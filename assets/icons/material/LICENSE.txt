@@ -1,0 +1,2 @@
+Material Symbols (Rounded, filled, 48 px) by Google, downloaded from fonts.gstatic.com.
+Licensed under the Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0

@@ -1,0 +1,242 @@
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Release Tag"
+        type: choice
+        options:
+          - stable
+          - rc
+          - nightly
+        default: nightly
+      rc_id:
+        description: "RC ID (only for rc, e.g. 1 -> VERSION-rc.1)"
+        type: string
+        required: false
+      source_repo:
+        description: "GitLab project path (group/project)"
+        default: "neoOMSI/game"
+      source_ref:
+        description: "Reference of source (branch, tag, commit)"
+        default: "main"
+      notify_discord:
+        description: "Send Discord notification after release"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  SOURCE_HOST: gitlab.com
+  SOURCE_REPO: ${{ inputs.source_repo || 'neoOMSI/game' }}
+  SOURCE_REF: ${{ inputs.source_ref || 'main' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-slim
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      channel: ${{ steps.v.outputs.channel }}
+      tag: ${{ steps.v.outputs.tag }}
+      source_sha: ${{ steps.v.outputs.source_sha }}
+      source_repo: ${{ steps.v.outputs.source_repo }}
+    steps:
+      - name: Checkout source (GitLab)
+        shell: bash
+        env:
+          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+        run: |
+          auth=""
+          if [ -n "$SOURCE_TOKEN" ]; then auth="oauth2:${SOURCE_TOKEN}@"; fi
+          git clone "https://${auth}${SOURCE_HOST}/${SOURCE_REPO}.git" .
+          git remote set-url origin "https://${SOURCE_HOST}/${SOURCE_REPO}.git"
+          git checkout "$SOURCE_REF"
+      - id: v
+        shell: bash
+        env:
+          INPUT_TYPE: ${{ inputs.release_type }}
+          INPUT_RC_ID: ${{ inputs.rc_id }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"
+            tag="$GITHUB_REF_NAME"
+            case "$v" in
+              *-nightly.*) channel=nightly ;;
+              *-rc.*) channel=rc ;;
+              *) channel=stable ;;
+            esac
+          else
+            channel="${INPUT_TYPE:-nightly}"
+            base="$(sh scripts/version.sh)"
+            case "$channel" in
+              stable)
+                v="$base"
+                tag="v${v}"
+                ;;
+              rc)
+                if ! printf '%s' "$INPUT_RC_ID" | grep -Eq '^[0-9A-Za-z.-]+$'; then
+                  echo "::error::rc_id missing or invalid (A-Z, a-z, 0-9, . and -)."
+                  exit 1
+                fi
+                v="${base}-rc.${INPUT_RC_ID}"
+                tag="v${v}"
+                ;;
+              nightly)
+                short_engine="$(git rev-parse --short=8 HEAD)"
+                v="${base}-nightly.g${short_engine}"
+                tag="nightly"
+                ;;
+              *)
+                echo "::error::Unknown release type: $channel"
+                exit 1
+                ;;
+            esac
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+      - shell: bash
+        run: |
+          echo "### neoOMSI ${{ steps.v.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source ${SOURCE_REPO}@\`$(git rev-parse --short=8 HEAD)\` · Actions run #${GITHUB_RUN_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-target.yml
+    secrets: inherit
+    with:
+      platform: windows
+      runner: windows-latest
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      version: ${{ needs.version.outputs.version }}
+      channel: ${{ needs.version.outputs.channel }}
+      source_repository: ${{ needs.version.outputs.source_repo }}
+      source_ref: ${{ needs.version.outputs.source_sha }}
+      cache_write: ${{ github.ref == 'refs/heads/main' }}
+      direct_artifact: false
+      retention_days: 1
+
+  macos:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x64
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-target.yml
+    secrets: inherit
+    with:
+      platform: macos
+      runner: macos-latest
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      version: ${{ needs.version.outputs.version }}
+      channel: ${{ needs.version.outputs.channel }}
+      source_repository: ${{ needs.version.outputs.source_repo }}
+      source_ref: ${{ needs.version.outputs.source_sha }}
+      cache_write: ${{ github.ref == 'refs/heads/main' }}
+      direct_artifact: false
+      retention_days: 1
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-target.yml
+    secrets: inherit
+    with:
+      platform: linux
+      runner: ${{ matrix.runner }}
+      arch: ${{ matrix.arch }}
+      version: ${{ needs.version.outputs.version }}
+      channel: ${{ needs.version.outputs.channel }}
+      source_repository: ${{ needs.version.outputs.source_repo }}
+      source_ref: ${{ needs.version.outputs.source_sha }}
+      cache_write: ${{ github.ref == 'refs/heads/main' }}
+      direct_artifact: false
+      retention_days: 1
+
+  release:
+    needs: [version, windows, macos, linux]
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      CHANNEL: ${{ needs.version.outputs.channel }}
+      PRERELEASE: ${{ contains(needs.version.outputs.version, '-') }}
+      TAG: ${{ needs.version.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: ${{ needs.version.outputs.source_sha }}
+    steps:
+      - name: Checkout source (GitLab)
+        shell: bash
+        env:
+          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+          SOURCE_REF: ${{ needs.version.outputs.source_sha }}
+        run: |
+          auth=""
+          if [ -n "$SOURCE_TOKEN" ]; then auth="oauth2:${SOURCE_TOKEN}@"; fi
+          git clone "https://${auth}${SOURCE_HOST}/${SOURCE_REPO}.git" .
+          git remote set-url origin "https://${SOURCE_HOST}/${SOURCE_REPO}.git"
+          git checkout "$SOURCE_REF"
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish release
+        shell: bash
+        run: bash scripts/ci/publish-release.sh
+      - name: Mark stable release as latest
+        if: ${{ needs.version.outputs.channel == 'stable' }}
+        shell: bash
+        run: gh release edit "$TAG" --latest --prerelease=false
+      - name: Notify Discord
+        if: ${{ inputs.notify_discord != false }}
+        shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL not set, skipping"
+            exit 0
+          fi
+          content="$(printf '<@&1555697320824148078>\n\n`%s` is now available\n-# The changes can be found on our release page: <https://neoomsi.com/releases/>' "$VERSION")"
+          jq -n --arg content "$content" '{content: $content, allowed_mentions: {parse: ["roles"]}}' \
+            | curl -fsS -X POST -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK_URL"
