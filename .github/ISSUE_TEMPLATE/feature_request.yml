@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose an intentional neoOMSI capability beyond OMSI 2 compatibility
+labels: ["enhancement", "scope: extension", "status: untriaged"]
+type: Feature
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        neoOMSI is currently compatibility-first. Use this form for intentional extensions beyond OMSI 2.
+
+        If OMSI 2.2.032 already supports the behavior and neoOMSI does not, file an **OMSI compatibility issue** instead. Valid extensions may be deferred while the relevant subsystem is still being stabilized for compatibility.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should this solve?
+      description: Explain the user, content-author, or developer need that exists today. Start with the problem rather than a preferred implementation.
+      placeholder: What is difficult, missing, or unnecessarily limited today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired behavior
+      description: Describe what should become possible or observable. Include important compatibility constraints if the extension must not change existing OMSI behavior or content semantics.
+      placeholder: What should neoOMSI do once this is implemented?
+    validations:
+      required: true

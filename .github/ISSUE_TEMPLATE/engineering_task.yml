@@ -1,0 +1,30 @@
+name: Engineering task
+description: Refactoring, build/CI, documentation, or other concrete repository work
+labels: ["scope: internal", "status: untriaged"]
+type: Task
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for a concrete piece of repository or architecture work rather than a player-facing feature request.
+
+        Good tasks have a specific problem and a verifiable end state. Avoid speculative rewrites or cleanup without a demonstrated maintenance, correctness, or workflow benefit.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem needs to be addressed?
+      description: Describe the concrete engineering or maintenance problem. Point to the affected subsystem, workflow, or files when that helps establish the scope.
+      placeholder: What is currently coupled, duplicated, fragile, unclear, or unnecessarily difficult?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe what should be true when the task is complete. Include important behavior or APIs that must remain unchanged and any useful acceptance criteria.
+      placeholder: What would a complete, reviewable result look like?
+    validations:
+      required: true
