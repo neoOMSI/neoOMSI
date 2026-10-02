@@ -48,12 +48,12 @@ Plain cargo works too: `cargo build --release -p omsi-app` builds `target/releas
 
 ## Icons
 
-The application icon is made from the logos in `assets/logos`:
-`assets/icons/app/neoomsi.svg` (Windows/Linux) and `neoomsi-macos.svg` (macOS, with the
-standard margin). `neoomsi.ico` is embedded into the Windows executables at build time
-(`build.rs`, `winresource`), `neoomsi.icns` goes into the macOS bundle, and
-`neoomsi-256.png` is the window icon on Windows and Linux. To regenerate them after changing
-the SVGs (needs `cargo install resvg`):
+The supplied app icon at `assets/icons/app/neoOMSI-icon-outlined.png` is rendered by the SVG wrappers
+`neoomsi.svg` and `neoomsi-macos.svg`; the macOS wrapper applies the standard margin. Generated
+`neoomsi.ico` is embedded into Windows executables, `neoomsi.icns` is used by the macOS bundle,
+and `neoomsi-256.png` is the window icon on Windows and Linux. Regenerate the platform icons
+after changing the source artwork (needs `cargo install resvg`; macOS also needs `iconutil`,
+and Python 3 with Pillow):
 
 ```sh
 scripts/make-icons.sh

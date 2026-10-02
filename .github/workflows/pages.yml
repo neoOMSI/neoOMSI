@@ -31,7 +31,6 @@ jobs:
           cp docs/*.md _site/docs/
           cp -R assets/logos _site/assets/logos
           cp assets/icons/app/neoomsi-256.png _site/assets/icon.png
-          cp assets/icons/app/neoomsi.svg _site/assets/icon.svg
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
