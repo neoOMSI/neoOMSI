@@ -57,6 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build
         shell: cmd
         run: scripts\build-windows.cmd ${{ matrix.target }}
@@ -126,6 +127,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build
         run: scripts/build-macos.sh
       - name: Package
@@ -160,6 +162,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: System libraries
         run: |
           for i in 1 2 3; do
