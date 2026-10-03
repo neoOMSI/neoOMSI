@@ -1336,6 +1336,12 @@ pub(crate) fn run_offscreen(
                         .bounding_box
                         .map(|bb| (p.vehicle.position, p.vehicle.heading, bb))
                 });
+                lighting.glass_wind = player
+                    .as_ref()
+                    .map(|p| lights::vehicle_velocity(&p.vehicle))
+                    .unwrap_or_default()
+                    - rain::weather_wind(&weather);
+                lighting.animation_time = Some(t_s + service_seconds as f32);
                 let puddle_surface = lighting
                     .inside
                     .and_then(|(o, _, _)| world.puddle_surface(o));
@@ -2844,6 +2850,8 @@ pub(crate) fn run_offscreen(
         .or(player.as_ref())
         .map(|p| crate::lights::vehicle_velocity(&p.vehicle))
         .unwrap_or_default();
+    lighting.glass_wind -= rain::weather_wind(&weather);
+    lighting.animation_time = Some(args.drive.unwrap_or(0.0) + service_seconds as f32);
     // OMSI_GLASS_WIND=<m/s>: the rain on the glass as the bus would meet it at that speed
     if let (Some(v), Some(p)) = (
         omsi_cfg::env::var("OMSI_GLASS_WIND")
@@ -2919,7 +2927,7 @@ pub(crate) fn run_offscreen(
             rn.tick(
                 1.0 / 30.0,
                 camera.position,
-                Vec3::ZERO,
+                rain::weather_wind(&weather),
                 &mut scene,
                 &player_ref
                     .as_ref()

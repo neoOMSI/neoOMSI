@@ -104,11 +104,7 @@ impl App {
             if let Some(wt) = &self.weather {
                 let (kind, rate) = precip_of(wt);
                 self.rain.set(kind, rate);
-                let wind = Vec3::new(
-                    wt.wind.0.to_radians().sin() * wt.wind.1,
-                    wt.wind.0.to_radians().cos() * wt.wind.1,
-                    0.0,
-                );
+                let wind = crate::rain::weather_wind(wt);
                 // every bus one may ride in keeps the weather out: the own, another
                 // player's, a timetable bus - each part of it: an articulated bus's
                 // rear section is a coupled part with its own [boundingbox] (#777)

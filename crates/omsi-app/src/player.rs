@@ -2339,6 +2339,16 @@ impl Player {
             &mut self.trailer_renders,
             inside,
         );
+        if self.render.window_wipers.is_none() {
+            self.render.window_wipers = Some(crate::window_wipers::WindowWipers::new(
+                renderer,
+                scene,
+                &self.vehicle,
+                &self.render,
+            ));
+        }
+        let wipers = self.render.window_wipers.as_mut().unwrap();
+        wipers.update(renderer, scene, &self.vehicle, &self.render.instances);
     }
 
     /// Pose and place the driver at the wheel; `show` false hides the figure (the `driver`

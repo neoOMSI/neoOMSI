@@ -387,7 +387,13 @@ impl App {
             .player
             .as_ref()
             .map(|p| lights::vehicle_velocity(&p.vehicle))
-            .unwrap_or_default();
+            .unwrap_or_default()
+            - self
+                .weather
+                .as_ref()
+                .map(crate::rain::weather_wind)
+                .unwrap_or_default();
+        lighting.animation_time = Some(self.clock.run_time as f32);
         lighting.led_glow = self.settings.led_glow as f32 * 0.25;
         lighting.led_mips = self.settings.led_mips;
         lighting.atmosphere_brightness = self.settings.atmosphere_brightness;

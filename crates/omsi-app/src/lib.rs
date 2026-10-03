@@ -56,6 +56,8 @@ mod threads;
 mod tiles;
 mod traffic;
 mod ui;
+mod window_drops;
+mod window_wipers;
 
 // the game itself, split by what each part does
 mod app;
