@@ -2569,6 +2569,7 @@ pub(crate) fn run_offscreen(
                 time: clock.time,
                 weekday: clock.weekday(),
                 language: &settings.language,
+                units: &settings.units,
                 screen: (w as f32, h as f32),
                 ui_scale: settings.ui_scale,
                 follow_window: settings.ui_scale_window,

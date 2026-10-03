@@ -141,6 +141,7 @@ pub struct NavFrame<'a> {
     pub time: f64,
     pub weekday: i32,
     pub language: &'a str,
+    pub units: &'a str,
     /// Window size in physical pixels.
     pub screen: (f32, f32),
     /// The player's interface size (`Settings::ui_scale`): the panel and the city map's
@@ -1015,7 +1016,7 @@ impl Navigator {
                 -1 => "turn_left",
                 _ => "turn_right",
             };
-            let t = if *dist >= 1000.0 { format!("{:.1} km", dist / 1000.0) } else { format!("{:.0} m", ((dist / 10.0).round() * 10.0).max(10.0)) };
+            let t = rounded_distance(*dist, uses_miles(f.units), 10.0);
             let tw = self.fonts.width(&t, 14.0 * s, Weight::Bold);
             // with the street it turns into, when the map names it
             let street = street.as_deref().map(|n| self.fonts.fit(n, 12.0 * s, Weight::Medium, map.w * 0.62 - 50.0 * s - tw));
@@ -1074,9 +1075,10 @@ impl Navigator {
         let pad = 11.0 * s;
         let base = top.y + top.h * 0.5 + self.fonts.cap_height(17.0 * s, Weight::Bold) * 0.5;
         let mut x = pad;
-        x += ui.text(&mut self.atlas, &self.fonts, &format!("{:.0}", f.speed_kmh.abs()), 17.0 * s, Weight::Bold, Vec2::new(x, base), Align::Left, TEXT);
+        let miles = uses_miles(f.units);
+        x += ui.text(&mut self.atlas, &self.fonts, &format!("{:.0}", speed(f.speed_kmh.abs(), miles)), 17.0 * s, Weight::Bold, Vec2::new(x, base), Align::Left, TEXT);
         x += 4.0 * s;
-        x += ui.text(&mut self.atlas, &self.fonts, wd.kmh, 12.0 * s, Weight::Medium, Vec2::new(x, base), Align::Left, TEXT_DIM);
+        x += ui.text(&mut self.atlas, &self.fonts, if miles { "mph" } else { wd.kmh }, 12.0 * s, Weight::Medium, Vec2::new(x, base), Align::Left, TEXT_DIM);
         let limit = net.and_then(|n| {
             let lane = if self.route.on_route { self.route.lanes.get(self.route.progress).copied() } else { None };
             let lane = lane.or_else(|| n.nearest_lane_near(f.bus, LaneKind::Street).filter(|l| l.2 < 8.0).map(|l| l.0))?;
@@ -1088,7 +1090,7 @@ impl Navigator {
             let c = Vec2::new(x + 10.0 * s, top.center().y);
             ui.circle(c, 10.5 * s, Color::rgba(200, 40, 40, 1.0));
             ui.circle(c, 8.3 * s, Color::rgba(235, 235, 235, 1.0));
-            let t = format!("{:.0}", (v / 5.0).round() * 5.0);
+            let t = format!("{:.0}", speed((v / 5.0).round() * 5.0, miles));
             let px = if t.len() > 2 { 7.5 } else { 9.0 } * s;
             ui.text(&mut self.atlas, &self.fonts, &t, px, Weight::Black, Vec2::new(c.x, c.y + self.fonts.cap_height(px, Weight::Black) * 0.5), Align::Center, Color::rgba(15, 15, 15, 1.0));
         }
@@ -1103,7 +1105,9 @@ impl Navigator {
 
         // Temperatures stay in the navigator header on every bus. The simulator always keeps
         // Cabinair_Temp, while scripts that model heating/air conditioning can overwrite it.
-        let temp = format!("EXT {:.0}°C · INT {:.0}°C", f.outside_temp, f.inside_temp);
+        let fahrenheit = uses_fahrenheit(f.units);
+        let unit = if fahrenheit { "°F" } else { "°C" };
+        let temp = format!("EXT {:.0}{unit} · INT {:.0}{unit}", temperature(f.outside_temp, fahrenheit), temperature(f.inside_temp, fahrenheit));
         let center = match f.line.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
             Some(line) => format!("{temp} · {line}"),
             None => temp,
@@ -1146,7 +1150,7 @@ impl Navigator {
                 ui.text_in(&mut self.atlas, &self.fonts, &name, 13.5 * s, Weight::Bold, stop_row, Align::Left, TEXT);
                 let mut parts = Vec::new();
                 if let Some(d) = self.next_dist {
-                    parts.push(if d >= 1000.0 { format!("{:.1} km", d / 1000.0) } else { format!("{:.0} m", (d / 10.0).round() * 10.0) });
+                    parts.push(rounded_distance(d, miles, 0.0));
                     let secs = d / (self.speed_avg.max(5.0) as f64);
                     parts.push(if secs < 60.0 { "<1 min".to_string() } else { format!("{:.0} min", (secs / 60.0).round()) });
                 }
@@ -1258,7 +1262,7 @@ fn congestion_on(net: &Network, traffic: &Network, c: &HashMap<usize, f32>) -> H
 
 impl<'a> NavFrame<'a> {
     fn clone_ref(&self) -> NavFrame<'a> {
-        NavFrame { traffic: self.traffic, bus: self.bus, heading: self.heading, speed_kmh: self.speed_kmh, outside_temp: self.outside_temp, inside_temp: self.inside_temp, line: self.line.clone(), terminus: self.terminus.clone(), stops: self.stops.clone(), delay: self.delay, passengers: self.passengers, time: self.time, weekday: self.weekday, language: self.language, screen: self.screen, ui_scale: self.ui_scale, follow_window: self.follow_window, dt: self.dt, stop_requested: self.stop_requested }
+        NavFrame { traffic: self.traffic, bus: self.bus, heading: self.heading, speed_kmh: self.speed_kmh, outside_temp: self.outside_temp, inside_temp: self.inside_temp, line: self.line.clone(), terminus: self.terminus.clone(), stops: self.stops.clone(), delay: self.delay, passengers: self.passengers, time: self.time, weekday: self.weekday, language: self.language, units: self.units, screen: self.screen, ui_scale: self.ui_scale, follow_window: self.follow_window, dt: self.dt, stop_requested: self.stop_requested }
     }
 }
 
@@ -2333,7 +2337,7 @@ impl Navigator {
         };
         let title_w = ui.text_in(&mut self.atlas, &self.fonts, &title, 15.0 * s, Weight::Bold, Rect::new(pad, head.y, w * 0.4, head.h), Align::Left, TEXT);
         if let Some(st) = f.stops.first() {
-            let d = self.next_dist.map(|d| if d >= 1000.0 { format!("{:.1} km", d / 1000.0) } else { format!("{:.0} m", d) }).unwrap_or_default();
+            let d = self.next_dist.map(|d| distance(d, uses_miles(f.units))).unwrap_or_default();
             let t = format!("{}  ·  {}  ·  {:02}:{:02}", st.name.trim(), d, (st.arrival / 3600.0) as i32 % 24, ((st.arrival % 3600.0) / 60.0) as i32);
             ui.text_in(&mut self.atlas, &self.fonts, &t, 13.5 * s, Weight::Medium, Rect::new(pad + title_w + 24.0 * s, head.y, w * 0.45, head.h), Align::Left, TEXT_DIM);
         }
@@ -2353,7 +2357,7 @@ impl Navigator {
         let len = (metres / self.city.mpp) as f32;
         let by = h - 22.0 * s;
         ui.rect(Rect::new(pad, by, len, 2.0 * s), TEXT_DIM);
-        ui.text(&mut self.atlas, &self.fonts, &if metres >= 1000.0 { format!("{:.0} km", metres / 1000.0) } else { format!("{metres:.0} m") }, 12.0 * s, Weight::Medium, Vec2::new(pad + len + 8.0 * s, by + 4.0 * s), Align::Left, TEXT_DIM);
+        ui.text(&mut self.atlas, &self.fonts, &distance(metres, uses_miles(f.units)), 12.0 * s, Weight::Medium, Vec2::new(pad + len + 8.0 * s, by + 4.0 * s), Align::Left, TEXT_DIM);
         ui.rounded_border(win, 10.0 * s, 1.0, Color::WHITE.alpha(0.08));
 
         // --- to the GPU
@@ -2579,5 +2583,41 @@ mod tests {
         let edge = stop_label_rect(Vec2::new(590.0, 200.0), 150.0, 1.0, win, &[]).unwrap();
         assert!(edge.right() < 600.0);
         assert!(stop_label_rect(p, 150.0, 1.0, win, &[win]).is_none());
+    }
+}
+
+fn uses_miles(units: &str) -> bool {
+    units.eq_ignore_ascii_case("uk") || units.eq_ignore_ascii_case("imperial")
+}
+
+fn uses_fahrenheit(units: &str) -> bool {
+    units.eq_ignore_ascii_case("imperial")
+}
+
+fn speed(kmh: f32, miles: bool) -> f32 {
+    if miles { kmh * 0.621_371 } else { kmh }
+}
+
+fn temperature(celsius: f32, fahrenheit: bool) -> f32 {
+    if fahrenheit { celsius * 9.0 / 5.0 + 32.0 } else { celsius }
+}
+
+fn distance(metres: f64, miles: bool) -> String {
+    if miles {
+        if metres >= 1609.344 { format!("{:.1} mi", metres / 1609.344) } else { format!("{:.0} yd", metres * 1.093_613_3) }
+    } else if metres >= 1000.0 {
+        format!("{:.1} km", metres / 1000.0)
+    } else {
+        format!("{metres:.0} m")
+    }
+}
+
+fn rounded_distance(metres: f64, miles: bool, minimum: f64) -> String {
+    if miles {
+        if metres >= 1609.344 { format!("{:.1} mi", metres / 1609.344) } else { format!("{:.0} yd", ((metres * 1.093_613_3 / 10.0).round() * 10.0).max(minimum)) }
+    } else if metres >= 1000.0 {
+        format!("{:.1} km", metres / 1000.0)
+    } else {
+        format!("{:.0} m", ((metres / 10.0).round() * 10.0).max(minimum))
     }
 }

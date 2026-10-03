@@ -786,6 +786,7 @@ fn general_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, out: &mut Outside, c
         let langs: Vec<(&str, &str)> = core::LANGUAGES.iter().map(|l| (l.0, l.1)).collect();
         sel_setting(ui, s, dirty, "s-lang", c.row(), "Language", "language", &langs);
     }
+    sel_setting(ui, s, dirty, "s-units", c.row(), "Units", "units", &[("metric", "Metric (km/h, km, °C)"), ("uk", "UK (mph, miles, °C)"), ("imperial", "Imperial (mph, miles, °F)")]);
     // (the launcher speaks the chosen language at once)
     crate::ui_language(get(s, "language").as_str().unwrap_or("ENG"));
     // (texts nobody has translated: translated on this machine, see `mt`)
@@ -2300,7 +2301,7 @@ mod settings_tests {
             "s-maint", "set-collision_vehicles", "set-collision_objects", "set-collision_pedestrians", "set-use_real_time", "set-use_real_date", "set-time_sync", "set-metar_sync", "s-timespeed",
         ];
         let general = vec![
-            "s-lang", "set-machine_translation", "set-launcher_rest", "set-discord_status", "s-uiscale", "set-ui_scale_window", "s-uiop", "set-tooltips", "set-show_fps", "set-notes", "set-chat", "set-name_tags",
+            "s-lang", "s-units", "set-machine_translation", "set-launcher_rest", "set-discord_status", "s-uiscale", "set-ui_scale_window", "s-uiop", "set-tooltips", "set-show_fps", "set-notes", "set-chat", "set-name_tags",
             "set-navigator", "set-nav_arrows", "set-nav_ai", "corner-top-left", "corner-top-right", "corner-bottom-left", "corner-bottom-right",
             "set-update_check", "set-update_auto", "s-upd-check", "s-upd-github", "s-reset",
         ];

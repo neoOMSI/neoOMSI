@@ -1980,6 +1980,7 @@ impl ApplicationHandler for App {
                             time: self.clock.time,
                             weekday: self.clock.weekday(),
                             language: &self.settings.language,
+                            units: &self.settings.units,
                             screen: if vr_active { (1440.0, 1440.0) } else { (s.config.width as f32, s.config.height as f32) },
                             ui_scale: if vr_active { 1.0 } else { self.settings.ui_scale },
                             follow_window: if vr_active { true } else { self.settings.ui_scale_window },
