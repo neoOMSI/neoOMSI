@@ -257,7 +257,7 @@ pub(crate) struct App {
     /// belongs to now; see `App::sync_view_look`.
     pub(crate) view_looks: std::collections::HashMap<String, (f32, f32)>,
     pub(crate) look_view: String,
-    /// Smooth switch between two cockpit cameras (arrow keys), see `CamBlend`.
+    /// Smooth camera changes in the driver view, see `CamBlend`.
     pub(crate) cam_blend: CamBlend,
     /// The zoom of the views inside the bus (driver, passenger): their field of view is
     /// the camera's times this (the mouse wheel, + and -, a pinch), per view.
@@ -1327,6 +1327,8 @@ pub(crate) struct CamBlend {
     /// (view, camera numbers) of the last frame: a change of the numbers inside the same
     /// view is a camera switch.
     pub key: Option<(String, (usize, usize))>,
+    /// The driver view was reset and should move back smoothly.
+    pub resetting: bool,
     /// The camera the glide started from (in the bus's frame), while one is under way.
     pub from: Option<omsi_vehicle::Camera>,
     /// The cockpit camera as it was drawn last frame (in the bus's frame): where the next

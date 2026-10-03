@@ -442,6 +442,7 @@ impl App {
                     {
                         let inside_view = self.view == "driver";
                         let entering = std::mem::take(&mut self.cam_blend.entering);
+                        let resetting = std::mem::take(&mut self.cam_blend.resetting);
                         let left = self
                             .cam_blend
                             .key
@@ -454,7 +455,7 @@ impl App {
                         };
                         let mut started = false;
                         if let Some(to) = target.as_ref() {
-                            if (entering || left)
+                            if (entering || left || resetting)
                                 && crate::app::CAM_BLEND_SECS > 0.0
                                 && self.settings.driverview_smooth
                             {
