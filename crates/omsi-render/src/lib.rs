@@ -3,6 +3,9 @@
 pub mod atmosphere;
 pub mod clouds;
 mod puddles;
+mod targets;
+
+use targets::{AoTargets, HdrTargets};
 
 use anyhow::{anyhow, Context, Result};
 use glam::{DVec3, Mat4, Vec3, Vec4};
@@ -94,31 +97,6 @@ struct EnhancedUniform {
     led: [f32; 4],
 }
 
-/// High-range colour targets of the enhanced path for one size: the multisampled one the
-/// scene is drawn into, the single-sampled one it resolves into, the glow's levels, the
-/// tone-mapped picture FXAA reads, and the bind groups of the passes between them.
-struct HdrTargets {
-    msaa_view: Option<wgpu::TextureView>,
-    view: wgpu::TextureView,
-    /// The screen mask (`MASK_FORMAT`), multisampled and resolved like the picture.
-    mask_msaa: Option<wgpu::TextureView>,
-    mask: wgpu::TextureView,
-    /// Glow levels at 1/2, 1/4, ... of the size, and the upsampled sums per level.
-    down: Vec<wgpu::TextureView>,
-    up: Vec<wgpu::TextureView>,
-    ldr: wgpu::TextureView,
-    /// down[i] reads the picture (i = 0) or down[i - 1]; up[i] reads up[i + 1] (or the
-    /// last down level) and down[i].
-    down_bg: Vec<wgpu::BindGroup>,
-    up_bg: Vec<wgpu::BindGroup>,
-    meter_bg: wgpu::BindGroup,
-    /// Tone mapping with the adapted exposure in `adapt[k]`.
-    tonemap_bg: [wgpu::BindGroup; 2],
-    fxaa_bg: wgpu::BindGroup,
-    /// Allocated only when wet roads need scene reflections in the main view.
-    puddles: Option<puddles::Targets>,
-}
-
 /// The enhanced path's reflection probe: a cube map of the sky around the camera with a
 /// GGX-blurred mip chain, drawn now and then.
 struct Probe {
@@ -171,8 +149,6 @@ const SKY_CUBE_EVERY: u32 = 4;
 
 const PROBE_SIZE: u32 = 64;
 const PROBE_MIPS: u32 = 6;
-/// Glow levels of the enhanced post path.
-const GLOW_LEVELS: usize = 6;
 /// The illuminance a light's core gives (maplight colour 1, in the sky model's units:
 /// 55 lux, so the street under a lamp gets its 15-25 lux).
 const LAMP_E: f32 = 0.0055;
@@ -189,16 +165,6 @@ const METER_BRIGHTEN: f32 = 0.8;
 const NIGHT_VISION: f32 = 0.55;
 /// The sun's angular radius as drawn (a little larger than the real 0.27°).
 const SUN_RADIUS: f32 = 0.0065;
-
-/// The textures of the ambient-occlusion pass for one target size.
-struct AoTargets {
-    size: (u32, u32),
-    depth_view: wgpu::TextureView,
-    ao_view: wgpu::TextureView,
-    blur_view: wgpu::TextureView,
-    ssao_bg: wgpu::BindGroup,
-    blur_bg: wgpu::BindGroup,
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -5855,268 +5821,6 @@ impl Renderer {
         if changed {
             Self::mark_changed(scene, instance);
         }
-    }
-
-    /// The ambient-occlusion textures for a target of this size (rebuilt on resize).
-    fn ensure_ao(&mut self, w: u32, h: u32) -> bool {
-        if self.ao.as_ref().map(|a| a.size == (w, h)).unwrap_or(false) {
-            return false;
-        }
-        let size = wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        };
-        let depth = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("prepass depth"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-                | if self.puddles.is_some() { wgpu::TextureUsages::COPY_SRC } else { wgpu::TextureUsages::empty() },
-            view_formats: &[],
-        });
-        // the AO itself at half size: four times fewer pixels, and the blur hides the rest
-        let half = wgpu::Extent3d {
-            width: w.div_ceil(2),
-            height: h.div_ceil(2),
-            depth_or_array_layers: 1,
-        };
-        let mk = |label: &str| {
-            self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: half,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                // r the occlusion, g the view depth (m) it was worked out at: the main
-                // pass upsamples it by depth, not bilinearly (see `ao_at` in shader.wgsl)
-                format: wgpu::TextureFormat::Rg16Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-        };
-        let ao = mk("ssao");
-        let blur = mk("ssao blur");
-        let depth_view = depth.create_view(&Default::default());
-        let ao_view = ao.create_view(&Default::default());
-        let blur_view = blur.create_view(&Default::default());
-        let bg = |label: &str, tex: &wgpu::TextureView| {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(label),
-                layout: &self.ao_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.ao_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(tex),
-                    },
-                ],
-            })
-        };
-        // the SSAO pass reads no AO texture, but the layout wants one: bind the blur target
-        let ssao_bg = bg("ssao", &blur_view);
-        let blur_bg = bg("ssao blur", &ao_view);
-        self.ao = Some(AoTargets {
-            size: (w, h),
-            depth_view,
-            ao_view,
-            blur_view,
-            ssao_bg,
-            blur_bg,
-        });
-        true
-    }
-
-    /// Before a new size's targets are made: let go of the sizes nobody asked for lately
-    /// (dragging the window's edge made a full set per frame, and the old caches, cleared
-    /// only past a dozen entries, could hold gigabytes meanwhile), and past a handful of
-    /// sizes the least recently used (the window, the scaled picture and the mirrors are
-    /// asked for every frame they are drawn).
-    fn evict_targets(&mut self) {
-        const STALE: std::time::Duration = std::time::Duration::from_millis(250);
-        const KEEP: usize = 10;
-        let now = std::time::Instant::now();
-        let mut uses: Vec<((u32, u32), std::time::Instant)> = self.target_use.iter().map(|(k, t)| (*k, *t)).collect();
-        uses.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
-        let keep: std::collections::HashSet<(u32, u32)> = uses.iter().filter(|(_, t)| now.duration_since(*t) < STALE).take(KEEP).map(|(k, _)| *k).collect();
-        self.target_use.retain(|k, _| keep.contains(k));
-        self.scale_targets.retain(|k, _| keep.contains(k));
-        self.msaa_targets.retain(|k, _| keep.contains(k));
-        self.hdr_targets.retain(|k, _| keep.contains(k));
-    }
-
-    /// The multisampled colour and depth attachments for a target of this size.
-    fn msaa_targets(&mut self, w: u32, h: u32) -> (wgpu::TextureView, wgpu::TextureView) {
-        self.target_use.insert((w, h), std::time::Instant::now());
-        if let Some(t) = self.msaa_targets.get(&(w, h)) {
-            return t.clone();
-        }
-        self.evict_targets();
-        let size = wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        };
-        let color = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("msaa colour"),
-            size,
-            mip_level_count: 1,
-            sample_count: self.options.msaa,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("msaa depth"),
-            size,
-            mip_level_count: 1,
-            sample_count: self.options.msaa,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let t = (
-            color.create_view(&Default::default()),
-            depth.create_view(&Default::default()),
-        );
-        self.msaa_targets.insert((w, h), t.clone());
-        t
-    }
-
-    /// The HDR colour targets of the enhanced path for this size, with the glow's levels,
-    /// the tone-mapped picture FXAA reads and the post passes' bind groups.
-    fn hdr_targets(&mut self, w: u32, h: u32) -> bool {
-        self.target_use.insert((w, h), std::time::Instant::now());
-        if self.hdr_targets.contains_key(&(w, h)) {
-            return false;
-        }
-        self.evict_targets();
-        let fmt = wgpu::TextureFormat::Rgba16Float;
-        let target = |label: &str, tw: u32, th: u32, format: wgpu::TextureFormat, samples: u32| {
-            let usage = if samples > 1 {
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-            } else {
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-            };
-            self.device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: tw.max(1),
-                        height: th.max(1),
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
-        };
-        let msaa_view =
-            (self.options.msaa > 1).then(|| target("hdr msaa", w, h, fmt, self.options.msaa));
-        let view = target("hdr", w, h, fmt, 1);
-        let mask_msaa = (self.options.msaa > 1).then(|| target("screen mask msaa", w, h, MASK_FORMAT, self.options.msaa));
-        let mask = target("screen mask", w, h, MASK_FORMAT, 1);
-        // the glow: halving until the smallest level is a few dozen pixels across
-        let levels = GLOW_LEVELS
-            .min((w.min(h).max(16) as f32).log2() as usize - 3)
-            .max(1);
-        let down: Vec<wgpu::TextureView> = (1..=levels)
-            .map(|k| target("glow down", w >> k, h >> k, fmt, 1))
-            .collect();
-        let up: Vec<wgpu::TextureView> = (1..=levels)
-            .map(|k| target("glow up", w >> k, h >> k, fmt, 1))
-            .collect();
-        let ldr = target("tone mapped", w, h, wgpu::TextureFormat::Rgba8Unorm, 1);
-        let bg = |src: &wgpu::TextureView, base: &wgpu::TextureView, adapt: &wgpu::TextureView| {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("post"),
-                layout: &self.post_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.post_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(src),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&self.post_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(base),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::TextureView(adapt),
-                    },
-                ],
-            })
-        };
-        let none = &self.white_texture.view;
-        // (the first level of the glow reads the screen mask as its `t_base`: no light from
-        // the screens)
-        let down_bg: Vec<wgpu::BindGroup> = (0..levels)
-            .map(|i| bg(if i == 0 { &view } else { &down[i - 1] }, if i == 0 { &mask } else { none }, none))
-            .collect();
-        let up_bg: Vec<wgpu::BindGroup> = (0..levels)
-            .map(|i| {
-                bg(
-                    if i + 1 == levels {
-                        &down[i]
-                    } else {
-                        &up[i + 1]
-                    },
-                    &down[i],
-                    none,
-                )
-            })
-            .collect();
-        let meter_bg = bg(&down[levels - 1], none, none);
-        let tonemap_bg = [
-            bg(&view, &up[0], &self.adapt_views[0]),
-            bg(&view, &up[0], &self.adapt_views[1]),
-        ];
-        // (FXAA reads the screen mask as its `t_base` and leaves the screens as they are)
-        let fxaa_bg = bg(&ldr, &mask, none);
-        self.hdr_targets.insert(
-            (w, h),
-            HdrTargets {
-                msaa_view,
-                view,
-                mask_msaa,
-                mask,
-                down,
-                up,
-                ldr,
-                down_bg,
-                up_bg,
-                meter_bg,
-                tonemap_bg,
-                fxaa_bg,
-                puddles: None,
-            },
-        );
-        true
     }
 
     /// Take in a newly computed sky: its table goes to the GPU, the probe is redrawn.
