@@ -1376,7 +1376,7 @@ mod tests {
         let mut ui = Ui::new();
         let mut sel = 0;
         let field = Rect::new(20.0, 20.0, 240.0, 30.0);
-        let mut frame = |ui: &mut Ui, sel: &mut usize| {
+        let frame = |ui: &mut Ui, sel: &mut usize| {
             ui.begin(Vec2::new(800.0, 600.0), 1.0, 1.0 / 60.0);
             ui.select("n", field, sel, &options);
             ui.finish();
@@ -1452,7 +1452,7 @@ mod tests {
         let mut ui = Ui::new();
         let mut sel = 0;
         let field = Rect::new(20.0, 20.0, 240.0, 30.0);
-        let mut frame = |ui: &mut Ui, sel: &mut usize| {
+        let frame = |ui: &mut Ui, sel: &mut usize| {
             ui.begin(Vec2::new(800.0, 600.0), 1.0, 1.0 / 60.0);
             let changed = ui.select("n", field, sel, &options);
             ui.finish();

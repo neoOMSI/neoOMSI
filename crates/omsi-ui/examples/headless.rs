@@ -1,6 +1,6 @@
 //! Draw a few shapes with omsi-ui into a texture and write it as PNG (a check of the
 //! pipeline without the game): `cargo run -p omsi-ui --example headless out.png`
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use omsi_ui::{paint::Align, Atlas, Color, Draw, Fonts, Gpu, Layer, Painter, Rect, Weight};
 
 fn main() {
@@ -43,7 +43,11 @@ fn main() {
     gpu.upload(&device, &queue, 1, &route.verts);
     gpu.upload(&device, &queue, 2, &ui.verts);
     gpu.upload_atlas(&queue, &mut atlas);
-    let viewv = Mat4::look_at_rh(Vec3::new(0.0, -120.0, 160.0), Vec3::new(0.0, 40.0, 0.0), Vec3::Z);
+    let viewv = glam::camera::rh::view::look_at_mat4(
+        Vec3::new(0.0, -120.0, 160.0),
+        Vec3::new(0.0, 40.0, 0.0),
+        Vec3::Z,
+    );
     let map = [0.0, 40.0, w as f32, h as f32 - 40.0];
     let layers = [Layer::flat([0.0, 0.0, w as f32, h as f32], 12.0, 1.0), Layer::world(viewv, 0.73, map, [0.0, 40.0, w as f32, h as f32], 12.0, 1.0)];
     let draws = [
