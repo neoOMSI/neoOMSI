@@ -2538,20 +2538,7 @@ impl ApplicationHandler for App {
                             let secs = self.fps_t.elapsed().as_secs_f32();
                             log::info!("profile interval: {:.1} fps over {secs:.2} s", self.frames as f32 / secs);
                         }
-                        let speed = self
-                            .player
-                            .as_ref()
-                            .map(|p| format!(" - {:.0} km/h", p.vehicle.physics.velocity_kmh()))
-                            .unwrap_or_default();
                         self.fps = self.frames as f32;
-                        win.set_title(&format!(
-                            "neoOMSI - {} fps{speed} - {:.0},{:.0},{:.0} yaw {:.0}",
-                            self.frames,
-                            cam.position.x,
-                            cam.position.y,
-                            cam.position.z,
-                            cam.yaw.rem_euclid(360.0)
-                        ));
                         self.frames = 0;
                         self.fps_t = Instant::now();
                     }
