@@ -23,7 +23,7 @@ static SAFER_TRIED: AtomicBool = AtomicBool::new(false);
 /// Where the app keeps what a person puts on the phone for it.
 pub const SHARED: &str = "/storage/emulated/0/neoOMSI";
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
     // an error is also written where a person finds it without a computer:
     // neoOMSI/crash.log (or Android/data/org.neoomsi.game/files/crash.log)

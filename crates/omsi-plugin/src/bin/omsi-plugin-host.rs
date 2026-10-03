@@ -53,7 +53,7 @@ fn main() {
 /// Homebrew's i686 MinGW links no unwinder the prebuilt standard library can use; built
 /// with `panic=abort` nothing unwinds, and this stands in for the one symbol it names.
 #[cfg(all(target_os = "windows", target_arch = "x86", target_env = "gnu"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn _Unwind_Resume() -> ! {
     std::process::abort()
 }

@@ -8,6 +8,7 @@
 .claude/
 .idea/
 .vscode/
+.omp/
 node_modules/
 
 # the Android build's signing key (made on the first build) and intermediate files

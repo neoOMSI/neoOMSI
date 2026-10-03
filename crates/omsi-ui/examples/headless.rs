@@ -60,7 +60,7 @@ fn main() {
     queue.submit([enc.finish()]);
     buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely()).ok();
-    let data = buf.slice(..).get_mapped_range();
+    let data = buf.slice(..).get_mapped_range().unwrap();
     let mut img = image::RgbaImage::new(w, h);
     for y in 0..h {
         for x in 0..w {
