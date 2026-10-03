@@ -60,6 +60,16 @@ lto = "thin"
 [profile.dev]
 opt-level = 1
 
+# A release-like build for local Windows testing. It keeps the normal optimisation level but
+# skips the slower release-only work. The proper release profile is still used for PRs and
+# published builds.
+[profile.dev-release]
+inherits = "release"
+debug = 0
+lto = false
+codegen-units = 16
+incremental = true
+
 # the Android build (scripts/build-android.sh): the release profile without debug info (a
 # phone's app carries no 300 MB of symbols)
 [profile.android]

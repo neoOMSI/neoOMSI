@@ -8,8 +8,33 @@ Thanks for helping! A few rules keep the project healthy:
 * **Compatibility first.** A change must not break a stock map or a mod that worked. Run
   `cargo run --release -p omsi-check -- "/path/to/OMSI 2"` before and after larger changes.
 * **One change per pull request**, with a message that says what the player notices.
-* `cargo test --workspace` and `cargo build --release` must pass (CI checks all platforms).
+* **Use a fork and a branch.** Fork neoOMSI, make a separate branch for your changes, then
+  open a pull request from that branch.
 * Code style: `rustfmt` defaults, comments explain *why*.
+
+## Building while you work
+
+Use the development build while you are changing and testing the game. It is quicker than a
+release build and starts neoOMSI when the build finishes:
+
+* **Windows:** `scripts\dev-windows.cmd`
+* **macOS:** `sh scripts/dev-macos.sh`
+
+You can add normal game arguments after either command.
+
+On Windows, `scripts\dev-windows-release.cmd` makes a local build that is closer to a release
+build. It keeps the normal release optimisation, but skips debug symbols and the slow final
+optimisation pass. Use it when a bug only appears in a release-style build. It writes its files
+to `dist\windows-dev` and is quicker than the proper release build, but it is not a substitute
+for it.
+
+Before opening a pull request, run the full checks:
+
+* `cargo test --workspace`
+* `cargo build --release`
+
+To make a release build you can run locally, use `scripts\build-windows.cmd` on Windows or
+`sh scripts/build-macos.sh` on macOS. CI also checks the supported platforms.
 
 ## Where things are
 
