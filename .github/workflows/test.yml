@@ -23,7 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: test
+          key: x86_64-pc-windows-msvc
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run workspace tests
         run: cargo test --workspace --locked
