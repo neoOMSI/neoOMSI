@@ -1,16 +1,36 @@
-# build output (releases are built by GitHub Actions, see .github/workflows)
-/target
-/dist
+# Rust & Build Outputs
+/target/
+/dist/
+/out/
+/_site/
 **/*.rs.bk
+*.pdb
 
-# local tools and editors
+# Logs & Diagnostics
+*.log
+crash.log
+
+# Operating System Files
 .DS_Store
-.claude/
-.idea/
-.vscode/
-.omp/
-node_modules/
+._*
+Thumbs.db
+desktop.ini
 
-# the Android build's signing key (made on the first build) and intermediate files
+# IDEs & Editors
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+.vs/
+
+# Web & Node dependencies
+node_modules/
+.npm/
+
+# Android Build & Keys
 /android/debug.keystore
-/android/build
+/android/build/
+.gradle/
+local.properties
+*.apk
+*.aab
