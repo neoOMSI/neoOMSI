@@ -103,6 +103,9 @@ jobs:
         with:
           key: x86_64-pc-windows-msvc
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Preserve compiled dependencies from main even when a later test fails.
+          # Otherwise the next run has to rebuild the entire workspace from scratch.
+          cache-on-failure: true
 
       - uses: taiki-e/install-action@v2
         with:

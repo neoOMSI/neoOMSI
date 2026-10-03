@@ -482,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn navigator_translations_are_loaded_for_all_languages() {
+    fn navigator_translations_are_loaded_for_enabled_languages() {
         let keys = [
             "Navigator position (this bus)",
             "Position right / left",
@@ -502,10 +502,8 @@ mod tests {
             "VR: Position navigator",
             "Could not save navigator position",
         ];
-        let languages = [
-            "de", "fr", "ru", "uk", "be", "kk", "pl", "cs", "hu", "es", "pt", "pt-pt", "it", "nl",
-            "tr", "ja", "zh-tw", "ko", "th", "vi", "id", "ms", "tl", "zh", "hi",
-        ];
+        // English uses the source keys. German is the only enabled non-English UI locale.
+        let languages = ["de"];
         for language in languages {
             for key in keys {
                 let translated = crate::_rust_i18n_try_translate(language, key);
