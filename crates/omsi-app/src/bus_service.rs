@@ -6,8 +6,8 @@
 //! aboard. Nothing of the player's bus is involved: no driver inputs, no throttle and brake
 //! for the script to turn into motion - the car moves, the script only animates it.
 
-use omsi_sim::traffic::{AiState, LaneKind, Network};
 use omsi_sim::VehicleInstance;
+use omsi_sim::traffic::{AiState, LaneKind, Network};
 use std::collections::VecDeque;
 
 /// One stop of the trip, on the car's route.
@@ -32,7 +32,14 @@ pub struct Stop {
 impl Stop {
     #[allow(clippy::type_complexity)]
     pub fn from_tuple(t: (usize, f32, f32, f64, i64, f32)) -> Stop {
-        Stop { ri: t.0, s: t.1, bay: t.2, depart: t.3, id: t.4, side: t.5 }
+        Stop {
+            ri: t.0,
+            s: t.1,
+            bay: t.2,
+            depart: t.3,
+            id: t.4,
+            side: t.5,
+        }
     }
 }
 
@@ -89,11 +96,7 @@ pub struct BusService {
 
 /// The side the bus pulls out towards: left (1) from a bay on the right, else right (2).
 fn out_signal(bay: f32) -> i32 {
-    if bay < -0.1 {
-        2
-    } else {
-        1
-    }
+    if bay < -0.1 { 2 } else { 1 }
 }
 
 /// Seconds the doors stay open at a stop without anyone holding them.
@@ -188,7 +191,10 @@ impl BusService {
 
     /// Standing at a stop (boarding, waiting or pulling out).
     pub fn at_stop(&self) -> bool {
-        matches!(self.phase, Phase::Boarding | Phase::Waiting | Phase::Closing)
+        matches!(
+            self.phase,
+            Phase::Boarding | Phase::Waiting | Phase::Closing
+        )
     }
 
     /// Seconds it expects to stand where it is yet (for the traffic behind: worth going
@@ -243,7 +249,12 @@ impl BusService {
     /// Arrived at the front stop: what now.
     fn arrive(&mut self, ctx: &Ctx, depart: f64, at: (usize, f32)) {
         if omsi_cfg::env::var_os("OMSI_DEBUG_STOPS").is_some() {
-            log::info!("t={:.1}: timetable bus {} serves its stop {:?}", ctx.day_time, ctx.id, self.stops.front().map(|s| s.id));
+            log::info!(
+                "t={:.1}: timetable bus {} serves its stop {:?}",
+                ctx.day_time,
+                ctx.id,
+                self.stops.front().map(|s| s.id)
+            );
         }
         let layover = std::mem::take(&mut self.layover);
         let limit = if layover { LAYOVER_WAIT } else { EARLY_WAIT };
@@ -267,7 +278,10 @@ impl BusService {
                 ctx.id,
                 depart - ctx.day_time,
                 self.phase,
-                ctx.net.lanes.get(at.0).map(|l| { let p = l.at(at.1).0; (p.x.round(), p.y.round()) })
+                ctx.net.lanes.get(at.0).map(|l| {
+                    let p = l.at(at.1).0;
+                    (p.x.round(), p.y.round())
+                })
             );
         }
     }
@@ -298,7 +312,9 @@ impl BusService {
                 .iter()
                 .find(|&&(l, dl)| dl > 0.0 && !ctx.net.crossings[l].is_empty())
                 .map(|w| (w.1 - st.front - 1.0).max(4.0));
-            let len = (lat.abs() * 8.0).clamp(8.0, 30.0).min(junction.unwrap_or(f32::MAX));
+            let len = (lat.abs() * 8.0)
+                .clamp(8.0, 30.0)
+                .min(junction.unwrap_or(f32::MAX));
             st.lateral_target = 0.0;
             st.lateral_ramp = (lat, 0.0, st.odometer, len);
         }
@@ -314,7 +330,12 @@ impl BusService {
 
     /// One frame of the service: where the bus has to stop (distance from its origin along
     /// its way), if anywhere; it also sets its blinker and its place across the lane.
-    pub fn step(&mut self, st: &mut AiState, vehicle: &mut VehicleInstance, ctx: &Ctx) -> Option<f32> {
+    pub fn step(
+        &mut self,
+        st: &mut AiState,
+        vehicle: &mut VehicleInstance,
+        ctx: &Ctx,
+    ) -> Option<f32> {
         self.phase_t += ctx.dt;
         let here = Some(st.front);
         match self.phase {
@@ -323,7 +344,9 @@ impl BusService {
                 let board_at = self.leave_at - LAYOVER_BOARDING;
                 if !self.boarded && ctx.day_time >= board_at {
                     self.boarded = true;
-                    self.boarding = self.boarding.max((self.leave_at - ctx.day_time) as f32 - 3.0);
+                    self.boarding = self
+                        .boarding
+                        .max((self.leave_at - ctx.day_time) as f32 - 3.0);
                     self.set_phase(Phase::Boarding);
                 } else if self.boarded && ctx.day_time >= self.leave_at {
                     self.set_phase(Phase::Closing);
@@ -350,7 +373,11 @@ impl BusService {
                 let bay = self.stops.front().map(|s| s.bay).unwrap_or(0.0);
                 st.signal = out_signal(bay);
                 st.signal_time = st.signal_time.max(1.0);
-                let answered = vehicle.station_released() && vehicle.var("AI_Scheduled_AtStation").map(|v| v.abs() < 0.5).unwrap_or(true);
+                let answered = vehicle.station_released()
+                    && vehicle
+                        .var("AI_Scheduled_AtStation")
+                        .map(|v| v.abs() < 0.5)
+                        .unwrap_or(true);
                 if (answered && self.phase_t >= CLOSE_MIN) || self.phase_t >= CLOSE_MAX {
                     self.depart(st, vehicle, ctx);
                     if self.phase == Phase::TripDone {
@@ -365,7 +392,12 @@ impl BusService {
     }
 
     /// Driving: brake for the next stop, pull into its bay.
-    fn approach(&mut self, st: &mut AiState, vehicle: &mut VehicleInstance, ctx: &Ctx) -> Option<f32> {
+    fn approach(
+        &mut self,
+        st: &mut AiState,
+        vehicle: &mut VehicleInstance,
+        ctx: &Ctx,
+    ) -> Option<f32> {
         loop {
             let Some(stop) = self.stops.front().copied() else {
                 if !ctx.passing {
@@ -394,12 +426,23 @@ impl BusService {
             let d = st.route_distance(ctx.net, stop.ri, stop.s);
             // near enough to see whether anybody wants it (a train keeps to its stations)
             if self.serve.is_none() && d < SKIP_DECIDE {
-                let rail = ctx.net.lanes.get(st.lane).is_some_and(|l| l.kind == LaneKind::Rail);
-                self.serve = Some(rail || self.must_serve(&stop, ctx.day_time) || ctx.wanted.unwrap_or(true));
+                let rail = ctx
+                    .net
+                    .lanes
+                    .get(st.lane)
+                    .is_some_and(|l| l.kind == LaneKind::Rail);
+                self.serve = Some(
+                    rail || self.must_serve(&stop, ctx.day_time) || ctx.wanted.unwrap_or(true),
+                );
             }
             if self.serve == Some(false) {
                 if ctx.debug || omsi_cfg::env::var_os("OMSI_DEBUG_STOPS").is_some() {
-                    log::info!("t={:.1}: timetable bus {} passes its stop {}: nobody gets off or on", ctx.day_time, ctx.id, stop.id);
+                    log::info!(
+                        "t={:.1}: timetable bus {} passes its stop {}: nobody gets off or on",
+                        ctx.day_time,
+                        ctx.id,
+                        stop.id
+                    );
                 }
                 self.stops.pop_front();
                 self.near_d = f32::INFINITY;
@@ -443,7 +486,15 @@ impl BusService {
             if d < -2.0 {
                 // missed it
                 if ctx.debug || omsi_cfg::env::var_os("OMSI_DEBUG_STOPS").is_some() {
-                    log::info!("t={:.1}: timetable bus {} missed its stop ({:.1} m past, {:.1} m/s, stood {:.1} s, passing {})", ctx.day_time, ctx.id, -d, speed, ctx.stopped, ctx.passing);
+                    log::info!(
+                        "t={:.1}: timetable bus {} missed its stop ({:.1} m past, {:.1} m/s, stood {:.1} s, passing {})",
+                        ctx.day_time,
+                        ctx.id,
+                        -d,
+                        speed,
+                        ctx.stopped,
+                        ctx.passing
+                    );
                 }
                 self.stops.pop_front();
                 self.near_d = f32::INFINITY;
@@ -466,7 +517,11 @@ impl BusService {
 /// offset of its `[ai_brakeperformance]` ("to correct unprecise braking").
 pub fn stop_shift(ty: &omsi_sim::VehicleType, rail: bool) -> f32 {
     let hold = ty.def.ai_brake_performance.map(|b| b[4]).unwrap_or(0.0);
-    let half = if rail { ty.half_length().unwrap_or(0.0) } else { 0.0 };
+    let half = if rail {
+        ty.half_length().unwrap_or(0.0)
+    } else {
+        0.0
+    };
     half - hold
 }
 

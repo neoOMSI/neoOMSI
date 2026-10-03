@@ -153,7 +153,10 @@ impl Lane {
             let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
             let d = (a + ab * t - p).length();
             if best.map(|b| d < b.1).unwrap_or(true) {
-                best = Some((self.dist[k] + (self.dist[k + 1] - self.dist[k]) * t as f32, d));
+                best = Some((
+                    self.dist[k] + (self.dist[k + 1] - self.dist[k]) * t as f32,
+                    d,
+                ));
             }
         }
         best
@@ -171,7 +174,11 @@ impl Lane {
     /// Segment and fraction along it at distance `s` (clamped to the lane).
     fn locate(&self, s: f32) -> (usize, f32) {
         // (a position gone NaN takes the lane's start rather than stopping the game)
-        let s = if s.is_nan() { 0.0 } else { s.clamp(0.0, self.length()) };
+        let s = if s.is_nan() {
+            0.0
+        } else {
+            s.clamp(0.0, self.length())
+        };
         let i = match self.dist.binary_search_by(|d| d.total_cmp(&s)) {
             Ok(i) => i.min(self.points.len() - 2),
             Err(i) => i.saturating_sub(1).min(self.points.len() - 2),
@@ -186,7 +193,10 @@ impl Lane {
     /// jerks at every sample and at every lane joint.
     pub fn at(&self, s: f32) -> (DVec3, f32) {
         if self.points.len() < 2 {
-            return (self.points.first().copied().unwrap_or(DVec3::ZERO), self.headings.first().copied().unwrap_or(0.0));
+            return (
+                self.points.first().copied().unwrap_or(DVec3::ZERO),
+                self.headings.first().copied().unwrap_or(0.0),
+            );
         }
         let (i, t) = self.locate(s);
         let (h0, h1) = (self.headings[i], self.headings[i + 1]);
@@ -209,7 +219,10 @@ impl Lane {
             return lin;
         }
         let (t2, t3) = (t * t, t * t * t);
-        let xy = a.truncate() * (2.0 * t3 - 3.0 * t2 + 1.0) + d0 * len * (t3 - 2.0 * t2 + t) + b.truncate() * (3.0 * t2 - 2.0 * t3) + d1 * len * (t3 - t2);
+        let xy = a.truncate() * (2.0 * t3 - 3.0 * t2 + 1.0)
+            + d0 * len * (t3 - 2.0 * t2 + t)
+            + b.truncate() * (3.0 * t2 - 2.0 * t3)
+            + d1 * len * (t3 - t2);
         DVec3::new(xy.x, xy.y, lin.z)
     }
 
@@ -262,7 +275,15 @@ pub struct LaneBuilder;
 impl LaneBuilder {
     /// Sample an arc/straight lane: start position, heading (deg), length, radius (0 = straight,
     /// > 0 right turn), height change over the length.
-    pub fn arc(start: DVec3, heading_deg: f64, length: f64, radius: f64, dz: f64, kind: LaneKind, width: f32) -> Lane {
+    pub fn arc(
+        start: DVec3,
+        heading_deg: f64,
+        length: f64,
+        radius: f64,
+        dz: f64,
+        kind: LaneKind,
+        width: f32,
+    ) -> Lane {
         let n = ((length / 2.0).ceil() as usize).clamp(1, 400);
         let mut points = Vec::with_capacity(n + 1);
         let mut headings = Vec::with_capacity(n + 1);
@@ -272,7 +293,11 @@ impl LaneBuilder {
             points.push(DVec3::new(p.x, p.y, start.z + dz * s / length.max(1e-6)));
             headings.push(h as f32);
         }
-        let k = if radius.abs() < 1e-6 { 0.0 } else { (1.0 / radius) as f32 };
+        let k = if radius.abs() < 1e-6 {
+            0.0
+        } else {
+            (1.0 / radius) as f32
+        };
         Self::curve(points, headings, vec![k; n + 1], kind, width)
     }
 
@@ -280,10 +305,46 @@ impl LaneBuilder {
     /// A flight path has no speed limit of its own unless the map gives it one with a
     /// `[rule] speedlimit`; the street default of 50 km/h had the Tegel approach flown at
     /// walking pace for an airliner.
-    pub fn curve(points: Vec<DVec3>, headings: Vec<f32>, curvature: Vec<f32>, kind: LaneKind, width: f32) -> Lane {
+    pub fn curve(
+        points: Vec<DVec3>,
+        headings: Vec<f32>,
+        curvature: Vec<f32>,
+        kind: LaneKind,
+        width: f32,
+    ) -> Lane {
         let dist = cumulative(&points);
-        let speed_limit_kmh = if kind == LaneKind::Air { AIR_NO_LIMIT_KMH } else { 50.0 };
-        Lane { key: None, reversed: false, kind, width, points, headings, curvature, dist, speed_limit_kmh, next: Vec::new(), traffic_light: None, turn: 0, source: 0, offset: 0.0, name: String::new(), invisible: false, density: 1.0, group_density: Vec::new(), no_cars: false, rule_bus: false, rule_trucks: false, left: None, right: None, priority: DEFAULT_PRIORITY, blocks: Vec::new() }
+        let speed_limit_kmh = if kind == LaneKind::Air {
+            AIR_NO_LIMIT_KMH
+        } else {
+            50.0
+        };
+        Lane {
+            key: None,
+            reversed: false,
+            kind,
+            width,
+            points,
+            headings,
+            curvature,
+            dist,
+            speed_limit_kmh,
+            next: Vec::new(),
+            traffic_light: None,
+            turn: 0,
+            source: 0,
+            offset: 0.0,
+            name: String::new(),
+            invisible: false,
+            density: 1.0,
+            group_density: Vec::new(),
+            no_cars: false,
+            rule_bus: false,
+            rule_trucks: false,
+            left: None,
+            right: None,
+            priority: DEFAULT_PRIORITY,
+            blocks: Vec::new(),
+        }
     }
 
     /// Lane from bare points: headings from the neighbouring points on both sides (the
@@ -306,7 +367,11 @@ impl LaneBuilder {
             .map(|i| {
                 let (p, q) = (i.saturating_sub(1), (i + 1).min(n.saturating_sub(1)));
                 let ds = dist.get(q).copied().unwrap_or(0.0) - dist.get(p).copied().unwrap_or(0.0);
-                if ds > 1e-3 { wrap_deg(headings[q] - headings[p]).to_radians() / ds } else { 0.0 }
+                if ds > 1e-3 {
+                    wrap_deg(headings[q] - headings[p]).to_radians() / ds
+                } else {
+                    0.0
+                }
             })
             .collect();
         Self::curve(points, headings, curvature, kind, width)
@@ -353,7 +418,10 @@ pub fn arc_point(start: DVec3, heading_deg: f64, s: f64, radius: f64) -> (DVec2,
     let ang = -turn * s / r;
     let p = start.truncate() - centre;
     let (sa, ca) = ang.sin_cos();
-    (centre + DVec2::new(p.x * ca - p.y * sa, p.x * sa + p.y * ca), heading_deg + turn * (s / r).to_degrees())
+    (
+        centre + DVec2::new(p.x * ca - p.y * sa, p.x * sa + p.y * ca),
+        heading_deg + turn * (s / r).to_degrees(),
+    )
 }
 
 /// The whole network.
@@ -420,7 +488,11 @@ const MEET_MAX: f32 = 14.0;
 /// How far before and after distance `at` of lane `a` its centre line stays within
 /// `MEET_DIST` of lane `b`'s (in half-metre steps, at least the half metre around the point).
 fn meeting_extent(a: &Lane, at: f32, b: &Lane) -> (f32, f32) {
-    let near = |s: f32| b.nearest_point(a.at(s).0).map(|(_, d)| d < MEET_DIST).unwrap_or(false);
+    let near = |s: f32| {
+        b.nearest_point(a.at(s).0)
+            .map(|(_, d)| d < MEET_DIST)
+            .unwrap_or(false)
+    };
     let mut before = 0.5f32;
     while before < MEET_MAX && at - before >= 0.0 && near(at - before) {
         before += 0.5;
@@ -466,18 +538,18 @@ impl Network {
     /// The sign of a lateral offset (positive to the right) towards the oncoming lane:
     /// -1 on the right-hand side of the road, +1 on a left-hand-traffic map.
     pub fn oncoming_sign(&self) -> f32 {
-        if self.left_hand {
-            1.0
-        } else {
-            -1.0
-        }
+        if self.left_hand { 1.0 } else { -1.0 }
     }
 
     /// Lane with the given key, preferring the direction flag.
     pub fn find(&self, key: LaneKey, reversed: Option<bool>) -> Option<usize> {
         let list = self.by_key.get(&key)?;
         match reversed {
-            Some(r) => list.iter().copied().find(|&i| self.lanes[i].reversed == r).or_else(|| list.first().copied()),
+            Some(r) => list
+                .iter()
+                .copied()
+                .find(|&i| self.lanes[i].reversed == r)
+                .or_else(|| list.first().copied()),
             None => list.first().copied(),
         }
     }
@@ -495,7 +567,9 @@ impl Network {
     /// link reaches the stop on the through lane, the next one leaves from the stop lane
     /// beside it). Driven one after the other the bus jumped up to 58 m back.
     pub fn parallel(&self, a: usize, b: usize) -> bool {
-        let (Some(la), Some(lb)) = (self.lanes.get(a), self.lanes.get(b)) else { return false };
+        let (Some(la), Some(lb)) = (self.lanes.get(a), self.lanes.get(b)) else {
+            return false;
+        };
         if a == b || la.next.contains(&b) {
             return false;
         }
@@ -503,7 +577,11 @@ impl Network {
             (Some(x), Some(y)) => x.tile == y.tile && x.id == y.id && x.path != y.path,
             _ => false,
         };
-        if same && (lb.start() - la.start()).truncate().length() < 8.0 && (lb.start().z - la.start().z).abs() < 1.0 && wrap_deg(lb.start_heading() - la.start_heading()).abs() < 45.0 {
+        if same
+            && (lb.start() - la.start()).truncate().length() < 8.0
+            && (lb.start().z - la.start().z).abs() < 1.0
+            && wrap_deg(lb.start_heading() - la.start_heading()).abs() < 45.0
+        {
             return true;
         }
         // (a lane of another spline beside it counts as well: mod maps lay a bus lane or a
@@ -520,7 +598,9 @@ impl Network {
         for i in 0..=n {
             let s = la.length() * i as f32 / n as f32;
             let (p, h) = la.at(s);
-            let Some((sb, d)) = lb.nearest_point(p) else { continue };
+            let Some((sb, d)) = lb.nearest_point(p) else {
+                continue;
+            };
             let inside = sb > 0.5 && sb < lb.length() - 0.5;
             // (on the same level: a track or road under a bridge lies a few metres off in 3D
             // too, and a train "changed lanes" down onto the line under its viaduct)
@@ -538,7 +618,11 @@ impl Network {
     pub fn beside_s(&self, a: usize, b: usize, s: f32) -> f32 {
         let (la, lb) = (&self.lanes[a], &self.lanes[b]);
         if (lb.start() - la.start()).truncate().length() < 8.0 {
-            let frac = if la.length() > 0.0 { s / la.length() } else { 0.0 };
+            let frac = if la.length() > 0.0 {
+                s / la.length()
+            } else {
+                0.0
+            };
             return frac * lb.length();
         }
         (s + self.beside_delta(a, b)).clamp(0.0, lb.length())
@@ -554,13 +638,17 @@ impl Network {
         }
         match la.nearest_point(lb.start()) {
             Some((sa, _)) if sa > 0.5 => -sa,
-            _ => lb.nearest_point(la.start()).map(|(sb, _)| sb).unwrap_or(0.0),
+            _ => lb
+                .nearest_point(la.start())
+                .map(|(sb, _)| sb)
+                .unwrap_or(0.0),
         }
     }
 
     /// Point on a lane sequence closest to `p`: (index into `route`, distance along that lane).
     pub fn project_on_route(&self, route: &[usize], p: DVec3) -> Option<(usize, f32)> {
-        self.project_on_route_lateral(route, p).map(|(ri, s, _)| (ri, s))
+        self.project_on_route_lateral(route, p)
+            .map(|(ri, s, _)| (ri, s))
     }
 
     /// Like `project_on_route`, plus the lateral offset of `p` from the lane (m, right of
@@ -581,7 +669,12 @@ impl Network {
                     let rel = (p - q).truncate();
                     // right vector of (dir.x, dir.y) is (dir.y, -dir.x)
                     let lateral = (rel.x * dir.y - rel.y * dir.x) as f32;
-                    best = Some((ri, l.dist[k] + (l.dist[k + 1] - l.dist[k]) * t as f32, d, lateral));
+                    best = Some((
+                        ri,
+                        l.dist[k] + (l.dist[k + 1] - l.dist[k]) * t as f32,
+                        d,
+                        lateral,
+                    ));
                 }
             }
         }
@@ -594,7 +687,13 @@ impl Network {
     /// goes before a nearer one with the stop across it - a route back along the same
     /// street passes each stop twice, once from the other side, and the bus stopped at the
     /// stop across the road on its way out. Falls back to the nearest point.
-    pub fn project_stop_on_route(&self, route: &[usize], p: DVec3, reach: Option<f64>, from: usize) -> Option<(usize, f32, f32)> {
+    pub fn project_stop_on_route(
+        &self,
+        route: &[usize],
+        p: DVec3,
+        reach: Option<f64>,
+        from: usize,
+    ) -> Option<(usize, f32, f32)> {
         // (index, s, distance, lateral) of the best on the kerb side, and of any
         let mut kerb: Option<(usize, f32, f64, f32)> = None;
         let mut any: Option<(usize, f32, f64, f32)> = None;
@@ -613,8 +712,17 @@ impl Network {
                 let dir = ab.truncate().normalize_or_zero();
                 let rel = (p - q).truncate();
                 let lateral = (rel.x * dir.y - rel.y * dir.x) as f32;
-                let cand = (ri, l.dist[k] + (l.dist[k + 1] - l.dist[k]) * t as f32, d, lateral);
-                let kerb_side = if self.left_hand { lateral < -0.3 } else { lateral > 0.3 };
+                let cand = (
+                    ri,
+                    l.dist[k] + (l.dist[k + 1] - l.dist[k]) * t as f32,
+                    d,
+                    lateral,
+                );
+                let kerb_side = if self.left_hand {
+                    lateral < -0.3
+                } else {
+                    lateral > 0.3
+                };
                 if kerb_side && kerb.map(|b| d < b.2).unwrap_or(true) {
                     kerb = Some(cand);
                 }
@@ -638,7 +746,9 @@ impl Network {
         self.crossings = vec![Vec::new(); self.lanes.len()];
         self.walks = vec![Vec::new(); self.lanes.len()];
         let (n, walks) = self.conflicts_from(0);
-        log::info!("path network: {n} conflicting lane pairs at crossings, {walks} footpath crossings");
+        log::info!(
+            "path network: {n} conflicting lane pairs at crossings, {walks} footpath crossings"
+        );
     }
 
     /// `conflicts`, `crossings` and `walks` of the junction objects whose lanes start at
@@ -658,7 +768,9 @@ impl Network {
             let Some(k) = l.key else { continue };
             match l.kind {
                 // a level crossing is a junction of a road and a railway
-                LaneKind::Street | LaneKind::Rail => by_object.entry((k.tile, k.id)).or_default().push(i),
+                LaneKind::Street | LaneKind::Rail => {
+                    by_object.entry((k.tile, k.id)).or_default().push(i)
+                }
                 LaneKind::Sidewalk => walks_by_object.entry((k.tile, k.id)).or_default().push(i),
                 LaneKind::Air => {}
             }
@@ -675,35 +787,90 @@ impl Network {
                     // one runs into the other: the same end, or ends a car's width apart that
                     // lead into the same lane (two turns converging on one exit)
                     let ends = (a.end() - b.end()).truncate().length();
-                    let joint = ends < 1.5 || (ends < MEET_DIST && a.next.iter().any(|n| b.next.contains(n)));
+                    let joint = ends < 1.5
+                        || (ends < MEET_DIST && a.next.iter().any(|n| b.next.contains(n)));
                     let merge = joint && (a.start() - b.start()).truncate().length() > 3.0;
-                    let place = if merge { Some((a.length(), b.length())) } else { polyline_crossing(a, b) };
+                    let place = if merge {
+                        Some((a.length(), b.length()))
+                    } else {
+                        polyline_crossing(a, b)
+                    };
                     // `[blockpath]`: the object says the two are in each other's way even
                     // where their lines do not cross - the whole of both is the meeting place
-                    let (pa, pb) = (a.key.map(|k| k.path).unwrap_or(u16::MAX), b.key.map(|k| k.path).unwrap_or(u16::MAX));
+                    let (pa, pb) = (
+                        a.key.map(|k| k.path).unwrap_or(u16::MAX),
+                        b.key.map(|k| k.path).unwrap_or(u16::MAX),
+                    );
                     if place.is_none() && (a.blocks.contains(&pb) || b.blocks.contains(&pa)) {
                         let (la, lb) = (a.length(), b.length());
                         self.conflicts[i].push(j);
                         self.conflicts[j].push(i);
-                        self.crossings[i].push(Crossing { other: j, at: la * 0.5, other_at: lb * 0.5, merge: false, before: la * 0.5, after: la * 0.5, other_before: lb * 0.5, other_after: lb * 0.5 });
-                        self.crossings[j].push(Crossing { other: i, at: lb * 0.5, other_at: la * 0.5, merge: false, before: lb * 0.5, after: lb * 0.5, other_before: la * 0.5, other_after: la * 0.5 });
+                        self.crossings[i].push(Crossing {
+                            other: j,
+                            at: la * 0.5,
+                            other_at: lb * 0.5,
+                            merge: false,
+                            before: la * 0.5,
+                            after: la * 0.5,
+                            other_before: lb * 0.5,
+                            other_after: lb * 0.5,
+                        });
+                        self.crossings[j].push(Crossing {
+                            other: i,
+                            at: lb * 0.5,
+                            other_at: la * 0.5,
+                            merge: false,
+                            before: lb * 0.5,
+                            after: lb * 0.5,
+                            other_before: la * 0.5,
+                            other_after: la * 0.5,
+                        });
                         n += 1;
                         continue;
                     }
                     if let Some((sa, sb)) = place {
                         // (after a joint the two are in one lane, and follow each other)
-                        let (ab, aa) = if merge { (meeting_extent(a, sa, b).0, 0.5) } else { meeting_extent(a, sa, b) };
-                        let (bb, ba) = if merge { (meeting_extent(b, sb, a).0, 0.5) } else { meeting_extent(b, sb, a) };
+                        let (ab, aa) = if merge {
+                            (meeting_extent(a, sa, b).0, 0.5)
+                        } else {
+                            meeting_extent(a, sa, b)
+                        };
+                        let (bb, ba) = if merge {
+                            (meeting_extent(b, sb, a).0, 0.5)
+                        } else {
+                            meeting_extent(b, sb, a)
+                        };
                         self.conflicts[i].push(j);
                         self.conflicts[j].push(i);
-                        self.crossings[i].push(Crossing { other: j, at: sa, other_at: sb, merge, before: ab, after: aa, other_before: bb, other_after: ba });
-                        self.crossings[j].push(Crossing { other: i, at: sb, other_at: sa, merge, before: bb, after: ba, other_before: ab, other_after: aa });
+                        self.crossings[i].push(Crossing {
+                            other: j,
+                            at: sa,
+                            other_at: sb,
+                            merge,
+                            before: ab,
+                            after: aa,
+                            other_before: bb,
+                            other_after: ba,
+                        });
+                        self.crossings[j].push(Crossing {
+                            other: i,
+                            at: sb,
+                            other_at: sa,
+                            merge,
+                            before: bb,
+                            after: ba,
+                            other_before: ab,
+                            other_after: aa,
+                        });
                         n += 1;
                     }
                 }
             }
             if let Some(walks) = walks_by_object.get(key) {
-                for &i in lanes.iter().filter(|&&i| self.lanes[i].kind == LaneKind::Street) {
+                for &i in lanes
+                    .iter()
+                    .filter(|&&i| self.lanes[i].kind == LaneKind::Street)
+                {
                     for &w in walks {
                         if let Some((sa, sw)) = polyline_crossing(&self.lanes[i], &self.lanes[w]) {
                             self.walks[i].push((w, sa, sw));
@@ -768,7 +935,12 @@ impl Network {
         let mut seen: Vec<usize> = Vec::new();
         for dx in -1..=1 {
             for dy in -1..=1 {
-                for &i in self.grid.get(&(cx + dx, cy + dy)).map(|v| v.as_slice()).unwrap_or(&[]) {
+                for &i in self
+                    .grid
+                    .get(&(cx + dx, cy + dy))
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[])
+                {
                     if i == lane || seen.contains(&i) {
                         continue;
                     }
@@ -777,7 +949,9 @@ impl Network {
                     if o.kind != LaneKind::Street || o.no_cars {
                         continue;
                     }
-                    let Some((os, d)) = o.nearest_point(p) else { continue };
+                    let Some((os, d)) = o.nearest_point(p) else {
+                        continue;
+                    };
                     if d > 7.0 || d < 1.5 {
                         continue;
                     }
@@ -801,14 +975,23 @@ impl Network {
     /// `x + offset` in `lane`'s own distances (negative before its start); the first entry
     /// is `lane` itself with offset 0. Where several ways lead to one lane, the shortest
     /// counts. At most `max` lanes.
-    pub fn upstream(&self, lane: usize, s: f32, within: f32, max: usize) -> Vec<(usize, f32, Option<usize>)> {
+    pub fn upstream(
+        &self,
+        lane: usize,
+        s: f32,
+        within: f32,
+        max: usize,
+    ) -> Vec<(usize, f32, Option<usize>)> {
         let mut out: Vec<(usize, f32, Option<usize>)> = vec![(lane, 0.0, None)];
         if lane >= self.lanes.len() {
             return out;
         }
         // nearest first (a junction's lanes can be reached two ways)
         let mut done = vec![false];
-        while let Some(k) = (0..out.len()).filter(|&k| !done[k]).max_by(|&a, &b| out[a].1.total_cmp(&out[b].1)) {
+        while let Some(k) = (0..out.len())
+            .filter(|&k| !done[k])
+            .max_by(|&a, &b| out[a].1.total_cmp(&out[b].1))
+        {
             done[k] = true;
             let (l, off, _) = out[k];
             // this lane starts `s - off` metres before the place: nothing before it is in reach
@@ -852,7 +1035,10 @@ impl Network {
         for (i, l) in self.lanes.iter().enumerate() {
             if let Some(k) = l.key {
                 if l.source == 1 && matches!(l.kind, LaneKind::Street) {
-                    by_spline.entry((k.tile, k.id as i64, l.reversed)).or_default().push(i);
+                    by_spline
+                        .entry((k.tile, k.id as i64, l.reversed))
+                        .or_default()
+                        .push(i);
                 }
             }
         }
@@ -866,7 +1052,12 @@ impl Network {
                     // b lies at the larger offset: to the right when driving along the spline
                     if neighbours == 0 {
                         let p = self.lanes[a].start();
-                        log::info!("first neighbouring lane pair at ({:.1}, {:.1}), heading {:.0}", p.x, p.y, self.lanes[a].start_heading());
+                        log::info!(
+                            "first neighbouring lane pair at ({:.1}, {:.1}), heading {:.0}",
+                            p.x,
+                            p.y,
+                            self.lanes[a].start_heading()
+                        );
                     }
                     neighbours += 1;
                     let reversed = self.lanes[a].reversed;
@@ -880,12 +1071,17 @@ impl Network {
                 }
             }
         }
-        log::info!("lanes: {} neighbouring lane pairs (lane changes)", neighbours);
+        log::info!(
+            "lanes: {} neighbouring lane pairs (lane changes)",
+            neighbours
+        );
         let cell = 4.0;
         let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
         for (i, l) in self.lanes.iter().enumerate() {
             let s = l.start();
-            grid.entry(((s.x / cell).floor() as i64, (s.y / cell).floor() as i64)).or_default().push(i);
+            grid.entry(((s.x / cell).floor() as i64, (s.y / cell).floor() as i64))
+                .or_default()
+                .push(i);
         }
         let mut links = 0;
         for i in 0..self.lanes.len() {
@@ -919,13 +1115,27 @@ impl Network {
                 // a lane end with a start of its kind near it that was not taken
                 for dx in -1..=1 {
                     for dy in -1..=1 {
-                        for &j in grid.get(&(cx + dx, cy + dy)).map(|v| v.as_slice()).unwrap_or(&[]) {
+                        for &j in grid
+                            .get(&(cx + dx, cy + dy))
+                            .map(|v| v.as_slice())
+                            .unwrap_or(&[])
+                        {
                             let l = &self.lanes[j];
                             if j != i && l.kind == kind {
                                 let d = (l.start() - e).truncate().length();
                                 let dh = wrap_deg(l.start_heading() - eh).abs();
                                 if d < 4.0 && dh < 40.0 {
-                                    log::info!("unlinked: lane {i} {:?} end ({:.2}, {:.2}, {:.2}) -> lane {j} {:?} start {:.2} m away, dz {:.2}, dh {:.1}", self.lanes[i].key, e.x, e.y, e.z, l.key, d, l.start().z - e.z, dh);
+                                    log::info!(
+                                        "unlinked: lane {i} {:?} end ({:.2}, {:.2}, {:.2}) -> lane {j} {:?} start {:.2} m away, dz {:.2}, dh {:.1}",
+                                        self.lanes[i].key,
+                                        e.x,
+                                        e.y,
+                                        e.z,
+                                        l.key,
+                                        d,
+                                        l.start().z - e.z,
+                                        dh
+                                    );
                                 }
                             }
                         }
@@ -962,13 +1172,20 @@ impl Network {
         let n = self.lanes.len();
         // a lane closed to cars is no way on for one that is open
         let counts = |i: usize, j: usize| !self.lanes[j].no_cars || self.lanes[i].no_cars;
-        let mut waiting: Vec<usize> = (0..n).map(|i| self.lanes[i].next.iter().filter(|&&j| counts(i, j)).count()).collect();
+        let mut waiting: Vec<usize> = (0..n)
+            .map(|i| self.lanes[i].next.iter().filter(|&&j| counts(i, j)).count())
+            .collect();
         let mut reach = vec![REACH_MAX; n];
         let mut settled = vec![false; n];
         let mut ready: Vec<usize> = (0..n).filter(|&i| waiting[i] == 0).collect();
         while let Some(j) = ready.pop() {
             let l = &self.lanes[j];
-            let best = l.next.iter().filter(|&&k| counts(j, k)).map(|&k| reach[k]).fold(0.0f32, f32::max);
+            let best = l
+                .next
+                .iter()
+                .filter(|&&k| counts(j, k))
+                .map(|&k| reach[k])
+                .fold(0.0f32, f32::max);
             reach[j] = (l.length() + best).min(REACH_MAX);
             settled[j] = true;
             for &p in self.prev.get(j).map(|v| v.as_slice()).unwrap_or(&[]) {
@@ -980,7 +1197,12 @@ impl Network {
                 }
             }
         }
-        let dead = self.lanes.iter().zip(&reach).filter(|(l, r)| l.kind == LaneKind::Street && **r < DEAD_END).count();
+        let dead = self
+            .lanes
+            .iter()
+            .zip(&reach)
+            .filter(|(l, r)| l.kind == LaneKind::Street && **r < DEAD_END)
+            .count();
         self.reach = reach;
         dead
     }
@@ -991,21 +1213,32 @@ impl Network {
         self.grid.clear();
         self.start_grid.clear();
         for (i, l) in self.lanes.iter().enumerate() {
-            self.start_grid.entry(Self::grid_cell(l.start())).or_default().push(i);
+            self.start_grid
+                .entry(Self::grid_cell(l.start()))
+                .or_default()
+                .push(i);
             let mut cells: Vec<(i32, i32)> = Vec::new();
             for w in l.points.windows(2) {
                 // every cell along the segment, sampled finer than a cell
-                let n = ((w[1] - w[0]).truncate().length() / (GRID_CELL * 0.5)).ceil().max(1.0) as usize;
+                let n = ((w[1] - w[0]).truncate().length() / (GRID_CELL * 0.5))
+                    .ceil()
+                    .max(1.0) as usize;
                 for k in 0..=n {
                     let q = w[0].lerp(w[1], k as f64 / n as f64);
-                    let c = ((q.x / GRID_CELL).floor() as i32, (q.y / GRID_CELL).floor() as i32);
+                    let c = (
+                        (q.x / GRID_CELL).floor() as i32,
+                        (q.y / GRID_CELL).floor() as i32,
+                    );
                     if !cells.contains(&c) {
                         cells.push(c);
                     }
                 }
             }
             if l.points.len() == 1 {
-                cells.push(((l.points[0].x / GRID_CELL).floor() as i32, (l.points[0].y / GRID_CELL).floor() as i32));
+                cells.push((
+                    (l.points[0].x / GRID_CELL).floor() as i32,
+                    (l.points[0].y / GRID_CELL).floor() as i32,
+                ));
             }
             for c in cells {
                 self.grid.entry(c).or_default().push(i);
@@ -1100,7 +1333,10 @@ impl Network {
         let mut heap = BinaryHeap::new();
 
         dist[start] = 0.0;
-        heap.push(State { cost: 0.0, position: start });
+        heap.push(State {
+            cost: 0.0,
+            position: start,
+        });
 
         while let Some(State { cost, position }) = heap.pop() {
             if position == target {
@@ -1127,7 +1363,10 @@ impl Network {
                 if next_cost < dist[next_idx] {
                     dist[next_idx] = next_cost;
                     parent[next_idx] = Some(position);
-                    heap.push(State { cost: next_cost, position: next_idx });
+                    heap.push(State {
+                        cost: next_cost,
+                        position: next_idx,
+                    });
                 }
             }
         }
@@ -1156,7 +1395,10 @@ impl Network {
             if let Some(k) = self.lanes[i].key {
                 self.by_key.entry(k).or_default().push(i);
             }
-            self.start_grid.entry(Self::grid_cell(self.lanes[i].start())).or_default().push(i);
+            self.start_grid
+                .entry(Self::grid_cell(self.lanes[i].start()))
+                .or_default()
+                .push(i);
             for c in Self::lane_cells(&self.lanes[i]) {
                 self.grid.entry(c).or_default().push(i);
             }
@@ -1166,7 +1408,10 @@ impl Network {
         for i in first..end {
             let l = &self.lanes[i];
             if let (Some(k), 1, LaneKind::Street) = (l.key, l.source, l.kind) {
-                by_spline.entry((k.tile, k.id, l.reversed)).or_default().push(i);
+                by_spline
+                    .entry((k.tile, k.id, l.reversed))
+                    .or_default()
+                    .push(i);
             }
         }
         for (_, mut list) in by_spline {
@@ -1196,7 +1441,10 @@ impl Network {
             (s - e).truncate().length() <= tol && dh < 40.0 && (s.z - e.z).abs() < 3.0
         };
         let near = |net: &Network, p: DVec3| -> Vec<usize> {
-            let c = ((p.x / GRID_CELL).floor() as i32, (p.y / GRID_CELL).floor() as i32);
+            let c = (
+                (p.x / GRID_CELL).floor() as i32,
+                (p.y / GRID_CELL).floor() as i32,
+            );
             let mut out: Vec<usize> = Vec::new();
             for dx in -1..=1 {
                 for dy in -1..=1 {
@@ -1212,7 +1460,10 @@ impl Network {
         let mut added: Vec<(usize, usize)> = Vec::new();
         for i in first..end {
             let e = self.lanes[i].end();
-            let found: Vec<usize> = near(self, e).into_iter().filter(|&j| joins(self, i, j)).collect();
+            let found: Vec<usize> = near(self, e)
+                .into_iter()
+                .filter(|&j| joins(self, i, j))
+                .collect();
             for &j in &found {
                 added.push((i, j));
             }
@@ -1263,16 +1514,34 @@ impl Network {
         }
         self.reach.resize(self.lanes.len(), REACH_MAX);
         let counts = |i: usize, j: usize| !self.lanes[j].no_cars || self.lanes[i].no_cars;
-        let mut waiting: HashMap<usize, usize> = affected.iter().map(|&i| {
-            (i, self.lanes[i].next.iter().filter(|&&j| affected.contains(&j) && counts(i, j)).count())
-        }).collect();
-        let mut ready: Vec<usize> = waiting.iter().filter_map(|(&i, &n)| (n == 0).then_some(i)).collect();
+        let mut waiting: HashMap<usize, usize> = affected
+            .iter()
+            .map(|&i| {
+                (
+                    i,
+                    self.lanes[i]
+                        .next
+                        .iter()
+                        .filter(|&&j| affected.contains(&j) && counts(i, j))
+                        .count(),
+                )
+            })
+            .collect();
+        let mut ready: Vec<usize> = waiting
+            .iter()
+            .filter_map(|(&i, &n)| (n == 0).then_some(i))
+            .collect();
         for &i in &affected {
             self.reach[i] = REACH_MAX;
         }
         while let Some(i) = ready.pop() {
             let l = &self.lanes[i];
-            let best = l.next.iter().filter(|&&j| counts(i, j)).map(|&j| self.reach[j]).fold(0.0f32, f32::max);
+            let best = l
+                .next
+                .iter()
+                .filter(|&&j| counts(i, j))
+                .map(|&j| self.reach[j])
+                .fold(0.0f32, f32::max);
             self.reach[i] = (l.length() + best).min(REACH_MAX);
             for &p in &self.prev[i] {
                 if counts(p, i) {
@@ -1296,7 +1565,9 @@ impl Network {
         let mut seen: Vec<usize> = Vec::new();
         for dx in -1..=1 {
             for dy in -1..=1 {
-                let Some(list) = self.grid.get(&(cx + dx, cy + dy)) else { continue };
+                let Some(list) = self.grid.get(&(cx + dx, cy + dy)) else {
+                    continue;
+                };
                 for &i in list {
                     if seen.contains(&i) {
                         continue;
@@ -1320,13 +1591,22 @@ impl Network {
     /// The nearest lane of `kind` within `max_dist` of `p` that runs within `max_turn`
     /// degrees of `heading` there (a vehicle's own lane, not the one beside it going the
     /// other way): (lane, distance along it, distance to it).
-    pub fn lane_along(&self, p: DVec3, heading: f64, kind: LaneKind, max_dist: f64, max_turn: f64) -> Option<(usize, f32, f64)> {
+    pub fn lane_along(
+        &self,
+        p: DVec3,
+        heading: f64,
+        kind: LaneKind,
+        max_dist: f64,
+        max_turn: f64,
+    ) -> Option<(usize, f32, f64)> {
         let (cx, cy) = Self::grid_cell(p);
         let mut best: Option<(usize, f32, f64)> = None;
         let mut seen: Vec<usize> = Vec::new();
         for dx in -1..=1 {
             for dy in -1..=1 {
-                let Some(list) = self.grid.get(&(cx + dx, cy + dy)) else { continue };
+                let Some(list) = self.grid.get(&(cx + dx, cy + dy)) else {
+                    continue;
+                };
                 for &i in list {
                     if seen.contains(&i) {
                         continue;
@@ -1336,7 +1616,9 @@ impl Network {
                     if l.kind != kind {
                         continue;
                     }
-                    let Some((s, d)) = l.nearest_point(p) else { continue };
+                    let Some((s, d)) = l.nearest_point(p) else {
+                        continue;
+                    };
                     if d > max_dist || best.map(|b| d >= b.2).unwrap_or(false) {
                         continue;
                     }
@@ -1352,24 +1634,35 @@ impl Network {
 
     /// The grid cell `p` lies in.
     pub fn grid_cell(p: DVec3) -> (i32, i32) {
-        ((p.x / GRID_CELL).floor() as i32, (p.y / GRID_CELL).floor() as i32)
+        (
+            (p.x / GRID_CELL).floor() as i32,
+            (p.y / GRID_CELL).floor() as i32,
+        )
     }
 
     /// The grid cells a lane's points touch (see [`Network::build_grid`]).
     pub fn lane_cells(l: &Lane) -> Vec<(i32, i32)> {
         let mut cells: Vec<(i32, i32)> = Vec::new();
         for w in l.points.windows(2) {
-            let n = ((w[1] - w[0]).truncate().length() / (GRID_CELL * 0.5)).ceil().max(1.0) as usize;
+            let n = ((w[1] - w[0]).truncate().length() / (GRID_CELL * 0.5))
+                .ceil()
+                .max(1.0) as usize;
             for k in 0..=n {
                 let q = w[0].lerp(w[1], k as f64 / n as f64);
-                let c = ((q.x / GRID_CELL).floor() as i32, (q.y / GRID_CELL).floor() as i32);
+                let c = (
+                    (q.x / GRID_CELL).floor() as i32,
+                    (q.y / GRID_CELL).floor() as i32,
+                );
                 if !cells.contains(&c) {
                     cells.push(c);
                 }
             }
         }
         if l.points.len() == 1 {
-            cells.push(((l.points[0].x / GRID_CELL).floor() as i32, (l.points[0].y / GRID_CELL).floor() as i32));
+            cells.push((
+                (l.points[0].x / GRID_CELL).floor() as i32,
+                (l.points[0].y / GRID_CELL).floor() as i32,
+            ));
         }
         cells
     }
@@ -1380,7 +1673,11 @@ mod extend_tests {
     use super::*;
 
     fn straight(x: f64, y0: f64, y1: f64, id: i64, tile: (i32, i32)) -> Lane {
-        let mut l = LaneBuilder::polyline(vec![DVec3::new(x, y0, 0.0), DVec3::new(x, y1, 0.0)], LaneKind::Street, 3.0);
+        let mut l = LaneBuilder::polyline(
+            vec![DVec3::new(x, y0, 0.0), DVec3::new(x, y1, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
         l.key = Some(LaneKey { tile, id, path: 0 });
         l.source = 1;
         l
@@ -1388,10 +1685,21 @@ mod extend_tests {
 
     #[test]
     fn extend_links_like_link() {
-        let all = vec![straight(0.0, 0.0, 100.0, 1, (0, 0)), straight(0.0, 100.0, 200.0, 2, (0, 0)), straight(0.0, 200.0, 300.0, 3, (0, 1)), straight(0.0, 300.0, 400.0, 4, (0, 1))];
-        let mut whole = Network { lanes: all.clone(), ..Default::default() };
+        let all = vec![
+            straight(0.0, 0.0, 100.0, 1, (0, 0)),
+            straight(0.0, 100.0, 200.0, 2, (0, 0)),
+            straight(0.0, 200.0, 300.0, 3, (0, 1)),
+            straight(0.0, 300.0, 400.0, 4, (0, 1)),
+        ];
+        let mut whole = Network {
+            lanes: all.clone(),
+            ..Default::default()
+        };
         whole.link(1.5);
-        let mut grown = Network { lanes: all[..2].to_vec(), ..Default::default() };
+        let mut grown = Network {
+            lanes: all[..2].to_vec(),
+            ..Default::default()
+        };
         grown.link(1.5);
         let r = grown.extend(all[2..].to_vec(), 1.5);
         assert_eq!(r, 2..4);
@@ -1401,17 +1709,42 @@ mod extend_tests {
         }
         assert_eq!(grown.reach, whole.reach);
         assert_eq!(grown.crossings.len(), 4);
-        assert_eq!(grown.find(LaneKey { tile: (0, 1), id: 3, path: 0 }, None), Some(2));
-        assert_eq!(grown.nearest_lane(DVec3::new(0.5, 350.0, 0.0), LaneKind::Street).map(|n| n.0), Some(3));
+        assert_eq!(
+            grown.find(
+                LaneKey {
+                    tile: (0, 1),
+                    id: 3,
+                    path: 0
+                },
+                None
+            ),
+            Some(2)
+        );
+        assert_eq!(
+            grown
+                .nearest_lane(DVec3::new(0.5, 350.0, 0.0), LaneKind::Street)
+                .map(|n| n.0),
+            Some(3)
+        );
     }
 
     #[test]
     fn start_grid_tracks_added_lanes_in_map_order() {
-        let first = vec![straight(0.0, 0.0, 100.0, 1, (0, 0)), straight(300.0, 0.0, 100.0, 2, (1, 0))];
-        let mut net = Network { lanes: first, ..Default::default() };
+        let first = vec![
+            straight(0.0, 0.0, 100.0, 1, (0, 0)),
+            straight(300.0, 0.0, 100.0, 2, (1, 0)),
+        ];
+        let mut net = Network {
+            lanes: first,
+            ..Default::default()
+        };
         net.link(1.5);
-        let near = |net: &Network| net.lanes_starting_near(DVec3::ZERO, 60.0).into_iter()
-            .filter(|&i| net.lanes[i].start().truncate().length() < 60.0).collect::<Vec<_>>();
+        let near = |net: &Network| {
+            net.lanes_starting_near(DVec3::ZERO, 60.0)
+                .into_iter()
+                .filter(|&i| net.lanes[i].start().truncate().length() < 60.0)
+                .collect::<Vec<_>>()
+        };
         assert_eq!(near(&net), vec![0]);
         net.extend(vec![straight(25.0, 0.0, 100.0, 3, (0, 1))], 1.5);
         assert_eq!(near(&net), vec![0, 2]);
@@ -1425,11 +1758,17 @@ mod extend_tests {
             straight(500.0, 0.0, 100.0, 3, (2, 0)),
         ];
         let extra = vec![straight(0.0, 200.0, 300.0, 4, (0, 1))];
-        let mut grown = Network { lanes: old.clone(), ..Default::default() };
+        let mut grown = Network {
+            lanes: old.clone(),
+            ..Default::default()
+        };
         grown.link(1.5);
         let distant_reach = grown.reach[2];
         grown.extend(extra.clone(), 1.5);
-        let mut whole = Network { lanes: old.into_iter().chain(extra).collect(), ..Default::default() };
+        let mut whole = Network {
+            lanes: old.into_iter().chain(extra).collect(),
+            ..Default::default()
+        };
         whole.link(1.5);
         assert_eq!(grown.reach, whole.reach);
         assert_eq!(grown.reach[2], distant_reach);
@@ -1487,20 +1826,50 @@ pub struct TrafficLightController {
 impl TrafficLightController {
     pub fn new(lights: Vec<Vec<(i32, f32)>>, cycle: f32) -> TrafficLightController {
         let n = lights.len();
-        TrafficLightController { lights, cycle, offset: 0.0, approach: vec![None; n], stops: Vec::new(), time: 0.0, request: vec![false; n], held: false, passed: None, rewound: None, started: false }
+        TrafficLightController {
+            lights,
+            cycle,
+            offset: 0.0,
+            approach: vec![None; n],
+            stops: Vec::new(),
+            time: 0.0,
+            request: vec![false; n],
+            held: false,
+            passed: None,
+            rewound: None,
+            started: false,
+        }
     }
 
     /// From the `[traffic_light]` program of a crossing object: (per light: name, phases
     /// as (state, seconds), `[approachdist]`), the cycle, the stop and jump points.
-    pub fn from_program(lights: Vec<(Vec<(i32, f32)>, Option<f32>)>, cycle: Option<f32>, stops: &[[f32; 3]], jumps: &[[f32; 4]]) -> TrafficLightController {
+    pub fn from_program(
+        lights: Vec<(Vec<(i32, f32)>, Option<f32>)>,
+        cycle: Option<f32>,
+        stops: &[[f32; 3]],
+        jumps: &[[f32; 4]],
+    ) -> TrafficLightController {
         let approach = lights.iter().map(|l| l.1).collect();
-        let mut c = TrafficLightController::new(lights.into_iter().map(|l| l.0).collect(), cycle.unwrap_or(0.0));
+        let mut c = TrafficLightController::new(
+            lights.into_iter().map(|l| l.0).collect(),
+            cycle.unwrap_or(0.0),
+        );
         c.approach = approach;
         for s in stops {
-            c.stops.push(LightStop { light: s[0].max(0.0) as usize, time: s[1], if_request: s[2] > 0.5, jump_to: None });
+            c.stops.push(LightStop {
+                light: s[0].max(0.0) as usize,
+                time: s[1],
+                if_request: s[2] > 0.5,
+                jump_to: None,
+            });
         }
         for j in jumps {
-            c.stops.push(LightStop { light: j[0].max(0.0) as usize, time: j[1], if_request: j[2] > 0.5, jump_to: Some(j[3]) });
+            c.stops.push(LightStop {
+                light: j[0].max(0.0) as usize,
+                time: j[1],
+                if_request: j[2] > 0.5,
+                jump_to: Some(j[3]),
+            });
         }
         c
     }
@@ -1510,7 +1879,11 @@ impl TrafficLightController {
         if self.cycle > 0.0 {
             return self.cycle as f64;
         }
-        self.lights.iter().map(|p| p.iter().map(|x| x.1).sum::<f32>()).fold(0.0f32, f32::max).max(1.0) as f64
+        self.lights
+            .iter()
+            .map(|p| p.iter().map(|x| x.1).sum::<f32>())
+            .fold(0.0f32, f32::max)
+            .max(1.0) as f64
     }
 
     /// Set the clock from the time of day (s) the first time the program runs: crossings
@@ -1524,7 +1897,11 @@ impl TrafficLightController {
 
     /// Request distance of light `i` (m).
     pub fn approach_dist(&self, i: usize) -> f32 {
-        self.approach.get(i).copied().flatten().unwrap_or(DEFAULT_APPROACH)
+        self.approach
+            .get(i)
+            .copied()
+            .flatten()
+            .unwrap_or(DEFAULT_APPROACH)
     }
 
     /// Run the cycle clock on by `dt` seconds of game time, honouring the stop and jump
@@ -1685,11 +2062,17 @@ impl TrafficLightController {
         let mut spans: Vec<(i32, f32, f32)> = Vec::new();
         let mut start = 0.0;
         for (k, (state, dur)) in phases.iter().enumerate() {
-            let end = if k + 1 == phases.len() { cycle.max(start + dur) } else { start + dur };
+            let end = if k + 1 == phases.len() {
+                cycle.max(start + dur)
+            } else {
+                start + dur
+            };
             spans.push((*state, start, end));
             start = end;
         }
-        let Some(k) = spans.iter().position(|s| x < s.2).or(Some(spans.len() - 1)) else { return f32::INFINITY };
+        let Some(k) = spans.iter().position(|s| x < s.2).or(Some(spans.len() - 1)) else {
+            return f32::INFINITY;
+        };
         let state = spans[k].0;
         if spans.iter().all(|s| s.0 == state) {
             return f32::INFINITY;
@@ -1729,7 +2112,11 @@ impl TrafficLightController {
     /// (the rules of the stock `ampel1_ddr.osc`, which agree with `ampel1.osc` for the
     /// states the West Berlin programs use).
     pub fn lamps(state: i32) -> (bool, bool, bool) {
-        (matches!(state, 0..=5), matches!(state, 3..=5 | 8..=11), matches!(state, 6..=8))
+        (
+            matches!(state, 0..=5),
+            matches!(state, 3..=5 | 8..=11),
+            matches!(state, 6..=8),
+        )
     }
 }
 
@@ -1990,7 +2377,48 @@ impl LaneSeq {
 
 impl AiState {
     pub fn new(lane: usize, s: f32, seed: u64) -> AiState {
-        AiState { traffic_pool: None, veh_type: 0, lane, s, speed: 0.0, max_speed_kmh: 50.0, accel: 1.2, decel: 3.0, length: 5.0, rng: seed | 1, blinker: 0, braking: false, odometer: 0.0, planned_next: None, ahead: Vec::new(), change_plan: Vec::new(), prev_lane: None, yield_time: 0.0, route: Vec::new(), route_index: 0, change: None, change_cooldown: 5.0, lateral: 0.0, lateral_target: 0.0, lateral_ramp: (0.0, 0.0, 0.0, 1.0), turn_wish: 0, signal: 0, signal_time: 0.0, lat_accel: 2.8, desire: 1.0, headway: 1.4, min_gap: 2.0, accept_gap: 4.0, reaction: 0.7, front: 2.5, rear: 2.5, held: false, start_timer: 0.0, acc: 0.0, accel_cap: None }
+        AiState {
+            traffic_pool: None,
+            veh_type: 0,
+            lane,
+            s,
+            speed: 0.0,
+            max_speed_kmh: 50.0,
+            accel: 1.2,
+            decel: 3.0,
+            length: 5.0,
+            rng: seed | 1,
+            blinker: 0,
+            braking: false,
+            odometer: 0.0,
+            planned_next: None,
+            ahead: Vec::new(),
+            change_plan: Vec::new(),
+            prev_lane: None,
+            yield_time: 0.0,
+            route: Vec::new(),
+            route_index: 0,
+            change: None,
+            change_cooldown: 5.0,
+            lateral: 0.0,
+            lateral_target: 0.0,
+            lateral_ramp: (0.0, 0.0, 0.0, 1.0),
+            turn_wish: 0,
+            signal: 0,
+            signal_time: 0.0,
+            lat_accel: 2.8,
+            desire: 1.0,
+            headway: 1.4,
+            min_gap: 2.0,
+            accept_gap: 4.0,
+            reaction: 0.7,
+            front: 2.5,
+            rear: 2.5,
+            held: false,
+            start_timer: 0.0,
+            acc: 0.0,
+            accel_cap: None,
+        }
     }
 
     fn rand(&mut self) -> u64 {
@@ -2004,7 +2432,9 @@ impl AiState {
 
     /// The lanes ahead, nearest first: `planned_next`, then the rest of the plan.
     pub fn upcoming(&self) -> impl Iterator<Item = usize> + '_ {
-        self.planned_next.into_iter().chain(self.ahead.iter().copied())
+        self.planned_next
+            .into_iter()
+            .chain(self.ahead.iter().copied())
     }
 
     /// A random way on from the end of `lane`. Lanes the map closes to this vehicle ([rule]
@@ -2030,21 +2460,37 @@ impl AiState {
                 })
                 .collect()
         };
-        let pooled = self.traffic_pool.is_some().then(|| open_to(true)).filter(|o| !o.is_empty());
+        let pooled = self
+            .traffic_pool
+            .is_some()
+            .then(|| open_to(true))
+            .filter(|o| !o.is_empty());
         let weighted = pooled.is_some();
         let open = pooled.unwrap_or_else(|| open_to(false));
-        let mut choices = if open.is_empty() { l.next.clone() } else { open };
+        let mut choices = if open.is_empty() {
+            l.next.clone()
+        } else {
+            open
+        };
         // and a way that goes on rather than into the end of the network, where there is
         // the choice (the map's edge is where OMSI takes its cars away; a village like
         // Grundorf had a queue of twenty growing at the end of its one outbound road)
         if l.kind == LaneKind::Street && net.reach.len() == net.lanes.len() {
-            let through: Vec<usize> = choices.iter().copied().filter(|&n| net.reach[n] >= DEAD_END).collect();
+            let through: Vec<usize> = choices
+                .iter()
+                .copied()
+                .filter(|&n| net.reach[n] >= DEAD_END)
+                .collect();
             if !through.is_empty() {
                 choices = through;
             }
         }
         if self.turn_wish != 0 {
-            let wished: Vec<usize> = choices.iter().copied().filter(|&n| net.lanes[n].turn == self.turn_wish).collect();
+            let wished: Vec<usize> = choices
+                .iter()
+                .copied()
+                .filter(|&n| net.lanes[n].turn == self.turn_wish)
+                .collect();
             if !wished.is_empty() {
                 choices = wished;
                 self.turn_wish = 0;
@@ -2054,15 +2500,22 @@ impl AiState {
             None
         } else {
             if let Some((pool, defaults)) = self.traffic_pool.clone().filter(|_| weighted) {
-                let total: f32 = choices.iter().map(|&n| net.lanes[n].pool_density(&defaults, pool)).sum();
+                let total: f32 = choices
+                    .iter()
+                    .map(|&n| net.lanes[n].pool_density(&defaults, pool))
+                    .sum();
                 let mut pick = (self.rand() >> 32) as f32 / (u32::MAX as f32 + 1.0) * total;
                 for &n in &choices {
                     let weight = net.lanes[n].pool_density(&defaults, pool);
-                    if pick < weight { return Some(n); }
+                    if pick < weight {
+                        return Some(n);
+                    }
                     pick -= weight;
                 }
                 choices.last().copied()
-            } else { Some(choices[(self.rand() % choices.len() as u64) as usize]) }
+            } else {
+                Some(choices[(self.rand() % choices.len() as u64) as usize])
+            }
         }
     }
 
@@ -2072,11 +2525,22 @@ impl AiState {
         if !self.route.is_empty() {
             // a route step onto a lane beside this one is a lane change, not the way on
             let mut k = self.route_index + 1;
-            if self.route.get(k).map(|&b| net.parallel(self.lane, b)).unwrap_or(false) {
+            if self
+                .route
+                .get(k)
+                .map(|&b| net.parallel(self.lane, b))
+                .unwrap_or(false)
+            {
                 k += 1;
             }
             self.planned_next = self.route.get(k).copied();
-            self.ahead = self.route.iter().skip(k + 1).take(PLAN_LANES).copied().collect();
+            self.ahead = self
+                .route
+                .iter()
+                .skip(k + 1)
+                .take(PLAN_LANES)
+                .copied()
+                .collect();
             return;
         }
         if self.planned_next.is_none() {
@@ -2084,7 +2548,9 @@ impl AiState {
         }
         let planned: f32 = self.upcoming().map(|l| net.lanes[l].length()).sum();
         let rest = net.lanes[self.lane].length() - self.s;
-        if self.planned_next.is_some() && (rest + planned >= PLAN_AHEAD || self.ahead.len() >= PLAN_LANES) {
+        if self.planned_next.is_some()
+            && (rest + planned >= PLAN_AHEAD || self.ahead.len() >= PLAN_LANES)
+        {
             return;
         }
         let mut plan: Vec<usize> = self.upcoming().collect();
@@ -2124,7 +2590,9 @@ impl AiState {
     /// Begin a lane change onto the neighbour `to` (`dir` 1 left, 2 right): the indicator
     /// goes on at once, the car moves over after a moment.
     pub fn start_change(&mut self, net: &Network, to: usize, dir: i32) {
-        let Some(l) = net.lanes.get(self.lane) else { return };
+        let Some(l) = net.lanes.get(self.lane) else {
+            return;
+        };
         let Some(t) = net.lanes.get(to) else { return };
         // two to three and a half seconds at the speed the car has now, at least 12 m
         let duration = (3.5 - self.speed * 0.05).clamp(2.0, 3.5);
@@ -2132,13 +2600,27 @@ impl AiState {
         // (the same share of a lane that starts beside this one, else the point beside the car)
         let s_to = net.beside_s(self.lane, to, self.s.min(l.length()));
         let rest = t.length() - s_to;
-        self.change = Some(LaneChange { to, t: 0.0, length, s_to, dir, wait: SIGNAL_BEFORE_CHANGE, bypass: false });
+        self.change = Some(LaneChange {
+            to,
+            t: 0.0,
+            length,
+            s_to,
+            dir,
+            wait: SIGNAL_BEFORE_CHANGE,
+            bypass: false,
+        });
         self.blinker = dir;
         let mut plan = Vec::new();
         if self.route.is_empty() {
             self.extend_plan(net, to, rest, &mut plan);
         } else {
-            plan.extend(self.route.iter().skip(self.route_index + 2).take(PLAN_LANES).copied());
+            plan.extend(
+                self.route
+                    .iter()
+                    .skip(self.route_index + 2)
+                    .take(PLAN_LANES)
+                    .copied(),
+            );
         }
         self.change_plan = plan;
     }
@@ -2187,7 +2669,14 @@ impl AiState {
         let pb = lb.at(net.beside_s(self.lane, b, self.s)).0;
         let h = (ha as f64).to_radians();
         let side = (pb - pa).truncate().dot(DVec2::new(h.cos(), -h.sin()));
-        Some((b, if side > 0.0 || (side.abs() < 0.5 && lb.offset > la.offset) { 2 } else { 1 }))
+        Some((
+            b,
+            if side > 0.0 || (side.abs() < 0.5 && lb.offset > la.offset) {
+                2
+            } else {
+                1
+            },
+        ))
     }
 
     /// Pull out into `to` from behind a standing obstacle: a short, steep move.
@@ -2212,7 +2701,11 @@ impl AiState {
 
     /// The lane sequence the car is driving along: where it came from, where it is, the plan.
     fn seq(&self) -> LaneSeq {
-        let mut q = LaneSeq { lanes: [0; PLAN_LANES + 2], n: 0, cur: 0 };
+        let mut q = LaneSeq {
+            lanes: [0; PLAN_LANES + 2],
+            n: 0,
+            cur: 0,
+        };
         if let Some(p) = self.prev_lane {
             q.lanes[0] = p;
             q.n = 1;
@@ -2232,7 +2725,11 @@ impl AiState {
 
     /// The lane sequence of the lane the car is changing to, with the way on it chose.
     fn change_seq(&self, to: usize) -> LaneSeq {
-        let mut q = LaneSeq { lanes: [0; PLAN_LANES + 2], n: 1, cur: 0 };
+        let mut q = LaneSeq {
+            lanes: [0; PLAN_LANES + 2],
+            n: 1,
+            cur: 0,
+        };
         q.lanes[0] = to;
         for &l in &self.change_plan {
             if q.n == q.lanes.len() {
@@ -2295,7 +2792,10 @@ impl AiState {
         let mut next = first;
         while d <= reach {
             let (i, u) = q.locate(net, s, d);
-            let turn = wrap_deg(q.point(net, s, d + 3.0).1 - q.point(net, s, d - 3.0).1).abs().to_radians() / 6.0;
+            let turn = wrap_deg(q.point(net, s, d + 3.0).1 - q.point(net, s, d - 3.0).1)
+                .abs()
+                .to_radians()
+                / 6.0;
             let k = net.lanes[q.lanes[i]].curvature_at(u).abs().max(turn);
             if k > 1e-4 {
                 let v = (self.lat_accel / k).sqrt().max(2.5);
@@ -2352,7 +2852,11 @@ impl AiState {
         } else if self.signal != 0 && self.signal_time > 0.0 {
             self.signal
         } else if (self.lateral_target - self.lateral).abs() > 0.3 {
-            if self.lateral_target > self.lateral { 2 } else { 1 }
+            if self.lateral_target > self.lateral {
+                2
+            } else {
+                1
+            }
         } else {
             let within = (self.speed * 4.0).clamp(25.0, 60.0);
             self.turn_ahead(net, within).map(|t| t.0).unwrap_or(0)
@@ -2362,8 +2866,18 @@ impl AiState {
     /// Advance along the network. `obstacle` = distance from the car's origin to the rear of
     /// a standing vehicle ahead (m), `stop_at` = distance from its origin to a stop line
     /// (m). False at a dead end (the car is taken off the road).
-    pub fn advance(&mut self, net: &Network, dt: f32, obstacle: Option<f32>, stop_at: Option<f32>) -> bool {
-        let lead = obstacle.map(|d| Lead { gap: d - self.front, speed: 0.0, acc: 0.0 });
+    pub fn advance(
+        &mut self,
+        net: &Network,
+        dt: f32,
+        obstacle: Option<f32>,
+        stop_at: Option<f32>,
+    ) -> bool {
+        let lead = obstacle.map(|d| Lead {
+            gap: d - self.front,
+            speed: 0.0,
+            acc: 0.0,
+        });
         self.drive(net, dt, lead, stop_at)
     }
 
@@ -2373,10 +2887,17 @@ impl AiState {
     /// `lead` is the vehicle ahead, `stop` the distance from the car's origin to where it
     /// has to stop (a light, a junction it gives way at, a bus stop).
     pub fn desired_accel(&self, net: &Network, lead: Option<Lead>, stop: Option<f32>) -> f32 {
-        let Some(lane) = net.lanes.get(self.lane) else { return 0.0 };
+        let Some(lane) = net.lanes.get(self.lane) else {
+            return 0.0;
+        };
         let (a, b) = (self.accel.max(0.1), self.decel.max(0.5));
         let v = self.speed;
-        let limit = |l: &Lane| (l.speed_limit_kmh * self.desire).min(self.max_speed_kmh).max(3.0) / 3.6;
+        let limit = |l: &Lane| {
+            (l.speed_limit_kmh * self.desire)
+                .min(self.max_speed_kmh)
+                .max(3.0)
+                / 3.6
+        };
         let mut v0 = limit(lane);
         // a lower limit on the lanes ahead (a junction's turning lanes, a 30 zone) is
         // reached at that speed, slowing gently (1.2 m/s²) from where it has to: taken only
@@ -2408,7 +2929,8 @@ impl AiState {
             acc = acc.min(acc + (track - acc) * k);
         }
         let interaction = |gap: f32, lead_speed: f32, s0: f32, headway: f32| -> f32 {
-            let s_star = s0 + (v * headway + v * (v - lead_speed) / (2.0 * (a * b).sqrt())).max(0.0);
+            let s_star =
+                s0 + (v * headway + v * (v - lead_speed) / (2.0 * (a * b).sqrt())).max(0.0);
             -a * (s_star / gap.max(0.05)).powi(2)
         };
         let mut out = acc;
@@ -2420,11 +2942,19 @@ impl AiState {
             // and a gap that opens again over the next seconds, not an emergency stop.
             let (vl, s, al) = (l.speed.max(0.0), l.gap.max(0.05), l.acc.min(a));
             let den = vl * vl - 2.0 * s * al;
-            let cah = if vl * (v - vl) <= -2.0 * s * al && den > 1e-3 { v * v * al / den } else { al - (v - vl).max(0.0).powi(2) / (2.0 * s) };
+            let cah = if vl * (v - vl) <= -2.0 * s * al && den > 1e-3 {
+                v * v * al / den
+            } else {
+                al - (v - vl).max(0.0).powi(2) / (2.0 * s)
+            };
             // (a car beside or just ahead that drives away faster gives the model a gap of
             // nothing: its braking term is bounded so that the heuristic decides)
             let idm = idm.max(-2.0 * MAX_BRAKE);
-            let acc_lead = if idm >= cah { idm } else { 0.01 * idm + 0.99 * (cah + b * ((idm - cah) / b).tanh()) };
+            let acc_lead = if idm >= cah {
+                idm
+            } else {
+                0.01 * idm + 0.99 * (cah + b * ((idm - cah) / b).tanh())
+            };
             out = out.min(acc_lead);
         }
         if let Some(d) = stop {
@@ -2467,7 +2997,11 @@ impl AiState {
                 // as the cars on the ring come and go - winds the reaction back only a
                 // little: set back whole every frame, it never ran out, and the car stood at
                 // an empty roundabout for minutes, "about to go")
-                self.start_timer = if self.held { (self.start_timer + 3.0 * dt).min(self.reaction) } else { self.reaction };
+                self.start_timer = if self.held {
+                    (self.start_timer + 3.0 * dt).min(self.reaction)
+                } else {
+                    self.reaction
+                };
                 self.held = true;
                 acc = acc.min(0.0);
             } else if self.held {
@@ -2543,11 +3077,17 @@ impl AiState {
             self.prev_lane = Some(self.lane);
             self.lane = next;
             if self.route.is_empty() {
-                self.planned_next = if self.ahead.is_empty() { None } else { Some(self.ahead.remove(0)) };
+                self.planned_next = if self.ahead.is_empty() {
+                    None
+                } else {
+                    Some(self.ahead.remove(0))
+                };
             } else {
                 // the plan may have stepped over a lane-change entry of the route
                 let from = self.route_index + 1;
-                self.route_index = (from..(from + 3).min(self.route.len())).find(|&k| self.route[k] == next).unwrap_or(from);
+                self.route_index = (from..(from + 3).min(self.route.len()))
+                    .find(|&k| self.route[k] == next)
+                    .unwrap_or(from);
             }
             self.plan_next(net);
         }
@@ -2566,18 +3106,44 @@ mod tests {
     fn a_stop_is_matched_to_the_lane_it_stands_beside() {
         // out along y = 0 (east), back along y = 6 (west); the stop stands north of the
         // way back: on its right, across the road from the way out
-        let out = LaneBuilder::polyline(vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 0.0)], LaneKind::Street, 3.0);
-        let back = LaneBuilder::polyline(vec![DVec3::new(100.0, 6.0, 0.0), DVec3::new(0.0, 6.0, 0.0)], LaneKind::Street, 3.0);
-        let net = Network { lanes: vec![out, back], ..Default::default() };
+        let out = LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 0.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        let back = LaneBuilder::polyline(
+            vec![DVec3::new(100.0, 6.0, 0.0), DVec3::new(0.0, 6.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        let net = Network {
+            lanes: vec![out, back],
+            ..Default::default()
+        };
         let stop = DVec3::new(50.0, 9.0, 0.0);
         // nearer to the way back anyway: matched there
-        assert_eq!(net.project_stop_on_route(&[0, 1], stop, Some(25.0), 0).unwrap().0, 1);
+        assert_eq!(
+            net.project_stop_on_route(&[0, 1], stop, Some(25.0), 0)
+                .unwrap()
+                .0,
+            1
+        );
         // a stop on the right of the way out, nearer the middle of the road
         let stop2 = DVec3::new(50.0, -2.0, 0.0);
-        assert_eq!(net.project_stop_on_route(&[0, 1], stop2, Some(25.0), 0).unwrap().0, 0);
+        assert_eq!(
+            net.project_stop_on_route(&[0, 1], stop2, Some(25.0), 0)
+                .unwrap()
+                .0,
+            0
+        );
         // the route out, back and out again: a stop on the way out, once the trip is past
         // its first leg, is the one on the second way out
-        assert_eq!(net.project_stop_on_route(&[0, 1, 0], stop2, Some(25.0), 1).unwrap().0, 2);
+        assert_eq!(
+            net.project_stop_on_route(&[0, 1, 0], stop2, Some(25.0), 1)
+                .unwrap()
+                .0,
+            2
+        );
     }
 
     use super::*;
@@ -2586,16 +3152,31 @@ mod tests {
     /// 60°, then straight on again.
     fn junction() -> Network {
         let a = LaneBuilder::arc(DVec3::ZERO, 0.0, 60.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let bend = LaneBuilder::arc(a.end(), 0.0, 14.0 * 60f64.to_radians(), 14.0, 0.0, LaneKind::Street, 3.0);
+        let bend = LaneBuilder::arc(
+            a.end(),
+            0.0,
+            14.0 * 60f64.to_radians(),
+            14.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
         let c = LaneBuilder::arc(bend.end(), 60.0, 80.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let mut net = Network { lanes: vec![a, bend, c], ..Default::default() };
+        let mut net = Network {
+            lanes: vec![a, bend, c],
+            ..Default::default()
+        };
         net.link(1.5);
         net
     }
 
     #[test]
     fn path_rules_open_lanes_by_vehicle_type() {
-        let mut l = LaneBuilder::polyline(vec![DVec3::ZERO, DVec3::new(0.0, 50.0, 0.0)], LaneKind::Street, 3.0);
+        let mut l = LaneBuilder::polyline(
+            vec![DVec3::ZERO, DVec3::new(0.0, 50.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
         // no rules: cars and taxis, no AI buses or trucks (Omsi.exe 0x71d714)
         assert!(l.allows(0) && l.allows(1) && !l.allows(2) && !l.allows(3) && l.allows(-1));
         l.rule_trucks = true;
@@ -2655,13 +3236,21 @@ mod tests {
         }
         let (lane, before) = first_on.expect("indicator on");
         assert_eq!(lane, 0);
-        assert!(before >= 24.0, "indicator on only {before} m before the turn");
+        assert!(
+            before >= 24.0,
+            "indicator on only {before} m before the turn"
+        );
     }
 
     /// Einm_erzgebirgs.sco's "Main" light: red and yellow 2 s, green 11 s, yellow 3 s,
     /// red for the rest of the 38 s cycle.
     fn erzgebirgs() -> TrafficLightController {
-        TrafficLightController::from_program(vec![(vec![(3, 2.0), (6, 11.0), (9, 3.0), (0, 0.0)], None)], Some(38.0), &[], &[])
+        TrafficLightController::from_program(
+            vec![(vec![(3, 2.0), (6, 11.0), (9, 3.0), (0, 0.0)], None)],
+            Some(38.0),
+            &[],
+            &[],
+        )
     }
 
     #[test]
@@ -2682,12 +3271,38 @@ mod tests {
                 t += dt;
             }
             let order: Vec<Aspect> = seen.iter().map(|s| s.0).collect();
-            assert_eq!(&order[..5], &[Aspect::RedYellow, Aspect::Green, Aspect::Yellow, Aspect::Red, Aspect::RedYellow], "dt {dt}");
+            assert_eq!(
+                &order[..5],
+                &[
+                    Aspect::RedYellow,
+                    Aspect::Green,
+                    Aspect::Yellow,
+                    Aspect::Red,
+                    Aspect::RedYellow
+                ],
+                "dt {dt}"
+            );
             let tol = dt + 1e-3;
-            assert!((seen[0].1 - 2.0).abs() <= tol, "red-yellow {} at dt {dt}", seen[0].1);
-            assert!((seen[1].1 - 11.0).abs() <= tol, "green {} at dt {dt}", seen[1].1);
-            assert!((seen[2].1 - 3.0).abs() <= tol, "yellow {} at dt {dt}", seen[2].1);
-            assert!((seen[3].1 - 22.0).abs() <= tol, "red {} at dt {dt}", seen[3].1);
+            assert!(
+                (seen[0].1 - 2.0).abs() <= tol,
+                "red-yellow {} at dt {dt}",
+                seen[0].1
+            );
+            assert!(
+                (seen[1].1 - 11.0).abs() <= tol,
+                "green {} at dt {dt}",
+                seen[1].1
+            );
+            assert!(
+                (seen[2].1 - 3.0).abs() <= tol,
+                "yellow {} at dt {dt}",
+                seen[2].1
+            );
+            assert!(
+                (seen[3].1 - 22.0).abs() <= tol,
+                "red {} at dt {dt}",
+                seen[3].1
+            );
         }
     }
 
@@ -2698,7 +3313,11 @@ mod tests {
         assert_eq!(TrafficLightController::lamps(6), (false, false, true));
         assert_eq!(TrafficLightController::lamps(9), (false, true, false));
         assert_eq!(TrafficLightController::lamps(12), (false, false, false));
-        assert!(TrafficLightController::allows_go(6) && !TrafficLightController::allows_go(9) && !TrafficLightController::allows_go(3));
+        assert!(
+            TrafficLightController::allows_go(6)
+                && !TrafficLightController::allows_go(9)
+                && !TrafficLightController::allows_go(3)
+        );
         // the clock starts from the time of day: two crossings with one cycle run in step
         let (mut a, mut b) = (erzgebirgs(), erzgebirgs());
         a.start(8.0 * 3600.0 + 10.0);
@@ -2714,7 +3333,10 @@ mod tests {
         // bue_falks_ohe.sco: road green until a train asks at light 0 (stop at 1 s), barrier
         // down while it is still there (stop at 16 s)
         let mut c = TrafficLightController::from_program(
-            vec![(vec![(0, 15.0), (6, 4.0), (0, 1.0)], None), (vec![(6, 2.0), (9, 12.0), (0, 5.0), (3, 1.0)], None)],
+            vec![
+                (vec![(0, 15.0), (6, 4.0), (0, 1.0)], None),
+                (vec![(6, 2.0), (9, 12.0), (0, 5.0), (3, 1.0)], None),
+            ],
             Some(22.0),
             &[[0.0, 1.0, 1.0], [0.0, 16.0, 0.0]],
             &[],
@@ -2723,7 +3345,11 @@ mod tests {
         for _ in 0..600 {
             c.advance(0.1);
         }
-        assert!((c.time - 1.0).abs() < 1e-6 && c.held, "holding at {}", c.time);
+        assert!(
+            (c.time - 1.0).abs() < 1e-6 && c.held,
+            "holding at {}",
+            c.time
+        );
         assert_eq!(c.state(1), 6, "road green while no train comes");
         c.request[0] = true;
         let mut t = 0.0;
@@ -2731,7 +3357,11 @@ mod tests {
             c.advance(0.1);
             t += 0.1;
         }
-        assert!((c.time - 16.0).abs() < 1e-6 && c.held, "the train is still there: holding at {}", c.time);
+        assert!(
+            (c.time - 16.0).abs() < 1e-6 && c.held,
+            "the train is still there: holding at {}",
+            c.time
+        );
         assert_eq!(c.state(0), 6);
         assert_eq!(c.state(1), 0, "road red while the train passes");
         c.request[0] = false;
@@ -2742,7 +3372,15 @@ mod tests {
     #[test]
     fn a_bus_phase_is_skipped_when_no_bus_comes() {
         // Kreuz_Heerstr_Pillnitzer_Reimer.sco: the bus light 3 jumps from 51.5 to 61.5 s
-        let mut c = TrafficLightController::from_program(vec![(vec![(0, 52.0), (3, 2.0), (6, 4.0), (9, 3.0), (0, 0.0)], Some(10.0))], Some(64.0), &[], &[[0.0, 51.5, 1.0, 61.5]]);
+        let mut c = TrafficLightController::from_program(
+            vec![(
+                vec![(0, 52.0), (3, 2.0), (6, 4.0), (9, 3.0), (0, 0.0)],
+                Some(10.0),
+            )],
+            Some(64.0),
+            &[],
+            &[[0.0, 51.5, 1.0, 61.5]],
+        );
         c.start(50.0);
         c.advance(2.0);
         assert!((c.time - 62.0).abs() < 1e-3, "jumped: {}", c.time);
@@ -2790,7 +3428,10 @@ mod tests {
         }
         let front = car.s + car.front;
         assert!(car.speed < 0.01, "stopped: {}", car.speed);
-        assert!(front <= line && front > line - 1.5, "front at {front}, line at {line}");
+        assert!(
+            front <= line && front > line - 1.5,
+            "front at {front}, line at {line}"
+        );
         assert!(hardest > -3.5, "braked at {hardest} m/s²");
     }
 
@@ -2811,7 +3452,16 @@ mod tests {
             lead_s += lead_v * dt;
             let gap = lead_s - 2.5 - (car.s + car.front);
             closest = closest.min(gap);
-            car.drive(&net, dt, Some(Lead { gap, speed: lead_v, acc: if k > 60 && lead_v > 0.0 { -6.0 } else { 0.0 } }), None);
+            car.drive(
+                &net,
+                dt,
+                Some(Lead {
+                    gap,
+                    speed: lead_v,
+                    acc: if k > 60 && lead_v > 0.0 { -6.0 } else { 0.0 },
+                }),
+                None,
+            );
         }
         assert!(closest > 0.8, "came within {closest} m");
         assert!(car.speed < 0.05);
@@ -2821,11 +3471,38 @@ mod tests {
     fn right_of_way_between_paths() {
         // a crossing: a from the south going north, b from the east going west, c from the
         // north going south and turning left (east)
-        let a = LaneBuilder::arc(DVec3::new(0.0, -10.0, 0.0), 0.0, 20.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let b = LaneBuilder::arc(DVec3::new(10.0, 0.0, 0.0), 270.0, 20.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let mut c = LaneBuilder::arc(DVec3::new(-1.5, 10.0, 0.0), 180.0, 10.0 * std::f64::consts::FRAC_PI_2, -10.0, 0.0, LaneKind::Street, 3.0);
+        let a = LaneBuilder::arc(
+            DVec3::new(0.0, -10.0, 0.0),
+            0.0,
+            20.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let b = LaneBuilder::arc(
+            DVec3::new(10.0, 0.0, 0.0),
+            270.0,
+            20.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let mut c = LaneBuilder::arc(
+            DVec3::new(-1.5, 10.0, 0.0),
+            180.0,
+            10.0 * std::f64::consts::FRAC_PI_2,
+            -10.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
         c.turn = 1;
-        let mut net = Network { lanes: vec![a, b, c], ..Default::default() };
+        let mut net = Network {
+            lanes: vec![a, b, c],
+            ..Default::default()
+        };
         net.link(1.5);
         // equal priority: b comes from a's right
         assert!(net.must_yield(0, 1));
@@ -2844,11 +3521,39 @@ mod tests {
     fn right_of_way_on_the_left() {
         // the same crossing on a left-hand-traffic map: b (from a's right) now waits for a
         // (from b's left), and a right turn across the oncoming traffic waits, a left one not
-        let a = LaneBuilder::arc(DVec3::new(0.0, -10.0, 0.0), 0.0, 20.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let b = LaneBuilder::arc(DVec3::new(10.0, 0.0, 0.0), 270.0, 20.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let mut c = LaneBuilder::arc(DVec3::new(-1.5, 10.0, 0.0), 180.0, 10.0 * std::f64::consts::FRAC_PI_2, -10.0, 0.0, LaneKind::Street, 3.0);
+        let a = LaneBuilder::arc(
+            DVec3::new(0.0, -10.0, 0.0),
+            0.0,
+            20.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let b = LaneBuilder::arc(
+            DVec3::new(10.0, 0.0, 0.0),
+            270.0,
+            20.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let mut c = LaneBuilder::arc(
+            DVec3::new(-1.5, 10.0, 0.0),
+            180.0,
+            10.0 * std::f64::consts::FRAC_PI_2,
+            -10.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
         c.turn = 2;
-        let mut net = Network { lanes: vec![a, b, c], left_hand: true, ..Default::default() };
+        let mut net = Network {
+            lanes: vec![a, b, c],
+            left_hand: true,
+            ..Default::default()
+        };
         net.link(1.5);
         assert!(!net.must_yield(0, 1));
         assert!(net.must_yield(1, 0));
@@ -2862,19 +3567,58 @@ mod tests {
     fn a_shallow_crossing_is_a_long_meeting_place() {
         // one junction object (source 2, same key): a straight lane and two lanes crossing
         // it, one square, one at 20°
-        let key = |path: u16| Some(LaneKey { tile: (0, 0), id: 1, path });
-        let mut a = LaneBuilder::arc(DVec3::new(0.0, -20.0, 0.0), 0.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let mut b = LaneBuilder::arc(DVec3::new(20.0, 0.0, 0.0), 270.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
+        let key = |path: u16| {
+            Some(LaneKey {
+                tile: (0, 0),
+                id: 1,
+                path,
+            })
+        };
+        let mut a = LaneBuilder::arc(
+            DVec3::new(0.0, -20.0, 0.0),
+            0.0,
+            40.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let mut b = LaneBuilder::arc(
+            DVec3::new(20.0, 0.0, 0.0),
+            270.0,
+            40.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
         let h = 20f64.to_radians();
-        let mut c = LaneBuilder::arc(DVec3::new(-20.0 * h.sin(), -20.0 * h.cos(), 0.0), 20.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
+        let mut c = LaneBuilder::arc(
+            DVec3::new(-20.0 * h.sin(), -20.0 * h.cos(), 0.0),
+            20.0,
+            40.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
         for (l, k) in [(&mut a, 0), (&mut b, 1), (&mut c, 2)] {
             l.source = 2;
             l.key = key(k);
         }
-        let mut net = Network { lanes: vec![a, b, c], ..Default::default() };
+        let mut net = Network {
+            lanes: vec![a, b, c],
+            ..Default::default()
+        };
         net.link(1.5);
-        let square = net.crossings[0].iter().find(|x| x.other == 1).expect("square crossing");
-        let shallow = net.crossings[0].iter().find(|x| x.other == 2).expect("shallow crossing");
+        let square = net.crossings[0]
+            .iter()
+            .find(|x| x.other == 1)
+            .expect("square crossing");
+        let shallow = net.crossings[0]
+            .iter()
+            .find(|x| x.other == 2)
+            .expect("shallow crossing");
         assert!((square.at - 20.0).abs() < 0.5 && (shallow.at - 20.0).abs() < 0.5);
         // square: the bodies touch within a car's width or so of the point
         assert!(square.before <= 3.0 && square.after <= 3.0, "{square:?}");
@@ -2886,9 +3630,28 @@ mod tests {
     fn a_driver_with_a_choice_keeps_out_of_a_dead_end() {
         // a lane that forks: one way ends after 50 m, the other runs round a long loop
         let a = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let dead = LaneBuilder::arc(DVec3::new(0.0, 30.0, 0.0), 10.0, 50.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let on = LaneBuilder::arc(DVec3::new(0.0, 30.0, 0.0), 350.0, 700.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let mut net = Network { lanes: vec![a, dead, on], ..Default::default() };
+        let dead = LaneBuilder::arc(
+            DVec3::new(0.0, 30.0, 0.0),
+            10.0,
+            50.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let on = LaneBuilder::arc(
+            DVec3::new(0.0, 30.0, 0.0),
+            350.0,
+            700.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let mut net = Network {
+            lanes: vec![a, dead, on],
+            ..Default::default()
+        };
         net.link(1.5);
         assert_eq!(net.lanes[0].next.len(), 2);
         assert!(net.reach[1] < DEAD_END && net.reach[0] >= DEAD_END && net.reach[2] >= DEAD_END);
@@ -2903,8 +3666,19 @@ mod tests {
     fn the_way_has_no_steps_at_a_lane_joint() {
         // two lanes that meet 1.2 m apart: the way bends over the joint instead of jumping
         let a = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let b = LaneBuilder::arc(DVec3::new(1.2, 30.0, 0.0), 0.0, 30.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let mut net = Network { lanes: vec![a, b], ..Default::default() };
+        let b = LaneBuilder::arc(
+            DVec3::new(1.2, 30.0, 0.0),
+            0.0,
+            30.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let mut net = Network {
+            lanes: vec![a, b],
+            ..Default::default()
+        };
         net.link(1.5);
         let mut car = AiState::new(0, 20.0, 1);
         car.plan_next(&net);
@@ -2913,7 +3687,11 @@ mod tests {
         while d < 25.0 {
             d += 0.25;
             let p = car.way_point(&net, d);
-            assert!((p - last).length() < 0.3, "step of {} m at {d}", (p - last).length());
+            assert!(
+                (p - last).length() < 0.3,
+                "step of {} m at {d}",
+                (p - last).length()
+            );
             last = p;
         }
     }
@@ -2922,12 +3700,51 @@ mod tests {
     /// straight path J1 (10 m), a left turn J2 from the east into the same exit, and the lane
     /// A (50 m) after the junction.
     fn oncoming_road() -> Network {
-        let a = LaneBuilder::arc(DVec3::new(-3.0, 150.0, 0.0), 180.0, 50.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let j1 = LaneBuilder::arc(DVec3::new(-3.0, 160.0, 0.0), 180.0, 10.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        let j2 = LaneBuilder::arc(DVec3::new(5.0, 158.0, 0.0), 270.0, 8.0 * std::f64::consts::FRAC_PI_2, -8.0, 0.0, LaneKind::Street, 3.0);
-        let b = LaneBuilder::arc(DVec3::new(-3.0, 220.0, 0.0), 180.0, 60.0, 0.0, 0.0, LaneKind::Street, 3.0);
-        assert!((j2.end() - DVec3::new(-3.0, 150.0, 0.0)).length() < 0.05, "{:?}", j2.end());
-        let mut net = Network { lanes: vec![a, j1, j2, b], ..Default::default() };
+        let a = LaneBuilder::arc(
+            DVec3::new(-3.0, 150.0, 0.0),
+            180.0,
+            50.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let j1 = LaneBuilder::arc(
+            DVec3::new(-3.0, 160.0, 0.0),
+            180.0,
+            10.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let j2 = LaneBuilder::arc(
+            DVec3::new(5.0, 158.0, 0.0),
+            270.0,
+            8.0 * std::f64::consts::FRAC_PI_2,
+            -8.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let b = LaneBuilder::arc(
+            DVec3::new(-3.0, 220.0, 0.0),
+            180.0,
+            60.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        assert!(
+            (j2.end() - DVec3::new(-3.0, 150.0, 0.0)).length() < 0.05,
+            "{:?}",
+            j2.end()
+        );
+        let mut net = Network {
+            lanes: vec![a, j1, j2, b],
+            ..Default::default()
+        };
         net.link(1.5);
         net
     }
@@ -2943,13 +3760,19 @@ mod tests {
         let (_, off1, into1) = find(1).expect("J1");
         assert!((off1 + 10.0).abs() < 0.01 && into1 == Some(0), "{up:?}");
         let (_, off2, into2) = find(2).expect("J2");
-        assert!((off2 + 8.0 * std::f32::consts::FRAC_PI_2).abs() < 0.05 && into2 == Some(0), "{up:?}");
+        assert!(
+            (off2 + 8.0 * std::f32::consts::FRAC_PI_2).abs() < 0.05 && into2 == Some(0),
+            "{up:?}"
+        );
         let (_, off3, into3) = find(3).expect("B");
         assert!((off3 + 70.0).abs() < 0.01 && into3 == Some(1), "{up:?}");
         // a car 15 m into B is at 15 - 70 = -55 in A's distances: 75 m before the place
         // looking only 25 m back, the lanes that end within reach are there, B is not
         let near = net.upstream(0, 20.0, 25.0, 16);
-        assert!(near.iter().any(|e| e.0 == 1) && !near.iter().any(|e| e.0 == 3), "{near:?}");
+        assert!(
+            near.iter().any(|e| e.0 == 1) && !near.iter().any(|e| e.0 == 3),
+            "{near:?}"
+        );
         // and the list is capped
         assert_eq!(net.upstream(0, 20.0, 100.0, 2).len(), 2);
     }
@@ -3016,9 +3839,19 @@ mod light_tests {
         assert_eq!(c.state(0), 0);
         assert!((c.remaining(0) - 18.0).abs() < 1e-4);
         // red running over the end of the cycle into a red start
-        let d = at(TrafficLightController::new(vec![vec![(0, 19.0), (3, 2.0), (6, 11.0), (9, 3.0), (0, 0.0)]], 38.0), 36.0);
+        let d = at(
+            TrafficLightController::new(
+                vec![vec![(0, 19.0), (3, 2.0), (6, 11.0), (9, 3.0), (0, 0.0)]],
+                38.0,
+            ),
+            36.0,
+        );
         assert!((d.remaining(0) - 21.0).abs() < 1e-4, "{}", d.remaining(0));
-        assert!(at(TrafficLightController::new(vec![vec![(6, 5.0)]], 0.0), 1.0).remaining(0).is_infinite());
+        assert!(
+            at(TrafficLightController::new(vec![vec![(6, 5.0)]], 0.0), 1.0)
+                .remaining(0)
+                .is_infinite()
+        );
     }
 }
 

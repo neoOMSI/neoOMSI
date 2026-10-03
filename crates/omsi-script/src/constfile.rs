@@ -63,14 +63,21 @@ impl ConstFile {
                 }
                 "newcurve" => {
                     let name = r.word().to_string();
-                    out.curves.push(Curve { name, points: Vec::new() });
+                    out.curves.push(Curve {
+                        name,
+                        points: Vec::new(),
+                    });
                 }
                 "pnt" => {
                     let x = r.f32();
                     let y = r.f32();
                     match out.curves.last_mut() {
                         Some(c) => c.points.push((x, y)),
-                        None => out.errors.push(format!("{}:{}: [pnt] before [newcurve]", file.path.display(), r.block_line())),
+                        None => out.errors.push(format!(
+                            "{}:{}: [pnt] before [newcurve]",
+                            file.path.display(),
+                            r.block_line()
+                        )),
                     }
                 }
                 _ => {}

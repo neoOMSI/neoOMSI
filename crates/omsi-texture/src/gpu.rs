@@ -64,9 +64,16 @@ impl TextureData {
     pub fn gpu_bytes(&self) -> u64 {
         let mut total = 0u64;
         let full = mip_count(self.width, self.height);
-        let n = if self.format == PixelFormat::Rgba8 && self.levels.len() == 1 && self.gpu_mips { full } else { self.levels.len() as u32 };
+        let n = if self.format == PixelFormat::Rgba8 && self.levels.len() == 1 && self.gpu_mips {
+            full
+        } else {
+            self.levels.len() as u32
+        };
         for l in 0..n {
-            total += self.format.level_bytes((self.width >> l).max(1), (self.height >> l).max(1)) as u64;
+            total += self
+                .format
+                .level_bytes((self.width >> l).max(1), (self.height >> l).max(1))
+                as u64;
         }
         total
     }
@@ -77,7 +84,14 @@ impl TextureData {
     }
 
     pub fn from_image(img: Image) -> TextureData {
-        TextureData { width: img.width, height: img.height, format: PixelFormat::Rgba8, levels: vec![img.rgba], has_alpha: img.has_alpha, gpu_mips: true }
+        TextureData {
+            width: img.width,
+            height: img.height,
+            format: PixelFormat::Rgba8,
+            levels: vec![img.rgba],
+            has_alpha: img.has_alpha,
+            gpu_mips: true,
+        }
     }
 
     /// Drop the `n` largest levels (a texture kept at a lower resolution). Only for data
@@ -115,7 +129,10 @@ pub fn set_gpu_options(o: GpuOptions) {
 
 pub fn gpu_options() -> GpuOptions {
     let v = OPTIONS.load(Ordering::Relaxed);
-    GpuOptions { bc: v & 1 != 0, compress: v & 2 != 0 }
+    GpuOptions {
+        bc: v & 1 != 0,
+        compress: v & 2 != 0,
+    }
 }
 
 /// Smallest picture (texels) worth compressing: below this the saving is a few kilobytes.
@@ -144,7 +161,14 @@ pub struct Prepared {
 }
 
 /// Mip levels 1.. of `rgba` as blocks of `format`.
-fn encode_levels(mut rgba: Vec<u8>, mut w: u32, mut h: u32, format: PixelFormat, punch: bool, out: &mut Vec<Vec<u8>>) {
+fn encode_levels(
+    mut rgba: Vec<u8>,
+    mut w: u32,
+    mut h: u32,
+    format: PixelFormat,
+    punch: bool,
+    out: &mut Vec<Vec<u8>>,
+) {
     let full = mip_count(w, h);
     for _ in 1..full {
         let (next, nw, nh) = bc::downsample(&rgba, w, h);
@@ -190,15 +214,27 @@ pub fn prepare_image_with(img: Image, o: GpuOptions) -> (TextureData, Prepared) 
     // (the picture as read goes as soon as its resized copy is there)
     let img = if (nw, nh) != (img.width, img.height) {
         let rgba = bc::resize(&img.rgba, img.width, img.height, nw, nh);
-        Image { rgba, width: nw, height: nh, has_alpha: img.has_alpha }
+        Image {
+            rgba,
+            width: nw,
+            height: nh,
+            has_alpha: img.has_alpha,
+        }
     } else {
         img
     };
     let texels = nw as u64 * nh as u64;
     let opaque = !img.has_alpha || img.rgba.chunks_exact(4).all(|p| p[3] == 255);
-    let format = if opaque { PixelFormat::Bc1 } else { PixelFormat::Bc3 };
+    let format = if opaque {
+        PixelFormat::Bc1
+    } else {
+        PixelFormat::Bc3
+    };
     let (blocks, ec, ea) = bc::encode(&img.rgba, img.width, img.height, format.bc(false));
-    info.psnr = (psnr(ec, texels), if opaque { 99.0 } else { psnr(ea, texels) });
+    info.psnr = (
+        psnr(ec, texels),
+        if opaque { 99.0 } else { psnr(ea, texels) },
+    );
     if info.psnr.0 < MIN_PSNR_COLOUR || info.psnr.1 < MIN_PSNR_ALPHA {
         info.rejected = true;
         return (TextureData::from_image(img), info);
@@ -207,7 +243,17 @@ pub fn prepare_image_with(img: Image, o: GpuOptions) -> (TextureData, Prepared) 
     let mut levels = vec![blocks];
     let (w, h, has_alpha) = (img.width, img.height, img.has_alpha);
     encode_levels(img.rgba, w, h, format, false, &mut levels);
-    (TextureData { width: w, height: h, format, levels, has_alpha, gpu_mips: false }, info)
+    (
+        TextureData {
+            width: w,
+            height: h,
+            format,
+            levels,
+            has_alpha,
+            gpu_mips: false,
+        },
+        info,
+    )
 }
 
 /// Least alpha PSNR (dB) a compressed `[matl_bumpmap]` height map must keep: the renderer
@@ -220,7 +266,17 @@ pub const MIN_PSNR_BUMP: f64 = 40.0;
 /// [`MIN_PSNR_BUMP`] (`compress`), else RGBA with its mip chain made here - so that either
 /// can be made on a worker ([`TextureData::gpu_mips`] is off).
 pub fn prepare_bump(img: &Image, compress: bool) -> TextureData {
-    prepare_bump_with(img, if compress { gpu_options() } else { GpuOptions { bc: false, compress: false } })
+    prepare_bump_with(
+        img,
+        if compress {
+            gpu_options()
+        } else {
+            GpuOptions {
+                bc: false,
+                compress: false,
+            }
+        },
+    )
 }
 
 /// [`prepare_bump`] under the given options.
@@ -242,7 +298,14 @@ pub fn prepare_bump_with(img: &Image, o: GpuOptions) -> TextureData {
         ch = nh;
     }
     levels.push(cur);
-    TextureData { width: w, height: hh, format: PixelFormat::Rgba8, levels, has_alpha: true, gpu_mips: false }
+    TextureData {
+        width: w,
+        height: hh,
+        format: PixelFormat::Rgba8,
+        levels,
+        has_alpha: true,
+        gpu_mips: false,
+    }
 }
 
 /// A picture drawn without a mip chain (a tile's light map and ground masks) for the GPU:
@@ -253,21 +316,49 @@ pub fn prepare_single_level(img: Image, alpha_only: bool) -> (TextureData, Prepa
     let o = gpu_options();
     let mut info = Prepared::default();
     let texels = img.width as u64 * img.height as u64;
-    let plain = |img: Image| TextureData { gpu_mips: false, ..TextureData::from_image(img) };
-    if !(o.bc && o.compress) || img.width % 4 != 0 || img.height % 4 != 0 || texels < MIN_COMPRESS_TEXELS {
+    let plain = |img: Image| TextureData {
+        gpu_mips: false,
+        ..TextureData::from_image(img)
+    };
+    if !(o.bc && o.compress)
+        || img.width % 4 != 0
+        || img.height % 4 != 0
+        || texels < MIN_COMPRESS_TEXELS
+    {
         return (plain(img), info);
     }
     let binary = alpha_only && img.rgba.chunks_exact(4).all(|p| p[3] == 0 || p[3] == 255);
     let opaque = !img.has_alpha || img.rgba.chunks_exact(4).all(|p| p[3] == 255);
-    let (format, bcf) = if binary || opaque { (PixelFormat::Bc1, Bc::Bc1 { punch: binary }) } else { (PixelFormat::Bc3, Bc::Bc3) };
+    let (format, bcf) = if binary || opaque {
+        (PixelFormat::Bc1, Bc::Bc1 { punch: binary })
+    } else {
+        (PixelFormat::Bc3, Bc::Bc3)
+    };
     let (blocks, ec, ea) = bc::encode(&img.rgba, img.width, img.height, bcf);
-    info.psnr = (if alpha_only { 99.0 } else { psnr(ec, texels) }, if opaque || binary { 99.0 } else { psnr(ea, texels) });
+    info.psnr = (
+        if alpha_only { 99.0 } else { psnr(ec, texels) },
+        if opaque || binary {
+            99.0
+        } else {
+            psnr(ea, texels)
+        },
+    );
     if info.psnr.0 < MIN_PSNR_COLOUR || info.psnr.1 < MIN_PSNR_ALPHA {
         info.rejected = true;
         return (plain(img), info);
     }
     info.encoded = true;
-    (TextureData { width: img.width, height: img.height, format, levels: vec![blocks], has_alpha: img.has_alpha, gpu_mips: false }, info)
+    (
+        TextureData {
+            width: img.width,
+            height: img.height,
+            format,
+            levels: vec![blocks],
+            has_alpha: img.has_alpha,
+            gpu_mips: false,
+        },
+        info,
+    )
 }
 
 fn u32_at(b: &[u8], o: usize) -> u32 {
@@ -302,18 +393,27 @@ fn dds_blocks(bytes: &[u8]) -> Option<(PixelFormat, u32, u32, u32, usize)> {
         },
         _ => return None,
     };
-    if width == 0 || height == 0 || width as usize > crate::MAX_DIMENSION || height as usize > crate::MAX_DIMENSION {
+    if width == 0
+        || height == 0
+        || width as usize > crate::MAX_DIMENSION
+        || height as usize > crate::MAX_DIMENSION
+    {
         return None;
     }
     // writers disagree on the flag; a count above one is taken as it is
-    let mut count = if flags & 0x20000 != 0 || mips > 1 { mips.max(1) } else { 1 };
+    let mut count = if flags & 0x20000 != 0 || mips > 1 {
+        mips.max(1)
+    } else {
+        1
+    };
     count = count.min(mip_count(width, height));
     Some((format, width, height, count, offset))
 }
 
 /// Load a texture file for the GPU under the current options.
 pub fn load_gpu(path: &Path) -> Result<(TextureData, Prepared), TextureError> {
-    let bytes = omsi_cfg::vfs::read(path).map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
+    let bytes = omsi_cfg::vfs::read(path)
+        .map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
     load_gpu_bytes(&bytes, path, gpu_options())
 }
 
@@ -322,7 +422,8 @@ pub fn load_gpu(path: &Path) -> Result<(TextureData, Prepared), TextureError> {
 /// GPU makes (what the renderer did before). The flag says [`load_gpu`] would give a
 /// compressed texture, worth doing on a worker and swapping in.
 pub fn load_gpu_fast(path: &Path) -> Result<(TextureData, bool), TextureError> {
-    let bytes = omsi_cfg::vfs::read(path).map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
+    let bytes = omsi_cfg::vfs::read(path)
+        .map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
     let o = gpu_options();
     if o.bc {
         if let Some((_, w, h, count, _)) = dds_blocks(&bytes) {
@@ -335,7 +436,10 @@ pub fn load_gpu_fast(path: &Path) -> Result<(TextureData, bool), TextureError> {
     let img = crate::decode_bytes(&bytes, path)?;
     let texels = img.width as u64 * img.height as u64;
     let dxt = bytes.starts_with(b"DDS ") && dds_blocks(&bytes).is_some();
-    let worth = o.bc && (dxt || o.compress) && block_size(img.width, img.height).is_some() && texels >= MIN_COMPRESS_TEXELS;
+    let worth = o.bc
+        && (dxt || o.compress)
+        && block_size(img.width, img.height).is_some()
+        && texels >= MIN_COMPRESS_TEXELS;
     Ok((TextureData::from_image(img), worth))
 }
 
@@ -346,10 +450,19 @@ pub fn halved_for_now(t: TextureData) -> TextureData {
         return t;
     }
     let (rgba, w, h) = bc::downsample(&t.levels[0], t.width, t.height);
-    TextureData { width: w, height: h, levels: vec![rgba], ..t }
+    TextureData {
+        width: w,
+        height: h,
+        levels: vec![rgba],
+        ..t
+    }
 }
 
-pub fn load_gpu_bytes(bytes: &[u8], path: &Path, o: GpuOptions) -> Result<(TextureData, Prepared), TextureError> {
+pub fn load_gpu_bytes(
+    bytes: &[u8],
+    path: &Path,
+    o: GpuOptions,
+) -> Result<(TextureData, Prepared), TextureError> {
     if o.bc {
         if let Some((format, w, h, count, offset)) = dds_blocks(bytes) {
             if w % 4 == 0 && h % 4 == 0 {
@@ -365,14 +478,25 @@ pub fn load_gpu_bytes(bytes: &[u8], path: &Path, o: GpuOptions) -> Result<(Textu
                     at += n;
                 }
                 if !levels.is_empty() {
-                    let has_alpha = format != PixelFormat::Bc1 || levels[0].chunks_exact(8).any(bc::bc1_block_has_alpha);
+                    let has_alpha = format != PixelFormat::Bc1
+                        || levels[0].chunks_exact(8).any(bc::bc1_block_has_alpha);
                     // a single level gets its chain like D3DX makes it: filtered in RGBA and
                     // compressed again (the top level stays the file's own)
                     if levels.len() == 1 && mip_count(w, h) > 1 {
                         let rgba = bc::decode(&levels[0], w, h, format.bc(has_alpha));
                         encode_levels(rgba, w, h, format, has_alpha, &mut levels);
                     }
-                    return Ok((TextureData { width: w, height: h, format, levels, has_alpha, gpu_mips: false }, Prepared::default()));
+                    return Ok((
+                        TextureData {
+                            width: w,
+                            height: h,
+                            format,
+                            levels,
+                            has_alpha,
+                            gpu_mips: false,
+                        },
+                        Prepared::default(),
+                    ));
                 }
             }
         }
@@ -402,7 +526,10 @@ mod tests {
 
     #[test]
     fn dxt_files_keep_their_blocks_and_chain() {
-        let on = GpuOptions { bc: true, compress: true };
+        let on = GpuOptions {
+            bc: true,
+            compress: true,
+        };
         // 8x8 DXT5 with its full chain (8x8, 4x4, 2x2, 1x1 = 4 + 1 + 1 + 1 blocks)
         let blocks: Vec<u8> = (0..7 * 16).map(|i| i as u8).collect();
         let f = dds(b"DXT5", 8, 8, 4, &blocks);
@@ -413,16 +540,32 @@ mod tests {
         assert_eq!(t.levels[3], blocks[96..112]);
         assert!(t.has_alpha);
         // a DXT1 without a chain gets one made; its top level stays the file's
-        let opaque: Vec<u8> = (0..16).flat_map(|i| [0xFF, 0xF0 - i as u8, 0x10, 0x00, 0x1B, 0x6C, 0xC6, 0x00]).collect();
+        let opaque: Vec<u8> = (0..16)
+            .flat_map(|i| [0xFF, 0xF0 - i as u8, 0x10, 0x00, 0x1B, 0x6C, 0xC6, 0x00])
+            .collect();
         let f = dds(b"DXT1", 16, 16, 1, &opaque);
         let (t, _) = load_gpu_bytes(&f, Path::new("x.dds"), on).unwrap();
         assert_eq!((t.format, t.levels.len()), (PixelFormat::Bc1, 5));
         assert_eq!(t.levels[0], opaque);
         assert!(!t.has_alpha);
-        assert_eq!(t.levels.iter().map(|l| l.len()).collect::<Vec<_>>(), vec![128, 32, 8, 8, 8]);
+        assert_eq!(
+            t.levels.iter().map(|l| l.len()).collect::<Vec<_>>(),
+            vec![128, 32, 8, 8, 8]
+        );
         // without block support the same file is decoded
-        let (t, _) = load_gpu_bytes(&f, Path::new("x.dds"), GpuOptions { bc: false, compress: false }).unwrap();
-        assert_eq!((t.format, t.levels.len(), t.levels[0].len()), (PixelFormat::Rgba8, 1, 16 * 16 * 4));
+        let (t, _) = load_gpu_bytes(
+            &f,
+            Path::new("x.dds"),
+            GpuOptions {
+                bc: false,
+                compress: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (t.format, t.levels.len(), t.levels[0].len()),
+            (PixelFormat::Rgba8, 1, 16 * 16 * 4)
+        );
         // a truncated chain keeps the levels that are there
         let f = dds(b"DXT5", 8, 8, 4, &blocks[..80]);
         let (t, _) = load_gpu_bytes(&f, Path::new("x.dds"), on).unwrap();
@@ -431,26 +574,57 @@ mod tests {
 
     #[test]
     fn bump_maps_keep_their_heights() {
-        let on = GpuOptions { bc: true, compress: true };
-        let off = GpuOptions { bc: true, compress: false };
+        let on = GpuOptions {
+            bc: true,
+            compress: true,
+        };
+        let off = GpuOptions {
+            bc: true,
+            compress: false,
+        };
         // a smooth slope compresses within the bound
         let (w, h) = (128u32, 128u32);
-        let grey: Vec<u8> = (0..w * h).flat_map(|i| {
-            let v = (i % w) as u8;
-            [v, v, v, 255]
-        }).collect();
-        let img = Image { width: w, height: h, rgba: grey, has_alpha: false };
+        let grey: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let v = (i % w) as u8;
+                [v, v, v, 255]
+            })
+            .collect();
+        let img = Image {
+            width: w,
+            height: h,
+            rgba: grey,
+            has_alpha: false,
+        };
         let t = prepare_bump_with(&img, on);
-        assert_eq!((t.format, t.width, t.height, t.gpu_mips), (PixelFormat::Bc3, w, h, false));
+        assert_eq!(
+            (t.format, t.width, t.height, t.gpu_mips),
+            (PixelFormat::Bc3, w, h, false)
+        );
         let back = bc::decode(&t.levels[0], w, h, Bc::Bc3);
-        assert!(back.chunks_exact(4).zip(img.rgba.chunks_exact(4)).all(|(b, s)| (b[3] as i32 - s[0] as i32).abs() <= 4 && b[0] == 255));
+        assert!(
+            back.chunks_exact(4)
+                .zip(img.rgba.chunks_exact(4))
+                .all(|(b, s)| (b[3] as i32 - s[0] as i32).abs() <= 4 && b[0] == 255)
+        );
         // uncompressed: white with the height in alpha and a full chain of its own
         let t = prepare_bump_with(&img, off);
-        assert_eq!((t.format, t.levels.len(), t.gpu_mips), (PixelFormat::Rgba8, 8, false));
+        assert_eq!(
+            (t.format, t.levels.len(), t.gpu_mips),
+            (PixelFormat::Rgba8, 8, false)
+        );
         assert_eq!(&t.levels[0][..8], &[255, 255, 255, 0, 255, 255, 255, 1]);
         assert_eq!(t.levels[7].len(), 4);
         // a 3x1 map keeps its odd size
-        let t = prepare_bump_with(&Image { width: 3, height: 1, rgba: vec![9; 12], has_alpha: false }, on);
+        let t = prepare_bump_with(
+            &Image {
+                width: 3,
+                height: 1,
+                rgba: vec![9; 12],
+                has_alpha: false,
+            },
+            on,
+        );
         assert_eq!((t.width, t.height, t.levels.len()), (3, 1, 2));
     }
 
@@ -460,7 +634,15 @@ mod tests {
         let blk = [0x00u8, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let blocks: Vec<u8> = blk.iter().cycle().take(8 * 4).copied().collect();
         let f = dds(b"DXT1", 8, 8, 1, &blocks);
-        let (t, _) = load_gpu_bytes(&f, Path::new("x.dds"), GpuOptions { bc: true, compress: false }).unwrap();
+        let (t, _) = load_gpu_bytes(
+            &f,
+            Path::new("x.dds"),
+            GpuOptions {
+                bc: true,
+                compress: false,
+            },
+        )
+        .unwrap();
         assert!(t.has_alpha);
         // its made levels keep the holes
         let back = bc::decode(&t.levels[1], 4, 4, Bc::Bc1 { punch: true });
@@ -470,24 +652,83 @@ mod tests {
     #[test]
     fn pictures_are_compressed_when_close_enough() {
         let (w, h) = (128u32, 128u32);
-        let smooth: Vec<u8> = (0..w * h).flat_map(|i| [(i % w) as u8, (i / w) as u8, 100, 255]).collect();
-        let img = Image { width: w, height: h, rgba: smooth, has_alpha: false };
-        let (t, info) = prepare_image_with(img.clone(), GpuOptions { bc: true, compress: true });
+        let smooth: Vec<u8> = (0..w * h)
+            .flat_map(|i| [(i % w) as u8, (i / w) as u8, 100, 255])
+            .collect();
+        let img = Image {
+            width: w,
+            height: h,
+            rgba: smooth,
+            has_alpha: false,
+        };
+        let (t, info) = prepare_image_with(
+            img.clone(),
+            GpuOptions {
+                bc: true,
+                compress: true,
+            },
+        );
         assert_eq!(t.format, PixelFormat::Bc1);
         assert_eq!(t.levels.len(), 8);
         assert!(info.encoded && info.psnr.0 > 40.0, "{info:?}");
         // off: stays RGBA
-        let (t, _) = prepare_image_with(img, GpuOptions { bc: true, compress: false });
+        let (t, _) = prepare_image_with(
+            img,
+            GpuOptions {
+                bc: true,
+                compress: false,
+            },
+        );
         assert_eq!(t.format, PixelFormat::Rgba8);
         // alpha → BC3
-        let soft: Vec<u8> = (0..w * h).flat_map(|i| [50, 60, 70, (i % w) as u8 * 2]).collect();
-        let (t, _) = prepare_image_with(Image { width: w, height: h, rgba: soft, has_alpha: true }, GpuOptions { bc: true, compress: true });
+        let soft: Vec<u8> = (0..w * h)
+            .flat_map(|i| [50, 60, 70, (i % w) as u8 * 2])
+            .collect();
+        let (t, _) = prepare_image_with(
+            Image {
+                width: w,
+                height: h,
+                rgba: soft,
+                has_alpha: true,
+            },
+            GpuOptions {
+                bc: true,
+                compress: true,
+            },
+        );
         assert_eq!(t.format, PixelFormat::Bc3);
         // small odd sizes and tiny pictures stay RGBA, big odd ones are resized a little
-        let img = Image { width: 130, height: 126, rgba: vec![0; 130 * 126 * 4], has_alpha: false };
-        assert_eq!(prepare_image_with(img, GpuOptions { bc: true, compress: true }).0.format, PixelFormat::Rgba8);
-        let img = Image { width: 130, height: 131, rgba: vec![7; 130 * 131 * 4], has_alpha: false };
-        let (t, _) = prepare_image_with(img, GpuOptions { bc: true, compress: true });
+        let img = Image {
+            width: 130,
+            height: 126,
+            rgba: vec![0; 130 * 126 * 4],
+            has_alpha: false,
+        };
+        assert_eq!(
+            prepare_image_with(
+                img,
+                GpuOptions {
+                    bc: true,
+                    compress: true
+                }
+            )
+            .0
+            .format,
+            PixelFormat::Rgba8
+        );
+        let img = Image {
+            width: 130,
+            height: 131,
+            rgba: vec![7; 130 * 131 * 4],
+            has_alpha: false,
+        };
+        let (t, _) = prepare_image_with(
+            img,
+            GpuOptions {
+                bc: true,
+                compress: true,
+            },
+        );
         assert_eq!((t.format, t.width, t.height), (PixelFormat::Bc1, 132, 132));
         assert_eq!(block_size(2550, 2550), Some((2552, 2552)));
         assert_eq!(block_size(2000, 447), Some((2000, 448)));
@@ -501,7 +742,18 @@ mod tests {
                 if i % 4 == 3 { 255 } else { (s >> 16) as u8 }
             })
             .collect();
-        let (t, info) = prepare_image_with(Image { width: w, height: h, rgba: noise, has_alpha: false }, GpuOptions { bc: true, compress: true });
+        let (t, info) = prepare_image_with(
+            Image {
+                width: w,
+                height: h,
+                rgba: noise,
+                has_alpha: false,
+            },
+            GpuOptions {
+                bc: true,
+                compress: true,
+            },
+        );
         assert_eq!(t.format, PixelFormat::Rgba8);
         assert!(info.rejected);
     }
@@ -509,34 +761,99 @@ mod tests {
     #[test]
     fn tile_masks_stay_single_level() {
         let _g = crate::gpu::tests::OPTIONS_LOCK.lock();
-        set_gpu_options(GpuOptions { bc: true, compress: true });
+        set_gpu_options(GpuOptions {
+            bc: true,
+            compress: true,
+        });
         let (w, h) = (128u32, 128u32);
         // a cut mask: white, alpha 0 or 255 → 1-bit BC1, exact
-        let cut: Vec<u8> = (0..w * h).flat_map(|i| [255, 255, 255, if (i % w) < 40 { 0 } else { 255 }]).collect();
-        let (t, info) = prepare_single_level(Image { width: w, height: h, rgba: cut.clone(), has_alpha: true }, true);
-        assert_eq!((t.format, t.levels.len(), t.gpu_mips), (PixelFormat::Bc1, 1, false));
+        let cut: Vec<u8> = (0..w * h)
+            .flat_map(|i| [255, 255, 255, if (i % w) < 40 { 0 } else { 255 }])
+            .collect();
+        let (t, info) = prepare_single_level(
+            Image {
+                width: w,
+                height: h,
+                rgba: cut.clone(),
+                has_alpha: true,
+            },
+            true,
+        );
+        assert_eq!(
+            (t.format, t.levels.len(), t.gpu_mips),
+            (PixelFormat::Bc1, 1, false)
+        );
         assert!(info.encoded);
         let back = bc::decode(&t.levels[0], w, h, Bc::Bc1 { punch: true });
-        assert!(cut.chunks_exact(4).zip(back.chunks_exact(4)).all(|(a, b)| a[3] == b[3]));
+        assert!(
+            cut.chunks_exact(4)
+                .zip(back.chunks_exact(4))
+                .all(|(a, b)| a[3] == b[3])
+        );
         // a soft paint mask → BC3
-        let soft: Vec<u8> = (0..w * h).flat_map(|i| [255, 255, 255, (i % w) as u8]).collect();
-        let (t, _) = prepare_single_level(Image { width: w, height: h, rgba: soft, has_alpha: true }, true);
+        let soft: Vec<u8> = (0..w * h)
+            .flat_map(|i| [255, 255, 255, (i % w) as u8])
+            .collect();
+        let (t, _) = prepare_single_level(
+            Image {
+                width: w,
+                height: h,
+                rgba: soft,
+                has_alpha: true,
+            },
+            true,
+        );
         assert_eq!((t.format, t.levels.len()), (PixelFormat::Bc3, 1));
         // off: RGBA, still one level
-        set_gpu_options(GpuOptions { bc: false, compress: false });
-        let (t, _) = prepare_single_level(Image { width: w, height: h, rgba: cut, has_alpha: true }, true);
-        assert_eq!((t.format, t.gpu_mips, t.gpu_bytes()), (PixelFormat::Rgba8, false, (w * h * 4) as u64));
+        set_gpu_options(GpuOptions {
+            bc: false,
+            compress: false,
+        });
+        let (t, _) = prepare_single_level(
+            Image {
+                width: w,
+                height: h,
+                rgba: cut,
+                has_alpha: true,
+            },
+            true,
+        );
+        assert_eq!(
+            (t.format, t.gpu_mips, t.gpu_bytes()),
+            (PixelFormat::Rgba8, false, (w * h * 4) as u64)
+        );
     }
 
     pub(crate) static OPTIONS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
     #[test]
     fn sizes() {
-        let t = TextureData { width: 256, height: 128, format: PixelFormat::Bc1, levels: vec![vec![0; 64 * 32 * 8]], has_alpha: false, gpu_mips: false };
+        let t = TextureData {
+            width: 256,
+            height: 128,
+            format: PixelFormat::Bc1,
+            levels: vec![vec![0; 64 * 32 * 8]],
+            has_alpha: false,
+            gpu_mips: false,
+        };
         assert_eq!(t.gpu_bytes(), (64 * 32 * 8) as u64);
-        let t = TextureData { width: 4, height: 4, format: PixelFormat::Rgba8, levels: vec![vec![0; 64]], has_alpha: false, gpu_mips: true };
+        let t = TextureData {
+            width: 4,
+            height: 4,
+            format: PixelFormat::Rgba8,
+            levels: vec![vec![0; 64]],
+            has_alpha: false,
+            gpu_mips: true,
+        };
         assert_eq!(t.gpu_bytes(), 64 + 16 + 4);
-        assert_eq!(TextureData { gpu_mips: false, ..t }.gpu_bytes(), 64);
+        assert_eq!(
+            TextureData {
+                gpu_mips: false,
+                ..t
+            }
+            .gpu_bytes(),
+            64
+        );
         assert_eq!(mip_count(256, 128), 9);
         assert_eq!(PixelFormat::Bc3.level_bytes(1, 1), 16);
     }

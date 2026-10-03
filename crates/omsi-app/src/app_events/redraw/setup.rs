@@ -14,7 +14,10 @@ impl App {
         }
         if (!self.vr_active() || self.player.is_none())
             && matches!(self.list_kind, Some(game_lists::ListKind::Options(_)))
-            && self.admin_list.as_ref().is_some_and(|rows| rows.iter().any(|(_, action)| action.starts_with("vr_nav_")))
+            && self
+                .admin_list
+                .as_ref()
+                .is_some_and(|rows| rows.iter().any(|(_, action)| action.starts_with("vr_nav_")))
         {
             self.open_list(game_lists::ListKind::Options(0));
         }
@@ -24,7 +27,11 @@ impl App {
             self.autosave_t = self.clock.run_time;
             self.save_last_situation();
         }
-        if let Some(t) = self.pending_time.take().filter(|_| !self.real_time_locked()) {
+        if let Some(t) = self
+            .pending_time
+            .take()
+            .filter(|_| !self.real_time_locked())
+        {
             let d = (t - self.clock.time + 43_200.0).rem_euclid(86_400.0) - 43_200.0;
             self.shift_clock(d);
         }
@@ -33,12 +40,23 @@ impl App {
         // summary, the personnel file and the LAN goodbye are not lost
         // the card ran out of memory: fewer textures (the finest levels of the far
         // ones go), before the driver gives the device up
-        if self.renderer.as_ref().is_some_and(|r| r.take_out_of_memory()) {
+        if self
+            .renderer
+            .as_ref()
+            .is_some_and(|r| r.take_out_of_memory())
+        {
             if let Some(w) = self.world.as_ref() {
                 let now = w.texture_budget_bytes();
-                let less = if now == 0 { 600_000_000 } else { (now * 3 / 5).max(300_000_000) };
+                let less = if now == 0 {
+                    600_000_000
+                } else {
+                    (now * 3 / 5).max(300_000_000)
+                };
                 w.set_texture_budget(less);
-                log::warn!("the graphics card ran out of memory: textures kept to {:.0} MB from now on", less as f64 / 1e6);
+                log::warn!(
+                    "the graphics card ran out of memory: textures kept to {:.0} MB from now on",
+                    less as f64 / 1e6
+                );
             }
         }
         if let Some(why) = self.renderer.as_ref().and_then(|r| r.device_lost()) {
@@ -69,7 +87,8 @@ impl App {
         let raw_dt = (now - self.last).as_secs_f32();
         self.log_frame(raw_dt);
         let profiling = omsi_cfg::env::var_os("OMSI_PROFILE").is_some();
-        let waited: f64 = ["acquire", "present", "gpu"].iter()
+        let waited: f64 = ["acquire", "present", "gpu"]
+            .iter()
             .map(|&k| self.profile.get(k).copied().unwrap_or(0.0))
             .sum();
         let wait_this_frame = (waited - self.governor_wait_prev).max(0.0) as f32;
@@ -81,9 +100,7 @@ impl App {
                     let mut parts: Vec<(&'static str, f64)> = self
                         .profile
                         .iter()
-                        .map(|(k, v)| {
-                            (*k, v - self.profile_prev.get(k).copied().unwrap_or(0.0))
-                        })
+                        .map(|(k, v)| (*k, v - self.profile_prev.get(k).copied().unwrap_or(0.0)))
                         .collect();
                     let staged: f64 = parts
                         .iter()
@@ -129,18 +146,28 @@ impl App {
                     let step = render_scale_step(fps, wait_share);
                     r.set_dynamic_scale(s + step);
                     if (r.dynamic_scale() - s).abs() > 1e-3 {
-                        log::info!("frame rate {fps:.0} fps (presentation wait {:.0}%): the 3D picture is drawn at {:.0} % of the window now", wait_share * 100.0, r.dynamic_scale() * 100.0);
+                        log::info!(
+                            "frame rate {fps:.0} fps (presentation wait {:.0}%): the 3D picture is drawn at {:.0} % of the window now",
+                            wait_share * 100.0,
+                            r.dynamic_scale() * 100.0
+                        );
                         self.governor_low = 0;
                     } else if step < 0.0 {
                         self.governor_low += 1;
                         if self.governor_low >= 2 && fps < 30.0 {
                             self.governor_low = 0;
                             let what = r.lighten().or_else(|| {
-                                std::mem::replace(&mut self.settings.shadows, false).then_some("shadows off")
+                                std::mem::replace(&mut self.settings.shadows, false)
+                                    .then_some("shadows off")
                             });
                             if let Some(what) = what {
-                                log::warn!("frame rate {fps:.0} fps at the smallest render scale: {what} to keep up");
-                                self.service_msg = Some((format!("The graphics card cannot keep up: {what}"), 4.0));
+                                log::warn!(
+                                    "frame rate {fps:.0} fps at the smallest render scale: {what} to keep up"
+                                );
+                                self.service_msg = Some((
+                                    format!("The graphics card cannot keep up: {what}"),
+                                    4.0,
+                                ));
                             }
                         }
                     }
@@ -160,11 +187,7 @@ impl App {
         if let Some(m) = self.menu.as_ref() {
             if let Some(limit) = self.args.exit_after {
                 if self.started.elapsed().as_secs_f32() > limit {
-                    log::info!(
-                        "menu: {} maps, {} vehicles",
-                        m.maps.len(),
-                        m.vehicles.len()
-                    );
+                    log::info!("menu: {} maps, {} vehicles", m.maps.len(), m.vehicles.len());
                     platform::exit(event_loop);
                 }
             }

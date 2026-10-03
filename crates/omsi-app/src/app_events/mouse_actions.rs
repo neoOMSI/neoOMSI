@@ -4,7 +4,10 @@ use super::*;
 
 impl App {
     pub(crate) fn wheel(&mut self, amount: f32) {
-        if self.vr_nav_edit.is_some() { self.vr_nav_scroll(amount); return; }
+        if self.vr_nav_edit.is_some() {
+            self.vr_nav_scroll(amount);
+            return;
+        }
         if self.game_menu.is_none() && self.editor_wheel(amount) {
             return;
         }
@@ -27,12 +30,12 @@ impl App {
             }
         }
         if self.hover.is_some() && self.view != "free" {
-            let ray = self.camera.as_ref().zip(self.surface.as_ref())
+            let ray = self
+                .camera
+                .as_ref()
+                .zip(self.surface.as_ref())
                 .map(|(cam, s)| self.cockpit_cursor_ray(cam, (s.config.width, s.config.height)));
-            if let (Some(p), Some((o, d, spread))) = (
-                self.player.as_mut(),
-                ray,
-            ) {
+            if let (Some(p), Some((o, d, spread))) = (self.player.as_mut(), ray) {
                 p.occlude_controls = self.view == "outside";
                 if p.pick(o, d, spread).is_some() {
                     // a notch is worth a good push of the mouse: the scripts divide
@@ -43,7 +46,8 @@ impl App {
                 }
             }
         }
-        let ctrl = self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
+        let ctrl =
+            self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
         if self.view == "outside" && self.player.is_some() && ctrl {
             // Ctrl+wheel: the outside camera stays where it is and narrows its field of view
             // (a telephoto; OMSI's own zoom there only moves the camera, as the wheel does)
@@ -61,8 +65,15 @@ impl App {
     }
 
     pub(crate) fn left_button(&mut self, event_loop: &ActiveEventLoop, pressed: bool) {
-        if let Some(edit) = self.vr_nav_edit.as_mut() { edit.moving = pressed; return; }
-        let state = if pressed { ElementState::Pressed } else { ElementState::Released };
+        if let Some(edit) = self.vr_nav_edit.as_mut() {
+            edit.moving = pressed;
+            return;
+        }
+        let state = if pressed {
+            ElementState::Pressed
+        } else {
+            ElementState::Released
+        };
         if self.placing.is_some() && self.game_menu.is_none() {
             if state == ElementState::Pressed {
                 self.placing_click();
@@ -83,8 +94,18 @@ impl App {
             }
 
             if self.dropdown.is_some() {
-                let inside = |r: &[f32; 4]| self.cursor.0 >= r[0] && self.cursor.0 <= r[2] && self.cursor.1 >= r[1] && self.cursor.1 <= r[3];
-                let hit = self.ui.as_ref().and_then(|u| u.dd_rects.iter().position(|r| inside(r)).map(|i| i + u.dd_top));
+                let inside = |r: &[f32; 4]| {
+                    self.cursor.0 >= r[0]
+                        && self.cursor.0 <= r[2]
+                        && self.cursor.1 >= r[1]
+                        && self.cursor.1 <= r[3]
+                };
+                let hit = self.ui.as_ref().and_then(|u| {
+                    u.dd_rects
+                        .iter()
+                        .position(|r| inside(r))
+                        .map(|i| i + u.dd_top)
+                });
                 match hit {
                     Some(i) => self.dropdown_pick(i),
                     None => self.dropdown = None,
@@ -93,11 +114,7 @@ impl App {
             }
 
             if state == ElementState::Pressed {
-                if let Some(thumb) = self
-                    .ui
-                    .as_ref()
-                    .and_then(|u| u.menu_scroll_thumb)
-                {
+                if let Some(thumb) = self.ui.as_ref().and_then(|u| u.menu_scroll_thumb) {
                     if self.cursor.0 >= thumb[0]
                         && self.cursor.0 <= thumb[2]
                         && self.cursor.1 >= thumb[1]
@@ -125,14 +142,22 @@ impl App {
 
                 if self.chooser.is_some() {
                     let pane = self.ui.as_ref().and_then(|u| {
-                        let inside = |r: &[f32; 4]| self.cursor.0 >= r[0] && self.cursor.0 <= r[2] && self.cursor.1 >= r[1] && self.cursor.1 <= r[3];
+                        let inside = |r: &[f32; 4]| {
+                            self.cursor.0 >= r[0]
+                                && self.cursor.0 <= r[2]
+                                && self.cursor.1 >= r[1]
+                                && self.cursor.1 <= r[3]
+                        };
                         if u.menu_pane_go.as_ref().is_some_and(inside) {
                             return Some(usize::MAX);
                         }
                         if let Some(j) = u.menu_time.iter().position(inside) {
                             return Some(usize::MAX - 1 - j);
                         }
-                        u.menu_pane.iter().position(inside).map(|i| i + u.menu_pane_start)
+                        u.menu_pane
+                            .iter()
+                            .position(inside)
+                            .map(|i| i + u.menu_pane_start)
                     });
                     if let Some(i) = pane {
                         self.tour_pane_click(i);
@@ -141,7 +166,16 @@ impl App {
                 }
 
                 if self.chooser.is_some() && self.key_capture.is_none() {
-                    let on_field = self.ui.as_ref().and_then(|u| u.menu_search).is_some_and(|r| self.cursor.0 >= r[0] && self.cursor.0 <= r[2] && self.cursor.1 >= r[1] && self.cursor.1 <= r[3]);
+                    let on_field = self
+                        .ui
+                        .as_ref()
+                        .and_then(|u| u.menu_search)
+                        .is_some_and(|r| {
+                            self.cursor.0 >= r[0]
+                                && self.cursor.0 <= r[2]
+                                && self.cursor.1 >= r[1]
+                                && self.cursor.1 <= r[3]
+                        });
                     if on_field {
                         self.key_search_start();
                         return;
@@ -161,21 +195,21 @@ impl App {
                 });
 
                 if let Some(row) = hit {
-                    let k = row
-                        + self
+                    let k = row + self.ui.as_ref().map(|u| u.menu_start).unwrap_or(0);
+                    let ctl = self
                         .ui
                         .as_ref()
-                        .map(|u| u.menu_start)
-                        .unwrap_or(0);
-                    let ctl = self.ui.as_ref().and_then(|u| u.menu_ctl.get(row).copied().flatten());
+                        .and_then(|u| u.menu_ctl.get(row).copied().flatten());
 
                     if self.menu_item_off(k) {
                         return;
                     }
 
                     if let Some(c) = ctl {
-                        if self.chooser.is_some() && self.cursor.0 >= c[0] && self.cursor.0 <= c[2] {
-                            let fx = ((self.cursor.0 - c[0]) / (c[2] - c[0]).max(1.0)).clamp(0.0, 1.0);
+                        if self.chooser.is_some() && self.cursor.0 >= c[0] && self.cursor.0 <= c[2]
+                        {
+                            let fx =
+                                ((self.cursor.0 - c[0]) / (c[2] - c[0]).max(1.0)).clamp(0.0, 1.0);
                             self.chooser = Some(k);
                             if self.list_click(k, fx) {
                                 self.menu_drag = Some(k);
@@ -188,7 +222,9 @@ impl App {
                         self.game_menu = Some(k);
                     }
 
-                    if matches!(self.list_kind, Some(game_lists::ListKind::Tours(..))) && game_lists::tour_at(self, k).is_some() {
+                    if matches!(self.list_kind, Some(game_lists::ListKind::Tours(..)))
+                        && game_lists::tour_at(self, k).is_some()
+                    {
                         self.chooser = Some(k);
                         if let Some(game_lists::ListKind::Tours(line, _)) = self.list_kind.clone() {
                             self.list_kind = Some(game_lists::ListKind::Tours(line, None));
@@ -196,9 +232,14 @@ impl App {
                         return;
                     }
 
-                    let arrows = self.ui.as_ref().and_then(|u| u.menu_arrows.get(row).copied().flatten());
+                    let arrows = self
+                        .ui
+                        .as_ref()
+                        .and_then(|u| u.menu_arrows.get(row).copied().flatten());
                     match arrows {
-                        Some([from, to, _]) if self.cursor.0 >= from && self.cursor.0 < to => self.chooser_adjust(k, "-"),
+                        Some([from, to, _]) if self.cursor.0 >= from && self.cursor.0 < to => {
+                            self.chooser_adjust(k, "-")
+                        }
                         Some([_, _, plus]) if self.cursor.0 >= plus => self.chooser_adjust(k, "+"),
                         _ => self.menu_choose(event_loop, k),
                     }

@@ -40,12 +40,20 @@ pub(crate) fn physical_memory() -> Option<u64> {
     #[cfg(windows)]
     {
         use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-        let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+        let mut m = MEMORYSTATUSEX {
+            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+            ..Default::default()
+        };
         // SAFETY: a MEMORYSTATUSEX with its length set, as the call wants it
         unsafe { GlobalMemoryStatusEx(&mut m) }.ok()?;
         (m.ullTotalPhys > 0).then_some(m.ullTotalPhys)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
     {
         None
     }
@@ -65,7 +73,10 @@ pub(crate) fn texture_budget(settings: &settings::Settings) -> u64 {
         // #323)
         let card = omsi_render::ADAPTER_TEXTURE_MB.load(std::sync::atomic::Ordering::Relaxed);
         if card > 0 && mb > card * 5 / 4 {
-            log::warn!("texture memory {mb} MB is more than the graphics card holds: {} MB", card * 5 / 4);
+            log::warn!(
+                "texture memory {mb} MB is more than the graphics card holds: {} MB",
+                card * 5 / 4
+            );
             return card * 5 / 4 * 1_000_000;
         }
         return mb * 1_000_000;
@@ -76,7 +87,10 @@ pub(crate) fn texture_budget(settings: &settings::Settings) -> u64 {
     // (and no more than 2.5 GB: since Windows reads its memory as well - 0.1.237 - a PC
     // with 32 or 64 GB let the textures grow to 4-8 GB, the game took 9 GB at the start and
     // ran at single-digit frame rates, #277; the setting still gives more when asked)
-    let ram = physical_memory().map(|m| m / 8).unwrap_or(2_000_000_000).min(2_500_000_000);
+    let ram = physical_memory()
+        .map(|m| m / 8)
+        .unwrap_or(2_000_000_000)
+        .min(2_500_000_000);
     match omsi_render::ADAPTER_TEXTURE_MB.load(std::sync::atomic::Ordering::Relaxed) {
         0 => ram.min(1_600_000_000),
         g => ram.min(g * 1_000_000),

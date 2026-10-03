@@ -3,27 +3,51 @@
 use super::*;
 
 pub(crate) fn tour_start(tour: &omsi_timetable::Tour) -> Option<f64> {
-    tour.trips.iter().map(|t| t.departure as f64 * 60.0).fold(None, |a: Option<f64>, d| Some(a.map_or(d, |x| x.min(d))))
+    tour.trips
+        .iter()
+        .map(|t| t.departure as f64 * 60.0)
+        .fold(None, |a: Option<f64>, d| Some(a.map_or(d, |x| x.min(d))))
 }
 
 /// Whether a tour is listed now: it runs on this day and is current at `now` (seconds of the
 /// day) - under way, or leaving within half an hour; one that has finished is not.
-pub(super) fn tour_listed(sch: &crate::schedule::Schedule, line: &str, tour: &omsi_timetable::Tour, now: f64) -> bool {
+pub(super) fn tour_listed(
+    sch: &crate::schedule::Schedule,
+    line: &str,
+    tour: &omsi_timetable::Tour,
+    now: f64,
+) -> bool {
     if !sch.tour_available(tour) {
         return false;
     }
     let start = tour_start(tour).unwrap_or(0.0);
-    let end = sch.tour_stops(line, &tour.number).iter().map(|s| s.3).fold(start, f64::max);
+    let end = sch
+        .tour_stops(line, &tour.number)
+        .iter()
+        .map(|s| s.3)
+        .fold(start, f64::max);
     // (a night tour's times go on past 24:00: the early hours of the next day count too)
-    [now, now + 86400.0].iter().any(|n| *n >= start - 1800.0 && *n <= end + 60.0)
+    [now, now + 86400.0]
+        .iter()
+        .any(|n| *n >= start - 1800.0 && *n <= end + 60.0)
 }
 
-pub(super) fn line_sign(schedule: Option<&crate::schedule::Schedule>, line: &omsi_timetable::Line) -> String {
+pub(super) fn line_sign(
+    schedule: Option<&crate::schedule::Schedule>,
+    line: &omsi_timetable::Line,
+) -> String {
     let sign = schedule.and_then(|sch| {
-        line.tours.iter().flat_map(|t| t.trips.iter()).find_map(|tt| {
-            let t = sch.data.trips.iter().find(|x| x.name.eq_ignore_ascii_case(&tt.trip))?;
-            Some(t.line.trim().to_string()).filter(|n| !n.is_empty())
-        })
+        line.tours
+            .iter()
+            .flat_map(|t| t.trips.iter())
+            .find_map(|tt| {
+                let t = sch
+                    .data
+                    .trips
+                    .iter()
+                    .find(|x| x.name.eq_ignore_ascii_case(&tt.trip))?;
+                Some(t.line.trim().to_string()).filter(|n| !n.is_empty())
+            })
     });
     sign.unwrap_or_else(|| line.name.clone())
 }
@@ -34,17 +58,29 @@ pub(super) fn sorted_tours(line: &omsi_timetable::Line) -> Vec<&omsi_timetable::
     let mut tours: Vec<&omsi_timetable::Tour> = line.tours.iter().collect();
     tours.sort_by(|a, b| {
         bus_cmp(a.number.trim(), b.number.trim()).then_with(|| {
-            let (ta, tb) = (tour_start(a).unwrap_or(f64::MAX), tour_start(b).unwrap_or(f64::MAX));
+            let (ta, tb) = (
+                tour_start(a).unwrap_or(f64::MAX),
+                tour_start(b).unwrap_or(f64::MAX),
+            );
             ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal)
         })
     });
     tours
 }
 
-pub(super) fn tour_trip_name(sch: &crate::schedule::Schedule, tour: &omsi_timetable::Tour, k: usize) -> Option<String> {
+pub(super) fn tour_trip_name(
+    sch: &crate::schedule::Schedule,
+    tour: &omsi_timetable::Tour,
+    k: usize,
+) -> Option<String> {
     tour.trips
         .iter()
-        .filter(|tt| sch.data.trips.iter().any(|x| x.name.eq_ignore_ascii_case(&tt.trip)))
+        .filter(|tt| {
+            sch.data
+                .trips
+                .iter()
+                .any(|x| x.name.eq_ignore_ascii_case(&tt.trip))
+        })
         .nth(k)
         .map(|tt| tt.trip.clone())
 }
@@ -52,7 +88,10 @@ pub(super) fn tour_trip_name(sch: &crate::schedule::Schedule, tour: &omsi_timeta
 /// Numbers compared as numbers where they are ("5" before "13", "N30" after "M49").
 pub(super) fn natural_key(s: &str) -> (u64, String) {
     let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
-    (digits.parse::<u64>().unwrap_or(u64::MAX), s.to_ascii_lowercase())
+    (
+        digits.parse::<u64>().unwrap_or(u64::MAX),
+        s.to_ascii_lowercase(),
+    )
 }
 
 pub(super) fn natural(a: &str, b: &str) -> std::cmp::Ordering {
@@ -90,10 +129,16 @@ pub(crate) fn tour_choice(app: &App, k: usize) -> Option<(usize, usize, usize, u
 pub(crate) fn start_duty_at(app: &mut App, line: &str, tour: &str, trip: usize, chosen: usize) {
     let now = app.clock.time;
     let at = tour_start_of(app, line, tour);
-    let Some((k, j)) = app.schedule.as_ref().and_then(|s| s.tour_trip_stops(line, tour, trip).get(chosen).map(|x| (x.0, x.1))) else {
+    let Some((k, j)) = app.schedule.as_ref().and_then(|s| {
+        s.tour_trip_stops(line, tour, trip)
+            .get(chosen)
+            .map(|x| (x.0, x.1))
+    }) else {
         return start_duty(app, line, tour);
     };
-    let (Some(w), Some(sch)) = (app.world.clone(), app.schedule.as_mut()) else { return };
+    let (Some(w), Some(sch)) = (app.world.clone(), app.schedule.as_mut()) else {
+        return;
+    };
     let mut d = match sch.player_duty(&w, line, tour, at, None, false) {
         Ok(d) => d,
         Err(e) => {
@@ -123,7 +168,9 @@ pub(crate) fn start_duty_at(app: &mut App, line: &str, tour: &str, trip: usize, 
 }
 
 pub(super) fn start_duty(app: &mut App, line: &str, tour: &str) {
-    let (Some(w), Some(sch)) = (app.world.clone(), app.schedule.as_mut()) else { return };
+    let (Some(w), Some(sch)) = (app.world.clone(), app.schedule.as_mut()) else {
+        return;
+    };
     let now = app.clock.time;
     match sch.player_duty(&w, line, tour, now, None, false) {
         Ok(mut d) => {
@@ -134,11 +181,9 @@ pub(super) fn start_duty(app: &mut App, line: &str, tour: &str) {
                     p.set_duty_destination(trip, stop);
                 }
                 let mut fonts = w.fonts.lock();
-                if let Err(e) = crate::schedule_paper::update_vehicle(
-                    &mut p.vehicle,
-                    &d,
-                    &mut fonts,
-                ) {
+                if let Err(e) =
+                    crate::schedule_paper::update_vehicle(&mut p.vehicle, &d, &mut fonts)
+                {
                     log::warn!("driver timetable paper: {e:#}");
                 }
             }

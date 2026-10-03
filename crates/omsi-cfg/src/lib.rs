@@ -24,10 +24,10 @@
 use std::path::{Path, PathBuf};
 
 pub mod codepage;
+pub mod install_search;
 mod keywords;
 pub mod number;
 pub mod vfs;
-pub mod install_search;
 pub use install_search::find_original_install;
 pub use number::{parse_f32, parse_f64, parse_i32, parse_i64};
 pub use vfs::{add_content_zip, mount_zip};
@@ -93,20 +93,35 @@ pub struct CfgFile {
 impl CfgFile {
     pub fn read(path: impl AsRef<Path>) -> Result<Self, CfgError> {
         let path = path.as_ref();
-        let bytes = vfs::read(path).map_err(|e| CfgError::Io { path: path.to_path_buf(), source: e })?;
+        let bytes = vfs::read(path).map_err(|e| CfgError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
         Ok(Self::from_bytes(path, &bytes))
     }
 
     pub fn from_bytes(path: impl AsRef<Path>, bytes: &[u8]) -> Self {
-        Self { path: path.as_ref().to_path_buf(), lines: split_lines(&decode_text(bytes)) }
+        Self {
+            path: path.as_ref().to_path_buf(),
+            lines: split_lines(&decode_text(bytes)),
+        }
     }
 
     pub fn from_str(path: impl AsRef<Path>, text: &str) -> Self {
-        Self { path: path.as_ref().to_path_buf(), lines: split_lines(text) }
+        Self {
+            path: path.as_ref().to_path_buf(),
+            lines: split_lines(text),
+        }
     }
 
     pub fn reader(&self) -> CfgReader<'_> {
-        CfgReader { file: self, pos: 0, block_line: 0, rule: KeywordRule::Exact, disabled_blocks: false }
+        CfgReader {
+            file: self,
+            pos: 0,
+            block_line: 0,
+            rule: KeywordRule::Exact,
+            disabled_blocks: false,
+        }
     }
 
     /// Directory the file lives in (for resolving relative paths in it).
@@ -145,7 +160,10 @@ fn omsi_spelling(name: &str) -> Option<&'static str> {
     if let Ok(i) = keywords::MIXED_CASE.binary_search_by(|k| cmp_lower(k, key)) {
         return Some(keywords::MIXED_CASE[i]);
     }
-    keywords::LOWER_CASE.binary_search(&key).ok().map(|i| keywords::LOWER_CASE[i])
+    keywords::LOWER_CASE
+        .binary_search(&key)
+        .ok()
+        .map(|i| keywords::LOWER_CASE[i])
 }
 
 /// `a.to_ascii_lowercase().cmp(b)` without allocating.
@@ -162,7 +180,11 @@ pub fn keyword_of(line: &str) -> Option<&str> {
 
 /// [`keyword_of`] for a loader with its own rule.
 pub fn keyword_with(line: &str, rule: KeywordRule) -> Option<&str> {
-    let t = if rule == KeywordRule::TrimEnd { line.trim_end_matches(hof_trailing) } else { line };
+    let t = if rule == KeywordRule::TrimEnd {
+        line.trim_end_matches(hof_trailing)
+    } else {
+        line
+    };
     if t.len() < 2 || t.as_bytes()[0] != b'[' || !t.ends_with(']') {
         return None;
     }
@@ -249,7 +271,12 @@ impl<'a> CfgReader<'a> {
     /// affixes out (`[registration_automatic]` straight before `[model]`, the Urumqi AI cars)
     /// must not have the `[model]` read as one of them.
     pub fn param_line(&mut self) -> &'a str {
-        if self.file.lines.get(self.pos).is_some_and(|l| keyword_with(l, self.rule).is_some()) {
+        if self
+            .file
+            .lines
+            .get(self.pos)
+            .is_some_and(|l| keyword_with(l, self.rule).is_some())
+        {
             ""
         } else {
             self.line()
@@ -340,7 +367,11 @@ impl<'a> CfgReader<'a> {
         let mut v: Vec<i32> = (0..n).map(|_| self.i32()).collect();
         while self.pos < self.file.lines.len() {
             let l = self.file.lines[self.pos].trim();
-            let whole = !l.is_empty() && l.strip_prefix('-').unwrap_or(l).chars().all(|c| c.is_ascii_digit());
+            let whole = !l.is_empty()
+                && l.strip_prefix('-')
+                    .unwrap_or(l)
+                    .chars()
+                    .all(|c| c.is_ascii_digit());
             if !whole || keyword_with(self.file.lines[self.pos].as_str(), self.rule).is_some() {
                 break;
             }
@@ -446,7 +477,11 @@ pub fn windows_components(rel: &str) -> Vec<&str> {
         }
         // a path ending in a separator has an empty last part, so its last folder counts
         // as a folder here
-        let c = if i + 1 == n { c.trim_end_matches(['.', ' ']) } else { c.strip_suffix('.').unwrap_or(c) };
+        let c = if i + 1 == n {
+            c.trim_end_matches(['.', ' '])
+        } else {
+            c.strip_suffix('.').unwrap_or(c)
+        };
         if !c.is_empty() {
             out.push(c);
         }
@@ -468,7 +503,9 @@ fn name_key(name: &str) -> String {
 }
 
 type Listing = std::sync::Arc<std::collections::HashMap<String, std::ffi::OsString>>;
-static LISTINGS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Listing>>> = std::sync::OnceLock::new();
+static LISTINGS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<PathBuf, Listing>>,
+> = std::sync::OnceLock::new();
 /// Bumped whenever content may have come or gone (a root added or taken away, a mod
 /// installed while the game runs): the caches of what is where start afresh.
 static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -586,14 +623,20 @@ pub fn mark_sandbox(root: PathBuf) {
 
 /// Does `path` lie in a sandbox root (see [`mark_sandbox`])?
 pub fn is_sandbox(path: &Path) -> bool {
-    SANDBOX_ROOTS.lock().unwrap().iter().any(|r| path.starts_with(r))
+    SANDBOX_ROOTS
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|r| path.starts_with(r))
 }
 
 /// The first content root (in the order they are searched) that has `rel`, and the file
 /// or folder found there (case-insensitive, as Windows reads the folder).
 pub fn find_in_roots(rel: &str) -> Option<(PathBuf, PathBuf)> {
     let comps = windows_components(rel);
-    content_roots().into_iter().find_map(|r| resolve_existing(&r, &comps).map(|p| (r, p)))
+    content_roots()
+        .into_iter()
+        .find_map(|r| resolve_existing(&r, &comps).map(|p| (r, p)))
 }
 
 pub fn content_roots() -> Vec<PathBuf> {
@@ -607,13 +650,22 @@ pub fn content_roots() -> Vec<PathBuf> {
 /// listing must see both.
 pub fn mirrored_dirs(dir: &Path) -> Vec<PathBuf> {
     let roots = content_roots();
-    let Some(suffix) = owner_root(dir, &roots).and_then(|r| dir.strip_prefix(r).ok()) else { return vec![dir.to_path_buf()] };
+    let Some(suffix) = owner_root(dir, &roots).and_then(|r| dir.strip_prefix(r).ok()) else {
+        return vec![dir.to_path_buf()];
+    };
     // a real folder: its names as they are
-    let rel: Vec<String> = suffix.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+    let rel: Vec<String> = suffix
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
     let rel: Vec<&str> = rel.iter().map(|s| s.as_str()).collect();
     let mut out: Vec<PathBuf> = Vec::new();
     for r in &roots {
-        let found = if rel.is_empty() { Some(r.clone()) } else { resolve_existing(r, &rel) };
+        let found = if rel.is_empty() {
+            Some(r.clone())
+        } else {
+            resolve_existing(r, &rel)
+        };
         if let Some(p) = found.filter(|p| vfs::is_dir(p)) {
             if !out.contains(&p) {
                 out.push(p);
@@ -630,7 +682,10 @@ pub fn mirrored_dirs(dir: &Path) -> Vec<PathBuf> {
 /// mounted from `<content>/Archives` lies inside the content folder, and a path inside the
 /// archive is the archive's, not the content folder's.
 fn owner_root<'a>(path: &Path, roots: &'a [PathBuf]) -> Option<&'a PathBuf> {
-    roots.iter().filter(|r| path.starts_with(r)).max_by_key(|r| r.components().count())
+    roots
+        .iter()
+        .filter(|r| path.starts_with(r))
+        .max_by_key(|r| r.components().count())
 }
 
 /// The same relative location of `base` under `root` (None if `base` belongs to `root`
@@ -640,7 +695,9 @@ fn mirrored_base(base: &Path, root: &Path, roots: &[PathBuf]) -> Option<PathBuf>
     if owner == root {
         return None;
     }
-    base.strip_prefix(owner).ok().map(|suffix| root.join(suffix))
+    base.strip_prefix(owner)
+        .ok()
+        .map(|suffix| root.join(suffix))
 }
 
 /// Case-insensitive walk of the components `rel` from `base` using the cached directory
@@ -718,16 +775,23 @@ fn overlays_package(over: &Path, owner: &Path, package: &str) -> bool {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Key, bool>>> =
         std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
-    let key = (over.to_path_buf(), owner.to_path_buf(), package.to_ascii_lowercase());
+    let key = (
+        over.to_path_buf(),
+        owner.to_path_buf(),
+        package.to_ascii_lowercase(),
+    );
     if let Some(v) = cache.lock().unwrap().get(&key) {
         return *v;
     }
     // (a root without the pack at all is only where the lookup starts: `--bus` is resolved
     // from the installation's root)
     let comps: Vec<&str> = package.split('/').collect();
-    let owner_has = resolve_existing(owner, &comps).map(|d| vfs::is_dir(&d)).unwrap_or(false);
+    let owner_has = resolve_existing(owner, &comps)
+        .map(|d| vfs::is_dir(&d))
+        .unwrap_or(false);
     let theirs = package_definitions(over, package);
-    let ok = !owner_has || theirs.is_empty() || theirs.is_subset(&package_definitions(owner, package));
+    let ok =
+        !owner_has || theirs.is_empty() || theirs.is_subset(&package_definitions(owner, package));
     cache.lock().unwrap().insert(key, ok);
     ok
 }
@@ -750,7 +814,9 @@ pub fn missing_vehicle_pack(path: &Path) -> Option<String> {
         return None;
     }
     let installed = roots.iter().any(|r| {
-        resolve_existing(r, &["Vehicles", pack.as_str()]).map(|d| vfs::is_dir(&d)).unwrap_or(false)
+        resolve_existing(r, &["Vehicles", pack.as_str()])
+            .map(|d| vfs::is_dir(&d))
+            .unwrap_or(false)
     });
     (!installed).then_some(pack)
 }
@@ -760,7 +826,11 @@ pub fn missing_vehicle_pack(path: &Path) -> Option<String> {
 /// and the installed mods.
 pub fn content_dirs(rel: &str) -> Vec<PathBuf> {
     let rel = windows_components(rel);
-    content_roots().iter().filter_map(|r| resolve_existing(r, &rel)).filter(|p| vfs::is_dir(p)).collect()
+    content_roots()
+        .iter()
+        .filter_map(|r| resolve_existing(r, &rel))
+        .filter(|p| vfs::is_dir(p))
+        .collect()
 }
 
 /// Directory entries of `rel` (relative to a content root) merged over all roots; an
@@ -787,7 +857,11 @@ pub fn resolve_path(base: &Path, rel: &str) -> PathBuf {
     // a mod's copy first: the same place under a content root of higher priority than the
     // one `base` belongs to
     let roots = content_roots();
-    let owner = if roots.len() > 1 { owner_root(base, &roots).cloned() } else { None };
+    let owner = if roots.len() > 1 {
+        owner_root(base, &roots).cloned()
+    } else {
+        None
+    };
     if let Some(owner) = &owner {
         let package = vehicle_package(base, owner, rel);
         for r in roots.iter().take_while(|r| *r != owner) {
@@ -875,7 +949,10 @@ pub fn missing_original_essentials(root: &Path) -> Vec<String> {
     // that said the game was not there)
     let marked = root.join(CONTENT_MARKER).exists();
     if marked && resolve_existing(root, &["Omsi.exe"]).is_none() {
-        return vec![format!("{} (this is the neoOMSI content folder, not the original game)", root.display())];
+        return vec![format!(
+            "{} (this is the neoOMSI content folder, not the original game)",
+            root.display()
+        )];
     }
     ORIGINAL_ESSENTIALS
         .iter()
@@ -892,7 +969,24 @@ pub fn missing_original_essentials(root: &Path) -> Vec<String> {
 /// folder of neoOMSI is laid out the same way, so a mod is installed by putting its
 /// folders here - and the game finds them exactly as the original would.
 pub const CONTENT_FOLDERS: &[&str] = &[
-    "Vehicles", "maps", "Sceneryobjects", "Splines", "Texture", "Fonts", "Plugins", "TicketPacks", "Drivers", "Weather", "Announcements", "Humans", "Money", "Scripts", "Trains", "Situations", "Inputs", "Sound",
+    "Vehicles",
+    "maps",
+    "Sceneryobjects",
+    "Splines",
+    "Texture",
+    "Fonts",
+    "Plugins",
+    "TicketPacks",
+    "Drivers",
+    "Weather",
+    "Announcements",
+    "Humans",
+    "Money",
+    "Scripts",
+    "Trains",
+    "Situations",
+    "Inputs",
+    "Sound",
 ];
 
 /// Marker file of an neoOMSI content folder (so it is never mistaken for the OMSI 2
@@ -908,11 +1002,16 @@ pub unsafe fn drop_unusable_home() {
     if !cfg!(windows) {
         return;
     }
-    let Some(h) = std::env::var_os("HOME") else { return };
+    let Some(h) = std::env::var_os("HOME") else {
+        return;
+    };
     let p = PathBuf::from(&h);
-    let usable = p.is_absolute() && p.is_dir() && std::fs::create_dir_all(p.join(".neoomsi")).is_ok();
+    let usable =
+        p.is_absolute() && p.is_dir() && std::fs::create_dir_all(p.join(".neoomsi")).is_ok();
     if !usable && std::env::var_os("USERPROFILE").is_some() {
-        unsafe { std::env::remove_var("HOME"); }
+        unsafe {
+            std::env::remove_var("HOME");
+        }
     }
 }
 
@@ -920,7 +1019,8 @@ pub unsafe fn drop_unusable_home() {
 /// OMSI 2 folder itself (neoOMSI unpacked into it), which neoOMSI never writes to: then the
 /// `neoOMSI` folder inside it.
 pub fn content_folder_of(dir: &Path) -> PathBuf {
-    if resolve_existing(dir, &["Omsi.exe"]).is_some() && resolve_existing(dir, &["maps"]).is_some() {
+    if resolve_existing(dir, &["Omsi.exe"]).is_some() && resolve_existing(dir, &["maps"]).is_some()
+    {
         dir.join("neoOMSI")
     } else {
         dir.to_path_buf()
@@ -944,11 +1044,17 @@ pub fn ensure_content_layout(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir.join("Mods"))?;
     let marker = dir.join(CONTENT_MARKER);
     if !marker.exists() {
-        std::fs::write(&marker, "This folder holds neoOMSI's own content and installed mods, laid out like the original game.\nDrop a mod folder or zip into Mods/ and the launcher sorts it into place.\n")?;
+        std::fs::write(
+            &marker,
+            "This folder holds neoOMSI's own content and installed mods, laid out like the original game.\nDrop a mod folder or zip into Mods/ and the launcher sorts it into place.\n",
+        )?;
     }
     let readme = dir.join("Mods").join("README.txt");
     if !readme.exists() {
-        std::fs::write(&readme, "Put a mod here (a folder or a .zip) and start the launcher: it works out what the mod is\n(a bus, a map, scenery objects, splines, textures, fonts ...) and sorts it into the folders\nnext to this one. The original OMSI 2 folder is never written to.\n")?;
+        std::fs::write(
+            &readme,
+            "Put a mod here (a folder or a .zip) and start the launcher: it works out what the mod is\n(a bus, a map, scenery objects, splines, textures, fonts ...) and sorts it into the folders\nnext to this one. The original OMSI 2 folder is never written to.\n",
+        )?;
     }
     Ok(())
 }
@@ -981,14 +1087,23 @@ mod tests {
         assert_eq!(keyword_of("[LOD]"), Some("LOD"));
         assert_eq!(keyword_of("[lod]"), None);
         // … not for the rest
-        assert_eq!(keyword_of("[Infosystem_Busstop]"), Some("Infosystem_Busstop"));
+        assert_eq!(
+            keyword_of("[Infosystem_Busstop]"),
+            Some("Infosystem_Busstop")
+        );
         // .hof: spreadsheet exports
-        assert_eq!(keyword_with("[global_strings]\t\t\t", KeywordRule::TrimEnd), Some("global_strings"));
+        assert_eq!(
+            keyword_with("[global_strings]\t\t\t", KeywordRule::TrimEnd),
+            Some("global_strings")
+        );
         assert_eq!(keyword_with("[end]\"\t", KeywordRule::TrimEnd), Some("end"));
         assert_eq!(keyword_with("\t[end]", KeywordRule::TrimEnd), None);
         assert_eq!(keyword_of("[global_strings]\t"), None);
         // ailists.cfg
-        assert_eq!(keyword_with("[AIGroup_2]", KeywordRule::AnyCase), Some("AIGroup_2"));
+        assert_eq!(
+            keyword_with("[AIGroup_2]", KeywordRule::AnyCase),
+            Some("AIGroup_2")
+        );
         assert_eq!(keyword_with(" [aigroup_2]", KeywordRule::AnyCase), None);
         for k in keywords::MIXED_CASE.iter().chain(keywords::LOWER_CASE) {
             assert_eq!(omsi_spelling(&k.to_ascii_uppercase()), Some(*k));
@@ -1026,7 +1141,10 @@ mod tests {
             n += 1;
         }
         assert_eq!(n, 4);
-        let f = CfgFile::from_str("model.cfg", "-<DISABLED>-\n[mesh]\nx\n -<ENABLED>-\n[mesh]\ny\n");
+        let f = CfgFile::from_str(
+            "model.cfg",
+            "-<DISABLED>-\n[mesh]\nx\n -<ENABLED>-\n[mesh]\ny\n",
+        );
         assert_eq!(f.reader().disabled_blocks().next_keyword(), None);
     }
 
@@ -1036,7 +1154,10 @@ mod tests {
         let f = CfgFile::from_str("x.sco", text);
         let mut r = f.reader();
         const T: &[&str] = &["attach_trans", "attach_rot_x", "attach_rot_y"];
-        assert_eq!(r.next_entry(T), Some(Entry::Keyword("new_attachment".into())));
+        assert_eq!(
+            r.next_entry(T),
+            Some(Entry::Keyword("new_attachment".into()))
+        );
         assert_eq!(r.next_entry(T), Some(Entry::Keyword("complexity".into())));
         assert_eq!(r.i32(), 2);
         assert_eq!(r.next_entry(T), Some(Entry::Token("attach_trans")));
@@ -1059,17 +1180,38 @@ mod tests {
 
     #[test]
     fn windows_paths() {
-        assert_eq!(windows_components("texture\\anz-oben.jpg."), vec!["texture", "anz-oben.jpg"]);
-        assert_eq!(windows_components(" ..\\..\\Model.\\a.o3d . "), vec!["..", "..", "Model", "a.o3d"]);
-        assert_eq!(windows_components("\\Splines//x\\.\\y.sli"), vec!["Splines", "x", "y.sli"]);
+        assert_eq!(
+            windows_components("texture\\anz-oben.jpg."),
+            vec!["texture", "anz-oben.jpg"]
+        );
+        assert_eq!(
+            windows_components(" ..\\..\\Model.\\a.o3d . "),
+            vec!["..", "..", "Model", "a.o3d"]
+        );
+        assert_eq!(
+            windows_components("\\Splines//x\\.\\y.sli"),
+            vec!["Splines", "x", "y.sli"]
+        );
         assert_eq!(windows_components("Folder..\\x"), vec!["Folder.", "x"]);
         assert_eq!(windows_components("Folder.\\"), vec!["Folder"]);
-        assert_eq!(windows_components("str_gehweg02.bmp "), vec!["str_gehweg02.bmp"]);
+        assert_eq!(
+            windows_components("str_gehweg02.bmp "),
+            vec!["str_gehweg02.bmp"]
+        );
         assert_eq!(windows_components(""), Vec::<&str>::new());
         let dir = std::env::temp_dir().join(format!("omsi-cfg-paths-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("Texture").join("Bahn\u{fc}bergang")).unwrap();
-        std::fs::write(dir.join("Texture").join("Bahn\u{fc}bergang").join("anz-oben.jpg"), b"x").unwrap();
-        let p = resolve_path(&dir.join("model"), "..\\TEXTURE.\\BAHN\u{dc}BERGANG/Anz-Oben.JPG. ");
+        std::fs::write(
+            dir.join("Texture")
+                .join("Bahn\u{fc}bergang")
+                .join("anz-oben.jpg"),
+            b"x",
+        )
+        .unwrap();
+        let p = resolve_path(
+            &dir.join("model"),
+            "..\\TEXTURE.\\BAHN\u{dc}BERGANG/Anz-Oben.JPG. ",
+        );
         assert!(vfs::is_file(&p), "{}", p.display());
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -34,19 +34,28 @@ impl Default for Placement {
 impl Placement {
     pub(crate) fn value(&self, field: &str) -> Option<f32> {
         Some(match field {
-            "x" => self.offset[0], "y" => self.offset[1], "z" => self.offset[2],
-            "width" => self.width, "yaw" => self.yaw, "tilt" => self.tilt,
-            "roll" => self.roll, "opacity" => self.opacity,
+            "x" => self.offset[0],
+            "y" => self.offset[1],
+            "z" => self.offset[2],
+            "width" => self.width,
+            "yaw" => self.yaw,
+            "tilt" => self.tilt,
+            "roll" => self.roll,
+            "opacity" => self.opacity,
             _ => return None,
         })
     }
 
     fn set_value(&mut self, field: &str, value: f32) {
         match field {
-            "x" => self.offset[0] = value, "y" => self.offset[1] = value,
-            "z" => self.offset[2] = value, "width" => self.width = value,
-            "yaw" => self.yaw = value, "tilt" => self.tilt = value,
-            "roll" => self.roll = value, "opacity" => self.opacity = value,
+            "x" => self.offset[0] = value,
+            "y" => self.offset[1] = value,
+            "z" => self.offset[2] = value,
+            "width" => self.width = value,
+            "yaw" => self.yaw = value,
+            "tilt" => self.tilt = value,
+            "roll" => self.roll = value,
+            "opacity" => self.opacity = value,
             _ => return,
         }
         *self = self.sanitize();
@@ -100,7 +109,12 @@ impl Placement {
             "roll" => self.roll += direction * 2.0,
             "opacity" => self.opacity += direction * 0.05,
             "enabled" => self.enabled = !self.enabled,
-            "reset" => *self = Self { enabled: self.enabled, ..Self::default() },
+            "reset" => {
+                *self = Self {
+                    enabled: self.enabled,
+                    ..Self::default()
+                }
+            }
             _ => return,
         }
         *self = self.sanitize();
@@ -204,7 +218,9 @@ impl Display {
             Vec4::Z,
             (origin - eye.position).as_vec3().extend(1.0),
         );
-        projection * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, eye.forward(), eye.up()) * plane
+        projection
+            * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, eye.forward(), eye.up())
+            * plane
     }
 }
 
@@ -486,12 +502,17 @@ mod tests {
             "VR: Position navigator",
             "Could not save navigator position",
         ];
-        let languages = ["de", "fr", "ru", "uk", "be", "kk", "pl", "cs", "hu", "es", "pt", "pt-pt", "it", "nl", "tr", "ja", "zh-tw", "ko", "th", "vi", "id", "ms", "tl", "zh", "hi"];
+        let languages = [
+            "de", "fr", "ru", "uk", "be", "kk", "pl", "cs", "hu", "es", "pt", "pt-pt", "it", "nl",
+            "tr", "ja", "zh-tw", "ko", "th", "vi", "id", "ms", "tl", "zh", "hi",
+        ];
         for language in languages {
             for key in keys {
                 let translated = crate::_rust_i18n_try_translate(language, key);
                 assert!(
-                    translated.as_ref().is_some_and(|text| !text.trim().is_empty() && text.as_ref() != key),
+                    translated
+                        .as_ref()
+                        .is_some_and(|text| !text.trim().is_empty() && text.as_ref() != key),
                     "Missing navigator translation: {language} / {key}"
                 );
             }
@@ -539,7 +560,8 @@ mod tests {
             placement: Placement::default(),
             local_center: Vec3::new(0.3, 1.0, -0.3),
         };
-        let projection = glam::camera::rh::proj::directx::perspective(90.0_f32.to_radians(), 1.0, 1000.0, 0.1);
+        let projection =
+            glam::camera::rh::proj::directx::perspective(90.0_f32.to_radians(), 1.0, 1000.0, 0.1);
         let first = display.transform(
             DVec3::ZERO,
             Mat4::IDENTITY,
@@ -582,7 +604,8 @@ mod tests {
             placement,
             local_center: Vec3::Y,
         };
-        let projection = glam::camera::rh::proj::directx::perspective(90.0_f32.to_radians(), 1.0, 1000.0, 0.1);
+        let projection =
+            glam::camera::rh::proj::directx::perspective(90.0_f32.to_radians(), 1.0, 1000.0, 0.1);
         let left = display.transform(
             DVec3::ZERO,
             Mat4::IDENTITY,

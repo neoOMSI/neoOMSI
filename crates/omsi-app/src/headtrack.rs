@@ -29,7 +29,9 @@ impl HeadTracker {
         let sock = match std::net::UdpSocket::bind(("0.0.0.0", port)) {
             Ok(s) => Some(s),
             Err(e) if cfg!(windows) => {
-                log::warn!("head tracking: cannot listen on UDP port {port} ({e}), reading opentrack's freetrack output only");
+                log::warn!(
+                    "head tracking: cannot listen on UDP port {port} ({e}), reading opentrack's freetrack output only"
+                );
                 None
             }
             Err(e) => {
@@ -78,7 +80,9 @@ impl HeadTracker {
                     if n < 48 {
                         continue;
                     }
-                    let d = |i: usize| f64::from_le_bytes(buf[i * 8..i * 8 + 8].try_into().unwrap()) as f32;
+                    let d = |i: usize| {
+                        f64::from_le_bytes(buf[i * 8..i * 8 + 8].try_into().unwrap()) as f32
+                    };
                     let v = [d(0), d(1), d(2), d(3), d(4), d(5)];
                     if v.iter().any(|x| !x.is_finite()) {
                         continue;
@@ -91,7 +95,13 @@ impl HeadTracker {
                     {
                         last_udp = Some(Instant::now());
                     }
-                    *out.lock().unwrap() = Some((HeadPose { pos: [v[0], v[1], v[2]], rot: [v[3], v[4], v[5]] }, Instant::now()));
+                    *out.lock().unwrap() = Some((
+                        HeadPose {
+                            pos: [v[0], v[1], v[2]],
+                            rot: [v[3], v[4], v[5]],
+                        },
+                        Instant::now(),
+                    ));
                 }
             })
             .ok()?;
@@ -104,7 +114,8 @@ impl HeadTracker {
     /// The pose, while poses keep coming (none for half a second: the head is centred).
     pub fn pose(&self) -> Option<HeadPose> {
         let l = self.last.lock().ok()?;
-        l.filter(|(_, t)| t.elapsed() < Duration::from_millis(500)).map(|(p, _)| p)
+        l.filter(|(_, t)| t.elapsed() < Duration::from_millis(500))
+            .map(|(p, _)| p)
     }
 }
 
@@ -121,11 +132,11 @@ fn freetrack_pose(yaw: f32, pitch: f32, roll: f32, x: f32, y: f32, z: f32) -> He
 
 #[cfg(windows)]
 mod freetrack {
-    use super::{freetrack_pose, HeadPose};
+    use super::{HeadPose, freetrack_pose};
     use std::time::{Duration, Instant};
-    use windows::core::w;
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::Memory::{MapViewOfFile, OpenFileMappingW, FILE_MAP_READ};
+    use windows::Win32::System::Memory::{FILE_MAP_READ, MapViewOfFile, OpenFileMappingW};
+    use windows::core::w;
 
     /// `FTData`: DataID, CamWidth, CamHeight (i32), Yaw, Pitch, Roll, X, Y, Z (f32), ...
     const FIELDS: usize = 9;
@@ -146,13 +157,17 @@ mod freetrack {
         /// A new pose, when opentrack has written one since the last call.
         pub fn poll(&mut self) -> Option<HeadPose> {
             if self.view.is_none() {
-                if self.tried.is_some_and(|t| t.elapsed() < Duration::from_secs(1)) {
+                if self
+                    .tried
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(1))
+                {
                     return None;
                 }
                 self.tried = Some(Instant::now());
                 // SAFETY: plain Win32 calls; the view stays mapped for the life of the game.
                 unsafe {
-                    let handle = OpenFileMappingW(FILE_MAP_READ.0, false, w!("FT_SharedMem")).ok()?;
+                    let handle =
+                        OpenFileMappingW(FILE_MAP_READ.0, false, w!("FT_SharedMem")).ok()?;
                     let view = MapViewOfFile(handle, FILE_MAP_READ, 0, 0, FIELDS * 4);
                     if view.Value.is_null() {
                         let _ = windows::Win32::Foundation::CloseHandle(handle);
@@ -189,8 +204,19 @@ mod tests {
 
     #[test]
     fn freetrack_pose_is_in_cm_and_degrees() {
-        let p = freetrack_pose(-0.5f32.to_radians() * 60.0, 10f32.to_radians(), 5f32.to_radians(), 15.0, -20.0, 100.0);
-        assert!((p.rot[0] - 30.0).abs() < 1e-3 && (p.rot[1] + 10.0).abs() < 1e-3 && (p.rot[2] - 5.0).abs() < 1e-3);
+        let p = freetrack_pose(
+            -0.5f32.to_radians() * 60.0,
+            10f32.to_radians(),
+            5f32.to_radians(),
+            15.0,
+            -20.0,
+            100.0,
+        );
+        assert!(
+            (p.rot[0] - 30.0).abs() < 1e-3
+                && (p.rot[1] + 10.0).abs() < 1e-3
+                && (p.rot[2] - 5.0).abs() < 1e-3
+        );
         assert_eq!(p.pos, [1.5, -2.0, 10.0]);
     }
 }

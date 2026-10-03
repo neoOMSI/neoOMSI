@@ -41,7 +41,15 @@ impl Font {
                     // as a font of no height. Loading those as fonts only gives a lookup
                     // something wrong to land on.
                     if height > 0 && !name.starts_with('{') {
-                        out.push(Font { path: f.path.clone(), name, bitmap, alpha, height, gap, chars: Vec::new() });
+                        out.push(Font {
+                            path: f.path.clone(),
+                            name,
+                            bitmap,
+                            alpha,
+                            height,
+                            gap,
+                            chars: Vec::new(),
+                        });
                     }
                 }
                 "char" => {
@@ -88,8 +96,11 @@ impl Font {
                     .find_map(|v| self.chars.iter().find(|g| g.ch == v))
             });
         }
-        self.exact_glyph(c)
-            .or_else(|| c.is_ascii_lowercase().then(|| self.exact_glyph(c.to_ascii_uppercase())).flatten())
+        self.exact_glyph(c).or_else(|| {
+            c.is_ascii_lowercase()
+                .then(|| self.exact_glyph(c.to_ascii_uppercase()))
+                .flatten()
+        })
     }
 
     /// Whether the font has a glyph of its own for `c`.
@@ -137,7 +148,10 @@ pub struct TextAlign {
 
 impl Default for TextAlign {
     fn default() -> Self {
-        TextAlign { orientation: 0, grid: 1 }
+        TextAlign {
+            orientation: 0,
+            grid: 1,
+        }
     }
 }
 
@@ -183,7 +197,13 @@ impl FontAtlas {
     /// `color`/`alpha` are the decoded font bitmaps (same size). When the font has no
     /// separate colour bitmap, pass the alpha image for both.
     pub fn new(font: Font, width: u32, height: u32, color: Vec<u8>, alpha: Vec<u8>) -> FontAtlas {
-        FontAtlas { font, width, height, color, alpha }
+        FontAtlas {
+            font,
+            width,
+            height,
+            color,
+            alpha,
+        }
     }
 
     /// Pixel width of `text` in this font (glyph advances including the gap after each).
@@ -193,7 +213,10 @@ impl FontAtlas {
                 let w = if ch.is_whitespace() {
                     self.font.space_width()
                 } else {
-                    self.font.glyph(ch).map(|g| (g.x1 - g.x0).max(0)).unwrap_or(0)
+                    self.font
+                        .glyph(ch)
+                        .map(|g| (g.x1 - g.x0).max(0))
+                        .unwrap_or(0)
                 };
                 w + self.font.gap
             })
@@ -209,7 +232,15 @@ impl FontAtlas {
     }
 
     /// `render` with the horizontal placement of `[texttexture_enh]`.
-    pub fn render_aligned(&self, text: &str, w: u32, h: u32, full_color: bool, rgb: [u8; 3], align: TextAlign) -> Vec<u8> {
+    pub fn render_aligned(
+        &self,
+        text: &str,
+        w: u32,
+        h: u32,
+        full_color: bool,
+        rgb: [u8; 3],
+        align: TextAlign,
+    ) -> Vec<u8> {
         // '@' breaks the text into lines, one glyph height each, from the top: the SD202's
         // matrix hands over "   NORDSPITZE   @   BAUERNHOF    @NORDSP.BAUERNH. " for a
         // 512x128 texture whose meshes map the lines separately. Drawn as one line and
@@ -241,7 +272,15 @@ impl FontAtlas {
         self.render_unscaled(text, w, h, full_color, rgb, align)
     }
 
-    fn render_unscaled(&self, text: &str, w: u32, h: u32, full_color: bool, rgb: [u8; 3], align: TextAlign) -> Vec<u8> {
+    fn render_unscaled(
+        &self,
+        text: &str,
+        w: u32,
+        h: u32,
+        full_color: bool,
+        rgb: [u8; 3],
+        align: TextAlign,
+    ) -> Vec<u8> {
         let mut out = vec![0u8; (w * h * 4) as usize];
         let glyph_h = self.font.height.max(1) as i32;
         let y0 = (h as i32 - glyph_h) / 2;
@@ -274,7 +313,11 @@ impl FontAtlas {
                         continue;
                     }
                     let di = ((dy as u32 * w + dx as u32) * 4) as usize;
-                    let (r, gcol, b) = if full_color { (self.color[si], self.color[si + 1], self.color[si + 2]) } else { (rgb[0], rgb[1], rgb[2]) };
+                    let (r, gcol, b) = if full_color {
+                        (self.color[si], self.color[si + 1], self.color[si + 2])
+                    } else {
+                        (rgb[0], rgb[1], rgb[2])
+                    };
                     // alpha-over compositing onto the transparent target
                     let af = a as f32 / 255.0;
                     let inv = 1.0 - af;
@@ -306,9 +349,24 @@ mod tests {
             height: 10,
             gap: 1,
             chars: vec![
-                FontChar { ch: '|', x0: 0, x1: 2, y: 0 },
-                FontChar { ch: '0', x0: 2, x1: 10, y: 0 },
-                FontChar { ch: '1', x0: 10, x1: 18, y: 0 },
+                FontChar {
+                    ch: '|',
+                    x0: 0,
+                    x1: 2,
+                    y: 0,
+                },
+                FontChar {
+                    ch: '0',
+                    x0: 2,
+                    x1: 10,
+                    y: 0,
+                },
+                FontChar {
+                    ch: '1',
+                    x0: 10,
+                    x1: 18,
+                    y: 0,
+                },
             ],
         };
         // Alpha bitmap where '|' has opaque pixels
@@ -322,12 +380,26 @@ mod tests {
         let atlas = FontAtlas::new(font.clone(), 18, 10, alpha.clone(), alpha);
 
         // Leading spaces (as used in odometer padding e.g. "  1") must not draw '|'
-        let rendered = atlas.render_aligned("  1", 40, 10, false, [255, 255, 255], TextAlign { orientation: 1, grid: 1 });
+        let rendered = atlas.render_aligned(
+            "  1",
+            40,
+            10,
+            false,
+            [255, 255, 255],
+            TextAlign {
+                orientation: 1,
+                grid: 1,
+            },
+        );
         // The first 10 pixels horizontally (where spaces sit) must have 0 alpha!
         for y in 0..10 {
             for x in 0..10 {
                 let idx = (y * 40 + x) * 4;
-                assert_eq!(rendered[idx + 3], 0, "space pixel at ({x}, {y}) must be transparent");
+                assert_eq!(
+                    rendered[idx + 3],
+                    0,
+                    "space pixel at ({x}, {y}) must be transparent"
+                );
             }
         }
 

@@ -318,10 +318,14 @@ pub(crate) struct App {
 
 impl App {
     #[cfg(windows)]
-    pub(crate) fn vr_active(&self) -> bool { self.vr.is_some() }
+    pub(crate) fn vr_active(&self) -> bool {
+        self.vr.is_some()
+    }
 
     #[cfg(not(windows))]
-    pub(crate) fn vr_active(&self) -> bool { false }
+    pub(crate) fn vr_active(&self) -> bool {
+        false
+    }
 
     pub(crate) fn resumed_impl(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(window) = self.window.clone() {
@@ -330,7 +334,15 @@ impl App {
                 if let Some(r) = self.renderer.as_ref() {
                     let size = window.inner_size();
                     let vsync = self.settings.vsync && !self.vr_active();
-                    self.surface = SurfaceState::new_with(&self.instance, window.clone(), r, size.width.max(1), size.height.max(1), vsync).ok();
+                    self.surface = SurfaceState::new_with(
+                        &self.instance,
+                        window.clone(),
+                        r,
+                        size.width.max(1),
+                        size.height.max(1),
+                        vsync,
+                    )
+                    .ok();
                     self.last = Instant::now();
                 }
             }
@@ -341,7 +353,11 @@ impl App {
 
     /// The game's window (or the launcher's, handed over on a phone), its surface and the
     /// renderer; then the menu or, when the session is given, the world.
-    pub(crate) fn create_window(&mut self, event_loop: &ActiveEventLoop, given: Option<Arc<Window>>) {
+    pub(crate) fn create_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        given: Option<Arc<Window>>,
+    ) {
         // --size sets the window's size in points as well (1600x900 unless given)
         let (lw, lh) = self
             .args
@@ -377,17 +393,22 @@ impl App {
             Some(w) => w,
             None => Arc::new(event_loop.create_window(attrs).expect("window")),
         };
-        let mut renderer = match window_renderer(&mut self.instance, &window, self.settings.render_options()) {
-            Ok(r) => r,
-            Err(e) => {
-                fatal_message(&format!("The game cannot draw on this computer: {e:#}"));
-                platform::exit(event_loop);
-                return;
-            }
-        };
+        let mut renderer =
+            match window_renderer(&mut self.instance, &window, self.settings.render_options()) {
+                Ok(r) => r,
+                Err(e) => {
+                    fatal_message(&format!("The game cannot draw on this computer: {e:#}"));
+                    platform::exit(event_loop);
+                    return;
+                }
+            };
         #[cfg(windows)]
         if self.settings.vr_requested() {
-            match openxr::Vr::new(&renderer, self.settings.vr_scale, self.settings.vr_desktop_mirror) {
+            match openxr::Vr::new(
+                &renderer,
+                self.settings.vr_scale,
+                self.settings.vr_desktop_mirror,
+            ) {
                 Ok(vr) => self.vr = Some(vr),
                 Err(e) => log::error!("OpenXR could not start: {e:#}"),
             }
@@ -395,8 +416,15 @@ impl App {
         let upload = renderer.upload_speed_mb_s();
         log::info!("graphics: {upload:.0} MB/s copied towards the card");
         if upload < SLOW_UPLOAD_MB_S {
-            log::error!("graphics: the driver copies only {upload:.0} MB/s towards the card (thousands are usual); every texture and buffer the game sends waits on it, down to a few frames a second - restarting the computer usually brings it back");
-            self.service_msg = Some((format!("Graphics driver is slow ({upload:.0} MB/s): the game will stutter. Restarting the computer usually fixes it."), 30.0));
+            log::error!(
+                "graphics: the driver copies only {upload:.0} MB/s towards the card (thousands are usual); every texture and buffer the game sends waits on it, down to a few frames a second - restarting the computer usually brings it back"
+            );
+            self.service_msg = Some((
+                format!(
+                    "Graphics driver is slow ({upload:.0} MB/s): the game will stutter. Restarting the computer usually fixes it."
+                ),
+                30.0,
+            ));
         }
         lights::load_smoke_texture(&mut renderer, &self.args.root);
         lights::set_corona_root(&self.args.root);
@@ -441,7 +469,11 @@ impl App {
     }
 
     pub(crate) fn present_splash(&mut self, caption: &str) {
-        if let (Some(win), Some(s), Some(r)) = (self.window.clone(), self.surface.as_mut(), self.renderer.as_ref()) {
+        if let (Some(win), Some(s), Some(r)) = (
+            self.window.clone(),
+            self.surface.as_mut(),
+            self.renderer.as_ref(),
+        ) {
             let size = win.inner_size();
             s.resize(r, size.width.max(1), size.height.max(1));
         }
@@ -454,15 +486,52 @@ impl App {
         ) {
             scene.overlays.clear();
             let dpi = win.scale_factor() as f32;
-            let scale = dpi * ui::size_factor(s.config.height as f32, dpi, self.settings.ui_scale, self.settings.ui_scale_window);
+            let scale = dpi
+                * ui::size_factor(
+                    s.config.height as f32,
+                    dpi,
+                    self.settings.ui_scale,
+                    self.settings.ui_scale_window,
+                );
             ui.loading_bg = Some(None);
-            ui.loading(r, scene, s.config.width as f32, s.config.height as f32, scale, "", caption, None, None, 0.0);
+            ui.loading(
+                r,
+                scene,
+                s.config.width as f32,
+                s.config.height as f32,
+                scale,
+                "",
+                caption,
+                None,
+                None,
+                0.0,
+            );
             ui.loading_bg = None;
-            if let wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) = s.surface.get_current_texture() {
+            if let wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) = s.surface.get_current_texture()
+            {
                 let view = frame.texture.create_view(&Default::default());
-                let blank = Camera { position: DVec3::new(0.0, 0.0, -1.0e6), yaw: 0.0, pitch: -89.0, roll: 0.0, fov_deg: 60.0, near: 0.5, far: 10.0 };
-                let lighting = omsi_render::Lighting { sky_color: Vec3::new(0.04, 0.045, 0.055), ..Default::default() };
-                r.render(scene, &view, s.config.width, s.config.height, &blank, &lighting);
+                let blank = Camera {
+                    position: DVec3::new(0.0, 0.0, -1.0e6),
+                    yaw: 0.0,
+                    pitch: -89.0,
+                    roll: 0.0,
+                    fov_deg: 60.0,
+                    near: 0.5,
+                    far: 10.0,
+                };
+                let lighting = omsi_render::Lighting {
+                    sky_color: Vec3::new(0.04, 0.045, 0.055),
+                    ..Default::default()
+                };
+                r.render(
+                    scene,
+                    &view,
+                    s.config.width,
+                    s.config.height,
+                    &blank,
+                    &lighting,
+                );
                 win.pre_present_notify();
                 r.queue.present(frame);
             }
@@ -475,8 +544,18 @@ impl App {
     }
 
     pub(crate) fn loading_preview(&mut self) {
-        let map_dir = self.world.as_ref().map(|w| w.map_dir.clone()).or_else(|| self.args.root.join(&self.args.map).parent().map(|d| d.to_path_buf()));
-        let name = map_dir.as_ref().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let map_dir = self.world.as_ref().map(|w| w.map_dir.clone()).or_else(|| {
+            self.args
+                .root
+                .join(&self.args.map)
+                .parent()
+                .map(|d| d.to_path_buf())
+        });
+        let name = map_dir
+            .as_ref()
+            .and_then(|d| d.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let t = self.started.elapsed().as_secs_f32();
         if let (Some(ui), Some(s), Some(win), Some(r), Some(scene)) = (
             self.ui.as_mut(),
@@ -487,13 +566,50 @@ impl App {
         ) {
             scene.overlays.clear();
             let dpi = win.scale_factor() as f32;
-            let scale = dpi * ui::size_factor(s.config.height as f32, dpi, self.settings.ui_scale, self.settings.ui_scale_window);
-            ui.loading(r, scene, s.config.width as f32, s.config.height as f32, scale, &name, "Loading", Some((t / 10.0).fract()), map_dir.as_deref(), t);
-            if let wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) = s.surface.get_current_texture() {
+            let scale = dpi
+                * ui::size_factor(
+                    s.config.height as f32,
+                    dpi,
+                    self.settings.ui_scale,
+                    self.settings.ui_scale_window,
+                );
+            ui.loading(
+                r,
+                scene,
+                s.config.width as f32,
+                s.config.height as f32,
+                scale,
+                &name,
+                "Loading",
+                Some((t / 10.0).fract()),
+                map_dir.as_deref(),
+                t,
+            );
+            if let wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) = s.surface.get_current_texture()
+            {
                 let view = frame.texture.create_view(&Default::default());
-                let blank = Camera { position: DVec3::new(0.0, 0.0, -1.0e6), yaw: 0.0, pitch: -89.0, roll: 0.0, fov_deg: 60.0, near: 0.5, far: 10.0 };
-                let lighting = omsi_render::Lighting { sky_color: Vec3::new(0.04, 0.045, 0.055), ..Default::default() };
-                r.render(scene, &view, s.config.width, s.config.height, &blank, &lighting);
+                let blank = Camera {
+                    position: DVec3::new(0.0, 0.0, -1.0e6),
+                    yaw: 0.0,
+                    pitch: -89.0,
+                    roll: 0.0,
+                    fov_deg: 60.0,
+                    near: 0.5,
+                    far: 10.0,
+                };
+                let lighting = omsi_render::Lighting {
+                    sky_color: Vec3::new(0.04, 0.045, 0.055),
+                    ..Default::default()
+                };
+                r.render(
+                    scene,
+                    &view,
+                    s.config.width,
+                    s.config.height,
+                    &blank,
+                    &lighting,
+                );
                 win.pre_present_notify();
                 r.queue.present(frame);
             }
@@ -515,11 +631,17 @@ impl App {
         self.envir = omsi_content::Envir::load(&self.args.root.join("envir.cfg")).ok();
         // the weather cycle: a first weather that suits the month, the others after it
         if weather_cycle::is_cycle(self.args.weather.as_deref()) {
-            let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(7);
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(7);
             let mut c = weather_cycle::Cycle::new(seed);
             let month = start_clock(&self.args).day_month().1;
             let all = weather_cycle::installed();
-            let clear = omsi_content::weather::Weather { fog: (50000.0, 1.0), ..Default::default() };
+            let clear = omsi_content::weather::Weather {
+                fog: (50000.0, 1.0),
+                ..Default::default()
+            };
             let r = c.rand();
             self.args.weather = weather_cycle::pick(&all, &clear, "", month, r);
             log::info!("weather cycle: starting with {:?}", self.args.weather);
@@ -530,7 +652,13 @@ impl App {
         // offscreen: a session begun in the rain used to open on a bone-dry street
         self.wetness = self.weather.as_ref().map(initial_wetness).unwrap_or(0.0);
         self.clock = start_clock(&self.args);
-        setup_sky(&self.args, &renderer, &mut scene, self.envir.as_ref(), self.weather.as_ref());
+        setup_sky(
+            &self.args,
+            &renderer,
+            &mut scene,
+            self.envir.as_ref(),
+            self.weather.as_ref(),
+        );
         // the window streams the tiles around the camera unless a fixed area was asked for
         if !self.args.all && self.args.radius.is_none() {
             match open_world(&self.args) {
@@ -599,7 +727,13 @@ impl App {
                     Err(e) if self.args.bus.is_some() => {
                         log::warn!("the bus could not be put down ({e:#}); trying again");
                         spawn_player(&self.args, &w, &renderer, &mut scene).map_err(|e2| {
-                            self.service_msg = Some((format!("The bus could not be loaded: {}", format!("{e2:#}").lines().next().unwrap_or_default()), 15.0));
+                            self.service_msg = Some((
+                                format!(
+                                    "The bus could not be loaded: {}",
+                                    format!("{e2:#}").lines().next().unwrap_or_default()
+                                ),
+                                15.0,
+                            ));
                             e2
                         })
                     }
@@ -609,7 +743,8 @@ impl App {
                     Ok(mut p) => {
                         let audio = omsi_audio::AudioEngine::new();
                         if let Some(p) = p.as_mut() {
-                            p.vehicle.host.auto_clutch = if self.settings.auto_clutch { 1.0 } else { 0.0 };
+                            p.vehicle.host.auto_clutch =
+                                if self.settings.auto_clutch { 1.0 } else { 0.0 };
                             p.load_sounds(&audio);
                             p.ibis_background = true;
                             // --autostart applies in the window too, not only offscreen
@@ -620,7 +755,13 @@ impl App {
                             // a pack this bus borrows parts from is not installed: say so
                             // once, it explains dark displays and missing devices
                             if !p.vehicle.ty.missing_packs.is_empty() {
-                                let packs: Vec<String> = p.vehicle.ty.missing_packs.iter().map(|(n, _)| n.clone()).collect();
+                                let packs: Vec<String> = p
+                                    .vehicle
+                                    .ty
+                                    .missing_packs
+                                    .iter()
+                                    .map(|(n, _)| n.clone())
+                                    .collect();
                                 let msg = format!(
                                     "This bus takes parts from vehicle pack(s) that are not installed: {} (install them for its displays and devices)",
                                     packs.join(", ")
@@ -694,7 +835,11 @@ impl App {
                     }
                     h.exact_fare = self.settings.exact_fare;
                     h.boarding = self.settings.boarding.clone();
-                    h.voices = match self.settings.pax_voices.as_str() { "off" => 2, "tickets" => 1, _ => 0 };
+                    h.voices = match self.settings.pax_voices.as_str() {
+                        "off" => 2,
+                        "tickets" => 1,
+                        _ => 0,
+                    };
                     if let Some(p) = self.player.as_mut() {
                         h.set_cabin(&mut p.vehicle);
                         h.ticket_key = ticket_key_name(&self.args.root, &p.bindings);
@@ -715,7 +860,10 @@ impl App {
                 }
                 // (a player who joins draws the host's traffic in it, whatever their own count
                 // says: the host's cars had nowhere to go without it)
-                let populated = self.args.traffic > 0 || self.args.schedule || rail_drive::args_rail(&self.args) || self.args.lan_join.is_some();
+                let populated = self.args.traffic > 0
+                    || self.args.schedule
+                    || rail_drive::args_rail(&self.args)
+                    || self.args.lan_join.is_some();
                 // Without traffic it still runs the light programs and switches the lamps:
                 // they stood frozen with red, yellow and green all lit (#727).
                 {
@@ -776,11 +924,9 @@ impl App {
                             }
                             if let Some(d) = self.duty.as_ref() {
                                 let mut fonts = w.fonts.lock();
-                                if let Err(e) = schedule_paper::update_vehicle(
-                                    &mut p.vehicle,
-                                    d,
-                                    &mut fonts,
-                                ) {
+                                if let Err(e) =
+                                    schedule_paper::update_vehicle(&mut p.vehicle, d, &mut fonts)
+                                {
                                     log::warn!("driver timetable paper: {e:#}");
                                 }
                             }
@@ -869,7 +1015,13 @@ impl App {
         ) {
             scene.overlays.clear();
             let dpi = win.scale_factor() as f32;
-            let scale = dpi * ui::size_factor(s.config.height as f32, dpi, self.settings.ui_scale, self.settings.ui_scale_window);
+            let scale = dpi
+                * ui::size_factor(
+                    s.config.height as f32,
+                    dpi,
+                    self.settings.ui_scale,
+                    self.settings.ui_scale_window,
+                );
             ui.loading(
                 &renderer,
                 &mut scene,
@@ -887,7 +1039,10 @@ impl App {
             // to full screen, without a resize event) is made again, as the game's own
             // frames do: left as it was, every later frame of the loading screen failed
             // the same way and its picture stood still until the map was there (#776)
-            reconfigure = matches!(acquired, wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost);
+            reconfigure = matches!(
+                acquired,
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost
+            );
             if let wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) = acquired
             {
@@ -926,7 +1081,11 @@ impl App {
             self.renderer = Some(renderer);
         }
         if reconfigure {
-            if let (Some(s), Some(r), Some(win)) = (self.surface.as_mut(), self.renderer.as_ref(), self.window.as_ref()) {
+            if let (Some(s), Some(r), Some(win)) = (
+                self.surface.as_mut(),
+                self.renderer.as_ref(),
+                self.window.as_ref(),
+            ) {
                 let size = win.inner_size();
                 s.resize(r, size.width, size.height);
             }
@@ -950,7 +1109,12 @@ impl App {
         let mut centers: Vec<DVec3> = self.camera.iter().map(|c| c.position).collect();
         centers.extend(self.player.iter().map(|p| p.vehicle.position));
         // a LAN host simulates the world around every player: the ground and the roads there
-        if self.lan.as_ref().map(|l| l.role == omsi_net::Role::Host).unwrap_or(false) {
+        if self
+            .lan
+            .as_ref()
+            .map(|l| l.role == omsi_net::Role::Host)
+            .unwrap_or(false)
+        {
             centers.extend(self.remotes.remotes.values().map(|r| r.vehicle().position));
         }
         let (Some(streamer), Some(w), Some(r), Some(scene)) = (
@@ -971,18 +1135,21 @@ impl App {
         w.update_texture_budget(r, scene, &centers, false);
         if centers.is_empty()
             || !streamer.update(
-            r,
-            scene,
-            &centers,
-            std::time::Duration::from_millis(6),
-            self.audio.as_ref(),
-        )
+                r,
+                scene,
+                &centers,
+                std::time::Duration::from_millis(6),
+                self.audio.as_ref(),
+            )
         {
             return;
         }
         if let Some(p) = self.player.as_mut() {
             // (OMSI's [no_collision]: no solid object stops the bus)
-            p.vehicle.collision = self.settings.collision_objects.then(|| w.collision.lock().clone());
+            p.vehicle.collision = self
+                .settings
+                .collision_objects
+                .then(|| w.collision.lock().clone());
             p.vehicle.wheel_walls = self.settings.collision_objects;
         }
         match self.traffic.as_mut() {
@@ -1027,9 +1194,15 @@ pub(crate) fn report_missing_content(w: &World, msg: &mut Option<(String, f32)>)
     let addon = |f: &str| f.split('/').take(2).collect::<Vec<_>>().join("/");
     let mut by_addon: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for (f, what) in &files {
-        by_addon.entry(addon(f)).or_default().push(format!("{what}: {f}"));
+        by_addon
+            .entry(addon(f))
+            .or_default()
+            .push(format!("{what}: {f}"));
     }
-    let mut text = format!("neoOMSI: content this map uses that is not installed\nmap: {}\n\n", w.map_dir.display());
+    let mut text = format!(
+        "neoOMSI: content this map uses that is not installed\nmap: {}\n\n",
+        w.map_dir.display()
+    );
     for (a, list) in &by_addon {
         text.push_str(&format!("{a} ({} files)\n", list.len()));
         for l in list {
@@ -1048,13 +1221,25 @@ pub(crate) fn report_missing_content(w: &World, msg: &mut Option<(String, f32)>)
     let objects = files.iter().filter(|(_, w)| *w != "spline").count();
     let splines = files.len() - objects;
     let addons: Vec<&String> = by_addon.keys().take(4).collect();
-    let more = if by_addon.len() > 4 { format!(" and {} more", by_addon.len() - 4) } else { String::new() };
-    log::warn!("missing content: {objects} objects, {splines} splines, {} textures (list: {})", textures.len(), path.display());
+    let more = if by_addon.len() > 4 {
+        format!(" and {} more", by_addon.len() - 4)
+    } else {
+        String::new()
+    };
+    log::warn!(
+        "missing content: {objects} objects, {splines} splines, {} textures (list: {})",
+        textures.len(),
+        path.display()
+    );
     if !files.is_empty() {
         *msg = Some((
             format!(
                 "This map uses {objects} objects and {splines} splines that are not installed (add-ons: {}{more}). The list is in {}",
-                addons.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(", "),
+                addons
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 path.display()
             ),
             15.0,
@@ -1076,7 +1261,11 @@ fn wrap_deg(a: f32) -> f32 {
 /// `a` (k = 0) to `b` (k = 1), both cameras fixed in the bus's frame: the eye, the turn of the
 /// view and the field of view on a straight way. The bus's own motion (its pitch, bank, the
 /// head) is put on the result afterwards, so the glide is the same standing and driving.
-pub(crate) fn blend_local(a: &omsi_vehicle::Camera, b: &omsi_vehicle::Camera, k: f32) -> omsi_vehicle::Camera {
+pub(crate) fn blend_local(
+    a: &omsi_vehicle::Camera,
+    b: &omsi_vehicle::Camera,
+    k: f32,
+) -> omsi_vehicle::Camera {
     // (measured from `b`: at k = 1 every value is exactly `b`'s - no 360 degree residue of a
     // yaw that went the short way round, no rounding left over for the hand-over to the
     // plain camera to show)
@@ -1108,10 +1297,17 @@ pub(crate) fn blend_local(a: &omsi_vehicle::Camera, b: &omsi_vehicle::Camera, k:
             let s = theta.sin();
             ((fa * ((rest * theta).sin() / s)) + (fb * ((k * theta).sin() / s))).normalize_or(fb)
         };
-        (f.x.atan2(f.y).to_degrees(), f.z.clamp(-1.0, 1.0).asin().to_degrees())
+        (
+            f.x.atan2(f.y).to_degrees(),
+            f.z.clamp(-1.0, 1.0).asin().to_degrees(),
+        )
     };
     omsi_vehicle::Camera {
-        pos: [l(a.pos[0], b.pos[0]), l(a.pos[1], b.pos[1]), l(a.pos[2], b.pos[2])],
+        pos: [
+            l(a.pos[0], b.pos[0]),
+            l(a.pos[1], b.pos[1]),
+            l(a.pos[2], b.pos[2]),
+        ],
         dist: l(a.dist, b.dist),
         fov: l(a.fov, b.fov),
         yaw,
@@ -1186,7 +1382,11 @@ impl CamCarry {
         self.pitch *= k;
         self.roll *= k;
         self.fov *= k;
-        self.pos.length() > 1e-4 || self.yaw.abs() > 0.01 || self.pitch.abs() > 0.01 || self.roll.abs() > 0.01 || self.fov.abs() > 0.01
+        self.pos.length() > 1e-4
+            || self.yaw.abs() > 0.01
+            || self.pitch.abs() > 0.01
+            || self.roll.abs() > 0.01
+            || self.fov.abs() > 0.01
     }
 }
 

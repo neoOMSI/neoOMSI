@@ -4,9 +4,20 @@ use super::*;
 
 impl App {
     /// The interface, the picture itself, screenshots and the end of the session.
-    pub(super) fn redraw_render(&mut self, event_loop: &ActiveEventLoop, f: &Frame, daylight: omsi_sim::Daylight) {
-        let Frame { now, raw_dt, dt, .. } = *f;
-        let menu_lines = if self.game_menu.is_some() { self.game_menu_items() } else { Vec::new() };
+    pub(super) fn redraw_render(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        f: &Frame,
+        daylight: omsi_sim::Daylight,
+    ) {
+        let Frame {
+            now, raw_dt, dt, ..
+        } = *f;
+        let menu_lines = if self.game_menu.is_some() {
+            self.game_menu_items()
+        } else {
+            Vec::new()
+        };
         let vr_nav_display = self.vr_nav_display();
         let vr_active = self.vr_active();
         let menu_tabs = match self.list_kind.as_ref() {
@@ -68,7 +79,11 @@ impl App {
             let __t = Instant::now();
             scene.overlays.clear();
             let notes = lines;
-            if let (Some(nav), Some(p), Some(s)) = (self.navigator.as_mut(), self.player.as_ref(), self.surface.as_ref()) {
+            if let (Some(nav), Some(p), Some(s)) = (
+                self.navigator.as_mut(),
+                self.player.as_ref(),
+                self.surface.as_ref(),
+            ) {
                 let old_enabled = nav.enabled;
                 let old_opacity = nav.opacity;
                 nav.cockpit_display = vr_active;
@@ -86,7 +101,12 @@ impl App {
                     }
                 }
                 let (line, terminus, stops, trip) = navigator::duty_parts(self.duty.as_ref());
-                match (trip, self.schedule.as_ref(), self.traffic.as_ref(), self.world.as_ref()) {
+                match (
+                    trip,
+                    self.schedule.as_ref(),
+                    self.traffic.as_ref(),
+                    self.world.as_ref(),
+                ) {
                     (Some((key, name)), Some(sch), _, _) if nav.map_net().is_some() => {
                         if nav.wants_route(&key, 0) {
                             let lanes = sch.trip_route_in(nav.map_net().unwrap(), &name);
@@ -124,9 +144,21 @@ impl App {
                     weekday: self.clock.weekday(),
                     language: &self.settings.language,
                     units: &self.settings.units,
-                    screen: if vr_active { (1440.0, 1440.0) } else { (s.config.width as f32, s.config.height as f32) },
-                    ui_scale: if vr_active { 1.0 } else { self.settings.ui_scale },
-                    follow_window: if vr_active { true } else { self.settings.ui_scale_window },
+                    screen: if vr_active {
+                        (1440.0, 1440.0)
+                    } else {
+                        (s.config.width as f32, s.config.height as f32)
+                    },
+                    ui_scale: if vr_active {
+                        1.0
+                    } else {
+                        self.settings.ui_scale
+                    },
+                    follow_window: if vr_active {
+                        true
+                    } else {
+                        self.settings.ui_scale_window
+                    },
                     dt,
                 };
                 let __tn = Instant::now();
@@ -136,13 +168,20 @@ impl App {
                 *self.profile.entry("hud.navigator").or_default() += __tn.elapsed().as_secs_f64();
                 if nav.arrows {
                     if let Some(w) = self.world.as_ref() {
-                        let spots = nav.arrow_spots(self.traffic.as_ref().map(|t| &t.net), 350.0, &|id| w.object_positions.lock().get(&id).map(|p| (p.0, p.1[0])));
+                        let spots =
+                            nav.arrow_spots(self.traffic.as_ref().map(|t| &t.net), 350.0, &|id| {
+                                w.object_positions.lock().get(&id).map(|p| (p.0, p.1[0]))
+                            });
                         self.route_arrows.tick(dt, w, r, scene, &spots);
                     }
                 }
             }
             if let (Some(ui), Some(s)) = (self.ui.as_mut(), self.surface.as_ref()) {
-                let scale = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0);
+                let scale = self
+                    .window
+                    .as_ref()
+                    .map(|w| w.scale_factor() as f32)
+                    .unwrap_or(1.0);
                 let (w, h) = (s.config.width as f32, s.config.height as f32);
                 self.remotes.chat.disabled = !self.settings.chat;
                 let chat = (self.lan.is_some() && self.settings.chat).then(|| ui::ChatView {
@@ -152,7 +191,10 @@ impl App {
                 });
                 ui.chat.hidden = self.remotes.chat.hidden;
                 let tags = if self.settings.name_tags {
-                    self.camera.as_ref().map(|c| lan::name_tags(&self.remotes, c, w, h)).unwrap_or_default()
+                    self.camera
+                        .as_ref()
+                        .map(|c| lan::name_tags(&self.remotes, c, w, h))
+                        .unwrap_or_default()
                 } else {
                     Vec::new()
                 };
@@ -163,37 +205,75 @@ impl App {
                     || self.chooser.is_some()
                     || ui.chat.hovered
                     || map_open
-                    || (!vr_active && self.navigator.as_ref().is_some_and(|n| n.over_panel(cx, cy)));
-                let dropdown = self.dropdown.as_ref().filter(|_| self.chooser.is_some()).map(|d| ui::DropdownView {
-                    row: d.row,
-                    items: d.items.iter().map(|x| x.0.as_str()).collect(),
-                    sel: d.sel,
-                    top: d.top,
-                    current: d.current,
-                });
+                    || (!vr_active
+                        && self
+                            .navigator
+                            .as_ref()
+                            .is_some_and(|n| n.over_panel(cx, cy)));
+                let dropdown = self
+                    .dropdown
+                    .as_ref()
+                    .filter(|_| self.chooser.is_some())
+                    .map(|d| ui::DropdownView {
+                        row: d.row,
+                        items: d.items.iter().map(|x| x.0.as_str()).collect(),
+                        sel: d.sel,
+                        top: d.top,
+                        current: d.current,
+                    });
                 let chooser_list = self.admin_list.as_ref().unwrap_or(&self.vehicle_list);
-                let (chooser_items, chooser_sel): (Vec<(&str, &str)>, Option<usize>) = match self.chooser {
-                    Some(sel) => {
-                        let items = chooser_list.iter().map(|(name, path)| (path.as_str(), name.as_str())).collect();
-                        (items, Some(sel))
-                    }
-                    None => (Vec::new(), None),
-                };
+                let (chooser_items, chooser_sel): (Vec<(&str, &str)>, Option<usize>) =
+                    match self.chooser {
+                        Some(sel) => {
+                            let items = chooser_list
+                                .iter()
+                                .map(|(name, path)| (path.as_str(), name.as_str()))
+                                .collect();
+                            (items, Some(sel))
+                        }
+                        None => (Vec::new(), None),
+                    };
                 let menu_disabled: &[&str] = &[];
-                let (menu_kind, menu_head, menu_preview) = game_lists::menu_extras(self.list_kind.as_ref(), self.admin_list.as_deref(), chooser_sel, self.schedule.as_ref(), self.clock.time);
+                let (menu_kind, menu_head, menu_preview) = game_lists::menu_extras(
+                    self.list_kind.as_ref(),
+                    self.admin_list.as_deref(),
+                    chooser_sel,
+                    self.schedule.as_ref(),
+                    self.clock.time,
+                );
                 let frame = ui::Frame {
                     scale,
-                    ui_scale: ui::size_factor(h, scale, self.settings.ui_scale, self.settings.ui_scale_window),
+                    ui_scale: ui::size_factor(
+                        h,
+                        scale,
+                        self.settings.ui_scale,
+                        self.settings.ui_scale_window,
+                    ),
                     opacity: ui::backdrop(self.settings.ui_opacity),
                     width: w,
                     height: h,
                     cursor: self.cursor,
                     vr: {
-                        #[cfg(windows)] { self.vr.is_some() }
-                        #[cfg(not(windows))] { false }
+                        #[cfg(windows)]
+                        {
+                            self.vr.is_some()
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            false
+                        }
                     },
-                    tooltip: tooltip.filter(|_| self.settings.tooltips && !self.dragging && !covered && self.game_menu.is_none()),
-                    notes: if self.settings.notes && !map_open && self.game_menu.is_none() { &notes } else { &[] },
+                    tooltip: tooltip.filter(|_| {
+                        self.settings.tooltips
+                            && !self.dragging
+                            && !covered
+                            && self.game_menu.is_none()
+                    }),
+                    notes: if self.settings.notes && !map_open && self.game_menu.is_none() {
+                        &notes
+                    } else {
+                        &[]
+                    },
                     fps: self.settings.show_fps.then_some(self.fps),
                     paused: self.paused,
                     menu: match chooser_sel {
@@ -204,14 +284,45 @@ impl App {
                     menu_kind,
                     menu_head,
                     menu_preview,
-                    pane_first: self.pane_scroll.filter(|p| Some(p.0) == chooser_sel).map(|p| p.1),
+                    pane_first: self
+                        .pane_scroll
+                        .filter(|p| Some(p.0) == chooser_sel)
+                        .map(|p| p.1),
                     menu_tabs,
                     dropdown,
                     menu_kbd: self.menu_kbd,
                     menu_top: self.menu_top,
-                    timetable: (self.timetable && !map_open).then(|| timetable_rows(self.duty.as_ref(), self.player.as_ref().map(|p| p.vehicle.host.tt_delay as f64))).flatten(),
-                    info: self.info_bar.then(|| info_line(&self.clock, self.player.as_ref(), self.duty.as_ref(), self.humans.as_ref().map(|h| h.riding()))),
-                    tutorial: self.tutorial.as_ref().filter(|t| !t.hidden && self.game_menu.is_none()).and_then(|t| t.page().map(|p| (p.title.as_str(), p.text.as_str(), p.image.as_deref(), t.at, t.pages.len()))),
+                    timetable: (self.timetable && !map_open)
+                        .then(|| {
+                            timetable_rows(
+                                self.duty.as_ref(),
+                                self.player.as_ref().map(|p| p.vehicle.host.tt_delay as f64),
+                            )
+                        })
+                        .flatten(),
+                    info: self.info_bar.then(|| {
+                        info_line(
+                            &self.clock,
+                            self.player.as_ref(),
+                            self.duty.as_ref(),
+                            self.humans.as_ref().map(|h| h.riding()),
+                        )
+                    }),
+                    tutorial: self
+                        .tutorial
+                        .as_ref()
+                        .filter(|t| !t.hidden && self.game_menu.is_none())
+                        .and_then(|t| {
+                            t.page().map(|p| {
+                                (
+                                    p.title.as_str(),
+                                    p.text.as_str(),
+                                    p.image.as_deref(),
+                                    t.at,
+                                    t.pages.len(),
+                                )
+                            })
+                        }),
                     chat,
                     tags,
                 };
@@ -237,8 +348,16 @@ impl App {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(self.wetness);
-        lighting.inside = match self.inside_remote.and_then(|id| self.remotes.remotes.get(&id)) {
-            Some(rv) => rv.vehicle().ty.def.bounding_box.map(|bb| (rv.vehicle().position, rv.vehicle().heading, bb)),
+        lighting.inside = match self
+            .inside_remote
+            .and_then(|id| self.remotes.remotes.get(&id))
+        {
+            Some(rv) => rv
+                .vehicle()
+                .ty
+                .def
+                .bounding_box
+                .map(|bb| (rv.vehicle().position, rv.vehicle().heading, bb)),
             None => self.player.as_ref().and_then(|p| {
                 p.vehicle
                     .ty
@@ -247,15 +366,28 @@ impl App {
                     .map(|bb| (p.vehicle.position, p.vehicle.heading, bb))
             }),
         };
-        let puddle_surface = lighting.inside.and_then(|(o, _, _)| self.world.as_ref().and_then(|w| w.puddle_surface(o)));
+        let puddle_surface = lighting
+            .inside
+            .and_then(|(o, _, _)| self.world.as_ref().and_then(|w| w.puddle_surface(o)));
         lighting.puddle_ground = puddle_surface.map(|(h, _)| h);
         lighting.puddle_normal = puddle_surface.map_or(Vec3::Z, |(_, n)| n);
-        let puddle_vehicle = self.inside_remote.and_then(|id| self.remotes.remotes.get(&id)).map(|rv| rv.vehicle())
+        let puddle_vehicle = self
+            .inside_remote
+            .and_then(|id| self.remotes.remotes.get(&id))
+            .map(|rv| rv.vehicle())
             .or_else(|| self.player.as_ref().map(|p| &p.vehicle));
-        lighting.puddle_parts = puddle_vehicle.into_iter().flat_map(|v| &v.trailers)
-            .filter_map(|t| t.ty.def.bounding_box.map(|bb| (t.position, t.heading, bb))).take(3).collect();
+        lighting.puddle_parts = puddle_vehicle
+            .into_iter()
+            .flat_map(|v| &v.trailers)
+            .filter_map(|t| t.ty.def.bounding_box.map(|bb| (t.position, t.heading, bb)))
+            .take(3)
+            .collect();
         lighting.detail = self.settings.detail_textures;
-        lighting.glass_wind = self.player.as_ref().map(|p| lights::vehicle_velocity(&p.vehicle)).unwrap_or_default();
+        lighting.glass_wind = self
+            .player
+            .as_ref()
+            .map(|p| lights::vehicle_velocity(&p.vehicle))
+            .unwrap_or_default();
         lighting.led_glow = self.settings.led_glow as f32 * 0.25;
         lighting.led_mips = self.settings.led_mips;
         lighting.atmosphere_brightness = self.settings.atmosphere_brightness;
@@ -274,13 +406,7 @@ impl App {
             self.window.as_ref(),
         ) {
             if let Some(path) = shot {
-                match r.render_to_image(
-                    scene,
-                    s.config.width,
-                    s.config.height,
-                    cam,
-                    &lighting,
-                ) {
+                match r.render_to_image(scene, s.config.width, s.config.height, cam, &lighting) {
                     Ok(mut px) => match {
                         if let Some(over) = self.touch.picture(r, s.config.width, s.config.height) {
                             touch::composite(&mut px, &over);
@@ -291,19 +417,18 @@ impl App {
                             s.config.width,
                             s.config.height,
                             image::ColorType::Rgba8,
-                        ) } {
-                        Ok(()) => log::info!(
-                            "input script: window picture written to {}",
-                            path.display()
-                        ),
-                        Err(e) => log::warn!(
-                            "input script: {} could not be written: {e}",
-                            path.display()
-                        ),
+                        )
+                    } {
+                        Ok(()) => {
+                            log::info!("input script: window picture written to {}", path.display())
+                        }
+                        Err(e) => {
+                            log::warn!("input script: {} could not be written: {e}", path.display())
+                        }
                     },
-                    Err(e) => log::warn!(
-                        "input script: the window picture could not be rendered: {e}"
-                    ),
+                    Err(e) => {
+                        log::warn!("input script: the window picture could not be rendered: {e}")
+                    }
                 }
             }
             // A window that is hidden (another app covers it, another Space) gets
@@ -324,50 +449,48 @@ impl App {
             let acquired = match s.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(_)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(_)
-                if hidden_now =>
-                    {
-                        wgpu::CurrentSurfaceTexture::Occluded
-                    }
+                    if hidden_now =>
+                {
+                    wgpu::CurrentSurfaceTexture::Occluded
+                }
                 other => other,
             };
             let (frame, stand_in) = match acquired {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (Some(frame), None),
                 wgpu::CurrentSurfaceTexture::Occluded
-                if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
+                    if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
+                {
+                    let (w, h) = (s.config.width, s.config.height);
+                    if self
+                        .stand_in
+                        .as_ref()
+                        .map(|t| (t.width(), t.height()) != (w, h))
+                        .unwrap_or(true)
                     {
-                        let (w, h) = (s.config.width, s.config.height);
-                        if self
-                            .stand_in
-                            .as_ref()
-                            .map(|t| (t.width(), t.height()) != (w, h))
-                            .unwrap_or(true)
-                        {
-                            self.stand_in =
-                                Some(r.device.create_texture(&wgpu::TextureDescriptor {
-                                    label: Some("hidden window"),
-                                    size: wgpu::Extent3d {
-                                        width: w,
-                                        height: h,
-                                        depth_or_array_layers: 1,
-                                    },
-                                    mip_level_count: 1,
-                                    sample_count: 1,
-                                    dimension: wgpu::TextureDimension::D2,
-                                    format: r.format(),
-                                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                                    view_formats: &[],
-                                }));
-                        }
-                        (
-                            None,
-                            self.stand_in
-                                .as_ref()
-                                .map(|t| t.create_view(&Default::default())),
-                        )
+                        self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("hidden window"),
+                            size: wgpu::Extent3d {
+                                width: w,
+                                height: h,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: r.format(),
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            view_formats: &[],
+                        }));
                     }
-                wgpu::CurrentSurfaceTexture::Outdated
-                | wgpu::CurrentSurfaceTexture::Lost => {
+                    (
+                        None,
+                        self.stand_in
+                            .as_ref()
+                            .map(|t| t.create_view(&Default::default())),
+                    )
+                }
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     reconfigure = true;
                     (None, None)
                 }
@@ -402,13 +525,24 @@ impl App {
                             _ => -1.0,
                         };
                         let next = since.max(0.0) + raw_dt.min(0.1);
-                        if since < 0.0 || (since < MIRROR_FREEZE_REDRAW && next >= MIRROR_FREEZE_REDRAW) || p.mirrors_dirty {
-                            self.mirrors_seen = render_mirrors(r, scene, w, p, &lighting, None, None);
+                        if since < 0.0
+                            || (since < MIRROR_FREEZE_REDRAW && next >= MIRROR_FREEZE_REDRAW)
+                            || p.mirrors_dirty
+                        {
+                            self.mirrors_seen =
+                                render_mirrors(r, scene, w, p, &lighting, None, None);
                         }
-                        self.frozen_mirrors = Some(FrozenMirrors { bus: p.uid, since: next });
+                        self.frozen_mirrors = Some(FrozenMirrors {
+                            bus: p.uid,
+                            since: next,
+                        });
                     }
                 } else {
-                    let mirrors = self.player.as_ref().map(|p| p.vehicle.ty.def.cameras_reflexion.len()).unwrap_or(0);
+                    let mirrors = self
+                        .player
+                        .as_ref()
+                        .map(|p| p.vehicle.ty.def.cameras_reflexion.len())
+                        .unwrap_or(0);
                     #[cfg(windows)]
                     let vr_active = self.vr.is_some();
                     #[cfg(not(windows))]
@@ -423,8 +557,14 @@ impl App {
                                 .filter(|rate| rate.is_finite() && *rate >= -1.0)
                                 .unwrap_or(self.settings.vr_mirror_rate)
                         } else {
-                            let max_hz = if self.settings.mirror_refresh == "full" { MIRROR_MAX_HZ_FULL } else { MIRROR_MAX_HZ_ECO };
-                            MIRROR_RATE.max(mirrors as f32 * MIRROR_MIN_HZ).min(max_hz * self.mirrors_seen.max(1) as f32)
+                            let max_hz = if self.settings.mirror_refresh == "full" {
+                                MIRROR_MAX_HZ_FULL
+                            } else {
+                                MIRROR_MAX_HZ_ECO
+                            };
+                            MIRROR_RATE
+                                .max(mirrors as f32 * MIRROR_MIN_HZ)
+                                .min(max_hz * self.mirrors_seen.max(1) as f32)
                         }
                     };
                     // The desktop camera does not follow the headset. Culling by
@@ -436,7 +576,11 @@ impl App {
                     } else {
                         Some((*cam, s.config.width as f32 / s.config.height.max(1) as f32))
                     };
-                    let near = self.player.as_ref().zip(self.camera.as_ref()).is_some_and(|(p, c)| (p.vehicle.position - c.position).length() < 12.0);
+                    let near = self
+                        .player
+                        .as_ref()
+                        .zip(self.camera.as_ref())
+                        .is_some_and(|(p, c)| (p.vehicle.position - c.position).length() < 12.0);
                     let draw_limit = if vr_active {
                         if self.in_cab || near {
                             vr_mirror_updates(&mut self.mirror_budget, raw_dt, rate, mirrors)
@@ -452,12 +596,23 @@ impl App {
                     if vr_active && draw_limit > 0 && draw_limit == mirrors {
                         if let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) {
                             self.mirror_turn = self.mirror_turn.wrapping_add(draw_limit);
-                            self.mirrors_seen = render_mirrors(r, scene, w, p, &lighting, None, mirror_view);
+                            self.mirrors_seen =
+                                render_mirrors(r, scene, w, p, &lighting, None, mirror_view);
                             drawn = draw_limit;
                         }
                     }
-                    while (self.in_cab || near) && drawn < (if vr_active { draw_limit } else { self.mirrors_seen.clamp(1, 2) }) && (vr_active || self.mirror_budget >= 1.0) {
-                        let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) else { break };
+                    while (self.in_cab || near)
+                        && drawn
+                            < (if vr_active {
+                                draw_limit
+                            } else {
+                                self.mirrors_seen.clamp(1, 2)
+                            })
+                        && (vr_active || self.mirror_budget >= 1.0)
+                    {
+                        let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) else {
+                            break;
+                        };
                         if !vr_active {
                             self.mirror_budget -= 1.0;
                         }
@@ -482,9 +637,21 @@ impl App {
                 let mirrored = false;
                 #[cfg(windows)]
                 if let Some(vr) = self.vr.as_mut() {
-                    let menu_range = self.ui.as_ref().map(|u| u.menu_overlay_range.clone()).unwrap_or(0..0);
-                    let cursor_overlay = self.ui.as_ref().and_then(|u| u.vr_cursor_overlay).filter(|_| self.vr_nav_edit.is_none());
-                    let tooltip_overlay = self.ui.as_ref().and_then(|u| u.vr_tooltip_overlay).filter(|_| self.vr_nav_edit.is_none());
+                    let menu_range = self
+                        .ui
+                        .as_ref()
+                        .map(|u| u.menu_overlay_range.clone())
+                        .unwrap_or(0..0);
+                    let cursor_overlay = self
+                        .ui
+                        .as_ref()
+                        .and_then(|u| u.vr_cursor_overlay)
+                        .filter(|_| self.vr_nav_edit.is_none());
+                    let tooltip_overlay = self
+                        .ui
+                        .as_ref()
+                        .and_then(|u| u.vr_tooltip_overlay)
+                        .filter(|_| self.vr_nav_edit.is_none());
                     match vr.render(
                         r,
                         scene,
@@ -496,10 +663,17 @@ impl App {
                         cursor_overlay,
                         tooltip_overlay,
                         self.cursor,
-                        self.player.as_ref().map(|p| (p.vehicle.position, p.vehicle.body_rotation())),
-                        vr_nav_display.filter(|d| d.placement.enabled).and_then(|d| {
-                            self.navigator.as_ref().and_then(|n| n.panel_overlay).map(|index| (index, d))
-                        }),
+                        self.player
+                            .as_ref()
+                            .map(|p| (p.vehicle.position, p.vehicle.body_rotation())),
+                        vr_nav_display
+                            .filter(|d| d.placement.enabled)
+                            .and_then(|d| {
+                                self.navigator
+                                    .as_ref()
+                                    .and_then(|n| n.panel_overlay)
+                                    .map(|index| (index, d))
+                            }),
                         self.player.as_ref().map(|p| p.uid),
                         self.settings.vr_head_smoothing_ms,
                         !self.mouse_drive,
@@ -554,8 +728,7 @@ impl App {
                 r.queue.submit(std::iter::empty::<wgpu::CommandBuffer>());
                 let _ = r.device.poll(wgpu::PollType::Poll);
                 *self.profile.entry("present").or_default() += __t.elapsed().as_secs_f64();
-                if let Some(rest) =
-                    std::time::Duration::from_millis(16).checked_sub(now.elapsed())
+                if let Some(rest) = std::time::Duration::from_millis(16).checked_sub(now.elapsed())
                 {
                     std::thread::sleep(rest);
                 }
@@ -568,7 +741,13 @@ impl App {
             // machine (with V-sync off and no limit an M4 drew 300 frames a second in the
             // depot and ran hot); 1000 and more = no limit at all
             let max_fps = if max_fps == 0 {
-                self.window.as_ref().and_then(|w| w.current_monitor()).and_then(|m| m.refresh_rate_millihertz()).map(|mhz| (mhz as f64 / 1000.0).round() as u32).filter(|r| *r >= 30).unwrap_or(120)
+                self.window
+                    .as_ref()
+                    .and_then(|w| w.current_monitor())
+                    .and_then(|m| m.refresh_rate_millihertz())
+                    .map(|mhz| (mhz as f64 / 1000.0).round() as u32)
+                    .filter(|r| *r >= 30)
+                    .unwrap_or(120)
             } else if max_fps >= 1000 {
                 0
             } else {
@@ -589,21 +768,43 @@ impl App {
             }
             self.frames += 1;
             let profiling = omsi_cfg::env::var_os("OMSI_PROFILE").is_some();
-            if profiling
-                && self.cpu_mark.is_none()
-                && self.started.elapsed().as_secs_f32() > 15.0
-            {
+            if profiling && self.cpu_mark.is_none() && self.started.elapsed().as_secs_f32() > 15.0 {
                 self.cpu_mark =
                     process_cpu_seconds().map(|c| (c, Instant::now(), self.total_frames));
             }
             if let (Some(limit), false) = (self.args.exit_after, self.exiting) {
                 if self.started.elapsed().as_secs_f32() > limit {
                     self.exiting = true;
-                    log::info!("exit after {limit} s: {} frames total ({} with the window hidden{}), {:.1} fps average, {} frames over 50 ms, worst {:.0} ms", self.total_frames, self.hidden_frames, if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() { ", drawn off-screen" } else { ", not drawn" }, self.total_frames as f32 / self.started.elapsed().as_secs_f32(), self.spikes, self.worst_ms);
-                    if let (Some(st), Some(w)) =
-                        (self.streamer.as_ref(), self.world.as_ref())
-                    {
-                        log::info!("tile streaming: {} tiles loaded now, {} loaded and {} unloaded in all, {:.1} s preparing on the worker, slowest upload {:.0} ms, streaming over 16 ms in {} frames (worst {:.0} ms); {} objects + {} trees, {} rows, {} attached ({} without parent), {} unresolved", w.loaded_tiles().len(), st.loaded_total, st.unloaded_total, st.prepare_secs, st.worst_upload_ms, st.slow_frames, st.worst_frame_ms, st.stats.objects, st.stats.trees, st.stats.rows, st.stats.attached, st.stats.unattached, st.stats.failed_objects);
+                    log::info!(
+                        "exit after {limit} s: {} frames total ({} with the window hidden{}), {:.1} fps average, {} frames over 50 ms, worst {:.0} ms",
+                        self.total_frames,
+                        self.hidden_frames,
+                        if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() {
+                            ", drawn off-screen"
+                        } else {
+                            ", not drawn"
+                        },
+                        self.total_frames as f32 / self.started.elapsed().as_secs_f32(),
+                        self.spikes,
+                        self.worst_ms
+                    );
+                    if let (Some(st), Some(w)) = (self.streamer.as_ref(), self.world.as_ref()) {
+                        log::info!(
+                            "tile streaming: {} tiles loaded now, {} loaded and {} unloaded in all, {:.1} s preparing on the worker, slowest upload {:.0} ms, streaming over 16 ms in {} frames (worst {:.0} ms); {} objects + {} trees, {} rows, {} attached ({} without parent), {} unresolved",
+                            w.loaded_tiles().len(),
+                            st.loaded_total,
+                            st.unloaded_total,
+                            st.prepare_secs,
+                            st.worst_upload_ms,
+                            st.slow_frames,
+                            st.worst_frame_ms,
+                            st.stats.objects,
+                            st.stats.trees,
+                            st.stats.rows,
+                            st.stats.attached,
+                            st.stats.unattached,
+                            st.stats.failed_objects
+                        );
                         st.stats.log_ground();
                     }
                     if omsi_cfg::env::var_os("OMSI_PROFILE").is_some() {
@@ -612,29 +813,29 @@ impl App {
                             log::info!("profile {k:10}: {:.1} ms/frame", v / n * 1000.0);
                         }
                         if let Some(h) = self.humans.as_ref() {
-                            log::info!(
-                                "profile people: {} ({})",
-                                h.people.len(),
-                                h.summary()
-                            );
+                            log::info!("profile people: {} ({})", h.people.len(), h.summary());
                         }
                         for (k, v) in r.stats.borrow().iter() {
-                            log::info!(
-                                "profile render.{k:10}: {:.2} ms/frame",
-                                v / n * 1000.0
-                            );
+                            log::info!("profile render.{k:10}: {:.2} ms/frame", v / n * 1000.0);
                         }
                         for (k, v) in r.counts.borrow().iter() {
                             log::info!("profile count {k}: {:.0} a frame", v / n);
                         }
                         for (pass, ms, frames) in r.gpu_pass_times() {
-                            log::info!("profile gpu pass {pass:12}: {ms:.2} ms ({frames} frames measured)");
+                            log::info!(
+                                "profile gpu pass {pass:12}: {ms:.2} ms ({frames} frames measured)"
+                            );
                         }
                         if let (Some((c0, t0, f0)), Some(c1)) =
                             (self.cpu_mark, process_cpu_seconds())
                         {
                             let frames = self.total_frames.saturating_sub(f0).max(1) as f64;
-                            log::info!("profile: since 15 s {:.1} ms wall and {:.1} ms CPU (all threads) per frame, {:.1} cores busy", t0.elapsed().as_secs_f64() / frames * 1000.0, (c1 - c0) / frames * 1000.0, (c1 - c0) / t0.elapsed().as_secs_f64().max(1e-3));
+                            log::info!(
+                                "profile: since 15 s {:.1} ms wall and {:.1} ms CPU (all threads) per frame, {:.1} cores busy",
+                                t0.elapsed().as_secs_f64() / frames * 1000.0,
+                                (c1 - c0) / frames * 1000.0,
+                                (c1 - c0) / t0.elapsed().as_secs_f64().max(1e-3)
+                            );
                         }
                         let (sw, sh) = r.scene_size(s.config.width, s.config.height);
                         log::info!(
@@ -652,7 +853,10 @@ impl App {
             if self.fps_t.elapsed().as_secs_f32() >= 1.0 {
                 if omsi_cfg::env::var_os("OMSI_PROFILE").is_some() {
                     let secs = self.fps_t.elapsed().as_secs_f32();
-                    log::info!("profile interval: {:.1} fps over {secs:.2} s", self.frames as f32 / secs);
+                    log::info!(
+                        "profile interval: {:.1} fps over {secs:.2} s",
+                        self.frames as f32 / secs
+                    );
                 }
                 self.fps = self.frames as f32;
                 self.frames = 0;

@@ -35,21 +35,28 @@ impl ControlNames {
         }
         for dir in dirs {
             // (through the content file system: a mod's language files may be in an archive)
-            let Some(list) = omsi_cfg::vfs::list_dir(&dir) else { continue };
+            let Some(list) = omsi_cfg::vfs::list_dir(&dir) else {
+                continue;
+            };
             let mut files: Vec<std::path::PathBuf> = list
                 .into_iter()
                 .filter(|(_, is_dir)| !*is_dir)
                 .map(|(n, _)| dir.join(n))
                 .filter(|p| {
-                    let n = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-                    n.starts_with(&format!("{}_key_", lang.to_ascii_lowercase())) && n.ends_with(".olf")
+                    let n = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                        .unwrap_or_default();
+                    n.starts_with(&format!("{}_key_", lang.to_ascii_lowercase()))
+                        && n.ends_with(".olf")
                 })
                 .collect();
             files.sort();
             for f in files {
                 if let Ok(l) = omsi_content::language::Language::load(&f) {
                     for (k, v) in l.strings {
-                        if let Some(name) = k.strip_prefix("KY_").or_else(|| k.strip_prefix("ky_")) {
+                        if let Some(name) = k.strip_prefix("KY_").or_else(|| k.strip_prefix("ky_"))
+                        {
                             let v = v.trim();
                             if !v.is_empty() && !v.starts_with('<') {
                                 texts.insert(name.to_ascii_lowercase(), v.to_string());
@@ -66,11 +73,19 @@ impl ControlNames {
     /// The same names from a table (tests).
     #[cfg(test)]
     pub fn from_table(lang: &str, table: &[(&str, &str)]) -> ControlNames {
-        ControlNames { lang: language_code(lang), texts: table.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.to_string())).collect() }
+        ControlNames {
+            lang: language_code(lang),
+            texts: table
+                .iter()
+                .map(|(k, v)| (k.to_ascii_lowercase(), v.to_string()))
+                .collect(),
+        }
     }
 
     fn text(&self, trigger: &str) -> Option<&str> {
-        self.texts.get(&trigger.to_ascii_lowercase()).map(|s| s.as_str())
+        self.texts
+            .get(&trigger.to_ascii_lowercase())
+            .map(|s| s.as_str())
     }
 
     /// What a `[mouseevent]` does, for the HUD.
@@ -81,7 +96,13 @@ impl ControlNames {
         }
         // variants of a trigger the key dialog knows: the mouse version of a key, a second
         // button for the same job, the outside button of a door
-        for (suffix, extra) in [("_mouse", ""), ("_external", " (outside)"), ("_2", " 2"), ("_sw", ""), ("_button", "")] {
+        for (suffix, extra) in [
+            ("_mouse", ""),
+            ("_external", " (outside)"),
+            ("_2", " 2"),
+            ("_sw", ""),
+            ("_button", ""),
+        ] {
             if let Some(base) = strip_suffix_ci(event, suffix) {
                 if let Some(t) = self.official(base) {
                     return format!("{t}{}", if self.lang == "ENG" { extra } else { "" });
@@ -130,12 +151,23 @@ pub fn names(root: &Path, lang: &str) -> &'static ControlNames {
 }
 
 fn strip_suffix_ci<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
-    (s.len() > suffix.len() && s.is_char_boundary(s.len() - suffix.len()) && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)).then(|| &s[..s.len() - suffix.len()])
+    (s.len() > suffix.len()
+        && s.is_char_boundary(s.len() - suffix.len())
+        && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix))
+    .then(|| &s[..s.len() - suffix.len()])
 }
 
 /// The internal name with its separators turned into spaces (German texts).
 pub fn humanize(name: &str) -> String {
-    let words: Vec<String> = tokens(name).into_iter().filter(|t| !matches!(t.to_ascii_lowercase().as_str(), "cp" | "kw" | "bus" | "toggle" | "mouse" | "lod")).collect();
+    let words: Vec<String> = tokens(name)
+        .into_iter()
+        .filter(|t| {
+            !matches!(
+                t.to_ascii_lowercase().as_str(),
+                "cp" | "kw" | "bus" | "toggle" | "mouse" | "lod"
+            )
+        })
+        .collect();
     sentence(&words.join(" "))
 }
 
@@ -147,7 +179,9 @@ fn tokens(name: &str) -> Vec<String> {
     for c in name.chars() {
         let sep = matches!(c, '_' | '-' | ' ' | '.' | '\\' | '/');
         let boundary = match prev {
-            Some(p) => (p.is_ascii_digit() != c.is_ascii_digit()) || (p.is_lowercase() && c.is_uppercase()),
+            Some(p) => {
+                (p.is_ascii_digit() != c.is_ascii_digit()) || (p.is_lowercase() && c.is_uppercase())
+            }
             None => false,
         };
         if sep || (boundary && !cur.is_empty()) {
@@ -168,93 +202,474 @@ fn tokens(name: &str) -> Vec<String> {
 
 /// German spelling folded the way the file names write it.
 fn fold(word: &str) -> String {
-    word.to_lowercase().replace('ä', "ae").replace('ö', "oe").replace('ü', "ue").replace('ß', "ss")
+    word.to_lowercase()
+        .replace('ä', "ae")
+        .replace('ö', "oe")
+        .replace('ü', "ue")
+        .replace('ß', "ss")
 }
 
 /// The cockpit and body vocabulary of OMSI's stock and add-on buses (folded German or
 /// internal English → English). An empty translation drops the word.
 const WORDS: &[(&str, &str)] = &[
     // technical prefixes and noise
-    ("cp", ""), ("kw", ""), ("m", ""), ("bus", ""), ("lod", ""), ("mouse", ""), ("mov", ""), ("komplett", ""), ("generic", ""),
+    ("cp", ""),
+    ("kw", ""),
+    ("m", ""),
+    ("bus", ""),
+    ("lod", ""),
+    ("mouse", ""),
+    ("mov", ""),
+    ("komplett", ""),
+    ("generic", ""),
     // doors and body
-    ("tuer", "door"), ("tueren", "doors"), ("door", "door"), ("doors", "doors"), ("doorfront", "front door"), ("dooraft", "rear door"),
-    ("tuerfluegel", "door leaf"), ("fluegel", "leaf"), ("tuerbuegel", "door grab rail"), ("buegel", "grab rail"), ("tuerlappen", "door flap"),
-    ("tuerscheibe", "door window"), ("tuerfenst", "door window"), ("tuertaster", "door button"), ("tuerb", "door"), ("tuerext", "door outside"), ("tuerint", "door inside"),
-    ("fahrertuer", "driver's door"), ("fahrgastpendel", "passenger swing gate"), ("fahrgpend", "passenger swing gate"), ("pendel", "swing gate"),
-    ("aussenoeffner", "outside opener"), ("oeffner", "opener"), ("entriegelung", "release"), ("nothahn", "emergency door valve"), ("notheben", "emergency lift"),
-    ("klappe", "flap"), ("frontklappe", "front flap"), ("tauschklappe", "exchange flap"), ("wagenkasten", "body"), ("kasten", "box"), ("body", "body"),
-    ("dach", "roof"), ("dachluke", "roof hatch"), ("luke", "hatch"), ("heck", "rear"), ("heckscheibe", "rear window"), ("heckl", "rear light"),
-    ("frontscheibe", "windscreen"), ("frontgrill", "front grille"), ("scheibe", "window"), ("scheiben", "windows"), ("fenster", "window"), ("fensterrahmen", "window frame"),
-    ("klappfenster", "tilting window"), ("fahrerfenster", "driver's window"), ("innenraumscheibe", "interior window"), ("trennscheibe", "partition"), ("trennscheiben", "partitions"),
-    ("cockpitscheibe", "cockpit window"), ("quersitzscheiben", "side seat screens"), ("fahrradscheiben", "bicycle area screens"), ("taucherbrille", "front window"),
-    ("rahmen", "frame"), ("gelenk", "articulation"), ("knick", "articulation"), ("articul", "articulation"), ("bellows", "bellows"), ("drehgestell", "bogie"), ("unterbau", "underbody"),
-    ("fahrgestell", "chassis"), ("achse", "axle"), ("rad", "wheel"), ("wheelcap", "wheel cap"), ("kupplung", "coupling"), ("stange", "pole"), ("stangen", "poles"),
-    ("griff", "handle"), ("hebel", "lever"), ("platte", "plate"), ("basis", "base"), ("unterlage", "pad"), ("polster", "upholstery"), ("kunstleder", "leatherette"),
-    ("sitz", "seat"), ("sitze", "seats"), ("seats", "seats"), ("klappsitz", "folding seat"), ("fahrersitz", "driver's seat"), ("innenraum", "interior"), ("interior", "interior"),
-    ("innen", "inside"), ("aussen", "outside"), ("innenwaende", "interior walls"), ("waende", "walls"), ("decke", "ceiling"), ("boden", "floor"), ("stufe", "step"),
+    ("tuer", "door"),
+    ("tueren", "doors"),
+    ("door", "door"),
+    ("doors", "doors"),
+    ("doorfront", "front door"),
+    ("dooraft", "rear door"),
+    ("tuerfluegel", "door leaf"),
+    ("fluegel", "leaf"),
+    ("tuerbuegel", "door grab rail"),
+    ("buegel", "grab rail"),
+    ("tuerlappen", "door flap"),
+    ("tuerscheibe", "door window"),
+    ("tuerfenst", "door window"),
+    ("tuertaster", "door button"),
+    ("tuerb", "door"),
+    ("tuerext", "door outside"),
+    ("tuerint", "door inside"),
+    ("fahrertuer", "driver's door"),
+    ("fahrgastpendel", "passenger swing gate"),
+    ("fahrgpend", "passenger swing gate"),
+    ("pendel", "swing gate"),
+    ("aussenoeffner", "outside opener"),
+    ("oeffner", "opener"),
+    ("entriegelung", "release"),
+    ("nothahn", "emergency door valve"),
+    ("notheben", "emergency lift"),
+    ("klappe", "flap"),
+    ("frontklappe", "front flap"),
+    ("tauschklappe", "exchange flap"),
+    ("wagenkasten", "body"),
+    ("kasten", "box"),
+    ("body", "body"),
+    ("dach", "roof"),
+    ("dachluke", "roof hatch"),
+    ("luke", "hatch"),
+    ("heck", "rear"),
+    ("heckscheibe", "rear window"),
+    ("heckl", "rear light"),
+    ("frontscheibe", "windscreen"),
+    ("frontgrill", "front grille"),
+    ("scheibe", "window"),
+    ("scheiben", "windows"),
+    ("fenster", "window"),
+    ("fensterrahmen", "window frame"),
+    ("klappfenster", "tilting window"),
+    ("fahrerfenster", "driver's window"),
+    ("innenraumscheibe", "interior window"),
+    ("trennscheibe", "partition"),
+    ("trennscheiben", "partitions"),
+    ("cockpitscheibe", "cockpit window"),
+    ("quersitzscheiben", "side seat screens"),
+    ("fahrradscheiben", "bicycle area screens"),
+    ("taucherbrille", "front window"),
+    ("rahmen", "frame"),
+    ("gelenk", "articulation"),
+    ("knick", "articulation"),
+    ("articul", "articulation"),
+    ("bellows", "bellows"),
+    ("drehgestell", "bogie"),
+    ("unterbau", "underbody"),
+    ("fahrgestell", "chassis"),
+    ("achse", "axle"),
+    ("rad", "wheel"),
+    ("wheelcap", "wheel cap"),
+    ("kupplung", "coupling"),
+    ("stange", "pole"),
+    ("stangen", "poles"),
+    ("griff", "handle"),
+    ("hebel", "lever"),
+    ("platte", "plate"),
+    ("basis", "base"),
+    ("unterlage", "pad"),
+    ("polster", "upholstery"),
+    ("kunstleder", "leatherette"),
+    ("sitz", "seat"),
+    ("sitze", "seats"),
+    ("seats", "seats"),
+    ("klappsitz", "folding seat"),
+    ("fahrersitz", "driver's seat"),
+    ("innenraum", "interior"),
+    ("interior", "interior"),
+    ("innen", "inside"),
+    ("aussen", "outside"),
+    ("innenwaende", "interior walls"),
+    ("waende", "walls"),
+    ("decke", "ceiling"),
+    ("boden", "floor"),
+    ("stufe", "step"),
     // driver's controls and instruments
-    ("panel", "panel"), ("cockpit", "cockpit"), ("lenkrad", "steering wheel"), ("lenksaeule", "steering column"), ("bremspedal", "brake pedal"), ("fahrpedal", "accelerator pedal"),
-    ("pedal", "pedal"), ("feststellbremse", "parking brake"), ("hstbremse", "stop brake"), ("haltestellenbremse", "stop brake"), ("hst", "stop"), ("bremse", "brake"),
-    ("bremsdruck", "brake pressure"), ("vorratsdruck", "reservoir pressure"), ("druckwarnung", "pressure warning"), ("druck", "pressure"), ("oeldruck", "oil pressure"),
-    ("kuehlwasser", "coolant temperature"), ("tankuhr", "fuel gauge"), ("tachonadel", "speedometer needle"), ("tacho", "speedometer"), ("nadel", "needle"),
-    ("kilometer", "odometer"), ("gangwahl", "gear selector"), ("schalter", "switch"), ("taster", "button"), ("knopf", "button"), ("drehschalter", "rotary switch"),
-    ("mikroschalter", "micro switch"), ("trennschalter", "master switch"), ("batterietrennschalter", "battery master switch"), ("batterie", "battery"),
-    ("zuendung", "ignition"), ("anlasser", "starter"), ("schluessel", "ignition key"), ("motorabstellung", "engine stop"), ("motor", "engine"), ("motorkuehlung", "engine cooling"),
-    ("blinker", "indicator"), ("blinkerhebel", "indicator lever"), ("warnblinker", "hazard lights"), ("warn", "hazard lights"), ("licht", "light"), ("leuchte", "lamp"),
-    ("leuchten", "lamps"), ("lampe", "lamp"), ("fahrerlicht", "driver's light"), ("fahrerleuchte", "driver's lamp"), ("fernlicht", "full beam"), ("fernlichtschalter", "full beam switch"),
-    ("abblendlicht", "dipped beam"), ("scheinwerfer", "headlights"), ("standlicht", "parking light"), ("nebelschluss", "rear fog light"), ("nebelschlussleuchte", "rear fog light"),
-    ("innenbeleuchtung", "interior light"), ("beleuchtung", "lighting"), ("lichtstufe", "light level"), ("hupe", "horn"), ("hupknopf", "horn button"), ("horn", "horn"),
-    ("wischer", "wiper"), ("wiper", "wiper"), ("wischerarm", "wiper arm"), ("wischerblatt", "wiper blade"), ("wischerhebel", "wiper lever"), ("wiperlever", "wiper lever"),
-    ("wipermode", "wiper mode"), ("wascher", "washer"), ("wischwasser", "washer fluid"), ("intervall", "intermittent"), ("schnell", "fast"), ("turnswitch", "rotary switch"),
-    ("heizung", "heating"), ("heiz", "heating"), ("heizregler", "heating control"), ("regler", "control"), ("heizluefter", "heater fan"), ("luefter", "fan"),
-    ("geblaese", "blower"), ("standheizung", "parking heater"), ("defrost", "defrost"), ("fussraum", "footwell"), ("umluft", "recirculation"), ("bug", "front"),
-    ("temp", "temperature"), ("misch", "mix"), ("klimator", "roof ventilator"), ("klima", "air conditioning"), ("spiegel", "mirror"), ("spiegelheizung", "mirror heating"),
-    ("rollo", "sun blind"), ("sonnenblende", "sun visor"), ("retarder", "retarder"), ("direkt", "direct"), ("kneeling", "kneeling"), ("kneel", "kneeling"), ("autokneel", "automatic kneeling"),
-    ("rampe", "ramp"), ("pandus", "ramp"), ("ramplift", "ramp / lift"), ("hub", "lift"), ("hublift", "lift"), ("anheben", "raise"), ("wunsch", "request"),
-    ("haltewunsch", "stop request"), ("haltewunschtaster", "stop request button"), ("haltewunschknopf", "stop request button"), ("stoptaster", "stop button"),
-    ("kinderwagen", "buggy"), ("kinderwagenknopf", "buggy button"), ("kinderwagenwunsch", "buggy request"), ("microphone", "microphone"), ("mikrofon", "microphone"),
-    ("kassettenrekorder", "cassette recorder"), ("kr", "cassette recorder"), ("uhr", "clock"), ("hour", "hour hand"), ("minute", "minute hand"), ("second", "second hand"),
-    ("thermometer", "thermometer"), ("raendel", "thumb wheel"), ("fahrer", "driver's"), ("fahrgast", "passenger"), ("fahrrad", "bicycle"),
-    ("parking", "parking"), ("brake", "brake"), ("engine", "engine"), ("startbutton", "start button"), ("engineshutdown", "engine shutdown"), ("automatic", "automatic gearbox"),
-    ("indic", "indicator"), ("ind", "indicator"), ("rpm", "rev counter"), ("airpress", "air pressure"), ("asr", "ASR"),
+    ("panel", "panel"),
+    ("cockpit", "cockpit"),
+    ("lenkrad", "steering wheel"),
+    ("lenksaeule", "steering column"),
+    ("bremspedal", "brake pedal"),
+    ("fahrpedal", "accelerator pedal"),
+    ("pedal", "pedal"),
+    ("feststellbremse", "parking brake"),
+    ("hstbremse", "stop brake"),
+    ("haltestellenbremse", "stop brake"),
+    ("hst", "stop"),
+    ("bremse", "brake"),
+    ("bremsdruck", "brake pressure"),
+    ("vorratsdruck", "reservoir pressure"),
+    ("druckwarnung", "pressure warning"),
+    ("druck", "pressure"),
+    ("oeldruck", "oil pressure"),
+    ("kuehlwasser", "coolant temperature"),
+    ("tankuhr", "fuel gauge"),
+    ("tachonadel", "speedometer needle"),
+    ("tacho", "speedometer"),
+    ("nadel", "needle"),
+    ("kilometer", "odometer"),
+    ("gangwahl", "gear selector"),
+    ("schalter", "switch"),
+    ("taster", "button"),
+    ("knopf", "button"),
+    ("drehschalter", "rotary switch"),
+    ("mikroschalter", "micro switch"),
+    ("trennschalter", "master switch"),
+    ("batterietrennschalter", "battery master switch"),
+    ("batterie", "battery"),
+    ("zuendung", "ignition"),
+    ("anlasser", "starter"),
+    ("schluessel", "ignition key"),
+    ("motorabstellung", "engine stop"),
+    ("motor", "engine"),
+    ("motorkuehlung", "engine cooling"),
+    ("blinker", "indicator"),
+    ("blinkerhebel", "indicator lever"),
+    ("warnblinker", "hazard lights"),
+    ("warn", "hazard lights"),
+    ("licht", "light"),
+    ("leuchte", "lamp"),
+    ("leuchten", "lamps"),
+    ("lampe", "lamp"),
+    ("fahrerlicht", "driver's light"),
+    ("fahrerleuchte", "driver's lamp"),
+    ("fernlicht", "full beam"),
+    ("fernlichtschalter", "full beam switch"),
+    ("abblendlicht", "dipped beam"),
+    ("scheinwerfer", "headlights"),
+    ("standlicht", "parking light"),
+    ("nebelschluss", "rear fog light"),
+    ("nebelschlussleuchte", "rear fog light"),
+    ("innenbeleuchtung", "interior light"),
+    ("beleuchtung", "lighting"),
+    ("lichtstufe", "light level"),
+    ("hupe", "horn"),
+    ("hupknopf", "horn button"),
+    ("horn", "horn"),
+    ("wischer", "wiper"),
+    ("wiper", "wiper"),
+    ("wischerarm", "wiper arm"),
+    ("wischerblatt", "wiper blade"),
+    ("wischerhebel", "wiper lever"),
+    ("wiperlever", "wiper lever"),
+    ("wipermode", "wiper mode"),
+    ("wascher", "washer"),
+    ("wischwasser", "washer fluid"),
+    ("intervall", "intermittent"),
+    ("schnell", "fast"),
+    ("turnswitch", "rotary switch"),
+    ("heizung", "heating"),
+    ("heiz", "heating"),
+    ("heizregler", "heating control"),
+    ("regler", "control"),
+    ("heizluefter", "heater fan"),
+    ("luefter", "fan"),
+    ("geblaese", "blower"),
+    ("standheizung", "parking heater"),
+    ("defrost", "defrost"),
+    ("fussraum", "footwell"),
+    ("umluft", "recirculation"),
+    ("bug", "front"),
+    ("temp", "temperature"),
+    ("misch", "mix"),
+    ("klimator", "roof ventilator"),
+    ("klima", "air conditioning"),
+    ("spiegel", "mirror"),
+    ("spiegelheizung", "mirror heating"),
+    ("rollo", "sun blind"),
+    ("sonnenblende", "sun visor"),
+    ("retarder", "retarder"),
+    ("direkt", "direct"),
+    ("kneeling", "kneeling"),
+    ("kneel", "kneeling"),
+    ("autokneel", "automatic kneeling"),
+    ("rampe", "ramp"),
+    ("pandus", "ramp"),
+    ("ramplift", "ramp / lift"),
+    ("hub", "lift"),
+    ("hublift", "lift"),
+    ("anheben", "raise"),
+    ("wunsch", "request"),
+    ("haltewunsch", "stop request"),
+    ("haltewunschtaster", "stop request button"),
+    ("haltewunschknopf", "stop request button"),
+    ("stoptaster", "stop button"),
+    ("kinderwagen", "buggy"),
+    ("kinderwagenknopf", "buggy button"),
+    ("kinderwagenwunsch", "buggy request"),
+    ("microphone", "microphone"),
+    ("mikrofon", "microphone"),
+    ("kassettenrekorder", "cassette recorder"),
+    ("kr", "cassette recorder"),
+    ("uhr", "clock"),
+    ("hour", "hour hand"),
+    ("minute", "minute hand"),
+    ("second", "second hand"),
+    ("thermometer", "thermometer"),
+    ("raendel", "thumb wheel"),
+    ("fahrer", "driver's"),
+    ("fahrgast", "passenger"),
+    ("fahrrad", "bicycle"),
+    ("parking", "parking"),
+    ("brake", "brake"),
+    ("engine", "engine"),
+    ("startbutton", "start button"),
+    ("engineshutdown", "engine shutdown"),
+    ("automatic", "automatic gearbox"),
+    ("indic", "indicator"),
+    ("ind", "indicator"),
+    ("rpm", "rev counter"),
+    ("airpress", "air pressure"),
+    ("asr", "ASR"),
     // tickets, money, information system
-    ("fahrschein", "ticket"), ("ticket", "ticket"), ("ausgabe", "dispenser"), ("drucker", "ticket printer"), ("ticketprinter", "ticket printer"), ("getticket", "take ticket"),
-    ("entwerter", "ticket validator"), ("zahltisch", "cash desk"), ("kassentisch", "cash desk"), ("kasse", "cash desk"), ("cashdesk", "cash desk"), ("wechsler", "coin changer"),
-    ("changer", "coin changer"), ("geld", "money"), ("money", "money"), ("muenze", "coin"), ("ziel", "destination"), ("linie", "line"), ("lin", "line"), ("kurs", "tour"),
-    ("route", "route"), ("eingabe", "enter"), ("loeschen", "delete"), ("vor", "forward"), ("rueck", "back"), ("stumm", "mute"), ("setmode", "mode"), ("fortschaltung", "advance"),
-    ("matrix", "destination display"), ("vollmatrix", "destination display"), ("innenanzeige", "interior display"), ("anzeige", "display"), ("display", "display"), ("disp", "display"),
-    ("seitenschild", "side sign"), ("seitenschildklemme", "side sign clamp"), ("seitenschklemme", "side sign clamp"), ("klemme", "clamp"), ("steckschild", "plug-in sign"),
-    ("schild", "sign"), ("schildern", "signs"), ("rollband", "rollsign"), ("rlbnd", "rollsign"), ("rlb", "rollsign"), ("fallblatt", "flip-leaf display"), ("ibis", "IBIS"),
-    ("vdv", "VDV"), ("kennz", "number plate"), ("kennzeichen", "number plate"), ("wagennummer", "fleet number"), ("wagennr", "fleet number"), ("nummer", "number"),
-    ("beschriftungen", "lettering"), ("text", "text"), ("textfeld", "text field"), ("schedule", "timetable"), ("fahrplan", "timetable"), ("karte", "card"),
+    ("fahrschein", "ticket"),
+    ("ticket", "ticket"),
+    ("ausgabe", "dispenser"),
+    ("drucker", "ticket printer"),
+    ("ticketprinter", "ticket printer"),
+    ("getticket", "take ticket"),
+    ("entwerter", "ticket validator"),
+    ("zahltisch", "cash desk"),
+    ("kassentisch", "cash desk"),
+    ("kasse", "cash desk"),
+    ("cashdesk", "cash desk"),
+    ("wechsler", "coin changer"),
+    ("changer", "coin changer"),
+    ("geld", "money"),
+    ("money", "money"),
+    ("muenze", "coin"),
+    ("ziel", "destination"),
+    ("linie", "line"),
+    ("lin", "line"),
+    ("kurs", "tour"),
+    ("route", "route"),
+    ("eingabe", "enter"),
+    ("loeschen", "delete"),
+    ("vor", "forward"),
+    ("rueck", "back"),
+    ("stumm", "mute"),
+    ("setmode", "mode"),
+    ("fortschaltung", "advance"),
+    ("matrix", "destination display"),
+    ("vollmatrix", "destination display"),
+    ("innenanzeige", "interior display"),
+    ("anzeige", "display"),
+    ("display", "display"),
+    ("disp", "display"),
+    ("seitenschild", "side sign"),
+    ("seitenschildklemme", "side sign clamp"),
+    ("seitenschklemme", "side sign clamp"),
+    ("klemme", "clamp"),
+    ("steckschild", "plug-in sign"),
+    ("schild", "sign"),
+    ("schildern", "signs"),
+    ("rollband", "rollsign"),
+    ("rlbnd", "rollsign"),
+    ("rlb", "rollsign"),
+    ("fallblatt", "flip-leaf display"),
+    ("ibis", "IBIS"),
+    ("vdv", "VDV"),
+    ("kennz", "number plate"),
+    ("kennzeichen", "number plate"),
+    ("wagennummer", "fleet number"),
+    ("wagennr", "fleet number"),
+    ("nummer", "number"),
+    ("beschriftungen", "lettering"),
+    ("text", "text"),
+    ("textfeld", "text field"),
+    ("schedule", "timetable"),
+    ("fahrplan", "timetable"),
+    ("karte", "card"),
     // modes, locks and add-on equipment (Citaro and other mod buses)
-    ("sperre", "lock"), ("tuersperre", "door lock"), ("wegfahrsperre", "immobiliser"), ("verriegelung", "lock"), ("freigabe", "release"),
-    ("schulfahrt", "training run"), ("schulfahr", "training run"), ("fahrschule", "driving school"), ("funktion", "function"), ("funktionen", "functions"),
-    ("modus", "mode"), ("betrieb", "operation"), ("ansage", "announcement"), ("ansagen", "announcements"), ("lautsprecher", "loudspeaker"),
-    ("lautstaerke", "volume"), ("funk", "radio"), ("sprechfunk", "radio"), ("notaus", "emergency stop"), ("nothalt", "emergency stop"),
-    ("notbremse", "emergency brake"), ("haltestelle", "stop"), ("frost", "frost"), ("frostschutz", "frost protection"), ("kasetka", "cash box"),
-    ("comp", "computer"), ("qiut", "quit"), ("quit", "quit"), ("info", "info"), ("system", "system"), ("menu", "menu"), ("rbl", "RBL"),
-    ("key", "key"), ("rot", "turn"), ("window", "window"), ("wheelchair", "wheelchair"), ("rollstuhl", "wheelchair"), ("camera", "camera"),
-    ("heat", "heating"), ("air", "air"), ("internal", "recirculation"), ("power", "power"), ("ok", "OK"), ("oeffnen", "open"), ("schliessen", "close"),
+    ("sperre", "lock"),
+    ("tuersperre", "door lock"),
+    ("wegfahrsperre", "immobiliser"),
+    ("verriegelung", "lock"),
+    ("freigabe", "release"),
+    ("schulfahrt", "training run"),
+    ("schulfahr", "training run"),
+    ("fahrschule", "driving school"),
+    ("funktion", "function"),
+    ("funktionen", "functions"),
+    ("modus", "mode"),
+    ("betrieb", "operation"),
+    ("ansage", "announcement"),
+    ("ansagen", "announcements"),
+    ("lautsprecher", "loudspeaker"),
+    ("lautstaerke", "volume"),
+    ("funk", "radio"),
+    ("sprechfunk", "radio"),
+    ("notaus", "emergency stop"),
+    ("nothalt", "emergency stop"),
+    ("notbremse", "emergency brake"),
+    ("haltestelle", "stop"),
+    ("frost", "frost"),
+    ("frostschutz", "frost protection"),
+    ("kasetka", "cash box"),
+    ("comp", "computer"),
+    ("qiut", "quit"),
+    ("quit", "quit"),
+    ("info", "info"),
+    ("system", "system"),
+    ("menu", "menu"),
+    ("rbl", "RBL"),
+    ("key", "key"),
+    ("rot", "turn"),
+    ("window", "window"),
+    ("wheelchair", "wheelchair"),
+    ("rollstuhl", "wheelchair"),
+    ("camera", "camera"),
+    ("heat", "heating"),
+    ("air", "air"),
+    ("internal", "recirculation"),
+    ("power", "power"),
+    ("ok", "OK"),
+    ("oeffnen", "open"),
+    ("schliessen", "close"),
     // other parts
-    ("wimpel", "pennant"), ("bommel", "tassel"), ("dreck", "dirt"), ("dreckmesh", "dirt"), ("dirt", "dirt"), ("schatten", "shadow"), ("shadow", "shadow"),
-    ("dummy", "unused"), ("dum", "unused"), ("blindwelle", "dummy shaft"), ("blaulicht", "blue light"), ("sticker", "sticker"), ("glas", "glass"), ("glass", "glass"),
+    ("wimpel", "pennant"),
+    ("bommel", "tassel"),
+    ("dreck", "dirt"),
+    ("dreckmesh", "dirt"),
+    ("dirt", "dirt"),
+    ("schatten", "shadow"),
+    ("shadow", "shadow"),
+    ("dummy", "unused"),
+    ("dum", "unused"),
+    ("blindwelle", "dummy shaft"),
+    ("blaulicht", "blue light"),
+    ("sticker", "sticker"),
+    ("glas", "glass"),
+    ("glass", "glass"),
     // directions, states, positions
-    ("links", "left"), ("rechts", "right"), ("vorne", "front"), ("vorn", "front"), ("hinten", "rear"), ("oben", "top"), ("unten", "bottom"), ("mitte", "middle"),
-    ("untenrechts", "lower right"), ("obenrechts", "upper right"), ("untenlinks", "lower left"), ("obenlinks", "upper left"), ("oberdeck", "upper deck"), ("unterdeck", "lower deck"),
-    ("auf", "up"), ("ab", "down"), ("dn", "down"), ("up", "up"), ("down", "down"), ("frei", "release"), ("voll", "full"), ("leer", "empty"), ("quer", "transverse"),
-    ("neu", "new"), ("new", "new"), ("alt", "old"), ("old", "old"), ("ist", "actual"), ("ext", "outer"), ("exterior", "outer"), ("int", "inner"), ("sw", "switch"),
-    ("btn", "button"), ("button", "button"), ("switch", "switch"), ("mstr", "master"), ("master", "master"), ("opn", "open"), ("ovrd", "override"), ("select", "select"),
-    ("start", "start"), ("stop", "stop"), ("play", "play"), ("cancel", "cancel"), ("enter", "enter"), ("retract", "retract"), ("sync", "synchronise"), ("change", "change"),
-    ("external", "outside"), ("off", "off"), ("on", "on"), ("main", "main"), ("trail", "trailer"), ("front", "front"), ("rear", "rear"), ("back", "back"), ("center", "centre"),
-    ("l", "left"), ("r", "right"), ("v", "front"), ("h", "rear"), ("vl", "front left"), ("vr", "front right"), ("hl", "rear left"), ("hr", "rear right"),
-    ("lv", "left front"), ("lh", "left rear"), ("rv", "right front"), ("rh", "right rear"), ("ol", "upper left"), ("or", "upper right"), ("ul", "lower left"), ("ur", "lower right"),
+    ("links", "left"),
+    ("rechts", "right"),
+    ("vorne", "front"),
+    ("vorn", "front"),
+    ("hinten", "rear"),
+    ("oben", "top"),
+    ("unten", "bottom"),
+    ("mitte", "middle"),
+    ("untenrechts", "lower right"),
+    ("obenrechts", "upper right"),
+    ("untenlinks", "lower left"),
+    ("obenlinks", "upper left"),
+    ("oberdeck", "upper deck"),
+    ("unterdeck", "lower deck"),
+    ("auf", "up"),
+    ("ab", "down"),
+    ("dn", "down"),
+    ("up", "up"),
+    ("down", "down"),
+    ("frei", "release"),
+    ("voll", "full"),
+    ("leer", "empty"),
+    ("quer", "transverse"),
+    ("neu", "new"),
+    ("new", "new"),
+    ("alt", "old"),
+    ("old", "old"),
+    ("ist", "actual"),
+    ("ext", "outer"),
+    ("exterior", "outer"),
+    ("int", "inner"),
+    ("sw", "switch"),
+    ("btn", "button"),
+    ("button", "button"),
+    ("switch", "switch"),
+    ("mstr", "master"),
+    ("master", "master"),
+    ("opn", "open"),
+    ("ovrd", "override"),
+    ("select", "select"),
+    ("start", "start"),
+    ("stop", "stop"),
+    ("play", "play"),
+    ("cancel", "cancel"),
+    ("enter", "enter"),
+    ("retract", "retract"),
+    ("sync", "synchronise"),
+    ("change", "change"),
+    ("external", "outside"),
+    ("off", "off"),
+    ("on", "on"),
+    ("main", "main"),
+    ("trail", "trailer"),
+    ("front", "front"),
+    ("rear", "rear"),
+    ("back", "back"),
+    ("center", "centre"),
+    ("l", "left"),
+    ("r", "right"),
+    ("v", "front"),
+    ("h", "rear"),
+    ("vl", "front left"),
+    ("vr", "front right"),
+    ("hl", "rear left"),
+    ("hr", "rear right"),
+    ("lv", "left front"),
+    ("lh", "left rear"),
+    ("rv", "right front"),
+    ("rh", "right rear"),
+    ("ol", "upper left"),
+    ("or", "upper right"),
+    ("ul", "lower left"),
+    ("ur", "lower right"),
 ];
 
 /// Words that name the kind of control go last in English ("switch lift down" reads
 /// "lift down switch"), and a side named last goes first ("mirror left" → "left mirror").
-const DEVICE_WORDS: &[&str] = &["switch", "button", "lever", "rotary switch", "micro switch", "master switch"];
-const SIDE_WORDS: &[&str] = &["left", "right", "front", "rear", "outer", "inner", "upper left", "upper right", "lower left", "lower right", "front left", "front right", "rear left", "rear right"];
+const DEVICE_WORDS: &[&str] = &[
+    "switch",
+    "button",
+    "lever",
+    "rotary switch",
+    "micro switch",
+    "master switch",
+];
+const SIDE_WORDS: &[&str] = &[
+    "left",
+    "right",
+    "front",
+    "rear",
+    "outer",
+    "inner",
+    "upper left",
+    "upper right",
+    "lower left",
+    "lower right",
+    "front left",
+    "front right",
+    "rear left",
+    "rear right",
+];
 
 fn dictionary() -> &'static HashMap<&'static str, &'static str> {
     static D: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
@@ -263,7 +678,11 @@ fn dictionary() -> &'static HashMap<&'static str, &'static str> {
 
 /// A German compound as a chain of known words (longest first; `s`/`n` may join them).
 fn split_compound(word: &str) -> Option<Vec<&'static str>> {
-    fn go(rest: &str, depth: usize, d: &HashMap<&'static str, &'static str>) -> Option<Vec<&'static str>> {
+    fn go(
+        rest: &str,
+        depth: usize,
+        d: &HashMap<&'static str, &'static str>,
+    ) -> Option<Vec<&'static str>> {
         if rest.is_empty() {
             return Some(Vec::new());
         }
@@ -305,7 +724,11 @@ pub fn translate(name: &str) -> String {
     let mut start = 0;
     while start + 1 < toks.len() {
         let t = toks[start].to_ascii_lowercase();
-        let code = matches!(t.as_str(), "lod" | "sd" | "d" | "gn" | "en" | "n" | "nl" | "mb" | "man" | "o" | "generic") || (t.chars().all(|c| c.is_ascii_digit()) && start > 0 && toks[start - 1].len() <= 2);
+        let code =
+            matches!(
+                t.as_str(),
+                "lod" | "sd" | "d" | "gn" | "en" | "n" | "nl" | "mb" | "man" | "o" | "generic"
+            ) || (t.chars().all(|c| c.is_ascii_digit()) && start > 0 && toks[start - 1].len() <= 2);
         if !code {
             break;
         }
@@ -320,7 +743,14 @@ pub fn translate(name: &str) -> String {
         }
         // the changer's coin values: `0_05` → 0.05
         if f.chars().all(|c| c.is_ascii_digit()) {
-            if f.len() == 2 && i > 0 && toks[i - 1].chars().all(|c| c.is_ascii_digit()) && words.last().map(|w| w.chars().all(|c| c.is_ascii_digit())).unwrap_or(false) {
+            if f.len() == 2
+                && i > 0
+                && toks[i - 1].chars().all(|c| c.is_ascii_digit())
+                && words
+                    .last()
+                    .map(|w| w.chars().all(|c| c.is_ascii_digit()))
+                    .unwrap_or(false)
+            {
                 let int = words.pop().unwrap_or_default();
                 words.push(format!("{int}.{f}"));
             } else {
@@ -332,7 +762,12 @@ pub fn translate(name: &str) -> String {
             Some(e) if e.is_empty() => {}
             Some(e) => words.push(e.to_string()),
             None => match split_compound(&f) {
-                Some(parts) => words.extend(parts.into_iter().filter(|p| !p.is_empty()).map(str::to_string)),
+                Some(parts) => words.extend(
+                    parts
+                        .into_iter()
+                        .filter(|p| !p.is_empty())
+                        .map(str::to_string),
+                ),
                 // keep what cannot be translated as it is written (IBIS, VDV, Almex, L0 ...)
                 None => words.push(t.clone()),
             },
@@ -346,7 +781,10 @@ pub fn translate(name: &str) -> String {
         words.push(w);
     }
     // "driver's door left" → "left driver's door"
-    if words.len() > 1 && SIDE_WORDS.contains(&words[words.len() - 1].as_str()) && !SIDE_WORDS.contains(&words[words.len() - 2].as_str()) {
+    if words.len() > 1
+        && SIDE_WORDS.contains(&words[words.len() - 1].as_str())
+        && !SIDE_WORDS.contains(&words[words.len() - 2].as_str())
+    {
         let w = words.pop().unwrap_or_default();
         words.insert(0, w);
     }
@@ -392,7 +830,10 @@ mod tests {
         let n = eng();
         assert_eq!(n.control("kw_batterietrennschalter"), "Electricity On/Off");
         assert_eq!(n.control("parking_brake_mouse"), "Parking Brake On/Off");
-        assert_eq!(n.control("bus_doorfront0_external"), "Front Door, 1st Wing Open/Close (outside)");
+        assert_eq!(
+            n.control("bus_doorfront0_external"),
+            "Front Door, 1st Wing Open/Close (outside)"
+        );
         assert_eq!(n.control("automatic_R_mouse"), "Automatic Gearbox: R");
         assert_eq!(n.control("door_haltewunsch_2"), "Stop Request Button 2");
         assert_eq!(n.control("IBIS_Loeschen"), "IBIS: Delete");
@@ -404,19 +845,37 @@ mod tests {
         assert_eq!(n.control("cp_Fahrertuer"), "Driver's door");
         assert_eq!(n.control("Fahrertuer_Links"), "Left driver's door");
         assert_eq!(n.control("Spiegel_Links"), "Left mirror");
-        assert_eq!(n.control("cp_spiegelheizung_toggle"), "Mirror heating on/off");
+        assert_eq!(
+            n.control("cp_spiegelheizung_toggle"),
+            "Mirror heating on/off"
+        );
         assert_eq!(n.control("cp_kneeling_toggle"), "Kneeling on/off");
-        assert_eq!(n.control("cp_schalter_hub_dn_toggle"), "Lift down switch on/off");
+        assert_eq!(
+            n.control("cp_schalter_hub_dn_toggle"),
+            "Lift down switch on/off"
+        );
         assert_eq!(n.control("taster_heiz_DEF"), "Heating DEF button");
-        assert_eq!(n.control("cp_heizregler_fussraum"), "Heating control footwell");
-        assert_eq!(n.control("cp_klappfenster_OL1"), "Tilting window upper left 1");
+        assert_eq!(
+            n.control("cp_heizregler_fussraum"),
+            "Heating control footwell"
+        );
+        assert_eq!(
+            n.control("cp_klappfenster_OL1"),
+            "Tilting window upper left 1"
+        );
         assert_eq!(n.control("door_aussenoeffner"), "Door outside opener");
-        assert_eq!(n.control("matrix_seitenschildklemme"), "Destination display side sign clamp");
+        assert_eq!(
+            n.control("matrix_seitenschildklemme"),
+            "Destination display side sign clamp"
+        );
         assert_eq!(n.control("cp_dachluke_1"), "Roof hatch 1");
         assert_eq!(n.control("cp_Fahrgastpendel"), "Passenger swing gate");
         assert_eq!(n.control("cp_schluessel_mov"), "Ignition key");
         assert_eq!(n.control("haltestellenbremse"), "Stop brake");
-        assert_eq!(n.part("Zahltisch_Wechsler_0_05"), "Cash desk coin changer 0.05");
+        assert_eq!(
+            n.part("Zahltisch_Wechsler_0_05"),
+            "Cash desk coin changer 0.05"
+        );
         assert_eq!(n.part("SD_Panel_Tachonadel"), "Panel speedometer needle");
         assert_eq!(n.part("GN92_Lenksaeule"), "Steering column");
         assert_eq!(n.part("N92_Blinker_Schalter"), "Indicator switch");
@@ -432,8 +891,14 @@ mod tests {
         assert_eq!(n.control("cp_schulfahrschalter"), "Training run switch");
         assert_eq!(n.control("ALMEX_Funktion"), "ALMEX function");
         assert_eq!(n.control("comp_button_qiut"), "Computer button quit");
-        assert_eq!(n.control("cp_frostregler_temp"), "Frost control temperature");
-        assert_eq!(n.control("cp_schalter_knick_ovrd_toggle"), "Articulation override switch on/off");
+        assert_eq!(
+            n.control("cp_frostregler_temp"),
+            "Frost control temperature"
+        );
+        assert_eq!(
+            n.control("cp_schalter_knick_ovrd_toggle"),
+            "Articulation override switch on/off"
+        );
     }
 
     /// Every word of every stock and add-on `[mouseevent]` name is translated (a German word
@@ -441,11 +906,28 @@ mod tests {
     #[test]
     fn mod_switch_names_have_no_german_left() {
         let n = eng();
-        let german = ["sperre", "schul", "funktion", "schalter", "regler", "taster", "tuer", "fenster", "licht", "heiz", "knopf", "hebel"];
+        let german = [
+            "sperre", "schul", "funktion", "schalter", "regler", "taster", "tuer", "fenster",
+            "licht", "heiz", "knopf", "hebel",
+        ];
         for name in [
-            "cp_tuersperre", "cp_schulfahrschalter", "ALMEX_Funktion", "cp_doorEntriegelung_01", "cp_frostregler_temp", "cp_klappfenster_UR4",
-            "taster_heiz_Misch", "cp_schalter_knick_ovrd_toggle", "cp_licht_unterdeck_toggle", "rlbnd_linie_select_100_+", "rollband_auf",
-            "door_kinderwagenwunsch", "ramplift_wunsch", "cp_novitus_kasetka", "rbl_rueck", "klappsitzL", "Fahrertuer_Rechts",
+            "cp_tuersperre",
+            "cp_schulfahrschalter",
+            "ALMEX_Funktion",
+            "cp_doorEntriegelung_01",
+            "cp_frostregler_temp",
+            "cp_klappfenster_UR4",
+            "taster_heiz_Misch",
+            "cp_schalter_knick_ovrd_toggle",
+            "cp_licht_unterdeck_toggle",
+            "rlbnd_linie_select_100_+",
+            "rollband_auf",
+            "door_kinderwagenwunsch",
+            "ramplift_wunsch",
+            "cp_novitus_kasetka",
+            "rbl_rueck",
+            "klappsitzL",
+            "Fahrertuer_Rechts",
         ] {
             let t = n.control(name).to_lowercase();
             assert!(!german.iter().any(|g| t.contains(g)), "{name} -> {t}");

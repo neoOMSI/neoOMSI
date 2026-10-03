@@ -7,7 +7,12 @@
 
 use std::path::{Path, PathBuf};
 
-pub const SITUATIONS: [&str; 4] = ["Tutorials/STRG.osn", "Tutorials/FAST.osn", "Tutorials/LIN.osn", "Tutorials/SPEZ.osn"];
+pub const SITUATIONS: [&str; 4] = [
+    "Tutorials/STRG.osn",
+    "Tutorials/FAST.osn",
+    "Tutorials/LIN.osn",
+    "Tutorials/SPEZ.osn",
+];
 
 pub struct Page {
     pub title: String,
@@ -30,8 +35,17 @@ pub fn page_text(html: &str) -> (String, String) {
         .map(|(t, _)| strip(t))
         .unwrap_or_default();
     let rest = body.split_once("</h2>").map(|x| x.1).unwrap_or(body);
-    let text = strip(&rest.replace("</p>", "\n").replace("<br>", "\n").replace("<li>", "\n• "));
-    let lines: Vec<String> = text.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect();
+    let text = strip(
+        &rest
+            .replace("</p>", "\n")
+            .replace("<br>", "\n")
+            .replace("<li>", "\n• "),
+    );
+    let lines: Vec<String> = text
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|l| !l.is_empty())
+        .collect();
     (title, lines.join("\n"))
 }
 
@@ -46,7 +60,11 @@ fn strip(s: &str) -> String {
             _ => {}
         }
     }
-    out.replace("&quot;", "\"").replace("&amp;", "&").replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
+    out.replace("&quot;", "\"")
+        .replace("&amp;", "&")
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
 }
 
 impl Tutorial {
@@ -54,7 +72,10 @@ impl Tutorial {
     /// folder is missing).
     pub fn load(root: &Path, number: usize, lang: &str) -> Option<Tutorial> {
         let dir = root.join("Tutorials").join(number.to_string());
-        let lang_dir = [lang, "ENG", "DEU"].iter().map(|l| dir.join(l)).find(|d| d.is_dir())?;
+        let lang_dir = [lang, "ENG", "DEU"]
+            .iter()
+            .map(|l| dir.join(l))
+            .find(|d| d.is_dir())?;
         let mut steps: Vec<(u64, PathBuf)> = std::fs::read_dir(&lang_dir)
             .ok()?
             .flatten()
@@ -71,11 +92,23 @@ impl Tutorial {
                 let bytes = std::fs::read(&p).ok()?;
                 let (title, text) = page_text(&omsi_cfg::codepage::decode(&bytes));
                 let img = dir.join(format!("{n}.jpg"));
-                Some(Page { title, text, image: img.is_file().then_some(img) })
+                Some(Page {
+                    title,
+                    text,
+                    image: img.is_file().then_some(img),
+                })
             })
             .collect::<Vec<_>>();
-        log::info!("tutorial {number}: {} pages from {}", pages.len(), lang_dir.display());
-        (!pages.is_empty()).then_some(Tutorial { pages, at: 0, hidden: false })
+        log::info!(
+            "tutorial {number}: {} pages from {}",
+            pages.len(),
+            lang_dir.display()
+        );
+        (!pages.is_empty()).then_some(Tutorial {
+            pages,
+            at: 0,
+            hidden: false,
+        })
     }
 
     pub fn next(&mut self) {
@@ -95,7 +128,9 @@ impl Tutorial {
 mod tests {
     #[test]
     fn text() {
-        let (t, x) = super::page_text("<style>b{}</style><h2>Hello!</h2><p>One &quot;two&quot;</p><p>Three</p>");
+        let (t, x) = super::page_text(
+            "<style>b{}</style><h2>Hello!</h2><p>One &quot;two&quot;</p><p>Three</p>",
+        );
         assert_eq!(t, "Hello!");
         assert_eq!(x, "One \"two\"\nThree");
     }

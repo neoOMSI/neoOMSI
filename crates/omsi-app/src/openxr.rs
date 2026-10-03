@@ -1,20 +1,19 @@
 //! Optional PCVR session. This module is only compiled on Windows; the normal
 //! desktop and Android render paths do not depend on an OpenXR runtime.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use glam::{DVec3, Mat4, Quat, Vec3, Vec4};
 use openxr as xr;
 use std::time::{Duration, Instant};
-use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D12::{
-    ID3D12CommandAllocator, ID3D12CommandList, ID3D12GraphicsCommandList, ID3D12PipelineState,
-    ID3D12Resource, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_RESOURCE_BARRIER,
-    D3D12_RESOURCE_BARRIER_0, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-    D3D12_RESOURCE_BARRIER_FLAG_NONE, D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
-    D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET,
-    D3D12_RESOURCE_TRANSITION_BARRIER,
+    D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_RESOURCE_BARRIER, D3D12_RESOURCE_BARRIER_0,
+    D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_BARRIER_FLAG_NONE,
+    D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, D3D12_RESOURCE_STATE_COMMON,
+    D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_TRANSITION_BARRIER, ID3D12CommandAllocator,
+    ID3D12CommandList, ID3D12GraphicsCommandList, ID3D12PipelineState, ID3D12Resource,
 };
 use windows::Win32::Graphics::Dxgi::Common::*;
+use windows::core::Interface;
 
 use omsi_render::{Camera, Lighting, Renderer, Scene};
 
@@ -118,7 +117,9 @@ impl UiAnchor {
             Vec4::Z,
             position.extend(1.0),
         );
-        projection * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, eye.forward(), eye.up()) * basis
+        projection
+            * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, eye.forward(), eye.up())
+            * basis
     }
 
     /// Project the 3D hit point, then face the dot towards each eye. A quad fixed
@@ -137,7 +138,9 @@ impl UiAnchor {
 
     fn cursor_clip(&self, eye: &Camera, projection: Mat4) -> Vec4 {
         let position = (self.origin - eye.position).as_vec3();
-        projection * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, eye.forward(), eye.up()) * position.extend(1.0)
+        projection
+            * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, eye.forward(), eye.up())
+            * position.extend(1.0)
     }
 
     fn cursor_on_screen(&self, eye: &Camera, projection: Mat4) -> bool {
@@ -284,10 +287,10 @@ impl Vr {
             format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | if sampled {
-                wgpu::TextureUsages::TEXTURE_BINDING
-            } else {
-                wgpu::TextureUsages::empty()
-            },
+                    wgpu::TextureUsages::TEXTURE_BINDING
+                } else {
+                    wgpu::TextureUsages::empty()
+                },
             view_formats: &[],
         };
         let imported = swapchain
@@ -298,12 +301,10 @@ impl Vr {
                 // separate reference for the lifetime of the imported texture.
                 let raw = image.cast();
                 let resource = unsafe {
-                    windows::Win32::Graphics::Direct3D12::ID3D12Resource::from_raw_borrowed(
-                        &raw,
-                    )
+                    windows::Win32::Graphics::Direct3D12::ID3D12Resource::from_raw_borrowed(&raw)
                 }
-                    .ok_or_else(|| anyhow!("OpenXR returned a null swapchain image"))?
-                    .clone();
+                .ok_or_else(|| anyhow!("OpenXR returned a null swapchain image"))?
+                .clone();
                 let hal_texture = unsafe {
                     wgpu_hal::dx12::Device::texture_from_raw(
                         resource.clone(),
@@ -317,7 +318,11 @@ impl Vr {
                 let texture = unsafe {
                     renderer
                         .device
-                        .create_texture_from_hal::<wgpu_hal::api::Dx12>(hal_texture, &desc, wgpu::TextureUses::COLOR_TARGET)
+                        .create_texture_from_hal::<wgpu_hal::api::Dx12>(
+                            hal_texture,
+                            &desc,
+                            wgpu::TextureUses::COLOR_TARGET,
+                        )
                 };
                 Ok((texture, resource))
             })
@@ -340,7 +345,9 @@ impl Vr {
             scale
         );
         if let Ok(rate) = omsi_cfg::env::var("OMSI_OPENXR_MIRROR_RATE") {
-            log::info!("OpenXR bus mirror rate override: {rate} pictures/s (-1: every mirror each game frame)");
+            log::info!(
+                "OpenXR bus mirror rate override: {rate} pictures/s (-1: every mirror each game frame)"
+            );
         }
         Ok(Self {
             instance,
@@ -456,9 +463,9 @@ impl Vr {
     pub(crate) fn needs_cursor_surface(&self, position: (f32, f32), menu_open: bool) -> bool {
         !menu_open
             && (self.cursor_menu_open
-            || self.last_cursor_position.is_none_or(|p| {
-            (p.0 - position.0).abs() > 0.5 || (p.1 - position.1).abs() > 0.5
-        }))
+                || self.last_cursor_position.is_none_or(|p| {
+                    (p.0 - position.0).abs() > 0.5 || (p.1 - position.1).abs() > 0.5
+                }))
     }
 
     pub(crate) fn set_cursor_surface(
@@ -501,8 +508,8 @@ impl Vr {
                 let dy = (previous.1 - position.1) * 2.0 / size.1.max(1) as f32;
                 return anchor.origin
                     + (camera.right() * (dx * anchor.half_width)
-                    + camera.up() * (dy * anchor.half_height))
-                    .as_dvec3();
+                        + camera.up() * (dy * anchor.half_height))
+                        .as_dvec3();
             }
         }
         let direction = eye_ray(
@@ -593,11 +600,13 @@ impl Vr {
         // A runtime may supply placeholder poses before tracking is ready.
         // Never use those poses as the seated origin (which would add room height).
         let valid = xr::ViewStateFlags::POSITION_VALID | xr::ViewStateFlags::ORIENTATION_VALID;
-        let tracked = xr::ViewStateFlags::POSITION_TRACKED | xr::ViewStateFlags::ORIENTATION_TRACKED;
+        let tracked =
+            xr::ViewStateFlags::POSITION_TRACKED | xr::ViewStateFlags::ORIENTATION_TRACKED;
         if !view_state.contains(valid)
             || (self.origin.is_none() && (!self.focused || !view_state.contains(tracked)))
         {
-            self.frame_stream.end(frame.predicted_display_time, self.blend, &[])?;
+            self.frame_stream
+                .end(frame.predicted_display_time, self.blend, &[])?;
             return Ok(false);
         }
         let midpoint = (xr_position(views[0].pose) + xr_position(views[1].pose)) * 0.5;
@@ -632,7 +641,7 @@ impl Vr {
             }
             let eye_position = head_position
                 + head_rotation
-                * (raw_rotation.inverse() * (xr_position(views[eye].pose) - midpoint));
+                    * (raw_rotation.inverse() * (xr_position(views[eye].pose) - midpoint));
             let eye_rotation =
                 head_rotation * (raw_rotation.inverse() * xr_rotation(views[eye].pose));
             xr::Posef {
@@ -707,7 +716,7 @@ impl Vr {
             let projection = zoom_projection(ui_projection, zoom);
             camera.fov_deg = (2.0
                 * (((xr_view.fov.angle_up - xr_view.fov.angle_down) * 0.5).tan() / zoom).atan())
-                .to_degrees();
+            .to_degrees();
             eye_cameras[eye] = camera;
             ui_cameras[eye] = ui_camera;
             eye_projections[eye] = projection;
@@ -732,8 +741,8 @@ impl Vr {
         if !menu_open
             && cockpit_pointer_enabled
             && self
-            .last_cursor_move
-            .is_some_and(|t| t.elapsed() >= Duration::from_secs(10))
+                .last_cursor_move
+                .is_some_and(|t| t.elapsed() >= Duration::from_secs(10))
         {
             self.cursor_anchor = None;
             self.cursor_surface_local = None;
@@ -767,10 +776,10 @@ impl Vr {
         }) || self.cursor_menu_open != menu_open;
         let place_in_front = !menu_open
             && (self.cursor_anchor.is_none()
-            || (moved
-            && self.cursor_anchor.is_some_and(|anchor| {
-            !anchor.cursor_on_screen(&eye_cameras[0], eye_projections[0])
-        })));
+                || (moved
+                    && self.cursor_anchor.is_some_and(|anchor| {
+                        !anchor.cursor_on_screen(&eye_cameras[0], eye_projections[0])
+                    })));
         let cursor_target = if place_in_front {
             eye_cameras[0].position + (eye_cameras[0].forward() * 1.5).as_dvec3()
         } else {
@@ -833,8 +842,8 @@ impl Vr {
         });
         let cursor_visible = (menu_open || cockpit_pointer_enabled)
             && self
-            .last_cursor_move
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(10));
+                .last_cursor_move
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(10));
         let cursor_transforms = [0, 1].map(|eye| {
             self.cursor_anchor
                 .filter(|_| cursor_visible)
@@ -846,12 +855,27 @@ impl Vr {
                     }
                 })
         });
-        let navigator = navigator.zip(bus_pose).and_then(|((index, display), (position, body))| {
-            let (texture, rect) = scene.overlays.get(index)?;
-            let aspect = (rect[2] - rect[0]) / (rect[3] - rect[1]);
-            if !aspect.is_finite() || aspect <= 0.0 { return None; }
-            Some((*texture, [0, 1].map(|eye| display.transform(position, body, &eye_cameras[eye], eye_projections[eye], aspect))))
-        });
+        let navigator = navigator
+            .zip(bus_pose)
+            .and_then(|((index, display), (position, body))| {
+                let (texture, rect) = scene.overlays.get(index)?;
+                let aspect = (rect[2] - rect[0]) / (rect[3] - rect[1]);
+                if !aspect.is_finite() || aspect <= 0.0 {
+                    return None;
+                }
+                Some((
+                    *texture,
+                    [0, 1].map(|eye| {
+                        display.transform(
+                            position,
+                            body,
+                            &eye_cameras[eye],
+                            eye_projections[eye],
+                            aspect,
+                        )
+                    }),
+                ))
+            });
         renderer.render_xr_ui(
             scene,
             &targets,

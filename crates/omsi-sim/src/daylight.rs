@@ -49,7 +49,12 @@ pub struct SunPlace {
 
 impl Default for SunPlace {
     fn default() -> Self {
-        SunPlace { latitude: 52.505, longitude: 13.2782, timezone: 1.0, dst: Vec::new() }
+        SunPlace {
+            latitude: 52.505,
+            longitude: 13.2782,
+            timezone: 1.0,
+            dst: Vec::new(),
+        }
     }
 }
 
@@ -83,14 +88,19 @@ pub fn set_place(p: SunPlace) {
 }
 
 pub fn place() -> std::sync::Arc<SunPlace> {
-    PLACE.read().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+    PLACE
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .unwrap_or_default()
 }
 
 /// Sun altitude and azimuth (degrees; azimuth clockwise from north) for the map clock at
 /// `place`.
 pub fn sun_position(clock: &SimClock, place: &SunPlace) -> (f64, f64) {
     let doy = clock.day_of_year as f64;
-    let decl = (23.44f64).to_radians() * ((2.0 * std::f64::consts::PI * (284.0 + doy) / 365.0).sin());
+    let decl =
+        (23.44f64).to_radians() * ((2.0 * std::f64::consts::PI * (284.0 + doy) / 365.0).sin());
     let hour = place.solar_hours(clock);
     let h = (15.0 * (hour - 12.0)).to_radians();
     let lat = place.latitude.to_radians();
@@ -141,7 +151,9 @@ impl Daylight {
         let ambient = (c * 0.45).max(Vec3::splat(0.05));
         // the sky follows the light from above; deep blue at day, near black at night
         let day = ((alt + 6.0) / 16.0).clamp(0.0, 1.0);
-        let sky = Vec3::new(0.55, 0.70, 0.92) * day + Vec3::new(0.01, 0.01, 0.03) * (1.0 - day) + (a * 0.15 * (1.0 - day) * day * 4.0).min(Vec3::splat(0.3));
+        let sky = Vec3::new(0.55, 0.70, 0.92) * day
+            + Vec3::new(0.01, 0.01, 0.03) * (1.0 - day)
+            + (a * 0.15 * (1.0 - day) * day * 4.0).min(Vec3::splat(0.3));
         let night = ((tw.1 - alt) / tw.1.max(1.0)).clamp(0.0, 1.0);
         let sky_weights = if alt >= tw.1 {
             [1.0, 0.0, 0.0]
@@ -157,19 +169,48 @@ impl Daylight {
         let stock = default_envir_values();
         let ratio = |own: Vec3, base: Vec3| -> Vec3 {
             // where the stock light is (nearly) black there is nothing to compare with
-            let r = |o: f32, b: f32| if b > 2.0 / 255.0 { (o / b).clamp(0.25, 4.0) } else { 1.0 };
+            let r = |o: f32, b: f32| {
+                if b > 2.0 / 255.0 {
+                    (o / b).clamp(0.25, 4.0)
+                } else {
+                    1.0
+                }
+            };
             Vec3::new(r(own.x, base.x), r(own.y, base.y), r(own.z, base.z))
         };
         let envir_tint = [
-            ratio(a, stops(&stock.light_color_a, stock.twilight_start_end, alt)),
-            ratio(b, stops(&stock.light_color_b, stock.twilight_start_end, alt)),
-            ratio(c, stops(&stock.light_color_c, stock.twilight_start_end, alt)),
+            ratio(
+                a,
+                stops(&stock.light_color_a, stock.twilight_start_end, alt),
+            ),
+            ratio(
+                b,
+                stops(&stock.light_color_b, stock.twilight_start_end, alt),
+            ),
+            ratio(
+                c,
+                stops(&stock.light_color_c, stock.twilight_start_end, alt),
+            ),
         ];
         // the street lamps come on below a light value of 0.6, as Omsi.exe switches them
         // (FUN_006ff1bc), the same value at which a scenery object's NightlightA does
         let brightness = ((alt + 6.0) / 12.0).clamp(0.0, 1.0);
         let light_a = ((a.x + a.y + a.z) / 3.0).clamp(0.0, 1.0);
-        Daylight { sun_dir, altitude_deg: alt, sun_color, secondary, ambient, sky, night, lamps_on: brightness < 0.6, brightness, light_a, azimuth_rad: az.to_radians() as f32, sky_weights, envir_tint }
+        Daylight {
+            sun_dir,
+            altitude_deg: alt,
+            sun_color,
+            secondary,
+            ambient,
+            sky,
+            night,
+            lamps_on: brightness < 0.6,
+            brightness,
+            light_a,
+            azimuth_rad: az.to_radians() as f32,
+            sky_weights,
+            envir_tint,
+        }
     }
 }
 
@@ -181,7 +222,10 @@ impl Daylight {
     /// Envir_Brightness` on Fenster_braun.tga and the like): by the sun's ramp alone it was
     /// 0 at every night, and a bus under the street lamps had no glass at all (#624).
     pub fn envir_brightness(&self, light_map: Option<Vec3>) -> f32 {
-        let lm = light_map.filter(|_| self.lamps_on).map(|c| (c.x + c.y + c.z) / 3.0).unwrap_or(0.0);
+        let lm = light_map
+            .filter(|_| self.lamps_on)
+            .map(|c| (c.x + c.y + c.z) / 3.0)
+            .unwrap_or(0.0);
         (self.light_a + lm.max(0.0)).clamp(0.0, 1.0)
     }
 }
@@ -189,9 +233,27 @@ impl Daylight {
 fn default_envir_values() -> Envir {
     Envir {
         twilight_start_end: (-18.0, 10.0),
-        light_color_a: [[0.0; 3], [0.0; 3], [200.0, 100.0, 20.0], [255.0, 255.0, 240.0], [255.0; 3]],
-        light_color_b: [[5.0, 5.0, 10.0], [10.0, 10.0, 20.0], [30.0, 20.0, 40.0], [60.0, 70.0, 80.0], [80.0, 90.0, 100.0]],
-        light_color_c: [[2.0, 2.0, 5.0], [15.0, 15.0, 25.0], [40.0, 50.0, 60.0], [220.0; 3], [230.0, 230.0, 255.0]],
+        light_color_a: [
+            [0.0; 3],
+            [0.0; 3],
+            [200.0, 100.0, 20.0],
+            [255.0, 255.0, 240.0],
+            [255.0; 3],
+        ],
+        light_color_b: [
+            [5.0, 5.0, 10.0],
+            [10.0, 10.0, 20.0],
+            [30.0, 20.0, 40.0],
+            [60.0, 70.0, 80.0],
+            [80.0, 90.0, 100.0],
+        ],
+        light_color_c: [
+            [2.0, 2.0, 5.0],
+            [15.0, 15.0, 25.0],
+            [40.0, 50.0, 60.0],
+            [220.0; 3],
+            [230.0, 230.0, 255.0],
+        ],
         ..Default::default()
     }
 }
@@ -201,7 +263,11 @@ mod tests {
     use super::*;
 
     fn clock_at(hours: f64) -> SimClock {
-        SimClock { day_of_year: 182, time: hours * 3600.0, ..Default::default() }
+        SimClock {
+            day_of_year: 182,
+            time: hours * 3600.0,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -209,14 +275,25 @@ mod tests {
         let mut spandau = SunPlace::default();
         spandau.dst.push((19890326, 19890924, 2.0, 3.0, 1.0));
         // 21 June 1989: summer time, the sun due south at about 13:07 local
-        let mut c = SimClock { year: 1989, day_of_year: 172, time: 13.12 * 3600.0, ..Default::default() };
+        let mut c = SimClock {
+            year: 1989,
+            day_of_year: 172,
+            time: 13.12 * 3600.0,
+            ..Default::default()
+        };
         let (alt, az) = sun_position(&c, &spandau);
-        assert!((az - 180.0).abs() < 3.0 && (alt - 61.0).abs() < 1.5, "summer noon: alt {alt:.1} az {az:.1}");
+        assert!(
+            (az - 180.0).abs() < 3.0 && (alt - 61.0).abs() < 1.5,
+            "summer noon: alt {alt:.1} az {az:.1}"
+        );
         // 21 December: standard time, south at about 12:07
         c.day_of_year = 355;
         c.time = 12.12 * 3600.0;
         let (alt, az) = sun_position(&c, &spandau);
-        assert!((az - 180.0).abs() < 3.0 && (alt - 14.0).abs() < 1.5, "winter noon: alt {alt:.1} az {az:.1}");
+        assert!(
+            (az - 180.0).abs() < 3.0 && (alt - 14.0).abs() < 1.5,
+            "winter noon: alt {alt:.1} az {az:.1}"
+        );
         // without summer time the June sun would be an hour further on
         c.day_of_year = 172;
         c.time = 13.12 * 3600.0;
@@ -227,7 +304,14 @@ mod tests {
     #[test]
     fn envir_brightness_is_light_a_plus_the_light_map_under_the_lamps() {
         // a December midnight: no light A, so only the light map's light counts
-        let night = Daylight::compute(&SimClock { day_of_year: 355, time: 0.0, ..Default::default() }, None);
+        let night = Daylight::compute(
+            &SimClock {
+                day_of_year: 355,
+                time: 0.0,
+                ..Default::default()
+            },
+            None,
+        );
         assert!(night.lamps_on);
         assert_eq!(night.envir_brightness(None), 0.0);
         let lit = night.envir_brightness(Some(Vec3::new(0.6, 0.5, 0.4)));
@@ -235,15 +319,26 @@ mod tests {
         // noon: light A alone is (nearly) 1, and the light map is off by day
         let noon = Daylight::compute(&clock_at(12.0), None);
         assert!(noon.envir_brightness(None) > 0.95);
-        assert_eq!(noon.envir_brightness(Some(Vec3::ONE)), noon.envir_brightness(None));
+        assert_eq!(
+            noon.envir_brightness(Some(Vec3::ONE)),
+            noon.envir_brightness(None)
+        );
     }
 
     #[test]
     fn stock_envir_leaves_the_enhanced_sky_untinted() {
         let own = default_envir_values();
         for h in [3.0, 6.0, 12.0, 19.0, 23.0] {
-            assert_eq!(Daylight::compute(&clock_at(h), None).envir_tint, [Vec3::ONE; 3], "{h} h");
-            assert_eq!(Daylight::compute(&clock_at(h), Some(&own)).envir_tint, [Vec3::ONE; 3], "{h} h");
+            assert_eq!(
+                Daylight::compute(&clock_at(h), None).envir_tint,
+                [Vec3::ONE; 3],
+                "{h} h"
+            );
+            assert_eq!(
+                Daylight::compute(&clock_at(h), Some(&own)).envir_tint,
+                [Vec3::ONE; 3],
+                "{h} h"
+            );
         }
     }
 
@@ -258,6 +353,9 @@ mod tests {
         assert!((a.x - 1.0).abs() < 1e-3 && a.y < 0.95 && a.z < 0.7, "{a:?}");
         assert_eq!(d.envir_tint[1], Vec3::ONE);
         // by night the stock sun is black: nothing to compare with, no tint
-        assert_eq!(Daylight::compute(&clock_at(1.0), Some(&warm)).envir_tint[0], Vec3::ONE);
+        assert_eq!(
+            Daylight::compute(&clock_at(1.0), Some(&warm)).envir_tint[0],
+            Vec3::ONE
+        );
     }
 }

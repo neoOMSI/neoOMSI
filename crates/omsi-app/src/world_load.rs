@@ -6,12 +6,22 @@ use super::*;
 /// as the map's season table has it; a snow weather puts the map into its snow textures
 /// whatever the calendar says.
 pub(crate) fn season_folder(args: &Args, global: &omsi_map::GlobalCfg) -> (i32, Option<String>) {
-    season_folder_on(args, global, start_clock(args).day_of_year, load_weather(args).snow)
+    season_folder_on(
+        args,
+        global,
+        start_clock(args).day_of_year,
+        load_weather(args).snow,
+    )
 }
 
 /// [`season_folder`] on day `day_of_year` in weather that is snowy or not (the date moves on
 /// at midnight, the weather changes).
-pub(crate) fn season_folder_on(args: &Args, global: &omsi_map::GlobalCfg, day_of_year: i32, snow: bool) -> (i32, Option<String>) {
+pub(crate) fn season_folder_on(
+    args: &Args,
+    global: &omsi_map::GlobalCfg,
+    day_of_year: i32,
+    snow: bool,
+) -> (i32, Option<String>) {
     let mut kind = global.season_kind(day_of_year);
     if let Some(sn) = args.season.as_deref() {
         kind = match sn.to_ascii_lowercase().as_str() {
@@ -102,7 +112,11 @@ pub(crate) fn spawn_point(args: &Args, world: Option<&World>) -> Option<DVec3> {
     world.entry_point_place(ep).map(|p| p.0)
 }
 
-pub(crate) fn load_world(args: &Args, renderer: &Renderer, scene: &mut Scene) -> Result<(World, Camera)> {
+pub(crate) fn load_world(
+    args: &Args,
+    renderer: &Renderer,
+    scene: &mut Scene,
+) -> Result<(World, Camera)> {
     let t0 = Instant::now();
     let (world, camera, center) = open_world(args)?;
     let tile_of = |p: DVec3| {

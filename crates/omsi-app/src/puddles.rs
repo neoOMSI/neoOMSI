@@ -18,7 +18,8 @@ pub fn puddle_coverage(x: f64, y: f64, wet_road: f32) -> f32 {
         return 0.0;
     }
     let (wx, wy) = (x as f32, y as f32);
-    let pn = vnoise(wx * 0.22 + 17.3, wy * 0.22 - 9.1) * 0.65 + vnoise(wx * 0.9 - 4.0, wy * 0.9 + 8.0) * 0.35;
+    let pn = vnoise(wx * 0.22 + 17.3, wy * 0.22 - 9.1) * 0.65
+        + vnoise(wx * 0.9 - 4.0, wy * 0.9 + 8.0) * 0.35;
     let t = 1.0 - wet_road * 1.15;
     smoothstep(t - 0.06, t + 0.06, pn)
 }
@@ -50,9 +51,18 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 /// (m/s, unsigned) - [`Splashes::update`] does not need each wheel's own speed, only
 /// whether the bus is moving through what its own wheels stand on.
 pub fn wheel_contacts(v: &omsi_sim::VehicleInstance) -> Vec<DVec3> {
-    let Some(rb) = v.rigid.as_ref() else { return Vec::new() };
+    let Some(rb) = v.rigid.as_ref() else {
+        return Vec::new();
+    };
     let xf = v.world_transform();
-    rb.wheels.iter().filter(|w| w.on_ground).map(|w| xf.transform_point3(Vec3::new(w.attach.x, w.attach.y, w.attach.z - w.radius)).as_dvec3()).collect()
+    rb.wheels
+        .iter()
+        .filter(|w| w.on_ground)
+        .map(|w| {
+            xf.transform_point3(Vec3::new(w.attach.x, w.attach.y, w.attach.z - w.radius))
+                .as_dvec3()
+        })
+        .collect()
 }
 
 struct Drop {
@@ -79,7 +89,12 @@ pub struct Splashes {
 
 impl Splashes {
     pub fn new() -> Splashes {
-        Splashes { drops: Vec::new(), debt: Vec::new(), rng: 0xD00D_F00D_1234_5678, wheels_in_puddle: 0 }
+        Splashes {
+            drops: Vec::new(),
+            debt: Vec::new(),
+            rng: 0xD00D_F00D_1234_5678,
+            wheels_in_puddle: 0,
+        }
     }
 
     fn rand(&mut self) -> f32 {
@@ -94,7 +109,13 @@ impl Splashes {
     /// live droplets come back as coronas for the caller to push onto `scene.coronas`,
     /// exactly as `rain::Rain::tick` pushes rain - a plain `Vec` so the spawning and ageing
     /// above stay testable without a real, GPU-backed `Scene`.
-    pub fn update(&mut self, dt: f32, wheels: &[DVec3], speed: f32, coverage_at: &dyn Fn(f64, f64) -> f32) -> Vec<SmokeParticle> {
+    pub fn update(
+        &mut self,
+        dt: f32,
+        wheels: &[DVec3],
+        speed: f32,
+        coverage_at: &dyn Fn(f64, f64) -> f32,
+    ) -> Vec<SmokeParticle> {
         if self.debt.len() != wheels.len() {
             self.debt = vec![0.0; wheels.len()];
         }
@@ -141,11 +162,23 @@ impl Splashes {
             d.pos += d.vel.as_dvec3() * dt as f64;
             let t = (d.age / d.life).clamp(0.0, 1.0);
             let fade = (1.0 - t) * (t * 6.0).min(1.0);
-            out.push(SmokeParticle { position: d.pos, size: 0.06 + 0.3 * t, color: [0.86, 0.89, 0.92], alpha: 0.3 * fade });
+            out.push(SmokeParticle {
+                position: d.pos,
+                size: 0.06 + 0.3 * t,
+                color: [0.86, 0.89, 0.92],
+                alpha: 0.3 * fade,
+            });
             i += 1;
         }
-        if omsi_cfg::env::var_os("OMSI_DEBUG_RAIN").is_some() && (self.wheels_in_puddle > 0 || !self.drops.is_empty()) {
-            log::info!("splashes: {} of {} wheels in a puddle, {} droplets", self.wheels_in_puddle, wheels.len(), self.drops.len());
+        if omsi_cfg::env::var_os("OMSI_DEBUG_RAIN").is_some()
+            && (self.wheels_in_puddle > 0 || !self.drops.is_empty())
+        {
+            log::info!(
+                "splashes: {} of {} wheels in a puddle, {} droplets",
+                self.wheels_in_puddle,
+                wheels.len(),
+                self.drops.len()
+            );
         }
         out
     }
@@ -157,7 +190,11 @@ mod tests {
 
     #[test]
     fn coverage_is_zero_off_the_moisture_mask_and_grows_with_wetness() {
-        assert_eq!(puddle_coverage(1000.0, 2000.0, 0.0), 0.0, "no [moisture] under the wheel: never a puddle");
+        assert_eq!(
+            puddle_coverage(1000.0, 2000.0, 0.0),
+            0.0,
+            "no [moisture] under the wheel: never a puddle"
+        );
         // scan a stretch of road for a spot the mask calls a puddle at full wetness, and
         // check it grows monotonically as the road dries back out from there
         let mut best = None;
@@ -169,17 +206,24 @@ mod tests {
                 break;
             }
         }
-        let (x, full) = best.expect("some spot along 520 m of road should read as a puddle at full wetness");
+        let (x, full) =
+            best.expect("some spot along 520 m of road should read as a puddle at full wetness");
         let half = puddle_coverage(x, 500.0, 0.5);
         let dry = puddle_coverage(x, 500.0, 0.05);
-        assert!(full >= half && half >= dry && full > dry, "a puddle should shrink as the road dries: {full} (wet) vs {half} (half) vs {dry} (drier)");
+        assert!(
+            full >= half && half >= dry && full > dry,
+            "a puddle should shrink as the road dries: {full} (wet) vs {half} (half) vs {dry} (drier)"
+        );
     }
 
     #[test]
     fn a_road_wet_through_is_all_puddle() {
         for i in 0..500 {
             let (x, y) = (i as f64 * 0.77, i as f64 * 1.9);
-            assert!(puddle_coverage(x, y, 1.0) > 0.99, "dry island at ({x}, {y}) on a soaked road");
+            assert!(
+                puddle_coverage(x, y, 1.0) > 0.99,
+                "dry island at ({x}, {y}) on a soaked road"
+            );
         }
     }
 
@@ -194,7 +238,10 @@ mod tests {
             }
         }
         assert_eq!(s.wheels_in_puddle, 1);
-        assert!(seen_drops, "a wheel sitting in a full puddle at speed should have sprayed something");
+        assert!(
+            seen_drops,
+            "a wheel sitting in a full puddle at speed should have sprayed something"
+        );
         // standing still or off the puddle stops the spray without leaving debt behind
         s.update(1.0 / 30.0, &wheels, 0.0, &|_, _| 1.0);
         assert_eq!(s.wheels_in_puddle, 0);

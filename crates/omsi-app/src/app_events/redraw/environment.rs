@@ -40,8 +40,12 @@ impl App {
             self.follow_date();
         }
         if let Some(p) = self.player.as_mut() {
-            let lm = self.world.as_ref().and_then(|w| w.light_map_light_at(p.vehicle.position));
-            p.vehicle.set_var("Envir_Brightness", daylight.envir_brightness(lm));
+            let lm = self
+                .world
+                .as_ref()
+                .and_then(|w| w.light_map_light_at(p.vehicle.position));
+            p.vehicle
+                .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             p.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
                 apply_weather(&mut p.vehicle, w, self.wetness);
@@ -55,7 +59,11 @@ impl App {
             lights::upload_corona_textures(r);
         }
         let __ta = Instant::now();
-        if let (Some(w), Some(r), Some(cam)) = (self.world.as_ref(), self.renderer.as_ref(), self.camera.as_ref()) {
+        if let (Some(w), Some(r), Some(cam)) = (
+            self.world.as_ref(),
+            self.renderer.as_ref(),
+            self.camera.as_ref(),
+        ) {
             w.update_light_map_atlas(r, cam.position);
         }
         *self.profile.entry("lights.atlas").or_default() += __ta.elapsed().as_secs_f64();
@@ -77,7 +85,12 @@ impl App {
             *self.profile.entry("lights.collect").or_default() += __tc.elapsed().as_secs_f64();
             if let Some(id) = self.editor.as_ref().and_then(|e| e.selected) {
                 let at = w.edit_objects.lock().get(&id).map(|o| o.pos);
-                let moved = w.object_edits.lock().get(&id).map(|e| e.moved).unwrap_or_default();
+                let moved = w
+                    .object_edits
+                    .lock()
+                    .get(&id)
+                    .map(|e| e.moved)
+                    .unwrap_or_default();
                 if let Some(p) = at {
                     scene.coronas.push(omsi_render::Corona {
                         position: p + moved + DVec3::Z * 3.0,
@@ -100,37 +113,60 @@ impl App {
                 // player's, a timetable bus - each part of it: an articulated bus's
                 // rear section is a coupled part with its own [boundingbox] (#777)
                 let boxed = rain::vehicle_boxes;
-                let mut buses: Vec<(DVec3, f64, [f32; 6])> = self.player.as_ref().map(|p| boxed(&p.vehicle)).unwrap_or_default();
-                buses.extend(self.remotes.remotes.values().flat_map(|rv| boxed(rv.vehicle())));
+                let mut buses: Vec<(DVec3, f64, [f32; 6])> = self
+                    .player
+                    .as_ref()
+                    .map(|p| boxed(&p.vehicle))
+                    .unwrap_or_default();
+                buses.extend(
+                    self.remotes
+                        .remotes
+                        .values()
+                        .flat_map(|rv| boxed(rv.vehicle())),
+                );
                 if let Some(t) = self.traffic.as_ref() {
-                    buses.extend(t.cars.iter().filter(|c| c.is_bus() && (c.vehicle.position - cam.position).length() < 40.0).flat_map(|c| boxed(&c.vehicle)));
+                    buses.extend(
+                        t.cars
+                            .iter()
+                            .filter(|c| {
+                                c.is_bus() && (c.vehicle.position - cam.position).length() < 40.0
+                            })
+                            .flat_map(|c| boxed(&c.vehicle)),
+                    );
                 }
                 let __tr = Instant::now();
-                self.rain.tick(if self.paused { 0.0 } else { dt }, cam.position, wind, scene, &buses);
+                self.rain.tick(
+                    if self.paused { 0.0 } else { dt },
+                    cam.position,
+                    wind,
+                    scene,
+                    &buses,
+                );
                 *self.profile.entry("lights.rain").or_default() += __tr.elapsed().as_secs_f64();
                 if kind == 1 {
                     if let Some(p) = self.player.as_ref() {
                         let wheels = puddles::wheel_contacts(&p.vehicle);
                         let speed = p.vehicle.physics.velocity_kmh().abs() / 3.6;
                         let wetness = self.wetness;
-                        scene.smoke.extend(self.splashes.update(
-                            dt,
-                            &wheels,
-                            speed,
-                            &|x, y| {
+                        scene
+                            .smoke
+                            .extend(self.splashes.update(dt, &wheels, speed, &|x, y| {
                                 puddles::puddle_coverage(x, y, w.wet_road_at(x, y, wetness))
-                            },
-                        ));
+                            }));
                     }
                 }
-                if let (Some(amb), Some(a)) = (self.ambience.as_mut(), self.audio.as_ref())
-                {
+                if let (Some(amb), Some(a)) = (self.ambience.as_mut(), self.audio.as_ref()) {
                     let steps = self
                         .humans
                         .as_mut()
                         .map(|h| h.take_footfalls())
                         .unwrap_or_default();
-                    for line in self.humans.as_mut().map(|h| h.take_voice_lines()).unwrap_or_default() {
+                    for line in self
+                        .humans
+                        .as_mut()
+                        .map(|h| h.take_voice_lines())
+                        .unwrap_or_default()
+                    {
                         if let Some(clip) = a.load_clip(&line.path) {
                             a.play(
                                 clip,
@@ -158,14 +194,19 @@ impl App {
                         cam.position,
                         &steps,
                     );
-                    *self.profile.entry("lights.ambience").or_default() += __tm.elapsed().as_secs_f64();
+                    *self.profile.entry("lights.ambience").or_default() +=
+                        __tm.elapsed().as_secs_f64();
                     if let Some(every) = debug_sound_every() {
                         static LAST: std::sync::atomic::AtomicU32 =
                             std::sync::atomic::AtomicU32::new(u32::MAX);
                         let bucket = (self.clock.time / every as f64) as u32;
-                        if LAST.swap(bucket, std::sync::atomic::Ordering::Relaxed) != bucket
-                        {
-                            log::info!("sound: environment - {} (precip {kind} {rate:.2}, StreetCond {:.2}, {} voices)", amb.last, street_condition(wt, self.wetness), a.voice_count());
+                        if LAST.swap(bucket, std::sync::atomic::Ordering::Relaxed) != bucket {
+                            log::info!(
+                                "sound: environment - {} (precip {kind} {rate:.2}, StreetCond {:.2}, {} voices)",
+                                amb.last,
+                                street_condition(wt, self.wetness),
+                                a.voice_count()
+                            );
                         }
                     }
                 }
@@ -180,9 +221,8 @@ impl App {
             self.camera.as_ref(),
         ) {
             let traffic = self.traffic.as_ref();
-            let phase = |c: usize, li: usize| {
-                traffic.map(|t| t.light_vars(c, li)).unwrap_or((-1.0, 0.0))
-            };
+            let phase =
+                |c: usize, li: usize| traffic.map(|t| t.light_vars(c, li)).unwrap_or((-1.0, 0.0));
             let __tb = Instant::now();
             if let Some(p) = self.player.as_mut() {
                 w.sync_html_departures(&mut p.vehicle.host);

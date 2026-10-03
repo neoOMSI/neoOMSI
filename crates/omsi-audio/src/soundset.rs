@@ -404,7 +404,11 @@ impl SoundSet {
     /// 100 Hz minimum. 1 for a plain `[sound]`.
     fn pitch_of(def: &SoundEntry, var: &dyn Fn(&str) -> Option<f32>, clip: &Clip) -> (f32, bool) {
         if def.is_loop && def.pitch_ref != 0.0 && !def.pitch_variable.is_empty() {
-            let rate = if def.sample_rate > 0.0 { def.sample_rate } else { clip.sample_rate as f32 };
+            let rate = if def.sample_rate > 0.0 {
+                def.sample_rate
+            } else {
+                clip.sample_rate as f32
+            };
             let hz = var(&def.pitch_variable).unwrap_or(0.0).abs() * rate / def.pitch_ref;
             (hz / clip.sample_rate.max(1) as f32, hz >= 100.0)
         } else {
@@ -428,7 +432,12 @@ impl SoundSet {
     pub fn curve_triggers(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for s in &self.sounds {
-            if !s.def.vol_curves.iter().any(|vc| vc.variable.trim().parse::<i32>().is_err()) {
+            if !s
+                .def
+                .vol_curves
+                .iter()
+                .any(|vc| vc.variable.trim().parse::<i32>().is_err())
+            {
                 continue;
             }
             for t in &s.def.triggers {
@@ -468,7 +477,12 @@ impl SoundSet {
         if !engine.enabled {
             return;
         }
-        let (muffled, exterior, master, doppler) = (self.muffled, self.exterior, self.master, !self.listener_vehicle);
+        let (muffled, exterior, master, doppler) = (
+            self.muffled,
+            self.exterior,
+            self.master,
+            !self.listener_vehicle,
+        );
         let view = self.view_mask();
         let world_pos = |p: Option<[f32; 3]>| {
             p.map(|p| object_to_world.transform_point3(Vec3::from_array(p)))
@@ -508,19 +522,32 @@ impl SoundSet {
             let facing = match (s.def.pos, s.def.dir) {
                 (Some(p), Some(d)) => {
                     let at = object_to_world.transform_point3(Vec3::from_array(p));
-                    let dir = object_to_world.transform_vector3(Vec3::from_array(d)).normalize_or_zero();
+                    let dir = object_to_world
+                        .transform_vector3(Vec3::from_array(d))
+                        .normalize_or_zero();
                     dir.dot((engine.listener_position() - at).normalize_or_zero())
                 }
                 _ => 1.0,
             };
             let fired_by = if triggered {
-                triggers.iter().find(|t| s.def.triggers.iter().any(|d| d.trim().eq_ignore_ascii_case(t)))
+                triggers.iter().find(|t| {
+                    s.def
+                        .triggers
+                        .iter()
+                        .any(|d| d.trim().eq_ignore_ascii_case(t))
+                })
             } else {
                 None
             };
             let fired = fired_by.is_some();
             let mut vol = match fired_by {
-                Some(t) => Self::volume(&s.def, &|n| at_fire(t, n).or_else(|| var(n)), view, active, facing),
+                Some(t) => Self::volume(
+                    &s.def,
+                    &|n| at_fire(t, n).or_else(|| var(n)),
+                    view,
+                    active,
+                    facing,
+                ),
                 None => Self::volume(&s.def, var, view, active, facing),
             };
             if triggered {
@@ -616,7 +643,12 @@ impl SoundSet {
                 } else {
                     "no clip".into()
                 };
-            } else if s.def.viewpoint != 0 && s.def.viewpoint & view == 0 && !(view == 2 && s.def.viewpoint & 2 == 0 && outside_open().is_some_and(|o| o > 0.01)) {
+            } else if s.def.viewpoint != 0
+                && s.def.viewpoint & view == 0
+                && !(view == 2
+                    && s.def.viewpoint & 2 == 0
+                    && outside_open().is_some_and(|o| o > 0.01))
+            {
                 why = format!("viewpoint {} (listener {view})", s.def.viewpoint);
             } else if let Some(c) = s
                 .def
@@ -625,15 +657,11 @@ impl SoundSet {
                 .find(|c| !c.holds(var(&c.variable).unwrap_or(0.0)))
             {
                 why = format!("condition {} = {:?}", c.variable, var(&c.variable));
-            } else if let Some(vc) = s
-                .def
-                .vol_curves
-                .iter()
-                .find(|vc| {
-                    let active = s.active_since.map_or(0.0, |t| t.elapsed().as_secs_f32());
-                    Self::curve_input(vc, var, active, 1.0).is_some_and(|x| curve(&vc.points, x) <= 0.001)
-                })
-            {
+            } else if let Some(vc) = s.def.vol_curves.iter().find(|vc| {
+                let active = s.active_since.map_or(0.0, |t| t.elapsed().as_secs_f32());
+                Self::curve_input(vc, var, active, 1.0)
+                    .is_some_and(|x| curve(&vc.points, x) <= 0.001)
+            }) {
                 why = format!("volcurve {} = {:?}", vc.variable, var(&vc.variable));
             }
             let playing = s.voice.and_then(|id| engine.voice_state(id));
@@ -665,7 +693,10 @@ static OUTSIDE_OPEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32
 
 /// Set how open the listener's bus is to the outside (`Snd_OutsideVol`), or `None`.
 pub fn set_outside_open(v: Option<f32>) {
-    OUTSIDE_OPEN.store(v.filter(|x| x.is_finite()).unwrap_or(f32::NAN).to_bits(), std::sync::atomic::Ordering::Relaxed);
+    OUTSIDE_OPEN.store(
+        v.filter(|x| x.is_finite()).unwrap_or(f32::NAN).to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 fn outside_open() -> Option<f32> {
@@ -680,30 +711,66 @@ mod tests {
     #[test]
     fn open_doors_let_the_outside_in() {
         set_outside_open(None);
-        assert_eq!(SoundSet::outside_gain(true, true), 1.0, "no variable: as before");
+        assert_eq!(
+            SoundSet::outside_gain(true, true),
+            1.0,
+            "no variable: as before"
+        );
         set_outside_open(Some(0.0));
         assert_eq!(SoundSet::outside_gain(true, true), 0.25, "shut: a quarter");
-        assert_eq!(SoundSet::outside_gain(true, false), 1.0, "the own bus's sounds are its own");
+        assert_eq!(
+            SoundSet::outside_gain(true, false),
+            1.0,
+            "the own bus's sounds are its own"
+        );
         assert_eq!(SoundSet::lowpass_of(true, false), 0.0);
         assert_eq!(SoundSet::outside_gain(false, true), 1.0, "standing outside");
         set_outside_open(Some(0.5));
-        assert_eq!(SoundSet::outside_gain(true, true), 1.0, "doors open: all of it");
+        assert_eq!(
+            SoundSet::outside_gain(true, true),
+            1.0,
+            "doors open: all of it"
+        );
         assert!(SoundSet::lowpass_of(true, true) > 5000.0);
         // (in the same test: the variable is one for all) the own bus's outside-only
         // entry, `[viewpoint] 5`, heard from the cab at `Snd_OutsideVol` (TSound update
         // 0x750340), not at all with everything shut
-        let engine = SoundEntry { volume: 0.8, viewpoint: 5, ..Default::default() };
+        let engine = SoundEntry {
+            volume: 0.8,
+            viewpoint: 5,
+            ..Default::default()
+        };
         let none = |_: &str| None;
         set_outside_open(Some(0.0));
         assert_eq!(SoundSet::volume(&engine, &none, 2, 0.0, 1.0), None);
         set_outside_open(Some(0.5));
         assert_eq!(SoundSet::volume(&engine, &none, 2, 0.0, 1.0), Some(0.4));
-        assert_eq!(SoundSet::volume(&engine, &none, 1, 0.0, 1.0), Some(0.8), "outside: as it is");
-        let outside = SoundEntry { volume: 0.8, viewpoint: 1, ..Default::default() };
+        assert_eq!(
+            SoundSet::volume(&engine, &none, 1, 0.0, 1.0),
+            Some(0.8),
+            "outside: as it is"
+        );
+        let outside = SoundEntry {
+            volume: 0.8,
+            viewpoint: 1,
+            ..Default::default()
+        };
         assert_eq!(SoundSet::volume(&outside, &none, 2, 0.0, 1.0), Some(0.4));
-        assert_eq!(SoundSet::volume(&outside, &none, 2 | 4, 0.0, 1.0), None, "not an AI bus's");
-        let cab = SoundEntry { volume: 0.8, viewpoint: 2, ..Default::default() };
-        assert_eq!(SoundSet::volume(&cab, &none, 1, 0.0, 1.0), None, "a cab sound stays in");
+        assert_eq!(
+            SoundSet::volume(&outside, &none, 2 | 4, 0.0, 1.0),
+            None,
+            "not an AI bus's"
+        );
+        let cab = SoundEntry {
+            volume: 0.8,
+            viewpoint: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            SoundSet::volume(&cab, &none, 1, 0.0, 1.0),
+            None,
+            "a cab sound stays in"
+        );
         set_outside_open(None);
         assert_eq!(SoundSet::volume(&engine, &none, 2, 0.0, 1.0), None);
     }
@@ -716,16 +783,41 @@ mod tests {
         let hit = SoundEntry {
             volume: 1.0,
             triggers: vec!["ev_doorhitclose_0".into()],
-            vol_curves: vec![omsi_vehicle::VolCurve { variable: "doorSpeed_0".into(), points: vec![(-1.0, 1.0), (-0.5, 0.0)] }],
+            vol_curves: vec![omsi_vehicle::VolCurve {
+                variable: "doorSpeed_0".into(),
+                points: vec![(-1.0, 1.0), (-0.5, 0.0)],
+            }],
             ..Default::default()
         };
         let now = |n: &str| (n == "doorSpeed_0").then_some(0.8);
-        let at_fire = |t: &str, n: &str| (t == "ev_doorhitclose_0" && n == "doorSpeed_0").then_some(-1.0);
+        let at_fire =
+            |t: &str, n: &str| (t == "ev_doorhitclose_0" && n == "doorSpeed_0").then_some(-1.0);
         set_outside_open(None);
-        assert_eq!(SoundSet::volume(&hit, &now, 2, 0.0, 1.0), Some(0.0), "read at the frame's end: silent");
+        assert_eq!(
+            SoundSet::volume(&hit, &now, 2, 0.0, 1.0),
+            Some(0.0),
+            "read at the frame's end: silent"
+        );
         let fired = |n: &str| at_fire("ev_doorhitclose_0", n).or_else(|| now(n));
         assert_eq!(SoundSet::volume(&hit, &fired, 2, 0.0, 1.0), Some(1.0));
-        let set = SoundSet { sounds: vec![RuntimeSound { def: hit, clip: None, voice: None, held: false, active_since: None, peak: 0.0 }], master: 1.0, dir: Default::default(), exterior: false, inside: true, ai: false, listener_vehicle: true, muffled: false, parts: Vec::new() };
+        let set = SoundSet {
+            sounds: vec![RuntimeSound {
+                def: hit,
+                clip: None,
+                voice: None,
+                held: false,
+                active_since: None,
+                peak: 0.0,
+            }],
+            master: 1.0,
+            dir: Default::default(),
+            exterior: false,
+            inside: true,
+            ai: false,
+            listener_vehicle: true,
+            muffled: false,
+            parts: Vec::new(),
+        };
         assert_eq!(set.curve_triggers(), vec!["ev_doorhitclose_0".to_string()]);
     }
 
@@ -736,7 +828,11 @@ mod tests {
         let mut peak = 0.7;
         assert_eq!(SoundSet::peak_hold(&mut peak, Some(1.0), true), Some(1.0));
         assert_eq!(SoundSet::peak_hold(&mut peak, Some(0.0), false), Some(1.0));
-        assert_eq!(SoundSet::peak_hold(&mut peak, None, false), None, "wrong view: silent");
+        assert_eq!(
+            SoundSet::peak_hold(&mut peak, None, false),
+            None,
+            "wrong view: silent"
+        );
         // fired again quieter: the old peak is forgotten
         assert_eq!(SoundSet::peak_hold(&mut peak, Some(0.3), true), Some(0.3));
     }

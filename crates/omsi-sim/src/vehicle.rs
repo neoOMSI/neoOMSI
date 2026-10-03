@@ -1,22 +1,26 @@
 //! A road vehicle: its type (definition + compiled scripts + model) and instances.
 
-use crate::particles::ParticleSet;
-use crate::anim::{pivot_from_mesh, MeshAnimator};
+use crate::anim::{MeshAnimator, pivot_from_mesh};
 use crate::host::VehicleHost;
+use crate::particles::ParticleSet;
 use crate::physics::{Controls, VehiclePhysics};
 use anyhow::{Context, Result};
 use glam::{DVec3, Mat4, Quat, Vec3, Vec4};
 use hashbrown::HashMap;
-use omsi_geometry::{mesh_from_o3d, MeshData};
+use omsi_geometry::{MeshData, mesh_from_o3d};
 use omsi_model::{MaterialDef, Model};
-use omsi_script::{compile, CompileInput, Program, State, Vm};
+use omsi_script::{CompileInput, Program, State, Vm, compile};
 use omsi_vehicle::Vehicle;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Scripts often test a stopped bus with `!Velocity_Ground`, so do not expose tiny solver drift.
 fn script_speed(speed_kmh: f32) -> f32 {
-    if speed_kmh.abs() < 0.01 { 0.0 } else { speed_kmh }
+    if speed_kmh.abs() < 0.01 {
+        0.0
+    } else {
+        speed_kmh
+    }
 }
 
 /// Built-in variables every road vehicle has (`program/varlist_roadvehicle.txt` + generated).
@@ -236,7 +240,15 @@ fn mesh_path(root: &Path, dir: &Path, model_dir: &Path, file: &str) -> PathBuf {
     }
     let model = omsi_cfg::resolve_path(dir, "model");
     let parent = model_dir.parent().map(Path::to_path_buf);
-    for base in [Some(dir.to_path_buf()), Some(model), parent, Some(root.to_path_buf())].into_iter().flatten() {
+    for base in [
+        Some(dir.to_path_buf()),
+        Some(model),
+        parent,
+        Some(root.to_path_buf()),
+    ]
+    .into_iter()
+    .flatten()
+    {
         let p = omsi_cfg::resolve_path(&base, file);
         if omsi_cfg::vfs::exists(&p) {
             return p;
@@ -266,7 +278,10 @@ impl VehicleType {
             .mesh_boxes
             .iter()
             .filter(|(lo, hi)| hi.x > lo.x || hi.y > lo.y)
-            .fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(a, b), (lo, hi)| (a.min(*lo), b.max(*hi)));
+            .fold(
+                (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                |(a, b), (lo, hi)| (a.min(*lo), b.max(*hi)),
+            );
         (hi.y > lo.y).then_some((lo, hi))
     }
 
@@ -313,7 +328,8 @@ impl VehicleType {
         }
         let mut meshes = Vec::new();
         let mut missing_packs: Vec<(String, usize)> = Vec::new();
-        let (mut turned, mut positive_forward, mut positive_backward) = (Vec::new(), 0usize, 0usize);
+        let (mut turned, mut positive_forward, mut positive_backward) =
+            (Vec::new(), 0usize, 0usize);
         if !model.lods.is_empty() {
             let start = model.lods[0].first_mesh;
             let end = model
@@ -332,9 +348,7 @@ impl VehicleType {
                                     let id = md
                                         .bones
                                         .iter()
-                                        .find(|(n, _)| {
-                                            n.trim().eq_ignore_ascii_case(b.name.trim())
-                                        })
+                                        .find(|(n, _)| n.trim().eq_ignore_ascii_case(b.name.trim()))
                                         .map(|(_, id)| *id)
                                         .filter(|id| *id >= 0);
                                     SkinBone {
@@ -351,7 +365,11 @@ impl VehicleType {
                             Vec::new()
                         };
                         // (a mesh none of whose bones is bound moves as a rigid one)
-                        let skin = if skin.iter().any(|b| b.def_index.is_some()) { skin } else { Vec::new() };
+                        let skin = if skin.iter().any(|b| b.def_index.is_some()) {
+                            skin
+                        } else {
+                            Vec::new()
+                        };
                         match omsi_geometry::positive_det_faces_forward(&m) {
                             Some(true) => positive_forward += 1,
                             Some(false) => positive_backward += 1,
@@ -371,15 +389,16 @@ impl VehicleType {
                             skin,
                         })
                     }
-                    Err(e) => {
-                        match omsi_cfg::missing_vehicle_pack(&p) {
-                            Some(pack) => match missing_packs.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(&pack)) {
-                                Some(m) => m.1 += 1,
-                                None => missing_packs.push((pack, 1)),
-                            },
-                            None => log::warn!("{}: {e}", p.display()),
-                        }
-                    }
+                    Err(e) => match omsi_cfg::missing_vehicle_pack(&p) {
+                        Some(pack) => match missing_packs
+                            .iter_mut()
+                            .find(|(n, _)| n.eq_ignore_ascii_case(&pack))
+                        {
+                            Some(m) => m.1 += 1,
+                            None => missing_packs.push((pack, 1)),
+                        },
+                        None => log::warn!("{}: {e}", p.display()),
+                    },
                 }
             }
         }
@@ -388,7 +407,11 @@ impl VehicleType {
             for &i in &turned {
                 omsi_geometry::reverse_winding(&mut meshes[i].data);
             }
-            log::info!("{}: {} meshes keep their winding ({positive_forward} of the meshes with a positive determinant face along their normals, {positive_backward} against them)", bus_file.display(), turned.len());
+            log::info!(
+                "{}: {} meshes keep their winding ({positive_forward} of the meshes with a positive determinant face along their normals, {positive_backward} against them)",
+                bus_file.display(),
+                turned.len()
+            );
         }
         for (pack, n) in &missing_packs {
             log::warn!(
@@ -403,14 +426,25 @@ impl VehicleType {
         }
         // the model's own items, after the `.cti` files' (their textures in the first
         // `[CTC]` folder, as a `.cti` of that folder has them)
-        let item_dir = model.ctc.first().map(|c| omsi_cfg::resolve_path(&dir, &c.path)).unwrap_or_else(|| dir.clone());
+        let item_dir = model
+            .ctc
+            .first()
+            .map(|c| omsi_cfg::resolve_path(&dir, &c.path))
+            .unwrap_or_else(|| dir.clone());
         for it in &model.items {
-            match paint_schemes.last_mut().filter(|s: &&mut PaintScheme| s.name.eq_ignore_ascii_case(&it.name) && s.dir == item_dir) {
+            match paint_schemes.last_mut().filter(|s: &&mut PaintScheme| {
+                s.name.eq_ignore_ascii_case(&it.name) && s.dir == item_dir
+            }) {
                 Some(s) => {
                     s.textures.push((it.ctc.clone(), it.texture.clone()));
                     s.set_vars.extend(it.set_vars.iter().cloned());
                 }
-                None => paint_schemes.push(PaintScheme { name: it.name.clone(), dir: item_dir.clone(), textures: vec![(it.ctc.clone(), it.texture.clone())], set_vars: it.set_vars.clone() }),
+                None => paint_schemes.push(PaintScheme {
+                    name: it.name.clone(),
+                    dir: item_dir.clone(),
+                    textures: vec![(it.ctc.clone(), it.texture.clone())],
+                    set_vars: it.set_vars.clone(),
+                }),
             }
         }
         let texchanges = omsi_model::load_texchanges(&dir, &model.texchanges);
@@ -418,13 +452,28 @@ impl VehicleType {
         let mesh_boxes: Vec<(Vec3, Vec3)> = meshes
             .iter()
             .map(|m| {
-                let lo = m.data.positions.iter().fold(Vec3::splat(f32::MAX), |a, p| a.min(*p));
-                let hi = m.data.positions.iter().fold(Vec3::splat(f32::MIN), |a, p| a.max(*p));
-                if lo.x <= hi.x { (lo, hi) } else { (Vec3::ZERO, Vec3::ZERO) }
+                let lo = m
+                    .data
+                    .positions
+                    .iter()
+                    .fold(Vec3::splat(f32::MAX), |a, p| a.min(*p));
+                let hi = m
+                    .data
+                    .positions
+                    .iter()
+                    .fold(Vec3::splat(f32::MIN), |a, p| a.max(*p));
+                if lo.x <= hi.x {
+                    (lo, hi)
+                } else {
+                    (Vec3::ZERO, Vec3::ZERO)
+                }
             })
             .collect();
         let mesh_bounds = if keep_meshes {
-            meshes.iter().map(|m| omsi_geometry::bounding_sphere(&m.data.positions)).collect()
+            meshes
+                .iter()
+                .map(|m| omsi_geometry::bounding_sphere(&m.data.positions))
+                .collect()
         } else {
             vec![(Vec3::ZERO, 0.0); meshes.len()]
         };
@@ -445,7 +494,12 @@ impl VehicleType {
                 let size = hi - lo;
                 let mid = (hi + lo) * 0.5;
                 if bb[1] > size.y + 1.5 {
-                    log::info!("{}: [boundingbox] {:.1} m long, the model {:.1} m: the model's length taken", bus_file.display(), bb[1], size.y);
+                    log::info!(
+                        "{}: [boundingbox] {:.1} m long, the model {:.1} m: the model's length taken",
+                        bus_file.display(),
+                        bb[1],
+                        size.y
+                    );
                     bb[1] = size.y + 0.1;
                     bb[4] = mid.y;
                 }
@@ -580,7 +634,9 @@ impl VehicleType {
     /// shone white. A body texture is never a flat colour, so the livery stays the model's.
     /// Values are full paths.
     pub fn default_substitutions(&self, root: &Path) -> HashMap<String, String> {
-        static CACHE: std::sync::OnceLock<parking_lot::Mutex<HashMap<PathBuf, HashMap<String, String>>>> = std::sync::OnceLock::new();
+        static CACHE: std::sync::OnceLock<
+            parking_lot::Mutex<HashMap<PathBuf, HashMap<String, String>>>,
+        > = std::sync::OnceLock::new();
         let cache = CACHE.get_or_init(|| parking_lot::Mutex::new(HashMap::new()));
         if let Some(m) = cache.lock().get(&self.def.path) {
             return m.clone();
@@ -589,7 +645,11 @@ impl VehicleType {
         if let Some(first) = self.paint_schemes.first() {
             let dirs = self.texture_dirs(root);
             for (name, default) in &self.model.ctc_textures {
-                let Some((_, file)) = first.textures.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) else {
+                let Some((_, file)) = first
+                    .textures
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                else {
                     continue;
                 };
                 // only a display's colour: a material that shows a script or text texture
@@ -597,24 +657,41 @@ impl VehicleType {
                 // [useTextTexture]). Window paint and a body's transparency map are CTC
                 // textures of one flat tone as well (the LiAZ's `Kuzov_trans.dds`), and the
                 // first repaint's put its livery over the windows as large splashes.
-                let display = self.model.meshes.iter().flat_map(|m| m.materials.iter()).any(|o| {
-                    o.texture.trim().eq_ignore_ascii_case(default.trim())
-                        && (o.transmap.as_deref().is_some_and(|t| t.trim().starts_with("\\S:"))
-                        || o.use_script_texture.is_some()
-                        || o.use_text_texture.is_some())
-                });
+                let display = self
+                    .model
+                    .meshes
+                    .iter()
+                    .flat_map(|m| m.materials.iter())
+                    .any(|o| {
+                        o.texture.trim().eq_ignore_ascii_case(default.trim())
+                            && (o
+                                .transmap
+                                .as_deref()
+                                .is_some_and(|t| t.trim().starts_with("\\S:"))
+                                || o.use_script_texture.is_some()
+                                || o.use_text_texture.is_some())
+                    });
                 if !display {
                     continue;
                 }
-                let own = dirs.iter().map(|d| omsi_cfg::resolve_path(d, default)).find(|p| omsi_cfg::vfs::is_file(p));
+                let own = dirs
+                    .iter()
+                    .map(|d| omsi_cfg::resolve_path(d, default))
+                    .find(|p| omsi_cfg::vfs::is_file(p));
                 let Some(own) = own else { continue };
                 if !flat_placeholder(&own) {
                     continue;
                 }
                 let theirs = omsi_cfg::resolve_path(&first.dir, file);
                 if omsi_cfg::vfs::is_file(&theirs) {
-                    log::info!("{}: CTC texture '{name}' is a flat placeholder ({default}); the first paint scheme's {file} lights it", self.def.path.display());
-                    map.insert(default.to_ascii_lowercase(), theirs.to_string_lossy().into_owned());
+                    log::info!(
+                        "{}: CTC texture '{name}' is a flat placeholder ({default}); the first paint scheme's {file} lights it",
+                        self.def.path.display()
+                    );
+                    map.insert(
+                        default.to_ascii_lowercase(),
+                        theirs.to_string_lossy().into_owned(),
+                    );
                 }
             }
         }
@@ -642,7 +719,9 @@ impl VehicleType {
             return Some(std::borrow::Cow::Borrowed(&m.data));
         }
         match omsi_o3d::load_mesh(&m.file) {
-            Ok(o) => Some(std::borrow::Cow::Owned(omsi_geometry::mesh_from_o3d_turning(&o, !self.keep_winding))),
+            Ok(o) => Some(std::borrow::Cow::Owned(
+                omsi_geometry::mesh_from_o3d_turning(&o, !self.keep_winding),
+            )),
             Err(e) => {
                 log::warn!("{}: {e}", m.file.display());
                 None
@@ -672,7 +751,9 @@ impl VehicleType {
 
 /// A texture of one flat, colourless tone (a stand-in the paint schemes replace).
 fn flat_placeholder(p: &Path) -> bool {
-    let Ok(img) = omsi_texture::decode_file(p) else { return false };
+    let Ok(img) = omsi_texture::decode_file(p) else {
+        return false;
+    };
     let n = (img.width as usize * img.height as usize).max(1);
     let step = (n / 4096).max(1);
     let (mut sum, mut sq, mut k) = ([0f64; 3], [0f64; 3], 0f64);
@@ -688,8 +769,11 @@ fn flat_placeholder(p: &Path) -> bool {
         return false;
     }
     let mean: Vec<f64> = sum.iter().map(|s| s / k).collect();
-    let spread = (0..3).map(|c| (sq[c] / k - mean[c] * mean[c]).max(0.0).sqrt()).fold(0.0, f64::max);
-    let chroma = mean.iter().cloned().fold(0.0, f64::max) - mean.iter().cloned().fold(255.0, f64::min);
+    let spread = (0..3)
+        .map(|c| (sq[c] / k - mean[c] * mean[c]).max(0.0).sqrt())
+        .fold(0.0, f64::max);
+    let chroma =
+        mean.iter().cloned().fold(0.0, f64::max) - mean.iter().cloned().fold(255.0, f64::min);
     // (a few black cells for the unlit part of a matrix are allowed: the median tone matters)
     spread < 40.0 && chroma < 20.0
 }
@@ -1119,7 +1203,10 @@ impl VehicleInstance {
         };
         VehicleInstance {
             a_trans: OmsiFrames::default(),
-            particles: ParticleSet::new(ty.model.particle_systems(), std::ptr::addr_of!(host) as u64 ^ 0x9e37_79b9),
+            particles: ParticleSet::new(
+                ty.model.particle_systems(),
+                std::ptr::addr_of!(host) as u64 ^ 0x9e37_79b9,
+            ),
             light_fade: Vec::new(),
             v_springfactor,
             rest_sag,
@@ -1136,7 +1223,10 @@ impl VehicleInstance {
             v_brake: v("Brake").or_else(|| v("brake_pedal")),
             v_brakeforce: v("Brakeforce"),
             v_clutch: v("Clutch").or_else(|| v("clutch_pedal")),
-            v_pax_req: (0..8).flat_map(|i| [format!("PAX_Entry{i}_Req"), format!("PAX_Exit{i}_Req")]).filter_map(|n| v(&n)).collect(),
+            v_pax_req: (0..8)
+                .flat_map(|i| [format!("PAX_Entry{i}_Req"), format!("PAX_Exit{i}_Req")])
+                .filter_map(|n| v(&n))
+                .collect(),
             v_accel: [v("A_Trans_X"), v("A_Trans_Y"), v("A_Trans_Z")],
             v_wheels,
             ty,
@@ -1223,11 +1313,19 @@ impl VehicleInstance {
     /// the body's vertical acceleration and its roll and pitch at the seat's place (the
     /// driver's camera) push a spring (3000) and damper (2000) on 150 kg; ±10 cm at most.
     fn update_driver_seat(&mut self, dt: f32) {
-        let Some(id) = self.ty.program.var("Driver_Seat_VertTransl") else { return };
+        let Some(id) = self.ty.program.var("Driver_Seat_VertTransl") else {
+            return;
+        };
         if dt <= 0.0 {
             return;
         }
-        let seat = self.ty.def.cameras_driver.first().map(|c| c.pos).unwrap_or([0.0; 3]);
+        let seat = self
+            .ty
+            .def
+            .cameras_driver
+            .first()
+            .map(|c| c.pos)
+            .unwrap_or([0.0; 3]);
         let (acc_z, omega) = match &self.rigid {
             Some(rb) => (rb.accel_body.z - 9.81, rb.omega),
             None => (0.0, Vec3::ZERO),
@@ -1293,7 +1391,14 @@ impl VehicleInstance {
     /// The axle that steers: the frontmost, as the rigid body takes it (the simple model
     /// took the first listed, which is not always the front one).
     fn steered_axle(&self) -> usize {
-        self.ty.def.axles.iter().enumerate().max_by(|a, b| a.1.long.total_cmp(&b.1.long)).map(|(i, _)| i).unwrap_or(0)
+        self.ty
+            .def
+            .axles
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.long.total_cmp(&b.1.long))
+            .map(|(i, _)| i)
+            .unwrap_or(0)
     }
 
     fn spring_factor(&self, axle: usize, side: usize) -> f32 {
@@ -1494,7 +1599,14 @@ impl VehicleInstance {
                 let ws = self.physics.wheels[ai][si].clone();
                 self.put(w[0], ws.rotation_deg.to_radians());
                 self.put(w[1], ws.rpm);
-                self.put(w[2], if ai == self.steered_axle() { steer } else { 0.0 });
+                self.put(
+                    w[2],
+                    if ai == self.steered_axle() {
+                        steer
+                    } else {
+                        0.0
+                    },
+                );
                 self.put(w[3], ws.suspension);
             }
         }
@@ -1511,7 +1623,12 @@ impl VehicleInstance {
         // each part pulls or holds back along its own heading: the third section of a
         // double articulated bus in a bend does not point where the second does
         let dir_of = |t: &TrailerPart| {
-            let h = if t.pivot.is_some() { t.heading } else { self.heading }.to_radians();
+            let h = if t.pivot.is_some() {
+                t.heading
+            } else {
+                self.heading
+            }
+            .to_radians();
             Vec3::new(h.sin() as f32, h.cos() as f32, 0.0)
         };
         self.trailers
@@ -1535,7 +1652,7 @@ impl VehicleInstance {
                     } else {
                         def.mass
                     }
-                        .max(0.0),
+                    .max(0.0),
                     driven_wheels: driven.len() * 2,
                     radius: driven
                         .first()
@@ -1645,8 +1762,21 @@ impl VehicleInstance {
                 // a brush that takes less than a kilojoule is no accident (a broken post is), and
                 // a car still inside the bus from the frame before is the same accident
                 let o = &obstacles[hit.obstacle];
-                if hit.speed >= crate::rigid::CRASH_SPEED && omsi_cfg::env::var_os("OMSI_DEBUG_PHYSICS").is_some() {
-                    log::info!("  hit obstacle {} at ({:.1}, {:.1}) z {:.2}..{:.2} half {:.2}x{:.2} heading {:.0}, {:.1} km/h", o.id, o.center.x, o.center.y, o.z0, o.z1, o.half.x, o.half.y, o.heading.to_degrees(), hit.speed * 3.6);
+                if hit.speed >= crate::rigid::CRASH_SPEED
+                    && omsi_cfg::env::var_os("OMSI_DEBUG_PHYSICS").is_some()
+                {
+                    log::info!(
+                        "  hit obstacle {} at ({:.1}, {:.1}) z {:.2}..{:.2} half {:.2}x{:.2} heading {:.0}, {:.1} km/h",
+                        o.id,
+                        o.center.x,
+                        o.center.y,
+                        o.z0,
+                        o.z1,
+                        o.half.x,
+                        o.half.y,
+                        o.heading.to_degrees(),
+                        hit.speed * 3.6
+                    );
                 }
                 if hit.speed < crate::rigid::CRASH_SPEED
                     || (hit.energy < 1000.0 && !hit.broke)
@@ -1710,7 +1840,9 @@ impl VehicleInstance {
         // 9.81 m/s² (the wheels' springs need it), which as `A_Trans_Z` kept checks such
         // as the NEOMAN ECAS's "|A_Trans_Z| < 3 while driving" from ever passing.
         // (over OMSI's frames: the rattle scripts take its change from one frame to the next)
-        let a = self.a_trans.push(scripts_acceleration(rb.accel_body, rb.orientation), dt);
+        let a = self
+            .a_trans
+            .push(scripts_acceleration(rb.accel_body, rb.orientation), dt);
         self.physics.a_trans = a;
         self.put(self.v_accel[0], a.x);
         self.put(self.v_accel[1], a.y);
@@ -1749,7 +1881,9 @@ impl VehicleInstance {
 
     /// Where variable `name` sits among the script's variables (`State::vars`).
     pub fn var_slot(&self, name: &str) -> Option<usize> {
-        self.var_index.get(&name.to_ascii_lowercase()).map(|&i| i as usize)
+        self.var_index
+            .get(&name.to_ascii_lowercase())
+            .map(|&i| i as usize)
     }
 
     pub fn var(&self, name: &str) -> Option<f32> {
@@ -1803,7 +1937,12 @@ impl VehicleInstance {
     /// sounds and messages the triggers asked for.
     pub fn trial_triggers(&mut self, names: &[&str]) -> Vec<f32> {
         let (state, vm) = (self.state.clone(), self.vm.clone());
-        let (fired, fired_files, messages, time_written) = (self.host.fired_triggers.len(), self.host.fired_file_triggers.len(), self.host.messages.clone(), self.host.time_written);
+        let (fired, fired_files, messages, time_written) = (
+            self.host.fired_triggers.len(),
+            self.host.fired_file_triggers.len(),
+            self.host.messages.clone(),
+            self.host.time_written,
+        );
         let fired_vars = self.host.fired_trigger_vars.len();
         for n in names {
             self.trigger(n);
@@ -1847,7 +1986,10 @@ impl VehicleInstance {
         // what is coupled to this vehicle (the train scripts light their ends by it: a head
         // lamp only where nothing is coupled, the tail lamps at the last car)
         self.set_engine_var("train_frontcoupling", 0.0);
-        self.set_engine_var("train_backcoupling", if self.trailers.is_empty() { 0.0 } else { 1.0 });
+        self.set_engine_var(
+            "train_backcoupling",
+            if self.trailers.is_empty() { 0.0 } else { 1.0 },
+        );
         self.set_engine_var("train_me_reverse", 0.0);
         // and for the tyres' grip
         let mu = road_grip(self.host.street_cond, self.host.temperature);
@@ -1875,10 +2017,15 @@ impl VehicleInstance {
             self.km_started = true;
             if self.host.km_base == 0.0 {
                 let (year, per_year) = self.ty.def.km_counter_init.unwrap_or((1980, 60000.0));
-                let years = ((self.host.clock.year - year) as f64 + self.host.clock.day_of_year as f64 / 365.0).max(0.0);
-                let seed = (std::ptr::addr_of!(self.host) as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40;
+                let years = ((self.host.clock.year - year) as f64
+                    + self.host.clock.day_of_year as f64 / 365.0)
+                    .max(0.0);
+                let seed = (std::ptr::addr_of!(self.host) as u64)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    >> 40;
                 let (r1, r2) = ((seed % 100) as f64, ((seed / 100) % 100) as f64);
-                self.host.km_base = r1 / 10.0 + 8.0 + years * per_year as f64 * (1.0 + 0.2 * (r2 - 50.0) / 50.0);
+                self.host.km_base =
+                    r1 / 10.0 + 8.0 + years * per_year as f64 * (1.0 + 0.2 * (r2 - 50.0) / 50.0);
             }
         }
         // (the sum is split, not the parts: 0.7 km + 0.5 km is 1 km 200 m, not 0 km 1200 m)
@@ -1893,7 +2040,12 @@ impl VehicleInstance {
         // them; only the relative humidity comes from their temperature and humidity. An
         // engine model on top of theirs broke that balance - the Sprinter 312D's cabin
         // went to infinity within a second, and its engine with it.
-        let owns = |name: &str| self.ty.program.var(name).is_some_and(|v| self.ty.program.stores(v));
+        let owns = |name: &str| {
+            self.ty
+                .program
+                .var(name)
+                .is_some_and(|v| self.ty.program.stores(v))
+        };
         if owns("Cabinair_Temp") {
             if let (Some(t), Some(hum)) = (self.var("Cabinair_Temp"), self.var("Cabinair_absHum")) {
                 if !owns("Cabinair_relHum") && t.is_finite() && t > -237.0 {
@@ -1903,7 +2055,9 @@ impl VehicleInstance {
             return;
         }
         let out = self.host.temperature;
-        let (mut t, mut hum, last) = self.cabin_air.unwrap_or((out.clamp(18.0, 25.0), 9.0, f32::NAN));
+        let (mut t, mut hum, last) =
+            self.cabin_air
+                .unwrap_or((out.clamp(18.0, 25.0), 9.0, f32::NAN));
         // a script of the bus's own wrote the cabin temperature: that is what it is now
         if let Some(cur) = self.var("Cabinair_Temp") {
             if !last.is_nan() && (cur - last).abs() > 1e-4 {
@@ -1914,7 +2068,11 @@ impl VehicleInstance {
         let upper = (out + 20.0).min(out.max(25.0)).max(lower);
         let target = t.clamp(lower, upper);
         t += (target - t) * (dt / 120.0).min(1.0);
-        let out_hum = if self.host.abs_humidity > 0.0 { self.host.abs_humidity } else { 9.0 };
+        let out_hum = if self.host.abs_humidity > 0.0 {
+            self.host.abs_humidity
+        } else {
+            9.0
+        };
         hum += (out_hum - hum) * (dt / 300.0).min(1.0);
         // relative humidity: against the saturation (Magnus) at the cabin temperature
 
@@ -2194,7 +2352,10 @@ impl VehicleInstance {
             // Urumqi61 lie left, the ordinary ones right). Off a stop it is 0 (OMSI's
             // default), so a script that reads it there does the same as ever.
             ("AI_Scheduled_AtStation_Side", ai.at_station_side),
-            ("TrafficPriorityWarningNeeded", ai.priority_warning as i32 as f32),
+            (
+                "TrafficPriorityWarningNeeded",
+                ai.priority_warning as i32 as f32,
+            ),
         ] {
             self.set_var(name, v);
         }
@@ -2257,16 +2418,28 @@ impl VehicleInstance {
     /// Only small corrections (under 8 cm) and only axles the model moves with
     /// `Axle_Suspension`: a larger mismatch is the model's own business.
     fn seat_wheels(&mut self) {
-        let Some(rb) = self.rigid.as_ref() else { return };
+        let Some(rb) = self.rigid.as_ref() else {
+            return;
+        };
         if self.wheel_seats.is_none() {
             let mut seats = Vec::new();
             for (i, vm) in self.ty.meshes.iter().enumerate() {
                 let def = &self.ty.model.meshes[vm.def_index];
-                let Some(an) = def.animations.iter().find(|a| a.variable.to_ascii_lowercase().starts_with("wheel_rotation_")) else { continue };
+                let Some(an) = def.animations.iter().find(|a| {
+                    a.variable
+                        .to_ascii_lowercase()
+                        .starts_with("wheel_rotation_")
+                }) else {
+                    continue;
+                };
                 let v = an.variable.to_ascii_lowercase();
                 let rest = v.trim_start_matches("wheel_rotation_");
                 let mut parts = rest.split('_');
-                let (Some(Ok(axle)), Some(side)) = (parts.next().map(|a| a.parse::<usize>()), parts.next()) else { continue };
+                let (Some(Ok(axle)), Some(side)) =
+                    (parts.next().map(|a| a.parse::<usize>()), parts.next())
+                else {
+                    continue;
+                };
                 if !self.ty.suspension_axles.contains(&axle) {
                     continue;
                 }
@@ -2282,7 +2455,9 @@ impl VehicleInstance {
                 let mut hub = None;
                 for o in &an.origins {
                     match o {
-                        omsi_model::AnimOrigin::Trans(t) => hub = Some(hub.unwrap_or(Vec3::ZERO) + Vec3::from(*t)),
+                        omsi_model::AnimOrigin::Trans(t) => {
+                            hub = Some(hub.unwrap_or(Vec3::ZERO) + Vec3::from(*t))
+                        }
                         omsi_model::AnimOrigin::FromMesh => hub = Some(vm.pivot.w_axis.truncate()),
                         _ => {}
                     }
@@ -2293,16 +2468,25 @@ impl VehicleInstance {
         }
         let seats = self.wheel_seats.as_ref().unwrap();
         for &(i, k, pivot) in seats {
-            let comp = rb.wheels[k].compression.clamp(-crate::rigid::DROOP, crate::rigid::BUMP);
+            let comp = rb.wheels[k]
+                .compression
+                .clamp(-crate::rigid::DROOP, crate::rigid::BUMP);
             let drawn = self.mesh_transforms[i].transform_point3(pivot).z;
             let dz = pivot.z + comp - drawn;
             if omsi_cfg::env::var_os("OMSI_DEBUG_SEAT").is_some() {
-                log::info!("seat mesh {i} wheel {k}: comp {:.4} drawn {:.4} pivot {:.4} dz {:.4}", comp, drawn, pivot.z, dz);
+                log::info!(
+                    "seat mesh {i} wheel {k}: comp {:.4} drawn {:.4} pivot {:.4} dz {:.4}",
+                    comp,
+                    drawn,
+                    pivot.z,
+                    dz
+                );
             }
             // (every frame, however small: a dead band of 3 mm had the correction switch on
             // and off as the travel crossed it, and the tyre ticked up and down by that much)
             if dz.abs() < 0.08 {
-                self.mesh_transforms[i] = Mat4::from_translation(Vec3::new(0.0, 0.0, dz)) * self.mesh_transforms[i];
+                self.mesh_transforms[i] =
+                    Mat4::from_translation(Vec3::new(0.0, 0.0, dz)) * self.mesh_transforms[i];
             }
         }
     }
@@ -2326,7 +2510,9 @@ impl VehicleInstance {
         let mut lead: Option<(DVec3, Mat4, f64)> = None;
         let (mut prev_c, mut b_prev) = (self.position, 0.0f64);
         for t in &mut trailers {
-            let (lp, lr) = lead.map(|(p, r, _)| (p, r)).unwrap_or((self.position, self.body_rotation()));
+            let (lp, lr) = lead
+                .map(|(p, r, _)| (p, r))
+                .unwrap_or((self.position, self.body_rotation()));
             let c = t.coupling_point(lp, lr);
             let b_c = b_prev + (c - prev_c).truncate().length();
             if let Some(p) = at_behind(b_c + t.pivot_length() as f64) {
@@ -2415,13 +2601,24 @@ impl VehicleInstance {
         }
         // the lamps come on and go out with their `timeconst`
         let mut lf = std::mem::take(&mut self.light_fade);
-        let mut part_fades: Vec<Vec<f32>> = self.trailers.iter_mut().map(|t| std::mem::take(&mut t.light_fade)).collect();
-        let value = |n: &str| -> f32 { n.trim().parse::<f32>().ok().or_else(|| self.var(n.trim())).unwrap_or(0.0) };
+        let mut part_fades: Vec<Vec<f32>> = self
+            .trailers
+            .iter_mut()
+            .map(|t| std::mem::take(&mut t.light_fade))
+            .collect();
+        let value = |n: &str| -> f32 {
+            n.trim()
+                .parse::<f32>()
+                .ok()
+                .or_else(|| self.var(n.trim()))
+                .unwrap_or(0.0)
+        };
         let fade = |model: &Model, fades: &mut Vec<f32>| {
             let mut k = 0;
             for md in &model.meshes {
                 for l in &md.light_enh_2 {
-                    let target = (value(&l.variable) * if l.factor > 0.0 { l.factor } else { 1.0 }).clamp(0.0, 2.0);
+                    let target = (value(&l.variable) * if l.factor > 0.0 { l.factor } else { 1.0 })
+                        .clamp(0.0, 2.0);
                     // (a NaN stays NaN through clamp: the lamp's glow was drawn black on Windows)
                     let target = if target.is_finite() { target } else { 0.0 };
                     if fades.len() <= k {
@@ -2453,7 +2650,11 @@ impl VehicleInstance {
         // vehicle and its coupled parts, which read the same scripts' variables
         if !self.particles.is_empty() || self.trailers.iter().any(|t| !t.particles.is_empty()) {
             let mut ps = std::mem::take(&mut self.particles);
-            let mut parts: Vec<ParticleSet> = self.trailers.iter_mut().map(|t| std::mem::take(&mut t.particles)).collect();
+            let mut parts: Vec<ParticleSet> = self
+                .trailers
+                .iter_mut()
+                .map(|t| std::mem::take(&mut t.particles))
+                .collect();
             {
                 let value = |n: &str| self.var(n).unwrap_or(0.0);
                 ps.update(dt, self.position, self.body_rotation(), &value);
@@ -2565,7 +2766,26 @@ impl VehicleInstance {
             let c = (lo + hi) * 0.5;
             let pv = m.pivot.col(3);
             let px = m.pivot.col(0);
-            let mut line = format!("{} {}: centre ({:.3}, {:.3}, {:.3}) pivot ({:.3}, {:.3}, {:.3}) x ({:.2}, {:.2}, {:.2}) det {:.2}", self.ty.def.path.file_name().unwrap_or_default().to_string_lossy(), self.ty.model.meshes[m.def_index].file, c.x, c.y, c.z, pv.x, pv.y, pv.z, px.x, px.y, px.z, m.pivot.determinant());
+            let mut line = format!(
+                "{} {}: centre ({:.3}, {:.3}, {:.3}) pivot ({:.3}, {:.3}, {:.3}) x ({:.2}, {:.2}, {:.2}) det {:.2}",
+                self.ty
+                    .def
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+                self.ty.model.meshes[m.def_index].file,
+                c.x,
+                c.y,
+                c.z,
+                pv.x,
+                pv.y,
+                pv.z,
+                px.x,
+                px.y,
+                px.z,
+                m.pivot.determinant()
+            );
             for name in names {
                 let Some(id) = self.ty.program.var(name) else {
                     continue;
@@ -2638,7 +2858,11 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
                 // when the variable is set
                 if let Some((_, _, v)) = m.change.as_ref().filter(|_| !m.item) {
                     // (its items follow it: item n shows at n, 1 <= n <= their number)
-                    let items = def.materials[mi + 1..].iter().take_while(|d| d.item).count().max(1) as f32;
+                    let items = def.materials[mi + 1..]
+                        .iter()
+                        .take_while(|d| d.item)
+                        .count()
+                        .max(1) as f32;
                     if let Some(slot) = override_slot(&vm.materials, m) {
                         // (the item as Omsi.exe picks it: the variable rounded is 1; an
                         // undeclared one is 0 - see scene.rs `change_picks_item`)
@@ -2648,7 +2872,11 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
                             .ok()
                             .or_else(|| var(v))
                             .unwrap_or(0.0);
-                        let n = if x.is_finite() { x.round_ties_even() } else { 0.0 };
+                        let n = if x.is_finite() {
+                            x.round_ties_even()
+                        } else {
+                            0.0
+                        };
                         props.slot_night[slot] = if n >= 1.0 && n <= items { 1.0 } else { 0.0 };
                     }
                 }
@@ -2668,7 +2896,8 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
                             .or_else(|| var(v))
                             // (a variable the bus does not have: always on, see below)
                             .unwrap_or(1.0);
-                        props.slot_light[slot] = props.slot_light[slot].max(if x >= 0.5 { 1.0 } else { 0.0 });
+                        props.slot_light[slot] =
+                            props.slot_light[slot].max(if x >= 0.5 { 1.0 } else { 0.0 });
                     }
                 }
             }
@@ -2862,7 +3091,11 @@ impl PropsPlan {
             props.visible = true;
             for &(slot, src) in &plan.night {
                 let x = src.value(vars, 0.0);
-                props.slot_night[slot] = if x.is_finite() && x.round_ties_even() == 1.0 { 1.0 } else { 0.0 };
+                props.slot_night[slot] = if x.is_finite() && x.round_ties_even() == 1.0 {
+                    1.0
+                } else {
+                    0.0
+                };
             }
             for &(slot, _) in &plan.light {
                 props.slot_light[slot] = 0.0;
@@ -2871,7 +3104,12 @@ impl PropsPlan {
             // texture stage of one whose variable reads under 0.5, 0x7fe51f - never half lit;
             // one whose variable the bus does not have - index -1 - is always on, 0x7fe4e7)
             for &(slot, src) in &plan.light {
-                props.slot_light[slot] = props.slot_light[slot].max(if src.value(vars, 1.0) >= 0.5 { 1.0 } else { 0.0 });
+                props.slot_light[slot] =
+                    props.slot_light[slot].max(if src.value(vars, 1.0) >= 0.5 {
+                        1.0
+                    } else {
+                        0.0
+                    });
             }
             if let Some((i, value)) = plan.visible {
                 if let Some(x) = vars.get(i) {
@@ -3061,7 +3299,10 @@ impl OmsiFrames {
         }
         // (a frame as long as OMSI's or longer is one of OMSI's)
         if dt >= Self::FRAME * 0.99 {
-            *self = OmsiFrames { out: a, ..Default::default() };
+            *self = OmsiFrames {
+                out: a,
+                ..Default::default()
+            };
             return a;
         }
         self.sum += a * dt;
@@ -3149,23 +3390,16 @@ impl TrailerPart {
         // AG300's, set ahead of its axle) followed it as if it were a fixed one (#322);
         // the stock GN92's line is its axle, a semitrailer's the middle of its axle group,
         // and rail cars name none.
-        let turning_line = (ty.def.rot_pnt_long != 0.0 && !ty.def.axles.is_empty()).then_some(ty.def.rot_pnt_long);
+        let turning_line =
+            (ty.def.rot_pnt_long != 0.0 && !ty.def.axles.is_empty()).then_some(ty.def.rot_pnt_long);
         let axle_long = if let Some(r) = turning_line {
             r
         } else if reversed {
             let a = ty.def.axles.iter().map(|a| a.long).fold(f32::MIN, f32::max);
-            if a == f32::MIN {
-                0.5
-            } else {
-                a
-            }
+            if a == f32::MIN { 0.5 } else { a }
         } else {
             let a = ty.def.axles.iter().map(|a| a.long).fold(f32::MAX, f32::min);
-            if a == f32::MAX {
-                -0.5
-            } else {
-                a
-            }
+            if a == f32::MAX { -0.5 } else { a }
         };
         let wheel_radius = ty
             .def
@@ -3289,7 +3523,11 @@ impl TrailerPart {
         } else {
             (self.heading, self.pitch, self.bank)
         };
-        Mat4::from_quat(Quat::from_rotation_z((-h).to_radians() as f32) * Quat::from_rotation_x(p.to_radians()) * Quat::from_rotation_y(b.to_radians()))
+        Mat4::from_quat(
+            Quat::from_rotation_z((-h).to_radians() as f32)
+                * Quat::from_rotation_x(p.to_radians())
+                * Quat::from_rotation_y(b.to_radians()),
+        )
     }
 
     /// World transform of the part's body (f32, for sound positions).
@@ -3476,7 +3714,13 @@ impl TrailerPart {
         // it (#140). Level with the coupling instead. With the world's faces the part may
         // stand lower than the coupling on a grade, but never metres under it: that is the
         // road under a bridge seen through a gap in the deck (#135).
-        let ground_z = ground_z.filter(|z| if main.contact.is_some() { z + lift - level > -3.0 } else { (z + lift - level).abs() < 1.5 });
+        let ground_z = ground_z.filter(|z| {
+            if main.contact.is_some() {
+                z + lift - level > -3.0
+            } else {
+                (z + lift - level).abs() < 1.5
+            }
+        });
         let axle_z = match on_track.or(ground_z.map(|z| z + lift)) {
             Some(z) if on_track.is_some() => z,
             Some(z) if main.contact.is_some() && dt > 0.0 => {
@@ -3518,7 +3762,8 @@ impl TrailerPart {
         // a crest the joint came apart by a hand's breadth or more). It leans as the vehicle
         // it is coupled to does.
         let rise = c.z - (axle_z + self.coupling_front.z as f64);
-        self.pitch = (rise.atan2(self.length.max(0.5) as f64).to_degrees() as f32).clamp(-15.0, 15.0);
+        self.pitch =
+            (rise.atan2(self.length.max(0.5) as f64).to_degrees() as f32).clamp(-15.0, 15.0);
         self.bank = main.bank;
         // the trailer origin: coupling_front sits at c
         let rot = self.body_rotation();
@@ -3537,9 +3782,15 @@ impl TrailerPart {
             let f = lead_rot.transform_vector3(Vec3::Y);
             let h = lead_heading.to_radians();
             let along = f.x as f64 * h.sin() + f.y as f64 * h.cos();
-            (f.z as f64).atan2(along.abs().max(1e-6) * along.signum()).to_degrees()
+            (f.z as f64)
+                .atan2(along.abs().max(1e-6) * along.signum())
+                .to_degrees()
         };
-        let lead_pitch = if lead_pitch.abs() > 90.0 { lead_pitch - 180.0 * lead_pitch.signum() } else { lead_pitch };
+        let lead_pitch = if lead_pitch.abs() > 90.0 {
+            lead_pitch - 180.0 * lead_pitch.signum()
+        } else {
+            lead_pitch
+        };
         let alpha = ((lead_heading - self.heading + 540.0) % 360.0) - 180.0;
         // (the part in front's pitch less this one's, as Omsi.exe's beta runs (0x7de798: it
         // grows as the rear axle sinks): taken the other way round the bellows bent away
@@ -3650,8 +3901,8 @@ impl VehicleInstance {
             for w in self.physics.wheels.iter().flatten() {
                 let p = self.position
                     + rot
-                    .transform_vector3(Vec3::new(w.lat, w.long, 0.0))
-                    .as_dvec3();
+                        .transform_vector3(Vec3::new(w.lat, w.long, 0.0))
+                        .as_dvec3();
                 if let Some(z) = wheel_ground(self.contact.as_deref(), self.ground.as_deref(), p) {
                     points.push(
                         inv.transform_vector3((DVec3::new(p.x, p.y, z) - self.position).as_vec3()),
@@ -3683,15 +3934,22 @@ impl VehicleInstance {
 
 /// A camera in a body's own matrix (`rot`, at `position`): see
 /// `VehicleInstance::camera_world_full`.
-fn camera_in_body(position: DVec3, rot: Mat4, cam: &omsi_vehicle::Camera) -> (DVec3, f32, f32, f32) {
+fn camera_in_body(
+    position: DVec3,
+    rot: Mat4,
+    cam: &omsi_vehicle::Camera,
+) -> (DVec3, f32, f32, f32) {
     let (sy, cy) = cam.yaw.to_radians().sin_cos();
     let (sp, cp) = cam.pitch.to_radians().sin_cos();
     let f_local = Vec3::new(sy * cp, cy * cp, sp);
     let r_local = Vec3::new(cy, -sy, 0.0);
     let f = rot.transform_vector3(f_local).normalize_or(Vec3::Y);
-    let up = rot.transform_vector3(r_local.cross(f_local)).normalize_or(Vec3::Z);
+    let up = rot
+        .transform_vector3(r_local.cross(f_local))
+        .normalize_or(Vec3::Z);
     let local = Vec3::new(cam.pos[0], cam.pos[1], cam.pos[2]);
-    let eye = position + rot.transform_point3(local).as_dvec3() - (f * cam.dist.max(0.0)).as_dvec3();
+    let eye =
+        position + rot.transform_point3(local).as_dvec3() - (f * cam.dist.max(0.0)).as_dvec3();
     let yaw = f.x.atan2(f.y).to_degrees();
     let pitch = f.z.clamp(-1.0, 1.0).asin().to_degrees();
     // (the roll the renderer's `Camera::up` turns back into this up)
@@ -3707,7 +3965,11 @@ fn skin_key(ty: &VehicleType, i: usize, transforms: &[Mat4]) -> Vec<Mat4> {
     };
     let mut key = vec![transforms.get(i).copied().unwrap_or(Mat4::IDENTITY)];
     for b in &vm.skin {
-        if let Some(k) = ty.meshes.iter().position(|m| Some(m.def_index) == b.def_index) {
+        if let Some(k) = ty
+            .meshes
+            .iter()
+            .position(|m| Some(m.def_index) == b.def_index)
+        {
             key.push(transforms.get(k).copied().unwrap_or(Mat4::IDENTITY));
         }
     }
@@ -3857,7 +4119,10 @@ mod tests {
         let (road, deck) = (12.0f64, 17.0f64);
         // the faces: the deck above the wheel, the road under it
         let faces = |_x: f64, _y: f64, top: f64| crate::rigid::GroundProbe {
-            below: [road, deck].into_iter().filter(|h| *h <= top).fold(None, |a: Option<f64>, b| Some(a.map_or(b, |a| a.max(b)))),
+            below: [road, deck]
+                .into_iter()
+                .filter(|h| *h <= top)
+                .fold(None, |a: Option<f64>, b| Some(a.map_or(b, |a| a.max(b)))),
             above: None,
         };
         let faces: &dyn crate::rigid::Ground = &faces;
@@ -3867,9 +4132,15 @@ mod tests {
         let wheel = DVec3::new(100.0, 200.0, road);
         assert_eq!(wheel_ground(Some(faces), Some(plain), wheel), Some(road));
         // a wheel standing on the deck itself gets the deck
-        assert_eq!(wheel_ground(Some(faces), Some(plain), DVec3::new(100.0, 200.0, deck)), Some(deck));
+        assert_eq!(
+            wheel_ground(Some(faces), Some(plain), DVec3::new(100.0, 200.0, deck)),
+            Some(deck)
+        );
         // nothing drawn within a step of the wheel: the plain sampler, as before
-        let empty = |_x: f64, _y: f64, _top: f64| crate::rigid::GroundProbe { below: None, above: Some(deck) };
+        let empty = |_x: f64, _y: f64, _top: f64| crate::rigid::GroundProbe {
+            below: None,
+            above: Some(deck),
+        };
         let empty: &dyn crate::rigid::Ground = &empty;
         assert_eq!(wheel_ground(Some(empty), Some(plain), wheel), Some(deck));
         // no face probe at all (a rail or air lane): the plain sampler
@@ -3950,10 +4221,13 @@ mod tests {
                 .iter()
                 .enumerate()
                 .find_map(|(i, vm)| {
-                    ty.model.meshes[vm.def_index].materials.iter().find_map(|m| {
-                        let (_, v) = m.lightmaps.first()?;
-                        Some((i, override_slot(&vm.materials, m)?, v.clone()))
-                    })
+                    ty.model.meshes[vm.def_index]
+                        .materials
+                        .iter()
+                        .find_map(|m| {
+                            let (_, v) = m.lightmaps.first()?;
+                            Some((i, override_slot(&vm.materials, m)?, v.clone()))
+                        })
                 })
                 .expect("a lightmap");
             let di = ty.meshes[i].def_index;
@@ -3963,7 +4237,8 @@ mod tests {
                     m.lightmaps.truncate(1);
                 }
             }
-            let mut v = VehicleInstance::new(Arc::new(ty), VehicleHost::new(crate::SimClock::default()));
+            let mut v =
+                VehicleInstance::new(Arc::new(ty), VehicleHost::new(crate::SimClock::default()));
             for x in v.state.vars.iter_mut() {
                 *x = value;
             }
@@ -4094,15 +4369,20 @@ mod tests {
         }
         let mut ty = VehicleType::load(&root, &bus).expect("SD77");
         ty.def.km_counter_init = None;
-        let mut v = VehicleInstance::new(Arc::new(ty), VehicleHost::new(crate::SimClock::default()));
+        let mut v =
+            VehicleInstance::new(Arc::new(ty), VehicleHost::new(crate::SimClock::default()));
         v.host.clock.year = 2011;
         v.host.clock.day_of_year = 0;
         v.update_engine_vars(0.02);
         let base = v.host.km_base;
-        assert!((31.0 * 60000.0 * 0.8 + 8.0..=31.0 * 60000.0 * 1.2 + 18.0).contains(&base), "{base}");
+        assert!(
+            (31.0 * 60000.0 * 0.8 + 8.0..=31.0 * 60000.0 * 1.2 + 18.0).contains(&base),
+            "{base}"
+        );
         v.driven_km = -0.5;
         v.update_engine_vars(0.02);
-        let km = v.var("kmcounter_km").unwrap() as f64 + v.var("kmcounter_m").unwrap() as f64 / 1000.0;
+        let km =
+            v.var("kmcounter_km").unwrap() as f64 + v.var("kmcounter_m").unwrap() as f64 / 1000.0;
         assert!((km - (base - 0.5)).abs() < 1.0, "{km} for {base}");
     }
 
@@ -4131,7 +4411,10 @@ mod tests {
             v.heading = h;
             v.update_visuals(0.02);
             let alpha = v.var("articulation_0_alpha").unwrap();
-            assert!((alpha.abs() - 52.5).abs() < 1e-3, "alpha {alpha} at heading {h}");
+            assert!(
+                (alpha.abs() - 52.5).abs() < 1e-3,
+                "alpha {alpha} at heading {h}"
+            );
         }
     }
 
@@ -4140,11 +4423,16 @@ mod tests {
     fn a_jolt_rattles_alike_at_any_frame_rate() {
         fn rattle(fps: f32) -> f32 {
             let dt = 1.0 / fps;
-            let (mut frames, mut last, mut vol, mut peak) = (OmsiFrames::default(), 0.0f32, 0.0f32, 0.0f32);
+            let (mut frames, mut last, mut vol, mut peak) =
+                (OmsiFrames::default(), 0.0f32, 0.0f32, 0.0f32);
             for i in 0..(fps as usize) {
                 let t = i as f32 * dt;
                 // a 6 Hz pitching after a bump, 0.5 m/s² along the bus
-                let a = Vec3::new(0.0, 0.5 * (t * 6.0 * std::f32::consts::TAU).sin() * (-t * 3.0).exp(), 0.0);
+                let a = Vec3::new(
+                    0.0,
+                    0.5 * (t * 6.0 * std::f32::consts::TAU).sin() * (-t * 3.0).exp(),
+                    0.0,
+                );
                 let a = frames.push(a, dt);
                 let m = (a.x * a.x + a.y * a.y + 0.01 * a.z * a.z).sqrt();
                 vol = ((m - last) * 1.0).max(vol * (-dt).exp()).min(1.0);
@@ -4156,7 +4444,10 @@ mod tests {
         let (omsi, fast) = (rattle(30.0), rattle(144.0));
         // (taken frame by frame, 144 a second rattled at 0.3 of OMSI's)
         assert!(omsi > 0.2 && omsi < 0.9, "{omsi}");
-        assert!(fast > 0.6 * omsi && fast < 1.4 * omsi, "30 fps {omsi}, 144 fps {fast}");
+        assert!(
+            fast > 0.6 * omsi && fast < 1.4 * omsi,
+            "30 fps {omsi}, 144 fps {fast}"
+        );
     }
 
     /// `A_Trans_*` are the body's acceleration without gravity, as in Omsi.exe: 0 for a bus
@@ -4172,7 +4463,10 @@ mod tests {
         assert!(grade.length() < 1e-4, "{grade}");
         // braking at 3 m/s² on the level
         let braking = scripts_acceleration(Vec3::new(0.0, -3.0, 9.81), Quat::IDENTITY);
-        assert!((braking - Vec3::new(0.0, -3.0, 0.0)).length() < 1e-4, "{braking}");
+        assert!(
+            (braking - Vec3::new(0.0, -3.0, 0.0)).length() < 1e-4,
+            "{braking}"
+        );
     }
 
     /// A rear section turns about its own `[rot_pnt_long]` line: the stock GN92's is its
@@ -4190,11 +4484,24 @@ mod tests {
         }
         let ty = Arc::new(VehicleType::load(&root, &bus).expect("GN92"));
         let mut tt = VehicleType::load(&root, &trail).expect("GN92 trail");
-        let stock = TrailerPart::new(Arc::new(VehicleType::load(&root, &trail).unwrap()), &ty, &ty.program, 2);
-        assert!((stock.pivot_length() - (4.169 + 0.387)).abs() < 1e-3, "{}", stock.pivot_length());
+        let stock = TrailerPart::new(
+            Arc::new(VehicleType::load(&root, &trail).unwrap()),
+            &ty,
+            &ty.program,
+            2,
+        );
+        assert!(
+            (stock.pivot_length() - (4.169 + 0.387)).abs() < 1e-3,
+            "{}",
+            stock.pivot_length()
+        );
         tt.def.rot_pnt_long = 1.0;
         let steered = TrailerPart::new(Arc::new(tt), &ty, &ty.program, 2);
-        assert!((steered.pivot_length() - (4.169 - 1.0)).abs() < 1e-3, "{}", steered.pivot_length());
+        assert!(
+            (steered.pivot_length() - (4.169 - 1.0)).abs() < 1e-3,
+            "{}",
+            steered.pivot_length()
+        );
     }
 
     /// The rear section of an articulated bus on a viaduct stays on the deck: one frame with
@@ -4214,18 +4521,30 @@ mod tests {
         }
         let ty = Arc::new(VehicleType::load(&root, &bus).expect("GN92"));
         let mut v = VehicleInstance::new(ty, VehicleHost::new(crate::SimClock::default()));
-        v.attach_trailer_ex(Arc::new(VehicleType::load(&root, &trail).expect("GN92 trail")), false);
+        v.attach_trailer_ex(
+            Arc::new(VehicleType::load(&root, &trail).expect("GN92 trail")),
+            false,
+        );
         // 0: a deck at 10 m over a road at 0; 1: a gap in the deck
         let mode = Arc::new(AtomicU8::new(0));
         let m = mode.clone();
         let ground = move |_x: f64, _y: f64, top: f64| {
             let deck = m.load(Ordering::Relaxed) == 0;
             if deck && top >= 10.0 {
-                crate::rigid::GroundProbe { below: Some(10.0), above: None }
+                crate::rigid::GroundProbe {
+                    below: Some(10.0),
+                    above: None,
+                }
             } else if deck {
-                crate::rigid::GroundProbe { below: Some(0.0), above: Some(10.0) }
+                crate::rigid::GroundProbe {
+                    below: Some(0.0),
+                    above: Some(10.0),
+                }
             } else {
-                crate::rigid::GroundProbe { below: Some(0.0), above: None }
+                crate::rigid::GroundProbe {
+                    below: Some(0.0),
+                    above: None,
+                }
             }
         };
         v.contact = Some(Arc::new(ground));
@@ -4237,7 +4556,11 @@ mod tests {
         assert!((on_deck - 10.0).abs() < 0.5, "rear section at {on_deck}");
         mode.store(1, Ordering::Relaxed);
         v.update_visuals(0.02);
-        assert!(v.trailers[0].position.z > 9.0, "dropped through the gap to {}", v.trailers[0].position.z);
+        assert!(
+            v.trailers[0].position.z > 9.0,
+            "dropped through the gap to {}",
+            v.trailers[0].position.z
+        );
         // sunk under the deck: it comes back up
         mode.store(0, Ordering::Relaxed);
         v.trailers[0].position.z = 0.2;
@@ -4245,7 +4568,11 @@ mod tests {
         for _ in 0..5 {
             v.update_visuals(0.02);
         }
-        assert!(v.trailers[0].position.z > 9.0, "stayed under the deck at {}", v.trailers[0].position.z);
+        assert!(
+            v.trailers[0].position.z > 9.0,
+            "stayed under the deck at {}",
+            v.trailers[0].position.z
+        );
     }
 
     /// A timetable duty and a random traffic car load their bus with `VehicleType::load_ai`,
@@ -4325,9 +4652,7 @@ mod tests {
         let content = omsi_cfg::env::var_os("OMSI_CONTENT")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                PathBuf::from(
-                    "/Users/savva/OMSI 2 Source Code/neoOMSI/target/release",
-                )
+                PathBuf::from("/Users/savva/OMSI 2 Source Code/neoOMSI/target/release")
             });
         let bus = content.join("Vehicles/MB_O530_Facelift/MB_O530GFL EL 3D Main.bus");
         let trail = content.join("Vehicles/MB_O530_Facelift/MB_O530GFL EL 3D Trail.bus");
@@ -4481,12 +4806,28 @@ mod grip_tests {
         }
         let ty = Arc::new(VehicleType::load(&root, &bus).expect("Agora S"));
         let i = (0..ty.meshes.len())
-            .find(|&i| ty.model.meshes[ty.meshes[i].def_index].file.to_ascii_lowercase().contains("retarderhebel_2"))
+            .find(|&i| {
+                ty.model.meshes[ty.meshes[i].def_index]
+                    .file
+                    .to_ascii_lowercase()
+                    .contains("retarderhebel_2")
+            })
             .expect("the Agora's retarder lever");
         let vm = &ty.meshes[i];
-        let bound = vm.skin.iter().find(|b| b.def_index.is_some()).expect("Bone.001");
-        assert!(vm.skin.iter().any(|b| b.def_index.is_none()), "the unbound Bone is kept");
-        let k = ty.meshes.iter().position(|m| Some(m.def_index) == bound.def_index).unwrap();
+        let bound = vm
+            .skin
+            .iter()
+            .find(|b| b.def_index.is_some())
+            .expect("Bone.001");
+        assert!(
+            vm.skin.iter().any(|b| b.def_index.is_none()),
+            "the unbound Bone is kept"
+        );
+        let k = ty
+            .meshes
+            .iter()
+            .position(|m| Some(m.def_index) == bound.def_index)
+            .unwrap();
         let mut v = VehicleInstance::new(ty.clone(), VehicleHost::new(crate::SimClock::default()));
         v.update_visuals(0.02);
         let rest = v.mesh_transforms.clone();
@@ -4495,7 +4836,10 @@ mod grip_tests {
             v.update_visuals(0.05);
         }
         let bone = v.mesh_transforms[k] * rest[k].inverse();
-        assert!(bone.abs_diff_eq(Mat4::IDENTITY, 1e-3) == false, "the lever's dummy did not move");
+        assert!(
+            bone.abs_diff_eq(Mat4::IDENTITY, 1e-3) == false,
+            "the lever's dummy did not move"
+        );
         let (pos, _) = v.skinned(i).expect("skinned lever");
         let mut checked = 0;
         for &(vi, w) in &bound.weights {
@@ -4507,7 +4851,12 @@ mod grip_tests {
             // (1 - w) where it was modelled, w with the bone, in the mesh's own frame
             let want = rest[i].inverse() * (Mat4::IDENTITY * (1.0 - w) + bone * w);
             let want = want.transform_point3(p);
-            assert!((pos[vi] - want).length() < 1e-4, "vertex {vi} (weight {w}): {:?} for {:?}", pos[vi], want);
+            assert!(
+                (pos[vi] - want).length() < 1e-4,
+                "vertex {vi} (weight {w}): {:?} for {:?}",
+                pos[vi],
+                want
+            );
             checked += 1;
         }
         assert!(checked > 0, "no vertex shared between the two bones");
@@ -4531,12 +4880,20 @@ mod grip_tests {
         }
         let ty = Arc::new(VehicleType::load(&root, &bus).expect("Agora L"));
         let mut v = VehicleInstance::new(ty, VehicleHost::new(crate::SimClock::default()));
-        v.attach_trailer_ex(Arc::new(VehicleType::load(&root, &trail).expect("Agora L trail")), false);
+        v.attach_trailer_ex(
+            Arc::new(VehicleType::load(&root, &trail).expect("Agora L trail")),
+            false,
+        );
         v.update_visuals(0.02);
         let find = |v: &VehicleInstance, n: &str| {
             v.ty.meshes
                 .iter()
-                .position(|m| v.ty.model.meshes[m.def_index].file.to_ascii_lowercase().ends_with(n))
+                .position(|m| {
+                    v.ty.model.meshes[m.def_index]
+                        .file
+                        .to_ascii_lowercase()
+                        .ends_with(n)
+                })
                 .expect(n)
         };
         let (arch, bone_b) = (find(&v, "gelenk_arch.o3d"), find(&v, "bone_b.o3d"));
@@ -4548,7 +4905,10 @@ mod grip_tests {
             // where the rear section lies, in the front section's frame
             let rel = v.body_rotation().inverse() * v.trailers[0].body_rotation();
             let back = rel.transform_vector3(-Vec3::Y);
-            assert!(back.z.abs() > 0.03, "the sections are not pitched apart ({back:?})");
+            assert!(
+                back.z.abs() > 0.03,
+                "the sections are not pitched apart ({back:?})"
+            );
             for k in [arch, bone_b] {
                 let d = v.mesh_transforms[k].transform_vector3(-Vec3::Y);
                 assert!(

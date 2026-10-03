@@ -36,7 +36,9 @@ pub(crate) fn is_omsi_root(p: &Path) -> bool {
 pub(crate) fn fatal_dialog(title: &str, text: &str) {
     log::error!("{title}: {text}");
     // started from a terminal (the message is right there) or by a test harness
-    if std::io::IsTerminal::is_terminal(&std::io::stderr()) || omsi_cfg::env::var_os("OMSI_BACKGROUND").is_some() {
+    if std::io::IsTerminal::is_terminal(&std::io::stderr())
+        || omsi_cfg::env::var_os("OMSI_BACKGROUND").is_some()
+    {
         return;
     }
     #[cfg(target_os = "macos")]
@@ -47,15 +49,27 @@ pub(crate) fn fatal_dialog(title: &str, text: &str) {
             esc(title),
             esc(text)
         );
-        let _ = std::process::Command::new("osascript").arg("-e").arg(script).status();
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status();
     }
     #[cfg(windows)]
     {
         #[link(name = "user32")]
         unsafe extern "system" {
-            fn MessageBoxW(hwnd: *mut core::ffi::c_void, text: *const u16, caption: *const u16, kind: u32) -> i32;
+            fn MessageBoxW(
+                hwnd: *mut core::ffi::c_void,
+                text: *const u16,
+                caption: *const u16,
+                kind: u32,
+            ) -> i32;
         }
-        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let wide = |s: &str| {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
         let (t, c) = (wide(text), wide(title));
         // MB_OK | MB_ICONERROR
         unsafe {
@@ -74,7 +88,10 @@ pub(crate) fn keyboard_cfg(root: &Path) -> PathBuf {
     if let Some(own) = omsi_launcher_lib::saved_keyboard_cfg() {
         return own;
     }
-    if let Some(own) = content_dir().map(|c| c.join("Inputs/keyboard.cfg")).filter(|p| p.exists()) {
+    if let Some(own) = content_dir()
+        .map(|c| c.join("Inputs/keyboard.cfg"))
+        .filter(|p| p.exists())
+    {
         return own;
     }
     omsi_cfg::original_keyboard_cfg(root)
@@ -92,12 +109,21 @@ pub(crate) fn own_keys(root: &Path) -> std::collections::HashSet<i32> {
 /// built-in list, not from the installation's file - a player who edited that file had
 /// every change overridden by the game's conveniences (Z / X / C, Shift+number).
 pub(crate) fn own_bindings(root: &Path, modifier: i32) -> std::collections::HashSet<i32> {
-    let Ok(m) = omsi_content::KeyboardCfg::load(&keyboard_cfg(root)) else { return Default::default() };
-    let stock: std::collections::HashSet<(String, i32, i32)> = crate::stock_keys::STOCK_KEYS.iter().map(|(a, k, md)| (a.to_ascii_lowercase(), *k, *md)).collect();
+    let Ok(m) = omsi_content::KeyboardCfg::load(&keyboard_cfg(root)) else {
+        return Default::default();
+    };
+    let stock: std::collections::HashSet<(String, i32, i32)> = crate::stock_keys::STOCK_KEYS
+        .iter()
+        .map(|(a, k, md)| (a.to_ascii_lowercase(), *k, *md))
+        .collect();
     m.vehicles
         .iter()
         .chain(m.game.iter())
-        .filter(|b| b.chord() == modifier && b.scan_code != 0 && !stock.contains(&(b.action.to_ascii_lowercase(), b.scan_code, b.modifier)))
+        .filter(|b| {
+            b.chord() == modifier
+                && b.scan_code != 0
+                && !stock.contains(&(b.action.to_ascii_lowercase(), b.scan_code, b.modifier))
+        })
         .map(|b| b.scan_code)
         .collect()
 }
@@ -145,7 +171,10 @@ pub(crate) fn find_root() -> Option<PathBuf> {
     // the folder the launcher was told about (Setup)
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         if let Ok(t) = std::fs::read_to_string(PathBuf::from(home).join(".neoomsi/launcher.json")) {
-            if let Some(r) = serde_json::from_str::<serde_json::Value>(&t).ok().and_then(|v| v.get("root").and_then(|r| r.as_str()).map(PathBuf::from)) {
+            if let Some(r) = serde_json::from_str::<serde_json::Value>(&t)
+                .ok()
+                .and_then(|v| v.get("root").and_then(|r| r.as_str()).map(PathBuf::from))
+            {
                 first.push(r);
             }
         }
@@ -167,7 +196,15 @@ pub(crate) fn graphics_instance() -> wgpu::Instance {
         let instance = backend_instance(b);
         let adapters = pollster::block_on(instance.enumerate_adapters(b));
         if !adapters.is_empty() {
-            log::info!("graphics: {:?} ({})", b, adapters.iter().map(|a| a.get_info().name).collect::<Vec<_>>().join(", "));
+            log::info!(
+                "graphics: {:?} ({})",
+                b,
+                adapters
+                    .iter()
+                    .map(|a| a.get_info().name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             return instance;
         }
         log::info!("graphics: no {b:?} adapter here");
@@ -190,10 +227,16 @@ pub(crate) fn backend_order() -> Vec<wgpu::Backends> {
     let wanted = if settings.vr_requested() {
         "dx12".to_owned()
     } else {
-        omsi_cfg::env::var("OMSI_BACKEND").ok().unwrap_or(settings.graphics_api)
+        omsi_cfg::env::var("OMSI_BACKEND")
+            .ok()
+            .unwrap_or(settings.graphics_api)
     };
     let all: Vec<wgpu::Backends> = if cfg!(windows) {
-        vec![wgpu::Backends::DX12, wgpu::Backends::VULKAN, wgpu::Backends::GL]
+        vec![
+            wgpu::Backends::DX12,
+            wgpu::Backends::VULKAN,
+            wgpu::Backends::GL,
+        ]
     } else {
         vec![wgpu::Backends::VULKAN, wgpu::Backends::GL]
     };
@@ -204,7 +247,10 @@ pub(crate) fn backend_order() -> Vec<wgpu::Backends> {
         _ => None,
     };
     // (the one asked for first, the others after it: a machine without it still starts)
-    first.into_iter().chain(all.into_iter().filter(|b| Some(*b) != first)).collect()
+    first
+        .into_iter()
+        .chain(all.into_iter().filter(|b| Some(*b) != first))
+        .collect()
 }
 
 fn backend_instance(b: wgpu::Backends) -> wgpu::Instance {
@@ -227,7 +273,8 @@ pub(crate) fn window_renderer(
 ) -> Result<Renderer> {
     let mut failures: Vec<String> = Vec::new();
     // the instance made for the settings' interface first, then every interface in turn
-    let mut candidates: Vec<(Option<wgpu::Backends>, wgpu::Instance)> = vec![(None, instance.clone())];
+    let mut candidates: Vec<(Option<wgpu::Backends>, wgpu::Instance)> =
+        vec![(None, instance.clone())];
     for b in backend_order() {
         candidates.push((Some(b), backend_instance(b)));
     }
@@ -235,7 +282,11 @@ pub(crate) fn window_renderer(
         let surface = match inst.create_surface(window.clone()) {
             Ok(s) => s,
             Err(e) => {
-                failures.push(format!("{}: no surface ({e})", b.map(|b| format!("{b:?}")).unwrap_or_else(|| "first choice".into())));
+                failures.push(format!(
+                    "{}: no surface ({e})",
+                    b.map(|b| format!("{b:?}"))
+                        .unwrap_or_else(|| "first choice".into())
+                ));
                 continue;
             }
         };
@@ -245,10 +296,15 @@ pub(crate) fn window_renderer(
             if failures.iter().any(|f| f.starts_with(&what)) {
                 continue;
             }
-            match omsi_render::catch(|| pollster::block_on(Renderer::new_on(adapter, Some(&surface), None, options))) {
+            match omsi_render::catch(|| {
+                pollster::block_on(Renderer::new_on(adapter, Some(&surface), None, options))
+            }) {
                 Some(Ok(r)) => {
                     if !failures.is_empty() {
-                        log::warn!("graphics: drawing on {what}; before it {}", failures.join("; "));
+                        log::warn!(
+                            "graphics: drawing on {what}; before it {}",
+                            failures.join("; ")
+                        );
                     }
                     drop(surface);
                     *instance = inst;
@@ -265,7 +321,14 @@ pub(crate) fn window_renderer(
             }
         }
     }
-    Err(anyhow!("no graphics device could be opened ({}); updating the graphics driver usually helps", if failures.is_empty() { "no adapter can show a window".to_string() } else { failures.join("; ") }))
+    Err(anyhow!(
+        "no graphics device could be opened ({}); updating the graphics driver usually helps",
+        if failures.is_empty() {
+            "no adapter can show a window".to_string()
+        } else {
+            failures.join("; ")
+        }
+    ))
 }
 
 /// Tell the player why the game cannot go on, also where there is no window yet (a message
@@ -275,12 +338,21 @@ pub(crate) fn fatal_message(text: &str) {
     eprintln!("neoOMSI: {text}");
     #[cfg(windows)]
     {
+        use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
         use windows::core::PCWSTR;
-        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
-        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let wide = |s: &str| {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
         let (t, c) = (wide(text), wide("neoOMSI"));
         unsafe {
-            MessageBoxW(None, PCWSTR(t.as_ptr()), PCWSTR(c.as_ptr()), MB_OK | MB_ICONERROR);
+            MessageBoxW(
+                None,
+                PCWSTR(t.as_ptr()),
+                PCWSTR(c.as_ptr()),
+                MB_OK | MB_ICONERROR,
+            );
         }
     }
 }
@@ -296,8 +368,18 @@ pub const VERSION: &str = env!("neoomsi_VERSION");
 /// middle: 1600 x 900 points at 125 % are 2000 x 1125 pixels, wider than a 1920 screen, and
 /// the window opened partly off it (#771). Where the system tells no screen (Wayland), the
 /// size as asked and no place.
-pub(crate) fn fit_window(event_loop: &winit::event_loop::ActiveEventLoop, w: f64, h: f64) -> (winit::dpi::LogicalSize<f64>, Option<winit::dpi::PhysicalPosition<i32>>) {
-    let Some(m) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) else {
+pub(crate) fn fit_window(
+    event_loop: &winit::event_loop::ActiveEventLoop,
+    w: f64,
+    h: f64,
+) -> (
+    winit::dpi::LogicalSize<f64>,
+    Option<winit::dpi::PhysicalPosition<i32>>,
+) {
+    let Some(m) = event_loop
+        .primary_monitor()
+        .or_else(|| event_loop.available_monitors().next())
+    else {
         return (winit::dpi::LogicalSize::new(w, h), None);
     };
     let (screen, scale) = (m.size(), m.scale_factor().max(0.5));
@@ -309,7 +391,11 @@ pub(crate) fn fit_window(event_loop: &winit::event_loop::ActiveEventLoop, w: f64
 /// `want` points fitted into a screen of `screen` pixels at `scale` (the size kept to 90 %
 /// of its width and 85 % of its height - a title bar and a task bar take some - with the
 /// shape kept), and where it starts for the screen's middle (pixels).
-pub(crate) fn fit_rect(want: (f64, f64), screen: (f64, f64), scale: f64) -> ((f64, f64), (i32, i32)) {
+pub(crate) fn fit_rect(
+    want: (f64, f64),
+    screen: (f64, f64),
+    scale: f64,
+) -> ((f64, f64), (i32, i32)) {
     let (sw, sh) = (screen.0 / scale, screen.1 / scale);
     let k = (sw * 0.9 / want.0).min(sh * 0.85 / want.1).min(1.0);
     let (w, h) = ((want.0 * k).round(), (want.1 * k).round());
@@ -328,17 +414,22 @@ pub(crate) fn window_icon() -> Option<winit::window::Icon> {
 }
 
 /// Enhanced graphics wanted (from the settings, `--enhanced`, or OMSI_ENHANCED=1).
-pub(crate) static ENHANCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) static ENHANCED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 /// Vanilla graphics: the picture as OMSI 2 draws it (no Vanilla+ extras, see
 /// `omsi_render::Lighting::classic`).
-pub(crate) static CLASSIC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) static CLASSIC: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 /// Volume of the AI vehicles and of the scenery's own sounds (OMSI's `sound_ai` and
 /// `sound_scenery`), as the bits of an f32.
-pub(crate) static SOUND_AI: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
-pub(crate) static SOUND_SCENERY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+pub(crate) static SOUND_AI: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3f80_0000);
+pub(crate) static SOUND_SCENERY: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3f80_0000);
 
 /// Edge of a mirror's picture (the `mirror_size` setting, OMSI's reflTexSize).
-pub(crate) static MIRROR_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(256);
+pub(crate) static MIRROR_SIZE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(256);
 
 pub(crate) fn sound_gain(which: &std::sync::atomic::AtomicU32) -> f32 {
     f32::from_bits(which.load(std::sync::atomic::Ordering::Relaxed))
@@ -406,7 +497,10 @@ mod window_tests {
     fn the_window_fits_a_small_screen_and_sits_in_its_middle() {
         // 1920 x 1200 at 125 %: 1600 x 900 points would be 2000 px wide
         let ((w, h), (x, y)) = super::fit_rect((1600.0, 900.0), (1920.0, 1200.0), 1.25);
-        assert!(w * 1.25 <= 1920.0 * 0.9 + 1.0 && h * 1.25 <= 1200.0 * 0.85 + 1.0, "{w} x {h}");
+        assert!(
+            w * 1.25 <= 1920.0 * 0.9 + 1.0 && h * 1.25 <= 1200.0 * 0.85 + 1.0,
+            "{w} x {h}"
+        );
         assert!(((w / h) - 16.0 / 9.0).abs() < 0.01);
         assert!((x as f64 - (1920.0 - w * 1.25) / 2.0).abs() <= 1.0);
         assert!(y > 0);

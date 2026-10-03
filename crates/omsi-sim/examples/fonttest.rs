@@ -4,7 +4,16 @@ fn main() {
     let text = std::env::args().nth(3).unwrap_or("EIN".into());
     let mut lib = omsi_sim::texttex::FontLibrary::new(&root);
     let atlas = lib.load(&name).expect("font");
-    println!("font {} from {} bitmap {} {}x{} height {} gap {}", atlas.font.name, atlas.font.path.display(), atlas.font.alpha, atlas.width, atlas.height, atlas.font.height, atlas.font.gap);
+    println!(
+        "font {} from {} bitmap {} {}x{} height {} gap {}",
+        atlas.font.name,
+        atlas.font.path.display(),
+        atlas.font.alpha,
+        atlas.width,
+        atlas.height,
+        atlas.font.height,
+        atlas.font.gap
+    );
     for c in text.chars() {
         if let Some(g) = atlas.font.glyph(c) {
             println!("  '{c}' x0 {} x1 {} y {}", g.x0, g.x1, g.y);
@@ -18,20 +27,37 @@ fn main() {
     }
     st.text_out(&atlas, 32, 0, 0, 2, &text);
     for y in 0..8 {
-        let row: String = (30..128).map(|x| if st.get(x, y)[0] > 0 { '#' } else { '.' }).collect();
+        let row: String = (30..128)
+            .map(|x| if st.get(x, y)[0] > 0 { '#' } else { '.' })
+            .collect();
         println!("{row}");
     }
 
     // the [texttexture] path (a whole picture at once, '@' breaking it into lines), as the
     // IBIS screen and the number plates use it
     let (w, h) = (
-        std::env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(256u32),
-        std::env::args().nth(5).and_then(|v| v.parse().ok()).unwrap_or(64u32),
+        std::env::args()
+            .nth(4)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(256u32),
+        std::env::args()
+            .nth(5)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(64u32),
     );
     let img = atlas.render(&text, w, h, false, [255, 255, 255]);
     println!("render {w}x{h} of {text:?}:");
     for y in 0..h {
-        let row: String = (0..w).step_by((w / 100).max(1) as usize).map(|x| if img[((y * w + x) * 4 + 3) as usize] > 0 { '#' } else { '.' }).collect();
+        let row: String = (0..w)
+            .step_by((w / 100).max(1) as usize)
+            .map(|x| {
+                if img[((y * w + x) * 4 + 3) as usize] > 0 {
+                    '#'
+                } else {
+                    '.'
+                }
+            })
+            .collect();
         println!("{y:3} {row}");
     }
 }

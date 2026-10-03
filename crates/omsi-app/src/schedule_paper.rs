@@ -6,7 +6,7 @@
 
 use crate::schedule::PlayerDuty;
 use ab_glyph::{Font as _, FontVec, PxScale, ScaleFont};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use omsi_content::font::{Font, FontAtlas, FontChar, TextAlign};
 use omsi_sim::VehicleInstance;
 use omsi_texture::Image;
@@ -40,7 +40,13 @@ pub(crate) fn update_vehicle(
     fonts: &mut omsi_sim::texttex::FontLibrary,
 ) -> Result<()> {
     let (arr, dep) = tt_labels();
-    let (title, rows) = paper_content(&duty.line, &duty.tour, &duty.trips, duty.trip_index, (arr, dep));
+    let (title, rows) = paper_content(
+        &duty.line,
+        &duty.tour,
+        &duty.trips,
+        duty.trip_index,
+        (arr, dep),
+    );
     let lines = paper_lines(&title, &rows);
     let signature = content_signature(&lines);
     let path = cache_dir()?.join(format!("schedule-v7-{signature:016x}.png"));
@@ -88,13 +94,11 @@ fn schedule_font(
     fonts: &mut omsi_sim::texttex::FontLibrary,
     lines: &[String],
 ) -> Option<std::sync::Arc<FontAtlas>> {
-    typewriter_font(lines)
-        .map(std::sync::Arc::new)
-        .or_else(|| {
-            ["19_HHAschedule_font", "DIN Narrow", "DIN_Narrow", "DIN"]
-                .into_iter()
-                .find_map(|name| fonts.load(name))
-        })
+    typewriter_font(lines).map(std::sync::Arc::new).or_else(|| {
+        ["19_HHAschedule_font", "DIN Narrow", "DIN_Narrow", "DIN"]
+            .into_iter()
+            .find_map(|name| fonts.load(name))
+    })
 }
 
 /// OMSI prints the schedule in a bold typewriter face, rather than a bus display's
@@ -195,9 +199,12 @@ fn tt_labels() -> &'static (String, String) {
     LABELS.get_or_init(|| {
         let lang = crate::settings::Settings::load().language;
         let find = |lang: &str| {
-            omsi_cfg::content_dirs("Languages").into_iter().find_map(|dir| {
-                omsi_content::language::Language::load(&dir.join(format!("{lang}_basic.olf"))).ok()
-            })
+            omsi_cfg::content_dirs("Languages")
+                .into_iter()
+                .find_map(|dir| {
+                    omsi_content::language::Language::load(&dir.join(format!("{lang}_basic.olf")))
+                        .ok()
+                })
         };
         let l = find(&lang).or_else(|| find("ENG"));
         let get = |key: &str, default: &str| {
@@ -312,7 +319,13 @@ fn paper_base() -> Image {
 fn draw_schedule(image: &mut Image, font: &FontAtlas, lines: &[String]) {
     let line_height = font.font.height.max(1) as u32;
     for (i, line) in lines.iter().enumerate() {
-        draw_text(image, font, line, PAPER_X, PAPER_TOP + i as u32 * line_height);
+        draw_text(
+            image,
+            font,
+            line,
+            PAPER_X,
+            PAPER_TOP + i as u32 * line_height,
+        );
     }
 }
 
@@ -456,7 +469,11 @@ mod tests {
     fn paper_text_is_two_columns_of_25_character_labels() {
         let rows: Vec<_> = (0..50)
             .map(|i| PaperRow {
-                name: if i == 0 { "Gustav-Adolf-Str./Langhansstr.  ".into() } else { format!("Stop {i:02}  ") },
+                name: if i == 0 {
+                    "Gustav-Adolf-Str./Langhansstr.  ".into()
+                } else {
+                    format!("Stop {i:02}  ")
+                },
                 time: "12:34".into(),
             })
             .collect();
@@ -468,7 +485,10 @@ mod tests {
             lines[2],
             "Gustav-Adolf-Str./Langhan 12:34     Stop 24  ................ 12:34"
         );
-        assert_eq!(lines[25], "Stop 23  ................ 12:34     Stop 47  ................ 12:34");
+        assert_eq!(
+            lines[25],
+            "Stop 23  ................ 12:34     Stop 47  ................ 12:34"
+        );
         // rows past the second column are left out
         assert!(!lines.iter().any(|l| l.contains("Stop 48")));
 
@@ -480,7 +500,12 @@ mod tests {
     #[test]
     fn paper_lines_are_drawn_from_60_90_one_font_height_apart() {
         let font = test_font();
-        let mut image = Image { width: 1024, height: 1024, rgba: vec![255; 1024 * 1024 * 4], has_alpha: false };
+        let mut image = Image {
+            width: 1024,
+            height: 1024,
+            rgba: vec![255; 1024 * 1024 * 4],
+            has_alpha: false,
+        };
         draw_schedule(&mut image, &font, &["AB".to_string(), "CD".to_string()]);
         let ink = |x: u32, y: u32| image.rgba[((y * image.width + x) * 4) as usize] < 100;
         assert!(ink(PAPER_X, PAPER_TOP));

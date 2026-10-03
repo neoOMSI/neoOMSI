@@ -2,8 +2,8 @@
 //! `humans.txt`, `drivers.txt`, `registrations.txt`.
 
 use omsi_cfg::CfgFile;
-use std::path::PathBuf;
 use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AiVehicleEntry {
@@ -86,7 +86,10 @@ impl AiLists {
                     let _ = r.str();
                     let default = r.str().trim().parse::<i32>().unwrap_or(-1);
                     let n = r.str().trim().parse::<usize>().unwrap_or(0).min(10_000);
-                    let files: Vec<String> = (0..n).map(|_| r.str().trim().to_string()).filter(|f| !f.is_empty()).collect();
+                    let files: Vec<String> = (0..n)
+                        .map(|_| r.str().trim().to_string())
+                        .filter(|f| !f.is_empty())
+                        .collect();
                     legacy = Some((default, files));
                 }
                 "aigroup" | "aigroup_2" => {
@@ -96,14 +99,28 @@ impl AiLists {
                     // (a map that leaves the depot line out altogether starts the list right
                     // there: Novi Sad's "Trucks" group - that line is a vehicle, not a depot)
                     let lower = hof.to_ascii_lowercase();
-                    let vehicle = lower.contains(".bus") || lower.contains(".ovh") || lower.contains(".sco");
-                    let mut g = AiGroup { name, hof: if hof.is_empty() || vehicle { None } else { Some(hof.clone()) }, ..Default::default() };
+                    let vehicle =
+                        lower.contains(".bus") || lower.contains(".ovh") || lower.contains(".sco");
+                    let mut g = AiGroup {
+                        name,
+                        hof: if hof.is_empty() || vehicle {
+                            None
+                        } else {
+                            Some(hof.clone())
+                        },
+                        ..Default::default()
+                    };
                     if vehicle {
                         let (file, w) = match hof.split_once('\t') {
                             Some((f, w)) => (f.trim().to_string(), omsi_cfg::parse_f32(w)),
                             None => (hof.trim().to_string(), 1.0),
                         };
-                        g.vehicles.push(AiVehicleEntry { file, weight: w, number: None, registration: None });
+                        g.vehicles.push(AiVehicleEntry {
+                            file,
+                            weight: w,
+                            number: None,
+                            registration: None,
+                        });
                     }
                     for l in r.until("[end]") {
                         let l = l.trim_end();
@@ -114,18 +131,31 @@ impl AiLists {
                             Some((f, w)) => (f.trim().to_string(), omsi_cfg::parse_f32(w)),
                             None => (l.trim().to_string(), 1.0),
                         };
-                        g.vehicles.push(AiVehicleEntry { file, weight: w, number: None, registration: None });
+                        g.vehicles.push(AiVehicleEntry {
+                            file,
+                            weight: w,
+                            number: None,
+                            registration: None,
+                        });
                     }
                     a.groups.push(g);
                 }
                 "aigroup_depot" => {
                     let name = r.str().to_string();
                     let hof = r.str().to_string();
-                    a.groups.push(AiGroup { name, hof: Some(hof), is_depot: true, ..Default::default() });
+                    a.groups.push(AiGroup {
+                        name,
+                        hof: Some(hof),
+                        is_depot: true,
+                        ..Default::default()
+                    });
                 }
                 "aigroup_depot_typgroup" | "aigroup_depot_typgroup_2" => {
                     let file = r.str().to_string();
-                    let mut tg = AiTypGroup { file, entries: Vec::new() };
+                    let mut tg = AiTypGroup {
+                        file,
+                        entries: Vec::new(),
+                    };
                     let v2 = k == "aigroup_depot_typgroup_2";
                     for l in r.until("[end]") {
                         if l.trim().is_empty() {
@@ -134,7 +164,11 @@ impl AiLists {
                         tg.entries.push(if v2 {
                             DepotEntry::parse(l)
                         } else {
-                            DepotEntry { number: l.trim().to_string(), paint: l.trim().to_string(), ..Default::default() }
+                            DepotEntry {
+                                number: l.trim().to_string(),
+                                paint: l.trim().to_string(),
+                                ..Default::default()
+                            }
                         });
                     }
                     if let Some(g) = a.groups.last_mut() {
@@ -148,14 +182,27 @@ impl AiLists {
         // "NotInGroup" (weight 1), as OMSI does after reading the file
         if let Some((default, files)) = legacy {
             if default < 0 || default as usize >= a.groups.len() {
-                let grouped: std::collections::HashSet<String> = a.groups.iter().flat_map(|g| g.vehicles.iter().map(|v| v.file.to_ascii_lowercase())).collect();
+                let grouped: std::collections::HashSet<String> = a
+                    .groups
+                    .iter()
+                    .flat_map(|g| g.vehicles.iter().map(|v| v.file.to_ascii_lowercase()))
+                    .collect();
                 let vehicles: Vec<AiVehicleEntry> = files
                     .into_iter()
                     .filter(|f| !grouped.contains(&f.to_ascii_lowercase()))
-                    .map(|file| AiVehicleEntry { file, weight: 1.0, number: None, registration: None })
+                    .map(|file| AiVehicleEntry {
+                        file,
+                        weight: 1.0,
+                        number: None,
+                        registration: None,
+                    })
                     .collect();
                 if !vehicles.is_empty() {
-                    a.groups.push(AiGroup { name: "NotInGroup".into(), vehicles, ..Default::default() });
+                    a.groups.push(AiGroup {
+                        name: "NotInGroup".into(),
+                        vehicles,
+                        ..Default::default()
+                    });
                 }
             }
         }
@@ -166,7 +213,12 @@ impl AiLists {
 /// A plain list file (one entry per line, blank lines ignored).
 pub fn load_list(path: &Path) -> Vec<String> {
     match CfgFile::read(path) {
-        Ok(f) => f.lines.iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        Ok(f) => f
+            .lines
+            .iter()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
         Err(_) => Vec::new(),
     }
 }
@@ -188,7 +240,11 @@ pub fn parse_unsched_trafficdens(f: &CfgFile) -> Vec<UnschedGroup> {
             "group" => {
                 let name = r.str().to_string();
                 let factor = r.f32();
-                out.push(UnschedGroup { name, factor, densities: Vec::new() });
+                out.push(UnschedGroup {
+                    name,
+                    factor,
+                    densities: Vec::new(),
+                });
             }
             "set_day_of_week" => {
                 let d = r.i32();
@@ -249,7 +305,10 @@ pub fn parse_chrono_cfg(f: &CfgFile) -> ChronoCfg {
             // n times). The count is not a line: read as one it took line "1" or "2" off.
             "deactivate_lines" => {
                 let n = r.i32().max(0);
-                c.deactivate_lines = (0..n).map(|_| r.str().trim().to_string()).filter(|s| !s.is_empty()).collect();
+                c.deactivate_lines = (0..n)
+                    .map(|_| r.str().trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
             }
             _ => {}
         }
@@ -261,7 +320,9 @@ impl ChronoCfg {
     /// Is the scenario in force on `date` (YYYYMMDD)? As the original: a scenario
     /// without any date never is; `[startdate]` and `[enddate]` both count as in force.
     pub fn active_on(&self, date: i32) -> bool {
-        (self.start_date != 0 || self.end_date != 0) && (self.start_date == 0 || date >= self.start_date) && (self.end_date == 0 || date <= self.end_date)
+        (self.start_date != 0 || self.end_date != 0)
+            && (self.start_date == 0 || date >= self.start_date)
+            && (self.end_date == 0 || date <= self.end_date)
     }
 }
 
@@ -288,7 +349,11 @@ pub fn active_chrono_dirs(map_dir: &Path, date: i32) -> Vec<PathBuf> {
     let mut cfgs = Vec::new();
     chrono_cfgs(&omsi_cfg::resolve_path(map_dir, "Chrono"), &mut cfgs);
     cfgs.into_iter()
-        .filter(|p| CfgFile::read(p).map(|f| parse_chrono_cfg(&f).active_on(date)).unwrap_or(false))
+        .filter(|p| {
+            CfgFile::read(p)
+                .map(|f| parse_chrono_cfg(&f).active_on(date))
+                .unwrap_or(false)
+        })
         .filter_map(|p| p.parent().map(|d| d.to_path_buf()))
         .collect()
 }
@@ -300,9 +365,15 @@ pub fn active_chrono_dirs(map_dir: &Path, date: i32) -> Vec<PathBuf> {
 pub fn chrono_deactivated_lines(chrono_dirs: &[PathBuf]) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     for d in chrono_dirs {
-        let cfg = Some(omsi_cfg::resolve_path(d, "Chrono.cfg")).filter(|p| omsi_cfg::vfs::is_file(p));
+        let cfg =
+            Some(omsi_cfg::resolve_path(d, "Chrono.cfg")).filter(|p| omsi_cfg::vfs::is_file(p));
         if let Some(f) = cfg.and_then(|p| CfgFile::read(&p).ok()) {
-            out.extend(parse_chrono_cfg(&f).deactivate_lines.into_iter().map(|l| (l, d.clone())));
+            out.extend(
+                parse_chrono_cfg(&f)
+                    .deactivate_lines
+                    .into_iter()
+                    .map(|l| (l, d.clone())),
+            );
         }
     }
     out
@@ -313,12 +384,17 @@ pub fn chrono_deactivated_lines(chrono_dirs: &[PathBuf]) -> Vec<(String, PathBuf
 /// gets the new vehicles, and a depot the depot file (`.hof`) the scenario names - Berlin's
 /// buses change to "Spandau 1994" on 29 May 1994.
 pub fn ailists_with_chrono(map_dir: &Path, chrono_dirs: &[PathBuf]) -> AiLists {
-    let mut ailists = AiLists::load(&omsi_cfg::resolve_path(map_dir, "ailists.cfg")).unwrap_or_default();
+    let mut ailists =
+        AiLists::load(&omsi_cfg::resolve_path(map_dir, "ailists.cfg")).unwrap_or_default();
     for c in chrono_dirs {
         for name in ["ailists_#upd.cfg", "ailists.cfg"] {
             if let Ok(extra) = AiLists::load(&c.join(name)) {
                 for g in extra.groups {
-                    match ailists.groups.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&g.name) && x.is_depot == g.is_depot) {
+                    match ailists
+                        .groups
+                        .iter_mut()
+                        .find(|x| x.name.eq_ignore_ascii_case(&g.name) && x.is_depot == g.is_depot)
+                    {
                         Some(base) => {
                             base.vehicles.extend(g.vehicles);
                             base.typgroups.extend(g.typgroups);
@@ -340,14 +416,23 @@ pub fn ailists_with_chrono(map_dir: &Path, chrono_dirs: &[PathBuf]) -> AiLists {
 /// depot's, with the chrono scenarios of that date.
 pub fn depot_hof_on(map_dir: &Path, date: i32) -> Option<String> {
     let l = ailists_with_chrono(map_dir, &active_chrono_dirs(map_dir, date));
-    l.groups.iter().filter(|g| g.is_depot).chain(l.groups.iter()).find_map(|g| g.hof.clone())
+    l.groups
+        .iter()
+        .filter(|g| g.is_depot)
+        .chain(l.groups.iter())
+        .find_map(|g| g.hof.clone())
 }
 
 /// A date as the game and the launcher write it (`YYYY-MM-DD`) as the chrono's `YYYYMMDD`.
 pub fn date_code(date: &str) -> Option<i32> {
-    let v: Vec<i32> = date.split('-').filter_map(|x| x.trim().parse().ok()).collect();
+    let v: Vec<i32> = date
+        .split('-')
+        .filter_map(|x| x.trim().parse().ok())
+        .collect();
     match v[..] {
-        [y, m, d] if (1..=12).contains(&m) && (1..=31).contains(&d) => Some(y * 10000 + m * 100 + d),
+        [y, m, d] if (1..=12).contains(&m) && (1..=31).contains(&d) => {
+            Some(y * 10000 + m * 100 + d)
+        }
         _ => None,
     }
 }
@@ -374,7 +459,10 @@ pub fn parse_signalroutes(f: &CfgFile) -> Vec<SignalRoute> {
     let mut r = f.reader();
     while let Some(k) = r.next_keyword() {
         match k.as_str() {
-            "signalroute" => out.push(SignalRoute { kind: r.i32(), ..Default::default() }),
+            "signalroute" => out.push(SignalRoute {
+                kind: r.i32(),
+                ..Default::default()
+            }),
             "signal" => {
                 let a = r.i64();
                 let b = r.i32();
@@ -428,24 +516,36 @@ mod tests {
     /// that does it is active and names the line; before it, nothing takes the line off.
     #[test]
     fn spandau_takes_line_5_off_in_1991() {
-        let root = std::env::var_os("OMSI_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
+        let root = std::env::var_os("OMSI_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
         let map = root.join("maps/Berlin-Spandau");
         if !map.join("Chrono").is_dir() {
             eprintln!("skipped: no {}", map.display());
             return;
         }
         let later = chrono_deactivated_lines(&active_chrono_dirs(&map, 20260917));
-        let by = later.iter().find(|(l, _)| l == "5 & 5N").map(|(_, d)| d.file_name().unwrap().to_string_lossy().into_owned());
+        let by = later
+            .iter()
+            .find(|(l, _)| l == "5 & 5N")
+            .map(|(_, d)| d.file_name().unwrap().to_string_lossy().into_owned());
         assert_eq!(by.as_deref(), Some("1000_FPW_19910602"), "{later:?}");
         let before = chrono_deactivated_lines(&active_chrono_dirs(&map, 19890530));
         assert!(!before.iter().any(|(l, _)| l == "5 & 5N"), "{before:?}");
         // the count before the names is no line
-        assert!(!later.iter().any(|(l, _)| l == "1" || l == "17" || l == "2"), "{later:?}");
+        assert!(
+            !later.iter().any(|(l, _)| l == "1" || l == "17" || l == "2"),
+            "{later:?}"
+        );
     }
 
     #[test]
     fn chrono_dates_are_inclusive_and_need_one() {
-        let c = |s, e| ChronoCfg { start_date: s, end_date: e, ..Default::default() };
+        let c = |s, e| ChronoCfg {
+            start_date: s,
+            end_date: e,
+            ..Default::default()
+        };
         assert!(!c(0, 0).active_on(19900101));
         assert!(c(19900910, 19900923).active_on(19900923));
         assert!(!c(19900910, 19900923).active_on(19900924));
@@ -458,7 +558,10 @@ mod tests {
 mod legacy_tests {
     #[test]
     fn the_old_ailist_makes_a_group_of_its_own() {
-        let f = omsi_cfg::CfgFile::from_str("ailists.cfg", "[ailist]\n0\n-1\n2\nvehicles\\A\\a.bus\nvehicles\\B\\b.ovh\n");
+        let f = omsi_cfg::CfgFile::from_str(
+            "ailists.cfg",
+            "[ailist]\n0\n-1\n2\nvehicles\\A\\a.bus\nvehicles\\B\\b.ovh\n",
+        );
         let a = super::AiLists::parse(&f);
         assert_eq!(a.groups.len(), 1);
         assert_eq!(a.groups[0].name, "NotInGroup");

@@ -40,7 +40,11 @@ impl App {
                 .passenger_density((self.clock.time / 3600.0) as f32)
                 * self.settings.pax_density;
             h.time_of_day = self.clock.time;
-            h.delay = self.duty.as_ref().map(|d| d.delay(self.clock.time)).unwrap_or(0.0);
+            h.delay = self
+                .duty
+                .as_ref()
+                .map(|d| d.delay(self.clock.time))
+                .unwrap_or(0.0);
             self.humans_populate_t -= dt;
             if self.humans_populate_t <= 0.0 && !self.paused {
                 self.humans_populate_t = 2.0;
@@ -52,7 +56,12 @@ impl App {
                     s.config.width as f32 / s.config.height.max(1) as f32,
                 ));
             }
-            h.set_remote_buses(self.remotes.remotes.iter().map(|(id, r)| (*id, r.vehicle())));
+            h.set_remote_buses(
+                self.remotes
+                    .remotes
+                    .iter()
+                    .map(|(id, r)| (*id, r.vehicle())),
+            );
             h.set_placed_buses(self.placed.iter().map(|q| (q.uid, &q.vehicle)));
             let took = h.tick(
                 if self.paused { 0.0 } else { dt },
@@ -70,7 +79,11 @@ impl App {
                         }
                     }
                     Some(id) => {
-                        if let Some(c) = self.traffic.as_mut().and_then(|t| t.cars.iter_mut().find(|c| c.id == id)) {
+                        if let Some(c) = self
+                            .traffic
+                            .as_mut()
+                            .and_then(|t| t.cars.iter_mut().find(|c| c.id == id))
+                        {
                             c.vehicle.host.fired_triggers.push("ev_Stamper".into());
                         }
                     }
@@ -135,11 +148,7 @@ impl App {
                 p.set_duty_destination(trip, stop);
             }
             let mut fonts = w.fonts.lock();
-            if let Err(e) = schedule_paper::update_vehicle(
-                &mut p.vehicle,
-                d,
-                &mut fonts,
-            ) {
+            if let Err(e) = schedule_paper::update_vehicle(&mut p.vehicle, d, &mut fonts) {
                 log::warn!("driver timetable paper: {e:#}");
             }
         }
@@ -152,7 +161,8 @@ impl App {
                 self.career.tick(dt, &p.vehicle, riders);
             }
             if crash > 0.0 {
-                self.career.crashed(crash, p.vehicle.physics.velocity_kmh() / 3.6);
+                self.career
+                    .crashed(crash, p.vehicle.physics.velocity_kmh() / 3.6);
                 self.service_msg = Some((format!("Crash: {:.0} kJ", crash / 1000.0), 6.0));
             }
         }
@@ -160,7 +170,12 @@ impl App {
             admin::guard_fall(self, dt);
         }
         self.placing_frame();
-        if self.lan.as_ref().map(|l| l.role == omsi_net::Role::Host).unwrap_or(false) {
+        if self
+            .lan
+            .as_ref()
+            .map(|l| l.role == omsi_net::Role::Host)
+            .unwrap_or(false)
+        {
             self.editor_sync_t -= dt;
             if self.editor_sync_t <= 0.0 {
                 self.editor_sync_t = 10.0;
@@ -173,11 +188,19 @@ impl App {
                 self.remove_driven_vehicle();
             } else if let Some(c) = self.camera.as_ref() {
                 let p = c.position;
-                let z = self.world.as_ref().and_then(|w| w.walk_height(p.x, p.y)).unwrap_or(p.z - 1.7);
+                let z = self
+                    .world
+                    .as_ref()
+                    .and_then(|w| w.walk_height(p.x, p.y))
+                    .unwrap_or(p.z - 1.7);
                 let yaw = c.yaw as f64;
                 self.start_on_foot(DVec3::new(p.x, p.y, z), yaw);
             }
-            self.service_msg = Some(("On foot: Esc menu, Place a vehicle..., then G at its driver's door to drive it".into(), 8.0));
+            self.service_msg = Some((
+                "On foot: Esc menu, Place a vehicle..., then G at its driver's door to drive it"
+                    .into(),
+                8.0,
+            ));
         }
         #[cfg(not(target_os = "android"))]
         {
@@ -188,20 +211,29 @@ impl App {
                     && self.discord.is_none()
                     && self.settings.discord_status
                 {
-                    self.discord =
-                        discord::Discord::start(&self.settings.discord_app_id);
+                    self.discord = discord::Discord::start(&self.settings.discord_app_id);
                 }
                 if let Some(d) = self.discord.as_ref() {
                     let bus = self.player.as_ref().map(|p| {
                         let definition = &p.vehicle.ty.def;
-                        let short = omsi_launcher_lib::vehicle_type_label(&definition.type_name, &definition.path);
-                        let full = omsi_launcher_lib::display_bus_name(&format!("{} {short}", definition.manufacturer));
+                        let short = omsi_launcher_lib::vehicle_type_label(
+                            &definition.type_name,
+                            &definition.path,
+                        );
+                        let full = omsi_launcher_lib::display_bus_name(&format!(
+                            "{} {short}",
+                            definition.manufacturer
+                        ));
                         (short, full)
                     });
-                    let duty = self.duty.as_ref().map(|d| (d.line.as_str(), d.tour.as_str()));
+                    let duty = self
+                        .duty
+                        .as_ref()
+                        .map(|d| (d.line.as_str(), d.tour.as_str()));
                     d.set(discord::Presence::for_game(
                         self.world.as_ref().map(|w| w.global.name.as_str()),
-                        bus.as_ref().map(|(short, full)| (short.as_str(), full.as_str())),
+                        bus.as_ref()
+                            .map(|(short, full)| (short.as_str(), full.as_str())),
                         duty,
                         self.lan.is_some(),
                     ));
@@ -213,7 +245,14 @@ impl App {
             let info = plugins::game_info(self);
             let keys = std::mem::take(&mut self.plugin_keys);
             let plugins = self.plugins.as_mut().unwrap();
-            let mut io = plugins::Io { vehicle: self.player.as_mut().map(|p| &mut p.vehicle), dt, message: None, info, commands: Vec::new(), keys };
+            let mut io = plugins::Io {
+                vehicle: self.player.as_mut().map(|p| &mut p.vehicle),
+                dt,
+                message: None,
+                info,
+                commands: Vec::new(),
+                keys,
+            };
             plugins.frame(&mut io);
             let commands = std::mem::take(&mut io.commands);
             if let Some(m) = io.message {
@@ -256,7 +295,11 @@ impl App {
             self.career.content = h.content as i32;
             self.career.ticket_requests = h.ticket_requests as i32;
             self.career.ticket_points = h.ticket_points as i32;
-            let hurt = if self.settings.collision_pedestrians { h.run_over(&p.vehicle) } else { 0 };
+            let hurt = if self.settings.collision_pedestrians {
+                h.run_over(&p.vehicle)
+            } else {
+                0
+            };
             if hurt > 0 {
                 self.career.crashes[1] += hurt as i32;
                 self.service_msg = Some(("Pedestrian knocked down!".into(), 6.0));

@@ -41,13 +41,36 @@ pub(crate) struct Io<'a> {
 
 /// The game menu lines a plugin may run with `omsi.command` (those that do something at
 /// once, not the ones that open a list).
-pub(crate) const PLUGIN_COMMANDS: [&str; 14] = ["refuel", "wash", "repair", "shot", "save", "load", "weather", "later", "earlier", "info", "timetable", "reset", "couple", "uncouple"];
+pub(crate) const PLUGIN_COMMANDS: [&str; 14] = [
+    "refuel",
+    "wash",
+    "repair",
+    "shot",
+    "save",
+    "load",
+    "weather",
+    "later",
+    "earlier",
+    "info",
+    "timetable",
+    "reset",
+    "couple",
+    "uncouple",
+];
 
 /// What the game is doing, for `omsi.info()`.
 pub(crate) fn game_info(app: &crate::App) -> Vec<(&'static str, InfoValue)> {
     use InfoValue::{Bool, Num, Text};
     let mut v: Vec<(&'static str, InfoValue)> = Vec::new();
-    v.push(("map", Text(app.world.as_ref().map(|w| w.global.name.clone()).unwrap_or_default())));
+    v.push((
+        "map",
+        Text(
+            app.world
+                .as_ref()
+                .map(|w| w.global.name.clone())
+                .unwrap_or_default(),
+        ),
+    ));
     v.push(("clock", Num(app.clock.time)));
     v.push(("day", Num(app.clock.day_of_year as f64)));
     v.push(("year", Num(app.clock.year as f64)));
@@ -138,11 +161,17 @@ impl PluginIo for Io<'_> {
     }
 
     fn vehicle_name(&self) -> Option<String> {
-        self.vehicle.as_ref().map(|v| format!("{} {}", v.ty.def.manufacturer, v.ty.def.type_name).trim().to_string())
+        self.vehicle.as_ref().map(|v| {
+            format!("{} {}", v.ty.def.manufacturer, v.ty.def.type_name)
+                .trim()
+                .to_string()
+        })
     }
 
     fn position(&self) -> Option<[f64; 4]> {
-        self.vehicle.as_ref().map(|v| [v.position.x, v.position.y, v.position.z, v.heading])
+        self.vehicle
+            .as_ref()
+            .map(|v| [v.position.x, v.position.y, v.position.z, v.heading])
     }
 
     fn message(&mut self, text: &str, seconds: f32) {
@@ -164,7 +193,10 @@ impl PluginIo for Io<'_> {
 
     fn var_names(&self) -> (Vec<String>, Vec<String>) {
         match self.vehicle.as_ref() {
-            Some(v) => (v.ty.program.var_names.clone(), v.ty.program.str_var_names.clone()),
+            Some(v) => (
+                v.ty.program.var_names.clone(),
+                v.ty.program.str_var_names.clone(),
+            ),
             None => (Vec::new(), Vec::new()),
         }
     }

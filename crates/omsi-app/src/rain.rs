@@ -19,7 +19,11 @@ pub fn vehicle_boxes(v: &omsi_sim::VehicleInstance) -> Vec<(DVec3, f64, [f32; 6]
     let front = v.ty.def.bounding_box.map(|bb| (v.position, v.heading, bb));
     let parts = v.trailers.iter().filter_map(|t| {
         // a part coupled the other way round stands turned about its own origin
-        let heading = if t.reversed { t.heading + 180.0 } else { t.heading };
+        let heading = if t.reversed {
+            t.heading + 180.0
+        } else {
+            t.heading
+        };
         t.ty.def.bounding_box.map(|bb| (t.position, heading, bb))
     });
     front.into_iter().chain(parts).collect()
@@ -78,7 +82,11 @@ impl Rain {
         if self.particles.is_empty() {
             return;
         }
-        let buses: Vec<(DVec3, f64, [f32; 6])> = inside.iter().filter(|b| (b.0 - camera).length() < 40.0).map(|&(o, h, bb)| (o, h.to_radians(), bb)).collect();
+        let buses: Vec<(DVec3, f64, [f32; 6])> = inside
+            .iter()
+            .filter(|b| (b.0 - camera).length() < 40.0)
+            .map(|&(o, h, bb)| (o, h.to_radians(), bb))
+            .collect();
         let in_one = |p: DVec3, (o, h, bb): (DVec3, f64, [f32; 6])| -> bool {
             let d = p - o;
             let (sh, ch) = (h.sin(), h.cos());
@@ -141,7 +149,10 @@ impl Rain {
             log::info!(
                 "rain: {} particles, {excluded} inside the buses (boxes {:?})",
                 self.particles.len(),
-                buses.iter().map(|b| (b.0, b.1.to_degrees(), b.2)).collect::<Vec<_>>()
+                buses
+                    .iter()
+                    .map(|b| (b.0, b.1.to_degrees(), b.2))
+                    .collect::<Vec<_>>()
             );
         }
     }

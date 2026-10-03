@@ -29,9 +29,15 @@ type IoSlot = Rc<Cell<Option<*mut (dyn PluginIo + 'static)>>>;
 
 /// Every Lua plugin of a plugins folder: top-level `*.lua` files and `<folder>/main.lua`.
 pub fn find_lua(dir: &Path) -> Vec<PathBuf> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
-    entries.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_uppercase()).unwrap_or_default());
+    entries.sort_by_key(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().to_uppercase())
+            .unwrap_or_default()
+    });
     let mut out = Vec::new();
     for p in entries {
         if p.is_dir() {
@@ -66,10 +72,23 @@ pub struct LuaPlugin {
 impl LuaPlugin {
     /// Load and start the plugin (its top level runs, then the `start` event).
     pub fn load(path: &Path, io: &mut dyn PluginIo) -> Result<LuaPlugin, String> {
-        let is_main = path.file_name().is_some_and(|n| n.eq_ignore_ascii_case("main.lua"));
-        let name_src = if is_main { path.parent().unwrap_or(path) } else { path };
-        let name = name_src.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "plugin".into());
-        let data_path = if is_main { path.with_file_name("data.save.lua") } else { path.with_extension("save.lua") };
+        let is_main = path
+            .file_name()
+            .is_some_and(|n| n.eq_ignore_ascii_case("main.lua"));
+        let name_src = if is_main {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        let name = name_src
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "plugin".into());
+        let data_path = if is_main {
+            path.with_file_name("data.save.lua")
+        } else {
+            path.with_extension("save.lua")
+        };
         let mut p = LuaPlugin {
             name,
             path: path.to_path_buf(),
@@ -93,17 +112,26 @@ impl LuaPlugin {
 
     /// Newest change time of the plugin's `.lua` files (its folder's, for a `main.lua`).
     fn newest_stamp(&self) -> Option<SystemTime> {
-        let is_main = self.path.file_name().is_some_and(|n| n.eq_ignore_ascii_case("main.lua"));
+        let is_main = self
+            .path
+            .file_name()
+            .is_some_and(|n| n.eq_ignore_ascii_case("main.lua"));
         if !is_main {
-            return std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
+            return std::fs::metadata(&self.path)
+                .and_then(|m| m.modified())
+                .ok();
         }
         fn walk(dir: &Path, best: &mut Option<SystemTime>) {
-            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
                     walk(&p, best);
-                } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lua")) && !p.to_string_lossy().ends_with(".save.lua") {
+                } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lua"))
+                    && !p.to_string_lossy().ends_with(".save.lua")
+                {
                     if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
                         *best = Some(best.map_or(t, |b| b.max(t)));
                     }
@@ -121,7 +149,13 @@ impl LuaPlugin {
         let lua = self.new_state().map_err(|e| e.to_string())?;
         self.lua = Some(lua);
         self.vehicle = io.vehicle_name().filter(|_| io.has_vehicle());
-        let chunk_name = format!("@{}", self.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
+        let chunk_name = format!(
+            "@{}",
+            self.path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default()
+        );
         let vehicle = self.vehicle.clone();
         let ok = self.call(io, |lua| {
             lua.load(&source[..]).set_name(chunk_name).exec()?;
@@ -140,7 +174,13 @@ impl LuaPlugin {
 
     /// A Lua state with the safe libraries and the `omsi` table.
     fn new_state(&self) -> mlua::Result<Lua> {
-        let libs = StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE | StdLib::PACKAGE | StdLib::OS;
+        let libs = StdLib::TABLE
+            | StdLib::STRING
+            | StdLib::MATH
+            | StdLib::UTF8
+            | StdLib::COROUTINE
+            | StdLib::PACKAGE
+            | StdLib::OS;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
         let g = lua.globals();
 
@@ -159,21 +199,30 @@ impl LuaPlugin {
         package.set("path", format!("{dir}/?.lua;{dir}/?/init.lua"))?;
         package.set("cpath", "")?;
         package.set("loadlib", Value::Nil)?;
-        lua.load("package.searchers[4] = nil; package.searchers[3] = nil").exec()?;
+        lua.load("package.searchers[4] = nil; package.searchers[3] = nil")
+            .exec()?;
 
         // a call that runs past its deadline is stopped
         let deadline = self.deadline.clone();
-        let _ = lua.set_hook(HookTriggers::new().every_nth_instruction(10_000), move |_, _| match deadline.get() {
-            Some(d) if Instant::now() > d => Err(mlua::Error::runtime("the plugin ran longer than a second and was stopped")),
-            _ => Ok(VmState::Continue),
-        });
+        let _ = lua.set_hook(
+            HookTriggers::new().every_nth_instruction(10_000),
+            move |_, _| match deadline.get() {
+                Some(d) if Instant::now() > d => Err(mlua::Error::runtime(
+                    "the plugin ran longer than a second and was stopped",
+                )),
+                _ => Ok(VmState::Continue),
+            },
+        );
 
         let omsi = lua.create_table()?;
         omsi.set("version", env!("CARGO_PKG_VERSION"))?;
         omsi.set("name", self.name.clone())?;
         let name = self.name.clone();
         let join = |args: MultiValue| -> String {
-            args.iter().map(|v| v.to_string().unwrap_or_else(|_| format!("{v:?}"))).collect::<Vec<_>>().join("\t")
+            args.iter()
+                .map(|v| v.to_string().unwrap_or_else(|_| format!("{v:?}")))
+                .collect::<Vec<_>>()
+                .join("\t")
         };
         omsi.set(
             "log",
@@ -264,7 +313,11 @@ impl LuaPlugin {
             lua.create_function(move |lua, kind: Option<String>| {
                 let mut names = (Vec::new(), Vec::new());
                 with4(&mut |io: &mut dyn PluginIo| names = io.var_names());
-                let list = if kind.as_deref() == Some("str") { names.1 } else { names.0 };
+                let list = if kind.as_deref() == Some("str") {
+                    names.1
+                } else {
+                    names.0
+                };
                 lua.create_sequence_from(list)
             })?,
         )?;
@@ -287,7 +340,10 @@ impl LuaPlugin {
 
         // saved data, only the plugin's own file
         let data_path = self.data_path.clone();
-        omsi.set("_read_data", lua.create_function(move |_, ()| Ok(std::fs::read_to_string(&data_path).ok()))?)?;
+        omsi.set(
+            "_read_data",
+            lua.create_function(move |_, ()| Ok(std::fs::read_to_string(&data_path).ok()))?,
+        )?;
         let data_path = self.data_path.clone();
         omsi.set(
             "_write_data",
@@ -310,11 +366,15 @@ impl LuaPlugin {
 
     /// Run `f` with the game's io reachable from Lua; false (logged) when it failed.
     fn call(&mut self, io: &mut dyn PluginIo, f: impl FnOnce(&Lua) -> mlua::Result<()>) -> bool {
-        let Some(lua) = self.lua.as_ref() else { return false };
+        let Some(lua) = self.lua.as_ref() else {
+            return false;
+        };
         // SAFETY: the lifetime is erased only for the length of this call; the slot is
         // cleared before `io` goes out of reach
         let ptr: *mut (dyn PluginIo + '_) = io;
-        self.io.set(Some(unsafe { std::mem::transmute::<*mut (dyn PluginIo + '_), *mut (dyn PluginIo + 'static)>(ptr) }));
+        self.io.set(Some(unsafe {
+            std::mem::transmute::<*mut (dyn PluginIo + '_), *mut (dyn PluginIo + 'static)>(ptr)
+        }));
         self.deadline.set(Some(Instant::now() + CALL_BUDGET));
         let r = f(lua);
         self.deadline.set(None);
@@ -324,9 +384,15 @@ impl LuaPlugin {
             Err(e) => {
                 self.errors += 1;
                 log::warn!("[lua {}] {e}", self.name);
-                io.message(&format!("Lua plugin {}: {}", self.name, first_line(&e.to_string())), 8.0);
+                io.message(
+                    &format!("Lua plugin {}: {}", self.name, first_line(&e.to_string())),
+                    8.0,
+                );
                 if self.errors >= MAX_ERRORS {
-                    log::warn!("[lua {}] {MAX_ERRORS} errors: switched off until it changes or the game restarts", self.name);
+                    log::warn!(
+                        "[lua {}] {MAX_ERRORS} errors: switched off until it changes or the game restarts",
+                        self.name
+                    );
                     self.disabled = true;
                 }
                 false
@@ -337,7 +403,10 @@ impl LuaPlugin {
     /// One frame: a reload when the files changed, the `vehicle` event when the player's
     /// bus changed, then timers, watches and `frame`.
     pub fn frame(&mut self, io: &mut dyn PluginIo) {
-        if self.last_check.is_none_or(|t| t.elapsed() > Duration::from_secs(1)) {
+        if self
+            .last_check
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(1))
+        {
             self.last_check = Some(Instant::now());
             let stamp = self.newest_stamp();
             if stamp.is_some() && stamp != self.stamp {
@@ -360,7 +429,12 @@ impl LuaPlugin {
             self.call(io, |lua| emit(lua, "vehicle", now));
         }
         let dt = io.dt();
-        self.call(io, |lua| lua.globals().get::<Table>("omsi")?.get::<Function>("_tick")?.call::<()>(dt));
+        self.call(io, |lua| {
+            lua.globals()
+                .get::<Table>("omsi")?
+                .get::<Function>("_tick")?
+                .call::<()>(dt)
+        });
     }
 
     /// The `stop` event, then `omsi.data` is saved.
@@ -368,7 +442,12 @@ impl LuaPlugin {
         if self.lua.is_some() {
             self.deadline.set(None);
             self.call(io, |lua| emit(lua, "stop", ()));
-            self.call(io, |lua| lua.globals().get::<Table>("omsi")?.get::<Function>("_save")?.call::<()>(()));
+            self.call(io, |lua| {
+                lua.globals()
+                    .get::<Table>("omsi")?
+                    .get::<Function>("_save")?
+                    .call::<()>(())
+            });
         }
         self.lua = None;
     }

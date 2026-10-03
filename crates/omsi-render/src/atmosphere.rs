@@ -75,7 +75,16 @@ pub struct SkyInput {
 
 impl Default for SkyInput {
     fn default() -> Self {
-        Self { sun_dir: Vec3::new(0.3, 0.2, 0.9).normalize(), sun_visibility: 1.0, overcast: 0.0, haze: 1.0, rain: 0.0, ground_albedo: 0.2, tint: [Vec3::ONE; 3], night_light: 1.0 }
+        Self {
+            sun_dir: Vec3::new(0.3, 0.2, 0.9).normalize(),
+            sun_visibility: 1.0,
+            overcast: 0.0,
+            haze: 1.0,
+            rain: 0.0,
+            ground_albedo: 0.2,
+            tint: [Vec3::ONE; 3],
+            night_light: 1.0,
+        }
     }
 }
 
@@ -219,7 +228,8 @@ fn rayleigh_phase(c: f32) -> f32 {
 /// Cornette-Shanks aerosol phase function.
 fn mie_phase(c: f32, g: f32) -> f32 {
     let g2 = g * g;
-    3.0 / (8.0 * std::f32::consts::PI) * ((1.0 - g2) * (1.0 + c * c)) / ((2.0 + g2) * (1.0 + g2 - 2.0 * g * c).max(1e-4).powf(1.5))
+    3.0 / (8.0 * std::f32::consts::PI) * ((1.0 - g2) * (1.0 + c * c))
+        / ((2.0 + g2) * (1.0 + g2 - 2.0 * g * c).max(1e-4).powf(1.5))
 }
 
 /// Elevation (radians) of the centre of table row `v` in 0..1.
@@ -256,7 +266,10 @@ fn sh_basis(d: Vec3) -> [f32; 9] {
 /// Evaluate irradiance SH (as produced in `SkyState::sh`) for a surface normal.
 pub fn sh_irradiance(sh: &[Vec3; 9], n: Vec3) -> Vec3 {
     let y = sh_basis(n);
-    sh.iter().zip(y).map(|(c, y)| *c * y).fold(Vec3::ZERO, |a, b| a + b)
+    sh.iter()
+        .zip(y)
+        .map(|(c, y)| *c * y)
+        .fold(Vec3::ZERO, |a, b| a + b)
 }
 
 /// The camera's white: the colour of the noon daylight on a white sheet (sun at 60° and
@@ -264,7 +277,10 @@ pub fn sh_irradiance(sh: &[Vec3; 9], n: Vec3) -> Vec3 {
 fn daylight_white() -> Vec3 {
     static WHITE: std::sync::OnceLock<Vec3> = std::sync::OnceLock::new();
     *WHITE.get_or_init(|| {
-        let input = SkyInput { sun_dir: Vec3::new(0.5, 0.0, 0.866), ..Default::default() };
+        let input = SkyInput {
+            sun_dir: Vec3::new(0.5, 0.0, 0.866),
+            ..Default::default()
+        };
         let raw = SkyState::compute_raw(&input);
         let e = raw.sun * input.sun_dir.z + raw.sky_horizontal;
         e / e.dot(Vec3::new(0.2126, 0.7152, 0.0722))
@@ -284,14 +300,17 @@ impl SkyState {
         let white = daylight_white();
         let wb = |c: Vec3| c / white;
         let night_light = input.night_light.clamp(0.0, 4.0);
-        let tint = input.tint.map(|t| t.clamp(Vec3::splat(0.25), Vec3::splat(4.0)));
+        let tint = input
+            .tint
+            .map(|t| t.clamp(Vec3::splat(0.25), Vec3::splat(4.0)));
         let s = input.sun_dir.normalize_or_zero();
         let sun_disc = wb(raw.sun) * tint[0];
         let sun = sun_disc * input.sun_visibility.clamp(0.0, 1.0);
         // the clear sky, greyed and evened out under a closed cover (a CIE overcast sky:
         // the zenith three times as bright as the horizon), holding about a third of what
         // sun and sky together gave, less under rain
-        let clear_global = (raw.sun * s.z.max(0.0) + raw.sky_horizontal).dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        let clear_global =
+            (raw.sun * s.z.max(0.0) + raw.sky_horizontal).dot(Vec3::new(0.2126, 0.7152, 0.0722));
         let overcast_e = clear_global * 0.34 * (1.0 - 0.45 * input.rain.clamp(0.0, 1.0));
         let overcast_zenith = overcast_e * 9.0 / (7.0 * std::f32::consts::PI);
         let grey = Vec3::new(0.96, 0.98, 1.0);
@@ -303,7 +322,11 @@ impl SkyState {
             for col in 0..w {
                 let clear = wb(raw.lut[row * w + col]) * tint[1];
                 let cover = grey * overcast_zenith * (1.0 + 2.0 * el.max(0.0).sin()) / 3.0;
-                let l = if el >= 0.0 { clear.lerp(cover, oc) } else { clear * (1.0 - oc) };
+                let l = if el >= 0.0 {
+                    clear.lerp(cover, oc)
+                } else {
+                    clear * (1.0 - oc)
+                };
                 lut.push(l + NIGHT_SKY * night_light);
             }
         }
@@ -312,10 +335,14 @@ impl SkyState {
         let mut sky_horizontal = Vec3::ZERO;
         let az_step = std::f32::consts::PI / w as f32;
         for row in (h / 2)..h {
-            let (e0, e1) = (lut_elevation(row as f32 / h as f32), lut_elevation((row + 1) as f32 / h as f32));
+            let (e0, e1) = (
+                lut_elevation(row as f32 / h as f32),
+                lut_elevation((row + 1) as f32 / h as f32),
+            );
             let el = lut_elevation((row as f32 + 0.5) / h as f32);
             for col in 0..w {
-                sky_horizontal += lut[row * w + col] * el.sin().max(0.0) * el.cos() * az_step * (e1 - e0) * 2.0;
+                sky_horizontal +=
+                    lut[row * w + col] * el.sin().max(0.0) * el.cos() * az_step * (e1 - e0) * 2.0;
             }
         }
         // The SH of the upper half as a street sees it: the lowest part of the sky is hidden
@@ -325,16 +352,22 @@ impl SkyState {
         let ground_e = sun * s.z.max(0.0) + sky_horizontal;
         let mut sh = [Vec3::ZERO; 9];
         for row in (h / 2)..h {
-            let (e0, e1) = (lut_elevation(row as f32 / h as f32), lut_elevation((row + 1) as f32 / h as f32));
+            let (e0, e1) = (
+                lut_elevation(row as f32 / h as f32),
+                lut_elevation((row + 1) as f32 / h as f32),
+            );
             let el = lut_elevation((row as f32 + 0.5) / h as f32);
             let d_el = e1 - e0;
-            let hidden = SURROUND_MAX * (1.0 - smoothstep(0.0, SURROUND_ELEVATION.to_radians(), el));
+            let hidden =
+                SURROUND_MAX * (1.0 - smoothstep(0.0, SURROUND_ELEVATION.to_radians(), el));
             for col in 0..w {
                 let l = lut[row * w + col];
                 let az = (col as f32 + 0.5) * az_step;
                 // seen towards the sun, a facade is in its own shade; away from it, sunlit
                 let facing_sun = (-az.cos()).max(0.0);
-                let facade_e = sun * (s.z.max(0.0).powi(2) - 1.0).abs().sqrt() * facing_sun * 0.8 + sky_horizontal * 0.5 + ground_e * input.ground_albedo * 0.5;
+                let facade_e = sun * (s.z.max(0.0).powi(2) - 1.0).abs().sqrt() * facing_sun * 0.8
+                    + sky_horizontal * 0.5
+                    + ground_e * input.ground_albedo * 0.5;
                 let facade = facade_e * (SURROUND_ALBEDO / std::f32::consts::PI) * tint[2];
                 let l = l.lerp(facade, hidden);
                 for side in [-1.0f32, 1.0] {
@@ -348,7 +381,9 @@ impl SkyState {
             }
         }
         // the ground: lit by the sun and the sky, seen as the lower half of the sphere
-        let ground = (sun * s.z.max(0.0) + sky_horizontal) * input.ground_albedo / std::f32::consts::PI * tint[2];
+        let ground = (sun * s.z.max(0.0) + sky_horizontal) * input.ground_albedo
+            / std::f32::consts::PI
+            * tint[2];
         let lower = ground_sh(ground);
         for k in 0..9 {
             sh[k] += lower[k];
@@ -364,23 +399,48 @@ impl SkyState {
         }
         // cosine lobe convolution, and the eye's own white balance in the shade: it takes
         // the sky's blue in part for white (a linear map, so it applies to every coefficient)
-        let band = [std::f32::consts::PI, 2.0 * std::f32::consts::PI / 3.0, std::f32::consts::PI / 4.0];
+        let band = [
+            std::f32::consts::PI,
+            2.0 * std::f32::consts::PI / 3.0,
+            std::f32::consts::PI / 4.0,
+        ];
         let lum = Vec3::new(0.2126, 0.7152, 0.0722);
         for (k, c) in sh.iter_mut().enumerate() {
-            *c *= band[if k == 0 { 0 } else if k < 4 { 1 } else { 2 }];
+            *c *= band[if k == 0 {
+                0
+            } else if k < 4 {
+                1
+            } else {
+                2
+            }];
             let grey = Vec3::splat(c.dot(lum));
             *c = grey + (*c - grey) * (1.0 - SHADE_ADAPTATION);
         }
         let lut_scale = lut.iter().map(|l| l.max_element()).fold(1e-6f32, f32::max);
-        let lut_out = lut.iter().map(|l| [l.x / lut_scale, l.y / lut_scale, l.z / lut_scale, 1.0]).collect();
+        let lut_out = lut
+            .iter()
+            .map(|l| [l.x / lut_scale, l.y / lut_scale, l.z / lut_scale, 1.0])
+            .collect();
         // the light the eye adapts to: a low sun still falls fully on the walls that face it,
         // which a horizontal surface alone does not tell (a sunlit facade at seven in the
         // evening came out washed out)
-        let sun_facing = s.z.max(0.0) + (1.0 - s.z.max(0.0)) * LOW_SUN_WALLS * (s.z * 20.0).clamp(0.0, 1.0);
+        let sun_facing =
+            s.z.max(0.0) + (1.0 - s.z.max(0.0)) * LOW_SUN_WALLS * (s.z * 20.0).clamp(0.0, 1.0);
         // (the exposure is that of the night as it is by default: a darker night stays dark)
         let night_lost = (1.0 - night_light) * std::f32::consts::PI * NIGHT_SKY.dot(lum);
-        let e_ref = ((sun * sun_facing + sky_horizontal).dot(lum) + night_lost).max(0.0) + ARTIFICIAL;
-        SkyState { input: *input, sun, sun_disc, lut: lut_out, lut_scale, sh, sky_horizontal, ground, exposure: exposure_for(e_ref) }
+        let e_ref =
+            ((sun * sun_facing + sky_horizontal).dot(lum) + night_lost).max(0.0) + ARTIFICIAL;
+        SkyState {
+            input: *input,
+            sun,
+            sun_disc,
+            lut: lut_out,
+            lut_scale,
+            sh,
+            sky_horizontal,
+            ground,
+            exposure: exposure_for(e_ref),
+        }
     }
 
     /// Single scattering (plus the multiple-scattering estimate) before white balance,
@@ -420,7 +480,11 @@ impl SkyState {
                     let hh = altitude(r0, mu, t);
                     let dens = densities(hh);
                     // the view path up to the middle of this step
-                    let half = [view_depth[0] + dens[0] * dt * 0.5, view_depth[1] + dens[1] * dt * 0.5, view_depth[2] + dens[2] * dt * 0.5];
+                    let half = [
+                        view_depth[0] + dens[0] * dt * 0.5,
+                        view_depth[1] + dens[1] * dt * 0.5,
+                        view_depth[2] + dens[2] * dt * 0.5,
+                    ];
                     view_depth[0] += dens[0] * dt;
                     view_depth[1] += dens[1] * dt;
                     view_depth[2] += dens[2] * dt;
@@ -436,7 +500,9 @@ impl SkyState {
                     let lit = ((mu_s + 0.2) / 1.2).clamp(0.0, 1.0);
                     let t_up = transmittance(table.lookup(hh, 1.0), haze);
                     // (aerosols scatter forward: little of their light goes round again)
-                    let multi = (scat_r + Vec3::splat(scat_m * MULTI_MIE)) * (t_sun * 0.6 + t_up * 0.4 * lit * lit) * (MULTI / (4.0 * std::f32::consts::PI));
+                    let multi = (scat_r + Vec3::splat(scat_m * MULTI_MIE))
+                        * (t_sun * 0.6 + t_up * 0.4 * lit * lit)
+                        * (MULTI / (4.0 * std::f32::consts::PI));
                     acc += t_view * (single + multi) * dt;
                 }
                 lut.push(acc * SUN_E0);
@@ -446,13 +512,21 @@ impl SkyState {
         let mut sky_horizontal = Vec3::ZERO;
         let az_step = std::f32::consts::PI / w as f32;
         for row in (h / 2)..h {
-            let (e0, e1) = (lut_elevation(row as f32 / h as f32), lut_elevation((row + 1) as f32 / h as f32));
+            let (e0, e1) = (
+                lut_elevation(row as f32 / h as f32),
+                lut_elevation((row + 1) as f32 / h as f32),
+            );
             let el = lut_elevation((row as f32 + 0.5) / h as f32);
             for col in 0..w {
-                sky_horizontal += lut[row * w + col] * el.sin().max(0.0) * el.cos() * az_step * (e1 - e0) * 2.0;
+                sky_horizontal +=
+                    lut[row * w + col] * el.sin().max(0.0) * el.cos() * az_step * (e1 - e0) * 2.0;
             }
         }
-        RawSky { sun, lut, sky_horizontal }
+        RawSky {
+            sun,
+            lut,
+            sky_horizontal,
+        }
     }
 }
 
@@ -511,10 +585,16 @@ mod tests {
 
     #[test]
     fn noon_light_is_white_and_the_shade_realistic() {
-        let s = SkyState::compute(&SkyInput { sun_dir: sun_at(60.0), ..Default::default() });
+        let s = SkyState::compute(&SkyInput {
+            sun_dir: sun_at(60.0),
+            ..Default::default()
+        });
         let global = s.sun * 0.866 + s.sky_horizontal;
         // the camera is balanced for this light
-        assert!((global.x / global.y - 1.0).abs() < 0.02 && (global.z / global.y - 1.0).abs() < 0.02, "{global:?}");
+        assert!(
+            (global.x / global.y - 1.0).abs() < 0.02 && (global.z / global.y - 1.0).abs() < 0.02,
+            "{global:?}"
+        );
         // about 11 units in all; the sky gives 12..25 % of it
         assert!((lum(global) - 11.0).abs() < 2.5, "{}", lum(global));
         let share = lum(s.sky_horizontal) / lum(global);
@@ -523,43 +603,90 @@ mod tests {
         assert!(s.sun.x > s.sun.z && s.sky_horizontal.z > s.sky_horizontal.x);
         // SH: a surface facing up gets the sky plus a little from nowhere below
         let up = sh_irradiance(&s.sh, Vec3::Z);
-        assert!((lum(up) / lum(s.sky_horizontal) - 1.0).abs() < 0.1, "{up:?} vs {:?}", s.sky_horizontal);
+        assert!(
+            (lum(up) / lum(s.sky_horizontal) - 1.0).abs() < 0.1,
+            "{up:?} vs {:?}",
+            s.sky_horizontal
+        );
         // a wall gets half the ground's bounce and some of the sky and the houses across the
         // street, the ground's underside only the bounce
         let wall = sh_irradiance(&s.sh, Vec3::X);
         let down = sh_irradiance(&s.sh, -Vec3::Z);
-        assert!(lum(wall) > 0.6 * lum(down) && lum(down) > 0.0, "wall {wall:?} down {down:?}");
+        assert!(
+            lum(wall) > 0.6 * lum(down) && lum(down) > 0.0,
+            "wall {wall:?} down {down:?}"
+        );
         // the shade is bluish, but not as blue as the sky
         let shade_blue = up.z / up.x;
-        assert!(shade_blue > 1.1 && shade_blue < s.sky_horizontal.z / s.sky_horizontal.x, "{up:?}");
+        assert!(
+            shade_blue > 1.1 && shade_blue < s.sky_horizontal.z / s.sky_horizontal.x,
+            "{up:?}"
+        );
     }
 
     #[test]
     fn low_sun_is_golden_and_twilight_blue() {
-        let low = SkyState::compute(&SkyInput { sun_dir: sun_at(9.6), ..Default::default() });
-        assert!(low.sun.x > low.sun.y * 1.15 && low.sun.y > low.sun.z * 1.2, "{:?}", low.sun);
-        let dusk = SkyState::compute(&SkyInput { sun_dir: sun_at(-4.0), ..Default::default() });
+        let low = SkyState::compute(&SkyInput {
+            sun_dir: sun_at(9.6),
+            ..Default::default()
+        });
+        assert!(
+            low.sun.x > low.sun.y * 1.15 && low.sun.y > low.sun.z * 1.2,
+            "{:?}",
+            low.sun
+        );
+        let dusk = SkyState::compute(&SkyInput {
+            sun_dir: sun_at(-4.0),
+            ..Default::default()
+        });
         assert!(lum(dusk.sun) < 1e-3, "{:?}", dusk.sun);
-        assert!(dusk.sky_horizontal.z > dusk.sky_horizontal.x, "{:?}", dusk.sky_horizontal);
-        let night = SkyState::compute(&SkyInput { sun_dir: sun_at(-30.0), ..Default::default() });
-        assert!(lum(night.sky_horizontal) < 1e-3 && lum(night.sky_horizontal) > 1e-5, "{:?}", night.sky_horizontal);
+        assert!(
+            dusk.sky_horizontal.z > dusk.sky_horizontal.x,
+            "{:?}",
+            dusk.sky_horizontal
+        );
+        let night = SkyState::compute(&SkyInput {
+            sun_dir: sun_at(-30.0),
+            ..Default::default()
+        });
+        assert!(
+            lum(night.sky_horizontal) < 1e-3 && lum(night.sky_horizontal) > 1e-5,
+            "{:?}",
+            night.sky_horizontal
+        );
         // exposure rises into the night, but not all the way
         assert!(night.exposure > low.exposure * 100.0);
         // a white wall under the street lamps comes out clearly below white, one lit by
         // the night sky alone dark but not black
         let lamp = 0.9 / std::f32::consts::PI * ARTIFICIAL * night.exposure;
         let sky = 0.3 / std::f32::consts::PI * lum(night.sky_horizontal) * night.exposure;
-        assert!((0.1..0.5).contains(&lamp) && (0.003..0.03).contains(&sky), "lamp {lamp} sky {sky}");
+        assert!(
+            (0.1..0.5).contains(&lamp) && (0.003..0.03).contains(&sky),
+            "lamp {lamp} sky {sky}"
+        );
     }
 
     #[test]
     fn overcast_is_grey_and_darker() {
-        let clear = SkyState::compute(&SkyInput { sun_dir: sun_at(40.0), ..Default::default() });
-        let grey = SkyState::compute(&SkyInput { sun_dir: sun_at(40.0), sun_visibility: 0.0, overcast: 1.0, ..Default::default() });
+        let clear = SkyState::compute(&SkyInput {
+            sun_dir: sun_at(40.0),
+            ..Default::default()
+        });
+        let grey = SkyState::compute(&SkyInput {
+            sun_dir: sun_at(40.0),
+            sun_visibility: 0.0,
+            overcast: 1.0,
+            ..Default::default()
+        });
         let g = grey.sky_horizontal;
         assert!((g.z / g.x) < 1.15, "{g:?}");
         let clear_global = lum(clear.sun * sun_at(40.0).z + clear.sky_horizontal);
-        assert!((0.2..0.5).contains(&(lum(g) / clear_global)), "{} of {}", lum(g), clear_global);
+        assert!(
+            (0.2..0.5).contains(&(lum(g) / clear_global)),
+            "{} of {}",
+            lum(g),
+            clear_global
+        );
         assert!(grey.exposure > clear.exposure * 1.5);
     }
 
@@ -570,38 +697,88 @@ mod tests {
     fn sky_report() {
         let srgb = |c: f32| {
             let c = c.clamp(0.0, 1.0);
-            (if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }) * 255.0
+            (if c <= 0.003_130_8 {
+                c * 12.92
+            } else {
+                1.055 * c.powf(1.0 / 2.4) - 0.055
+            }) * 255.0
         };
-        for (sun_el, oc) in [(60.0f32, 0.0f32), (22.0, 0.0), (8.0, 0.0), (1.0, 0.0), (-4.0, 0.0), (-20.0, 0.0), (40.0, 1.0)] {
-            let input = SkyInput { sun_dir: sun_at(sun_el), overcast: oc, sun_visibility: 1.0 - oc, ..Default::default() };
+        for (sun_el, oc) in [
+            (60.0f32, 0.0f32),
+            (22.0, 0.0),
+            (8.0, 0.0),
+            (1.0, 0.0),
+            (-4.0, 0.0),
+            (-20.0, 0.0),
+            (40.0, 1.0),
+        ] {
+            let input = SkyInput {
+                sun_dir: sun_at(sun_el),
+                overcast: oc,
+                sun_visibility: 1.0 - oc,
+                ..Default::default()
+            };
             let st = SkyState::compute(&input);
             let e = st.exposure;
-            println!("sun {sun_el:5.1}° overcast {oc}: sun {:?} sky_h {:?} exposure {e:.3} (log2 {:.2})", st.sun, st.sky_horizontal, e.log2());
+            println!(
+                "sun {sun_el:5.1}° overcast {oc}: sun {:?} sky_h {:?} exposure {e:.3} (log2 {:.2})",
+                st.sun,
+                st.sky_horizontal,
+                e.log2()
+            );
             let sun_az = input.sun_dir.y.atan2(input.sun_dir.x);
             for rel_az in [0.0f32, 90.0, 180.0] {
                 let mut line = format!("  az {rel_az:5.0}:");
                 for el in [2.0f32, 8.0, 20.0, 45.0, 89.0] {
                     let a = sun_az + rel_az.to_radians();
-                    let d = Vec3::new(el.to_radians().cos() * a.cos(), el.to_radians().cos() * a.sin(), el.to_radians().sin());
+                    let d = Vec3::new(
+                        el.to_radians().cos() * a.cos(),
+                        el.to_radians().cos() * a.sin(),
+                        el.to_radians().sin(),
+                    );
                     // the table cell nearest to d
                     let az = {
-                        let (s2, d2) = (glam::Vec2::new(input.sun_dir.x, input.sun_dir.y).normalize(), glam::Vec2::new(d.x, d.y).normalize());
+                        let (s2, d2) = (
+                            glam::Vec2::new(input.sun_dir.x, input.sun_dir.y).normalize(),
+                            glam::Vec2::new(d.x, d.y).normalize(),
+                        );
                         s2.dot(d2).clamp(-1.0, 1.0).acos()
                     };
-                    let col = ((az / std::f32::consts::PI) * SKY_LUT_W as f32).floor().min(SKY_LUT_W as f32 - 1.0) as usize;
-                    let row = (lut_row(el.to_radians()) * SKY_LUT_H as f32).floor().min(SKY_LUT_H as f32 - 1.0) as usize;
+                    let col = ((az / std::f32::consts::PI) * SKY_LUT_W as f32)
+                        .floor()
+                        .min(SKY_LUT_W as f32 - 1.0) as usize;
+                    let row = (lut_row(el.to_radians()) * SKY_LUT_H as f32)
+                        .floor()
+                        .min(SKY_LUT_H as f32 - 1.0) as usize;
                     let l = st.lut[row * SKY_LUT_W as usize + col];
                     let c = Vec3::new(l[0], l[1], l[2]) * st.lut_scale * e;
-                    line += &format!("  {el:2.0}°({:3.0},{:3.0},{:3.0})", srgb(c.x), srgb(c.y), srgb(c.z));
+                    line += &format!(
+                        "  {el:2.0}°({:3.0},{:3.0},{:3.0})",
+                        srgb(c.x),
+                        srgb(c.y),
+                        srgb(c.z)
+                    );
                 }
                 println!("{line}");
             }
             let n = |v: Vec3| format!("({:3.0},{:3.0},{:3.0})", srgb(v.x), srgb(v.y), srgb(v.z));
             // a grey card (albedo 0.18) facing up, facing the sun's side, facing away
-            let up = (st.sun * input.sun_dir.z.max(0.0) + sh_irradiance(&st.sh, Vec3::Z)) * 0.18 / std::f32::consts::PI * e;
+            let up = (st.sun * input.sun_dir.z.max(0.0) + sh_irradiance(&st.sh, Vec3::Z)) * 0.18
+                / std::f32::consts::PI
+                * e;
             let shade = sh_irradiance(&st.sh, Vec3::Z) * 0.18 / std::f32::consts::PI * e;
-            let wall_away = sh_irradiance(&st.sh, -Vec3::new(input.sun_dir.x, input.sun_dir.y, 0.0).normalize()) * 0.18 / std::f32::consts::PI * e;
-            println!("  grey card: sunlit up {}  shaded up {}  wall facing away {}", n(up), n(shade), n(wall_away));
+            let wall_away = sh_irradiance(
+                &st.sh,
+                -Vec3::new(input.sun_dir.x, input.sun_dir.y, 0.0).normalize(),
+            ) * 0.18
+                / std::f32::consts::PI
+                * e;
+            println!(
+                "  grey card: sunlit up {}  shaded up {}  wall facing away {}",
+                n(up),
+                n(shade),
+                n(wall_away)
+            );
         }
     }
 
@@ -612,7 +789,11 @@ mod tests {
             let sign = if b & 0x8000 != 0 { -1.0 } else { 1.0 };
             let e = ((b >> 10) & 0x1f) as i32;
             let m = (b & 0x3ff) as f32;
-            let back = if e == 0 { sign * m / 1024.0 * 2f32.powi(-14) } else { sign * (1.0 + m / 1024.0) * 2f32.powi(e - 15) };
+            let back = if e == 0 {
+                sign * m / 1024.0 * 2f32.powi(-14)
+            } else {
+                sign * (1.0 + m / 1024.0) * 2f32.powi(e - 15)
+            };
             assert!((back - v).abs() <= v.abs() * 1e-3 + 1e-6, "{v} -> {back}");
         }
         assert_eq!(f16_bits(1e9), 0x7c00);

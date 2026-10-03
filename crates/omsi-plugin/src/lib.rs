@@ -59,7 +59,10 @@ pub fn parse_opl(text: &str) -> Opl {
             "[triggers]" => &mut o.triggers,
             _ => continue,
         };
-        let n: usize = lines.next().and_then(|c| c.trim().parse().ok()).unwrap_or(0);
+        let n: usize = lines
+            .next()
+            .and_then(|c| c.trim().parse().ok())
+            .unwrap_or(0);
         for _ in 0..n {
             match lines.next() {
                 Some(name) => list.push(name.trim().to_string()),
@@ -74,9 +77,15 @@ pub fn parse_opl(text: &str) -> Opl {
 /// case - the order FindFilesRecursive gives).
 pub fn find_opls(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return out;
+    };
     let mut entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
-    entries.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_uppercase()).unwrap_or_default());
+    entries.sort_by_key(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().to_uppercase())
+            .unwrap_or_default()
+    });
     for p in entries.iter().filter(|p| p.is_dir()) {
         out.extend(find_opls(p));
     }
@@ -98,9 +107,14 @@ pub fn resolve_path(base: &Path, rel: &str) -> Option<PathBuf> {
             cur = direct;
             continue;
         }
-        let found = std::fs::read_dir(&cur).ok()?.flatten().map(|e| e.path()).find(|p| {
-            p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(part))
-        })?;
+        let found = std::fs::read_dir(&cur)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(part))
+            })?;
         cur = found;
     }
     Some(cur)
@@ -156,20 +170,50 @@ impl Library {
     /// Load the library and look its procedures up.
     pub fn load(path: &Path) -> Result<Library, String> {
         // SAFETY: loading a library runs its initialisers; that is what a plugin is for
-        let lib = unsafe { libloading::Library::new(path) }.map_err(|e| format!("LoadLibrary failed: {e}"))?;
+        let lib = unsafe { libloading::Library::new(path) }
+            .map_err(|e| format!("LoadLibrary failed: {e}"))?;
         unsafe {
-            let start = *lib.get::<StartFn>(b"PluginStart\0").map_err(|_| "procedure \"PluginStart\" not found".to_string())?;
-            let finalize = *lib.get::<FinalizeFn>(b"PluginFinalize\0").map_err(|_| "procedure \"PluginFinalize\" not found".to_string())?;
-            let variable = lib.get::<AccessFloatFn>(b"AccessVariable\0").ok().map(|s| *s);
-            let trigger = lib.get::<AccessTriggerFn>(b"AccessTrigger\0").ok().map(|s| *s);
-            let system = lib.get::<AccessFloatFn>(b"AccessSystemVariable\0").ok().map(|s| *s);
-            let string = lib.get::<AccessStringFn>(b"AccessStringVariable\0").ok().map(|s| *s);
-            Ok(Library { _lib: lib, start, finalize, variable, trigger, system, string })
+            let start = *lib
+                .get::<StartFn>(b"PluginStart\0")
+                .map_err(|_| "procedure \"PluginStart\" not found".to_string())?;
+            let finalize = *lib
+                .get::<FinalizeFn>(b"PluginFinalize\0")
+                .map_err(|_| "procedure \"PluginFinalize\" not found".to_string())?;
+            let variable = lib
+                .get::<AccessFloatFn>(b"AccessVariable\0")
+                .ok()
+                .map(|s| *s);
+            let trigger = lib
+                .get::<AccessTriggerFn>(b"AccessTrigger\0")
+                .ok()
+                .map(|s| *s);
+            let system = lib
+                .get::<AccessFloatFn>(b"AccessSystemVariable\0")
+                .ok()
+                .map(|s| *s);
+            let string = lib
+                .get::<AccessStringFn>(b"AccessStringVariable\0")
+                .ok()
+                .map(|s| *s);
+            Ok(Library {
+                _lib: lib,
+                start,
+                finalize,
+                variable,
+                trigger,
+                system,
+                string,
+            })
         }
     }
 
     pub fn procs(&self) -> Procs {
-        Procs { variable: self.variable.is_some(), trigger: self.trigger.is_some(), system: self.system.is_some(), string: self.string.is_some() }
+        Procs {
+            variable: self.variable.is_some(),
+            trigger: self.trigger.is_some(),
+            system: self.system.is_some(),
+            string: self.string.is_some(),
+        }
     }
 
     /// `PluginStart(AOwner)`; there is no Delphi application to own the plugin's forms here.
@@ -220,7 +264,9 @@ impl Library {
             .triggers
             .iter()
             .map(|&i| {
-                let Some(func) = self.trigger else { return false };
+                let Some(func) = self.trigger else {
+                    return false;
+                };
                 let mut active = 0u8;
                 unsafe { func(i, &mut active) };
                 active != 0
@@ -341,7 +387,16 @@ pub mod wire {
     pub fn get_reply(rd: &mut impl Read, f: &Frame) -> std::io::Result<Reply> {
         let mut r = Reply::default();
         let mut float = |n: usize| -> std::io::Result<Vec<Option<f32>>> {
-            (0..n).map(|_| Ok(if get_u8(rd)? != 0 { Some(get_f32(rd)?) } else { get_f32(rd)?; None })).collect()
+            (0..n)
+                .map(|_| {
+                    Ok(if get_u8(rd)? != 0 {
+                        Some(get_f32(rd)?)
+                    } else {
+                        get_f32(rd)?;
+                        None
+                    })
+                })
+                .collect()
         };
         r.system = float(f.system.len())?;
         r.vars = float(f.vars.len())?;
@@ -377,14 +432,24 @@ impl Remote {
             }
             None => Command::new(host),
         };
-        cmd.arg(dll).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+        cmd.arg(dll)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
         if let Some(dir) = dll.parent() {
             cmd.current_dir(dir);
         }
-        let mut child = cmd.spawn().map_err(|e| format!("could not start {}: {e}", host.display()))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("could not start {}: {e}", host.display()))?;
         let to = BufWriter::new(child.stdin.take().ok_or("no stdin")?);
         let from = BufReader::new(child.stdout.take().ok_or("no stdout")?);
-        let mut r = Remote { child, to, from, procs: Procs::default() };
+        let mut r = Remote {
+            child,
+            to,
+            from,
+            procs: Procs::default(),
+        };
         let answer = (|| -> std::io::Result<(u8, u8)> {
             wire::put_u8(&mut r.to, wire::START)?;
             r.to.flush()?;
@@ -392,7 +457,12 @@ impl Remote {
         })();
         match answer {
             Ok((1, flags)) => {
-                r.procs = Procs { variable: flags & 1 != 0, trigger: flags & 2 != 0, system: flags & 4 != 0, string: flags & 8 != 0 };
+                r.procs = Procs {
+                    variable: flags & 1 != 0,
+                    trigger: flags & 2 != 0,
+                    system: flags & 4 != 0,
+                    string: flags & 8 != 0,
+                };
                 Ok(r)
             }
             Ok(_) => {
@@ -453,7 +523,9 @@ pub struct HostConfig {
 impl HostConfig {
     /// The host next to the running program and, off Windows, `wine` from the path.
     pub fn detect() -> HostConfig {
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf));
         let host32 = std::env::var_os("OMSI_PLUGIN_HOST32")
             .map(PathBuf::from)
             .or_else(|| exe_dir.map(|d| d.join("omsi-plugin-host32.exe")))
@@ -461,27 +533,33 @@ impl HostConfig {
         let runner = if cfg!(windows) {
             None
         } else {
-            std::env::var_os("OMSI_WINE").map(PathBuf::from).or_else(|| {
-                // the path, then where Homebrew and the Wine app bundles put it (a game
-                // started from Finder gets a path without /opt/homebrew/bin)
-                let from_path: Vec<PathBuf> = std::env::var_os("PATH")
-                    .map(|paths| std::env::split_paths(&paths).map(|d| d.join("wine")).collect())
-                    .unwrap_or_default();
-                from_path
-                    .into_iter()
-                    .chain(
-                        [
-                            "/opt/homebrew/bin/wine",
-                            "/usr/local/bin/wine",
-                            "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
-                            "/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine",
-                            "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine",
-                            "/usr/bin/wine",
-                        ]
-                        .map(PathBuf::from),
-                    )
-                    .find(|p| p.is_file())
-            })
+            std::env::var_os("OMSI_WINE")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    // the path, then where Homebrew and the Wine app bundles put it (a game
+                    // started from Finder gets a path without /opt/homebrew/bin)
+                    let from_path: Vec<PathBuf> = std::env::var_os("PATH")
+                        .map(|paths| {
+                            std::env::split_paths(&paths)
+                                .map(|d| d.join("wine"))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    from_path
+                        .into_iter()
+                        .chain(
+                            [
+                                "/opt/homebrew/bin/wine",
+                                "/usr/local/bin/wine",
+                                "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
+                                "/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine",
+                                "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine",
+                                "/usr/bin/wine",
+                            ]
+                            .map(PathBuf::from),
+                        )
+                        .find(|p| p.is_file())
+                })
         };
         HostConfig { host32, runner }
     }
@@ -496,7 +574,8 @@ impl Plugin {
         if opl.dll.is_empty() {
             return Err("no [dll]".into());
         }
-        let dll = resolve_path(plugins_dir, &opl.dll).ok_or_else(|| format!("{} not found", opl.dll))?;
+        let dll =
+            resolve_path(plugins_dir, &opl.dll).ok_or_else(|| format!("{} not found", opl.dll))?;
         let (backend, procs) = match Library::load(&dll) {
             Ok(lib) => {
                 lib.start();
@@ -505,23 +584,42 @@ impl Plugin {
             }
             Err(local) => {
                 let Some(host) = &hosts.host32 else {
-                    return Err(format!("{local}; a 32-bit Windows plugin needs omsi-plugin-host32.exe next to the game"));
+                    return Err(format!(
+                        "{local}; a 32-bit Windows plugin needs omsi-plugin-host32.exe next to the game"
+                    ));
                 };
                 if !cfg!(windows) && hosts.runner.is_none() {
-                    return Err(format!("{local}; a Windows plugin needs Wine here (or OMSI_WINE)"));
+                    return Err(format!(
+                        "{local}; a Windows plugin needs Wine here (or OMSI_WINE)"
+                    ));
                 }
                 let r = Remote::spawn(hosts.runner.as_deref(), host, &dll)?;
                 let p = r.procs();
                 (Backend::Remote(r), p)
             }
         };
-        for (has, name) in [(procs.variable, "AccessVariable"), (procs.trigger, "AccessTrigger"), (procs.system, "AccessSystemVariable"), (procs.string, "AccessStringVariable")] {
+        for (has, name) in [
+            (procs.variable, "AccessVariable"),
+            (procs.trigger, "AccessTrigger"),
+            (procs.system, "AccessSystemVariable"),
+            (procs.string, "AccessStringVariable"),
+        ] {
             if !has {
-                log::warn!("Loading plugin {}: procedure \"{name}\" not found!", opl.dll);
+                log::warn!(
+                    "Loading plugin {}: procedure \"{name}\" not found!",
+                    opl.dll
+                );
             }
         }
         let n = opl.triggers.len();
-        Ok(Plugin { opl_path: opl_path.to_path_buf(), opl, backend, procs, trigger_state: vec![false; n], failed: false })
+        Ok(Plugin {
+            opl_path: opl_path.to_path_buf(),
+            opl,
+            backend,
+            procs,
+            trigger_state: vec![false; n],
+            failed: false,
+        })
     }
 
     pub fn procs(&self) -> Procs {
@@ -575,7 +673,10 @@ impl Plugin {
             Backend::Remote(r) => match r.frame(&f) {
                 Ok(r) => r,
                 Err(e) => {
-                    log::warn!("plugin {}: the host stopped answering ({e}); it is left out from now on", self.opl.dll);
+                    log::warn!(
+                        "plugin {}: the host stopped answering ({e}); it is left out from now on",
+                        self.opl.dll
+                    );
                     self.failed = true;
                     return;
                 }
@@ -682,13 +783,24 @@ impl Plugins {
         let mut seen = std::collections::HashSet::new();
         for dir in dirs {
             for opl in find_opls(dir) {
-                let key = opl.strip_prefix(dir).unwrap_or(&opl).to_string_lossy().to_ascii_lowercase();
+                let key = opl
+                    .strip_prefix(dir)
+                    .unwrap_or(&opl)
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
                 if !seen.insert(key) {
                     continue;
                 }
                 match Plugin::load(&opl, dir, hosts) {
                     Ok(p) => {
-                        log::info!("plugin {} loaded ({} variables, {} strings, {} system variables, {} triggers)", p.opl.dll, p.opl.vars.len(), p.opl.string_vars.len(), p.opl.system_vars.len(), p.opl.triggers.len());
+                        log::info!(
+                            "plugin {} loaded ({} variables, {} strings, {} system variables, {} triggers)",
+                            p.opl.dll,
+                            p.opl.vars.len(),
+                            p.opl.string_vars.len(),
+                            p.opl.system_vars.len(),
+                            p.opl.triggers.len()
+                        );
                         loaded.push(p);
                     }
                     Err(e) => log::warn!("Could not load plugin {}: {e}", opl.display()),
@@ -699,7 +811,11 @@ impl Plugins {
         let mut seen = std::collections::HashSet::new();
         for dir in dirs {
             for path in lua::find_lua(dir) {
-                let key = path.strip_prefix(dir).unwrap_or(&path).to_string_lossy().to_ascii_lowercase();
+                let key = path
+                    .strip_prefix(dir)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
                 if !seen.insert(key) {
                     continue;
                 }
@@ -752,7 +868,9 @@ mod tests {
 
     #[test]
     fn opl_lists() {
-        let o = parse_opl("[dll]\r\nsub\\my.dll\r\n\r\n[varlist]\r\n2\r\nVelocity\r\nthrottle\r\n[systemvarlist]\r\n1\r\nTime\r\n[stringvarlist]\r\n1\r\nIBIS_terminus_name\r\n[triggers]\r\n1\r\nbus_doorfront0\r\n");
+        let o = parse_opl(
+            "[dll]\r\nsub\\my.dll\r\n\r\n[varlist]\r\n2\r\nVelocity\r\nthrottle\r\n[systemvarlist]\r\n1\r\nTime\r\n[stringvarlist]\r\n1\r\nIBIS_terminus_name\r\n[triggers]\r\n1\r\nbus_doorfront0\r\n",
+        );
         assert_eq!(o.dll, "sub\\my.dll");
         assert_eq!(o.vars, ["Velocity", "throttle"]);
         assert_eq!(o.system_vars, ["Time"]);
@@ -762,11 +880,21 @@ mod tests {
 
     #[test]
     fn wire_round_trip() {
-        let f = Frame { system: vec![(0, 1.5)], vars: vec![(1, 2.0), (3, -1.0)], strings: vec![(0, "Zoo €".into())], triggers: vec![0, 2] };
+        let f = Frame {
+            system: vec![(0, 1.5)],
+            vars: vec![(1, 2.0), (3, -1.0)],
+            strings: vec![(0, "Zoo €".into())],
+            triggers: vec![0, 2],
+        };
         let mut buf = Vec::new();
         wire::put_frame(&mut buf, &f).unwrap();
         assert_eq!(wire::get_frame(&mut buf.as_slice()).unwrap(), f);
-        let r = Reply { system: vec![None], vars: vec![Some(3.0), None], strings: vec![Some("ab".into())], triggers_active: vec![true, false] };
+        let r = Reply {
+            system: vec![None],
+            vars: vec![Some(3.0), None],
+            strings: vec![Some("ab".into())],
+            triggers_active: vec![true, false],
+        };
         let mut buf = Vec::new();
         wire::put_reply(&mut buf, &r).unwrap();
         assert_eq!(wire::get_reply(&mut buf.as_slice(), &f).unwrap(), r);

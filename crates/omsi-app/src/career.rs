@@ -128,8 +128,14 @@ impl Career {
         let (path, read) = if given.is_absolute() {
             (given.to_path_buf(), given.to_path_buf())
         } else {
-            let own = crate::startup::content_dir().map(|c| c.join(rel)).unwrap_or_else(|| omsi_cfg::resolve_path(root, rel));
-            let read = if own.exists() { own.clone() } else { omsi_cfg::resolve_path(root, rel) };
+            let own = crate::startup::content_dir()
+                .map(|c| c.join(rel))
+                .unwrap_or_else(|| omsi_cfg::resolve_path(root, rel));
+            let read = if own.exists() {
+                own.clone()
+            } else {
+                omsi_cfg::resolve_path(root, rel)
+            };
             (own, read)
         };
         if let Some(dir) = path.parent() {
@@ -154,8 +160,16 @@ impl Career {
                 None
             }
         };
-        let penalty = driver.as_ref().map(|d| d.rating[0].clamp(0.0, 1.0)).unwrap_or(0.0);
-        Career { driver, path: Some(path), penalty, ..Default::default() }
+        let penalty = driver
+            .as_ref()
+            .map(|d| d.rating[0].clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        Career {
+            driver,
+            path: Some(path),
+            penalty,
+            ..Default::default()
+        }
     }
 
     /// One simulation frame of the player's bus.
@@ -201,7 +215,11 @@ impl Career {
             self.harsh += 1;
             self.penalise(JOLT_WEIGHT);
             if omsi_cfg::env::var_os("OMSI_DEBUG_CAREER").is_some() {
-                log::info!("jolt after {:.0} m: along {along:+.1} across {across:+.1} m/s2 at {:.0} km/h", self.metres, v * 3.6);
+                log::info!(
+                    "jolt after {:.0} m: along {along:+.1} across {across:+.1} m/s2 at {:.0} km/h",
+                    self.metres,
+                    v * 3.6
+                );
             }
             if riders > 0 {
                 self.harsh_pax += 1;
@@ -209,7 +227,13 @@ impl Career {
         }
         // see-sawing between throttle and brake
         let c = bus.physics.controls;
-        let pedal = if c.throttle > 0.2 { 1 } else if c.brake > 0.2 { -1 } else { self.pedal };
+        let pedal = if c.throttle > 0.2 {
+            1
+        } else if c.brake > 0.2 {
+            -1
+        } else {
+            self.pedal
+        };
         if pedal != self.pedal && self.pedal != 0 {
             self.seesaw.push_back(self.seconds);
         }
@@ -299,12 +323,21 @@ impl Career {
     /// Add this session to the personnel file and write it back: the counters are added,
     /// the driving penalty is this session's (it started from the file's).
     pub fn save(&mut self) -> std::io::Result<()> {
-        let Some(path) = self.path.clone() else { return Ok(()) };
-        let mut d = Driver::load(&path).ok().or_else(|| self.driver.clone()).unwrap_or_else(|| Driver {
-            name: path.file_stem().and_then(|s| s.to_str()).unwrap_or("Driver").to_string(),
-            sex: "M".into(),
-            ..Default::default()
-        });
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        let mut d = Driver::load(&path)
+            .ok()
+            .or_else(|| self.driver.clone())
+            .unwrap_or_else(|| Driver {
+                name: path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Driver")
+                    .to_string(),
+                sex: "M".into(),
+                ..Default::default()
+            });
         let w = self.written;
         for i in 0..3 {
             d.bus_stops[i] += self.stops[i] - w.stops[i];
@@ -318,14 +351,29 @@ impl Career {
         }
         d.tickets[0] += (self.tickets.0 - w.tickets.0) as f64;
         d.tickets[1] += self.tickets.1 - w.tickets.1;
-        let now = [self.content, self.ticket_requests, self.ticket_points, self.stepped_in];
+        let now = [
+            self.content,
+            self.ticket_requests,
+            self.ticket_points,
+            self.stepped_in,
+        ];
         d.rating[0] = self.penalty.clamp(0.0, 1.0);
         for (k, slot) in [1usize, 2, 3, 4].into_iter().enumerate() {
             d.rating[slot] += (now[k] - w.counters[k]) as f64;
         }
         d.save(&path)?;
-        self.written = Written { metres: w.metres + hm * 100.0, stops: self.stops, crashes: self.crashes, tickets: self.tickets, counters: now };
-        log::info!("personnel file {} updated: {}", path.display(), self.summary());
+        self.written = Written {
+            metres: w.metres + hm * 100.0,
+            stops: self.stops,
+            crashes: self.crashes,
+            tickets: self.tickets,
+            counters: now,
+        };
+        log::info!(
+            "personnel file {} updated: {}",
+            path.display(),
+            self.summary()
+        );
         self.driver = Some(d);
         Ok(())
     }
@@ -335,12 +383,33 @@ impl Career {
     /// Write this session into `~/.neoomsi/sessions/<time>-<process>.json`, where the
     /// launcher adds it up into the driver's hours, experience and level (the process id
     /// keeps two games that end in the same second apart).
-    pub fn write_session(&self, map: &str, bus: &str, line: Option<&str>, tour: Option<&str>) -> std::io::Result<()> {
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default();
+    pub fn write_session(
+        &self,
+        map: &str,
+        bus: &str,
+        line: Option<&str>,
+        tour: Option<&str>,
+    ) -> std::io::Result<()> {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_default();
         let dir = home.join(".neoomsi").join("sessions");
         std::fs::create_dir_all(&dir)?;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let driver = self.driver.as_ref().map(|d| d.name.clone()).or_else(|| self.path.as_ref().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))).unwrap_or_else(|| "Driver".into());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let driver = self
+            .driver
+            .as_ref()
+            .map(|d| d.name.clone())
+            .or_else(|| {
+                self.path
+                    .as_ref()
+                    .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+            })
+            .unwrap_or_else(|| "Driver".into());
         let v = serde_json::json!({
             "time": now,
             "driver": driver,

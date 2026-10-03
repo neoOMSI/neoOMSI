@@ -22,7 +22,7 @@
 use anyhow::{Context, Result};
 use glam::{Affine3A, DVec2, DVec3, Mat3A, Quat, Vec2, Vec3, Vec3A};
 use omsi_content::Human;
-use omsi_geometry::{mesh_from_o3d, MeshData};
+use omsi_geometry::{MeshData, mesh_from_o3d};
 use omsi_model::Model;
 use std::f32::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
@@ -198,7 +198,8 @@ impl Rig {
                 top = top.max(p.z);
             }
             for (i, inf) in m.skin.iter().enumerate() {
-                if (0..inf.n as usize).any(|k| inf.slot[k] as usize == HEAD && inf.weight[k] > 0.5) {
+                if (0..inf.n as usize).any(|k| inf.slot[k] as usize == HEAD && inf.weight[k] > 0.5)
+                {
                     head_sum += m.data.positions[i];
                     head_n += 1;
                 }
@@ -289,15 +290,25 @@ impl Rig {
                 let (mut sum, mut n) = (Vec3::ZERO, 0u32);
                 for m in meshes {
                     for p in &m.data.positions {
-                        if (p.z - j.neck.z).abs() < 0.03 && Vec2::new(p.x - c.x, p.y - c.y).length() < 0.09 {
+                        if (p.z - j.neck.z).abs() < 0.03
+                            && Vec2::new(p.x - c.x, p.y - c.y).length() < 0.09
+                        {
                             sum += *p;
                             n += 1;
                         }
                     }
                 }
-                let at = if n >= 8 { sum / n as f32 } else { Vec3::new(c.x, j.neck.y + (c.y - j.neck.y) * 0.75, j.neck.z) };
+                let at = if n >= 8 {
+                    sum / n as f32
+                } else {
+                    Vec3::new(c.x, j.neck.y + (c.y - j.neck.y) * 0.75, j.neck.z)
+                };
                 // (never further than 12 cm from the linked point)
-                Vec3::new(j.neck.x, j.neck.y + (at.y - j.neck.y).clamp(-0.12, 0.12), j.neck.z)
+                Vec3::new(
+                    j.neck.x,
+                    j.neck.y + (at.y - j.neck.y).clamp(-0.12, 0.12),
+                    j.neck.z,
+                )
             } else {
                 j.neck
             },
@@ -425,7 +436,10 @@ impl HumanType {
                         seen.push(name);
                         md.materials
                             .iter()
-                            .find(|d| d.texture.trim().eq_ignore_ascii_case(mat.texture.trim()) && d.index == n)
+                            .find(|d| {
+                                d.texture.trim().eq_ignore_ascii_case(mat.texture.trim())
+                                    && d.index == n
+                            })
                             .map(|d| d.alpha)
                             .unwrap_or(0)
                     })
@@ -454,7 +468,13 @@ impl HumanType {
         for c in &model.ctc {
             let mut d = omsi_cfg::resolve_path(dir, &c.path);
             if !omsi_cfg::vfs::is_dir(&d) {
-                let last = c.path.trim().trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or("");
+                let last = c
+                    .path
+                    .trim()
+                    .trim_end_matches(['\\', '/'])
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or("");
                 if !last.is_empty() {
                     let alt = omsi_cfg::resolve_path(dir, last);
                     if omsi_cfg::vfs::is_dir(&alt) {
@@ -509,7 +529,11 @@ impl HumanType {
 
     /// The texture a material shows in clothing variant `variant` (0 = the default):
     /// the file name and the folder to look in first.
-    pub fn variant_texture<'a>(&'a self, texture: &'a str, variant: usize) -> (&'a str, Option<&'a Path>) {
+    pub fn variant_texture<'a>(
+        &'a self,
+        texture: &'a str,
+        variant: usize,
+    ) -> (&'a str, Option<&'a Path>) {
         let Some(s) = variant.checked_sub(1).and_then(|k| self.variants.get(k)) else {
             return (texture, None);
         };
@@ -537,7 +561,9 @@ fn fit_leg_joints(j: &mut Joints, meshes: &[HumanMesh], path: &Path) {
         let mut out = Vec::new();
         for m in meshes {
             for (i, inf) in m.skin.iter().enumerate() {
-                if (0..inf.n as usize).any(|k| slots.contains(&(inf.slot[k] as usize)) && inf.weight[k] > 0.5) {
+                if (0..inf.n as usize)
+                    .any(|k| slots.contains(&(inf.slot[k] as usize)) && inf.weight[k] > 0.5)
+                {
                     out.push(m.data.positions[i]);
                 }
             }
@@ -550,10 +576,19 @@ fn fit_leg_joints(j: &mut Joints, meshes: &[HumanMesh], path: &Path) {
         if limb.len() < 8 {
             return;
         }
-        let near: Vec<&Vec3> = limb.iter().filter(|p| (p.z - joint.z).abs() < 0.06).collect();
-        let near: Vec<&Vec3> = if near.len() >= 4 { near } else { limb.iter().collect() };
+        let near: Vec<&Vec3> = limb
+            .iter()
+            .filter(|p| (p.z - joint.z).abs() < 0.06)
+            .collect();
+        let near: Vec<&Vec3> = if near.len() >= 4 {
+            near
+        } else {
+            limb.iter().collect()
+        };
         let n = near.len() as f32;
-        let (lo, hi) = limb.iter().fold((Vec3::MAX, Vec3::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
+        let (lo, hi) = limb
+            .iter()
+            .fold((Vec3::MAX, Vec3::MIN), |(a, b), p| (a.min(*p), b.max(*p)));
         let mut fixed = false;
         if joint.x < lo.x - 0.05 || joint.x > hi.x + 0.05 {
             joint.x = near.iter().map(|p| p.x).sum::<f32>() / n;
@@ -1054,7 +1089,27 @@ impl Pose {
         };
         format!(
             "origin ({:.2}, {:.2}, {:.2}) heading {:.0} turning {:.0}/s frame {} speed {:.2} gait {} walk {:.2} phase {:.2} sit {:.2} reach {:.2} hold {:.2} head ({:.0}, {:.0}) floor {:.2} drop {:.3} catch-ups {} shuffles {}; left {}; right {}",
-            self.origin.x, self.origin.y, self.origin.z, self.heading, self.turn, self.frame, self.speed, self.gait, self.walk, self.phase, self.sit, self.reach, self.hold, self.head.x, self.head.y, self.body_floor, self.drop, self.catch_ups, self.shuffles, foot(&self.feet[0]), foot(&self.feet[1])
+            self.origin.x,
+            self.origin.y,
+            self.origin.z,
+            self.heading,
+            self.turn,
+            self.frame,
+            self.speed,
+            self.gait,
+            self.walk,
+            self.phase,
+            self.sit,
+            self.reach,
+            self.hold,
+            self.head.x,
+            self.head.y,
+            self.body_floor,
+            self.drop,
+            self.catch_ups,
+            self.shuffles,
+            foot(&self.feet[0]),
+            foot(&self.feet[1])
         )
     }
 
@@ -1499,7 +1554,8 @@ impl Pose {
                 f.to_sampled = DVec2::splat(f64::MAX);
                 f.land_z = f.pos.z;
                 f.land_wait = 0.0;
-                f.lift = (0.035 + 0.035 * (speed / 1.3).min(1.3) + 0.11 * run_factor(speed)) * rig.scale;
+                f.lift =
+                    (0.035 + 0.035 * (speed / 1.3).min(1.3) + 0.11 * run_factor(speed)) * rig.scale;
             }
             if self.feet[side].planted {
                 continue;
@@ -1659,7 +1715,11 @@ impl Pose {
             Self::sample_floor(input, f.to.truncate(), fallback)
         };
         // (within a centimetre of where the swing brought it, or it gave up waiting)
-        let floor = if (floor - f.land_z).abs() < 0.05 { floor } else { f.land_z + (floor - f.land_z).clamp(-0.05, 0.05) };
+        let floor = if (floor - f.land_z).abs() < 0.05 {
+            floor
+        } else {
+            f.land_z + (floor - f.land_z).clamp(-0.05, 0.05)
+        };
         f.pos = DVec3::new(f.to.x, f.to.y, floor);
         f.yaw = f.to_yaw;
         f.planted = true;
@@ -1678,7 +1738,11 @@ impl Pose {
             if !f.planted {
                 let gap = f.to_floor - f.land_z;
                 let step = (gap * ease_k(dt, 0.05) as f64).clamp(-1.8 * dt as f64, 1.8 * dt as f64);
-                f.land_z = if gap.abs() < 0.002 { f.to_floor } else { f.land_z + step };
+                f.land_z = if gap.abs() < 0.002 {
+                    f.to_floor
+                } else {
+                    f.land_z + step
+                };
             }
         }
     }
@@ -1744,7 +1808,9 @@ impl Pose {
                 let rise = (land.z - f.from_ankle.z) as f32;
                 let up = smoothstep(0.0, 0.06, rise);
                 let down = smoothstep(0.0, 0.06, -rise);
-                let zt = t * (1.0 - up - down) + smoothstep(0.0, 0.55, t) * up + smoothstep(0.35, 1.0, t) * down;
+                let zt = t * (1.0 - up - down)
+                    + smoothstep(0.0, 0.55, t) * up
+                    + smoothstep(0.35, 1.0, t) * down;
                 let bumpf = (PI * t.powf(0.75)).sin().max(0.0);
                 a.z = f.from_ankle.z
                     + (land.z - f.from_ankle.z) * zt as f64
@@ -1772,7 +1838,11 @@ impl Pose {
         let lat_walk = -0.022 * rig.scale * sway.min(1.3) * (ph - 0.25).sin() * intensity;
         let lat_idle = self.shift * still * (1.0 - s_ease);
         let run = run_factor(self.speed);
-        let bob = -0.018 * rig.scale * intensity * (1.0 + 1.8 * run) * (0.5 + 0.5 * (2.0 * ph - 0.35).cos());
+        let bob = -0.018
+            * rig.scale
+            * intensity
+            * (1.0 + 1.8 * run)
+            * (0.5 + 0.5 * (2.0 * ph - 0.35).cos());
         let lean_acc = (self.accel * 1.8).clamp(-6.0, 7.0) * walk;
         let pelvis_roll = d(3.5) * sway * intensity * (ph - 0.35).sin()
             - d(2.2) * (self.shift / (0.03 * rig.scale)) * still * (1.0 - s_ease);
@@ -1792,14 +1862,17 @@ impl Pose {
             (0.0, 0.0)
         };
         // a driver sits up, leaning towards the wheel
-        let grip_lean = d(16.0 + self.grip_extra.clamp(0.0, 30.0)) * smoothstep(0.0, 1.0, self.grip);
+        let grip_lean =
+            d(16.0 + self.grip_extra.clamp(0.0, 30.0)) * smoothstep(0.0, 1.0, self.grip);
         // forward tilt walking, backwards on a seat
-        let pelvis_tilt = d(2.0) * walk + d(11.0) * run - d(12.0) * s_ease + reach_lean * 0.5 + grip_lean * 0.7;
+        let pelvis_tilt =
+            d(2.0) * walk + d(11.0) * run - d(12.0) * s_ease + reach_lean * 0.5 + grip_lean * 0.7;
         // swaying with the bus: the body goes with the pull (forwards when it brakes, outwards
         // in a bend), less when holding on or sitting
         let lean_bus = self.lean * (1.0 - 0.4 * self.hold) * (1.0 - 0.4 * s_ease);
         let bus_shift = Vec3::new(lean_bus.x * 0.012, lean_bus.y * 0.012, 0.0) * (1.0 - s_ease);
-        let stand_z = rig.pelvis.z - 0.004 * rig.scale - 0.012 * walk - 0.035 * rig.scale * run + 0.002 * breath * still;
+        let stand_z = rig.pelvis.z - 0.004 * rig.scale - 0.012 * walk - 0.035 * rig.scale * run
+            + 0.002 * breath * still;
         let stand_c = Vec3::new(
             lat_walk + lat_idle,
             rig.pelvis.y + 0.02 * walk,
@@ -1856,7 +1929,9 @@ impl Pose {
         // 60 degrees on still shoulders, made a twisted, broken neck of every passenger
         // who looked at the driver)
         let trunk_yaw = -pelvis_yaw * 1.7
-            - d((self.head.x.clamp(-90.0, 90.0) * 0.42).clamp(-30.0, 30.0)) * (1.0 - walk) * (1.0 - self.reach)
+            - d((self.head.x.clamp(-90.0, 90.0) * 0.42).clamp(-30.0, 30.0))
+                * (1.0 - walk)
+                * (1.0 - self.reach)
             + reach_twist;
         let trunk_lean = d(3.0 * walk + lean_acc)
             + d(34.0) * bump
@@ -1912,7 +1987,9 @@ impl Pose {
                 let flat = Vec3::new(pelvis_fwd.x, pelvis_fwd.y, 0.0).normalize_or(Vec3::Y);
                 let knee_n = hip_at + flat * rig.thigh * 0.95;
                 let hang = knee_n - Vec3::Z * rig.shin * 0.97;
-                if ankle_t[side].z < hang.z - 0.12 || (ankle_t[side] - hip_at).length() > (rig.thigh + rig.shin) * 0.99 {
+                if ankle_t[side].z < hang.z - 0.12
+                    || (ankle_t[side] - hip_at).length() > (rig.thigh + rig.shin) * 0.99
+                {
                     let blend = ((sit - 0.5) * 2.0).clamp(0.0, 1.0);
                     let floor_z = ankle_t[side].z.max(hang.z);
                     let target = Vec3::new(hang.x, hang.y, floor_z);
@@ -2064,7 +2141,8 @@ impl Pose {
                 let g = smoothstep(0.0, 1.0, self.grip);
                 let v = self.grip_at[side] - sh_at;
                 let to = sh_at
-                    + v.normalize_or(Vec3::Y) * v.length().min((rig.upper_arm + rig.forearm) * 0.97);
+                    + v.normalize_or(Vec3::Y)
+                        * v.length().min((rig.upper_arm + rig.forearm) * 0.97);
                 target = target.lerp(to, g);
                 pole = pole.lerp(Vec3::new(s * 0.7, -0.2, -1.0), g);
             }
@@ -2285,7 +2363,11 @@ mod tests {
         // `[walk_param]` 1.4 (the stride) / 80 (an arm angle): 0.7 m steps
         assert!((r.walk_step - 0.7).abs() < 1e-6, "{}", r.walk_step);
         // slower than 1.2 m/s the stride shortens and the pace stays: 2.4 / 1.4 steps a second
-        assert!((r.cadence(0.6) - 2.4 / 1.4).abs() < 1e-4, "{}", r.cadence(0.6));
+        assert!(
+            (r.cadence(0.6) - 2.4 / 1.4).abs() < 1e-4,
+            "{}",
+            r.cadence(0.6)
+        );
     }
 
     #[test]
@@ -2753,15 +2835,23 @@ mod tests {
 /// and normals per mesh, for [`skin_from`].
 pub fn curl_hands(ty: &HumanType, radius: f32) -> Vec<(Vec<Vec3>, Vec<Vec3>)> {
     let rig = &ty.rig;
-    let hand_len = (ty.joints.finger - ty.joints.hand).length().clamp(0.12, 0.3);
-    let mut out: Vec<(Vec<Vec3>, Vec<Vec3>)> = ty.meshes.iter().map(|m| (m.data.positions.clone(), m.data.normals.clone())).collect();
+    let hand_len = (ty.joints.finger - ty.joints.hand)
+        .length()
+        .clamp(0.12, 0.3);
+    let mut out: Vec<(Vec<Vec3>, Vec<Vec3>)> = ty
+        .meshes
+        .iter()
+        .map(|m| (m.data.positions.clone(), m.data.normals.clone()))
+        .collect();
     for side in 0..2 {
         let slot = HAND[side] as u8;
         let w = rig.wrist[side];
         let u = (rig.wrist[side] - rig.elbow[side]).normalize_or(Vec3::X * SIDE[side]);
         let p = -Vec3::Z;
         let kd = hand_len * 0.58;
-        let owned = |inf: &Influence| (0..inf.n as usize).any(|k| inf.slot[k] == slot && inf.weight[k] > 0.5);
+        let owned = |inf: &Influence| {
+            (0..inf.n as usize).any(|k| inf.slot[k] == slot && inf.weight[k] > 0.5)
+        };
         // the fingers' middle plane: their average height
         let (mut zs, mut n) = (0.0f32, 0.0f32);
         for m in &ty.meshes {
@@ -2811,11 +2901,15 @@ pub fn curl_hands(ty: &HumanType, radius: f32) -> Vec<(Vec<Vec3>, Vec<Vec3>)> {
                 let s = rel.dot(u);
                 let h = rel.dot(p);
                 let c = rel.dot(axis) * side_sign;
-                let thumb = smoothstep(thumb_root, thumb_root + 0.02 * scale, c) * (1.0 - smoothstep(-0.005 * scale, 0.012 * scale, s));
+                let thumb = smoothstep(thumb_root, thumb_root + 0.02 * scale, c)
+                    * (1.0 - smoothstep(-0.005 * scale, 0.012 * scale, s));
                 if thumb > 0.0 {
                     let t = (THUMB_TURN * thumb).to_radians();
                     let (dc, dh) = (c - thumb_root, h);
-                    let (c2, h2) = (thumb_root + dc * t.cos() - dh * t.sin(), dc * t.sin() + dh * t.cos());
+                    let (c2, h2) = (
+                        thumb_root + dc * t.cos() - dh * t.sin(),
+                        dc * t.sin() + dh * t.cos(),
+                    );
                     out[k].0[i] = knuckle + u * s + p * h2 + axis * (c2 * side_sign);
                     // (axis = u x p: a turn about u takes axis towards -p)
                     out[k].1[i] = Quat::from_axis_angle(u, -t * side_sign) * m.data.normals[i];
@@ -2831,7 +2925,8 @@ pub fn curl_hands(ty: &HumanType, radius: f32) -> Vec<(Vec<Vec3>, Vec<Vec3>)> {
                 let extra = (s - MAX_TURN * radius).max(0.0);
                 let r = (radius - h).max(0.003);
                 let tangent = u * phi.cos() + p * phi.sin();
-                out[k].0[i] = centre - p * (r * phi.cos()) + u * (r * phi.sin()) + tangent * extra + across;
+                out[k].0[i] =
+                    centre - p * (r * phi.cos()) + u * (r * phi.sin()) + tangent * extra + across;
                 out[k].1[i] = Quat::from_axis_angle(axis, phi) * m.data.normals[i];
             }
         }
@@ -2843,13 +2938,17 @@ pub fn curl_hands(ty: &HumanType, radius: f32) -> Vec<(Vec<Vec3>, Vec<Vec3>)> {
 /// centre in the rest frame (left, right), for a caller that wants the bar exactly there.
 pub fn grip_centres(ty: &HumanType, radius: f32) -> [Option<Vec3>; 2] {
     let rig = &ty.rig;
-    let hand_len = (ty.joints.finger - ty.joints.hand).length().clamp(0.12, 0.3);
+    let hand_len = (ty.joints.finger - ty.joints.hand)
+        .length()
+        .clamp(0.12, 0.3);
     [0, 1].map(|side| {
         let slot = HAND[side] as u8;
         let w = rig.wrist[side];
         let u = (rig.wrist[side] - rig.elbow[side]).normalize_or(Vec3::X * SIDE[side]);
         let kd = hand_len * 0.58;
-        let owned = |inf: &Influence| (0..inf.n as usize).any(|k| inf.slot[k] == slot && inf.weight[k] > 0.5);
+        let owned = |inf: &Influence| {
+            (0..inf.n as usize).any(|k| inf.slot[k] == slot && inf.weight[k] > 0.5)
+        };
         let (mut zs, mut n) = (0.0f32, 0.0f32);
         for m in &ty.meshes {
             for (i, inf) in m.skin.iter().enumerate() {

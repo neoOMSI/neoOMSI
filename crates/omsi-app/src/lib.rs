@@ -10,47 +10,47 @@
 //! window of one process.
 
 mod admin;
-mod discord;
-mod headtrack;
-#[cfg(windows)]
-mod openxr;
-#[cfg(target_os = "macos")]
-mod mac_hid;
+mod ambience;
 #[cfg(target_os = "android")]
 mod android;
-mod platform;
-mod touch;
-mod placing;
-mod updater;
-mod ambience;
 mod camera_arm;
 mod career;
 mod describe;
-mod editor;
-mod game_lists;
-mod rail_drive;
+mod discord;
 mod driver;
+mod editor;
 mod export;
+mod game_lists;
+mod headtrack;
 mod hud;
 mod humans;
 mod keys;
 mod lan;
 mod lan_world;
-mod lights;
 mod launcher;
+mod lights;
+#[cfg(target_os = "macos")]
+mod mac_hid;
 mod menu;
-mod navigator;
-mod vr_navigator;
 mod money;
+mod navigator;
+#[cfg(windows)]
+mod openxr;
+mod placing;
+mod platform;
 mod radio;
+mod rail_drive;
+mod touch;
+mod updater;
+mod vr_navigator;
 
 mod puddles;
 mod quit;
 mod rain;
+mod real_time;
 mod scene;
 mod schedule;
 mod schedule_paper;
-mod real_time;
 mod settings;
 mod threads;
 mod tiles;
@@ -59,43 +59,43 @@ mod ui;
 
 // the game itself, split by what each part does
 mod app;
-mod applog;
 mod app_events;
+mod applog;
 mod bus_service;
 mod camera_util;
+mod cli;
 mod controllers;
-mod ffb_calibration;
 #[cfg(windows)]
 mod dinput;
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-mod evdev_ff;
-mod cli;
 mod duty_start;
 mod editor_ctl;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+mod evdev_ff;
+mod ffb_calibration;
 mod game_menu;
 mod input_keys;
 mod input_mouse;
 mod input_script;
-mod session;
-mod world_ctl;
-mod launcher_link;
 mod lan_mods;
+mod launcher_link;
 mod memory;
 mod offscreen;
 mod on_foot;
-mod route_arrows;
-mod server;
 mod player;
 mod plugins;
+mod route_arrows;
+mod server;
 mod services;
+mod session;
 mod situation;
 mod spawn;
-mod stock_keys;
 mod startup;
+mod stock_keys;
 mod traffic_link;
 mod tutorial;
-mod weather_setup;
 mod weather_cycle;
+mod weather_setup;
+mod world_ctl;
 mod world_load;
 
 // the interface's translations (locales/app.yml; the English text is the key)
@@ -106,40 +106,42 @@ const _LOCALES: &str = include_str!("../locales/app.yml");
 
 /// Show the interface in `code` (the settings' ENG / DEU / FRA / RUS).
 pub(crate) fn ui_language(code: &str) {
-    omsi_ui::i18n::set_lookup(|lang, text| _rust_i18n_try_translate(lang, text).map(|t| t.into_owned()));
+    omsi_ui::i18n::set_lookup(|lang, text| {
+        _rust_i18n_try_translate(lang, text).map(|t| t.into_owned())
+    });
     let iso = omsi_launcher_lib::language_iso(code);
     omsi_ui::i18n::set_language(iso);
     omsi_sim::vehicle_api::set_locale(iso);
 }
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+use app::*;
+use camera_util::*;
 use clap::Parser;
+use cli::*;
+use duty_start::*;
 use glam::{DVec3, Vec3};
+use input_script::*;
+use launcher_link::*;
+use memory::*;
+use offscreen::*;
 use omsi_render::{Camera, Renderer, Scene, SurfaceState};
+use player::*;
 use scene::World;
+use services::*;
+use situation::*;
+use spawn::*;
+use startup::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+use traffic_link::*;
+use weather_setup::*;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
-use app::*;
-use camera_util::*;
-use cli::*;
-use duty_start::*;
-use input_script::*;
-use launcher_link::*;
-use memory::*;
-use offscreen::*;
-use player::*;
-use services::*;
-use situation::*;
-use spawn::*;
-use startup::*;
-use traffic_link::*;
-use weather_setup::*;
 use world_load::*;
 
 /// The game (and its launcher) from the command line: what `main` does.
@@ -175,7 +177,9 @@ pub fn run() -> Result<()> {
     // Started by a double click or with no arguments at all: that is the launcher's job.
     // The launcher itself runs the game with a full command line (--no-menu, --map, ...).
     let bare = std::env::args().len() == 1;
-    let Some((args, server_cfg)) = prepare(args, bare)? else { return Ok(()) };
+    let Some((args, server_cfg)) = prepare(args, bare)? else {
+        return Ok(());
+    };
     if args.launcher || (bare && !args.menu) {
         // the launcher window (the game started again by it with a full command line);
         // OMSI_LAUNCHER=<program> still opens another launcher instead
@@ -185,7 +189,9 @@ pub fn run() -> Result<()> {
         launcher_statics();
         return launcher::run(graphics_instance());
     }
-    let Some(app) = make_app(args, server_cfg)? else { return Ok(()) };
+    let Some(app) = make_app(args, server_cfg)? else {
+        return Ok(());
+    };
     let event_loop = EventLoop::new()?;
     // SIGTERM (the launcher's Stop) and Ctrl+C end the session the way Escape does
     let proxy = event_loop.create_proxy();
@@ -203,15 +209,24 @@ pub fn run() -> Result<()> {
 /// The showroom is drawn the way the game will be.
 pub(crate) fn launcher_statics() {
     let s = settings::Settings::load();
-    ENHANCED.store(s.enhanced || omsi_cfg::env::var_os("OMSI_ENHANCED").is_some(), std::sync::atomic::Ordering::Relaxed);
+    ENHANCED.store(
+        s.enhanced || omsi_cfg::env::var_os("OMSI_ENHANCED").is_some(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     CLASSIC.store(s.classic(), std::sync::atomic::Ordering::Relaxed);
-    CLOUDS.store(s.clouds && omsi_cfg::env::var_os("OMSI_NO_CLOUDS").is_none(), std::sync::atomic::Ordering::Relaxed);
+    CLOUDS.store(
+        s.clouds && omsi_cfg::env::var_os("OMSI_NO_CLOUDS").is_none(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 /// Everything before a window: the language, the session's random seed, the original
 /// installation and the content roots (mods, archives). None when the program has
 /// nothing more to do (a fatal error was shown).
-pub(crate) fn prepare(mut args: Args, bare: bool) -> Result<Option<(Args, Option<server::ServerCfg>)>> {
+pub(crate) fn prepare(
+    mut args: Args,
+    bare: bool,
+) -> Result<Option<(Args, Option<server::ServerCfg>)>> {
     ui_language(&settings::Settings::load().language);
     // the dedicated server: server.cfg decides the world, the rest is a host without a window
     let server_cfg = match args.server.clone() {
@@ -307,7 +322,10 @@ pub(crate) fn prepare(mut args: Args, bare: bool) -> Result<Option<(Args, Option
 
 /// The game for `args`, ready for its window; None when there is no window to open (a
 /// picture or a model was written instead).
-pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) -> Result<Option<App>> {
+pub(crate) fn make_app(
+    mut args: Args,
+    server_cfg: Option<server::ServerCfg>,
+) -> Result<Option<App>> {
     let _lan_status = lan::StatusFileGuard;
     // OMSI's tutorials: the lesson's own situation
     if let Some(n) = args.tutorial.filter(|n| (1..=4).contains(n)) {
@@ -315,7 +333,11 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
     }
     apply_situation(&mut args)?;
     // `neoomsi`: the official server, wherever its tunnel is today (see omsi_net::official)
-    if let Some(t) = args.lan_join.clone().filter(|t| omsi_net::official::is_alias(t)) {
+    if let Some(t) = args
+        .lan_join
+        .clone()
+        .filter(|t| omsi_net::official::is_alias(t))
+    {
         match omsi_net::official::resolve_target(&t) {
             Ok(url) => {
                 log::info!("LAN: the official server is at {url}");
@@ -329,7 +351,11 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
     // "Automatic" put it at the map's first entry point, the depot
     // real-time sync: the game starts at this device's date and time (a joining player's
     // clock is the host's, a server's is its server.cfg's); a duty does not move it
-    if settings::Settings::load().time_sync && args.lan_join.is_none() && args.server.is_none() && args.offscreen.is_none() {
+    if settings::Settings::load().time_sync
+        && args.lan_join.is_none()
+        && args.server.is_none()
+        && args.offscreen.is_none()
+    {
         real_time::start_at_now(&mut args);
     }
     if args.export_glb.is_none() && args.lan_join.is_none() {
@@ -346,9 +372,18 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
         settings.enhanced || args.enhanced || omsi_cfg::env::var_os("OMSI_ENHANCED").is_some(),
         std::sync::atomic::Ordering::Relaxed,
     );
-    CLOUDS.store(settings.clouds && omsi_cfg::env::var_os("OMSI_NO_CLOUDS").is_none(), std::sync::atomic::Ordering::Relaxed);
-    SOUND_AI.store(settings.vol_ai.to_bits(), std::sync::atomic::Ordering::Relaxed);
-    SOUND_SCENERY.store(settings.vol_scenery.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    CLOUDS.store(
+        settings.clouds && omsi_cfg::env::var_os("OMSI_NO_CLOUDS").is_none(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    SOUND_AI.store(
+        settings.vol_ai.to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    SOUND_SCENERY.store(
+        settings.vol_scenery.to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     MIRROR_SIZE.store(settings.mirror_size, std::sync::atomic::Ordering::Relaxed);
     omsi_audio::DOPPLER.store(settings.doppler, std::sync::atomic::Ordering::Relaxed);
     CLASSIC.store(
@@ -377,19 +412,27 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
             std::thread::spawn(|| {
                 for _ in 0..300 {
                     if let Some(u) = lan::tunnel_url() {
-                        println!("\n  Server address for the players: {u}\n  (Multiplayer -> Servers -> Add)\n");
+                        println!(
+                            "\n  Server address for the players: {u}\n  (Multiplayer -> Servers -> Add)\n"
+                        );
                         return;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
-                println!("  No tunnel address (is cloudflared installed?): players join at this machine's address and the UDP port");
+                println!(
+                    "  No tunnel address (is cloudflared installed?): players join at this machine's address and the UDP port"
+                );
             });
         }
     }
     // a host's clock runs at its time speed (a server's: its server.cfg)
     if let (Some(l), None) = (lan.as_mut(), server_cfg.as_ref()) {
         if l.role == omsi_net::Role::Host {
-            l.clock_speed = if settings.time_sync { 1.0 } else { settings.time_speed.clamp(1.0, 30.0) };
+            l.clock_speed = if settings.time_sync {
+                1.0
+            } else {
+                settings.time_speed.clamp(1.0, 30.0)
+            };
         }
     }
     let mut lan_game = lan::LanGame::default();
@@ -528,7 +571,11 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
         key_filter: String::new(),
         key_search: false,
         route_arrows: Default::default(),
-        game_keys: omsi_content::KeyboardCfg::load(&keyboard_cfg(&args_root_for_keys)).unwrap_or_default().with_game_defaults().with_vr_defaults().game,
+        game_keys: omsi_content::KeyboardCfg::load(&keyboard_cfg(&args_root_for_keys))
+            .unwrap_or_default()
+            .with_game_defaults()
+            .with_vr_defaults()
+            .game,
         own_keys: own_keys(&args_root_for_keys),
         own_shift: own_bindings(&args_root_for_keys, omsi_content::input::KEY_SHIFT),
         menu_prev_pause: false,

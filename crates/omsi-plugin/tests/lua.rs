@@ -57,7 +57,11 @@ fn dir(tag: &str) -> PathBuf {
 fn events_vars_timers_and_data() {
     let d = dir("main");
     std::fs::create_dir_all(d.join("Speedo")).unwrap();
-    std::fs::write(d.join("Speedo/util.lua"), "return { double = function(x) return x * 2 end }").unwrap();
+    std::fs::write(
+        d.join("Speedo/util.lua"),
+        "return { double = function(x) return x * 2 end }",
+    )
+    .unwrap();
     std::fs::write(
         d.join("Speedo/main.lua"),
         r#"
@@ -79,7 +83,10 @@ fn events_vars_timers_and_data() {
     let mut plugins = Plugins::load(&[d.clone()], &HostConfig::default());
     assert_eq!(plugins.lua.len(), 1);
     assert_eq!(plugins.lua[0].name, "Speedo");
-    let mut bus = Bus { vehicle: true, ..Default::default() };
+    let mut bus = Bus {
+        vehicle: true,
+        ..Default::default()
+    };
     for k in ["Velocity", "doubled", "ticks", "time"] {
         bus.vars.insert(k.into(), 0.0);
     }
@@ -94,7 +101,13 @@ fn events_vars_timers_and_data() {
     assert_eq!(bus.vars["ticks"], 2.0);
     bus.vars.insert("Velocity".into(), 50.0);
     plugins.frame(&mut bus);
-    assert_eq!(bus.fired, [("bus_horn".to_string(), true), ("bus_horn".to_string(), false)]);
+    assert_eq!(
+        bus.fired,
+        [
+            ("bus_horn".to_string(), true),
+            ("bus_horn".to_string(), false)
+        ]
+    );
     assert_eq!(bus.messages, ["v 50.0"]);
     plugins.finalize();
     let saved = std::fs::read_to_string(d.join("Speedo/data.save.lua")).unwrap();
@@ -102,18 +115,37 @@ fn events_vars_timers_and_data() {
     // the next session reads it back
     let mut plugins = Plugins::load(&[d.clone()], &HostConfig::default());
     plugins.finalize();
-    assert!(std::fs::read_to_string(d.join("Speedo/data.save.lua")).unwrap().contains("runs = 2"));
+    assert!(
+        std::fs::read_to_string(d.join("Speedo/data.save.lua"))
+            .unwrap()
+            .contains("runs = 2")
+    );
 }
 
 #[test]
 fn errors_and_runaway_loops_are_contained() {
     let d = dir("bad");
-    std::fs::write(d.join("loop.lua"), "function on_frame() while true do end end").unwrap();
-    std::fs::write(d.join("broken.lua"), "function on_frame() error('boom') end").unwrap();
+    std::fs::write(
+        d.join("loop.lua"),
+        "function on_frame() while true do end end",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("broken.lua"),
+        "function on_frame() error('boom') end",
+    )
+    .unwrap();
     std::fs::write(d.join("syntax.lua"), "this is not lua").unwrap();
     let mut plugins = Plugins::load(&[d.clone()], &HostConfig::default());
-    assert_eq!(plugins.lua.len(), 2, "the file that does not compile is left out");
-    let mut bus = Bus { vehicle: true, ..Default::default() };
+    assert_eq!(
+        plugins.lua.len(),
+        2,
+        "the file that does not compile is left out"
+    );
+    let mut bus = Bus {
+        vehicle: true,
+        ..Default::default()
+    };
     let t = std::time::Instant::now();
     plugins.frame(&mut bus);
     assert!(t.elapsed().as_secs_f32() < 3.0);
@@ -123,4 +155,3 @@ fn errors_and_runaway_loops_are_contained() {
     assert!(plugins.lua.iter().all(|p| p.disabled));
     assert!(bus.messages.iter().any(|m| m.contains("boom")));
 }
-

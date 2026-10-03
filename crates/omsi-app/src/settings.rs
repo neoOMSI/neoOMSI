@@ -299,7 +299,18 @@ impl Default for Settings {
         if crate::platform::MOBILE {
             // a phone's graphics chip and battery: 2x MSAA (cheap on a tiled GPU), no
             // ambient occlusion, a smaller shadow map and mirrors, a shorter view
-            return Self { msaa: 2, anisotropy: 4, ssao: false, shadow_size: 1024, mirror_size: 128, max_fps: 60, max_obj_dist: 900.0, pax_density: 0.7, navigator_corner: "top-center".into(), ..Self::desktop() };
+            return Self {
+                msaa: 2,
+                anisotropy: 4,
+                ssao: false,
+                shadow_size: 1024,
+                mirror_size: 128,
+                max_fps: 60,
+                max_obj_dist: 900.0,
+                pax_density: 0.7,
+                navigator_corner: "top-center".into(),
+                ..Self::desktop()
+            };
         }
         Self::desktop()
     }
@@ -308,7 +319,115 @@ impl Default for Settings {
 impl Settings {
     /// The defaults of a computer.
     fn desktop() -> Self {
-        Self { msaa: 4, anisotropy: 8, ssao: true, shadows: true, shadow_size: 2048, shadow_blobs: true, navigator: true, ui_opacity: 0.85, notes: true, ui_scale: 1.0, ui_scale_window: true, navigator_corner: "bottom-left".into(), boarding: "auto".into(), detail_textures: true, exact_fare: true, enhanced: false, graphics: "vanilla_plus".into(), vr: false, vr_scale: 0.65, vr_head_smoothing_ms: 0.0, vr_mirror_rate: 16.0, vr_desktop_mirror: true, fullscreen: false, vsync: true, volume: 0.6, drive_keys: "simple".into(), post_aa: "fxaa".into(), render_scale: 0.0, language: "ENG".into(), units: "metric".into(), pax_voices: "all".into(), nav_arrows: false, nav_ai: true, nav_topbar: true, nav_turn: true, nav_stoplist: true, nav_stops_ext: false, texture_compression: true, texture_memory: 0, auto_clutch: true, auto_ibis: false, momentary_gears: false, auto_shift: false, min_obj_size: 0.013, max_obj_dist: -1.0, max_fps: 0, chat: true, tooltips: true, name_tags: true, show_fps: false, clouds: true, pax_density: 1.0, vol_ai: 1.0, vol_scenery: 1.0, mirror_size: 256, mirror_refresh: "full".into(), doppler: true, driver: true, maintenance: 0, ai_unsched_factor: 1.0, ai_max_scheduled: 0, ai_max_parked: 0, collision_vehicles: true, collision_objects: true, collision_pedestrians: true, head_movement: true, driverview_smooth: true, hands_in_cab: false, alt_view: true, time_speed: 1.0, time_sync: false, metar_sync: false, metar_station: String::new(), shadow_casters: "all".into(), ctrl_deadzone: 0.0, ctrl_off: String::new(), steering_linear: false, old_steering: false, red_steer_spd: false, reflections: true, led_glow: 6, atmosphere_brightness: 1.0, led_mips: 1.3, mouse_sens: 1.0, graphics_api: "auto".into(), ff_invert: false, ff_enabled: true, brake_hold: true, mouse_steering: false, mouse_right_off: false, look_sens: 1.0, blinker_cancel: true, wheel_range: 900.0, wheel_lock: 0.0, fov: 0.0, camera_collision: true, steer_look: false, steer_look_angle: 30.0, steer_look_response: 0.25, pedal_throttle: 1.0, pedal_brake: 1.0, seat: [0.0; 3], head_tracking: false, head_tracking_port: 4242, head_tracking_invert: String::new(), discord_status: true, discord_app_id: String::new() }
+        Self {
+            msaa: 4,
+            anisotropy: 8,
+            ssao: true,
+            shadows: true,
+            shadow_size: 2048,
+            shadow_blobs: true,
+            navigator: true,
+            ui_opacity: 0.85,
+            notes: true,
+            ui_scale: 1.0,
+            ui_scale_window: true,
+            navigator_corner: "bottom-left".into(),
+            boarding: "auto".into(),
+            detail_textures: true,
+            exact_fare: true,
+            enhanced: false,
+            graphics: "vanilla_plus".into(),
+            vr: false,
+            vr_scale: 0.65,
+            vr_head_smoothing_ms: 0.0,
+            vr_mirror_rate: 16.0,
+            vr_desktop_mirror: true,
+            fullscreen: false,
+            vsync: true,
+            volume: 0.6,
+            drive_keys: "simple".into(),
+            post_aa: "fxaa".into(),
+            render_scale: 0.0,
+            language: "ENG".into(),
+            units: "metric".into(),
+            pax_voices: "all".into(),
+            nav_arrows: false,
+            nav_ai: true,
+            nav_topbar: true,
+            nav_turn: true,
+            nav_stoplist: true,
+            nav_stops_ext: false,
+            texture_compression: true,
+            texture_memory: 0,
+            auto_clutch: true,
+            auto_ibis: false,
+            momentary_gears: false,
+            auto_shift: false,
+            min_obj_size: 0.013,
+            max_obj_dist: -1.0,
+            max_fps: 0,
+            chat: true,
+            tooltips: true,
+            name_tags: true,
+            show_fps: false,
+            clouds: true,
+            pax_density: 1.0,
+            vol_ai: 1.0,
+            vol_scenery: 1.0,
+            mirror_size: 256,
+            mirror_refresh: "full".into(),
+            doppler: true,
+            driver: true,
+            maintenance: 0,
+            ai_unsched_factor: 1.0,
+            ai_max_scheduled: 0,
+            ai_max_parked: 0,
+            collision_vehicles: true,
+            collision_objects: true,
+            collision_pedestrians: true,
+            head_movement: true,
+            driverview_smooth: true,
+            hands_in_cab: false,
+            alt_view: true,
+            time_speed: 1.0,
+            time_sync: false,
+            metar_sync: false,
+            metar_station: String::new(),
+            shadow_casters: "all".into(),
+            ctrl_deadzone: 0.0,
+            ctrl_off: String::new(),
+            steering_linear: false,
+            old_steering: false,
+            red_steer_spd: false,
+            reflections: true,
+            led_glow: 6,
+            atmosphere_brightness: 1.0,
+            led_mips: 1.3,
+            mouse_sens: 1.0,
+            graphics_api: "auto".into(),
+            ff_invert: false,
+            ff_enabled: true,
+            brake_hold: true,
+            mouse_steering: false,
+            mouse_right_off: false,
+            look_sens: 1.0,
+            blinker_cancel: true,
+            wheel_range: 900.0,
+            wheel_lock: 0.0,
+            fov: 0.0,
+            camera_collision: true,
+            steer_look: false,
+            steer_look_angle: 30.0,
+            steer_look_response: 0.25,
+            pedal_throttle: 1.0,
+            pedal_brake: 1.0,
+            seat: [0.0; 3],
+            head_tracking: false,
+            head_tracking_port: 4242,
+            head_tracking_invert: String::new(),
+            discord_status: true,
+            discord_app_id: String::new(),
+        }
     }
 }
 
@@ -325,7 +444,9 @@ impl Settings {
     }
 
     pub fn load() -> Settings {
-        let Some(p) = Self::path() else { return Settings::default() };
+        let Some(p) = Self::path() else {
+            return Settings::default();
+        };
         let mut text = std::fs::read_to_string(&p).unwrap_or_default();
         // OMSI_GRAPHICS=vanilla|vanilla_plus|enhanced: another renderer for one run
         if let Ok(g) = omsi_cfg::env::var("OMSI_GRAPHICS") {
@@ -334,10 +455,31 @@ impl Settings {
         let mut s = Self::from_text(&text);
         // OMSI_SAFE_GPU=<n>: the game was started again after its graphics device was lost
         // (see `App::restart_after_device_loss`): lighter on the card each time
-        if let Some(n) = omsi_cfg::env::var("OMSI_SAFE_GPU").ok().and_then(|v| v.parse::<u32>().ok()).filter(|n| *n > 0) {
+        if let Some(n) = omsi_cfg::env::var("OMSI_SAFE_GPU")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|n| *n > 0)
+        {
             s.apply_safe_gpu(n);
         }
-        log::info!("settings from {}: msaa {} af {} ssao {} shadows {} ({}) navigator {} graphics {} post aa {} vsync {} render scale {} boarding {} min object size {} max object distance {} max fps {}", p.display(), s.msaa, s.anisotropy, s.ssao, s.shadows, s.shadow_size, s.navigator, s.graphics, s.post_aa, s.vsync, s.render_scale_text(), s.boarding, s.min_obj_size, s.object_distance(), s.max_fps);
+        log::info!(
+            "settings from {}: msaa {} af {} ssao {} shadows {} ({}) navigator {} graphics {} post aa {} vsync {} render scale {} boarding {} min object size {} max object distance {} max fps {}",
+            p.display(),
+            s.msaa,
+            s.anisotropy,
+            s.ssao,
+            s.shadows,
+            s.shadow_size,
+            s.navigator,
+            s.graphics,
+            s.post_aa,
+            s.vsync,
+            s.render_scale_text(),
+            s.boarding,
+            s.min_obj_size,
+            s.object_distance(),
+            s.max_fps
+        );
         s
     }
 
@@ -351,9 +493,12 @@ impl Settings {
             if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
             }
-            let Some((k, v)) = line.split_once('=') else { continue };
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
             let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
-            let b = |v: &str| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes");
+            let b =
+                |v: &str| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes");
             match k.as_str() {
                 "version" => version = v.parse().unwrap_or(0),
                 "msaa" => s.msaa = v.parse().unwrap_or(s.msaa),
@@ -363,7 +508,14 @@ impl Settings {
                 "shadow_size" => s.shadow_size = v.parse().unwrap_or(s.shadow_size),
                 "shadow_blobs" => s.shadow_blobs = b(v),
                 "navigator" => s.navigator = b(v),
-                "ui_opacity" | "navigator_opacity" => s.ui_opacity = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.2, 1.0)).unwrap_or(s.ui_opacity),
+                "ui_opacity" | "navigator_opacity" => {
+                    s.ui_opacity = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.2, 1.0))
+                        .unwrap_or(s.ui_opacity)
+                }
                 "navigator_corner" => s.navigator_corner = v.to_ascii_lowercase(),
                 "boarding" => s.boarding = v.to_ascii_lowercase(),
                 "detail_textures" | "fractal" => s.detail_textures = b(v),
@@ -371,9 +523,30 @@ impl Settings {
                 "enhanced" => s.enhanced = b(v),
                 "graphics" | "renderer" => graphics = Some(graphics_mode(v).to_string()),
                 "vr" => s.vr = b(v),
-                "vr_scale" => s.vr_scale = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.5, 1.0)).unwrap_or(s.vr_scale),
-                "vr_head_smoothing_ms" => s.vr_head_smoothing_ms = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 30.0)).unwrap_or(s.vr_head_smoothing_ms),
-                "vr_mirror_rate" => s.vr_mirror_rate = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(-1.0, 360.0)).unwrap_or(s.vr_mirror_rate),
+                "vr_scale" => {
+                    s.vr_scale = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.5, 1.0))
+                        .unwrap_or(s.vr_scale)
+                }
+                "vr_head_smoothing_ms" => {
+                    s.vr_head_smoothing_ms = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 30.0))
+                        .unwrap_or(s.vr_head_smoothing_ms)
+                }
+                "vr_mirror_rate" => {
+                    s.vr_mirror_rate = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(-1.0, 360.0))
+                        .unwrap_or(s.vr_mirror_rate)
+                }
                 "vr_desktop_mirror" => s.vr_desktop_mirror = b(v),
                 "fullscreen" => s.fullscreen = b(v),
                 "vsync" => s.vsync = b(v),
@@ -392,12 +565,20 @@ impl Settings {
                     }
                 }
                 "language" | "lang" => s.language = crate::describe::language_code(v),
-                "units" => s.units = match v.to_ascii_lowercase().as_str() {
-                    "uk" | "british" => "uk".into(),
-                    "imperial" => "imperial".into(),
-                    _ => "metric".into(),
-                },
-                "pax_voices" => s.pax_voices = match v.to_ascii_lowercase().as_str() { "tickets" => "tickets".into(), "off" | "0" | "none" => "off".into(), _ => "all".into() },
+                "units" => {
+                    s.units = match v.to_ascii_lowercase().as_str() {
+                        "uk" | "british" => "uk".into(),
+                        "imperial" => "imperial".into(),
+                        _ => "metric".into(),
+                    }
+                }
+                "pax_voices" => {
+                    s.pax_voices = match v.to_ascii_lowercase().as_str() {
+                        "tickets" => "tickets".into(),
+                        "off" | "0" | "none" => "off".into(),
+                        _ => "all".into(),
+                    }
+                }
                 "nav_arrows" => s.nav_arrows = b(v),
                 "nav_ai" => s.nav_ai = b(v),
                 "nav_topbar" => s.nav_topbar = b(v),
@@ -409,10 +590,28 @@ impl Settings {
                 "momentary_gears" | "gear_buttons_hold" => s.momentary_gears = b(v),
                 "auto_shift" => s.auto_shift = b(v),
                 "auto_ibis" => s.auto_ibis = b(v),
-                "min_obj_size" | "performance_minobjsize" => s.min_obj_size = v.parse::<f32>().map(|x| x.clamp(0.0, 0.2)).unwrap_or(s.min_obj_size),
-                "max_obj_dist" | "performance_maxobjdist" => s.max_obj_dist = if v.eq_ignore_ascii_case("off") { 0.0 } else if v.eq_ignore_ascii_case("auto") { -1.0 } else { v.parse::<f32>().map(|x| x.max(0.0)).unwrap_or(s.max_obj_dist) },
+                "min_obj_size" | "performance_minobjsize" => {
+                    s.min_obj_size = v
+                        .parse::<f32>()
+                        .map(|x| x.clamp(0.0, 0.2))
+                        .unwrap_or(s.min_obj_size)
+                }
+                "max_obj_dist" | "performance_maxobjdist" => {
+                    s.max_obj_dist = if v.eq_ignore_ascii_case("off") {
+                        0.0
+                    } else if v.eq_ignore_ascii_case("auto") {
+                        -1.0
+                    } else {
+                        v.parse::<f32>()
+                            .map(|x| x.max(0.0))
+                            .unwrap_or(s.max_obj_dist)
+                    }
+                }
                 "max_fps" | "maxfps" => {
-                    s.max_fps = v.parse::<f32>().map(|x| x.max(0.0) as u32).unwrap_or(s.max_fps);
+                    s.max_fps = v
+                        .parse::<f32>()
+                        .map(|x| x.max(0.0) as u32)
+                        .unwrap_or(s.max_fps);
                     // a phone given the PC OMSI's 30 by the settings import: 60
                     if cfg!(target_os = "android") && s.max_fps == 30 {
                         s.max_fps = 60;
@@ -424,22 +623,72 @@ impl Settings {
                 "driver" => s.driver = b(v),
                 "show_fps" | "fps" => s.show_fps = b(v),
                 "clouds" => s.clouds = b(v),
-                "pax_density" | "aipassfactor" => s.pax_density = v.trim_end_matches('%').parse::<f32>().map(|x| if x > 5.0 { x / 100.0 } else { x }).map(|x| x.clamp(0.0, 3.0)).unwrap_or(s.pax_density),
-                "vol_ai" => s.vol_ai = v.parse::<f32>().map(|x| x.clamp(0.0, 1.0)).unwrap_or(s.vol_ai),
-                "vol_scenery" => s.vol_scenery = v.parse::<f32>().map(|x| x.clamp(0.0, 1.0)).unwrap_or(s.vol_scenery),
-                "doppler" | "sound_doppler" => s.doppler = b(v),
-                "mirror_size" => s.mirror_size = v.parse::<u32>().map(|x| if x == 0 { 0 } else { x.clamp(64, 2048).next_power_of_two() }).unwrap_or(s.mirror_size),
-                "mirror_refresh" | "performance_realreflexions" => s.mirror_refresh = match v.trim().to_ascii_lowercase().as_str() {
-                    "off" | "none" => "off",
-                    "eco" | "economy" => "eco",
-                    _ => "full",
+                "pax_density" | "aipassfactor" => {
+                    s.pax_density = v
+                        .trim_end_matches('%')
+                        .parse::<f32>()
+                        .map(|x| if x > 5.0 { x / 100.0 } else { x })
+                        .map(|x| x.clamp(0.0, 3.0))
+                        .unwrap_or(s.pax_density)
                 }
-                    .into(),
-                "texture_memory" | "texmemlimit" => s.texture_memory = v.parse::<f32>().map(|x| x.max(0.0) as u32).unwrap_or(s.texture_memory),
-                "maintenance" | "wear_lifespan" => s.maintenance = v.parse::<u8>().map(|x| x.min(4)).unwrap_or(s.maintenance),
-                "ai_unsched_factor" | "aiunschedfactor" => s.ai_unsched_factor = v.trim_end_matches('%').parse::<f32>().map(|x| (x / 100.0).clamp(0.0, 3.0)).unwrap_or(s.ai_unsched_factor),
-                "ai_max_scheduled" | "aimaxcountscheduled" => s.ai_max_scheduled = v.parse().unwrap_or(s.ai_max_scheduled),
-                "ai_max_parked" | "aimaxcountparked" => s.ai_max_parked = v.parse::<i32>().map(|x| x.max(-1)).unwrap_or(s.ai_max_parked),
+                "vol_ai" => {
+                    s.vol_ai = v
+                        .parse::<f32>()
+                        .map(|x| x.clamp(0.0, 1.0))
+                        .unwrap_or(s.vol_ai)
+                }
+                "vol_scenery" => {
+                    s.vol_scenery = v
+                        .parse::<f32>()
+                        .map(|x| x.clamp(0.0, 1.0))
+                        .unwrap_or(s.vol_scenery)
+                }
+                "doppler" | "sound_doppler" => s.doppler = b(v),
+                "mirror_size" => {
+                    s.mirror_size = v
+                        .parse::<u32>()
+                        .map(|x| {
+                            if x == 0 {
+                                0
+                            } else {
+                                x.clamp(64, 2048).next_power_of_two()
+                            }
+                        })
+                        .unwrap_or(s.mirror_size)
+                }
+                "mirror_refresh" | "performance_realreflexions" => {
+                    s.mirror_refresh = match v.trim().to_ascii_lowercase().as_str() {
+                        "off" | "none" => "off",
+                        "eco" | "economy" => "eco",
+                        _ => "full",
+                    }
+                    .into()
+                }
+                "texture_memory" | "texmemlimit" => {
+                    s.texture_memory = v
+                        .parse::<f32>()
+                        .map(|x| x.max(0.0) as u32)
+                        .unwrap_or(s.texture_memory)
+                }
+                "maintenance" | "wear_lifespan" => {
+                    s.maintenance = v.parse::<u8>().map(|x| x.min(4)).unwrap_or(s.maintenance)
+                }
+                "ai_unsched_factor" | "aiunschedfactor" => {
+                    s.ai_unsched_factor = v
+                        .trim_end_matches('%')
+                        .parse::<f32>()
+                        .map(|x| (x / 100.0).clamp(0.0, 3.0))
+                        .unwrap_or(s.ai_unsched_factor)
+                }
+                "ai_max_scheduled" | "aimaxcountscheduled" => {
+                    s.ai_max_scheduled = v.parse().unwrap_or(s.ai_max_scheduled)
+                }
+                "ai_max_parked" | "aimaxcountparked" => {
+                    s.ai_max_parked = v
+                        .parse::<i32>()
+                        .map(|x| x.max(-1))
+                        .unwrap_or(s.ai_max_parked)
+                }
                 "collision_vehicles" => s.collision_vehicles = b(v),
                 "collision_objects" => s.collision_objects = b(v),
                 "collision_pedestrians" => s.collision_pedestrians = b(v),
@@ -447,15 +696,60 @@ impl Settings {
                 "driverview_smooth" => s.driverview_smooth = b(v),
                 "hands_in_cab" => s.hands_in_cab = b(v),
                 "alt_view" => s.alt_view = b(v),
-                "time_speed" => s.time_speed = v.trim_start_matches(['x', 'X']).parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(1.0, 30.0)).unwrap_or(s.time_speed),
+                "time_speed" => {
+                    s.time_speed = v
+                        .trim_start_matches(['x', 'X'])
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(1.0, 30.0))
+                        .unwrap_or(s.time_speed)
+                }
                 "time_sync" | "real_time_sync" => s.time_sync = b(v),
                 "metar_sync" => s.metar_sync = b(v),
-                "metar_station" => s.metar_station = v.trim().chars().filter(|c| c.is_ascii_alphabetic()).take(4).collect::<String>().to_ascii_uppercase(),
-                "ctrl_deadzone" => s.ctrl_deadzone = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 0.3)).unwrap_or(s.ctrl_deadzone),
+                "metar_station" => {
+                    s.metar_station = v
+                        .trim()
+                        .chars()
+                        .filter(|c| c.is_ascii_alphabetic())
+                        .take(4)
+                        .collect::<String>()
+                        .to_ascii_uppercase()
+                }
+                "ctrl_deadzone" => {
+                    s.ctrl_deadzone = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 0.3))
+                        .unwrap_or(s.ctrl_deadzone)
+                }
                 "reflections" | "envmap" => s.reflections = b(v),
-                "led_glow" => s.led_glow = v.trim().parse::<i32>().map(|x| x.clamp(0, 15) as u8).unwrap_or(s.led_glow),
-                "atmosphere_brightness" => s.atmosphere_brightness = v.trim().parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 2.0)).unwrap_or(s.atmosphere_brightness),
-                "led_mips" => s.led_mips = v.trim().parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 4.0)).unwrap_or(s.led_mips),
+                "led_glow" => {
+                    s.led_glow = v
+                        .trim()
+                        .parse::<i32>()
+                        .map(|x| x.clamp(0, 15) as u8)
+                        .unwrap_or(s.led_glow)
+                }
+                "atmosphere_brightness" => {
+                    s.atmosphere_brightness = v
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 2.0))
+                        .unwrap_or(s.atmosphere_brightness)
+                }
+                "led_mips" => {
+                    s.led_mips = v
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 4.0))
+                        .unwrap_or(s.led_mips)
+                }
                 "graphics_api" => s.graphics_api = v.trim().to_ascii_lowercase(),
                 "ctrl_off" => s.ctrl_off = v.trim().to_string(),
                 "steering_linear" => s.steering_linear = b(v),
@@ -467,38 +761,146 @@ impl Settings {
                 "mouse_steering" => s.mouse_steering = b(v),
                 "mouse_right_off" => s.mouse_right_off = b(v),
                 "blinker_cancel" => s.blinker_cancel = b(v),
-                "look_sens" => s.look_sens = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.1, 2.0)).unwrap_or(s.look_sens),
-                "wheel_range" => s.wheel_range = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(90.0, 2880.0)).unwrap_or(s.wheel_range),
-                "wheel_lock" => s.wheel_lock = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| if x < 45.0 { 0.0 } else { x.min(2880.0) }).unwrap_or(s.wheel_lock),
+                "look_sens" => {
+                    s.look_sens = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.1, 2.0))
+                        .unwrap_or(s.look_sens)
+                }
+                "wheel_range" => {
+                    s.wheel_range = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(90.0, 2880.0))
+                        .unwrap_or(s.wheel_range)
+                }
+                "wheel_lock" => {
+                    s.wheel_lock = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| if x < 45.0 { 0.0 } else { x.min(2880.0) })
+                        .unwrap_or(s.wheel_lock)
+                }
                 "camera_collision" => s.camera_collision = b(v),
                 "steer_look" => s.steer_look = b(v),
-                "steer_look_angle" => s.steer_look_angle = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 60.0)).unwrap_or(s.steer_look_angle),
-                "steer_look_response" => s.steer_look_response = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.05, 1.0)).unwrap_or(s.steer_look_response),
+                "steer_look_angle" => {
+                    s.steer_look_angle = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 60.0))
+                        .unwrap_or(s.steer_look_angle)
+                }
+                "steer_look_response" => {
+                    s.steer_look_response = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.05, 1.0))
+                        .unwrap_or(s.steer_look_response)
+                }
                 "head_tracking" => s.head_tracking = b(v),
                 "head_tracking_invert" => s.head_tracking_invert = v.to_ascii_lowercase(),
                 "discord_status" => s.discord_status = b(v),
                 "discord_app_id" => s.discord_app_id = v.trim().to_string(),
-                "head_tracking_port" => s.head_tracking_port = v.parse::<u16>().ok().filter(|p| *p > 0).unwrap_or(s.head_tracking_port),
-                "pedal_throttle" => s.pedal_throttle = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.25, 4.0)).unwrap_or(s.pedal_throttle),
-                "pedal_brake" => s.pedal_brake = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.25, 4.0)).unwrap_or(s.pedal_brake),
+                "head_tracking_port" => {
+                    s.head_tracking_port = v
+                        .parse::<u16>()
+                        .ok()
+                        .filter(|p| *p > 0)
+                        .unwrap_or(s.head_tracking_port)
+                }
+                "pedal_throttle" => {
+                    s.pedal_throttle = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.25, 4.0))
+                        .unwrap_or(s.pedal_throttle)
+                }
+                "pedal_brake" => {
+                    s.pedal_brake = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.25, 4.0))
+                        .unwrap_or(s.pedal_brake)
+                }
                 "seat_x" | "seat_y" | "seat_z" => {
                     let k = (k.as_bytes()[5] - b'x') as usize;
-                    s.seat[k] = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(-1.5, 1.5)).unwrap_or(0.0);
+                    s.seat[k] = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(-1.5, 1.5))
+                        .unwrap_or(0.0);
                 }
-                "fov" => s.fov = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| if x < 20.0 { 0.0 } else { x.min(120.0) }).unwrap_or(s.fov),
-                "mouse_sens" => s.mouse_sens = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.1, 3.0)).unwrap_or(s.mouse_sens),
+                "fov" => {
+                    s.fov = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| if x < 20.0 { 0.0 } else { x.min(120.0) })
+                        .unwrap_or(s.fov)
+                }
+                "mouse_sens" => {
+                    s.mouse_sens = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.1, 3.0))
+                        .unwrap_or(s.mouse_sens)
+                }
                 "ui_scale_window" => s.ui_scale_window = b(v),
                 "notes" => s.notes = b(v),
-                "ui_scale" => s.ui_scale = v.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.5, 2.0)).unwrap_or(s.ui_scale),
-                "shadow_casters" => s.shadow_casters = if v.eq_ignore_ascii_case("omsi") { "omsi".into() } else { "all".into() },
-                "post_aa" => s.post_aa = if matches!(v.to_ascii_lowercase().as_str(), "off" | "0" | "none" | "false") { "off".into() } else { "fxaa".into() },
-                "drive_keys" => s.drive_keys = match v.to_ascii_lowercase().as_str() { "wasd" | "arrows" | "omsi" | "simple" => v.to_ascii_lowercase(), _ => s.drive_keys },
+                "ui_scale" => {
+                    s.ui_scale = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.5, 2.0))
+                        .unwrap_or(s.ui_scale)
+                }
+                "shadow_casters" => {
+                    s.shadow_casters = if v.eq_ignore_ascii_case("omsi") {
+                        "omsi".into()
+                    } else {
+                        "all".into()
+                    }
+                }
+                "post_aa" => {
+                    s.post_aa = if matches!(
+                        v.to_ascii_lowercase().as_str(),
+                        "off" | "0" | "none" | "false"
+                    ) {
+                        "off".into()
+                    } else {
+                        "fxaa".into()
+                    }
+                }
+                "drive_keys" => {
+                    s.drive_keys = match v.to_ascii_lowercase().as_str() {
+                        "wasd" | "arrows" | "omsi" | "simple" => v.to_ascii_lowercase(),
+                        _ => s.drive_keys,
+                    }
+                }
                 _ => {}
             }
         }
         // `graphics` decides; a file without it (older builds) says only `enhanced`, and
         // its vanilla renderer is what is now called Vanilla+
-        s.graphics = graphics.unwrap_or_else(|| if s.enhanced { "enhanced" } else { "vanilla_plus" }.to_string());
+        s.graphics = graphics.unwrap_or_else(|| {
+            if s.enhanced {
+                "enhanced"
+            } else {
+                "vanilla_plus"
+            }
+            .to_string()
+        });
         s.enhanced = s.graphics == "enhanced";
         if s.classic() {
             s.shadows = false;
@@ -509,7 +911,9 @@ impl Settings {
         // default, not because anybody chose it: passengers then stood at the cash desk
         // waiting for a driver who did not know he had to sell them a ticket.
         if version < SETTINGS_VERSION && s.boarding == "pay" {
-            log::info!("settings: boarding=pay from an old settings file taken as auto (choose pay again in the launcher to keep it)");
+            log::info!(
+                "settings: boarding=pay from an old settings file taken as auto (choose pay again in the launcher to keep it)"
+            );
             s.boarding = "auto".into();
         }
         s
@@ -522,15 +926,69 @@ impl Settings {
     pub fn to_text(&self) -> String {
         let mut text = format!(
             "# neoOMSI settings\nversion={}\nmsaa={}\nanisotropy={}\nssao={}\nshadows={}\nshadow_size={}\nshadow_blobs={}\nnavigator={}\nui_opacity={}\nnavigator_corner={}\nboarding={}\ndetail_textures={}\nexact_fare={}\nenhanced={}\ngraphics={}\nvr={}\nvr_scale={}\nfullscreen={}\nvsync={}\nvolume={}\ndrive_keys={}\npost_aa={}\nrender_scale={}\nlanguage={}\ntexture_compression={}\ntexture_memory={}\nauto_clutch={}\nauto_ibis={}\nmomentary_gears={}\nmin_obj_size={}\nmax_obj_dist={}\nmax_fps={}\nchat={}\ntooltips={}\nname_tags={}\nshow_fps={}\nclouds={}\npax_density={}\nvol_ai={}\nvol_scenery={}\nmirror_size={}\nmirror_refresh={}\ndoppler={}\ndriver={}\ndriverview_smooth={}\n",
-            SETTINGS_VERSION, self.msaa, self.anisotropy, self.ssao as u8, self.shadows as u8, self.shadow_size, self.shadow_blobs as u8, self.navigator as u8, self.ui_opacity, self.navigator_corner, self.boarding, self.detail_textures as u8, self.exact_fare as u8, self.enhanced as u8, self.graphics, self.vr as u8, self.vr_scale, self.fullscreen as u8, self.vsync as u8, self.volume, self.drive_keys, self.post_aa, self.render_scale_text(), self.language, self.texture_compression as u8, self.texture_memory, self.auto_clutch as u8, self.auto_ibis as u8, self.momentary_gears as u8, self.min_obj_size, if self.max_obj_dist < 0.0 { "auto".to_string() } else { self.max_obj_dist.to_string() }, self.max_fps, self.chat as u8, self.tooltips as u8, self.name_tags as u8, self.show_fps as u8, self.clouds as u8, self.pax_density, self.vol_ai, self.vol_scenery, self.mirror_size, self.mirror_refresh, self.doppler as u8, self.driver as u8, self.driverview_smooth as u8
+            SETTINGS_VERSION,
+            self.msaa,
+            self.anisotropy,
+            self.ssao as u8,
+            self.shadows as u8,
+            self.shadow_size,
+            self.shadow_blobs as u8,
+            self.navigator as u8,
+            self.ui_opacity,
+            self.navigator_corner,
+            self.boarding,
+            self.detail_textures as u8,
+            self.exact_fare as u8,
+            self.enhanced as u8,
+            self.graphics,
+            self.vr as u8,
+            self.vr_scale,
+            self.fullscreen as u8,
+            self.vsync as u8,
+            self.volume,
+            self.drive_keys,
+            self.post_aa,
+            self.render_scale_text(),
+            self.language,
+            self.texture_compression as u8,
+            self.texture_memory,
+            self.auto_clutch as u8,
+            self.auto_ibis as u8,
+            self.momentary_gears as u8,
+            self.min_obj_size,
+            if self.max_obj_dist < 0.0 {
+                "auto".to_string()
+            } else {
+                self.max_obj_dist.to_string()
+            },
+            self.max_fps,
+            self.chat as u8,
+            self.tooltips as u8,
+            self.name_tags as u8,
+            self.show_fps as u8,
+            self.clouds as u8,
+            self.pax_density,
+            self.vol_ai,
+            self.vol_scenery,
+            self.mirror_size,
+            self.mirror_refresh,
+            self.doppler as u8,
+            self.driver as u8,
+            self.driverview_smooth as u8
         );
         text.push_str(&format!(
             "vr_head_smoothing_ms={}\nvr_mirror_rate={}\nvr_desktop_mirror={}\nled_glow={}\nled_mips={}\nui_scale={}\nui_scale_window={}\nnotes={}\n",
             self.vr_head_smoothing_ms, self.vr_mirror_rate, self.vr_desktop_mirror as u8, self.led_glow, self.led_mips, self.ui_scale, self.ui_scale_window as u8, self.notes as u8,
         ));
-        text.push_str(&format!("atmosphere_brightness={}\n", self.atmosphere_brightness));
+        text.push_str(&format!(
+            "atmosphere_brightness={}\n",
+            self.atmosphere_brightness
+        ));
         text.push_str(&format!("steer_look={}\nsteer_look_angle={}\nsteer_look_response={}\nlook_sens={}\nblinker_cancel={}\n", self.steer_look as u8, self.steer_look_angle, self.steer_look_response, self.look_sens, self.blinker_cancel as u8));
-        text.push_str(&format!("units={}\ndiscord_status={}\ndiscord_app_id={}\n", self.units, self.discord_status as u8, self.discord_app_id));
+        text.push_str(&format!(
+            "units={}\ndiscord_status={}\ndiscord_app_id={}\n",
+            self.units, self.discord_status as u8, self.discord_app_id
+        ));
         text.push_str(&format!("auto_shift={}\n", self.auto_shift as u8));
         text
     }
@@ -552,7 +1010,11 @@ impl Settings {
 
     /// `auto` or the fraction, as the file and the log write it.
     pub fn render_scale_text(&self) -> String {
-        if self.render_scale > 0.0 { format!("{}", self.render_scale) } else { "auto".into() }
+        if self.render_scale > 0.0 {
+            format!("{}", self.render_scale)
+        } else {
+            "auto".into()
+        }
     }
 
     /// Lighter graphics after the graphics device was lost `n` times this session: no
@@ -563,26 +1025,59 @@ impl Settings {
         self.ssao = false;
         self.shadow_size = self.shadow_size.min(2048);
         self.mirror_size = self.mirror_size.min(256);
-        let budget = if self.texture_memory > 0 { self.texture_memory } else { 1200 };
+        let budget = if self.texture_memory > 0 {
+            self.texture_memory
+        } else {
+            1200
+        };
         self.texture_memory = (budget * 2 / 3).max(400);
         if n >= 2 {
             self.shadows = false;
             self.shadow_size = 1024;
-            self.render_scale = if self.render_scale > 0.0 { self.render_scale.min(0.75) } else { 0.75 };
+            self.render_scale = if self.render_scale > 0.0 {
+                self.render_scale.min(0.75)
+            } else {
+                0.75
+            };
             self.texture_memory = self.texture_memory.min(700);
             self.mirror_size = self.mirror_size.min(128);
         }
-        log::warn!("safer graphics after a lost graphics device ({n}): msaa 1, SSAO off, shadows {} ({}), textures {} MB, render scale {}", self.shadows, self.shadow_size, self.texture_memory, self.render_scale_text());
+        log::warn!(
+            "safer graphics after a lost graphics device ({n}): msaa 1, SSAO off, shadows {} ({}), textures {} MB, render scale {}",
+            self.shadows,
+            self.shadow_size,
+            self.texture_memory,
+            self.render_scale_text()
+        );
     }
 
     pub fn render_options(&self) -> omsi_render::RenderOptions {
-        omsi_render::RenderOptions { msaa: self.msaa, anisotropy: self.anisotropy, shadow_size: self.shadow_size, ssao: self.ssao, render_scale: self.render_scale, compress_textures: self.texture_compression, fxaa: self.post_aa != "off", min_obj_size: self.min_obj_size, max_obj_dist: self.object_distance(), omsi_shadow_casters: self.shadow_casters == "omsi", shadow_blobs: self.shadow_blobs, reflections: self.reflections, no_enhanced: graphics_mode(&self.graphics) != "enhanced" }
+        omsi_render::RenderOptions {
+            msaa: self.msaa,
+            anisotropy: self.anisotropy,
+            shadow_size: self.shadow_size,
+            ssao: self.ssao,
+            render_scale: self.render_scale,
+            compress_textures: self.texture_compression,
+            fxaa: self.post_aa != "off",
+            min_obj_size: self.min_obj_size,
+            max_obj_dist: self.object_distance(),
+            omsi_shadow_casters: self.shadow_casters == "omsi",
+            shadow_blobs: self.shadow_blobs,
+            reflections: self.reflections,
+            no_enhanced: graphics_mode(&self.graphics) != "enhanced",
+        }
     }
 }
 
 /// `vanilla`, `vanilla_plus` or `enhanced` from the ways a file may spell them.
 pub fn graphics_mode(v: &str) -> &'static str {
-    match v.trim().to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
+    match v
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_")
+        .as_str()
+    {
         "enhanced" | "1" => "enhanced",
         "vanilla" | "classic" | "original" | "omsi" | "omsi2" | "omsi_2" => "vanilla",
         _ => "vanilla_plus",
@@ -593,7 +1088,11 @@ pub fn graphics_mode(v: &str) -> &'static str {
 /// are kept loaded (OMSI's "visible distance"). None when the file does not say.
 pub fn view_distance() -> Option<f64> {
     let text = std::fs::read_to_string(Settings::path()?).ok()?;
-    text.lines().filter_map(|l| l.trim().split_once('=')).find(|(k, _)| k.trim().eq_ignore_ascii_case("view_distance")).and_then(|(_, v)| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0)
+    text.lines()
+        .filter_map(|l| l.trim().split_once('='))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("view_distance"))
+        .and_then(|(_, v)| v.trim().parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
 }
 
 #[cfg(test)]
@@ -603,16 +1102,32 @@ mod tests {
     #[test]
     fn old_files_board_automatically() {
         // the launcher's old default, written without a version
-        assert_eq!(Settings::from_text("msaa=1\nboarding=pay\n").boarding, "auto");
+        assert_eq!(
+            Settings::from_text("msaa=1\nboarding=pay\n").boarding,
+            "auto"
+        );
         // chosen again in a current file, it stays
-        assert_eq!(Settings::from_text("version=2\nboarding=pay\n").boarding, "pay");
+        assert_eq!(
+            Settings::from_text("version=2\nboarding=pay\n").boarding,
+            "pay"
+        );
         assert_eq!(Settings::from_text("boarding=walk\n").boarding, "walk");
         // what we write reads back the same
-        let s = Settings { boarding: "pay".into(), ..Default::default() };
+        let s = Settings {
+            boarding: "pay".into(),
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&s.to_text()), s);
-        let s = Settings { texture_compression: false, texture_memory: 1500, ..Default::default() };
+        let s = Settings {
+            texture_compression: false,
+            texture_memory: 1500,
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&s.to_text()), s);
-        assert_eq!(Settings::from_text("texmemlimit=401.0\n").texture_memory, 401);
+        assert_eq!(
+            Settings::from_text("texmemlimit=401.0\n").texture_memory,
+            401
+        );
     }
 
     #[test]
@@ -625,7 +1140,11 @@ mod tests {
         assert!(Settings::from_text("graphics=enhanced\nenhanced=0\n").enhanced);
         assert_eq!(graphics_mode("Vanilla+"), "vanilla_plus");
         assert_eq!(graphics_mode("OMSI 2"), "vanilla");
-        let s = Settings { graphics: "enhanced".into(), enhanced: true, ..Default::default() };
+        let s = Settings {
+            graphics: "enhanced".into(),
+            enhanced: true,
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&s.to_text()), s);
     }
 
@@ -633,26 +1152,49 @@ mod tests {
     fn mirror_size_zero_disables_mirror_rendering() {
         assert_eq!(Settings::from_text("mirror_size=0\n").mirror_size, 0);
         assert_eq!(Settings::from_text("mirror_size=32\n").mirror_size, 64);
-        let off = Settings { mirror_size: 0, ..Default::default() };
+        let off = Settings {
+            mirror_size: 0,
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&off.to_text()).mirror_size, 0);
     }
 
     #[test]
     fn mirror_refresh_reads_omsi_realreflexions_and_round_trips() {
         assert_eq!(Settings::default().mirror_refresh, "full");
-        assert_eq!(Settings::from_text("performance_realreflexions=none\n").mirror_refresh, "off");
-        assert_eq!(Settings::from_text("performance_realreflexions=economy\n").mirror_refresh, "eco");
-        assert_eq!(Settings::from_text("performance_realreflexions=full\n").mirror_refresh, "full");
-        assert_eq!(Settings::from_text("mirror_refresh=nonsense\n").mirror_refresh, "full");
+        assert_eq!(
+            Settings::from_text("performance_realreflexions=none\n").mirror_refresh,
+            "off"
+        );
+        assert_eq!(
+            Settings::from_text("performance_realreflexions=economy\n").mirror_refresh,
+            "eco"
+        );
+        assert_eq!(
+            Settings::from_text("performance_realreflexions=full\n").mirror_refresh,
+            "full"
+        );
+        assert_eq!(
+            Settings::from_text("mirror_refresh=nonsense\n").mirror_refresh,
+            "full"
+        );
         for mode in ["off", "eco", "full"] {
-            let s = Settings { mirror_refresh: mode.into(), ..Default::default() };
+            let s = Settings {
+                mirror_refresh: mode.into(),
+                ..Default::default()
+            };
             assert_eq!(Settings::from_text(&s.to_text()).mirror_refresh, mode);
         }
     }
 
     #[test]
     fn steering_view_settings_round_trip_and_reject_invalid_values() {
-        let settings = Settings { steer_look: true, steer_look_angle: 45.0, steer_look_response: 0.5, ..Default::default() };
+        let settings = Settings {
+            steer_look: true,
+            steer_look_angle: 45.0,
+            steer_look_response: 0.5,
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&settings.to_text()), settings);
         let invalid = Settings::from_text("steer_look_angle=NaN\nsteer_look_response=NaN\n");
         assert_eq!(invalid.steer_look_angle, 30.0);
@@ -665,11 +1207,20 @@ mod tests {
     #[test]
     fn vr_mirror_rates_round_trip_including_every_frame() {
         for rate in [-1.0, 0.0, 16.0, 60.0, 120.0, 240.0, 360.0] {
-            let s = Settings { vr_mirror_rate: rate, ..Default::default() };
+            let s = Settings {
+                vr_mirror_rate: rate,
+                ..Default::default()
+            };
             assert_eq!(Settings::from_text(&s.to_text()).vr_mirror_rate, rate);
         }
-        assert_eq!(Settings::from_text("vr_mirror_rate=NaN\n").vr_mirror_rate, 16.0);
-        assert_eq!(Settings::from_text("vr_mirror_rate=999\n").vr_mirror_rate, 360.0);
+        assert_eq!(
+            Settings::from_text("vr_mirror_rate=NaN\n").vr_mirror_rate,
+            16.0
+        );
+        assert_eq!(
+            Settings::from_text("vr_mirror_rate=999\n").vr_mirror_rate,
+            360.0
+        );
     }
 
     #[test]
@@ -679,10 +1230,19 @@ mod tests {
         assert_eq!(Settings::from_text("ui_scale=5\n").ui_scale, 2.0);
         assert_eq!(Settings::from_text("ui_scale=0\n").ui_scale, 0.5);
         assert_eq!(Settings::from_text("ui_scale=NaN\n").ui_scale, 1.0);
-        let s = Settings { ui_scale: 1.5, ui_scale_window: false, ui_opacity: 0.4, notes: false, ..Default::default() };
+        let s = Settings {
+            ui_scale: 1.5,
+            ui_scale_window: false,
+            ui_opacity: 0.4,
+            notes: false,
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&s.to_text()), s);
         // (the opacity under its old name, the navigator's)
-        assert_eq!(Settings::from_text("navigator_opacity=0.5\n").ui_opacity, 0.5);
+        assert_eq!(
+            Settings::from_text("navigator_opacity=0.5\n").ui_opacity,
+            0.5
+        );
         assert_eq!(Settings::from_text("ui_opacity=7\n").ui_opacity, 1.0);
     }
 
@@ -692,14 +1252,21 @@ mod tests {
         assert_eq!(Settings::from_text("units=uk\n").units, "uk");
         assert_eq!(Settings::from_text("units=imperial\n").units, "imperial");
         assert_eq!(Settings::from_text("units=unknown\n").units, "metric");
-        let s = Settings { units: "imperial".into(), ..Default::default() };
+        let s = Settings {
+            units: "imperial".into(),
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&s.to_text()), s);
     }
 
     #[test]
     fn discord_settings_round_trip_and_default_enabled() {
         assert!(Settings::default().discord_status);
-        let settings = Settings { discord_status: false, discord_app_id: "123456".into(), ..Default::default() };
+        let settings = Settings {
+            discord_status: false,
+            discord_app_id: "123456".into(),
+            ..Default::default()
+        };
         assert_eq!(Settings::from_text(&settings.to_text()), settings);
     }
 
@@ -725,20 +1292,31 @@ impl Settings {
 /// kept per `.bus` file in `~/.neoomsi/mirrors.cfg` as `<bus file>|<mirror>=<yaw>,<pitch>`.
 pub fn mirror_offsets(bus: &std::path::Path) -> Vec<[f32; 2]> {
     let key = bus.to_string_lossy().to_ascii_lowercase();
-    let Some(p) = Settings::path().map(|p| p.with_file_name("mirrors.cfg")) else { return Vec::new() };
+    let Some(p) = Settings::path().map(|p| p.with_file_name("mirrors.cfg")) else {
+        return Vec::new();
+    };
     let text = std::fs::read_to_string(p).unwrap_or_default();
     let mut out: Vec<[f32; 2]> = Vec::new();
     for line in text.lines() {
-        let Some((k, v)) = line.rsplit_once('=') else { continue };
-        let Some((file, i)) = k.rsplit_once('|') else { continue };
-        let (Ok(i), Some((y, p))) = (i.trim().parse::<usize>(), v.split_once(',')) else { continue };
+        let Some((k, v)) = line.rsplit_once('=') else {
+            continue;
+        };
+        let Some((file, i)) = k.rsplit_once('|') else {
+            continue;
+        };
+        let (Ok(i), Some((y, p))) = (i.trim().parse::<usize>(), v.split_once(',')) else {
+            continue;
+        };
         if file.trim().to_ascii_lowercase() != key || i > 64 {
             continue;
         }
         if out.len() <= i {
             out.resize(i + 1, [0.0; 2]);
         }
-        out[i] = [y.trim().parse().unwrap_or(0.0), p.trim().parse().unwrap_or(0.0)];
+        out[i] = [
+            y.trim().parse().unwrap_or(0.0),
+            p.trim().parse().unwrap_or(0.0),
+        ];
     }
     out
 }
@@ -746,16 +1324,27 @@ pub fn mirror_offsets(bus: &std::path::Path) -> Vec<[f32; 2]> {
 /// Keep a bus's mirror turns (see [`mirror_offsets`]).
 pub fn save_mirror_offsets(bus: &std::path::Path, offsets: &[[f32; 2]]) {
     let key = bus.to_string_lossy().to_ascii_lowercase();
-    let Some(p) = Settings::path().map(|p| p.with_file_name("mirrors.cfg")) else { return };
+    let Some(p) = Settings::path().map(|p| p.with_file_name("mirrors.cfg")) else {
+        return;
+    };
     let text = std::fs::read_to_string(&p).unwrap_or_default();
     let mut lines: Vec<String> = text
         .lines()
-        .filter(|l| l.rsplit_once('=').and_then(|(k, _)| k.rsplit_once('|')).is_none_or(|(f, _)| f.trim().to_ascii_lowercase() != key))
+        .filter(|l| {
+            l.rsplit_once('=')
+                .and_then(|(k, _)| k.rsplit_once('|'))
+                .is_none_or(|(f, _)| f.trim().to_ascii_lowercase() != key)
+        })
         .map(str::to_string)
         .collect();
     for (i, o) in offsets.iter().enumerate() {
         if o[0].abs() > 0.01 || o[1].abs() > 0.01 {
-            lines.push(format!("{}|{i}={:.1},{:.1}", bus.to_string_lossy(), o[0], o[1]));
+            lines.push(format!(
+                "{}|{i}={:.1},{:.1}",
+                bus.to_string_lossy(),
+                o[0],
+                o[1]
+            ));
         }
     }
     if let Some(d) = p.parent() {

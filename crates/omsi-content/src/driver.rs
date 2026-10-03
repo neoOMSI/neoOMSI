@@ -21,13 +21,30 @@ pub struct Driver {
 impl Driver {
     /// Write the personnel file the way OMSI does (UTF-16 LE with a BOM, CR LF).
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let mut t = String::from("-----------------------\r\nDriver File\r\n-----------------------\r\n\r\n");
+        let mut t = String::from(
+            "-----------------------\r\nDriver File\r\n-----------------------\r\n\r\n",
+        );
         t.push_str("Created with neoOMSI\r\n\r\n");
-        t.push_str(&format!("[ident]\r\n{}\r\n{}\r\n{}\r\n{}\r\n\r\n", self.name, if self.sex.is_empty() { "M" } else { &self.sex }, self.birth_date, self.employ_date));
-        t.push_str(&format!("[busstops]\r\n{}\r\n{}\r\n{}\r\n\r\n", self.bus_stops[0], self.bus_stops[1], self.bus_stops[2]));
+        t.push_str(&format!(
+            "[ident]\r\n{}\r\n{}\r\n{}\r\n{}\r\n\r\n",
+            self.name,
+            if self.sex.is_empty() { "M" } else { &self.sex },
+            self.birth_date,
+            self.employ_date
+        ));
+        t.push_str(&format!(
+            "[busstops]\r\n{}\r\n{}\r\n{}\r\n\r\n",
+            self.bus_stops[0], self.bus_stops[1], self.bus_stops[2]
+        ));
         t.push_str(&format!("[hektom]\r\n{:.0}\r\n\r\n", self.hektom));
-        t.push_str(&format!("[crashs]\r\n{}\r\n{}\r\n{}\r\n{}\r\n\r\n", self.crashes[0], self.crashes[1], self.crashes[2], self.crashes[3]));
-        t.push_str(&format!("[tickets]\r\n{:.0}\r\n{:.6}\r\n\r\n", self.tickets[0], self.tickets[1]));
+        t.push_str(&format!(
+            "[crashs]\r\n{}\r\n{}\r\n{}\r\n{}\r\n\r\n",
+            self.crashes[0], self.crashes[1], self.crashes[2], self.crashes[3]
+        ));
+        t.push_str(&format!(
+            "[tickets]\r\n{:.0}\r\n{:.6}\r\n\r\n",
+            self.tickets[0], self.tickets[1]
+        ));
         t.push_str("[rating]\r\n");
         for v in &self.rating {
             t.push_str(&format!("{v:.6}\r\n"));
@@ -47,7 +64,10 @@ impl Driver {
 
     pub fn load(path: &Path) -> Result<Driver, omsi_cfg::CfgError> {
         let f = CfgFile::read(path)?;
-        let mut d = Driver { path: f.path.clone(), ..Default::default() };
+        let mut d = Driver {
+            path: f.path.clone(),
+            ..Default::default()
+        };
         let mut r = f.reader();
         while let Some(k) = r.next_keyword() {
             match k.as_str() {
@@ -62,7 +82,13 @@ impl Driver {
                 "crashs" => d.crashes = [r.i32(), r.i32(), r.i32(), r.i32()],
                 "tickets" => d.tickets = r.f64s::<2>(),
                 "rating" => d.rating = r.f64s::<5>(),
-                "perbusinfo" => d.per_bus_info = r.rest_of_block().into_iter().map(|s| s.to_string()).collect(),
+                "perbusinfo" => {
+                    d.per_bus_info = r
+                        .rest_of_block()
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                }
                 _ => {}
             }
         }
@@ -77,9 +103,19 @@ impl Driver {
     /// older neoOMSI file kept averages there) are set back to zero.
     fn check_ratings(&mut self) {
         let [p, content, asked, points, stepped] = self.rating;
-        let ok = (0.0..=1.0).contains(&p) && content >= 0.0 && content <= stepped && asked >= 0.0 && points >= 0.0 && points <= 2.0 * asked + 1e-9 && self.rating.iter().all(|v| v.is_finite());
+        let ok = (0.0..=1.0).contains(&p)
+            && content >= 0.0
+            && content <= stepped
+            && asked >= 0.0
+            && points >= 0.0
+            && points <= 2.0 * asked + 1e-9
+            && self.rating.iter().all(|v| v.is_finite());
         if !ok {
-            log::info!("personnel file {}: ratings {:?} are not Omsi.exe's counters; started afresh", self.path.display(), self.rating);
+            log::info!(
+                "personnel file {}: ratings {:?} are not Omsi.exe's counters; started afresh",
+                self.path.display(),
+                self.rating
+            );
             self.rating = [0.0; 5];
         }
     }

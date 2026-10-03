@@ -68,7 +68,10 @@ impl PassengerCabin {
         while let Some(k) = r.next_keyword() {
             match k.as_str() {
                 "entry" => {
-                    let mut e = Entry { path_point: r.i32(), ..Default::default() };
+                    let mut e = Entry {
+                        path_point: r.i32(),
+                        ..Default::default()
+                    };
                     loop {
                         let save = r.pos();
                         let w = r.word().to_ascii_lowercase();
@@ -86,12 +89,25 @@ impl PassengerCabin {
                 "exit" => c.exits.push(r.i32()),
                 "linktonextveh" => c.link_to_next_veh = Some(r.i32()),
                 "linktoprevveh" => c.link_to_prev_veh = Some(r.i32()),
-                "stamper" => c.stampers.push(Point3 { path_point: r.i32(), pos: r.f32s::<3>() }),
-                "ticket_sale" => c.ticket_sales.push(Point3 { path_point: r.i32(), pos: r.f32s::<3>() }),
-                "ticket_sale_money_point" | "ticket_sale_money_point_2" | "ticket_sale_change_point" | "ticket_sale_change_point_2" => {
+                "stamper" => c.stampers.push(Point3 {
+                    path_point: r.i32(),
+                    pos: r.f32s::<3>(),
+                }),
+                "ticket_sale" => c.ticket_sales.push(Point3 {
+                    path_point: r.i32(),
+                    pos: r.f32s::<3>(),
+                }),
+                "ticket_sale_money_point"
+                | "ticket_sale_money_point_2"
+                | "ticket_sale_change_point"
+                | "ticket_sale_change_point_2" => {
                     let pos = r.f32s::<3>();
                     let var = r.f32s::<2>();
-                    let parent = if k.ends_with("_2") { Some(r.str().to_string()) } else { None };
+                    let parent = if k.ends_with("_2") {
+                        Some(r.str().to_string())
+                    } else {
+                        None
+                    };
                     let p = VarPoint { pos, var, parent };
                     if k.contains("money") {
                         c.money_points.push(p);
@@ -109,7 +125,13 @@ impl PassengerCabin {
                         None => [0, 1, 2, 3],
                     };
                     let file_index = c.pass_positions.len() + c.driver_positions.len();
-                    let p = PassPos { pos, height, rot, illumination, file_index };
+                    let p = PassPos {
+                        pos,
+                        height,
+                        rot,
+                        illumination,
+                        file_index,
+                    };
                     if k == "passpos" {
                         c.pass_positions.push(p);
                         last = Some((false, c.pass_positions.len() - 1));
@@ -151,7 +173,10 @@ mod tests {
         assert_eq!(c.pass_positions[0].illumination, [4, 5, -1, -1]);
         assert_eq!(c.pass_positions[1].illumination, [6, 7, 8, 9]);
         assert_eq!(c.pass_positions[2].illumination, [6, 7, 8, 9]);
-        let c = PassengerCabin::parse(&CfgFile::from_str("passengercabin.cfg", "[passpos]\n0\n0\n1\n0.5\n0\n"));
+        let c = PassengerCabin::parse(&CfgFile::from_str(
+            "passengercabin.cfg",
+            "[passpos]\n0\n0\n1\n0.5\n0\n",
+        ));
         assert_eq!(c.pass_positions[0].illumination, [0, 1, 2, 3]);
     }
 
@@ -162,6 +187,12 @@ mod tests {
         let c = PassengerCabin::parse(&CfgFile::from_str("passengercabin.cfg", text));
         let seats: Vec<usize> = c.pass_positions.iter().map(|p| p.file_index).collect();
         assert_eq!(seats, [1, 2, 4]);
-        assert_eq!(c.driver_positions.iter().map(|p| p.file_index).collect::<Vec<_>>(), [0, 3]);
+        assert_eq!(
+            c.driver_positions
+                .iter()
+                .map(|p| p.file_index)
+                .collect::<Vec<_>>(),
+            [0, 3]
+        );
     }
 }

@@ -44,7 +44,9 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
     // (a pixel or palette entry of no bytes has no colour to read; a picture wider than
     // any texture is a damaged header, not something to allocate gigabytes for)
     if px_bytes == 0 || px_bytes > 4 || (base == 1 && !(1..=4).contains(&cmap_bytes)) {
-        return Err(format!("unsupported pixel depth {bpp} (palette {cmap_bpp})"));
+        return Err(format!(
+            "unsupported pixel depth {bpp} (palette {cmap_bpp})"
+        ));
     }
     if width > crate::MAX_DIMENSION || height > crate::MAX_DIMENSION {
         return Err(format!("{width}x{height} is larger than any texture"));
@@ -86,14 +88,24 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
                 let r = ((v >> 10) & 31) as u32;
                 let g = ((v >> 5) & 31) as u32;
                 let bl = (v & 31) as u32;
-                let a = if bits == 16 && v & 0x8000 == 0 && false { 0 } else { 255 };
-                [((r * 255) / 31) as u8, ((g * 255) / 31) as u8, ((bl * 255) / 31) as u8, a]
+                let a = if bits == 16 && v & 0x8000 == 0 && false {
+                    0
+                } else {
+                    255
+                };
+                [
+                    ((r * 255) / 31) as u8,
+                    ((g * 255) / 31) as u8,
+                    ((bl * 255) / 31) as u8,
+                    a,
+                ]
             }
             _ => [p[0], p[0], p[0], 255],
         }
     };
     let mut rgba = vec![0u8; n * 4];
-    let has_alpha = (base == 2 && bpp == 32) || (base == 1 && cmap_bpp == 32) || (base == 3 && px_bytes == 2);
+    let has_alpha =
+        (base == 2 && bpp == 32) || (base == 1 && cmap_bpp == 32) || (base == 3 && px_bytes == 2);
     for y in 0..height {
         for x in 0..width {
             let i = y * width + x;
@@ -119,7 +131,12 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
             rgba[(dy * width + dx) * 4..][..4].copy_from_slice(&c);
         }
     }
-    Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha })
+    Ok(Image {
+        width: width as u32,
+        height: height as u32,
+        rgba,
+        has_alpha,
+    })
 }
 
 #[cfg(test)]

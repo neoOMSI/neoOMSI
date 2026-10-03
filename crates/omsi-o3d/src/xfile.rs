@@ -53,7 +53,10 @@ impl<'a> Tok<'a> {
             self.p += 1;
             return Some(&self.s[start..self.p]);
         }
-        while self.p < b.len() && !(b[self.p] as char).is_whitespace() && !b"{};,<>\"".contains(&b[self.p]) {
+        while self.p < b.len()
+            && !(b[self.p] as char).is_whitespace()
+            && !b"{};,<>\"".contains(&b[self.p])
+        {
             self.p += 1;
         }
         Some(&self.s[start..self.p])
@@ -72,11 +75,15 @@ impl<'a> Tok<'a> {
     }
     fn number(&mut self) -> Result<f32, O3dError> {
         loop {
-            let t = self.next().ok_or_else(|| O3dError::XFile("eof in number".into()))?;
+            let t = self
+                .next()
+                .ok_or_else(|| O3dError::XFile("eof in number".into()))?;
             if t == "," || t == ";" {
                 continue;
             }
-            return t.parse::<f32>().map_err(|_| O3dError::XFile(format!("bad number {t}")));
+            return t
+                .parse::<f32>()
+                .map_err(|_| O3dError::XFile(format!("bad number {t}")));
         }
     }
     fn int(&mut self) -> Result<usize, O3dError> {
@@ -194,7 +201,9 @@ fn parse_objects(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError
 fn parse_frame(t: &mut Tok, ctx: &mut Ctx, parent: Mat4) -> Result<(), O3dError> {
     let mut xform = parent;
     loop {
-        let tok = t.next().ok_or_else(|| O3dError::XFile("eof in frame".into()))?;
+        let tok = t
+            .next()
+            .ok_or_else(|| O3dError::XFile("eof in frame".into()))?;
         match tok {
             "}" => return Ok(()),
             "FrameTransformMatrix" => {
@@ -285,7 +294,9 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
     let mut mats: Vec<Material> = Vec::new();
     let mut material_refs: Vec<(usize, String)> = Vec::new();
     loop {
-        let tok = t.next().ok_or_else(|| O3dError::XFile("eof in mesh".into()))?;
+        let tok = t
+            .next()
+            .ok_or_else(|| O3dError::XFile("eof in mesh".into()))?;
         match tok {
             "}" => break,
             "MeshNormals" => {
@@ -296,7 +307,11 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
                 let nn = t.int()?;
                 let mut nrm = Vec::with_capacity(nn.min(t.s.len().saturating_sub(t.p)));
                 let linear = Mat3::from_mat4(xform);
-                let normal_matrix = if linear.determinant().abs() > 1e-12 { linear.inverse().transpose() } else { linear };
+                let normal_matrix = if linear.determinant().abs() > 1e-12 {
+                    linear.inverse().transpose()
+                } else {
+                    linear
+                };
                 for _ in 0..nn {
                     let n = Vec3::new(t.number()?, t.number()?, t.number()?);
                     nrm.push((normal_matrix * n).normalize_or_zero());
@@ -344,7 +359,9 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
                     }
                 }
                 loop {
-                    let tk = t.next().ok_or_else(|| O3dError::XFile("eof in matlist".into()))?;
+                    let tk = t
+                        .next()
+                        .ok_or_else(|| O3dError::XFile("eof in matlist".into()))?;
                     match tk {
                         "}" => break,
                         "Material" => {
@@ -388,12 +405,19 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
         mats.push(Material::default());
     }
     for i in 0..nv {
-        ctx.mesh.vertices.push(Vertex { position: positions[i], normal: normals[i], uv: uvs[i] });
+        ctx.mesh.vertices.push(Vertex {
+            position: positions[i],
+            normal: normals[i],
+            uv: uvs[i],
+        });
     }
     for (fi, f) in faces.iter().enumerate() {
         let m = base_m + face_mats[fi].min(mats.len() as u16 - 1);
         for k in 1..f.len().saturating_sub(1) {
-            ctx.mesh.triangles.push(Triangle { indices: [base_v + f[0], base_v + f[k], base_v + f[k + 1]], material: m });
+            ctx.mesh.triangles.push(Triangle {
+                indices: [base_v + f[0], base_v + f[k], base_v + f[k + 1]],
+                material: m,
+            });
         }
     }
     let material_base = ctx.mesh.materials.len();
@@ -468,7 +492,6 @@ fn skip_to_close(t: &mut Tok) -> Result<(), O3dError> {
 mod tests {
     use super::*;
 
-
     #[test]
     #[ignore = "requires installed traffic-light assets; set OMSI_ROOT or OMSI_TEST_CONTENT"]
     fn installed_traffic_light_material_references() {
@@ -497,10 +520,11 @@ mod tests {
                 texture.display()
             );
         }
-        assert!(mesh
-            .triangles
-            .iter()
-            .all(|triangle| (triangle.material as usize) < mesh.materials.len()));
+        assert!(
+            mesh.triangles
+                .iter()
+                .all(|triangle| (triangle.material as usize) < mesh.materials.len())
+        );
     }
 
     fn material_test_mesh(entries: &str) -> String {
@@ -630,12 +654,20 @@ Frame Root {\n FrameTransformMatrix {\n 1.0, 0.0, 0.0, 0.0,\n 0.0,-0.0, 1.0, 0.0
         let p: Vec<Vec3> = m.vertices.iter().map(|v| v.position).collect();
         // Blender (x, y, z) -> child: (x, y, z)·M = (-2y, 2x, 2z) + (-0.5, 5.5, 1.3), then the
         // root swaps y and z.
-        let want = [Vec3::new(-0.5, 1.3, 7.5), Vec3::new(-2.5, 1.3, 5.5), Vec3::new(-0.5, 3.3, 5.5)];
+        let want = [
+            Vec3::new(-0.5, 1.3, 7.5),
+            Vec3::new(-2.5, 1.3, 5.5),
+            Vec3::new(-0.5, 3.3, 5.5),
+        ];
         for (a, b) in p.iter().zip(want) {
             assert!((*a - b).length() < 1e-5, "{p:?}");
         }
         // the +x normal turns to Blender +y, D3D +z
-        assert!((m.vertices[0].normal - Vec3::Z).length() < 1e-5, "{:?}", m.vertices[0].normal);
+        assert!(
+            (m.vertices[0].normal - Vec3::Z).length() < 1e-5,
+            "{:?}",
+            m.vertices[0].normal
+        );
     }
 
     /// A Blender export: the root frame swaps y and z, the child frame turns, scales and
@@ -646,9 +678,21 @@ Frame Root {\n FrameTransformMatrix {\n 1.0, 0.0, 0.0, 0.0,\n 0.0,-0.0, 1.0, 0.0
         let m = parse_x(x.as_bytes()).unwrap();
         let p: Vec<Vec3> = m.vertices.iter().map(|v| v.position).collect();
         // v * child: (x, y, z) -> (2x + 0.5, -2z + 0.25, 2y + 1.5); then y and z swap
-        assert!((p[0] - Vec3::new(0.5, 1.5, 0.25)).length() < 1e-5, "{:?}", p[0]);
-        assert!((p[1] - Vec3::new(2.5, 1.5, 0.25)).length() < 1e-5, "{:?}", p[1]);
-        assert!((p[2] - Vec3::new(0.5, 3.5, 0.25)).length() < 1e-5, "{:?}", p[2]);
+        assert!(
+            (p[0] - Vec3::new(0.5, 1.5, 0.25)).length() < 1e-5,
+            "{:?}",
+            p[0]
+        );
+        assert!(
+            (p[1] - Vec3::new(2.5, 1.5, 0.25)).length() < 1e-5,
+            "{:?}",
+            p[1]
+        );
+        assert!(
+            (p[2] - Vec3::new(0.5, 3.5, 0.25)).length() < 1e-5,
+            "{:?}",
+            p[2]
+        );
     }
 
     /// A frame that scales unevenly (the Ruede Trafohaus: 1.5 x 0.75 x 0.85) keeps the
@@ -661,7 +705,11 @@ Frame Root {\n FrameTransformMatrix {\n 1.0, 0.0, 0.0, 0.0,\n 0.0,-0.0, 1.0, 0.0
         let [a, b, c] = [0, 1, 2].map(|i| m.vertices[i].position);
         let face = (b - a).cross(c - a).normalize();
         for v in &m.vertices {
-            assert!(v.normal.normalize().dot(face).abs() > 0.9999, "{:?} vs {face:?}", v.normal);
+            assert!(
+                v.normal.normalize().dot(face).abs() > 0.9999,
+                "{:?} vs {face:?}",
+                v.normal
+            );
         }
     }
 }

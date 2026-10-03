@@ -11,13 +11,34 @@ impl App {
             // looking around with the keyboard: Alt + I/J/K/L (the plain letters
             // belong to the bus - L is the headlights in Inputs/keyboard.cfg)
             let step = 60.0 * dt;
-            let ctrl_alt = (self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight)) && (self.keys.contains(&KeyCode::AltLeft) || self.keys.contains(&KeyCode::AltRight));
-            let arrows = [KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::ArrowUp, KeyCode::ArrowDown].map(|k| self.keys.contains(&k));
-            if let (true, Some(p), Some(cam)) = (ctrl_alt && self.view == "driver" && arrows.iter().any(|a| *a), self.player.as_mut(), self.camera.as_ref()) {
+            let ctrl_alt = (self.keys.contains(&KeyCode::ControlLeft)
+                || self.keys.contains(&KeyCode::ControlRight))
+                && (self.keys.contains(&KeyCode::AltLeft)
+                    || self.keys.contains(&KeyCode::AltRight));
+            let arrows = [
+                KeyCode::ArrowLeft,
+                KeyCode::ArrowRight,
+                KeyCode::ArrowUp,
+                KeyCode::ArrowDown,
+            ]
+            .map(|k| self.keys.contains(&k));
+            if let (true, Some(p), Some(cam)) = (
+                ctrl_alt && self.view == "driver" && arrows.iter().any(|a| *a),
+                self.player.as_mut(),
+                self.camera.as_ref(),
+            ) {
                 let cams = &p.vehicle.ty.def.cameras_reflexion;
                 let f = cam.forward();
                 let best = (0..cams.len())
-                    .map(|i| (i, (p.vehicle.camera_world_full(&cams[i]).0 - cam.position).as_vec3().normalize_or_zero().dot(f)))
+                    .map(|i| {
+                        (
+                            i,
+                            (p.vehicle.camera_world_full(&cams[i]).0 - cam.position)
+                                .as_vec3()
+                                .normalize_or_zero()
+                                .dot(f),
+                        )
+                    })
                     .max_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(i, _)| i);
                 if let Some(i) = best {
@@ -26,19 +47,31 @@ impl App {
                     }
                     let o = &mut p.mirror_offsets[i];
                     let rate = 12.0 * dt;
-                    o[0] = (o[0] + rate * (arrows[1] as i32 - arrows[0] as i32) as f32).clamp(-45.0, 45.0);
-                    o[1] = (o[1] + rate * (arrows[2] as i32 - arrows[3] as i32) as f32).clamp(-30.0, 30.0);
+                    o[0] = (o[0] + rate * (arrows[1] as i32 - arrows[0] as i32) as f32)
+                        .clamp(-45.0, 45.0);
+                    o[1] = (o[1] + rate * (arrows[2] as i32 - arrows[3] as i32) as f32)
+                        .clamp(-30.0, 30.0);
                     p.mirrors_dirty = true;
-                    self.service_msg = Some((format!("Mirror {}: {:+.1}° across, {:+.1}° up (Ctrl+Alt+arrows)", i + 1, o[0], o[1]), 2.0));
+                    self.service_msg = Some((
+                        format!(
+                            "Mirror {}: {:+.1}° across, {:+.1}° up (Ctrl+Alt+arrows)",
+                            i + 1,
+                            o[0],
+                            o[1]
+                        ),
+                        2.0,
+                    ));
                 }
             } else if let Some(p) = self.player.as_mut().filter(|p| p.mirrors_dirty) {
                 p.mirrors_dirty = false;
                 settings::save_mirror_offsets(&p.vehicle.ty.def.path, &p.mirror_offsets);
             }
             self.look.0 += step * 1.5 * (self.pad_look[1] as i32 - self.pad_look[0] as i32) as f32;
-            self.look.1 = (self.look.1 + step * 0.7 * (self.pad_look[2] as i32 - self.pad_look[3] as i32) as f32).clamp(-85.0, 85.0);
-            let alt = self.keys.contains(&KeyCode::AltLeft)
-                || self.keys.contains(&KeyCode::AltRight);
+            self.look.1 = (self.look.1
+                + step * 0.7 * (self.pad_look[2] as i32 - self.pad_look[3] as i32) as f32)
+                .clamp(-85.0, 85.0);
+            let alt =
+                self.keys.contains(&KeyCode::AltLeft) || self.keys.contains(&KeyCode::AltRight);
             if alt && self.keys.contains(&KeyCode::KeyJ) {
                 self.look.0 -= step;
             }
@@ -55,14 +88,22 @@ impl App {
                 self.look.0 = self.look.0.clamp(-140.0, 140.0);
             }
             {
-                let ctrl = self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
-                let shift = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
-                let dir = match (self.keys.contains(&KeyCode::PageUp), self.keys.contains(&KeyCode::PageDown)) {
+                let ctrl = self.keys.contains(&KeyCode::ControlLeft)
+                    || self.keys.contains(&KeyCode::ControlRight);
+                let shift = self.keys.contains(&KeyCode::ShiftLeft)
+                    || self.keys.contains(&KeyCode::ShiftRight);
+                let dir = match (
+                    self.keys.contains(&KeyCode::PageUp),
+                    self.keys.contains(&KeyCode::PageDown),
+                ) {
                     (true, false) => 1.0,
                     (false, true) => -1.0,
                     _ => 0.0,
                 };
-                let client = self.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client);
+                let client = self
+                    .lan
+                    .as_ref()
+                    .is_some_and(|l| l.role == omsi_net::Role::Client);
                 if ctrl && shift && dir != 0.0 && !client {
                     if self.clock_hold == 0.0 && self.real_time_locked() {
                         self.shift_clock(dir);
@@ -87,19 +128,22 @@ impl App {
                 }
             }
             if self.view == "outside" {
-                if zoom_in || self.keys.contains(&KeyCode::NumpadAdd)
-                {
+                if zoom_in || self.keys.contains(&KeyCode::NumpadAdd) {
                     self.orbit = (self.orbit - 12.0 * dt).max(ORBIT_MIN);
                 }
-                if zoom_out || self.keys.contains(&KeyCode::NumpadSubtract)
-                {
+                if zoom_out || self.keys.contains(&KeyCode::NumpadSubtract) {
                     self.orbit = (self.orbit + 12.0 * dt).min(ORBIT_MAX);
                 }
             }
             // Home held recentres the view - unless keyboard.cfg gives it a job (the
             // stock file makes it the ticket desk camera, which this then turned
             // straight ahead again whenever it was switched to, #733)
-            if self.keys.contains(&KeyCode::Home) && !self.game_keys.iter().any(|b| Some(b.scan_code) == keys::dik_code(KeyCode::Home)) {
+            if self.keys.contains(&KeyCode::Home)
+                && !self
+                    .game_keys
+                    .iter()
+                    .any(|b| Some(b.scan_code) == keys::dik_code(KeyCode::Home))
+            {
                 self.look = (0.0, 0.0);
                 self.orbit = ORBIT_DEFAULT;
                 self.view_zoom.remove(&self.view);
@@ -146,7 +190,11 @@ impl App {
                 let flat = Vec3::new(v.x, v.y, 0.0).normalize_or_zero();
                 let pace = if boost > 1.0 { 4.5 } else { 1.4 };
                 cam.position += (flat * pace * dt).as_dvec3();
-                if let Some(g) = self.world.as_ref().and_then(|w| w.walk_height(cam.position.x, cam.position.y)) {
+                if let Some(g) = self
+                    .world
+                    .as_ref()
+                    .and_then(|w| w.walk_height(cam.position.x, cam.position.y))
+                {
                     cam.position.z = g + 1.7;
                 }
             } else {

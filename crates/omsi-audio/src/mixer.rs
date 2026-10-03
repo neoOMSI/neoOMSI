@@ -6,8 +6,8 @@ use glam::Vec3;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 pub struct Clip {
     pub sample_rate: u32,
@@ -135,7 +135,8 @@ impl Shared {
         let updates = std::mem::take(&mut *self.updates.lock());
         let mut voices = self.voices.lock();
         if !updates.is_empty() {
-            let index: HashMap<VoiceId, usize> = voices.iter().enumerate().map(|(k, v)| (v.id, k)).collect();
+            let index: HashMap<VoiceId, usize> =
+                voices.iter().enumerate().map(|(k, v)| (v.id, k)).collect();
             for (id, params, at) in updates {
                 if let Some(&k) = index.get(&id) {
                     apply_params(&mut voices[k], params, at, listener.position);
@@ -149,7 +150,12 @@ impl Shared {
         // More voices than OMSI's `[sound_maxcount]` (200 by default): keep `[important]`
         // sounds first, then the ordinary voices that reach the listener loudest. Voices
         // left out still advance in time, so a loop comes back at the right phase.
-        let mixed: Option<Vec<bool>> = if voices.iter().filter(|v| !v.finished && v.stream.is_none()).count() > MAX_VOICES {
+        let mixed: Option<Vec<bool>> = if voices
+            .iter()
+            .filter(|v| !v.finished && v.stream.is_none())
+            .count()
+            > MAX_VOICES
+        {
             let mut ranked: Vec<(bool, f32, usize)> = voices
                 .iter()
                 .enumerate()
@@ -188,7 +194,8 @@ impl Shared {
             let target_gain = (v.params.gain * spatial_gain * listener.master).max(0.0);
             if let Some(sb) = v.stream.clone() {
                 let lp_alpha = if v.params.lowpass_hz > 0.0 {
-                    1.0 - (-2.0 * std::f32::consts::PI * v.params.lowpass_hz / dev_rate as f32).exp()
+                    1.0 - (-2.0 * std::f32::consts::PI * v.params.lowpass_hz / dev_rate as f32)
+                        .exp()
                 } else {
                     1.0
                 };
@@ -229,7 +236,8 @@ impl Shared {
                 v.finished = true;
                 continue;
             }
-            let step = (v.params.pitch * v.doppler.2).max(0.01) as f64 * clip.sample_rate as f64 / dev_rate;
+            let step = (v.params.pitch * v.doppler.2).max(0.01) as f64 * clip.sample_rate as f64
+                / dev_rate;
             // one-pole low-pass: alpha such that the filter's -3dB point sits at `lowpass_hz`
             let lp_alpha = if v.params.lowpass_hz > 0.0 {
                 1.0 - (-2.0 * std::f32::consts::PI * v.params.lowpass_hz / dev_rate as f32).exp()
@@ -287,7 +295,13 @@ impl Shared {
         voices.retain(|v| !v.finished);
         drop(voices);
         if listener.reverb_mix > 0.001 && listener.reverb_time > 0.05 {
-            self.reverb.lock().process(out, ch, rate, listener.reverb_time.min(3.0), listener.reverb_mix.min(1.0));
+            self.reverb.lock().process(
+                out,
+                ch,
+                rate,
+                listener.reverb_time.min(3.0),
+                listener.reverb_mix.min(1.0),
+            );
         }
         // The master limiter: a busy street sums past full scale, and cut off hard there the
         // sound crackled and squeaked. Loud moments are turned down (at once) and back up
@@ -297,9 +311,15 @@ impl Shared {
             let frames = (out.len() / ch.max(1)).max(1);
             let release = (-1.0 / (0.5 * rate as f32)).exp();
             for f in 0..frames {
-                let peak = (0..ch).map(|c| out[f * ch + c].abs()).fold(0.0f32, f32::max);
+                let peak = (0..ch)
+                    .map(|c| out[f * ch + c].abs())
+                    .fold(0.0f32, f32::max);
                 let want = if peak * *g > 0.9 { 0.9 / peak } else { 1.0 };
-                *g = if want < *g { want } else { want + (*g - want) * release };
+                *g = if want < *g {
+                    want
+                } else {
+                    want + (*g - want) * release
+                };
                 for c in 0..ch {
                     out[f * ch + c] = soft_clip(out[f * ch + c] * *g);
                 }
@@ -315,7 +335,10 @@ impl Shared {
 /// shift from how fast the distance to the listener changes (the bus's own sounds move with
 /// the listener and keep their pitch).
 fn apply_params(v: &mut Voice, params: VoiceParams, now: std::time::Instant, listener: Vec3) {
-    if let (Some(p), true) = (params.position, params.doppler && DOPPLER.load(Ordering::Relaxed)) {
+    if let (Some(p), true) = (
+        params.position,
+        params.doppler && DOPPLER.load(Ordering::Relaxed),
+    ) {
         let dist = (p - listener).length();
         let (last, at, factor) = v.doppler;
         let mut f = factor;
@@ -339,7 +362,11 @@ pub const MAX_VOICES: usize = 200;
 
 /// How loud voice `v` reaches the listener (its gain and distance), to rank voices by.
 fn heard_gain(v: &Voice, listener: &Listener) -> f32 {
-    let spatial = v.params.position.map(|p| distance_gain(v.params.range, (p - listener.position).length())).unwrap_or(1.0);
+    let spatial = v
+        .params
+        .position
+        .map(|p| distance_gain(v.params.range, (p - listener.position).length()))
+        .unwrap_or(1.0);
     v.params.gain * spatial
 }
 
@@ -351,7 +378,8 @@ fn skip_clip(v: &mut Voice, frames: usize, dev_rate: f64) {
         v.finished = true;
         return;
     }
-    let step = (v.params.pitch * v.doppler.2).max(0.01) as f64 * v.clip.sample_rate as f64 / dev_rate;
+    let step =
+        (v.params.pitch * v.doppler.2).max(0.01) as f64 * v.clip.sample_rate as f64 / dev_rate;
     v.pos += step * frames as f64;
     v.cur_gain = 0.0;
     if v.pos >= nframes as f64 {
@@ -408,18 +436,23 @@ pub fn read_clip(path: &Path) -> Option<Arc<Clip>> {
 /// Every two seconds, the name of the system's default output device: when it is not the
 /// one played on (`first`, then the last one seen), `reopen` is set. Ends with the engine.
 fn watch_default_device(first: String, reopen: std::sync::Weak<AtomicBool>) {
-    let _ = std::thread::Builder::new().name("audio device".into()).spawn(move || {
-        let mut current = first;
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let Some(flag) = reopen.upgrade() else { return };
-            let name = cpal::default_host().default_output_device().and_then(|d| d.description().ok().map(|d| d.name().to_string())).unwrap_or_default();
-            if name != current {
-                current = name;
-                flag.store(true, Ordering::Relaxed);
+    let _ = std::thread::Builder::new()
+        .name("audio device".into())
+        .spawn(move || {
+            let mut current = first;
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let Some(flag) = reopen.upgrade() else { return };
+                let name = cpal::default_host()
+                    .default_output_device()
+                    .and_then(|d| d.description().ok().map(|d| d.name().to_string()))
+                    .unwrap_or_default();
+                if name != current {
+                    current = name;
+                    flag.store(true, Ordering::Relaxed);
+                }
             }
-        }
-    });
+        });
 }
 
 impl AudioEngine {
@@ -466,7 +499,10 @@ impl AudioEngine {
             log::warn!("audio: no output device");
             return false;
         };
-        let name = dev.description().map(|d| d.name().to_string()).unwrap_or_default();
+        let name = dev
+            .description()
+            .map(|d| d.name().to_string())
+            .unwrap_or_default();
         let cfg = match dev.default_output_config() {
             Ok(c) => c,
             Err(e) => {
@@ -474,8 +510,12 @@ impl AudioEngine {
                 return false;
             }
         };
-        self.shared.sample_rate.store(cfg.sample_rate(), Ordering::Relaxed);
-        self.shared.channels.store(cfg.channels().max(1) as usize, Ordering::Relaxed);
+        self.shared
+            .sample_rate
+            .store(cfg.sample_rate(), Ordering::Relaxed);
+        self.shared
+            .channels
+            .store(cfg.channels().max(1) as usize, Ordering::Relaxed);
         let s2 = self.shared.clone();
         let lost = self.reopen.clone();
         let stream = dev.build_output_stream(
@@ -495,7 +535,11 @@ impl AudioEngine {
                 if let Err(e) = s.play() {
                     log::warn!("audio: cannot start stream: {e}");
                 }
-                log::info!("audio: playing on {name} ({} Hz, {} channels)", cfg.sample_rate(), cfg.channels());
+                log::info!(
+                    "audio: playing on {name} ({} Hz, {} channels)",
+                    cfg.sample_rate(),
+                    cfg.channels()
+                );
                 *self.stream.borrow_mut() = Some(s);
                 *self.device.borrow_mut() = name;
                 true
@@ -512,7 +556,10 @@ impl AudioEngine {
     /// again on the default device - the sound had stayed on the speakers, or stopped for
     /// good when the headset was disconnected. Cheap; called every frame.
     pub fn follow_device(&self) {
-        if !self.enabled || self.opened.get().elapsed().as_secs_f32() < 1.0 || !self.reopen.swap(false, Ordering::Relaxed) {
+        if !self.enabled
+            || self.opened.get().elapsed().as_secs_f32() < 1.0
+            || !self.reopen.swap(false, Ordering::Relaxed)
+        {
             return;
         }
         self.opened.set(std::time::Instant::now());
@@ -558,9 +605,9 @@ impl AudioEngine {
         self.clips.lock().retain(|_, (clip, used)| {
             let idle = used.elapsed() >= unused
                 && clip
-                .as_ref()
-                .map(|c| Arc::strong_count(c) == 1)
-                .unwrap_or(false);
+                    .as_ref()
+                    .map(|c| Arc::strong_count(c) == 1)
+                    .unwrap_or(false);
             if idle {
                 freed += clip.as_ref().map(|c| c.samples.len() * 2).unwrap_or(0);
             }
@@ -646,11 +693,19 @@ impl AudioEngine {
 
     /// Play what `stream` is fed with (see `stream::StreamBuf`); the voice ends when the
     /// stream is closed.
-    pub fn play_stream(&self, stream: Arc<crate::stream::StreamBuf>, params: VoiceParams) -> VoiceId {
+    pub fn play_stream(
+        &self,
+        stream: Arc<crate::stream::StreamBuf>,
+        params: VoiceParams,
+    ) -> VoiceId {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.shared.voices.lock().push(Voice {
             id,
-            clip: Arc::new(Clip { sample_rate: 44100, channels: 2, samples: Vec::new() }),
+            clip: Arc::new(Clip {
+                sample_rate: 44100,
+                channels: 2,
+                samples: Vec::new(),
+            }),
             stream: Some(stream),
             params,
             pos: 0.0,
@@ -728,8 +783,16 @@ mod tests {
     use super::*;
 
     fn shared() -> Shared {
-        Shared { voices: Mutex::new(Vec::new()), updates: Mutex::new(Vec::new()), listener: Mutex::new(Listener::default()),
-            reverb: Mutex::new(Reverb::default()), limiter: Mutex::new(1.0), sample_rate: AtomicU32::new(48_000), channels: AtomicUsize::new(1), muted: false }
+        Shared {
+            voices: Mutex::new(Vec::new()),
+            updates: Mutex::new(Vec::new()),
+            listener: Mutex::new(Listener::default()),
+            reverb: Mutex::new(Reverb::default()),
+            limiter: Mutex::new(1.0),
+            sample_rate: AtomicU32::new(48_000),
+            channels: AtomicUsize::new(1),
+            muted: false,
+        }
     }
 
     fn voice(clip: Arc<Clip>, gain: f32) -> Voice {
@@ -737,7 +800,16 @@ mod tests {
             id: 1,
             clip,
             stream: None,
-            params: VoiceParams { gain, pitch: 1.0, looping: true, position: None, doppler: true, range: 10.0, lowpass_hz: 0.0, important: false },
+            params: VoiceParams {
+                gain,
+                pitch: 1.0,
+                looping: true,
+                position: None,
+                doppler: true,
+                range: 10.0,
+                lowpass_hz: 0.0,
+                important: false,
+            },
             pos: 0.0,
             finished: false,
             cur_gain: gain,
@@ -749,7 +821,11 @@ mod tests {
     #[test]
     fn a_loop_has_no_gap_where_it_turns() {
         // a 5-frame loop of a constant level at the device rate: every output frame carries it
-        let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![16_384; 5] });
+        let clip = Arc::new(Clip {
+            sample_rate: 48_000,
+            channels: 1,
+            samples: vec![16_384; 5],
+        });
         let s = shared();
         s.voices.lock().push(voice(clip, 1.0));
         let mut out = vec![0.0f32; 64];
@@ -759,10 +835,22 @@ mod tests {
 
     #[test]
     fn parameters_arrive_with_the_next_block() {
-        let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![16_384; 5] });
+        let clip = Arc::new(Clip {
+            sample_rate: 48_000,
+            channels: 1,
+            samples: vec![16_384; 5],
+        });
         let s = shared();
         s.voices.lock().push(voice(clip, 1.0));
-        s.updates.lock().push((1, VoiceParams { gain: 0.0, looping: true, ..Default::default() }, std::time::Instant::now()));
+        s.updates.lock().push((
+            1,
+            VoiceParams {
+                gain: 0.0,
+                looping: true,
+                ..Default::default()
+            },
+            std::time::Instant::now(),
+        ));
         let mut out = vec![0.0f32; 4];
         s.render(&mut out);
         assert_eq!(s.voices.lock()[0].params.gain, 0.0);
@@ -771,15 +859,36 @@ mod tests {
 
     #[test]
     fn listener_vehicle_keeps_spatial_sound_at_its_original_pitch() {
-        let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![0; 5] });
+        let clip = Arc::new(Clip {
+            sample_rate: 48_000,
+            channels: 1,
+            samples: vec![0; 5],
+        });
         let mut own = voice(clip.clone(), 1.0);
         let mut passing = voice(clip, 1.0);
         let now = std::time::Instant::now();
         for (distance, elapsed) in [(2.0, 0), (2.2, 20)] {
             let at = now + std::time::Duration::from_millis(elapsed);
             let position = Some(Vec3::new(distance, 0.0, 0.0));
-            apply_params(&mut own, VoiceParams { position, doppler: false, ..Default::default() }, at, Vec3::ZERO);
-            apply_params(&mut passing, VoiceParams { position, ..Default::default() }, at, Vec3::ZERO);
+            apply_params(
+                &mut own,
+                VoiceParams {
+                    position,
+                    doppler: false,
+                    ..Default::default()
+                },
+                at,
+                Vec3::ZERO,
+            );
+            apply_params(
+                &mut passing,
+                VoiceParams {
+                    position,
+                    ..Default::default()
+                },
+                at,
+                Vec3::ZERO,
+            );
         }
         assert_eq!(own.doppler.2, 1.0);
         assert!(passing.doppler.2 < 1.0);
@@ -795,7 +904,8 @@ mod tests {
         }
         let before = e.device.borrow().clone();
         e.reopen.store(true, Ordering::Relaxed);
-        e.opened.set(std::time::Instant::now() - std::time::Duration::from_secs(2));
+        e.opened
+            .set(std::time::Instant::now() - std::time::Duration::from_secs(2));
         e.follow_device();
         assert!(e.stream.borrow().is_some());
         assert_eq!(*e.device.borrow(), before);
@@ -804,7 +914,11 @@ mod tests {
 
     #[test]
     fn important_voices_win_the_mixer_limit() {
-        let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![64; 100] });
+        let clip = Arc::new(Clip {
+            sample_rate: 48_000,
+            channels: 1,
+            samples: vec![64; 100],
+        });
         let s = shared();
         for _ in 0..MAX_VOICES {
             s.voices.lock().push(voice(clip.clone(), 1.0));
@@ -821,10 +935,16 @@ mod tests {
 
     #[test]
     fn only_the_loudest_voices_are_mixed() {
-        let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![64; 100] });
+        let clip = Arc::new(Clip {
+            sample_rate: 48_000,
+            channels: 1,
+            samples: vec![64; 100],
+        });
         let s = shared();
         for k in 0..MAX_VOICES + 50 {
-            s.voices.lock().push(voice(clip.clone(), if k < 50 { 0.001 } else { 1.0 }));
+            s.voices
+                .lock()
+                .push(voice(clip.clone(), if k < 50 { 0.001 } else { 1.0 }));
         }
         let mut out = vec![0.0f32; 16];
         s.render(&mut out);
@@ -851,15 +971,38 @@ impl Reverb {
     fn process(&mut self, out: &mut [f32], ch: usize, rate: u32, rt60: f32, mix: f32) {
         if self.rate != rate || self.lines.len() != ch {
             self.rate = rate;
-            self.lines = (0..ch).map(|c| Self::COMBS.iter().map(|d| (vec![0.0; ((d + c as f32 * 0.0011) * rate as f32) as usize + 1], 0, 0.0)).collect()).collect();
-            self.allpass = (0..ch).map(|_| Self::ALLPASS.iter().map(|d| (vec![0.0; (d * rate as f32) as usize + 1], 0)).collect()).collect();
+            self.lines = (0..ch)
+                .map(|c| {
+                    Self::COMBS
+                        .iter()
+                        .map(|d| {
+                            (
+                                vec![0.0; ((d + c as f32 * 0.0011) * rate as f32) as usize + 1],
+                                0,
+                                0.0,
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            self.allpass = (0..ch)
+                .map(|_| {
+                    Self::ALLPASS
+                        .iter()
+                        .map(|d| (vec![0.0; (d * rate as f32) as usize + 1], 0))
+                        .collect()
+                })
+                .collect();
         }
         let frames = out.len() / ch;
         for c in 0..ch {
             let combs = &mut self.lines[c];
             let aps = &mut self.allpass[c];
             // feedback so that a comb decays by 60 dB in rt60 seconds
-            let gains: Vec<f32> = Self::COMBS.iter().map(|d| 10f32.powf(-3.0 * d / rt60)).collect();
+            let gains: Vec<f32> = Self::COMBS
+                .iter()
+                .map(|d| 10f32.powf(-3.0 * d / rt60))
+                .collect();
             for f in 0..frames {
                 let x = out[f * ch + c];
                 let mut y = 0.0;

@@ -99,7 +99,12 @@ impl ScriptTexture {
             return [0; 4];
         }
         let i = ((y as u32 * self.width + x as u32) * 4) as usize;
-        [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2], self.rgba[i + 3]]
+        [
+            self.rgba[i],
+            self.rgba[i + 1],
+            self.rgba[i + 2],
+            self.rgba[i + 3],
+        ]
     }
 
     pub fn rect(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) {
@@ -117,7 +122,15 @@ impl ScriptTexture {
     /// from the font's colour bitmap (else the `STSetColor` colour), the alpha is the font's
     /// mask; `mode & 3 == 2` writes only the glyphs' covered pixels (a transparent
     /// background), any other mode the whole glyph cell.
-    pub fn text_out(&mut self, atlas: &FontAtlas, x: i32, y: i32, spacing: i32, mode: u8, text: &str) {
+    pub fn text_out(
+        &mut self,
+        atlas: &FontAtlas,
+        x: i32,
+        y: i32,
+        spacing: i32,
+        mode: u8,
+        text: &str,
+    ) {
         let glyph_h = atlas.font.height.max(1) as i32;
         let mut cx = x;
         let c = self.color;
@@ -148,7 +161,11 @@ impl ScriptTexture {
                     if cov == 0 && transparent {
                         continue;
                     }
-                    let rgb = if from_font && si + 2 < atlas.color.len() { [atlas.color[si], atlas.color[si + 1], atlas.color[si + 2]] } else { [c[0], c[1], c[2]] };
+                    let rgb = if from_font && si + 2 < atlas.color.len() {
+                        [atlas.color[si], atlas.color[si + 1], atlas.color[si + 2]]
+                    } else {
+                        [c[0], c[1], c[2]]
+                    };
                     self.put(cx + gx, y + gy, [rgb[0], rgb[1], rgb[2], cov]);
                 }
             }
@@ -168,7 +185,11 @@ impl ScriptTexture {
         let (tw, th) = (w.next_power_of_two(), h.next_power_of_two());
         self.width = tw;
         self.height = th;
-        self.rgba = if (tw, th) == (w, h) { rgba[..(w * h * 4) as usize].to_vec() } else { resample(w, h, rgba, tw, th) };
+        self.rgba = if (tw, th) == (w, h) {
+            rgba[..(w * h * 4) as usize].to_vec()
+        } else {
+            resample(w, h, rgba, tw, th)
+        };
         self.mipmaps = true;
         // the file replaces whatever was released at the old size
         self.pending = None;
@@ -222,7 +243,10 @@ mod tests {
         // a power-of-two bitmap is taken as it is
         let px: Vec<u8> = (0..8 * 2 * 4).map(|i| i as u8).collect();
         t.load(8, 2, &px);
-        assert_eq!((t.width, t.height, t.rgba.as_slice()), (8, 2, px.as_slice()));
+        assert_eq!(
+            (t.width, t.height, t.rgba.as_slice()),
+            (8, 2, px.as_slice())
+        );
         // STNewTex: back to the declared size, empty
         t.color = [255; 4];
         t.renew();

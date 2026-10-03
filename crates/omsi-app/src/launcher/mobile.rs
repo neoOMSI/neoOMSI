@@ -95,9 +95,18 @@ impl Browser {
         let dir = if !start.as_os_str().is_empty() && start.is_dir() {
             start
         } else {
-            storage_roots().first().map(|r| r.1.clone()).unwrap_or_else(|| PathBuf::from("/"))
+            storage_roots()
+                .first()
+                .map(|r| r.1.clone())
+                .unwrap_or_else(|| PathBuf::from("/"))
         };
-        let mut b = Browser { purpose, dir: PathBuf::new(), entries: Vec::new(), is_root: false, error: None };
+        let mut b = Browser {
+            purpose,
+            dir: PathBuf::new(),
+            entries: Vec::new(),
+            is_root: false,
+            error: None,
+        };
         b.open(dir);
         b
     }
@@ -113,12 +122,17 @@ impl Browser {
                         continue;
                     }
                     let Ok(m) = e.metadata() else { continue };
-                    let archive = [".zip", ".7z", ".rar"].iter().any(|ext| name.to_ascii_lowercase().ends_with(ext));
+                    let archive = [".zip", ".7z", ".rar"]
+                        .iter()
+                        .any(|ext| name.to_ascii_lowercase().ends_with(ext));
                     if m.is_dir() || (archive && self.purpose == Purpose::ModZip) {
                         self.entries.push((name, m.is_dir(), m.len()));
                     }
                 }
-                self.entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+                self.entries.sort_by(|a, b| {
+                    b.1.cmp(&a.1)
+                        .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+                });
             }
             Err(e) => {
                 self.error = Some(if e.kind() == std::io::ErrorKind::PermissionDenied {
@@ -128,7 +142,8 @@ impl Browser {
                 });
             }
         }
-        self.is_root = self.purpose == Purpose::Root && omsi_cfg::missing_original_essentials(&dir).is_empty();
+        self.is_root =
+            self.purpose == Purpose::Root && omsi_cfg::missing_original_essentials(&dir).is_empty();
         self.dir = dir;
     }
 
@@ -175,7 +190,12 @@ impl Launcher {
                 }
             }
             TouchPhase::Moved => {
-                let prev = self.fingers.at.iter().find(|(id, _)| *id == t.id).map(|f| f.1);
+                let prev = self
+                    .fingers
+                    .at
+                    .iter()
+                    .find(|(id, _)| *id == t.id)
+                    .map(|f| f.1);
                 if let Some(f) = self.fingers.at.iter_mut().find(|(id, _)| *id == t.id) {
                     f.1 = p;
                 }
@@ -185,7 +205,9 @@ impl Launcher {
                     self.fingers.pinch = Some(d);
                     return;
                 }
-                let Some((id, start, drag)) = self.fingers.main else { return };
+                let Some((id, start, drag)) = self.fingers.main else {
+                    return;
+                };
                 if id != t.id {
                     return;
                 }
@@ -201,7 +223,9 @@ impl Launcher {
                     return;
                 }
                 // a slider or a scroll bar held keeps the finger; anything else scrolls
-                let held_slider = self.ui.active.is_some() && self.ui.input.down && !self.fingers.main.map(|m| m.2).unwrap_or(false);
+                let held_slider = self.ui.active.is_some()
+                    && self.ui.input.down
+                    && !self.fingers.main.map(|m| m.2).unwrap_or(false);
                 self.ui.input.mouse = p;
                 if self.fingers.main.map(|m| m.2).unwrap_or(false) && !held_slider {
                     self.ui.input.wheel.y += delta.y / 42.0;
@@ -212,7 +236,9 @@ impl Launcher {
                 if self.fingers.at.len() < 2 {
                     self.fingers.pinch = None;
                 }
-                let Some((id, _, drag)) = self.fingers.main else { return };
+                let Some((id, _, drag)) = self.fingers.main else {
+                    return;
+                };
                 if id != t.id {
                     return;
                 }
@@ -247,7 +273,9 @@ impl Launcher {
 
     /// The storage browser over the page, when it is open.
     pub(super) fn draw_browser(&mut self) {
-        let Some(mut b) = self.browser.take() else { return };
+        let Some(mut b) = self.browser.take() else {
+            return;
+        };
         let size = self.ui.size;
         let full = Rect::new(0.0, 0.0, size.x, size.y);
         self.ui.solid(full);
@@ -255,13 +283,32 @@ impl Launcher {
         let r = Rect::new(24.0, 14.0, size.x - 48.0, size.y - 28.0);
         self.ui.panel(r);
         let inner = Rect::new(r.x + 16.0, r.y + 12.0, r.w - 32.0, r.h - 24.0);
-        self.ui.text_in(b.title(), Rect::new(inner.x, inner.y, inner.w - 130.0, 26.0), 17.0, Weight::Bold, TEXT, Align::Left);
-        let mut close = self.ui.button("browse-cancel", Rect::new(inner.right() - 120.0, inner.y - 2.0, 120.0, 34.0), "Cancel", Some("close"), ButtonKind::Ghost);
+        self.ui.text_in(
+            b.title(),
+            Rect::new(inner.x, inner.y, inner.w - 130.0, 26.0),
+            17.0,
+            Weight::Bold,
+            TEXT,
+            Align::Left,
+        );
+        let mut close = self.ui.button(
+            "browse-cancel",
+            Rect::new(inner.right() - 120.0, inner.y - 2.0, 120.0, 34.0),
+            "Cancel",
+            Some("close"),
+            ButtonKind::Ghost,
+        );
         // the places, then the folder we are in
         let mut x = inner.x;
         let y = inner.y + 34.0;
         let mut go_to: Option<PathBuf> = None;
-        if self.ui.button("browse-up", Rect::new(x, y, 44.0, 34.0), "", Some("drive_folder_upload"), ButtonKind::Normal) {
+        if self.ui.button(
+            "browse-up",
+            Rect::new(x, y, 44.0, 34.0),
+            "",
+            Some("drive_folder_upload"),
+            ButtonKind::Normal,
+        ) {
             if let Some(p) = b.dir.parent() {
                 go_to = Some(p.to_path_buf());
             }
@@ -272,43 +319,122 @@ impl Launcher {
             if x + w > inner.right() {
                 break;
             }
-            if self.ui.button(&format!("browse-root-{k}"), Rect::new(x, y, w, 34.0), &name, Some("sd_card"), ButtonKind::Normal) {
+            if self.ui.button(
+                &format!("browse-root-{k}"),
+                Rect::new(x, y, w, 34.0),
+                &name,
+                Some("sd_card"),
+                ButtonKind::Normal,
+            ) {
                 go_to = Some(path);
             }
             x += w + 8.0;
         }
         let path_y = y + 42.0;
-        self.ui.icon("folder_open", Vec2::new(inner.x + 10.0, path_y + 11.0), 16.0, TEXT_DIM);
-        let shown = self.ui.fonts.fit(&b.dir.to_string_lossy(), 12.5, Weight::Medium, inner.w - 30.0);
-        self.ui.text_in(&shown, Rect::new(inner.x + 26.0, path_y, inner.w - 26.0, 22.0), 12.5, Weight::Medium, TEXT_SOFT, Align::Left);
+        self.ui.icon(
+            "folder_open",
+            Vec2::new(inner.x + 10.0, path_y + 11.0),
+            16.0,
+            TEXT_DIM,
+        );
+        let shown = self.ui.fonts.fit(
+            &b.dir.to_string_lossy(),
+            12.5,
+            Weight::Medium,
+            inner.w - 30.0,
+        );
+        self.ui.text_in(
+            &shown,
+            Rect::new(inner.x + 26.0, path_y, inner.w - 26.0, 22.0),
+            12.5,
+            Weight::Medium,
+            TEXT_SOFT,
+            Align::Left,
+        );
         // what to do with this folder
         let foot_h = 46.0;
-        let foot = Rect::new(inner.x, inner.bottom() - foot_h + 6.0, inner.w, foot_h - 6.0);
+        let foot = Rect::new(
+            inner.x,
+            inner.bottom() - foot_h + 6.0,
+            inner.w,
+            foot_h - 6.0,
+        );
         let mut chosen: Option<PathBuf> = None;
         match b.purpose {
             Purpose::Root => {
-                let (text, c) = if b.is_root { ("A complete OMSI 2 installation", OK) } else { ("Not an OMSI 2 folder (it needs Omsi.exe, maps and Vehicles)", TEXT_DIM) };
-                self.ui.text_in(text, Rect::new(foot.x, foot.y, foot.w - 230.0, foot.h), 12.5, Weight::Medium, c, Align::Left);
-                if self.ui.button("browse-use", Rect::new(foot.right() - 220.0, foot.y, 220.0, foot.h), "Use this folder", Some("check"), if b.is_root { ButtonKind::Primary } else { ButtonKind::Normal }) {
+                let (text, c) = if b.is_root {
+                    ("A complete OMSI 2 installation", OK)
+                } else {
+                    (
+                        "Not an OMSI 2 folder (it needs Omsi.exe, maps and Vehicles)",
+                        TEXT_DIM,
+                    )
+                };
+                self.ui.text_in(
+                    text,
+                    Rect::new(foot.x, foot.y, foot.w - 230.0, foot.h),
+                    12.5,
+                    Weight::Medium,
+                    c,
+                    Align::Left,
+                );
+                if self.ui.button(
+                    "browse-use",
+                    Rect::new(foot.right() - 220.0, foot.y, 220.0, foot.h),
+                    "Use this folder",
+                    Some("check"),
+                    if b.is_root {
+                        ButtonKind::Primary
+                    } else {
+                        ButtonKind::Normal
+                    },
+                ) {
                     chosen = Some(b.dir.clone());
                 }
             }
             Purpose::ModFolder => {
-                if self.ui.button("browse-use", Rect::new(foot.right() - 220.0, foot.y, 220.0, foot.h), "Install this folder", Some("download"), ButtonKind::Primary) {
+                if self.ui.button(
+                    "browse-use",
+                    Rect::new(foot.right() - 220.0, foot.y, 220.0, foot.h),
+                    "Install this folder",
+                    Some("download"),
+                    ButtonKind::Primary,
+                ) {
                     chosen = Some(b.dir.clone());
                 }
             }
             Purpose::ModZip => {
-                self.ui.text_in("Tap a .zip, .7z or .rar to install it", Rect::new(foot.x, foot.y, foot.w, foot.h), 12.5, Weight::Regular, TEXT_DIM, Align::Left);
+                self.ui.text_in(
+                    "Tap a .zip, .7z or .rar to install it",
+                    Rect::new(foot.x, foot.y, foot.w, foot.h),
+                    12.5,
+                    Weight::Regular,
+                    TEXT_DIM,
+                    Align::Left,
+                );
             }
         }
         // the folder's contents
         let list = Rect::new(inner.x, path_y + 28.0, inner.w, foot.y - path_y - 36.0);
         self.ui.p().rounded(list, 6.0, FIELD);
         if let Some(e) = b.error.clone() {
-            self.ui.paragraph(&e, Vec2::new(list.x + 12.0, list.y + 12.0), list.w - 24.0, 13.0, Weight::Regular, DANGER);
+            self.ui.paragraph(
+                &e,
+                Vec2::new(list.x + 12.0, list.y + 12.0),
+                list.w - 24.0,
+                13.0,
+                Weight::Regular,
+                DANGER,
+            );
         } else if b.entries.is_empty() {
-            self.ui.text_in("Nothing here", list, 13.0, Weight::Regular, TEXT_FAINT, Align::Center);
+            self.ui.text_in(
+                "Nothing here",
+                list,
+                13.0,
+                Weight::Regular,
+                TEXT_FAINT,
+                Align::Center,
+            );
         }
         let entries = b.entries.clone();
         let mut picked: Option<(String, bool)> = None;
@@ -316,17 +442,41 @@ impl Launcher {
         self.ui.scroll_area(&key, list, &mut |ui, area| {
             let row_h = 40.0;
             for (k, (name, dir, bytes)) in entries.iter().enumerate() {
-                let rr = Rect::new(area.x + 4.0, area.y + 4.0 + k as f32 * row_h, area.w - 12.0, row_h - 2.0);
+                let rr = Rect::new(
+                    area.x + 4.0,
+                    area.y + 4.0 + k as f32 * row_h,
+                    area.w - 12.0,
+                    row_h - 2.0,
+                );
                 if rr.bottom() < list.y || rr.y > list.bottom() {
                     continue;
                 }
                 if ui.row(&format!("{key}-{k}"), rr, false) {
                     picked = Some((name.clone(), *dir));
                 }
-                ui.icon(if *dir { "folder" } else { "inventory_2" }, Vec2::new(rr.x + 18.0, rr.center().y), 20.0, if *dir { ACCENT } else { TEXT_SOFT });
-                ui.text_in(name, Rect::new(rr.x + 40.0, rr.y, rr.w - 140.0, rr.h), 13.5, Weight::Medium, TEXT, Align::Left);
+                ui.icon(
+                    if *dir { "folder" } else { "inventory_2" },
+                    Vec2::new(rr.x + 18.0, rr.center().y),
+                    20.0,
+                    if *dir { ACCENT } else { TEXT_SOFT },
+                );
+                ui.text_in(
+                    name,
+                    Rect::new(rr.x + 40.0, rr.y, rr.w - 140.0, rr.h),
+                    13.5,
+                    Weight::Medium,
+                    TEXT,
+                    Align::Left,
+                );
                 if !*dir {
-                    ui.text_in(&super::state::fmt_bytes(*bytes), Rect::new(rr.x, rr.y, rr.w - 12.0, rr.h), 12.0, Weight::Regular, TEXT_DIM, Align::Right);
+                    ui.text_in(
+                        &super::state::fmt_bytes(*bytes),
+                        Rect::new(rr.x, rr.y, rr.w - 12.0, rr.h),
+                        12.0,
+                        Weight::Regular,
+                        TEXT_DIM,
+                        Align::Right,
+                    );
                 }
             }
             8.0 + entries.len() as f32 * row_h

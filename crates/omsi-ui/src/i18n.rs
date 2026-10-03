@@ -32,7 +32,11 @@ pub fn set_lookup(f: Lookup) {
 /// The language to show (`ru`, `de`, `fr`; empty or `en` for English).
 pub fn set_language(code: &str) {
     if let Ok(mut s) = STATE.write() {
-        s.1 = if code.eq_ignore_ascii_case("en") { String::new() } else { code.to_ascii_lowercase() };
+        s.1 = if code.eq_ignore_ascii_case("en") {
+            String::new()
+        } else {
+            code.to_ascii_lowercase()
+        };
     }
 }
 
@@ -43,11 +47,18 @@ pub fn language() -> String {
 
 /// `text` in the interface's language.
 pub fn tr(text: &str) -> Cow<'_, str> {
-    let Ok(s) = STATE.read() else { return Cow::Borrowed(text) };
+    let Ok(s) = STATE.read() else {
+        return Cow::Borrowed(text);
+    };
     match (&s.0, s.1.is_empty()) {
         (Some(f), false) if !text.is_empty() => match f(&s.1, text) {
             Some(t) => Cow::Owned(t),
-            None => match FALLBACK.read().ok().and_then(|g| *g).and_then(|g| g(&s.1, text)) {
+            None => match FALLBACK
+                .read()
+                .ok()
+                .and_then(|g| *g)
+                .and_then(|g| g(&s.1, text))
+            {
                 Some(t) => Cow::Owned(t),
                 None => Cow::Borrowed(text),
             },

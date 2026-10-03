@@ -200,7 +200,11 @@ fn anchor_of(frame: &WorldFrame) -> (i32, i32, i16) {
             0
         }
     };
-    (r(p.0), r(p.1), r(p.2).clamp(i16::MIN as i32, i16::MAX as i32) as i16)
+    (
+        r(p.0),
+        r(p.1),
+        r(p.2).clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+    )
 }
 
 /// `frame` as datagrams of at most `MAX_WORLD_DATAGRAM` bytes: the lights and the gone
@@ -238,8 +242,20 @@ pub fn encode(frame: &WorldFrame, protocol: u8) -> Vec<Vec<u8>> {
         } else {
             &[]
         };
-        let parked: Option<(bool, &[u32])> = if first { frame.parked.as_ref().map(|(c, k)| (*c && k.len() <= 127, &k[..k.len().min(127)])) } else { None };
-        left = left.saturating_sub(lights.len() * LIGHT_BITS + gone.len() * GONE_BITS + 1 + parked.map(|p| 8 + p.1.len() * 32).unwrap_or(0));
+        let parked: Option<(bool, &[u32])> = if first {
+            frame
+                .parked
+                .as_ref()
+                .map(|(c, k)| (*c && k.len() <= 127, &k[..k.len().min(127)]))
+        } else {
+            None
+        };
+        left = left.saturating_sub(
+            lights.len() * LIGHT_BITS
+                + gone.len() * GONE_BITS
+                + 1
+                + parked.map(|p| 8 + p.1.len() * 32).unwrap_or(0),
+        );
         let c0 = ci;
         while ci < cars.len() && ci - c0 < 127 && left >= CAR_BITS {
             left -= CAR_BITS;
@@ -249,7 +265,12 @@ pub fn encode(frame: &WorldFrame, protocol: u8) -> Vec<Vec<u8>> {
         while pi < people.len() && pi - p0 < 255 {
             let bits = match people[pi].place {
                 PersonPlace::Foot { waiting, .. } => {
-                    PERSON_FOOT_BITS + if waiting.is_some() { PERSON_WAIT_BITS } else { 0 }
+                    PERSON_FOOT_BITS
+                        + if waiting.is_some() {
+                            PERSON_WAIT_BITS
+                        } else {
+                            0
+                        }
                 }
                 PersonPlace::Aboard { .. } => PERSON_ABOARD_BITS,
             };
@@ -587,7 +608,11 @@ impl Desc {
         if parts.len() < 4 || parts[0] != "DESC" {
             return None;
         }
-        let id = parts[2].trim().parse::<u32>().ok().filter(|i| *i <= MAX_ID)?;
+        let id = parts[2]
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|i| *i <= MAX_ID)?;
         match parts[1] {
             "c" => Some(Desc::Car {
                 id,
@@ -621,7 +646,12 @@ pub fn content_file(p: &str, exts: &[&str]) -> Option<String> {
     {
         return None;
     }
-    let ext = p.rsplit('/').next()?.rsplit_once('.')?.1.to_ascii_lowercase();
+    let ext = p
+        .rsplit('/')
+        .next()?
+        .rsplit_once('.')?
+        .1
+        .to_ascii_lowercase();
     exts.contains(&ext.as_str()).then_some(p)
 }
 
@@ -719,11 +749,16 @@ mod tests {
         assert_eq!((g.seq, g.host_ms), (65535, 123_456_789));
         assert_eq!(g.cars.len(), 2);
         let (a, b) = (&f.cars[0], &g.cars[0]);
-        assert!((a.x - b.x).abs() < 0.006 && (a.y - b.y).abs() < 0.006 && (a.z - b.z).abs() < 0.006);
+        assert!(
+            (a.x - b.x).abs() < 0.006 && (a.y - b.y).abs() < 0.006 && (a.z - b.z).abs() < 0.006
+        );
         assert!((a.heading - b.heading).abs() < 0.05);
         assert!((a.pitch - b.pitch).abs() < 0.051 && (a.bank - b.bank).abs() < 0.051);
         assert!((a.speed - b.speed).abs() < 0.026 && (a.steer - b.steer).abs() < 0.26);
-        assert_eq!((b.blinker, b.brake, b.lights, b.at_station), (2, true, true, -1));
+        assert_eq!(
+            (b.blinker, b.brake, b.lights, b.at_station),
+            (2, true, true, -1)
+        );
         assert_eq!(g.cars[1].id, MAX_ID);
         assert_eq!(g.people.len(), 4);
         match g.people[0].place {
@@ -742,7 +777,9 @@ mod tests {
         }
         // a rider of player 3's bus
         match g.people[3].place {
-            PersonPlace::Aboard { bus, seat, .. } => assert!(bus == PLAYER_BUS | 3 && seat.is_none()),
+            PersonPlace::Aboard { bus, seat, .. } => {
+                assert!(bus == PLAYER_BUS | 3 && seat.is_none())
+            }
             _ => panic!(),
         }
         assert_eq!(g.lights.len(), 1);
@@ -760,7 +797,9 @@ mod tests {
     #[test]
     fn a_busy_street_is_shared_out_over_datagrams() {
         let f = WorldFrame {
-            cars: (0..150).map(|i| car(i, 892_000.0 + i as f64 * 5.0)).collect(),
+            cars: (0..150)
+                .map(|i| car(i, 892_000.0 + i as f64 * 5.0))
+                .collect(),
             people: (0..300)
                 .map(|i| PersonState {
                     id: 1000 + i,
@@ -792,7 +831,11 @@ mod tests {
         assert_eq!(frames.iter().map(|g| g.lights.len()).sum::<usize>(), 10);
         let bytes: usize = d.iter().map(|x| x.len()).sum();
         // 17 bytes a car, 12 to 17 a person
-        assert!(bytes < 150 * 17 + 300 * 15 + 200, "{bytes} bytes in {} datagrams", d.len());
+        assert!(
+            bytes < 150 * 17 + 300 * 15 + 200,
+            "{bytes} bytes in {} datagrams",
+            d.len()
+        );
         // something 5 km away from the rest does not fit the anchor and is left out
         let far = WorldFrame {
             cars: vec![car(1, 0.0), car(2, 5000.0)],
@@ -847,8 +890,14 @@ mod tests {
             }
         );
         let refs = vec![
-            EntityRef { person: false, id: 3 },
-            EntityRef { person: true, id: 16_777_215 },
+            EntityRef {
+                person: false,
+                id: 3,
+            },
+            EntityRef {
+                person: true,
+                id: 16_777_215,
+            },
         ];
         assert_eq!(EntityRef::parse_list(&EntityRef::list(&refs)), refs);
         assert!(EntityRef::parse_list("x1,c,p99999999,c-1").is_empty());

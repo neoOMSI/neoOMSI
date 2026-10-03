@@ -26,14 +26,20 @@ impl App {
         }
     }
 
-    pub(super) fn on_window_key(&mut self, event_loop: &ActiveEventLoop, event: winit::event::KeyEvent) {
+    pub(super) fn on_window_key(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: winit::event::KeyEvent,
+    ) {
         if event.state == ElementState::Pressed && self.key_search {
             if let Some(text) = event.text.as_deref() {
                 self.key_search_text(text);
             }
         }
         if event.state == ElementState::Pressed && self.menu_edit_icao {
-            if let Some(text)=event.text.as_deref(){ self.icao_edit_text(text); }
+            if let Some(text) = event.text.as_deref() {
+                self.icao_edit_text(text);
+            }
         }
         // '/' opens the chat's input box wherever the keyboard has it (the key
         // itself is then swallowed by the chat) - but not Numpad ÷, OMSI's stock
@@ -43,7 +49,9 @@ impl App {
         if event.state == ElementState::Pressed
             && event.text.as_deref() == Some("/")
             && event.physical_key != PhysicalKey::Code(KeyCode::NumpadDivide)
-            && self.game_keys.iter().any(|b| b.action.eq_ignore_ascii_case("chat_open") && b.scan_code == 53 && b.chord() == 0)
+            && self.game_keys.iter().any(|b| {
+                b.action.eq_ignore_ascii_case("chat_open") && b.scan_code == 53 && b.chord() == 0
+            })
             && self.lan.is_some()
             && !lan::chat_open(&self.remotes)
         {
@@ -62,7 +70,8 @@ impl App {
         }
         if let (PhysicalKey::Code(code), false) = (event.physical_key, event.repeat) {
             if self.plugin_keys.len() < 64 {
-                self.plugin_keys.push((format!("{code:?}"), event.state == ElementState::Pressed));
+                self.plugin_keys
+                    .push((format!("{code:?}"), event.state == ElementState::Pressed));
             }
         }
         let physical = match event.physical_key {
@@ -86,13 +95,18 @@ impl App {
             edit.rotating = state == ElementState::Pressed;
             return;
         }
-        if self.navigator.as_ref().map(|n| n.map_open()).unwrap_or(false) {
+        if self
+            .navigator
+            .as_ref()
+            .map(|n| n.map_open())
+            .unwrap_or(false)
+        {
             return;
         }
         if self.vr_active() {
             #[cfg(windows)]
-            if state == ElementState::Pressed && self.game_menu.is_none()
-                && self.chooser.is_none() {
+            if state == ElementState::Pressed && self.game_menu.is_none() && self.chooser.is_none()
+            {
                 if self.mouse_drive {
                     self.set_mouse_drive(false);
                     self.service_msg = Some(("Mouse steering off".into(), 3.0));
@@ -107,8 +121,15 @@ impl App {
 
     /// (the middle button - the wheel pressed - turns the view as well: OMSI's pan)
     pub(super) fn on_mouse_middle(&mut self, state: ElementState) {
-        if self.vr_nav_edit.is_some() { return; }
-        if self.navigator.as_ref().map(|n| n.map_open()).unwrap_or(false) {
+        if self.vr_nav_edit.is_some() {
+            return;
+        }
+        if self
+            .navigator
+            .as_ref()
+            .map(|n| n.map_open())
+            .unwrap_or(false)
+        {
             return;
         }
         self.mouse_look = state == ElementState::Pressed;
@@ -124,7 +145,9 @@ impl App {
     }
 
     pub(super) fn on_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
-        if self.vr_nav_edit.is_some() { return; }
+        if self.vr_nav_edit.is_some() {
+            return;
+        }
         if let Some((x, y)) = self.cursor_hidden {
             if (position.x as f32 - x).abs() + (position.y as f32 - y).abs() > 8.0 {
                 self.cursor_hidden = None;
@@ -137,7 +160,8 @@ impl App {
             self.finger_move(0, glam::Vec2::new(position.x as f32, position.y as f32));
         }
         #[cfg(windows)]
-        let vr_cockpit = self.vr.is_some() && self.game_menu.is_none()
+        let vr_cockpit = self.vr.is_some()
+            && self.game_menu.is_none()
             && matches!(self.view.as_str(), "driver" | "pax");
         #[cfg(not(windows))]
         let vr_cockpit = false;
@@ -163,7 +187,8 @@ impl App {
             if pressed && self.buttons_held.1 && self.start_both_drag() {
                 return;
             }
-            if !pressed && self.both_drag.is_some() && !(self.buttons_held.1 && self.right_zooms()) {
+            if !pressed && self.both_drag.is_some() && !(self.buttons_held.1 && self.right_zooms())
+            {
                 self.both_drag = None;
                 self.mouse_look = self.buttons_held.1;
                 self.update_hover();

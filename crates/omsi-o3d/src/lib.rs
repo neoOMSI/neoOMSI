@@ -62,7 +62,13 @@ pub struct Mesh {
 
 impl Default for Material {
     fn default() -> Self {
-        Self { diffuse: [1.0; 4], specular: [0.0; 3], emissive: [0.0; 3], specular_power: 1.0, texture: String::new() }
+        Self {
+            diffuse: [1.0; 4],
+            specular: [0.0; 3],
+            emissive: [0.0; 3],
+            specular_power: 1.0,
+            texture: String::new(),
+        }
     }
 }
 
@@ -117,7 +123,8 @@ impl<'a> Cur<'a> {
     fn str8(&mut self) -> Result<String, O3dError> {
         let n = self.u8()? as usize;
         self.need(n)?;
-        let (s, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(&self.b[self.p..self.p + n]);
+        let (s, _) =
+            encoding_rs::WINDOWS_1252.decode_without_bom_handling(&self.b[self.p..self.p + n]);
         self.p += n;
         Ok(s.into_owned())
     }
@@ -152,13 +159,21 @@ pub fn parse_o3d(bytes: &[u8]) -> Result<Mesh, O3dError> {
         0
     };
     let wide_count = version >= 3;
-    let mut mesh = Mesh { transform: Mat4::IDENTITY, version, ..Default::default() };
+    let mut mesh = Mesh {
+        transform: Mat4::IDENTITY,
+        version,
+        ..Default::default()
+    };
 
     while c.p < bytes.len() {
         let tag = c.u8()?;
         match tag {
             0x17 => {
-                let n = if wide_count { c.u32()? as usize } else { c.u16()? as usize };
+                let n = if wide_count {
+                    c.u32()? as usize
+                } else {
+                    c.u16()? as usize
+                };
                 c.need(n * 32)?;
                 mesh.vertices.reserve(n);
                 let n16 = (n as i64 % 0xFDE8) as u32;
@@ -175,21 +190,36 @@ pub fn parse_o3d(bytes: &[u8]) -> Result<Mesh, O3dError> {
                         fb = frac_byte(position);
                         unscramble(state, &mut position, &mut normal, &mut uv);
                     }
-                    mesh.vertices.push(Vertex { position, normal, uv });
+                    mesh.vertices.push(Vertex {
+                        position,
+                        normal,
+                        uv,
+                    });
                 }
             }
             0x49 => {
-                let n = if wide_count { c.u32()? as usize } else { c.u16()? as usize };
+                let n = if wide_count {
+                    c.u32()? as usize
+                } else {
+                    c.u16()? as usize
+                };
                 let isz = if long_indices { 4 } else { 2 };
                 c.need(n * (3 * isz + 2))?;
                 mesh.triangles.reserve(n);
                 for _ in 0..n {
                     let mut idx = [0u32; 3];
                     for i in idx.iter_mut() {
-                        *i = if long_indices { c.u32()? } else { c.u16()? as u32 };
+                        *i = if long_indices {
+                            c.u32()?
+                        } else {
+                            c.u16()? as u32
+                        };
                     }
                     let material = c.u16()?;
-                    mesh.triangles.push(Triangle { indices: idx, material });
+                    mesh.triangles.push(Triangle {
+                        indices: idx,
+                        material,
+                    });
                 }
             }
             0x26 => {
@@ -200,7 +230,13 @@ pub fn parse_o3d(bytes: &[u8]) -> Result<Mesh, O3dError> {
                     let emissive = [c.f32()?, c.f32()?, c.f32()?];
                     let specular_power = c.f32()?;
                     let texture = c.str8()?;
-                    mesh.materials.push(Material { diffuse, specular, emissive, specular_power, texture });
+                    mesh.materials.push(Material {
+                        diffuse,
+                        specular,
+                        emissive,
+                        specular_power,
+                        texture,
+                    });
                 }
             }
             0x79 => {
@@ -219,7 +255,11 @@ pub fn parse_o3d(bytes: &[u8]) -> Result<Mesh, O3dError> {
                     let w = c.u16()? as usize;
                     let mut weights = Vec::with_capacity(w);
                     for _ in 0..w {
-                        let vertex = if long_indices { c.u32()? } else { c.u16()? as u32 };
+                        let vertex = if long_indices {
+                            c.u32()?
+                        } else {
+                            c.u16()? as u32
+                        };
                         let weight = c.f32()?;
                         weights.push(BoneWeight { vertex, weight });
                     }
@@ -284,7 +324,11 @@ fn unscramble(s: u16, p: &mut Vec3, n: &mut Vec3, uv: &mut Vec2) {
 /// Load a mesh by file name, choosing the parser by extension.
 pub fn load_mesh(path: &Path) -> Result<Mesh, O3dError> {
     let bytes = omsi_cfg::vfs::read(path)?;
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if ext == "x" {
         xfile::parse_x(&bytes)
     } else {
@@ -300,7 +344,10 @@ impl Mesh {
         let before = self.triangles.len();
         self.triangles.retain(|t| t.indices.iter().all(|&i| i < n));
         if self.triangles.len() != before {
-            log::warn!("mesh: {} triangles name vertices beyond the {n} there are; left out", before - self.triangles.len());
+            log::warn!(
+                "mesh: {} triangles name vertices beyond the {n} there are; left out",
+                before - self.triangles.len()
+            );
         }
     }
 

@@ -1,8 +1,8 @@
 //! Script host for road vehicles: system variables, callbacks, sound triggers.
 
+use crate::SimClock;
 use crate::scripttex::{FontTable, ScriptTexture};
 use crate::texttex::FontLibrary;
-use crate::SimClock;
 use omsi_script::{Host, NameId, Stacks, State, SysVar};
 use omsi_vehicle::hof::Hof;
 use parking_lot::Mutex;
@@ -135,13 +135,18 @@ pub struct Arrival {
 /// of the fleet - read from the disk (or an archive) in the frame each time. The pictures
 /// are kept (up to 64 MB of them), the misses too.
 fn st_load(path: &std::path::Path) -> Result<Arc<omsi_texture::Image>, String> {
-    type Cache = Mutex<(std::collections::HashMap<std::path::PathBuf, Result<Arc<omsi_texture::Image>, String>>, usize)>;
+    type Cache = Mutex<(
+        std::collections::HashMap<std::path::PathBuf, Result<Arc<omsi_texture::Image>, String>>,
+        usize,
+    )>;
     static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
     if let Some(hit) = cache.lock().0.get(path) {
         return hit.clone();
     }
-    let got = omsi_texture::decode_file(path).map(Arc::new).map_err(|e| e.to_string());
+    let got = omsi_texture::decode_file(path)
+        .map(Arc::new)
+        .map_err(|e| e.to_string());
     let mut c = cache.lock();
     let bytes = got.as_ref().map(|i| i.rgba.len()).unwrap_or(0);
     if c.1 + bytes > 64 << 20 {
@@ -167,7 +172,12 @@ pub fn set_ambient_weather(temperature: f32, abs_humidity: f32) {
 
 fn ambient_weather() -> Option<(f32, f32)> {
     let bits = AMBIENT.load(std::sync::atomic::Ordering::Relaxed);
-    (bits != u64::MAX).then(|| (f32::from_bits((bits >> 32) as u32), f32::from_bits(bits as u32)))
+    (bits != u64::MAX).then(|| {
+        (
+            f32::from_bits((bits >> 32) as u32),
+            f32::from_bits(bits as u32),
+        )
+    })
 }
 
 impl VehicleHost {
@@ -196,7 +206,14 @@ impl VehicleHost {
         // 1.0 before reading them): the manual gearboxes of the Sprinters, the PAZ and the
         // LAZ work their clutch themselves then, and at 0 every gear a driver without a
         // clutch pedal put in was thrown out again at once
-        Self { clock, wear_lifespan: AI_WEAR_LIFESPAN, auto_clutch: 1.0, temperature, abs_humidity, ..Default::default() }
+        Self {
+            clock,
+            wear_lifespan: AI_WEAR_LIFESPAN,
+            auto_clutch: 1.0,
+            temperature,
+            abs_humidity,
+            ..Default::default()
+        }
     }
 
     /// A host for trying the scripts out on a copy of the vehicle's state (the IBIS typist
@@ -237,11 +254,16 @@ impl VehicleHost {
 
     /// The font behind a `GetFontIndex` result; -1 (a missing font) draws nothing.
     fn font_atlas(&self, index: i32) -> Option<Arc<omsi_content::font::FontAtlas>> {
-        usize::try_from(index).ok().and_then(|i| self.fonts.entries.get(i)).and_then(|f| f.1.clone())
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| self.fonts.entries.get(i))
+            .and_then(|f| f.1.clone())
     }
 
     fn terminus(&self, index: i32) -> Option<&omsi_vehicle::hof::Terminus> {
-        self.hof.as_ref().and_then(|h| h.termini.get(usize::try_from(index).ok()?))
+        self.hof
+            .as_ref()
+            .and_then(|h| h.termini.get(usize::try_from(index).ok()?))
     }
 
     fn arrival(&self, index: i32) -> Option<&Arrival> {
@@ -249,17 +271,61 @@ impl VehicleHost {
     }
 
     fn bus_stop(&self, index: i32) -> Option<&omsi_vehicle::hof::BusStop> {
-        self.hof.as_ref().and_then(|h| h.bus_stops.get(usize::try_from(index).ok()?))
+        self.hof
+            .as_ref()
+            .and_then(|h| h.bus_stops.get(usize::try_from(index).ok()?))
     }
 }
 
 /// The `(M.V.…)` callbacks this host answers (lower case); anything else reads 0.
 pub const PROVIDED_CALLBACKS: &[&str] = &[
-    "getfontindex", "textlength", "stnewtex", "stlock", "stunlock", "stfilter", "stsetcolor", "stdrawpixel", "stdrawrect", "sttextout", "streadpixel", "stgetr", "stgetg", "stgetb", "stgeta", "stcopycolor", "stloadtex",
-    "getrouteindex", "getrouteterminusindex", "getterminuscode", "getterminusindex", "getterminusstring", "getbusstopcount", "getroutebusstopident", "getbusstopindex", "getbusstopstring", "getdepotstringglobal",
-    "getttlinestring", "getttdelay", "getttbusstopcount", "getttbusstopindex", "gettterminusindex", "getttterminusindex", "getttbusstopname", "getttbusstopdep", "getttbusstoparr",
-    "getheightabovepoint", "gethumancountonpathlink", "gethumancountonseat", "givechangecoin", "nrspecrandom", "getticketname", "gettticketname", "getticketvalue",
-    "getarrbusline", "getarrbusterminus", "getarrbustimediff",
+    "getfontindex",
+    "textlength",
+    "stnewtex",
+    "stlock",
+    "stunlock",
+    "stfilter",
+    "stsetcolor",
+    "stdrawpixel",
+    "stdrawrect",
+    "sttextout",
+    "streadpixel",
+    "stgetr",
+    "stgetg",
+    "stgetb",
+    "stgeta",
+    "stcopycolor",
+    "stloadtex",
+    "getrouteindex",
+    "getrouteterminusindex",
+    "getterminuscode",
+    "getterminusindex",
+    "getterminusstring",
+    "getbusstopcount",
+    "getroutebusstopident",
+    "getbusstopindex",
+    "getbusstopstring",
+    "getdepotstringglobal",
+    "getttlinestring",
+    "getttdelay",
+    "getttbusstopcount",
+    "getttbusstopindex",
+    "gettterminusindex",
+    "getttterminusindex",
+    "getttbusstopname",
+    "getttbusstopdep",
+    "getttbusstoparr",
+    "getheightabovepoint",
+    "gethumancountonpathlink",
+    "gethumancountonseat",
+    "givechangecoin",
+    "nrspecrandom",
+    "getticketname",
+    "gettticketname",
+    "getticketvalue",
+    "getarrbusline",
+    "getarrbusterminus",
+    "getarrbustimediff",
 ];
 
 /// A number a script hands a callback, as Omsi.exe takes it: rounded to the nearest
@@ -281,7 +347,13 @@ impl Host for VehicleHost {
             SysVar::Timegap => self.clock.timegap,
             SysVar::GetTime => self.clock.run_time as f32,
             SysVar::NoSound => self.no_sound,
-            SysVar::Pause => if self.clock.paused { 1.0 } else { 0.0 },
+            SysVar::Pause => {
+                if self.clock.paused {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             // seconds since midnight ("Time in seconds", says the stock clock object): every
             // script divides it by 3600 for the hour (IBIS and ticket printer clocks) or
             // compares it with 28800/72000 (the Citaro's door chime by day). Handing out hours
@@ -337,7 +409,10 @@ impl Host for VehicleHost {
                 };
                 self.clock.set_date(y, m, d);
             }
-            SysVar::DayOfYear => self.clock.day_of_year = (value as i32).clamp(1, crate::clock::days_in_year(self.clock.year)),
+            SysVar::DayOfYear => {
+                self.clock.day_of_year =
+                    (value as i32).clamp(1, crate::clock::days_in_year(self.clock.year))
+            }
             SysVar::MouseX => self.mouse.0 = value,
             SysVar::MouseY => self.mouse.1 = value,
             SysVar::PrecipType => self.precip_type = value,
@@ -357,18 +432,31 @@ impl Host for VehicleHost {
     fn callback(&mut self, name: &str, _id: NameId, stacks: &mut Stacks, state: &mut State) {
         let lname = name.to_ascii_lowercase();
         if lname.starts_with("st") && omsi_cfg::env::var_os("OMSI_DEBUG_TEXT").is_some() {
-            log::info!("callback {name} stack {:?} strings {:?}", &stacks.st[..stacks.st.len().min(8)], stacks.sst.last());
+            log::info!(
+                "callback {name} stack {:?} strings {:?}",
+                &stacks.st[..stacks.st.len().min(8)],
+                stacks.sst.last()
+            );
         }
         match lname.as_str() {
             "getfontindex" => {
                 let font = stacks.pop_str();
-                let idx = match self.fonts.entries.iter().position(|f| f.0.eq_ignore_ascii_case(&font)) {
+                let idx = match self
+                    .fonts
+                    .entries
+                    .iter()
+                    .position(|f| f.0.eq_ignore_ascii_case(&font))
+                {
                     Some(i) => i,
                     None => {
                         // an empty name or a depot string that is no font (the Krüger
                         // matrix asks for the custom fonts of termini 14991.. this way) is
                         // looked up once and remembered as missing
-                        let atlas = if font.trim().is_empty() { None } else { self.font_lib.as_ref().and_then(|l| l.lock().load(&font)) };
+                        let atlas = if font.trim().is_empty() {
+                            None
+                        } else {
+                            self.font_lib.as_ref().and_then(|l| l.lock().load(&font))
+                        };
                         self.fonts.entries.push((font, atlas));
                         self.fonts.entries.len() - 1
                     }
@@ -384,9 +472,15 @@ impl Host for VehicleHost {
                 let font = arg_i32(stacks.pop());
                 let text = stacks.pop_str();
                 // as Omsi.exe measures it (0x5d6c00): the glyphs and the gaps between them
-                let w = self.font_atlas(font).map(|a| a.font.text_width(&text) as f32).unwrap_or(0.0);
+                let w = self
+                    .font_atlas(font)
+                    .map(|a| a.font.text_width(&text) as f32)
+                    .unwrap_or(0.0);
                 if omsi_cfg::env::var_os("OMSI_DEBUG_TEXT").is_some() {
-                    log::info!("TextLength(font {font} = {:?}, {text:?}) = {w}", self.font_atlas(font).map(|a| a.font.name.clone()));
+                    log::info!(
+                        "TextLength(font {font} = {:?}, {text:?}) = {w}",
+                        self.font_atlas(font).map(|a| a.font.name.clone())
+                    );
                 }
                 stacks.push(w);
             }
@@ -460,7 +554,17 @@ impl Host for VehicleHost {
                 let i = arg_idx(stacks.pop());
                 let atlas = self.font_atlas(font);
                 if omsi_cfg::env::var_os("OMSI_DEBUG_TEXT").is_some() {
-                    log::info!("STTextOut(tex {i}, x {x}, y {y}, font {font}, spacing {spacing}, {text:?}) atlas {:?} from {:?} bitmap {:?} {}x{} E {:?}", atlas.as_ref().map(|a| a.font.name.clone()), atlas.as_ref().map(|a| a.font.path.clone()), atlas.as_ref().map(|a| a.font.alpha.clone()), atlas.as_ref().map(|a| a.width).unwrap_or(0), atlas.as_ref().map(|a| a.height).unwrap_or(0), atlas.as_ref().and_then(|a| a.font.glyph('E').map(|g| (g.x0, g.x1, g.y))));
+                    log::info!(
+                        "STTextOut(tex {i}, x {x}, y {y}, font {font}, spacing {spacing}, {text:?}) atlas {:?} from {:?} bitmap {:?} {}x{} E {:?}",
+                        atlas.as_ref().map(|a| a.font.name.clone()),
+                        atlas.as_ref().map(|a| a.font.path.clone()),
+                        atlas.as_ref().map(|a| a.font.alpha.clone()),
+                        atlas.as_ref().map(|a| a.width).unwrap_or(0),
+                        atlas.as_ref().map(|a| a.height).unwrap_or(0),
+                        atlas
+                            .as_ref()
+                            .and_then(|a| a.font.glyph('E').map(|g| (g.x0, g.x1, g.y)))
+                    );
                 }
                 if let (Some(t), Some(a)) = (self.script_textures.get_mut(i), atlas) {
                     t.text_out(&a, x, y, spacing, arg_i32(mode) as u8, &text);
@@ -487,7 +591,12 @@ impl Host for VehicleHost {
                     "stgetb" => 2,
                     _ => 3,
                 };
-                stacks.push(self.script_textures.get(i).map(|t| t.color[k] as f32).unwrap_or(0.0));
+                stacks.push(
+                    self.script_textures
+                        .get(i)
+                        .map(|t| t.color[k] as f32)
+                        .unwrap_or(0.0),
+                );
             }
             "stcopycolor" => {
                 // colour of texture a → texture b
@@ -506,10 +615,15 @@ impl Host for VehicleHost {
                 // vehicle: the Krüger matrix loads `..\..\Anzeigen\Krueger\<bitmap>`,
                 // which is `Vehicles\Anzeigen\...` seen from `Vehicles\<bus>\Texture`
                 // (and found in whichever content root has it)
-                let mut full = omsi_cfg::resolve_path(&omsi_cfg::resolve_path(&self.content_dir, "Texture"), &path);
+                let mut full = omsi_cfg::resolve_path(
+                    &omsi_cfg::resolve_path(&self.content_dir, "Texture"),
+                    &path,
+                );
                 // (then the global `Texture` folder, as OMSI looks)
                 if !omsi_cfg::vfs::is_file(&full) {
-                    if let Some((_, p)) = omsi_cfg::find_in_roots(&format!("Texture/{}", path.replace('\\', "/"))) {
+                    if let Some((_, p)) =
+                        omsi_cfg::find_in_roots(&format!("Texture/{}", path.replace('\\', "/")))
+                    {
                         full = p;
                     }
                 }
@@ -520,7 +634,10 @@ impl Host for VehicleHost {
                             t.load(img.width, img.height, &img.rgba);
                         }
                     }
-                    Err(e) => log::warn!("STLoadTex: did not find texture file {}: {e}", full.display()),
+                    Err(e) => log::warn!(
+                        "STLoadTex: did not find texture file {}: {e}",
+                        full.display()
+                    ),
                 }
             }
             // --- depot (HOF) callbacks of the IBIS: arguments come off the float stack, the
@@ -562,40 +679,78 @@ impl Host for VehicleHost {
             }
             "getterminusindex" => {
                 let code = arg_i32(stacks.pop());
-                let idx = self.hof.as_ref().and_then(|h| h.termini.iter().position(|t| t.code == code)).map(|i| i as f32).unwrap_or(-1.0);
+                let idx = self
+                    .hof
+                    .as_ref()
+                    .and_then(|h| h.termini.iter().position(|t| t.code == code))
+                    .map(|i| i as f32)
+                    .unwrap_or(-1.0);
                 stacks.push(idx);
             }
             "getterminusstring" => {
                 let n = arg_i32(stacks.pop());
                 let idx = arg_i32(stacks.pop());
-                let s = self.terminus(idx).and_then(|t| t.strings.get(usize::try_from(n).ok()?)).cloned().unwrap_or_default();
+                let s = self
+                    .terminus(idx)
+                    .and_then(|t| t.strings.get(usize::try_from(n).ok()?))
+                    .cloned()
+                    .unwrap_or_default();
                 stacks.push_str(s);
             }
             "getbusstopcount" => {
                 let route = arg_i32(stacks.pop());
-                let n = self.hof.as_ref().and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?)).map(|l| l.len() as f32).unwrap_or(0.0);
+                let n = self
+                    .hof
+                    .as_ref()
+                    .and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?))
+                    .map(|l| l.len() as f32)
+                    .unwrap_or(0.0);
                 stacks.push(n);
             }
             "getroutebusstopident" => {
                 let stop = arg_i32(stacks.pop());
                 let route = arg_i32(stacks.pop());
-                let s = self.hof.as_ref().and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?)).and_then(|l| l.get(usize::try_from(stop).ok()?)).cloned().unwrap_or_default();
+                let s = self
+                    .hof
+                    .as_ref()
+                    .and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?))
+                    .and_then(|l| l.get(usize::try_from(stop).ok()?))
+                    .cloned()
+                    .unwrap_or_default();
                 stacks.push_str(s);
             }
             "getbusstopindex" => {
                 let ident = stacks.pop_str();
-                let idx = self.hof.as_ref().and_then(|h| h.bus_stops.iter().position(|b| b.ident.trim().eq_ignore_ascii_case(ident.trim()))).map(|i| i as f32).unwrap_or(-1.0);
+                let idx = self
+                    .hof
+                    .as_ref()
+                    .and_then(|h| {
+                        h.bus_stops
+                            .iter()
+                            .position(|b| b.ident.trim().eq_ignore_ascii_case(ident.trim()))
+                    })
+                    .map(|i| i as f32)
+                    .unwrap_or(-1.0);
                 stacks.push(idx);
             }
             "getbusstopstring" => {
                 let n = arg_i32(stacks.pop());
                 let idx = arg_i32(stacks.pop());
-                let s = self.bus_stop(idx).and_then(|b| b.strings.get(usize::try_from(n).ok()?)).cloned().unwrap_or_default();
+                let s = self
+                    .bus_stop(idx)
+                    .and_then(|b| b.strings.get(usize::try_from(n).ok()?))
+                    .cloned()
+                    .unwrap_or_default();
                 stacks.push_str(s);
             }
             "getdepotstringglobal" => {
                 let n = arg_i32(stacks.pop());
-                let s = self.hof.as_ref().and_then(|h| h.global_strings.get(usize::try_from(n).ok()?)).cloned().unwrap_or_default();
+                let s = self
+                    .hof
+                    .as_ref()
+                    .and_then(|h| h.global_strings.get(usize::try_from(n).ok()?))
+                    .cloned()
+                    .unwrap_or_default();
                 stacks.push_str(s);
             }
             // --- timetable callbacks
@@ -610,36 +765,62 @@ impl Host for VehicleHost {
             } else {
                 self.tt_busstop_index as f32
             }),
-            "gettterminusindex" | "getttterminusindex" => stacks.push(if self.tt_stops.is_empty() {
-                -1.0
-            } else {
-                self.tt_terminus_index as f32
-            }),
+            "gettterminusindex" | "getttterminusindex" => {
+                stacks.push(if self.tt_stops.is_empty() {
+                    -1.0
+                } else {
+                    self.tt_terminus_index as f32
+                })
+            }
             // how high a point of the vehicle stands over the ground (the NL/NG ramp
             // measures the kerb this way before extending)
             "getheightabovepoint" => {
                 let z = stacks.pop();
                 let y = stacks.pop();
                 let x = stacks.pop();
-                let h = self.ground_probe.as_ref().map(|f| f(x, y, z)).unwrap_or(0.0);
+                let h = self
+                    .ground_probe
+                    .as_ref()
+                    .map(|f| f(x, y, z))
+                    .unwrap_or(0.0);
                 stacks.push(h);
             }
             // passengers standing on one link of the cabin path network
             "gethumancountonpathlink" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push(self.humans_on_path_link.get(usize::try_from(i).unwrap_or(usize::MAX)).copied().unwrap_or(0) as f32);
+                stacks.push(
+                    self.humans_on_path_link
+                        .get(usize::try_from(i).unwrap_or(usize::MAX))
+                        .copied()
+                        .unwrap_or(0) as f32,
+                );
             }
             "getttbusstopname" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push_str(self.tt_stops.get(usize::try_from(i).unwrap_or(usize::MAX)).map(|s| s.0.clone()).unwrap_or_default());
+                stacks.push_str(
+                    self.tt_stops
+                        .get(usize::try_from(i).unwrap_or(usize::MAX))
+                        .map(|s| s.0.clone())
+                        .unwrap_or_default(),
+                );
             }
             "getttbusstopdep" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push(self.tt_stops.get(usize::try_from(i).unwrap_or(usize::MAX)).map(|s| s.2).unwrap_or(0.0));
+                stacks.push(
+                    self.tt_stops
+                        .get(usize::try_from(i).unwrap_or(usize::MAX))
+                        .map(|s| s.2)
+                        .unwrap_or(0.0),
+                );
             }
             "getttbusstoparr" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push(self.tt_stops.get(usize::try_from(i).unwrap_or(usize::MAX)).map(|s| s.1).unwrap_or(0.0));
+                stacks.push(
+                    self.tt_stops
+                        .get(usize::try_from(i).unwrap_or(usize::MAX))
+                        .map(|s| s.1)
+                        .unwrap_or(0.0),
+                );
             }
             "givechangecoin" => {
                 let i = arg_i32(stacks.pop());
@@ -651,20 +832,41 @@ impl Host for VehicleHost {
             // number and characteristic every time (broken matrix pixels, wear effects)
             "nrspecrandom" => {
                 let n = arg_i32(stacks.pop());
-                let number = self.number_var.and_then(|i| state.str_vars.get(i as usize)).cloned().unwrap_or_default();
+                let number = self
+                    .number_var
+                    .and_then(|i| state.str_vars.get(i as usize))
+                    .cloned()
+                    .unwrap_or_default();
                 stacks.push(omsi_vehicle::sound::spec_random(&number, n));
             }
             "getticketname" | "gettticketname" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push_str(self.tickets.as_ref().and_then(|t| t.tickets.get(usize::try_from(i).unwrap_or(usize::MAX))).map(|t| t.name.clone()).unwrap_or_default());
+                stacks.push_str(
+                    self.tickets
+                        .as_ref()
+                        .and_then(|t| t.tickets.get(usize::try_from(i).unwrap_or(usize::MAX)))
+                        .map(|t| t.name.clone())
+                        .unwrap_or_default(),
+                );
             }
             "getticketvalue" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push(self.tickets.as_ref().and_then(|t| t.tickets.get(usize::try_from(i).unwrap_or(usize::MAX))).map(|t| t.value).unwrap_or(0.0));
+                stacks.push(
+                    self.tickets
+                        .as_ref()
+                        .and_then(|t| t.tickets.get(usize::try_from(i).unwrap_or(usize::MAX)))
+                        .map(|t| t.value)
+                        .unwrap_or(0.0),
+                );
             }
             "gethumancountonseat" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push(self.humans_on_seat.get(usize::try_from(i).unwrap_or(usize::MAX)).copied().unwrap_or(0) as f32);
+                stacks.push(
+                    self.humans_on_seat
+                        .get(usize::try_from(i).unwrap_or(usize::MAX))
+                        .copied()
+                        .unwrap_or(0) as f32,
+                );
             }
             // --- scenery objects (`program/callbacklist_scenobj.txt`): the n-th bus due at
             // the object's stop. Past the last one the line and terminus are empty (the stock
@@ -675,7 +877,11 @@ impl Host for VehicleHost {
             }
             "getarrbusterminus" => {
                 let i = arg_i32(stacks.pop());
-                stacks.push_str(self.arrival(i).map(|a| a.terminus.clone()).unwrap_or_default());
+                stacks.push_str(
+                    self.arrival(i)
+                        .map(|a| a.terminus.clone())
+                        .unwrap_or_default(),
+                );
             }
             "getarrbustimediff" => {
                 let i = arg_i32(stacks.pop());
@@ -698,7 +904,8 @@ impl Host for VehicleHost {
         if file.trim().is_empty() {
             return;
         }
-        self.fired_file_triggers.push((name.to_string(), file.to_string()));
+        self.fired_file_triggers
+            .push((name.to_string(), file.to_string()));
     }
     fn sound_trigger(&mut self, name: &str, _id: NameId) {
         self.fired_triggers.push(name.to_string());
@@ -729,7 +936,7 @@ impl Host for VehicleHost {
 mod tests {
     use super::*;
     use crate::scripttex::ScriptTexture;
-    use omsi_script::{compile, CompileInput, Vm};
+    use omsi_script::{CompileInput, Vm, compile};
 
     #[test]
     fn departure_wants_keep_the_stops_asked_most_recently() {
@@ -738,13 +945,25 @@ mod tests {
             host.want_departures(format!("stop {i}"));
         }
         assert_eq!(host.html_departure_wants.len(), MAX_HTML_DEPARTURE_STOPS);
-        assert_eq!(host.html_departure_wants.first().map(String::as_str), Some("stop 3"));
-        assert_eq!(host.html_departure_wants.last().map(String::as_str), Some("stop 10"));
+        assert_eq!(
+            host.html_departure_wants.first().map(String::as_str),
+            Some("stop 3")
+        );
+        assert_eq!(
+            host.html_departure_wants.last().map(String::as_str),
+            Some("stop 10")
+        );
         // asked again: moves to the back and nothing is pushed out
         host.want_departures("stop 3".to_string());
         assert_eq!(host.html_departure_wants.len(), MAX_HTML_DEPARTURE_STOPS);
-        assert_eq!(host.html_departure_wants.last().map(String::as_str), Some("stop 3"));
-        assert_eq!(host.html_departure_wants.first().map(String::as_str), Some("stop 4"));
+        assert_eq!(
+            host.html_departure_wants.last().map(String::as_str),
+            Some("stop 3")
+        );
+        assert_eq!(
+            host.html_departure_wants.first().map(String::as_str),
+            Some("stop 4")
+        );
     }
 
     /// A callback's argument is rounded, as Omsi.exe's `fistp` does: 1100.9999 out of the
@@ -754,8 +973,15 @@ mod tests {
         let p = compile(&CompileInput::default());
         let mut state = State::new(&p);
         let mut host = VehicleHost::new(SimClock::default());
-        let terminus = |code: i32, name: &str| omsi_vehicle::hof::Terminus { code, strings: vec![name.to_string()], ..Default::default() };
-        host.hof = Some(Arc::new(Hof { termini: vec![terminus(1100, "A"), terminus(1101, "B")], ..Default::default() }));
+        let terminus = |code: i32, name: &str| omsi_vehicle::hof::Terminus {
+            code,
+            strings: vec![name.to_string()],
+            ..Default::default()
+        };
+        host.hof = Some(Arc::new(Hof {
+            termini: vec![terminus(1100, "A"), terminus(1101, "B")],
+            ..Default::default()
+        }));
         let mut stacks = Stacks::default();
         stacks.push(1100.9999);
         host.callback("GetTerminusIndex", 0, &mut stacks, &mut state);
@@ -766,7 +992,10 @@ mod tests {
         host.callback("GetTerminusString", 0, &mut stacks, &mut state);
         assert_eq!(stacks.pop_str(), "B");
         // a half goes to the even number, as under Delphi's control word
-        assert_eq!((arg_i32(0.5), arg_i32(1.5), arg_i32(2.5), arg_i32(-0.5)), (0, 2, 2, 0));
+        assert_eq!(
+            (arg_i32(0.5), arg_i32(1.5), arg_i32(2.5), arg_i32(-0.5)),
+            (0, 2, 2, 0)
+        );
         assert_eq!(arg_idx(-1.0), usize::MAX);
     }
 
@@ -798,14 +1027,15 @@ mod tests {
 
     #[test]
     fn stfilter_marks_a_script_texture_for_mipmaps() {
-        let dir = std::env::temp_dir().join(format!("omsi_host_stfilter_test_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("omsi_host_stfilter_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("matrix.osc");
         std::fs::write(
             &script,
             "{trigger:matrix_refresh}\n0 (M.V.STLock)\n0 (M.V.STUnlock)\n0 (M.V.STFilter)\n{end}\n",
         )
-            .unwrap();
+        .unwrap();
         let p = compile(&CompileInput {
             scripts: vec![script],
             ..Default::default()
@@ -825,10 +1055,7 @@ mod tests {
 
     #[test]
     fn atron_unlock_filter_relock_publishes_the_released_image() {
-        let dir = std::env::temp_dir().join(format!(
-            "omsi_host_atron_test_{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("omsi_host_atron_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("atron.osc");
         std::fs::write(
@@ -848,7 +1075,9 @@ mod tests {
         let t = &mut host.script_textures[0];
         assert!(t.locked);
         assert!(t.mipmaps);
-        let first = t.take_upload().expect("STUnlock must survive STLock in the same frame");
+        let first = t
+            .take_upload()
+            .expect("STUnlock must survive STLock in the same frame");
         assert_eq!(&first[20..24], &[255; 4]);
         assert_eq!(
             &first[24..28],
@@ -911,7 +1140,11 @@ mod tests {
             .unwrap();
         let vars = dir.join("vars.txt");
         std::fs::write(&vars, "collision_energy\ncollision_energy_eng\n").unwrap();
-        let p = compile(&CompileInput { varlists: vec![vars], scripts: vec![script], ..Default::default() });
+        let p = compile(&CompileInput {
+            varlists: vec![vars],
+            scripts: vec![script],
+            ..Default::default()
+        });
         assert!(p.errors.is_empty(), "{:?}", p.errors);
         let mut host = VehicleHost::new(SimClock::default());
         let mut st = State::new(&p);

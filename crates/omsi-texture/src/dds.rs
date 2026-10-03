@@ -18,7 +18,12 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     let pf_flags = u32_at(bytes, 80);
     let fourcc = &bytes[84..88];
     let bpp = u32_at(bytes, 88) as usize;
-    let masks = [u32_at(bytes, 92), u32_at(bytes, 96), u32_at(bytes, 100), u32_at(bytes, 104)];
+    let masks = [
+        u32_at(bytes, 92),
+        u32_at(bytes, 96),
+        u32_at(bytes, 100),
+        u32_at(bytes, 104),
+    ];
     let mut data_start = 128;
     if fourcc == b"DX10" {
         data_start += 20;
@@ -65,7 +70,12 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
             (b"DXT2" | b"DXT3", _) | (_, Some(73..=75)) => (16, 3),
             (b"DXT4" | b"DXT5", _) | (_, Some(76..=78)) => (16, 5),
             (_, Some(f)) => return Err(format!("unsupported DXGI format {f}")),
-            (other, None) => return Err(format!("unsupported fourcc {:?}", String::from_utf8_lossy(other))),
+            (other, None) => {
+                return Err(format!(
+                    "unsupported fourcc {:?}",
+                    String::from_utf8_lossy(other)
+                ));
+            }
         };
         // DXT2 and DXT4 hold colour premultiplied by alpha
         let premultiplied = matches!(fourcc, b"DXT2" | b"DXT4");
@@ -99,7 +109,12 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
             }
         }
         let has_alpha = kind != 1 || rgba.chunks_exact(4).any(|p| p[3] < 255);
-        return Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha });
+        return Ok(Image {
+            width: width as u32,
+            height: height as u32,
+            rgba,
+            has_alpha,
+        });
     }
     // uncompressed: masks describe the channels (luminance: r mask only, flag 0x20000)
     let luminance = pf_flags & 0x20000 != 0;
@@ -136,21 +151,44 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
                 p.copy_from_slice(&[255, 255, 255, extract(v, masks[3])]);
             } else if luminance {
                 let l = extract(v, masks[0]);
-                let a = if masks[3] != 0 { extract(v, masks[3]) } else { 255 };
+                let a = if masks[3] != 0 {
+                    extract(v, masks[3])
+                } else {
+                    255
+                };
                 p.copy_from_slice(&[l, l, l, a]);
             } else {
-                let a = if masks[3] != 0 { extract(v, masks[3]) } else { 255 };
-                p.copy_from_slice(&[extract(v, masks[0]), extract(v, masks[1]), extract(v, masks[2]), a]);
+                let a = if masks[3] != 0 {
+                    extract(v, masks[3])
+                } else {
+                    255
+                };
+                p.copy_from_slice(&[
+                    extract(v, masks[0]),
+                    extract(v, masks[1]),
+                    extract(v, masks[2]),
+                    a,
+                ]);
             }
         }
     }
-    Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha })
+    Ok(Image {
+        width: width as u32,
+        height: height as u32,
+        rgba,
+        has_alpha,
+    })
 }
 
 /// The uncompressed DXGI formats of a DX10 header: R8G8B8A8 (28, 29 sRGB), B8G8R8A8 (87,
 /// 91), B8G8R8X8 (88, 93), R16G16B16A16 float (10) and unorm (11), R32G32B32A32 float (2),
 /// R8 (61), A8 (65).
-fn dxgi_plain(format: u32, data: &[u8], width: usize, height: usize) -> Option<Result<Image, String>> {
+fn dxgi_plain(
+    format: u32,
+    data: &[u8],
+    width: usize,
+    height: usize,
+) -> Option<Result<Image, String>> {
     let wide = match format {
         10 => Some(113),
         11 => Some(36),
@@ -180,12 +218,22 @@ fn dxgi_plain(format: u32, data: &[u8], width: usize, height: usize) -> Option<R
         }
     }
     let has_alpha = rgba.chunks_exact(4).any(|p| p[3] < 255);
-    Some(Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha }))
+    Some(Ok(Image {
+        width: width as u32,
+        height: height as u32,
+        rgba,
+        has_alpha,
+    }))
 }
 
 /// `D3DFMT_A16B16G16R16` (36), `D3DFMT_A16B16G16R16F` (113) and `D3DFMT_A32B32G32R32F`
 /// (116): four channels in R, G, B, A order, tone-clamped to 0..1.
-fn wide_rgba(format: u32, data: &[u8], width: usize, height: usize) -> Option<Result<Image, String>> {
+fn wide_rgba(
+    format: u32,
+    data: &[u8],
+    width: usize,
+    height: usize,
+) -> Option<Result<Image, String>> {
     let (bytes_pp, read): (usize, fn(&[u8]) -> f32) = match format {
         36 => (8, |b| u16::from_le_bytes([b[0], b[1]]) as f32 / 65535.0),
         113 => (8, |b| half_to_f32(u16::from_le_bytes([b[0], b[1]]))),
@@ -204,7 +252,12 @@ fn wide_rgba(format: u32, data: &[u8], width: usize, height: usize) -> Option<Re
         }
     }
     let has_alpha = rgba.chunks_exact(4).any(|p| p[3] < 255);
-    Some(Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha }))
+    Some(Ok(Image {
+        width: width as u32,
+        height: height as u32,
+        rgba,
+        has_alpha,
+    }))
 }
 
 fn half_to_f32(h: u16) -> f32 {
@@ -222,7 +275,12 @@ fn rgb565(v: u16) -> [u8; 4] {
     let r = ((v >> 11) & 31) as u32;
     let g = ((v >> 5) & 63) as u32;
     let b = (v & 31) as u32;
-    [((r * 255) / 31) as u8, ((g * 255) / 63) as u8, ((b * 255) / 31) as u8, 255]
+    [
+        ((r * 255) / 31) as u8,
+        ((g * 255) / 63) as u8,
+        ((b * 255) / 31) as u8,
+        255,
+    ]
 }
 
 pub(crate) fn decode_block(block: &[u8], kind: u8) -> [[u8; 4]; 16] {
@@ -320,9 +378,17 @@ fn cube_to_sphere(faces: &[Image], size: usize) -> Image {
             let d = [2.0 * nz * nx, 2.0 * nz * ny, 2.0 * nz * nz - 1.0];
             let (ax, ay, az) = (d[0].abs(), d[1].abs(), d[2].abs());
             let (face, u, v) = if ax >= ay && ax >= az {
-                if d[0] > 0.0 { (0, -d[2] / ax, -d[1] / ax) } else { (1, d[2] / ax, -d[1] / ax) }
+                if d[0] > 0.0 {
+                    (0, -d[2] / ax, -d[1] / ax)
+                } else {
+                    (1, d[2] / ax, -d[1] / ax)
+                }
             } else if ay >= az {
-                if d[1] > 0.0 { (2, d[0] / ay, d[2] / ay) } else { (3, d[0] / ay, -d[2] / ay) }
+                if d[1] > 0.0 {
+                    (2, d[0] / ay, d[2] / ay)
+                } else {
+                    (3, d[0] / ay, -d[2] / ay)
+                }
             } else if d[2] > 0.0 {
                 (4, d[0] / az, -d[1] / az)
             } else {
@@ -339,7 +405,12 @@ fn cube_to_sphere(faces: &[Image], size: usize) -> Image {
             }
         }
     }
-    Image { width: size as u32, height: size as u32, rgba, has_alpha }
+    Image {
+        width: size as u32,
+        height: size as u32,
+        rgba,
+        has_alpha,
+    }
 }
 
 #[cfg(test)]

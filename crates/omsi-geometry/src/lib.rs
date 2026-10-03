@@ -3,7 +3,7 @@
 //! World frame: x east, y north, z up, metres. Headings in degrees, 0 = +y, clockwise.
 
 use glam::{DVec2, DVec3, Mat4, Quat, Vec2, Vec3};
-use omsi_map::{tile_size, MapSpline, Terrain};
+use omsi_map::{MapSpline, Terrain, tile_size};
 use omsi_scenery::Spline;
 
 /// A renderable triangle mesh with one texture per material slot.
@@ -26,8 +26,13 @@ impl MeshData {
     /// keeps its place in the material order, but draws all segments in one call.
     /// Positions must already be expressed in the same coordinate frame.
     pub fn merge_static(meshes: &[&MeshData]) -> MeshData {
-        let Some(first) = meshes.first() else { return MeshData::default() };
-        let mut out = MeshData { one_sided: first.one_sided, ..Default::default() };
+        let Some(first) = meshes.first() else {
+            return MeshData::default();
+        };
+        let mut out = MeshData {
+            one_sided: first.one_sided,
+            ..Default::default()
+        };
         let mut ranges = vec![Vec::new(); first.ranges.len()];
         for mesh in meshes {
             assert_eq!(mesh.one_sided, first.one_sided);
@@ -38,7 +43,11 @@ impl MeshData {
             out.uvs.extend_from_slice(&mesh.uvs);
             for (i, &(start, count, slot)) in mesh.ranges.iter().enumerate() {
                 assert_eq!(slot, first.ranges[i].2);
-                ranges[i].extend(mesh.indices[start as usize..(start + count) as usize].iter().map(|v| base + v));
+                ranges[i].extend(
+                    mesh.indices[start as usize..(start + count) as usize]
+                        .iter()
+                        .map(|v| base + v),
+                );
             }
         }
         for (indices, &(_, _, slot)) in ranges.into_iter().zip(&first.ranges) {
@@ -60,7 +69,11 @@ impl MeshData {
 
     /// Bytes the mesh holds on the heap.
     pub fn heap_bytes(&self) -> usize {
-        self.positions.capacity() * 12 + self.normals.capacity() * 12 + self.uvs.capacity() * 8 + self.indices.capacity() * 4 + self.ranges.capacity() * 12
+        self.positions.capacity() * 12
+            + self.normals.capacity() * 12
+            + self.uvs.capacity() * 8
+            + self.indices.capacity() * 4
+            + self.ranges.capacity() * 12
     }
 }
 
@@ -105,26 +118,40 @@ pub fn half_cant_width(def: &Spline) -> f64 {
     if let Some(w) = def.half_cant_width.filter(|w| w.is_finite() && *w >= 0.0) {
         return w as f64;
     }
-    let (lo, hi) = def.height_profiles.iter().fold((0.0f64, 0.0f64), |(lo, hi), h| (lo.min(h.x0 as f64), hi.max(h.x1 as f64)));
+    let (lo, hi) = def
+        .height_profiles
+        .iter()
+        .fold((0.0f64, 0.0f64), |(lo, hi), h| {
+            (lo.min(h.x0 as f64), hi.max(h.x1 as f64))
+        });
     (-lo).max(hi).max(-1.0)
 }
 
 /// The half cant width of a spline without a .sli object (OMSI: 10 m).
 pub const DEFAULT_HALF_CANT_WIDTH: f64 = 10.0;
 
-static HALF_CANT_WIDTHS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, f64>>> = std::sync::OnceLock::new();
+static HALF_CANT_WIDTHS: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, f64>>,
+> = std::sync::OnceLock::new();
 
 /// Remember a spline type's half cant width by its file name (as a tile names it), for
 /// what is placed on its splines without the type at hand (objects in rows).
 pub fn register_half_cant_width(file: &str, def: &Spline) {
     let key = file.trim().to_ascii_lowercase().replace('\\', "/");
-    HALF_CANT_WIDTHS.get_or_init(Default::default).write().unwrap_or_else(|e| e.into_inner()).insert(key, half_cant_width(def));
+    HALF_CANT_WIDTHS
+        .get_or_init(Default::default)
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, half_cant_width(def));
 }
 
 /// The half cant width of the spline type `file` names, as registered (else the default).
 pub fn half_cant_width_of(file: &str) -> f64 {
     let key = file.trim().to_ascii_lowercase().replace('\\', "/");
-    HALF_CANT_WIDTHS.get().and_then(|m| m.read().ok().and_then(|m| m.get(&key).copied())).unwrap_or(DEFAULT_HALF_CANT_WIDTH)
+    HALF_CANT_WIDTHS
+        .get()
+        .and_then(|m| m.read().ok().and_then(|m| m.get(&key).copied()))
+        .unwrap_or(DEFAULT_HALF_CANT_WIDTH)
 }
 
 impl SplineCurve {
@@ -149,7 +176,10 @@ impl SplineCurve {
 
     /// The same curve with its spline type's half cant width.
     pub fn with_sli(self, def: &Spline) -> SplineCurve {
-        SplineCurve { half_cant_width: half_cant_width(def), ..self }
+        SplineCurve {
+            half_cant_width: half_cant_width(def),
+            ..self
+        }
     }
 
     /// Direction vector (unit, horizontal) for a heading.
@@ -179,7 +209,10 @@ impl SplineCurve {
             Some(dh) => {
                 let (m0, m1) = (self.grad_start / 100.0 * l, self.grad_end / 100.0 * l);
                 let (t2, t3) = (t * t, t * t * t);
-                self.start.z + (t3 - 2.0 * t2 + t) * m0 + (3.0 * t2 - 2.0 * t3) * dh + (t3 - t2) * m1
+                self.start.z
+                    + (t3 - 2.0 * t2 + t) * m0
+                    + (3.0 * t2 - 2.0 * t3) * dh
+                    + (t3 - t2) * m1
             }
             None => {
                 let g = self.grad_start + (self.grad_end - self.grad_start) * t * 0.5;
@@ -195,7 +228,10 @@ impl SplineCurve {
         match self.delta_h {
             Some(dh) => {
                 let (m0, m1) = (self.grad_start / 100.0 * l, self.grad_end / 100.0 * l);
-                ((3.0 * t * t - 4.0 * t + 1.0) * m0 + (6.0 * t - 6.0 * t * t) * dh + (3.0 * t * t - 2.0 * t) * m1) / l
+                ((3.0 * t * t - 4.0 * t + 1.0) * m0
+                    + (6.0 * t - 6.0 * t * t) * dh
+                    + (3.0 * t * t - 2.0 * t) * m1)
+                    / l
             }
             None => (self.grad_start + (self.grad_end - self.grad_start) * t) / 100.0,
         }
@@ -251,12 +287,19 @@ pub fn spline_station_count(def: &Spline, curve: &SplineCurve) -> usize {
     const HALF_DEGREE: f64 = 0.008726647;
     let l = curve.length.max(0.0);
     // (the turn: Generate's curvature times length)
-    let turn = if curve.radius != 0.0 { (l / curve.radius).abs() } else { 0.0 };
+    let turn = if curve.radius != 0.0 {
+        (l / curve.radius).abs()
+    } else {
+        0.0
+    };
     let horizontal = (turn / HALF_DEGREE) as usize + 1;
     // the height polynomial g0 s + a s^2 + b s^3 (sub_5ab108)
     let (g0, g1) = (curve.grad_start / 100.0, curve.grad_end / 100.0);
     let (a, b) = match curve.delta_h {
-        Some(dh) if l > 1e-6 => ((3.0 * (dh - g0 * l) - (g1 - g0) * l) / (l * l), ((g1 - g0) * l - 2.0 * (dh - g0 * l)) / (l * l * l)),
+        Some(dh) if l > 1e-6 => (
+            (3.0 * (dh - g0 * l) - (g1 - g0) * l) / (l * l),
+            ((g1 - g0) * l - 2.0 * (dh - g0 * l)) / (l * l * l),
+        ),
         _ if l > 1e-6 => ((g1 - g0) / (2.0 * l), 0.0),
         _ => (0.0, 0.0),
     };
@@ -274,7 +317,11 @@ pub fn spline_station_count(def: &Spline, curve: &SplineCurve) -> usize {
 /// and 3870 indices over all its profiles).
 fn station_cap(def: &Spline) -> usize {
     let points: usize = def.profiles.iter().map(|p| p.points.len()).sum();
-    let segments: usize = def.profiles.iter().map(|p| p.points.len().saturating_sub(1)).sum();
+    let segments: usize = def
+        .profiles
+        .iter()
+        .map(|p| p.points.len().saturating_sub(1))
+        .sum();
     if points == 0 || segments == 0 {
         return usize::MAX;
     }
@@ -302,7 +349,12 @@ struct Patchwork {
 /// `stations` is made a multiple of the stretches.
 fn patchwork(def: &Spline, curve: &SplineCurve, stations: &mut usize) -> Option<Patchwork> {
     // (OMSI keeps one chain per spline type, the last one defined)
-    let (texture, pc) = def.textures.iter().enumerate().rev().find_map(|(i, t)| t.patchwork.as_ref().filter(|p| p.valid()).map(|p| (i, p)))?;
+    let (texture, pc) = def
+        .textures
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, t)| t.patchwork.as_ref().filter(|p| p.valid()).map(|p| (i, p)))?;
     let chain = pc.chain.as_bytes();
     let n_parts = pc.weights.len();
     let weight = |k: usize| pc.weights.as_bytes()[k].wrapping_sub(b'0').min(9) as usize;
@@ -362,19 +414,36 @@ fn patchwork(def: &Spline, curve: &SplineCurve, stations: &mut usize) -> Option<
         } else {
             cands[((cands.len() as f64 * r) as usize).min(cands.len() - 1)]
         };
-        state = if part < 0 { chain[(-part - 1) as usize] } else { chain[part as usize] };
+        state = if part < 0 {
+            chain[(-part - 1) as usize]
+        } else {
+            chain[part as usize]
+        };
         order.push(part);
     }
-    Some(Patchwork { texture, parts: n_parts, per, order })
+    Some(Patchwork {
+        texture,
+        parts: n_parts,
+        per,
+        order,
+    })
 }
 
 /// The point of a spline mesh at distance `s` along it, `x` across (right positive, already
 /// mirrored) and `z` up: the cross-section shifted along the spline by the skew (Omsi.exe
 /// sub_5aaef4: `x * (skew_start (1 - s/L) + skew_end s/L)`), and that shifted distance.
 fn skewed_point(curve: &SplineCurve, s: f64, x: f64, z: f64) -> (DVec3, f64) {
-    let t = if curve.length > 0.0 { s / curve.length } else { 0.0 };
+    let t = if curve.length > 0.0 {
+        s / curve.length
+    } else {
+        0.0
+    };
     let skew = curve.skew_start * (1.0 - t) + curve.skew_end * t;
-    let s = if skew.is_finite() { s + x * skew.clamp(-32.0, 32.0) } else { s };
+    let s = if skew.is_finite() {
+        s + x * skew.clamp(-32.0, 32.0)
+    } else {
+        s
+    };
     (curve.offset_point(s, x, z), s)
 }
 
@@ -384,7 +453,12 @@ fn skewed_point(curve: &SplineCurve, s: f64, x: f64, z: f64) -> (DVec3, f64) {
 /// (`[scaleTexByLength]`: from 0 to `v_scale` over the whole spline; a `[patchwork_chain]`:
 /// part by part); a mirrored spline is flipped across and its v turned round.
 /// Positions are relative to `origin` (f64 subtraction keeps precision on large maps).
-pub fn build_spline_mesh(def: &Spline, curve: &SplineCurve, mirror: bool, origin: DVec3) -> MeshData {
+pub fn build_spline_mesh(
+    def: &Spline,
+    curve: &SplineCurve,
+    mirror: bool,
+    origin: DVec3,
+) -> MeshData {
     let mut mesh = MeshData::default();
     if curve.length <= 0.0 {
         return mesh;
@@ -418,14 +492,20 @@ pub fn build_spline_mesh(def: &Spline, curve: &SplineCurve, mirror: bool, origin
                 for i in 0..n {
                     let block = i / pw.per;
                     let part = pw.order.get(block).copied().unwrap_or(1);
-                    let p0 = (part.unsigned_abs() as usize).saturating_sub(1) as f64 / pw.parts as f64;
+                    let p0 =
+                        (part.unsigned_abs() as usize).saturating_sub(1) as f64 / pw.parts as f64;
                     let q = base + (i as u32) * 2 * pn;
                     for e in 0..2 {
                         let r = (i + e - block * pw.per) as f64;
                         let r = if part < 0 { pw.per as f64 - r } else { r };
                         let v = r / (pw.per * pw.parts) as f64 + p0;
                         for pt in &profile.points {
-                            let (p, _) = skewed_point(curve, station(i + e), pt.x as f64 * mirror_sign, pt.z as f64);
+                            let (p, _) = skewed_point(
+                                curve,
+                                station(i + e),
+                                pt.x as f64 * mirror_sign,
+                                pt.z as f64,
+                            );
                             mesh.positions.push((p - origin).as_vec3());
                             mesh.normals.push(Vec3::Z);
                             mesh.uvs.push(Vec2::new(pt.u, (v * mirror_sign) as f32));
@@ -440,11 +520,19 @@ pub fn build_spline_mesh(def: &Spline, curve: &SplineCurve, mirror: bool, origin
                 let by_length = tex.is_some_and(|t| t.scale_by_length);
                 // (v can run to thousands on a long chain: drop whole repeats, which change
                 // nothing, where the profile's points share one scale)
-                let shared = profile.points.iter().all(|p| p.v_scale == profile.points[0].v_scale);
-                let whole = if shared && !by_length { (profile.points[0].v_scale as f64 * curve.tex_offset * mirror_sign).floor() } else { 0.0 };
+                let shared = profile
+                    .points
+                    .iter()
+                    .all(|p| p.v_scale == profile.points[0].v_scale);
+                let whole = if shared && !by_length {
+                    (profile.points[0].v_scale as f64 * curve.tex_offset * mirror_sign).floor()
+                } else {
+                    0.0
+                };
                 for i in 0..=n {
                     for pt in &profile.points {
-                        let (p, s) = skewed_point(curve, station(i), pt.x as f64 * mirror_sign, pt.z as f64);
+                        let (p, s) =
+                            skewed_point(curve, station(i), pt.x as f64 * mirror_sign, pt.z as f64);
                         mesh.positions.push((p - origin).as_vec3());
                         mesh.normals.push(Vec3::Z);
                         let v = if by_length {
@@ -464,7 +552,8 @@ pub fn build_spline_mesh(def: &Spline, curve: &SplineCurve, mirror: bool, origin
             }
         }
         let count = mesh.indices.len() as u32 - first_index;
-        mesh.ranges.push((first_index, count, profile.texture as u32));
+        mesh.ranges
+            .push((first_index, count, profile.texture as u32));
     }
     compute_normals(&mut mesh);
     // Drawn from the side a profile faces only, as OMSI draws splines: the makers orient
@@ -498,7 +587,11 @@ pub fn terrain_hole_profiles(def: &Spline) -> Vec<Vec<[f32; 3]>> {
         return def.terrain_hole_profiles.clone();
     }
     const JOIN: f32 = 0.01;
-    let profiles: Vec<Vec<(f32, f32)>> = def.profiles.iter().map(|p| p.points.iter().map(|q| (q.x, q.z)).collect()).collect();
+    let profiles: Vec<Vec<(f32, f32)>> = def
+        .profiles
+        .iter()
+        .map(|p| p.points.iter().map(|q| (q.x, q.z)).collect())
+        .collect();
     let mut used = vec![false; profiles.len()];
     let mut out = Vec::new();
     while used.iter().any(|u| !u) {
@@ -509,7 +602,9 @@ pub fn terrain_hole_profiles(def: &Spline) -> Vec<Vec<[f32; 3]>> {
                     && match chain.last() {
                         None => true,
                         Some(&l) => match (profiles[l].last(), profiles[j].first()) {
-                            (Some(a), Some(b)) => (a.0 - b.0).abs() < JOIN && (a.1 - b.1).abs() < JOIN,
+                            (Some(a), Some(b)) => {
+                                (a.0 - b.0).abs() < JOIN && (a.1 - b.1).abs() < JOIN
+                            }
                             _ => false,
                         },
                     }
@@ -536,17 +631,26 @@ pub fn terrain_hole_profiles(def: &Spline) -> Vec<Vec<[f32; 3]>> {
         let points = || chain.iter().flat_map(|&j| profiles[j].iter().copied());
         let low = points().fold(zl.min(zr), |m, (_, z)| m.min(z));
         let bottom_left = if low < zl {
-            points().filter(|p| zl > p.1).fold(xr, |m, (x, z)| m.min((x - xl) / (zl - z) * (zl - low) + xl))
+            points()
+                .filter(|p| zl > p.1)
+                .fold(xr, |m, (x, z)| m.min((x - xl) / (zl - z) * (zl - low) + xl))
         } else {
             (xr - xl) / 4.0 + xl
         };
         let bottom_right = if low < zr {
-            points().filter(|p| zr > p.1).fold(xl, |m, (x, z)| m.max(xr - (xr - x) / (zr - z) * (zr - low)))
+            points()
+                .filter(|p| zr > p.1)
+                .fold(xl, |m, (x, z)| m.max(xr - (xr - x) / (zr - z) * (zr - low)))
         } else {
             (xr - xl) * 3.0 / 4.0 + xl
         };
         let low = low - 0.1;
-        out.push(vec![[xl + 0.03, zl - 0.003, 0.0], [bottom_left, low, -0.5], [bottom_right, low, -0.5], [xr - 0.03, zr - 0.003, 0.0]]);
+        out.push(vec![
+            [xl + 0.03, zl - 0.003, 0.0],
+            [bottom_left, low, -0.5],
+            [bottom_right, low, -0.5],
+            [xr - 0.03, zr - 0.003, 0.0],
+        ]);
     }
     out
 }
@@ -560,7 +664,12 @@ pub fn terrain_hole_profiles(def: &Spline) -> Vec<Vec<[f32; 3]>> {
 /// `[spline_terrain_align_2]` says otherwise: `mode` 2 and 4 keep the far end at the end,
 /// 3 and 4 the near end at the start. A mirrored spline takes the profile backwards and
 /// turned across.
-pub fn spline_hole_outlines(def: &Spline, curve: &SplineCurve, mirror: bool, mode: u8) -> Vec<Vec<DVec2>> {
+pub fn spline_hole_outlines(
+    def: &Spline,
+    curve: &SplineCurve,
+    mirror: bool,
+    mode: u8,
+) -> Vec<Vec<DVec2>> {
     if mode == 0 || curve.length <= 0.0 {
         return Vec::new();
     }
@@ -574,7 +683,11 @@ pub fn spline_hole_outlines(def: &Spline, curve: &SplineCurve, mirror: bool, mod
         .into_iter()
         .filter(|p| !p.is_empty())
         .map(|p| {
-            let p: Vec<[f32; 3]> = if mirror { p.iter().rev().map(|q| [-q[0], q[1], q[2]]).collect() } else { p };
+            let p: Vec<[f32; 3]> = if mirror {
+                p.iter().rev().map(|q| [-q[0], q[1], q[2]]).collect()
+            } else {
+                p
+            };
             let k = p.len();
             let mut ring = Vec::with_capacity(2 * (k + n - 1));
             for i in 1..n {
@@ -605,7 +718,8 @@ pub fn outline_crosses_itself(ring: &[DVec2]) -> bool {
     let hits = |p1: DVec2, p2: DVec2, q1: DVec2, q2: DVec2| {
         let (d1, d2) = (cross(q1, q2, p1), cross(q1, q2, p2));
         let (d3, d4) = (cross(p1, p2, q1), cross(p1, p2, q2));
-        ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+        ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+            && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
     };
     for i in 0..n {
         let (a, b) = (ring[i], ring[(i + 1) % n]);
@@ -630,14 +744,22 @@ pub fn outline_crosses_itself(ring: &[DVec2]) -> bool {
 pub fn hole_mesh_outlines(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> Vec<Vec<DVec2>> {
     use std::collections::HashMap;
     // (a model repeats a vertex for every face and UV seam: the corners by place, to the mm)
-    let key = |v: Vec3| ((v.x * 1000.0).round() as i64, (v.y * 1000.0).round() as i64, (v.z * 1000.0).round() as i64);
+    let key = |v: Vec3| {
+        (
+            (v.x * 1000.0).round() as i64,
+            (v.y * 1000.0).round() as i64,
+            (v.z * 1000.0).round() as i64,
+        )
+    };
     let mut place: HashMap<(i64, i64, i64), DVec2> = HashMap::new();
     let mut edges: HashMap<((i64, i64, i64), (i64, i64, i64)), u32> = HashMap::new();
     for t in mesh.indices.chunks_exact(3) {
         let k = [0, 1, 2].map(|i| {
             let v = mesh.positions[t[i] as usize];
             let kv = key(v);
-            place.entry(kv).or_insert_with(|| origin.truncate() + transform.transform_point3(v).truncate().as_dvec2());
+            place.entry(kv).or_insert_with(|| {
+                origin.truncate() + transform.transform_point3(v).truncate().as_dvec2()
+            });
             kv
         });
         if k[0] == k[1] || k[1] == k[2] || k[2] == k[0] {
@@ -645,7 +767,9 @@ pub fn hole_mesh_outlines(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> V
         }
         for i in 0..3 {
             let (a, b) = (k[i], k[(i + 1) % 3]);
-            *edges.entry(if a < b { (a, b) } else { (b, a) }).or_insert(0) += 1;
+            *edges
+                .entry(if a < b { (a, b) } else { (b, a) })
+                .or_insert(0) += 1;
         }
     }
     let mut next: HashMap<(i64, i64, i64), Vec<(i64, i64, i64)>> = HashMap::new();
@@ -686,7 +810,12 @@ pub fn hole_mesh_outlines(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> V
 /// on. OMSI keeps it apart from the graphics - a railway's third rail or a tunnel's walls are
 /// drawn but not driven on, a fence or the Berlin Wall has no height profile at all, and a
 /// street's lies exactly on its carriageway and pavements. Positions are relative to `origin`.
-pub fn build_height_profile_mesh(def: &Spline, curve: &SplineCurve, mirror: bool, origin: DVec3) -> MeshData {
+pub fn build_height_profile_mesh(
+    def: &Spline,
+    curve: &SplineCurve,
+    mirror: bool,
+    origin: DVec3,
+) -> MeshData {
     let mut mesh = MeshData::default();
     if curve.length <= 0.0 || def.height_profiles.is_empty() {
         return mesh;
@@ -729,7 +858,8 @@ pub fn build_height_profile_mesh(def: &Spline, curve: &SplineCurve, mirror: bool
     }
     mesh.ranges.push((0, flat_end, 0));
     if mesh.indices.len() as u32 > flat_end {
-        mesh.ranges.push((flat_end, mesh.indices.len() as u32 - flat_end, 1));
+        mesh.ranges
+            .push((flat_end, mesh.indices.len() as u32 - flat_end, 1));
     }
     mesh
 }
@@ -773,12 +903,22 @@ pub fn compute_normals(mesh: &mut MeshData) {
     let mut acc = vec![Vec3::ZERO; mesh.positions.len()];
     for tri in mesh.indices.chunks_exact(3) {
         let (a, b, c) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
-        let n = (mesh.positions[b] - mesh.positions[a]).cross(mesh.positions[c] - mesh.positions[a]);
+        let n =
+            (mesh.positions[b] - mesh.positions[a]).cross(mesh.positions[c] - mesh.positions[a]);
         acc[a] += n;
         acc[b] += n;
         acc[c] += n;
     }
-    mesh.normals = acc.into_iter().map(|n| if n.length_squared() > 0.0 { n.normalize() } else { Vec3::Z }).collect();
+    mesh.normals = acc
+        .into_iter()
+        .map(|n| {
+            if n.length_squared() > 0.0 {
+                n.normalize()
+            } else {
+                Vec3::Z
+            }
+        })
+        .collect();
 }
 
 /// Smooth vertex normals from the faces as D3DXComputeNormals makes them for a mesh read
@@ -818,7 +958,8 @@ pub fn build_terrain_mesh(t: &Terrain) -> MeshData {
             let x = i as f32 * cell;
             let y = j as f32 * cell;
             mesh.positions.push(Vec3::new(x, y, t.height_at(i, j)));
-            mesh.uvs.push(Vec2::new(x / tile_size() as f32, y / tile_size() as f32));
+            mesh.uvs
+                .push(Vec2::new(x / tile_size() as f32, y / tile_size() as f32));
             mesh.normals.push(Vec3::Z);
         }
     }
@@ -860,7 +1001,8 @@ pub fn object_rotation(rot_deg: [f64; 3]) -> Mat4 {
     let heading = (-rot_deg[0]).to_radians() as f32; // clockwise heading → counter-clockwise rotation about +z
     let pitch = rot_deg[1].to_radians() as f32;
     let bank = rot_deg[2].to_radians() as f32;
-    let q = Quat::from_rotation_z(heading) * Quat::from_rotation_y(bank) * Quat::from_rotation_x(pitch);
+    let q =
+        Quat::from_rotation_z(heading) * Quat::from_rotation_y(bank) * Quat::from_rotation_x(pitch);
     Mat4::from_quat(q)
 }
 
@@ -871,7 +1013,9 @@ pub fn object_rotation_ypr(rot_deg: [f64; 3]) -> Mat4 {
     let heading = (-rot_deg[0]).to_radians() as f32;
     let pitch = rot_deg[1].to_radians() as f32;
     let bank = rot_deg[2].to_radians() as f32;
-    Mat4::from_quat(Quat::from_rotation_z(heading) * Quat::from_rotation_x(pitch) * Quat::from_rotation_y(bank))
+    Mat4::from_quat(
+        Quat::from_rotation_z(heading) * Quat::from_rotation_x(pitch) * Quat::from_rotation_y(bank),
+    )
 }
 
 /// A map file's heading, pitch and bank (`[object]`, `[attachObj]`, `[splineAttachement]`)
@@ -897,9 +1041,16 @@ pub fn mesh_from_o3d_turning(m: &omsi_o3d::Mesh, may_turn: bool) -> MeshData {
     // to apply. Mesh files use Direct3D's frame (x right, y up, z forward); the world uses
     // x right, y forward, z up, so y and z are swapped.
     let swap = |v: Vec3| Vec3::new(v.x, v.z, v.y);
-    let mut out = MeshData { one_sided: true, ..Default::default() };
+    let mut out = MeshData {
+        one_sided: true,
+        ..Default::default()
+    };
     out.positions = m.vertices.iter().map(|v| swap(v.position)).collect();
-    out.normals = m.vertices.iter().map(|v| swap(v.normal).normalize_or_zero()).collect();
+    out.normals = m
+        .vertices
+        .iter()
+        .map(|v| swap(v.normal).normalize_or_zero())
+        .collect();
     out.uvs = m.vertices.iter().map(|v| v.uv).collect();
     let turn = may_turn && turns_round(m);
     // group triangles by material, preserving material index as slot
@@ -927,7 +1078,6 @@ pub fn mesh_from_o3d_turning(m: &omsi_o3d::Mesh, may_turn: bool) -> MeshData {
     }
     out
 }
-
 
 pub fn turns_round(m: &omsi_o3d::Mesh) -> bool {
     // A mesh whose faces all turn their backs on their own normals was mirrored in the
@@ -1021,12 +1171,23 @@ mod tests {
             one_sided: true,
         };
         let mut b = a.clone();
-        for p in &mut b.positions { *p += Vec3::splat(20.0); }
+        for p in &mut b.positions {
+            *p += Vec3::splat(20.0);
+        }
         let merged = MeshData::merge_static(&[&a, &b]);
-        assert_eq!(merged.positions, [a.positions.clone(), b.positions.clone()].concat());
-        assert_eq!(merged.normals, [a.normals.clone(), b.normals.clone()].concat());
+        assert_eq!(
+            merged.positions,
+            [a.positions.clone(), b.positions.clone()].concat()
+        );
+        assert_eq!(
+            merged.normals,
+            [a.normals.clone(), b.normals.clone()].concat()
+        );
         assert_eq!(merged.uvs, [a.uvs.clone(), b.uvs.clone()].concat());
-        assert_eq!(merged.indices, vec![0, 1, 2, 4, 5, 6, 1, 2, 3, 5, 6, 7, 0, 2, 3, 4, 6, 7]);
+        assert_eq!(
+            merged.indices,
+            vec![0, 1, 2, 4, 5, 6, 1, 2, 3, 5, 6, 7, 0, 2, 3, 4, 6, 7]
+        );
         assert_eq!(merged.ranges, vec![(0, 6, 0), (6, 6, 1), (12, 6, 0)]);
         assert!(merged.one_sided);
         // Same-slot adjacent profiles need only one draw and keep their triangle order.
@@ -1043,15 +1204,37 @@ mod tests {
     fn map_angles_compose_as_omsi_does() {
         let d3d = |v: [f32; 3], h: f32, p: f32, b: f32| -> Vec3 {
             let (h, p, b) = (h.to_radians(), p.to_radians(), b.to_radians());
-            let rx = |v: [f32; 3]| [v[0], v[1] * p.cos() - v[2] * p.sin(), v[1] * p.sin() + v[2] * p.cos()];
-            let rz = |v: [f32; 3]| [v[0] * b.cos() - v[1] * b.sin(), v[0] * b.sin() + v[1] * b.cos(), v[2]];
-            let ry = |v: [f32; 3]| [v[0] * h.cos() + v[2] * h.sin(), v[1], -v[0] * h.sin() + v[2] * h.cos()];
+            let rx = |v: [f32; 3]| {
+                [
+                    v[0],
+                    v[1] * p.cos() - v[2] * p.sin(),
+                    v[1] * p.sin() + v[2] * p.cos(),
+                ]
+            };
+            let rz = |v: [f32; 3]| {
+                [
+                    v[0] * b.cos() - v[1] * b.sin(),
+                    v[0] * b.sin() + v[1] * b.cos(),
+                    v[2],
+                ]
+            };
+            let ry = |v: [f32; 3]| {
+                [
+                    v[0] * h.cos() + v[2] * h.sin(),
+                    v[1],
+                    -v[0] * h.sin() + v[2] * h.cos(),
+                ]
+            };
             let w = ry(rz(rx(v)));
             Vec3::new(w[0], w[2], w[1])
         };
         let (h, p, b) = (40.0, 35.0, -50.0);
         let r = object_rotation(map_rotation([h as f64, p as f64, b as f64]));
-        for (lh, rh) in [([0.0, 0.0, 1.0], Vec3::Y), ([1.0, 0.0, 0.0], Vec3::X), ([0.0, 1.0, 0.0], Vec3::Z)] {
+        for (lh, rh) in [
+            ([0.0, 0.0, 1.0], Vec3::Y),
+            ([1.0, 0.0, 0.0], Vec3::X),
+            ([0.0, 1.0, 0.0], Vec3::Z),
+        ] {
             let want = d3d(lh, h, p, b);
             let got = r.transform_vector3(rh);
             assert!((want - got).length() < 1e-4, "{lh:?}: {got:?} != {want:?}");
@@ -1078,23 +1261,47 @@ mod tests {
     fn drive_grid_probes_the_face_under_the_axle() {
         let mut g = DriveGrid::default();
         let quad = |g: &mut DriveGrid, x0: f32, x1: f32, z: f32| {
-            g.push([Vec3::new(x0, 0.0, z), Vec3::new(x1, 0.0, z), Vec3::new(x0, 20.0, z)]);
-            g.push([Vec3::new(x1, 0.0, z), Vec3::new(x1, 20.0, z), Vec3::new(x0, 20.0, z)]);
+            g.push([
+                Vec3::new(x0, 0.0, z),
+                Vec3::new(x1, 0.0, z),
+                Vec3::new(x0, 20.0, z),
+            ]);
+            g.push([
+                Vec3::new(x1, 0.0, z),
+                Vec3::new(x1, 20.0, z),
+                Vec3::new(x0, 20.0, z),
+            ]);
         };
         quad(&mut g, 0.0, 10.0, 0.0);
         quad(&mut g, 10.0, 20.0, 0.15);
         quad(&mut g, 0.0, 20.0, 6.0);
         // the kerb face itself is a wall and never a place to stand
-        g.push([Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 20.0, 0.0), Vec3::new(10.0, 0.0, 0.15)]);
+        g.push([
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(10.0, 20.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.15),
+        ]);
         g.build(300.0);
         assert_eq!(g.tris.len(), 6);
         let p = g.probe(5.0, 5.0, 0.5);
-        assert_eq!(p, Probe { below: Some(0.0), above: Some(6.0) });
+        assert_eq!(
+            p,
+            Probe {
+                below: Some(0.0),
+                above: Some(6.0)
+            }
+        );
         let p = g.probe(12.0, 5.0, 0.5);
         assert_eq!(p.below, Some(0.15));
         // a probe that starts under the pavement's top sees it as a step above
         let p = g.probe(12.0, 5.0, 0.1);
-        assert_eq!(p, Probe { below: None, above: Some(0.15) });
+        assert_eq!(
+            p,
+            Probe {
+                below: None,
+                above: Some(0.15)
+            }
+        );
         // on the shared edge of two triangles
         assert_eq!(g.probe(5.0, 10.0, 0.5).below, Some(0.0));
         assert_eq!(g.probe(250.0, 250.0, 0.5), Probe::default());
@@ -1103,8 +1310,13 @@ mod tests {
     #[test]
     fn reflection_surface_uses_the_nearby_face_and_its_grade() {
         let mut grid = DriveGrid::default();
-        let plane = |height: f32| [Vec3::new(0.0, 0.0, height),
-            Vec3::new(20.0, 0.0, height + 2.0), Vec3::new(0.0, 20.0, height - 1.0)];
+        let plane = |height: f32| {
+            [
+                Vec3::new(0.0, 0.0, height),
+                Vec3::new(20.0, 0.0, height + 2.0),
+                Vec3::new(0.0, 20.0, height - 1.0),
+            ]
+        };
         // Reversed authoring winding must still give an upward normal.
         let mut road = plane(12.0);
         road.swap(1, 2);
@@ -1125,8 +1337,10 @@ mod tests {
         let (lo, hi, middle) = (side * 0.25, side * 0.75, side * 0.5);
         let cutter = MeshData {
             positions: vec![
-                Vec3::new(lo, lo, -12.0), Vec3::new(hi, lo, -12.0),
-                Vec3::new(hi, hi, -12.0), Vec3::new(lo, hi, -12.0),
+                Vec3::new(lo, lo, -12.0),
+                Vec3::new(hi, lo, -12.0),
+                Vec3::new(hi, hi, -12.0),
+                Vec3::new(lo, hi, -12.0),
             ],
             indices: vec![0, 1, 2, 0, 2, 3],
             ..Default::default()
@@ -1169,7 +1383,12 @@ mod tests {
         // a cutter from texel 16 to the middle of texel 40 in x, 16..48 in y
         let (x0, x1, y0, y1) = (16.0 * cell, 40.5 * cell, 16.0 * cell, 48.0 * cell);
         let cutter = MeshData {
-            positions: vec![Vec3::new(x0, y0, 0.0), Vec3::new(x1, y0, 0.0), Vec3::new(x1, y1, 0.0), Vec3::new(x0, y1, 0.0)],
+            positions: vec![
+                Vec3::new(x0, y0, 0.0),
+                Vec3::new(x1, y0, 0.0),
+                Vec3::new(x1, y1, 0.0),
+                Vec3::new(x0, y1, 0.0),
+            ],
             indices: vec![0, 1, 2, 0, 2, 3],
             ..Default::default()
         };
@@ -1191,7 +1410,12 @@ mod tests {
         let cell = side / 512.0;
         let (x0, x1, y0, y1) = (100.0 * cell, 300.0 * cell, 100.0 * cell, 300.0 * cell);
         let cutter = MeshData {
-            positions: vec![Vec3::new(x0, y0, 0.0), Vec3::new(x1, y0, 0.0), Vec3::new(x1, y1, 0.0), Vec3::new(x0, y1, 0.0)],
+            positions: vec![
+                Vec3::new(x0, y0, 0.0),
+                Vec3::new(x1, y0, 0.0),
+                Vec3::new(x1, y1, 0.0),
+                Vec3::new(x0, y1, 0.0),
+            ],
             indices: vec![0, 1, 2, 0, 2, 3],
             ..Default::default()
         };
@@ -1220,8 +1444,21 @@ mod tests {
         };
         // a plate at 2 m, a road at 1 m under part of it, a hole cutter elsewhere
         ts.rasterize_kind(&quad(2.0), &Mat4::IDENTITY, DVec3::ZERO, 0, 0, false);
-        ts.rasterize_kind(&quad(1.0), &Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)), DVec3::ZERO, 0, 0, true);
-        ts.rasterize_hole(&quad(0.5), &Mat4::from_translation(Vec3::new(100.0, 100.0, 0.0)), DVec3::ZERO, 0, 0);
+        ts.rasterize_kind(
+            &quad(1.0),
+            &Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)),
+            DVec3::ZERO,
+            0,
+            0,
+            true,
+        );
+        ts.rasterize_hole(
+            &quad(0.5),
+            &Mat4::from_translation(Vec3::new(100.0, 100.0, 0.0)),
+            DVec3::ZERO,
+            0,
+            0,
+        );
         ts.finish();
         let k = |x: f32, y: f32| ts.texel(x, y);
         assert_eq!(ts.sample(12.0, 20.0), Some(2.0));
@@ -1241,12 +1478,26 @@ mod tests {
         assert_eq!(ts.cut_at(12.0, 20.0, 1.95, 0.12), road_cut());
         assert!(!ts.cut_at(12.0, 20.0, 1.5, 0.12));
         // an aligned spline's outline cuts exactly along it, whatever the heights
-        ts.add_outline(&[DVec2::new(50.0, 50.0), DVec2::new(60.0, 50.0), DVec2::new(60.0, 51.0), DVec2::new(50.0, 51.0)], 0, 0);
+        ts.add_outline(
+            &[
+                DVec2::new(50.0, 50.0),
+                DVec2::new(60.0, 50.0),
+                DVec2::new(60.0, 51.0),
+                DVec2::new(50.0, 51.0),
+            ],
+            0,
+            0,
+        );
         assert!(ts.cut_at(55.0, 50.5, 40.0, 0.12));
         assert!(!ts.cut_at(55.0, 51.3, 0.0, 0.12));
         let mask = ts.mask_image(&|_, _| 0.0, 0.12);
         let n = ts.size;
-        let a = |x: f32, y: f32| mask[((y / tile_size() as f32 * n as f32) as usize * n + (x / tile_size() as f32 * n as f32) as usize) * 4 + 3];
+        let a = |x: f32, y: f32| {
+            mask[((y / tile_size() as f32 * n as f32) as usize * n
+                + (x / tile_size() as f32 * n as f32) as usize)
+                * 4
+                + 3]
+        };
         assert!(a(55.0, 50.5) < 128 && a(55.0, 53.0) == 255);
         // only the touched blocks hold memory: a few kilobytes, not the 5 MB of a dense raster
         assert!(ts.heap_bytes().0 < 200_000, "{}", ts.heap_bytes().0);
@@ -1256,17 +1507,55 @@ mod tests {
     #[test]
     fn height_profile_mesh_follows_the_segments() {
         let mut def = Spline::default();
-        def.height_profiles.push(omsi_scenery::sli::HeightProfile { x0: -4.5, x1: 4.5, z0: 0.1, z1: 0.1 });
-        def.height_profiles.push(omsi_scenery::sli::HeightProfile { x0: 4.5, x1: 7.5, z0: 0.25, z1: 0.25 });
-        def.height_profiles.push(omsi_scenery::sli::HeightProfile { x0: -1.25, x1: -1.25, z0: 0.25, z1: 0.25 });
-        let c = SplineCurve { start: DVec3::new(10.0, 10.0, 30.0), heading_deg: 0.0, length: 20.0, radius: 0.0, grad_start: 0.0, grad_end: 0.0, delta_h: None, cant_start: 0.0, cant_end: 0.0, skew_start: 0.0, skew_end: 0.0, tex_offset: 0.0, seed: 0, half_cant_width: DEFAULT_HALF_CANT_WIDTH };
+        def.height_profiles.push(omsi_scenery::sli::HeightProfile {
+            x0: -4.5,
+            x1: 4.5,
+            z0: 0.1,
+            z1: 0.1,
+        });
+        def.height_profiles.push(omsi_scenery::sli::HeightProfile {
+            x0: 4.5,
+            x1: 7.5,
+            z0: 0.25,
+            z1: 0.25,
+        });
+        def.height_profiles.push(omsi_scenery::sli::HeightProfile {
+            x0: -1.25,
+            x1: -1.25,
+            z0: 0.25,
+            z1: 0.25,
+        });
+        let c = SplineCurve {
+            start: DVec3::new(10.0, 10.0, 30.0),
+            heading_deg: 0.0,
+            length: 20.0,
+            radius: 0.0,
+            grad_start: 0.0,
+            grad_end: 0.0,
+            delta_h: None,
+            cant_start: 0.0,
+            cant_end: 0.0,
+            skew_start: 0.0,
+            skew_end: 0.0,
+            tex_offset: 0.0,
+            seed: 0,
+            half_cant_width: DEFAULT_HALF_CANT_WIDTH,
+        };
         let m = build_height_profile_mesh(&def, &c, false, DVec3::ZERO);
         let mut g = DriveGrid::default();
         for t in m.indices.chunks_exact(3) {
-            g.push([m.positions[t[0] as usize], m.positions[t[1] as usize], m.positions[t[2] as usize]]);
+            g.push([
+                m.positions[t[0] as usize],
+                m.positions[t[1] as usize],
+                m.positions[t[2] as usize],
+            ]);
         }
         g.build(300.0);
-        assert_eq!(g.tris.len(), 8, "the zero-width segment is no surface (two cross-sections every 10 m)");
+        assert_eq!(
+            g.tris.len(),
+            8,
+            "the zero-width segment is no surface (two cross-sections every 10 m)"
+        );
         assert!((g.probe(10.0, 15.0, 31.0).below.unwrap() - 30.1).abs() < 1e-4);
         assert!((g.probe(16.0, 15.0, 31.0).below.unwrap() - 30.25).abs() < 1e-4);
         // mirrored, the pavement is on the left
@@ -1300,18 +1589,66 @@ mod tests {
 
     #[test]
     fn straight_and_arc() {
-        let c = SplineCurve { start: DVec3::ZERO, heading_deg: 90.0, length: 10.0, radius: 0.0, grad_start: 0.0, grad_end: 0.0, delta_h: None, cant_start: 0.0, cant_end: 0.0, skew_start: 0.0, skew_end: 0.0, tex_offset: 0.0, seed: 0, half_cant_width: DEFAULT_HALF_CANT_WIDTH };
+        let c = SplineCurve {
+            start: DVec3::ZERO,
+            heading_deg: 90.0,
+            length: 10.0,
+            radius: 0.0,
+            grad_start: 0.0,
+            grad_end: 0.0,
+            delta_h: None,
+            cant_start: 0.0,
+            cant_end: 0.0,
+            skew_start: 0.0,
+            skew_end: 0.0,
+            tex_offset: 0.0,
+            seed: 0,
+            half_cant_width: DEFAULT_HALF_CANT_WIDTH,
+        };
         let e = c.end_point();
         assert!((e.x - 10.0).abs() < 1e-9 && e.y.abs() < 1e-9);
         // quarter circle to the right from heading 0 with radius 10 ends at (10, 10), heading 90
-        let c = SplineCurve { start: DVec3::ZERO, heading_deg: 0.0, length: std::f64::consts::FRAC_PI_2 * 10.0, radius: 10.0, grad_start: 0.0, grad_end: 0.0, delta_h: None, cant_start: 0.0, cant_end: 0.0, skew_start: 0.0, skew_end: 0.0, tex_offset: 0.0, seed: 0, half_cant_width: DEFAULT_HALF_CANT_WIDTH };
+        let c = SplineCurve {
+            start: DVec3::ZERO,
+            heading_deg: 0.0,
+            length: std::f64::consts::FRAC_PI_2 * 10.0,
+            radius: 10.0,
+            grad_start: 0.0,
+            grad_end: 0.0,
+            delta_h: None,
+            cant_start: 0.0,
+            cant_end: 0.0,
+            skew_start: 0.0,
+            skew_end: 0.0,
+            tex_offset: 0.0,
+            seed: 0,
+            half_cant_width: DEFAULT_HALF_CANT_WIDTH,
+        };
         let e = c.end_point();
-        assert!((e.x - 10.0).abs() < 1e-9 && (e.y - 10.0).abs() < 1e-9, "{e:?}");
+        assert!(
+            (e.x - 10.0).abs() < 1e-9 && (e.y - 10.0).abs() < 1e-9,
+            "{e:?}"
+        );
         assert!((c.heading_at(c.length) - 90.0).abs() < 1e-9);
     }
 
     fn plain_curve(length: f64, radius: f64) -> SplineCurve {
-        SplineCurve { start: DVec3::ZERO, heading_deg: 0.0, length, radius, grad_start: 0.0, grad_end: 0.0, delta_h: None, cant_start: 0.0, cant_end: 0.0, skew_start: 0.0, skew_end: 0.0, tex_offset: 0.0, seed: 0, half_cant_width: DEFAULT_HALF_CANT_WIDTH }
+        SplineCurve {
+            start: DVec3::ZERO,
+            heading_deg: 0.0,
+            length,
+            radius,
+            grad_start: 0.0,
+            grad_end: 0.0,
+            delta_h: None,
+            cant_start: 0.0,
+            cant_end: 0.0,
+            skew_start: 0.0,
+            skew_end: 0.0,
+            tex_offset: 0.0,
+            seed: 0,
+            half_cant_width: DEFAULT_HALF_CANT_WIDTH,
+        }
     }
 
     fn strip(half: f32, v_scale: f32) -> Spline {
@@ -1320,8 +1657,18 @@ mod tests {
         def.profiles.push(omsi_scenery::sli::SplineProfile {
             texture: 0,
             points: vec![
-                omsi_scenery::sli::SplineProfilePoint { x: -half, u: 0.0, v_scale, ..Default::default() },
-                omsi_scenery::sli::SplineProfilePoint { x: half, u: 1.0, v_scale, ..Default::default() },
+                omsi_scenery::sli::SplineProfilePoint {
+                    x: -half,
+                    u: 0.0,
+                    v_scale,
+                    ..Default::default()
+                },
+                omsi_scenery::sli::SplineProfilePoint {
+                    x: half,
+                    u: 1.0,
+                    v_scale,
+                    ..Default::default()
+                },
             ],
         });
         def
@@ -1343,8 +1690,14 @@ mod tests {
             road.profiles.push(omsi_scenery::sli::SplineProfile {
                 texture: 0,
                 points: vec![
-                    omsi_scenery::sli::SplineProfilePoint { x: k as f32, ..Default::default() },
-                    omsi_scenery::sli::SplineProfilePoint { x: k as f32 + 1.0, ..Default::default() },
+                    omsi_scenery::sli::SplineProfilePoint {
+                        x: k as f32,
+                        ..Default::default()
+                    },
+                    omsi_scenery::sli::SplineProfilePoint {
+                        x: k as f32 + 1.0,
+                        ..Default::default()
+                    },
                 ],
             });
         }
@@ -1358,18 +1711,33 @@ mod tests {
     #[test]
     fn skew_runs_along_the_spline() {
         let def = strip(2.0, 0.0);
-        let c = SplineCurve { skew_end: 1.0, ..plain_curve(20.0, 0.0) };
+        let c = SplineCurve {
+            skew_end: 1.0,
+            ..plain_curve(20.0, 0.0)
+        };
         let m = build_spline_mesh(&def, &c, false, DVec3::ZERO);
         // two cross-sections: at 0, 10 and 20 m; the right edge (x = 2) at the end is 2 m on
         let right_end = m.positions[5];
-        assert!((right_end.y - 22.0).abs() < 1e-4 && (right_end.x - 2.0).abs() < 1e-4, "{right_end:?}");
+        assert!(
+            (right_end.y - 22.0).abs() < 1e-4 && (right_end.x - 2.0).abs() < 1e-4,
+            "{right_end:?}"
+        );
         let left_end = m.positions[4];
         assert!((left_end.y - 18.0).abs() < 1e-4, "{left_end:?}");
         // half way the skew is a half
-        assert!((m.positions[3].y - 11.0).abs() < 1e-4, "{:?}", m.positions[3]);
+        assert!(
+            (m.positions[3].y - 11.0).abs() < 1e-4,
+            "{:?}",
+            m.positions[3]
+        );
         // the drivable surface follows
         let mut def = def;
-        def.height_profiles.push(omsi_scenery::sli::HeightProfile { x0: -2.0, x1: 2.0, z0: 0.0, z1: 0.0 });
+        def.height_profiles.push(omsi_scenery::sli::HeightProfile {
+            x0: -2.0,
+            x1: 2.0,
+            z0: 0.0,
+            z1: 0.0,
+        });
         let hp = build_height_profile_mesh(&def, &c, false, DVec3::ZERO);
         assert!((hp.positions[5].y - 22.0).abs() < 1e-4);
     }
@@ -1380,12 +1748,22 @@ mod tests {
     fn textures_run_on_along_a_chain() {
         let def = strip(2.0, 0.37);
         let a = plain_curve(13.0, 0.0);
-        let b = SplineCurve { start: a.end_point(), tex_offset: 13.0, ..plain_curve(9.0, 0.0) };
+        let b = SplineCurve {
+            start: a.end_point(),
+            tex_offset: 13.0,
+            ..plain_curve(9.0, 0.0)
+        };
         let ma = build_spline_mesh(&def, &a, false, DVec3::ZERO);
         let mb = build_spline_mesh(&def, &b, false, DVec3::ZERO);
         let end_a = ma.uvs[ma.uvs.len() - 1].y;
         let start_b = mb.uvs[1].y;
-        assert!((end_a - start_b).rem_euclid(1.0).min(1.0 - (end_a - start_b).rem_euclid(1.0)) < 1e-4, "{end_a} {start_b}");
+        assert!(
+            (end_a - start_b)
+                .rem_euclid(1.0)
+                .min(1.0 - (end_a - start_b).rem_euclid(1.0))
+                < 1e-4,
+            "{end_a} {start_b}"
+        );
         let mm = build_spline_mesh(&def, &a, true, DVec3::ZERO);
         assert!((mm.uvs[mm.uvs.len() - 1].y + end_a).abs() < 1e-5);
         // [scaleTexByLength]: 0..v_scale over the whole spline
@@ -1407,7 +1785,10 @@ mod tests {
             invertable: "0000000000000000".into(),
         });
         for seed in [1u32, 4190, 3215067, 123456789] {
-            let c = SplineCurve { seed, ..plain_curve(47.3, 0.0) };
+            let c = SplineCurve {
+                seed,
+                ..plain_curve(47.3, 0.0)
+            };
             let mut n = spline_station_count(&def, &c);
             let pw = patchwork(&def, &c, &mut n).unwrap();
             assert_eq!(pw.order.len(), 10);
@@ -1429,16 +1810,39 @@ mod tests {
             let m = build_spline_mesh(&def, &c, false, DVec3::ZERO);
             let (v0, v1) = (m.uvs[0].y, m.uvs[2].y);
             let p = pw.order[0] as f32 - 1.0;
-            assert!((v0 - p / 16.0).abs() < 1e-6 && (v1 - (p / 16.0 + 1.0 / 16.0 / pw.per as f32)).abs() < 1e-6, "{v0} {v1}");
+            assert!(
+                (v0 - p / 16.0).abs() < 1e-6
+                    && (v1 - (p / 16.0 + 1.0 / 16.0 / pw.per as f32)).abs() < 1e-6,
+                "{v0} {v1}"
+            );
         }
     }
 
     #[test]
     fn spline_h_height() {
         // the Ahlheim underpass ramp: 73.86 m, leaves at 6.19 %, arrives level, 5.85 m up
-        let c = SplineCurve { start: DVec3::new(0.0, 0.0, -5.79), heading_deg: 0.0, length: 73.86, radius: 0.0, grad_start: 6.19, grad_end: 0.0, delta_h: Some(5.85), cant_start: 0.0, cant_end: 0.0, skew_start: 0.0, skew_end: 0.0, tex_offset: 0.0, seed: 0, half_cant_width: DEFAULT_HALF_CANT_WIDTH };
+        let c = SplineCurve {
+            start: DVec3::new(0.0, 0.0, -5.79),
+            heading_deg: 0.0,
+            length: 73.86,
+            radius: 0.0,
+            grad_start: 6.19,
+            grad_end: 0.0,
+            delta_h: Some(5.85),
+            cant_start: 0.0,
+            cant_end: 0.0,
+            skew_start: 0.0,
+            skew_end: 0.0,
+            tex_offset: 0.0,
+            seed: 0,
+            half_cant_width: DEFAULT_HALF_CANT_WIDTH,
+        };
         assert!((c.height_at(0.0) + 5.79).abs() < 1e-9);
-        assert!((c.height_at(c.length) - 0.06).abs() < 1e-9, "{}", c.height_at(c.length));
+        assert!(
+            (c.height_at(c.length) - 0.06).abs() < 1e-9,
+            "{}",
+            c.height_at(c.length)
+        );
         assert!((c.slope_at(0.0) - 0.0619).abs() < 1e-9);
         assert!(c.slope_at(c.length).abs() < 1e-9);
         // the slope is the derivative of the height
@@ -1452,16 +1856,42 @@ mod tests {
 
     #[test]
     fn a_backwards_quad_with_an_unmirrored_matrix_can_keep_its_winding() {
-        let v = |x: f32, y: f32| omsi_o3d::Vertex { position: Vec3::new(x, y, 1.0), normal: Vec3::new(0.0, 0.0, 1.0), uv: Vec2::ZERO };
-        let o3d = omsi_o3d::Mesh { vertices: vec![v(0.0, 0.0), v(0.0, 1.0), v(1.0, 0.0), v(1.0, 1.0)], triangles: vec![omsi_o3d::Triangle { indices: [0, 1, 2], material: 0 }, omsi_o3d::Triangle { indices: [2, 1, 3], material: 0 }], materials: vec![omsi_o3d::Material::default()], transform: glam::Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0)), has_transform: true, ..Default::default() };
+        let v = |x: f32, y: f32| omsi_o3d::Vertex {
+            position: Vec3::new(x, y, 1.0),
+            normal: Vec3::new(0.0, 0.0, 1.0),
+            uv: Vec2::ZERO,
+        };
+        let o3d = omsi_o3d::Mesh {
+            vertices: vec![v(0.0, 0.0), v(0.0, 1.0), v(1.0, 0.0), v(1.0, 1.0)],
+            triangles: vec![
+                omsi_o3d::Triangle {
+                    indices: [0, 1, 2],
+                    material: 0,
+                },
+                omsi_o3d::Triangle {
+                    indices: [2, 1, 3],
+                    material: 0,
+                },
+            ],
+            materials: vec![omsi_o3d::Material::default()],
+            transform: glam::Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0)),
+            has_transform: true,
+            ..Default::default()
+        };
         assert_eq!(positive_det_faces_forward(&o3d), Some(false));
         assert!(turns_round(&o3d));
         // the same faces from a file without a matrix (an `.x`, an old `.o3d`) or with the
         // identity: drawn as wound, as Omsi.exe draws every mesh (#874)
-        let plain = omsi_o3d::Mesh { has_transform: false, ..o3d.clone() };
+        let plain = omsi_o3d::Mesh {
+            has_transform: false,
+            ..o3d.clone()
+        };
         assert!(!turns_round(&plain));
         assert_eq!(mesh_from_o3d(&plain).indices[..3], [0, 1, 2]);
-        let identity = omsi_o3d::Mesh { transform: glam::Mat4::IDENTITY, ..o3d.clone() };
+        let identity = omsi_o3d::Mesh {
+            transform: glam::Mat4::IDENTITY,
+            ..o3d.clone()
+        };
         assert!(!turns_round(&identity));
         assert_eq!(mesh_from_o3d(&o3d).indices[..3], [0, 2, 1]);
         let mut kept = mesh_from_o3d_turning(&o3d, false);
@@ -1483,7 +1913,11 @@ mod tests {
         for _ in 0..1500 {
             positions.push(Vec3::new(rnd() * 2.0, 3.0 + rnd() * 2.0, rnd() * 2.0));
         }
-        let mesh = MeshData { indices: (0..1500).collect(), positions, ..Default::default() };
+        let mesh = MeshData {
+            indices: (0..1500).collect(),
+            positions,
+            ..Default::default()
+        };
         let xf = Mat4::from_rotation_z(0.3) * Mat4::from_translation(Vec3::new(0.2, 0.0, 0.1));
         let o = Vec3::new(0.1, -1.0, 0.05);
         let axis = Vec3::new(0.05, 1.0, 0.02).normalize();
@@ -1497,7 +1931,10 @@ mod tests {
                 let a = k as f32 / (8 * ring).max(1) as f32 * std::f32::consts::TAU;
                 let r = spread * ring as f32;
                 let d = (axis + right * (a.cos() * r) + up * (a.sin() * r)).normalize();
-                assert_eq!(ray_triangles(o, d, &mesh, &xf, &tris), ray_mesh(o, d, &mesh, &xf));
+                assert_eq!(
+                    ray_triangles(o, d, &mesh, &xf, &tris),
+                    ray_mesh(o, d, &mesh, &xf)
+                );
             }
         }
     }
@@ -1507,15 +1944,34 @@ mod tests {
         // A triangle a viewer at the origin looking along +z sees from its front in the
         // file's Direct3D frame (x right, y up, z forward): clockwise there, the normal
         // pointing back at the viewer.
-        let v = |x: f32, y: f32, z: f32| omsi_o3d::Vertex { position: Vec3::new(x, y, z), normal: Vec3::new(0.0, 0.0, -1.0), uv: Vec2::ZERO };
-        let o3d = omsi_o3d::Mesh { vertices: vec![v(0.0, 0.0, 1.0), v(0.0, 1.0, 1.0), v(1.0, 0.0, 1.0)], triangles: vec![omsi_o3d::Triangle { indices: [0, 1, 2], material: 0 }], materials: vec![omsi_o3d::Material::default()], ..Default::default() };
+        let v = |x: f32, y: f32, z: f32| omsi_o3d::Vertex {
+            position: Vec3::new(x, y, z),
+            normal: Vec3::new(0.0, 0.0, -1.0),
+            uv: Vec2::ZERO,
+        };
+        let o3d = omsi_o3d::Mesh {
+            vertices: vec![v(0.0, 0.0, 1.0), v(0.0, 1.0, 1.0), v(1.0, 0.0, 1.0)],
+            triangles: vec![omsi_o3d::Triangle {
+                indices: [0, 1, 2],
+                material: 0,
+            }],
+            materials: vec![omsi_o3d::Material::default()],
+            ..Default::default()
+        };
         let m = mesh_from_o3d(&o3d);
         assert!(m.one_sided);
         // the same viewer in the world frame looks along +y with z up: the screen shows
         // world x to the right and world z upwards
-        let p: Vec<(f32, f32)> = m.indices.iter().map(|i| (m.positions[*i as usize].x, m.positions[*i as usize].z)).collect();
+        let p: Vec<(f32, f32)> = m
+            .indices
+            .iter()
+            .map(|i| (m.positions[*i as usize].x, m.positions[*i as usize].z))
+            .collect();
         let area = (p[1].0 - p[0].0) * (p[2].1 - p[0].1) - (p[2].0 - p[0].0) * (p[1].1 - p[0].1);
-        assert!(area < 0.0, "front face must be clockwise on the screen (the renderer's front face), area {area}");
+        assert!(
+            area < 0.0,
+            "front face must be clockwise on the screen (the renderer's front face), area {area}"
+        );
         assert_eq!(m.normals[0], Vec3::new(0.0, -1.0, 0.0));
     }
 
@@ -1523,12 +1979,30 @@ mod tests {
     fn d3d_normals_face_the_front() {
         // the front-facing triangle of `o3d_front_faces_arrive_clockwise`, its file normals
         // pointing away: recomputed, they point back at the viewer as D3DX makes them
-        let v = |x: f32, y: f32, z: f32| omsi_o3d::Vertex { position: Vec3::new(x, y, z), normal: Vec3::new(0.0, 0.0, 1.0), uv: Vec2::ZERO };
-        let o3d = omsi_o3d::Mesh { vertices: vec![v(0.0, 0.0, 1.0), v(0.0, 1.0, 1.0), v(1.0, 0.0, 1.0)], triangles: vec![omsi_o3d::Triangle { indices: [0, 1, 2], material: 0 }], materials: vec![omsi_o3d::Material::default()], ..Default::default() };
+        let v = |x: f32, y: f32, z: f32| omsi_o3d::Vertex {
+            position: Vec3::new(x, y, z),
+            normal: Vec3::new(0.0, 0.0, 1.0),
+            uv: Vec2::ZERO,
+        };
+        let o3d = omsi_o3d::Mesh {
+            vertices: vec![v(0.0, 0.0, 1.0), v(0.0, 1.0, 1.0), v(1.0, 0.0, 1.0)],
+            triangles: vec![omsi_o3d::Triangle {
+                indices: [0, 1, 2],
+                material: 0,
+            }],
+            materials: vec![omsi_o3d::Material::default()],
+            ..Default::default()
+        };
         let mut m = mesh_from_o3d(&o3d);
         assert_eq!(m.normals[0], Vec3::new(0.0, 1.0, 0.0));
         compute_normals_d3d(&mut m);
-        assert!(m.normals.iter().all(|n| (*n - Vec3::new(0.0, -1.0, 0.0)).length() < 1e-6), "{:?}", m.normals);
+        assert!(
+            m.normals
+                .iter()
+                .all(|n| (*n - Vec3::new(0.0, -1.0, 0.0)).length() < 1e-6),
+            "{:?}",
+            m.normals
+        );
     }
 }
 
@@ -1539,7 +2013,13 @@ pub fn ray_triangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Optio
 
 /// The same test, with the barycentric coordinates of the hit: `(t, u, v)`, the point being
 /// `a + u * (b - a) + v * (c - a)`.
-pub fn ray_triangle_bary(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<(f32, f32, f32)> {
+pub fn ray_triangle_bary(
+    origin: Vec3,
+    dir: Vec3,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+) -> Option<(f32, f32, f32)> {
     let e1 = b - a;
     let e2 = c - a;
     let p = dir.cross(e2);
@@ -1559,11 +2039,7 @@ pub fn ray_triangle_bary(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> 
         return None;
     }
     let d = e2.dot(q) * inv;
-    if d > 1e-4 {
-        Some((d, u, v))
-    } else {
-        None
-    }
+    if d > 1e-4 { Some((d, u, v)) } else { None }
 }
 
 /// Where a ray met a mesh.
@@ -1583,7 +2059,9 @@ impl MeshData {
     pub fn slot_of(&self, index: usize) -> u32 {
         self.ranges
             .iter()
-            .find(|(first, count, _)| index >= *first as usize && index < (*first + *count) as usize)
+            .find(|(first, count, _)| {
+                index >= *first as usize && index < (*first + *count) as usize
+            })
             .map(|r| r.2)
             .unwrap_or(0)
     }
@@ -1611,7 +2089,11 @@ pub fn ray_mesh_hit(origin: Vec3, dir: Vec3, mesh: &MeshData, transform: &Mat4) 
                     (Some(&x), Some(&y), Some(&z)) => x * (1.0 - u - v) + y * u + z * v,
                     _ => Vec2::ZERO,
                 };
-                best = Some(MeshHit { t, index: k * 3, uv });
+                best = Some(MeshHit {
+                    t,
+                    index: k * 3,
+                    uv,
+                });
             }
         }
     }
@@ -1624,9 +2106,16 @@ pub fn bounding_sphere(points: &[Vec3]) -> (Vec3, f32) {
     if points.is_empty() {
         return (Vec3::ZERO, 0.0);
     }
-    let (lo, hi) = points.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    let (lo, hi) = points.iter().fold(
+        (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+    );
     let c = (lo + hi) * 0.5;
-    let r = points.iter().map(|p| p.distance_squared(c)).fold(0.0f32, f32::max).sqrt();
+    let r = points
+        .iter()
+        .map(|p| p.distance_squared(c))
+        .fold(0.0f32, f32::max)
+        .sqrt();
     (c, r)
 }
 
@@ -1651,7 +2140,11 @@ pub fn ray_mesh(origin: Vec3, dir: Vec3, mesh: &MeshData, transform: &Mat4) -> O
     let dn = d / scale;
     let mut best: Option<f32> = None;
     for tri in mesh.indices.chunks_exact(3) {
-        let (a, b, c) = (mesh.positions[tri[0] as usize], mesh.positions[tri[1] as usize], mesh.positions[tri[2] as usize]);
+        let (a, b, c) = (
+            mesh.positions[tri[0] as usize],
+            mesh.positions[tri[1] as usize],
+            mesh.positions[tri[2] as usize],
+        );
         if let Some(t) = ray_triangle(o, dn, a, b, c) {
             let t = t / scale;
             if best.map(|bt| t < bt).unwrap_or(true) {
@@ -1662,15 +2155,28 @@ pub fn ray_mesh(origin: Vec3, dir: Vec3, mesh: &MeshData, transform: &Mat4) -> O
     best
 }
 
-pub fn cone_triangles(origin: Vec3, axis: Vec3, tan_half: f32, mesh: &MeshData, transform: &Mat4) -> Vec<u32> {
+pub fn cone_triangles(
+    origin: Vec3,
+    axis: Vec3,
+    tan_half: f32,
+    mesh: &MeshData,
+    transform: &Mat4,
+) -> Vec<u32> {
     let inv = transform.inverse();
     let o = inv.transform_point3(origin);
     let a = inv.transform_vector3(axis).normalize_or_zero();
     let mut out = Vec::new();
     for (k, tri) in mesh.indices.chunks_exact(3).enumerate() {
-        let (p0, p1, p2) = (mesh.positions[tri[0] as usize], mesh.positions[tri[1] as usize], mesh.positions[tri[2] as usize]);
+        let (p0, p1, p2) = (
+            mesh.positions[tri[0] as usize],
+            mesh.positions[tri[1] as usize],
+            mesh.positions[tri[2] as usize],
+        );
         let c = (p0 + p1 + p2) / 3.0;
-        let r = (p0 - c).length().max((p1 - c).length()).max((p2 - c).length());
+        let r = (p0 - c)
+            .length()
+            .max((p1 - c).length())
+            .max((p2 - c).length());
         let w = c - o;
         let along = w.dot(a);
         if along < -r {
@@ -1685,7 +2191,13 @@ pub fn cone_triangles(origin: Vec3, axis: Vec3, tan_half: f32, mesh: &MeshData, 
     out
 }
 
-pub fn ray_triangles(origin: Vec3, dir: Vec3, mesh: &MeshData, transform: &Mat4, tris: &[u32]) -> Option<f32> {
+pub fn ray_triangles(
+    origin: Vec3,
+    dir: Vec3,
+    mesh: &MeshData,
+    transform: &Mat4,
+    tris: &[u32],
+) -> Option<f32> {
     let inv = transform.inverse();
     let o = inv.transform_point3(origin);
     let d = inv.transform_vector3(dir);
@@ -1697,7 +2209,11 @@ pub fn ray_triangles(origin: Vec3, dir: Vec3, mesh: &MeshData, transform: &Mat4,
     let mut best: Option<f32> = None;
     for &k in tris {
         let k = k as usize;
-        let (a, b, c) = (mesh.positions[mesh.indices[k] as usize], mesh.positions[mesh.indices[k + 1] as usize], mesh.positions[mesh.indices[k + 2] as usize]);
+        let (a, b, c) = (
+            mesh.positions[mesh.indices[k] as usize],
+            mesh.positions[mesh.indices[k + 1] as usize],
+            mesh.positions[mesh.indices[k + 2] as usize],
+        );
         if let Some(t) = ray_triangle(o, dn, a, b, c) {
             let t = t / scale;
             if best.map(|bt| t < bt).unwrap_or(true) {
@@ -1723,15 +2239,24 @@ impl Probe {
             (Some(x), Some(y)) => Some(f(x, y)),
             (x, y) => x.or(y),
         };
-        Probe { below: pick(self.below, o.below, f32::max), above: pick(self.above, o.above, f32::min) }
+        Probe {
+            below: pick(self.below, o.below, f32::max),
+            above: pick(self.above, o.above, f32::min),
+        }
     }
 
     /// Put a single height into a probe with its top at `z_top`.
     pub fn of(z: f32, z_top: f32) -> Probe {
         if z <= z_top {
-            Probe { below: Some(z), above: None }
+            Probe {
+                below: Some(z),
+                above: None,
+            }
         } else {
-            Probe { below: None, above: Some(z) }
+            Probe {
+                below: None,
+                above: Some(z),
+            }
         }
     }
 }
@@ -1757,7 +2282,10 @@ impl DriveGrid {
 
     /// Bytes the grid holds on the heap.
     pub fn heap_bytes(&self) -> usize {
-        self.tris.capacity() * std::mem::size_of::<[Vec3; 3]>() + self.ridge.capacity() + self.start.capacity() * 4 + self.items.capacity() * 4
+        self.tris.capacity() * std::mem::size_of::<[Vec3; 3]>()
+            + self.ridge.capacity()
+            + self.start.capacity() * 4
+            + self.items.capacity() * 4
     }
 
     /// Add a triangle; walls (faces steeper than about 70°) are left out, they are nothing
@@ -1787,8 +2315,14 @@ impl DriveGrid {
         let mut keep_ridge = Vec::with_capacity(self.tris.len());
         self.ridge.resize(self.tris.len(), false);
         for (t, r) in self.tris.iter().zip(self.ridge.iter()) {
-            let (lo_x, hi_x) = (t[0].x.min(t[1].x).min(t[2].x), t[0].x.max(t[1].x).max(t[2].x));
-            let (lo_y, hi_y) = (t[0].y.min(t[1].y).min(t[2].y), t[0].y.max(t[1].y).max(t[2].y));
+            let (lo_x, hi_x) = (
+                t[0].x.min(t[1].x).min(t[2].x),
+                t[0].x.max(t[1].x).max(t[2].x),
+            );
+            let (lo_y, hi_y) = (
+                t[0].y.min(t[1].y).min(t[2].y),
+                t[0].y.max(t[1].y).max(t[2].y),
+            );
             if hi_x < 0.0 || hi_y < 0.0 || lo_x > tile || lo_y > tile {
                 continue;
             }
@@ -1835,20 +2369,30 @@ impl DriveGrid {
     /// Highest road face below the point, with its upward geometric normal.
     /// Reflections need the actual plane rather than a raster texel's height.
     pub fn surface_below(&self, x: f32, y: f32, top: f32) -> Option<(f32, Vec3)> {
-        if self.cells == 0 || x < 0.0 || y < 0.0 { return None; }
+        if self.cells == 0 || x < 0.0 || y < 0.0 {
+            return None;
+        }
         let (cx, cy) = ((x / self.cell) as usize, (y / self.cell) as usize);
-        if cx >= self.cells || cy >= self.cells { return None; }
+        if cx >= self.cells || cy >= self.cells {
+            return None;
+        }
         let k = cy * self.cells + cx;
         let mut best: Option<(f32, Vec3)> = None;
         for &i in &self.items[self.start[k] as usize..self.start[k + 1] as usize] {
-            if self.ridge.get(i as usize).copied().unwrap_or(false) { continue; }
+            if self.ridge.get(i as usize).copied().unwrap_or(false) {
+                continue;
+            }
             let [a, b, c] = self.tris[i as usize];
             let d = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
-            if d.abs() < 1e-9 { continue; }
+            if d.abs() < 1e-9 {
+                continue;
+            }
             let l1 = ((b.y - c.y) * (x - c.x) + (c.x - b.x) * (y - c.y)) / d;
             let l2 = ((c.y - a.y) * (x - c.x) + (a.x - c.x) * (y - c.y)) / d;
             let l3 = 1.0 - l1 - l2;
-            if l1.min(l2).min(l3) < -1e-4 { continue; }
+            if l1.min(l2).min(l3) < -1e-4 {
+                continue;
+            }
             let z = l1 * a.z + l2 * b.z + l3 * c.z;
             if z <= top && best.is_none_or(|(old, _)| z > old) {
                 let n = (b - a).cross(c - a).normalize();
@@ -1976,7 +2520,12 @@ struct SurfaceBlock {
 
 impl SurfaceBlock {
     fn new() -> Box<SurfaceBlock> {
-        Box::new(SurfaceBlock { flags: [0; BLOCK * BLOCK], height: [0.0; BLOCK * BLOCK], low: Some(Box::new([0.0; BLOCK * BLOCK])), road: Some(Box::new([0.0; BLOCK * BLOCK])) })
+        Box::new(SurfaceBlock {
+            flags: [0; BLOCK * BLOCK],
+            height: [0.0; BLOCK * BLOCK],
+            low: Some(Box::new([0.0; BLOCK * BLOCK])),
+            road: Some(Box::new([0.0; BLOCK * BLOCK])),
+        })
     }
 }
 
@@ -1986,15 +2535,25 @@ impl TileSurface {
         let n = BLOCK * BLOCK;
         let mut rasters = self.blocks.capacity() * 8 + self.holes.capacity() * 8;
         for b in self.blocks.iter().flatten() {
-            rasters += n * 5 + b.low.as_ref().map(|_| n * 4).unwrap_or(0) + b.road.as_ref().map(|_| n * 4).unwrap_or(0);
+            rasters += n * 5
+                + b.low.as_ref().map(|_| n * 4).unwrap_or(0)
+                + b.road.as_ref().map(|_| n * 4).unwrap_or(0);
         }
-        rasters += self.holes.iter().flatten().count() * n * 4 + self.hole_cover.iter().flatten().count() * n * 2;
+        rasters += self.holes.iter().flatten().count() * n * 4
+            + self.hole_cover.iter().flatten().count() * n * 2;
         (rasters, self.drive.heap_bytes())
     }
 
     pub fn new(size: usize) -> TileSurface {
         let blocks = size.div_ceil(BLOCK);
-        TileSurface { size, blocks: (0..blocks * blocks).map(|_| None).collect(), holes: (0..blocks * blocks).map(|_| None).collect(), hole_cover: (0..blocks * blocks).map(|_| None).collect(), outlines: Vec::new(), drive: DriveGrid::default() }
+        TileSurface {
+            size,
+            blocks: (0..blocks * blocks).map(|_| None).collect(),
+            holes: (0..blocks * blocks).map(|_| None).collect(),
+            hole_cover: (0..blocks * blocks).map(|_| None).collect(),
+            outlines: Vec::new(),
+            drive: DriveGrid::default(),
+        }
     }
 
     /// Block and index within it of texel `k`.
@@ -2002,21 +2561,30 @@ impl TileSurface {
     fn at(&self, k: usize) -> (usize, usize) {
         let (x, y) = (k % self.size, k / self.size);
         let per_row = self.size.div_ceil(BLOCK);
-        ((y / BLOCK) * per_row + x / BLOCK, (y % BLOCK) * BLOCK + x % BLOCK)
+        (
+            (y / BLOCK) * per_row + x / BLOCK,
+            (y % BLOCK) * BLOCK + x % BLOCK,
+        )
     }
 
     /// Whether a surface covers texel `k`.
     #[inline]
     pub fn covered(&self, k: usize) -> bool {
         let (b, i) = self.at(k);
-        self.blocks[b].as_ref().map(|b| b.flags[i] & COVERED != 0).unwrap_or(false)
+        self.blocks[b]
+            .as_ref()
+            .map(|b| b.flags[i] & COVERED != 0)
+            .unwrap_or(false)
     }
 
     /// Whether a drivable surface covers texel `k`.
     #[inline]
     pub fn road_covered(&self, k: usize) -> bool {
         let (b, i) = self.at(k);
-        self.blocks[b].as_ref().map(|b| b.flags[i] & ROAD != 0).unwrap_or(false)
+        self.blocks[b]
+            .as_ref()
+            .map(|b| b.flags[i] & ROAD != 0)
+            .unwrap_or(false)
     }
 
     /// Height of the highest surface over texel `k` (0 where none).
@@ -2030,21 +2598,30 @@ impl TileSurface {
     #[inline]
     pub fn low_height(&self, k: usize) -> f32 {
         let (b, i) = self.at(k);
-        self.blocks[b].as_ref().map(|b| b.low.as_ref().map(|l| l[i]).unwrap_or(b.height[i])).unwrap_or(0.0)
+        self.blocks[b]
+            .as_ref()
+            .map(|b| b.low.as_ref().map(|l| l[i]).unwrap_or(b.height[i]))
+            .unwrap_or(0.0)
     }
 
     /// Height of the drivable surface over texel `k`.
     #[inline]
     pub fn road_height(&self, k: usize) -> f32 {
         let (b, i) = self.at(k);
-        self.blocks[b].as_ref().map(|b| b.road.as_ref().map(|l| l[i]).unwrap_or(b.height[i])).unwrap_or(0.0)
+        self.blocks[b]
+            .as_ref()
+            .map(|b| b.road.as_ref().map(|l| l[i]).unwrap_or(b.height[i]))
+            .unwrap_or(0.0)
     }
 
     /// The top of a `[terrainhole]` cutter over texel `k`, if one is there.
     #[inline]
     pub fn hole_height(&self, k: usize) -> Option<f32> {
         let (b, i) = self.at(k);
-        self.holes[b].as_ref().map(|h| h[i]).filter(|h| *h > f32::MIN)
+        self.holes[b]
+            .as_ref()
+            .map(|h| h[i])
+            .filter(|h| *h > f32::MIN)
     }
 
     fn block_mut(&mut self, k: usize) -> (&mut SurfaceBlock, usize) {
@@ -2099,10 +2676,18 @@ impl TileSurface {
     fn compact(&mut self) {
         for b in self.blocks.iter_mut().flatten() {
             let (flags, height) = (&b.flags, &b.height);
-            if b.low.as_ref().map(|l| (0..BLOCK * BLOCK).all(|i| flags[i] & COVERED == 0 || l[i] == height[i])).unwrap_or(false) {
+            if b.low
+                .as_ref()
+                .map(|l| (0..BLOCK * BLOCK).all(|i| flags[i] & COVERED == 0 || l[i] == height[i]))
+                .unwrap_or(false)
+            {
                 b.low = None;
             }
-            if b.road.as_ref().map(|r| (0..BLOCK * BLOCK).all(|i| flags[i] & ROAD == 0 || r[i] == height[i])).unwrap_or(false) {
+            if b.road
+                .as_ref()
+                .map(|r| (0..BLOCK * BLOCK).all(|i| flags[i] & ROAD == 0 || r[i] == height[i]))
+                .unwrap_or(false)
+            {
                 b.road = None;
             }
         }
@@ -2111,14 +2696,26 @@ impl TileSurface {
     /// Add a mesh the wheels stand on: a spline's height profile, a surface object, or a low
     /// object with a `[collision_mesh]` (a traffic island) that cuts no ground. The probe
     /// takes the highest face below the axle, so a bridge deck overhead is never picked.
-    pub fn add_drive_mesh(&mut self, mesh: &MeshData, transform: &Mat4, origin: DVec3, tx: i32, ty: i32) {
+    pub fn add_drive_mesh(
+        &mut self,
+        mesh: &MeshData,
+        transform: &Mat4,
+        origin: DVec3,
+        tx: i32,
+        ty: i32,
+    ) {
         let ident = *transform == Mat4::IDENTITY;
-        let off = (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
+        let off =
+            (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
         for tri in mesh.indices.chunks_exact(3) {
             let mut p = [Vec3::ZERO; 3];
             for k in 0..3 {
                 let v = mesh.positions[tri[k] as usize];
-                p[k] = (if ident { v } else { transform.transform_point3(v) }) + off;
+                p[k] = (if ident {
+                    v
+                } else {
+                    transform.transform_point3(v)
+                }) + off;
             }
             self.drive.push(p);
         }
@@ -2127,8 +2724,14 @@ impl TileSurface {
     /// Add a spline's height profiles ([`build_height_profile_mesh`]): its wall tops (the
     /// range of material 1) go in as walls.
     pub fn add_height_profiles(&mut self, mesh: &MeshData, origin: DVec3, tx: i32, ty: i32) {
-        let off = (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
-        let ridge_from = mesh.ranges.iter().find(|r| r.2 == 1).map(|r| r.0 as usize).unwrap_or(usize::MAX);
+        let off =
+            (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
+        let ridge_from = mesh
+            .ranges
+            .iter()
+            .find(|r| r.2 == 1)
+            .map(|r| r.0 as usize)
+            .unwrap_or(usize::MAX);
         for (j, tri) in mesh.indices.chunks_exact(3).enumerate() {
             let p = [0, 1, 2].map(|k| mesh.positions[tri[k] as usize] + off);
             self.drive.push_kind(p, j * 3 >= ridge_from);
@@ -2144,7 +2747,14 @@ impl TileSurface {
 
     /// Rasterize a mesh into this tile at (tx, ty). Mesh positions are relative to
     /// `origin` (after `transform`).
-    pub fn rasterize(&mut self, mesh: &MeshData, transform: &Mat4, origin: DVec3, tx: i32, ty: i32) {
+    pub fn rasterize(
+        &mut self,
+        mesh: &MeshData,
+        transform: &Mat4,
+        origin: DVec3,
+        tx: i32,
+        ty: i32,
+    ) {
         self.rasterize_kind(mesh, transform, origin, tx, ty, true)
     }
 
@@ -2152,9 +2762,18 @@ impl TileSurface {
     pub fn add_outline(&mut self, ring: &[DVec2], tx: i32, ty: i32) {
         let o = DVec2::new(tx as f64 * tile_size(), ty as f64 * tile_size());
         let pts: Vec<Vec2> = ring.iter().map(|p| (*p - o).as_vec2()).collect();
-        let b = pts.iter().fold([f32::MAX, f32::MAX, f32::MIN, f32::MIN], |b, p| [b[0].min(p.x), b[1].min(p.y), b[2].max(p.x), b[3].max(p.y)]);
+        let b = pts
+            .iter()
+            .fold([f32::MAX, f32::MAX, f32::MIN, f32::MIN], |b, p| {
+                [b[0].min(p.x), b[1].min(p.y), b[2].max(p.x), b[3].max(p.y)]
+            });
         let t = tile_size() as f32;
-        if pts.len() < 3 || b[2] < -OUTLINE_EDGE || b[3] < -OUTLINE_EDGE || b[0] > t + OUTLINE_EDGE || b[1] > t + OUTLINE_EDGE {
+        if pts.len() < 3
+            || b[2] < -OUTLINE_EDGE
+            || b[3] < -OUTLINE_EDGE
+            || b[0] > t + OUTLINE_EDGE
+            || b[1] > t + OUTLINE_EDGE
+        {
             return;
         }
         self.outlines.push((pts, b));
@@ -2166,7 +2785,11 @@ impl TileSurface {
         let p = Vec2::new(x, y);
         let mut best: Option<f32> = None;
         for (ring, b) in &self.outlines {
-            if x < b[0] - OUTLINE_EDGE || y < b[1] - OUTLINE_EDGE || x > b[2] + OUTLINE_EDGE || y > b[3] + OUTLINE_EDGE {
+            if x < b[0] - OUTLINE_EDGE
+                || y < b[1] - OUTLINE_EDGE
+                || x > b[2] + OUTLINE_EDGE
+                || y > b[3] + OUTLINE_EDGE
+            {
                 continue;
             }
             let mut d2 = f32::MAX;
@@ -2207,11 +2830,19 @@ impl TileSurface {
 
     /// Mark the texels a `[terrainhole]` mesh covers: there the ground goes away entirely.
     /// Its faces may be vertical walls, so nothing is skipped by orientation here.
-    pub fn rasterize_hole(&mut self, mesh: &MeshData, transform: &Mat4, origin: DVec3, tx: i32, ty: i32) {
+    pub fn rasterize_hole(
+        &mut self,
+        mesh: &MeshData,
+        transform: &Mat4,
+        origin: DVec3,
+        tx: i32,
+        ty: i32,
+    ) {
         let n = self.size as f32;
         let scale = n / tile_size() as f32;
         let ident = *transform == Mat4::IDENTITY;
-        let off = (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
+        let off =
+            (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
         let (ox, oy) = (-off.x, -off.y);
         // the triangles in texel units (x, y) with their heights, walls left out
         let mut tris: Vec<[Vec3; 3]> = Vec::new();
@@ -2219,7 +2850,11 @@ impl TileSurface {
             let mut p = [Vec3::ZERO; 3];
             for k in 0..3 {
                 let v = mesh.positions[tri[k] as usize];
-                let w = if ident { v } else { transform.transform_point3(v) };
+                let w = if ident {
+                    v
+                } else {
+                    transform.transform_point3(v)
+                };
                 p[k] = Vec3::new((w.x - ox) * scale, (w.y - oy) * scale, w.z + off.z);
             }
             let det = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[2].x - p[0].x) * (p[1].y - p[0].y);
@@ -2232,7 +2867,8 @@ impl TileSurface {
         // an aligned spline's outline: a junction's cutter reaches a little past its kerbs
         // and footways, and cut that far the ground left the sky showing along them.
         let key = |v: Vec3| ((v.x * 256.0).round() as i64, (v.y * 256.0).round() as i64);
-        let mut edges: std::collections::HashMap<((i64, i64), (i64, i64)), (u32, Vec2, Vec2)> = std::collections::HashMap::new();
+        let mut edges: std::collections::HashMap<((i64, i64), (i64, i64)), (u32, Vec2, Vec2)> =
+            std::collections::HashMap::new();
         for p in &tris {
             for k in 0..3 {
                 let (a, b) = (p[k], p[(k + 1) % 3]);
@@ -2244,7 +2880,11 @@ impl TileSurface {
                 edges.entry(e).or_insert((0, a.truncate(), b.truncate())).0 += 1;
             }
         }
-        let rim: Vec<(Vec2, Vec2)> = edges.into_values().filter(|e| e.0 == 1).map(|e| (e.1, e.2)).collect();
+        let rim: Vec<(Vec2, Vec2)> = edges
+            .into_values()
+            .filter(|e| e.0 == 1)
+            .map(|e| (e.1, e.2))
+            .collect();
         let keep = HOLE_KEEP * scale;
         let near_rim = |q: Vec2| {
             rim.iter().any(|(a, c)| {
@@ -2283,7 +2923,11 @@ impl TileSurface {
                         let sy = py as f32 + ((q / 4) as f32 + 0.5) / 4.0;
                         let m1 = ((x1 - x0) * (sy - y0) - (sx - x0) * (y1 - y0)) * inv;
                         let m2 = ((sx - x0) * (y2 - y0) - (x2 - x0) * (sy - y0)) * inv;
-                        if m1 >= eps && m2 >= eps && 1.0 - m1 - m2 >= eps && !near_rim(Vec2::new(sx, sy)) {
+                        if m1 >= eps
+                            && m2 >= eps
+                            && 1.0 - m1 - m2 >= eps
+                            && !near_rim(Vec2::new(sx, sy))
+                        {
                             bits |= 1 << q;
                         }
                     }
@@ -2296,18 +2940,31 @@ impl TileSurface {
     }
 
     /// `drivable`: this surface also carries vehicles (a road, a crossing plate, a car park).
-    pub fn rasterize_kind(&mut self, mesh: &MeshData, transform: &Mat4, origin: DVec3, tx: i32, ty: i32, drivable: bool) {
+    pub fn rasterize_kind(
+        &mut self,
+        mesh: &MeshData,
+        transform: &Mat4,
+        origin: DVec3,
+        tx: i32,
+        ty: i32,
+        drivable: bool,
+    ) {
         let n = self.size as f32;
         let scale = n / tile_size() as f32;
         let ident = *transform == Mat4::IDENTITY;
         // offset from the mesh origin to this tile's corner, in f64
-        let off = (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
+        let off =
+            (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
         let (ox, oy) = (-off.x, -off.y);
         for tri in mesh.indices.chunks_exact(3) {
             let mut p = [Vec3::ZERO; 3];
             for k in 0..3 {
                 let v = mesh.positions[tri[k] as usize];
-                p[k] = if ident { v } else { transform.transform_point3(v) };
+                p[k] = if ident {
+                    v
+                } else {
+                    transform.transform_point3(v)
+                };
                 p[k].z += off.z;
             }
             // skip (near-)vertical faces: they are walls, not surfaces
@@ -2375,11 +3032,20 @@ impl TileSurface {
         let (ix, iy) = (fx.floor(), fy.floor());
         let (tx, ty) = (fx - ix, fy - iy);
         let (mut acc, mut sum) = (0.0f32, 0.0f32);
-        for (dx, dy, w) in [(0, 0, (1.0 - tx) * (1.0 - ty)), (1, 0, tx * (1.0 - ty)), (0, 1, (1.0 - tx) * ty), (1, 1, tx * ty)] {
+        for (dx, dy, w) in [
+            (0, 0, (1.0 - tx) * (1.0 - ty)),
+            (1, 0, tx * (1.0 - ty)),
+            (0, 1, (1.0 - tx) * ty),
+            (1, 1, tx * ty),
+        ] {
             let cx = (ix as i32 + dx).clamp(0, n - 1);
             let cy = (iy as i32 + dy).clamp(0, n - 1);
             let k = (cy * n + cx) as usize;
-            let (covered, height) = if road { (self.road_covered(k), self.road_height(k)) } else { (self.covered(k), self.height(k)) };
+            let (covered, height) = if road {
+                (self.road_covered(k), self.road_height(k))
+            } else {
+                (self.covered(k), self.height(k))
+            };
             if covered && w > 0.0 {
                 acc += height * w;
                 sum += w;
@@ -2438,7 +3104,9 @@ impl TileSurface {
             for j in lo[1]..hi[1] {
                 for i in lo[0]..hi[0] {
                     let (cx, cy) = ((i as f32 + 0.5) * cell, (j as f32 + 0.5) * cell);
-                    let Some(d) = self.outline_distance(cx, cy) else { continue };
+                    let Some(d) = self.outline_distance(cx, cy) else {
+                        continue;
+                    };
                     let a = if d < -cell * 0.75 {
                         0
                     } else if d > cell * 0.75 {
@@ -2446,8 +3114,14 @@ impl TileSurface {
                     } else {
                         let kept = (0..16)
                             .filter(|q| {
-                                let (x, y) = (cx + ((q % 4) as f32 - 1.5) * cell / 4.0, cy + ((q / 4) as f32 - 1.5) * cell / 4.0);
-                                !self.in_outlines(x, y) || self.outline_distance(x, y).is_some_and(|d| d > -OUTLINE_KEEP)
+                                let (x, y) = (
+                                    cx + ((q % 4) as f32 - 1.5) * cell / 4.0,
+                                    cy + ((q / 4) as f32 - 1.5) * cell / 4.0,
+                                );
+                                !self.in_outlines(x, y)
+                                    || self
+                                        .outline_distance(x, y)
+                                        .is_some_and(|d| d > -OUTLINE_KEEP)
                             })
                             .count();
                         (kept * 255 / 16) as u8
@@ -2462,7 +3136,11 @@ impl TileSurface {
                 let all = (-1i32..=1).all(|dj| {
                     (-1i32..=1).all(|di| {
                         let (x, y) = (i as i32 + di, j as i32 + dj);
-                        x < 0 || y < 0 || x >= n as i32 || y >= n as i32 || cut[y as usize * n + x as usize]
+                        x < 0
+                            || y < 0
+                            || x >= n as i32
+                            || y >= n as i32
+                            || cut[y as usize * n + x as usize]
                     })
                 });
                 if all && cut[j * n + i] {
@@ -2517,13 +3195,19 @@ impl TileSurface {
     /// are empty.
     fn touched(&self) -> impl Iterator<Item = usize> + '_ {
         let per_row = self.size.div_ceil(BLOCK);
-        (0..self.blocks.len()).filter(|b| self.blocks[*b].is_some() || self.holes[*b].is_some() || self.hole_cover[*b].is_some()).flat_map(move |b| {
-            let (bx, by) = (b % per_row, b / per_row);
-            (0..BLOCK * BLOCK).filter_map(move |i| {
-                let (x, y) = (bx * BLOCK + i % BLOCK, by * BLOCK + i / BLOCK);
-                (x < self.size && y < self.size).then_some(y * self.size + x)
+        (0..self.blocks.len())
+            .filter(|b| {
+                self.blocks[*b].is_some()
+                    || self.holes[*b].is_some()
+                    || self.hole_cover[*b].is_some()
             })
-        })
+            .flat_map(move |b| {
+                let (bx, by) = (b % per_row, b / per_row);
+                (0..BLOCK * BLOCK).filter_map(move |i| {
+                    let (x, y) = (bx * BLOCK + i % BLOCK, by * BLOCK + i / BLOCK);
+                    (x < self.size && y < self.size).then_some(y * self.size + x)
+                })
+            })
     }
 
     /// Is any texel actually cut? (`mask_image` with the same arguments would do something.)
@@ -2549,7 +3233,22 @@ mod cant_tests {
 
     #[test]
     fn cant_is_a_percentage_within_the_half_cant_width() {
-        let c = SplineCurve { start: DVec3::ZERO, heading_deg: 0.0, length: 10.0, radius: 0.0, grad_start: 0.0, grad_end: 0.0, delta_h: None, cant_start: 5.0, cant_end: 5.0, skew_start: 0.0, skew_end: 0.0, tex_offset: 0.0, seed: 0, half_cant_width: 3.0 };
+        let c = SplineCurve {
+            start: DVec3::ZERO,
+            heading_deg: 0.0,
+            length: 10.0,
+            radius: 0.0,
+            grad_start: 0.0,
+            grad_end: 0.0,
+            delta_h: None,
+            cant_start: 5.0,
+            cant_end: 5.0,
+            skew_start: 0.0,
+            skew_end: 0.0,
+            tex_offset: 0.0,
+            seed: 0,
+            half_cant_width: 3.0,
+        };
         // 2 m right at 5 %: 10 cm down
         assert!((c.offset_point(5.0, 2.0, 0.0).z + 0.10).abs() < 1e-9);
         // beyond the half cant width the height stays what it is at its edge
@@ -2566,9 +3265,19 @@ mod ray_hit_tests {
     /// u runs with x, v runs down (v = 0 at z = 1).
     fn quad() -> MeshData {
         MeshData {
-            positions: vec![Vec3::new(-1.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 1.0), Vec3::new(1.0, 0.0, -1.0), Vec3::new(-1.0, 0.0, -1.0)],
+            positions: vec![
+                Vec3::new(-1.0, 0.0, 1.0),
+                Vec3::new(1.0, 0.0, 1.0),
+                Vec3::new(1.0, 0.0, -1.0),
+                Vec3::new(-1.0, 0.0, -1.0),
+            ],
             normals: vec![Vec3::Y; 4],
-            uvs: vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)],
+            uvs: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1.0, 0.0),
+                Vec2::new(1.0, 1.0),
+                Vec2::new(0.0, 1.0),
+            ],
             ranges: vec![(0, 3, 0), (3, 3, 1)],
             indices: vec![0, 1, 2, 0, 2, 3],
             one_sided: false,
@@ -2593,10 +3302,18 @@ mod ray_hit_tests {
     fn the_mesh_transform_is_undone() {
         let m = quad();
         // the quad moved 10 m east and doubled in size: its middle is at x = 10, z = 0
-        let xf = Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)) * Mat4::from_scale(Vec3::splat(2.0));
+        let xf =
+            Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)) * Mat4::from_scale(Vec3::splat(2.0));
         let h = ray_mesh_hit(Vec3::new(11.0, -3.0, 0.5), Vec3::Y, &m, &xf).unwrap();
         assert!((h.t - 3.0).abs() < 1e-4);
-        assert!((h.uv - Vec2::new(0.75, 0.375)).length() < 1e-4, "{:?}", h.uv);
-        assert_eq!(ray_mesh_hit(Vec3::new(11.0, -3.0, 0.5), Vec3::Y, &m, &xf).map(|h| h.t), ray_mesh(Vec3::new(11.0, -3.0, 0.5), Vec3::Y, &m, &xf));
+        assert!(
+            (h.uv - Vec2::new(0.75, 0.375)).length() < 1e-4,
+            "{:?}",
+            h.uv
+        );
+        assert_eq!(
+            ray_mesh_hit(Vec3::new(11.0, -3.0, 0.5), Vec3::Y, &m, &xf).map(|h| h.t),
+            ray_mesh(Vec3::new(11.0, -3.0, 0.5), Vec3::Y, &m, &xf)
+        );
     }
 }

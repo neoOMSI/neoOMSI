@@ -3,7 +3,7 @@
 //! DLLs OMSI's plugins are; on Windows the game starts it directly, elsewhere through Wine.
 //!
 //! usage: omsi-plugin-host <library>   (then the protocol of `omsi_plugin::wire` on stdio)
-use omsi_plugin::{wire, Library};
+use omsi_plugin::{Library, wire};
 use std::io::{BufReader, BufWriter, Write};
 
 fn main() {
@@ -21,16 +21,23 @@ fn main() {
         }
     };
     loop {
-        let Ok(op) = wire::get_u8(&mut input) else { return };
+        let Ok(op) = wire::get_u8(&mut input) else {
+            return;
+        };
         let res = match (op, &lib) {
             (wire::START, Some(lib)) => {
                 lib.start();
                 let p = lib.procs();
-                let flags = p.variable as u8 | (p.trigger as u8) << 1 | (p.system as u8) << 2 | (p.string as u8) << 3;
+                let flags = p.variable as u8
+                    | (p.trigger as u8) << 1
+                    | (p.system as u8) << 2
+                    | (p.string as u8) << 3;
                 wire::put_u8(&mut out, 1).and_then(|_| wire::put_u8(&mut out, flags))
             }
             (wire::START, None) => {
-                let _ = wire::put_u8(&mut out, 0).and_then(|_| wire::put_u8(&mut out, 0)).and_then(|_| out.flush());
+                let _ = wire::put_u8(&mut out, 0)
+                    .and_then(|_| wire::put_u8(&mut out, 0))
+                    .and_then(|_| out.flush());
                 return;
             }
             (wire::FRAME, Some(lib)) => match wire::get_frame(&mut input) {

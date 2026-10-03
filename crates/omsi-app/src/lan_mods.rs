@@ -40,12 +40,100 @@ const KEEP_FREE: u64 = 3 << 30;
 const MAX_FILES: usize = 400_000;
 
 /// The top-level content folders a session may bring files into.
-const FOLDERS: &[&str] = &["maps", "vehicles", "sceneryobjects", "splines", "humans", "fonts", "ticketpacks", "money", "weather", "texture", "sound", "sounds", "trains", "announcements"];
+const FOLDERS: &[&str] = &[
+    "maps",
+    "vehicles",
+    "sceneryobjects",
+    "splines",
+    "humans",
+    "fonts",
+    "ticketpacks",
+    "money",
+    "weather",
+    "texture",
+    "sound",
+    "sounds",
+    "trains",
+    "announcements",
+];
 
 /// Names that run code somewhere (Windows, macOS, Linux, the JVM, Office macros, OMSI
 /// plugins and their configuration).
 const REFUSED: &[&str] = &[
-    "exe", "dll", "com", "bat", "cmd", "scr", "ps1", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "msi", "msp", "mst", "jar", "hta", "cpl", "sys", "drv", "ocx", "ax", "lnk", "url", "reg", "inf", "sh", "bash", "zsh", "csh", "ksh", "command", "tool", "app", "dylib", "so", "py", "pyc", "pyw", "pl", "rb", "php", "lua", "apk", "run", "pif", "gadget", "appx", "msix", "iso", "img", "dmg", "pkg", "vhd", "vhdx", "opl", "docm", "xlsm", "pptm", "dotm", "xlam", "scpt", "applescript", "workflow", "action", "zip", "rar", "7z", "cab", "tar", "gz",
+    "exe",
+    "dll",
+    "com",
+    "bat",
+    "cmd",
+    "scr",
+    "ps1",
+    "psm1",
+    "psd1",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "msi",
+    "msp",
+    "mst",
+    "jar",
+    "hta",
+    "cpl",
+    "sys",
+    "drv",
+    "ocx",
+    "ax",
+    "lnk",
+    "url",
+    "reg",
+    "inf",
+    "sh",
+    "bash",
+    "zsh",
+    "csh",
+    "ksh",
+    "command",
+    "tool",
+    "app",
+    "dylib",
+    "so",
+    "py",
+    "pyc",
+    "pyw",
+    "pl",
+    "rb",
+    "php",
+    "lua",
+    "apk",
+    "run",
+    "pif",
+    "gadget",
+    "appx",
+    "msix",
+    "iso",
+    "img",
+    "dmg",
+    "pkg",
+    "vhd",
+    "vhdx",
+    "opl",
+    "docm",
+    "xlsm",
+    "pptm",
+    "dotm",
+    "xlam",
+    "scpt",
+    "applescript",
+    "workflow",
+    "action",
+    "zip",
+    "rar",
+    "7z",
+    "cab",
+    "tar",
+    "gz",
 ];
 
 /// One file of the list: path relative to a content root (`/`-separated, as the host
@@ -73,7 +161,8 @@ pub fn refuse_path(path: &str) -> Option<String> {
     if path.is_empty() || path.len() > 400 {
         return Some("empty or too long".into());
     }
-    if path.starts_with('/') || path.starts_with('\\') || path.contains(':') || path.contains('\\') {
+    if path.starts_with('/') || path.starts_with('\\') || path.contains(':') || path.contains('\\')
+    {
         return Some("not a plain relative name".into());
     }
     let comps: Vec<&str> = path.split('/').collect();
@@ -81,13 +170,22 @@ pub fn refuse_path(path: &str) -> Option<String> {
         return Some("not inside a content folder".into());
     }
     for c in &comps {
-        if c.is_empty() || *c == "." || *c == ".." || c.chars().any(|ch| ch.is_control() || matches!(ch, '<' | '>' | '"' | '|' | '?' | '*')) || c.trim() != *c && c.trim().is_empty() {
+        if c.is_empty()
+            || *c == "."
+            || *c == ".."
+            || c.chars()
+                .any(|ch| ch.is_control() || matches!(ch, '<' | '>' | '"' | '|' | '?' | '*'))
+            || c.trim() != *c && c.trim().is_empty()
+        {
             return Some(format!("bad name component {c:?}"));
         }
     }
     let top = comps[0].to_ascii_lowercase();
     if !FOLDERS.contains(&top.as_str()) {
-        return Some(format!("{} is no content folder a session brings", comps[0]));
+        return Some(format!(
+            "{} is no content folder a session brings",
+            comps[0]
+        ));
     }
     if comps.iter().any(|c| c.eq_ignore_ascii_case("plugins")) {
         return Some("plugins are never taken from another machine".into());
@@ -157,7 +255,13 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     };
     // a folder (relative) and everything in it, from the content roots that are not the
     // original installation (a mod's copy of a stock folder brings only what it adds)
-    fn add_folder(rel: &str, original: &Path, files: &mut HashMap<String, (String, PathBuf)>, text_todo: &mut Vec<(String, PathBuf)>, depth: usize) {
+    fn add_folder(
+        rel: &str,
+        original: &Path,
+        files: &mut HashMap<String, (String, PathBuf)>,
+        text_todo: &mut Vec<(String, PathBuf)>,
+        depth: usize,
+    ) {
         if depth > 12 {
             return;
         }
@@ -171,7 +275,9 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             let dir = comps.iter().fold(r.clone(), |p, c| p.join(c));
             let Some(list) = omsi_cfg::vfs::list_dir(&dir).or_else(|| {
                 // (case-insensitively, as Windows would find it)
-                omsi_cfg::find_in_roots(rel).filter(|(root, _)| *root == r).and_then(|(_, p)| omsi_cfg::vfs::list_dir(&p))
+                omsi_cfg::find_in_roots(rel)
+                    .filter(|(root, _)| *root == r)
+                    .and_then(|(_, p)| omsi_cfg::vfs::list_dir(&p))
             }) else {
                 continue;
             };
@@ -193,7 +299,12 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                             continue;
                         }
                         let lower = name.to_lowercase();
-                        if [".cfg", ".sco", ".sli", ".bus", ".ovh", ".zug", ".hum", ".txt", ".hof"].iter().any(|e| lower.ends_with(e)) {
+                        if [
+                            ".cfg", ".sco", ".sli", ".bus", ".ovh", ".zug", ".hum", ".txt", ".hof",
+                        ]
+                        .iter()
+                        .any(|e| lower.ends_with(e))
+                        {
                             text_todo.push((child.clone(), path.clone()));
                         }
                         files.insert(key, (child, path));
@@ -216,12 +327,20 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         }
         Some(comps[..comps.len() - 1].join("/"))
     };
-    let mut want_folder = |rel: String, files: &mut HashMap<String, (String, PathBuf)>, text_todo: &mut Vec<(String, PathBuf)>| {
+    let mut want_folder = |rel: String,
+                           files: &mut HashMap<String, (String, PathBuf)>,
+                           text_todo: &mut Vec<(String, PathBuf)>| {
         if folders_done.insert(rel.to_lowercase()) {
             add_folder(&rel, &original, files, text_todo, 0);
         }
     };
-    let map_dir = norm(Path::new(&args.map).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default().as_str());
+    let map_dir = norm(
+        Path::new(&args.map)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+            .as_str(),
+    );
     if !map_dir.is_empty() {
         want_folder(map_dir.clone(), &mut files, &mut text_todo);
     }
@@ -265,8 +384,13 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             if !scanned.insert(rel.to_lowercase()) {
                 continue;
             }
-            let Ok(text) = omsi_cfg::vfs::read_text(&path) else { continue };
-            let here = rel.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+            let Ok(text) = omsi_cfg::vfs::read_text(&path) else {
+                continue;
+            };
+            let here = rel
+                .rsplit_once('/')
+                .map(|(d, _)| d.to_string())
+                .unwrap_or_default();
             // the fonts its text textures write with (`[texttexture]`: variable, font, …)
             let lines: Vec<&str> = text.lines().collect();
             for (i, l) in lines.iter().enumerate() {
@@ -282,7 +406,9 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     continue;
                 }
                 let lower = t.to_ascii_lowercase();
-                let is_ref = [".sco", ".sli", ".bus", ".ovh", ".zug", ".hum", ".owt"].iter().any(|e| lower.ends_with(e));
+                let is_ref = [".sco", ".sli", ".bus", ".ovh", ".zug", ".hum", ".owt"]
+                    .iter()
+                    .any(|e| lower.ends_with(e));
                 let relative = t.contains("..");
                 if !is_ref && !relative {
                     continue;
@@ -297,11 +423,17 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     if !FOLDERS.contains(&top.as_str()) {
                         continue;
                     }
-                    let Some((root, _)) = omsi_cfg::find_in_roots(&c) else { continue };
+                    let Some((root, _)) = omsi_cfg::find_in_roots(&c) else {
+                        continue;
+                    };
                     if is_original(&root, &original) {
                         break;
                     }
-                    let folder = if is_ref { owner_folder(&c) } else { c.rsplit_once('/').map(|(d, _)| d.to_string()) };
+                    let folder = if is_ref {
+                        owner_folder(&c)
+                    } else {
+                        c.rsplit_once('/').map(|(d, _)| d.to_string())
+                    };
                     if let Some(f) = folder.filter(|f| f.split('/').count() >= 2) {
                         let before = files.len();
                         want_folder(f, &mut files, &mut next);
@@ -319,19 +451,30 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         if is_original(&r, &original) {
             continue;
         }
-        let Some(dir) = omsi_cfg::find_in_roots("Fonts").filter(|(root, _)| *root == r).map(|(_, p)| p).or_else(|| Some(r.join("Fonts"))) else { continue };
+        let Some(dir) = omsi_cfg::find_in_roots("Fonts")
+            .filter(|(root, _)| *root == r)
+            .map(|(_, p)| p)
+            .or_else(|| Some(r.join("Fonts")))
+        else {
+            continue;
+        };
         for (name, is_dir) in omsi_cfg::vfs::list_dir(&dir).unwrap_or_default() {
             let n = name.to_string_lossy().to_string();
             if is_dir || !n.to_lowercase().ends_with(".oft") {
                 continue;
             }
-            let Ok(text) = omsi_cfg::vfs::read_text(&dir.join(&n)) else { continue };
+            let Ok(text) = omsi_cfg::vfs::read_text(&dir.join(&n)) else {
+                continue;
+            };
             let lines: Vec<&str> = text.lines().map(|l| l.trim()).collect();
             let mut wanted = false;
             let mut bitmaps: Vec<String> = Vec::new();
             for (i, l) in lines.iter().enumerate() {
                 if l.eq_ignore_ascii_case("[newfont]") {
-                    let name = lines.get(i + 1).map(|x| x.to_lowercase()).unwrap_or_default();
+                    let name = lines
+                        .get(i + 1)
+                        .map(|x| x.to_lowercase())
+                        .unwrap_or_default();
                     if fonts_used.contains(&name) {
                         wanted = true;
                         bitmaps.extend(lines.iter().skip(i + 2).take(2).map(|b| b.to_string()));
@@ -351,18 +494,27 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             }
         }
     }
-    let mut list: Vec<(String, PathBuf)> = files.into_values().filter(|(rel, _)| refuse_path(rel).is_none()).collect();
+    let mut list: Vec<(String, PathBuf)> = files
+        .into_values()
+        .filter(|(rel, _)| refuse_path(rel).is_none())
+        .collect();
     list.sort_by(|a, b| a.0.cmp(&b.0));
     let mut entries = Vec::with_capacity(list.len());
     let mut sources = Vec::with_capacity(list.len());
     let mut total = 0u64;
     for (rel, path) in list {
-        let Ok(data) = omsi_cfg::vfs::read(&path) else { continue };
+        let Ok(data) = omsi_cfg::vfs::read(&path) else {
+            continue;
+        };
         if data.len() as u64 > MAX_FILE || looks_executable(&data[..data.len().min(8)]) {
             continue;
         }
         total += data.len() as u64;
-        entries.push(Entry { path: rel, size: data.len() as u64, sha256: sha256_of(&data) });
+        entries.push(Entry {
+            path: rel,
+            size: data.len() as u64,
+            sha256: sha256_of(&data),
+        });
         sources.push(path);
     }
     log::info!(
@@ -372,7 +524,11 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         t0.elapsed().as_secs_f64()
     );
     (
-        Manifest { map: args.map.replace('\\', "/"), bus: args.bus.clone().unwrap_or_default().replace('\\', "/"), entries },
+        Manifest {
+            map: args.map.replace('\\', "/"),
+            bus: args.bus.clone().unwrap_or_default().replace('\\', "/"),
+            entries,
+        },
         sources,
     )
 }
@@ -385,7 +541,9 @@ pub fn serve(port: u16, session: u64, args: &Args) {
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,
         Err(e) => {
-            log::warn!("LAN mods: cannot serve on TCP port {port}: {e} (joining players need the host's mods installed)");
+            log::warn!(
+                "LAN mods: cannot serve on TCP port {port}: {e} (joining players need the host's mods installed)"
+            );
             return;
         }
     };
@@ -410,18 +568,22 @@ pub fn serve(port: u16, session: u64, args: &Args) {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { continue };
                 if open.load(std::sync::atomic::Ordering::Relaxed) >= MAX_CONNECTIONS {
-                    log::info!("LAN mods: {MAX_CONNECTIONS} connections open already; one more closed");
+                    log::info!(
+                        "LAN mods: {MAX_CONNECTIONS} connections open already; one more closed"
+                    );
                     continue;
                 }
                 open.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let (ready, held) = (ready.clone(), open.clone());
-                let spawned = std::thread::Builder::new().name("lan-mods-conn".into()).spawn(move || {
-                    let peer = stream.peer_addr().ok();
-                    if let Err(e) = handle(stream, session, &ready) {
-                        log::info!("LAN mods: connection from {peer:?} ended: {e}");
-                    }
-                    held.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                });
+                let spawned = std::thread::Builder::new()
+                    .name("lan-mods-conn".into())
+                    .spawn(move || {
+                        let peer = stream.peer_addr().ok();
+                        if let Err(e) = handle(stream, session, &ready) {
+                            log::info!("LAN mods: connection from {peer:?} ended: {e}");
+                        }
+                        held.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    });
                 if spawned.is_err() {
                     open.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -436,7 +598,10 @@ const MAX_CONNECTIONS: usize = 16;
 const MAX_LINE: u64 = 256;
 
 /// One line of at most `MAX_LINE` bytes (a longer one ends the connection).
-fn read_line_limited(input: &mut BufReader<TcpStream>, line: &mut String) -> std::io::Result<usize> {
+fn read_line_limited(
+    input: &mut BufReader<TcpStream>,
+    line: &mut String,
+) -> std::io::Result<usize> {
     let n = input.by_ref().take(MAX_LINE).read_line(line)?;
     if n as u64 >= MAX_LINE && !line.ends_with('\n') {
         return Err(std::io::Error::other("request line too long"));
@@ -444,7 +609,11 @@ fn read_line_limited(input: &mut BufReader<TcpStream>, line: &mut String) -> std
     Ok(n)
 }
 
-fn handle(stream: TcpStream, session: u64, ready: &Mutex<Option<Arc<(Manifest, Vec<PathBuf>)>>>) -> std::io::Result<()> {
+fn handle(
+    stream: TcpStream,
+    session: u64,
+    ready: &Mutex<Option<Arc<(Manifest, Vec<PathBuf>)>>>,
+) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(120)))?;
     stream.set_nodelay(true).ok();
     let mut out = stream.try_clone()?;
@@ -452,7 +621,10 @@ fn handle(stream: TcpStream, session: u64, ready: &Mutex<Option<Arc<(Manifest, V
     let mut line = String::new();
     read_line_limited(&mut input, &mut line)?;
     let hello: Vec<&str> = line.split_whitespace().collect();
-    if hello.len() != 2 || hello[0] != MAGIC || u64::from_str_radix(hello[1], 16).ok() != Some(session) {
+    if hello.len() != 2
+        || hello[0] != MAGIC
+        || u64::from_str_radix(hello[1], 16).ok() != Some(session)
+    {
         out.write_all(b"ERR not this session\n")?;
         return Ok(());
     }
@@ -491,13 +663,16 @@ fn handle(stream: TcpStream, session: u64, ready: &Mutex<Option<Arc<(Manifest, V
                 // mounted archive is read whole (archives hold small files)
                 let src = &sources[k];
                 if omsi_cfg::vfs::archive_of(src).is_none() {
-                    match std::fs::File::open(src).and_then(|f| f.metadata().map(|m| (f, m.len()))) {
+                    match std::fs::File::open(src).and_then(|f| f.metadata().map(|m| (f, m.len())))
+                    {
                         Ok((f, len)) => {
                             writeln!(out, "OK {len}")?;
                             let sent = std::io::copy(&mut f.take(len), &mut out)?;
                             if sent != len {
                                 // (the file shrank meanwhile: the stream is out of step)
-                                return Err(std::io::Error::other("a file changed while it was sent"));
+                                return Err(std::io::Error::other(
+                                    "a file changed while it was sent",
+                                ));
                             }
                         }
                         Err(e) => writeln!(out, "ERR {e}")?,
@@ -533,7 +708,9 @@ static SANDBOX: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// cleaning up).
 pub fn remove_stale() {
     let Some(base) = sandbox_base() else { return };
-    let Ok(rd) = std::fs::read_dir(&base) else { return };
+    let Ok(rd) = std::fs::read_dir(&base) else {
+        return;
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         let alive = name.parse::<u32>().map(process_alive).unwrap_or(false);
@@ -569,7 +746,10 @@ pub fn clean_up() {
         omsi_cfg::remove_content_root(&dir);
         match std::fs::remove_dir_all(&dir) {
             Ok(()) => log::info!("LAN mods: the host's mods of this session were removed"),
-            Err(e) => log::warn!("LAN mods: could not remove {}: {e} (it goes at the next start)", dir.display()),
+            Err(e) => log::warn!(
+                "LAN mods: could not remove {}: {e} (it goes at the next start)",
+                dir.display()
+            ),
         }
     }
 }
@@ -608,9 +788,15 @@ fn read_reply(input: &mut BufReader<TcpStream>) -> Result<Option<u64>, String> {
         if rest.is_empty() {
             return Ok(None);
         }
-        return rest.parse::<u64>().map(Some).map_err(|_| format!("bad reply {t:?}"));
+        return rest
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| format!("bad reply {t:?}"));
     }
-    Err(format!("the host says: {}", t.strip_prefix("ERR").unwrap_or(t).trim()))
+    Err(format!(
+        "the host says: {}",
+        t.strip_prefix("ERR").unwrap_or(t).trim()
+    ))
 }
 
 /// Local files' hashes by path: (size, modification time, SHA-256).
@@ -621,7 +807,10 @@ fn hash_cache_path() -> Option<std::path::PathBuf> {
 }
 
 fn hash_cache() -> HashCache {
-    hash_cache_path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    hash_cache_path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
 }
 
 fn save_hash_cache(c: &HashCache) {
@@ -635,7 +824,8 @@ fn save_hash_cache(c: &HashCache) {
 /// first content root; the host's map becomes ours. `progress` is told (done, total bytes).
 /// A connection to the host's mods, greeted.
 fn open(host: SocketAddr, session: u64) -> Result<(TcpStream, BufReader<TcpStream>), String> {
-    let stream = TcpStream::connect_timeout(&host, Duration::from_secs(6)).map_err(|e| format!("cannot reach the host's mods on TCP {host}: {e}"))?;
+    let stream = TcpStream::connect_timeout(&host, Duration::from_secs(6))
+        .map_err(|e| format!("cannot reach the host's mods on TCP {host}: {e}"))?;
     // the host greets once its list is made, which takes a while on a big map (it waits
     // up to ten minutes for it): after 25 s a join gave up on a big add-on map, and the
     // player was left without the host's map
@@ -646,7 +836,10 @@ fn open(host: SocketAddr, session: u64) -> Result<(TcpStream, BufReader<TcpStrea
     writeln!(out, "{MAGIC} {}", omsi_net::session_hex(session)).map_err(|e| e.to_string())?;
     read_reply(&mut input)?;
     // (then a stalled transfer ends the attempt instead of holding the game's start for ever)
-    input.get_ref().set_read_timeout(Some(Duration::from_secs(25))).ok();
+    input
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_secs(25)))
+        .ok();
     Ok((out, input))
 }
 
@@ -665,7 +858,12 @@ fn place(stored: &Path, target: &Path) -> std::io::Result<()> {
     std::fs::hard_link(stored, target).or_else(|_| std::fs::copy(stored, target).map(|_| ()))
 }
 
-pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn FnMut(u64, u64, &str)) -> Result<Report, String> {
+pub fn fetch(
+    args: &mut Args,
+    host: SocketAddr,
+    session: u64,
+    progress: &mut dyn FnMut(u64, u64, &str),
+) -> Result<Report, String> {
     if omsi_cfg::env::var_os("OMSI_NO_LAN_MODS").is_some() {
         return Err("switched off (OMSI_NO_LAN_MODS)".into());
     }
@@ -692,7 +890,11 @@ pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn
             continue;
         }
         // (the hash names the file in the store: nothing but 64 hex digits may go there)
-        if e.size > MAX_FILE || e.sha256.len() != 64 || !e.sha256.bytes().all(|b| b.is_ascii_hexdigit()) || !seen.insert(e.path.to_lowercase()) {
+        if e.size > MAX_FILE
+            || e.sha256.len() != 64
+            || !e.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+            || !seen.insert(e.path.to_lowercase())
+        {
             report.refused.push(format!("{}: refused", e.path));
             continue;
         }
@@ -707,23 +909,37 @@ pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn
         todo.par_iter()
             .map(|&k| {
                 let e = &manifest.entries[k];
-                let Some((_, p)) = omsi_cfg::find_in_roots(&e.path).filter(|(root, _)| !omsi_cfg::is_sandbox(root)) else { return (k, false, None) };
+                let Some((_, p)) = omsi_cfg::find_in_roots(&e.path)
+                    .filter(|(root, _)| !omsi_cfg::is_sandbox(root))
+                else {
+                    return (k, false, None);
+                };
                 let key = p.to_string_lossy().to_string();
                 if let Ok(md) = std::fs::metadata(&p) {
                     if md.len() != e.size {
                         return (k, false, None);
                     }
-                    let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+                    let mtime = md
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
                     if let Some((sz, mt, h)) = cache.get(&key) {
                         if *sz == md.len() && *mt == mtime {
                             return (k, *h == e.sha256, None);
                         }
                     }
-                    let Ok(d) = std::fs::read(&p) else { return (k, false, None) };
+                    let Ok(d) = std::fs::read(&p) else {
+                        return (k, false, None);
+                    };
                     let h = sha256_of(&d);
                     return (k, h == e.sha256, Some((key, (md.len(), mtime, h))));
                 }
-                let same = omsi_cfg::vfs::read(&p).ok().map(|d| d.len() as u64 == e.size && sha256_of(&d) == e.sha256).unwrap_or(false);
+                let same = omsi_cfg::vfs::read(&p)
+                    .ok()
+                    .map(|d| d.len() as u64 == e.size && sha256_of(&d) == e.sha256)
+                    .unwrap_or(false);
                 (k, same, None)
             })
             .collect()
@@ -747,7 +963,11 @@ pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn
         }
         // fetched at an earlier join
         let stored = store.join(&e.sha256);
-        if std::fs::metadata(&stored).map(|m| m.len() == e.size).unwrap_or(false) && place(&stored, &target_of(e)).is_ok() {
+        if std::fs::metadata(&stored)
+            .map(|m| m.len() == e.size)
+            .unwrap_or(false)
+            && place(&stored, &target_of(e)).is_ok()
+        {
             report.had += 1;
             continue;
         }
@@ -756,19 +976,36 @@ pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn
     }
     save_hash_cache(&cache);
     if total > MAX_TOTAL {
-        return Err(format!("the host's mods are {:.1} GB, more than a session takes ({:.0} GB)", total as f64 / 1e9, MAX_TOTAL as f64 / 1e9));
+        return Err(format!(
+            "the host's mods are {:.1} GB, more than a session takes ({:.0} GB)",
+            total as f64 / 1e9,
+            MAX_TOTAL as f64 / 1e9
+        ));
     }
     *SANDBOX.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir.clone());
-    log::info!("LAN mods: {} files of the host's are here already, {} to fetch ({:.1} MB)", report.had, todo.len(), total as f64 / 1e6);
+    log::info!(
+        "LAN mods: {} files of the host's are here already, {} to fetch ({:.1} MB)",
+        report.had,
+        todo.len(),
+        total as f64 / 1e6
+    );
     if !todo.is_empty() {
-        let some: Vec<&str> = todo.iter().take(6).map(|k| manifest.entries[*k].path.as_str()).collect();
+        let some: Vec<&str> = todo
+            .iter()
+            .take(6)
+            .map(|k| manifest.entries[*k].path.as_str())
+            .collect();
         log::info!("LAN mods: to fetch, e.g. {}", some.join(", "));
     }
     // (nothing to fetch needs no room: a nearly full disk turned away a join that had
     // everything already)
     if let Some(free) = free_space(&dir).filter(|_| total > 0) {
         if free < total + KEEP_FREE {
-            return Err(format!("{:.1} GB are needed for the host's mods, {:.1} GB are free", (total + KEEP_FREE) as f64 / 1e9, free as f64 / 1e9));
+            return Err(format!(
+                "{:.1} GB are needed for the host's mods, {:.1} GB are free",
+                (total + KEEP_FREE) as f64 / 1e9,
+                free as f64 / 1e9
+            ));
         }
     }
     // every request at once (one after the other took a round trip per file: through a
@@ -810,7 +1047,9 @@ pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn
                     return Err(format!("{}: {len} bytes, the list said {}", e.path, e.size));
                 }
                 let mut data = vec![0u8; len as usize];
-                input.read_exact(&mut data).map_err(|x| format!("{}: {x}", e.path))?;
+                input
+                    .read_exact(&mut data)
+                    .map_err(|x| format!("{}: {x}", e.path))?;
                 if sha256_of(&data) != e.sha256 {
                     return Err(format!("{}: not the file the list names (hash)", e.path));
                 }
@@ -838,7 +1077,9 @@ pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn
             }
             let stored = store.join(&e.sha256);
             let tmp = store.join(format!("{}.part", e.sha256));
-            std::fs::write(&tmp, &data).and_then(|_| std::fs::rename(&tmp, &stored)).map_err(|x| format!("{}: {x}", e.path))?;
+            std::fs::write(&tmp, &data)
+                .and_then(|_| std::fs::rename(&tmp, &stored))
+                .map_err(|x| format!("{}: {x}", e.path))?;
             place(&stored, &target).map_err(|x| format!("{}: {x}", e.path))?;
             done += len;
             report.fetched += 1;
@@ -860,15 +1101,39 @@ pub fn fetch(args: &mut Args, host: SocketAddr, session: u64, progress: &mut dyn
     omsi_cfg::mark_sandbox(dir.clone());
     omsi_cfg::add_content_root_first(dir.clone());
     // the host's map (now that we have it)
-    let map_ok = refuse_path(&manifest.map).is_none() && omsi_cfg::find_in_roots(&manifest.map).is_some();
-    if map_ok && !manifest.map.is_empty() && !manifest.map.eq_ignore_ascii_case(&args.map.replace('\\', "/")) {
-        log::info!("LAN mods: the session is on the host's map {}", manifest.map);
+    let map_ok =
+        refuse_path(&manifest.map).is_none() && omsi_cfg::find_in_roots(&manifest.map).is_some();
+    if map_ok
+        && !manifest.map.is_empty()
+        && !manifest
+            .map
+            .eq_ignore_ascii_case(&args.map.replace('\\', "/"))
+    {
+        log::info!(
+            "LAN mods: the session is on the host's map {}",
+            manifest.map
+        );
         args.map = manifest.map.clone();
     }
     if !report.refused.is_empty() {
-        log::warn!("LAN mods: {} files refused: {}", report.refused.len(), report.refused.iter().take(8).cloned().collect::<Vec<_>>().join("; "));
+        log::warn!(
+            "LAN mods: {} files refused: {}",
+            report.refused.len(),
+            report
+                .refused
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
     }
-    log::info!("LAN mods: fetched {} files ({:.1} MB), {} were here already", report.fetched, report.bytes as f64 / 1e6, report.had);
+    log::info!(
+        "LAN mods: fetched {} files ({:.1} MB), {} were here already",
+        report.fetched,
+        report.bytes as f64 / 1e6,
+        report.had
+    );
     Ok(report)
 }
 

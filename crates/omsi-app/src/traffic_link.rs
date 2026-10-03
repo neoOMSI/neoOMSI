@@ -29,7 +29,10 @@ pub(crate) fn vehicle_outline(v: &omsi_sim::VehicleInstance, speed: f32) -> traf
 /// the front section and drove into the back of a turning GN92), and the vehicles placed
 /// by hand from the vehicle list, with their trailers - under ids of their own beside the
 /// LAN players'.
-pub(crate) fn own_outlines(player: Option<&Player>, placed: &[Player]) -> Vec<(u32, traffic::PlayerBox)> {
+pub(crate) fn own_outlines(
+    player: Option<&Player>,
+    placed: &[Player],
+) -> Vec<(u32, traffic::PlayerBox)> {
     let mut out = Vec::new();
     let mut add = |v: &omsi_sim::VehicleInstance, base: u32, whole: bool| {
         let speed = v.physics.speed;
@@ -37,7 +40,9 @@ pub(crate) fn own_outlines(player: Option<&Player>, placed: &[Player]) -> Vec<(u
             out.push((base, vehicle_outline(v, speed)));
         }
         for (k, t) in v.trailers.iter().enumerate() {
-            let Some(bb) = t.ty.def.bounding_box else { continue };
+            let Some(bb) = t.ty.def.bounding_box else {
+                continue;
+            };
             let h = t.heading.to_radians();
             let centre = t.position
                 + DVec3::new(
@@ -45,7 +50,10 @@ pub(crate) fn own_outlines(player: Option<&Player>, placed: &[Player]) -> Vec<(u
                     -(bb[3] as f64) * h.sin() + (bb[4] as f64) * h.cos(),
                     0.0,
                 );
-            out.push((base + 1 + k as u32, (centre, t.heading, bb[1] * 0.5, bb[0] * 0.5, speed)));
+            out.push((
+                base + 1 + k as u32,
+                (centre, t.heading, bb[1] * 0.5, bb[0] * 0.5, speed),
+            ));
         }
     };
     if let Some(p) = player {

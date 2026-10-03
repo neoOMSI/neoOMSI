@@ -110,7 +110,10 @@ impl SoundCfg {
             })
             .cloned()
             .collect();
-        SoundCfg { sounds, unknown_keywords: self.unknown_keywords.clone() }
+        SoundCfg {
+            sounds,
+            unknown_keywords: self.unknown_keywords.clone(),
+        }
     }
 
     pub fn load(path: &Path) -> Result<SoundCfg, omsi_cfg::CfgError> {
@@ -127,7 +130,12 @@ impl SoundCfg {
                 "sound" => {
                     let file = r.str().to_string();
                     let volume = r.f32();
-                    c.sounds.push(SoundEntry { file, volume, random: pending_random.take(), ..Default::default() });
+                    c.sounds.push(SoundEntry {
+                        file,
+                        volume,
+                        random: pending_random.take(),
+                        ..Default::default()
+                    });
                 }
                 "loopsound" => {
                     // file, sample rate, pitch variable, its reference value, volume: the
@@ -138,7 +146,16 @@ impl SoundCfg {
                     let pitch_variable = r.str().to_string();
                     let pitch_ref = r.f32();
                     let volume = r.f32();
-                    c.sounds.push(SoundEntry { file, volume, is_loop: true, sample_rate, pitch_variable, pitch_ref, random: pending_random.take(), ..Default::default() });
+                    c.sounds.push(SoundEntry {
+                        file,
+                        volume,
+                        is_loop: true,
+                        sample_rate,
+                        pitch_variable,
+                        pitch_ref,
+                        random: pending_random.take(),
+                        ..Default::default()
+                    });
                 }
                 "next_random" => {
                     let n = r.i32();
@@ -179,7 +196,10 @@ impl SoundCfg {
                 "volcurve" => {
                     let v = r.str().to_string();
                     if let Some(s) = c.sounds.last_mut() {
-                        s.vol_curves.push(VolCurve { variable: v, points: Vec::new() });
+                        s.vol_curves.push(VolCurve {
+                            variable: v,
+                            points: Vec::new(),
+                        });
                     }
                 }
                 "pnt" => {
@@ -193,9 +213,17 @@ impl SoundCfg {
                     let variable = r.str().to_string();
                     let value = r.f32();
                     // (a bool has no relation: it is compared for equality)
-                    let relation = if k == "conditionsingle" || k == "conditionint" { r.f32() as i32 } else { 1 };
+                    let relation = if k == "conditionsingle" || k == "conditionint" {
+                        r.f32() as i32
+                    } else {
+                        1
+                    };
                     if let Some(s) = c.sounds.last_mut() {
-                        s.conditions.push(Condition { variable, value, relation });
+                        s.conditions.push(Condition {
+                            variable,
+                            value,
+                            relation,
+                        });
                     }
                 }
                 "trigger" => {
@@ -245,19 +273,36 @@ mod tests {
         for n in [0, 6, 8, 16, 29] {
             let a = spec_random("3261", n);
             assert!((0.0..1.0).contains(&a));
-            assert_eq!(a, spec_random("3261", n), "the same number gives the same value");
+            assert_eq!(
+                a,
+                spec_random("3261", n),
+                "the same number gives the same value"
+            );
         }
         // different numbers give different buses
-        let v: Vec<f32> = (3000..3040).map(|k| spec_random(&k.to_string(), 8)).collect();
+        let v: Vec<f32> = (3000..3040)
+            .map(|k| spec_random(&k.to_string(), 8))
+            .collect();
         let below = v.iter().filter(|x| **x < 0.4).count();
         assert!(below > 4 && below < 36, "{below} of 40 below 0.4");
     }
 
     #[test]
     fn next_random_keeps_an_entry_for_some_numbers_only() {
-        let cfg = SoundCfg::parse(&CfgFile::from_str("t.cfg", "[next_random]\n8\n0.0\n0.4\n[loopsound]\nrattle.wav\n32000\nengine_n\n497\n0.7\n\n[sound]\nhorn.wav\n1\n"));
-        assert_eq!(cfg.sounds[0].volume, 0.7, "the fifth line of [loopsound] is its volume");
-        let kept: usize = (3000..3040).map(|k| cfg.chosen_for(&k.to_string()).sounds.len()).sum();
-        assert!(kept > 40 && kept < 80, "the horn always, the rattle on some buses: {kept}");
+        let cfg = SoundCfg::parse(&CfgFile::from_str(
+            "t.cfg",
+            "[next_random]\n8\n0.0\n0.4\n[loopsound]\nrattle.wav\n32000\nengine_n\n497\n0.7\n\n[sound]\nhorn.wav\n1\n",
+        ));
+        assert_eq!(
+            cfg.sounds[0].volume, 0.7,
+            "the fifth line of [loopsound] is its volume"
+        );
+        let kept: usize = (3000..3040)
+            .map(|k| cfg.chosen_for(&k.to_string()).sounds.len())
+            .sum();
+        assert!(
+            kept > 40 && kept < 80,
+            "the horn always, the rattle on some buses: {kept}"
+        );
     }
 }

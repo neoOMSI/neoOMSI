@@ -48,7 +48,10 @@ impl Interp {
     /// A page's interpreter; `api` decides what `window.omsi` offers (a scenery object's page
     /// has no vehicle, depot or route functions).
     pub(crate) fn with_api(dom: Dom, api: crate::htmltex::PageApi) -> Interp {
-        let global = Arc::new(Mutex::new(Scope { vars: HashMap::new(), parent: None }));
+        let global = Arc::new(Mutex::new(Scope {
+            vars: HashMap::new(),
+            parent: None,
+        }));
         let mut basic = vec![
             ("setVar", Val::Nat(Nat::SetVar)),
             ("trigger", Val::Nat(Nat::Trigger)),
@@ -76,7 +79,13 @@ impl Interp {
                 ])),
             ),
             ("locale", Val::Str("en".to_string())),
-            ("vars", Val::Obj(obj_of(&[("num", Val::Obj(obj_of(&[]))), ("str", Val::Obj(obj_of(&[])))]))),
+            (
+                "vars",
+                Val::Obj(obj_of(&[
+                    ("num", Val::Obj(obj_of(&[]))),
+                    ("str", Val::Obj(obj_of(&[]))),
+                ])),
+            ),
         ];
         if api == crate::htmltex::PageApi::Vehicle {
             basic.extend([
@@ -139,20 +148,32 @@ impl Interp {
             ("createElement", Val::Nat(Nat::CreateEl)),
             ("body", Val::Elem(body)),
         ]);
-        let console = obj_of(&[("log", Val::Nat(Nat::Log)), ("warn", Val::Nat(Nat::Log)), ("error", Val::Nat(Nat::Log))]);
+        let console = obj_of(&[
+            ("log", Val::Nat(Nat::Log)),
+            ("warn", Val::Nat(Nat::Log)),
+            ("error", Val::Nat(Nat::Log)),
+        ]);
         {
             let mut g = it.global.lock().unwrap();
             g.vars.insert("Math".into(), Val::Obj(math));
-            g.vars.insert("Object".into(), Val::Obj(obj_of(&[("keys", Val::Nat(Nat::ObjectKeys))])));
-            g.vars.insert("setTimeout".into(), Val::Nat(Nat::SetTimeout));
-            g.vars.insert("setInterval".into(), Val::Nat(Nat::SetInterval));
-            g.vars.insert("clearTimeout".into(), Val::Nat(Nat::ClearTimer));
-            g.vars.insert("clearInterval".into(), Val::Nat(Nat::ClearTimer));
+            g.vars.insert(
+                "Object".into(),
+                Val::Obj(obj_of(&[("keys", Val::Nat(Nat::ObjectKeys))])),
+            );
+            g.vars
+                .insert("setTimeout".into(), Val::Nat(Nat::SetTimeout));
+            g.vars
+                .insert("setInterval".into(), Val::Nat(Nat::SetInterval));
+            g.vars
+                .insert("clearTimeout".into(), Val::Nat(Nat::ClearTimer));
+            g.vars
+                .insert("clearInterval".into(), Val::Nat(Nat::ClearTimer));
             g.vars.insert("document".into(), Val::Obj(doc));
             g.vars.insert("console".into(), Val::Obj(console));
             g.vars.insert("window".into(), Val::Obj(it.window.clone()));
             g.vars.insert("parseInt".into(), Val::Nat(Nat::ParseInt));
-            g.vars.insert("parseFloat".into(), Val::Nat(Nat::ParseFloat));
+            g.vars
+                .insert("parseFloat".into(), Val::Nat(Nat::ParseFloat));
             g.vars.insert("String".into(), Val::Nat(Nat::Str));
             g.vars.insert("Number".into(), Val::Nat(Nat::Number));
             g.vars.insert("isNaN".into(), Val::Nat(Nat::IsNaN));
@@ -231,7 +252,10 @@ impl Interp {
     pub(crate) fn exec_block(&mut self, stmts: &[Stmt], env: &Env) -> Result<Flow, String> {
         for s in stmts {
             if let Stmt::Func(n, d) = s {
-                let f = Val::Func(Arc::new(Closure { def: d.clone(), env: env.clone() }));
+                let f = Val::Func(Arc::new(Closure {
+                    def: d.clone(),
+                    env: env.clone(),
+                }));
                 env.lock().unwrap().vars.insert(n.clone(), f);
             }
         }
@@ -321,7 +345,10 @@ impl Interp {
             Expr::Null => Val::Null,
             Expr::Undef => Val::Undef,
             Expr::Ident(n) => self.lookup(env, n).unwrap_or(Val::Undef),
-            Expr::Func(d) => Val::Func(Arc::new(Closure { def: d.clone(), env: env.clone() })),
+            Expr::Func(d) => Val::Func(Arc::new(Closure {
+                def: d.clone(),
+                env: env.clone(),
+            })),
             Expr::Obj(props) => {
                 let mut m = HashMap::new();
                 for (k, v) in props {
@@ -360,7 +387,7 @@ impl Interp {
                             Val::Func(_) | Val::Nat(_) => "function",
                             _ => "object",
                         }
-                            .into(),
+                        .into(),
                     ));
                 }
                 let v = self.eval(x, env)?;
@@ -373,7 +400,11 @@ impl Interp {
             Expr::Bin(op, a, b) => {
                 if op == "&&" || op == "||" {
                     let l = self.eval(a, env)?;
-                    return if (op == "&&") == truthy(&l) { self.eval(b, env) } else { Ok(l) };
+                    return if (op == "&&") == truthy(&l) {
+                        self.eval(b, env)
+                    } else {
+                        Ok(l)
+                    };
                 }
                 let l = self.eval(a, env)?;
                 let r = self.eval(b, env)?;
@@ -459,7 +490,9 @@ impl Interp {
                 let key = to_str(&l);
                 Val::Bool(match &r {
                     Val::Obj(o) => o.lock().unwrap().contains_key(&key),
-                    Val::Arr(a) => key.parse::<usize>().map_or(false, |i| i < a.lock().unwrap().len()),
+                    Val::Arr(a) => key
+                        .parse::<usize>()
+                        .map_or(false, |i| i < a.lock().unwrap().len()),
                     _ => false,
                 })
             }
@@ -475,7 +508,10 @@ impl Interp {
                 if key == "length" {
                     Val::Num(a.len() as f64)
                 } else {
-                    key.parse::<usize>().ok().and_then(|i| a.get(i).cloned()).unwrap_or(Val::Undef)
+                    key.parse::<usize>()
+                        .ok()
+                        .and_then(|i| a.get(i).cloned())
+                        .unwrap_or(Val::Undef)
                 }
             }
             Val::Str(s) => {
@@ -530,7 +566,8 @@ impl Interp {
                 }
                 "textContent" | "innerText" => self.dom.set_text(*i, to_str(&v)),
                 "className" => {
-                    let cls: Vec<String> = to_str(&v).split_whitespace().map(str::to_string).collect();
+                    let cls: Vec<String> =
+                        to_str(&v).split_whitespace().map(str::to_string).collect();
                     if self.dom.nodes[*i].classes != cls {
                         self.dom.nodes[*i].classes = cls;
                         self.dom.generation += 1;
@@ -581,7 +618,11 @@ impl Interp {
         let arg_n = |i: usize| args.get(i).map(to_num);
         match o {
             Val::Num(n) => match name {
-                "toFixed" => Some(Val::Str(format!("{:.*}", arg_n(0).unwrap_or(0.0).clamp(0.0, 20.0) as usize, n))),
+                "toFixed" => Some(Val::Str(format!(
+                    "{:.*}",
+                    arg_n(0).unwrap_or(0.0).clamp(0.0, 20.0) as usize,
+                    n
+                ))),
                 "toString" => Some(Val::Str(fmt_num(*n))),
                 _ => None,
             },
@@ -602,9 +643,19 @@ impl Interp {
                     "includes" => Some(Val::Bool(s.contains(&arg_s(0)))),
                     "startsWith" => Some(Val::Bool(s.starts_with(&arg_s(0)))),
                     "endsWith" => Some(Val::Bool(s.ends_with(&arg_s(0)))),
-                    "indexOf" => Some(Val::Num(s.find(&arg_s(0)).map_or(-1.0, |b| s[..b].chars().count() as f64))),
-                    "charAt" => Some(Val::Str(chars.get(arg_n(0).unwrap_or(0.0) as usize).map(|c| c.to_string()).unwrap_or_default())),
-                    "repeat" => Some(Val::Str(s.repeat(arg_n(0).unwrap_or(0.0).clamp(0.0, 1000.0) as usize))),
+                    "indexOf" => Some(Val::Num(
+                        s.find(&arg_s(0))
+                            .map_or(-1.0, |b| s[..b].chars().count() as f64),
+                    )),
+                    "charAt" => Some(Val::Str(
+                        chars
+                            .get(arg_n(0).unwrap_or(0.0) as usize)
+                            .map(|c| c.to_string())
+                            .unwrap_or_default(),
+                    )),
+                    "repeat" => Some(Val::Str(
+                        s.repeat(arg_n(0).unwrap_or(0.0).clamp(0.0, 1000.0) as usize),
+                    )),
                     "replace" => Some(Val::Str(s.replacen(&arg_s(0), &arg_s(1), 1))),
                     "split" => {
                         let sep = arg_s(0);
@@ -620,7 +671,11 @@ impl Interp {
                     "slice" | "substring" => {
                         let a = idx(arg_n(0), 0);
                         let b = idx(arg_n(1), chars.len());
-                        Some(Val::Str(if a < b { chars[a..b].iter().collect() } else { String::new() }))
+                        Some(Val::Str(if a < b {
+                            chars[a..b].iter().collect()
+                        } else {
+                            String::new()
+                        }))
                     }
                     "padStart" | "padEnd" => {
                         let want = arg_n(0).unwrap_or(0.0).max(0.0) as usize;
@@ -632,7 +687,11 @@ impl Interp {
                                 fill.push(it.next().unwrap());
                             }
                         }
-                        Some(Val::Str(if name == "padStart" { format!("{fill}{s}") } else { format!("{s}{fill}") }))
+                        Some(Val::Str(if name == "padStart" {
+                            format!("{fill}{s}")
+                        } else {
+                            format!("{s}{fill}")
+                        }))
                     }
                     _ => None,
                 }
@@ -644,15 +703,27 @@ impl Interp {
                     Some(Val::Num(a.len() as f64))
                 }
                 "join" => {
-                    let sep = if args.is_empty() { ",".to_string() } else { arg_s(0) };
-                    Some(Val::Str(a.lock().unwrap().iter().map(to_str).collect::<Vec<_>>().join(&sep)))
+                    let sep = if args.is_empty() {
+                        ",".to_string()
+                    } else {
+                        arg_s(0)
+                    };
+                    Some(Val::Str(
+                        a.lock()
+                            .unwrap()
+                            .iter()
+                            .map(to_str)
+                            .collect::<Vec<_>>()
+                            .join(&sep),
+                    ))
                 }
                 "forEach" | "map" | "filter" => {
                     let f = args.first().cloned().unwrap_or(Val::Undef);
                     let items: Vec<Val> = a.lock().unwrap().clone();
                     let mut out = Vec::new();
                     for (i, v) in items.into_iter().enumerate() {
-                        match self.call(f.clone(), Val::Undef, vec![v.clone(), Val::Num(i as f64)]) {
+                        match self.call(f.clone(), Val::Undef, vec![v.clone(), Val::Num(i as f64)])
+                        {
                             Ok(r) => match name {
                                 "map" => out.push(r),
                                 "filter" => {
@@ -668,17 +739,29 @@ impl Interp {
                             }
                         }
                     }
-                    Some(if name == "forEach" { Val::Undef } else { Val::Arr(Arc::new(Mutex::new(out))) })
+                    Some(if name == "forEach" {
+                        Val::Undef
+                    } else {
+                        Val::Arr(Arc::new(Mutex::new(out)))
+                    })
                 }
                 "indexOf" | "includes" => {
                     let want = args.first().cloned().unwrap_or(Val::Undef);
                     let pos = a.lock().unwrap().iter().position(|x| strict_eq(x, &want));
-                    Some(if name == "indexOf" { Val::Num(pos.map_or(-1.0, |p| p as f64)) } else { Val::Bool(pos.is_some()) })
+                    Some(if name == "indexOf" {
+                        Val::Num(pos.map_or(-1.0, |p| p as f64))
+                    } else {
+                        Val::Bool(pos.is_some())
+                    })
                 }
                 "pop" => Some(a.lock().unwrap().pop().unwrap_or(Val::Undef)),
                 "shift" => {
                     let mut a = a.lock().unwrap();
-                    Some(if a.is_empty() { Val::Undef } else { a.remove(0) })
+                    Some(if a.is_empty() {
+                        Val::Undef
+                    } else {
+                        a.remove(0)
+                    })
                 }
                 "slice" => {
                     let v = a.lock().unwrap();
@@ -689,19 +772,30 @@ impl Interp {
                         Some(x) => (x as usize).min(len),
                     };
                     let (from, to) = (at(arg_n(0), 0), at(arg_n(1), len));
-                    Some(Val::Arr(Arc::new(Mutex::new(if from < to { v[from..to].to_vec() } else { Vec::new() }))))
+                    Some(Val::Arr(Arc::new(Mutex::new(if from < to {
+                        v[from..to].to_vec()
+                    } else {
+                        Vec::new()
+                    }))))
                 }
                 _ => None,
             },
-            Val::Obj(m) if name == "hasOwnProperty" => Some(Val::Bool(m.lock().unwrap().contains_key(&arg_s(0)))),
+            Val::Obj(m) if name == "hasOwnProperty" => {
+                Some(Val::Bool(m.lock().unwrap().contains_key(&arg_s(0))))
+            }
             Val::Obj(m) if name == "stopPropagation" => {
-                m.lock().unwrap().insert("cancelBubble".into(), Val::Bool(true));
+                m.lock()
+                    .unwrap()
+                    .insert("cancelBubble".into(), Val::Bool(true));
                 Some(Val::Undef)
             }
             Val::Obj(_) if name == "preventDefault" => Some(Val::Undef),
             Val::Elem(i) if name == "addEventListener" => {
                 if let Some(f @ Val::Func(_)) = args.get(1) {
-                    self.handlers.entry((*i, arg_s(0))).or_default().push(f.clone());
+                    self.handlers
+                        .entry((*i, arg_s(0)))
+                        .or_default()
+                        .push(f.clone());
                 }
                 Some(Val::Undef)
             }
@@ -797,11 +891,15 @@ impl Interp {
                     return Err("call stack too deep".into());
                 }
                 self.tick()?;
-                let scope = Arc::new(Mutex::new(Scope { vars: HashMap::new(), parent: Some(c.env.clone()) }));
+                let scope = Arc::new(Mutex::new(Scope {
+                    vars: HashMap::new(),
+                    parent: Some(c.env.clone()),
+                }));
                 {
                     let mut s = scope.lock().unwrap();
                     for (i, p) in c.def.params.iter().enumerate() {
-                        s.vars.insert(p.clone(), args.get(i).cloned().unwrap_or(Val::Undef));
+                        s.vars
+                            .insert(p.clone(), args.get(i).cloned().unwrap_or(Val::Undef));
                     }
                 }
                 let r = self.exec_block(&c.def.body, &scope);
@@ -832,7 +930,10 @@ impl Interp {
             Nat::ParseInt => {
                 let s = args.first().map(to_str).unwrap_or_default();
                 let t = s.trim();
-                let end = t.char_indices().find(|(i, c)| !(c.is_ascii_digit() || (*i == 0 && (*c == '-' || *c == '+')))).map_or(t.len(), |(i, _)| i);
+                let end = t
+                    .char_indices()
+                    .find(|(i, c)| !(c.is_ascii_digit() || (*i == 0 && (*c == '-' || *c == '+'))))
+                    .map_or(t.len(), |(i, _)| i);
                 Val::Num(t[..end].parse::<f64>().unwrap_or(f64::NAN))
             }
             Nat::ParseFloat => {
@@ -840,7 +941,9 @@ impl Interp {
                 let t = s.trim();
                 let end = t
                     .char_indices()
-                    .find(|(i, c)| !(c.is_ascii_digit() || *c == '.' || (*i == 0 && (*c == '-' || *c == '+'))))
+                    .find(|(i, c)| {
+                        !(c.is_ascii_digit() || *c == '.' || (*i == 0 && (*c == '-' || *c == '+')))
+                    })
                     .map_or(t.len(), |(i, _)| i);
                 Val::Num(t[..end].parse::<f64>().unwrap_or(f64::NAN))
             }
@@ -866,7 +969,9 @@ impl Interp {
                         log::debug!("htmltexture: page calls setVar({name}, {v})");
                         self.events.push((name, v));
                     } else {
-                        log::debug!("htmltexture: setVar({name}) ignored, the value is not a finite number");
+                        log::debug!(
+                            "htmltexture: setVar({name}) ignored, the value is not a finite number"
+                        );
                     }
                 }
                 Val::Undef
@@ -876,10 +981,17 @@ impl Interp {
                 self.omsi_var(&name).unwrap_or(Val::Undef)
             }
             Nat::GetDepartures => {
-                let key = args.first().map(to_str).unwrap_or_default().trim().to_ascii_lowercase();
+                let key = args
+                    .first()
+                    .map(to_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase();
                 let mut list = Vec::new();
                 if !key.is_empty() {
-                    if !self.departure_wants.contains(&key) && self.departure_wants.len() < MAX_DEPARTURE_WANTS {
+                    if !self.departure_wants.contains(&key)
+                        && self.departure_wants.len() < MAX_DEPARTURE_WANTS
+                    {
                         self.departure_wants.push(key.clone());
                     }
                     let omsi = match self.window.lock().unwrap().get("omsi") {
@@ -915,7 +1027,11 @@ impl Interp {
                 let v = a(0);
                 if v.is_finite() && v >= 0.0 {
                     let i = v as usize;
-                    self.requests.push(if n == Nat::SetRoute { crate::htmltex::HtmlRequest::SetRoute(i) } else { crate::htmltex::HtmlRequest::SetDestination(i) });
+                    self.requests.push(if n == Nat::SetRoute {
+                        crate::htmltex::HtmlRequest::SetRoute(i)
+                    } else {
+                        crate::htmltex::HtmlRequest::SetDestination(i)
+                    });
                 } else {
                     log::debug!("htmltexture: {n:?} ignored, the index is not a number");
                 }
@@ -928,7 +1044,8 @@ impl Interp {
             Nat::SetNextStop => {
                 let v = a(0);
                 if v.is_finite() && v >= 0.0 {
-                    self.requests.push(crate::htmltex::HtmlRequest::SetNextStop(v as usize));
+                    self.requests
+                        .push(crate::htmltex::HtmlRequest::SetNextStop(v as usize));
                 } else {
                     log::debug!("htmltexture: SetNextStop ignored, the index is not a number");
                 }
@@ -938,9 +1055,16 @@ impl Interp {
                 let (r, s) = (a(0), a(1));
                 if r.is_finite() && r >= 0.0 && s.is_finite() && s >= 0.0 {
                     let terminus = args.get(2).map_or(false, truthy);
-                    self.requests.push(crate::htmltex::HtmlRequest::PlayAnnouncement { route: r as usize, stop: s as usize, terminus });
+                    self.requests
+                        .push(crate::htmltex::HtmlRequest::PlayAnnouncement {
+                            route: r as usize,
+                            stop: s as usize,
+                            terminus,
+                        });
                 } else {
-                    log::debug!("htmltexture: playAnnouncement ignored, route or stop is not a number");
+                    log::debug!(
+                        "htmltexture: playAnnouncement ignored, route or stop is not a number"
+                    );
                 }
                 Val::Undef
             }
@@ -948,26 +1072,37 @@ impl Interp {
                 let file = args.first().map(to_str).unwrap_or_default();
                 if !file.trim().is_empty() {
                     let v = a(1);
-                    let volume = if v.is_finite() { v.clamp(0.0, 1.0) as f32 } else { 1.0 };
-                    self.requests.push(crate::htmltex::HtmlRequest::PlaySound { file, volume });
+                    let volume = if v.is_finite() {
+                        v.clamp(0.0, 1.0) as f32
+                    } else {
+                        1.0
+                    };
+                    self.requests
+                        .push(crate::htmltex::HtmlRequest::PlaySound { file, volume });
                 }
                 Val::Undef
             }
             Nat::FireEvent => {
                 if let Some(name) = args.first().map(to_str).filter(|n| !n.trim().is_empty()) {
-                    self.requests.push(crate::htmltex::HtmlRequest::FireEvent(name.trim().to_string()));
+                    self.requests.push(crate::htmltex::HtmlRequest::FireEvent(
+                        name.trim().to_string(),
+                    ));
                 }
                 Val::Undef
             }
             Nat::SetLine => {
                 let line = args.first().map(to_str).unwrap_or_default();
                 if !line.trim().is_empty() {
-                    self.requests.push(crate::htmltex::HtmlRequest::SetLine(line));
+                    self.requests
+                        .push(crate::htmltex::HtmlRequest::SetLine(line));
                 }
                 Val::Undef
             }
             Nat::Log => {
-                log::info!("htmltexture console: {}", args.iter().map(to_str).collect::<Vec<_>>().join(" "));
+                log::info!(
+                    "htmltexture console: {}",
+                    args.iter().map(to_str).collect::<Vec<_>>().join(" ")
+                );
                 Val::Undef
             }
             Nat::SetTimeout | Nat::SetInterval => {
@@ -980,7 +1115,12 @@ impl Interp {
                 self.next_timer += 1;
                 let id = self.next_timer;
                 let every = (n == Nat::SetInterval).then(|| (ms / 1000.0).max(0.016));
-                self.timers.push(Timer { id, due: self.now + ms / 1000.0, every, f });
+                self.timers.push(Timer {
+                    id,
+                    due: self.now + ms / 1000.0,
+                    every,
+                    f,
+                });
                 Val::Num(id as f64)
             }
             Nat::ClearTimer => {
@@ -994,10 +1134,16 @@ impl Interp {
                     _ => Vec::new(),
                 };
                 keys.sort();
-                Val::Arr(Arc::new(Mutex::new(keys.into_iter().map(Val::Str).collect())))
+                Val::Arr(Arc::new(Mutex::new(
+                    keys.into_iter().map(Val::Str).collect(),
+                )))
             }
             Nat::CreateEl => {
-                let tag = args.first().map(to_str).unwrap_or_default().to_ascii_lowercase();
+                let tag = args
+                    .first()
+                    .map(to_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
                 Val::Elem(self.dom.create(&tag))
             }
         }

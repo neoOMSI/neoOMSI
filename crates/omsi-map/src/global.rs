@@ -21,11 +21,7 @@ impl GroundTex {
     /// Edge length of this layer's painting mask in texels (`2^params[0]`).
     pub fn mask_size(&self) -> u32 {
         let p = self.params[0].round() as i32;
-        if (1..=13).contains(&p) {
-            1 << p
-        } else {
-            256
-        }
+        if (1..=13).contains(&p) { 1 << p } else { 256 }
     }
 
     /// How often the texture repeats across one tile.
@@ -90,7 +86,11 @@ pub fn curve_at(curve: &[(f32, f32)], hour: f32) -> f32 {
     }
     for w in pts.windows(2) {
         if hour >= w[0].0 && hour <= w[1].0 {
-            let t = if w[1].0 > w[0].0 { (hour - w[0].0) / (w[1].0 - w[0].0) } else { 0.0 };
+            let t = if w[1].0 > w[0].0 {
+                (hour - w[0].0) / (w[1].0 - w[0].0)
+            } else {
+                0.0
+            };
             return w[0].1 + (w[1].1 - w[0].1) * t;
         }
     }
@@ -149,7 +149,11 @@ pub struct GlobalCfg {
 impl GlobalCfg {
     /// Season kind for a day of the year (0 = summer / none).
     pub fn season_kind(&self, day_of_year: i32) -> i32 {
-        self.seasons.iter().find(|s| day_of_year >= s.start_day && day_of_year < s.end_day).map(|s| s.kind).unwrap_or(0)
+        self.seasons
+            .iter()
+            .find(|s| day_of_year >= s.start_day && day_of_year < s.end_day)
+            .map(|s| s.kind)
+            .unwrap_or(0)
     }
 
     /// Road traffic density factor at an hour of the day (1 without a curve).
@@ -172,7 +176,11 @@ impl GlobalCfg {
     }
 
     pub fn parse(file: &CfgFile) -> GlobalCfg {
-        let mut g = GlobalCfg { path: file.path.clone(), repair_time_min: 10.0, ..Default::default() };
+        let mut g = GlobalCfg {
+            path: file.path.clone(),
+            repair_time_min: 10.0,
+            ..Default::default()
+        };
         let mut r = file.reader();
         while let Some(k) = r.next_keyword() {
             match k.as_str() {
@@ -185,7 +193,9 @@ impl GlobalCfg {
                 "dynhelperactive" => g.dyn_helper_active = true,
                 "realrail" => g.real_rail = true,
                 "lht" => g.left_hand_traffic = true,
-                "backgroundimage" => g.background_image = (0..5).map(|_| r.str().to_string()).collect(),
+                "backgroundimage" => {
+                    g.background_image = (0..5).map(|_| r.str().to_string()).collect()
+                }
                 "mapcam" => g.map_cam = (0..8).map(|_| r.f64()).collect(),
                 "moneysystem" => g.money_system = r.str().to_string(),
                 "ticketpack" => g.ticket_pack = r.str().to_string(),
@@ -201,13 +211,21 @@ impl GlobalCfg {
                     let texture = r.str().to_string();
                     let detail_texture = r.str().to_string();
                     let params = r.f32s::<3>();
-                    g.ground_textures.push(GroundTex { texture, detail_texture, params });
+                    g.ground_textures.push(GroundTex {
+                        texture,
+                        detail_texture,
+                        params,
+                    });
                 }
                 "addseason" => {
                     let kind = r.i32();
                     let start_day = r.i32();
                     let end_day = r.i32();
-                    g.seasons.push(Season { kind, start_day, end_day });
+                    g.seasons.push(Season {
+                        kind,
+                        start_day,
+                        end_day,
+                    });
                 }
                 "trafficdensity_road" => {
                     let t = r.f32();
@@ -231,11 +249,31 @@ impl GlobalCfg {
                         let quat = r.f64s::<4>();
                         let group = r.i32();
                         let name = r.str().to_string();
-                        g.entry_points.push(EntryPoint { index, object_id, unknown, pos: [x, y, z], quat, group, name });
+                        g.entry_points.push(EntryPoint {
+                            index,
+                            object_id,
+                            unknown,
+                            pos: [x, y, z],
+                            quat,
+                            group,
+                            name,
+                        });
                     }
                 }
-                "splineobjtypes" => g.spline_obj_types = r.rest_of_block().into_iter().map(|s| s.to_string()).collect(),
-                "scenobjlist" => g.scen_obj_list = r.rest_of_block().into_iter().map(|s| s.to_string()).collect(),
+                "splineobjtypes" => {
+                    g.spline_obj_types = r
+                        .rest_of_block()
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                }
+                "scenobjlist" => {
+                    g.scen_obj_list = r
+                        .rest_of_block()
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                }
                 "map" => {
                     let x = r.i32();
                     let y = r.i32();
@@ -244,7 +282,11 @@ impl GlobalCfg {
                     // place: fences, houses, all of it flickering; the first entry counts)
                     let index = g.raw_tiles.len();
                     g.raw_tiles.push((x, y));
-                    if !g.tiles.iter().any(|t| (t.x == x && t.y == y) || t.file.eq_ignore_ascii_case(&file)) {
+                    if !g
+                        .tiles
+                        .iter()
+                        .any(|t| (t.x == x && t.y == y) || t.file.eq_ignore_ascii_case(&file))
+                    {
                         g.tiles.push(MapTileRef { x, y, file, index });
                     }
                 }
@@ -263,7 +305,8 @@ mod tests {
     /// the tile after the repeat names index 2, which is tile (5, 5)).
     #[test]
     fn a_repeated_tile_keeps_the_numbering() {
-        let text = "[map]\n0\n0\ntile_0_0.map\n\n[map]\n0\n0\ntile_0_0.map\n\n[map]\n5\n5\ntile_5_5.map\n";
+        let text =
+            "[map]\n0\n0\ntile_0_0.map\n\n[map]\n0\n0\ntile_0_0.map\n\n[map]\n5\n5\ntile_5_5.map\n";
         let g = GlobalCfg::parse(&omsi_cfg::CfgFile::from_str("global.cfg", text));
         assert_eq!(g.tiles.len(), 2);
         assert_eq!(g.raw_tiles, vec![(0, 0), (0, 0), (5, 5)]);

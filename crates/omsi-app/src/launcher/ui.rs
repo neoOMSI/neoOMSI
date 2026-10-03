@@ -92,7 +92,9 @@ impl Popup {
     /// The options shown (their places in `options`): those with the typed text in them.
     fn shown(&self) -> Vec<usize> {
         let q = self.query.to_lowercase();
-        (0..self.options.len()).filter(|&k| q.is_empty() || self.options[k].to_lowercase().contains(&q)).collect()
+        (0..self.options.len())
+            .filter(|&k| q.is_empty() || self.options[k].to_lowercase().contains(&q))
+            .collect()
     }
 }
 
@@ -199,7 +201,8 @@ impl Ui {
         // typing into an open dropdown searches it: the keys are the list's, not the page's
         if let Some(p) = self.popup.as_mut() {
             let before = p.query.clone();
-            p.query.extend(self.input.text.chars().filter(|c| !c.is_control()));
+            p.query
+                .extend(self.input.text.chars().filter(|c| !c.is_control()));
             self.input.text.clear();
             let mut close = false;
             self.input.keys.retain(|k| match k {
@@ -228,13 +231,18 @@ impl Ui {
         // a click outside the open dropdown closes it (the click does nothing else)
         if self.input.pressed {
             if let Some(p) = &self.popup {
-                if !popup_rect(p, self.size).contains(self.input.mouse) && !p.anchor.contains(self.input.mouse) && p.opened >= 1.0 {
+                if !popup_rect(p, self.size).contains(self.input.mouse)
+                    && !p.anchor.contains(self.input.mouse)
+                    && p.opened >= 1.0
+                {
                     self.popup = None;
                     self.input.pressed = false;
                 }
             }
             if let Some(p) = &self.date_popup {
-                if !date_rect(p, self.size).contains(self.input.mouse) && !p.anchor.contains(self.input.mouse) {
+                if !date_rect(p, self.size).contains(self.input.mouse)
+                    && !p.anchor.contains(self.input.mouse)
+                {
                     self.date_popup = None;
                     self.input.pressed = false;
                 }
@@ -261,8 +269,14 @@ impl Ui {
         // sliding its list moved the phone's page behind it as well, #774)
         let m = self.input.mouse;
         self.wheel_taken
-            || self.popup.as_ref().is_some_and(|p| popup_rect(p, self.size).contains(m))
-            || self.date_popup.as_ref().is_some_and(|p| date_rect(p, self.size).contains(m))
+            || self
+                .popup
+                .as_ref()
+                .is_some_and(|p| popup_rect(p, self.size).contains(m))
+            || self
+                .date_popup
+                .as_ref()
+                .is_some_and(|p| date_rect(p, self.size).contains(m))
     }
 
     /// The painter of the current layer.
@@ -282,12 +296,19 @@ impl Ui {
 
     pub fn pop_clip(&mut self) {
         self.clip_stack.pop();
-        let (r, rad) = self.clip_stack.last().copied().unwrap_or((Rect::new(0.0, 0.0, self.size.x, self.size.y), 0.0));
+        let (r, rad) = self
+            .clip_stack
+            .last()
+            .copied()
+            .unwrap_or((Rect::new(0.0, 0.0, self.size.x, self.size.y), 0.0));
         self.push_layer(r, rad);
     }
 
     fn clip_now(&self) -> Rect {
-        self.clip_stack.last().map(|c| c.0).unwrap_or(Rect::new(0.0, 0.0, self.size.x, self.size.y))
+        self.clip_stack
+            .last()
+            .map(|c| c.0)
+            .unwrap_or(Rect::new(0.0, 0.0, self.size.x, self.size.y))
     }
 
     pub fn rect_visible(&self, r: Rect) -> bool {
@@ -320,9 +341,23 @@ impl Ui {
         let clip = intersect(self.clip_now(), r);
         self.push_layer(clip, radius);
         self.layers.last_mut().unwrap().2 = tex;
-        let sprite = omsi_ui::Sprite { uv: [0.0, 0.0, 1.0, 1.0], w: r.w, h: r.h, ascent: 0.0 };
-        self.p().sprite(sprite, Vec2::new(r.x, r.y), Vec2::new(r.w, r.h), Color::WHITE);
-        let (c, rad) = self.clip_stack.last().copied().unwrap_or((Rect::new(0.0, 0.0, self.size.x, self.size.y), 0.0));
+        let sprite = omsi_ui::Sprite {
+            uv: [0.0, 0.0, 1.0, 1.0],
+            w: r.w,
+            h: r.h,
+            ascent: 0.0,
+        };
+        self.p().sprite(
+            sprite,
+            Vec2::new(r.x, r.y),
+            Vec2::new(r.w, r.h),
+            Color::WHITE,
+        );
+        let (c, rad) = self
+            .clip_stack
+            .last()
+            .copied()
+            .unwrap_or((Rect::new(0.0, 0.0, self.size.x, self.size.y), 0.0));
         self.push_layer(c, rad);
     }
 
@@ -373,19 +408,61 @@ impl Ui {
     // --- text -------------------------------------------------------------------------
 
     /// Text on its baseline; returns its width.
-    pub fn text(&mut self, text: &str, at: Vec2, px: f32, weight: Weight, c: Color, align: Align) -> f32 {
-        let Ui { atlas, fonts, layers, .. } = self;
-        layers.last_mut().unwrap().1.text(atlas, fonts, text, px, weight, at, align, c)
+    pub fn text(
+        &mut self,
+        text: &str,
+        at: Vec2,
+        px: f32,
+        weight: Weight,
+        c: Color,
+        align: Align,
+    ) -> f32 {
+        let Ui {
+            atlas,
+            fonts,
+            layers,
+            ..
+        } = self;
+        layers
+            .last_mut()
+            .unwrap()
+            .1
+            .text(atlas, fonts, text, px, weight, at, align, c)
     }
 
     /// Text vertically centred in `r`, cut to fit.
-    pub fn text_in(&mut self, text: &str, r: Rect, px: f32, weight: Weight, c: Color, align: Align) -> f32 {
-        let Ui { atlas, fonts, layers, .. } = self;
-        layers.last_mut().unwrap().1.text_in(atlas, fonts, text, px, weight, r, align, c)
+    pub fn text_in(
+        &mut self,
+        text: &str,
+        r: Rect,
+        px: f32,
+        weight: Weight,
+        c: Color,
+        align: Align,
+    ) -> f32 {
+        let Ui {
+            atlas,
+            fonts,
+            layers,
+            ..
+        } = self;
+        layers
+            .last_mut()
+            .unwrap()
+            .1
+            .text_in(atlas, fonts, text, px, weight, r, align, c)
     }
 
     /// Several lines broken at spaces to `width`; returns the height used.
-    pub fn paragraph(&mut self, text: &str, at: Vec2, width: f32, px: f32, weight: Weight, c: Color) -> f32 {
+    pub fn paragraph(
+        &mut self,
+        text: &str,
+        at: Vec2,
+        width: f32,
+        px: f32,
+        weight: Weight,
+        c: Color,
+    ) -> f32 {
         let text = &*omsi_ui::tr(text);
         let lh = px * 1.38;
         let mut y = at.y + px;
@@ -393,7 +470,11 @@ impl Ui {
         for para in text.split('\n') {
             let mut line = String::new();
             for word in para.split(' ') {
-                let t = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+                let t = if line.is_empty() {
+                    word.to_string()
+                } else {
+                    format!("{line} {word}")
+                };
                 if self.fonts.width(&t, px, weight) > width && !line.is_empty() {
                     self.text(&line, Vec2::new(at.x, y), px, weight, c, Align::Left);
                     y += lh;
@@ -418,7 +499,11 @@ impl Ui {
         for para in text.split('\n') {
             let mut line = String::new();
             for word in para.split(' ') {
-                let t = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+                let t = if line.is_empty() {
+                    word.to_string()
+                } else {
+                    format!("{line} {word}")
+                };
                 if self.fonts.width(&t, px, weight) > width && !line.is_empty() {
                     n += 1;
                     line = word.to_string();
@@ -433,7 +518,11 @@ impl Ui {
 
     pub fn icon(&mut self, name: &str, center: Vec2, size: f32, c: Color) {
         let Ui { atlas, layers, .. } = self;
-        layers.last_mut().unwrap().1.icon(atlas, name, center, size, c)
+        layers
+            .last_mut()
+            .unwrap()
+            .1
+            .icon(atlas, name, center, size, c)
     }
 
     pub fn width(&self, text: &str, px: f32, weight: Weight) -> f32 {
@@ -453,7 +542,14 @@ impl Ui {
     /// A section heading inside a panel: an accent tick and the title in capitals.
     pub fn heading(&mut self, r: Rect, title: &str, icon: Option<&str>) -> Rect {
         let _ = icon;
-        self.text(&omsi_ui::tr(title).to_uppercase(), Vec2::new(r.x, r.y + 14.0), 11.0, Weight::Bold, TEXT_DIM, Align::Left);
+        self.text(
+            &omsi_ui::tr(title).to_uppercase(),
+            Vec2::new(r.x, r.y + 14.0),
+            11.0,
+            Weight::Bold,
+            TEXT_DIM,
+            Align::Left,
+        );
         Rect::new(r.x, r.y + 26.0, r.w, (r.h - 26.0).max(0.0))
     }
 
@@ -464,16 +560,31 @@ impl Ui {
     // --- controls ------------------------------------------------------------------------
 
     /// A button. `primary` is the accent-coloured one.
-    pub fn button(&mut self, name: &str, r: Rect, label: &str, icon: Option<&str>, kind: ButtonKind) -> bool {
+    pub fn button(
+        &mut self,
+        name: &str,
+        r: Rect,
+        label: &str,
+        icon: Option<&str>,
+        kind: ButtonKind,
+    ) -> bool {
         let id = id_of(name);
         let (h, held, clicked) = self.interact(id, r);
         let t = self.anim(id, if h { 1.0 } else { 0.0 }, 0.06);
         let rr = if held { r.inset(0.5) } else { r };
         let (fill, text_c, edge) = match kind {
-            ButtonKind::Primary => (ACCENT.lighten(0.08 * t), Color::rgba(18, 14, 8, 1.0), Color::CLEAR),
+            ButtonKind::Primary => (
+                ACCENT.lighten(0.08 * t),
+                Color::rgba(18, 14, 8, 1.0),
+                Color::CLEAR,
+            ),
             ButtonKind::Danger => (FIELD.mix(HOVER, t), DANGER, DANGER.alpha(0.35 + 0.3 * t)),
             ButtonKind::Normal => (FIELD.mix(HOVER, t), TEXT, EDGE),
-            ButtonKind::Ghost => (Color::WHITE.alpha(0.05 * t), if h { TEXT } else { TEXT_DIM }, Color::CLEAR),
+            ButtonKind::Ghost => (
+                Color::WHITE.alpha(0.05 * t),
+                if h { TEXT } else { TEXT_DIM },
+                Color::CLEAR,
+            ),
         };
         let rad = 6.0;
         self.p().rounded(rr, rad, fill);
@@ -481,15 +592,35 @@ impl Ui {
             self.p().rounded_border(rr, rad, 1.0, edge);
         }
         let px = if rr.h >= 44.0 { 14.5 } else { 13.0 };
-        let weight = if kind == ButtonKind::Primary { Weight::Bold } else { Weight::Medium };
+        let weight = if kind == ButtonKind::Primary {
+            Weight::Bold
+        } else {
+            Weight::Medium
+        };
         let tw = self.width(label, px, weight);
         // (the gap after the icon only when a label follows it)
-        let iw = if icon.is_some() { px * 1.3 + if label.is_empty() { 0.0 } else { 6.0 } } else { 0.0 };
+        let iw = if icon.is_some() {
+            px * 1.3 + if label.is_empty() { 0.0 } else { 6.0 }
+        } else {
+            0.0
+        };
         let x0 = rr.center().x - (tw + iw) * 0.5;
         if let Some(i) = icon {
-            self.icon(i, Vec2::new(x0 + px * 0.65, rr.center().y), px * 1.3, text_c);
+            self.icon(
+                i,
+                Vec2::new(x0 + px * 0.65, rr.center().y),
+                px * 1.3,
+                text_c,
+            );
         }
-        self.text_in(label, Rect::new(x0 + iw, rr.y, tw + 2.0, rr.h), px, weight, text_c, Align::Left);
+        self.text_in(
+            label,
+            Rect::new(x0 + iw, rr.y, tw + 2.0, rr.h),
+            px,
+            weight,
+            text_c,
+            Align::Left,
+        );
         clicked
     }
 
@@ -518,18 +649,47 @@ impl Ui {
         let tw = 34.0;
         let th = 18.0;
         let track = Rect::new(r.right() - tw, r.y + (r.h - th) * 0.5, tw, th);
-        self.p().rounded(track, th * 0.5, Color::rgba(62, 62, 62, 1.0).mix(ACCENT, on));
+        self.p().rounded(
+            track,
+            th * 0.5,
+            Color::rgba(62, 62, 62, 1.0).mix(ACCENT, on),
+        );
         let kx = track.x + th * 0.5 + (tw - th) * on;
-        self.p().circle(Vec2::new(kx, track.center().y), th * 0.5 - 3.0, Color::rgba(240, 240, 240, 1.0));
-        self.text_in(label, Rect::new(r.x, r.y, r.w - tw - 10.0, r.h), 13.0, Weight::Regular, if h { TEXT } else { TEXT_SOFT }, Align::Left);
+        self.p().circle(
+            Vec2::new(kx, track.center().y),
+            th * 0.5 - 3.0,
+            Color::rgba(240, 240, 240, 1.0),
+        );
+        self.text_in(
+            label,
+            Rect::new(r.x, r.y, r.w - tw - 10.0, r.h),
+            13.0,
+            Weight::Regular,
+            if h { TEXT } else { TEXT_SOFT },
+            Align::Left,
+        );
         clicked
     }
 
     /// A slider over `[min, max]` rounded to `step`; `fmt` makes the value's text.
     #[allow(clippy::too_many_arguments)]
-    pub fn slider(&mut self, name: &str, r: Rect, value: &mut f32, min: f32, max: f32, step: f32, label: &str, fmt: &dyn Fn(f32) -> String) -> bool {
+    pub fn slider(
+        &mut self,
+        name: &str,
+        r: Rect,
+        value: &mut f32,
+        min: f32,
+        max: f32,
+        step: f32,
+        label: &str,
+        fmt: &dyn Fn(f32) -> String,
+    ) -> bool {
         let id = id_of(name);
-        let label_w = if label.is_empty() { 0.0 } else { (r.w * 0.38).min(170.0) };
+        let label_w = if label.is_empty() {
+            0.0
+        } else {
+            (r.w * 0.38).min(170.0)
+        };
         let val_w = 58.0;
         let track_r = Rect::new(r.x + label_w, r.y, r.w - label_w - val_w, r.h);
         let (h, held, _) = self.interact(id, track_r.pad(-8.0, 0.0));
@@ -550,22 +710,51 @@ impl Ui {
         let frac = ((*value - min) / (max - min).max(1e-6)).clamp(0.0, 1.0);
         let shown = self.anim(id ^ 3, frac, 0.06);
         if !label.is_empty() {
-            self.text_in(label, Rect::new(r.x, r.y, label_w - 8.0, r.h), 13.0, Weight::Regular, TEXT_SOFT, Align::Left);
+            self.text_in(
+                label,
+                Rect::new(r.x, r.y, label_w - 8.0, r.h),
+                13.0,
+                Weight::Regular,
+                TEXT_SOFT,
+                Align::Left,
+            );
         }
         let cy = track_r.center().y;
         let th = 4.0;
         let track = Rect::new(track_r.x, cy - th * 0.5, track_r.w, th);
-        self.p().rounded(track, th * 0.5, Color::rgba(58, 58, 58, 1.0));
-        self.p().rounded(Rect::new(track.x, track.y, track.w * shown, th), th * 0.5, ACCENT);
+        self.p()
+            .rounded(track, th * 0.5, Color::rgba(58, 58, 58, 1.0));
+        self.p().rounded(
+            Rect::new(track.x, track.y, track.w * shown, th),
+            th * 0.5,
+            ACCENT,
+        );
         let kc = Vec2::new(track.x + track.w * shown, cy);
-        self.p().circle(kc, if h || held { 7.5 } else { 6.5 }, Color::rgba(240, 240, 240, 1.0));
+        self.p().circle(
+            kc,
+            if h || held { 7.5 } else { 6.5 },
+            Color::rgba(240, 240, 240, 1.0),
+        );
         let txt = fmt(*value);
-        self.text_in(&txt, Rect::new(r.right() - val_w + 8.0, r.y, val_w - 8.0, r.h), 12.5, Weight::Medium, TEXT, Align::Right);
+        self.text_in(
+            &txt,
+            Rect::new(r.right() - val_w + 8.0, r.y, val_w - 8.0, r.h),
+            12.5,
+            Weight::Medium,
+            TEXT,
+            Align::Right,
+        );
         *value != before
     }
 
     /// Buttons side by side, one of them chosen.
-    pub fn segmented(&mut self, name: &str, r: Rect, selected: &mut usize, labels: &[&str]) -> bool {
+    pub fn segmented(
+        &mut self,
+        name: &str,
+        r: Rect,
+        selected: &mut usize,
+        labels: &[&str],
+    ) -> bool {
         let n = labels.len().max(1);
         let id = id_of(name);
         self.p().rounded(r, 6.0, FIELD);
@@ -581,14 +770,33 @@ impl Ui {
                 *selected = k;
                 changed = true;
             }
-            let c = if *selected == k { TEXT } else if h { TEXT_SOFT } else { TEXT_DIM };
-            self.text_in(l, cell.pad(4.0, 0.0), 12.5, Weight::Medium, c, Align::Center);
+            let c = if *selected == k {
+                TEXT
+            } else if h {
+                TEXT_SOFT
+            } else {
+                TEXT_DIM
+            };
+            self.text_in(
+                l,
+                cell.pad(4.0, 0.0),
+                12.5,
+                Weight::Medium,
+                c,
+                Align::Center,
+            );
         }
         changed
     }
 
     /// A dropdown: shows the chosen option, opens a list over everything else.
-    pub fn select(&mut self, name: &str, r: Rect, selected: &mut usize, options: &[String]) -> bool {
+    pub fn select(
+        &mut self,
+        name: &str,
+        r: Rect,
+        selected: &mut usize,
+        options: &[String],
+    ) -> bool {
         let id = id_of(name);
         let mut changed = false;
         if let Some(p) = self.popup.as_mut().filter(|p| p.id == id) {
@@ -604,11 +812,28 @@ impl Ui {
         let open = self.popup.as_ref().map(|p| p.id == id).unwrap_or(false);
         let t = self.anim(id, if h || open { 1.0 } else { 0.0 }, 0.08);
         self.p().rounded(r, 6.0, FIELD.mix(HOVER, t));
-        self.p().rounded_border(r, 6.0, 1.0, if open { ACCENT.alpha(0.7) } else { EDGE });
+        self.p()
+            .rounded_border(r, 6.0, 1.0, if open { ACCENT.alpha(0.7) } else { EDGE });
         let txt = options.get(*selected).cloned().unwrap_or_default();
-        self.text_in(&txt, Rect::new(r.x + 12.0, r.y, r.w - 40.0, r.h), 13.0, Weight::Regular, TEXT, Align::Left);
+        self.text_in(
+            &txt,
+            Rect::new(r.x + 12.0, r.y, r.w - 40.0, r.h),
+            13.0,
+            Weight::Regular,
+            TEXT,
+            Align::Left,
+        );
         let rot = self.anim(id ^ 9, if open { 1.0 } else { 0.0 }, 0.08);
-        self.icon(if rot > 0.5 { "expand_less" } else { "expand_more" }, Vec2::new(r.right() - 18.0, r.center().y), 20.0, if h { TEXT } else { TEXT_DIM });
+        self.icon(
+            if rot > 0.5 {
+                "expand_less"
+            } else {
+                "expand_more"
+            },
+            Vec2::new(r.right() - 18.0, r.center().y),
+            20.0,
+            if h { TEXT } else { TEXT_DIM },
+        );
         if clicked {
             // (a phone's tap can come twice - as a touch and as the mouse click made of it:
             // the second one closed the list it had just opened)
@@ -617,11 +842,22 @@ impl Ui {
             } else if open {
             } else {
                 let sel = (*selected).min(options.len().saturating_sub(1));
-                let mut p = Popup { id, anchor: r, options: options.to_vec(), selected: sel, scroll: 0.0, opened: 0.0, picked: None, drag: None, query: String::new() };
+                let mut p = Popup {
+                    id,
+                    anchor: r,
+                    options: options.to_vec(),
+                    selected: sel,
+                    scroll: 0.0,
+                    opened: 0.0,
+                    picked: None,
+                    drag: None,
+                    query: String::new(),
+                };
                 // the chosen option in view
                 let row = 34.0;
                 let visible = popup_rect(&p, self.size).h;
-                p.scroll = ((sel as f32 + 0.5) * row - visible * 0.5).clamp(0.0, (options.len() as f32 * row - visible).max(0.0));
+                p.scroll = ((sel as f32 + 0.5) * row - visible * 0.5)
+                    .clamp(0.0, (options.len() as f32 * row - visible).max(0.0));
                 self.popup = Some(p);
                 self.date_popup = None;
             }
@@ -634,7 +870,14 @@ impl Ui {
     }
 
     /// A text field. Returns true when the text changed.
-    pub fn text_input(&mut self, name: &str, r: Rect, value: &mut String, placeholder: &str, icon: Option<&str>) -> bool {
+    pub fn text_input(
+        &mut self,
+        name: &str,
+        r: Rect,
+        value: &mut String,
+        placeholder: &str,
+        icon: Option<&str>,
+    ) -> bool {
         let id = id_of(name);
         let (h, _, _) = self.interact(id, r);
         if h {
@@ -650,10 +893,15 @@ impl Ui {
         let before = value.clone();
         let click_x = self.text_click.remove(&id);
         if focused {
-            let (mut caret, mut moved) = self.caret.get(&id).copied().unwrap_or((value.chars().count(), self.time));
+            let (mut caret, mut moved) = self
+                .caret
+                .get(&id)
+                .copied()
+                .unwrap_or((value.chars().count(), self.time));
             let n = value.chars().count();
             caret = caret.min(n);
-            let byte = |s: &str, c: usize| s.char_indices().nth(c).map(|(b, _)| b).unwrap_or(s.len());
+            let byte =
+                |s: &str, c: usize| s.char_indices().nth(c).map(|(b, _)| b).unwrap_or(s.len());
             for k in self.input.keys.clone() {
                 match k {
                     Key::Left => caret = caret.saturating_sub(1),
@@ -726,7 +974,12 @@ impl Ui {
                 moved = self.time;
             }
             if !self.input.text.is_empty() {
-                let t: String = self.input.text.chars().filter(|c| !c.is_control()).collect();
+                let t: String = self
+                    .input
+                    .text
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .collect();
 
                 if let Some(&(a, b)) = self.selection.get(&id) {
                     let (start, end) = (a.min(b), a.max(b));
@@ -747,9 +1000,20 @@ impl Ui {
             }
             self.caret.insert(id, (caret, moved));
         }
-        let t = self.anim(id, if focused { 1.0 } else if h { 0.5 } else { 0.0 }, 0.08);
+        let t = self.anim(
+            id,
+            if focused {
+                1.0
+            } else if h {
+                0.5
+            } else {
+                0.0
+            },
+            0.08,
+        );
         self.p().rounded(r, 6.0, FIELD.mix(HOVER, t * 0.5));
-        self.p().rounded_border(r, 6.0, 1.0, if focused { ACCENT.alpha(0.7) } else { EDGE });
+        self.p()
+            .rounded_border(r, 6.0, 1.0, if focused { ACCENT.alpha(0.7) } else { EDGE });
         let mut x = r.x + 12.0;
         if let Some(i) = icon {
             self.icon(i, Vec2::new(x + 8.0, r.center().y), 18.0, TEXT_DIM);
@@ -760,25 +1024,25 @@ impl Ui {
         let px = 13.0;
 
         if let Some(click_x) = click_x {
-                let local_x = (click_x - inner.x).clamp(0.0, inner.w);
-                
-                let mut best = 0;
-                let mut best_dist = f32::MAX;
+            let local_x = (click_x - inner.x).clamp(0.0, inner.w);
 
-                for i in 0..=value.chars().count() {
-                    let upto: String = value.chars().take(i).collect();
-                    let cx = self.width(&upto, px, Weight::Regular);
-                    let dist = (cx - local_x).abs();
-                    
-                    if dist < best_dist {
-                        best_dist = dist;
-                        best = i;
-                    }
+            let mut best = 0;
+            let mut best_dist = f32::MAX;
+
+            for i in 0..=value.chars().count() {
+                let upto: String = value.chars().take(i).collect();
+                let cx = self.width(&upto, px, Weight::Regular);
+                let dist = (cx - local_x).abs();
+
+                if dist < best_dist {
+                    best_dist = dist;
+                    best = i;
                 }
-
-                self.caret.insert(id, (best, self.time));
-                self.selection.insert(id, (best, best));
             }
+
+            self.caret.insert(id, (best, self.time));
+            self.selection.insert(id, (best, best));
+        }
         if self.focus == Some(id) && self.input.down {
             let mouse_x = self.input.mouse.x;
             let local_x = (mouse_x - inner.x).clamp(0.0, inner.w);
@@ -790,20 +1054,27 @@ impl Ui {
                 let upto: String = value.chars().take(i).collect();
                 let cx = self.width(&upto, px, Weight::Regular);
                 let dist = (cx - local_x).abs();
-            
+
                 if dist < best_dist {
                     best_dist = dist;
                     best = i;
                 }
             }
-        
+
             if let Some(&(anchor, _)) = self.selection.get(&id) {
                 self.selection.insert(id, (anchor, best));
                 self.caret.insert(id, (best, self.time));
             }
         }
         if value.is_empty() && !focused {
-            self.text_in(placeholder, inner, px, Weight::Regular, TEXT_FAINT, Align::Left);
+            self.text_in(
+                placeholder,
+                inner,
+                px,
+                Weight::Regular,
+                TEXT_FAINT,
+                Align::Left,
+            );
         } else {
             let (caret, moved) = self.caret.get(&id).copied().unwrap_or((0, 0.0));
             let upto: String = value.chars().take(caret).collect();
@@ -827,19 +1098,33 @@ impl Ui {
             }
             // keep the caret in view
             let shift = (cw - inner.w + 4.0).max(0.0);
-            self.text_in(value, Rect::new(inner.x - shift, inner.y, inner.w + shift + 2000.0, inner.h), px, Weight::Regular, TEXT, Align::Left);
-            if focused 
+            self.text_in(
+                value,
+                Rect::new(inner.x - shift, inner.y, inner.w + shift + 2000.0, inner.h),
+                px,
+                Weight::Regular,
+                TEXT,
+                Align::Left,
+            );
+            if focused
                 && self.selection.get(&id).is_none_or(|&(a, b)| a == b)
                 && ((self.time - moved) % 1.0) < 0.55
             {
                 self.p().rect(
-                    Rect::new(inner.x - shift + cw + 0.5, r.center().y -8.5, 1.5, 17.0),
+                    Rect::new(inner.x - shift + cw + 0.5, r.center().y - 8.5, 1.5, 17.0),
                     ACCENT,
                 );
             }
         }
         if value.is_empty() {
-            self.text_in(placeholder, inner, px, Weight::Regular, TEXT_FAINT, Align::Left);
+            self.text_in(
+                placeholder,
+                inner,
+                px,
+                Weight::Regular,
+                TEXT_FAINT,
+                Align::Left,
+            );
         }
         self.pop_clip();
         *value != before
@@ -859,14 +1144,40 @@ impl Ui {
                 *minutes += self.input.wheel.y.signum() as i32 * if *unit == 60 { 60 } else { 5 };
                 self.wheel_taken = true;
             }
-            let v = if *unit == 60 { minutes.rem_euclid(1440) / 60 } else { minutes.rem_euclid(60) };
-            self.text_in(&format!("{v:02}"), Rect::new(cell.x + 8.0, cell.y, cell.w - 30.0, cell.h), 17.0, Weight::Medium, TEXT, Align::Center);
+            let v = if *unit == 60 {
+                minutes.rem_euclid(1440) / 60
+            } else {
+                minutes.rem_euclid(60)
+            };
+            self.text_in(
+                &format!("{v:02}"),
+                Rect::new(cell.x + 8.0, cell.y, cell.w - 30.0, cell.h),
+                17.0,
+                Weight::Medium,
+                TEXT,
+                Align::Center,
+            );
             let up = Rect::new(cell.right() - 24.0, cell.y + 3.0, 20.0, cell.h * 0.5 - 3.0);
-            let down = Rect::new(cell.right() - 24.0, cell.center().y, 20.0, cell.h * 0.5 - 3.0);
+            let down = Rect::new(
+                cell.right() - 24.0,
+                cell.center().y,
+                20.0,
+                cell.h * 0.5 - 3.0,
+            );
             let (hu, _, cu) = self.interact(id ^ 1, up);
             let (hd, _, cd) = self.interact(id ^ 2, down);
-            self.icon("expand_less", up.center(), 16.0, if hu { TEXT } else { TEXT_FAINT });
-            self.icon("expand_more", down.center(), 16.0, if hd { TEXT } else { TEXT_FAINT });
+            self.icon(
+                "expand_less",
+                up.center(),
+                16.0,
+                if hu { TEXT } else { TEXT_FAINT },
+            );
+            self.icon(
+                "expand_more",
+                down.center(),
+                16.0,
+                if hd { TEXT } else { TEXT_FAINT },
+            );
             if cu {
                 *minutes += step;
             }
@@ -874,7 +1185,14 @@ impl Ui {
                 *minutes -= step;
             }
         }
-        self.text_in(":", Rect::new(r.x + half, r.y, 16.0, r.h - 2.0), 17.0, Weight::Medium, TEXT_DIM, Align::Center);
+        self.text_in(
+            ":",
+            Rect::new(r.x + half, r.y, 16.0, r.h - 2.0),
+            17.0,
+            Weight::Medium,
+            TEXT_DIM,
+            Align::Center,
+        );
         *minutes = minutes.rem_euclid(1440);
         *minutes != before
     }
@@ -891,20 +1209,50 @@ impl Ui {
             }
         }
         let (h, _, clicked) = self.interact(id, r);
-        let open = self.date_popup.as_ref().map(|p| p.id == id).unwrap_or(false);
+        let open = self
+            .date_popup
+            .as_ref()
+            .map(|p| p.id == id)
+            .unwrap_or(false);
         let t = self.anim(id, if h || open { 1.0 } else { 0.0 }, 0.08);
         self.p().rounded(r, 6.0, FIELD.mix(HOVER, t));
-        self.p().rounded_border(r, 6.0, 1.0, if open { ACCENT.alpha(0.7) } else { EDGE });
-        self.icon("calendar_month", Vec2::new(r.x + 20.0, r.center().y), 17.0, TEXT_DIM);
+        self.p()
+            .rounded_border(r, 6.0, 1.0, if open { ACCENT.alpha(0.7) } else { EDGE });
+        self.icon(
+            "calendar_month",
+            Vec2::new(r.x + 20.0, r.center().y),
+            17.0,
+            TEXT_DIM,
+        );
         let (y, m, d) = parse_date(date);
         let shown = format!("{} {} {}", d, MONTHS[(m as usize).clamp(1, 12) - 1], y);
-        self.text_in(&shown, Rect::new(r.x + 38.0, r.y, r.w - 60.0, r.h), 13.0, Weight::Regular, TEXT, Align::Left);
-        self.icon("expand_more", Vec2::new(r.right() - 18.0, r.center().y), 20.0, TEXT_DIM);
+        self.text_in(
+            &shown,
+            Rect::new(r.x + 38.0, r.y, r.w - 60.0, r.h),
+            13.0,
+            Weight::Regular,
+            TEXT,
+            Align::Left,
+        );
+        self.icon(
+            "expand_more",
+            Vec2::new(r.right() - 18.0, r.center().y),
+            20.0,
+            TEXT_DIM,
+        );
         if clicked {
             if open {
                 self.date_popup = None;
             } else {
-                self.date_popup = Some(DatePopup { id, anchor: r, year: y, month: m, current: (y, m, d), picked: None, opened: 0.0 });
+                self.date_popup = Some(DatePopup {
+                    id,
+                    anchor: r,
+                    year: y,
+                    month: m,
+                    current: (y, m, d),
+                    picked: None,
+                    opened: 0.0,
+                });
                 self.popup = None;
             }
         }
@@ -915,11 +1263,16 @@ impl Ui {
     pub fn progress(&mut self, r: Rect, frac: f32, busy: bool) {
         self.p().rounded(r, r.h * 0.5, Color::rgba(50, 50, 50, 1.0));
         let w = (r.w * frac.clamp(0.0, 1.0)).max(r.h);
-        self.p().rounded(Rect::new(r.x, r.y, w, r.h), r.h * 0.5, ACCENT);
+        self.p()
+            .rounded(Rect::new(r.x, r.y, w, r.h), r.h * 0.5, ACCENT);
         if busy {
             let x = r.x + ((self.time * 0.6) % 1.0) * (w + 60.0) - 60.0;
             self.push_clip(Rect::new(r.x, r.y, w, r.h), r.h * 0.5);
-            self.p().gradient_h(Rect::new(x, r.y, 60.0, r.h), Color::WHITE.alpha(0.0), Color::WHITE.alpha(0.15));
+            self.p().gradient_h(
+                Rect::new(x, r.y, 60.0, r.h),
+                Color::WHITE.alpha(0.0),
+                Color::WHITE.alpha(0.15),
+            );
             self.pop_clip();
         }
     }
@@ -951,25 +1304,44 @@ impl Ui {
             let bar_h = (r.h * r.h / content).max(28.0);
             let bar_y = r.y + (r.h - bar_h) * (off / max);
             let bar = Rect::new(r.right() - 5.0, bar_y, 4.0, bar_h);
-            let (h, held, _) = self.interact(id ^ 0xdef, Rect::new(bar.x - 6.0, bar.y, 14.0, bar.h));
+            let (h, held, _) =
+                self.interact(id ^ 0xdef, Rect::new(bar.x - 6.0, bar.y, 14.0, bar.h));
             if held {
                 target = ((self.input.mouse.y - r.y - bar_h * 0.5) / (r.h - bar_h).max(1.0)) * max;
             }
-            let t = self.anim(id ^ 0x77, if h || held || self.hover(r) { 1.0 } else { 0.0 }, 0.15);
-            self.p().rounded(bar, 2.0, Color::WHITE.alpha(0.10 + 0.25 * t));
+            let t = self.anim(
+                id ^ 0x77,
+                if h || held || self.hover(r) { 1.0 } else { 0.0 },
+                0.15,
+            );
+            self.p()
+                .rounded(bar, 2.0, Color::WHITE.alpha(0.10 + 0.25 * t));
         }
         target = target.clamp(0.0, max);
         self.scroll.insert(id ^ 0xabc, target);
         let k = 1.0 - (-self.dt / 0.07).exp();
         let now = off + (target - off) * k;
-        self.scroll.insert(id, if (now - target).abs() < 0.3 { target } else { now });
+        self.scroll.insert(
+            id,
+            if (now - target).abs() < 0.3 {
+                target
+            } else {
+                now
+            },
+        );
     }
 
     /// Scroll the list `name` to show a row at `y..y+h` of its content (a newly chosen row).
     pub fn scroll_to(&mut self, name: &str, y: f32, h: f32, view_h: f32) {
         let id = id_of(name);
         let t = self.scroll.get(&(id ^ 0xabc)).copied().unwrap_or(0.0);
-        let t = if y < t { y } else if y + h > t + view_h { y + h - view_h } else { t };
+        let t = if y < t {
+            y
+        } else if y + h > t + view_h {
+            y + h - view_h
+        } else {
+            t
+        };
         self.scroll.insert(id ^ 0xabc, t.max(0.0));
     }
 
@@ -981,7 +1353,11 @@ impl Ui {
         let s = self.anim(id ^ 4, if selected { 1.0 } else { 0.0 }, 0.1);
         if s > 0.01 {
             self.p().rounded(r, 6.0, SELECTED.alpha(s));
-            self.p().rounded(Rect::new(r.x, r.y + 8.0, 2.0, r.h - 16.0), 1.0, ACCENT.alpha(s));
+            self.p().rounded(
+                Rect::new(r.x, r.y + 8.0, 2.0, r.h - 16.0),
+                1.0,
+                ACCENT.alpha(s),
+            );
         } else if t > 0.01 {
             self.p().rounded(r, 6.0, HOVER.alpha(t));
         }
@@ -1016,8 +1392,16 @@ impl Ui {
                 r.y = at.y - 12.0 - r.h;
             }
             self.p().rounded(r, 6.0, Color::rgba(34, 34, 34, 1.0));
-            self.p().rounded_border(r, 7.0, 1.0, Color::WHITE.alpha(0.1));
-            self.paragraph(&t, Vec2::new(r.x + 10.0, r.y + 4.0), w - 20.0, 12.5, Weight::Medium, TEXT_SOFT);
+            self.p()
+                .rounded_border(r, 7.0, 1.0, Color::WHITE.alpha(0.1));
+            self.paragraph(
+                &t,
+                Vec2::new(r.x + 10.0, r.y + 4.0),
+                w - 20.0,
+                12.5,
+                Weight::Medium,
+                TEXT_SOFT,
+            );
         }
         let mut layers = Vec::new();
         let mut verts = Vec::new();
@@ -1026,7 +1410,14 @@ impl Ui {
         // made a layer for every field of every row, hidden or not, and the rail, the
         // buttons under it and the status bar were never drawn, #666. A layer whose clip
         // shows nothing is left out, one that clips as the layer before it joins it.)
-        let same = |a: &Layer, b: &Layer| a.clip == b.clip && a.radius == b.radius && a.viewport == b.viewport && a.opacity == b.opacity && a.px_scale == b.px_scale && a.view_proj == b.view_proj;
+        let same = |a: &Layer, b: &Layer| {
+            a.clip == b.clip
+                && a.radius == b.radius
+                && a.viewport == b.viewport
+                && a.opacity == b.opacity
+                && a.px_scale == b.px_scale
+                && a.view_proj == b.view_proj
+        };
         for (l, p, tex) in self.layers.drain(..) {
             if p.verts.is_empty() || l.clip[2] <= l.clip[0] || l.clip[3] <= l.clip[1] {
                 continue;
@@ -1034,7 +1425,11 @@ impl Ui {
             let a = verts.len() as u32;
             verts.extend(p.verts);
             match (layers.last(), ranges.last_mut()) {
-                (Some(last), Some((range, last_tex))) if *last_tex == tex && same(last, &l) && range.end == a => range.end = verts.len() as u32,
+                (Some(last), Some((range, last_tex)))
+                    if *last_tex == tex && same(last, &l) && range.end == a =>
+                {
+                    range.end = verts.len() as u32
+                }
                 _ => {
                     layers.push(l);
                     ranges.push((a..verts.len() as u32, tex));
@@ -1060,7 +1455,9 @@ impl Ui {
     }
 
     fn draw_popup(&mut self) {
-        let Some(mut p) = self.popup.take() else { return };
+        let Some(mut p) = self.popup.take() else {
+            return;
+        };
         let r = popup_rect(&p, self.size);
         // the tap that opened the list must not also pick from it (on a small screen the
         // list lies under the finger)
@@ -1069,7 +1466,8 @@ impl Ui {
         let e = 1.0 - (1.0 - p.opened).powi(3);
         let rr = Rect::new(r.x, r.y - 6.0 * (1.0 - e), r.w, r.h);
         self.p().rounded(rr, 8.0, Color::rgba(28, 28, 28, e));
-        self.p().rounded_border(rr, 8.0, 1.0, Color::WHITE.alpha(0.1 * e));
+        self.p()
+            .rounded_border(rr, 8.0, 1.0, Color::WHITE.alpha(0.1 * e));
         let row = 34.0;
         let shown = p.shown();
         // (what was typed, over the options it leaves)
@@ -1086,7 +1484,11 @@ impl Ui {
             if self.input.pressed && !fresh && track.contains(self.input.mouse) {
                 let y = rr.y + (rr.h - bar_h) * (p.scroll / max.max(1.0));
                 let inside = self.input.mouse.y - y;
-                p.drag = Some(if (0.0..=bar_h).contains(&inside) { inside } else { bar_h * 0.5 });
+                p.drag = Some(if (0.0..=bar_h).contains(&inside) {
+                    inside
+                } else {
+                    bar_h * 0.5
+                });
             }
             if let Some(grab) = p.drag {
                 let at = (self.input.mouse.y - grab - rr.y) / (rr.h - bar_h).max(1.0);
@@ -1100,11 +1502,34 @@ impl Ui {
         self.push_clip(rr.inset(4.0), 8.0);
         if head > 0.0 {
             let y = rr.y + 4.0 - p.scroll;
-            self.icon("search", Vec2::new(rr.x + 22.0, y + row * 0.5), 16.0, TEXT_DIM);
-            let caret = if (self.time * 2.0) as i64 % 2 == 0 { "|" } else { "" };
-            self.text_in(&format!("{}{caret}", p.query), Rect::new(rr.x + 38.0, y, rr.w - 60.0, row), 13.0, Weight::Medium, TEXT, Align::Left);
+            self.icon(
+                "search",
+                Vec2::new(rr.x + 22.0, y + row * 0.5),
+                16.0,
+                TEXT_DIM,
+            );
+            let caret = if (self.time * 2.0) as i64 % 2 == 0 {
+                "|"
+            } else {
+                ""
+            };
+            self.text_in(
+                &format!("{}{caret}", p.query),
+                Rect::new(rr.x + 38.0, y, rr.w - 60.0, row),
+                13.0,
+                Weight::Medium,
+                TEXT,
+                Align::Left,
+            );
             if shown.is_empty() {
-                self.text_in("Nothing found", Rect::new(rr.x + 14.0, y + row, rr.w - 28.0, row), 13.0, Weight::Regular, TEXT_DIM, Align::Left);
+                self.text_in(
+                    "Nothing found",
+                    Rect::new(rr.x + 14.0, y + row, rr.w - 28.0, row),
+                    13.0,
+                    Weight::Regular,
+                    TEXT_DIM,
+                    Align::Left,
+                );
             }
         }
         for (n, &k) in shown.iter().enumerate() {
@@ -1114,14 +1539,29 @@ impl Ui {
                 continue;
             }
             let cell = Rect::new(rr.x + 4.0, y, rr.w - 8.0, row);
-            let h = cell.contains(self.input.mouse) && rr.contains(self.input.mouse) && !dragging && !(max > 0.0 && track.contains(self.input.mouse));
+            let h = cell.contains(self.input.mouse)
+                && rr.contains(self.input.mouse)
+                && !dragging
+                && !(max > 0.0 && track.contains(self.input.mouse));
             if k == p.selected {
                 self.p().rounded(cell, 5.0, SELECTED);
-                self.icon("check", Vec2::new(cell.right() - 16.0, cell.center().y), 15.0, ACCENT);
+                self.icon(
+                    "check",
+                    Vec2::new(cell.right() - 16.0, cell.center().y),
+                    15.0,
+                    ACCENT,
+                );
             } else if h {
                 self.p().rounded(cell, 5.0, HOVER);
             }
-            self.text_in(o, Rect::new(cell.x + 10.0, cell.y, cell.w - 36.0, cell.h), 13.0, Weight::Regular, TEXT, Align::Left);
+            self.text_in(
+                o,
+                Rect::new(cell.x + 10.0, cell.y, cell.w - 36.0, cell.h),
+                13.0,
+                Weight::Regular,
+                TEXT,
+                Align::Left,
+            );
             if h {
                 self.cursor = winit::window::CursorIcon::Pointer;
                 if self.input.released && !fresh {
@@ -1134,7 +1574,11 @@ impl Ui {
             let y = rr.y + (rr.h - bar_h) * (p.scroll / max.max(1.0));
             let wide = dragging || track.contains(self.input.mouse);
             let w = if wide { 5.0 } else { 3.0 };
-            self.p().rounded(Rect::new(rr.right() - 2.0 - w, y, w, bar_h), w * 0.5, Color::WHITE.alpha(if wide { 0.5 } else { 0.3 }));
+            self.p().rounded(
+                Rect::new(rr.right() - 2.0 - w, y, w, bar_h),
+                w * 0.5,
+                Color::WHITE.alpha(if wide { 0.5 } else { 0.3 }),
+            );
         }
         if rr.contains(self.input.mouse) {
             self.over_ui = true;
@@ -1143,22 +1587,37 @@ impl Ui {
     }
 
     fn draw_date_popup(&mut self) {
-        let Some(mut p) = self.date_popup.take() else { return };
+        let Some(mut p) = self.date_popup.take() else {
+            return;
+        };
         let r = date_rect(&p, self.size);
         p.opened = (p.opened + self.dt / 0.12).min(1.0);
         let e = 1.0 - (1.0 - p.opened).powi(3);
         self.p().rounded(r, 8.0, Color::rgba(28, 28, 28, e));
-        self.p().rounded_border(r, 8.0, 1.0, Color::WHITE.alpha(0.1 * e));
+        self.p()
+            .rounded_border(r, 8.0, 1.0, Color::WHITE.alpha(0.1 * e));
         let m = self.input.mouse;
         let click = self.input.released;
         // month header with arrows
         let head = Rect::new(r.x + 8.0, r.y + 8.0, r.w - 16.0, 30.0);
-        self.text_in(&format!("{} {}", MONTHS_LONG[p.month as usize - 1], p.year), head, 14.0, Weight::Bold, TEXT, Align::Center);
+        self.text_in(
+            &format!("{} {}", MONTHS_LONG[p.month as usize - 1], p.year),
+            head,
+            14.0,
+            Weight::Bold,
+            TEXT,
+            Align::Center,
+        );
         let prev = Rect::new(head.x, head.y, 30.0, 30.0);
         let next = Rect::new(head.right() - 30.0, head.y, 30.0, 30.0);
         let py = Rect::new(head.x + 30.0, head.y, 30.0, 30.0);
         let ny = Rect::new(head.right() - 60.0, head.y, 30.0, 30.0);
-        for (b, icon) in [(prev, "chevron_left"), (next, "chevron_right"), (py, "expand_more"), (ny, "expand_less")] {
+        for (b, icon) in [
+            (prev, "chevron_left"),
+            (next, "chevron_right"),
+            (py, "expand_more"),
+            (ny, "expand_less"),
+        ] {
             let h = b.contains(m);
             if h {
                 self.p().rounded(b, 6.0, Color::WHITE.alpha(0.08));
@@ -1189,8 +1648,22 @@ impl Ui {
             p.year += 1;
         }
         let cw = (r.w - 16.0) / 7.0;
-        for (k, d) in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].iter().enumerate() {
-            self.text_in(d, Rect::new(r.x + 8.0 + cw * k as f32, r.y + 42.0, cw, 18.0), 11.0, Weight::Bold, if k >= 5 { ACCENT.alpha(0.8) } else { TEXT_FAINT }, Align::Center);
+        for (k, d) in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+            .iter()
+            .enumerate()
+        {
+            self.text_in(
+                d,
+                Rect::new(r.x + 8.0 + cw * k as f32, r.y + 42.0, cw, 18.0),
+                11.0,
+                Weight::Bold,
+                if k >= 5 {
+                    ACCENT.alpha(0.8)
+                } else {
+                    TEXT_FAINT
+                },
+                Align::Center,
+            );
         }
         let first = weekday(p.year, p.month, 1);
         let days = days_in_month(p.year, p.month);
@@ -1198,7 +1671,13 @@ impl Ui {
         for d in 1..=days {
             let cell_k = first + d as i32 - 1;
             let (col, row) = (cell_k % 7, cell_k / 7);
-            let cell = Rect::new(r.x + 8.0 + cw * col as f32, r.y + 62.0 + row as f32 * 30.0, cw, 28.0).inset(1.5);
+            let cell = Rect::new(
+                r.x + 8.0 + cw * col as f32,
+                r.y + 62.0 + row as f32 * 30.0,
+                cw,
+                28.0,
+            )
+            .inset(1.5);
             let h = cell.contains(m);
             let is_chosen = chosen == Some((p.year, p.month, d));
             if is_chosen {
@@ -1206,7 +1685,18 @@ impl Ui {
             } else if h {
                 self.p().rounded(cell, 7.0, Color::WHITE.alpha(0.09));
             }
-            self.text_in(&d.to_string(), cell, 12.5, Weight::Medium, if is_chosen { Color::rgba(20, 16, 8, 1.0) } else { TEXT }, Align::Center);
+            self.text_in(
+                &d.to_string(),
+                cell,
+                12.5,
+                Weight::Medium,
+                if is_chosen {
+                    Color::rgba(20, 16, 8, 1.0)
+                } else {
+                    TEXT
+                },
+                Align::Center,
+            );
             if h {
                 self.cursor = winit::window::CursorIcon::Pointer;
                 if click {
@@ -1219,7 +1709,6 @@ impl Ui {
         }
         self.date_popup = Some(p);
     }
-
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1242,7 +1731,11 @@ fn popup_rect(p: &Popup, size: Vec2) -> Rect {
     let row = 34.0;
     let h = (p.options.len() as f32 * row + 8.0).min(320.0);
     let below = p.anchor.bottom() + 6.0;
-    let y = if below + h > size.y - 10.0 { (p.anchor.y - 6.0 - h).max(10.0) } else { below };
+    let y = if below + h > size.y - 10.0 {
+        (p.anchor.y - 6.0 - h).max(10.0)
+    } else {
+        below
+    };
     Rect::new(p.anchor.x, y, p.anchor.w.max(200.0), h)
 }
 
@@ -1250,18 +1743,45 @@ fn date_rect(p: &DatePopup, size: Vec2) -> Rect {
     let h = 62.0 + 6.0 * 30.0 + 8.0;
     let w = 280.0;
     let below = p.anchor.bottom() + 6.0;
-    let y = if below + h > size.y - 10.0 { (p.anchor.y - 6.0 - h).max(10.0) } else { below };
+    let y = if below + h > size.y - 10.0 {
+        (p.anchor.y - 6.0 - h).max(10.0)
+    } else {
+        below
+    };
     Rect::new(p.anchor.x, y, w, h)
 }
 
-pub const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-pub const MONTHS_LONG: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+pub const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+pub const MONTHS_LONG: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
 
 pub fn parse_date(s: &str) -> (i32, u32, u32) {
     let mut it = s.trim().split('-');
     let y = it.next().and_then(|x| x.parse().ok()).unwrap_or(1989);
-    let m = it.next().and_then(|x| x.parse().ok()).unwrap_or(5).clamp(1, 12);
-    let d = it.next().and_then(|x| x.parse().ok()).unwrap_or(30).clamp(1, 31);
+    let m = it
+        .next()
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(5)
+        .clamp(1, 12);
+    let d = it
+        .next()
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(30)
+        .clamp(1, 31);
     (y, m, d)
 }
 
@@ -1318,10 +1838,22 @@ mod tests {
         let r = Rect::new(100.0, 100.0, 46.0, 46.0);
         ui.button("b", r, "", Some("chevron_left"), ButtonKind::Normal);
         // the icon is the only sprite drawn
-        let xs: Vec<f32> = ui.p().verts.iter().filter(|v| v.mode == [0.0, 1.0]).map(|v| v.pos[0]).collect();
+        let xs: Vec<f32> = ui
+            .p()
+            .verts
+            .iter()
+            .filter(|v| v.mode == [0.0, 1.0])
+            .map(|v| v.pos[0])
+            .collect();
         assert!(!xs.is_empty());
-        let middle = (xs.iter().cloned().fold(f32::MAX, f32::min) + xs.iter().cloned().fold(f32::MIN, f32::max)) * 0.5;
-        assert!((middle - r.center().x).abs() <= 0.5, "the icon is at {middle}, the button's middle at {}", r.center().x);
+        let middle = (xs.iter().cloned().fold(f32::MAX, f32::min)
+            + xs.iter().cloned().fold(f32::MIN, f32::max))
+            * 0.5;
+        assert!(
+            (middle - r.center().x).abs() <= 0.5,
+            "the icon is at {middle}, the button's middle at {}",
+            r.center().x
+        );
     }
 
     /// A long list of fields in a scroll area (a tour of 242 trips) stays well under the
@@ -1330,17 +1862,34 @@ mod tests {
     fn a_long_list_of_fields_leaves_layers_for_the_rest_of_the_page() {
         let mut ui = Ui::new();
         ui.begin(Vec2::new(1400.0, 900.0), 1.0, 1.0 / 60.0);
-        let mut texts: Vec<String> = (0..242).map(|k| format!("{}:{:02}", 4 + k / 60, k % 60)).collect();
+        let mut texts: Vec<String> = (0..242)
+            .map(|k| format!("{}:{:02}", 4 + k / 60, k % 60))
+            .collect();
         let options = vec!["a".to_string(), "b".to_string()];
-        ui.scroll_area("trips", Rect::new(300.0, 100.0, 900.0, 600.0), &mut |ui, v| {
-            for (i, t) in texts.iter_mut().enumerate() {
-                let y = v.y + i as f32 * 42.0;
-                ui.text_input(&format!("dep-{i}"), Rect::new(v.x, y, 110.0, 36.0), t, "h:mm", None);
-                let mut k = 0;
-                ui.select(&format!("trip-{i}"), Rect::new(v.x + 120.0, y, 200.0, 36.0), &mut k, &options);
-            }
-            242.0 * 42.0
-        });
+        ui.scroll_area(
+            "trips",
+            Rect::new(300.0, 100.0, 900.0, 600.0),
+            &mut |ui, v| {
+                for (i, t) in texts.iter_mut().enumerate() {
+                    let y = v.y + i as f32 * 42.0;
+                    ui.text_input(
+                        &format!("dep-{i}"),
+                        Rect::new(v.x, y, 110.0, 36.0),
+                        t,
+                        "h:mm",
+                        None,
+                    );
+                    let mut k = 0;
+                    ui.select(
+                        &format!("trip-{i}"),
+                        Rect::new(v.x + 120.0, y, 200.0, 36.0),
+                        &mut k,
+                        &options,
+                    );
+                }
+                242.0 * 42.0
+            },
+        );
         // the rail, last
         ui.p().rect(Rect::new(0.0, 0.0, 240.0, 900.0), Color::WHITE);
         let (layers, _, ranges) = ui.finish();
@@ -1402,7 +1951,11 @@ mod tests {
         ui.input.mouse = Vec2::new(r.x + 40.0, r.bottom() + 50.0);
         frame(&mut ui, &mut sel);
         let max = 200.0 * 34.0 - r.h + 8.0;
-        assert!((ui.popup.as_ref().unwrap().scroll - max).abs() < 0.5, "scrolled to {}", ui.popup.as_ref().unwrap().scroll);
+        assert!(
+            (ui.popup.as_ref().unwrap().scroll - max).abs() < 0.5,
+            "scrolled to {}",
+            ui.popup.as_ref().unwrap().scroll
+        );
         // let go over an option: it is not picked, the list stays open
         ui.input.mouse = Vec2::new(r.x + 40.0, r.center().y);
         ui.input.down = false;
@@ -1448,7 +2001,10 @@ mod tests {
     /// takes the first of them, Escape clears the text and then closes the list.
     #[test]
     fn typing_into_a_dropdown_searches_it() {
-        let options: Vec<String> = ["Depot", "Bauernhof", "Hauptbahnhof", "Kirche"].iter().map(|s| s.to_string()).collect();
+        let options: Vec<String> = ["Depot", "Bauernhof", "Hauptbahnhof", "Kirche"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let mut ui = Ui::new();
         let mut sel = 0;
         let field = Rect::new(20.0, 20.0, 240.0, 30.0);

@@ -87,7 +87,8 @@ pub(super) static DRIVER_SCAN: ScanCache = std::sync::Mutex::new(None);
 pub(super) static WEATHER_SCAN: ScanCache = std::sync::Mutex::new(None);
 
 /// Set by `option_do` when a value really changed: the open list is out of date then.
-pub(crate) static LIST_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) static LIST_DIRTY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
 mod tests {

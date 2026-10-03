@@ -80,7 +80,9 @@ mod vr_mirror_tests {
     fn fractional_credit_preserves_the_selected_total_rate() {
         for fps in [30, 60, 90] {
             let mut budget = 0.0;
-            let updates: usize = (0..fps * 10).map(|_| vr_mirror_updates(&mut budget, 1.0 / fps as f32, 16.0, 4)).sum();
+            let updates: usize = (0..fps * 10)
+                .map(|_| vr_mirror_updates(&mut budget, 1.0 / fps as f32, 16.0, 4))
+                .sum();
             assert!((159..=160).contains(&updates), "fps={fps}: {updates}");
         }
     }

@@ -37,7 +37,15 @@ pub struct Animation {
 
 impl Default for Animation {
     fn default() -> Self {
-        Self { origins: Vec::new(), kind: None, variable: String::new(), factor: 1.0, offset: 0.0, delay: 0.0, max_speed: 0.0 }
+        Self {
+            origins: Vec::new(),
+            kind: None,
+            variable: String::new(),
+            factor: 1.0,
+            offset: 0.0,
+            delay: 0.0,
+            max_speed: 0.0,
+        }
     }
 }
 
@@ -231,7 +239,11 @@ impl PsValue {
     /// names a variable.
     pub fn parse(s: &str) -> PsValue {
         let t = s.trim();
-        let numeric = t.chars().next().map(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | ',')).unwrap_or(true);
+        let numeric = t
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | ','))
+            .unwrap_or(true);
         if numeric {
             PsValue::Const(omsi_cfg::parse_f32(t))
         } else {
@@ -308,12 +320,28 @@ impl ParticleSystemDef {
 
     /// `[particle_emitter]`: position and direction, then labelled pairs (value, spread).
     pub fn from_emitter(e: &ParticleEmitter) -> ParticleSystemDef {
-        let lines: Vec<&str> = e.lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = e
+            .lines
+            .iter()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
         let f = |i: usize| lines.get(i).map(|s| omsi_cfg::parse_f32(s)).unwrap_or(0.0);
-        let mut d = ParticleSystemDef { pos: [f(0), f(1), f(2)], dir: [f(3), f(4), f(5)], calc_dist: 500.0, ..Default::default() };
+        let mut d = ParticleSystemDef {
+            pos: [f(0), f(1), f(2)],
+            dir: [f(3), f(4), f(5)],
+            calc_dist: 500.0,
+            ..Default::default()
+        };
         let mut i = 6;
         let pair = |i: usize| -> PsRange {
-            (lines.get(i).map(|s| PsValue::parse(s)).unwrap_or_default(), lines.get(i + 1).map(|s| PsValue::parse(s)).unwrap_or_default())
+            (
+                lines.get(i).map(|s| PsValue::parse(s)).unwrap_or_default(),
+                lines
+                    .get(i + 1)
+                    .map(|s| PsValue::parse(s))
+                    .unwrap_or_default(),
+            )
         };
         while i < lines.len() {
             let l = lines[i];
@@ -329,23 +357,56 @@ impl ParticleSystemDef {
                     d.velocity_all_round = label.ends_with("constvar");
                     i += 2;
                 }
-                "ps_freq" => { d.freq = pair(i); i += 2; }
-                "ps_instexplosion_partcount" => { d.burst = Some(pair(i)); i += 2; }
-                "ps_livetime" => { d.life = pair(i); i += 2; }
-                "ps_brakefactor" => { d.brake = pair(i); i += 2; }
-                "ps_g" => { d.gravity = pair(i); i += 2; }
-                "ps_size_start" => { d.size_start = pair(i); i += 2; }
-                "ps_size_grow" => { d.size_grow = pair(i); i += 2; }
-                "ps_alpha_initial" => { d.alpha_initial = pair(i); i += 2; }
-                "ps_alpha_final" => { d.alpha_final = pair(i); i += 2; }
+                "ps_freq" => {
+                    d.freq = pair(i);
+                    i += 2;
+                }
+                "ps_instexplosion_partcount" => {
+                    d.burst = Some(pair(i));
+                    i += 2;
+                }
+                "ps_livetime" => {
+                    d.life = pair(i);
+                    i += 2;
+                }
+                "ps_brakefactor" => {
+                    d.brake = pair(i);
+                    i += 2;
+                }
+                "ps_g" => {
+                    d.gravity = pair(i);
+                    i += 2;
+                }
+                "ps_size_start" => {
+                    d.size_start = pair(i);
+                    i += 2;
+                }
+                "ps_size_grow" => {
+                    d.size_grow = pair(i);
+                    i += 2;
+                }
+                "ps_alpha_initial" => {
+                    d.alpha_initial = pair(i);
+                    i += 2;
+                }
+                "ps_alpha_final" => {
+                    d.alpha_final = pair(i);
+                    i += 2;
+                }
                 "ps_rgb" => {
                     d.rgb = [pair(i), pair(i + 2), pair(i + 4)];
                     i += 6;
                 }
-                "ps_calcdist" => { d.calc_dist = f(i); i += 1; }
+                "ps_calcdist" => {
+                    d.calc_dist = f(i);
+                    i += 1;
+                }
                 "ps_emissive" => d.emissive = true,
                 "ps_bitmap" => {
-                    d.bitmap = lines.get(i).map(|s| s.to_string()).filter(|s| !s.starts_with("--"));
+                    d.bitmap = lines
+                        .get(i)
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.starts_with("--"));
                     i += 1;
                 }
                 _ => {}
@@ -412,8 +473,15 @@ impl Model {
     /// All declared cutters, plus legacy mesh fields supplied by programmatic callers.
     pub fn terrain_hole_meshes(&self) -> impl Iterator<Item = &str> {
         self.terrain_holes.iter().map(String::as_str).chain(
-            self.meshes.iter().filter_map(|m| m.terrain_hole.as_deref())
-                .filter(move |f| !self.terrain_holes.iter().any(|declared| declared.as_str() == *f)),
+            self.meshes
+                .iter()
+                .filter_map(|m| m.terrain_hole.as_deref())
+                .filter(move |f| {
+                    !self
+                        .terrain_holes
+                        .iter()
+                        .any(|declared| declared.as_str() == *f)
+                }),
         )
     }
 
@@ -423,7 +491,12 @@ impl Model {
     }
 
     pub fn parse(file: &CfgFile) -> Model {
-        let mut m = Model { path: file.path.clone(), detail_factor: 1.0, tex_detail_factor: 1.0, ..Default::default() };
+        let mut m = Model {
+            path: file.path.clone(),
+            detail_factor: 1.0,
+            tex_detail_factor: 1.0,
+            ..Default::default()
+        };
         let mut r = file.reader().disabled_blocks();
         while let Some(e) = r.next_entry(ANIM_TOKENS) {
             match e {
@@ -458,7 +531,9 @@ impl Model {
         let value = matches!(t, "offset" | "delay" | "maxspeed").then(|| r.f32());
         // a sub-command before any `[newanim]` of the mesh has nothing to act on (the
         // original stops reading the model there; no known file has one)
-        let Some(a) = self.meshes.last_mut().and_then(|m| m.animations.last_mut()) else { return };
+        let Some(a) = self.meshes.last_mut().and_then(|m| m.animations.last_mut()) else {
+            return;
+        };
         if let Some(o) = origin {
             a.origins.push(o);
         }
@@ -504,7 +579,10 @@ impl Model {
                     self.implicit_lod = false;
                 } else {
                     self.implicit_lod = false;
-                    self.lods.push(Lod { min_size, first_mesh: self.meshes.len() });
+                    self.lods.push(Lod {
+                        min_size,
+                        first_mesh: self.meshes.len(),
+                    });
                 }
             }
             "vfdmaxmin" => self.vfd_max_min = Some(r.f32s::<6>()),
@@ -530,7 +608,11 @@ impl Model {
                 let variable = r.str().to_string();
                 let path = r.str().to_string();
                 let value = r.i32();
-                self.ctc.push(Ctc { variable, path, value });
+                self.ctc.push(Ctc {
+                    variable,
+                    path,
+                    value,
+                });
             }
             "ctctexture" => {
                 let a = r.str().to_string();
@@ -548,7 +630,12 @@ impl Model {
                 let path = r.str().to_string();
                 let script_index = self.script_textures.len();
                 self.script_textures.push((width, height));
-                self.html_textures.push(HtmlTextureDef { script_index, width, height, path });
+                self.html_textures.push(HtmlTextureDef {
+                    script_index,
+                    width,
+                    height,
+                    path,
+                });
             }
             "texttexture" => {
                 let variable = r.str().to_string();
@@ -557,7 +644,16 @@ impl Model {
                 let height = r.i32();
                 let full_color = r.bool();
                 let color = r.f32s::<3>();
-                self.text_textures.push(TextTexture { variable, font, width, height, full_color, color, orientation: 0, grid: 1 });
+                self.text_textures.push(TextTexture {
+                    variable,
+                    font,
+                    width,
+                    height,
+                    full_color,
+                    color,
+                    orientation: 0,
+                    grid: 1,
+                });
             }
             "texttexture_enh" => {
                 // The same first eight fields as [texttexture] and two more: orientation
@@ -575,14 +671,26 @@ impl Model {
                 let extra: Vec<String> = (0..2).map(|_| r.str().to_string()).collect();
                 let orientation = omsi_cfg::parse_i32(&extra[0]);
                 let grid = omsi_cfg::parse_i32(&extra[1]).max(1);
-                self.text_textures.push(TextTexture { variable: variable.clone(), font: font.clone(), width, height, full_color, color, orientation, grid });
+                self.text_textures.push(TextTexture {
+                    variable: variable.clone(),
+                    font: font.clone(),
+                    width,
+                    height,
+                    full_color,
+                    color,
+                    orientation,
+                    grid,
+                });
                 let mut lines = vec![variable, font, width.to_string(), height.to_string()];
                 lines.extend(extra);
                 self.text_textures_enh.push(lines);
             }
             "mesh" => {
                 if self.lods.is_empty() {
-                    self.lods.push(Lod { min_size: 0.0, first_mesh: 0 });
+                    self.lods.push(Lod {
+                        min_size: 0.0,
+                        first_mesh: 0,
+                    });
                     self.implicit_lod = true;
                 }
                 let file = r.str().to_string();
@@ -590,14 +698,28 @@ impl Model {
                 // mesh before it, the first one lights 0 to 3 - a mesh without its own
                 // [illumination_interior] is lit like the one written before it (the GN92's
                 // rear saloon, its walls and seats, has no line of its own and stayed dark)
-                let illumination_interior = self.meshes.last().map(|m| m.illumination_interior.clone()).unwrap_or_else(|| vec![0, 1, 2, 3]);
-                self.meshes.push(MeshDef { file, lod: self.lods.len() - 1, illumination_interior, ..Default::default() });
+                let illumination_interior = self
+                    .meshes
+                    .last()
+                    .map(|m| m.illumination_interior.clone())
+                    .unwrap_or_else(|| vec![0, 1, 2, 3]);
+                self.meshes.push(MeshDef {
+                    file,
+                    lod: self.lods.len() - 1,
+                    illumination_interior,
+                    ..Default::default()
+                });
             }
             "item" => {
                 let name = r.str().to_string();
                 let ctc = r.str().to_string();
                 let texture = r.str().to_string();
-                self.items.push(ModelItem { name, ctc, texture, set_vars: Vec::new() });
+                self.items.push(ModelItem {
+                    name,
+                    ctc,
+                    texture,
+                    set_vars: Vec::new(),
+                });
             }
             "setvar" => {
                 let n = r.str().to_string();
@@ -693,13 +815,24 @@ impl Model {
                 // optional texture line (not a keyword, not empty, not numeric)
                 let save = r.pos();
                 let t = r.str();
-                if !t.trim().is_empty() && omsi_cfg::keyword_of(t).is_none() && t.trim().parse::<f64>().is_err() && t.contains('.') {
+                if !t.trim().is_empty()
+                    && omsi_cfg::keyword_of(t).is_none()
+                    && t.trim().parse::<f64>().is_err()
+                    && t.contains('.')
+                {
                     texture = Some(t.to_string());
                 } else {
                     r.seek(save);
                 }
                 if let Some(m) = self.cur_mesh() {
-                    m.light_enh.push(LightEnh { pos, color, size, variable, values, texture });
+                    m.light_enh.push(LightEnh {
+                        pos,
+                        color,
+                        size,
+                        variable,
+                        values,
+                        texture,
+                    });
                 }
             }
             "light_enh_2" => {
@@ -723,24 +856,57 @@ impl Model {
                     let mut ahead = r.clone();
                     let l = ahead.str().trim().to_string();
                     let lower = l.to_ascii_lowercase();
-                    if [".bmp", ".tga", ".dds", ".png", ".jpg"].iter().any(|e| lower.ends_with(e)) {
+                    if [".bmp", ".tga", ".dds", ".png", ".jpg"]
+                        .iter()
+                        .any(|e| lower.ends_with(e))
+                    {
                         bitmap = Some(l);
                         *r = ahead;
                     }
                 }
-                let cone = values.get(1).map(|v| omsi_cfg::parse_f32(v) >= 0.5).unwrap_or(false);
-                let time_const = values.get(2).map(|v| omsi_cfg::parse_f32(v).max(0.0)).unwrap_or(0.0);
+                let cone = values
+                    .get(1)
+                    .map(|v| omsi_cfg::parse_f32(v) >= 0.5)
+                    .unwrap_or(false);
+                let time_const = values
+                    .get(2)
+                    .map(|v| omsi_cfg::parse_f32(v).max(0.0))
+                    .unwrap_or(0.0);
                 if let Some(m) = self.cur_mesh() {
-                    m.light_enh_2.push(LightEnh2 { pos, dir, up, omni, rotating, color, size, cone_inner, cone_outer, variable, factor, z_offset, values, cone, time_const, bitmap });
+                    m.light_enh_2.push(LightEnh2 {
+                        pos,
+                        dir,
+                        up,
+                        omni,
+                        rotating,
+                        color,
+                        size,
+                        cone_inner,
+                        cone_outer,
+                        variable,
+                        factor,
+                        z_offset,
+                        values,
+                        cone,
+                        time_const,
+                        bitmap,
+                    });
                 }
             }
-            "spotlight" => self.spotlights.push(Spotlight { values: r.f32s::<12>() }),
+            "spotlight" => self.spotlights.push(Spotlight {
+                values: r.f32s::<12>(),
+            }),
             "interiorlight" => {
                 let variable = r.str().to_string();
                 let range = r.f32();
                 let color = r.f32s::<3>();
                 let pos = r.f32s::<3>();
-                self.interior_lights.push(InteriorLight { variable, range, color, pos });
+                self.interior_lights.push(InteriorLight {
+                    variable,
+                    range,
+                    color,
+                    pos,
+                });
             }
             "texchanges" => self.texchanges.push(r.str().to_string()),
             "matl" => {
@@ -751,13 +917,22 @@ impl Model {
                     // the same one goes on with it (TH_Wald's chain barrier gives its slot an
                     // envmap in one block and [matl_alpha] 1 in the next - the second block was
                     // lost and the chain stood on a white band)
-                    let same = |d: &MaterialDef| !d.item && d.change.is_none() && d.index == index && d.texture.eq_ignore_ascii_case(&texture);
+                    let same = |d: &MaterialDef| {
+                        !d.item
+                            && d.change.is_none()
+                            && d.index == index
+                            && d.texture.eq_ignore_ascii_case(&texture)
+                    };
                     match m.materials.iter().position(same) {
                         Some(k) => {
                             let d = m.materials.remove(k);
                             m.materials.push(d);
                         }
-                        None => m.materials.push(MaterialDef { texture, index, ..Default::default() }),
+                        None => m.materials.push(MaterialDef {
+                            texture,
+                            index,
+                            ..Default::default()
+                        }),
                     }
                 }
             }
@@ -766,22 +941,41 @@ impl Model {
                 let index = r.i32();
                 let var = r.str().to_string();
                 if let Some(m) = self.cur_mesh() {
-                    m.materials.push(MaterialDef { texture: texture.clone(), index, change: Some((texture, index, var)), ..Default::default() });
+                    m.materials.push(MaterialDef {
+                        texture: texture.clone(),
+                        index,
+                        change: Some((texture, index, var)),
+                        ..Default::default()
+                    });
                 }
             }
             "matl_item" => {
                 // the variant of the preceding [matl_change]: starts as a copy of the base
                 // material, the following matl_* keywords change the variant only
                 if let Some(mesh) = self.cur_mesh() {
-                    if let Some(change) = mesh.materials.last().filter(|m| m.change.is_some()).cloned() {
+                    if let Some(change) = mesh
+                        .materials
+                        .last()
+                        .filter(|m| m.change.is_some())
+                        .cloned()
+                    {
                         // inherit the plain [matl] of the same slot (alpha, transmap, ...)
                         let base = mesh
                             .materials
                             .iter()
                             .rev()
-                            .find(|m| !m.item && m.change.is_none() && m.texture.eq_ignore_ascii_case(&change.texture) && m.index == change.index)
+                            .find(|m| {
+                                !m.item
+                                    && m.change.is_none()
+                                    && m.texture.eq_ignore_ascii_case(&change.texture)
+                                    && m.index == change.index
+                            })
                             .cloned();
-                        let mut item = base.unwrap_or_else(|| MaterialDef { texture: change.texture.clone(), index: change.index, ..Default::default() });
+                        let mut item = base.unwrap_or_else(|| MaterialDef {
+                            texture: change.texture.clone(),
+                            index: change.index,
+                            ..Default::default()
+                        });
                         item.change = change.change.clone();
                         item.item = true;
                         mesh.materials.push(item);
@@ -942,8 +1136,15 @@ impl Model {
                 self.smokes.push(Smoke { params });
             }
             "particle_emitter" => {
-                let lines: Vec<String> = r.rest_of_block().into_iter().map(|s| s.to_string()).collect();
-                self.particle_emitters.push(ParticleEmitter { lines, attach_to: None });
+                let lines: Vec<String> = r
+                    .rest_of_block()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                self.particle_emitters.push(ParticleEmitter {
+                    lines,
+                    attach_to: None,
+                });
             }
             "ps_attachto" => {
                 let v = r.f32s::<3>();
@@ -962,14 +1163,22 @@ impl Model {
         self.particle_emitters
             .iter()
             .map(ParticleSystemDef::from_emitter)
-            .chain(self.smokes.iter().map(|s| ParticleSystemDef::from_smoke(&s.params)))
+            .chain(
+                self.smokes
+                    .iter()
+                    .map(|s| ParticleSystemDef::from_smoke(&s.params)),
+            )
             .collect()
     }
 
     /// Meshes belonging to LOD `i`.
     pub fn lod_meshes(&self, i: usize) -> &[MeshDef] {
         let start = self.lods[i].first_mesh;
-        let end = self.lods.get(i + 1).map(|l| l.first_mesh).unwrap_or(self.meshes.len());
+        let end = self
+            .lods
+            .get(i + 1)
+            .map(|l| l.first_mesh)
+            .unwrap_or(self.meshes.len());
         &self.meshes[start..end]
     }
 }
@@ -978,7 +1187,18 @@ impl Model {
 /// the way it compares keywords (so the EN92 ignition key's tab-indented origin lines, the
 /// BR481 mirrors' `origin_rot_Y` and the F90 lorry's indented, switched-off second rear axle
 /// are free text), anywhere after the `[newanim]` they belong to.
-pub const ANIM_TOKENS: &[&str] = &["origin_trans", "origin_rot_x", "origin_rot_y", "origin_rot_z", "origin_from_mesh", "anim_rot", "anim_trans", "offset", "delay", "maxspeed"];
+pub const ANIM_TOKENS: &[&str] = &[
+    "origin_trans",
+    "origin_rot_x",
+    "origin_rot_y",
+    "origin_rot_z",
+    "origin_from_mesh",
+    "anim_rot",
+    "anim_trans",
+    "offset",
+    "delay",
+    "maxspeed",
+];
 
 /// One `[newtexchangemaster]` of a `[texchanges]` file: the texture name used in the mesh,
 /// the script variable that picks a replacement, and the replacements themselves.
@@ -1003,7 +1223,10 @@ impl TexChangeMaster {
             return None;
         }
         let i = value.trunc() as i64;
-        usize::try_from(i).ok().and_then(|i| self.entries.get(i)).map(|s| s.as_str())
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| self.entries.get(i))
+            .map(|s| s.as_str())
     }
 }
 
@@ -1017,7 +1240,12 @@ pub fn parse_texchanges(file: &CfgFile) -> Vec<TexChangeMaster> {
             "newtexchangemaster" => {
                 let texture = r.str().trim().to_string();
                 let variable = r.word().to_string();
-                out.push(TexChangeMaster { texture, variable, entries: Vec::new(), dir: dir.clone() });
+                out.push(TexChangeMaster {
+                    texture,
+                    variable,
+                    entries: Vec::new(),
+                    dir: dir.clone(),
+                });
             }
             "entries" => {
                 let n = r.usize();
@@ -1058,7 +1286,10 @@ mod tests {
         ));
         assert!(model.meshes.is_empty());
         assert!(model.lods.is_empty());
-        assert_eq!(model.terrain_hole_meshes().collect::<Vec<_>>(), ["first.o3d", "second.o3d"]);
+        assert_eq!(
+            model.terrain_hole_meshes().collect::<Vec<_>>(),
+            ["first.o3d", "second.o3d"]
+        );
 
         model = super::Model::parse(&omsi_cfg::CfgFile::from_str(
             "cutters.cfg",
@@ -1067,19 +1298,28 @@ mod tests {
         assert_eq!(model.meshes.len(), 1);
         assert_eq!(model.meshes[0].file, "visible.o3d");
         assert_eq!(model.meshes[0].terrain_hole.as_deref(), Some("third.o3d"));
-        assert_eq!(model.terrain_hole_meshes().collect::<Vec<_>>(), ["first.o3d", "second.o3d", "third.o3d"]);
+        assert_eq!(
+            model.terrain_hole_meshes().collect::<Vec<_>>(),
+            ["first.o3d", "second.o3d", "third.o3d"]
+        );
 
         model.meshes.push(super::MeshDef {
             terrain_hole: Some("legacy.o3d".into()),
             ..Default::default()
         });
-        assert_eq!(model.terrain_hole_meshes().collect::<Vec<_>>(), ["first.o3d", "second.o3d", "third.o3d", "legacy.o3d"]);
+        assert_eq!(
+            model.terrain_hole_meshes().collect::<Vec<_>>(),
+            ["first.o3d", "second.o3d", "third.o3d", "legacy.o3d"]
+        );
     }
 
     /// Two [matl] blocks of one material are one material (Absperrung_grau.sco).
     #[test]
     fn a_second_matl_block_goes_on_with_the_same_material() {
-        let f = omsi_cfg::CfgFile::from_str("x.sco", "[mesh]\nx.o3d\n\n[matl]\nAbsperr_gr.dds\n0\n[matl_envmap]\nenvmap_Glas.dds\n0.03\n\n[matl]\nOther.dds\n0\n\n[matl]\nAbsperr_gr.dds\n0\n[matl_alpha]\n1\n");
+        let f = omsi_cfg::CfgFile::from_str(
+            "x.sco",
+            "[mesh]\nx.o3d\n\n[matl]\nAbsperr_gr.dds\n0\n[matl_envmap]\nenvmap_Glas.dds\n0.03\n\n[matl]\nOther.dds\n0\n\n[matl]\nAbsperr_gr.dds\n0\n[matl_alpha]\n1\n",
+        );
         let m = super::Model::parse(&f);
         let mats = &m.meshes[0].materials;
         assert_eq!(mats.len(), 2, "{mats:?}");
@@ -1111,7 +1351,14 @@ mod tests {
         assert_eq!(m.items.len(), 2);
         assert_eq!(m.items[0].set_vars, vec![("Display_Type".to_string(), 2.0)]);
         assert!(m.items[1].set_vars.is_empty());
-        assert_eq!((m.items[1].name.as_str(), m.items[1].ctc.as_str(), m.items[1].texture.as_str()), ("HVL", "body", "hvl.dds"));
+        assert_eq!(
+            (
+                m.items[1].name.as_str(),
+                m.items[1].ctc.as_str(),
+                m.items[1].texture.as_str()
+            ),
+            ("HVL", "body", "hvl.dds")
+        );
         assert_eq!(m.set_vars, vec![("lost".to_string(), 1.0)]);
     }
 
@@ -1135,7 +1382,10 @@ mod tests {
         assert_eq!(m.meshes.len(), 1);
         let a = &m.meshes[0].animations[0];
         assert_eq!(a.origins, vec![AnimOrigin::RotY(-90.0)]);
-        assert_eq!((a.kind, a.variable.as_str()), (Some(AnimKind::Trans), "Axle_Suspension_1_R"));
+        assert_eq!(
+            (a.kind, a.variable.as_str()),
+            (Some(AnimKind::Trans), "Axle_Suspension_1_R")
+        );
     }
 
     /// The EN92's ignition key: indented origin lines are free text, the column-0 ones count;
@@ -1146,7 +1396,10 @@ mod tests {
         let m = Model::parse(&CfgFile::from_str("model.cfg", text));
         let anims = &m.meshes[0].animations;
         assert_eq!(anims[0].origins, vec![AnimOrigin::FromMesh]);
-        assert_eq!((anims[0].kind, anims[0].variable.as_str(), anims[0].factor), (Some(AnimKind::Rot), "cp_schluessel_rot", -90.0));
+        assert_eq!(
+            (anims[0].kind, anims[0].variable.as_str(), anims[0].factor),
+            (Some(AnimKind::Rot), "cp_schluessel_rot", -90.0)
+        );
         assert_eq!(anims[1].origins, vec![AnimOrigin::RotZ(90.0)]);
         assert_eq!(anims[1].max_speed, 30.0);
         assert_eq!(m.meshes[0].materials[0].texture, "key.bmp");

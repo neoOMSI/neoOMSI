@@ -17,14 +17,29 @@ pub(crate) struct LogState {
 
 /// The machine, the program and its settings, once at the start.
 pub(crate) fn log_system(settings: &crate::settings::Settings) {
-    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0);
-    let ram = crate::memory::physical_memory().map(|b| b / 1_000_000).unwrap_or(0);
-    log::info!("system: {} {} ({}), {cpus} threads, {ram} MB memory", std::env::consts::OS, std::env::consts::ARCH, os_version());
-    log::info!("command line: {}", std::env::args().collect::<Vec<_>>().join(" "));
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(0);
+    let ram = crate::memory::physical_memory()
+        .map(|b| b / 1_000_000)
+        .unwrap_or(0);
+    log::info!(
+        "system: {} {} ({}), {cpus} threads, {ram} MB memory",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        os_version()
+    );
+    log::info!(
+        "command line: {}",
+        std::env::args().collect::<Vec<_>>().join(" ")
+    );
     if let Ok(d) = std::env::current_dir() {
         log::info!("working folder: {}", d.display());
     }
-    let env: Vec<String> = std::env::vars().filter(|(k, _)| k.starts_with("OMSI_") || k == "RUST_LOG" || k == "WGPU_BACKEND").map(|(k, v)| format!("{k}={v}")).collect();
+    let env: Vec<String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("OMSI_") || k == "RUST_LOG" || k == "WGPU_BACKEND")
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
     if !env.is_empty() {
         log::info!("environment: {}", env.join(" "));
     }
@@ -34,7 +49,10 @@ pub(crate) fn log_system(settings: &crate::settings::Settings) {
 fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
-        if let Ok(o) = std::process::Command::new("sw_vers").arg("-productVersion").output() {
+        if let Ok(o) = std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+        {
             return format!("macOS {}", String::from_utf8_lossy(&o.stdout).trim());
         }
     }
@@ -42,13 +60,19 @@ fn os_version() -> String {
     {
         if let Ok(s) = std::fs::read_to_string("/etc/os-release") {
             if let Some(l) = s.lines().find(|l| l.starts_with("PRETTY_NAME=")) {
-                return l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string();
+                return l
+                    .trim_start_matches("PRETTY_NAME=")
+                    .trim_matches('"')
+                    .to_string();
             }
         }
     }
     #[cfg(windows)]
     {
-        if let Ok(o) = std::process::Command::new("cmd").args(["/C", "ver"]).output() {
+        if let Ok(o) = std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .output()
+        {
             return String::from_utf8_lossy(&o.stdout).trim().to_string();
         }
     }
@@ -84,13 +108,29 @@ impl App {
         s.worst_dt = 0.0;
         let bus = self.player.as_ref().map(|p| {
             let v = &p.vehicle;
-            format!("bus at ({:.1}, {:.1}, {:.1}) heading {:.0}, {:.0} km/h", v.position.x, v.position.y, v.position.z, v.heading, v.physics.velocity_kmh())
+            format!(
+                "bus at ({:.1}, {:.1}, {:.1}) heading {:.0}, {:.0} km/h",
+                v.position.x,
+                v.position.y,
+                v.position.z,
+                v.heading,
+                v.physics.velocity_kmh()
+            )
         });
-        let cam = self.camera.as_ref().map(|c| format!("camera at ({:.0}, {:.0}, {:.0})", c.position.x, c.position.y, c.position.z));
+        let cam = self.camera.as_ref().map(|c| {
+            format!(
+                "camera at ({:.0}, {:.0}, {:.0})",
+                c.position.x, c.position.y, c.position.z
+            )
+        });
         let traffic = self.traffic.as_ref().map(|t| t.cars.len()).unwrap_or(0);
         let time = self.clock.time;
         let gpu = match (self.renderer.as_ref(), self.scene.as_ref()) {
-            (Some(r), Some(sc)) => format!(", GPU memory: textures {:.0} MB, meshes {:.0} MB", r.texture_bytes(sc) as f64 / 1e6, r.mesh_bytes(sc) as f64 / 1e6),
+            (Some(r), Some(sc)) => format!(
+                ", GPU memory: textures {:.0} MB, meshes {:.0} MB",
+                r.texture_bytes(sc) as f64 / 1e6,
+                r.mesh_bytes(sc) as f64 / 1e6
+            ),
             _ => String::new(),
         };
         log::info!(

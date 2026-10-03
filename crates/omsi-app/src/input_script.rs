@@ -64,8 +64,13 @@ pub(crate) fn parse_input_script() -> Vec<(f32, String)> {
 impl App {
     pub(crate) fn script_key(name: &str) -> Option<KeyCode> {
         use KeyCode::*;
-        pub(crate) const LETTERS: [KeyCode; 26] = [KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ];
-        pub(crate) const DIGITS: [KeyCode; 10] = [Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
+        pub(crate) const LETTERS: [KeyCode; 26] = [
+            KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN,
+            KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
+        ];
+        pub(crate) const DIGITS: [KeyCode; 10] = [
+            Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
+        ];
         pub(crate) const FKEYS: [KeyCode; 12] = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12];
         let b = name.as_bytes();
         if b.len() == 1 && b[0].is_ascii_alphabetic() {
@@ -175,7 +180,12 @@ impl App {
                     } else {
                         self.wheel(n);
                     }
-                    log::info!("input script: wheel {n}: menu line {:?}, chooser {:?}, placing heading {:?}", self.game_menu, self.chooser, self.placing.as_ref().map(|p| p.heading));
+                    log::info!(
+                        "input script: wheel {n}: menu line {:?}, chooser {:?}, placing heading {:?}",
+                        self.game_menu,
+                        self.chooser,
+                        self.placing.as_ref().map(|p| p.heading)
+                    );
                 }
                 "click" => {
                     if self.placing.is_some() && self.game_menu.is_none() {
@@ -187,7 +197,13 @@ impl App {
                         self.on_left(true);
                         self.on_left(false);
                     }
-                    log::info!("input script: click: placing {:?}, placed at {:?}", self.placing.as_ref().map(|p| (p.at, p.blocked)), self.placed.last().map(|q| (q.vehicle.position, q.vehicle.heading)));
+                    log::info!(
+                        "input script: click: placing {:?}, placed at {:?}",
+                        self.placing.as_ref().map(|p| (p.at, p.blocked)),
+                        self.placed
+                            .last()
+                            .map(|q| (q.vehicle.position, q.vehicle.heading))
+                    );
                 }
                 "both" => {
                     if arg == "down" {
@@ -197,12 +213,22 @@ impl App {
                     } else {
                         self.buttons_held = (false, false);
                         self.both_drag = None;
-                        log::info!("input script: both buttons up: zoom {:?}, orbit {:.1}", self.view_zoom.get(&self.view), self.orbit);
+                        log::info!(
+                            "input script: both buttons up: zoom {:?}, orbit {:.1}",
+                            self.view_zoom.get(&self.view),
+                            self.orbit
+                        );
                     }
                 }
                 "right" => {
                     self.on_right(arg == "down");
-                    log::info!("input script: right button {arg}: zoom drag {}, look {}, zoom {:?}, orbit {:.1}", self.both_drag.is_some(), self.mouse_look, self.view_zoom.get(&self.view), self.orbit);
+                    log::info!(
+                        "input script: right button {arg}: zoom drag {}, look {}, zoom {:?}, orbit {:.1}",
+                        self.both_drag.is_some(),
+                        self.mouse_look,
+                        self.view_zoom.get(&self.view),
+                        self.orbit
+                    );
                 }
                 "press" => self.on_left(true),
                 "release" => self.on_left(false),
@@ -245,12 +271,27 @@ impl App {
                         .as_ref()
                         .map(|w| w.loaded_tiles().len())
                         .unwrap_or(0);
-                    log::info!("input script: bus at {:?} (ground {:?}), camera at {:?}, {tiles} tiles loaded", bus.map(|b| b.0), bus.and_then(|b| b.1), self.camera.as_ref().map(|c| c.position));
+                    log::info!(
+                        "input script: bus at {:?} (ground {:?}), camera at {:?}, {tiles} tiles loaded",
+                        bus.map(|b| b.0),
+                        bus.and_then(|b| b.1),
+                        self.camera.as_ref().map(|c| c.position)
+                    );
                     if let (Some(p), Some(c)) = (self.player.as_ref(), self.camera.as_ref()) {
                         let d = c.position - p.vehicle.position;
                         let h = p.vehicle.heading.to_radians();
-                        let (fwd, right) = (glam::DVec2::new(h.sin(), h.cos()), glam::DVec2::new(h.cos(), -h.sin()));
-                        log::info!("input script: view {} camera in the bus ({:.2}, {:.2}, {:.2}), on foot {:?}", self.view, d.truncate().dot(right), d.truncate().dot(fwd), d.z, self.on_foot.as_ref().map(|f| f.pos));
+                        let (fwd, right) = (
+                            glam::DVec2::new(h.sin(), h.cos()),
+                            glam::DVec2::new(h.cos(), -h.sin()),
+                        );
+                        log::info!(
+                            "input script: view {} camera in the bus ({:.2}, {:.2}, {:.2}), on foot {:?}",
+                            self.view,
+                            d.truncate().dot(right),
+                            d.truncate().dot(fwd),
+                            d.z,
+                            self.on_foot.as_ref().map(|f| f.pos)
+                        );
                     }
                 }
                 "log" if arg == "mouse" => {
@@ -284,7 +325,10 @@ impl App {
                     );
                 }
                 "menu" => {
-                    if let Some(n) = arg.strip_prefix("pick:").and_then(|n| n.parse::<usize>().ok()) {
+                    if let Some(n) = arg
+                        .strip_prefix("pick:")
+                        .and_then(|n| n.parse::<usize>().ok())
+                    {
                         self.chooser_pick(n);
                     } else {
                         if self.game_menu.is_none() {
@@ -299,8 +343,26 @@ impl App {
                             }
                         }
                     }
-                    let riders = self.humans.as_ref().map(|h| (h.people_in(crate::humans::BusId::Player), self.placed.iter().map(|q| h.people_in(crate::humans::BusId::Ai(crate::humans::placed_bus_id(q.uid)))).collect::<Vec<_>>()));
-                    log::info!("input script: menu {arg}: player {:?}, on foot {:?}, placed {}, people in the bus / the placed ones {:?}", self.player.as_ref().map(|p| p.vehicle.position), self.on_foot.as_ref().map(|f| f.pos), self.placed.len(), riders);
+                    let riders = self.humans.as_ref().map(|h| {
+                        (
+                            h.people_in(crate::humans::BusId::Player),
+                            self.placed
+                                .iter()
+                                .map(|q| {
+                                    h.people_in(crate::humans::BusId::Ai(
+                                        crate::humans::placed_bus_id(q.uid),
+                                    ))
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    });
+                    log::info!(
+                        "input script: menu {arg}: player {:?}, on foot {:?}, placed {}, people in the bus / the placed ones {:?}",
+                        self.player.as_ref().map(|p| p.vehicle.position),
+                        self.on_foot.as_ref().map(|f| f.pos),
+                        self.placed.len(),
+                        riders
+                    );
                 }
                 "dumptex" => {
                     if let Some(p) = self.player.as_ref() {

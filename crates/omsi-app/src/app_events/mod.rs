@@ -53,11 +53,23 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(false) => self.on_focus_lost(),
             WindowEvent::KeyboardInput { event, .. } => self.on_window_key(event_loop, event),
-            WindowEvent::MouseInput { state, button: winit::event::MouseButton::Right, .. } => self.on_mouse_right(state),
-            WindowEvent::MouseInput { state, button: winit::event::MouseButton::Middle, .. } => self.on_mouse_middle(state),
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Right,
+                ..
+            } => self.on_mouse_right(state),
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Middle,
+                ..
+            } => self.on_mouse_middle(state),
             WindowEvent::MouseWheel { delta, .. } => self.on_mouse_wheel(delta),
             WindowEvent::CursorMoved { position, .. } => self.on_cursor_moved(position),
-            WindowEvent::MouseInput { state, button: winit::event::MouseButton::Left, .. } => self.on_mouse_left(event_loop, state),
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => self.on_mouse_left(event_loop, state),
             WindowEvent::Touch(t) => self.on_touch(event_loop, t),
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
@@ -77,7 +89,9 @@ impl ApplicationHandler for App {
         }
         if let DeviceEvent::MouseMotion { delta } = event {
             if self.vr_nav_edit.is_some() {
-                if self.window_focused { self.vr_nav_drag(delta.0 as f32, delta.1 as f32); }
+                if self.window_focused {
+                    self.vr_nav_drag(delta.0 as f32, delta.1 as f32);
+                }
                 return;
             }
             if self.game_menu.is_some() {

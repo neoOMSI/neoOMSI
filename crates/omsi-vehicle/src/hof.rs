@@ -56,7 +56,8 @@ impl Hof {
     /// minutes.
     pub fn read_name(path: &Path) -> Option<String> {
         type Names = std::collections::HashMap<PathBuf, Option<String>>;
-        static CACHE: std::sync::OnceLock<std::sync::Mutex<(u64, Names)>> = std::sync::OnceLock::new();
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<(u64, Names)>> =
+            std::sync::OnceLock::new();
         let cache = CACHE.get_or_init(Default::default);
         let generation = omsi_cfg::content_generation();
         {
@@ -77,19 +78,36 @@ impl Hof {
             }
             String::new()
         });
-        cache.lock().unwrap_or_else(|e| e.into_inner()).1.insert(path.to_path_buf(), name.clone());
+        cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .1
+            .insert(path.to_path_buf(), name.clone());
         name
     }
 
     pub fn parse(f: &CfgFile) -> Hof {
-        let mut h = Hof { path: f.path.clone(), string_count_terminus: 0, string_count_busstop: 0, ..Default::default() };
+        let mut h = Hof {
+            path: f.path.clone(),
+            string_count_terminus: 0,
+            string_count_busstop: 0,
+            ..Default::default()
+        };
         // `stringcount_terminus` / `stringcount_busstop` are bare (unbracketed) directives.
         for (i, l) in f.lines.iter().enumerate() {
             let w = l.trim_end();
             if w.eq_ignore_ascii_case("stringcount_terminus") {
-                h.string_count_terminus = f.lines.get(i + 1).map(|s| omsi_cfg::parse_i64(s).max(0) as usize).unwrap_or(0);
+                h.string_count_terminus = f
+                    .lines
+                    .get(i + 1)
+                    .map(|s| omsi_cfg::parse_i64(s).max(0) as usize)
+                    .unwrap_or(0);
             } else if w.eq_ignore_ascii_case("stringcount_busstop") {
-                h.string_count_busstop = f.lines.get(i + 1).map(|s| omsi_cfg::parse_i64(s).max(0) as usize).unwrap_or(0);
+                h.string_count_busstop = f
+                    .lines
+                    .get(i + 1)
+                    .map(|s| omsi_cfg::parse_i64(s).max(0) as usize)
+                    .unwrap_or(0);
             }
         }
         // the stock depot files are spreadsheet exports: every line ends in tabs, which the
@@ -110,9 +128,21 @@ impl Hof {
                     let all_exit = k.ends_with("allexit");
                     let code = r.i32();
                     let texture_id = r.str().to_string();
-                    let terminus_stop = if all_exit { None } else { Some(texture_id.clone()) };
-                    let strings = (0..h.string_count_terminus).map(|_| r.str().to_string()).collect();
-                    h.termini.push(Terminus { code, texture_id, terminus_stop, all_exit, strings });
+                    let terminus_stop = if all_exit {
+                        None
+                    } else {
+                        Some(texture_id.clone())
+                    };
+                    let strings = (0..h.string_count_terminus)
+                        .map(|_| r.str().to_string())
+                        .collect();
+                    h.termini.push(Terminus {
+                        code,
+                        texture_id,
+                        terminus_stop,
+                        all_exit,
+                        strings,
+                    });
                 }
                 "addterminus_list" => {
                     // One row per terminus, tab separated: a flag column (`{ALLEX}` or
@@ -130,17 +160,30 @@ impl Hof {
                         let all_exit = cols[0].trim().eq_ignore_ascii_case("{ALLEX}");
                         let code = omsi_cfg::parse_i32(cols.get(1).unwrap_or(&"0"));
                         let texture_id = cols.get(2).unwrap_or(&"").trim().to_string();
-                        let terminus_stop = if all_exit { None } else { Some(texture_id.clone()) };
-                        let mut strings: Vec<String> = cols.iter().skip(3).map(|s| s.to_string()).collect();
+                        let terminus_stop = if all_exit {
+                            None
+                        } else {
+                            Some(texture_id.clone())
+                        };
+                        let mut strings: Vec<String> =
+                            cols.iter().skip(3).map(|s| s.to_string()).collect();
                         if h.string_count_terminus > 0 {
                             strings.resize(h.string_count_terminus, String::new());
                         }
-                        h.termini.push(Terminus { code, texture_id, terminus_stop, all_exit, strings });
+                        h.termini.push(Terminus {
+                            code,
+                            texture_id,
+                            terminus_stop,
+                            all_exit,
+                            strings,
+                        });
                     }
                 }
                 "addbusstop" => {
                     let ident = r.str().to_string();
-                    let strings = (0..h.string_count_busstop).map(|_| r.str().to_string()).collect();
+                    let strings = (0..h.string_count_busstop)
+                        .map(|_| r.str().to_string())
+                        .collect();
                     h.bus_stops.push(BusStop { ident, strings });
                 }
                 "addbusstop_list" => {
@@ -150,7 +193,10 @@ impl Hof {
                         }
                         let mut cols = l.split('\t');
                         let ident = cols.next().unwrap_or("").trim().to_string();
-                        h.bus_stops.push(BusStop { ident, strings: cols.map(|s| s.to_string()).collect() });
+                        h.bus_stops.push(BusStop {
+                            ident,
+                            strings: cols.map(|s| s.to_string()).collect(),
+                        });
                     }
                 }
                 "infosystem_trip" => {
@@ -158,7 +204,13 @@ impl Hof {
                     let name = r.str().to_string();
                     let route = r.str().to_string();
                     let line = r.str().to_string();
-                    h.info_trips.push(InfoTrip { code, name, route, line, extra: Vec::new() });
+                    h.info_trips.push(InfoTrip {
+                        code,
+                        name,
+                        route,
+                        line,
+                        extra: Vec::new(),
+                    });
                     // every trip has a stop list, empty until one follows (THof.LoadFromFile
                     // 0x7ea142), so that the lists stay in step with the trips
                     h.info_busstop_lists.push(Vec::new());
@@ -173,7 +225,9 @@ impl Hof {
                         *last = list;
                     }
                 }
-                "infosystem_busstop" => h.info_busstops.push((0..3).map(|_| r.str().to_string()).collect()),
+                "infosystem_busstop" => h
+                    .info_busstops
+                    .push((0..3).map(|_| r.str().to_string()).collect()),
                 _ => {}
             }
         }
@@ -193,15 +247,29 @@ pub fn depot_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = Vec::new();
     for d in omsi_cfg::mirrored_dirs(dir) {
         for p in omsi_cfg::vfs::read_dir_paths(&d) {
-            if !p.extension().map(|e| e.eq_ignore_ascii_case("hof")).unwrap_or(false) {
+            if !p
+                .extension()
+                .map(|e| e.eq_ignore_ascii_case("hof"))
+                .unwrap_or(false)
+            {
                 continue;
             }
-            if seen.insert(p.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase()) {
+            if seen.insert(
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_ascii_lowercase(),
+            ) {
                 files.push(p);
             }
         }
     }
-    files.sort_by_key(|f| f.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase());
+    files.sort_by_key(|f| {
+        f.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+    });
     files
 }
 
@@ -212,7 +280,11 @@ pub fn depot_in(dir: &Path, name: &str) -> Option<Hof> {
         return None;
     }
     let files = depot_files(dir);
-    if let Some(f) = files.iter().find(|f| f.file_stem().map(|s| s.to_string_lossy().trim().eq_ignore_ascii_case(name)).unwrap_or(false)) {
+    if let Some(f) = files.iter().find(|f| {
+        f.file_stem()
+            .map(|s| s.to_string_lossy().trim().eq_ignore_ascii_case(name))
+            .unwrap_or(false)
+    }) {
         if let Ok(h) = Hof::load(f) {
             return Some(h);
         }
@@ -250,10 +322,22 @@ pub fn depot_anywhere(name: &str) -> Option<Hof> {
         return path.and_then(|p| Hof::load(&p).ok());
     }
     // every vehicle folder once over all roots (depot_in looks at each root's copy)
-    let mut dirs: Vec<PathBuf> = omsi_cfg::read_dir_merged("Vehicles").into_iter().filter(|d| omsi_cfg::vfs::is_dir(d)).collect();
-    dirs.sort_by_key(|d| d.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase());
+    let mut dirs: Vec<PathBuf> = omsi_cfg::read_dir_merged("Vehicles")
+        .into_iter()
+        .filter(|d| omsi_cfg::vfs::is_dir(d))
+        .collect();
+    dirs.sort_by_key(|d| {
+        d.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+    });
     let h = dirs.iter().find_map(|d| depot_in(d, name));
-    found.lock().unwrap_or_else(|e| e.into_inner()).1.insert(key, h.as_ref().map(|h| h.path.clone()));
+    found
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .1
+        .insert(key, h.as_ref().map(|h| h.path.clone()));
     h
 }
 
@@ -266,12 +350,35 @@ mod tests {
         let text = "stringcount_terminus\r\n3\r\n\r\n[addterminus_list]\r\n{ALLEX}\t13\tBetriebsfahrt\tBETRIEBSFAHRT\t\tBETRIEBSFAHRT\t\t\r\n\t282\tU Ruhleben\tRUHLEBEN\tU-BAHNHOF\tRUHLEBEN  \t\t\t\r\n[end]\r\n";
         let h = Hof::parse(&CfgFile::from_str("test.hof", text));
         assert_eq!(h.termini.len(), 2);
-        assert_eq!((h.termini[0].code, h.termini[0].texture_id.as_str(), h.termini[0].all_exit), (13, "Betriebsfahrt", true));
-        assert_eq!(h.termini[0].strings, vec!["BETRIEBSFAHRT", "", "BETRIEBSFAHRT"]);
-        assert_eq!((h.termini[1].code, h.termini[1].texture_id.as_str(), h.termini[1].all_exit), (282, "U Ruhleben", false));
+        assert_eq!(
+            (
+                h.termini[0].code,
+                h.termini[0].texture_id.as_str(),
+                h.termini[0].all_exit
+            ),
+            (13, "Betriebsfahrt", true)
+        );
+        assert_eq!(
+            h.termini[0].strings,
+            vec!["BETRIEBSFAHRT", "", "BETRIEBSFAHRT"]
+        );
+        assert_eq!(
+            (
+                h.termini[1].code,
+                h.termini[1].texture_id.as_str(),
+                h.termini[1].all_exit
+            ),
+            (282, "U Ruhleben", false)
+        );
         assert_eq!(h.termini[1].terminus_stop.as_deref(), Some("U Ruhleben"));
-        assert_eq!(h.termini[1].strings, vec!["RUHLEBEN", "U-BAHNHOF", "RUHLEBEN  "]);
-        assert_eq!(h.terminus_by_code(282).map(|t| t.texture_id.as_str()), Some("U Ruhleben"));
+        assert_eq!(
+            h.termini[1].strings,
+            vec!["RUHLEBEN", "U-BAHNHOF", "RUHLEBEN  "]
+        );
+        assert_eq!(
+            h.terminus_by_code(282).map(|t| t.texture_id.as_str()),
+            Some("U Ruhleben")
+        );
     }
 
     /// #667: a trip without a stop list (an IVU data route) keeps the lists of the trips
@@ -288,6 +395,9 @@ mod tests {
         assert_eq!(h.info_busstop_lists.len(), 3);
         assert_eq!(h.info_busstop_lists[0], vec!["ZOB", "Hoheneck"]);
         assert!(h.info_busstop_lists[1].is_empty());
-        assert_eq!(h.info_busstop_lists[2], vec!["Hauptbahnhof", "Markt", "Bergerfuerth"]);
+        assert_eq!(
+            h.info_busstop_lists[2],
+            vec!["Hauptbahnhof", "Markt", "Bergerfuerth"]
+        );
     }
 }

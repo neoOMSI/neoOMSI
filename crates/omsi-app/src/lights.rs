@@ -35,7 +35,11 @@ pub fn lighting_from(d: &Daylight, fog_range: f32) -> Lighting {
         fog_density: density,
         sky_color: d.sky,
         night: d.night,
-        night_maps: Some(if d.lamps_on || d.night >= 0.5 { 1.0 } else { 0.0 }),
+        night_maps: Some(if d.lamps_on || d.night >= 0.5 {
+            1.0
+        } else {
+            0.0
+        }),
         sun_azimuth: d.azimuth_rad,
         sky_weights: d.sky_weights,
         envir_tint: d.envir_tint,
@@ -106,7 +110,9 @@ pub fn apply_weather(
         // (the snowy grey only as bright as the daylight: a fixed 0.86 made a winter night
         // in fog a pale grey dusk in the classic picture and in every mirror)
         let day = 1.0 - 0.93 * l.night.clamp(0.0, 1.0);
-        l.fog_color = l.fog_color.lerp(Vec3::new(0.86, 0.88, 0.92) * day, 0.4 * snow);
+        l.fog_color = l
+            .fog_color
+            .lerp(Vec3::new(0.86, 0.88, 0.92) * day, 0.4 * snow);
     }
     l.snow = snow;
 }
@@ -133,7 +139,13 @@ pub fn vehicle_lights(
             None => v.body_rotation(),
         }
     };
-    coronas.extend(crate::scene::model_lights_faded(&ty.model, &mesh_xf, v.position, &value_of, &v.light_fade));
+    coronas.extend(crate::scene::model_lights_faded(
+        &ty.model,
+        &mesh_xf,
+        v.position,
+        &value_of,
+        &v.light_fade,
+    ));
     // An articulated vehicle is one visual bus, but its rear section has its own
     // `[light_enh_2]`/corona declarations and animated meshes.  The old collector only
     // visited the leading section, which made rear lamps, destination lights and section-
@@ -156,7 +168,9 @@ pub fn vehicle_lights(
     let body = v.body_rotation();
     // headlights: the spotlight selected by Spot_Select
     // (OMSI_SPOT_SELECT=n: that spotlight on, for checking the headlights in a picture)
-    let forced = omsi_cfg::env::var("OMSI_SPOT_SELECT").ok().and_then(|s| s.trim().parse::<f32>().ok());
+    let forced = omsi_cfg::env::var("OMSI_SPOT_SELECT")
+        .ok()
+        .and_then(|s| s.trim().parse::<f32>().ok());
     if let Some(sel) = forced.or_else(|| v.var("Spot_Select")) {
         if sel >= 0.0 {
             if let Some(sp) = ty.model.spotlights.get(sel as usize) {
@@ -179,11 +193,19 @@ pub fn vehicle_lights(
                     .model
                     .meshes
                     .iter()
-                    .flat_map(|m| m.light_enh.iter().map(|l| l.pos).chain(m.light_enh_2.iter().map(|l| l.pos)))
+                    .flat_map(|m| {
+                        m.light_enh
+                            .iter()
+                            .map(|l| l.pos)
+                            .chain(m.light_enh_2.iter().map(|l| l.pos))
+                    })
                     .collect();
                 let nose = lamps.iter().map(|l| l[1]).reduce(f32::max);
                 let tail = lamps.iter().map(|l| l[1]).reduce(f32::min);
-                let bb = ty.def.bounding_box.map(|bb| (bb[4] + bb[1] * 0.5, bb[4] - bb[1] * 0.5));
+                let bb = ty
+                    .def
+                    .bounding_box
+                    .map(|bb| (bb[4] + bb[1] * 0.5, bb[4] - bb[1] * 0.5));
                 if dl.y > 0.3 {
                     let face = match (nose.filter(|n| *n > apex.y), bb) {
                         (Some(n), Some((front, _))) => Some(n.min(front)),
@@ -209,13 +231,17 @@ pub fn vehicle_lights(
                 // per headlamp on that face (within 35 cm of it), as far apart as the mean of
                 // their distances from the axis (the outermost are indicators and position
                 // lamps). The Agora's headlamps are 1.8 to 2.4 m apart.
-                let half_width = ty.def.bounding_box.map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
+                let half_width = ty
+                    .def
+                    .bounding_box
+                    .map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
                 let on_face: Vec<f32> = lamps
                     .iter()
                     .filter(|l| (dl.y > 0.3 || dl.y < -0.3) && (l[1] - apex.y).abs() < 0.35)
                     .map(|l| (l[0] - apex.x).abs())
                     .collect();
-                let spread = (on_face.iter().sum::<f32>() / on_face.len().max(1) as f32).min(half_width);
+                let spread =
+                    (on_face.iter().sum::<f32>() / on_face.len().max(1) as f32).min(half_width);
                 let right = body.transform_vector3(Vec3::X).normalize_or_zero();
                 let apex = body.transform_point3(apex);
                 // inner and outer cone as full angles (values 10 and 11)
@@ -235,7 +261,8 @@ pub fn vehicle_lights(
                         position: at,
                         radius: vals[9].clamp(10.0, 45.0),
                         color,
-                        intensity: VANILLA_HEADLIGHT_INTENSITY / sides.len() as f32 * (0.3 + 0.7 * night),
+                        intensity: VANILLA_HEADLIGHT_INTENSITY / sides.len() as f32
+                            * (0.3 + 0.7 * night),
                         direction: d,
                         cone,
                         mode: LightMode::Vanilla,
@@ -379,7 +406,15 @@ pub fn collect(
     }
     if omsi_cfg::env::var_os("OMSI_DEBUG_PARTICLES").is_some() {
         if let Some(p) = scene.smoke.first() {
-            log::info!("smoke: {} particles from objects, first at ({:.1}, {:.1}, {:.1}) size {:.2} alpha {:.2}", scene.smoke.len(), p.position.x, p.position.y, p.position.z, p.size, p.alpha);
+            log::info!(
+                "smoke: {} particles from objects, first at ({:.1}, {:.1}, {:.1}) size {:.2} alpha {:.2}",
+                scene.smoke.len(),
+                p.position.x,
+                p.position.y,
+                p.position.z,
+                p.size,
+                p.alpha
+            );
         }
     }
     for v in vehicles {
@@ -411,9 +446,23 @@ pub fn collect(
         c.size > 0.05
     });
     if omsi_cfg::env::var_os("OMSI_DEBUG_CONES").is_some() {
-        log::info!("cones: visibility {vis:.0} m, dark {night:.2}, {} cones of {} coronas", scene.coronas.iter().filter(|c| c.beam).count(), scene.coronas.len());
+        log::info!(
+            "cones: visibility {vis:.0} m, dark {night:.2}, {} cones of {} coronas",
+            scene.coronas.iter().filter(|c| c.beam).count(),
+            scene.coronas.len()
+        );
         for c in scene.coronas.iter().filter(|c| c.beam).take(4) {
-            log::info!("  cone at ({:.1}, {:.1}, {:.1}) dir {:?} radius {:.2} half angles {:.0}/{:.0} deg tex {}", c.position.x, c.position.y, c.position.z, c.direction, c.size, c.inner_cos.to_degrees(), c.cone_cos.to_degrees(), c.texture);
+            log::info!(
+                "  cone at ({:.1}, {:.1}, {:.1}) dir {:?} radius {:.2} half angles {:.0}/{:.0} deg tex {}",
+                c.position.x,
+                c.position.y,
+                c.position.z,
+                c.direction,
+                c.size,
+                c.inner_cos.to_degrees(),
+                c.cone_cos.to_degrees(),
+                c.texture
+            );
         }
     }
     if omsi_cfg::env::var_os("OMSI_DEBUG_LIGHT").is_some() {
@@ -454,12 +503,20 @@ pub fn collect(
     }
     // nearest lights first: the grid cells hold a limited number
     // (total_cmp: a light at a NaN position must not end the game)
-    scene.lights.sort_by(|a, b| (a.position - camera_pos).length_squared().total_cmp(&(b.position - camera_pos).length_squared()));
+    scene.lights.sort_by(|a, b| {
+        (a.position - camera_pos)
+            .length_squared()
+            .total_cmp(&(b.position - camera_pos).length_squared())
+    });
 }
 
 /// The particles of a particle set as the renderer draws them: smoke blended over the scene,
 /// and the glowing ones (`--PS_emissive--`: sparks, rockets, a flame) as coronas.
-pub fn particle_sprites(set: &omsi_sim::particles::ParticleSet, smoke: &mut Vec<omsi_render::SmokeParticle>, coronas: &mut Vec<Corona>) {
+pub fn particle_sprites(
+    set: &omsi_sim::particles::ParticleSet,
+    smoke: &mut Vec<omsi_render::SmokeParticle>,
+    coronas: &mut Vec<Corona>,
+) {
     for (p, def) in set.particles() {
         let alpha = p.alpha();
         if alpha <= 0.002 {
@@ -477,7 +534,12 @@ pub fn particle_sprites(set: &omsi_sim::particles::ParticleSet, smoke: &mut Vec<
                 ..Default::default()
             });
         } else {
-            smoke.push(omsi_render::SmokeParticle { position: p.pos, size: p.size() * 0.5, color: p.color, alpha });
+            smoke.push(omsi_render::SmokeParticle {
+                position: p.pos,
+                size: p.size() * 0.5,
+                color: p.color,
+                alpha,
+            });
         }
     }
 }
@@ -505,13 +567,21 @@ static CORONA_TEXTURES: std::sync::Mutex<Option<CoronaTextures>> = std::sync::Mu
 /// The game folder the standard pictures (`Texture\…`) are found in.
 pub fn set_corona_root(root: &std::path::Path) {
     let mut g = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
-    let t = g.get_or_insert_with(|| CoronaTextures { ids: Default::default(), pending: Vec::new(), root: None });
+    let t = g.get_or_insert_with(|| CoronaTextures {
+        ids: Default::default(),
+        pending: Vec::new(),
+        root: None,
+    });
     t.root = Some(root.to_path_buf());
 }
 
 fn texture_id_of(path: std::path::PathBuf) -> u16 {
     let mut g = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
-    let t = g.get_or_insert_with(|| CoronaTextures { ids: Default::default(), pending: Vec::new(), root: None });
+    let t = g.get_or_insert_with(|| CoronaTextures {
+        ids: Default::default(),
+        pending: Vec::new(),
+        root: None,
+    });
     if let Some(id) = t.ids.get(&path) {
         return *id;
     }
@@ -526,12 +596,24 @@ fn texture_id_of(path: std::path::PathBuf) -> u16 {
 /// standard glow) when there is no such file.
 pub fn corona_texture_id(model_dir: &std::path::Path, name: &str) -> u16 {
     // (every lit lamp of every vehicle asks every frame: looked up once)
-    static KNOWN: std::sync::Mutex<Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>> = std::sync::Mutex::new(None);
+    static KNOWN: std::sync::Mutex<
+        Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>,
+    > = std::sync::Mutex::new(None);
     let key = (model_dir.to_path_buf(), name.to_string());
-    if let Some(&id) = KNOWN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)) {
+    if let Some(&id) = KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&key))
+    {
         return id;
     }
-    let root = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|t| t.root.clone()).unwrap_or_default();
+    let root = CORONA_TEXTURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|t| t.root.clone())
+        .unwrap_or_default();
     let mut id = 0;
     for d in crate::scene::texture_dirs(&root, model_dir) {
         let p = omsi_cfg::resolve_path(&d, name);
@@ -540,7 +622,11 @@ pub fn corona_texture_id(model_dir: &std::path::Path, name: &str) -> u16 {
             break;
         }
     }
-    KNOWN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(key, id);
+    KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(Default::default)
+        .insert(key, id);
     id
 }
 
@@ -548,15 +634,35 @@ pub fn corona_texture_id(model_dir: &std::path::Path, name: &str) -> u16 {
 fn stock_texture_id(name: &str) -> u16 {
     // (asked for every light of every vehicle every frame: the file is looked up once per
     // game folder, not each time - the lookups were a fifth of a frame's CPU time)
-    static KNOWN: std::sync::Mutex<Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>> = std::sync::Mutex::new(None);
-    let root = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|t| t.root.clone()).unwrap_or_default();
+    static KNOWN: std::sync::Mutex<
+        Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>,
+    > = std::sync::Mutex::new(None);
+    let root = CORONA_TEXTURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|t| t.root.clone())
+        .unwrap_or_default();
     let key = (root, name.to_string());
-    if let Some(&id) = KNOWN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)) {
+    if let Some(&id) = KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&key))
+    {
         return id;
     }
     let p = omsi_cfg::resolve_path(&key.0, &format!("Texture/{name}"));
-    let id = if omsi_cfg::vfs::is_file(&p) { texture_id_of(p) } else { 0 };
-    KNOWN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(key, id);
+    let id = if omsi_cfg::vfs::is_file(&p) {
+        texture_id_of(p)
+    } else {
+        0
+    };
+    KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(Default::default)
+        .insert(key, id);
     id
 }
 
@@ -601,8 +707,14 @@ static CONE_NIGHT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::
 /// The weather the lamps' cones are drawn in: the fog's visibility (m) and how dark it is
 /// (0 day … 1 night). Falling rain or snow counts only as far as it lowers the visibility.
 pub fn set_cone_strength(fog_visibility_m: f32, _precip: f32, night: f32) {
-    CONE.store(fog_visibility_m.to_bits(), std::sync::atomic::Ordering::Relaxed);
-    CONE_NIGHT.store(night.clamp(0.0, 1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+    CONE.store(
+        fog_visibility_m.to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    CONE_NIGHT.store(
+        night.clamp(0.0, 1.0).to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 fn cone_weather() -> (f32, f32) {

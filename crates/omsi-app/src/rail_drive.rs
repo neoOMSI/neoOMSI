@@ -49,13 +49,21 @@ pub(crate) fn is_rail(def: &omsi_vehicle::Vehicle) -> bool {
 /// lane runs nearest its own heading.
 pub(crate) fn attach(p: &mut Player, net: &Network, reach: f64) -> Option<RailDrive> {
     let pos = p.vehicle.position;
-    let (lane, s, dist) = net.nearest_lane(pos, LaneKind::Rail).or_else(|| nearest_anywhere(net, pos))?;
+    let (lane, s, dist) = net
+        .nearest_lane(pos, LaneKind::Rail)
+        .or_else(|| nearest_anywhere(net, pos))?;
     if dist > reach {
         return None;
     }
     let (_, h) = net.lanes[lane].at(s);
     let diff = angle_diff(h as f64, p.vehicle.heading);
-    let mut r = RailDrive { lane, s, along: diff.abs() <= 90.0, trail: Default::default(), u: 0.0 };
+    let mut r = RailDrive {
+        lane,
+        s,
+        along: diff.abs() <= 90.0,
+        trail: Default::default(),
+        u: 0.0,
+    };
     // the track behind it, for its coupled parts: walked backwards from where it stands
     let mut back = r.clone();
     let mut points = Vec::new();
@@ -65,15 +73,29 @@ pub(crate) fn attach(p: &mut Player, net: &Network, reach: f64) -> Option<RailDr
         points.push((-2.0 * k as f64, pos));
     }
     let (here, _) = net.lanes[lane].at(s);
-    r.trail = points.into_iter().rev().chain(std::iter::once((0.0, here))).collect();
-    log::info!("rail: {} stands on rail lane {lane} at {s:.1} m ({dist:.1} m away) at ({:.1}, {:.1})", p.vehicle.ty.def.path.display(), net.lanes[lane].at(s).0.x, net.lanes[lane].at(s).0.y);
+    r.trail = points
+        .into_iter()
+        .rev()
+        .chain(std::iter::once((0.0, here)))
+        .collect();
+    log::info!(
+        "rail: {} stands on rail lane {lane} at {s:.1} m ({dist:.1} m away) at ({:.1}, {:.1})",
+        p.vehicle.ty.def.path.display(),
+        net.lanes[lane].at(s).0.x,
+        net.lanes[lane].at(s).0.y
+    );
     Some(r)
 }
 
 /// The nearest rail lane of the whole network (the grid only looks nearby).
 fn nearest_anywhere(net: &Network, p: DVec3) -> Option<(usize, f32, f64)> {
     let mut best: Option<(usize, f32, f64)> = None;
-    for (i, l) in net.lanes.iter().enumerate().filter(|(_, l)| l.kind == LaneKind::Rail) {
+    for (i, l) in net
+        .lanes
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.kind == LaneKind::Rail)
+    {
         if let Some((s, d)) = l.nearest_point(p) {
             if best.map(|b| d < b.2).unwrap_or(true) {
                 best = Some((i, s, d));
@@ -101,12 +123,23 @@ fn angle_diff(a: f64, b: f64) -> f64 {
 impl RailDrive {
     /// Move `ds` metres (forward along the vehicle, negative backwards) and put the
     /// vehicle there. `blinker`: 1 left, 2 right (the branch at the next fork).
-    pub(crate) fn advance(&mut self, p: &mut Player, net: &Network, world: &World, ds: f32, blinker: u8) {
+    pub(crate) fn advance(
+        &mut self,
+        p: &mut Player,
+        net: &Network,
+        world: &World,
+        ds: f32,
+        blinker: u8,
+    ) {
         if !self.step(net, Some(world), ds, blinker) {
             p.vehicle.set_speed(0.0);
         }
         let (pos, h) = net.lanes[self.lane].at(self.s);
-        let heading = if self.along { h as f64 } else { (h as f64 + 180.0).rem_euclid(360.0) };
+        let heading = if self.along {
+            h as f64
+        } else {
+            (h as f64 + 180.0).rem_euclid(360.0)
+        };
         let v = &mut p.vehicle;
         v.position = pos;
         v.heading = heading;
@@ -116,7 +149,12 @@ impl RailDrive {
         v.set_controls(c);
         // the trail, and the coupled parts on it
         self.u += ds as f64;
-        if self.trail.back().map(|b| (self.u - b.0).abs() > 0.5).unwrap_or(true) {
+        if self
+            .trail
+            .back()
+            .map(|b| (self.u - b.0).abs() > 0.5)
+            .unwrap_or(true)
+        {
             // (backing up takes the trail back with it)
             while self.trail.back().is_some_and(|b| b.0 > self.u) {
                 self.trail.pop_back();
@@ -145,7 +183,14 @@ impl RailDrive {
             let t = self.s + d;
             if t > len {
                 let facing = self.along;
-                match self.pick(net, world, &net.lanes[self.lane].next, true, blinker, facing) {
+                match self.pick(
+                    net,
+                    world,
+                    &net.lanes[self.lane].next,
+                    true,
+                    blinker,
+                    facing,
+                ) {
                     Some(n) => {
                         d = t - len;
                         self.lane = n;
@@ -182,17 +227,38 @@ impl RailDrive {
 
     /// The next (or previous) rail lane among `candidates`: the indicator's branch, else
     /// the one the switch is set to, else the straightest. The points it takes are thrown.
-    fn pick(&self, net: &Network, world: Option<&World>, candidates: &[usize], forward: bool, blinker: u8, _facing: bool) -> Option<usize> {
+    fn pick(
+        &self,
+        net: &Network,
+        world: Option<&World>,
+        candidates: &[usize],
+        forward: bool,
+        blinker: u8,
+        _facing: bool,
+    ) -> Option<usize> {
         let here = &net.lanes[self.lane];
-        let h0 = if forward { here.at(here.length()).1 } else { here.at(0.0).1 } as f64;
+        let h0 = if forward {
+            here.at(here.length()).1
+        } else {
+            here.at(0.0).1
+        } as f64;
         let mut rails: Vec<(usize, f64)> = candidates
             .iter()
             .copied()
-            .filter(|&i| net.lanes.get(i).map(|l| l.kind == LaneKind::Rail).unwrap_or(false))
+            .filter(|&i| {
+                net.lanes
+                    .get(i)
+                    .map(|l| l.kind == LaneKind::Rail)
+                    .unwrap_or(false)
+            })
             .map(|i| {
                 let l = &net.lanes[i];
                 // how the branch turns over its first 15 m (positive: right)
-                let h1 = if forward { l.at(15.0f32.min(l.length())).1 } else { l.at((l.length() - 15.0).max(0.0)).1 } as f64;
+                let h1 = if forward {
+                    l.at(15.0f32.min(l.length())).1
+                } else {
+                    l.at((l.length() - 15.0).max(0.0)).1
+                } as f64;
                 let turn = angle_diff(h1, h0) * if forward { 1.0 } else { -1.0 };
                 (i, turn)
             })
@@ -206,7 +272,12 @@ impl RailDrive {
             2 => rails.last().map(|r| r.0),
             _ => rails
                 .iter()
-                .find(|(i, _)| net.lanes[*i].key.and_then(|k| world.and_then(|w| w.switch_set_to(k.id, k.path))) == Some(true))
+                .find(|(i, _)| {
+                    net.lanes[*i]
+                        .key
+                        .and_then(|k| world.and_then(|w| w.switch_set_to(k.id, k.path)))
+                        == Some(true)
+                })
                 .or_else(|| rails.iter().min_by(|a, b| a.1.abs().total_cmp(&b.1.abs())))
                 .map(|r| r.0),
         }?;
@@ -249,18 +320,26 @@ pub(crate) fn frame(p: &mut Player, net: Option<&Network>, world: &World, dt: f3
     // the AI only) is driven by a plain traction and brake of its own: a locomotive's
     // pull (up to 300 kN, 4 MW) and 1.2 m/s² of brake at full pedal.
     let c = p.vehicle.physics.controls;
-    let scripted = p.vehicle.var("M_Wheel").is_some_and(|m| m.abs() > 1.0) || p.vehicle.var("Brakeforce").is_some_and(|b| b > 1.0);
+    let scripted = p.vehicle.var("M_Wheel").is_some_and(|m| m.abs() > 1.0)
+        || p.vehicle.var("Brakeforce").is_some_and(|b| b > 1.0);
     if !scripted {
         let m = p.vehicle.physics.mass_kg.max(1000.0);
         let v = p.vehicle.physics.speed;
         let reverse = p.vehicle.var("rail_reverse").is_some_and(|r| r > 0.5);
-        let pull = (c.throttle.clamp(0.0, 1.0) * 300_000.0).min(4.0e6 / v.abs().max(1.0)).min(0.15 * m * 9.81) * if reverse { -1.0 } else { 1.0 };
+        let pull = (c.throttle.clamp(0.0, 1.0) * 300_000.0)
+            .min(4.0e6 / v.abs().max(1.0))
+            .min(0.15 * m * 9.81)
+            * if reverse { -1.0 } else { 1.0 };
         let brake = c.brake.clamp(0.0, 1.0) * 1.2 * m;
         let resist = 0.002 * m * 9.81 + 5.0 * v * v;
         let mut dv = (pull / m) * dt;
         let stop = ((brake + resist) / m) * dt;
         let nv = v + dv;
-        dv = if nv.abs() <= stop && c.throttle < 0.05 { -v } else { dv - stop * nv.signum() };
+        dv = if nv.abs() <= stop && c.throttle < 0.05 {
+            -v
+        } else {
+            dv - stop * nv.signum()
+        };
         p.vehicle.set_speed(v + dv);
     }
     let ds = p.vehicle.physics.speed * dt;

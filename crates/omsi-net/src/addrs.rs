@@ -146,14 +146,40 @@ pub fn classify(ip: Ipv4Addr, interface: &str) -> AddrKind {
     // bridges of virtual machines and containers (Docker, VirtualBox, VMware, Parallels,
     // Hyper-V/WSL, libvirt, macOS's own VM bridges)
     let virtual_names = [
-        "docker", "br-", "veth", "vboxnet", "virtualbox", "vmnet", "vmware", "vethernet",
-        "hyper-v", "virbr", "lxc", "lxd", "podman", "cni", "flannel", "bridge1", "vnic",
-        "parallels", "wsl",
+        "docker",
+        "br-",
+        "veth",
+        "vboxnet",
+        "virtualbox",
+        "vmnet",
+        "vmware",
+        "vethernet",
+        "hyper-v",
+        "virbr",
+        "lxc",
+        "lxd",
+        "podman",
+        "cni",
+        "flannel",
+        "bridge1",
+        "vnic",
+        "parallels",
+        "wsl",
     ];
     if virtual_names.iter().any(|v| name.starts_with(v) || has(v)) {
         return AddrKind::Virtual;
     }
-    let tunnel = ["utun", "tun", "tap", "wg", "ppp", "ipsec", "wireguard", "openvpn", "vpn"];
+    let tunnel = [
+        "utun",
+        "tun",
+        "tap",
+        "wg",
+        "ppp",
+        "ipsec",
+        "wireguard",
+        "openvpn",
+        "vpn",
+    ];
     if tunnel.iter().any(|t| name.starts_with(t) || has(t)) {
         return AddrKind::Vpn;
     }

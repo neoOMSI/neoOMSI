@@ -83,10 +83,20 @@ impl App {
                 }
                 self.first_populate = false;
             }
-            let gloomy = self.weather.as_ref().map(|w| {
-                let (kind, rate) = precip_of(w);
-                w.fog.0 < 600.0 || (kind != 0 && rate > 0.05) || w.clouds.0.trim().to_ascii_lowercase().starts_with("overcast")
-            }).unwrap_or(false);
+            let gloomy = self
+                .weather
+                .as_ref()
+                .map(|w| {
+                    let (kind, rate) = precip_of(w);
+                    w.fog.0 < 600.0
+                        || (kind != 0 && rate > 0.05)
+                        || w.clouds
+                            .0
+                            .trim()
+                            .to_ascii_lowercase()
+                            .starts_with("overcast")
+                })
+                .unwrap_or(false);
             // Omsi switches the AI's lights on below a light value of 0.75, before
             // the street lamps (0.6), and off after them in the morning
             let daylight = omsi_sim::Daylight::compute(&self.clock, self.envir.as_ref());
@@ -94,18 +104,26 @@ impl App {
             t.daylight = Some(daylight);
             let __t2 = Instant::now();
             t.others = lan_outlines(&self.remotes);
-            t.others.extend(own_outlines(self.player.as_ref(), &self.placed));
+            t.others
+                .extend(own_outlines(self.player.as_ref(), &self.placed));
             if !self.paused {
-                t.player_priority = self.player.as_ref().and_then(|p| p.vehicle.var("TrafficPriority")).is_some_and(|v| v > 0.5);
+                t.player_priority = self
+                    .player
+                    .as_ref()
+                    .and_then(|p| p.vehicle.var("TrafficPriority"))
+                    .is_some_and(|v| v > 0.5);
                 t.tick(dt, self.player.as_ref().map(|p| player_outline(p)));
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());
-                    let rail = self.player.as_ref().and_then(|p| p.rail.as_ref()).map(|r| (r.lane, r.along));
+                    let rail = self
+                        .player
+                        .as_ref()
+                        .and_then(|p| p.rail.as_ref())
+                        .map(|r| (r.lane, r.along));
                     w.set_signals(&t.signal_aspects(&w.signal_routes, rail));
                 }
             }
-            *self.profile.entry("traffic.tick").or_default() +=
-                __t2.elapsed().as_secs_f64();
+            *self.profile.entry("traffic.tick").or_default() += __t2.elapsed().as_secs_f64();
             for (k, v) in ["traffic.tick.lanes", "traffic.tick.plan", "traffic.tick.ai"]
                 .into_iter()
                 .zip(t.tick_split)
@@ -113,7 +131,11 @@ impl App {
                 *self.profile.entry(k).or_default() += v;
             }
             if let Some(p) = self.player.as_mut() {
-                p.vehicle.dynamic_boxes = if self.settings.collision_vehicles { t.boxes(p.vehicle.position, 80.0) } else { Vec::new() };
+                p.vehicle.dynamic_boxes = if self.settings.collision_vehicles {
+                    t.boxes(p.vehicle.position, 80.0)
+                } else {
+                    Vec::new()
+                };
             }
             let __t3 = Instant::now();
             if let Some(a) = self.audio.as_ref() {
@@ -128,13 +150,11 @@ impl App {
                 let ear = self.camera.as_ref().map(|c| c.position).unwrap_or(center);
                 t.update_audio(a, ear, street, muffled);
             }
-            *self.profile.entry("traffic.audio").or_default() +=
-                __t3.elapsed().as_secs_f64();
+            *self.profile.entry("traffic.audio").or_default() += __t3.elapsed().as_secs_f64();
             let __t4 = Instant::now();
             t.camera = self.camera.as_ref().map(|c| c.position);
             t.sync(w, r, scene);
-            *self.profile.entry("traffic.sync").or_default() +=
-                __t4.elapsed().as_secs_f64();
+            *self.profile.entry("traffic.sync").or_default() += __t4.elapsed().as_secs_f64();
         }
         *self.profile.entry("traffic").or_default() += __t.elapsed().as_secs_f64();
     }

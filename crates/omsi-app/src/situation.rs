@@ -60,7 +60,11 @@ pub(crate) fn apply_situation(args: &mut Args) -> Result<()> {
         return Ok(());
     };
     // (an absolute path is the file itself: a situation saved elsewhere, a test's)
-    let path = if Path::new(&rel).is_absolute() { PathBuf::from(&rel) } else { omsi_cfg::resolve_path(&args.root, &rel) };
+    let path = if Path::new(&rel).is_absolute() {
+        PathBuf::from(&rel)
+    } else {
+        omsi_cfg::resolve_path(&args.root, &rel)
+    };
     let sit = omsi_content::Situation::load(&path)
         .map_err(|e| anyhow!("loading {}: {e}", path.display()))?;
     log::info!(
@@ -126,7 +130,11 @@ pub(crate) fn apply_situation_parsed(sit: &omsi_content::situation::Situation, a
             // goes on from there with the rest of the tour, as it was driven (taken as a
             // picked trip, it was the whole duty, and the next save wrote it as trip 0 of
             // a one-trip duty: the game after that started at the tour's first trip, #653)
-            if let Some(t) = v.timetable.get(2).and_then(|t| t.trim().parse::<usize>().ok()) {
+            if let Some(t) = v
+                .timetable
+                .get(2)
+                .and_then(|t| t.trim().parse::<usize>().ok())
+            {
                 args.trip = Some((t + 1).to_string());
                 args.whole_tour = true;
             }
@@ -134,7 +142,12 @@ pub(crate) fn apply_situation_parsed(sit: &omsi_content::situation::Situation, a
         args.situation_vars = v.vars.iter().map(|(n, x)| (n.clone(), *x as f32)).collect();
         // the livery it was driven in: the scheme's index is the `Colorscheme` variable (the
         // bus came back in its default paint - the variable alone repaints nothing)
-        if let Some((_, c)) = v.vars.iter().find(|(n, _)| n.eq_ignore_ascii_case("Colorscheme")).filter(|(_, c)| *c >= 0.0) {
+        if let Some((_, c)) = v
+            .vars
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("Colorscheme"))
+            .filter(|(_, c)| *c >= 0.0)
+        {
             args.paint = Some(format!("{}", *c as i64));
         }
         args.situation_strvars = v.string_vars.clone();
@@ -176,7 +189,10 @@ pub(crate) fn apply_situation_parsed(sit: &omsi_content::situation::Situation, a
         })
         .collect();
     if !args.situation_others.is_empty() {
-        log::info!("situation: {} more vehicle(s) placed", args.situation_others.len());
+        log::info!(
+            "situation: {} more vehicle(s) placed",
+            args.situation_others.len()
+        );
     }
 }
 
@@ -334,7 +350,11 @@ pub(crate) fn ticket_key_name(root: &Path, bindings: &[omsi_content::KeyBinding]
         .map(|(_, n)| n.clone())
         .unwrap_or_else(|| format!("key {}", b.scan_code));
     let mut out = String::new();
-    for (bit, name) in [(omsi_content::input::KEY_SHIFT, "Shift+"), (omsi_content::input::KEY_CTRL, "Ctrl+"), (omsi_content::input::KEY_ALT, "Alt+")] {
+    for (bit, name) in [
+        (omsi_content::input::KEY_SHIFT, "Shift+"),
+        (omsi_content::input::KEY_CTRL, "Ctrl+"),
+        (omsi_content::input::KEY_ALT, "Alt+"),
+    ] {
         if b.modifier & bit != 0 {
             out.push_str(name);
         }
@@ -404,7 +424,14 @@ mod tests {
         };
         let mut args = crate::cli::Args::parse_from(["neoomsi"]);
         apply_situation_parsed(&sit, &mut args);
-        assert_eq!((args.line.as_deref(), args.tour.as_deref(), args.trip.as_deref()), (Some("137"), Some("4"), Some("4")));
+        assert_eq!(
+            (
+                args.line.as_deref(),
+                args.tour.as_deref(),
+                args.trip.as_deref()
+            ),
+            (Some("137"), Some("4"), Some("4"))
+        );
         assert!(args.whole_tour);
     }
 }

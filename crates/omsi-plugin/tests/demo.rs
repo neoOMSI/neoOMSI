@@ -9,12 +9,17 @@ fn demo_library() -> PathBuf {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let release = !cfg!(debug_assertions);
     let mut cmd = std::process::Command::new(cargo);
-    cmd.args(["build", "-q", "-p", "omsi-demo-plugin", "--manifest-path"]).arg(root.join("Cargo.toml"));
+    cmd.args(["build", "-q", "-p", "omsi-demo-plugin", "--manifest-path"])
+        .arg(root.join("Cargo.toml"));
     if release {
         cmd.arg("--release");
     }
     assert!(cmd.status().unwrap().success(), "building the demo plugin");
-    let name = format!("{}omsi_demo_plugin{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    let name = format!(
+        "{}omsi_demo_plugin{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
     // the test binary is target/<profile>/deps/…; the library sits in target/<profile>
     let exe = std::env::current_exe().unwrap();
     exe.parent().unwrap().parent().unwrap().join(name)
@@ -90,7 +95,10 @@ fn in_process() {
     assert_eq!(g.strings["note"], "seen at 2");
     // the system variable reached the plugin before its trigger was asked: down at 1 s
     // (odd), still down at 1.5 s, up at 2 s
-    assert_eq!(g.fired, [("horn".to_string(), true), ("horn".to_string(), false)]);
+    assert_eq!(
+        g.fired,
+        [("horn".to_string(), true), ("horn".to_string(), false)]
+    );
     plugins.finalize();
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -104,11 +112,23 @@ fn through_the_host() {
     assert!(r.procs().variable && r.procs().trigger && r.procs().system && r.procs().string);
     drop(r);
     // the same frames through a plugin whose library will not load here: force the host
-    let hosts = HostConfig { host32: Some(host.to_path_buf()), runner: None };
-    std::fs::write(dir.join("Demo/demo.opl"), "[dll]\r\nDemo\\notalibrary.dll\r\n").unwrap();
+    let hosts = HostConfig {
+        host32: Some(host.to_path_buf()),
+        runner: None,
+    };
+    std::fs::write(
+        dir.join("Demo/demo.opl"),
+        "[dll]\r\nDemo\\notalibrary.dll\r\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("Demo/notalibrary.dll"), b"MZ not really").unwrap();
-    let err = Plugin::load(&dir.join("Demo/demo.opl"), &dir, &hosts).err().expect("a file that is no library fails");
-    assert!(err.contains("could not load") || err.contains("host") || err.contains("Wine"), "{err}");
+    let err = Plugin::load(&dir.join("Demo/demo.opl"), &dir, &hosts)
+        .err()
+        .expect("a file that is no library fails");
+    assert!(
+        err.contains("could not load") || err.contains("host") || err.contains("Wine"),
+        "{err}"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -117,7 +137,12 @@ fn host_frames() {
     let dir = plugins_dir("frames");
     let host = Path::new(env!("CARGO_BIN_EXE_omsi-plugin-host"));
     let mut r = Remote::spawn(None, host, &dir.join("Demo/demo.dll")).unwrap();
-    let f = omsi_plugin::Frame { system: vec![(0, 3.0)], vars: vec![(0, 1.5)], strings: vec![(0, "0123456789ab".into())], triggers: vec![0] };
+    let f = omsi_plugin::Frame {
+        system: vec![(0, 3.0)],
+        vars: vec![(0, 1.5)],
+        strings: vec![(0, "0123456789ab".into())],
+        triggers: vec![0],
+    };
     let reply = r.frame(&f).unwrap();
     assert_eq!(reply.system, [None]);
     assert_eq!(reply.vars, [Some(3.0)]);
@@ -132,12 +157,31 @@ fn host_frames() {
 /// `omsi_demo_plugin.dll` built for i686-pc-windows-gnu (see docs/PLUGINS.md), and Wine.
 #[test]
 fn windows_dll_under_wine() {
-    let Some(dir) = std::env::var_os("OMSI_TEST_WINE_DIR").map(PathBuf::from) else { return };
+    let Some(dir) = std::env::var_os("OMSI_TEST_WINE_DIR").map(PathBuf::from) else {
+        return;
+    };
     let hosts = HostConfig::detect();
-    let wine = hosts.runner.clone().or_else(|| cfg!(windows).then(PathBuf::new));
-    let runner = if cfg!(windows) { None } else { Some(wine.expect("wine on the path")) };
-    let mut r = Remote::spawn(runner.as_deref(), &dir.join("omsi-plugin-host.exe"), &dir.join("omsi_demo_plugin.dll")).expect("the 32-bit host starts");
-    let f = omsi_plugin::Frame { system: vec![(0, 5.0)], vars: vec![(0, 0.75)], strings: vec![(0, "abcdefghijk".into())], triggers: vec![0] };
+    let wine = hosts
+        .runner
+        .clone()
+        .or_else(|| cfg!(windows).then(PathBuf::new));
+    let runner = if cfg!(windows) {
+        None
+    } else {
+        Some(wine.expect("wine on the path"))
+    };
+    let mut r = Remote::spawn(
+        runner.as_deref(),
+        &dir.join("omsi-plugin-host.exe"),
+        &dir.join("omsi_demo_plugin.dll"),
+    )
+    .expect("the 32-bit host starts");
+    let f = omsi_plugin::Frame {
+        system: vec![(0, 5.0)],
+        vars: vec![(0, 0.75)],
+        strings: vec![(0, "abcdefghijk".into())],
+        triggers: vec![0],
+    };
     let reply = r.frame(&f).unwrap();
     assert_eq!(reply.vars, [Some(1.5)]);
     assert_eq!(reply.strings, [Some("seen at 5".to_string())]);

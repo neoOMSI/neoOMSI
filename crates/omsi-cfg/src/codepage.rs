@@ -122,7 +122,11 @@ fn detect_on(bytes: &[u8], system: Option<CodePage>) -> CodePage {
     // a lead byte before a space), and read as GBK all the same, a Russian HOF's stops lost
     // their names and no longer matched the map's
     if let Some(page) = system {
-        if page.encoding().decode_without_bom_handling_and_without_replacement(bytes).is_some() {
+        if page
+            .encoding()
+            .decode_without_bom_handling_and_without_replacement(bytes)
+            .is_some()
+        {
             return page;
         }
     }
@@ -148,14 +152,17 @@ fn detect_on(bytes: &[u8], system: Option<CodePage>) -> CodePage {
     // a lower-case one between two letters ("Głowny"), a capital before one ("Łazarz");
     // "m³/s" in the stock constfiles is neither
     let letter = |i: Option<usize>| {
-        i.and_then(|i| bytes.get(i)).map(|b| b.is_ascii_alphabetic() || *b >= 0xC0).unwrap_or(false)
+        i.and_then(|i| bytes.get(i))
+            .map(|b| b.is_ascii_alphabetic() || *b >= 0xC0)
+            .unwrap_or(false)
     };
     let central = bytes
         .iter()
         .enumerate()
         .filter(|(i, b)| {
             let (before, after) = (letter(i.checked_sub(1)), letter(Some(i + 1)));
-            (central_european_lower(**b) && before && after) || (central_european_upper(**b) && after)
+            (central_european_lower(**b) && before && after)
+                || (central_european_upper(**b) && after)
         })
         .count();
     if central >= 2 {
@@ -176,12 +183,24 @@ pub fn decode(bytes: &[u8]) -> String {
 
 /// Code page 437, which zip tools use for names without the UTF-8 flag.
 pub(crate) const CP437_HIGH: [char; 128] = [
-    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å', 'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ', 'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»', '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐', '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧', '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀', 'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩', '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{a0}',
+    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å', 'É', 'æ', 'Æ',
+    'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ', 'á', 'í', 'ó', 'ú', 'ñ', 'Ñ',
+    'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»', '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕',
+    '╣', '║', '╗', '╝', '╜', '╛', '┐', '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦',
+    '╠', '═', '╬', '╧', '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐',
+    '▀', 'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩', '≡', '±',
+    '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{a0}',
 ];
 
 /// Code page 852 (DOS Central European), which unpackers guess for such names too.
 const CP852_HIGH: [char; 128] = [
-    'Ç', 'ü', 'é', 'â', 'ä', 'ů', 'ć', 'ç', 'ł', 'ë', 'Ő', 'ő', 'î', 'Ź', 'Ä', 'Ć', 'É', 'Ĺ', 'ĺ', 'ô', 'ö', 'Ľ', 'ľ', 'Ś', 'ś', 'Ö', 'Ü', 'Ť', 'ť', 'Ł', '×', 'č', 'á', 'í', 'ó', 'ú', 'Ą', 'ą', 'Ž', 'ž', 'Ę', 'ę', '¬', 'ź', 'Č', 'ş', '«', '»', '░', '▒', '▓', '│', '┤', 'Á', 'Â', 'Ě', 'Ş', '╣', '║', '╗', '╝', 'Ż', 'ż', '┐', '└', '┴', '┬', '├', '─', '┼', 'Ă', 'ă', '╚', '╔', '╩', '╦', '╠', '═', '╬', '¤', 'đ', 'Đ', 'Ď', 'Ë', 'ď', 'Ň', 'Í', 'Î', 'ě', '┘', '┌', '█', '▄', 'Ţ', 'Ů', '▀', 'Ó', 'ß', 'Ô', 'Ń', 'ń', 'ň', 'Š', 'š', 'Ŕ', 'Ú', 'ŕ', 'Ű', 'ý', 'Ý', 'ţ', '´', '\u{ad}', '˝', '˛', 'ˇ', '˘', '§', '÷', '¸', '°', '¨', '˙', 'ű', 'Ř', 'ř', '■', '\u{a0}',
+    'Ç', 'ü', 'é', 'â', 'ä', 'ů', 'ć', 'ç', 'ł', 'ë', 'Ő', 'ő', 'î', 'Ź', 'Ä', 'Ć', 'É', 'Ĺ', 'ĺ',
+    'ô', 'ö', 'Ľ', 'ľ', 'Ś', 'ś', 'Ö', 'Ü', 'Ť', 'ť', 'Ł', '×', 'č', 'á', 'í', 'ó', 'ú', 'Ą', 'ą',
+    'Ž', 'ž', 'Ę', 'ę', '¬', 'ź', 'Č', 'ş', '«', '»', '░', '▒', '▓', '│', '┤', 'Á', 'Â', 'Ě', 'Ş',
+    '╣', '║', '╗', '╝', 'Ż', 'ż', '┐', '└', '┴', '┬', '├', '─', '┼', 'Ă', 'ă', '╚', '╔', '╩', '╦',
+    '╠', '═', '╬', '¤', 'đ', 'Đ', 'Ď', 'Ë', 'ď', 'Ň', 'Í', 'Î', 'ě', '┘', '┌', '█', '▄', 'Ţ', 'Ů',
+    '▀', 'Ó', 'ß', 'Ô', 'Ń', 'ń', 'ň', 'Š', 'š', 'Ŕ', 'Ú', 'ŕ', 'Ű', 'ý', 'Ý', 'ţ', '´', '\u{ad}',
+    '˝', '˛', 'ˇ', '˘', '§', '÷', '¸', '°', '¨', '˙', 'ű', 'Ř', 'ř', '■', '\u{a0}',
 ];
 
 /// A single-byte code page, as a way to turn a name back into the bytes it was made of
@@ -214,7 +233,16 @@ impl Single {
 
     fn decode(self, b: &[u8]) -> String {
         match self {
-            Single::Table(t) => b.iter().map(|&x| if x < 0x80 { x as char } else { t[(x - 0x80) as usize] }).collect(),
+            Single::Table(t) => b
+                .iter()
+                .map(|&x| {
+                    if x < 0x80 {
+                        x as char
+                    } else {
+                        t[(x - 0x80) as usize]
+                    }
+                })
+                .collect(),
             Single::Enc(e) => e.decode_without_bom_handling(b).0.into_owned(),
         }
     }
@@ -245,7 +273,9 @@ pub fn name_variants(name: &str) -> Vec<String> {
     ];
     let mut out: Vec<String> = Vec::new();
     for wrong in read_as {
-        let Some(bytes) = wrong.encode(name) else { continue };
+        let Some(bytes) = wrong.encode(name) else {
+            continue;
+        };
         for right in written_in {
             let v = right.decode(&bytes);
             if v != name && !out.contains(&v) {
@@ -263,7 +293,11 @@ pub fn char_variants(c: char) -> Vec<char> {
     if c.is_ascii() {
         return Vec::new();
     }
-    let pages = [encoding_rs::WINDOWS_1251, encoding_rs::WINDOWS_1252, encoding_rs::WINDOWS_1250];
+    let pages = [
+        encoding_rs::WINDOWS_1251,
+        encoding_rs::WINDOWS_1252,
+        encoding_rs::WINDOWS_1250,
+    ];
     let mut buf = [0u8; 4];
     let s: &str = c.encode_utf8(&mut buf);
     let mut out = Vec::new();
@@ -300,30 +334,59 @@ mod tests {
 
     #[test]
     fn detects_the_code_page() {
-        assert_eq!(detect(&cp1251("[friendlyname]\r\nЛиАЗ\r\n5292.20\r\nЗаводская\r\n")), CodePage::Windows1251);
+        assert_eq!(
+            detect(&cp1251(
+                "[friendlyname]\r\nЛиАЗ\r\n5292.20\r\nЗаводская\r\n"
+            )),
+            CodePage::Windows1251
+        );
         assert_eq!(detect(&cp1251("верх.png")), CodePage::Windows1251);
         // German never has three accented letters in a row, even with "Größe"
-        assert_eq!(detect(&cp1252("Größe der Straße, Bahnübergang, Müllerstraße")), CodePage::Windows1252);
-        assert_eq!(detect(&cp1252("'(c) Rüdiger Hülsmann\r\n{trigger:a}\r\n")), CodePage::Windows1252);
-        let pl = encoding_rs::WINDOWS_1250.encode("Łazarz, Śródka, Żegrze, Dworzec Główny").0.into_owned();
+        assert_eq!(
+            detect(&cp1252("Größe der Straße, Bahnübergang, Müllerstraße")),
+            CodePage::Windows1252
+        );
+        assert_eq!(
+            detect(&cp1252("'(c) Rüdiger Hülsmann\r\n{trigger:a}\r\n")),
+            CodePage::Windows1252
+        );
+        let pl = encoding_rs::WINDOWS_1250
+            .encode("Łazarz, Śródka, Żegrze, Dworzec Główny")
+            .0
+            .into_owned();
         assert_eq!(detect(&pl), CodePage::Windows1250);
-        assert_eq!(detect(&cp1252("Volumenstrom in m³/s, Dichte in g/m³")), CodePage::Windows1252);
+        assert_eq!(
+            detect(&cp1252("Volumenstrom in m³/s, Dichte in g/m³")),
+            CodePage::Windows1252
+        );
         assert_eq!(detect("Überlandbus".as_bytes()), CodePage::Utf8);
         assert_eq!(decode(&cp1251("ЛиАЗ")), "ЛиАЗ");
     }
 
     #[test]
     fn reads_the_double_byte_system_code_page() {
-        let gbk = encoding_rs::GBK.encode("Vehicles\\公交车\\x.bus").0.into_owned();
+        let gbk = encoding_rs::GBK
+            .encode("Vehicles\\公交车\\x.bus")
+            .0
+            .into_owned();
         let page = detect_on(&gbk, CodePage::double_byte(936));
         assert_eq!(page, CodePage::Gbk);
-        assert_eq!(page.encoding().decode_without_bom_handling(&gbk).0, "Vehicles\\公交车\\x.bus");
+        assert_eq!(
+            page.encoding().decode_without_bom_handling(&gbk).0,
+            "Vehicles\\公交车\\x.bus"
+        );
         // UTF-8 stays UTF-8, and other systems keep the guess
-        assert_eq!(detect_on("公交车".as_bytes(), CodePage::double_byte(936)), CodePage::Utf8);
+        assert_eq!(
+            detect_on("公交车".as_bytes(), CodePage::double_byte(936)),
+            CodePage::Utf8
+        );
         assert_ne!(detect_on(&gbk, CodePage::double_byte(1251)), CodePage::Gbk);
         // a Russian file on a Chinese system is not GBK
         let ru = cp1251("[station]\r\nУлица Ленина\r\nМетро Сокол\r\n");
-        assert_eq!(detect_on(&ru, CodePage::double_byte(936)), CodePage::Windows1251);
+        assert_eq!(
+            detect_on(&ru, CodePage::double_byte(936)),
+            CodePage::Windows1251
+        );
     }
 
     #[test]
@@ -331,7 +394,12 @@ mod tests {
         // CP866 bytes read as CP852 by the unpacker
         assert!(name_variants("óąÓň.png").contains(&"верх.png".to_string()));
         // the same read as CP437 inside a zip
-        let cp437: String = encoding_rs::IBM866.encode("верх").0.iter().map(|&b| CP437_HIGH[(b - 0x80) as usize]).collect();
+        let cp437: String = encoding_rs::IBM866
+            .encode("верх")
+            .0
+            .iter()
+            .map(|&b| CP437_HIGH[(b - 0x80) as usize])
+            .collect();
         assert!(name_variants(&cp437).contains(&"верх".to_string()));
         // a 1251 name that was read as 1252
         assert!(name_variants("âåðõ.png").contains(&"верх.png".to_string()));

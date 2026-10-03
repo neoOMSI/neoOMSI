@@ -6,5 +6,5 @@ pub mod soundset;
 pub mod stream;
 pub mod wav;
 
-pub use mixer::{AudioEngine, Clip, Listener, VoiceId, VoiceParams, DOPPLER};
+pub use mixer::{AudioEngine, Clip, DOPPLER, Listener, VoiceId, VoiceParams};
 pub use soundset::SoundSet;

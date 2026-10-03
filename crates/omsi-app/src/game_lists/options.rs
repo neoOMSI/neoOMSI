@@ -30,8 +30,12 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "ui_opacity" => (4..=20).map(|v| v as f32 * 0.05).collect(),
         "vol_ai" | "vol_scenery" => (0..=20).map(|v| v as f32 * 0.05).collect(),
         "wheel_range" => (6..=60).map(|v| v as f32 * 30.0).collect(),
-        "wheel_lock" => std::iter::once(0.0).chain((2..=60).map(|v| v as f32 * 30.0)).collect(),
-        "fov" => std::iter::once(0.0).chain((20..=120).map(|v| v as f32)).collect(),
+        "wheel_lock" => std::iter::once(0.0)
+            .chain((2..=60).map(|v| v as f32 * 30.0))
+            .collect(),
+        "fov" => std::iter::once(0.0)
+            .chain((20..=120).map(|v| v as f32))
+            .collect(),
         "steer_look_angle" => (0..=60).map(|v| v as f32).collect(),
         "steer_look_response" => (1..=20).map(|v| v as f32 * 0.05).collect(),
         "pedal_t" | "pedal_b" => PEDAL.to_vec(),
@@ -44,7 +48,13 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
             let mut v: Vec<f32> = (0..=120)
                 .map(|i| {
                     let x = 100.0 * 500f32.powf(i as f32 / 120.0);
-                    let step = if x < 1000.0 { 10.0 } else if x < 10000.0 { 100.0 } else { 500.0 };
+                    let step = if x < 1000.0 {
+                        10.0
+                    } else if x < 10000.0 {
+                        100.0
+                    } else {
+                        500.0
+                    };
                     (x / step).round() * step
                 })
                 .collect();
@@ -61,7 +71,13 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
     })
 }
 
-pub(super) const CLOUD_TYPES: [(&str, &str); 5] = [("-1", "None"), ("Cumulus 1", "Few clouds"), ("Cumulus 2", "Scattered"), ("Cumulus 3", "Broken"), ("Overcast 1", "Overcast")];
+pub(super) const CLOUD_TYPES: [(&str, &str); 5] = [
+    ("-1", "None"),
+    ("Cumulus 1", "Few clouds"),
+    ("Cumulus 2", "Scattered"),
+    ("Cumulus 3", "Broken"),
+    ("Overcast 1", "Overcast"),
+];
 
 pub(super) const PRECIP_KINDS: [&str; 3] = ["None", "Rain", "Snow"];
 
@@ -69,19 +85,21 @@ pub(crate) const CUSTOM_WEATHER: &str = "Custom weather";
 
 pub(super) fn cloud_index(kind: &str) -> Option<usize> {
     let k = kind.trim();
-    CLOUD_TYPES.iter().position(|(id, _)| id.eq_ignore_ascii_case(k) || (*id == "-1" && (k.is_empty() || k.starts_with("-1"))))
+    CLOUD_TYPES.iter().position(|(id, _)| {
+        id.eq_ignore_ascii_case(k) || (*id == "-1" && (k.is_empty() || k.starts_with("-1")))
+    })
 }
 
-pub(super) fn custom_state(app:&App)->crate::weather_setup::CustomWeather{
-    if let Some(mut c)=crate::weather_setup::custom_weather(app.args.weather.as_deref()){
+pub(super) fn custom_state(app: &App) -> crate::weather_setup::CustomWeather {
+    if let Some(mut c) = crate::weather_setup::custom_weather(app.args.weather.as_deref()) {
         // Wetness keeps evolving while driving; never restore an old serialized value just
         // because another custom field (brightness, humidity, etc.) was edited.
-        c.road_wetness=app.wetness;
-        return c
+        c.road_wetness = app.wetness;
+        return c;
     }
-    match app.weather.as_ref(){
-        Some(w)=>crate::weather_setup::CustomWeather::from_weather(w,1.0,app.wetness),
-        None=>crate::weather_setup::CustomWeather::default(),
+    match app.weather.as_ref() {
+        Some(w) => crate::weather_setup::CustomWeather::from_weather(w, 1.0, app.wetness),
+        None => crate::weather_setup::CustomWeather::default(),
     }
 }
 
@@ -102,7 +120,12 @@ pub(crate) fn is_slider(verb: &str) -> bool {
 }
 
 pub(super) fn nearest(steps: &[f32], now: f32) -> usize {
-    steps.iter().enumerate().min_by(|a, b| (a.1 - now).abs().total_cmp(&(b.1 - now).abs())).map(|x| x.0).unwrap_or(0)
+    steps
+        .iter()
+        .enumerate()
+        .min_by(|a, b| (a.1 - now).abs().total_cmp(&(b.1 - now).abs()))
+        .map(|x| x.0)
+        .unwrap_or(0)
 }
 
 pub(super) fn step_move(steps: &[f32], now: f32, mv: Move) -> f32 {
@@ -119,7 +142,11 @@ pub(super) fn step_move(steps: &[f32], now: f32, mv: Move) -> f32 {
 
 pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
     if let Some(field) = verb.strip_prefix("vr_nav_") {
-        return if app.vr_active() && app.player.is_some() { app.vr_nav_profile().value(field) } else { None };
+        return if app.vr_active() && app.player.is_some() {
+            app.vr_nav_profile().value(field)
+        } else {
+            None
+        };
     }
     let s = &app.settings;
     Some(match verb {
@@ -149,7 +176,11 @@ pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
         "visibility" => app.weather.as_ref()?.fog.0,
         "rain_amt" => {
             let w = app.weather.as_ref()?;
-            if w.precip.first().copied().unwrap_or(0.0) < 0.5 { 0.0 } else { (w.precip.get(1).copied().unwrap_or(0.0) / 255.0).clamp(0.0, 1.0) }
+            if w.precip.first().copied().unwrap_or(0.0) < 0.5 {
+                0.0
+            } else {
+                (w.precip.get(1).copied().unwrap_or(0.0) / 255.0).clamp(0.0, 1.0)
+            }
         }
         "wet" => app.wetness,
         "brightness" => custom_state(app).brightness,
@@ -161,7 +192,12 @@ pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
     })
 }
 
-pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option<(&'static str, String)> {
+pub(super) fn option_set(
+    app: &mut App,
+    verb: &str,
+    arg: &str,
+    v: f32,
+) -> Option<(&'static str, String)> {
     if let Some(field) = verb.strip_prefix("vr_nav_") {
         app.vr_nav_set(field, v);
         return None; // Stored per bus, never in the desktop settings file.
@@ -192,7 +228,10 @@ pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option
         }
         "atmosphere_brightness" => {
             app.settings.atmosphere_brightness = v.clamp(0.0, 2.0);
-            Some(("atmosphere_brightness", app.settings.atmosphere_brightness.to_string()))
+            Some((
+                "atmosphere_brightness",
+                app.settings.atmosphere_brightness.to_string(),
+            ))
         }
         "led_mips" => {
             app.settings.led_mips = v.clamp(0.0, 4.0);
@@ -244,25 +283,45 @@ pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option
         }
         "steer_look_angle" => {
             app.settings.steer_look_angle = v.round();
-            Some(("steer_look_angle", app.settings.steer_look_angle.to_string()))
+            Some((
+                "steer_look_angle",
+                app.settings.steer_look_angle.to_string(),
+            ))
         }
         "steer_look_response" => {
             app.settings.steer_look_response = (v * 100.0).round() / 100.0;
-            Some(("steer_look_response", app.settings.steer_look_response.to_string()))
+            Some((
+                "steer_look_response",
+                app.settings.steer_look_response.to_string(),
+            ))
         }
         "seat" => {
             let k: usize = arg.trim().parse().unwrap_or(0).min(2);
             app.settings.seat[k] = (v * 100.0).round() / 100.0;
-            Some((["seat_x", "seat_y", "seat_z"][k], app.settings.seat[k].to_string()))
+            Some((
+                ["seat_x", "seat_y", "seat_z"][k],
+                app.settings.seat[k].to_string(),
+            ))
         }
         "hour" | "minute" => {
-            if app.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
+            if app
+                .lan
+                .as_ref()
+                .is_some_and(|l| l.role == omsi_net::Role::Client)
+            {
                 app.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
                 return None;
             }
             let t = app.clock.time;
-            let (h, m) = (((t / 3600.0) as i64).rem_euclid(24), ((t / 60.0) as i64) % 60);
-            let (h, m) = if verb == "hour" { (v.round() as i64, m) } else { (h, v.round() as i64) };
+            let (h, m) = (
+                ((t / 3600.0) as i64).rem_euclid(24),
+                ((t / 60.0) as i64) % 60,
+            );
+            let (h, m) = if verb == "hour" {
+                (v.round() as i64, m)
+            } else {
+                (h, v.round() as i64)
+            };
             let target = (h * 3600 + m * 60) as f64 + t % 60.0;
             app.shift_clock(target - t);
             None
@@ -282,13 +341,22 @@ pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option
             None
         }
         "wet" => {
-            let mut c=custom_state(app); c.road_wetness=v; app.set_custom_weather(c); None
+            let mut c = custom_state(app);
+            c.road_wetness = v;
+            app.set_custom_weather(c);
+            None
         }
         "brightness" => {
-            let mut c=custom_state(app); c.brightness=v; app.set_custom_weather(c); None
+            let mut c = custom_state(app);
+            c.brightness = v;
+            app.set_custom_weather(c);
+            None
         }
         "humidity" => {
-            let mut c=custom_state(app); c.humidity=v; app.set_custom_weather(c); None
+            let mut c = custom_state(app);
+            c.humidity = v;
+            app.set_custom_weather(c);
+            None
         }
         "temp" => {
             app.edit_weather(|w| w.temp.0 = v);
@@ -309,12 +377,27 @@ pub(super) fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option
 pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
     let s = &app.settings;
     Some(match id {
-        "navigator" => if app.vr_active() { app.vr_nav_profile().enabled } else { app.navigator.as_ref().is_some_and(|n| n.enabled) },
+        "navigator" => {
+            if app.vr_active() {
+                app.vr_nav_profile().enabled
+            } else {
+                app.navigator.as_ref().is_some_and(|n| n.enabled)
+            }
+        }
         "nav_ai" => app.navigator.as_ref().map_or(s.nav_ai, |n| n.show_ai),
-        "nav_topbar" => app.navigator.as_ref().map_or(s.nav_topbar, |n| n.show_topbar),
+        "nav_topbar" => app
+            .navigator
+            .as_ref()
+            .map_or(s.nav_topbar, |n| n.show_topbar),
         "nav_turn" => app.navigator.as_ref().map_or(s.nav_turn, |n| n.show_turn),
-        "nav_stoplist" => app.navigator.as_ref().map_or(s.nav_stoplist, |n| n.show_stoplist),
-        "nav_stops_ext" => app.navigator.as_ref().map_or(s.nav_stops_ext, |n| n.schedule),
+        "nav_stoplist" => app
+            .navigator
+            .as_ref()
+            .map_or(s.nav_stoplist, |n| n.show_stoplist),
+        "nav_stops_ext" => app
+            .navigator
+            .as_ref()
+            .map_or(s.nav_stops_ext, |n| n.schedule),
         "shadows" => s.shadows,
         "head" => s.head_movement,
         "cam_smooth" => s.driverview_smooth,
@@ -327,8 +410,8 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "auto_ibis" => s.auto_ibis,
         "time_sync" => s.time_sync,
         "metar_sync" => s.metar_sync,
-        "snow_cover" => app.weather.as_ref().is_some_and(|w|w.snow),
-        "snow_road" => app.weather.as_ref().is_some_and(|w|w.snow_on_road),
+        "snow_cover" => app.weather.as_ref().is_some_and(|w| w.snow),
+        "snow_road" => app.weather.as_ref().is_some_and(|w| w.snow_on_road),
         "camcoll" => s.camera_collision,
         "steer_look" => s.steer_look,
         "hands_in_cab" => s.hands_in_cab,
@@ -373,7 +456,9 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
     match id {
         "navigator" => {
             if app.vr_active() {
-                if app.vr_nav_profile().enabled != on { app.vr_nav_adjust("enabled", 1.0); }
+                if app.vr_nav_profile().enabled != on {
+                    app.vr_nav_adjust("enabled", 1.0);
+                }
                 return None;
             }
             if let Some(n) = app.navigator.as_mut() {
@@ -451,8 +536,23 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
             if !app.mouse_drive {
                 app.reset_vr_pointer();
             }
-            app.mouse_steer = (app.player.as_ref().map(|p| p.vehicle.physics.controls.steering).unwrap_or(0.0), 1.0);
-            app.mouse_pedals = app.player.as_ref().map(|p| (p.vehicle.physics.controls.throttle, p.vehicle.physics.controls.brake)).unwrap_or((0.0, 0.0));
+            app.mouse_steer = (
+                app.player
+                    .as_ref()
+                    .map(|p| p.vehicle.physics.controls.steering)
+                    .unwrap_or(0.0),
+                1.0,
+            );
+            app.mouse_pedals = app
+                .player
+                .as_ref()
+                .map(|p| {
+                    (
+                        p.vehicle.physics.controls.throttle,
+                        p.vehicle.physics.controls.brake,
+                    )
+                })
+                .unwrap_or((0.0, 0.0));
             None
         }
         "blinker_cancel" => {
@@ -478,7 +578,11 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         "time_sync" => {
             app.settings.time_sync = on;
             if let Some(l) = app.lan.as_mut().filter(|l| l.role == omsi_net::Role::Host) {
-                l.clock_speed = if on { 1.0 } else { app.settings.time_speed.clamp(1.0, 30.0) };
+                l.clock_speed = if on {
+                    1.0
+                } else {
+                    app.settings.time_speed.clamp(1.0, 30.0)
+                };
             }
             app.sync_real_time();
             Some(("time_sync", bit))
@@ -496,8 +600,14 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
             }
             Some(("metar_sync", bit))
         }
-        "snow_cover" => { app.edit_weather(|w|w.snow=on); None }
-        "snow_road" => { app.edit_weather(|w|w.snow_on_road=on); None }
+        "snow_cover" => {
+            app.edit_weather(|w| w.snow = on);
+            None
+        }
+        "snow_road" => {
+            app.edit_weather(|w| w.snow_on_road = on);
+            None
+        }
         "fps" => {
             app.settings.show_fps = on;
             Some(("show_fps", bit))

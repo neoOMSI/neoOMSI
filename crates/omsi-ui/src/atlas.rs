@@ -42,7 +42,18 @@ const MAX_SIZE: u32 = 4096;
 
 impl Atlas {
     pub fn new(size: u32) -> Atlas {
-        Atlas { size, rgba: vec![0; (size * size * 4) as usize], entries: HashMap::new(), shelf_y: 0, shelf_h: 0, cursor_x: 0, dirty: Some([0, 0, size, size]), frame: 0, generation: 0, overflowed: false }
+        Atlas {
+            size,
+            rgba: vec![0; (size * size * 4) as usize],
+            entries: HashMap::new(),
+            shelf_y: 0,
+            shelf_h: 0,
+            cursor_x: 0,
+            dirty: Some([0, 0, size, size]),
+            frame: 0,
+            generation: 0,
+            overflowed: false,
+        }
     }
 
     /// Start of a frame: an atlas more than nine tenths full is cleared now, before
@@ -128,12 +139,25 @@ impl Atlas {
             None => r,
             Some(d) => {
                 let (x0, y0) = (d[0].min(r[0]), d[1].min(r[1]));
-                let (x1, y1) = ((d[0] + d[2]).max(r[0] + r[2]), (d[1] + d[3]).max(r[1] + r[3]));
+                let (x1, y1) = (
+                    (d[0] + d[2]).max(r[0] + r[2]),
+                    (d[1] + d[3]).max(r[1] + r[3]),
+                );
                 [x0, y0, x1 - x0, y1 - y0]
             }
         });
         let s = self.size as f32;
-        let sprite = Sprite { uv: [at.0 as f32 / s, at.1 as f32 / s, (at.0 + w) as f32 / s, (at.1 + h) as f32 / s], w: w as f32, h: h as f32, ascent };
+        let sprite = Sprite {
+            uv: [
+                at.0 as f32 / s,
+                at.1 as f32 / s,
+                (at.0 + w) as f32 / s,
+                (at.1 + h) as f32 / s,
+            ],
+            w: w as f32,
+            h: h as f32,
+            ascent,
+        };
         self.entries.insert(key, (sprite, self.frame));
         sprite
     }

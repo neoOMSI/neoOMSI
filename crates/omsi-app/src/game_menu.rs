@@ -4,7 +4,10 @@ use super::*;
 
 pub(crate) fn route_char(code: KeyCode) -> Option<char> {
     let name = format!("{code:?}");
-    let c = name.strip_prefix("Digit").or_else(|| name.strip_prefix("Numpad")).or_else(|| name.strip_prefix("Key"))?;
+    let c = name
+        .strip_prefix("Digit")
+        .or_else(|| name.strip_prefix("Numpad"))
+        .or_else(|| name.strip_prefix("Key"))?;
     let mut chars = c.chars();
     let ch = chars.next()?;
     (chars.next().is_none() && ch.is_ascii_alphanumeric()).then(|| ch.to_ascii_uppercase())
@@ -20,7 +23,10 @@ pub(crate) const SERVER_GAME_MENU: [(&str, &str); 6] = [
 ];
 
 pub(crate) fn on_server(args: &crate::Args) -> bool {
-    args.lan_join.as_deref().map(|t| omsi_net::ws::ws_url(t).is_some()).unwrap_or(false)
+    args.lan_join
+        .as_deref()
+        .map(|t| omsi_net::ws::ws_url(t).is_some())
+        .unwrap_or(false)
 }
 
 pub(crate) fn game_menu_for(args: &crate::Args) -> &'static [(&'static str, &'static str)] {
@@ -59,8 +65,11 @@ impl App {
 
     pub(crate) fn close_game_menu(&mut self) {
         if self.menu_edit_icao {
-            if let Some(w)=self.window.as_ref(){w.set_ime_allowed(false);}
-            self.menu_edit_icao=false; self.menu_edit=None;
+            if let Some(w) = self.window.as_ref() {
+                w.set_ime_allowed(false);
+            }
+            self.menu_edit_icao = false;
+            self.menu_edit = None;
         }
         self.game_menu = None;
         self.menu_top = None;
@@ -74,15 +83,27 @@ impl App {
         self.dropdown = None;
         self.admin_list = Some(crate::game_lists::items(self, &kind));
         self.list_kind = Some(kind);
-        self.chooser = Some(if self.is_heading(0) { self.chooser_next(0, 1) } else { 0 });
+        self.chooser = Some(if self.is_heading(0) {
+            self.chooser_next(0, 1)
+        } else {
+            0
+        });
     }
 
     pub(crate) fn is_heading(&self, k: usize) -> bool {
-        self.admin_list.as_ref().and_then(|l| l.get(k)).is_some_and(|l| l.1 == crate::game_lists::HEADING || l.1 == "keysearch")
+        self.admin_list
+            .as_ref()
+            .and_then(|l| l.get(k))
+            .is_some_and(|l| l.1 == crate::game_lists::HEADING || l.1 == "keysearch")
     }
 
     pub(crate) fn chooser_next(&self, sel: usize, step: usize) -> usize {
-        let n = self.admin_list.as_ref().unwrap_or(&self.vehicle_list).len().max(1);
+        let n = self
+            .admin_list
+            .as_ref()
+            .unwrap_or(&self.vehicle_list)
+            .len()
+            .max(1);
         let mut k = sel;
         for _ in 0..n {
             k = (k + step) % n;
@@ -94,48 +115,88 @@ impl App {
     }
 
     pub(crate) fn chooser_adjust(&mut self, k: usize, dir: &str) {
-        let Some(action) = self.admin_list.as_ref().and_then(|l| l.get(k)).and_then(|l| l.1.strip_suffix(crate::game_lists::ADJUST)).map(|a| format!("{a} {dir}")) else { return };
+        let Some(action) = self
+            .admin_list
+            .as_ref()
+            .and_then(|l| l.get(k))
+            .and_then(|l| l.1.strip_suffix(crate::game_lists::ADJUST))
+            .map(|a| format!("{a} {dir}"))
+        else {
+            return;
+        };
         if let Some(l) = self.admin_list.as_mut().and_then(|l| l.get_mut(k)) {
             l.1 = action;
         }
         self.chooser_pick(k);
     }
 
-    pub(crate) fn icao_edit_key(&mut self,code:KeyCode){
-        match code{
-            KeyCode::Escape=>{self.menu_edit=None;self.menu_edit_icao=false;if let Some(w)=self.window.as_ref(){w.set_ime_allowed(false);}},
-            KeyCode::Backspace|KeyCode::Delete=>{if let Some(d)=self.menu_edit.as_mut(){d.pop();}},
-            KeyCode::Enter|KeyCode::NumpadEnter=>{self.apply_icao_edit();return;},
-            _=>{}
+    pub(crate) fn icao_edit_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Escape => {
+                self.menu_edit = None;
+                self.menu_edit_icao = false;
+                if let Some(w) = self.window.as_ref() {
+                    w.set_ime_allowed(false);
+                }
+            }
+            KeyCode::Backspace | KeyCode::Delete => {
+                if let Some(d) = self.menu_edit.as_mut() {
+                    d.pop();
+                }
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                self.apply_icao_edit();
+                return;
+            }
+            _ => {}
         }
         self.refresh_list();
     }
 
-    pub(crate) fn icao_edit_text(&mut self,text:&str){
-        if !self.menu_edit_icao{return}
-        if let Some(d)=self.menu_edit.as_mut(){
-            for c in text.chars().filter(|c|c.is_ascii_alphabetic()){
-                if d.len()>=4{break} d.push(c.to_ascii_uppercase());
+    pub(crate) fn icao_edit_text(&mut self, text: &str) {
+        if !self.menu_edit_icao {
+            return;
+        }
+        if let Some(d) = self.menu_edit.as_mut() {
+            for c in text.chars().filter(|c| c.is_ascii_alphabetic()) {
+                if d.len() >= 4 {
+                    break;
+                }
+                d.push(c.to_ascii_uppercase());
             }
         }
         self.refresh_list();
     }
 
-    pub(crate) fn start_icao_edit(&mut self){
-        self.menu_edit=Some(String::new()); self.menu_edit_icao=true;
-        if let Some(w)=self.window.as_ref(){w.set_ime_allowed(true);}
+    pub(crate) fn start_icao_edit(&mut self) {
+        self.menu_edit = Some(String::new());
+        self.menu_edit_icao = true;
+        if let Some(w) = self.window.as_ref() {
+            w.set_ime_allowed(true);
+        }
     }
 
-    pub(crate) fn apply_icao_edit(&mut self){
-        let code=self.menu_edit.take().unwrap_or_default().trim().to_ascii_uppercase();
-        self.menu_edit_icao=false;
-        if let Some(w)=self.window.as_ref(){w.set_ime_allowed(false);}
-        if code.len()==4&&code.chars().all(|c|c.is_ascii_alphabetic()){
-            self.settings.metar_station=code.clone();
-            crate::game_lists::remember_setting("metar_station",&code);
-            self.metar_rx=None; self.metar_once=false; self.metar_next=0.0;
-            self.service_msg=Some((format!("METAR source: {code}"),3.0));
-        }else if !code.is_empty(){self.service_msg=Some(("ICAO must be exactly 4 letters".into(),3.0));}
+    pub(crate) fn apply_icao_edit(&mut self) {
+        let code = self
+            .menu_edit
+            .take()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_uppercase();
+        self.menu_edit_icao = false;
+        if let Some(w) = self.window.as_ref() {
+            w.set_ime_allowed(false);
+        }
+        if code.len() == 4 && code.chars().all(|c| c.is_ascii_alphabetic()) {
+            self.settings.metar_station = code.clone();
+            crate::game_lists::remember_setting("metar_station", &code);
+            self.metar_rx = None;
+            self.metar_once = false;
+            self.metar_next = 0.0;
+            self.service_msg = Some((format!("METAR source: {code}"), 3.0));
+        } else if !code.is_empty() {
+            self.service_msg = Some(("ICAO must be exactly 4 letters".into(), 3.0));
+        }
         self.refresh_list();
     }
 
@@ -204,7 +265,9 @@ impl App {
     }
 
     pub(crate) fn apply_time_edit(&mut self) {
-        let Some(d) = self.menu_edit.take() else { return };
+        let Some(d) = self.menu_edit.take() else {
+            return;
+        };
         if !d.is_empty() {
             let mut c = d.clone();
             while c.len() < 6 {
@@ -213,11 +276,21 @@ impl App {
             let n = |a: usize| c[a..a + 2].parse::<i64>().unwrap_or(0);
             let (h, m, sec) = (n(0), n(2), n(4));
             if h > 23 || m > 59 || sec > 59 {
-                self.service_msg = Some((format!("{:02}:{:02}:{:02} is no time of day", h, m, sec), 3.0));
-            } else if self.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
+                self.service_msg = Some((
+                    format!("{:02}:{:02}:{:02} is no time of day", h, m, sec),
+                    3.0,
+                ));
+            } else if self
+                .lan
+                .as_ref()
+                .is_some_and(|l| l.role == omsi_net::Role::Client)
+            {
                 self.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
             } else if self.real_time_locked() {
-                self.service_msg = Some(("The time cannot be changed while the real-time sync is on".into(), 3.0));
+                self.service_msg = Some((
+                    "The time cannot be changed while the real-time sync is on".into(),
+                    3.0,
+                ));
             } else {
                 let t = self.clock.time;
                 let day_start = t - t.rem_euclid(86400.0);
@@ -229,7 +302,9 @@ impl App {
     }
 
     pub(crate) fn refresh_list(&mut self) {
-        let Some(kind) = self.list_kind.clone() else { return };
+        let Some(kind) = self.list_kind.clone() else {
+            return;
+        };
         let keep = self.chooser;
         self.open_list(kind);
         if let (Some(k), Some(l)) = (keep, self.admin_list.as_ref()) {
@@ -239,15 +314,23 @@ impl App {
 
     pub(crate) fn settings_list(&self) -> bool {
         use crate::game_lists::ListKind;
-        self.chooser.is_some() && matches!(self.list_kind, Some(ListKind::Options(_) | ListKind::Vehicle(_) | ListKind::World(_)))
+        self.chooser.is_some()
+            && matches!(
+                self.list_kind,
+                Some(ListKind::Options(_) | ListKind::Vehicle(_) | ListKind::World(_))
+            )
     }
 
     pub(crate) fn close_list(&mut self) {
         self.key_capture = None;
         self.key_search_stop();
         self.dropdown = None;
-        if self.menu_edit_icao { if let Some(w)=self.window.as_ref(){w.set_ime_allowed(false);} }
-        self.menu_edit_icao=false;
+        if self.menu_edit_icao {
+            if let Some(w) = self.window.as_ref() {
+                w.set_ime_allowed(false);
+            }
+        }
+        self.menu_edit_icao = false;
         self.menu_edit = None;
         self.chooser = None;
         self.admin_list = None;
@@ -256,9 +339,15 @@ impl App {
     }
 
     /// Remembers the Options tab the map page is opened from, and sends "back" from the map page there.
-    fn map_page_target(&mut self, from: &crate::game_lists::ListKind, next: crate::game_lists::ListKind) -> crate::game_lists::ListKind {
-        use crate::game_lists::{is_sub_tab, ListKind};
-        if matches!(from, ListKind::Options(t) if *t == crate::game_lists::KEYS_TAB) && *from != next {
+    fn map_page_target(
+        &mut self,
+        from: &crate::game_lists::ListKind,
+        next: crate::game_lists::ListKind,
+    ) -> crate::game_lists::ListKind {
+        use crate::game_lists::{ListKind, is_sub_tab};
+        if matches!(from, ListKind::Options(t) if *t == crate::game_lists::KEYS_TAB)
+            && *from != next
+        {
             self.key_search_stop();
         }
         match (from, &next) {
@@ -266,7 +355,9 @@ impl App {
                 self.map_return_tab = *t;
                 self.key_filter.clear();
             }
-            (ListKind::Options(t), ListKind::Options(0)) if is_sub_tab(*t) => return ListKind::Options(self.map_return_tab),
+            (ListKind::Options(t), ListKind::Options(0)) if is_sub_tab(*t) => {
+                return ListKind::Options(self.map_return_tab);
+            }
             _ => {}
         }
         next
@@ -274,15 +365,37 @@ impl App {
 
     /// The (section, entry, action) of the Keys page row `k`, if it is a key binding.
     fn keybind_row(&self, k: usize) -> Option<(usize, usize, String)> {
-        let a = self.admin_list.as_ref()?.get(k)?.1.strip_prefix("keybind ")?.to_string();
+        let a = self
+            .admin_list
+            .as_ref()?
+            .get(k)?
+            .1
+            .strip_prefix("keybind ")?
+            .to_string();
         let mut it = a.splitn(3, ' ');
-        Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next()?.to_string()))
+        Some((
+            it.next()?.parse().ok()?,
+            it.next()?.parse().ok()?,
+            it.next()?.to_string(),
+        ))
     }
 
     /// A key pressed while a binding waits for it (Escape leaves the binding as it is).
     pub(crate) fn capture_key(&mut self, code: KeyCode) {
-        let Some((sec, idx)) = self.key_capture else { return };
-        if matches!(code, KeyCode::ShiftLeft | KeyCode::ShiftRight | KeyCode::ControlLeft | KeyCode::ControlRight | KeyCode::AltLeft | KeyCode::AltRight | KeyCode::SuperLeft | KeyCode::SuperRight) {
+        let Some((sec, idx)) = self.key_capture else {
+            return;
+        };
+        if matches!(
+            code,
+            KeyCode::ShiftLeft
+                | KeyCode::ShiftRight
+                | KeyCode::ControlLeft
+                | KeyCode::ControlRight
+                | KeyCode::AltLeft
+                | KeyCode::AltRight
+                | KeyCode::SuperLeft
+                | KeyCode::SuperRight
+        ) {
             return;
         }
         let name = self.keybind_name(sec, idx);
@@ -292,12 +405,19 @@ impl App {
             return;
         }
         let Some(scan) = crate::keys::dik_code(code) else {
-            self.service_msg = Some((format!("{code:?} has no key code the game understands"), 3.0));
+            self.service_msg = Some((
+                format!("{code:?} has no key code the game understands"),
+                3.0,
+            ));
             self.reopen_keys(sec, idx);
             return;
         };
         let held = |a: KeyCode, b: KeyCode| self.keys.contains(&a) || self.keys.contains(&b);
-        let m = omsi_content::input::chord(held(KeyCode::ShiftLeft, KeyCode::ShiftRight), held(KeyCode::ControlLeft, KeyCode::ControlRight), held(KeyCode::AltLeft, KeyCode::AltRight)) as i64;
+        let m = omsi_content::input::chord(
+            held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
+            held(KeyCode::ControlLeft, KeyCode::ControlRight),
+            held(KeyCode::AltLeft, KeyCode::AltRight),
+        ) as i64;
         if let Some(name) = name {
             self.keybind_edit(sec, idx, &name, KeyEdit::Set(scan as i64, m));
         }
@@ -306,14 +426,22 @@ impl App {
     /// The action name of the list row that is entry `idx` of section `sec`.
     fn keybind_name(&self, sec: usize, idx: usize) -> Option<String> {
         let list = self.admin_list.as_ref()?;
-        (0..list.len()).filter_map(|k| self.keybind_row(k)).find(|r| r.0 == sec && r.1 == idx).map(|r| r.2)
+        (0..list.len())
+            .filter_map(|k| self.keybind_row(k))
+            .find(|r| r.0 == sec && r.1 == idx)
+            .map(|r| r.2)
     }
 
     /// Opens the Keys page again with the row of entry `idx` of section `sec` selected.
     fn reopen_keys(&mut self, sec: usize, idx: usize) {
-        let Some(kind) = self.list_kind.clone() else { return };
+        let Some(kind) = self.list_kind.clone() else {
+            return;
+        };
         self.open_list(kind);
-        let at = (0..self.admin_list.as_ref().map(|l| l.len()).unwrap_or(0)).find(|k| self.keybind_row(*k).is_some_and(|r| r.0 == sec && r.1 == idx));
+        let at = (0..self.admin_list.as_ref().map(|l| l.len()).unwrap_or(0)).find(|k| {
+            self.keybind_row(*k)
+                .is_some_and(|r| r.0 == sec && r.1 == idx)
+        });
         if let Some(k) = at {
             self.chooser = Some(k);
         }
@@ -330,12 +458,23 @@ impl App {
         };
         let target = idx;
         {
-            let Some(arr) = v.get_mut(section).and_then(|a| a.as_array_mut()) else { return };
-            if arr.get(idx).and_then(|b| b.get("action")).and_then(|a| a.as_str()) != Some(name) {
+            let Some(arr) = v.get_mut(section).and_then(|a| a.as_array_mut()) else {
+                return;
+            };
+            if arr
+                .get(idx)
+                .and_then(|b| b.get("action"))
+                .and_then(|a| a.as_str())
+                != Some(name)
+            {
                 self.reopen_keys(sec, idx);
                 return;
             }
-            let hold = arr[idx].get("modifier").and_then(|x| x.as_i64()).unwrap_or(0) & omsi_content::input::KEY_HOLD as i64;
+            let hold = arr[idx]
+                .get("modifier")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0)
+                & omsi_content::input::KEY_HOLD as i64;
             match edit {
                 KeyEdit::Set(scan, m) => {
                     arr[idx]["scan_code"] = serde_json::json!(scan);
@@ -365,20 +504,27 @@ impl App {
     /// Reads `keyboard.cfg` anew into what the running game uses.
     fn reload_keys(&mut self) {
         let path = crate::startup::keyboard_cfg(&self.args.root);
-        self.game_keys = omsi_content::KeyboardCfg::load(&path).unwrap_or_default().with_game_defaults().with_vr_defaults().game;
+        self.game_keys = omsi_content::KeyboardCfg::load(&path)
+            .unwrap_or_default()
+            .with_game_defaults()
+            .with_vr_defaults()
+            .game;
         if let Ok(k) = omsi_content::KeyboardCfg::load(&path) {
             if let Some(p) = self.player.as_mut() {
                 p.bindings = k.with_game_defaults().vehicles;
             }
         }
         self.own_keys = crate::startup::own_keys(&self.args.root);
-        self.own_shift = crate::startup::own_bindings(&self.args.root, omsi_content::input::KEY_SHIFT);
+        self.own_shift =
+            crate::startup::own_bindings(&self.args.root, omsi_content::input::KEY_SHIFT);
     }
 
     /// The Keys page's rows anew (the search line shows whether it is being typed in), the
     /// row chosen and the scroll kept.
     fn rebuild_keys_rows(&mut self) {
-        if !matches!(self.list_kind, Some(crate::game_lists::ListKind::Options(t)) if t == crate::game_lists::KEYS_TAB) || self.admin_list.is_none() {
+        if !matches!(self.list_kind, Some(crate::game_lists::ListKind::Options(t)) if t == crate::game_lists::KEYS_TAB)
+            || self.admin_list.is_none()
+        {
             return;
         }
         if let Some(kind) = self.list_kind.clone() {
@@ -412,13 +558,19 @@ impl App {
         if self.key_capture.is_some() {
             return;
         }
-        self.key_filter.extend(text.chars().filter(|c| !c.is_control()));
+        self.key_filter
+            .extend(text.chars().filter(|c| !c.is_control()));
         self.refresh_keys_list();
     }
 
     /// A key pressed on the key bindings page (the letters come in as search text).
     fn key_search_key(&mut self, code: KeyCode) {
-        let n = self.admin_list.as_ref().map(|l| l.len()).unwrap_or(0).max(1);
+        let n = self
+            .admin_list
+            .as_ref()
+            .map(|l| l.len())
+            .unwrap_or(0)
+            .max(1);
         let sel = self.chooser.unwrap_or(0);
         match code {
             KeyCode::Escape => self.key_search_stop(),
@@ -428,9 +580,27 @@ impl App {
             }
             KeyCode::ArrowUp => self.chooser = Some(self.chooser_next(sel, n - 1)),
             KeyCode::ArrowDown => self.chooser = Some(self.chooser_next(sel, 1)),
-            KeyCode::PageUp => self.chooser = Some(sel.saturating_sub(10)).map(|k| if self.is_heading(k) { self.chooser_next(k, 1) } else { k }),
-            KeyCode::PageDown => self.chooser = Some((sel + 10).min(n - 1)).map(|k| if self.is_heading(k) { self.chooser_next(k, 1) } else { k }),
-            KeyCode::Enter | KeyCode::NumpadEnter if !self.is_heading(sel) => self.chooser_pick(sel),
+            KeyCode::PageUp => {
+                self.chooser = Some(sel.saturating_sub(10)).map(|k| {
+                    if self.is_heading(k) {
+                        self.chooser_next(k, 1)
+                    } else {
+                        k
+                    }
+                })
+            }
+            KeyCode::PageDown => {
+                self.chooser = Some((sel + 10).min(n - 1)).map(|k| {
+                    if self.is_heading(k) {
+                        self.chooser_next(k, 1)
+                    } else {
+                        k
+                    }
+                })
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter if !self.is_heading(sel) => {
+                self.chooser_pick(sel)
+            }
             KeyCode::Delete if !self.is_heading(sel) => {
                 if let Some((s, i, name)) = self.keybind_row(sel) {
                     self.keybind_edit(s, i, &name, KeyEdit::Clear);
@@ -442,7 +612,9 @@ impl App {
 
     /// The list anew after the search text changed: the first binding chosen, shown from the top.
     pub(crate) fn refresh_keys_list(&mut self) {
-        let Some(kind) = self.list_kind.clone() else { return };
+        let Some(kind) = self.list_kind.clone() else {
+            return;
+        };
         self.menu_top = None;
         self.open_list(kind);
     }
@@ -463,18 +635,31 @@ impl App {
     }
 
     pub(crate) fn settings_tab_step(&mut self, forward: bool) {
-        let Some(kind) = self.list_kind.clone() else { return };
-        let Some((titles, at)) = crate::game_lists::page_titles(self, &kind) else { return };
+        let Some(kind) = self.list_kind.clone() else {
+            return;
+        };
+        let Some((titles, at)) = crate::game_lists::page_titles(self, &kind) else {
+            return;
+        };
         let n = titles.len().max(1);
-        self.settings_tab(if forward { (at + 1) % n } else { (at + n - 1) % n });
+        self.settings_tab(if forward {
+            (at + 1) % n
+        } else {
+            (at + n - 1) % n
+        });
     }
 
     pub(crate) fn settings_side_click(&mut self, i: usize) {
-        let Some(kind) = self.list_kind.clone() else { return };
-        let n = crate::game_lists::page_titles(self, &kind).map(|t| t.0.len()).unwrap_or(0);
+        let Some(kind) = self.list_kind.clone() else {
+            return;
+        };
+        let n = crate::game_lists::page_titles(self, &kind)
+            .map(|t| t.0.len())
+            .unwrap_or(0);
         if i < n {
             self.settings_tab(i);
-        } else if matches!(kind, crate::game_lists::ListKind::Options(t) if crate::game_lists::is_sub_tab(t)) {
+        } else if matches!(kind, crate::game_lists::ListKind::Options(t) if crate::game_lists::is_sub_tab(t))
+        {
             self.key_search_stop();
             self.menu_top = None;
             self.open_list(crate::game_lists::ListKind::Options(self.map_return_tab));
@@ -486,27 +671,49 @@ impl App {
 
     pub(crate) fn list_adjust(&mut self, k: usize, mv: crate::game_lists::Move) {
         use crate::game_lists::ListKind;
-        let Some(kind) = self.list_kind.clone() else { return };
+        let Some(kind) = self.list_kind.clone() else {
+            return;
+        };
         if !matches!(kind, ListKind::Options(_) | ListKind::World(_)) {
             return;
         }
-        let Some(action) = self.admin_list.as_ref().and_then(|l| l.get(k)).map(|x| x.1.clone()) else { return };
+        let Some(action) = self
+            .admin_list
+            .as_ref()
+            .and_then(|l| l.get(k))
+            .map(|x| x.1.clone())
+        else {
+            return;
+        };
         let slider = crate::game_lists::is_slider(action.split(' ').next().unwrap_or(""));
         crate::game_lists::LIST_DIRTY.store(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(next) = crate::game_lists::run_move(self, &kind, &action, mv) {
             let next = self.map_page_target(&kind, next);
-            if slider && !crate::game_lists::LIST_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            if slider
+                && !crate::game_lists::LIST_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
                 return;
             }
             self.open_list(next);
-            let last = self.admin_list.as_ref().map(|l| l.len().saturating_sub(1)).unwrap_or(0);
+            let last = self
+                .admin_list
+                .as_ref()
+                .map(|l| l.len().saturating_sub(1))
+                .unwrap_or(0);
             self.chooser = Some(k.min(last));
         }
     }
 
     pub(crate) fn list_click(&mut self, k: usize, fx: f32) -> bool {
         use crate::game_lists::Move;
-        let Some(action) = self.admin_list.as_ref().and_then(|l| l.get(k)).map(|x| x.1.clone()) else { return false };
+        let Some(action) = self
+            .admin_list
+            .as_ref()
+            .and_then(|l| l.get(k))
+            .map(|x| x.1.clone())
+        else {
+            return false;
+        };
         let verb = action.split(' ').next().unwrap_or("");
         let slider = crate::game_lists::is_slider(verb);
         let mv = if slider || verb == "mapopts" {
@@ -528,19 +735,28 @@ impl App {
         if self.menu_edit.is_some() {
             if self.menu_edit_icao {
                 self.icao_edit_key(code);
-            } else if matches!(self.list_kind, Some(crate::game_lists::ListKind::RouteNumbers)) {
+            } else if matches!(
+                self.list_kind,
+                Some(crate::game_lists::ListKind::RouteNumbers)
+            ) {
                 self.route_edit_key(code);
             } else {
                 self.time_edit_key(code);
             }
             return;
         }
-        let n = self.admin_list.as_ref().unwrap_or(&self.vehicle_list).len().max(1);
+        let n = self
+            .admin_list
+            .as_ref()
+            .unwrap_or(&self.vehicle_list)
+            .len()
+            .max(1);
         let sel = self.chooser.unwrap_or(0);
         self.menu_top = None;
         match code {
             KeyCode::Escape => {
-                if matches!(self.list_kind, Some(crate::game_lists::ListKind::Options(t)) if crate::game_lists::is_sub_tab(t)) {
+                if matches!(self.list_kind, Some(crate::game_lists::ListKind::Options(t)) if crate::game_lists::is_sub_tab(t))
+                {
                     self.menu_top = None;
                     self.open_list(crate::game_lists::ListKind::Options(self.map_return_tab));
                     self.chooser = Some(0);
@@ -559,25 +775,51 @@ impl App {
             }
             KeyCode::ArrowUp | KeyCode::KeyW => self.chooser = Some(self.chooser_next(sel, n - 1)),
             KeyCode::ArrowDown | KeyCode::KeyS => self.chooser = Some(self.chooser_next(sel, 1)),
-            KeyCode::ArrowLeft | KeyCode::KeyA if self.settings_list() => self.list_adjust(sel, crate::game_lists::Move::Dec),
-            KeyCode::ArrowRight | KeyCode::KeyD if self.settings_list() => self.list_adjust(sel, crate::game_lists::Move::Inc),
-            KeyCode::Minus | KeyCode::Slash | KeyCode::NumpadSubtract if self.tours_list() => self.tour_stop_step(false),
-            KeyCode::Equal | KeyCode::BracketRight | KeyCode::NumpadAdd if self.tours_list() => self.tour_stop_step(true),
+            KeyCode::ArrowLeft | KeyCode::KeyA if self.settings_list() => {
+                self.list_adjust(sel, crate::game_lists::Move::Dec)
+            }
+            KeyCode::ArrowRight | KeyCode::KeyD if self.settings_list() => {
+                self.list_adjust(sel, crate::game_lists::Move::Inc)
+            }
+            KeyCode::Minus | KeyCode::Slash | KeyCode::NumpadSubtract if self.tours_list() => {
+                self.tour_stop_step(false)
+            }
+            KeyCode::Equal | KeyCode::BracketRight | KeyCode::NumpadAdd if self.tours_list() => {
+                self.tour_stop_step(true)
+            }
             KeyCode::ArrowLeft | KeyCode::KeyA if self.tours_list() => self.trip_step(false),
             KeyCode::ArrowRight | KeyCode::KeyD if self.tours_list() => self.trip_step(true),
             KeyCode::ArrowLeft | KeyCode::KeyA => self.chooser_adjust(sel, "-"),
             KeyCode::ArrowRight | KeyCode::KeyD => self.chooser_adjust(sel, "+"),
             KeyCode::PageUp if self.settings_list() => self.settings_tab_step(false),
             KeyCode::PageDown if self.settings_list() => self.settings_tab_step(true),
-            KeyCode::PageUp => self.chooser = Some(sel.saturating_sub(15)).map(|k| if self.is_heading(k) { self.chooser_next(k, 1) } else { k }),
-            KeyCode::PageDown => self.chooser = Some((sel + 15).min(n - 1)).map(|k| if self.is_heading(k) { self.chooser_next(k, 1) } else { k }),
+            KeyCode::PageUp => {
+                self.chooser = Some(sel.saturating_sub(15)).map(|k| {
+                    if self.is_heading(k) {
+                        self.chooser_next(k, 1)
+                    } else {
+                        k
+                    }
+                })
+            }
+            KeyCode::PageDown => {
+                self.chooser = Some((sel + 15).min(n - 1)).map(|k| {
+                    if self.is_heading(k) {
+                        self.chooser_next(k, 1)
+                    } else {
+                        k
+                    }
+                })
+            }
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => self.chooser_pick(sel),
             _ => {}
         }
     }
 
     pub(crate) fn dropdown_key(&mut self, code: KeyCode) {
-        let Some(d) = self.dropdown.as_mut() else { return };
+        let Some(d) = self.dropdown.as_mut() else {
+            return;
+        };
         let n = d.items.len().max(1);
         match code {
             KeyCode::Escape => {
@@ -612,36 +854,69 @@ impl App {
     }
 
     pub(crate) fn dropdown_pick(&mut self, i: usize) {
-        let Some(d) = self.dropdown.take() else { return };
-        let Some((_, action)) = d.items.get(i).cloned() else { return };
+        let Some(d) = self.dropdown.take() else {
+            return;
+        };
+        let Some((_, action)) = d.items.get(i).cloned() else {
+            return;
+        };
         crate::game_lists::dropdown_apply(self, &action);
         if let Some(kind) = self.list_kind.clone() {
             self.open_list(kind);
-            let last = self.admin_list.as_ref().map(|l| l.len().saturating_sub(1)).unwrap_or(0);
+            let last = self
+                .admin_list
+                .as_ref()
+                .map(|l| l.len().saturating_sub(1))
+                .unwrap_or(0);
             self.chooser = Some(d.row.min(last));
         }
     }
 
     pub(crate) fn tours_list(&self) -> bool {
-        self.chooser.is_some() && matches!(self.list_kind, Some(crate::game_lists::ListKind::Tours(..)))
+        self.chooser.is_some()
+            && matches!(self.list_kind, Some(crate::game_lists::ListKind::Tours(..)))
     }
 
     pub(crate) fn trip_step(&mut self, forward: bool) {
         let k = self.chooser.unwrap_or(0);
-        let (Some((line, tour)), Some((_, _, trip, trips))) = (crate::game_lists::tour_at(self, k), crate::game_lists::tour_choice(self, k)) else { return };
-        let to = if forward { (trip + 1).min(trips.saturating_sub(1)) } else { trip.saturating_sub(1) };
+        let (Some((line, tour)), Some((_, _, trip, trips))) = (
+            crate::game_lists::tour_at(self, k),
+            crate::game_lists::tour_choice(self, k),
+        ) else {
+            return;
+        };
+        let to = if forward {
+            (trip + 1).min(trips.saturating_sub(1))
+        } else {
+            trip.saturating_sub(1)
+        };
         if to != trip {
             self.pane_scroll = None;
-            self.list_kind = Some(crate::game_lists::ListKind::Tours(line, Some((tour, 0, to))));
+            self.list_kind = Some(crate::game_lists::ListKind::Tours(
+                line,
+                Some((tour, 0, to)),
+            ));
         }
     }
 
     pub(crate) fn tour_stop_step(&mut self, forward: bool) {
         let k = self.chooser.unwrap_or(0);
-        let (Some((line, tour)), Some((n, at, trip, _))) = (crate::game_lists::tour_at(self, k), crate::game_lists::tour_choice(self, k)) else { return };
-        let to = if forward { (at + 1).min(n - 1) } else { at.saturating_sub(1) };
+        let (Some((line, tour)), Some((n, at, trip, _))) = (
+            crate::game_lists::tour_at(self, k),
+            crate::game_lists::tour_choice(self, k),
+        ) else {
+            return;
+        };
+        let to = if forward {
+            (at + 1).min(n - 1)
+        } else {
+            at.saturating_sub(1)
+        };
         self.pane_scroll = None;
-        self.list_kind = Some(crate::game_lists::ListKind::Tours(line, Some((tour, to, trip))));
+        self.list_kind = Some(crate::game_lists::ListKind::Tours(
+            line,
+            Some((tour, to, trip)),
+        ));
     }
 
     pub(crate) fn tour_pane_click(&mut self, i: usize) {
@@ -650,10 +925,18 @@ impl App {
             self.trip_step(i == usize::MAX - 2);
             return;
         }
-        let (Some((line, tour)), Some((n, at, trip, _))) = (crate::game_lists::tour_at(self, k), crate::game_lists::tour_choice(self, k)) else { return };
+        let (Some((line, tour)), Some((n, at, trip, _))) = (
+            crate::game_lists::tour_at(self, k),
+            crate::game_lists::tour_choice(self, k),
+        ) else {
+            return;
+        };
         if i < n {
             self.pane_scroll = None;
-            self.list_kind = Some(crate::game_lists::ListKind::Tours(line, Some((tour, i, trip))));
+            self.list_kind = Some(crate::game_lists::ListKind::Tours(
+                line,
+                Some((tour, i, trip)),
+            ));
             return;
         }
         crate::game_lists::start_duty_at(self, &line, &tour, trip, at);
@@ -668,7 +951,12 @@ impl App {
             return;
         }
         if self.settings_list() {
-            let id = self.admin_list.as_ref().and_then(|l| l.get(k)).map(|l| l.1.clone()).unwrap_or_default();
+            let id = self
+                .admin_list
+                .as_ref()
+                .and_then(|l| l.get(k))
+                .map(|l| l.1.clone())
+                .unwrap_or_default();
             if let Some(d) = crate::game_lists::dropdown_for(self, k, &id) {
                 self.dropdown = Some(d);
                 self.dd_reveal();
@@ -677,8 +965,13 @@ impl App {
         }
         self.chooser = None;
         if let Some(list) = self.admin_list.take() {
-            let kind = self.list_kind.take().unwrap_or(crate::game_lists::ListKind::Admin);
-            let Some((_, action)) = list.get(k).cloned() else { return };
+            let kind = self
+                .list_kind
+                .take()
+                .unwrap_or(crate::game_lists::ListKind::Admin);
+            let Some((_, action)) = list.get(k).cloned() else {
+                return;
+            };
             match crate::game_lists::run(self, &kind, &action) {
                 Some(next) => {
                     let next = self.map_page_target(&kind, next);
@@ -688,16 +981,37 @@ impl App {
                     }
                     self.open_list(next);
                     if keep {
-                        self.chooser = Some(k.min(self.admin_list.as_ref().map(|l| l.len().saturating_sub(1)).unwrap_or(0)));
+                        self.chooser = Some(
+                            k.min(
+                                self.admin_list
+                                    .as_ref()
+                                    .map(|l| l.len().saturating_sub(1))
+                                    .unwrap_or(0),
+                            ),
+                        );
                     }
                 }
-                None if action != "back" && matches!(kind, crate::game_lists::ListKind::Tours(..) | crate::game_lists::ListKind::Numbers | crate::game_lists::ListKind::Destinations | crate::game_lists::ListKind::RouteNumbers | crate::game_lists::ListKind::Hofs | crate::game_lists::ListKind::Spots) => self.close_game_menu(),
+                None if action != "back"
+                    && matches!(
+                        kind,
+                        crate::game_lists::ListKind::Tours(..)
+                            | crate::game_lists::ListKind::Numbers
+                            | crate::game_lists::ListKind::Destinations
+                            | crate::game_lists::ListKind::RouteNumbers
+                            | crate::game_lists::ListKind::Hofs
+                            | crate::game_lists::ListKind::Spots
+                    ) =>
+                {
+                    self.close_game_menu()
+                }
                 None => self.menu_top = None,
             }
             return;
         }
         self.menu_top = None;
-        let Some((_, bus)) = self.vehicle_list.get(k).cloned() else { return };
+        let Some((_, bus)) = self.vehicle_list.get(k).cloned() else {
+            return;
+        };
         self.open_list(crate::game_lists::ListKind::PlaceLivery(bus));
     }
 
@@ -707,7 +1021,12 @@ impl App {
             self.capture_key(code);
             return;
         }
-        if self.key_search && matches!(code, KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::Enter | KeyCode::NumpadEnter) {
+        if self.key_search
+            && matches!(
+                code,
+                KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::Enter | KeyCode::NumpadEnter
+            )
+        {
             self.key_search_stop();
         }
         if self.key_search {
@@ -721,15 +1040,29 @@ impl App {
         let n = self.game_menu_items().len();
         let sel = self.game_menu.unwrap_or(0);
         let modified = self.keys.iter().any(|key| {
-            matches!(*key, KeyCode::ControlLeft | KeyCode::ControlRight | KeyCode::AltLeft | KeyCode::AltRight | KeyCode::ShiftLeft | KeyCode::ShiftRight)
+            matches!(
+                *key,
+                KeyCode::ControlLeft
+                    | KeyCode::ControlRight
+                    | KeyCode::AltLeft
+                    | KeyCode::AltRight
+                    | KeyCode::ShiftLeft
+                    | KeyCode::ShiftRight
+            )
         });
         self.menu_top = None;
         match code {
             KeyCode::KeyP if !modified => self.toggle_pause(),
             KeyCode::Escape => self.close_game_menu(),
-            KeyCode::ArrowUp | KeyCode::KeyW => self.game_menu = Some(self.menu_step(sel, n, false)),
-            KeyCode::ArrowDown | KeyCode::KeyS => self.game_menu = Some(self.menu_step(sel, n, true)),
-            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => self.menu_choose(event_loop, sel),
+            KeyCode::ArrowUp | KeyCode::KeyW => {
+                self.game_menu = Some(self.menu_step(sel, n, false))
+            }
+            KeyCode::ArrowDown | KeyCode::KeyS => {
+                self.game_menu = Some(self.menu_step(sel, n, true))
+            }
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
+                self.menu_choose(event_loop, sel)
+            }
             _ => {}
         }
     }
@@ -757,14 +1090,20 @@ impl App {
         self.wheel_acc -= steps as f32;
         if let (Some(u), Some(k)) = (self.ui.as_ref(), self.chooser) {
             let (x, y) = self.cursor;
-            if u.menu_pane_box.is_some_and(|r| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]) {
+            if u.menu_pane_box
+                .is_some_and(|r| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3])
+            {
                 let first = (u.menu_pane_start as i64 - steps).max(0) as usize;
                 self.pane_scroll = Some((k, first));
                 return;
             }
         }
         let n = self.menu_len() as f32;
-        let (start, rows) = self.ui.as_ref().map(|u| (u.menu_start as f32, u.menu_rows as f32)).unwrap_or((0.0, n));
+        let (start, rows) = self
+            .ui
+            .as_ref()
+            .map(|u| (u.menu_start as f32, u.menu_rows as f32))
+            .unwrap_or((0.0, n));
         let top = (self.menu_top.unwrap_or(start) - steps as f32).clamp(0.0, (n - rows).max(0.0));
         self.menu_top = Some(top);
     }
@@ -777,7 +1116,11 @@ impl App {
     }
 
     pub(crate) fn menu_choose(&mut self, event_loop: &ActiveEventLoop, k: usize) {
-        self.menu_top = if self.chooser.is_some() { self.ui.as_ref().map(|u| u.menu_start as f32) } else { None };
+        self.menu_top = if self.chooser.is_some() {
+            self.ui.as_ref().map(|u| u.menu_start as f32)
+        } else {
+            None
+        };
         if self.chooser.is_some() {
             self.chooser_pick(k);
             return;
@@ -785,7 +1128,9 @@ impl App {
         if self.menu_item_off(k) {
             return;
         }
-        let Some(id) = self.game_menu_items().get(k).map(|m| m.0) else { return };
+        let Some(id) = self.game_menu_items().get(k).map(|m| m.0) else {
+            return;
+        };
         match id {
             "resume" => self.close_game_menu(),
             "options" => self.open_list(crate::game_lists::ListKind::Options(0)),
@@ -846,7 +1191,12 @@ impl App {
                 self.swap_pending = id == "swap" && self.player.is_some();
                 if self.vehicle_list.is_empty() {
                     let menu = crate::menu::Menu::new(&self.args.root, &self.args.map);
-                    self.vehicle_meta = menu.vehicles.iter().zip(menu.vehicle_meta).map(|(v, meta)| (v.1.clone(), meta)).collect();
+                    self.vehicle_meta = menu
+                        .vehicles
+                        .iter()
+                        .zip(menu.vehicle_meta)
+                        .map(|(v, meta)| (v.1.clone(), meta))
+                        .collect();
                     self.vehicle_list = menu.vehicles;
                     self.vehicle_list.sort_by_key(|v| v.0.to_lowercase());
                 }
@@ -899,7 +1249,10 @@ impl App {
                         n.toggle_map();
                     }
                     self.teleport_pick = true;
-                    self.service_msg = Some(("Click a street on the map: the bus is put there".into(), 6.0));
+                    self.service_msg = Some((
+                        "Click a street on the map: the bus is put there".into(),
+                        6.0,
+                    ));
                 }
             }
             "driver" => self.open_list(crate::game_lists::ListKind::Drivers),
@@ -936,8 +1289,14 @@ impl App {
             }
             "later" | "earlier" | "later10" | "earlier10" => {
                 self.close_game_menu();
-                if self.lan.as_ref().map(|l| l.role == omsi_net::Role::Client).unwrap_or(false) {
-                    self.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
+                if self
+                    .lan
+                    .as_ref()
+                    .map(|l| l.role == omsi_net::Role::Client)
+                    .unwrap_or(false)
+                {
+                    self.service_msg =
+                        Some(("In a LAN session the host sets the clock".into(), 3.0));
                 } else {
                     self.shift_clock(match id {
                         "later" => 3600.0,
@@ -968,7 +1327,11 @@ impl App {
         if self.navigator.is_none() {
             v.retain(|x| x.0 != "map");
         }
-        let host = self.lan.as_ref().map(|l| l.role == omsi_net::Role::Host).unwrap_or(false);
+        let host = self
+            .lan
+            .as_ref()
+            .map(|l| l.role == omsi_net::Role::Host)
+            .unwrap_or(false);
         if self.lan.is_some() || on_server(&self.args) {
             if let Some(w) = v.iter().position(|x| x.0 == "world") {
                 v.insert(w + 1, ("copycode", "Copy server code"));
@@ -976,15 +1339,29 @@ impl App {
             }
         }
         if host || self.is_admin {
-            let before_quit = v.iter().position(|x| x.0 == "quit").unwrap_or(v.len()).max(at);
+            let before_quit = v
+                .iter()
+                .position(|x| x.0 == "quit")
+                .unwrap_or(v.len())
+                .max(at);
             v.insert(before_quit, ("admin", "Administration..."));
         }
         v
     }
 
     pub(crate) fn copy_server_code(&mut self) {
-        let Some(code) = self.lan.as_ref().and_then(|l| l.code()).map(|c| c.encode()).or_else(|| self.args.lan_join.clone()).filter(|c| !c.trim().is_empty()) else {
-            self.service_msg = Some(("No server code: not in a LAN session or on a server".into(), 3.0));
+        let Some(code) = self
+            .lan
+            .as_ref()
+            .and_then(|l| l.code())
+            .map(|c| c.encode())
+            .or_else(|| self.args.lan_join.clone())
+            .filter(|c| !c.trim().is_empty())
+        else {
+            self.service_msg = Some((
+                "No server code: not in a LAN session or on a server".into(),
+                3.0,
+            ));
             return;
         };
         #[cfg(not(target_os = "android"))]
@@ -997,9 +1374,14 @@ impl App {
                 if c.is_none() {
                     *c = arboard::Clipboard::new().ok();
                 }
-                c.as_mut().is_some_and(|cb| cb.set_text(code.clone()).is_ok())
+                c.as_mut()
+                    .is_some_and(|cb| cb.set_text(code.clone()).is_ok())
             });
-            self.service_msg = Some(if ok { ("Server code copied".into(), 3.0) } else { (format!("{}: {code}", omsi_ui::tr("Server code")), 8.0) });
+            self.service_msg = Some(if ok {
+                ("Server code copied".into(), 3.0)
+            } else {
+                (format!("{}: {code}", omsi_ui::tr("Server code")), 8.0)
+            });
         }
         #[cfg(target_os = "android")]
         {
@@ -1012,7 +1394,11 @@ impl App {
     }
 
     pub(crate) fn menu_item_off(&self, k: usize) -> bool {
-        self.chooser.is_none() && self.game_menu_items().get(k).is_some_and(|m| self.menu_disabled_ids().contains(&m.0))
+        self.chooser.is_none()
+            && self
+                .game_menu_items()
+                .get(k)
+                .is_some_and(|m| self.menu_disabled_ids().contains(&m.0))
     }
 
     pub(crate) fn menu_step(&self, from: usize, n: usize, down: bool) -> usize {

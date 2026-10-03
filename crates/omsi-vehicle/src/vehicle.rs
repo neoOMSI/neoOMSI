@@ -38,7 +38,17 @@ pub struct Axle {
 
 impl Default for Axle {
     fn default() -> Self {
-        Self { long: 0.0, max_width: 2.0, min_width: 1.5, wheel_diameter: 1.0, spring: 0.0, max_force: 0.0, damper: 0.0, driven: false, inertia_inv: 0.0 }
+        Self {
+            long: 0.0,
+            max_width: 2.0,
+            min_width: 1.5,
+            wheel_diameter: 1.0,
+            spring: 0.0,
+            max_force: 0.0,
+            damper: 0.0,
+            driven: false,
+            inertia_inv: 0.0,
+        }
     }
 }
 
@@ -138,7 +148,11 @@ pub struct Vehicle {
 
 fn read_list(r: &mut omsi_cfg::CfgReader, base: &Path) -> Vec<PathBuf> {
     let n = r.usize();
-    (0..n).map(|_| r.str().to_string()).filter(|s| !s.trim().is_empty()).map(|s| omsi_cfg::resolve_path(base, &s)).collect()
+    (0..n)
+        .map(|_| r.str().to_string())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| omsi_cfg::resolve_path(base, &s))
+        .collect()
 }
 
 fn read_camera(r: &mut omsi_cfg::CfgReader, extra: bool) -> Camera {
@@ -148,7 +162,14 @@ fn read_camera(r: &mut omsi_cfg::CfgReader, extra: bool) -> Camera {
     let yaw = r.f32();
     let pitch = r.f32();
     let extra = if extra { Some(r.f32()) } else { None };
-    Camera { pos, dist, fov, yaw, pitch, extra }
+    Camera {
+        pos,
+        dist,
+        fov,
+        yaw,
+        pitch,
+        extra,
+    }
 }
 
 pub fn parse_attachment(r: &mut omsi_cfg::CfgReader) -> Attachment {
@@ -177,7 +198,11 @@ fn parse_axle(r: &mut omsi_cfg::CfgReader) -> Axle {
     // per line: long, max width, min width, wheel diameter, spring, max force, damper,
     // driven, inertia. Read that way, the Golf's wheels are 0.503 m, not the default 1 m
     // that made every AI car's wheels turn at half their speed.
-    let first = r.lines().get(r.pos()).map(|l| l.trim().to_string()).unwrap_or_default();
+    let first = r
+        .lines()
+        .get(r.pos())
+        .map(|l| l.trim().to_string())
+        .unwrap_or_default();
     if omsi_cfg::keyword_of(&first).is_none() && first.parse::<f32>().is_ok() {
         let mut vals = Vec::new();
         while vals.len() < 9 && !r.at_end() {
@@ -190,7 +215,15 @@ fn parse_axle(r: &mut omsi_cfg::CfgReader) -> Axle {
                 }
             }
         }
-        let slots: [&mut f32; 7] = [&mut a.long, &mut a.max_width, &mut a.min_width, &mut a.wheel_diameter, &mut a.spring, &mut a.max_force, &mut a.damper];
+        let slots: [&mut f32; 7] = [
+            &mut a.long,
+            &mut a.max_width,
+            &mut a.min_width,
+            &mut a.wheel_diameter,
+            &mut a.spring,
+            &mut a.max_force,
+            &mut a.damper,
+        ];
         for (slot, v) in slots.into_iter().zip(vals.iter()) {
             *slot = *v;
         }
@@ -216,7 +249,10 @@ fn parse_axle(r: &mut omsi_cfg::CfgReader) -> Axle {
             "achse_daempfer" => a.damper = r.f32(),
             "achse_antrieb" => {
                 let w = r.word();
-                a.driven = w.parse::<f32>().map(|x| x != 0.0).unwrap_or(w.eq_ignore_ascii_case("true"));
+                a.driven = w
+                    .parse::<f32>()
+                    .map(|x| x != 0.0)
+                    .unwrap_or(w.eq_ignore_ascii_case("true"));
             }
             "achse_inertia_inv" => a.inertia_inv = r.f32(),
             _ => {
@@ -251,7 +287,9 @@ impl Vehicle {
 
     /// The file of the vehicle coupled behind this one (`[couple_back]`), wherever it lives.
     pub fn couple_back_path(&self) -> Option<PathBuf> {
-        self.couple_back.as_ref().map(|(f, _)| omsi_cfg::resolve_path(self.dir(), f))
+        self.couple_back
+            .as_ref()
+            .map(|(f, _)| omsi_cfg::resolve_path(self.dir(), f))
     }
 
     /// A part that is only ever coupled behind another vehicle: the rear section of an
@@ -261,8 +299,21 @@ impl Vehicle {
     }
 
     pub fn parse(file: &CfgFile) -> Vehicle {
-        let is_ovh = file.path.extension().map(|e| e.eq_ignore_ascii_case("ovh")).unwrap_or(false);
-        let mut v = Vehicle { path: file.path.clone(), kind: if is_ovh { VehicleKind::Other(0) } else { VehicleKind::Bus }, mass: 1000.0, ..Default::default() };
+        let is_ovh = file
+            .path
+            .extension()
+            .map(|e| e.eq_ignore_ascii_case("ovh"))
+            .unwrap_or(false);
+        let mut v = Vehicle {
+            path: file.path.clone(),
+            kind: if is_ovh {
+                VehicleKind::Other(0)
+            } else {
+                VehicleKind::Bus
+            },
+            mass: 1000.0,
+            ..Default::default()
+        };
         let base = file.dir().to_path_buf();
         let mut r = file.reader().disabled_blocks();
         while let Some(k) = r.next_keyword() {
@@ -274,7 +325,9 @@ impl Vehicle {
                     v.type_name = r.str().to_string();
                     v.default_paint = r.str().to_string();
                 }
-                "friendlyname_inv" => v.friendly_name_inv = (0..3).map(|_| r.str().to_string()).collect(),
+                "friendlyname_inv" => {
+                    v.friendly_name_inv = (0..3).map(|_| r.str().to_string()).collect()
+                }
                 "description" => v.description = r.until("[end]").join("\n"),
                 "ai_veh_type" => v.ai_veh_type = r.i32(),
                 "number" => v.number_file = Some(r.str().to_string()),
@@ -323,7 +376,9 @@ impl Vehicle {
                 "add_camera_reflexion" => v.cameras_reflexion.push(read_camera(&mut r, false)),
                 "add_camera_reflexion_2" => v.cameras_reflexion.push(read_camera(&mut r, true)),
                 "view_schedule" => v.view_schedule = Some(v.cameras_driver.len().saturating_sub(1)),
-                "view_ticketselling" => v.view_ticketselling = Some(v.cameras_driver.len().saturating_sub(1)),
+                "view_ticketselling" => {
+                    v.view_ticketselling = Some(v.cameras_driver.len().saturating_sub(1))
+                }
                 "set_camera_std" => v.camera_std = r.usize(),
                 "set_camera_outside_center" => v.camera_outside_center = r.f32s::<3>(),
                 "mass" => v.mass = r.f32(),
@@ -359,8 +414,12 @@ impl Vehicle {
                 }
                 "couple_front_open_for_sound" => v.couple_front_open_for_sound = true,
                 "coupling_front_character" => v.coupling_front_character = Some(r.f32s::<4>()),
-                "control_cable_front" => v.control_cable_front.push(ControlCable { lines: (0..5).map(|_| r.str().to_string()).collect() }),
-                "control_cable_back" => v.control_cable_back.push(ControlCable { lines: (0..5).map(|_| r.str().to_string()).collect() }),
+                "control_cable_front" => v.control_cable_front.push(ControlCable {
+                    lines: (0..5).map(|_| r.str().to_string()).collect(),
+                }),
+                "control_cable_back" => v.control_cable_back.push(ControlCable {
+                    lines: (0..5).map(|_| r.str().to_string()).collect(),
+                }),
                 "rowdy_factor" => {
                     let a = r.f32();
                     let b = r.f32();
@@ -382,8 +441,12 @@ impl Vehicle {
 /// Content paths name files case-insensitively (a mod writes `[couple_back]` however it
 /// likes, and a case-insensitive file system hands the spelling back unchanged).
 fn same_file(a: &Path, b: &Path) -> bool {
-    let (x, y) = (a.canonicalize().unwrap_or_else(|_| a.to_path_buf()), b.canonicalize().unwrap_or_else(|_| b.to_path_buf()));
-    x.to_string_lossy().eq_ignore_ascii_case(&y.to_string_lossy())
+    let (x, y) = (
+        a.canonicalize().unwrap_or_else(|_| a.to_path_buf()),
+        b.canonicalize().unwrap_or_else(|_| b.to_path_buf()),
+    );
+    x.to_string_lossy()
+        .eq_ignore_ascii_case(&y.to_string_lossy())
 }
 
 /// Of the vehicle files of one vehicle folder (every content root's copy together), the
@@ -394,11 +457,24 @@ fn same_file(a: &Path, b: &Path) -> bool {
 pub fn offered_vehicles(files: &[PathBuf]) -> Vec<(PathBuf, Vehicle)> {
     let loaded: Vec<(PathBuf, Vehicle)> = files
         .iter()
-        .filter(|f| f.extension().map(|e| e.eq_ignore_ascii_case("bus") || e.eq_ignore_ascii_case("ovh")).unwrap_or(false))
+        .filter(|f| {
+            f.extension()
+                .map(|e| e.eq_ignore_ascii_case("bus") || e.eq_ignore_ascii_case("ovh"))
+                .unwrap_or(false)
+        })
         .filter_map(|f| Vehicle::load(f).ok().map(|v| (f.clone(), v)))
         .collect();
-    let coupled: Vec<PathBuf> = loaded.iter().filter_map(|(_, v)| v.couple_back_path()).collect();
-    loaded.into_iter().filter(|(f, v)| v.is_selectable() && !(v.coupling_front.is_some() && coupled.iter().any(|c| same_file(c, f)))).collect()
+    let coupled: Vec<PathBuf> = loaded
+        .iter()
+        .filter_map(|(_, v)| v.couple_back_path())
+        .collect();
+    loaded
+        .into_iter()
+        .filter(|(f, v)| {
+            v.is_selectable()
+                && !(v.coupling_front.is_some() && coupled.iter().any(|c| same_file(c, f)))
+        })
+        .collect()
 }
 
 /// The vehicles that couple `rear` behind them (`[couple_back]`), looked for in its folder
@@ -407,7 +483,9 @@ pub fn offered_vehicles(files: &[PathBuf]) -> Vec<(PathBuf, Vehicle)> {
 /// followed to its selectable front.
 pub fn front_sections_of(rear: &Path) -> Vec<PathBuf> {
     fn direct(rear: &Path) -> Vec<(PathBuf, Vehicle)> {
-        let Some(dir) = rear.parent() else { return Vec::new() };
+        let Some(dir) = rear.parent() else {
+            return Vec::new();
+        };
         // the folder under every content root (archives read in place too)
         let mut dirs = vec![dir.to_path_buf()];
         for d in omsi_cfg::mirrored_dirs(dir) {
@@ -417,14 +495,24 @@ pub fn front_sections_of(rear: &Path) -> Vec<PathBuf> {
         }
         let mut out = Vec::new();
         for d in dirs {
-            let mut files: Vec<PathBuf> = omsi_cfg::vfs::read_dir_paths(&d).into_iter().filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("bus") || e.eq_ignore_ascii_case("ovh")).unwrap_or(false)).collect();
+            let mut files: Vec<PathBuf> = omsi_cfg::vfs::read_dir_paths(&d)
+                .into_iter()
+                .filter(|p| {
+                    p.extension()
+                        .map(|e| e.eq_ignore_ascii_case("bus") || e.eq_ignore_ascii_case("ovh"))
+                        .unwrap_or(false)
+                })
+                .collect();
             files.sort();
             for f in files {
                 if same_file(&f, rear) {
                     continue;
                 }
                 let Ok(v) = Vehicle::load(&f) else { continue };
-                if v.couple_back_path().map(|p| same_file(&p, rear)).unwrap_or(false) {
+                if v.couple_back_path()
+                    .map(|p| same_file(&p, rear))
+                    .unwrap_or(false)
+                {
                     out.push((f, v));
                 }
             }
@@ -481,7 +569,12 @@ pub struct NumberList {
 impl NumberList {
     pub fn load(path: &Path) -> Result<NumberList, omsi_cfg::CfgError> {
         let f = CfgFile::read(path)?;
-        let numbers = f.lines.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let numbers = f
+            .lines
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         Ok(NumberList { numbers })
     }
 }
@@ -491,11 +584,20 @@ impl Vehicle {
     /// gives each - line by line beside it, empty lines counted (0x614f90) - and no plate
     /// where that file has none.
     pub fn numbers_with_plates(&self) -> Vec<(String, String)> {
-        let Some(list) = self.number_file.as_ref() else { return Vec::new() };
+        let Some(list) = self.number_file.as_ref() else {
+            return Vec::new();
+        };
         // (read once per bus: the AI asks it for every bus it puts on the road)
-        static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Vec<(String, String)>>>> = std::sync::OnceLock::new();
+        static CACHE: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Vec<(String, String)>>>,
+        > = std::sync::OnceLock::new();
         let key = self.path.clone();
-        if let Some(v) = CACHE.get_or_init(Default::default).lock().ok().and_then(|c| c.get(&key).cloned()) {
+        if let Some(v) = CACHE
+            .get_or_init(Default::default)
+            .lock()
+            .ok()
+            .and_then(|c| c.get(&key).cloned())
+        {
             return v;
         }
         let out = self.read_numbers_with_plates(list);
@@ -506,7 +608,9 @@ impl Vehicle {
     }
 
     fn read_numbers_with_plates(&self, list: &str) -> Vec<(String, String)> {
-        let Ok(numbers) = CfgFile::read(&omsi_cfg::resolve_path(self.dir(), list)) else { return Vec::new() };
+        let Ok(numbers) = CfgFile::read(&omsi_cfg::resolve_path(self.dir(), list)) else {
+            return Vec::new();
+        };
         let plates = self
             .registration_list
             .as_ref()
@@ -517,7 +621,11 @@ impl Vehicle {
             .enumerate()
             .filter(|(_, n)| !n.trim().is_empty())
             .map(|(i, n)| {
-                let plate = plates.as_ref().and_then(|p| p.lines.get(i)).map(|p| p.trim_end().to_string()).unwrap_or_default();
+                let plate = plates
+                    .as_ref()
+                    .and_then(|p| p.lines.get(i))
+                    .map(|p| p.trim_end().to_string())
+                    .unwrap_or_default();
                 (n.trim().to_string(), plate)
             })
             .collect()
@@ -543,7 +651,11 @@ impl Vehicle {
 
     fn plate_from(&self, number: &str, list: bool) -> String {
         if list {
-            if let Some((_, p)) = self.numbers_with_plates().into_iter().find(|(n, p)| n == number.trim() && !p.is_empty()) {
+            if let Some((_, p)) = self
+                .numbers_with_plates()
+                .into_iter()
+                .find(|(n, p)| n == number.trim() && !p.is_empty())
+            {
                 return p;
             }
         }
@@ -561,9 +673,30 @@ mod tests {
         let keyed = "[newachse]\nachse_long\n2.943\nachse_raddurchmesser\n1.023\n1.05\nachse_feder\n240\nachse_antrieb\n0\n[newachse]\n-2.577\n2.4\n1.4\n1.023\n280\n116\n20\n1\n0.015\n\n[mass]\n10.9\n[cog]\n0\n0.2\n0.8\n";
         let v = Vehicle::parse(&CfgFile::from_str("x.bus", keyed));
         assert_eq!(v.axles.len(), 2);
-        assert_eq!((v.axles[0].long, v.axles[0].wheel_diameter, v.axles[0].spring, v.axles[0].driven), (2.943, 1.023, 240.0, false));
+        assert_eq!(
+            (
+                v.axles[0].long,
+                v.axles[0].wheel_diameter,
+                v.axles[0].spring,
+                v.axles[0].driven
+            ),
+            (2.943, 1.023, 240.0, false)
+        );
         let b = &v.axles[1];
-        assert_eq!((b.long, b.max_width, b.min_width, b.wheel_diameter, b.spring, b.max_force, b.damper, b.driven, b.inertia_inv), (-2.577, 2.4, 1.4, 1.023, 280.0, 116.0, 20.0, true, 0.015));
+        assert_eq!(
+            (
+                b.long,
+                b.max_width,
+                b.min_width,
+                b.wheel_diameter,
+                b.spring,
+                b.max_force,
+                b.damper,
+                b.driven,
+                b.inertia_inv
+            ),
+            (-2.577, 2.4, 1.4, 1.023, 280.0, 116.0, 20.0, true, 0.015)
+        );
         assert_eq!(v.mass, 10.9);
         assert_eq!(v.cog, Some([0.0, 0.2, 0.8]));
     }
@@ -572,7 +705,10 @@ mod tests {
     fn a_share_of_the_drive_is_a_driven_axle() {
         let text = "[newachse]\nachse_long\n-2.9\nachse_antrieb\n0.2\n[newachse]\nachse_long\n2.9\nachse_antrieb\n0\n";
         let v = Vehicle::parse(&CfgFile::from_str("x.bus", text));
-        assert_eq!(v.axles.iter().map(|a| a.driven).collect::<Vec<_>>(), vec![true, false]);
+        assert_eq!(
+            v.axles.iter().map(|a| a.driven).collect::<Vec<_>>(),
+            vec![true, false]
+        );
     }
 
     #[test]
@@ -580,7 +716,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("omsi_vehicle_couple_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("G Main.bus"), "[friendlyname]\nMB\nO530G\nDefault\n\n[coupling_back]\n0\n-4\n0.3\n\n[couple_back]\ng trail.BUS\nfalse\n").unwrap();
-        std::fs::write(dir.join("G Trail.bus"), "[scriptshare]\n\n[coupling_front]\n0\n4\n0.3\n").unwrap();
+        std::fs::write(
+            dir.join("G Trail.bus"),
+            "[scriptshare]\n\n[coupling_front]\n0\n4\n0.3\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("Solo.bus"), "[friendlyname]\nMB\nO530\nDefault\n").unwrap();
         std::fs::write(dir.join("Solo_KI.bus"), "[model]\nx.cfg\n").unwrap();
         let main = Vehicle::load(&dir.join("G Main.bus")).unwrap();
@@ -590,17 +730,38 @@ mod tests {
         assert!(!trail.is_selectable() && trail.is_rear_section() && trail.script_share);
         assert!(!ki.is_selectable() && !ki.is_rear_section());
         // the case of the [couple_back] name does not matter
-        assert!(main.couple_back_path().unwrap().to_string_lossy().to_ascii_lowercase().ends_with("g trail.bus"));
+        assert!(
+            main.couple_back_path()
+                .unwrap()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with("g trail.bus")
+        );
         let fronts = front_sections_of(&dir.join("G Trail.bus"));
         assert_eq!(fronts.len(), 1);
         assert_eq!(fronts[0].file_name().unwrap(), "G Main.bus");
         assert!(front_sections_of(&dir.join("Solo.bus")).is_empty());
         // a rear section that carries the front's [friendlyname] is still not offered
-        std::fs::write(dir.join("L Main.bus"), "[friendlyname]\nMB\nO530GL\nDefault\n\n[couple_back]\nL Trail.bus\nfalse\n").unwrap();
-        std::fs::write(dir.join("L Trail.bus"), "[friendlyname]\nMB\nO530GL\nDefault\n\n[coupling_front]\n0\n4\n0.3\n").unwrap();
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();
+        std::fs::write(
+            dir.join("L Main.bus"),
+            "[friendlyname]\nMB\nO530GL\nDefault\n\n[couple_back]\nL Trail.bus\nfalse\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("L Trail.bus"),
+            "[friendlyname]\nMB\nO530GL\nDefault\n\n[coupling_front]\n0\n4\n0.3\n",
+        )
+        .unwrap();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
         files.sort();
-        let offered: Vec<String> = offered_vehicles(&files).iter().map(|(f, _)| f.file_name().unwrap().to_string_lossy().to_string()).collect();
+        let offered: Vec<String> = offered_vehicles(&files)
+            .iter()
+            .map(|(f, _)| f.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
         assert_eq!(offered, vec!["G Main.bus", "L Main.bus", "Solo.bus"]);
         assert_eq!(front_sections_of(&dir.join("L Trail.bus")).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
@@ -611,12 +772,18 @@ mod tests {
     /// `[model]` is a keyword, not the postfix, so the vehicle keeps its model.
     #[test]
     fn an_empty_registration_affix_keeps_the_next_keyword() {
-        let v = Vehicle::parse(&CfgFile::from_str("x.ovh", "[registration_free]\n\n[registration_automatic]\n\n[model]\nmodel\\model.cfg\n\n[sound]\ns.cfg\n"));
+        let v = Vehicle::parse(&CfgFile::from_str(
+            "x.ovh",
+            "[registration_free]\n\n[registration_automatic]\n\n[model]\nmodel\\model.cfg\n\n[sound]\ns.cfg\n",
+        ));
         assert_eq!(v.registration_mode, 3);
         assert_eq!(v.registration_affix, (String::new(), String::new()));
         assert_eq!(v.model.as_deref(), Some("model\\model.cfg"));
         // the stock shape (prefix "B-V ", blank postfix) is unchanged
-        let s = Vehicle::parse(&CfgFile::from_str("y.bus", "[registration_automatic]\nB-V \n\n[model]\nm.cfg\n"));
+        let s = Vehicle::parse(&CfgFile::from_str(
+            "y.bus",
+            "[registration_automatic]\nB-V \n\n[model]\nm.cfg\n",
+        ));
         assert_eq!(s.registration_affix, ("B-V ".to_string(), String::new()));
         assert_eq!(s.model.as_deref(), Some("m.cfg"));
     }

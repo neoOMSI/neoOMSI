@@ -10,7 +10,9 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
     if action == "back" {
         return match kind {
             ListKind::Tours(..) => Some(ListKind::Lines),
-            ListKind::PlaceType(_) | ListKind::PlaceLivery(_) | ListKind::PlaceHof(..) => Some(ListKind::PlaceMaker),
+            ListKind::PlaceType(_) | ListKind::PlaceLivery(_) | ListKind::PlaceHof(..) => {
+                Some(ListKind::PlaceMaker)
+            }
             _ => None,
         };
     }
@@ -35,7 +37,8 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                     LIST_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 // (the preset, the clouds and the precipitation are picked from a drop-down: `App::chooser_pick`)
-                "weather" | "cloudkind" | "precipkind" | "metar_src" | "sel" | "preset" | "gfxprofile" | "reset" => {}
+                "weather" | "cloudkind" | "precipkind" | "metar_src" | "sel" | "preset"
+                | "gfxprofile" | "reset" => {}
                 "mapopts" => {
                     if step {
                         return Some(ListKind::Options(MAP_TAB));
@@ -46,7 +49,11 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                 "keysearch" => {}
                 "keybind" if matches!(mv, Move::Dec | Move::Inc) => {
                     let mut it = arg.splitn(3, ' ');
-                    if let (Some(sec), Some(idx), Some(name)) = (it.next().and_then(|x| x.parse::<usize>().ok()), it.next().and_then(|x| x.parse::<usize>().ok()), it.next()) {
+                    if let (Some(sec), Some(idx), Some(name)) = (
+                        it.next().and_then(|x| x.parse::<usize>().ok()),
+                        it.next().and_then(|x| x.parse::<usize>().ok()),
+                        it.next(),
+                    ) {
                         let name = name.to_string();
                         app.keybind_edit(sec, idx, &name, crate::game_menu::KeyEdit::Clear);
                     }
@@ -54,22 +61,37 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                 "keysopts" if step => return Some(ListKind::Options(KEYS_TAB)),
                 "mapback" if step => return Some(ListKind::Options(0)),
                 "metar_icao_edit" if step => {
-                    if app.menu_edit_icao { app.apply_icao_edit(); } else { app.start_icao_edit(); }
+                    if app.menu_edit_icao {
+                        app.apply_icao_edit();
+                    } else {
+                        app.start_icao_edit();
+                    }
                 }
                 "time_edit" if step => {
                     if app.menu_edit.is_some() {
                         app.apply_time_edit();
-                    } else if app.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
-                        app.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
+                    } else if app
+                        .lan
+                        .as_ref()
+                        .is_some_and(|l| l.role == omsi_net::Role::Client)
+                    {
+                        app.service_msg =
+                            Some(("In a LAN session the host sets the clock".into(), 3.0));
                     } else if app.real_time_locked() {
-                        app.service_msg = Some(("The time cannot be changed while the real-time sync is on".into(), 3.0));
+                        app.service_msg = Some((
+                            "The time cannot be changed while the real-time sync is on".into(),
+                            3.0,
+                        ));
                     } else {
                         app.menu_edit = Some(String::new());
                     }
                 }
                 "keybind" if step => {
                     let mut it = arg.split(' ');
-                    if let (Some(sec), Some(idx)) = (it.next().and_then(|x| x.parse::<usize>().ok()), it.next().and_then(|x| x.parse::<usize>().ok())) {
+                    if let (Some(sec), Some(idx)) = (
+                        it.next().and_then(|x| x.parse::<usize>().ok()),
+                        it.next().and_then(|x| x.parse::<usize>().ok()),
+                    ) {
                         app.key_capture = Some((sec, idx));
                     }
                 }
@@ -80,9 +102,19 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                     }
                 }
                 "clock_ontime" if step => {
-                    if app.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
-                        app.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
-                    } else if let Some(d) = app.player.as_ref().map(|p| p.vehicle.host.tt_delay as f64).filter(|d| d.abs() >= 1.0) {
+                    if app
+                        .lan
+                        .as_ref()
+                        .is_some_and(|l| l.role == omsi_net::Role::Client)
+                    {
+                        app.service_msg =
+                            Some(("In a LAN session the host sets the clock".into(), 3.0));
+                    } else if let Some(d) = app
+                        .player
+                        .as_ref()
+                        .map(|p| p.vehicle.host.tt_delay as f64)
+                        .filter(|d| d.abs() >= 1.0)
+                    {
                         // (the delay as it is now, not as the button was drawn: a second click
                         // would otherwise move the clock by the old amount again)
                         app.shift_clock(-d);
@@ -92,10 +124,19 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                     }
                 }
                 "clock_set" | "clock_shift" if step => {
-                    if app.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
-                        app.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
+                    if app
+                        .lan
+                        .as_ref()
+                        .is_some_and(|l| l.role == omsi_net::Role::Client)
+                    {
+                        app.service_msg =
+                            Some(("In a LAN session the host sets the clock".into(), 3.0));
                     } else if let Ok(secs) = arg.trim().parse::<f64>() {
-                        let by = if verb == "clock_set" { secs - app.clock.time } else { secs };
+                        let by = if verb == "clock_set" {
+                            secs - app.clock.time
+                        } else {
+                            secs
+                        };
                         app.shift_clock(by);
                     }
                 }
@@ -115,9 +156,7 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             Some(kind.clone())
         }
         ListKind::Lines => match verb {
-            "line" => {
-                Some(ListKind::Tours(arg.to_string(), None))
-            }
+            "line" => Some(ListKind::Tours(arg.to_string(), None)),
             "free" => {
                 app.duty = None;
                 // unscheduled: the GetTT* callbacks answer ""/0/-1 again, as in Omsi.exe
@@ -137,8 +176,21 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
         },
         ListKind::Tours(_, pick) => {
             if let Some((line, tour)) = arg.split_once('\u{1}') {
-                let chosen = pick.as_ref().filter(|p| p.0 == tour).map(|p| p.1).unwrap_or(0);
-                let trip = pick.as_ref().filter(|p| p.0 == tour).map(|p| p.2).unwrap_or_else(|| app.schedule.as_ref().map(|s| s.tour_trip_now(line, tour, app.clock.time)).unwrap_or(0));
+                let chosen = pick
+                    .as_ref()
+                    .filter(|p| p.0 == tour)
+                    .map(|p| p.1)
+                    .unwrap_or(0);
+                let trip = pick
+                    .as_ref()
+                    .filter(|p| p.0 == tour)
+                    .map(|p| p.2)
+                    .unwrap_or_else(|| {
+                        app.schedule
+                            .as_ref()
+                            .map(|s| s.tour_trip_now(line, tour, app.clock.time))
+                            .unwrap_or(0)
+                    });
                 start_duty_at(app, line, tour, trip, chosen);
             }
             None
@@ -161,12 +213,23 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             None
         }
         ListKind::Spots => {
-            if app.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
-                app.service_msg = Some(("In a LAN session only the host moves vehicles on the map".into(), 4.0));
+            if app
+                .lan
+                .as_ref()
+                .is_some_and(|l| l.role == omsi_net::Role::Client)
+            {
+                app.service_msg = Some((
+                    "In a LAN session only the host moves vehicles on the map".into(),
+                    4.0,
+                ));
                 return None;
             }
             let found = app.world.clone().and_then(|w| {
-                let ep = arg.trim().parse::<usize>().ok().and_then(|i| w.global.entry_points.get(i))?;
+                let ep = arg
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| w.global.entry_points.get(i))?;
                 // (the entry points of tiles that are not loaded come from the map index)
                 w.index();
                 w.entry_point_place(ep).map(|(pos, rot)| (pos, rot[0]))
@@ -180,28 +243,34 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             }
             None
         }
-        ListKind::PlaceMaker | ListKind::PlaceType(_) if verb == "maker" => Some(ListKind::PlaceType(arg.to_string())),
-        ListKind::PlaceMaker | ListKind::PlaceType(_) => Some(ListKind::PlaceLivery(arg.to_string())),
+        ListKind::PlaceMaker | ListKind::PlaceType(_) if verb == "maker" => {
+            Some(ListKind::PlaceType(arg.to_string()))
+        }
+        ListKind::PlaceMaker | ListKind::PlaceType(_) => {
+            Some(ListKind::PlaceLivery(arg.to_string()))
+        }
         ListKind::PlaceLivery(bus) => Some(ListKind::PlaceHof(bus.clone(), arg.to_string())),
         ListKind::PlaceHof(bus, paint) => {
             let (bus, paint, hof) = (bus.clone(), paint.clone(), arg.trim().to_string());
             app.close_game_menu();
-            app.place_vehicle(&bus, Some(paint).filter(|p| !p.is_empty()), Some(hof).filter(|h| !h.is_empty()));
+            app.place_vehicle(
+                &bus,
+                Some(paint).filter(|p| !p.is_empty()),
+                Some(hof).filter(|h| !h.is_empty()),
+            );
             None
         }
         ListKind::Destinations if verb == "routes" => Some(ListKind::RouteNumbers),
-        ListKind::RouteNumbers if verb == "route_type" => {
-            match app.menu_edit.take() {
-                Some(t) => {
-                    set_route_by_hand(app, &t);
-                    None
-                }
-                None => {
-                    app.menu_edit = Some(String::new());
-                    Some(ListKind::RouteNumbers)
-                }
+        ListKind::RouteNumbers if verb == "route_type" => match app.menu_edit.take() {
+            Some(t) => {
+                set_route_by_hand(app, &t);
+                None
             }
-        }
+            None => {
+                app.menu_edit = Some(String::new());
+                Some(ListKind::RouteNumbers)
+            }
+        },
         ListKind::RouteNumbers => {
             set_route_by_hand(app, arg);
             None
@@ -210,11 +279,29 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             if let Some(p) = app.player.as_mut() {
                 let hof = p.vehicle.host.hof.clone();
                 let code: i32 = arg.trim().parse().unwrap_or(-1);
-                if let Some(t) = hof.as_ref().and_then(|h| h.termini.iter().find(|t| t.code == code)) {
-                    let line = p.vehicle.var("IBIS_LinieKurs").filter(|l| *l > 0.0).map(|l| format!("{}", l as i64)).unwrap_or_default();
+                if let Some(t) = hof
+                    .as_ref()
+                    .and_then(|h| h.termini.iter().find(|t| t.code == code))
+                {
+                    let line = p
+                        .vehicle
+                        .var("IBIS_LinieKurs")
+                        .filter(|l| *l > 0.0)
+                        .map(|l| format!("{}", l as i64))
+                        .unwrap_or_default();
                     let name = t.strings.first().cloned().unwrap_or_default();
-                    crate::schedule::set_player_destination_directly(&mut p.vehicle, hof.as_deref(), &line, &name, &[]);
-                    log::info!("destination display set by hand: {code} {} (terminus code now {:?})", name.trim(), p.vehicle.var("IBIS_TerminusCode"));
+                    crate::schedule::set_player_destination_directly(
+                        &mut p.vehicle,
+                        hof.as_deref(),
+                        &line,
+                        &name,
+                        &[],
+                    );
+                    log::info!(
+                        "destination display set by hand: {code} {} (terminus code now {:?})",
+                        name.trim(),
+                        p.vehicle.var("IBIS_TerminusCode")
+                    );
                     app.service_msg = Some((format!("Destination: {}", name.trim()), 3.0));
                 }
             }
@@ -240,8 +327,25 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
 
 pub(super) fn option_do(app: &mut App, verb: &str, arg: &str, mv: Move) -> bool {
     // (the weather is the METAR report's while the sync is on)
-    if app.metar_locked() && matches!(verb, "visibility" | "rain_amt" | "wet" | "brightness" | "humidity" | "temp" | "wind_speed" | "wind_dir" | "snow_cover" | "snow_road") {
-        app.service_msg = Some(("The weather cannot be changed while the METAR sync is on".into(), 3.0));
+    if app.metar_locked()
+        && matches!(
+            verb,
+            "visibility"
+                | "rain_amt"
+                | "wet"
+                | "brightness"
+                | "humidity"
+                | "temp"
+                | "wind_speed"
+                | "wind_dir"
+                | "snow_cover"
+                | "snow_road"
+        )
+    {
+        app.service_msg = Some((
+            "The weather cannot be changed while the METAR sync is on".into(),
+            3.0,
+        ));
         return true;
     }
     if let Some(cur) = toggle_now(app, verb) {

@@ -38,7 +38,14 @@ fn value_noise(x: [f32; 3], tile: f32) -> f32 {
     let f = [fract(x[0]), fract(x[1]), fract(x[2])];
     let u = f.map(|f| f * f * (3.0 - 2.0 * f));
     let h = |dx: f32, dy: f32, dz: f32| {
-        hash13([modf(p[0] + dx, tile), modf(p[1] + dy, tile), modf(p[2] + dz, tile)], 0.1031)
+        hash13(
+            [
+                modf(p[0] + dx, tile),
+                modf(p[1] + dy, tile),
+                modf(p[2] + dz, tile),
+            ],
+            0.1031,
+        )
     };
     let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
     let x00 = lerp(h(0.0, 0.0, 0.0), h(1.0, 0.0, 0.0), u[0]);
@@ -58,9 +65,17 @@ fn worley(x: [f32; 3], tile: f32) -> f32 {
         for j in -1..=1 {
             for i in -1..=1 {
                 let b = [i as f32, j as f32, k as f32];
-                let c = [modf(p[0] + b[0], tile), modf(p[1] + b[1], tile), modf(p[2] + b[2], tile)];
+                let c = [
+                    modf(p[0] + b[0], tile),
+                    modf(p[1] + b[1], tile),
+                    modf(p[2] + b[2], tile),
+                ];
                 // the cell's point, one hash per axis
-                let o = [hash13(c, 1031.1031), hash13([c[1] + 7.3, c[2], c[0]], 1031.1031), hash13([c[2] + 3.1, c[0], c[1]], 1031.1031)];
+                let o = [
+                    hash13(c, 1031.1031),
+                    hash13([c[1] + 7.3, c[2], c[0]], 1031.1031),
+                    hash13([c[2] + 3.1, c[0], c[1]], 1031.1031),
+                ];
                 let r = [b[0] - f[0] + o[0], b[1] - f[1] + o[1], b[2] - f[2] + o[2]];
                 best = best.min(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
             }
@@ -85,7 +100,10 @@ fn shape_texel(u: f32, v: f32) -> [f32; 3] {
     let perlin = fbm(c, 7, 4.0, value_noise);
     let cells = fbm(c, 4, 8.0, worley);
     let r = (1.0 + (perlin - 1.0) * 0.9) * (1.0 + (cells - 1.0) * 0.7);
-    let g = 0.625 * fbm(c, 3, 15.0, worley) + 0.25 * fbm(c, 3, 19.0, worley) + 0.125 * fbm(c, 3, 23.0, worley) - 1.0;
+    let g = 0.625 * fbm(c, 3, 15.0, worley)
+        + 0.25 * fbm(c, 3, 19.0, worley)
+        + 0.125 * fbm(c, 3, 23.0, worley)
+        - 1.0;
     let b = 1.0 - fbm([c[0] + 0.5, c[1] + 0.5, c[2] + 0.5], 4, 9.0, worley);
     [r, g + 1.0, b]
 }
@@ -103,9 +121,16 @@ fn to_u8(v: f32) -> u8 {
 }
 
 /// Rows of `n` computed on as many threads as the machine has.
-fn parallel_rows<T: Send + Clone + Default>(n: usize, row_len: usize, f: impl Fn(usize, &mut [T]) + Sync) -> Vec<T> {
+fn parallel_rows<T: Send + Clone + Default>(
+    n: usize,
+    row_len: usize,
+    f: impl Fn(usize, &mut [T]) + Sync,
+) -> Vec<T> {
     let mut out = vec![T::default(); n * row_len];
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(1);
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(1);
     let per = n.div_ceil(threads);
     std::thread::scope(|s| {
         for (k, chunk) in out.chunks_mut(per * row_len).enumerate() {
@@ -158,7 +183,11 @@ pub fn detail_volume() -> Vec<Vec<u8>> {
     let base = parallel_rows::<u8>(n * n, n, |zy, row| {
         let (z, y) = (zy / n, zy % n);
         for (x, v) in row.iter_mut().enumerate() {
-            *v = to_u8(detail_texel((x as f32 + 0.5) / n as f32, (y as f32 + 0.5) / n as f32, (z as f32 + 0.5) / n as f32));
+            *v = to_u8(detail_texel(
+                (x as f32 + 0.5) / n as f32,
+                (y as f32 + 0.5) / n as f32,
+                (z as f32 + 0.5) / n as f32,
+            ));
         }
     });
     let mut levels = vec![base];
@@ -201,7 +230,10 @@ mod tests {
         let shape = shape_map();
         assert_eq!(shape.len(), SHAPE_SIZE.trailing_zeros() as usize + 1);
         let r: Vec<u8> = shape[0].chunks(4).map(|p| p[0]).collect();
-        let (lo, hi) = (r.iter().min().copied().unwrap_or(0), r.iter().max().copied().unwrap_or(0));
+        let (lo, hi) = (
+            r.iter().min().copied().unwrap_or(0),
+            r.iter().max().copied().unwrap_or(0),
+        );
         assert!(hi - lo > 120, "shape R spans {lo}..{hi}");
     }
 }

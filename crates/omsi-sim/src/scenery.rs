@@ -6,16 +6,35 @@ use crate::anim::MeshAnimator;
 use crate::host::VehicleHost;
 use glam::Mat4;
 use omsi_model::MeshDef;
-use omsi_script::{compile, CompileInput, Program, State, Vm};
 use omsi_scenery::sco::ScriptSet;
+use omsi_script::{CompileInput, Program, State, Vm, compile};
 use std::path::Path;
 use std::sync::Arc;
 
 /// Builtin variables of scenery objects (`program/varlist_scenobj.txt`).
 pub fn builtin_scenobj_vars(root: &Path) -> Vec<String> {
-    let mut v: Vec<String> = match omsi_cfg::CfgFile::read(root.join("program/varlist_scenobj.txt")) {
-        Ok(f) => f.lines.iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
-        Err(_) => vec!["NightlightA", "InUse", "TrafficLightPhase", "TrafficLightApproach", "Colorscheme", "Signal", "NextSignal", "Refresh_Strings", "Switch"].into_iter().map(String::from).collect(),
+    let mut v: Vec<String> = match omsi_cfg::CfgFile::read(root.join("program/varlist_scenobj.txt"))
+    {
+        Ok(f) => f
+            .lines
+            .iter()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        Err(_) => vec![
+            "NightlightA",
+            "InUse",
+            "TrafficLightPhase",
+            "TrafficLightApproach",
+            "Colorscheme",
+            "Signal",
+            "NextSignal",
+            "Refresh_Strings",
+            "Switch",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
     };
     for n in ["NightlightA", "TrafficLightPhase", "Switch"] {
         if !v.iter().any(|x| x.eq_ignore_ascii_case(n)) {
@@ -36,22 +55,35 @@ mod placement_tests {
         let vars = dir.join("strings.txt");
         let script = dir.join("BusStop.osc");
         std::fs::write(&vars, "BusStop\nTexture\n").unwrap();
-        std::fs::write(&script, concat!(
-            "{init}\n{end}\n{frame}\n",
-            "(L.$.BusStop) \"\" $= !\n{if}\n",
-            "\"Busstop\\\" $+ (L.$.BusStop) $+ \".png\" $+ (S.$.Texture)\n",
-            "{endif}\n{end}\n",
-        )).unwrap();
+        std::fs::write(
+            &script,
+            concat!(
+                "{init}\n{end}\n{frame}\n",
+                "(L.$.BusStop) \"\" $= !\n{if}\n",
+                "\"Busstop\\\" $+ (L.$.BusStop) $+ \".png\" $+ (S.$.Texture)\n",
+                "{endif}\n{end}\n",
+            ),
+        )
+        .unwrap();
         let program = Arc::new(compile(&CompileInput {
-            stringvarlists: vec![vars], scripts: vec![script], ..Default::default()
+            stringvarlists: vec![vars],
+            scripts: vec![script],
+            ..Default::default()
         }));
         assert!(program.errors.is_empty(), "{:?}", program.errors);
         for name in ["BentenDaini_1", "BentenDaini_2", ""] {
             let mut inst = SceneryInstance::new(
-                program.clone(), &[], crate::SimClock::default(), &[name.to_string()],
+                program.clone(),
+                &[],
+                crate::SimClock::default(),
+                &[name.to_string()],
             );
             inst.update(0.0, &SceneryVars::default());
-            let expected = if name.is_empty() { String::new() } else { format!("Busstop\\{name}.png") };
+            let expected = if name.is_empty() {
+                String::new()
+            } else {
+                format!("Busstop\\{name}.png")
+            };
             assert_eq!(inst.str_var("Texture"), expected);
         }
         std::fs::remove_dir_all(dir).unwrap();
@@ -61,7 +93,10 @@ mod placement_tests {
 /// Compile the scripts of a scenery object type (an empty program with the builtin
 /// variables when it has none, so animations can still bind to `Switch` & co).
 pub fn compile_scenery(root: &Path, scripts: &ScriptSet) -> Program {
-    let mut input = CompileInput { builtin_vars: builtin_scenobj_vars(root), ..Default::default() };
+    let mut input = CompileInput {
+        builtin_vars: builtin_scenobj_vars(root),
+        ..Default::default()
+    };
     input.varlists = scripts.varlists.clone();
     input.stringvarlists = scripts.stringvarlists.clone();
     input.constfiles = scripts.constfiles.clone();
@@ -108,7 +143,12 @@ impl SceneryInstance {
     /// strings from the map, which are its string variables in order, before the `{init}`
     /// runs (Omsi.exe sub_7eea70 copies them into the object's string variables when it
     /// is placed - a sign's label naming its picture, a display's stop).
-    pub fn new(program: Arc<Program>, meshes: &[(&MeshDef, Mat4)], clock: crate::SimClock, strings: &[String]) -> SceneryInstance {
+    pub fn new(
+        program: Arc<Program>,
+        meshes: &[(&MeshDef, Mat4)],
+        clock: crate::SimClock,
+        strings: &[String],
+    ) -> SceneryInstance {
         let mut state = State::new(&program);
         for (v, s) in state.str_vars.iter_mut().zip(strings) {
             v.clone_from(s);
@@ -121,9 +161,22 @@ impl SceneryInstance {
             state.vars[id as usize] = -1.0;
         }
         vm.run_init(&program, &mut state, &mut host);
-        let mut animators: Vec<MeshAnimator> = meshes.iter().map(|(d, pivot)| MeshAnimator::new(d, *pivot, |n| program.var(n))).collect();
-        crate::anim::link_parents(&mut animators, &meshes.iter().map(|(d, _)| *d).collect::<Vec<_>>());
-        let visible_conds = meshes.iter().map(|(d, _)| d.visible.as_ref().and_then(|(v, x)| program.var(v).map(|id| (id, *x)))).collect();
+        let mut animators: Vec<MeshAnimator> = meshes
+            .iter()
+            .map(|(d, pivot)| MeshAnimator::new(d, *pivot, |n| program.var(n)))
+            .collect();
+        crate::anim::link_parents(
+            &mut animators,
+            &meshes.iter().map(|(d, _)| *d).collect::<Vec<_>>(),
+        );
+        let visible_conds = meshes
+            .iter()
+            .map(|(d, _)| {
+                d.visible
+                    .as_ref()
+                    .and_then(|(v, x)| program.var(v).map(|id| (id, *x)))
+            })
+            .collect();
         let n = meshes.len();
         SceneryInstance {
             v_night: program.var("NightlightA"),
@@ -151,7 +204,9 @@ impl SceneryInstance {
 
     /// Does the object need per-frame updates at all?
     pub fn is_dynamic(&self) -> bool {
-        !self.program.frame.is_empty() || self.animators.iter().any(|a| a.has_animations()) || self.visible_conds.iter().any(|c| c.is_some())
+        !self.program.frame.is_empty()
+            || self.animators.iter().any(|a| a.has_animations())
+            || self.visible_conds.iter().any(|c| c.is_some())
     }
 
     fn put(&mut self, id: Option<omsi_script::VarId>, v: f32) {
@@ -162,7 +217,8 @@ impl SceneryInstance {
 
     pub fn trigger(&mut self, name: &str) -> bool {
         let p = self.program.clone();
-        self.vm.run_trigger(&p, name, &mut self.state, &mut self.host)
+        self.vm
+            .run_trigger(&p, name, &mut self.state, &mut self.host)
     }
 
     pub fn update(&mut self, dt: f32, vars: &SceneryVars) {
@@ -205,7 +261,11 @@ impl SceneryInstance {
 
     /// A string variable of the script (empty when it has none of that name).
     pub fn str_var(&self, name: &str) -> &str {
-        self.program.str_var(name).and_then(|i| self.state.str_vars.get(i as usize)).map(|s| s.as_str()).unwrap_or("")
+        self.program
+            .str_var(name)
+            .and_then(|i| self.state.str_vars.get(i as usize))
+            .map(|s| s.as_str())
+            .unwrap_or("")
     }
 
     /// `Refresh_Strings`: the script asks for its text textures to be drawn again from its
@@ -220,7 +280,12 @@ impl SceneryInstance {
 
     /// Start the `[htmltexture]` pages of the object's model. `model_dir` is the folder of
     /// the model config, `object_dir` the folder of the `.sco`.
-    pub fn init_html_textures(&mut self, defs: &[omsi_model::HtmlTextureDef], model_dir: &Path, object_dir: &Path) {
+    pub fn init_html_textures(
+        &mut self,
+        defs: &[omsi_model::HtmlTextureDef],
+        model_dir: &Path,
+        object_dir: &Path,
+    ) {
         self.html_textures = crate::htmltex::scenery_pages(defs, model_dir, object_dir);
     }
 
@@ -230,12 +295,33 @@ impl SceneryInstance {
         if self.html_textures.is_empty() {
             return Vec::new();
         }
-        let num: Vec<(String, f32)> = self.program.var_names.iter().enumerate().map(|(i, n)| (n.clone(), self.state.vars[i])).collect();
-        let strs: Vec<(String, String)> = self.program.str_var_names.iter().enumerate().map(|(i, n)| (n.clone(), self.state.str_vars[i].clone())).collect();
+        let num: Vec<(String, f32)> = self
+            .program
+            .var_names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), self.state.vars[i]))
+            .collect();
+        let strs: Vec<(String, String)> = self
+            .program
+            .str_var_names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), self.state.str_vars[i].clone()))
+            .collect();
         // (the basic API only: no vehicle, no depot)
         let env = crate::vehicle_api::environment(&self.host.clock, &crate::vehicle_api::locale());
-        let departures = (!self.host.html_departures.is_empty()).then(|| crate::vehicle_api::departures(&self.host.html_departures));
-        let out = crate::htmltex::drive_pages(&mut self.html_textures, &num, &strs, None, &env, None, departures.as_ref());
+        let departures = (!self.host.html_departures.is_empty())
+            .then(|| crate::vehicle_api::departures(&self.host.html_departures));
+        let out = crate::htmltex::drive_pages(
+            &mut self.html_textures,
+            &num,
+            &strs,
+            None,
+            &env,
+            None,
+            departures.as_ref(),
+        );
         for key in out.departure_wants {
             self.host.want_departures(key);
         }
@@ -245,7 +331,13 @@ impl SceneryInstance {
 
     /// A press, release or move on page `script_index` (`u`/`v` 0..1 across it, `v` down
     /// from the top). False when the object has no such page.
-    pub fn html_pointer(&mut self, script_index: usize, u: f32, v: f32, kind: crate::htmltex::PointerKind) -> bool {
+    pub fn html_pointer(
+        &mut self,
+        script_index: usize,
+        u: f32,
+        v: f32,
+        kind: crate::htmltex::PointerKind,
+    ) -> bool {
         match crate::htmltex::pointer_on(&mut self.html_textures, script_index, u, v, kind) {
             Some((events, triggers)) => {
                 self.apply_page_output(events, triggers);
@@ -270,7 +362,11 @@ impl SceneryInstance {
 
     /// Whether the script asks for the buses due at its stop (`GetArrBus*`).
     pub fn wants_arrivals(&self) -> bool {
-        self.program.names.iter().any(|n| n.get(..9).map(|p| p.eq_ignore_ascii_case("getarrbus")).unwrap_or(false))
+        self.program.names.iter().any(|n| {
+            n.get(..9)
+                .map(|p| p.eq_ignore_ascii_case("getarrbus"))
+                .unwrap_or(false)
+        })
     }
 }
 
@@ -285,7 +381,12 @@ mod tests {
         let mut p = Program::default();
         p.declare_str_var("A");
         p.declare_str_var("B");
-        let inst = SceneryInstance::new(Arc::new(p), &[], crate::SimClock::default(), &["bss1\\14.jpg".into(), "x".into(), "ignored".into()]);
+        let inst = SceneryInstance::new(
+            Arc::new(p),
+            &[],
+            crate::SimClock::default(),
+            &["bss1\\14.jpg".into(), "x".into(), "ignored".into()],
+        );
         assert_eq!(inst.str_var("A"), "bss1\\14.jpg");
         assert_eq!(inst.str_var("B"), "x");
     }

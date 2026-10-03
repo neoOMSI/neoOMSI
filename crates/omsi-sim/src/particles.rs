@@ -86,7 +86,13 @@ impl ParticleSet {
         ParticleSet {
             emitters: defs
                 .into_iter()
-                .map(|def| Emitter { def, particles: Vec::new(), carry: 0.0, burst_done: false, ended: Vec::new() })
+                .map(|def| Emitter {
+                    def,
+                    particles: Vec::new(),
+                    carry: 0.0,
+                    burst_done: false,
+                    ended: Vec::new(),
+                })
                 .collect(),
             rng: seed | 1,
         }
@@ -99,7 +105,9 @@ impl ParticleSet {
     /// Live particles of every emitter, and whether each glows (`--PS_emissive--`) and its
     /// picture.
     pub fn particles(&self) -> impl Iterator<Item = (&Particle, &ParticleSystemDef)> {
-        self.emitters.iter().flat_map(|e| e.particles.iter().map(move |p| (p, &e.def)))
+        self.emitters
+            .iter()
+            .flat_map(|e| e.particles.iter().map(move |p| (p, &e.def)))
     }
 
     /// -1..1
@@ -147,7 +155,9 @@ impl ParticleSet {
                     continue;
                 }
             }
-            let dir = rot.transform_vector3(Vec3::from(def.dir)).normalize_or_zero();
+            let dir = rot
+                .transform_vector3(Vec3::from(def.dir))
+                .normalize_or_zero();
             // where new particles start: the emitter itself, or the particles of the one it
             // is attached to
             let mut sources: Vec<(DVec3, Vec3)> = Vec::new();
@@ -157,7 +167,13 @@ impl ParticleSet {
                     let pe = &self.emitters[parent];
                     match mode {
                         1 => burst_sources = pe.ended.clone(),
-                        _ => sources = pe.particles.iter().map(|p| (p.pos, if mode == 2 { -p.vel } else { dir })).collect(),
+                        _ => {
+                            sources = pe
+                                .particles
+                                .iter()
+                                .map(|p| (p.pos, if mode == 2 { -p.vel } else { dir }))
+                                .collect()
+                        }
                     }
                 }
                 Some(_) => {}
@@ -198,7 +214,13 @@ impl ParticleSet {
         }
     }
 
-    fn new_particle(&mut self, def: &ParticleSystemDef, at: DVec3, dir: Vec3, value: &dyn Fn(&str) -> f32) -> Particle {
+    fn new_particle(
+        &mut self,
+        def: &ParticleSystemDef,
+        at: DVec3,
+        dir: Vec3,
+        value: &dyn Fn(&str) -> f32,
+    ) -> Particle {
         let speed = eval(&def.velocity.0, value);
         let spread = eval(&def.velocity.1, value);
         let vel = if def.velocity_all_round {
@@ -233,7 +255,30 @@ mod tests {
     use super::*;
 
     fn smoke(freq: f32) -> ParticleSystemDef {
-        let p: Vec<String> = ["0", "-5", "0.4", "0", "-1", "0", "2", "0.2", &freq.to_string(), "2", "0.95", "-0.2", "0.5", "3", "0.8", "0", "0.6", "0.6", "0.6"].iter().map(|s| s.to_string()).collect();
+        let p: Vec<String> = [
+            "0",
+            "-5",
+            "0.4",
+            "0",
+            "-1",
+            "0",
+            "2",
+            "0.2",
+            &freq.to_string(),
+            "2",
+            "0.95",
+            "-0.2",
+            "0.5",
+            "3",
+            "0.8",
+            "0",
+            "0.6",
+            "0.6",
+            "0.6",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         ParticleSystemDef::from_smoke(&p)
     }
 
@@ -241,15 +286,32 @@ mod tests {
     fn exhaust_puffs_rise_grow_and_fade() {
         let mut s = ParticleSet::new(vec![smoke(20.0)], 7);
         for _ in 0..30 {
-            s.update(1.0 / 30.0, DVec3::new(100.0, 200.0, 10.0), Mat4::IDENTITY, &|_| 0.0);
+            s.update(
+                1.0 / 30.0,
+                DVec3::new(100.0, 200.0, 10.0),
+                Mat4::IDENTITY,
+                &|_| 0.0,
+            );
         }
         let ps: Vec<&Particle> = s.particles().map(|(p, _)| p).collect();
-        assert!(ps.len() >= 18 && ps.len() <= 21, "{} particles after a second at 20/s", ps.len());
+        assert!(
+            ps.len() >= 18 && ps.len() <= 21,
+            "{} particles after a second at 20/s",
+            ps.len()
+        );
         let oldest = ps.iter().max_by(|a, b| a.age.total_cmp(&b.age)).unwrap();
-        assert!(oldest.pos.y < 195.0, "blown out backwards: {:?}", oldest.pos);
+        assert!(
+            oldest.pos.y < 195.0,
+            "blown out backwards: {:?}",
+            oldest.pos
+        );
         assert!(oldest.size() > 2.5, "grown to {}", oldest.size());
         assert!(oldest.alpha() < 0.5, "faded to {}", oldest.alpha());
-        assert!(oldest.vel.length() < 2.0, "slowed to {}", oldest.vel.length());
+        assert!(
+            oldest.vel.length() < 2.0,
+            "slowed to {}",
+            oldest.vel.length()
+        );
     }
 
     #[test]
@@ -258,7 +320,9 @@ mod tests {
         p.freq.0 = PsValue::Var("auspuff_freq".into());
         let mut s = ParticleSet::new(vec![p], 3);
         for _ in 0..30 {
-            s.update(1.0 / 30.0, DVec3::ZERO, Mat4::IDENTITY, &|n| if n == "auspuff_freq" { 0.0 } else { 1.0 });
+            s.update(1.0 / 30.0, DVec3::ZERO, Mat4::IDENTITY, &|n| {
+                if n == "auspuff_freq" { 0.0 } else { 1.0 }
+            });
         }
         assert_eq!(s.particles().count(), 0);
         for _ in 0..60 {

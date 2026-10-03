@@ -19,7 +19,7 @@ pub mod tga;
 pub const MAX_DIMENSION: usize = 16384;
 
 pub mod pbr;
-pub use gpu::{gpu_options, set_gpu_options, GpuOptions, PixelFormat, TextureData};
+pub use gpu::{GpuOptions, PixelFormat, TextureData, gpu_options, set_gpu_options};
 
 #[derive(Debug, Clone)]
 pub struct Image {
@@ -33,7 +33,12 @@ pub struct Image {
 
 impl Image {
     pub fn solid(rgba: [u8; 4]) -> Image {
-        Image { width: 1, height: 1, rgba: rgba.to_vec(), has_alpha: rgba[3] != 255 }
+        Image {
+            width: 1,
+            height: 1,
+            rgba: rgba.to_vec(),
+            has_alpha: rgba[3] != 255,
+        }
     }
 
     /// A `[matl_bumpmap]` texture as the renderer samples it: every stock and mod bump map
@@ -41,8 +46,24 @@ impl Image {
     /// bump-mapped environment stage), so the height goes into the alpha channel, which
     /// stays linear in an sRGB texture; the colour is left white.
     pub fn bump_height_map(&self) -> Image {
-        let rgba = self.rgba.chunks_exact(4).flat_map(|p| [255, 255, 255, ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8]).collect();
-        Image { width: self.width, height: self.height, rgba, has_alpha: true }
+        let rgba = self
+            .rgba
+            .chunks_exact(4)
+            .flat_map(|p| {
+                [
+                    255,
+                    255,
+                    255,
+                    ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8,
+                ]
+            })
+            .collect();
+        Image {
+            width: self.width,
+            height: self.height,
+            rgba,
+            has_alpha: true,
+        }
     }
 }
 
@@ -91,19 +112,27 @@ pub const EXTENSIONS: [&str; 5] = ["dds", "bmp", "tga", "jpg", "png"];
 
 /// Decode an image file into RGBA8.
 pub fn decode_file(path: &Path) -> Result<Image, TextureError> {
-    let bytes = omsi_cfg::vfs::read(path).map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
+    let bytes = omsi_cfg::vfs::read(path)
+        .map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
     decode_bytes(&bytes, path)
 }
 
 pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     // The original loads by content (D3DX), so files are often misnamed: a `.dds` that is a
     // BMP is common. Sniff the signatures first and fall back to the extension (TGA has none).
     if bytes.starts_with(b"DDS ") {
         return dds::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
     }
     let is_tga_ext = matches!(ext.as_str(), "tga");
-    let looks_tga = bytes.len() > 18 && (1..=3).contains(&(bytes[2] & 7)) && bytes[2] & 0xF0 == 0 && matches!(bytes[16], 8 | 15 | 16 | 24 | 32);
+    let looks_tga = bytes.len() > 18
+        && (1..=3).contains(&(bytes[2] & 7))
+        && bytes[2] & 0xF0 == 0
+        && matches!(bytes[16], 8 | 15 | 16 | 24 | 32);
     if is_tga_ext && looks_tga && !bytes.starts_with(b"BM") && !bytes.starts_with(&[0xFF, 0xD8]) {
         return tga::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
     }
@@ -120,10 +149,13 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
         match ext.as_str() {
             "dds" => image::ImageFormat::Dds,
             "bmp" => image::ImageFormat::Bmp,
-            "tga" => return tga::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e)),
+            "tga" => {
+                return tga::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
+            }
             "jpg" | "jpeg" => image::ImageFormat::Jpeg,
             "png" => image::ImageFormat::Png,
-            _ => image::guess_format(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?,
+            _ => image::guess_format(bytes)
+                .map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?,
         }
     };
     let img = match image::load_from_memory_with_format(bytes, format) {
@@ -132,10 +164,13 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
         // depth holds (the A21's and the Urbino's 4-bit `LCD-Innenanzeige.bmp` says 17) is
         // read with the colours it can use, and a 24-bit one that says BI_BITFIELDS (sky
         // packs' `Texture\skybox\night01.bmp`) as the plain 24-bit bitmap it is
-        Err(e) if format == image::ImageFormat::Bmp => match bmp_clamped_palette(bytes).or_else(|| bmp24_bitfields(bytes)) {
-            Some(fixed) => image::load_from_memory_with_format(&fixed, format).map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?,
-            None => return Err(TextureError::Decode(path.to_path_buf(), e.to_string())),
-        },
+        Err(e) if format == image::ImageFormat::Bmp => {
+            match bmp_clamped_palette(bytes).or_else(|| bmp24_bitfields(bytes)) {
+                Some(fixed) => image::load_from_memory_with_format(&fixed, format)
+                    .map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?,
+                None => return Err(TextureError::Decode(path.to_path_buf(), e.to_string())),
+            }
+        }
         Err(e) => return Err(TextureError::Decode(path.to_path_buf(), e.to_string())),
     };
     let mut has_alpha = img.color().has_alpha();
@@ -145,14 +180,27 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
     if format == image::ImageFormat::Bmp && !has_alpha {
         has_alpha = bmp32_alpha(bytes, width, height, &mut rgba);
     }
-    Ok(Image { width, height, rgba, has_alpha })
+    Ok(Image {
+        width,
+        height,
+        rgba,
+        has_alpha,
+    })
 }
 
 /// A copy of a palette bitmap whose colour count (`biClrUsed`, `biClrImportant`) is cut to
 /// what its bit depth can index; None when there is nothing to cut.
 fn bmp_clamped_palette(bytes: &[u8]) -> Option<Vec<u8>> {
-    let u16_at = |o: usize| bytes.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
-    let u32_at = |o: usize| bytes.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let u16_at = |o: usize| {
+        bytes
+            .get(o..o + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    };
+    let u32_at = |o: usize| {
+        bytes
+            .get(o..o + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
     let bits = u16_at(28)? as u32;
     if !(1..=8).contains(&bits) {
         return None;
@@ -173,8 +221,12 @@ fn bmp_clamped_palette(bytes: &[u8]) -> Option<Vec<u8>> {
 /// the `image` crate refuses the file. The masks after a 40-byte header stay where they are
 /// (the pixel offset already points past them). None when the bitmap is not one of those.
 fn bmp24_bitfields(bytes: &[u8]) -> Option<Vec<u8>> {
-    let bits = bytes.get(28..30).map(|b| u16::from_le_bytes([b[0], b[1]]))?;
-    let compression = bytes.get(30..34).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))?;
+    let bits = bytes
+        .get(28..30)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))?;
+    let compression = bytes
+        .get(30..34)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))?;
     if bits != 24 || compression != 3 {
         return None;
     }
@@ -190,15 +242,27 @@ fn bmp24_bitfields(bytes: &[u8]) -> Option<Vec<u8>> {
 /// scheme are 32-bit bitmaps named `.dds`), and their fourth byte is the reflection mask
 /// of the paint. Returns whether the alpha was taken over.
 fn bmp32_alpha(bytes: &[u8], width: u32, height: u32, rgba: &mut [u8]) -> bool {
-    let u32_at = |o: usize| bytes.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
-    let (Some(offset), Some(raw_h), Some(compression)) = (u32_at(10), u32_at(22), u32_at(30)) else { return false };
-    let bpp = bytes.get(28..30).map(|b| u16::from_le_bytes([b[0], b[1]])).unwrap_or(0);
+    let u32_at = |o: usize| {
+        bytes
+            .get(o..o + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let (Some(offset), Some(raw_h), Some(compression)) = (u32_at(10), u32_at(22), u32_at(30))
+    else {
+        return false;
+    };
+    let bpp = bytes
+        .get(28..30)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .unwrap_or(0);
     if bpp != 32 || compression != 0 {
         return false;
     }
     let (w, h) = (width as usize, height as usize);
     let offset = offset as usize;
-    let Some(pixels) = bytes.get(offset..offset + w * h * 4) else { return false };
+    let Some(pixels) = bytes.get(offset..offset + w * h * 4) else {
+        return false;
+    };
     if !pixels.chunks_exact(4).any(|p| p[3] != 0) {
         return false;
     }
@@ -234,7 +298,8 @@ pub fn find_texture(name: &str, dirs: &[&Path]) -> Option<PathBuf> {
     // cost three quarters of a minute to put the Spandau fleet on the GPU.
     // (a miss is kept only while the content stays as it was: a paint installed while the
     // game runs is found)
-    static MEMO: std::sync::OnceLock<Mutex<HashMap<String, (u64, Option<PathBuf>)>>> = std::sync::OnceLock::new();
+    static MEMO: std::sync::OnceLock<Mutex<HashMap<String, (u64, Option<PathBuf>)>>> =
+        std::sync::OnceLock::new();
     let generation = omsi_cfg::content_generation();
     let key = {
         let mut k = String::with_capacity(256);
@@ -268,7 +333,9 @@ fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> O
     // a file named in full (a paint scheme's picture, resolved in its scheme's folder)
     let full = Path::new(name.trim());
     if full.is_absolute() {
-        if let (Some(parent), Some(file)) = (full.parent(), full.file_name().and_then(|f| f.to_str())) {
+        if let (Some(parent), Some(file)) =
+            (full.parent(), full.file_name().and_then(|f| f.to_str()))
+        {
             if let Some(found) = find_texture_in_dir(parent, file) {
                 return Some(found);
             }
@@ -286,7 +353,12 @@ fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> O
     let mut names: Vec<String> = Vec::new();
     if let Some(f) = season {
         match (stem_path.parent(), stem_path.file_name()) {
-            (Some(par), Some(file)) if !par.as_os_str().is_empty() => names.push(format!("{}/{}/{}", par.display(), f, file.to_string_lossy())),
+            (Some(par), Some(file)) if !par.as_os_str().is_empty() => names.push(format!(
+                "{}/{}/{}",
+                par.display(),
+                f,
+                file.to_string_lossy()
+            )),
             (_, Some(file)) => names.push(format!("{}/{}", f, file.to_string_lossy())),
             _ => {}
         }
@@ -295,8 +367,16 @@ fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> O
     // A name with folders in it that is not below any of the texture folders is taken from
     // the main folder, as OMSI does (`Splines\BS_ADDON_CreativeStreets\Gehwege\texture\
     // BS_Gehweg_Allgemein1.bmp` in a spline of another folder of that add-on).
-    let from_root: Vec<PathBuf> = if name.contains('/') { omsi_cfg::content_roots().into_iter().take(1).collect() } else { Vec::new() };
-    let dirs: Vec<&Path> = dirs.iter().copied().chain(from_root.iter().map(|p| p.as_path())).collect();
+    let from_root: Vec<PathBuf> = if name.contains('/') {
+        omsi_cfg::content_roots().into_iter().take(1).collect()
+    } else {
+        Vec::new()
+    };
+    let dirs: Vec<&Path> = dirs
+        .iter()
+        .copied()
+        .chain(from_root.iter().map(|p| p.as_path()))
+        .collect();
     // Keep the pack's directory priority, then prefer its seasonal variant.
     for dir in &dirs {
         for cand_name in &names {
@@ -311,7 +391,11 @@ fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> O
     let absolute = name.as_bytes().get(1) == Some(&b':') || name.starts_with('/');
     if absolute {
         let parts: Vec<&str> = name.split('/').filter(|p| !p.is_empty()).collect();
-        if let Some(i) = parts.iter().position(|p| omsi_cfg::CONTENT_FOLDERS.iter().any(|f| f.eq_ignore_ascii_case(p))) {
+        if let Some(i) = parts.iter().position(|p| {
+            omsi_cfg::CONTENT_FOLDERS
+                .iter()
+                .any(|f| f.eq_ignore_ascii_case(p))
+        }) {
             let rel = parts[i..].join("/");
             for root in omsi_cfg::content_roots() {
                 if let Some(found) = find_texture_in_dir(&root, &rel) {
@@ -374,9 +458,15 @@ pub fn cfg_path(requested: &str, found: &Path) -> Option<PathBuf> {
     let req = requested.trim().replace('\\', "/");
     let base = req.rsplit('/').next().unwrap_or(&req).to_string();
     let req_stem = Path::new(&base).with_extension("");
-    let found_name = found.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let found_name = found
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let found_stem = found.with_extension("");
-    let found_stem = found_stem.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let found_stem = found_stem
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut dirs: Vec<&Path> = Vec::new();
     if let Some(d) = found.parent() {
         dirs.push(d);
@@ -385,7 +475,12 @@ pub fn cfg_path(requested: &str, found: &Path) -> Option<PathBuf> {
         }
     }
     for (i, d) in dirs.iter().enumerate() {
-        let mut names = vec![format!("{base}.cfg"), format!("{found_name}.cfg"), format!("{}.cfg", req_stem.to_string_lossy()), format!("{found_stem}.cfg")];
+        let mut names = vec![
+            format!("{base}.cfg"),
+            format!("{found_name}.cfg"),
+            format!("{}.cfg", req_stem.to_string_lossy()),
+            format!("{found_stem}.cfg"),
+        ];
         if i > 0 {
             // the parent folder is only for a seasonal subfolder's texture
             names.truncate(1);
@@ -527,7 +622,17 @@ impl TextureCache {
 
     /// Bytes of the pictures held (decoded and prepared ones).
     pub fn held_bytes(&self) -> usize {
-        self.images.lock().values().map(|i| i.rgba.len()).sum::<usize>() + self.gpu.lock().values().map(|t| t.cpu_bytes()).sum::<usize>()
+        self.images
+            .lock()
+            .values()
+            .map(|i| i.rgba.len())
+            .sum::<usize>()
+            + self
+                .gpu
+                .lock()
+                .values()
+                .map(|t| t.cpu_bytes())
+                .sum::<usize>()
     }
 
     pub fn len(&self) -> usize {
@@ -603,15 +708,31 @@ mod tests {
             std::fs::write(local.join(format!("{stem}.DDS")), b"x").unwrap();
             let name = format!("{stem}.{ext}");
             let found = find_texture_uncached(&name, &[&local]).unwrap();
-            assert_eq!(found.extension().unwrap().to_string_lossy().to_ascii_lowercase(), "dds");
-            assert_eq!(find_texture_uncached(local.join(&name).to_str().unwrap(), &[]), Some(found));
+            assert_eq!(
+                found
+                    .extension()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_ascii_lowercase(),
+                "dds"
+            );
+            assert_eq!(
+                find_texture_uncached(local.join(&name).to_str().unwrap(), &[]),
+                Some(found)
+            );
         }
         std::fs::write(local.join("local_only.png"), b"x").unwrap();
         std::fs::write(global.join("local_only.dds"), b"x").unwrap();
-        assert_eq!(find_texture_uncached("local_only.png", &[&local, &global]), Some(local.join("local_only.png")));
+        assert_eq!(
+            find_texture_uncached("local_only.png", &[&local, &global]),
+            Some(local.join("local_only.png"))
+        );
         // Without DDS, the requested format wins over the other fallback formats.
         std::fs::write(local.join("local_only.bmp"), b"x").unwrap();
-        assert_eq!(find_texture_uncached("local_only.png", &[&local]), Some(local.join("local_only.png")));
+        assert_eq!(
+            find_texture_uncached("local_only.png", &[&local]),
+            Some(local.join("local_only.png"))
+        );
         assert_eq!(find_texture_uncached("missing.png", &[&local]), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -623,10 +744,20 @@ mod tests {
         std::fs::create_dir_all(dir.join("texture")).unwrap();
         std::fs::write(dir.join("texture").join("anz-oben.jpg"), b"x").unwrap();
         let tex = dir.join("texture");
-        assert_eq!(find_texture("anz-oben.jpg.", &[tex.as_path()]), Some(tex.join("anz-oben.jpg")));
-        let upper = find_texture("ANZ-OBEN.JPG .", &[tex.as_path()]).map(|p| p.to_string_lossy().to_lowercase());
-        assert_eq!(upper, Some(tex.join("anz-oben.jpg").to_string_lossy().to_lowercase()));
-        assert_eq!(find_texture("texture.\\anz-oben.bmp", &[dir.as_path()]), Some(tex.join("anz-oben.jpg")));
+        assert_eq!(
+            find_texture("anz-oben.jpg.", &[tex.as_path()]),
+            Some(tex.join("anz-oben.jpg"))
+        );
+        let upper = find_texture("ANZ-OBEN.JPG .", &[tex.as_path()])
+            .map(|p| p.to_string_lossy().to_lowercase());
+        assert_eq!(
+            upper,
+            Some(tex.join("anz-oben.jpg").to_string_lossy().to_lowercase())
+        );
+        assert_eq!(
+            find_texture("texture.\\anz-oben.bmp", &[dir.as_path()]),
+            Some(tex.join("anz-oben.jpg"))
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -652,7 +783,16 @@ mod tests {
     #[test]
     fn bmp32_alpha_like_d3dx() {
         // file rows are bottom-up: the first two pixels are the lower row of the image
-        let img = decode_bytes(&bmp32([[1, 2, 3, 10], [4, 5, 6, 20], [7, 8, 9, 30], [10, 11, 12, 40]]), Path::new("x.dds")).unwrap();
+        let img = decode_bytes(
+            &bmp32([
+                [1, 2, 3, 10],
+                [4, 5, 6, 20],
+                [7, 8, 9, 30],
+                [10, 11, 12, 40],
+            ]),
+            Path::new("x.dds"),
+        )
+        .unwrap();
         assert!(img.has_alpha);
         let alpha: Vec<u8> = img.rgba.chunks_exact(4).map(|p| p[3]).collect();
         assert_eq!(alpha, vec![30, 40, 10, 20]);
@@ -701,9 +841,17 @@ mod tests {
 
     #[test]
     fn bump_height_in_alpha() {
-        let grey = Image { width: 3, height: 1, rgba: vec![0, 0, 0, 255, 127, 127, 127, 255, 255, 255, 255, 7], has_alpha: false };
+        let grey = Image {
+            width: 3,
+            height: 1,
+            rgba: vec![0, 0, 0, 255, 127, 127, 127, 255, 255, 255, 255, 7],
+            has_alpha: false,
+        };
         let h = grey.bump_height_map();
-        assert_eq!(h.rgba, vec![255, 255, 255, 0, 255, 255, 255, 127, 255, 255, 255, 255]);
+        assert_eq!(
+            h.rgba,
+            vec![255, 255, 255, 0, 255, 255, 255, 127, 255, 255, 255, 255]
+        );
         assert!(h.has_alpha);
         assert_eq!((h.width, h.height), (3, 1));
     }

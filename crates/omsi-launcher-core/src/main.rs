@@ -18,11 +18,26 @@ fn main() {
     }
     let game = omsi_launcher_lib::load_config().game;
     let game = if game.trim().is_empty() {
-        std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(if cfg!(windows) { "neoomsi.exe" } else { "neoomsi" }))).unwrap_or_default()
+        std::env::current_exe()
+            .ok()
+            .and_then(|e| {
+                e.parent().map(|d| {
+                    d.join(if cfg!(windows) {
+                        "neoomsi.exe"
+                    } else {
+                        "neoomsi"
+                    })
+                })
+            })
+            .unwrap_or_default()
     } else {
         std::path::PathBuf::from(game)
     };
-    match std::process::Command::new(&game).arg("--launcher").args(&args[1..]).status() {
+    match std::process::Command::new(&game)
+        .arg("--launcher")
+        .args(&args[1..])
+        .status()
+    {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
             eprintln!("starting {}: {e}", game.display());

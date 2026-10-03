@@ -16,8 +16,15 @@
 /// the number's three digits followed by the letter (`052D`), as the lines with a letter
 /// behind the number (`10`, `30`…) already were.
 fn four_char_matrix(lines: &mut [String]) -> bool {
-    let has = |s: &str| lines.iter().any(|l| l.split_whitespace().collect::<Vec<_>>().join(" ") == s);
-    if !(has("(L.$.Matrix_NewNr) $length 1 <=") && has("(L.$.Matrix_NewNr) 3 $SetLengthR \"E\" $+") && has("4 $SetLengthL")) {
+    let has = |s: &str| {
+        lines
+            .iter()
+            .any(|l| l.split_whitespace().collect::<Vec<_>>().join(" ") == s)
+    };
+    if !(has("(L.$.Matrix_NewNr) $length 1 <=")
+        && has("(L.$.Matrix_NewNr) 3 $SetLengthR \"E\" $+")
+        && has("4 $SetLengthL"))
+    {
         return false;
     }
     let mut changed = false;
@@ -28,7 +35,10 @@ fn four_char_matrix(lines: &mut [String]) -> bool {
         if lines[i].split_whitespace().collect::<Vec<_>>().join(" ") != "4 $SetLengthR" {
             continue;
         }
-        let next = lines[i + 1..].iter().map(|l| l.trim()).find(|l| !l.is_empty());
+        let next = lines[i + 1..]
+            .iter()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty());
         if next == Some("(S.$.Matrix_NewNr)") {
             let indent: String = lines[i].chars().take_while(|c| c.is_whitespace()).collect();
             lines[i] = format!("{indent}4 $SetLengthR $__DigitsFirst");

@@ -38,7 +38,10 @@ mod look_tests {
     #[test]
     fn chase_orbits_at_035_deg_px_with_stops_above_and_below() {
         let (y, p) = super::chase_orbit_step(0.0, 0.0, 100.0, 100.0);
-        assert!((y - 35.0).abs() < 1e-4 && (p + 35.0).abs() < 1e-4, "{y} {p}");
+        assert!(
+            (y - 35.0).abs() < 1e-4 && (p + 35.0).abs() < 1e-4,
+            "{y} {p}"
+        );
         assert!((super::chase_orbit_step(350.0, 0.0, 100.0, 0.0).0 - 25.0).abs() < 1e-3);
         assert_eq!(super::chase_orbit_step(0.0, 0.0, 0.0, -1000.0).1, 25.0);
         assert_eq!(super::chase_orbit_step(0.0, 0.0, 0.0, 1000.0).1, -60.0);
@@ -53,7 +56,12 @@ pub(crate) fn look_key_of(view: &str, cam: Option<(usize, usize)>) -> String {
     }
 }
 
-pub(crate) fn swap_view_look(look: &mut (f32, f32), looks: &mut std::collections::HashMap<String, (f32, f32)>, look_view: &mut String, view: &str) {
+pub(crate) fn swap_view_look(
+    look: &mut (f32, f32),
+    looks: &mut std::collections::HashMap<String, (f32, f32)>,
+    look_view: &mut String,
+    view: &str,
+) {
     if look_view != view {
         let old = std::mem::replace(look_view, view.to_string());
         if !old.is_empty() {
@@ -63,10 +71,18 @@ pub(crate) fn swap_view_look(look: &mut (f32, f32), looks: &mut std::collections
     }
 }
 
-pub(crate) fn part_in_reach(eye: glam::DVec3, at: glam::DVec3, heading: f64, bb: Option<[f32; 6]>) -> bool {
+pub(crate) fn part_in_reach(
+    eye: glam::DVec3,
+    at: glam::DVec3,
+    heading: f64,
+    bb: Option<[f32; 6]>,
+) -> bool {
     let bb = bb.unwrap_or([2.5, 12.0, 3.0, 0.0, 0.0, 1.5]);
     let h = heading.to_radians();
-    let (fwd, right) = (glam::DVec2::new(h.sin(), h.cos()), glam::DVec2::new(h.cos(), -h.sin()));
+    let (fwd, right) = (
+        glam::DVec2::new(h.sin(), h.cos()),
+        glam::DVec2::new(h.cos(), -h.sin()),
+    );
     let centre = at + (right * bb[3] as f64 + fwd * bb[4] as f64).extend(bb[5] as f64);
     let reach = (bb[0].max(bb[1]) as f64) * 0.5 + 3.0;
     (eye - centre).length() < reach
@@ -83,15 +99,30 @@ mod reach_tests {
         let rear = [2.5, 7.0, 3.0, 0.0, -3.5, 1.5];
         let eye = DVec3::new(2.0, -17.0, 1.7);
         assert!(!part_in_reach(eye, DVec3::ZERO, 0.0, Some(front)));
-        assert!(part_in_reach(eye, DVec3::new(0.0, -12.0, 0.0), 0.0, Some(rear)));
-        assert!(part_in_reach(DVec3::new(-2.0, 17.0, 1.7), DVec3::new(0.0, 12.0, 0.0), 180.0, Some(rear)));
+        assert!(part_in_reach(
+            eye,
+            DVec3::new(0.0, -12.0, 0.0),
+            0.0,
+            Some(rear)
+        ));
+        assert!(part_in_reach(
+            DVec3::new(-2.0, 17.0, 1.7),
+            DVec3::new(0.0, 12.0, 0.0),
+            180.0,
+            Some(rear)
+        ));
     }
 }
 
 impl App {
     pub(crate) fn sync_view_look(&mut self) {
         let key = self.look_key();
-        swap_view_look(&mut self.look, &mut self.view_looks, &mut self.look_view, &key);
+        swap_view_look(
+            &mut self.look,
+            &mut self.view_looks,
+            &mut self.look_view,
+            &key,
+        );
     }
 
     /// Which camera the look belongs to: the view, and for the driver's and the passengers'
@@ -134,7 +165,10 @@ impl App {
     }
 
     pub(crate) fn start_both_drag(&mut self) -> bool {
-        if self.game_menu.is_some() || self.player.is_none() || self.navigator.as_ref().is_some_and(|n| n.map_open()) {
+        if self.game_menu.is_some()
+            || self.player.is_none()
+            || self.navigator.as_ref().is_some_and(|n| n.map_open())
+        {
             return false;
         }
         let value = match self.view.as_str() {
@@ -149,17 +183,24 @@ impl App {
     }
 
     pub(crate) fn mouse_steers_in_view(&self) -> bool {
-        self.player.is_some() && (matches!(self.view.as_str(), "driver" | "outside" | "pax") || (self.view == "free" && !self.ego))
+        self.player.is_some()
+            && (matches!(self.view.as_str(), "driver" | "outside" | "pax")
+                || (self.view == "free" && !self.ego))
     }
 
     pub(crate) fn cursor_looks(&self) -> bool {
-        self.mouse_look && self.game_menu.is_none() && self.player.is_some() && !matches!(self.view.as_str(), "foot" | "free")
+        self.mouse_look
+            && self.game_menu.is_none()
+            && self.player.is_some()
+            && !matches!(self.view.as_str(), "foot" | "free")
     }
 
     /// The right button alone zooms, as in Omsi.exe (TForm_main.Panel1MouseMove 0x82c5f8:
     /// ssRight without `[altView]`, or Shift+right with it); otherwise it turns the view.
     pub(crate) fn right_zooms(&self) -> bool {
-        !self.settings.alt_view || self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight)
+        !self.settings.alt_view
+            || self.keys.contains(&KeyCode::ShiftLeft)
+            || self.keys.contains(&KeyCode::ShiftRight)
     }
 
     pub(crate) fn on_right(&mut self, pressed: bool) {
@@ -177,7 +218,12 @@ impl App {
         // wants it so; otherwise the right button looks round and the wheel and pedals stay
         // where the mouse left them (it went off with every look round, and with every
         // look round in the pause)
-        if pressed && self.mouse_drive && self.game_menu.is_none() && self.settings.mouse_right_off && !self.paused {
+        if pressed
+            && self.mouse_drive
+            && self.game_menu.is_none()
+            && self.settings.mouse_right_off
+            && !self.paused
+        {
             self.set_mouse_drive(false);
             self.service_msg = Some(("Mouse steering off".into(), 3.0));
         }
@@ -190,7 +236,8 @@ impl App {
             } else if let Some((x, y)) = self.steer_cursor.take() {
                 self.cursor = (x, y);
                 if let Some(win) = self.window.as_ref() {
-                    let _ = win.set_cursor_position(winit::dpi::PhysicalPosition::new(x as f64, y as f64));
+                    let _ = win
+                        .set_cursor_position(winit::dpi::PhysicalPosition::new(x as f64, y as f64));
                 }
             }
         }
@@ -206,17 +253,28 @@ impl App {
 
     pub(crate) fn html_move(&mut self) {
         if let Some((id, page, ..)) = self.html_object_pressed {
-            let Some((o, d, _)) = self.cursor_ray_now() else { return };
+            let Some((o, d, _)) = self.cursor_ray_now() else {
+                return;
+            };
             let Some(w) = self.world.clone() else { return };
-            if let Some(h) = w.html_object_hit(o, d, HTML_OBJECT_REACH).filter(|h| h.map_id == id && h.page == page) {
+            if let Some(h) = w
+                .html_object_hit(o, d, HTML_OBJECT_REACH)
+                .filter(|h| h.map_id == id && h.page == page)
+            {
                 w.html_object_pointer(id, page, h.u, h.v, omsi_sim::htmltex::PointerKind::Move);
                 self.html_object_pressed = Some((id, page, h.u, h.v));
             }
             return;
         }
-        let Some((page, ..)) = self.html_pressed else { return };
-        let Some((o, d, _)) = self.cursor_ray_now() else { return };
-        let Some(p) = self.player.as_mut() else { return };
+        let Some((page, ..)) = self.html_pressed else {
+            return;
+        };
+        let Some((o, d, _)) = self.cursor_ray_now() else {
+            return;
+        };
+        let Some(p) = self.player.as_mut() else {
+            return;
+        };
         if let Some((pg, u, v)) = p.html_hit(o, d).filter(|h| h.0 == page) {
             p.html_pointer(pg, u, v, omsi_sim::htmltex::PointerKind::Move);
             self.html_pressed = Some((pg, u, v));
@@ -247,13 +305,26 @@ impl App {
         }
         self.vr_cursor_physical = Some((x, y));
         self.html_move();
-        let Some((width, height)) = self.surface.as_ref().map(|s|
-            (s.config.width as f32, s.config.height as f32)) else { return };
-        if self.window_focused && !self.mouse_look
-            && (x < 12.0 || x > width - 12.0 || y < 12.0 || y > height - 12.0) {
+        let Some((width, height)) = self
+            .surface
+            .as_ref()
+            .map(|s| (s.config.width as f32, s.config.height as f32))
+        else {
+            return;
+        };
+        if self.window_focused
+            && !self.mouse_look
+            && (x < 12.0 || x > width - 12.0 || y < 12.0 || y > height - 12.0)
+        {
             let center = (width * 0.5, height * 0.5);
-            if self.window.as_ref().is_some_and(|window| window.set_cursor_position(
-                winit::dpi::PhysicalPosition::new(center.0 as f64, center.1 as f64)).is_ok()) {
+            if self.window.as_ref().is_some_and(|window| {
+                window
+                    .set_cursor_position(winit::dpi::PhysicalPosition::new(
+                        center.0 as f64,
+                        center.1 as f64,
+                    ))
+                    .is_ok()
+            }) {
                 self.vr_cursor_physical = Some(center);
                 self.vr_cursor_warp_pending = Some(center);
             }
@@ -262,27 +333,41 @@ impl App {
 
     #[cfg(windows)]
     pub(crate) fn poll_vr_cursor_position(&mut self) {
-        if self.vr_nav_edit.is_some() { return; }
-        let cockpit = self.vr.is_some() && self.game_menu.is_none()
-            && self.chooser.is_none() && !self.mouse_drive
+        if self.vr_nav_edit.is_some() {
+            return;
+        }
+        let cockpit = self.vr.is_some()
+            && self.game_menu.is_none()
+            && self.chooser.is_none()
+            && !self.mouse_drive
             && matches!(self.view.as_str(), "driver" | "pax");
         if !cockpit {
             self.vr_cursor_physical = None;
             self.vr_cursor_warp_pending = None;
             return;
         }
-        if !self.window_focused || self.mouse_look { return; }
-        let Some(window) = self.window.as_ref() else { return };
-        let Ok(client_origin) = window.inner_position() else { return };
+        if !self.window_focused || self.mouse_look {
+            return;
+        }
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let Ok(client_origin) = window.inner_position() else {
+            return;
+        };
         let mut point = windows::Win32::Foundation::POINT::default();
         if unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut point) }.is_ok() {
-            self.on_vr_cursor_moved((point.x - client_origin.x) as f32,
-                                    (point.y - client_origin.y) as f32);
+            self.on_vr_cursor_moved(
+                (point.x - client_origin.x) as f32,
+                (point.y - client_origin.y) as f32,
+            );
         }
     }
 
     pub(crate) fn mouse_past_edge(&mut self, dx: f32) {
-        let Some(w) = self.surface.as_ref().map(|s| s.config.width as f32) else { return };
+        let Some(w) = self.surface.as_ref().map(|s| s.config.width as f32) else {
+            return;
+        };
         let per_px = 2.0 / w.max(1.0);
         let (at_left, at_right) = (self.cursor.0 <= 2.0, self.cursor.0 >= w - 3.0);
         let before = self.mouse_edge;
@@ -290,10 +375,17 @@ impl App {
             self.mouse_edge = (self.mouse_edge + dx * per_px).clamp(-2.0, 2.0);
         } else if (self.mouse_edge > 0.0 && dx < 0.0) || (self.mouse_edge < 0.0 && dx > 0.0) {
             let m = self.mouse_edge + dx * per_px;
-            self.mouse_edge = if m.signum() != before.signum() { 0.0 } else { m };
+            self.mouse_edge = if m.signum() != before.signum() {
+                0.0
+            } else {
+                m
+            };
             if let Some(win) = self.window.as_ref() {
                 let x = if before > 0.0 { w - 2.0 } else { 1.0 };
-                let _ = win.set_cursor_position(winit::dpi::PhysicalPosition::new(x as f64, self.cursor.1 as f64));
+                let _ = win.set_cursor_position(winit::dpi::PhysicalPosition::new(
+                    x as f64,
+                    self.cursor.1 as f64,
+                ));
                 self.cursor.0 = x;
             }
         }
@@ -309,7 +401,10 @@ impl App {
             self.menu_drag = None;
         }
         if let Some(k) = self.menu_drag {
-            let c = self.ui.as_ref().and_then(|u| k.checked_sub(u.menu_start).and_then(|i| u.menu_ctl.get(i).copied().flatten()));
+            let c = self.ui.as_ref().and_then(|u| {
+                k.checked_sub(u.menu_start)
+                    .and_then(|i| u.menu_ctl.get(i).copied().flatten())
+            });
             match c {
                 Some(c) => {
                     let fx = ((x - c[0]) / (c[2] - c[0]).max(1.0)).clamp(0.0, 1.0);
@@ -328,7 +423,10 @@ impl App {
                 let k = (1.0 + (y0 - y) / 500.0).max(0.05);
                 self.orbit = (v0 * k).clamp(ORBIT_MIN, ORBIT_MAX);
             } else {
-                self.view_zoom.insert(self.view.clone(), (v0 + (y0 - y) / 500.0).clamp(0.2, 1.0_f32.max(v0)));
+                self.view_zoom.insert(
+                    self.view.clone(),
+                    (v0 + (y0 - y) / 500.0).clamp(0.2, 1.0_f32.max(v0)),
+                );
             }
             return false;
         }
@@ -338,22 +436,18 @@ impl App {
                 return true;
             };
 
-            if let (Some(track), Some(thumb)) =
-                (ui.menu_scroll_track, ui.menu_scroll_thumb)
-            {
+            if let (Some(track), Some(thumb)) = (ui.menu_scroll_track, ui.menu_scroll_thumb) {
                 let track_h = (track[3] - track[1]).max(1.0);
                 let thumb_h = (thumb[3] - thumb[1]).max(1.0);
                 let travel = (track_h - thumb_h).max(1.0);
 
-                let max_top =
-                    (self.menu_len() as f32 - ui.menu_rows as f32).max(0.0);
+                let max_top = (self.menu_len() as f32 - ui.menu_rows as f32).max(0.0);
 
                 if max_top > 0.0 {
                     let delta = (y - last.1) / travel * max_top;
 
                     self.menu_top = Some(
-                        (self.menu_top.unwrap_or(ui.menu_start as f32) + delta)
-                            .clamp(0.0, max_top),
+                        (self.menu_top.unwrap_or(ui.menu_start as f32) + delta).clamp(0.0, max_top),
                     );
                 }
             }
@@ -373,7 +467,12 @@ impl App {
         // raw device deltas are no window pixels (a tablet, a remote desktop or a VM
         // reports positions there and spun the view) and did not follow the zoom
         if self.cursor_looks() {
-            let scale = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0).max(0.1);
+            let scale = self
+                .window
+                .as_ref()
+                .map(|w| w.scale_factor() as f32)
+                .unwrap_or(1.0)
+                .max(0.1);
             let fov = self.camera.as_ref().map(|c| c.fov_deg).unwrap_or(60.0);
             let k = look_deg_per_px(fov) * self.settings.look_sens;
             self.look_by((x - last.0) / scale * k, (y - last.1) / scale * k);
@@ -392,7 +491,9 @@ impl App {
     }
 
     pub(crate) fn on_left(&mut self, pressed: bool) {
-        if self.vr_nav_edit.is_some() { return; }
+        if self.vr_nav_edit.is_some() {
+            return;
+        }
         if self.game_menu.is_none() && self.editor_mouse(pressed) {
             return;
         }
@@ -400,7 +501,8 @@ impl App {
         let vr_active = self.vr_active();
         if let Some(n) = self.navigator.as_mut() {
             if n.map_open() {
-                let ctrl = self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
+                let ctrl = self.keys.contains(&KeyCode::ControlLeft)
+                    || self.keys.contains(&KeyCode::ControlRight);
                 if pressed && (ctrl || self.teleport_pick) {
                     if let Some(at) = n.map_point(x, y) {
                         if std::mem::take(&mut self.teleport_pick) {
@@ -437,20 +539,25 @@ impl App {
             return;
         }
         #[cfg(windows)]
-        if self.vr.is_some() && self.mouse_drive && self.game_menu.is_none()
-            && matches!(self.view.as_str(), "driver" | "pax") {
+        if self.vr.is_some()
+            && self.mouse_drive
+            && self.game_menu.is_none()
+            && matches!(self.view.as_str(), "driver" | "pax")
+        {
             if !pressed {
-                if let Some(player) = self.player.as_mut() { player.release(); }
+                if let Some(player) = self.player.as_mut() {
+                    player.release();
+                }
                 self.dragging = false;
             }
             return;
         }
-        let ray = self.camera.as_ref().zip(self.surface.as_ref())
+        let ray = self
+            .camera
+            .as_ref()
+            .zip(self.surface.as_ref())
             .map(|(cam, s)| self.cockpit_cursor_ray(cam, (s.config.width, s.config.height)));
-        if let (Some(p), Some((o, d, spread))) = (
-            self.player.as_mut(),
-            ray,
-        ) {
+        if let (Some(p), Some((o, d, spread))) = (self.player.as_mut(), ray) {
             self.drag_delta = (0.0, 0.0);
             p.occlude_controls = self.view == "outside";
             if pressed {
@@ -461,12 +568,13 @@ impl App {
                     self.dragging = false;
                     return;
                 }
-                self.dragging = p
-                    .click(o, d, spread)
-                    .is_some();
+                self.dragging = p.click(o, d, spread).is_some();
             } else {
                 if let Some((page, u, v)) = self.html_pressed.take() {
-                    let (u, v) = p.html_hit(o, d).filter(|h| h.0 == page).map_or((u, v), |h| (h.1, h.2));
+                    let (u, v) = p
+                        .html_hit(o, d)
+                        .filter(|h| h.0 == page)
+                        .map_or((u, v), |h| (h.1, h.2));
                     p.html_pointer(page, u, v, omsi_sim::htmltex::PointerKind::Up);
                     self.dragging = false;
                     return;
@@ -482,9 +590,13 @@ impl App {
     }
 
     pub(crate) fn html_object_click(&mut self, pressed: bool) -> bool {
-        let Some(w) = self.world.clone() else { return false };
+        let Some(w) = self.world.clone() else {
+            return false;
+        };
         if !pressed {
-            let Some((id, page, u, v)) = self.html_object_pressed.take() else { return false };
+            let Some((id, page, u, v)) = self.html_object_pressed.take() else {
+                return false;
+            };
             let (u, v) = self
                 .cursor_ray_now()
                 .and_then(|(o, d, _)| w.html_object_hit(o, d, HTML_OBJECT_REACH))
@@ -495,18 +607,37 @@ impl App {
             return true;
         }
         #[cfg(windows)]
-        if self.vr.is_some() && self.mouse_drive && self.game_menu.is_none() && matches!(self.view.as_str(), "driver" | "pax") {
+        if self.vr.is_some()
+            && self.mouse_drive
+            && self.game_menu.is_none()
+            && matches!(self.view.as_str(), "driver" | "pax")
+        {
             return false;
         }
-        let Some((o, d, _)) = self.cursor_ray_now() else { return false };
-        let Some(h) = w.html_object_hit(o, d, HTML_OBJECT_REACH) else { return false };
-        if self.player.as_ref().and_then(|p| p.body_hit(o, d)).is_some_and(|t| t < h.t) {
+        let Some((o, d, _)) = self.cursor_ray_now() else {
+            return false;
+        };
+        let Some(h) = w.html_object_hit(o, d, HTML_OBJECT_REACH) else {
+            return false;
+        };
+        if self
+            .player
+            .as_ref()
+            .and_then(|p| p.body_hit(o, d))
+            .is_some_and(|t| t < h.t)
+        {
             return false;
         }
         if let Some(p) = self.player.as_mut() {
             p.release();
         }
-        w.html_object_pointer(h.map_id, h.page, h.u, h.v, omsi_sim::htmltex::PointerKind::Down);
+        w.html_object_pointer(
+            h.map_id,
+            h.page,
+            h.u,
+            h.v,
+            omsi_sim::htmltex::PointerKind::Down,
+        );
         self.html_object_pressed = Some((h.map_id, h.page, h.u, h.v));
         self.dragging = false;
         true
@@ -537,19 +668,37 @@ impl App {
             (Some(p), Some(c)) => {
                 let v = &p.vehicle;
                 std::iter::once((v.position, v.heading, v.ty.def.bounding_box))
-                    .chain(v.trailers.iter().map(|t| (t.position, t.heading, t.ty.def.bounding_box)))
+                    .chain(
+                        v.trailers
+                            .iter()
+                            .map(|t| (t.position, t.heading, t.ty.def.bounding_box)),
+                    )
                     .any(|(at, heading, bb)| part_in_reach(c.position, at, heading, bb))
             }
             _ => false,
         }
     }
 
-    pub(crate) fn cockpit_cursor_ray(&self, cam: &Camera, size: (u32, u32)) -> (glam::DVec3, glam::Vec3, f32) {
+    pub(crate) fn cockpit_cursor_ray(
+        &self,
+        cam: &Camera,
+        size: (u32, u32),
+    ) -> (glam::DVec3, glam::Vec3, f32) {
         #[cfg(windows)]
-        if let Some(ray) = self.vr.as_ref().and_then(|vr| vr.cursor_ray(self.cursor.0, self.cursor.1, size)) {
+        if let Some(ray) = self
+            .vr
+            .as_ref()
+            .and_then(|vr| vr.cursor_ray(self.cursor.0, self.cursor.1, size))
+        {
             return (ray.0, ray.1, ray.2 * 6.0);
         }
-        let (o, d) = cursor_ray(cam, self.cursor.0, self.cursor.1, size.0 as f32, size.1 as f32);
+        let (o, d) = cursor_ray(
+            cam,
+            self.cursor.0,
+            self.cursor.1,
+            size.0 as f32,
+            size.1 as f32,
+        );
         (o, d, pixel_angle(cam, size.1 as f32) * 6.0)
     }
 
@@ -561,21 +710,30 @@ impl App {
             return;
         }
         #[cfg(windows)]
-        if !self.mouse_drive && self.vr.as_ref().is_some_and(|vr| vr.needs_cursor_surface(
-            self.cursor, self.game_menu.is_some() || self.chooser.is_some())) {
-            let surface = self.player.as_ref()
+        if !self.mouse_drive
+            && self.vr.as_ref().is_some_and(|vr| {
+                vr.needs_cursor_surface(
+                    self.cursor,
+                    self.game_menu.is_some() || self.chooser.is_some(),
+                )
+            })
+        {
+            let surface = self
+                .player
+                .as_ref()
                 .zip(self.camera.as_ref())
                 .zip(self.surface.as_ref())
                 .filter(|_| matches!(self.view.as_str(), "driver" | "pax"))
                 .map(|((player, camera), window)| {
-                    let (origin, direction, _) = self.cockpit_cursor_ray(camera,
-                                                                         (window.config.width, window.config.height));
-                    (player.surface_hit(origin, direction),
-                     (player.vehicle.position, player.vehicle.body_rotation()))
+                    let (origin, direction, _) = self
+                        .cockpit_cursor_ray(camera, (window.config.width, window.config.height));
+                    (
+                        player.surface_hit(origin, direction),
+                        (player.vehicle.position, player.vehicle.body_rotation()),
+                    )
                 });
             if let Some(vr) = self.vr.as_mut() {
-                vr.set_cursor_surface(surface.as_ref().and_then(|s| s.0),
-                                      surface.map(|s| s.1));
+                vr.set_cursor_surface(surface.as_ref().and_then(|s| s.0), surface.map(|s| s.1));
             }
         }
         let outside = self.view == "outside";
@@ -587,11 +745,15 @@ impl App {
             self.camera.as_ref(),
             self.surface.as_ref(),
         ) {
-            (Some(p), Some(cam), Some(s)) if self.view != "free"
-                && (self.view != "foot" || self.foot_reaches_bus())
-                && !(self.vr_active() && self.mouse_drive
-                && matches!(self.view.as_str(), "driver" | "pax")) => {
-                let (o, d, spread) = self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
+            (Some(p), Some(cam), Some(s))
+                if self.view != "free"
+                    && (self.view != "foot" || self.foot_reaches_bus())
+                    && !(self.vr_active()
+                        && self.mouse_drive
+                        && matches!(self.view.as_str(), "driver" | "pax")) =>
+            {
+                let (o, d, spread) =
+                    self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
                 p.hovered_part(o, d, spread)
             }
             _ => (None, false),
@@ -660,11 +822,10 @@ impl App {
             || u.menu_pane_go.as_ref().is_some_and(|r| inside(r))
             || u.menu_time.iter().any(|r| inside(r))
             || u.menu_ctl.iter().flatten().any(|r| inside(r))
-            || u.menu_rects.iter().enumerate().any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
-        if clickable {
-            1
-        } else {
-            0
-        }
+            || u.menu_rects
+                .iter()
+                .enumerate()
+                .any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
+        if clickable { 1 } else { 0 }
     }
 }

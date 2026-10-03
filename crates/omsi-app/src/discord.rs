@@ -2,8 +2,8 @@
 
 use std::io::{self, Read, Write};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -118,14 +118,14 @@ fn overlapped_io(
     buffer: &mut [u8],
     write: bool,
 ) -> io::Result<usize> {
-    use windows::core::PCWSTR;
     use windows::Win32::{
         Foundation::WAIT_OBJECT_0,
         System::{
-            Threading::{CreateEventW, WaitForSingleObject},
             IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
+            Threading::{CreateEventW, WaitForSingleObject},
         },
     };
+    use windows::core::PCWSTR;
 
     let event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
         .map_err(|e| io::Error::other(e.to_string()))?;
@@ -248,14 +248,14 @@ fn connect() -> Option<Pipe> {
         }
         #[cfg(windows)]
         {
-            use windows::core::PCWSTR;
             use windows::Win32::{
                 Foundation::{GENERIC_READ, GENERIC_WRITE},
                 Storage::FileSystem::{
-                    CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_OVERLAPPED, FILE_SHARE_MODE,
+                    CreateFileW, FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE,
                     OPEN_EXISTING,
                 },
             };
+            use windows::core::PCWSTR;
             let path: Vec<u16> = format!(r"\\.\pipe\discord-ipc-{i}")
                 .encode_utf16()
                 .chain([0])
@@ -514,7 +514,7 @@ fn run_with<T: Read + Write>(
 
         match read_frame(pipe.as_mut().unwrap(), &mut pending) {
             Ok(Some(frame)) if answer_ping(pipe.as_mut().unwrap(), &frame).unwrap_or(false) => {
-                continue
+                continue;
             }
             Ok(Some(frame)) => {
                 let Some(value) = text(&frame) else {
@@ -916,9 +916,11 @@ mod tests {
         .unwrap();
         assert_eq!(presence.details, "Grundorf · Line 76");
         assert_eq!(presence.state, "MB O550 Euro3… · Tour 1");
-        assert!(presence
-            .large_text
-            .contains("Thueringer Wald MB O550 Euro3 Automatik"));
+        assert!(
+            presence
+                .large_text
+                .contains("Thueringer Wald MB O550 Euro3 Automatik")
+        );
         assert_eq!(compact("🚌".repeat(20).as_str(), 16).chars().count(), 16);
     }
 

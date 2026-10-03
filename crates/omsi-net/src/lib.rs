@@ -77,11 +77,11 @@
 
 pub mod addrs;
 pub mod bridge;
+pub mod official;
+pub mod tunnel;
 pub mod wire;
 pub mod world;
 pub mod ws;
-pub mod tunnel;
-pub mod official;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -323,7 +323,10 @@ impl SessionCode {
             let mut v = 0usize;
             for k in 0..5 {
                 let bit = i * 5 + k;
-                let b = bytes.get(bit / 8).map(|x| (x >> (7 - bit % 8)) & 1).unwrap_or(0);
+                let b = bytes
+                    .get(bit / 8)
+                    .map(|x| (x >> (7 - bit % 8)) & 1)
+                    .unwrap_or(0);
                 v = (v << 1) | b as usize;
             }
             chars.push(ALPHABET[v] as char);
@@ -346,13 +349,20 @@ impl SessionCode {
         }
         lengths
             .into_iter()
-            .find(|&l| l < s.len() && l.div_ceil(4) * 4 == s.len() && s.as_bytes()[l..].iter().all(|c| *c == ALPHABET[0]))
+            .find(|&l| {
+                l < s.len()
+                    && l.div_ceil(4) * 4 == s.len()
+                    && s.as_bytes()[l..].iter().all(|c| *c == ALPHABET[0])
+            })
             .map(|l| &s[..l])
     }
 
     /// The lengths a code is written with (its last group filled to four).
     fn written_lengths() -> Vec<usize> {
-        Self::valid_lengths().into_iter().map(|l| l.div_ceil(4) * 4).collect()
+        Self::valid_lengths()
+            .into_iter()
+            .map(|l| l.div_ceil(4) * 4)
+            .collect()
     }
 
     /// The code lengths (characters after `OMSI-`) that exist: one address, or two to
@@ -396,9 +406,9 @@ impl SessionCode {
                 Some(v) => v,
                 None if matches!(c, b'0' | b'O' | b'1' | b'I') => {
                     return Err(format!(
-                    "'{}' never appears in a session code - check the character that looks like it",
-                    c as char
-                ))
+                        "'{}' never appears in a session code - check the character that looks like it",
+                        c as char
+                    ));
                 }
                 None => return Err(format!("'{}' is not part of a session code", c as char)),
             };
@@ -510,11 +520,7 @@ pub fn random_session_id() -> u64 {
     );
     h.write_u32(std::process::id());
     let v = h.finish() & 0xFFFF_FFFF_FFFF;
-    if v == 0 {
-        1
-    } else {
-        v
-    }
+    if v == 0 { 1 } else { v }
 }
 
 /// The addresses a session code carries: those of this machine another player can reach
@@ -564,12 +570,17 @@ pub fn describe_join(text: &str) -> Result<String, String> {
         return Ok("search the local network for a hosted session".into());
     }
     if let Some(url) = ws::ws_url(t) {
-        return Ok(format!("a server on the internet, reached over a WebSocket ({url})"));
+        return Ok(format!(
+            "a server on the internet, reached over a WebSocket ({url})"
+        ));
     }
     if looks_like_code(t) {
         let c = SessionCode::decode(t)?;
         if c.protocol as u32 != PROTOCOL {
-            return Err(format!("this code was made by a game with LAN protocol {}, this one speaks {PROTOCOL} - both players need the same version", c.protocol));
+            return Err(format!(
+                "this code was made by a game with LAN protocol {}, this one speaks {PROTOCOL} - both players need the same version",
+                c.protocol
+            ));
         }
         let at: Vec<String> = c
             .ips
@@ -602,7 +613,7 @@ pub fn describe_join(text: &str) -> Result<String, String> {
             _ => {
                 return Err(format!(
                     "the part after ':' must be a port (1 to 65535), not '{p}'"
-                ))
+                ));
             }
         },
         None => (t, DEFAULT_PORT),
@@ -622,7 +633,9 @@ pub fn describe_join(text: &str) -> Result<String, String> {
     {
         return Ok(format!("the computer named {host}, port {port}"));
     }
-    Err(format!("'{t}' is neither a session code (OMSI-XXXX-…), an address (192.168.1.20 or 192.168.1.20:27015), a port, nor empty (search)"))
+    Err(format!(
+        "'{t}' is neither a session code (OMSI-XXXX-…), an address (192.168.1.20 or 192.168.1.20:27015), a port, nor empty (search)"
+    ))
 }
 
 /// Read what a player typed into the join field: a session code, `ip`, `ip:port`,
@@ -675,7 +688,7 @@ pub fn parse_join(text: &str) -> Result<JoinTarget, String> {
             _ => {
                 return Err(format!(
                     "'{t}': the part after ':' must be a port (1 to 65535)"
-                ))
+                ));
             }
         },
         None => (t, DEFAULT_PORT),
@@ -685,14 +698,22 @@ pub fn parse_join(text: &str) -> Result<JoinTarget, String> {
         || host.contains(char::is_whitespace)
         || host.bytes().all(|b| b.is_ascii_digit() || b == b'.')
     {
-        return Err(format!("'{t}' is neither a session code (OMSI-…), an address (192.168.1.20 or 192.168.1.20:27015) nor a port"));
+        return Err(format!(
+            "'{t}' is neither a session code (OMSI-…), an address (192.168.1.20 or 192.168.1.20:27015) nor a port"
+        ));
     }
     match (host, port).to_socket_addrs() {
         Ok(mut it) => match it.find(|a| a.is_ipv4()) {
-            Some(a) => Ok(JoinTarget::Direct { addrs: vec![a], session: None, protocol: None }),
+            Some(a) => Ok(JoinTarget::Direct {
+                addrs: vec![a],
+                session: None,
+                protocol: None,
+            }),
             None => Err(format!("{host} has no IPv4 address")),
         },
-        Err(e) => Err(format!("'{t}' is neither a session code (OMSI-…), an address nor a port, and no computer of that name was found ({e})")),
+        Err(e) => Err(format!(
+            "'{t}' is neither a session code (OMSI-…), an address nor a port, and no computer of that name was found ({e})"
+        )),
     }
 }
 
@@ -953,11 +974,17 @@ impl Pose {
         // paths and a destination in another alphabet made an INFO too long to be taken in:
         // the others never learnt which bus the player drove)
         let room = MAX_DATAGRAM.saturating_sub(head.len() + figure.len() + 1);
-        let info = format!("{head}{}|{figure}", encode_texts(&self.texts, MAX_TEXTS, MAX_TEXT_LEN, room));
+        let info = format!(
+            "{head}{}|{figure}",
+            encode_texts(&self.texts, MAX_TEXTS, MAX_TEXT_LEN, room)
+        );
         // the `[matl_freetex]` pictures last, in what room is left (an older game reads the
         // fields it knows and passes this one by)
         let room = MAX_DATAGRAM.saturating_sub(info.len() + 1);
-        format!("{info}|{}", encode_texts(&self.freetex, MAX_FREETEX, MAX_FREETEX_LEN, room))
+        format!(
+            "{info}|{}",
+            encode_texts(&self.freetex, MAX_FREETEX, MAX_FREETEX_LEN, room)
+        )
     }
 
     /// The info fields of an `INFO` message (checked and cleaned), or None.
@@ -983,10 +1010,22 @@ impl Pose {
             width: num(8, 0.0, 8.0)?,
             box_offset: num(9, -40.0, 40.0)?,
             table: u32::from_str_radix(parts[10].trim(), 16).ok()?,
-            tour: parts.get(11).map(|t| clean_text(t, MAX_FIELD)).unwrap_or_default(),
-            texts: parts.get(12).map(|t| decode_texts(t, MAX_TEXTS, MAX_TEXT_LEN)).unwrap_or_default(),
-            figure: parts.get(13).and_then(|f| human_path(f)).unwrap_or_default(),
-            freetex: parts.get(14).map(|t| decode_texts(t, MAX_FREETEX, MAX_FREETEX_LEN)).unwrap_or_default(),
+            tour: parts
+                .get(11)
+                .map(|t| clean_text(t, MAX_FIELD))
+                .unwrap_or_default(),
+            texts: parts
+                .get(12)
+                .map(|t| decode_texts(t, MAX_TEXTS, MAX_TEXT_LEN))
+                .unwrap_or_default(),
+            figure: parts
+                .get(13)
+                .and_then(|f| human_path(f))
+                .unwrap_or_default(),
+            freetex: parts
+                .get(14)
+                .map(|t| decode_texts(t, MAX_FREETEX, MAX_FREETEX_LEN))
+                .unwrap_or_default(),
             ..Default::default()
         })
     }
@@ -1055,11 +1094,7 @@ impl Pose {
 }
 
 fn finite_or(v: f32, or: f32) -> f32 {
-    if v.is_finite() {
-        v
-    } else {
-        or
-    }
+    if v.is_finite() { v } else { or }
 }
 
 /// Text from the network or for it: no field separators or control characters, no
@@ -1079,7 +1114,11 @@ fn encode_texts(texts: &[String], max: usize, max_len: usize, room: usize) -> St
         .iter()
         .take(max)
         .map(|t| {
-            let t: String = t.chars().filter(|c| !c.is_control()).take(max_len).collect();
+            let t: String = t
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(max_len)
+                .collect();
             t.bytes().map(|b| format!("{b:02x}")).collect::<String>()
         })
         .scan(0usize, |used, h| {
@@ -1099,8 +1138,14 @@ fn decode_texts(field: &str, max: usize, max_len: usize) -> Vec<String> {
         .split(',')
         .take(max)
         .map(|h| {
-            let bytes: Vec<u8> = (0..h.len() / 2).filter_map(|i| u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()).collect();
-            String::from_utf8_lossy(&bytes).chars().filter(|c| !c.is_control()).take(max_len).collect()
+            let bytes: Vec<u8> = (0..h.len() / 2)
+                .filter_map(|i| u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok())
+                .collect();
+            String::from_utf8_lossy(&bytes)
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(max_len)
+                .collect()
         })
         .collect()
 }
@@ -1528,9 +1573,15 @@ impl LanSession {
                     let mut s = LanSession::new(socket, Role::Host, name, world);
                     s.session = random_session_id();
                     s.bridge = bridge::Bridge::start(true, s.session, local_addrs(p), p);
-                    log::info!("LAN: hosting session {} on port {p} as '{name}' (protocol {PROTOCOL}), code {}", session_hex(s.session), s.code().map(|c| c.encode()).unwrap_or_default());
+                    log::info!(
+                        "LAN: hosting session {} on port {p} as '{name}' (protocol {PROTOCOL}), code {}",
+                        session_hex(s.session),
+                        s.code().map(|c| c.encode()).unwrap_or_default()
+                    );
                     if p != port {
-                        log::info!("LAN: port {port} is taken (another session on this machine?), using {p}");
+                        log::info!(
+                            "LAN: port {port} is taken (another session on this machine?), using {p}"
+                        );
                     }
                     return Ok(s);
                 }
@@ -1596,16 +1647,26 @@ impl LanSession {
         match parse_join(target)? {
             JoinTarget::Discover => match Self::discover(DEFAULT_PORT, name, world, wait) {
                 Ok(Some(s)) => Ok(s),
-                Ok(None) => Err(format!("no host answered on the local network within {:.0} s (is a session hosted? a firewall may block UDP port {DEFAULT_PORT})", wait.as_secs_f32())),
+                Ok(None) => Err(format!(
+                    "no host answered on the local network within {:.0} s (is a session hosted? a firewall may block UDP port {DEFAULT_PORT})",
+                    wait.as_secs_f32()
+                )),
                 Err(e) => Err(format!("searching the network failed: {e}")),
             },
-            JoinTarget::Direct { addrs, session, protocol } => {
+            JoinTarget::Direct {
+                addrs,
+                session,
+                protocol,
+            } => {
                 if let Some(p) = protocol {
                     if p as u32 != PROTOCOL {
-                        return Err(format!("the session code was made by a game with LAN protocol {p}, this game speaks protocol {PROTOCOL} - both players need the same version"));
+                        return Err(format!(
+                            "the session code was made by a game with LAN protocol {p}, this game speaks protocol {PROTOCOL} - both players need the same version"
+                        ));
                     }
                 }
-                Self::join_addr(addrs, session, name, world).map_err(|e| format!("cannot open a network socket: {e}"))
+                Self::join_addr(addrs, session, name, world)
+                    .map_err(|e| format!("cannot open a network socket: {e}"))
             }
         }
     }
@@ -1650,7 +1711,10 @@ impl LanSession {
                 let parts: Vec<&str> = text.split('|').collect();
                 if parts[0] == "HERE" {
                     if field(&parts, 1).parse::<u32>().ok() != Some(PROTOCOL) {
-                        log::warn!("LAN: host at {from} speaks protocol {} (we speak {PROTOCOL}); skipping it", field(&parts, 1));
+                        log::warn!(
+                            "LAN: host at {from} speaks protocol {} (we speak {PROTOCOL}); skipping it",
+                            field(&parts, 1)
+                        );
                         continue;
                     }
                     log::info!(
@@ -1820,7 +1884,10 @@ impl LanSession {
     }
 
     fn on_command(&mut self, parts: &[&str], from: SocketAddr) {
-        let (Some(sender), Some(to)) = (field(parts, 1).parse::<u32>().ok(), field(parts, 2).parse::<u32>().ok()) else {
+        let (Some(sender), Some(to)) = (
+            field(parts, 1).parse::<u32>().ok(),
+            field(parts, 2).parse::<u32>().ok(),
+        ) else {
             return;
         };
         let text = clean_text(field(parts, 3), MAX_CHAT);
@@ -1830,7 +1897,10 @@ impl LanSession {
         match self.role {
             Role::Host => {
                 // only from the player it says, at their address
-                if self.checked_peer(sender, from, MESSAGE_RATE, false).is_none() {
+                if self
+                    .checked_peer(sender, from, MESSAGE_RATE, false)
+                    .is_none()
+                {
                     return;
                 }
                 if to == self.my_id {
@@ -1852,7 +1922,9 @@ impl LanSession {
         if self.role != Role::Host {
             return;
         }
-        let Some(p) = self.peers.remove(&id) else { return };
+        let Some(p) = self.peers.remove(&id) else {
+            return;
+        };
         if let Some(a) = p.addr {
             self.send(format!("KICK|{}", clean_text(reason, 200)).as_bytes(), a);
         }
@@ -1878,7 +1950,11 @@ impl LanSession {
             return Err("only the host speaks to one player".into());
         }
         let name = clean_text(name, MAX_NAME);
-        let addr = self.peers.get(&to).and_then(|p| p.addr).ok_or_else(|| format!("no player {to}"))?;
+        let addr = self
+            .peers
+            .get(&to)
+            .and_then(|p| p.addr)
+            .ok_or_else(|| format!("no player {to}"))?;
         self.send(format!("SAY|{}|{name}|{text}", self.my_id).as_bytes(), addr);
         log::info!("LAN chat to {to} <{name}> {text}");
         Ok(())
@@ -1943,7 +2019,9 @@ impl LanSession {
 
     /// The moment of this frame on our clock (ms), for stamping what is sent of it.
     pub fn stamp_ms(&self) -> u32 {
-        self.frame_ms.map(|m| m.max(0.0) as u32).unwrap_or_else(|| self.world_ms())
+        self.frame_ms
+            .map(|m| m.max(0.0) as u32)
+            .unwrap_or_else(|| self.world_ms())
     }
 
     /// The address of player `id` (host).
@@ -1974,7 +2052,8 @@ impl LanSession {
         if let Some(to) = self.peer_addr(id).filter(|_| self.role == Role::Host) {
             let text = desc.encode();
             self.send(text.as_bytes(), to);
-            self.world_sent.set(self.world_sent.get() + text.len() as u64);
+            self.world_sent
+                .set(self.world_sent.get() + text.len() as u64);
         }
     }
 
@@ -2008,7 +2087,8 @@ impl LanSession {
         {
             let text = desc.encode();
             self.send(text.as_bytes(), h);
-            self.world_sent.set(self.world_sent.get() + text.len() as u64);
+            self.world_sent
+                .set(self.world_sent.get() + text.len() as u64);
         }
     }
 
@@ -2038,7 +2118,10 @@ impl LanSession {
         if let (Role::Client, Some(h), true) = (self.role, self.host, self.connected) {
             for chunk in people.chunks(64) {
                 let ids: Vec<String> = chunk.iter().map(|i| i.to_string()).collect();
-                self.send(format!("CLAIM|{}|{}", self.my_id, ids.join(",")).as_bytes(), h);
+                self.send(
+                    format!("CLAIM|{}|{}", self.my_id, ids.join(",")).as_bytes(),
+                    h,
+                );
             }
         }
     }
@@ -2258,7 +2341,8 @@ impl LanSession {
             };
             log::info!("LAN: player {id} timed out");
             gone.push(id);
-            self.gone_lately.push((p.nonce, p.pose.name.clone(), id, now));
+            self.gone_lately
+                .push((p.nonce, p.pose.name.clone(), id, now));
             if self.role == Role::Host {
                 self.broadcast(format!("BYE|{id}").as_bytes(), None);
                 self.notice(format!("{} lost the connection", p.label()), None);
@@ -2303,7 +2387,11 @@ impl LanSession {
     /// Why nobody may have answered, for the player.
     fn no_answer(&self, after: Duration) -> String {
         let tried: Vec<String> = self.candidates.iter().map(|a| a.to_string()).collect();
-        let port = self.candidates.first().map(|a| a.port()).unwrap_or(DEFAULT_PORT);
+        let port = self
+            .candidates
+            .first()
+            .map(|a| a.port())
+            .unwrap_or(DEFAULT_PORT);
         if self.refused >= 2 && self.candidates.len() == 1 {
             return format!(
                 "{} answers, but no session runs on port {port} there - check the port, or whether the host has started its game",
@@ -2367,7 +2455,8 @@ impl LanSession {
         // Sent when it changes, but no more often than INFO_MIN_GAP: a roller blind turning
         // through its numbers or a pilot screen changes the `[matl_freetex]` pictures many
         // times a second, and the host took ten messages a second and dropped the rest.
-        if (info != self.last_info && self.info_acc >= INFO_MIN_GAP) || self.info_acc >= INFO_EVERY {
+        if (info != self.last_info && self.info_acc >= INFO_MIN_GAP) || self.info_acc >= INFO_EVERY
+        {
             self.info_acc = 0.0;
             match self.role {
                 Role::Host => self.broadcast(info.as_bytes(), None),
@@ -2381,7 +2470,10 @@ impl LanSession {
         }
         if self.role == Role::Host && self.clock_acc >= CLOCK_EVERY {
             self.clock_acc = 0.0;
-            self.broadcast(format!("CLOCK|{}|{}", self.world.fields(), self.clock_speed).as_bytes(), None);
+            self.broadcast(
+                format!("CLOCK|{}|{}", self.world.fields(), self.clock_speed).as_bytes(),
+                None,
+            );
         }
         if let (Role::Client, Some(at), None, Some(h)) =
             (self.role, self.place, self.near.as_ref(), self.host)
@@ -2506,7 +2598,9 @@ impl LanSession {
                     // the message, but the others may still answer.
                     if self.host.is_none() && self.candidates.len() > 1 {
                         if self.other_reject.is_none() {
-                            log::info!("LAN: {from} turned us away ({reason}); still trying the host's other addresses");
+                            log::info!(
+                                "LAN: {from} turned us away ({reason}); still trying the host's other addresses"
+                            );
                         }
                         self.other_reject = Some(format!("{from}: {reason}"));
                         continue;
@@ -2538,7 +2632,11 @@ impl LanSession {
                 ("CLOCK", Role::Client) => {
                     let world = WorldInfo::from_fields(&parts, 1);
                     // (after the world's fields: how fast the host's clock runs)
-                    let speed = field(&parts, 6).parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0 && *v <= 1000.0).unwrap_or(1.0);
+                    let speed = field(&parts, 6)
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1000.0)
+                        .unwrap_or(1.0);
                     self.clock_speed = speed;
                     if !world.date.is_empty() {
                         self.host_clock = Some(HostClock {
@@ -2553,7 +2651,9 @@ impl LanSession {
                 ("KICK", Role::Client) => {
                     let reason = clean_text(field(&parts, 1), 200);
                     log::warn!("LAN: the host sent us away: {reason}");
-                    self.events.push(LanEvent::Notice(format!("the host sent you away: {reason}")));
+                    self.events.push(LanEvent::Notice(format!(
+                        "the host sent you away: {reason}"
+                    )));
                     self.rejected = Some(format!("the host sent you away: {reason}"));
                     self.connected = false;
                 }
@@ -2852,7 +2952,8 @@ impl LanSession {
         if let Some(p) = self.peers.remove(&id) {
             log::info!("LAN: player {id} '{}' left", p.pose.name);
             gone.push(id);
-            self.gone_lately.push((p.nonce, p.pose.name.clone(), id, Instant::now()));
+            self.gone_lately
+                .push((p.nonce, p.pose.name.clone(), id, Instant::now()));
             if self.role == Role::Host {
                 self.broadcast(text.as_bytes(), None);
                 self.notice(format!("{} left", p.label()), None);
@@ -2906,7 +3007,9 @@ impl LanSession {
                 (id, None)
             }
             None if self.peers.len() >= MAX_PEERS => {
-                log::warn!("LAN: '{name}' at {from} wants to join, but {MAX_PEERS} players are here already; turned away");
+                log::warn!(
+                    "LAN: '{name}' at {from} wants to join, but {MAX_PEERS} players are here already; turned away"
+                );
                 self.reject(
                     from,
                     &format!("the session is full ({} players)", MAX_PEERS + 1),
@@ -2926,7 +3029,8 @@ impl LanSession {
             }
             None => {
                 // back after a lost connection (or a restart of the game): the number it had
-                self.gone_lately.retain(|g| g.3.elapsed() < Duration::from_secs(300));
+                self.gone_lately
+                    .retain(|g| g.3.elapsed() < Duration::from_secs(300));
                 let back = self
                     .gone_lately
                     .iter()
@@ -2938,7 +3042,11 @@ impl LanSession {
                         _ => false,
                     })
                     .map(|k| self.gone_lately.remove(k));
-                let id = match back.as_ref().map(|g| g.2).filter(|i| !self.peers.contains_key(i)) {
+                let id = match back
+                    .as_ref()
+                    .map(|g| g.2)
+                    .filter(|i| !self.peers.contains_key(i))
+                {
                     Some(i) => i,
                     None => self.fresh_id(),
                 };
@@ -3065,7 +3173,16 @@ impl LanSession {
         self.lost_at = None;
         self.host_seen = Instant::now();
         if first {
-            log::info!("LAN: connected to '{host_name}' (session {}), we are player {id}; the host's world: {} {} {:02}:{:02} weather '{}' season '{}'", session_hex(session), world.map, world.date, (world.time / 3600.0) as i32, ((world.time % 3600.0) / 60.0) as i32, world.weather, world.season);
+            log::info!(
+                "LAN: connected to '{host_name}' (session {}), we are player {id}; the host's world: {} {} {:02}:{:02} weather '{}' season '{}'",
+                session_hex(session),
+                world.map,
+                world.date,
+                (world.time / 3600.0) as i32,
+                ((world.time % 3600.0) / 60.0) as i32,
+                world.weather,
+                world.season
+            );
             self.events.push(LanEvent::Notice(format!(
                 "connected to {host_name}'s session ({players} player(s))"
             )));

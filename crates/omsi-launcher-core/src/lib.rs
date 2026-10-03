@@ -11,9 +11,9 @@ pub mod index;
 pub mod install;
 pub mod instances;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------------------
@@ -30,7 +30,10 @@ pub struct Config {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default()
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
 
 pub fn data_dir() -> PathBuf {
@@ -58,13 +61,20 @@ fn find_game(configured: &str) -> Option<PathBuf> {
     // old build after every update - the new pause menu "was not there" on macOS
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            cands.push(dir.join(if cfg!(windows) { "neoomsi.exe" } else { "neoomsi" }));
+            cands.push(dir.join(if cfg!(windows) {
+                "neoomsi.exe"
+            } else {
+                "neoomsi"
+            }));
         }
     }
     if !configured.trim().is_empty() {
         let c = PathBuf::from(configured.trim());
         // (only a game of today's name: the old `omsi` binary is not taken any more)
-        let stem = c.file_stem().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        let stem = c
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
         if stem == "neoomsi" {
             cands.push(c);
         }
@@ -91,7 +101,8 @@ fn find_game(configured: &str) -> Option<PathBuf> {
 }
 
 /// The last search for the OMSI folder: (the places given first, what was found).
-static FOUND: std::sync::Mutex<Option<(Vec<PathBuf>, Option<PathBuf>)>> = std::sync::Mutex::new(None);
+static FOUND: std::sync::Mutex<Option<(Vec<PathBuf>, Option<PathBuf>)>> =
+    std::sync::Mutex::new(None);
 
 /// The OMSI folder: configured, remembered by the game, or found in any usual place
 /// (beside the program, Steam libraries, Wine bottles, the user's folders).
@@ -124,7 +135,10 @@ fn find_root(configured: &str) -> Option<PathBuf> {
 }
 
 pub fn load_config() -> Config {
-    let mut c: Config = std::fs::read_to_string(config_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let mut c: Config = std::fs::read_to_string(config_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
     if let Some(r) = find_root(&c.root) {
         c.root = r.to_string_lossy().to_string();
     }
@@ -157,7 +171,11 @@ pub struct OmsiOptions {
 pub fn omsi_options(root: &Path) -> Option<OmsiOptions> {
     let o = omsi_content::options::Options::load(&root.join("options.cfg")).ok()?;
     let mut v = json!({});
-    let num = |k: &str| o.str(k).and_then(|x| x.trim().replace(',', ".").parse::<f64>().ok()).filter(|x| x.is_finite());
+    let num = |k: &str| {
+        o.str(k)
+            .and_then(|x| x.trim().replace(',', ".").parse::<f64>().ok())
+            .filter(|x| x.is_finite())
+    };
     // (not on a phone: the PC's OMSI caps at 30, and a phone played at 30 frames)
     if let Some(x) = num("maxfps").filter(|_| !cfg!(target_os = "android")) {
         v["max_fps"] = json!(x.max(0.0) as i64);
@@ -168,7 +186,12 @@ pub fn omsi_options(root: &Path) -> Option<OmsiOptions> {
     if let Some(x) = num("performance_maxobjdist") {
         v["max_obj_dist"] = json!((x.round() as i64).max(0).to_string());
     }
-    if let Some(af) = o.values.get("texfilter").and_then(|x| x.get(1)).and_then(|x| x.trim().parse::<i64>().ok()) {
+    if let Some(af) = o
+        .values
+        .get("texfilter")
+        .and_then(|x| x.get(1))
+        .and_then(|x| x.trim().parse::<i64>().ok())
+    {
         v["anisotropy"] = json!(af.clamp(1, 16));
     }
     if let Some(x) = num("texmemlimit").filter(|x| *x > 0.0) {
@@ -213,11 +236,21 @@ pub fn omsi_options(root: &Path) -> Option<OmsiOptions> {
     if let Some(x) = num("ticketselling") {
         v["boarding"] = json!(if x > 0.5 { "pay" } else { "auto" });
     }
-    let file_stem = |p: &str| Path::new(&p.replace('\\', "/")).file_stem().map(|s| s.to_string_lossy().to_string());
+    let file_stem = |p: &str| {
+        Path::new(&p.replace('\\', "/"))
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+    };
     Some(OmsiOptions {
         settings: v,
-        last_map: o.str("last_map").map(|m| m.trim().replace('\\', "/")).filter(|m| !m.is_empty()),
-        last_driver: o.str("last_driver").and_then(file_stem).filter(|d| !d.is_empty()),
+        last_map: o
+            .str("last_map")
+            .map(|m| m.trim().replace('\\', "/"))
+            .filter(|m| !m.is_empty()),
+        last_driver: o
+            .str("last_driver")
+            .and_then(file_stem)
+            .filter(|d| !d.is_empty()),
     })
 }
 
@@ -259,9 +292,15 @@ pub fn content_dir() -> Option<PathBuf> {
             let c = load_config_raw();
             let game = find_game(&c.game)?;
             let dir = game.parent()?.to_path_buf();
-            let beside = if dir.ends_with("Contents/MacOS") { dir.parent()?.parent()?.parent()?.to_path_buf() } else { dir };
+            let beside = if dir.ends_with("Contents/MacOS") {
+                dir.parent()?.parent()?.parent()?.to_path_buf()
+            } else {
+                dir
+            };
             let cand = omsi_cfg::content_folder_of(&beside);
-            if (cand.exists() || std::fs::create_dir_all(&cand).is_ok()) && omsi_cfg::is_writable(&cand) {
+            if (cand.exists() || std::fs::create_dir_all(&cand).is_ok())
+                && omsi_cfg::is_writable(&cand)
+            {
                 cand
             } else {
                 data_dir().join("content")
@@ -296,10 +335,24 @@ fn register_roots(content: &Path) {
 /// folder. Archives that went away stay mounted until the launcher restarts.
 fn mount_archives(content: &Path) {
     let dir = content.join(install::ARCHIVES);
-    let Ok(rd) = std::fs::read_dir(&dir) else { return };
-    let mut zips: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("zip")).unwrap_or(false)).collect();
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut zips: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .map(|e| e.eq_ignore_ascii_case("zip"))
+                    .unwrap_or(false)
+        })
+        .collect();
     zips.sort();
-    let mounted: Vec<PathBuf> = omsi_cfg::vfs::mounts().iter().map(|m| m.path().to_path_buf()).collect();
+    let mounted: Vec<PathBuf> = omsi_cfg::vfs::mounts()
+        .iter()
+        .map(|m| m.path().to_path_buf())
+        .collect();
     for z in zips.into_iter().filter(|z| !mounted.contains(z)) {
         mount_archive(&z);
     }
@@ -321,13 +374,20 @@ pub(crate) fn mount_archive(zip: &Path) {
 /// The archives of the content folder that are mounted, in name order.
 fn archive_roots(content: &Path) -> Vec<PathBuf> {
     let dir = content.join(install::ARCHIVES);
-    let mut v: Vec<PathBuf> = omsi_cfg::vfs::mounts().iter().map(|m| m.path().to_path_buf()).filter(|p| p.starts_with(&dir) && p.exists()).collect();
+    let mut v: Vec<PathBuf> = omsi_cfg::vfs::mounts()
+        .iter()
+        .map(|m| m.path().to_path_buf())
+        .filter(|p| p.starts_with(&dir) && p.exists())
+        .collect();
     v.sort();
     v
 }
 
 fn load_config_raw() -> Config {
-    std::fs::read_to_string(config_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    std::fs::read_to_string(config_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 /// `rel` (a path as the game takes it, `Vehicles/Foo/foo.bus`) in the content folder if it
@@ -385,11 +445,21 @@ fn merged_folders(rel: &str) -> Vec<(String, Vec<PathBuf>)> {
     let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for base in bases() {
         let dir = base.join(rel);
-        let Some(list) = omsi_cfg::vfs::list_dir(&dir) else { continue };
-        let mut names: Vec<PathBuf> = list.into_iter().filter(|(_, is_dir)| *is_dir).map(|(n, _)| dir.join(n)).collect();
+        let Some(list) = omsi_cfg::vfs::list_dir(&dir) else {
+            continue;
+        };
+        let mut names: Vec<PathBuf> = list
+            .into_iter()
+            .filter(|(_, is_dir)| *is_dir)
+            .map(|(n, _)| dir.join(n))
+            .collect();
         names.sort();
         for p in names {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             if name.starts_with('.') {
                 continue;
             }
@@ -441,37 +511,75 @@ pub struct ModsStatus {
 /// and .rar are always unpacked),
 /// "extract" or "inplace".
 pub fn start_install(src: &Path, mode: &str) -> Result<install::Progress> {
-    let content = content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
+    let content =
+        content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
     if !src.exists() {
         return Err(anyhow!("{} does not exist", src.display()));
     }
     let from_inbox = src.starts_with(content.join("Mods"));
-    let job = install::start(content, root().ok(), src.to_path_buf(), install::InstallMode::parse(mode), from_inbox);
+    let job = install::start(
+        content,
+        root().ok(),
+        src.to_path_buf(),
+        install::InstallMode::parse(mode),
+        from_inbox,
+    );
     Ok(job.snapshot())
 }
 
 /// How big the mod at `src` is unpacked, what is free, and whether it can be used in place.
 pub fn inspect_mod(src: &Path) -> Result<install::SourceInfo> {
-    let content = content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
+    let content =
+        content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
     install::inspect(&content, root().ok().as_deref(), src)
 }
 
 /// Install the mod at `src` and wait for it (the terminal), printing the progress.
-pub fn install_mod_blocking(src: &Path, mode: &str, cancel_after_ms: Option<u64>) -> Result<install::Progress> {
-    let content = content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
-    Ok(install::run_blocking(content, root().ok(), src.to_path_buf(), install::InstallMode::parse(mode), cancel_after_ms.map(std::time::Duration::from_millis), true))
+pub fn install_mod_blocking(
+    src: &Path,
+    mode: &str,
+    cancel_after_ms: Option<u64>,
+) -> Result<install::Progress> {
+    let content =
+        content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
+    Ok(install::run_blocking(
+        content,
+        root().ok(),
+        src.to_path_buf(),
+        install::InstallMode::parse(mode),
+        cancel_after_ms.map(std::time::Duration::from_millis),
+        true,
+    ))
 }
 
 fn inbox_entries(content: &Path) -> Vec<PathBuf> {
     let inbox = content.join("Mods");
-    let Ok(rd) = std::fs::read_dir(&inbox) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(&inbox) else {
+        return Vec::new();
+    };
     let mut v: Vec<PathBuf> = rd
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-            !(name.starts_with('.') || name.eq_ignore_ascii_case("installed") || name.eq_ignore_ascii_case(install::WAITING) || name.eq_ignore_ascii_case(install::PLUGINS_HELD) || name.eq_ignore_ascii_case(install::UNINSTALLED) || name.eq_ignore_ascii_case("README.txt"))
-                && (p.is_dir() || p.extension().map(|x| ["zip", "7z", "rar"].iter().any(|ext| x.eq_ignore_ascii_case(ext))).unwrap_or(false))
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            !(name.starts_with('.')
+                || name.eq_ignore_ascii_case("installed")
+                || name.eq_ignore_ascii_case(install::WAITING)
+                || name.eq_ignore_ascii_case(install::PLUGINS_HELD)
+                || name.eq_ignore_ascii_case(install::UNINSTALLED)
+                || name.eq_ignore_ascii_case("README.txt"))
+                && (p.is_dir()
+                    || p.extension()
+                        .map(|x| {
+                            ["zip", "7z", "rar"]
+                                .iter()
+                                .any(|ext| x.eq_ignore_ascii_case(ext))
+                        })
+                        .unwrap_or(false))
         })
         .collect();
     v.sort();
@@ -480,8 +588,15 @@ fn inbox_entries(content: &Path) -> Vec<PathBuf> {
 
 /// (size, newest time, files) of a file or a folder tree.
 fn tree_signature(p: &Path) -> (u64, u64, u64) {
-    let Ok(md) = std::fs::symlink_metadata(p) else { return (0, 0, 0) };
-    let t = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as u64).unwrap_or(0);
+    let Ok(md) = std::fs::symlink_metadata(p) else {
+        return (0, 0, 0);
+    };
+    let t = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
     if !md.is_dir() {
         return (md.len(), t, 1);
     }
@@ -507,11 +622,15 @@ fn watch_inbox(content: &Path) -> Vec<String> {
         /// at again only now and then).
         checked: std::time::Instant,
     }
-    static SEEN: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Seen>>> = std::sync::Mutex::new(None);
+    static SEEN: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Seen>>> =
+        std::sync::Mutex::new(None);
     // a mod deleted from Mods/installed is taken out of the lists (#819)
     let gone = install::uninstall_removed(content);
     for g in &gone {
-        log_line(&format!("mods: {g} was deleted from Mods/installed - uninstalled, its folders are in Mods/{}/{g}", install::UNINSTALLED));
+        log_line(&format!(
+            "mods: {g} was deleted from Mods/installed - uninstalled, its folders are in Mods/{}/{g}",
+            install::UNINSTALLED
+        ));
     }
     if !gone.is_empty() {
         omsi_cfg::content_changed();
@@ -527,7 +646,13 @@ fn watch_inbox(content: &Path) -> Vec<String> {
             continue;
         }
         let now = std::time::Instant::now();
-        if seen.get(&p).map(|s| s.started && now.duration_since(s.checked) < std::time::Duration::from_secs(30)).unwrap_or(false) {
+        if seen
+            .get(&p)
+            .map(|s| {
+                s.started && now.duration_since(s.checked) < std::time::Duration::from_secs(30)
+            })
+            .unwrap_or(false)
+        {
             continue;
         }
         let sig = tree_signature(&p);
@@ -538,13 +663,27 @@ fn watch_inbox(content: &Path) -> Vec<String> {
             Some(s) if s.sig == sig => {
                 if !s.started && now.duration_since(s.at) >= std::time::Duration::from_secs(2) {
                     s.started = true;
-                    install::start(content.to_path_buf(), root().ok(), p.clone(), install::InstallMode::Auto, true);
+                    install::start(
+                        content.to_path_buf(),
+                        root().ok(),
+                        p.clone(),
+                        install::InstallMode::Auto,
+                        true,
+                    );
                     started.push(p.to_string_lossy().to_string());
                 }
             }
             // new, still growing (a copy in progress), or changed after a failed try
             _ => {
-                seen.insert(p.clone(), Seen { sig, at: now, started: false, checked: now });
+                seen.insert(
+                    p.clone(),
+                    Seen {
+                        sig,
+                        at: now,
+                        started: false,
+                        checked: now,
+                    },
+                );
             }
         }
     }
@@ -552,11 +691,29 @@ fn watch_inbox(content: &Path) -> Vec<String> {
     if !busy {
         for p in install::waiting_ready(content, root().ok().as_deref()) {
             let sig = tree_signature(&p);
-            if seen.get(&p).map(|s| s.started && s.sig == sig).unwrap_or(false) {
+            if seen
+                .get(&p)
+                .map(|s| s.started && s.sig == sig)
+                .unwrap_or(false)
+            {
                 continue;
             }
-            seen.insert(p.clone(), Seen { sig, at: std::time::Instant::now(), started: true, checked: std::time::Instant::now() });
-            install::start(content.to_path_buf(), root().ok(), p.clone(), install::InstallMode::Extract, true);
+            seen.insert(
+                p.clone(),
+                Seen {
+                    sig,
+                    at: std::time::Instant::now(),
+                    started: true,
+                    checked: std::time::Instant::now(),
+                },
+            );
+            install::start(
+                content.to_path_buf(),
+                root().ok(),
+                p.clone(),
+                install::InstallMode::Extract,
+                true,
+            );
             started.push(p.to_string_lossy().to_string());
         }
     }
@@ -566,10 +723,21 @@ fn watch_inbox(content: &Path) -> Vec<String> {
 /// Install everything in the inbox (and the waiting packs whose bus is there) now, and
 /// wait (the terminal's `mods`).
 pub fn install_inbox_blocking() -> Vec<install::Progress> {
-    let Some(content) = content_dir() else { return Vec::new() };
+    let Some(content) = content_dir() else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    for p in inbox_entries(&content).into_iter().chain(install::waiting_ready(&content, root().ok().as_deref())) {
-        let job = install::start(content.clone(), root().ok(), p, install::InstallMode::Auto, true);
+    for p in inbox_entries(&content)
+        .into_iter()
+        .chain(install::waiting_ready(&content, root().ok().as_deref()))
+    {
+        let job = install::start(
+            content.clone(),
+            root().ok(),
+            p,
+            install::InstallMode::Auto,
+            true,
+        );
         while job.snapshot().finished.is_none() {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -579,19 +747,47 @@ pub fn install_inbox_blocking() -> Vec<install::Progress> {
 }
 
 pub fn mods_status() -> Result<ModsStatus> {
-    let content = content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
+    let content =
+        content_dir().ok_or_else(|| anyhow!("no game binary configured, so no content folder"))?;
     let cleaned = install::cleanup_stale(&data_dir(), Some(&content));
     let folders = omsi_cfg::CONTENT_FOLDERS
         .iter()
         .map(|f| {
-            let n = std::fs::read_dir(content.join(f)).map(|rd| rd.flatten().filter(|e| !e.file_name().to_string_lossy().starts_with('.')).count()).unwrap_or(0);
+            let n = std::fs::read_dir(content.join(f))
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+                        .count()
+                })
+                .unwrap_or(0);
             (f.to_string(), n)
         })
         .collect();
-    let names = |v: Vec<PathBuf>| v.iter().filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string())).collect::<Vec<_>>();
-    let waiting: Vec<PathBuf> = std::fs::read_dir(content.join("Mods").join(install::WAITING)).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    let names = |v: Vec<PathBuf>| {
+        v.iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect::<Vec<_>>()
+    };
+    let waiting: Vec<PathBuf> = std::fs::read_dir(content.join("Mods").join(install::WAITING))
+        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
     let mut archives: Vec<(String, u64)> = std::fs::read_dir(content.join(install::ARCHIVES))
-        .map(|rd| rd.flatten().filter(|e| e.path().extension().map(|x| x.eq_ignore_ascii_case("zip")).unwrap_or(false)).map(|e| (e.file_name().to_string_lossy().to_string(), e.metadata().map(|m| m.len()).unwrap_or(0))).collect())
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map(|x| x.eq_ignore_ascii_case("zip"))
+                        .unwrap_or(false)
+                })
+                .map(|e| {
+                    (
+                        e.file_name().to_string_lossy().to_string(),
+                        e.metadata().map(|m| m.len()).unwrap_or(0),
+                    )
+                })
+                .collect()
+        })
         .unwrap_or_default();
     archives.sort();
     Ok(ModsStatus {
@@ -621,8 +817,16 @@ pub struct Poll {
 pub fn poll() -> Result<Poll> {
     let content = content_dir();
     let started = content.as_deref().map(watch_inbox).unwrap_or_default();
-    let stamp = index::content_stamp(&bases(), content.as_ref().map(|c| c.join("Mods")).as_deref());
-    Ok(Poll { stamp, jobs: install::jobs(), instances: instances::list(), started })
+    let stamp = index::content_stamp(
+        &bases(),
+        content.as_ref().map(|c| c.join("Mods")).as_deref(),
+    );
+    Ok(Poll {
+        stamp,
+        jobs: install::jobs(),
+        instances: instances::list(),
+        started,
+    })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -655,13 +859,19 @@ pub fn list_maps() -> Result<Vec<MapInfo>> {
     let mut keys = Vec::new();
     for (folder, dirs) in merged_folders("maps") {
         // a map is one folder: the first copy that has a global.cfg
-        let Some(d) = dirs.into_iter().find(|d| omsi_cfg::vfs::is_file(&d.join("global.cfg"))) else { continue };
+        let Some(d) = dirs
+            .into_iter()
+            .find(|d| omsi_cfg::vfs::is_file(&d.join("global.cfg")))
+        else {
+            continue;
+        };
         let key = format!("map|{lang}|{}", d.display());
         let mut stamped = vec![d.clone(), d.join("global.cfg"), d.join("ailists.cfg")];
         stamped.extend(dsc_candidates(&d.join("global.cfg"), lang));
         let stamp = index::files_stamp(&stamped);
         keys.push(key.clone());
-        let info: Option<MapInfo> = index::cached(&key, stamp, || (read_map(&d, &folder, lang), Vec::new()));
+        let info: Option<MapInfo> =
+            index::cached(&key, stamp, || (read_map(&d, &folder, lang), Vec::new()));
         out.extend(info);
     }
     index::save("map|", Some(&keys));
@@ -680,33 +890,66 @@ fn log_empty(rel: &str, what: &str) {
             let d = b.join(rel);
             match omsi_cfg::vfs::list_dir(&d) {
                 Some(l) => format!("{} ({} entries)", d.display(), l.len()),
-                None => format!("{} (cannot be read: {})", d.display(), std::fs::read_dir(&d).err().map(|e| e.to_string()).unwrap_or_else(|| "not a folder".into())),
+                None => format!(
+                    "{} (cannot be read: {})",
+                    d.display(),
+                    std::fs::read_dir(&d)
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "not a folder".into())
+                ),
             }
         })
         .collect();
-    log_line(&format!("{rel}: nothing with a {what} found in {}", if places.is_empty() { "no folder (no OMSI 2 folder and no content folder)".to_string() } else { places.join(", ") }));
+    log_line(&format!(
+        "{rel}: nothing with a {what} found in {}",
+        if places.is_empty() {
+            "no folder (no OMSI 2 folder and no content folder)".to_string()
+        } else {
+            places.join(", ")
+        }
+    ));
 }
 
 fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
     let g = match omsi_map::GlobalCfg::load(&d.join("global.cfg")) {
         Ok(g) => g,
         Err(e) => {
-            log_line(&format!("maps: {} cannot be read ({e:#}) - not listed", d.join("global.cfg").display()));
+            log_line(&format!(
+                "maps: {} cannot be read ({e:#}) - not listed",
+                d.join("global.cfg").display()
+            ));
             return None;
         }
     };
     // `global_ENG.dsc` (the language of the settings) names and describes the map
     let dsc = find_dsc(&d.join("global.cfg"), lang);
-    let friendly = dsc.as_ref().and_then(|x| x.name.first().cloned()).unwrap_or_else(|| g.friendly_name.trim().to_string());
-    let description = dsc.map(|x| x.description).filter(|t| !t.is_empty()).unwrap_or_else(|| g.description.trim().to_string());
-    let mut entries: Vec<EntryInfo> = g.entry_points.iter().map(|e| EntryInfo { index: e.index, name: e.name.trim().to_string() }).collect();
+    let friendly = dsc
+        .as_ref()
+        .and_then(|x| x.name.first().cloned())
+        .unwrap_or_else(|| g.friendly_name.trim().to_string());
+    let description = dsc
+        .map(|x| x.description)
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| g.description.trim().to_string());
+    let mut entries: Vec<EntryInfo> = g
+        .entry_points
+        .iter()
+        .map(|e| EntryInfo {
+            index: e.index,
+            name: e.name.trim().to_string(),
+        })
+        .collect();
     // the game's --entry is the position in the list, not the index field; several
     // entries often share a name (one per stop position), so number them
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let total: std::collections::HashMap<String, usize> = entries.iter().fold(std::collections::HashMap::new(), |mut m, e| {
-        *m.entry(e.name.clone()).or_default() += 1;
-        m
-    });
+    let total: std::collections::HashMap<String, usize> =
+        entries
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut m, e| {
+                *m.entry(e.name.clone()).or_default() += 1;
+                m
+            });
     for (i, e) in entries.iter_mut().enumerate() {
         e.index = i as i32;
         let n = seen.entry(e.name.clone()).or_default();
@@ -716,8 +959,29 @@ fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
         }
     }
     // (the depot groups' first: a plain car group's name line is no depot)
-    let hof = omsi_map::ailists::AiLists::load(&d.join("ailists.cfg")).ok().and_then(|l| l.groups.iter().filter(|g| g.is_depot).chain(l.groups.iter()).find_map(|g| g.hof.clone())).unwrap_or_default();
-    Some(MapInfo { name: if g.name.trim().is_empty() { folder.to_string() } else { g.name.trim().to_string() }, friendly, file: format!("maps/{folder}/global.cfg"), description, entry_points: entries, hof, installed: in_content(d) })
+    let hof = omsi_map::ailists::AiLists::load(&d.join("ailists.cfg"))
+        .ok()
+        .and_then(|l| {
+            l.groups
+                .iter()
+                .filter(|g| g.is_depot)
+                .chain(l.groups.iter())
+                .find_map(|g| g.hof.clone())
+        })
+        .unwrap_or_default();
+    Some(MapInfo {
+        name: if g.name.trim().is_empty() {
+            folder.to_string()
+        } else {
+            g.name.trim().to_string()
+        },
+        friendly,
+        file: format!("maps/{folder}/global.cfg"),
+        description,
+        entry_points: entries,
+        hof,
+        installed: in_content(d),
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -749,7 +1013,10 @@ pub struct VehicleInfo {
 
 /// Names in older vehicle packs use underscores as spaces.
 pub fn display_bus_name(name: &str) -> String {
-    name.replace('_', " ").split_whitespace().collect::<Vec<_>>().join(" ")
+    name.replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The displayed vehicle type, using its file name when [friendlyname] leaves it empty.
@@ -763,7 +1030,9 @@ pub fn vehicle_type_label(type_name: &str, path: &Path) -> String {
 
 /// The vehicle packs whose parts a model file names and that are installed nowhere.
 fn missing_packs_of(model: &Path) -> Vec<String> {
-    let Ok(text) = omsi_cfg::vfs::read(model) else { return Vec::new() };
+    let Ok(text) = omsi_cfg::vfs::read(model) else {
+        return Vec::new();
+    };
     let text = omsi_cfg::codepage::decode(&text);
     let dir = model.parent().unwrap_or(Path::new("."));
     let mut out: Vec<String> = Vec::new();
@@ -793,9 +1062,13 @@ fn missing_packs_of(model: &Path) -> Vec<String> {
 fn paint_schemes(vehicle: &omsi_vehicle::Vehicle) -> (Vec<String>, Vec<PathBuf>) {
     let mut names: Vec<String> = Vec::new();
     let mut dirs_read: Vec<PathBuf> = Vec::new();
-    let Some(model_rel) = vehicle.model.as_ref() else { return (names, dirs_read) };
+    let Some(model_rel) = vehicle.model.as_ref() else {
+        return (names, dirs_read);
+    };
     let model_path = omsi_cfg::resolve_path(vehicle.dir(), model_rel);
-    let Ok(model) = omsi_model::Model::load(&model_path) else { return (names, dirs_read) };
+    let Ok(model) = omsi_model::Model::load(&model_path) else {
+        return (names, dirs_read);
+    };
     for c in &model.ctc {
         let dir = omsi_cfg::resolve_path(vehicle.dir(), &c.path);
         let mut files: Vec<PathBuf> = Vec::new();
@@ -806,17 +1079,34 @@ fn paint_schemes(vehicle: &omsi_vehicle::Vehicle) -> (Vec<String>, Vec<PathBuf>)
         }
         for d in copies {
             dirs_read.push(d.clone());
-            let Some(list) = omsi_cfg::vfs::list_dir(&d) else { continue };
-            let mut here: Vec<PathBuf> = list.into_iter().map(|(n, _)| d.join(n)).filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("cti")).unwrap_or(false)).collect();
+            let Some(list) = omsi_cfg::vfs::list_dir(&d) else {
+                continue;
+            };
+            let mut here: Vec<PathBuf> = list
+                .into_iter()
+                .map(|(n, _)| d.join(n))
+                .filter(|p| {
+                    p.extension()
+                        .map(|e| e.eq_ignore_ascii_case("cti"))
+                        .unwrap_or(false)
+                })
+                .collect();
             here.sort();
             for f in here {
-                if seen.insert(f.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase()) {
+                if seen.insert(
+                    f.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_ascii_lowercase(),
+                ) {
                     files.push(f);
                 }
             }
         }
         for f in files {
-            let Ok(cfg) = omsi_cfg::CfgFile::read(&f) else { continue };
+            let Ok(cfg) = omsi_cfg::CfgFile::read(&f) else {
+                continue;
+            };
             let mut r = cfg.reader();
             while let Some(k) = r.next_keyword() {
                 if k == "item" {
@@ -837,8 +1127,15 @@ fn paint_schemes(vehicle: &omsi_vehicle::Vehicle) -> (Vec<String>, Vec<PathBuf>)
 fn log_line(line: &str) {
     use std::io::Write;
     let p = data_dir().join("launcher.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let _ = writeln!(f, "{now} {line}");
     }
 }
@@ -851,36 +1148,73 @@ pub fn list_vehicles() -> Result<Vec<VehicleInfo>> {
 /// held, how many folders are done and how many there are: a big installation's first
 /// reading (thousands of vehicle folders, nothing in the cache yet) takes minutes, and the
 /// page showed nothing at all until the last folder was read.
-pub fn list_vehicles_progress(progress: impl Fn(&[VehicleInfo], usize, usize)) -> Result<Vec<VehicleInfo>> {
+pub fn list_vehicles_progress(
+    progress: impl Fn(&[VehicleInfo], usize, usize),
+) -> Result<Vec<VehicleInfo>> {
     use rayon::prelude::*;
     root()?;
     let lang = content_language();
     let folders = merged_folders("Vehicles");
-    let keys: Vec<String> = folders.iter().map(|(_, dirs)| format!("bus4|{lang}|{}", dirs.iter().map(|d| d.to_string_lossy()).collect::<Vec<_>>().join("|"))).collect();
+    let keys: Vec<String> = folders
+        .iter()
+        .map(|(_, dirs)| {
+            format!(
+                "bus4|{lang}|{}",
+                dirs.iter()
+                    .map(|d| d.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("|")
+            )
+        })
+        .collect();
     let read = |(folder, dirs): &(String, Vec<PathBuf>), key: &String| -> Vec<VehicleInfo> {
         // the stamp covers every copy of the folder and their direct entries (Model/,
         // Texture/ ...); the paint folders the entry read are its dependencies
         let mut stamped: Vec<PathBuf> = dirs.clone();
         for d in dirs {
             if let Some(list) = omsi_cfg::vfs::list_dir(d) {
-                let mut subs: Vec<PathBuf> = list.into_iter().filter(|(_, is_dir)| *is_dir).map(|(n, _)| d.join(n)).collect();
+                let mut subs: Vec<PathBuf> = list
+                    .into_iter()
+                    .filter(|(_, is_dir)| *is_dir)
+                    .map(|(n, _)| d.join(n))
+                    .collect();
                 subs.sort();
                 stamped.extend(subs);
             }
         }
-        index::cached(key, index::folder_stamp(&stamped), || read_vehicle_folder(folder, dirs, lang))
+        index::cached(key, index::folder_stamp(&stamped), || {
+            read_vehicle_folder(folder, dirs, lang)
+        })
     };
     // folders side by side (the files of one wait for the disk while another's are parsed),
     // a handful of threads so that a hard disk is not sent seeking all over
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 8)).build().ok();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .clamp(2, 8),
+        )
+        .build()
+        .ok();
     let mut out = Vec::new();
     let total = folders.len();
     let mut done = 0;
     let mut saved = std::time::Instant::now();
     for (chunk, chunk_keys) in folders.chunks(32).zip(keys.chunks(32)) {
         let lists: Vec<Vec<VehicleInfo>> = match &pool {
-            Some(pool) => pool.install(|| chunk.par_iter().zip(chunk_keys.par_iter()).map(|(f, k)| read(f, k)).collect()),
-            None => chunk.iter().zip(chunk_keys.iter()).map(|(f, k)| read(f, k)).collect(),
+            Some(pool) => pool.install(|| {
+                chunk
+                    .par_iter()
+                    .zip(chunk_keys.par_iter())
+                    .map(|(f, k)| read(f, k))
+                    .collect()
+            }),
+            None => chunk
+                .iter()
+                .zip(chunk_keys.iter())
+                .map(|(f, k)| read(f, k))
+                .collect(),
         };
         let batch: Vec<VehicleInfo> = lists.into_iter().flatten().collect();
         done += chunk.len();
@@ -902,7 +1236,11 @@ pub fn list_vehicles_progress(progress: impl Fn(&[VehicleInfo], usize, usize)) -
 
 /// The buses of one vehicle folder (all its copies; a bus file in the content folder hides
 /// the one of the same name in the OMSI folder), and the folders read besides its own.
-fn read_vehicle_folder(folder: &str, dirs: &[PathBuf], lang: &str) -> (Vec<VehicleInfo>, Vec<PathBuf>) {
+fn read_vehicle_folder(
+    folder: &str,
+    dirs: &[PathBuf],
+    lang: &str,
+) -> (Vec<VehicleInfo>, Vec<PathBuf>) {
     // Every file of the folder and of the folders in it, however deep: OMSI's bus list looks
     // for `*.bus` and `*.ovh` under Vehicles to any depth (Omsi.exe 0x67bdf9, the search
     // with depth 255) - `Vehicles\Pack\Variant\x.bus` was not listed here (#137). A file of
@@ -912,7 +1250,11 @@ fn read_vehicle_folder(folder: &str, dirs: &[PathBuf], lang: &str) -> (Vec<Vehic
         list.sort();
         for (n, is_dir) in list {
             let name = n.to_string_lossy().to_string();
-            let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let r = if rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel}/{name}")
+            };
             if is_dir {
                 if depth > 0 && !name.starts_with('.') {
                     walk(&d.join(&n), &r, depth - 1, out);
@@ -937,44 +1279,115 @@ fn read_vehicle_folder(folder: &str, dirs: &[PathBuf], lang: &str) -> (Vec<Vehic
     }
     let mut out = Vec::new();
     let mut deps = Vec::new();
-    if !files.iter().any(|f| f.extension().map(|e| e.eq_ignore_ascii_case("bus") || e.eq_ignore_ascii_case("ovh")).unwrap_or(false)) {
+    if !files.iter().any(|f| {
+        f.extension()
+            .map(|e| e.eq_ignore_ascii_case("bus") || e.eq_ignore_ascii_case("ovh"))
+            .unwrap_or(false)
+    }) {
         // textures, or a repaint for a bus that is not installed: nothing to drive
-        log_line(&format!("vehicles: Vehicles/{folder} has no .bus file (a repaint or textures for a bus that is not installed?) - not listed"));
+        log_line(&format!(
+            "vehicles: Vehicles/{folder} has no .bus file (a repaint or textures for a bus that is not installed?) - not listed"
+        ));
         return (out, deps);
     }
     // the depot files beside each bus (a bus in a folder of the pack: those of its folder,
     // else those of the pack's own)
-    let hof_dir = |f: &PathBuf| rel_of.get(f).map(|r| r.rsplit_once('/').map(|(d, _)| d.to_ascii_lowercase()).unwrap_or_default()).unwrap_or_default();
-    let mut hofs_in: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for f in files.iter().filter(|f| f.extension().map(|e| e.eq_ignore_ascii_case("hof")).unwrap_or(false)) {
+    let hof_dir = |f: &PathBuf| {
+        rel_of
+            .get(f)
+            .map(|r| {
+                r.rsplit_once('/')
+                    .map(|(d, _)| d.to_ascii_lowercase())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    };
+    let mut hofs_in: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for f in files.iter().filter(|f| {
+        f.extension()
+            .map(|e| e.eq_ignore_ascii_case("hof"))
+            .unwrap_or(false)
+    }) {
         // (the name alone: UK depot files carry megabytes of trips)
         if let Some(name) = omsi_vehicle::Hof::read_name(f) {
-            hofs_in.entry(hof_dir(f)).or_default().push(name.trim().to_string());
+            hofs_in
+                .entry(hof_dir(f))
+                .or_default()
+                .push(name.trim().to_string());
         }
     }
     // OMSI offers what has a [friendlyname]: never the rear section of an articulated bus
     // (its front brings it along), an AI-only variant or a car
     for (f, v) in omsi_vehicle::vehicle::offered_vehicles(&files) {
         let f = &f;
-        let stem = f.file_stem().unwrap().to_string_lossy().to_ascii_lowercase();
+        let stem = f
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_ascii_lowercase();
         // a vehicle file whose model is not there would load as nothing
         let model = v.model.as_ref().map(|m| omsi_cfg::resolve_path(v.dir(), m));
-        if !model.as_ref().map(|m| omsi_cfg::vfs::is_file(m)).unwrap_or(false) {
-            log_line(&format!("vehicles: {} - its model {} is missing, not listed", f.display(), model.map(|m| m.display().to_string()).unwrap_or_else(|| "(none)".into())));
+        if !model
+            .as_ref()
+            .map(|m| omsi_cfg::vfs::is_file(m))
+            .unwrap_or(false)
+        {
+            log_line(&format!(
+                "vehicles: {} - its model {} is missing, not listed",
+                f.display(),
+                model
+                    .map(|m| m.display().to_string())
+                    .unwrap_or_else(|| "(none)".into())
+            ));
             continue;
         }
-        let rel = format!("Vehicles/{}/{}", folder, rel_of.get(f).cloned().unwrap_or_else(|| f.file_name().unwrap().to_string_lossy().to_string()));
-        let hofs = hofs_in.get(&hof_dir(f)).or_else(|| hofs_in.get("")).cloned().unwrap_or_default();
-        let name = format!("{} {}", v.manufacturer.trim(), v.type_name.trim()).trim().to_string();
+        let rel = format!(
+            "Vehicles/{}/{}",
+            folder,
+            rel_of.get(f).cloned().unwrap_or_else(|| f
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string())
+        );
+        let hofs = hofs_in
+            .get(&hof_dir(f))
+            .or_else(|| hofs_in.get(""))
+            .cloned()
+            .unwrap_or_default();
+        let name = format!("{} {}", v.manufacturer.trim(), v.type_name.trim())
+            .trim()
+            .to_string();
         let (paints, paint_dirs) = paint_schemes(&v);
         deps.extend(paint_dirs);
         // `<bus>_ENG.dsc` beside the bus file (the language of the settings) describes it
-        let description = find_dsc(f, lang).map(|x| x.description).filter(|t| !t.is_empty()).unwrap_or_else(|| v.description.trim().to_string());
+        let description = find_dsc(f, lang)
+            .map(|x| x.description)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| v.description.trim().to_string());
         let missing_packs = model.as_deref().map(missing_packs_of).unwrap_or_default();
         if !missing_packs.is_empty() {
-            log_line(&format!("vehicles: {} borrows parts from packs that are not installed: {}", f.display(), missing_packs.join(", ")));
+            log_line(&format!(
+                "vehicles: {} borrows parts from packs that are not installed: {}",
+                f.display(),
+                missing_packs.join(", ")
+            ));
         }
-        out.push(VehicleInfo { name: if name.is_empty() { stem.clone() } else { name }, manufacturer: v.manufacturer.trim().to_string(), type_name: v.type_name.trim().to_string(), file: rel, folder: folder.to_string(), description: description.chars().take(600).collect(), default_paint: v.default_paint.trim().to_string(), paints, hofs, installed: in_content(f), missing_packs, numbers: v.numbers_with_plates() });
+        out.push(VehicleInfo {
+            name: if name.is_empty() { stem.clone() } else { name },
+            manufacturer: v.manufacturer.trim().to_string(),
+            type_name: v.type_name.trim().to_string(),
+            file: rel,
+            folder: folder.to_string(),
+            description: description.chars().take(600).collect(),
+            default_paint: v.default_paint.trim().to_string(),
+            paints,
+            hofs,
+            installed: in_content(f),
+            missing_packs,
+            numbers: v.numbers_with_plates(),
+        });
     }
     deps.sort();
     deps.dedup();
@@ -1002,7 +1415,14 @@ pub fn list_weather() -> Result<Vec<WeatherInfo>> {
     let mut out = Vec::new();
     let mut keys = Vec::new();
     let lang = content_language();
-    let mut files: Vec<PathBuf> = merged_entries("Weather").into_iter().filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("owt")).unwrap_or(false)).collect();
+    let mut files: Vec<PathBuf> = merged_entries("Weather")
+        .into_iter()
+        .filter(|p| {
+            p.extension()
+                .map(|e| e.eq_ignore_ascii_case("owt"))
+                .unwrap_or(false)
+        })
+        .collect();
     files.sort();
     for f in files {
         // the description in the settings' language lives in `<name>_ENG.dsc`
@@ -1010,7 +1430,9 @@ pub fn list_weather() -> Result<Vec<WeatherInfo>> {
         stamped.extend(dsc_candidates(&f, lang));
         let key = format!("wx|{lang}|{}", f.display());
         keys.push(key.clone());
-        let info: Option<WeatherInfo> = index::cached(&key, index::files_stamp(&stamped), || (read_weather(&f, lang), Vec::new()));
+        let info: Option<WeatherInfo> = index::cached(&key, index::files_stamp(&stamped), || {
+            (read_weather(&f, lang), Vec::new())
+        });
         out.extend(info);
     }
     index::save("wx|", Some(&keys));
@@ -1021,32 +1443,65 @@ fn read_weather(f: &Path, lang: &str) -> Option<WeatherInfo> {
     let w = omsi_content::weather::Weather::load(f).ok()?;
     let stem = f.file_stem().unwrap().to_string_lossy().to_string();
     // (the `[name]` of the file is not part of the description: "Ground Fog Heavy ground fog ...")
-    let description = find_dsc(f, lang).map(|x| x.description.replace('\n', " ")).filter(|t| !t.is_empty()).unwrap_or_else(|| w.description.replace('\n', " "));
+    let description = find_dsc(f, lang)
+        .map(|x| x.description.replace('\n', " "))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| w.description.replace('\n', " "));
     let precip = match w.precip.first().copied().unwrap_or(0.0) as i32 {
-        1 => format!("rain {:.0}%", w.precip.get(1).copied().unwrap_or(0.0) / 255.0 * 100.0),
-        2 => format!("snow {:.0}%", w.precip.get(1).copied().unwrap_or(0.0) / 255.0 * 100.0),
+        1 => format!(
+            "rain {:.0}%",
+            w.precip.get(1).copied().unwrap_or(0.0) / 255.0 * 100.0
+        ),
+        2 => format!(
+            "snow {:.0}%",
+            w.precip.get(1).copied().unwrap_or(0.0) / 255.0 * 100.0
+        ),
         _ => "dry".into(),
     };
-    Some(WeatherInfo { name: stem.trim_start_matches('#').to_string(), file: format!("Weather/{}", f.file_name().unwrap().to_string_lossy()), description, fog_m: w.fog.0, temp: w.temp.0, clouds: if w.clouds.0.trim().starts_with("-1") { "clear".into() } else { w.clouds.0.trim().to_string() }, precip, snow: w.snow, installed: in_content(f) })
+    Some(WeatherInfo {
+        name: stem.trim_start_matches('#').to_string(),
+        file: format!("Weather/{}", f.file_name().unwrap().to_string_lossy()),
+        description,
+        fog_m: w.fog.0,
+        temp: w.temp.0,
+        clouds: if w.clouds.0.trim().starts_with("-1") {
+            "clear".into()
+        } else {
+            w.clouds.0.trim().to_string()
+        },
+        precip,
+        snow: w.snow,
+        installed: in_content(f),
+    })
 }
 
 /// The content language of the settings (`language=`, English by default): which
 /// `<file>_<LANG>.dsc` names and describes maps, buses and weathers.
 fn content_language() -> &'static str {
     let text = std::fs::read_to_string(data_dir().join("settings.cfg")).ok();
-    language_code(settings_from_text(text.as_deref())["language"].as_str().unwrap_or("ENG"))
+    language_code(
+        settings_from_text(text.as_deref())["language"]
+            .as_str()
+            .unwrap_or("ENG"),
+    )
 }
 
 /// The description files OMSI reads for `file` (`global.cfg` -> `global_ENG.dsc`), in the
 /// order they are tried: the language itself, then English for a language that has none
 /// (German is the files' own language, so German falls back to the file itself).
 fn dsc_candidates(file: &Path, lang: &str) -> Vec<PathBuf> {
-    let stem = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let stem = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     let mut langs = vec![lang];
     if lang != "DEU" && lang != "ENG" {
         langs.push("ENG");
     }
-    langs.into_iter().map(|l| file.with_file_name(format!("{stem}_{l}.dsc"))).collect()
+    langs
+        .into_iter()
+        .map(|l| file.with_file_name(format!("{stem}_{l}.dsc")))
+        .collect()
 }
 
 /// A `.dsc` file: the `[name]` / `[friendlyname]` lines and the `[description]` text.
@@ -1062,13 +1517,14 @@ fn parse_dsc(text: &str) -> Dsc {
     for line in text.lines() {
         let t = line.trim();
         if t.starts_with('[') && t.ends_with(']') {
-            section = if t.eq_ignore_ascii_case("[name]") || t.eq_ignore_ascii_case("[friendlyname]") {
-                "name"
-            } else if t.eq_ignore_ascii_case("[description]") {
-                "description"
-            } else {
-                ""
-            };
+            section =
+                if t.eq_ignore_ascii_case("[name]") || t.eq_ignore_ascii_case("[friendlyname]") {
+                    "name"
+                } else if t.eq_ignore_ascii_case("[description]") {
+                    "description"
+                } else {
+                    ""
+                };
             continue;
         }
         match section {
@@ -1078,22 +1534,34 @@ fn parse_dsc(text: &str) -> Dsc {
             _ => {}
         }
     }
-    Dsc { name, description: desc.join("\n").trim().to_string() }
+    Dsc {
+        name,
+        description: desc.join("\n").trim().to_string(),
+    }
 }
 
 fn find_dsc(file: &Path, lang: &str) -> Option<Dsc> {
-    dsc_candidates(file, lang).iter().find_map(|p| omsi_cfg::vfs::read(p).ok()).map(|b| parse_dsc(&encoding_latin1(&b)))
+    dsc_candidates(file, lang)
+        .iter()
+        .find_map(|p| omsi_cfg::vfs::read(p).ok())
+        .map(|b| parse_dsc(&encoding_latin1(&b)))
 }
 
 /// OMSI's text files are Latin-1, except that some description files were saved as
 /// UTF-16 with a byte-order mark.
 fn encoding_latin1(b: &[u8]) -> String {
     if b.len() >= 2 && b[0] == 0xFF && b[1] == 0xFE {
-        let u: Vec<u16> = b[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let u: Vec<u16> = b[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
         return String::from_utf16_lossy(&u);
     }
     if b.len() >= 2 && b[0] == 0xFE && b[1] == 0xFF {
-        let u: Vec<u16> = b[2..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let u: Vec<u16> = b[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
         return String::from_utf16_lossy(&u);
     }
     b.iter().map(|&c| c as char).collect()
@@ -1161,21 +1629,37 @@ pub const DEFAULT_DATE: &str = "1989-05-30";
 /// the chrono folders active that day add their lines and take theirs off, as the game does
 /// - Spandau's 1991 timetable change replaces line "5 & 5N" and sixteen others.
 pub fn list_lines(map: &str, date: &str) -> Result<Vec<LineInfo>> {
-    let map_dir = resolve_content(map)?.parent().map(|p| p.to_path_buf()).context("map folder")?;
+    let map_dir = resolve_content(map)?
+        .parent()
+        .map(|p| p.to_path_buf())
+        .context("map folder")?;
     lines_on(&map_dir, date)
 }
 
 fn lines_on(map_dir: &Path, date: &str) -> Result<Vec<LineInfo>> {
-    let date = if date.trim().is_empty() { DEFAULT_DATE } else { date.trim() };
-    let code = omsi_map::date_code(date).with_context(|| format!("'{date}' is not a date (YYYY-MM-DD)"))?;
+    let date = if date.trim().is_empty() {
+        DEFAULT_DATE
+    } else {
+        date.trim()
+    };
+    let code = omsi_map::date_code(date)
+        .with_context(|| format!("'{date}' is not a date (YYYY-MM-DD)"))?;
     let chrono = omsi_map::active_chrono_dirs(map_dir, code);
     let off = omsi_map::chrono_deactivated_lines(&chrono);
     let data = omsi_timetable::TimetableData::load_with_chrono(map_dir, &chrono, &off);
     // which tours run that day: the tour's mask as the game reads it (bits 0-6 Monday to
     // Sunday, 7 a public holiday, 8 school holidays, 9 school days: the original)
     let calendar = omsi_map::Calendar::load(&map_dir.join("Holidays.txt")).unwrap_or_default();
-    let day_bit = if calendar.is_holiday(code) { 1 << 7 } else { 1 << weekday(code) };
-    let school_bit = if calendar.in_holiday_range(code) { 1 << 8 } else { 1 << 9 };
+    let day_bit = if calendar.is_holiday(code) {
+        1 << 7
+    } else {
+        1 << weekday(code)
+    };
+    let school_bit = if calendar.in_holiday_range(code) {
+        1 << 8
+    } else {
+        1 << 9
+    };
     let mut out = Vec::new();
     for l in &data.lines {
         let mut termini: Vec<String> = Vec::new();
@@ -1183,28 +1667,66 @@ fn lines_on(map_dir: &Path, date: &str) -> Result<Vec<LineInfo>> {
         for t in &l.tours {
             let mask = t.extra.trim().parse::<i32>().unwrap_or(1023);
             let runs_on = |c: i32| {
-                let day = if calendar.is_holiday(c) { 1 << 7 } else { 1 << weekday(c) };
-                let school = if calendar.in_holiday_range(c) { 1 << 8 } else { 1 << 9 };
+                let day = if calendar.is_holiday(c) {
+                    1 << 7
+                } else {
+                    1 << weekday(c)
+                };
+                let school = if calendar.in_holiday_range(c) {
+                    1 << 8
+                } else {
+                    1 << 9
+                };
                 mask & day != 0 && mask & school != 0
             };
             let runs = mask & day_bit != 0 && mask & school_bit != 0;
-            let next_run = (0..400).map(|k| add_days(code, k)).find(|c| runs_on(*c)).map(|c| format!("{:04}-{:02}-{:02}", c / 10000, c / 100 % 100, c % 100));
+            let next_run = (0..400)
+                .map(|k| add_days(code, k))
+                .find(|c| runs_on(*c))
+                .map(|c| format!("{:04}-{:02}-{:02}", c / 10000, c / 100 % 100, c % 100));
             let mut trips = Vec::new();
             for tt in &t.trips {
-                let Some(trip) = data.trips.iter().find(|x| x.name.eq_ignore_ascii_case(&tt.trip)) else { continue };
+                let Some(trip) = data
+                    .trips
+                    .iter()
+                    .find(|x| x.name.eq_ignore_ascii_case(&tt.trip))
+                else {
+                    continue;
+                };
                 let departure = tt.departure as f64 * 60.0;
-                let duration = trip.profiles.get(tt.profile.max(0) as usize).or(trip.profiles.first()).map(|p| p.factor as f64 * 60.0).filter(|d| *d > 0.0).unwrap_or(600.0);
+                let duration = trip
+                    .profiles
+                    .get(tt.profile.max(0) as usize)
+                    .or(trip.profiles.first())
+                    .map(|p| p.factor as f64 * 60.0)
+                    .filter(|d| *d > 0.0)
+                    .unwrap_or(600.0);
                 // its stations: [station_typ2] objects, or the [station] records of a type-1
                 // trip (all of Novi Sad), which carry their stop's name themselves
                 let legacy: Vec<(i64, String)> = trip
                     .stations_legacy
                     .iter()
-                    .filter_map(|r| Some((r.first()?.trim().parse::<i64>().ok()?, r.get(2).map(|n| n.trim().to_string()).unwrap_or_default())))
+                    .filter_map(|r| {
+                        Some((
+                            r.first()?.trim().parse::<i64>().ok()?,
+                            r.get(2).map(|n| n.trim().to_string()).unwrap_or_default(),
+                        ))
+                    })
                     .collect();
-                let stations: Vec<i64> = if trip.stations.is_empty() { legacy.iter().map(|x| x.0).collect() } else { trip.stations.clone() };
+                let stations: Vec<i64> = if trip.stations.is_empty() {
+                    legacy.iter().map(|x| x.0).collect()
+                } else {
+                    trip.stations.clone()
+                };
                 let mut lens = Vec::new();
                 for w in stations.windows(2) {
-                    lens.push(data.stn_links.iter().find(|k| k.from_id == w[0] && k.to_id == w[1]).map(|k| k.length.max(1.0)).unwrap_or(500.0));
+                    lens.push(
+                        data.stn_links
+                            .iter()
+                            .find(|k| k.from_id == w[0] && k.to_id == w[1])
+                            .map(|k| k.length.max(1.0))
+                            .unwrap_or(500.0),
+                    );
                 }
                 let total: f64 = lens.iter().sum::<f64>().max(1.0);
                 let mut acc = 0.0;
@@ -1216,19 +1738,41 @@ fn lines_on(map_dir: &Path, date: &str) -> Result<Vec<LineInfo>> {
                         .iter()
                         .find(|b| b.object_id == *id)
                         .map(|b| b.name.trim().to_string())
-                        .or_else(|| legacy.iter().find(|x| x.0 == *id).map(|x| x.1.clone()).filter(|n| !n.is_empty()))
+                        .or_else(|| {
+                            legacy
+                                .iter()
+                                .find(|x| x.0 == *id)
+                                .map(|x| x.1.clone())
+                                .filter(|n| !n.is_empty())
+                        })
                         .unwrap_or_else(|| format!("stop {id}"));
-                    stops.push(StopInfo { name, arr: t_at, dep: if i == 0 { departure } else { t_at } });
+                    stops.push(StopInfo {
+                        name,
+                        arr: t_at,
+                        dep: if i == 0 { departure } else { t_at },
+                    });
                     if i < lens.len() {
                         acc += lens[i];
                     }
                 }
-                if !trip.terminus.trim().is_empty() && !termini.iter().any(|x| x == trip.terminus.trim()) {
+                if !trip.terminus.trim().is_empty()
+                    && !termini.iter().any(|x| x == trip.terminus.trim())
+                {
                     termini.push(trip.terminus.trim().to_string());
                 }
                 let from = stops.first().map(|s| s.name.clone()).unwrap_or_default();
                 let index = trips.len() + 1;
-                trips.push(TripInfo { name: trip.name.clone(), index, line: trip.line.trim().to_string(), from, terminus: trip.terminus.trim().to_string(), departure, arrival: departure + duration, stops, km: total / 1000.0 });
+                trips.push(TripInfo {
+                    name: trip.name.clone(),
+                    index,
+                    line: trip.line.trim().to_string(),
+                    from,
+                    terminus: trip.terminus.trim().to_string(),
+                    departure,
+                    arrival: departure + duration,
+                    stops,
+                    km: total / 1000.0,
+                });
             }
             // (a tour with no trip the timetable knows cannot be driven: not offered)
             if trips.is_empty() {
@@ -1236,10 +1780,24 @@ fn lines_on(map_dir: &Path, date: &str) -> Result<Vec<LineInfo>> {
             }
             let first = trips.first().map(|t| t.departure).unwrap_or(0.0);
             let last = trips.last().map(|t| t.arrival).unwrap_or(0.0);
-            tours.push(TourInfo { number: t.number.clone(), ai_group: t.ai_group.clone(), first, last, days: days_of(mask), runs, next_run, trips });
+            tours.push(TourInfo {
+                number: t.number.clone(),
+                ai_group: t.ai_group.clone(),
+                first,
+                last,
+                days: days_of(mask),
+                runs,
+                next_run,
+                trips,
+            });
         }
         tours.sort_by(|a, b| a.first.total_cmp(&b.first));
-        out.push(LineInfo { name: l.name.clone(), user_allowed: l.user_allowed, termini, tours });
+        out.push(LineInfo {
+            name: l.name.clone(),
+            user_allowed: l.user_allowed,
+            termini,
+            tours,
+        });
     }
     out.sort_by(|a, b| natural_key(&a.name).cmp(&natural_key(&b.name)));
     Ok(out)
@@ -1273,7 +1831,8 @@ fn weekday(code: i32) -> i32 {
     if m < 3 {
         y -= 1;
     }
-    let sunday0 = (y + y / 4 - y / 100 + y / 400 + t[((m - 1).clamp(0, 11)) as usize] + d).rem_euclid(7);
+    let sunday0 =
+        (y + y / 4 - y / 100 + y / 400 + t[((m - 1).clamp(0, 11)) as usize] + d).rem_euclid(7);
     (sunday0 + 6) % 7
 }
 
@@ -1287,10 +1846,18 @@ fn days_of(mask: i32) -> String {
         0x3f => "Mon-Sat".to_string(),
         0x60 => "Sat-Sun".to_string(),
         0 => String::new(),
-        w => (0..7).filter(|i| w & (1 << i) != 0).map(|i| names[i]).collect::<Vec<_>>().join(", "),
+        w => (0..7)
+            .filter(|i| w & (1 << i) != 0)
+            .map(|i| names[i])
+            .collect::<Vec<_>>()
+            .join(", "),
     };
     if mask & (1 << 7) != 0 && week != 0x7f {
-        out.push_str(if out.is_empty() { "holidays" } else { " & holidays" });
+        out.push_str(if out.is_empty() {
+            "holidays"
+        } else {
+            " & holidays"
+        });
     }
     match (mask & (1 << 8) != 0, mask & (1 << 9) != 0) {
         (true, false) => out.push_str(", school holidays"),
@@ -1330,21 +1897,45 @@ pub fn ibis_info(bus: &str, hof_name: &str, line: &str) -> Result<IbisInfo> {
     // the one another bus brings (the game borrows it the same way), else the bus's first
     let hof = omsi_vehicle::hof::depot_in(dir, hof_name)
         .or_else(|| omsi_vehicle::hof::depot_anywhere(hof_name))
-        .or_else(|| omsi_vehicle::hof::depot_files(dir).iter().find_map(|f| omsi_vehicle::Hof::load(f).ok()))
+        .or_else(|| {
+            omsi_vehicle::hof::depot_files(dir)
+                .iter()
+                .find_map(|f| omsi_vehicle::Hof::load(f).ok())
+        })
         .context("no depot file next to the bus")?;
     let hof = &hof;
     let line_digits: String = line.chars().take_while(|c| c.is_ascii_digit()).collect();
     let mut routes = Vec::new();
     for t in &hof.info_trips {
-        let matches = t.line.trim().eq_ignore_ascii_case(line.trim()) || (!line_digits.is_empty() && t.code.trim_start_matches('0').starts_with(line_digits.trim_start_matches('0')) && t.code.len() >= line_digits.len());
+        let matches = t.line.trim().eq_ignore_ascii_case(line.trim())
+            || (!line_digits.is_empty()
+                && t.code
+                    .trim_start_matches('0')
+                    .starts_with(line_digits.trim_start_matches('0'))
+                && t.code.len() >= line_digits.len());
         if !matches {
             continue;
         }
         let code = omsi_cfg::parse_i32(&t.route);
-        let terminus = hof.termini.iter().find(|x| x.code == code).and_then(|x| x.strings.first().cloned()).unwrap_or_default();
-        routes.push(IbisRoute { code: t.code.clone(), route: t.route.clone(), name: t.name.clone(), terminus_code: code, terminus });
+        let terminus = hof
+            .termini
+            .iter()
+            .find(|x| x.code == code)
+            .and_then(|x| x.strings.first().cloned())
+            .unwrap_or_default();
+        routes.push(IbisRoute {
+            code: t.code.clone(),
+            route: t.route.clone(),
+            name: t.name.clone(),
+            terminus_code: code,
+            terminus,
+        });
     }
-    Ok(IbisInfo { hof: hof.name.clone(), line_code: line_digits, routes })
+    Ok(IbisInfo {
+        hof: hof.name.clone(),
+        line_code: line_digits,
+        routes,
+    })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1398,7 +1989,14 @@ pub struct Profile {
 
 fn sessions() -> Vec<Session> {
     let dir = data_dir().join("sessions");
-    let mut out: Vec<Session> = std::fs::read_dir(&dir).map(|rd| rd.flatten().filter_map(|e| std::fs::read_to_string(e.path()).ok()).filter_map(|t| serde_json::from_str::<Session>(&t).ok()).collect()).unwrap_or_default();
+    let mut out: Vec<Session> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+                .filter_map(|t| serde_json::from_str::<Session>(&t).ok())
+                .collect()
+        })
+        .unwrap_or_default();
     out.sort_by(|a, b| b.time.cmp(&a.time));
     out
 }
@@ -1407,7 +2005,11 @@ fn sessions() -> Vec<Session> {
 /// minus twenty per crash and fifty per pedestrian; the level grows with the square root.
 fn xp_of(s: &Session) -> i64 {
     let on_time = (s.stops - s.early - s.late).max(0) as i64;
-    let xp = (s.metres / 100.0) as i64 + on_time * 5 + s.tickets as i64 * 2 + (s.seconds / 60.0) as i64 - s.crashes as i64 * 20 - s.hurt as i64 * 50 - s.jolts as i64;
+    let xp =
+        (s.metres / 100.0) as i64 + on_time * 5 + s.tickets as i64 * 2 + (s.seconds / 60.0) as i64
+            - s.crashes as i64 * 20
+            - s.hurt as i64 * 50
+            - s.jolts as i64;
     xp.max(0)
 }
 
@@ -1420,7 +2022,10 @@ fn level_of(xp: i64) -> (i64, i64) {
 /// Where a driver's personnel file is written: the content folder's `Drivers` (the
 /// original installation is only ever read).
 fn driver_write_path(root: &Path, name: &str) -> PathBuf {
-    content_dir().unwrap_or_else(|| root.to_path_buf()).join("Drivers").join(format!("{name}.odr"))
+    content_dir()
+        .unwrap_or_else(|| root.to_path_buf())
+        .join("Drivers")
+        .join(format!("{name}.odr"))
 }
 
 /// Where a driver's personnel file is read: the content folder's copy once the game has
@@ -1436,7 +2041,21 @@ fn driver_read_path(root: &Path, name: &str) -> PathBuf {
 
 pub fn list_profiles() -> Result<Vec<String>> {
     let root = root()?;
-    let odr_names = |dir: PathBuf| -> Vec<String> { std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("odr")).unwrap_or(false)).filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string())).collect()).unwrap_or_default() };
+    let odr_names = |dir: PathBuf| -> Vec<String> {
+        std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.extension()
+                            .map(|e| e.eq_ignore_ascii_case("odr"))
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     let mut names = odr_names(root.join("Drivers"));
     if let Some(c) = content_dir() {
         names.extend(odr_names(c.join("Drivers")));
@@ -1459,19 +2078,70 @@ pub fn get_profile(name: &str) -> Result<Profile> {
     }
     let file = driver_read_path(&root, name);
     let driver = omsi_content::driver::Driver::load(&file).ok();
-    let mine: Vec<Session> = sessions().into_iter().filter(|s| s.driver.eq_ignore_ascii_case(name)).collect();
+    let mine: Vec<Session> = sessions()
+        .into_iter()
+        .filter(|s| s.driver.eq_ignore_ascii_case(name))
+        .collect();
     let xp: i64 = mine.iter().map(xp_of).sum();
     let (level, next) = level_of(xp);
     let hours = mine.iter().map(|s| s.seconds).sum::<f64>() / 3600.0;
     let (km, stops, early, late, tickets, cash, crashes, hurt, rating) = match &driver {
-        Some(d) => (d.hektom / 10.0, d.bus_stops[0], d.bus_stops[1], d.bus_stops[2], d.tickets[0], d.tickets[1], d.crashes[0], d.crashes[1], [d.driving_percent(), d.comfort_percent().unwrap_or(100.0), d.ticket_percent().unwrap_or(100.0)]),
+        Some(d) => (
+            d.hektom / 10.0,
+            d.bus_stops[0],
+            d.bus_stops[1],
+            d.bus_stops[2],
+            d.tickets[0],
+            d.tickets[1],
+            d.crashes[0],
+            d.crashes[1],
+            [
+                d.driving_percent(),
+                d.comfort_percent().unwrap_or(100.0),
+                d.ticket_percent().unwrap_or(100.0),
+            ],
+        ),
         None => {
             let km = mine.iter().map(|s| s.metres).sum::<f64>() / 1000.0;
             let n = mine.len().max(1) as f64;
-            (km, mine.iter().map(|s| s.stops).sum(), mine.iter().map(|s| s.early).sum(), mine.iter().map(|s| s.late).sum(), mine.iter().map(|s| s.tickets as f64).sum(), mine.iter().map(|s| s.cash).sum(), mine.iter().map(|s| s.crashes).sum(), mine.iter().map(|s| s.hurt).sum(), [mine.iter().map(|s| s.driving).sum::<f64>() / n, mine.iter().map(|s| s.comfort).sum::<f64>() / n, mine.iter().map(|s| s.ticketing).sum::<f64>() / n])
+            (
+                km,
+                mine.iter().map(|s| s.stops).sum(),
+                mine.iter().map(|s| s.early).sum(),
+                mine.iter().map(|s| s.late).sum(),
+                mine.iter().map(|s| s.tickets as f64).sum(),
+                mine.iter().map(|s| s.cash).sum(),
+                mine.iter().map(|s| s.crashes).sum(),
+                mine.iter().map(|s| s.hurt).sum(),
+                [
+                    mine.iter().map(|s| s.driving).sum::<f64>() / n,
+                    mine.iter().map(|s| s.comfort).sum::<f64>() / n,
+                    mine.iter().map(|s| s.ticketing).sum::<f64>() / n,
+                ],
+            )
         }
     };
-    Ok(Profile { name: name.to_string(), file: format!("Drivers/{name}.odr"), hours, km, xp, level, next_level_xp: next, stops, early, late, tickets, cash, crashes, hurt, rating_driving: rating[0], rating_comfort: rating[1], rating_tickets: rating[2], sessions: mine.into_iter().take(40).collect(), exists: driver.is_some() })
+    Ok(Profile {
+        name: name.to_string(),
+        file: format!("Drivers/{name}.odr"),
+        hours,
+        km,
+        xp,
+        level,
+        next_level_xp: next,
+        stops,
+        early,
+        late,
+        tickets,
+        cash,
+        crashes,
+        hurt,
+        rating_driving: rating[0],
+        rating_comfort: rating[1],
+        rating_tickets: rating[2],
+        sessions: mine.into_iter().take(40).collect(),
+        exists: driver.is_some(),
+    })
 }
 
 /// Create the personnel file for a new driver (OMSI's own `.odr` format), so that the game
@@ -1487,7 +2157,16 @@ pub fn create_profile(name: &str, sex: &str) -> Result<Profile> {
         std::fs::create_dir_all(dir)?;
     }
     if !file.exists() && !driver_read_path(&root, name).exists() {
-        let d = omsi_content::driver::Driver { path: file.clone(), name: name.to_string(), sex: if sex.trim().is_empty() { "M".into() } else { sex.trim().to_string() }, ..Default::default() };
+        let d = omsi_content::driver::Driver {
+            path: file.clone(),
+            name: name.to_string(),
+            sex: if sex.trim().is_empty() {
+                "M".into()
+            } else {
+                sex.trim().to_string()
+            },
+            ..Default::default()
+        };
         d.save(&file)?;
     }
     let mut c = load_config();
@@ -1503,8 +2182,15 @@ pub fn delete_profile(name: &str) -> Result<()> {
     let file = driver_write_path(&root, name.trim());
     if file.exists() {
         std::fs::remove_file(&file)?;
-    } else if root.join("Drivers").join(format!("{}.odr", name.trim())).exists() {
-        return Err(anyhow!("'{}' belongs to the original OMSI 2 installation, which is not changed", name.trim()));
+    } else if root
+        .join("Drivers")
+        .join(format!("{}.odr", name.trim()))
+        .exists()
+    {
+        return Err(anyhow!(
+            "'{}' belongs to the original OMSI 2 installation, which is not changed",
+            name.trim()
+        ));
     }
     Ok(())
 }
@@ -1514,7 +2200,10 @@ pub fn delete_profile(name: &str) -> Result<()> {
 // game reads that first), else the original installation's, which is never written
 
 fn keyboard_cfg_write_path() -> Result<PathBuf> {
-    let cand = content_dir().unwrap_or(root()?).join("Inputs").join("keyboard.cfg");
+    let cand = content_dir()
+        .unwrap_or(root()?)
+        .join("Inputs")
+        .join("keyboard.cfg");
     if let Some(p) = cand.parent() {
         if (p.exists() || std::fs::create_dir_all(p).is_ok()) && omsi_cfg::is_writable(p) {
             return Ok(cand);
@@ -1563,16 +2252,28 @@ fn binding_from_json(v: &Value) -> Option<omsi_content::input::KeyBinding> {
 
 pub fn get_keybindings() -> Result<Value> {
     let path = keyboard_cfg_read_path()?;
-    let k = omsi_content::input::KeyboardCfg::load(&path)?.with_game_defaults().with_vr_defaults();
-    Ok(json!({ "game": k.game.iter().map(binding_to_json).collect::<Vec<_>>(), "vehicles": k.vehicles.iter().map(binding_to_json).collect::<Vec<_>>() }))
+    let k = omsi_content::input::KeyboardCfg::load(&path)?
+        .with_game_defaults()
+        .with_vr_defaults();
+    Ok(
+        json!({ "game": k.game.iter().map(binding_to_json).collect::<Vec<_>>(), "vehicles": k.vehicles.iter().map(binding_to_json).collect::<Vec<_>>() }),
+    )
 }
 
 /// Replace the bindings with the page's list. Written to a temp file and read back through
 /// the same loader the game uses before it replaces the real file, so a page bug never
 /// leaves the player with a `keyboard.cfg` the game itself cannot parse.
 pub fn save_keybindings(v: &Value) -> Result<()> {
-    let list = |k: &str| -> Vec<omsi_content::input::KeyBinding> { v.get(k).and_then(|x| x.as_array()).map(|a| a.iter().filter_map(binding_from_json).collect()).unwrap_or_default() };
-    let k = omsi_content::input::KeyboardCfg { game: list("game"), vehicles: list("vehicles") };
+    let list = |k: &str| -> Vec<omsi_content::input::KeyBinding> {
+        v.get(k)
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(binding_from_json).collect())
+            .unwrap_or_default()
+    };
+    let k = omsi_content::input::KeyboardCfg {
+        game: list("game"),
+        vehicles: list("vehicles"),
+    };
     let path = keyboard_cfg_write_path()?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -1610,11 +2311,22 @@ pub fn get_settings() -> Result<Value> {
 /// dropped when the file is written again (the game takes the last line of them, so a kept
 /// `texmemlimit=` would undo the page's `texture_memory=`).
 // (`navigator_opacity`: the opacity was the navigator's before it was the whole interface's)
-const SETTING_ALIASES: &[(&str, &str)] = &[("af", "anisotropy"), ("ambient_occlusion", "ssao"), ("fractal", "detail_textures"), ("lang", "language"), ("texmemlimit", "texture_memory"), ("navigator_opacity", "ui_opacity")];
+const SETTING_ALIASES: &[(&str, &str)] = &[
+    ("af", "anisotropy"),
+    ("ambient_occlusion", "ssao"),
+    ("fractal", "detail_textures"),
+    ("lang", "language"),
+    ("texmemlimit", "texture_memory"),
+    ("navigator_opacity", "ui_opacity"),
+];
 
 fn setting_key(k: &str) -> String {
     let k = k.trim().to_ascii_lowercase();
-    SETTING_ALIASES.iter().find(|(alias, _)| *alias == k).map(|(_, key)| key.to_string()).unwrap_or(k)
+    SETTING_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == k)
+        .map(|(_, key)| key.to_string())
+        .unwrap_or(k)
 }
 
 /// The interface's languages: the settings' code (OMSI's three-letter style), the name in
@@ -1631,7 +2343,9 @@ pub fn language_code(s: &str) -> &'static str {
     let s = s.trim().to_lowercase();
     LANGUAGES
         .iter()
-        .find(|(code, _, _, aliases)| code.eq_ignore_ascii_case(&s) || aliases.iter().any(|a| *a == s))
+        .find(|(code, _, _, aliases)| {
+            code.eq_ignore_ascii_case(&s) || aliases.iter().any(|a| *a == s)
+        })
         .map(|l| l.0)
         .unwrap_or("ENG")
 }
@@ -1639,13 +2353,22 @@ pub fn language_code(s: &str) -> &'static str {
 /// The interface tables' code of a language (`ru`, `ja` ...; empty for English).
 pub fn language_iso(code: &str) -> &'static str {
     let c = language_code(code);
-    LANGUAGES.iter().find(|l| l.0 == c).map(|l| if l.2 == "en" { "" } else { l.2 }).unwrap_or("")
+    LANGUAGES
+        .iter()
+        .find(|l| l.0 == c)
+        .map(|l| if l.2 == "en" { "" } else { l.2 })
+        .unwrap_or("")
 }
 
 /// `vanilla` (as OMSI 2), `vanilla_plus` or `enhanced`, from the ways a file may spell them
 /// (as the game's `settings::graphics_mode`).
 pub fn graphics_mode(v: &str) -> &'static str {
-    match v.trim().to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
+    match v
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_")
+        .as_str()
+    {
         "enhanced" | "1" => "enhanced",
         "vanilla" | "classic" | "original" | "omsi" | "omsi2" | "omsi_2" => "vanilla",
         _ => "vanilla_plus",
@@ -1676,11 +2399,70 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
     // the launcher gives the graphics card up while a game runs (off: it stays drawn)
     v["launcher_rest"] = json!(true);
     // OMSI's own options
-    for (k, d) in [("maintenance", json!(0)), ("ai_unsched_factor", json!(100)), ("ai_max_scheduled", json!(0)), ("ai_max_parked", json!(0)), ("use_real_time", json!(false)), ("use_real_date", json!(false)), ("use_real_year", json!(false)), ("collision_vehicles", json!(true)), ("collision_objects", json!(true)), ("collision_pedestrians", json!(true)), ("head_movement", json!(true)), ("driverview_smooth", json!(true)), ("hands_in_cab", json!(false)), ("alt_view", json!(true))] {
+    for (k, d) in [
+        ("maintenance", json!(0)),
+        ("ai_unsched_factor", json!(100)),
+        ("ai_max_scheduled", json!(0)),
+        ("ai_max_parked", json!(0)),
+        ("use_real_time", json!(false)),
+        ("use_real_date", json!(false)),
+        ("use_real_year", json!(false)),
+        ("collision_vehicles", json!(true)),
+        ("collision_objects", json!(true)),
+        ("collision_pedestrians", json!(true)),
+        ("head_movement", json!(true)),
+        ("driverview_smooth", json!(true)),
+        ("hands_in_cab", json!(false)),
+        ("alt_view", json!(true)),
+    ] {
         v[k] = d;
     }
     // neoOMSI's own: what passengers say, OMSI's route arrows, getting up from the seat
-    for (k, d) in [("pax_voices", json!("all")), ("nav_arrows", json!(false)), ("nav_ai", json!(true)), ("nav_topbar", json!(true)), ("nav_turn", json!(true)), ("nav_stoplist", json!(true)), ("nav_stops_ext", json!(false)), ("time_speed", json!("1")), ("time_sync", json!(false)), ("metar_sync", json!(false)), ("metar_station", json!("")), ("shadow_casters", json!("all")), ("shadow_blobs", json!(true)), ("reflections", json!(true)), ("mouse_sens", json!(1.0)), ("graphics_api", json!("auto")), ("ctrl_off", json!("")), ("steering_linear", json!(false)), ("old_steering", json!(false)), ("red_steer_spd", json!(false)), ("ff_invert", json!(false)), ("ff_enabled", json!(true)), ("brake_hold", json!(true)), ("auto_clutch", json!(true)), ("wheel_range", json!(900.0)), ("wheel_lock", json!(0.0)), ("fov", json!(0.0)), ("camera_collision", json!(true)), ("steer_look", json!(false)), ("pedal_throttle", json!(1.0)), ("pedal_brake", json!(1.0)), ("seat_x", json!(0.0)), ("seat_y", json!(0.0)), ("seat_z", json!(0.0)), ("head_tracking", json!(false)), ("led_glow", json!(6)), ("led_mips", json!(1.3)), ("ui_scale", json!(1.0)), ("ui_scale_window", json!(true)), ("notes", json!(true)), ("mouse_steering", json!(false)), ("mouse_right_off", json!(false)), ("blinker_cancel", json!(true))] {
+    for (k, d) in [
+        ("pax_voices", json!("all")),
+        ("nav_arrows", json!(false)),
+        ("nav_ai", json!(true)),
+        ("nav_topbar", json!(true)),
+        ("nav_turn", json!(true)),
+        ("nav_stoplist", json!(true)),
+        ("nav_stops_ext", json!(false)),
+        ("time_speed", json!("1")),
+        ("time_sync", json!(false)),
+        ("metar_sync", json!(false)),
+        ("metar_station", json!("")),
+        ("shadow_casters", json!("all")),
+        ("shadow_blobs", json!(true)),
+        ("reflections", json!(true)),
+        ("mouse_sens", json!(1.0)),
+        ("graphics_api", json!("auto")),
+        ("ctrl_off", json!("")),
+        ("steering_linear", json!(false)),
+        ("old_steering", json!(false)),
+        ("red_steer_spd", json!(false)),
+        ("ff_invert", json!(false)),
+        ("ff_enabled", json!(true)),
+        ("brake_hold", json!(true)),
+        ("auto_clutch", json!(true)),
+        ("wheel_range", json!(900.0)),
+        ("wheel_lock", json!(0.0)),
+        ("fov", json!(0.0)),
+        ("camera_collision", json!(true)),
+        ("steer_look", json!(false)),
+        ("pedal_throttle", json!(1.0)),
+        ("pedal_brake", json!(1.0)),
+        ("seat_x", json!(0.0)),
+        ("seat_y", json!(0.0)),
+        ("seat_z", json!(0.0)),
+        ("head_tracking", json!(false)),
+        ("led_glow", json!(6)),
+        ("led_mips", json!(1.3)),
+        ("ui_scale", json!(1.0)),
+        ("ui_scale_window", json!(true)),
+        ("notes", json!(true)),
+        ("mouse_steering", json!(false)),
+        ("mouse_right_off", json!(false)),
+        ("blinker_cancel", json!(true)),
+    ] {
         v[k] = d;
     }
     v["steer_look_angle"] = json!(30.0);
@@ -1699,50 +2481,251 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
         if line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        let Some((k, val)) = line.split_once('=') else { continue };
+        let Some((k, val)) = line.split_once('=') else {
+            continue;
+        };
         let (k, val) = (setting_key(k), val.trim());
         let b = |x: &str| matches!(x.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes");
         match k.as_str() {
             "anisotropy" => v[&k] = json!(val.parse::<i64>().unwrap_or(8).clamp(1, 16)),
             "msaa" | "shadow_size" => v[&k] = json!(val.parse::<i64>().unwrap_or(0)),
-            "ui_opacity" | "volume" | "vol_ai" | "vol_scenery" | "min_obj_size" => v[&k] = json!(val.parse::<f64>().unwrap_or(0.0)),
-            "pax_density" => v[&k] = json!(val.trim_end_matches('%').parse::<f64>().map(|x| if x > 5.0 { x / 100.0 } else { x }).unwrap_or(1.0)),
-            "vr_scale" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.5, 1.0)).unwrap_or(0.65)),
-            "vr_head_smoothing_ms" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 30.0) as i64).unwrap_or(0)),
-            "vr_mirror_rate" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(-1.0, 360.0) as i64).unwrap_or(16)),
-            "mirror_size" => v[&k] = json!(val.parse::<i64>().map(|x| if x == 0 { 0 } else { x.clamp(64, 2048) }).unwrap_or(256)),
+            "ui_opacity" | "volume" | "vol_ai" | "vol_scenery" | "min_obj_size" => {
+                v[&k] = json!(val.parse::<f64>().unwrap_or(0.0))
+            }
+            "pax_density" => {
+                v[&k] = json!(
+                    val.trim_end_matches('%')
+                        .parse::<f64>()
+                        .map(|x| if x > 5.0 { x / 100.0 } else { x })
+                        .unwrap_or(1.0)
+                )
+            }
+            "vr_scale" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.5, 1.0))
+                        .unwrap_or(0.65)
+                )
+            }
+            "vr_head_smoothing_ms" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 30.0) as i64)
+                        .unwrap_or(0)
+                )
+            }
+            "vr_mirror_rate" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(-1.0, 360.0) as i64)
+                        .unwrap_or(16)
+                )
+            }
+            "mirror_size" => {
+                v[&k] = json!(
+                    val.parse::<i64>()
+                        .map(|x| if x == 0 { 0 } else { x.clamp(64, 2048) })
+                        .unwrap_or(256)
+                )
+            }
             "mirror_refresh" => v[&k] = json!(mirror_refresh(val)),
             "max_fps" => v[&k] = json!(val.parse::<f64>().map(|x| x as i64).unwrap_or(0)),
-            "max_obj_dist" => v[&k] = if val.eq_ignore_ascii_case("auto") { json!("auto") } else { json!(val.parse::<f64>().map(|m| (m.round() as i64).to_string()).unwrap_or_else(|_| "auto".into())) },
-            "ssao" | "shadows" | "shadow_blobs" | "navigator" | "enhanced" | "vr" | "vr_desktop_mirror" | "fullscreen" | "vsync" | "exact_fare" | "detail_textures" | "texture_compression" | "chat" | "tooltips" | "name_tags" | "show_fps" | "clouds" | "doppler" | "driver" | "use_real_time" | "use_real_date" | "use_real_year" | "collision_vehicles" | "collision_objects" | "collision_pedestrians" | "head_movement" | "driverview_smooth" | "hands_in_cab" | "alt_view" => v[&k] = json!(b(val)),
-            "maintenance" | "ai_unsched_factor" | "ai_max_scheduled" => v[&k] = json!(val.trim_end_matches('%').parse::<f64>().map(|x| x.max(0.0) as i64).unwrap_or(0)),
+            "max_obj_dist" => {
+                v[&k] = if val.eq_ignore_ascii_case("auto") {
+                    json!("auto")
+                } else {
+                    json!(
+                        val.parse::<f64>()
+                            .map(|m| (m.round() as i64).to_string())
+                            .unwrap_or_else(|_| "auto".into())
+                    )
+                }
+            }
+            "ssao"
+            | "shadows"
+            | "shadow_blobs"
+            | "navigator"
+            | "enhanced"
+            | "vr"
+            | "vr_desktop_mirror"
+            | "fullscreen"
+            | "vsync"
+            | "exact_fare"
+            | "detail_textures"
+            | "texture_compression"
+            | "chat"
+            | "tooltips"
+            | "name_tags"
+            | "show_fps"
+            | "clouds"
+            | "doppler"
+            | "driver"
+            | "use_real_time"
+            | "use_real_date"
+            | "use_real_year"
+            | "collision_vehicles"
+            | "collision_objects"
+            | "collision_pedestrians"
+            | "head_movement"
+            | "driverview_smooth"
+            | "hands_in_cab"
+            | "alt_view" => v[&k] = json!(b(val)),
+            "maintenance" | "ai_unsched_factor" | "ai_max_scheduled" => {
+                v[&k] = json!(
+                    val.trim_end_matches('%')
+                        .parse::<f64>()
+                        .map(|x| x.max(0.0) as i64)
+                        .unwrap_or(0)
+                )
+            }
             // (-1: no parked cars at all, #864)
-            "ai_max_parked" => v[&k] = json!(val.parse::<f64>().map(|x| x.max(-1.0) as i64).unwrap_or(0)),
-            "drive_keys" | "navigator_corner" | "boarding" | "render_scale" | "pax_voices" => v[&k] = json!(val),
-            "units" => v[&k] = json!(match val.to_ascii_lowercase().as_str() { "uk" | "british" => "uk", "imperial" => "imperial", _ => "metric" }),
+            "ai_max_parked" => {
+                v[&k] = json!(val.parse::<f64>().map(|x| x.max(-1.0) as i64).unwrap_or(0))
+            }
+            "drive_keys" | "navigator_corner" | "boarding" | "render_scale" | "pax_voices" => {
+                v[&k] = json!(val)
+            }
+            "units" => {
+                v[&k] = json!(match val.to_ascii_lowercase().as_str() {
+                    "uk" | "british" => "uk",
+                    "imperial" => "imperial",
+                    _ => "metric",
+                })
+            }
             "ctrl_off" => v[&k] = json!(val),
-            "metar_station" => v[&k] = json!(val.chars().filter(|c| c.is_ascii_alphabetic()).take(4).collect::<String>().to_ascii_uppercase()),
+            "metar_station" => {
+                v[&k] = json!(
+                    val.chars()
+                        .filter(|c| c.is_ascii_alphabetic())
+                        .take(4)
+                        .collect::<String>()
+                        .to_ascii_uppercase()
+                )
+            }
             "discord_app_id" => v[&k] = json!(val),
-            "graphics_api" => v[&k] = json!(match val.to_ascii_lowercase().as_str() { "vulkan" => "vulkan", "dx12" => "dx12", "gl" => "gl", _ => "auto" }),
-            "shadow_casters" => v[&k] = json!(if val.eq_ignore_ascii_case("omsi") { "omsi" } else { "all" }),
+            "graphics_api" => {
+                v[&k] = json!(match val.to_ascii_lowercase().as_str() {
+                    "vulkan" => "vulkan",
+                    "dx12" => "dx12",
+                    "gl" => "gl",
+                    _ => "auto",
+                })
+            }
+            "shadow_casters" => {
+                v[&k] = json!(if val.eq_ignore_ascii_case("omsi") {
+                    "omsi"
+                } else {
+                    "all"
+                })
+            }
             "ctrl_deadzone" => v[&k] = json!(val.parse::<f64>().unwrap_or(0.0).clamp(0.0, 0.3)),
             "mouse_sens" => v[&k] = json!(val.parse::<f64>().unwrap_or(1.0).clamp(0.1, 3.0)),
-            "ui_scale" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).unwrap_or(1.0).clamp(0.5, 2.0)),
+            "ui_scale" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .unwrap_or(1.0)
+                        .clamp(0.5, 2.0)
+                )
+            }
             "wheel_range" => v[&k] = json!(val.parse::<f64>().unwrap_or(900.0).clamp(90.0, 2880.0)),
-            "wheel_lock" => v[&k] = json!(val.parse::<f64>().map(|x| if x < 45.0 { 0.0 } else { x.min(2880.0) }).unwrap_or(0.0)),
-            "fov" => v[&k] = json!(val.parse::<f64>().map(|x| if x < 20.0 { 0.0 } else { x.min(120.0) }).unwrap_or(0.0)),
-            "camera_collision" | "steer_look" | "head_tracking" | "discord_status" | "launcher_rest" => v[&k] = json!(b(val)),
+            "wheel_lock" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .map(|x| if x < 45.0 { 0.0 } else { x.min(2880.0) })
+                        .unwrap_or(0.0)
+                )
+            }
+            "fov" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .map(|x| if x < 20.0 { 0.0 } else { x.min(120.0) })
+                        .unwrap_or(0.0)
+                )
+            }
+            "camera_collision" | "steer_look" | "head_tracking" | "discord_status"
+            | "launcher_rest" => v[&k] = json!(b(val)),
             // (how much of the mip chain an LED panel is held at, 0..4; a file from before
             // it was a number says 1 or 0)
-            "led_mips" => v[&k] = json!(val.trim().parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 4.0)).unwrap_or(1.3)),
+            "led_mips" => {
+                v[&k] = json!(
+                    val.trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 4.0))
+                        .unwrap_or(1.3)
+                )
+            }
             "led_glow" => v[&k] = json!(val.parse::<i64>().map(|x| x.clamp(0, 15)).unwrap_or(6)),
-            "look_sens" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.1, 2.0)).unwrap_or(1.0)),
-            "steer_look_angle" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 60.0)).unwrap_or(30.0)),
-            "steer_look_response" => v[&k] = json!(val.parse::<f64>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(0.05, 1.0)).unwrap_or(0.25)),
-            "pedal_throttle" | "pedal_brake" => v[&k] = json!(val.parse::<f64>().map(|x| x.clamp(0.25, 4.0)).unwrap_or(1.0)),
-            "seat_x" | "seat_y" | "seat_z" => v[&k] = json!(val.parse::<f64>().map(|x| x.clamp(-1.5, 1.5)).unwrap_or(0.0)),
-            "nav_arrows" | "nav_ai" | "nav_topbar" | "nav_turn" | "nav_stoplist" | "nav_stops_ext" | "time_sync" | "metar_sync" | "ui_scale_window" | "notes" | "update_check" | "update_auto" | "reflections" | "steering_linear" | "old_steering" | "red_steer_spd" | "ff_invert" | "ff_enabled" | "brake_hold" | "auto_clutch" | "mouse_steering" | "mouse_right_off" | "blinker_cancel" => v[&k] = json!(b(val)),
-            "time_speed" => v[&k] = json!(val.trim_start_matches(['x', 'X']).parse::<f64>().map(|x| x.clamp(1.0, 30.0)).map(|x| if x.fract() == 0.0 { format!("{}", x as i64) } else { x.to_string() }).unwrap_or_else(|_| "1".into())),
+            "look_sens" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.1, 2.0))
+                        .unwrap_or(1.0)
+                )
+            }
+            "steer_look_angle" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.0, 60.0))
+                        .unwrap_or(30.0)
+                )
+            }
+            "steer_look_response" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.05, 1.0))
+                        .unwrap_or(0.25)
+                )
+            }
+            "pedal_throttle" | "pedal_brake" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .map(|x| x.clamp(0.25, 4.0))
+                        .unwrap_or(1.0)
+                )
+            }
+            "seat_x" | "seat_y" | "seat_z" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .map(|x| x.clamp(-1.5, 1.5))
+                        .unwrap_or(0.0)
+                )
+            }
+            "nav_arrows" | "nav_ai" | "nav_topbar" | "nav_turn" | "nav_stoplist"
+            | "nav_stops_ext" | "time_sync" | "metar_sync" | "ui_scale_window" | "notes"
+            | "update_check" | "update_auto" | "reflections" | "steering_linear"
+            | "old_steering" | "red_steer_spd" | "ff_invert" | "ff_enabled" | "brake_hold"
+            | "auto_clutch" | "mouse_steering" | "mouse_right_off" | "blinker_cancel" => {
+                v[&k] = json!(b(val))
+            }
+            "time_speed" => {
+                v[&k] = json!(
+                    val.trim_start_matches(['x', 'X'])
+                        .parse::<f64>()
+                        .map(|x| x.clamp(1.0, 30.0))
+                        .map(|x| if x.fract() == 0.0 {
+                            format!("{}", x as i64)
+                        } else {
+                            x.to_string()
+                        })
+                        .unwrap_or_else(|_| "1".into())
+                )
+            }
             "language" => v[&k] = json!(language_code(val)),
             "graphics" | "renderer" => graphics = Some(graphics_mode(val)),
             // whole metres, as the page's select has them ("1500"); anything else (auto) is
@@ -1765,7 +2748,11 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
     }
     // a file without `graphics` (older builds) says only `enhanced`; its vanilla renderer is
     // what is now Vanilla+
-    let g = graphics.unwrap_or(if v["enhanced"] == json!(true) { "enhanced" } else { "vanilla_plus" });
+    let g = graphics.unwrap_or(if v["enhanced"] == json!(true) {
+        "enhanced"
+    } else {
+        "vanilla_plus"
+    });
     v["graphics"] = json!(g);
     v["enhanced"] = json!(g == "enhanced");
     // before version 2 the launcher wrote its old default `boarding=pay` for everybody
@@ -1783,14 +2770,25 @@ pub fn tutorials() -> Vec<(usize, String, String)> {
     let lang = content_language();
     let mut out = Vec::new();
     for n in 1..=4usize {
-        let p = [lang, "ENG", "DEU"].iter().map(|l| r.join("Tutorials").join(format!("menu_{n}_{l}.html"))).find(|p| p.is_file());
+        let p = [lang, "ENG", "DEU"]
+            .iter()
+            .map(|l| r.join("Tutorials").join(format!("menu_{n}_{l}.html")))
+            .find(|p| p.is_file());
         let Some(p) = p else { continue };
-        let Ok(bytes) = std::fs::read(&p) else { continue };
+        let Ok(bytes) = std::fs::read(&p) else {
+            continue;
+        };
         let html = omsi_cfg::codepage::decode(&bytes);
         let body = html.split_once("</style>").map(|x| x.1).unwrap_or(&html);
         let mut text = String::new();
         let mut tag = false;
-        for c in body.replace("</p>", "\n").replace("<br>", "\n").replace("</h2>", "\n").replace("<li>", "\n• ").chars() {
+        for c in body
+            .replace("</p>", "\n")
+            .replace("<br>", "\n")
+            .replace("</h2>", "\n")
+            .replace("<li>", "\n• ")
+            .chars()
+        {
             match c {
                 '<' => tag = true,
                 '>' => tag = false,
@@ -1798,8 +2796,14 @@ pub fn tutorials() -> Vec<(usize, String, String)> {
                 _ => {}
             }
         }
-        let text = text.replace("&quot;", "\"").replace("&amp;", "&").replace("&nbsp;", " ");
-        let mut lines = text.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty());
+        let text = text
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .replace("&nbsp;", " ");
+        let mut lines = text
+            .lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|l| !l.is_empty());
         let title = lines.next().unwrap_or_default();
         let rest: Vec<String> = lines.collect();
         out.push((n, title, rest.join("\n")));
@@ -1813,19 +2817,41 @@ pub fn tutorials() -> Vec<(usize, String, String)> {
 pub fn option_presets() -> Vec<(String, Value)> {
     let Ok(r) = root() else { return Vec::new() };
     let mut out = Vec::new();
-    let Ok(dir) = std::fs::read_dir(r.join("option_presets")) else { return out };
-    let mut files: Vec<PathBuf> = dir.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("oop")).unwrap_or(false)).collect();
+    let Ok(dir) = std::fs::read_dir(r.join("option_presets")) else {
+        return out;
+    };
+    let mut files: Vec<PathBuf> = dir
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .map(|e| e.eq_ignore_ascii_case("oop"))
+                .unwrap_or(false)
+        })
+        .collect();
     files.sort();
     for f in files {
-        let Ok(o) = omsi_content::options::Options::load(&f) else { continue };
-        let name = f.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let Ok(o) = omsi_content::options::Options::load(&f) else {
+            continue;
+        };
+        let name = f
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let mut v = json!({});
         if !cfg!(target_os = "android") {
             v["max_fps"] = json!(o.i32("maxfps", 0).max(0));
         }
         v["min_obj_size"] = json!(o.f32("performance_minobjsize", 0.013) as f64);
-        v["max_obj_dist"] = json!((o.f32("performance_maxobjdist", 900.0).round() as i64).to_string());
-        if let Some(af) = o.values.get("texfilter").and_then(|x| x.get(1)).and_then(|x| x.parse::<i64>().ok()) {
+        v["max_obj_dist"] =
+            json!((o.f32("performance_maxobjdist", 900.0).round() as i64).to_string());
+        if let Some(af) = o
+            .values
+            .get("texfilter")
+            .and_then(|x| x.get(1))
+            .and_then(|x| x.parse::<i64>().ok())
+        {
             v["anisotropy"] = json!(af.clamp(1, 16));
         }
         let mem = o.f32("texmemlimit", 0.0);
@@ -1846,7 +2872,12 @@ pub fn option_presets() -> Vec<(String, Value)> {
 #[cfg(unix)]
 fn physical_memory() -> Option<u64> {
     // SAFETY: sysconf only reads system values
-    let (pages, size) = unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
+    let (pages, size) = unsafe {
+        (
+            libc::sysconf(libc::_SC_PHYS_PAGES),
+            libc::sysconf(libc::_SC_PAGESIZE),
+        )
+    };
     (pages > 0 && size > 0).then(|| pages as u64 * size as u64)
 }
 
@@ -1865,8 +2896,27 @@ pub fn save_settings(v: &Value) -> Result<()> {
 /// The settings a graphics profile holds: what the Graphics tab shows, except the machine's
 /// own (fullscreen, graphics API).
 pub const GRAPHICS_PROFILE_KEYS: [&str; 21] = [
-    "graphics", "msaa", "render_scale", "anisotropy", "shadow_size", "ssao", "shadows", "shadow_casters", "detail_textures", "led_glow", "led_mips", "reflections", "clouds",
-    "vsync", "max_fps", "view_distance", "max_obj_dist", "min_obj_size", "mirror_size", "texture_memory", "texture_compression",
+    "graphics",
+    "msaa",
+    "render_scale",
+    "anisotropy",
+    "shadow_size",
+    "ssao",
+    "shadows",
+    "shadow_casters",
+    "detail_textures",
+    "led_glow",
+    "led_mips",
+    "reflections",
+    "clouds",
+    "vsync",
+    "max_fps",
+    "view_distance",
+    "max_obj_dist",
+    "min_obj_size",
+    "mirror_size",
+    "texture_memory",
+    "texture_compression",
 ];
 
 fn graphics_profiles_path() -> PathBuf {
@@ -1875,13 +2925,23 @@ fn graphics_profiles_path() -> PathBuf {
 
 /// The saved graphics profiles by name (`~/.neoomsi/graphics_profiles.json`).
 pub fn graphics_profiles() -> std::collections::BTreeMap<String, Value> {
-    std::fs::read_to_string(graphics_profiles_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    std::fs::read_to_string(graphics_profiles_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 /// Keep the graphics of `settings` as profile `name` (an existing one of that name is
 /// replaced). Returns the name as kept.
 pub fn save_graphics_profile(name: &str, settings: &Value) -> Result<String> {
-    let name: String = name.chars().filter(|c| !c.is_control()).collect::<String>().trim().chars().take(40).collect();
+    let name: String = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(40)
+        .collect();
     if name.is_empty() {
         return Err(anyhow!("Give the profile a name."));
     }
@@ -1893,7 +2953,10 @@ pub fn save_graphics_profile(name: &str, settings: &Value) -> Result<String> {
     }
     let mut all = graphics_profiles();
     all.insert(name.clone(), Value::Object(profile));
-    std::fs::write(graphics_profiles_path(), serde_json::to_string_pretty(&all)?)?;
+    std::fs::write(
+        graphics_profiles_path(),
+        serde_json::to_string_pretty(&all)?,
+    )?;
     Ok(name)
 }
 
@@ -1901,7 +2964,10 @@ pub fn save_graphics_profile(name: &str, settings: &Value) -> Result<String> {
 pub fn delete_graphics_profile(name: &str) -> Result<()> {
     let mut all = graphics_profiles();
     all.remove(name);
-    std::fs::write(graphics_profiles_path(), serde_json::to_string_pretty(&all)?)?;
+    std::fs::write(
+        graphics_profiles_path(),
+        serde_json::to_string_pretty(&all)?,
+    )?;
     Ok(())
 }
 
@@ -1919,7 +2985,17 @@ pub fn apply_graphics_profile(profile: &Value, settings: &mut Value) {
 pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
     let b = |k: &str, d: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(d) as u8;
     // a number, also as the string a select gives
-    let n = |k: &str, d: i64| v.get(k).and_then(|x| x.as_i64().or_else(|| x.as_f64().or_else(|| x.as_str().and_then(|s| s.trim().parse::<f64>().ok())).map(|f| f as i64))).unwrap_or(d);
+    let n = |k: &str, d: i64| {
+        v.get(k)
+            .and_then(|x| {
+                x.as_i64().or_else(|| {
+                    x.as_f64()
+                        .or_else(|| x.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+                        .map(|f| f as i64)
+                })
+            })
+            .unwrap_or(d)
+    };
     let f = |k: &str, d: f64| v.get(k).and_then(|x| x.as_f64()).unwrap_or(d);
     let text = format!(
         "# neoOMSI settings (written by the launcher)\nversion=2\nmsaa={}\nanisotropy={}\nssao={}\nshadows={}\nshadow_size={}\nnavigator={}\nui_opacity={}\nnavigator_corner={}\nboarding={}\ndetail_textures={}\nexact_fare={}\nenhanced={}\ngraphics={}\nfullscreen={}\nvsync={}\nvolume={}\ndrive_keys={}\nrender_scale={}\nview_distance={}\nlanguage={}\nunits={}\ntexture_memory={}\ntexture_compression={}\nchat={}\ntooltips={}\nname_tags={}\nshow_fps={}\nclouds={}\npax_density={}\nvol_ai={}\nvol_scenery={}\nmirror_size={}\ndoppler={}\ndriver={}\nmax_fps={}\nmin_obj_size={}\nmax_obj_dist={}\n",
@@ -1930,16 +3006,28 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         n("shadow_size", 2048),
         b("navigator", true),
         f("ui_opacity", 0.85),
-        v.get("navigator_corner").and_then(|x| x.as_str()).unwrap_or("bottom-left"),
+        v.get("navigator_corner")
+            .and_then(|x| x.as_str())
+            .unwrap_or("bottom-left"),
         v.get("boarding").and_then(|x| x.as_str()).unwrap_or("auto"),
         b("detail_textures", true),
         b("exact_fare", true),
-        (graphics_mode(v.get("graphics").and_then(|x| x.as_str()).unwrap_or("vanilla_plus")) == "enhanced") as u8,
-        graphics_mode(v.get("graphics").and_then(|x| x.as_str()).unwrap_or("vanilla_plus")),
+        (graphics_mode(
+            v.get("graphics")
+                .and_then(|x| x.as_str())
+                .unwrap_or("vanilla_plus")
+        ) == "enhanced") as u8,
+        graphics_mode(
+            v.get("graphics")
+                .and_then(|x| x.as_str())
+                .unwrap_or("vanilla_plus")
+        ),
         b("fullscreen", false),
         b("vsync", true),
         f("volume", 0.6),
-        v.get("drive_keys").and_then(|x| x.as_str()).unwrap_or("simple"),
+        v.get("drive_keys")
+            .and_then(|x| x.as_str())
+            .unwrap_or("simple"),
         // "auto" or a fraction, as a string (the page's select) or a number
         match v.get("render_scale") {
             Some(Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
@@ -1948,12 +3036,17 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         },
         // metres, or "auto" (the game's 1200 m)
         match v.get("view_distance") {
-            Some(Value::String(s)) if s.trim().parse::<f64>().map(|m| m > 0.0).unwrap_or(false) => s.trim().to_string(),
+            Some(Value::String(s)) if s.trim().parse::<f64>().map(|m| m > 0.0).unwrap_or(false) =>
+                s.trim().to_string(),
             Some(Value::Number(x)) if x.as_f64().map(|m| m > 0.0).unwrap_or(false) => x.to_string(),
             _ => "auto".to_string(),
         },
         language_code(v.get("language").and_then(|x| x.as_str()).unwrap_or("ENG")),
-        match v.get("units").and_then(|x| x.as_str()) { Some("uk") => "uk", Some("imperial") => "imperial", _ => "metric" },
+        match v.get("units").and_then(|x| x.as_str()) {
+            Some("uk") => "uk",
+            Some("imperial") => "imperial",
+            _ => "metric",
+        },
         n("texture_memory", 0).max(0),
         b("texture_compression", true),
         b("chat", true),
@@ -1964,7 +3057,10 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         f("pax_density", 1.0),
         f("vol_ai", 1.0),
         f("vol_scenery", 1.0),
-        match n("mirror_size", 256) { 0 => 0, x => x.clamp(64, 2048) },
+        match n("mirror_size", 256) {
+            0 => 0,
+            x => x.clamp(64, 2048),
+        },
         b("doppler", true),
         b("driver", true),
         n("max_fps", 0).max(0),
@@ -1996,7 +3092,11 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
     );
     let text = format!(
         "{text}pax_voices={}\nnav_arrows={}\nnav_ai={}\nnav_topbar={}\nnav_turn={}\nnav_stoplist={}\nnav_stops_ext={}\ntime_speed={}\nshadow_casters={}\nshadow_blobs={}\nctrl_deadzone={}\nupdate_check={}\nupdate_auto={}\nreflections={}\nmouse_sens={}\ngraphics_api={}\nctrl_off={}\nsteering_linear={}\nold_steering={}\nred_steer_spd={}\nff_invert={}\nwheel_range={}\nwheel_lock={}\nfov={}\ncamera_collision={}\npedal_throttle={}\npedal_brake={}\nseat_x={}\nseat_y={}\nseat_z={}\nsteer_look={}\nhead_tracking={}\nff_enabled={}\nbrake_hold={}\nauto_clutch={}\nauto_ibis={}\nled_glow={}\nled_mips={}\nui_scale={}\nui_scale_window={}\nnotes={}\nmouse_steering={}\nmouse_right_off={}\nblinker_cancel={}\n",
-        match v.get("pax_voices").and_then(|x| x.as_str()).unwrap_or("all") {
+        match v
+            .get("pax_voices")
+            .and_then(|x| x.as_str())
+            .unwrap_or("all")
+        {
             "tickets" => "tickets",
             "off" => "off",
             _ => "all",
@@ -2008,24 +3108,39 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         b("nav_stoplist", true),
         b("nav_stops_ext", false),
         match v.get("time_speed") {
-            Some(Value::String(x)) => x.trim().parse::<f64>().map(|x| x.clamp(1.0, 30.0)).unwrap_or(1.0),
+            Some(Value::String(x)) => x
+                .trim()
+                .parse::<f64>()
+                .map(|x| x.clamp(1.0, 30.0))
+                .unwrap_or(1.0),
             Some(Value::Number(x)) => x.as_f64().unwrap_or(1.0).clamp(1.0, 30.0),
             _ => 1.0,
         },
-        if v.get("shadow_casters").and_then(|x| x.as_str()) == Some("omsi") { "omsi" } else { "all" },
+        if v.get("shadow_casters").and_then(|x| x.as_str()) == Some("omsi") {
+            "omsi"
+        } else {
+            "all"
+        },
         b("shadow_blobs", true),
         f("ctrl_deadzone", 0.0).clamp(0.0, 0.3),
         b("update_check", true),
         b("update_auto", false),
         b("reflections", true),
         f("mouse_sens", 1.0).clamp(0.1, 3.0),
-        match v.get("graphics_api").and_then(|x| x.as_str()).unwrap_or("auto") {
+        match v
+            .get("graphics_api")
+            .and_then(|x| x.as_str())
+            .unwrap_or("auto")
+        {
             "vulkan" => "vulkan",
             "dx12" => "dx12",
             "gl" => "gl",
             _ => "auto",
         },
-        v.get("ctrl_off").and_then(|x| x.as_str()).unwrap_or("").replace(['\n', '\r'], " "),
+        v.get("ctrl_off")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .replace(['\n', '\r'], " "),
         b("steering_linear", false),
         b("old_steering", false),
         b("red_steer_spd", false),
@@ -2054,16 +3169,57 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         b("mouse_right_off", false),
         b("blinker_cancel", true),
     );
-    let vr_scale = v.get("vr_scale").and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))).filter(|x| x.is_finite()).unwrap_or(0.65).clamp(0.5, 1.0);
-    let vr_head_smoothing_ms = v.get("vr_head_smoothing_ms").and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))).filter(|x| x.is_finite()).unwrap_or(0.0).clamp(0.0, 30.0);
-    let vr_mirror_rate = v.get("vr_mirror_rate").and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))).filter(|x| x.is_finite()).unwrap_or(16.0).clamp(-1.0, 360.0);
-    let text = format!("{text}vr={}\nvr_scale={vr_scale}\nvr_head_smoothing_ms={vr_head_smoothing_ms}\nvr_mirror_rate={vr_mirror_rate}\nvr_desktop_mirror={}\ndiscord_status={}\nlauncher_rest={}\n", b("vr", false), b("vr_desktop_mirror", true), b("discord_status", true), b("launcher_rest", true));
+    let vr_scale = v
+        .get("vr_scale")
+        .and_then(|x| {
+            x.as_f64()
+                .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+        })
+        .filter(|x| x.is_finite())
+        .unwrap_or(0.65)
+        .clamp(0.5, 1.0);
+    let vr_head_smoothing_ms = v
+        .get("vr_head_smoothing_ms")
+        .and_then(|x| {
+            x.as_f64()
+                .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+        })
+        .filter(|x| x.is_finite())
+        .unwrap_or(0.0)
+        .clamp(0.0, 30.0);
+    let vr_mirror_rate = v
+        .get("vr_mirror_rate")
+        .and_then(|x| {
+            x.as_f64()
+                .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+        })
+        .filter(|x| x.is_finite())
+        .unwrap_or(16.0)
+        .clamp(-1.0, 360.0);
+    let text = format!(
+        "{text}vr={}\nvr_scale={vr_scale}\nvr_head_smoothing_ms={vr_head_smoothing_ms}\nvr_mirror_rate={vr_mirror_rate}\nvr_desktop_mirror={}\ndiscord_status={}\nlauncher_rest={}\n",
+        b("vr", false),
+        b("vr_desktop_mirror", true),
+        b("discord_status", true),
+        b("launcher_rest", true)
+    );
     // what the page does not manage (keys of newer games, hand-written ones) stays as it
     // was in the file; other spellings of the keys just written go
     let mut text = text;
-    text.push_str(&format!("mirror_refresh={}\n", mirror_refresh(v.get("mirror_refresh").and_then(|x| x.as_str()).unwrap_or("full"))));
+    text.push_str(&format!(
+        "mirror_refresh={}\n",
+        mirror_refresh(
+            v.get("mirror_refresh")
+                .and_then(|x| x.as_str())
+                .unwrap_or("full")
+        )
+    ));
     text.push_str(&format!("look_sens={}\nsteer_look_angle={}\nsteer_look_response={}\ntime_sync={}\nmetar_sync={}\nmetar_station={}\n", f("look_sens", 1.0).clamp(0.1, 2.0), f("steer_look_angle", 30.0).clamp(0.0, 60.0), f("steer_look_response", 0.25).clamp(0.05, 1.0), b("time_sync", false), b("metar_sync", false), v.get("metar_station").and_then(|x| x.as_str()).unwrap_or("").chars().filter(|c| c.is_ascii_alphabetic()).take(4).collect::<String>().to_ascii_uppercase()));
-    let written: Vec<String> = text.lines().filter_map(|l| l.split_once('=')).map(|(k, _)| k.trim().to_ascii_lowercase()).collect();
+    let written: Vec<String> = text
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, _)| k.trim().to_ascii_lowercase())
+        .collect();
     for line in old.unwrap_or("").lines() {
         let t = line.trim();
         if t.is_empty() || t.starts_with('#') || t.starts_with(';') {
@@ -2088,20 +3244,40 @@ pub fn bus_preview(bus: &str, paint: &str) -> Result<String> {
     let c = load_config();
     let game = find_game(&c.game).context("the game binary was not found (set it under Setup)")?;
     let root = root()?;
-    let key: String = format!("{bus}|{paint}").chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect();
+    let key: String = format!("{bus}|{paint}")
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect();
     let out = data_dir().join("cache").join(format!("{key}.glb"));
     let bus_path = resolve_content(bus)?;
     // a bus inside an archive used in place changes with the archive
     let bus_path = omsi_cfg::vfs::archive_of(&bus_path).unwrap_or(bus_path);
-    let newest_input = [&bus_path, &game].iter().filter_map(|p| p.metadata().and_then(|m| m.modified()).ok()).max();
-    let fresh = out.metadata().and_then(|m| m.modified()).ok().zip(newest_input).map(|(o, b)| o >= b).unwrap_or(false);
+    let newest_input = [&bus_path, &game]
+        .iter()
+        .filter_map(|p| p.metadata().and_then(|m| m.modified()).ok())
+        .max();
+    let fresh = out
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .zip(newest_input)
+        .map(|(o, b)| o >= b)
+        .unwrap_or(false);
     if !fresh {
         let mut cmd = std::process::Command::new(&game);
-        cmd.arg("--root").arg(&root).arg("--bus").arg(bus).arg("--export-glb").arg(&out);
+        cmd.arg("--root")
+            .arg(&root)
+            .arg("--bus")
+            .arg(bus)
+            .arg("--export-glb")
+            .arg(&out);
         if !paint.trim().is_empty() {
             cmd.arg("--paint").arg(paint.trim());
         }
-        let status = cmd.env("RUST_LOG", "warn").status().context("running the game for the preview")?;
+        let status = cmd
+            .env("RUST_LOG", "warn")
+            .status()
+            .context("running the game for the preview")?;
         if !status.success() || !out.exists() {
             return Err(anyhow!("the game could not export {bus}"));
         }
@@ -2181,7 +3357,14 @@ pub struct SavedSituation {
 /// What can be continued on `map` (#341): the last situation, then the save slots the game
 /// writes into `Saves` of the map's folder in the content folder, the newest first.
 pub fn saved_situations(map: &str) -> Vec<SavedSituation> {
-    let mut out: Vec<SavedSituation> = last_situation(map).map(|f| SavedSituation { saved: modified_secs(&f), file: f, name: "Last situation".into() }).into_iter().collect();
+    let mut out: Vec<SavedSituation> = last_situation(map)
+        .map(|f| SavedSituation {
+            saved: modified_secs(&f),
+            file: f,
+            name: "Last situation".into(),
+        })
+        .into_iter()
+        .collect();
     if let (Some(dir), Some(c)) = (Path::new(&map.replace('\\', "/")).parent(), content_dir()) {
         out.extend(save_slots(&c.join(dir).join("Saves")));
     }
@@ -2189,7 +3372,12 @@ pub fn saved_situations(map: &str) -> Vec<SavedSituation> {
 }
 
 fn modified_secs(p: &Path) -> u64 {
-    std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// The situations in a map's `Saves` folder, the newest first, by their `[name]`.
@@ -2204,10 +3392,26 @@ fn save_slots(dir: &Path) -> Vec<SavedSituation> {
             // (the `[name]` line alone: the lists ask again every few seconds, and a whole
             // situation holds every variable of every vehicle; the game writes them in
             // UTF-16, as OMSI does)
-            let text = std::fs::read(&f).map(|b| omsi_cfg::decode_text(&b[..b.len().min(8192) & !1])).unwrap_or_default();
+            let text = std::fs::read(&f)
+                .map(|b| omsi_cfg::decode_text(&b[..b.len().min(8192) & !1]))
+                .unwrap_or_default();
             let mut lines = text.lines().map(str::trim);
-            let name = lines.by_ref().find(|l| l.eq_ignore_ascii_case("[name]")).and_then(|_| lines.next()).map(str::to_string).filter(|n| !n.is_empty()).unwrap_or_else(|| f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
-            SavedSituation { saved: modified_secs(&f), file: f, name }
+            let name = lines
+                .by_ref()
+                .find(|l| l.eq_ignore_ascii_case("[name]"))
+                .and_then(|_| lines.next())
+                .map(str::to_string)
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| {
+                    f.file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                });
+            SavedSituation {
+                saved: modified_secs(&f),
+                file: f,
+                name,
+            }
         })
         .collect();
     slots.sort_by(|a, b| b.saved.cmp(&a.saved).then_with(|| b.name.cmp(&a.name)));
@@ -2224,9 +3428,22 @@ mod save_slot_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // as the game writes them: UTF-16 with its mark
-        let utf16 = |t: &str| [0xFFu8, 0xFE].into_iter().chain(t.encode_utf16().flat_map(|u| u.to_le_bytes())).collect::<Vec<u8>>();
-        std::fs::write(dir.join("Slot 1.osn"), utf16("\r\n[name]\r\nSlot 1: SD202, 09:00\r\n[description]\r\nx\r\n")).unwrap();
-        std::fs::write(dir.join("Slot 2.osn"), utf16("[name]\r\nSlot 2: NG272, 10:30\r\n")).unwrap();
+        let utf16 = |t: &str| {
+            [0xFFu8, 0xFE]
+                .into_iter()
+                .chain(t.encode_utf16().flat_map(|u| u.to_le_bytes()))
+                .collect::<Vec<u8>>()
+        };
+        std::fs::write(
+            dir.join("Slot 1.osn"),
+            utf16("\r\n[name]\r\nSlot 1: SD202, 09:00\r\n[description]\r\nx\r\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("Slot 2.osn"),
+            utf16("[name]\r\nSlot 2: NG272, 10:30\r\n"),
+        )
+        .unwrap();
         std::fs::write(dir.join("notes.txt"), "not a situation").unwrap();
         let mut names: Vec<String> = save_slots(&dir).into_iter().map(|s| s.name).collect();
         names.sort();
@@ -2244,10 +3461,22 @@ pub fn duty_args(d: &Duty) -> Result<Vec<String>> {
 
 fn duty_args_from_root(root: &Path, d: &Duty) -> Result<Vec<String>> {
     if let Some(t) = d.tutorial {
-        return Ok(vec!["--root".into(), root.to_string_lossy().to_string(), "--no-menu".into(), "--tutorial".into(), t.to_string()]);
+        return Ok(vec![
+            "--root".into(),
+            root.to_string_lossy().to_string(),
+            "--no-menu".into(),
+            "--tutorial".into(),
+            t.to_string(),
+        ]);
     }
     if let Some(sit) = d.situation.as_deref().filter(|s| !s.trim().is_empty()) {
-        let mut a = vec!["--root".into(), root.to_string_lossy().to_string(), "--no-menu".into(), "--situation".into(), sit.to_string()];
+        let mut a = vec![
+            "--root".into(),
+            root.to_string_lossy().to_string(),
+            "--no-menu".into(),
+            "--situation".into(),
+            sit.to_string(),
+        ];
         if let Some(p) = d.profile.as_deref().filter(|p| !p.trim().is_empty()) {
             a.extend(["--driver".into(), format!("Drivers/{}.odr", p.trim())]);
         }
@@ -2261,7 +3490,21 @@ fn duty_args_from_root(root: &Path, d: &Duty) -> Result<Vec<String>> {
         }
         return Ok(a);
     }
-    let mut a: Vec<String> = vec!["--root".into(), root.to_string_lossy().to_string(), "--no-menu".into(), "--map".into(), d.map.clone(), "--bus".into(), d.bus.clone(), "--time".into(), if d.time.trim().is_empty() { "09:00".into() } else { d.time.trim().to_string() }];
+    let mut a: Vec<String> = vec![
+        "--root".into(),
+        root.to_string_lossy().to_string(),
+        "--no-menu".into(),
+        "--map".into(),
+        d.map.clone(),
+        "--bus".into(),
+        d.bus.clone(),
+        "--time".into(),
+        if d.time.trim().is_empty() {
+            "09:00".into()
+        } else {
+            d.time.trim().to_string()
+        },
+    ];
     if let Some(p) = d.paint.as_deref().filter(|p| !p.trim().is_empty()) {
         a.extend(["--paint".into(), p.trim().to_string()]);
     }
@@ -2272,14 +3515,22 @@ fn duty_args_from_root(root: &Path, d: &Duty) -> Result<Vec<String>> {
         a.extend(["--number".into(), n.to_string()]);
     }
     // (a vehicle file taken for a depot from a broken ailists.cfg by older launchers is none)
-    if let Some(h) = d.hof.as_deref().filter(|h| !h.trim().is_empty() && !h.to_ascii_lowercase().contains(".bus") && !h.to_ascii_lowercase().contains(".ovh")) {
+    if let Some(h) = d.hof.as_deref().filter(|h| {
+        !h.trim().is_empty()
+            && !h.to_ascii_lowercase().contains(".bus")
+            && !h.to_ascii_lowercase().contains(".ovh")
+    }) {
         a.extend(["--hof".into(), h.trim().to_string()]);
     }
     // the entry point's place in the map's list; -1: the one nearest to the duty's first
     // stop (a free drive takes the list's first then)
     match d.entry {
         Some(e) if e < 0 => {
-            if d.line.as_deref().map(|l| !l.trim().is_empty()).unwrap_or(false) {
+            if d.line
+                .as_deref()
+                .map(|l| !l.trim().is_empty())
+                .unwrap_or(false)
+            {
                 a.push("--auto-entry".into());
             }
         }
@@ -2297,9 +3548,19 @@ fn duty_args_from_root(root: &Path, d: &Duty) -> Result<Vec<String>> {
             a[i + 1] = format!("{h:02}:{m:02}");
         }
     }
-    let mut date = d.date.as_deref().map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
+    let mut date = d
+        .date
+        .as_deref()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty());
     if let (true, Some((y, mo, dd, _, _))) = (on("use_real_date"), now) {
-        let year = if on("use_real_year") { y } else { date.as_deref().and_then(|x| x.split('-').next()?.parse::<i32>().ok()).unwrap_or(y) };
+        let year = if on("use_real_year") {
+            y
+        } else {
+            date.as_deref()
+                .and_then(|x| x.split('-').next()?.parse::<i32>().ok())
+                .unwrap_or(y)
+        };
         date = Some(format!("{year:04}-{mo:02}-{dd:02}"));
     }
     if let Some(dt) = date {
@@ -2334,22 +3595,49 @@ fn duty_args_from_root(root: &Path, d: &Duty) -> Result<Vec<String>> {
     if d.on_foot.unwrap_or(false) {
         a.push("--on-foot".into());
     }
-    let profile = d.profile.clone().filter(|p| !p.trim().is_empty()).unwrap_or_else(|| load_config().profile);
-    if let Some(season) = d.season.as_deref().map(str::trim).filter(|x| !x.is_empty() && !x.eq_ignore_ascii_case("auto")) {
+    let profile = d
+        .profile
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| load_config().profile);
+    if let Some(season) = d
+        .season
+        .as_deref()
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && !x.eq_ignore_ascii_case("auto"))
+    {
         a.extend(["--season".into(), season.to_ascii_lowercase()]);
     }
-    if let Some(lan) = d.lan.as_deref().map(str::trim).filter(|l| !l.is_empty() && !l.eq_ignore_ascii_case("off")) {
+    if let Some(lan) = d
+        .lan
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.eq_ignore_ascii_case("off"))
+    {
         if lan.eq_ignore_ascii_case("host") {
             // 0: the default port, or the next free one when a session runs here already
             a.extend(["--lan-host".into(), "0".into()]);
         } else if let Some(target) = lan.strip_prefix("join:") {
             let target = target.trim();
             omsi_net::describe_join(target).map_err(|e| anyhow!("LAN join: {e}"))?;
-            a.extend(["--lan-join".into(), if target.is_empty() { "auto".into() } else { target.to_string() }]);
+            a.extend([
+                "--lan-join".into(),
+                if target.is_empty() {
+                    "auto".into()
+                } else {
+                    target.to_string()
+                },
+            ]);
         } else {
-            return Err(anyhow!("LAN play: '{lan}' is neither host nor join:<code or address>"));
+            return Err(anyhow!(
+                "LAN play: '{lan}' is neither host nor join:<code or address>"
+            ));
         }
-        let name = d.lan_name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| profile.clone());
+        let name = d
+            .lan_name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| profile.clone());
         if !name.trim().is_empty() {
             a.extend(["--lan-name".into(), name.trim().to_string()]);
         }
@@ -2376,14 +3664,28 @@ pub fn launch(d: &Duty) -> Result<Launched> {
         let command = args.join(" ");
         log_to_file(&format!("game in this process: {command}"));
         *IN_PROCESS.lock().unwrap_or_else(|e| e.into_inner()) = Some(args);
-        return Ok(Launched { pid: std::process::id(), log: data_dir().join("game.log").to_string_lossy().to_string(), command, others: 0 });
+        return Ok(Launched {
+            pid: std::process::id(),
+            log: data_dir().join("game.log").to_string_lossy().to_string(),
+            command,
+            others: 0,
+        });
     }
     let c = load_config();
     let game = find_game(&c.game).context("the game binary was not found (set it under Setup)")?;
     let args = duty_args(d)?;
-    let profile = d.profile.clone().filter(|p| !p.trim().is_empty()).unwrap_or(c.profile);
+    let profile = d
+        .profile
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or(c.profile);
     let s = instances::start(&game, &args, d, &profile)?;
-    Ok(Launched { pid: s.pid, log: s.log.to_string_lossy().to_string(), command: s.command, others: s.others })
+    Ok(Launched {
+        pid: s.pid,
+        log: s.log.to_string_lossy().to_string(),
+        command: s.command,
+        others: s.others,
+    })
 }
 
 /// What a LAN join field means (or what is wrong with it), and the sessions hosted here.
@@ -2401,8 +3703,15 @@ pub fn check_join(text: &str) -> Value {
 pub fn log_to_file(line: &str) {
     use std::io::Write;
     let p = data_dir().join("launcher.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let _ = writeln!(f, "{now} {line}");
     }
 }
@@ -2421,9 +3730,14 @@ pub fn pick_mod(zip: bool) -> Option<PathBuf> {
     #[cfg(not(target_os = "android"))]
     {
         if zip {
-            rfd::FileDialog::new().set_title("Choose a mod archive").add_filter("Mod archive", &["zip", "7z", "rar"]).pick_file()
+            rfd::FileDialog::new()
+                .set_title("Choose a mod archive")
+                .add_filter("Mod archive", &["zip", "7z", "rar"])
+                .pick_file()
         } else {
-            rfd::FileDialog::new().set_title("Choose the mod folder").pick_folder()
+            rfd::FileDialog::new()
+                .set_title("Choose the mod folder")
+                .pick_folder()
         }
     }
     #[cfg(target_os = "android")]
@@ -2472,7 +3786,7 @@ pub fn take_in_process_launch() -> Option<Vec<String>> {
 /// Whether games run inside the launcher's own process (a phone).
 pub const IN_PROCESS_GAMES: bool = cfg!(target_os = "android");
 
-pub use instances::{list as list_instances, log_tail, stop as stop_instance, Instance};
+pub use instances::{Instance, list as list_instances, log_tail, stop as stop_instance};
 
 /// Terminal access to the same functions: `--cli lines '{"map":"maps/Grundorf/global.cfg"}'`.
 pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
@@ -2497,7 +3811,15 @@ pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
         "install" => {
             let cancel = a.get("cancel_after_ms").and_then(|v| v.as_u64());
             let mode = s("mode");
-            let p = install_mod_blocking(Path::new(&s("path")), if mode.is_empty() { "auto" } else { mode.as_str() }, cancel)?;
+            let p = install_mod_blocking(
+                Path::new(&s("path")),
+                if mode.is_empty() {
+                    "auto"
+                } else {
+                    mode.as_str()
+                },
+                cancel,
+            )?;
             if p.state == "failed" {
                 return Err(anyhow!("{}", p.message));
             }
@@ -2512,7 +3834,9 @@ pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
             let t0 = std::time::Instant::now();
             let mut stamps = vec![poll()?.stamp];
             let mut started = Vec::new();
-            while t0.elapsed().as_secs_f64() < watch || install::jobs().iter().any(|j| j.finished.is_none()) {
+            while t0.elapsed().as_secs_f64() < watch
+                || install::jobs().iter().any(|j| j.finished.is_none())
+            {
                 std::thread::sleep(std::time::Duration::from_millis(1000));
                 let p = poll()?;
                 started.extend(p.started);
@@ -2527,10 +3851,14 @@ pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
         }
         "instances" => serde_json::to_value(instances::list())?,
         "stop" => {
-            let by_itself = instances::stop(a.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32)?;
+            let by_itself =
+                instances::stop(a.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32)?;
             json!({ "stopped": true, "ended_by_itself": by_itself })
         }
-        "log" => json!(instances::log_tail(a.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32, a.get("lines").and_then(|v| v.as_u64()).unwrap_or(40) as usize)?),
+        "log" => json!(instances::log_tail(
+            a.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            a.get("lines").and_then(|v| v.as_u64()).unwrap_or(40) as usize
+        )?),
         "join" => check_join(&s("text")),
         "settings" => get_settings()?,
         // what the page's Save does: `--cli save_settings '{"view_distance":"1500"}'` (the
@@ -2557,7 +3885,6 @@ pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -2566,7 +3893,10 @@ mod tests {
         for empty in ["", "   "] {
             assert_eq!(super::vehicle_type_label(empty, path), "NL 202");
         }
-        assert_eq!(super::vehicle_type_label("  MAN_NL202  ", path), "MAN NL202");
+        assert_eq!(
+            super::vehicle_type_label("  MAN_NL202  ", path),
+            "MAN NL202"
+        );
     }
 
     #[test]
@@ -2579,7 +3909,11 @@ mod tests {
         std::fs::write(obj.join("a.o3d"), b"x").unwrap();
         omsi_cfg::add_content_root(root.clone());
         let model = cfgs.join("m.cfg");
-        std::fs::write(&model, "[mesh]\r\n..\\..\\..\\Sceneryobjects\\X\\a.o3d\r\n..\\..\\..\\Other\\b.o3d\r\n").unwrap();
+        std::fs::write(
+            &model,
+            "[mesh]\r\n..\\..\\..\\Sceneryobjects\\X\\a.o3d\r\n..\\..\\..\\Other\\b.o3d\r\n",
+        )
+        .unwrap();
         let packs = super::missing_packs_of(&model);
         omsi_cfg::remove_content_root(&root);
         let _ = std::fs::remove_dir_all(&root);
@@ -2590,41 +3924,106 @@ mod tests {
     fn the_games_options_survive_a_save() {
         // what the pause menu's Options change, read back as they were set
         let mut v = settings_from_text(None);
-        for (k, x) in [("steer_look", json!(true)), ("discord_status", json!(false)), ("launcher_rest", json!(false)), ("camera_collision", json!(false)), ("brake_hold", json!(false)), ("auto_clutch", json!(false)), ("ff_enabled", json!(false)), ("head_tracking", json!(true)), ("collision_objects", json!(false)), ("led_mips", json!(2.5)), ("led_glow", json!(11)), ("look_sens", json!(0.5)), ("blinker_cancel", json!(false)), ("pedal_brake", json!(1.5)), ("seat_y", json!(-0.1))] {
+        for (k, x) in [
+            ("steer_look", json!(true)),
+            ("discord_status", json!(false)),
+            ("launcher_rest", json!(false)),
+            ("camera_collision", json!(false)),
+            ("brake_hold", json!(false)),
+            ("auto_clutch", json!(false)),
+            ("ff_enabled", json!(false)),
+            ("head_tracking", json!(true)),
+            ("collision_objects", json!(false)),
+            ("led_mips", json!(2.5)),
+            ("led_glow", json!(11)),
+            ("look_sens", json!(0.5)),
+            ("blinker_cancel", json!(false)),
+            ("pedal_brake", json!(1.5)),
+            ("seat_y", json!(-0.1)),
+        ] {
             v[k] = x;
         }
         let back = settings_from_text(Some(&settings_to_text(&v, None)));
-        for k in ["steer_look", "discord_status", "launcher_rest", "camera_collision", "brake_hold", "auto_clutch", "ff_enabled", "head_tracking", "collision_objects", "led_mips", "led_glow", "look_sens", "blinker_cancel", "pedal_brake", "seat_y"] {
+        for k in [
+            "steer_look",
+            "discord_status",
+            "launcher_rest",
+            "camera_collision",
+            "brake_hold",
+            "auto_clutch",
+            "ff_enabled",
+            "head_tracking",
+            "collision_objects",
+            "led_mips",
+            "led_glow",
+            "look_sens",
+            "blinker_cancel",
+            "pedal_brake",
+            "seat_y",
+        ] {
             assert_eq!(back[k], v[k], "{k}");
         }
-        assert!(settings_from_text(None)["discord_status"].as_bool().unwrap());
+        assert!(
+            settings_from_text(None)["discord_status"]
+                .as_bool()
+                .unwrap()
+        );
         assert!(settings_from_text(None)["launcher_rest"].as_bool().unwrap());
         let prior = settings_from_text(Some("discord_status=1\ndiscord_status=0\n"));
         assert!(!prior["discord_status"].as_bool().unwrap());
         let mut enabled = prior;
         enabled["discord_status"] = json!(true);
         let saved = settings_to_text(&enabled, Some("discord_status=0\ndiscord_status=0\n"));
-        assert_eq!(saved.lines().filter(|line| line.starts_with("discord_status=")).count(), 1);
-        assert!(settings_from_text(Some(&saved))["discord_status"].as_bool().unwrap());
+        assert_eq!(
+            saved
+                .lines()
+                .filter(|line| line.starts_with("discord_status="))
+                .count(),
+            1
+        );
+        assert!(
+            settings_from_text(Some(&saved))["discord_status"]
+                .as_bool()
+                .unwrap()
+        );
         let custom_id = "discord_app_id=123456\n";
         let values = settings_from_text(Some(custom_id));
         assert_eq!(values["discord_app_id"], json!("123456"));
         let saved = settings_to_text(&values, Some(custom_id));
-        assert_eq!(settings_from_text(Some(&saved))["discord_app_id"], json!("123456"));
+        assert_eq!(
+            settings_from_text(Some(&saved))["discord_app_id"],
+            json!("123456")
+        );
     }
 
     #[test]
     fn dsc_files_give_name_and_description() {
-        let d = super::parse_dsc("\r\n[friendlyname]\r\nMAN\r\nNL202 - EN92\r\nBeige\r\n\r\n[description]\r\nAlthough the BVG did not purchase\r\n\r\n-Technical specifications-\r\n[end]\r\n");
+        let d = super::parse_dsc(
+            "\r\n[friendlyname]\r\nMAN\r\nNL202 - EN92\r\nBeige\r\n\r\n[description]\r\nAlthough the BVG did not purchase\r\n\r\n-Technical specifications-\r\n[end]\r\n",
+        );
         assert_eq!(d.name, vec!["MAN", "NL202 - EN92", "Beige"]);
-        assert_eq!(d.description, "Although the BVG did not purchase\n\n-Technical specifications-");
-        let w = super::parse_dsc("[name]\r\nGround Fog\r\n\r\n[description]\r\nHeavy ground fog limits the maximum visibility dangerously!\r\n[end]\r\n");
+        assert_eq!(
+            d.description,
+            "Although the BVG did not purchase\n\n-Technical specifications-"
+        );
+        let w = super::parse_dsc(
+            "[name]\r\nGround Fog\r\n\r\n[description]\r\nHeavy ground fog limits the maximum visibility dangerously!\r\n[end]\r\n",
+        );
         assert_eq!(w.name, vec!["Ground Fog"]);
-        assert_eq!(w.description, "Heavy ground fog limits the maximum visibility dangerously!");
+        assert_eq!(
+            w.description,
+            "Heavy ground fog limits the maximum visibility dangerously!"
+        );
         let p = std::path::Path::new("/x/maps/Spandau/global.cfg");
-        assert_eq!(super::dsc_candidates(p, "ENG"), vec![std::path::PathBuf::from("/x/maps/Spandau/global_ENG.dsc")]);
+        assert_eq!(
+            super::dsc_candidates(p, "ENG"),
+            vec![std::path::PathBuf::from("/x/maps/Spandau/global_ENG.dsc")]
+        );
         assert_eq!(super::dsc_candidates(p, "FRA").len(), 2);
-        assert_eq!(super::dsc_candidates(std::path::Path::new("/v/MAN_EN92_main.bus"), "DEU"), vec![std::path::PathBuf::from("/v/MAN_EN92_main_DEU.dsc")]);
+        assert_eq!(
+            super::dsc_candidates(std::path::Path::new("/v/MAN_EN92_main.bus"), "DEU"),
+            vec![std::path::PathBuf::from("/v/MAN_EN92_main_DEU.dsc")]
+        );
     }
 
     use super::*;
@@ -2633,17 +4032,39 @@ mod tests {
     /// with no plate, and a plate the player typed is kept as it stands.
     #[test]
     fn a_picked_trip_starts_the_rest_of_the_tour() {
-        let d = Duty { map: "maps/x/global.cfg".into(), bus: "Vehicles/x.bus".into(), time: "09:43".into(), line: Some("14".into()), tour: Some("1".into()), trip: Some("5".into()), whole_tour: true, ..Default::default() };
+        let d = Duty {
+            map: "maps/x/global.cfg".into(),
+            bus: "Vehicles/x.bus".into(),
+            time: "09:43".into(),
+            line: Some("14".into()),
+            tour: Some("1".into()),
+            trip: Some("5".into()),
+            whole_tour: true,
+            ..Default::default()
+        };
         let a = duty_args_from_root(Path::new("C:/OMSI 2"), &d).unwrap();
         let k = a.iter().position(|x| x == "--trip").unwrap();
-        assert_eq!((a[k + 1].as_str(), a[k + 2].as_str()), ("5", "--whole-tour"));
-        let alone = duty_args_from_root(Path::new("C:/OMSI 2"), &Duty { whole_tour: false, ..d }).unwrap();
+        assert_eq!(
+            (a[k + 1].as_str(), a[k + 2].as_str()),
+            ("5", "--whole-tour")
+        );
+        let alone = duty_args_from_root(
+            Path::new("C:/OMSI 2"),
+            &Duty {
+                whole_tour: false,
+                ..d
+            },
+        )
+        .unwrap();
         assert!(!alone.iter().any(|x| x == "--whole-tour"));
     }
 
     #[test]
     fn a_duty_keeps_its_plate_and_older_files_load_without_one() {
-        let old: Duty = serde_json::from_str(r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00"}"#).unwrap();
+        let old: Duty = serde_json::from_str(
+            r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00"}"#,
+        )
+        .unwrap();
         assert_eq!(old.plate, None);
         let typed: Duty = serde_json::from_str(r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00","plate":"B-AB 1234"}"#).unwrap();
         assert_eq!(typed.plate.as_deref(), Some("B-AB 1234"));
@@ -2652,9 +4073,15 @@ mod tests {
     /// The fleet number picked in the launcher reaches the game.
     #[test]
     fn a_duty_passes_its_fleet_number() {
-        let d: Duty = serde_json::from_str(r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00","number":"4711"}"#).unwrap();
+        let d: Duty = serde_json::from_str(
+            r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00","number":"4711"}"#,
+        )
+        .unwrap();
         let a = duty_args_from_root(Path::new("C:/OMSI 2"), &d).unwrap();
-        assert!(a.windows(2).any(|w| w[0] == "--number" && w[1] == "4711"), "{a:?}");
+        assert!(
+            a.windows(2).any(|w| w[0] == "--number" && w[1] == "4711"),
+            "{a:?}"
+        );
     }
 
     #[test]
@@ -2680,7 +4107,10 @@ mod tests {
             let v = settings_from_text(Some(&format!("mirror_refresh={mode}\n")));
             assert_eq!(v["mirror_refresh"], mode);
             let text = settings_to_text(&v, None);
-            assert!(text.lines().any(|l| l == format!("mirror_refresh={mode}")), "{text}");
+            assert!(
+                text.lines().any(|l| l == format!("mirror_refresh={mode}")),
+                "{text}"
+            );
         }
     }
 
@@ -2690,18 +4120,31 @@ mod tests {
         assert_eq!(v["anisotropy"], 16);
         let text = settings_to_text(&v, None);
         assert!(text.lines().any(|l| l == "anisotropy=16"), "{text}");
-        assert_eq!(settings_from_text(Some("anisotropy=32\n"))["anisotropy"], 16);
+        assert_eq!(
+            settings_from_text(Some("anisotropy=32\n"))["anisotropy"],
+            16
+        );
     }
 
     #[test]
     fn update_settings_round_trip() {
         // no file: look for updates, ask before installing
         let d = settings_from_text(None);
-        assert_eq!((d["update_check"].clone(), d["update_auto"].clone()), (json!(true), json!(false)));
+        assert_eq!(
+            (d["update_check"].clone(), d["update_auto"].clone()),
+            (json!(true), json!(false))
+        );
         let v = settings_from_text(Some("update_check=0\nupdate_auto=1\n"));
-        assert_eq!((v["update_check"].clone(), v["update_auto"].clone()), (json!(false), json!(true)));
+        assert_eq!(
+            (v["update_check"].clone(), v["update_auto"].clone()),
+            (json!(false), json!(true))
+        );
         let text = settings_to_text(&v, None);
-        assert!(text.lines().any(|l| l == "update_check=0") && text.lines().any(|l| l == "update_auto=1"), "{text}");
+        assert!(
+            text.lines().any(|l| l == "update_check=0")
+                && text.lines().any(|l| l == "update_auto=1"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -2714,20 +4157,37 @@ mod tests {
         settings["vr_desktop_mirror"] = json!(false);
         let saved = settings_to_text(&settings, None);
         let loaded = settings_from_text(Some(&saved));
-        for key in ["vr", "vr_scale", "vr_head_smoothing_ms", "vr_mirror_rate", "vr_desktop_mirror"] {
+        for key in [
+            "vr",
+            "vr_scale",
+            "vr_head_smoothing_ms",
+            "vr_mirror_rate",
+            "vr_desktop_mirror",
+        ] {
             assert_eq!(loaded[key], settings[key], "{key} was not saved");
         }
     }
 
     #[test]
     fn steering_view_settings_survive_the_launcher() {
-        let values = settings_from_text(Some("steer_look=1\nsteer_look_angle=45\nsteer_look_response=0.5\n"));
-        let saved = settings_to_text(&values, Some("steer_look_angle=10\nsteer_look_response=0.1\n"));
+        let values = settings_from_text(Some(
+            "steer_look=1\nsteer_look_angle=45\nsteer_look_response=0.5\n",
+        ));
+        let saved = settings_to_text(
+            &values,
+            Some("steer_look_angle=10\nsteer_look_response=0.1\n"),
+        );
         let loaded = settings_from_text(Some(&saved));
         assert_eq!(loaded["steer_look"], json!(true));
         assert_eq!(loaded["steer_look_angle"], json!(45.0));
         assert_eq!(loaded["steer_look_response"], json!(0.5));
-        assert_eq!(saved.lines().filter(|l| l.starts_with("steer_look_angle=")).count(), 1);
+        assert_eq!(
+            saved
+                .lines()
+                .filter(|l| l.starts_with("steer_look_angle="))
+                .count(),
+            1
+        );
         let invalid = settings_from_text(Some("steer_look_angle=NaN\nsteer_look_response=NaN\n"));
         assert_eq!(invalid["steer_look_angle"], json!(30.0));
         assert_eq!(invalid["steer_look_response"], json!(0.25));
@@ -2743,8 +4203,14 @@ mod tests {
             let loaded = settings_from_text(Some(&saved));
             assert_eq!(loaded["vr_mirror_rate"], json!(rate));
         }
-        assert_eq!(settings_from_text(Some("vr_mirror_rate=NaN\n"))["vr_mirror_rate"], json!(16));
-        assert_eq!(settings_from_text(Some("vr_mirror_rate=999\n"))["vr_mirror_rate"], json!(360));
+        assert_eq!(
+            settings_from_text(Some("vr_mirror_rate=NaN\n"))["vr_mirror_rate"],
+            json!(16)
+        );
+        assert_eq!(
+            settings_from_text(Some("vr_mirror_rate=999\n"))["vr_mirror_rate"],
+            json!(360)
+        );
     }
 
     /// The interface size: 100% without a file, kept as set, and a hand-written value out
@@ -2757,17 +4223,34 @@ mod tests {
         let text = settings_to_text(&v, None);
         assert!(text.lines().any(|l| l == "ui_scale=1.5"), "{text}");
         assert_eq!(settings_from_text(Some(&text))["ui_scale"], json!(1.5));
-        assert_eq!(settings_from_text(Some("ui_scale=9\n"))["ui_scale"], json!(2.0));
-        assert_eq!(settings_from_text(Some("ui_scale=0.1\n"))["ui_scale"], json!(0.5));
-        assert_eq!(settings_from_text(Some("ui_scale=big\n"))["ui_scale"], json!(1.0));
+        assert_eq!(
+            settings_from_text(Some("ui_scale=9\n"))["ui_scale"],
+            json!(2.0)
+        );
+        assert_eq!(
+            settings_from_text(Some("ui_scale=0.1\n"))["ui_scale"],
+            json!(0.5)
+        );
+        assert_eq!(
+            settings_from_text(Some("ui_scale=big\n"))["ui_scale"],
+            json!(1.0)
+        );
         // (growing with the window: on unless switched off, and kept)
         assert_eq!(settings_from_text(None)["ui_scale_window"], json!(true));
         let off = settings_from_text(Some("ui_scale_window=0\n"));
         assert_eq!(off["ui_scale_window"], json!(false));
-        assert!(settings_to_text(&off, None).lines().any(|l| l == "ui_scale_window=0"));
+        assert!(
+            settings_to_text(&off, None)
+                .lines()
+                .any(|l| l == "ui_scale_window=0")
+        );
         // (the notes in the corner: on unless switched off, and kept)
         assert_eq!(settings_from_text(None)["notes"], json!(true));
-        assert!(settings_to_text(&settings_from_text(Some("notes=0\n")), None).lines().any(|l| l == "notes=0"));
+        assert!(
+            settings_to_text(&settings_from_text(Some("notes=0\n")), None)
+                .lines()
+                .any(|l| l == "notes=0")
+        );
     }
 
     /// The opacity is the whole interface's now: a file of an older build, where it was the
@@ -2802,14 +4285,32 @@ mod tests {
         page["texture_compression"] = json!(false);
         page["texture_memory_auto"] = json!(2000);
         let text = settings_to_text(&page, Some(old));
-        for line in ["view_distance=2000", "language=FRA", "texture_memory=3000", "texture_compression=0", "detail_textures=0", "future_switch=7", "OMSI_Thing = on"] {
+        for line in [
+            "view_distance=2000",
+            "language=FRA",
+            "texture_memory=3000",
+            "texture_compression=0",
+            "detail_textures=0",
+            "future_switch=7",
+            "OMSI_Thing = on",
+        ] {
             assert!(text.lines().any(|l| l == line), "{line} missing in\n{text}");
         }
         // the old spellings would override what was just written: gone, and nothing twice
-        for gone in ["lang=", "texmemlimit=", "fractal=", "texture_memory_auto", "view_distance=1500"] {
+        for gone in [
+            "lang=",
+            "texmemlimit=",
+            "fractal=",
+            "texture_memory_auto",
+            "view_distance=1500",
+        ] {
             assert!(!text.contains(gone), "{gone} kept in\n{text}");
         }
-        let keys: Vec<&str> = text.lines().filter_map(|l| l.split_once('=')).map(|(k, _)| k.trim()).collect();
+        let keys: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, _)| k.trim())
+            .collect();
         let mut unique = keys.clone();
         unique.sort();
         unique.dedup();
@@ -2826,18 +4327,35 @@ mod tests {
     /// "5 & 5N" off and brings "130 & N30"; without a date it is the game's default day.
     #[test]
     fn lines_follow_the_chrono_date() {
-        let root = std::env::var_os("OMSI_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
+        let root = std::env::var_os("OMSI_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
         let map = root.join("maps/Berlin-Spandau");
         if !map.join("TTData").is_dir() {
             eprintln!("skipped: no {}", map.display());
             return;
         }
-        let names = |date: &str| lines_on(&map, date).unwrap().into_iter().map(|l| l.name).collect::<Vec<_>>();
+        let names = |date: &str| {
+            lines_on(&map, date)
+                .unwrap()
+                .into_iter()
+                .map(|l| l.name)
+                .collect::<Vec<_>>()
+        };
         let (then, now) = (names(""), names("2026-09-17"));
         assert_eq!(then, names(DEFAULT_DATE));
-        assert!(then.iter().any(|l| l == "5 & 5N") && !then.iter().any(|l| l == "130 & N30"), "{then:?}");
-        assert!(!now.iter().any(|l| l == "5 & 5N") && now.iter().any(|l| l == "130 & N30"), "{now:?}");
-        assert!(names("1991-06-01").iter().any(|l| l == "5 & 5N") && !names("1991-06-02").iter().any(|l| l == "5 & 5N"));
+        assert!(
+            then.iter().any(|l| l == "5 & 5N") && !then.iter().any(|l| l == "130 & N30"),
+            "{then:?}"
+        );
+        assert!(
+            !now.iter().any(|l| l == "5 & 5N") && now.iter().any(|l| l == "130 & N30"),
+            "{now:?}"
+        );
+        assert!(
+            names("1991-06-01").iter().any(|l| l == "5 & 5N")
+                && !names("1991-06-02").iter().any(|l| l == "5 & 5N")
+        );
         assert!(lines_on(&map, "someday").is_err());
     }
 
@@ -2848,17 +4366,41 @@ mod tests {
         assert_eq!(v["language"], "ENG");
         assert_eq!(v["texture_memory"], 0);
         let text = settings_to_text(&v, None);
-        for line in ["view_distance=auto", "language=ENG", "texture_memory=0", "texture_compression=1", "render_scale=auto"] {
+        for line in [
+            "view_distance=auto",
+            "language=ENG",
+            "texture_memory=0",
+            "texture_compression=1",
+            "render_scale=auto",
+        ] {
             assert!(text.lines().any(|l| l == line), "{line} missing in\n{text}");
         }
         // nonsense from a hand-edited file falls back to the defaults
-        let v = settings_from_text(Some("view_distance=far\nview_distance=-5\nlanguage=Klingon\ntexture_memory=lots\n"));
-        assert_eq!((v["view_distance"].as_str(), v["language"].as_str(), v["texture_memory"].as_i64()), (Some("auto"), Some("ENG"), Some(0)));
+        let v = settings_from_text(Some(
+            "view_distance=far\nview_distance=-5\nlanguage=Klingon\ntexture_memory=lots\n",
+        ));
+        assert_eq!(
+            (
+                v["view_distance"].as_str(),
+                v["language"].as_str(),
+                v["texture_memory"].as_i64()
+            ),
+            (Some("auto"), Some("ENG"), Some(0))
+        );
         // a number from a script instead of the select's string
-        let text = settings_to_text(&json!({ "view_distance": 900, "texture_memory": 1500.0 }), None);
-        assert!(text.contains("\nview_distance=900\n") && text.contains("\ntexture_memory=1500\n"), "{text}");
+        let text = settings_to_text(
+            &json!({ "view_distance": 900, "texture_memory": 1500.0 }),
+            None,
+        );
+        assert!(
+            text.contains("\nview_distance=900\n") && text.contains("\ntexture_memory=1500\n"),
+            "{text}"
+        );
         #[cfg(unix)]
-        assert!(physical_memory().unwrap_or(0) > 256_000_000, "the machine's memory is read");
+        assert!(
+            physical_memory().unwrap_or(0) > 256_000_000,
+            "the machine's memory is read"
+        );
     }
 }
 
@@ -2872,7 +4414,13 @@ pub fn local_now() -> Option<(i32, i32, i32, i32, i32)> {
         if libc::localtime_r(&t, &mut tm).is_null() {
             return None;
         }
-        Some((tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min))
+        Some((
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min,
+        ))
     }
 }
 
@@ -2880,7 +4428,13 @@ pub fn local_now() -> Option<(i32, i32, i32, i32, i32)> {
 pub fn local_now() -> Option<(i32, i32, i32, i32, i32)> {
     // SAFETY: GetLocalTime only fills the struct handed to it
     let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    Some((t.wYear as i32, t.wMonth as i32, t.wDay as i32, t.wHour as i32, t.wMinute as i32))
+    Some((
+        t.wYear as i32,
+        t.wMonth as i32,
+        t.wDay as i32,
+        t.wHour as i32,
+        t.wMinute as i32,
+    ))
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -2893,8 +4447,13 @@ mod omsi_options_tests {
     #[test]
     fn the_originals_options_are_read() {
         let root = std::path::Path::new("../../../OMSI 2 Original");
-        let Some(o) = super::omsi_options(root) else { return };
-        assert_eq!(o.last_map.as_deref(), Some("maps/Berlin-Spandau/global.cfg"));
+        let Some(o) = super::omsi_options(root) else {
+            return;
+        };
+        assert_eq!(
+            o.last_map.as_deref(),
+            Some("maps/Berlin-Spandau/global.cfg")
+        );
         assert_eq!(o.last_driver.as_deref(), Some("OMSI-Fan"));
         assert_eq!(o.settings["max_fps"], 30);
         assert_eq!(o.settings["mirror_size"], 512);

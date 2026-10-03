@@ -55,7 +55,11 @@ pub enum Status {
     Checking,
     UpToDate,
     Available(Release),
-    Downloading { release: Release, done: u64, total: u64 },
+    Downloading {
+        release: Release,
+        done: u64,
+        total: u64,
+    },
     Installing(Release),
     /// Android: the system's installer has the APK and asks the player.
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -82,7 +86,14 @@ pub struct Updater {
 
 impl Default for Updater {
     fn default() -> Self {
-        Updater { status: Arc::new(Mutex::new(Status::Idle)), dismissed: false, checked_once: false, auto_started: false, relaunched: false, updated: None }
+        Updater {
+            status: Arc::new(Mutex::new(Status::Idle)),
+            dismissed: false,
+            checked_once: false,
+            auto_started: false,
+            relaunched: false,
+            updated: None,
+        }
     }
 }
 
@@ -102,7 +113,14 @@ impl Updater {
     /// Ask GitHub for the latest release (in the background).
     pub fn check(&mut self) {
         self.checked_once = true;
-        if matches!(self.status(), Status::Checking | Status::Downloading { .. } | Status::Installing(_) | Status::WaitingForInstaller(_) | Status::Restarting(_)) {
+        if matches!(
+            self.status(),
+            Status::Checking
+                | Status::Downloading { .. }
+                | Status::Installing(_)
+                | Status::WaitingForInstaller(_)
+                | Status::Restarting(_)
+        ) {
             return;
         }
         self.dismissed = false;
@@ -124,17 +142,28 @@ impl Updater {
 
     /// Download and install `r` (in the background).
     pub fn install(&mut self, r: Release) {
-        if matches!(self.status(), Status::Downloading { .. } | Status::Installing(_) | Status::WaitingForInstaller(_) | Status::Restarting(_)) {
+        if matches!(
+            self.status(),
+            Status::Downloading { .. }
+                | Status::Installing(_)
+                | Status::WaitingForInstaller(_)
+                | Status::Restarting(_)
+        ) {
             return;
         }
         self.dismissed = false;
-        self.set(Status::Downloading { release: r.clone(), done: 0, total: r.size });
+        self.set(Status::Downloading {
+            release: r.clone(),
+            done: 0,
+            total: r.size,
+        });
         let status = self.status.clone();
         std::thread::spawn(move || {
             let result = download_and_install(&r, &status);
             if let Err(e) = result {
                 log::warn!("update to {}: {e:#}", r.version);
-                *lock(&status) = Status::Failed(format!("neoOMSI was not updated to {}: {e}", r.version));
+                *lock(&status) =
+                    Status::Failed(format!("neoOMSI was not updated to {}: {e}", r.version));
             }
         });
     }
@@ -172,7 +201,11 @@ pub fn current_version() -> &'static str {
 
 /// `0.1.7` / `v0.1.7` as numbers (missing parts are 0).
 fn version_parts(v: &str) -> Vec<u64> {
-    v.trim().trim_start_matches(['v', 'V']).split(['.', '-', '+']).map_while(|p| p.parse::<u64>().ok()).collect()
+    v.trim()
+        .trim_start_matches(['v', 'V'])
+        .split(['.', '-', '+'])
+        .map_while(|p| p.parse::<u64>().ok())
+        .collect()
 }
 
 /// Whether `candidate` is a newer version than `current`.
@@ -222,7 +255,11 @@ fn fetch_text(url: &str) -> anyhow::Result<String> {
     if let Some(p) = url.strip_prefix("file://") {
         return Ok(std::fs::read_to_string(p)?);
     }
-    let r = agent().get(url).header("Accept", "application/vnd.github+json").call().map_err(|e| anyhow::anyhow!("{}", short_error(&e)))?;
+    let r = agent()
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| anyhow::anyhow!("{}", short_error(&e)))?;
     Ok(r.into_body().read_to_string()?)
 }
 
@@ -242,25 +279,44 @@ pub fn latest() -> anyhow::Result<Option<Release>> {
 
 /// A release described as the GitHub API does, when newer than `current`.
 fn parse_release(v: &serde_json::Value, current: &str) -> anyhow::Result<Option<Release>> {
-    let tag = v["tag_name"].as_str().ok_or_else(|| anyhow::anyhow!("the release has no tag"))?;
+    let tag = v["tag_name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("the release has no tag"))?;
     let version = tag.trim_start_matches(['v', 'V']).to_string();
-    if v["draft"].as_bool() == Some(true) || v["prerelease"].as_bool() == Some(true) || !newer(&version, current) {
+    if v["draft"].as_bool() == Some(true)
+        || v["prerelease"].as_bool() == Some(true)
+        || !newer(&version, current)
+    {
         return Ok(None);
     }
-    let Some(want) = asset_name(&version) else { return Ok(None) };
-    let Some(a) = v["assets"].as_array().and_then(|a| a.iter().find(|a| a["name"].as_str() == Some(want.as_str()))) else {
+    let Some(want) = asset_name(&version) else {
+        return Ok(None);
+    };
+    let Some(a) = v["assets"]
+        .as_array()
+        .and_then(|a| a.iter().find(|a| a["name"].as_str() == Some(want.as_str())))
+    else {
         // (the release is still being built: its files come a few minutes after the tag)
         log::info!("update check: {version} has no {want} (yet)");
         return Ok(None);
     };
     Ok(Some(Release {
         version,
-        page: v["html_url"].as_str().map(str::to_string).unwrap_or_else(|| format!("{REPO_URL}/releases/tag/{tag}")),
+        page: v["html_url"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{REPO_URL}/releases/tag/{tag}")),
         notes: v["body"].as_str().unwrap_or("").to_string(),
         asset_name: want,
-        asset_url: a["browser_download_url"].as_str().ok_or_else(|| anyhow::anyhow!("the release file has no address"))?.to_string(),
+        asset_url: a["browser_download_url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("the release file has no address"))?
+            .to_string(),
         size: a["size"].as_u64().unwrap_or(0),
-        sha256: a["digest"].as_str().and_then(|d| d.strip_prefix("sha256:")).map(|h| h.to_ascii_lowercase()),
+        sha256: a["digest"]
+            .as_str()
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .map(|h| h.to_ascii_lowercase()),
     }))
 }
 
@@ -278,15 +334,20 @@ fn download(r: &Release, to: &Path, status: &Mutex<Status>) -> anyhow::Result<()
     let part = to.with_extension("part");
     let mut hasher = sha2::Sha256::new();
     let mut out = std::fs::File::create(&part)?;
-    let (mut reader, total): (Box<dyn Read>, u64) = if let Some(p) = r.asset_url.strip_prefix("file://") {
-        let f = std::fs::File::open(p)?;
-        let n = f.metadata()?.len();
-        (Box::new(f), n)
-    } else {
-        let resp = agent().get(&r.asset_url).header("Accept", "application/octet-stream").call().map_err(|e| anyhow::anyhow!("{}", short_error(&e)))?;
-        let n = resp.body().content_length().unwrap_or(r.size);
-        (Box::new(resp.into_body().into_reader()), n)
-    };
+    let (mut reader, total): (Box<dyn Read>, u64) =
+        if let Some(p) = r.asset_url.strip_prefix("file://") {
+            let f = std::fs::File::open(p)?;
+            let n = f.metadata()?.len();
+            (Box::new(f), n)
+        } else {
+            let resp = agent()
+                .get(&r.asset_url)
+                .header("Accept", "application/octet-stream")
+                .call()
+                .map_err(|e| anyhow::anyhow!("{}", short_error(&e)))?;
+            let n = resp.body().content_length().unwrap_or(r.size);
+            (Box::new(resp.into_body().into_reader()), n)
+        };
     let mut buf = vec![0u8; 256 * 1024];
     let mut done = 0u64;
     loop {
@@ -297,7 +358,11 @@ fn download(r: &Release, to: &Path, status: &Mutex<Status>) -> anyhow::Result<()
         out.write_all(&buf[..n])?;
         hasher.update(&buf[..n]);
         done += n as u64;
-        *lock(status) = Status::Downloading { release: r.clone(), done, total: total.max(done) };
+        *lock(status) = Status::Downloading {
+            release: r.clone(),
+            done,
+            total: total.max(done),
+        };
     }
     out.flush()?;
     drop(out);
@@ -305,7 +370,11 @@ fn download(r: &Release, to: &Path, status: &Mutex<Status>) -> anyhow::Result<()
         anyhow::bail!("the download stopped at {} of {} bytes", done, r.size);
     }
     if let Some(want) = &r.sha256 {
-        let got: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let got: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         if &got != want {
             let _ = std::fs::remove_file(&part);
             anyhow::bail!("the downloaded file is damaged (SHA-256 {got}, GitHub lists {want})");
@@ -321,8 +390,15 @@ fn download_and_install(r: &Release, status: &Mutex<Status>) -> anyhow::Result<(
     {
         let place = install_place()?;
         if !writable(&place.dir) {
-            let admin = if cfg!(windows) { " (or start it once as administrator)" } else { "" };
-            anyhow::bail!("the folder {} cannot be written. Put neoOMSI in a folder of yours{admin} and update again", short_path(&place.dir));
+            let admin = if cfg!(windows) {
+                " (or start it once as administrator)"
+            } else {
+                ""
+            };
+            anyhow::bail!(
+                "the folder {} cannot be written. Put neoOMSI in a folder of yours{admin} and update again",
+                short_path(&place.dir)
+            );
         }
     }
     let file = download_dir().join(&r.asset_name);
@@ -365,18 +441,39 @@ pub fn install_place() -> anyhow::Result<Place> {
     // and after a second swap a deleted file that could not be started at all, #811)
     static EXE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     let exe = EXE
-        .get_or_init(|| std::env::current_exe().ok().map(|e| program_path(&e.canonicalize().unwrap_or(e))))
+        .get_or_init(|| {
+            std::env::current_exe()
+                .ok()
+                .map(|e| program_path(&e.canonicalize().unwrap_or(e)))
+        })
         .clone()
         .ok_or_else(|| anyhow::anyhow!("the program's own path is not known"))?;
     if is_dev_build(&exe) {
-        anyhow::bail!("this is a development build ({}); update it with git and cargo", short_path(&exe));
+        anyhow::bail!(
+            "this is a development build ({}); update it with git and cargo",
+            short_path(&exe)
+        );
     }
     // (macOS runs an app opened straight from Downloads from a read-only copy elsewhere)
     if exe.to_string_lossy().contains("/AppTranslocation/") {
-        anyhow::bail!("macOS runs neoOMSI from a temporary read-only copy. Move neoOMSI.app into your Applications folder (or any folder), start it from there and update again");
+        anyhow::bail!(
+            "macOS runs neoOMSI from a temporary read-only copy. Move neoOMSI.app into your Applications folder (or any folder), start it from there and update again"
+        );
     }
-    let bundle = exe.ancestors().find(|p| p.extension().map(|e| e.eq_ignore_ascii_case("app")).unwrap_or(false)).map(Path::to_path_buf);
-    let dir = bundle.as_deref().unwrap_or(&exe).parent().ok_or_else(|| anyhow::anyhow!("no folder around {}", exe.display()))?.to_path_buf();
+    let bundle = exe
+        .ancestors()
+        .find(|p| {
+            p.extension()
+                .map(|e| e.eq_ignore_ascii_case("app"))
+                .unwrap_or(false)
+        })
+        .map(Path::to_path_buf);
+    let dir = bundle
+        .as_deref()
+        .unwrap_or(&exe)
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("no folder around {}", exe.display()))?
+        .to_path_buf();
     Ok(Place { dir, bundle, exe })
 }
 
@@ -422,7 +519,8 @@ pub fn is_dev_build(exe: &Path) -> bool {
     let text = exe.to_string_lossy().to_ascii_lowercase();
     let parts: Vec<&str> = text.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
     let profile = |s: &str| s == "release" || s == "debug";
-    parts.windows(2).any(|w| w[0] == "target" && profile(w[1])) || parts.windows(3).any(|w| w[0] == "target" && profile(w[2]))
+    parts.windows(2).any(|w| w[0] == "target" && profile(w[1]))
+        || parts.windows(3).any(|w| w[0] == "target" && profile(w[2]))
 }
 
 const STAGING: &str = ".neoomsi-update";
@@ -442,9 +540,20 @@ fn unpack(zip: &Path, to: &Path) -> anyhow::Result<()> {
     let mut a = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
     for i in 0..a.len() {
         let mut e = a.by_index(i)?;
-        let Some(rel) = e.enclosed_name() else { continue };
+        let Some(rel) = e.enclosed_name() else {
+            continue;
+        };
         // (macOS' resource forks, which ditto keeps beside the files)
-        if rel.components().next().map(|c| c.as_os_str() == "__MACOSX").unwrap_or(false) || rel.file_name().map(|n| n.to_string_lossy().starts_with("._")).unwrap_or(false) {
+        if rel
+            .components()
+            .next()
+            .map(|c| c.as_os_str() == "__MACOSX")
+            .unwrap_or(false)
+            || rel
+                .file_name()
+                .map(|n| n.to_string_lossy().starts_with("._"))
+                .unwrap_or(false)
+        {
             continue;
         }
         let out = to.join(&rel);
@@ -493,8 +602,16 @@ fn target_of(name: &str, place: &Place) -> PathBuf {
 /// Put the program files of the release archive `zip` into the installation at `place`.
 pub fn install_archive(zip: &Path, place: &Place) -> anyhow::Result<()> {
     let staging = place.dir.join(STAGING);
-    unpack(zip, &staging).map_err(|e| anyhow::anyhow!("could not unpack the update into {} ({e})", short_path(&place.dir)))?;
-    let mut items: Vec<String> = std::fs::read_dir(&staging)?.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    unpack(zip, &staging).map_err(|e| {
+        anyhow::anyhow!(
+            "could not unpack the update into {} ({e})",
+            short_path(&place.dir)
+        )
+    })?;
+    let mut items: Vec<String> = std::fs::read_dir(&staging)?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
     items.sort();
     if items.is_empty() {
         anyhow::bail!("the update archive is empty");
@@ -508,8 +625,18 @@ pub fn install_archive(zip: &Path, place: &Place) -> anyhow::Result<()> {
         anyhow::bail!("the update archive holds no neoOMSI program");
     }
     // what an earlier update put here and this one no longer brings
-    let before: Vec<String> = std::fs::read_to_string(place.dir.join(MANIFEST)).map(|t| t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty() && !l.contains(['/', '\\']) && l != ".." && l != ".").collect()).unwrap_or_default();
-    let gone: Vec<String> = before.into_iter().filter(|n| !items.iter().any(|i| i.eq_ignore_ascii_case(n))).collect();
+    let before: Vec<String> = std::fs::read_to_string(place.dir.join(MANIFEST))
+        .map(|t| {
+            t.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty() && !l.contains(['/', '\\']) && l != ".." && l != ".")
+                .collect()
+        })
+        .unwrap_or_default();
+    let gone: Vec<String> = before
+        .into_iter()
+        .filter(|n| !items.iter().any(|i| i.eq_ignore_ascii_case(n)))
+        .collect();
     // swap: the old file aside, the new one in; undone completely on the first failure
     let mut moved: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
     let result = (|| -> anyhow::Result<()> {
@@ -519,10 +646,16 @@ pub fn install_archive(zip: &Path, place: &Place) -> anyhow::Result<()> {
             remove_any(&old);
             let had = target.exists() || target.is_symlink();
             if had {
-                std::fs::rename(&target, &old).map_err(|e| anyhow::anyhow!("{} cannot be replaced ({e}) - is the folder writable?", short_path(&target)))?;
+                std::fs::rename(&target, &old).map_err(|e| {
+                    anyhow::anyhow!(
+                        "{} cannot be replaced ({e}) - is the folder writable?",
+                        short_path(&target)
+                    )
+                })?;
             }
             moved.push((target.clone(), had.then_some(old)));
-            std::fs::rename(staging.join(name), &target).map_err(|e| anyhow::anyhow!("{} cannot be written ({e})", short_path(&target)))?;
+            std::fs::rename(staging.join(name), &target)
+                .map_err(|e| anyhow::anyhow!("{} cannot be written ({e})", short_path(&target)))?;
         }
         for name in &gone {
             let target = place.dir.join(name);
@@ -558,7 +691,11 @@ pub fn install_archive(zip: &Path, place: &Place) -> anyhow::Result<()> {
     }
     let _ = std::fs::write(place.dir.join(MANIFEST), items.join("\n") + "\n");
     let _ = std::fs::remove_dir_all(&staging);
-    log::info!("update: {} replaced in {}", items.join(", "), place.dir.display());
+    log::info!(
+        "update: {} replaced in {}",
+        items.join(", "),
+        place.dir.display()
+    );
     Ok(())
 }
 
@@ -576,7 +713,8 @@ fn remove_any(p: &Path) {
 /// it was meant for this one.)
 pub fn relaunch(place: &Place) -> anyhow::Result<()> {
     let mut cmd = std::process::Command::new(&place.exe);
-    cmd.current_dir(&place.dir).env_remove("OMSI_LAUNCHER_INPUT");
+    cmd.current_dir(&place.dir)
+        .env_remove("OMSI_LAUNCHER_INPUT");
     cmd.spawn()?;
     Ok(())
 }
@@ -591,7 +729,10 @@ pub fn cleanup_after_update() {
             if let Ok(rd) = std::fs::read_dir(&place.dir) {
                 for e in rd.flatten() {
                     let p = e.path();
-                    if p.file_name().map(|n| n.to_string_lossy().ends_with(OLD)).unwrap_or(false) {
+                    if p.file_name()
+                        .map(|n| n.to_string_lossy().ends_with(OLD))
+                        .unwrap_or(false)
+                    {
                         remove_any(&p);
                         left |= p.exists();
                     }
@@ -637,7 +778,10 @@ pub fn open_url(url: &str) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("rundll32").arg("url.dll,FileProtocolHandler").arg(url).spawn();
+    let _ = std::process::Command::new("rundll32")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(url)
+        .spawn();
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
@@ -668,7 +812,15 @@ mod tests {
             ]
         });
         let r = parse_release(&v, "0.1.7").unwrap().unwrap();
-        assert_eq!((r.version.as_str(), r.asset_url.as_str(), r.size, r.sha256.as_deref()), ("0.1.9", "https://x/mine", 42, Some("abcdef")));
+        assert_eq!(
+            (
+                r.version.as_str(),
+                r.asset_url.as_str(),
+                r.size,
+                r.sha256.as_deref()
+            ),
+            ("0.1.9", "https://x/mine", 42, Some("abcdef"))
+        );
         // not newer, a draft, or without this platform's file: nothing to offer
         assert!(parse_release(&v, "0.1.9").unwrap().is_none());
         let mut d = v.clone();
@@ -681,17 +833,35 @@ mod tests {
 
     #[test]
     fn the_program_path_survives_the_swap() {
-        assert_eq!(program_path(Path::new("/home/me/neoOMSI/neoomsi")), PathBuf::from("/home/me/neoOMSI/neoomsi"));
-        assert_eq!(program_path(Path::new("/home/me/neoOMSI/neoomsi.old-update")), PathBuf::from("/home/me/neoOMSI/neoomsi"));
-        assert_eq!(program_path(Path::new("/home/me/neoOMSI/neoomsi.old-update (deleted)")), PathBuf::from("/home/me/neoOMSI/neoomsi"));
-        assert_eq!(program_path(Path::new("C:\\Games\\neoOMSI\\neoomsi.exe.old-update")), PathBuf::from("C:\\Games\\neoOMSI\\neoomsi.exe"));
+        assert_eq!(
+            program_path(Path::new("/home/me/neoOMSI/neoomsi")),
+            PathBuf::from("/home/me/neoOMSI/neoomsi")
+        );
+        assert_eq!(
+            program_path(Path::new("/home/me/neoOMSI/neoomsi.old-update")),
+            PathBuf::from("/home/me/neoOMSI/neoomsi")
+        );
+        assert_eq!(
+            program_path(Path::new("/home/me/neoOMSI/neoomsi.old-update (deleted)")),
+            PathBuf::from("/home/me/neoOMSI/neoomsi")
+        );
+        assert_eq!(
+            program_path(Path::new("C:\\Games\\neoOMSI\\neoomsi.exe.old-update")),
+            PathBuf::from("C:\\Games\\neoOMSI\\neoomsi.exe")
+        );
     }
 
     #[test]
     fn development_builds_are_recognised() {
-        assert!(is_dev_build(Path::new("/src/neoOMSI/target/release/neoomsi")));
-        assert!(is_dev_build(Path::new("C:\\src\\target\\x86_64-pc-windows-msvc\\release\\neoomsi.exe")));
-        assert!(!is_dev_build(Path::new("/Applications/neoOMSI.app/Contents/MacOS/neoomsi")));
+        assert!(is_dev_build(Path::new(
+            "/src/neoOMSI/target/release/neoomsi"
+        )));
+        assert!(is_dev_build(Path::new(
+            "C:\\src\\target\\x86_64-pc-windows-msvc\\release\\neoomsi.exe"
+        )));
+        assert!(!is_dev_build(Path::new(
+            "/Applications/neoOMSI.app/Contents/MacOS/neoomsi"
+        )));
         assert!(!is_dev_build(Path::new("/home/me/Games/neoOMSI/neoomsi")));
     }
 
@@ -707,42 +877,80 @@ mod tests {
         std::fs::write(dir.join("neoomsi-launcher"), "old cli").unwrap();
         std::fs::write(dir.join("retired.dll"), "old").unwrap();
         std::fs::write(dir.join("Vehicles/MyMod/bus.bus"), "mod").unwrap();
-        std::fs::write(dir.join(MANIFEST), "neoomsi\nneoomsi-launcher\nretired.dll\n").unwrap();
+        std::fs::write(
+            dir.join(MANIFEST),
+            "neoomsi\nneoomsi-launcher\nretired.dll\n",
+        )
+        .unwrap();
         // the new release
         let zip_path = root.join("new.zip");
         {
             let mut z = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
             let o = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
-            for (n, body) in [("neoomsi", "new game"), ("neoomsi-launcher", "new cli"), ("README.md", "readme")] {
+            for (n, body) in [
+                ("neoomsi", "new game"),
+                ("neoomsi-launcher", "new cli"),
+                ("README.md", "readme"),
+            ] {
                 z.start_file(n, o).unwrap();
                 z.write_all(body.as_bytes()).unwrap();
             }
             z.finish().unwrap();
         }
-        let place = Place { dir: dir.clone(), bundle: None, exe: dir.join("neoomsi") };
+        let place = Place {
+            dir: dir.clone(),
+            bundle: None,
+            exe: dir.join("neoomsi"),
+        };
         install_archive(&zip_path, &place).unwrap();
-        assert_eq!(std::fs::read_to_string(dir.join("neoomsi")).unwrap(), "new game");
-        assert_eq!(std::fs::read_to_string(dir.join("neoomsi-launcher")).unwrap(), "new cli");
-        assert_eq!(std::fs::read_to_string(dir.join("README.md")).unwrap(), "readme");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("neoomsi")).unwrap(),
+            "new game"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("neoomsi-launcher")).unwrap(),
+            "new cli"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("README.md")).unwrap(),
+            "readme"
+        );
         assert!(!dir.join("retired.dll").exists());
-        assert_eq!(std::fs::read_to_string(dir.join("Vehicles/MyMod/bus.bus")).unwrap(), "mod");
-        assert_eq!(std::fs::read_to_string(dir.join("neoomsi.old-update")).unwrap(), "old game");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("Vehicles/MyMod/bus.bus")).unwrap(),
+            "mod"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("neoomsi.old-update")).unwrap(),
+            "old game"
+        );
         assert!(!dir.join(STAGING).exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(dir.join("neoomsi")).unwrap().permissions().mode() & 0o777, 0o755);
+            assert_eq!(
+                std::fs::metadata(dir.join("neoomsi"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o755
+            );
         }
         // an archive without a program replaces nothing
         let bad = root.join("bad.zip");
         {
             let mut z = zip::ZipWriter::new(std::fs::File::create(&bad).unwrap());
-            z.start_file("notes.txt", zip::write::SimpleFileOptions::default()).unwrap();
+            z.start_file("notes.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
             z.write_all(b"x").unwrap();
             z.finish().unwrap();
         }
         assert!(install_archive(&bad, &place).is_err());
-        assert_eq!(std::fs::read_to_string(dir.join("neoomsi")).unwrap(), "new game");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("neoomsi")).unwrap(),
+            "new game"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

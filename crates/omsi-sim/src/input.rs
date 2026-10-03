@@ -155,7 +155,11 @@ impl KeyboardAxes {
             (back * 1.1, back)
         };
         // `[redSteerSpd]`: the key's pace, and OMSI's return (the linear one), less at speed
-        let red = if self.red_steer_spd { (1.5 * (-0.1 * v / 3.6).exp()).min(1.0) } else { 1.0 };
+        let red = if self.red_steer_spd {
+            (1.5 * (-0.1 * v / 3.6).exp()).min(1.0)
+        } else {
+            1.0
+        };
         let (rate, back) = (rate * red, if self.linear { back * red } else { back });
         if self.neutral_key {
             self.centering = true;
@@ -206,7 +210,13 @@ mod tests {
 
     #[test]
     fn linear_and_old_steering_as_omsi() {
-        let mut a = KeyboardAxes { linear: true, old_steering: true, lock_curvature: 0.1, speed_kmh: 50.0, ..Default::default() };
+        let mut a = KeyboardAxes {
+            linear: true,
+            old_steering: true,
+            lock_curvature: 0.1,
+            speed_kmh: 50.0,
+            ..Default::default()
+        };
         a.right_key = true;
         for _ in 0..100 {
             a.update(0.01);
@@ -222,19 +232,36 @@ mod tests {
         for _ in 0..50 {
             a.update(0.01);
         }
-        assert!((a.steering - 0.25).abs() < 0.02, "it comes back at the same pace: {}", a.steering);
+        assert!(
+            (a.steering - 0.25).abs() < 0.02,
+            "it comes back at the same pace: {}",
+            a.steering
+        );
     }
 
     /// `[redSteerSpd]` with the steady pace: Omsi.exe's keys at speed (0x7e614c).
     #[test]
     fn red_steer_spd_slows_the_keys_at_speed() {
-        for (v, want) in [(50.0, 0.5 * 1.5 * (-0.1f32 * 50.0 / 3.6).exp()), (10.0, 0.5)] {
-            let mut a = KeyboardAxes { linear: true, red_steer_spd: true, lock_curvature: 0.1, speed_kmh: v, ..Default::default() };
+        for (v, want) in [
+            (50.0, 0.5 * 1.5 * (-0.1f32 * 50.0 / 3.6).exp()),
+            (10.0, 0.5),
+        ] {
+            let mut a = KeyboardAxes {
+                linear: true,
+                red_steer_spd: true,
+                lock_curvature: 0.1,
+                speed_kmh: v,
+                ..Default::default()
+            };
             a.right_key = true;
             for _ in 0..100 {
                 a.update(0.01);
             }
-            assert!((a.steering - want).abs() < 1e-3, "{v} km/h: {} against {want}", a.steering);
+            assert!(
+                (a.steering - want).abs() < 1e-3,
+                "{v} km/h: {} against {want}",
+                a.steering
+            );
         }
         assert!((0.5 * 1.5 * (-0.1f32 * 50.0 / 3.6).exp() - 0.187).abs() < 1e-3);
     }
@@ -243,7 +270,10 @@ mod tests {
     /// goes up to 0.85 (1 with throttle_amplify) and comes back by itself.
     #[test]
     fn pedals_as_omsi_works_them_from_the_keys() {
-        let mut a = KeyboardAxes { pedal_hold: true, ..Default::default() };
+        let mut a = KeyboardAxes {
+            pedal_hold: true,
+            ..Default::default()
+        };
         a.brake_key = true;
         for _ in 0..30 {
             a.update(0.01);
@@ -260,7 +290,11 @@ mod tests {
         for _ in 0..100 {
             a.update(0.01);
         }
-        assert!((a.throttle - 0.85).abs() < 1e-3, "up to 0.85: {}", a.throttle);
+        assert!(
+            (a.throttle - 0.85).abs() < 1e-3,
+            "up to 0.85: {}",
+            a.throttle
+        );
         a.amplify_key = true;
         for _ in 0..20 {
             a.update(0.01);
@@ -271,9 +305,17 @@ mod tests {
         for _ in 0..50 {
             a.update(0.01);
         }
-        assert!((a.throttle - 0.5).abs() < 1e-3, "falls at 1 a second: {}", a.throttle);
+        assert!(
+            (a.throttle - 0.5).abs() < 1e-3,
+            "falls at 1 a second: {}",
+            a.throttle
+        );
         // the other way: the brake comes off with its key
-        let mut b = KeyboardAxes { pedal_hold: false, brake: 0.6, ..Default::default() };
+        let mut b = KeyboardAxes {
+            pedal_hold: false,
+            brake: 0.6,
+            ..Default::default()
+        };
         for _ in 0..10 {
             b.update(0.01);
         }
@@ -283,7 +325,12 @@ mod tests {
     /// The centring key brings the wheel back in a straight line at OMSI's pace, not at once.
     #[test]
     fn steering_neutral_brings_the_wheel_back_steadily() {
-        let mut a = KeyboardAxes { old_steering: true, lock_curvature: 0.1, steering: 0.8, ..Default::default() };
+        let mut a = KeyboardAxes {
+            old_steering: true,
+            lock_curvature: 0.1,
+            steering: 0.8,
+            ..Default::default()
+        };
         a.neutral_key = true;
         a.update(0.1);
         a.neutral_key = false;
@@ -318,7 +365,10 @@ mod tests {
         a.left_key = true;
         a.update(0.1);
         let after_left = a.steering;
-        assert!(after_left < 0.25, "left alone must steer left: {after_left}");
+        assert!(
+            after_left < 0.25,
+            "left alone must steer left: {after_left}"
+        );
 
         a.right_key = true;
         a.update(0.2);

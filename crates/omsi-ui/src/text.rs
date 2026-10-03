@@ -15,7 +15,13 @@ pub enum Weight {
 }
 
 impl Weight {
-    const ALL: [Weight; 5] = [Weight::Regular, Weight::Medium, Weight::Bold, Weight::Black, Weight::Condensed];
+    const ALL: [Weight; 5] = [
+        Weight::Regular,
+        Weight::Medium,
+        Weight::Bold,
+        Weight::Black,
+        Weight::Condensed,
+    ];
     fn axes(self) -> (f32, f32) {
         match self {
             Weight::Regular => (400.0, 100.0),
@@ -78,7 +84,11 @@ fn composed(text: &str) -> std::borrow::Cow<'_, str> {
 fn compose(base: char, mark: char) -> Option<char> {
     let table: &[(char, &str, &str)] = &[
         ('\u{308}', "aeiouyAEIOUY", "äëïöüÿÄËÏÖÜŸ"),
-        ('\u{301}', "aeiouyAEIOUYcnszlrCNSZLR", "áéíóúýÁÉÍÓÚÝćńśźĺŕĆŃŚŹĹŔ"),
+        (
+            '\u{301}',
+            "aeiouyAEIOUYcnszlrCNSZLR",
+            "áéíóúýÁÉÍÓÚÝćńśźĺŕĆŃŚŹĹŔ",
+        ),
         ('\u{300}', "aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
         ('\u{302}', "aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
         ('\u{303}', "anoANO", "ãñõÃÑÕ"),
@@ -132,7 +142,10 @@ fn fallback_fonts() -> &'static [(&'static str, FontVec)] {
             ("th", "/System/Library/Fonts/Supplemental/SukhumvitSet.ttc"),
             ("th", "/System/Library/Fonts/Supplemental/Silom.ttf"),
             ("hi", "/System/Library/Fonts/Kohinoor.ttc"),
-            ("hi", "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc"),
+            (
+                "hi",
+                "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc",
+            ),
             ("", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
             ("", "/System/Library/Fonts/GeezaPro.ttc"),
             // Android
@@ -147,13 +160,28 @@ fn fallback_fonts() -> &'static [(&'static str, FontVec)] {
             // Linux
             ("", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
             ("", "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc"),
-            ("", "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"),
-            ("th", "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf"),
+            (
+                "",
+                "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+            ),
+            (
+                "th",
+                "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+            ),
             ("th", "/usr/share/fonts/truetype/tlwg/Garuda.ttf"),
-            ("hi", "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"),
+            (
+                "hi",
+                "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+            ),
             ("hi", "/usr/share/fonts/noto/NotoSansDevanagari-Regular.ttf"),
-            ("", "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"),
-            ("", "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc"),
+            (
+                "",
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            ),
+            (
+                "",
+                "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+            ),
             ("", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         ];
         let mut out = Vec::new();
@@ -183,7 +211,8 @@ pub fn fallback_font(c: char) -> Option<&'static FontVec> {
 
 /// Whether `c` has to come from another font than Roboto (`main`).
 pub fn needs_fallback(main: &impl Font, c: char) -> bool {
-    !(main.glyph_id(c).0 != 0 || (c as u32) < 0x2000 && !((c as u32) >= 0x0590 && (c as u32) < 0x1100))
+    !(main.glyph_id(c).0 != 0
+        || (c as u32) < 0x2000 && !((c as u32) >= 0x0590 && (c as u32) < 0x1100))
 }
 
 /// The font that draws `c`: Roboto (`main`), else the first system font that has it.
@@ -216,7 +245,12 @@ impl Fonts {
     }
 
     fn face(&self, w: Weight) -> &FontVec {
-        &self.faces.iter().find(|(k, _)| *k == w).unwrap_or(&self.faces[0]).1
+        &self
+            .faces
+            .iter()
+            .find(|(k, _)| *k == w)
+            .unwrap_or(&self.faces[0])
+            .1
     }
 
     /// Width of `text` in pixels at `px`.
@@ -253,7 +287,10 @@ impl Fonts {
         let f = self.face(weight).as_scaled(PxScale::from(px));
         let id = f.glyph_id('H');
         let g = id.with_scale(PxScale::from(px));
-        self.face(weight).outline_glyph(g).map(|o| -o.px_bounds().min.y).unwrap_or(f.ascent() * 0.7)
+        self.face(weight)
+            .outline_glyph(g)
+            .map(|o| -o.px_bounds().min.y)
+            .unwrap_or(f.ascent() * 0.7)
     }
 
     /// The longest start of `text` that fits in `max` pixels, with an ellipsis when cut.
@@ -268,14 +305,24 @@ impl Fonts {
         let (mut lo, mut hi) = (0usize, chars.len());
         while lo < hi {
             let mid = (lo + hi).div_ceil(2);
-            let s: String = chars[..mid].iter().collect::<String>().trim_end().to_string() + "…";
+            let s: String = chars[..mid]
+                .iter()
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+                + "…";
             if self.width(&s, px, weight) <= max {
                 lo = mid;
             } else {
                 hi = mid - 1;
             }
         }
-        chars[..lo].iter().collect::<String>().trim_end().to_string() + "…"
+        chars[..lo]
+            .iter()
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+            + "…"
     }
 
     /// Rasterise one line.
@@ -299,7 +346,10 @@ impl Fonts {
                     x += sf.kern(p, id);
                 }
             }
-            glyphs.push((gf, id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, pad + asc))));
+            glyphs.push((
+                gf,
+                id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, pad + asc)),
+            ));
             x += sf.h_advance(id);
             prev = Some((id, gf as *const FontVec));
         }
@@ -319,7 +369,12 @@ impl Fonts {
                 });
             }
         }
-        Bitmap { w, h, alpha: cov.iter().map(|c| (c * 255.0).round() as u8).collect(), ascent: asc + pad }
+        Bitmap {
+            w,
+            h,
+            alpha: cov.iter().map(|c| (c * 255.0).round() as u8).collect(),
+            ascent: asc + pad,
+        }
     }
 }
 
@@ -333,10 +388,21 @@ mod tests {
         let regular = f.render("Bauernhof", 20.0, Weight::Regular);
         let bold = f.render("Bauernhof", 20.0, Weight::Bold);
         let ink = |b: &Bitmap| b.alpha.iter().map(|&a| a as u64).sum::<u64>();
-        assert!(ink(&bold) > ink(&regular) * 11 / 10, "bold {} regular {}", ink(&bold), ink(&regular));
-        assert!(f.width("Bauernhof", 20.0, Weight::Condensed) < f.width("Bauernhof", 20.0, Weight::Bold));
+        assert!(
+            ink(&bold) > ink(&regular) * 11 / 10,
+            "bold {} regular {}",
+            ink(&bold),
+            ink(&regular)
+        );
+        assert!(
+            f.width("Bauernhof", 20.0, Weight::Condensed)
+                < f.width("Bauernhof", 20.0, Weight::Bold)
+        );
         let cut = f.fit("Krankenhaus Grundorf Nord", 16.0, Weight::Regular, 100.0);
-        assert!(cut.ends_with('…') && f.width(&cut, 16.0, Weight::Regular) <= 100.0, "{cut}");
+        assert!(
+            cut.ends_with('…') && f.width(&cut, 16.0, Weight::Regular) <= 100.0,
+            "{cut}"
+        );
         assert_eq!(f.fit("Kurz", 16.0, Weight::Regular, 100.0), "Kurz");
     }
 }
@@ -375,7 +441,10 @@ mod glyph_tests {
     fn missing_symbols_are_substituted() {
         let f = ab_glyph::FontRef::try_from_slice(ROBOTO).unwrap();
         for c in "→★⚠✓▸ Bauernhof · 12 °C - ДёЖ".chars() {
-            assert!(f.glyph_id(substitute(c)).0 != 0 || substitute(c) == ' ', "{c}");
+            assert!(
+                f.glyph_id(substitute(c)).0 != 0 || substitute(c) == ' ',
+                "{c}"
+            );
         }
     }
 }

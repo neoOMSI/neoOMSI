@@ -47,7 +47,9 @@ fn an_info_with_everything_at_its_longest_fits_one_datagram() {
     p.destination = "Weiden (Oberpfalz) Bahnhof/ZOB – über Stockerhut ".repeat(3);
     p.tour = "ä".repeat(70);
     p.figure = format!("Humans/{}/{}.hum", "é".repeat(60), "f".repeat(120));
-    p.texts = (0..MAX_TEXTS).map(|k| format!("{k}ß{}", "ñ".repeat(40))).collect();
+    p.texts = (0..MAX_TEXTS)
+        .map(|k| format!("{k}ß{}", "ñ".repeat(40)))
+        .collect();
     let text = p.encode_info();
     assert!(text.len() <= MAX_DATAGRAM, "{} bytes", text.len());
     let parts: Vec<&str> = text.split('|').collect();
@@ -82,9 +84,13 @@ fn info_carries_the_freetex_pictures_and_an_older_info_has_none() {
     assert!(q.freetex.is_empty());
     assert_eq!(q.texts, p.texts);
     // and with everything else at its longest the INFO still fits one datagram
-    p.freetex = (0..MAX_FREETEX).map(|k| format!("{k}{}", "é".repeat(200))).collect();
+    p.freetex = (0..MAX_FREETEX)
+        .map(|k| format!("{k}{}", "é".repeat(200)))
+        .collect();
     p.bus = format!("Vehicles/{}/{}.bus", "Ü".repeat(60), "b".repeat(120));
-    p.texts = (0..MAX_TEXTS).map(|k| format!("{k}ß{}", "ñ".repeat(40))).collect();
+    p.texts = (0..MAX_TEXTS)
+        .map(|k| format!("{k}ß{}", "ñ".repeat(40)))
+        .collect();
     assert!(p.encode_info().len() <= MAX_DATAGRAM);
 }
 
@@ -222,7 +228,7 @@ fn vehicle_paths_from_the_network() {
 
 #[test]
 fn addresses_are_told_apart() {
-    use addrs::{classify, AddrKind};
+    use addrs::{AddrKind, classify};
     let ip = |s: &str| s.parse::<Ipv4Addr>().unwrap();
     // the interfaces of the Mac this was written on: Hamachi, Tailscale, wifi
     assert_eq!(classify(ip("25.34.223.28"), "en9"), AddrKind::Hamachi);
@@ -264,9 +270,21 @@ fn addresses_are_told_apart() {
     assert_eq!(
         got,
         vec![
-            (ip("25.61.2.10"), AddrKind::Hamachi, Some(ip("25.255.255.255"))),
-            (ip("192.168.0.105"), AddrKind::Lan, Some(ip("192.168.0.255"))),
-            (ip("172.29.160.1"), AddrKind::Virtual, Some(ip("172.29.175.255"))),
+            (
+                ip("25.61.2.10"),
+                AddrKind::Hamachi,
+                Some(ip("25.255.255.255"))
+            ),
+            (
+                ip("192.168.0.105"),
+                AddrKind::Lan,
+                Some(ip("192.168.0.255"))
+            ),
+            (
+                ip("172.29.160.1"),
+                AddrKind::Virtual,
+                Some(ip("172.29.175.255"))
+            ),
         ]
     );
 }
@@ -335,9 +353,11 @@ fn session_codes() {
         protocol: 2,
         ..c.clone()
     };
-    assert!(describe_join(&old.encode())
-        .unwrap_err()
-        .contains("protocol 2"));
+    assert!(
+        describe_join(&old.encode())
+            .unwrap_err()
+            .contains("protocol 2")
+    );
     assert!(
         LanSession::join(&old.encode(), "x", world("m"), Duration::from_millis(10))
             .err()
@@ -389,9 +409,16 @@ fn session_codes() {
     // cut short while copying
     let short = &text[..text.len() - 5];
     assert!(looks_like_code(short));
-    assert!(SessionCode::decode(short).unwrap_err().contains("copy the whole code"));
+    assert!(
+        SessionCode::decode(short)
+            .unwrap_err()
+            .contains("copy the whole code")
+    );
     let d = describe_join(&text).unwrap();
-    assert!(d.contains("25.34.223.28:27015 (Hamachi)") && d.contains("192.168.1.174:27015 (LAN)"), "{d}");
+    assert!(
+        d.contains("25.34.223.28:27015 (Hamachi)") && d.contains("192.168.1.174:27015 (LAN)"),
+        "{d}"
+    );
     assert_eq!(
         parse_join(&text).unwrap(),
         JoinTarget::Direct {
@@ -457,16 +484,22 @@ fn join_targets() {
     assert!(parse_join("27015:27015").is_err());
     assert!(describe_join("27015:27015").is_err());
     assert!(describe_join("").unwrap().contains("search"));
-    assert!(describe_join("27016")
-        .unwrap()
-        .contains("this computer, port 27016"));
-    assert!(describe_join(&c.encode())
-        .unwrap()
-        .contains("10.0.0.7:27015"));
+    assert!(
+        describe_join("27016")
+            .unwrap()
+            .contains("this computer, port 27016")
+    );
+    assert!(
+        describe_join(&c.encode())
+            .unwrap()
+            .contains("10.0.0.7:27015")
+    );
     assert!(describe_join("OMSI-ABCD-EFGH").is_err());
-    assert!(describe_join("bus-pc.local:27020")
-        .unwrap()
-        .contains("bus-pc.local, port 27020"));
+    assert!(
+        describe_join("bus-pc.local:27020")
+            .unwrap()
+            .contains("bus-pc.local, port 27020")
+    );
     assert!(describe_join("hello world").is_err());
 }
 
@@ -762,9 +795,10 @@ fn a_private_line_reaches_one_player_only() {
         s.take_events();
     }
     let anton = a.my_id;
-    assert!(host
-        .say_to(anton, "Admin (private)", "take tour 13/1 at 04:47")
-        .is_ok());
+    assert!(
+        host.say_to(anton, "Admin (private)", "take tour 13/1 at 04:47")
+            .is_ok()
+    );
     assert!(host.say_to(9999, "Admin (private)", "nobody").is_err());
     assert!(a.say_to(host.my_id, "x", "a client cannot").is_err());
     pump(&mut [&mut host, &mut a, &mut b], &poses, 40, |s| {
@@ -784,7 +818,10 @@ fn a_private_line_reaches_one_player_only() {
     };
     assert_eq!(
         chat(&mut a),
-        [("Admin (private)".to_string(), "take tour 13/1 at 04:47".to_string())]
+        [(
+            "Admin (private)".to_string(),
+            "take tour 13/1 at 04:47".to_string()
+        )]
     );
     // (a little longer for Berta: nothing comes)
     pump(&mut [&mut host, &mut a, &mut b], &poses, 20, |_| false);
@@ -921,7 +958,9 @@ fn old_protocol_is_turned_away() {
             }
         }
         assert!(
-            answers.iter().all(|a| a.starts_with(&format!("REJECT|{PROTOCOL}|")))
+            answers
+                .iter()
+                .all(|a| a.starts_with(&format!("REJECT|{PROTOCOL}|")))
                 && answers.iter().any(|a| a.contains(want)),
             "{answers:?}"
         );
@@ -956,7 +995,8 @@ fn state_of(id: u32, x: f64) -> Vec<u8> {
 #[test]
 fn a_client_listens_to_its_host_only() {
     let host = raw();
-    let mut c = LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
+    let mut c =
+        LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
     let mine = pose(1.0);
     host.send_to(welcome_msg(5).as_bytes(), to_client(&c))
         .unwrap();
@@ -994,20 +1034,23 @@ fn a_client_listens_to_its_host_only() {
     assert_eq!(c.my_id, 5);
     assert_eq!(c.peer_count(), 1, "no stranger's states");
     assert!(c.peers().all(|p| p.pose.id == 1));
-    assert!(!c
-        .take_events()
-        .iter()
-        .any(|e| matches!(e, LanEvent::Chat { .. })));
-    assert!(c
-        .take_host_clock()
-        .map(|h| h.world.weather != "x")
-        .unwrap_or(true));
+    assert!(
+        !c.take_events()
+            .iter()
+            .any(|e| matches!(e, LanEvent::Chat { .. }))
+    );
+    assert!(
+        c.take_host_clock()
+            .map(|h| h.world.weather != "x")
+            .unwrap_or(true)
+    );
 }
 
 #[test]
 fn a_client_takes_a_limited_number_of_players() {
     let host = raw();
-    let mut c = LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
+    let mut c =
+        LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
     host.send_to(welcome_msg(2).as_bytes(), to_client(&c))
         .unwrap();
     for id in 3..(3 + 3 * MAX_PEERS as u32) {
@@ -1025,7 +1068,8 @@ fn a_client_takes_a_limited_number_of_players() {
 #[test]
 fn old_states_do_not_overtake_new_ones() {
     let host = raw();
-    let mut c = LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
+    let mut c =
+        LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
     host.send_to(welcome_msg(2).as_bytes(), to_client(&c))
         .unwrap();
     let mut p = pose(10.0);
@@ -1176,7 +1220,8 @@ fn the_host_checks_and_limits_what_it_relays() {
 #[test]
 fn idle_buses_send_less() {
     let host = raw();
-    let mut c = LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
+    let mut c =
+        LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
     host.send_to(welcome_msg(4).as_bytes(), to_client(&c))
         .unwrap();
     // (the simulated seconds pass quickly: the silent host must not time out meanwhile)
@@ -1214,8 +1259,13 @@ fn idle_buses_send_less() {
 #[test]
 fn a_player_without_a_bus_sends_a_heartbeat() {
     let host = raw();
-    let mut c =
-        LanSession::join_addr(vec![host.local_addr().unwrap()], None, "observer", world("m")).unwrap();
+    let mut c = LanSession::join_addr(
+        vec![host.local_addr().unwrap()],
+        None,
+        "observer",
+        world("m"),
+    )
+    .unwrap();
     host.send_to(welcome_msg(4).as_bytes(), to_client(&c))
         .unwrap();
     let none = Pose::default();
@@ -1330,10 +1380,11 @@ fn a_loading_player_is_kept() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(host.peer_count(), 0, "a player who never comes is dropped");
-    assert!(host
-        .take_events()
-        .iter()
-        .any(|e| matches!(e, LanEvent::Notice(n) if n == "c lost the connection")));
+    assert!(
+        host.take_events()
+            .iter()
+            .any(|e| matches!(e, LanEvent::Notice(n) if n == "c lost the connection"))
+    );
 }
 
 #[test]
@@ -1354,8 +1405,13 @@ fn discovery_finds_a_host() {
 #[test]
 fn a_join_nobody_answers_gives_up_with_a_message() {
     // an address where nothing answers (TEST-NET-1: never routed)
-    let mut c = LanSession::join("192.0.2.1:27015", "c", world("m"), Duration::from_millis(10))
-        .unwrap();
+    let mut c = LanSession::join(
+        "192.0.2.1:27015",
+        "c",
+        world("m"),
+        Duration::from_millis(10),
+    )
+    .unwrap();
     c.join_timeout = Duration::from_millis(400);
     let t0 = Instant::now();
     while c.rejected.is_none() && t0.elapsed() < Duration::from_secs(3) {
@@ -1386,13 +1442,16 @@ fn a_code_with_a_dead_address_still_joins_by_the_live_one() {
         port,
         session: host.session,
     };
-    let mut c = LanSession::join(&code.encode(), "c", world("m"), Duration::from_millis(10))
-        .unwrap();
+    let mut c =
+        LanSession::join(&code.encode(), "c", world("m"), Duration::from_millis(10)).unwrap();
     assert_eq!(c.candidates.len(), 2);
     assert_eq!(c.host, None);
-    pump(&mut [&mut host, &mut c], &[pose(1.0), pose(2.0)], 100, |s| {
-        find(s[0], 2.0).is_some() && find(s[1], 1.0).is_some()
-    });
+    pump(
+        &mut [&mut host, &mut c],
+        &[pose(1.0), pose(2.0)],
+        100,
+        |s| find(s[0], 2.0).is_some() && find(s[1], 1.0).is_some(),
+    );
     assert!(c.connected);
     assert_eq!(c.host, Some(SocketAddr::from((Ipv4Addr::LOCALHOST, port))));
     assert_eq!(host.peer_count(), 1);

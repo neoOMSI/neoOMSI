@@ -534,7 +534,12 @@ impl Renderer {
         }
         let vp = Mat4::from_cols_array_2d(&cu.view_proj);
         let proj = projection.unwrap_or_else(|| {
-            glam::camera::rh::proj::directx::perspective(camera.fov_deg.to_radians(), aspect, camera.far, camera.near)
+            glam::camera::rh::proj::directx::perspective(
+                camera.fov_deg.to_radians(),
+                aspect,
+                camera.far,
+                camera.near,
+            )
         });
         let st = self.sky_state.as_ref().unwrap();
         let surround = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
@@ -683,8 +688,8 @@ impl Renderer {
         );
         if omsi_cfg::env::var_os("OMSI_NO_PUDDLE_GLASS_DEPTH").is_none()
             && batches
-            .iter()
-            .any(|b| reflection_glass(&scene.materials[b.material as usize].uniform))
+                .iter()
+                .any(|b| reflection_glass(&scene.materials[b.material as usize].uniform))
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("puddle glass depth"),
@@ -760,8 +765,8 @@ fn vehicle_origins(lighting: &Lighting, camera: &Camera) -> Vec<DVec3> {
     if lighting.puddle_ground.is_none()
         || omsi_cfg::env::var_os("OMSI_NO_PUDDLE_VEHICLE").is_some()
         || !lighting
-        .inside
-        .is_some_and(|(o, _, _)| o.distance(camera.position) < 60.0)
+            .inside
+            .is_some_and(|(o, _, _)| o.distance(camera.position) < 60.0)
     {
         return Vec::new();
     }
@@ -879,7 +884,7 @@ mod tests {
                 ..Default::default()
             },
         ))
-            .expect("test renderer");
+        .expect("test renderer");
         let mut scene = r.new_scene();
         let back = r.add_material_wet(
             &mut scene,
@@ -1079,7 +1084,9 @@ fn vehicle_capture_splits_shared_batches_without_drawing_ai_entries() {
             .collect::<Vec<_>>(),
         vec![0..2, 3..4, 5..6]
     );
-    assert!(selected
-        .iter()
-        .all(|b| (b.pipe, b.mesh, b.first, b.count, b.material) == (7, 3, 12, 24, 4)));
+    assert!(
+        selected
+            .iter()
+            .all(|b| (b.pipe, b.mesh, b.first, b.count, b.material) == (7, 3, 12, 24, 4))
+    );
 }

@@ -17,7 +17,14 @@ pub struct SimClock {
 
 impl Default for SimClock {
     fn default() -> Self {
-        Self { year: 1989, day_of_year: 150, time: 9.0 * 3600.0, timegap: 1.0 / 60.0, paused: false, run_time: 0.0 }
+        Self {
+            year: 1989,
+            day_of_year: 150,
+            time: 9.0 * 3600.0,
+            timegap: 1.0 / 60.0,
+            paused: false,
+            run_time: 0.0,
+        }
     }
 }
 
@@ -45,7 +52,20 @@ impl SimClock {
     /// (day, month) of the current day of year.
     pub fn day_month(&self) -> (i32, i32) {
         let leap = days_in_year(self.year) == 366;
-        let months = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let months = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         let mut d = self.day_of_year.max(1);
         for (i, m) in months.iter().enumerate() {
             if d <= *m {
@@ -79,7 +99,20 @@ impl SimClock {
         // month and the year within reason, so the sums below cannot overflow)
         let year = year.clamp(1, 9999);
         let leap = days_in_year(year) == 366;
-        let months = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let months = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         let month = month.clamp(1, 12) as usize;
         let mut doy = day.clamp(1, months[month - 1]);
         for m in months.iter().take(month - 1) {

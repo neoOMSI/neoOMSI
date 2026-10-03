@@ -1,6 +1,6 @@
 //! The virtual machine.
 
-use crate::{compile::Program, BlockId, NameId, Op, SysVar};
+use crate::{BlockId, NameId, Op, SysVar, compile::Program};
 
 /// The 8-slot float stack, the register file (ten cells, `l0`…`l9` / `s0`…`s9`, like the
 /// original's `TCache`) and the 8-slot string stack.
@@ -13,7 +13,11 @@ pub struct Stacks {
 
 impl Default for Stacks {
     fn default() -> Self {
-        Self { st: [0.0; 8], reg: [0.0; 10], sst: Default::default() }
+        Self {
+            st: [0.0; 8],
+            reg: [0.0; 10],
+            sst: Default::default(),
+        }
     }
 }
 
@@ -76,7 +80,10 @@ pub struct State {
 
 impl State {
     pub fn new(p: &Program) -> Self {
-        Self { vars: vec![0.0; p.var_names.len()], str_vars: vec![String::new(); p.str_var_names.len()] }
+        Self {
+            vars: vec![0.0; p.var_names.len()],
+            str_vars: vec![String::new(); p.str_var_names.len()],
+        }
     }
     #[inline]
     pub fn get(&self, id: crate::VarId) -> f32 {
@@ -159,8 +166,18 @@ fn splitmix64(mut z: u64) -> u64 {
 impl Default for Vm {
     fn default() -> Self {
         let session = SESSION_SEED.load(std::sync::atomic::Ordering::Relaxed);
-        let rng = if session == 0 { FIXED_RNG } else { splitmix64(session ^ splitmix64(SEEDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed))) | 1 };
-        Self { stacks: Stacks::default(), rng, depth: 0 }
+        let rng = if session == 0 {
+            FIXED_RNG
+        } else {
+            splitmix64(
+                session ^ splitmix64(SEEDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
+            ) | 1
+        };
+        Self {
+            stacks: Stacks::default(),
+            rng,
+            depth: 0,
+        }
     }
 }
 
@@ -209,7 +226,13 @@ impl Vm {
     }
 
     /// Fire a `{trigger:name}` block. Returns false when the trigger does not exist.
-    pub fn run_trigger(&mut self, p: &Program, name: &str, state: &mut State, host: &mut dyn Host) -> bool {
+    pub fn run_trigger(
+        &mut self,
+        p: &Program,
+        name: &str,
+        state: &mut State,
+        host: &mut dyn Host,
+    ) -> bool {
         match p.trigger(name) {
             Some(b) => {
                 // OMSI passes the key state to a trigger: 1 on press and 0 on release.
@@ -217,7 +240,11 @@ impl Vm {
                 // the stack also lets release blocks such as `kw_m_enginestart_off` store
                 // the released state in their anti-repeat variable.
                 self.stacks.clear();
-                let value = if name.to_ascii_lowercase().ends_with("_off") { 0.0 } else { 1.0 };
+                let value = if name.to_ascii_lowercase().ends_with("_off") {
+                    0.0
+                } else {
+                    1.0
+                };
                 self.stacks.push(value);
                 self.run_block(p, b, state, host);
                 true
@@ -235,9 +262,18 @@ impl Vm {
         self.run_block(p, block, state, host);
     }
 
-    pub fn run_block(&mut self, p: &Program, block: BlockId, state: &mut State, host: &mut dyn Host) {
+    pub fn run_block(
+        &mut self,
+        p: &Program,
+        block: BlockId,
+        state: &mut State,
+        host: &mut dyn Host,
+    ) {
         if self.depth >= MAX_DEPTH {
-            log::warn!("script macro recursion too deep in {}", p.blocks[block as usize].name);
+            log::warn!(
+                "script macro recursion too deep in {}",
+                p.blocks[block as usize].name
+            );
             return;
         }
         self.depth += 1;
@@ -304,7 +340,11 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
         Op::Load(id) => s.push(state.vars[*id as usize]),
         Op::Store(id) => {
             if !s.st[0].is_finite() && debug_nan() {
-                log::warn!("script: {} = {} (the first number that is not one)", p.var_name(*id).unwrap_or("?"), s.st[0]);
+                log::warn!(
+                    "script: {} = {} (the first number that is not one)",
+                    p.var_name(*id).unwrap_or("?"),
+                    s.st[0]
+                );
             }
             state.vars[*id as usize] = s.st[0]
         }
@@ -318,7 +358,9 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
             let c = &p.curves[*id as usize];
             un!(|x| c.eval(x))
         }
-        Op::Macro(_) | Op::Random | Op::JumpIfZero(_) | Op::Jump(_) => unreachable!("handled by run_block"),
+        Op::Macro(_) | Op::Random | Op::JumpIfZero(_) | Op::Jump(_) => {
+            unreachable!("handled by run_block")
+        }
         Op::Callback(n) => host.callback(p.name(*n), *n, s, state),
         Op::SoundTrigger(n) => host.sound_trigger_vars(p.name(*n), *n, &state.vars),
         Op::SoundTriggerFile(n) => {
@@ -364,7 +406,13 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
         Op::Exp => un!(|a: f32| a.exp()),
         Op::Sqrt => un!(|a: f32| if a > 0.0 { a.sqrt() } else { 0.0 }),
         Op::Sqr => un!(|a: f32| a * a),
-        Op::Sgn => un!(|a: f32| if a > 0.0 { 1.0 } else if a < 0.0 { -1.0 } else { 0.0 }),
+        Op::Sgn => un!(|a: f32| if a > 0.0 {
+            1.0
+        } else if a < 0.0 {
+            -1.0
+        } else {
+            0.0
+        }),
         Op::Abs => un!(|a: f32| a.abs()),
         Op::Trunc => un!(|a: f32| a.trunc()),
         Op::Pi => s.push(std::f32::consts::PI),
@@ -411,7 +459,10 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
             let v = if n >= 1000.0 {
                 "ERROR".to_string()
             } else {
-                pat.chars().cycle().take(if pat.is_empty() { 0 } else { omsi_round(n) }).collect()
+                pat.chars()
+                    .cycle()
+                    .take(if pat.is_empty() { 0 } else { omsi_round(n) })
+                    .collect()
             };
             s.push_str(v)
         }
@@ -499,7 +550,12 @@ fn debug_nan() -> bool {
 /// swallowed the text.
 fn str_to_float(s: &str) -> f32 {
     let t = s.trim();
-    if t.is_empty() || !t.bytes().any(|b| b.is_ascii_digit()) || !t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'+' | b'e' | b'E')) {
+    if t.is_empty()
+        || !t.bytes().any(|b| b.is_ascii_digit())
+        || !t
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'+' | b'e' | b'E'))
+    {
         return -1.0;
     }
     t.parse::<f32>().unwrap_or(-1.0)
@@ -507,18 +563,18 @@ fn str_to_float(s: &str) -> f32 {
 
 #[inline]
 fn b2f(b: bool) -> f32 {
-    if b {
-        1.0
-    } else {
-        0.0
-    }
+    if b { 1.0 } else { 0.0 }
 }
 
 /// Delphi's `Round` of a string function's count (ties to even, as the FPU rounds), none
 /// below 0: Omsi.exe rounds the counts of `$cutBegin`, `$cutEnd`, `$SetLength*` and `$*`.
 fn omsi_round(v: f32) -> usize {
     let r = (v as f64).round_ties_even();
-    if r.is_finite() && r > 0.0 { r.min(1e9) as usize } else { 0 }
+    if r.is_finite() && r > 0.0 {
+        r.min(1e9) as usize
+    } else {
+        0
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -558,7 +614,9 @@ fn set_length(s: &str, n: usize, align: Align) -> String {
 /// (-5 in "04" is "00-5").
 fn int_to_str_enh(v: f32, fmt: &str) -> String {
     let mut chars = fmt.chars();
-    let (Some(pad), rest) = (chars.next(), chars.as_str()) else { return "ERROR".into() };
+    let (Some(pad), rest) = (chars.next(), chars.as_str()) else {
+        return "ERROR".into();
+    };
     if rest.is_empty() {
         return "ERROR".into();
     }
@@ -578,7 +636,7 @@ fn int_to_str_enh(v: f32, fmt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compile::{compile, CompileInput};
+    use crate::compile::{CompileInput, compile};
 
     fn prog(src: &str) -> Program {
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -590,8 +648,17 @@ mod tests {
         let vl = dir.join("v.txt");
         std::fs::write(&vl, "a\nb\nresult\n").unwrap();
         let cf = dir.join("c.txt");
-        std::fs::write(&cf, "[const]\nk\n2.5\n[newcurve]\ncv\n[pnt]\n0\n0\n[pnt]\n10\n100\n").unwrap();
-        compile(&CompileInput { varlists: vec![vl], constfiles: vec![cf], scripts: vec![script], ..Default::default() })
+        std::fs::write(
+            &cf,
+            "[const]\nk\n2.5\n[newcurve]\ncv\n[pnt]\n0\n0\n[pnt]\n10\n100\n",
+        )
+        .unwrap();
+        compile(&CompileInput {
+            varlists: vec![vl],
+            constfiles: vec![cf],
+            scripts: vec![script],
+            ..Default::default()
+        })
     }
 
     #[test]
@@ -607,9 +674,16 @@ mod tests {
         super::set_session_seed(12345);
         let a: Vec<f32> = (0..16).map(|_| draw()).collect();
         assert!(a.iter().all(|v| (400000.0..900000.0).contains(v)), "{a:?}");
-        let distinct = a.iter().map(|v| *v as i64).collect::<std::collections::BTreeSet<_>>().len();
+        let distinct = a
+            .iter()
+            .map(|v| *v as i64)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
         assert!(distinct >= 15, "{a:?}");
-        assert!(a.iter().any(|v| *v > 650000.0) && a.iter().any(|v| *v < 650000.0), "{a:?}");
+        assert!(
+            a.iter().any(|v| *v > 650000.0) && a.iter().any(|v| *v < 650000.0),
+            "{a:?}"
+        );
     }
 
     #[test]
@@ -626,7 +700,9 @@ mod tests {
     #[test]
     fn unknown_curve_takes_its_argument() {
         // the O530 Facelift's converter line with two curves its constfile lacks
-        let p = prog("{init}\n7 (S.L.b) 3 (L.L.b) (F.L.nocurve) (L.L.b) (F.L.cv) * max (S.L.result) (S.L.a)\n(L.L.b) (F.L.cv) (S.L.b)\n{end}\n");
+        let p = prog(
+            "{init}\n7 (S.L.b) 3 (L.L.b) (F.L.nocurve) (L.L.b) (F.L.cv) * max (S.L.result) (S.L.a)\n(L.L.b) (F.L.cv) (S.L.b)\n{end}\n",
+        );
         assert_eq!(p.errors.len(), 1, "{:?}", p.errors);
         assert!(p.errors[0].message.contains("functioninvalid"));
         let mut vm = Vm::new();
@@ -676,7 +752,9 @@ mod tests {
     #[test]
     fn if_keeps_its_condition() {
         // the SD200's parking brake release and the chura matrix's `{if} *`
-        let p = prog("{init}\n1 (S.L.a) 7 (L.L.a) {if} ! (S.L.a) {endif}\n5 d -1 = ! {if} * (S.L.b) {endif}\n3 (S.L.result) 0 {if} 9 (S.L.result) {else} (S.L.result) {endif}\n{end}\n");
+        let p = prog(
+            "{init}\n1 (S.L.a) 7 (L.L.a) {if} ! (S.L.a) {endif}\n5 d -1 = ! {if} * (S.L.b) {endif}\n3 (S.L.result) 0 {if} 9 (S.L.result) {else} (S.L.result) {endif}\n{end}\n",
+        );
         assert!(p.errors.is_empty(), "{:?}", p.errors);
         let mut vm = Vm::new();
         let mut st = State::new(&p);
@@ -705,13 +783,23 @@ mod tests {
 
     #[test]
     fn triggers_that_set_a_variable() {
-        let p = prog("{trigger:on}\n1 (S.L.a)\n{end}\n{trigger:off}\n0 (S.L.b) (S.L.a)\n{end}\n{macro:m}\n(L.L.a) ! (S.L.a)\n{end}\n{trigger:tog}\n(M.L.m)\n{end}\n{trigger:ai_x}\n1 (S.L.a)\n{end}\n{trigger:other}\n1 (S.L.b)\n{end}\n");
+        let p = prog(
+            "{trigger:on}\n1 (S.L.a)\n{end}\n{trigger:off}\n0 (S.L.b) (S.L.a)\n{end}\n{macro:m}\n(L.L.a) ! (S.L.a)\n{end}\n{trigger:tog}\n(M.L.m)\n{end}\n{trigger:ai_x}\n1 (S.L.a)\n{end}\n{trigger:other}\n1 (S.L.b)\n{end}\n",
+        );
         assert!(p.errors.is_empty(), "{:?}", p.errors);
-        assert_eq!(p.triggers_setting("a"), vec!["on".to_string(), "tog".to_string()]);
+        assert_eq!(
+            p.triggers_setting("a"),
+            vec!["on".to_string(), "tog".to_string()]
+        );
         assert_eq!(p.triggers_setting("b"), vec!["other".to_string()]);
         assert!(p.triggers_setting("nonexistent").is_empty());
-        let p = prog("{init}\n\"f1\" (M.V.GetFontIndex) (S.L.a) \"x\" \"f2\" (M.V.GetFontIndex) (S.L.b)\n{end}\n");
-        assert_eq!(p.literal_arguments("getfontindex"), vec!["f1".to_string(), "f2".to_string()]);
+        let p = prog(
+            "{init}\n\"f1\" (M.V.GetFontIndex) (S.L.a) \"x\" \"f2\" (M.V.GetFontIndex) (S.L.b)\n{end}\n",
+        );
+        assert_eq!(
+            p.literal_arguments("getfontindex"),
+            vec!["f1".to_string(), "f2".to_string()]
+        );
         assert_eq!(p.callbacks_used(), vec!["GetFontIndex".to_string()]);
     }
 
@@ -748,7 +836,12 @@ mod tests {
         std::fs::write(dir.join("t.osc"), src).unwrap();
         std::fs::write(dir.join("v.txt"), "a\nb\nresult\n").unwrap();
         std::fs::write(dir.join("s.txt"), "s\n").unwrap();
-        let p = compile(&CompileInput { varlists: vec![dir.join("v.txt")], stringvarlists: vec![dir.join("s.txt")], scripts: vec![dir.join("t.osc")], ..Default::default() });
+        let p = compile(&CompileInput {
+            varlists: vec![dir.join("v.txt")],
+            stringvarlists: vec![dir.join("s.txt")],
+            scripts: vec![dir.join("t.osc")],
+            ..Default::default()
+        });
         assert!(p.errors.is_empty(), "{:?}", p.errors);
         let mut vm = Vm::new();
         let mut st = State::new(&p);
@@ -807,13 +900,14 @@ mod tests {
     /// `{endif}` as OMSI's does, instead of running what follows it every time.
     #[test]
     fn orphan_else_skips_to_the_next_endif() {
-        let p = prog("{init}\n1 (S.L.a)\n1 {if} 2 (S.L.a) {endif} {endif}\n{else} 3 (S.L.a) {endif}\n{end}\n");
+        let p = prog(
+            "{init}\n1 (S.L.a)\n1 {if} 2 (S.L.a) {endif} {endif}\n{else} 3 (S.L.a) {endif}\n{end}\n",
+        );
         let mut st = State::new(&p);
         let mut vm = Vm::new();
         vm.run_init(&p, &mut st, &mut NullHost);
         assert_eq!(st.vars[p.var("a").unwrap() as usize], 2.0);
     }
-
 }
 
 /// A line number as a display of three digit cells and a letter cell shows it: the digits
@@ -822,8 +916,15 @@ mod tests {
 /// letter) is left as it is. See `compat::four_char_matrix`.
 pub fn digits_first(text: &str) -> String {
     let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-    let others: Vec<char> = text.chars().filter(|c| !c.is_ascii_digit() && !c.is_whitespace()).collect();
-    if digits.is_empty() || digits.len() > 3 || others.len() > 1 || others.iter().any(|c| !c.is_alphabetic()) {
+    let others: Vec<char> = text
+        .chars()
+        .filter(|c| !c.is_ascii_digit() && !c.is_whitespace())
+        .collect();
+    if digits.is_empty()
+        || digits.len() > 3
+        || others.len() > 1
+        || others.iter().any(|c| !c.is_alphabetic())
+    {
         return text.to_string();
     }
     let letter = others.first().copied().unwrap_or(' ');

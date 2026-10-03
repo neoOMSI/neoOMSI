@@ -1,6 +1,6 @@
 //! Minimal RIFF/WAVE PCM reader (8/16/24/32-bit integer and 32-bit float).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub struct WavData {
     pub sample_rate: u32,
@@ -44,13 +44,29 @@ pub fn parse_wav(bytes: &[u8]) -> Result<WavData> {
     let data = data.ok_or_else(|| anyhow!("missing data chunk"))?;
     let samples: Vec<i16> = match (tag, bits) {
         (1, 8) | (0xFFFE, 8) => data.iter().map(|b| ((*b as i16) - 128) << 8).collect(),
-        (1, 16) | (0xFFFE, 16) => data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect(),
-        (1, 24) | (0xFFFE, 24) => data.chunks_exact(3).map(|c| i16::from_le_bytes([c[1], c[2]])).collect(),
-        (1, 32) | (0xFFFE, 32) => data.chunks_exact(4).map(|c| i16::from_le_bytes([c[2], c[3]])).collect(),
-        (3, 32) => data.chunks_exact(4).map(|c| quantize(f32::from_le_bytes(c.try_into().unwrap()))).collect(),
+        (1, 16) | (0xFFFE, 16) => data
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect(),
+        (1, 24) | (0xFFFE, 24) => data
+            .chunks_exact(3)
+            .map(|c| i16::from_le_bytes([c[1], c[2]]))
+            .collect(),
+        (1, 32) | (0xFFFE, 32) => data
+            .chunks_exact(4)
+            .map(|c| i16::from_le_bytes([c[2], c[3]]))
+            .collect(),
+        (3, 32) => data
+            .chunks_exact(4)
+            .map(|c| quantize(f32::from_le_bytes(c.try_into().unwrap())))
+            .collect(),
         _ => return Err(anyhow!("unsupported WAV format tag {tag} / {bits} bit")),
     };
-    Ok(WavData { sample_rate, channels: channels.max(1), samples })
+    Ok(WavData {
+        sample_rate,
+        channels: channels.max(1),
+        samples,
+    })
 }
 
 #[cfg(test)]
@@ -78,12 +94,34 @@ mod tests {
     #[test]
     fn every_format_becomes_16_bit() {
         // 8-bit is unsigned around 128
-        assert_eq!(parse_wav(&wav(1, 8, &[0, 128, 255])).unwrap().samples, vec![-32768, 0, 32512]);
-        assert_eq!(parse_wav(&wav(1, 16, &[0x00, 0x80, 0xff, 0x7f])).unwrap().samples, vec![-32768, 32767]);
+        assert_eq!(
+            parse_wav(&wav(1, 8, &[0, 128, 255])).unwrap().samples,
+            vec![-32768, 0, 32512]
+        );
+        assert_eq!(
+            parse_wav(&wav(1, 16, &[0x00, 0x80, 0xff, 0x7f]))
+                .unwrap()
+                .samples,
+            vec![-32768, 32767]
+        );
         // 24 and 32 bit keep their top 16 bits
-        assert_eq!(parse_wav(&wav(1, 24, &[0x11, 0x00, 0x40])).unwrap().samples, vec![0x4000]);
-        assert_eq!(parse_wav(&wav(1, 32, &[0x11, 0x22, 0x00, 0xc0])).unwrap().samples, vec![-0x4000]);
-        let f: Vec<u8> = [0.5f32, -1.0, 2.0].iter().flat_map(|x| x.to_le_bytes()).collect();
-        assert_eq!(parse_wav(&wav(3, 32, &f)).unwrap().samples, vec![16384, -32768, 32767]);
+        assert_eq!(
+            parse_wav(&wav(1, 24, &[0x11, 0x00, 0x40])).unwrap().samples,
+            vec![0x4000]
+        );
+        assert_eq!(
+            parse_wav(&wav(1, 32, &[0x11, 0x22, 0x00, 0xc0]))
+                .unwrap()
+                .samples,
+            vec![-0x4000]
+        );
+        let f: Vec<u8> = [0.5f32, -1.0, 2.0]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        assert_eq!(
+            parse_wav(&wav(3, 32, &f)).unwrap().samples,
+            vec![16384, -32768, 32767]
+        );
     }
 }

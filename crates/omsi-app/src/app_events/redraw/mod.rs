@@ -1,11 +1,11 @@
 //! One frame (`RedrawRequested`), in phases that run in this order.
 
+mod ai_traffic;
 mod camera;
 mod environment;
 mod player;
 mod render;
 mod setup;
-mod ai_traffic;
 mod world;
 
 use super::*;
@@ -25,7 +25,9 @@ impl App {
         if !self.redraw_begin(event_loop) {
             return;
         }
-        let Some(f) = self.redraw_timing(event_loop) else { return };
+        let Some(f) = self.redraw_timing(event_loop) else {
+            return;
+        };
         self.redraw_traffic(&f);
         self.redraw_player(&f);
         self.redraw_world(event_loop, &f);
