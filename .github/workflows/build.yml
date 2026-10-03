@@ -171,9 +171,12 @@ jobs:
         run: scripts/build-linux.sh
       - name: Build the server
         run: scripts/build-server.sh
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - name: Validate shaders
         if: matrix.arch == 'x64'
-        run: cargo test --locked --release -p omsi-render shaders_validate_and_match_the_uniforms
+        run: cargo nextest run --locked --release -p omsi-render -E 'test(shaders_validate_and_match_the_uniforms)'
       - name: Package
         run: |
           mkdir -p out

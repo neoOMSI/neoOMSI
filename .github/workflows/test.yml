@@ -25,5 +25,8 @@ jobs:
         with:
           key: x86_64-pc-windows-msvc
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - name: Run workspace tests
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked
