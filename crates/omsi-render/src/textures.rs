@@ -1,4 +1,4 @@
-use super::{MaterialMaps, PbrMaps, Renderer, Scene, TextureId, fit_texture, gl_worker_turn};
+use super::{MaterialMaps, Renderer, Scene, TextureId, fit_texture, gl_worker_turn};
 
 struct RgbaRef<'a> {
     width: u32,
@@ -115,48 +115,6 @@ impl Renderer {
         let texture = upload_texture(&self.device, &self.queue, &image, false);
         scene.textures.push(texture);
         scene.textures.len() - 1
-    }
-
-    /// The PBR set found beside diffuse texture `diffuse` (`omsi_texture::pbr`): its maps up
-    /// (as data, not colours) and known to the materials made with that texture from now on.
-    pub fn add_pbr_maps(
-        &self,
-        scene: &mut Scene,
-        diffuse: TextureId,
-        set: &omsi_texture::pbr::PbrImages,
-    ) {
-        // sRGB decoding turns a stored value of 128 into about 0.22, which distorts normal
-        // maps. Convert byte values through the sRGB curve before storing them.
-        let lut: Vec<u8> = (0..256)
-            .map(|v| {
-                let l = v as f32 / 255.0;
-                let s = if l <= 0.003_130_8 {
-                    l * 12.92
-                } else {
-                    1.055 * l.powf(1.0 / 2.4) - 0.055
-                };
-                (s * 255.0 + 0.5).clamp(0.0, 255.0) as u8
-            })
-            .collect();
-        let mut up = |img: &omsi_texture::Image| {
-            let data = omsi_texture::Image {
-                width: img.width,
-                height: img.height,
-                rgba: img.rgba.iter().map(|b| lut[*b as usize]).collect(),
-                has_alpha: false,
-            };
-            self.add_texture(scene, &data, true)
-        };
-        let normal = set.normal.as_ref().map(&mut up);
-        let orm = set.orm.as_ref().map(&mut up);
-        scene.pbr_maps.insert(
-            diffuse,
-            PbrMaps {
-                normal,
-                orm,
-                flags: set.flags,
-            },
-        );
     }
 
     /// The device takes BC1-3 (DXT) textures.
