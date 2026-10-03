@@ -6,6 +6,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: test-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -16,17 +19,126 @@ env:
   CARGO_NET_RETRY: 10
 
 jobs:
-  test:
-    runs-on: windows-latest
+  changes:
+    name: Detect test-relevant changes
+    runs-on: ubuntu-slim
+
+    outputs:
+      run-tests: ${{ steps.changes.outputs.run-tests }}
+
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        id: changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Manual runs always execute the full test suite.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            echo "Manual run: tests required."
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            range="$PR_BASE...$PR_HEAD"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            # A branch creation or otherwise unavailable previous revision
+            # cannot be compared safely, so run the tests.
+            if [ -z "$PUSH_BEFORE" ] || \
+               [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "run-tests=true" >> "$GITHUB_OUTPUT"
+              echo "No usable previous revision: tests required."
+              exit 0
+            fi
+
+            range="$PUSH_BEFORE..$PUSH_HEAD"
+          else
+            # Fail safe for future trigger types.
+            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            echo "Unknown event type: tests required."
+            exit 0
+          fi
+
+          echo "Checking changes in $range"
+
+          changed="$(git diff --name-only "$range")"
+
+          echo "Changed files:"
+          printf '%s\n' "$changed"
+
+          # Files that can affect the Rust workspace or its tests.
+          if printf '%s\n' "$changed" | grep -Eq \
+            '^(crates/|tools/|Cargo\.toml$|Cargo\.lock$|\.cargo/|rust-toolchain$|rust-toolchain\.toml$|\.github/workflows/test\.yml$|\.github/actions/)'
+          then
+            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            echo "Test-relevant changes detected."
+          else
+            echo "run-tests=false" >> "$GITHUB_OUTPUT"
+            echo "No test-relevant changes detected."
+          fi
+
+  test:
+    name: Workspace tests
+    needs: changes
+    if: needs.changes.outputs.run-tests == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
       - uses: dtolnay/rust-toolchain@stable
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: x86_64-pc-windows-msvc
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+
       - name: Run workspace tests
-        run: cargo nextest run --workspace --locked
+        run: cargo nextest run --workspace --locked
+
+  required:
+    name: Required
+    needs: [changes, test]
+    if: always()
+    runs-on: ubuntu-slim
+
+    steps:
+      - name: Verify test result
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          RUN_TESTS: ${{ needs.changes.outputs.run-tests }}
+        run: |
+          set -euo pipefail
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::Change detection failed."
+            exit 1
+          fi
+
+          if [ "$RUN_TESTS" = "true" ]; then
+            if [ "$TEST_RESULT" != "success" ]; then
+              echo "::error::Workspace tests were required but did not pass."
+              exit 1
+            fi
+
+            echo "Workspace tests passed."
+          else
+            echo "No Rust/test-relevant changes. Workspace tests were safely skipped."
+          fi
