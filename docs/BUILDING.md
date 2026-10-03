@@ -61,11 +61,11 @@ cargo build --release -p omsi-app
 Run the workspace test suite:
 
 ```sh
-cargo test --workspace
+cargo nextest run --workspace
 ```
 
 Integration tests that inspect original game content read the path from the `OMSI_ROOT` environment variable and skip automatically if omitted:
 
 ```sh
-OMSI_ROOT="/path/to/OMSI 2" cargo test --workspace
+OMSI_ROOT="/path/to/OMSI 2" cargo nextest run --workspace
 ```

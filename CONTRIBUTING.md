@@ -13,7 +13,7 @@ Thanks for your interest in contributing. neoOMSI optimizes for **correctness, s
 
 1. **Build & test locally:**
    - Install prerequisites and use the fast local build scripts described in [Building from source](docs/BUILDING.md).
-   - Ensure the workspace checks pass: `cargo test --workspace`.
+   - Ensure the workspace checks pass: `cargo nextest run --workspace`.
 2. **Branch from `main`:**
    - Use short-lived, single-purpose branches (`feat/`, `fix/`, `parity/`, `refactor/`, `perf/`, `docs/`, `chore/`).
    - Details: [Development workflow](docs/DEVELOPMENT.md).

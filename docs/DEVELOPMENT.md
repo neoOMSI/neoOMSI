@@ -56,7 +56,7 @@ For fast iteration while developing, use the development scripts detailed in [Bu
 Before opening a pull request, verify that workspace checks pass:
 
 ```sh
-cargo test --workspace
+cargo nextest run --workspace
 cargo build --release
 ```
 
