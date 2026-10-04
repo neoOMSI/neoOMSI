@@ -396,6 +396,10 @@ impl App {
                     }
                 }
             }
+            if self.screenshot_mode.is_some() && pressed && !repeat && code == KeyCode::Escape {
+                self.leave_screenshot_mode();
+                return;
+            }
             if self.game_menu.is_none() && self.placing_key(code, pressed) {
                 return;
             }

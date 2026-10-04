@@ -21,6 +21,12 @@ impl App {
         };
         let vr_nav_display = self.vr_nav_display();
         let vr_active = self.vr_active();
+        let screenshot_mode = self.screenshot_mode.is_some();
+        let screenshot_help = self.screenshot_mode.as_mut().and_then(|mode| {
+            mode.help_left = (mode.help_left - dt).max(0.0);
+            (mode.help_left > 0.0)
+                .then(|| "Screenshot mode: HUD hidden. Press Esc to return.".to_string())
+        });
         let menu_tabs = match self.list_kind.as_ref() {
             Some(k) if self.chooser.is_some() => game_lists::page_titles(self, k),
             _ => None,
@@ -80,11 +86,12 @@ impl App {
             let __t = Instant::now();
             scene.overlays.clear();
             let notes = lines;
-            if let (Some(nav), Some(p), Some(s)) = (
+            if !screenshot_mode {
+                if let (Some(nav), Some(p), Some(s)) = (
                 self.navigator.as_mut(),
                 self.player.as_ref(),
                 self.surface.as_ref(),
-            ) {
+                ) {
                 let old_enabled = nav.enabled;
                 let old_opacity = nav.opacity;
                 nav.cockpit_display = vr_active;
@@ -177,6 +184,7 @@ impl App {
                     }
                 }
             }
+            }
             if let (Some(ui), Some(s)) = (self.ui.as_mut(), self.surface.as_ref()) {
                 let scale = self
                     .window
@@ -185,13 +193,13 @@ impl App {
                     .unwrap_or(1.0);
                 let (w, h) = (s.config.width as f32, s.config.height as f32);
                 self.remotes.chat.disabled = !self.settings.chat;
-                let chat = (self.lan.is_some() && self.settings.chat).then(|| ui::ChatView {
+                let chat = (!screenshot_mode && self.lan.is_some() && self.settings.chat).then(|| ui::ChatView {
                     lines: &self.remotes.chat.lines,
                     typing: self.remotes.chat.typing.as_deref(),
                     error: self.remotes.chat.error(),
                 });
                 ui.chat.hidden = self.remotes.chat.hidden;
-                let tags = if self.settings.name_tags {
+                let tags = if !screenshot_mode && self.settings.name_tags {
                     self.camera
                         .as_ref()
                         .map(|c| lan::name_tags(&self.remotes, c, w, h))
@@ -265,19 +273,25 @@ impl App {
                             false
                         }
                     },
-                    tooltip: tooltip.filter(|_| {
-                        self.settings.tooltips
-                            && !self.dragging
-                            && !covered
-                            && self.game_menu.is_none()
-                    }),
-                    notes: if self.settings.notes && !map_open && self.game_menu.is_none() {
+                    tooltip: if screenshot_mode {
+                        None
+                    } else {
+                        tooltip.filter(|_| {
+                            self.settings.tooltips
+                                && !self.dragging
+                                && !covered
+                                && self.game_menu.is_none()
+                        })
+                    },
+                    notes: if screenshot_mode {
+                        screenshot_help.as_slice()
+                    } else if self.settings.notes && !map_open && self.game_menu.is_none() {
                         &notes
                     } else {
                         &[]
                     },
-                    fps: self.settings.show_fps.then_some(self.fps),
-                    paused: self.paused,
+                    fps: (!screenshot_mode && self.settings.show_fps).then_some(self.fps),
+                    paused: self.paused && !screenshot_mode,
                     menu: match chooser_sel {
                         Some(k) => Some((k, &chooser_items[..])),
                         None => self.game_menu.map(|k| (k, &menu_lines[..])),
@@ -285,7 +299,7 @@ impl App {
                     menu_disabled,
                     menu_kind,
                     report: report_view.as_ref(),
-                    touch: crate::platform::touch_controls(),
+                    touch: !screenshot_mode && crate::platform::touch_controls(),
                     build: crate::startup::BUILD,
                     report_status: &self.report_status,
                     menu_head,
@@ -298,7 +312,7 @@ impl App {
                     dropdown,
                     menu_kbd: self.menu_kbd,
                     menu_top: self.menu_top,
-                    timetable: (self.timetable && !map_open)
+                    timetable: (!screenshot_mode && self.timetable && !map_open)
                         .then(|| {
                             timetable_rows(
                                 self.duty.as_ref(),
@@ -306,7 +320,7 @@ impl App {
                             )
                         })
                         .flatten(),
-                    info: self.info_bar.then(|| {
+                    info: (!screenshot_mode && self.info_bar).then(|| {
                         info_line(
                             &self.clock,
                             self.player.as_ref(),
@@ -317,7 +331,7 @@ impl App {
                     tutorial: self
                         .tutorial
                         .as_ref()
-                        .filter(|t| !t.hidden && self.game_menu.is_none())
+                        .filter(|t| !screenshot_mode && !t.hidden && self.game_menu.is_none())
                         .and_then(|t| {
                             t.page().map(|p| {
                                 (

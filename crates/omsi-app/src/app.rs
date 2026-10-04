@@ -2,6 +2,14 @@ use super::*;
 
 const SLOW_UPLOAD_MB_S: f64 = 300.0;
 
+/// The view and pause state to restore when screenshot mode ends.
+pub(crate) struct ScreenshotMode {
+    pub(crate) view: String,
+    pub(crate) ego: bool,
+    pub(crate) paused: bool,
+    pub(crate) help_left: f32,
+}
+
 pub(crate) struct App {
     pub(crate) args: Args,
     pub(crate) instance: wgpu::Instance,
@@ -84,6 +92,7 @@ pub(crate) struct App {
     pub(crate) hover_hand: bool,
     pub(crate) input_script: Vec<(f32, String)>,
     pub(crate) shot: Option<PathBuf>,
+    pub(crate) screenshot_mode: Option<ScreenshotMode>,
     pub(crate) paused: bool,
     pub(crate) game_menu: Option<usize>,
     pub(crate) menu_top: Option<f32>,

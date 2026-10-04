@@ -270,7 +270,9 @@ impl App {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let path = dir.join(format!("omsi_{secs}.png"));
-        self.service_msg = Some((format!("Screenshot: {}", path.display()), 4.0));
+        if self.screenshot_mode.is_none() {
+            self.service_msg = Some((format!("Screenshot: {}", path.display()), 4.0));
+        }
         self.shot = Some(path);
     }
 }

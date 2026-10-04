@@ -1151,6 +1151,7 @@ impl App {
             "report_current" => self.open_run_report(true),
             "report_last" => self.open_run_report(false),
             "resume" => self.close_game_menu(),
+            "screenshot" => self.enter_screenshot_mode(),
             "options" => self.open_list(crate::game_lists::ListKind::Options(0)),
             "vehicle" => self.open_list(crate::game_lists::ListKind::Vehicle(0)),
             "world" => self.open_list(crate::game_lists::ListKind::World(0)),
@@ -1340,6 +1341,9 @@ impl App {
         if self.last_report.is_some() {
             v.insert(1, ("report_last", "Last trip evaluation…"));
         }
+        if self.lan.is_none() {
+            v.insert(1, ("screenshot", "Screenshot mode"));
+        }
         let mut at = 1;
         if self.on_foot.is_some() && self.player.is_some() {
             v.insert(at, ("tobus", "Back to my bus"));
@@ -1374,6 +1378,51 @@ impl App {
             v.insert(before_quit, ("admin", "Administration..."));
         }
         v
+    }
+
+    /// Enter a clean, paused free-camera view for screenshots.
+    pub(crate) fn enter_screenshot_mode(&mut self) {
+        self.close_game_menu();
+        self.screenshot_mode = Some(crate::ScreenshotMode {
+            view: self.view.clone(),
+            ego: self.ego,
+            paused: self.paused,
+            help_left: 5.0,
+        });
+        if self.view != "free" {
+            if let (Some(cam), Some(p)) = (self.camera.as_mut(), self.player.as_ref()) {
+                let h = (p.vehicle.heading as f32).to_radians();
+                cam.position = p.vehicle.position
+                    + glam::DVec3::new(
+                        -(h.sin() as f64) * 25.0,
+                        -(h.cos() as f64) * 25.0,
+                        30.0,
+                    );
+                cam.yaw = p.vehicle.heading as f32;
+                cam.pitch = -45.0;
+            }
+        }
+        self.view = "free".into();
+        self.ego = false;
+        self.paused = true;
+        self.cursor_hidden = Some(self.cursor);
+        if let Some(win) = self.window.as_ref() {
+            win.set_cursor_visible(false);
+        }
+    }
+
+    /// Leave screenshot mode and put the player back where they were.
+    pub(crate) fn leave_screenshot_mode(&mut self) {
+        let Some(mode) = self.screenshot_mode.take() else {
+            return;
+        };
+        self.view = mode.view;
+        self.ego = mode.ego;
+        self.paused = mode.paused;
+        self.cursor_hidden = None;
+        if let Some(win) = self.window.as_ref() {
+            win.set_cursor_visible(true);
+        }
     }
 
     pub(crate) fn copy_server_code(&mut self) {

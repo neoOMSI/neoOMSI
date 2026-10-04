@@ -67,7 +67,8 @@ impl App {
             || self.list_kind.is_some()
             || self.navigator.as_ref().is_some_and(|n| n.map_open())
             || !matches!(self.view.as_str(), "driver" | "outside" | "pax");
-        let hide = (moved || actions.iter().any(|a| a.1)) && !needs_mouse && !vr_on;
+        let hide = self.screenshot_mode.is_some()
+            || ((moved || actions.iter().any(|a| a.1)) && !needs_mouse && !vr_on);
         if self.vr_nav_edit.is_none()
             && hide != self.cursor_hidden.is_some()
             && (hide || needs_mouse)

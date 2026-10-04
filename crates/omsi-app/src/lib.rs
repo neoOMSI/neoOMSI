@@ -482,6 +482,7 @@ pub(crate) fn make_app(
         hover_hand: false,
         input_script: parse_input_script(),
         shot: None,
+        screenshot_mode: None,
         paused: false,
         game_menu: None,
         menu_top: None,
