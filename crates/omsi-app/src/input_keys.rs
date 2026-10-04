@@ -713,6 +713,7 @@ impl App {
             "view_reset_direction" => {
                 if self.view == "driver" {
                     self.cam_blend.resetting = true;
+                    self.cam_blend.reset_zoom = self.view_zoom.get(&self.view).copied();
                 }
                 self.look = (0.0, 0.0);
                 self.view_zoom.remove(&self.view);
@@ -724,6 +725,7 @@ impl App {
             "view_reset_all_directions" => {
                 if self.view == "driver" {
                     self.cam_blend.resetting = true;
+                    self.cam_blend.reset_zoom = self.view_zoom.get(&self.view).copied();
                 }
                 self.look = (0.0, 0.0);
                 self.view_looks.clear();

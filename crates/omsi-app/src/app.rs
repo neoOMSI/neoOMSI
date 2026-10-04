@@ -1329,6 +1329,9 @@ pub(crate) struct CamBlend {
     pub key: Option<(String, (usize, usize))>,
     /// The driver view was reset and should move back smoothly.
     pub resetting: bool,
+    /// The driver's zoom immediately before a reset.  The reset removes the per-view zoom
+    /// at once, but its field of view still needs to be the start of the camera glide.
+    pub reset_zoom: Option<f32>,
     /// The camera the glide started from (in the bus's frame), while one is under way.
     pub from: Option<omsi_vehicle::Camera>,
     /// The cockpit camera as it was drawn last frame (in the bus's frame): where the next

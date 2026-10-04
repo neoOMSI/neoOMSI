@@ -443,6 +443,7 @@ impl App {
                         let inside_view = self.view == "driver";
                         let entering = std::mem::take(&mut self.cam_blend.entering);
                         let resetting = std::mem::take(&mut self.cam_blend.resetting);
+                        let reset_zoom = std::mem::take(&mut self.cam_blend.reset_zoom);
                         let left = self
                             .cam_blend
                             .key
@@ -472,7 +473,13 @@ impl App {
                                     }
                                     Some(f)
                                 } else {
-                                    self.cam_blend.shown.clone()
+                                    let mut from = self.cam_blend.shown.clone();
+                                    if resetting {
+                                        if let (Some(from), Some(zoom)) = (&mut from, reset_zoom) {
+                                            from.fov *= zoom;
+                                        }
+                                    }
+                                    from
                                 };
                                 if let Some(from) = from {
                                     let d = glam::Vec3::from_array(from.pos)
