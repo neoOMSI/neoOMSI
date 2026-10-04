@@ -6,7 +6,7 @@
 //! the platform - and when a bus opens its doors there, queues at the nearest open
 //! `[entry]` (a passenger who still has to buy a ticket only at one with a cash desk),
 //! steps in when the doorway is free, pays or shows a pass at the desk, walks the cabin's
-//! `paths.cfg` network to a free `[passpos]` (a standing place once the seats are gone),
+//! `paths.cfg` network to a free `[passpos]` (optionally preferring seated places),
 //! rides, presses the stop button before their stop, walks to the nearest `[exit]` when
 //! the bus stands there, steps out and walks away along the pavement - or waits at the
 //! stop for another bus. Timetable (AI) buses carry their passengers the same way.
@@ -1496,6 +1496,9 @@ pub struct Humans {
     /// ticket by themselves after a moment; `pay` - wait at the desk for the driver to
     /// sell it (and show a pass after `PAY_PATIENCE`); `walk` - no cash desk at all.
     pub boarding: String,
+    /// Prefer free seated places when reserving a place; off preserves OMSI's random
+    /// choice among seated and standing places.
+    pub prefer_seats: bool,
     /// The driver pressed the ticket key (`ticket_give`): sell the requested ticket.
     pub give_ticket: bool,
     /// The driver pressed `change_give`: all the change owed goes on the tray at once.
@@ -1715,6 +1718,7 @@ impl Humans {
             stroll_timer: 0.0,
             exact_fare: true,
             boarding: "auto".into(),
+            prefer_seats: false,
             give_ticket: false,
             give_change_all: false,
             ticket_key: "T".into(),
@@ -3554,7 +3558,7 @@ impl Humans {
         let trailers = part_frames(bus, &cabin);
         let rot = bus.body_rotation();
         for _ in 0..n {
-            let Some(k) = self.reserve_place(BusId::Player, cabin.seats.len()) else {
+            let Some(k) = self.reserve_place(BusId::Player, &cabin.seats) else {
                 break;
             };
             let walk = 1.1 + (self.rand_f() as f32 * 2.0 - 1.0) * 0.2;
@@ -6090,6 +6094,60 @@ mod tests {
             [0, 1, 0, 0, 2, 0, 1]
         );
         assert!(seat_numbers(&[], [0].into_iter()).is_empty());
+    }
+
+    #[test]
+    fn seat_preference_respects_reservations_capacity_and_released_seats() {
+        let places: Vec<Seat> = [false, true, false, true]
+            .into_iter()
+            .enumerate()
+            .map(|(omsi_seat, seated)| Seat {
+                pos: Vec3::ZERO,
+                floor: Vec3::ZERO,
+                rot: 0.0,
+                seated,
+                height: if seated { 0.45 } else { 0.0 },
+                omsi_seat,
+            })
+            .collect();
+        let mut h = Humans::new(Path::new("/nonexistent"));
+        h.prefer_seats = true;
+        for bus in [BusId::Player, BusId::Ai(42)] {
+            // One seated place is already reserved, including a walker or an avatar.
+            h.seats.insert(bus, vec![false, true, false, false]);
+            assert_eq!(h.reserve_place(bus, &places), Some(3));
+            let a = h.reserve_place(bus, &places).unwrap();
+            let b = h.reserve_place(bus, &places).unwrap();
+            assert!(!places[a].seated && !places[b].seated && a != b);
+            assert_eq!(h.reserve_place(bus, &places), None);
+            h.free_seat(bus, 1);
+            assert_eq!(h.reserve_place(bus, &places), Some(1));
+        }
+        assert_eq!(h.reserve_place(BusId::Player, &[]), None);
+    }
+
+    #[test]
+    fn seat_preference_off_preserves_random_place_selection() {
+        let places = [false, true].map(|seated| Seat {
+            pos: Vec3::ZERO,
+            floor: Vec3::ZERO,
+            rot: 0.0,
+            seated,
+            height: if seated { 0.45 } else { 0.0 },
+            omsi_seat: 0,
+        });
+        let mut h = Humans::new(Path::new("/nonexistent"));
+        assert!(!h.prefer_seats);
+        let mut reference = Humans::new(Path::new("/nonexistent"));
+        let mut seen = [false; 2];
+        for _ in 0..32 {
+            let expected = (reference.rand() as usize) % places.len();
+            let k = h.reserve_place(BusId::Player, &places).unwrap();
+            assert_eq!(k, expected);
+            seen[k] = true;
+            h.free_seat(BusId::Player, k);
+        }
+        assert_eq!(seen, [true, true]);
     }
 
     #[test]

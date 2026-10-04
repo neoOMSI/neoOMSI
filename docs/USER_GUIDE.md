@@ -43,6 +43,17 @@ This guide covers running neoOMSI, essential keybindings, and common configurati
 - **Look around:** Hold Right-Mouse-Button and move mouse (or arrow keys / `I`/`J`/`K`/`L`).
 - **In-game menu:** Press `Esc` to access settings, switch buses, or exit.
 
+## Passenger seating
+
+Under **Settings → Gameplay → Passengers**, enable **Passengers prefer available seats**
+to reserve free seats before using standing places when passengers board. Standing places
+are used once all seats are occupied or reserved. This neoOMSI option is off by default;
+with it off, passengers choose randomly among all free places, as in OMSI 2.
+
+The option can also be changed through the in-game **Options → Gameplay** menu. Changes
+apply to subsequent place reservations in player and timetable buses. In `settings.cfg`,
+the option is stored as `pax_prefer_seats=1` (enabled) or `pax_prefer_seats=0` (disabled).
+
 ## Command-line options
 
 You can launch directly into a specific scenario using command-line arguments:

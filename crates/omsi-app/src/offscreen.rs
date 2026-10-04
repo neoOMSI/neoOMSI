@@ -168,6 +168,7 @@ pub(crate) fn run_offscreen(
         }
         h.exact_fare = settings.exact_fare;
         h.boarding = settings.boarding.clone();
+        h.prefer_seats = settings.pax_prefer_seats;
         h.voices = match settings.pax_voices.as_str() {
             "off" => 2,
             "tickets" => 1,

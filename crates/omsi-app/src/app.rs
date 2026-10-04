@@ -835,6 +835,7 @@ impl App {
                     }
                     h.exact_fare = self.settings.exact_fare;
                     h.boarding = self.settings.boarding.clone();
+                    h.prefer_seats = self.settings.pax_prefer_seats;
                     h.voices = match self.settings.pax_voices.as_str() {
                         "off" => 2,
                         "tickets" => 1,

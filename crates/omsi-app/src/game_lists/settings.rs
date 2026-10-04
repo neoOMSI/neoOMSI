@@ -66,6 +66,7 @@ pub(super) fn sync_live(app: &mut App) {
     if let Some(h) = app.humans.as_mut() {
         h.exact_fare = s.exact_fare;
         h.boarding = s.boarding.clone();
+        h.prefer_seats = s.pax_prefer_seats;
         h.voices = match s.pax_voices.as_str() {
             "off" => 2,
             "tickets" => 1,

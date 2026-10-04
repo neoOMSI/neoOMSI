@@ -35,6 +35,9 @@ pub struct Settings {
     /// ticket key or the printer); `walk` - they just walk into the saloon (a flat-fare
     /// or ticket-machine service).
     pub boarding: String,
+    /// neoOMSI extension: reserve a seated place before using standing places.
+    /// Off by default to preserve OMSI's random choice among all free places.
+    pub pax_prefer_seats: bool,
     /// Procedural detail (fractal) texturing of the ground and large walls when close.
     pub detail_textures: bool,
     /// Passengers pay the exact fare (no change to give at the cash desk).
@@ -196,6 +199,8 @@ pub struct Settings {
     pub ctrl_deadzone: f32,
     /// Game controllers switched off, by name (`|` between them).
     pub ctrl_off: String,
+    /// `steering=<device>|throttle=<device>|...`
+    pub ctrl_assign: String,
     /// Keyboard steering at OMSI's steady pace (`KeyboardAxes::linear`).
     pub steering_linear: bool,
     /// The wheel stays where the keys left it (`KeyboardAxes::old_steering`).
@@ -217,6 +222,8 @@ pub struct Settings {
     /// Mouse steering: how far the wheel turns for the same hand movement (1 = OMSI's: the
     /// window's width is the full lock).
     pub mouse_sens: f32,
+    pub stick_sens: f32,
+    pub steer_center: bool,
     /// The graphics interface: `auto` (Vulkan, else DirectX 12, else OpenGL), `vulkan`,
     /// `dx12` or `gl` (see `startup::graphics_instance`).
     pub graphics_api: String,
@@ -333,6 +340,7 @@ impl Settings {
             ui_scale_window: true,
             navigator_corner: "bottom-left".into(),
             boarding: "auto".into(),
+            pax_prefer_seats: false,
             detail_textures: true,
             exact_fare: true,
             enhanced: false,
@@ -394,8 +402,9 @@ impl Settings {
             metar_sync: false,
             metar_station: String::new(),
             shadow_casters: "all".into(),
-            ctrl_deadzone: 0.0,
+            ctrl_deadzone: 0.05,
             ctrl_off: String::new(),
+            ctrl_assign: String::new(),
             steering_linear: false,
             old_steering: false,
             red_steer_spd: false,
@@ -404,6 +413,8 @@ impl Settings {
             atmosphere_brightness: 1.0,
             led_mips: 1.3,
             mouse_sens: 1.0,
+            stick_sens: 0.25,
+            steer_center: true,
             graphics_api: "auto".into(),
             ff_invert: false,
             ff_enabled: true,
@@ -518,6 +529,7 @@ impl Settings {
                 }
                 "navigator_corner" => s.navigator_corner = v.to_ascii_lowercase(),
                 "boarding" => s.boarding = v.to_ascii_lowercase(),
+                "pax_prefer_seats" => s.pax_prefer_seats = b(v),
                 "detail_textures" | "fractal" => s.detail_textures = b(v),
                 "exact_fare" => s.exact_fare = b(v),
                 "enhanced" => s.enhanced = b(v),
@@ -752,6 +764,7 @@ impl Settings {
                 }
                 "graphics_api" => s.graphics_api = v.trim().to_ascii_lowercase(),
                 "ctrl_off" => s.ctrl_off = v.trim().to_string(),
+                "ctrl_assign" => s.ctrl_assign = v.trim().to_string(),
                 "steering_linear" => s.steering_linear = b(v),
                 "old_steering" => s.old_steering = b(v),
                 "red_steer_spd" => s.red_steer_spd = b(v),
@@ -855,6 +868,15 @@ impl Settings {
                         .map(|x| x.clamp(0.1, 3.0))
                         .unwrap_or(s.mouse_sens)
                 }
+                "stick_sens" => {
+                    s.stick_sens = v
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x.clamp(0.1, 2.0))
+                        .unwrap_or(s.stick_sens)
+                }
+                "steer_center" => s.steer_center = b(v),
                 "ui_scale_window" => s.ui_scale_window = b(v),
                 "notes" => s.notes = b(v),
                 "ui_scale" => {
@@ -990,6 +1012,10 @@ impl Settings {
             self.units, self.discord_status as u8, self.discord_app_id
         ));
         text.push_str(&format!("auto_shift={}\n", self.auto_shift as u8));
+        text.push_str(&format!(
+            "pax_prefer_seats={}\n",
+            self.pax_prefer_seats as u8
+        ));
         text
     }
 
@@ -1098,6 +1124,15 @@ pub fn view_distance() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passenger_seat_preference_is_opt_in_and_round_trips() {
+        assert!(!Settings::from_text("").pax_prefer_seats);
+        let enabled = Settings::from_text("pax_prefer_seats=1\n");
+        assert!(enabled.pax_prefer_seats);
+        assert_eq!(Settings::from_text(&enabled.to_text()), enabled);
+        assert!(!Settings::from_text("pax_prefer_seats=0\n").pax_prefer_seats);
+    }
 
     #[test]
     fn old_files_board_automatically() {

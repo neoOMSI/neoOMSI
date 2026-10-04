@@ -2420,6 +2420,7 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
     // neoOMSI's own: what passengers say, OMSI's route arrows, getting up from the seat
     for (k, d) in [
         ("pax_voices", json!("all")),
+        ("pax_prefer_seats", json!(false)),
         ("nav_arrows", json!(false)),
         ("nav_ai", json!(true)),
         ("nav_topbar", json!(true)),
@@ -2434,8 +2435,12 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
         ("shadow_blobs", json!(true)),
         ("reflections", json!(true)),
         ("mouse_sens", json!(1.0)),
+        ("stick_sens", json!(0.25)),
+        ("steer_center", json!(true)),
+        ("ctrl_deadzone", json!(0.05)),
         ("graphics_api", json!("auto")),
         ("ctrl_off", json!("")),
+        ("ctrl_assign", json!("")),
         ("steering_linear", json!(false)),
         ("old_steering", json!(false)),
         ("red_steer_spd", json!(false)),
@@ -2557,6 +2562,7 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
             | "fullscreen"
             | "vsync"
             | "exact_fare"
+            | "pax_prefer_seats"
             | "detail_textures"
             | "texture_compression"
             | "chat"
@@ -2598,7 +2604,7 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
                     _ => "metric",
                 })
             }
-            "ctrl_off" => v[&k] = json!(val),
+            "ctrl_off" | "ctrl_assign" => v[&k] = json!(val),
             "metar_station" => {
                 v[&k] = json!(
                     val.chars()
@@ -2624,8 +2630,17 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
                     "all"
                 })
             }
-            "ctrl_deadzone" => v[&k] = json!(val.parse::<f64>().unwrap_or(0.0).clamp(0.0, 0.3)),
+            "ctrl_deadzone" => v[&k] = json!(val.parse::<f64>().unwrap_or(0.05).clamp(0.0, 0.3)),
             "mouse_sens" => v[&k] = json!(val.parse::<f64>().unwrap_or(1.0).clamp(0.1, 3.0)),
+            "stick_sens" => {
+                v[&k] = json!(
+                    val.parse::<f64>()
+                        .ok()
+                        .filter(|x| x.is_finite())
+                        .unwrap_or(0.25)
+                        .clamp(0.1, 2.0)
+                )
+            }
             "ui_scale" => {
                 v[&k] = json!(
                     val.parse::<f64>()
@@ -2710,9 +2725,8 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
             | "nav_stops_ext" | "time_sync" | "metar_sync" | "ui_scale_window" | "notes"
             | "update_check" | "update_auto" | "reflections" | "steering_linear"
             | "old_steering" | "red_steer_spd" | "ff_invert" | "ff_enabled" | "brake_hold"
-            | "auto_clutch" | "mouse_steering" | "mouse_right_off" | "blinker_cancel" => {
-                v[&k] = json!(b(val))
-            }
+            | "auto_clutch" | "mouse_steering" | "mouse_right_off" | "blinker_cancel"
+            | "steer_center" => v[&k] = json!(b(val)),
             "time_speed" => {
                 v[&k] = json!(
                     val.trim_start_matches(['x', 'X'])
@@ -3091,7 +3105,7 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         b("alt_view", true),
     );
     let text = format!(
-        "{text}pax_voices={}\nnav_arrows={}\nnav_ai={}\nnav_topbar={}\nnav_turn={}\nnav_stoplist={}\nnav_stops_ext={}\ntime_speed={}\nshadow_casters={}\nshadow_blobs={}\nctrl_deadzone={}\nupdate_check={}\nupdate_auto={}\nreflections={}\nmouse_sens={}\ngraphics_api={}\nctrl_off={}\nsteering_linear={}\nold_steering={}\nred_steer_spd={}\nff_invert={}\nwheel_range={}\nwheel_lock={}\nfov={}\ncamera_collision={}\npedal_throttle={}\npedal_brake={}\nseat_x={}\nseat_y={}\nseat_z={}\nsteer_look={}\nhead_tracking={}\nff_enabled={}\nbrake_hold={}\nauto_clutch={}\nauto_ibis={}\nled_glow={}\nled_mips={}\nui_scale={}\nui_scale_window={}\nnotes={}\nmouse_steering={}\nmouse_right_off={}\nblinker_cancel={}\n",
+        "{text}pax_voices={}\nnav_arrows={}\nnav_ai={}\nnav_topbar={}\nnav_turn={}\nnav_stoplist={}\nnav_stops_ext={}\ntime_speed={}\nshadow_casters={}\nshadow_blobs={}\nctrl_deadzone={}\nupdate_check={}\nupdate_auto={}\nreflections={}\nmouse_sens={}\nstick_sens={}\nsteer_center={}\ngraphics_api={}\nctrl_off={}\nctrl_assign={}\nsteering_linear={}\nold_steering={}\nred_steer_spd={}\nff_invert={}\nwheel_range={}\nwheel_lock={}\nfov={}\ncamera_collision={}\npedal_throttle={}\npedal_brake={}\nseat_x={}\nseat_y={}\nseat_z={}\nsteer_look={}\nhead_tracking={}\nff_enabled={}\nbrake_hold={}\nauto_clutch={}\nauto_ibis={}\nled_glow={}\nled_mips={}\nui_scale={}\nui_scale_window={}\nnotes={}\nmouse_steering={}\nmouse_right_off={}\nblinker_cancel={}\n",
         match v
             .get("pax_voices")
             .and_then(|x| x.as_str())
@@ -3122,11 +3136,13 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
             "all"
         },
         b("shadow_blobs", true),
-        f("ctrl_deadzone", 0.0).clamp(0.0, 0.3),
+        f("ctrl_deadzone", 0.05).clamp(0.0, 0.3),
         b("update_check", true),
         b("update_auto", false),
         b("reflections", true),
         f("mouse_sens", 1.0).clamp(0.1, 3.0),
+        f("stick_sens", 0.25).clamp(0.1, 2.0),
+        b("steer_center", true),
         match v
             .get("graphics_api")
             .and_then(|x| x.as_str())
@@ -3138,6 +3154,10 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
             _ => "auto",
         },
         v.get("ctrl_off")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .replace(['\n', '\r'], " "),
+        v.get("ctrl_assign")
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .replace(['\n', '\r'], " "),
@@ -3215,6 +3235,10 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         )
     ));
     text.push_str(&format!("look_sens={}\nsteer_look_angle={}\nsteer_look_response={}\ntime_sync={}\nmetar_sync={}\nmetar_station={}\n", f("look_sens", 1.0).clamp(0.1, 2.0), f("steer_look_angle", 30.0).clamp(0.0, 60.0), f("steer_look_response", 0.25).clamp(0.05, 1.0), b("time_sync", false), b("metar_sync", false), v.get("metar_station").and_then(|x| x.as_str()).unwrap_or("").chars().filter(|c| c.is_ascii_alphabetic()).take(4).collect::<String>().to_ascii_uppercase()));
+    text.push_str(&format!(
+        "pax_prefer_seats={}\n",
+        b("pax_prefer_seats", false)
+    ));
     let written: Vec<String> = text
         .lines()
         .filter_map(|l| l.split_once('='))
@@ -3926,6 +3950,7 @@ mod tests {
         let mut v = settings_from_text(None);
         for (k, x) in [
             ("steer_look", json!(true)),
+            ("pax_prefer_seats", json!(true)),
             ("discord_status", json!(false)),
             ("launcher_rest", json!(false)),
             ("camera_collision", json!(false)),
@@ -3946,6 +3971,7 @@ mod tests {
         let back = settings_from_text(Some(&settings_to_text(&v, None)));
         for k in [
             "steer_look",
+            "pax_prefer_seats",
             "discord_status",
             "launcher_rest",
             "camera_collision",
@@ -3960,6 +3986,9 @@ mod tests {
             "blinker_cancel",
             "pedal_brake",
             "seat_y",
+            "stick_sens",
+            "steer_center",
+            "ctrl_deadzone",
         ] {
             assert_eq!(back[k], v[k], "{k}");
         }
@@ -3969,6 +3998,16 @@ mod tests {
                 .unwrap()
         );
         assert!(settings_from_text(None)["launcher_rest"].as_bool().unwrap());
+        assert_eq!(settings_from_text(None)["pax_prefer_seats"], json!(false));
+        let saved = settings_to_text(
+            &settings_from_text(Some("pax_prefer_seats=0\n")),
+            Some("pax_prefer_seats=1\n"),
+        );
+        assert_eq!(saved.matches("pax_prefer_seats=").count(), 1);
+        assert_eq!(
+            settings_from_text(Some(&saved))["pax_prefer_seats"],
+            json!(false)
+        );
         let prior = settings_from_text(Some("discord_status=1\ndiscord_status=0\n"));
         assert!(!prior["discord_status"].as_bool().unwrap());
         let mut enabled = prior;

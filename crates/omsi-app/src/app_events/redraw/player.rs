@@ -26,6 +26,7 @@ impl App {
             .get_or_insert_with(|| crate::controllers::Controllers::new(&self.args.root, hwnd));
         ctl.set_focus(self.window_focused);
         ctl.deadzone = self.settings.ctrl_deadzone;
+        ctl.centre = self.settings.steer_center;
         ctl.pedal_throttle = self.settings.pedal_throttle;
         ctl.pedal_brake = self.settings.pedal_brake;
         ctl.ff_invert = self.settings.ff_invert;
@@ -43,6 +44,9 @@ impl App {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
+        }
+        if ctl.sources.iter().all(Option::is_none) && !self.settings.ctrl_assign.is_empty() {
+            ctl.sources = crate::controllers::parse_assign(&self.settings.ctrl_assign);
         }
         let analog = ctl.poll();
         let actions = std::mem::take(&mut ctl.actions);
@@ -118,12 +122,14 @@ impl App {
         }
         if analog.stick {
             if let (Some(x), Some(p)) = (analog.steering, self.player.as_ref()) {
+                let sens = self.settings.stick_sens;
                 let target = crate::controllers::gamepad_steering(
                     x,
                     p.vehicle.physics.velocity_kmh() as f32,
+                    sens,
                 );
                 let now = p.vehicle.physics.controls.steering;
-                let step = dt / 1.2;
+                let step = dt / crate::controllers::gamepad_steering_time(sens);
                 analog.steering = Some(now + (target - now).clamp(-step, step));
             }
         }

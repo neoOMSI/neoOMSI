@@ -118,6 +118,12 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
             "No change is given at the cash desk",
         ),
         pick("boarding", "Boarding", "How passengers get their tickets"),
+        switch_row(
+            app,
+            "pax_prefer_seats",
+            "Passengers prefer available seats",
+            "Passengers take a free seat when boarding; standing places are used when all seats are taken",
+        ),
         pick("maintenance", "Maintenance", later),
         switch_row(
             app,
@@ -181,6 +187,26 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
             "mouse_sens",
             "Mouse steering sensitivity",
             "Adjust how much the steering wheel turns based on mouse movement",
+            &pct,
+        ),
+        slider_row(
+            app,
+            "stick_sens",
+            "Gamepad steering sensitivity",
+            "How much a small stick push turns the wheel; a full push is still full lock",
+            &pct,
+        ),
+        switch_row(
+            app,
+            "steer_center",
+            "Wheel returns to the middle",
+            "Steering a hair off the middle counts as straight",
+        ),
+        slider_row(
+            app,
+            "ctrl_deadzone",
+            "Default controller dead zone",
+            "For controllers without their own dead zone (set per device in the launcher)",
             &pct,
         ),
         slider_row(
