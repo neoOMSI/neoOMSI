@@ -4085,11 +4085,12 @@ mod tests {
     }
 
     #[test]
-    fn portuguese_variants_are_distinct() {
-        assert_eq!(language_code("pt-BR"), "PTB");
-        assert_eq!(language_iso("PTB"), "pt");
-        assert_eq!(language_code("pt-PT"), "PTP");
-        assert_eq!(language_iso("PTP"), "pt-pt");
+    fn only_english_and_german_are_supported() {
+        assert_eq!(language_code("English"), "ENG");
+        assert_eq!(language_iso("ENG"), "");
+        assert_eq!(language_code("Deutsch"), "DEU");
+        assert_eq!(language_iso("DEU"), "de");
+        assert_eq!(language_code("pt-BR"), "ENG");
     }
 
     #[test]
@@ -4280,14 +4281,14 @@ mod tests {
         // the page changes a few things (its selects give strings) and saves
         let mut page = v.clone();
         page["view_distance"] = json!("2000");
-        page["language"] = json!("FRA");
+        page["language"] = json!("ENG");
         page["texture_memory"] = json!("3000");
         page["texture_compression"] = json!(false);
         page["texture_memory_auto"] = json!(2000);
         let text = settings_to_text(&page, Some(old));
         for line in [
             "view_distance=2000",
-            "language=FRA",
+            "language=ENG",
             "texture_memory=3000",
             "texture_compression=0",
             "detail_textures=0",
@@ -4318,7 +4319,7 @@ mod tests {
         // and it reads back as saved
         let back = settings_from_text(Some(&text));
         assert_eq!(back["view_distance"], "2000");
-        assert_eq!(back["language"], "FRA");
+        assert_eq!(back["language"], "ENG");
         assert_eq!(back["texture_memory"], 3000);
         assert_eq!(back["texture_compression"], false);
     }
