@@ -1861,9 +1861,10 @@ impl Pose {
         } else {
             (0.0, 0.0)
         };
-        // a driver sits up, leaning towards the wheel
-        let grip_lean =
-            d(16.0 + self.grip_extra.clamp(0.0, 30.0)) * smoothstep(0.0, 1.0, self.grip);
+        // A driver has a small natural lean towards the wheel.  The caller may add a modest
+        // reach correction for an unusually placed rim, but a seated figure should remain
+        // upright rather than folding over the dashboard.
+        let grip_lean = d(4.0 + self.grip_extra.clamp(0.0, 8.0)) * smoothstep(0.0, 1.0, self.grip);
         // forward tilt walking, backwards on a seat
         let pelvis_tilt =
             d(2.0) * walk + d(11.0) * run - d(12.0) * s_ease + reach_lean * 0.5 + grip_lean * 0.7;

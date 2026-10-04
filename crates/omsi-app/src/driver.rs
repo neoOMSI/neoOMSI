@@ -95,6 +95,10 @@ const SLIDE_MAX: f32 = 0.10;
 /// degrees); `UPPER_ARM` is the shoulder-to-elbow length (m) of the stock figure.
 const ARM_RATIO: f32 = 0.98;
 const LEAN_COMFORT: f32 = 2.0;
+/// Extra forward lean used only when a wheel is a little beyond the driver's natural reach.
+/// A larger correction folds the body over the dashboard on vehicles whose wheel geometry is
+/// unusual; keeping the seated posture takes priority over making the hands meet every rim.
+const MAX_REACH_LEAN: f32 = 8.0;
 const UPPER_ARM: f32 = 0.30;
 /// A hand lets go this many seconds ahead of the moment it would leave its range (at most
 /// `LEAD_MAX` degrees ahead), and a lone hand (the other at the gear lever) goes this far
@@ -731,7 +735,7 @@ impl DriverFigure {
                 let comfort_left = self.slide < SLIDE_MAX || comfort_extra < LEAN_COMFORT - 0.01;
                 let still_posing = miss < 0.02 && off < 0.01 && moved < 0.01;
                 if (still_posing && (excess < 0.02 || !comfort_left))
-                    || (self.slide >= SLIDE_MAX && self.lean >= 30.0)
+                    || (self.slide >= SLIDE_MAX && self.lean >= MAX_REACH_LEAN)
                     || round == 27
                 {
                     self.pose = p;
@@ -742,7 +746,7 @@ impl DriverFigure {
                         self.slide = (self.slide + miss * 0.8).min(SLIDE_MAX);
                     } else {
                         // about 1.1 cm of reach per degree of lean for a seated adult
-                        self.lean = (self.lean + (miss / 0.011).max(2.0)).min(30.0);
+                        self.lean = (self.lean + (miss / 0.011).max(2.0)).min(MAX_REACH_LEAN);
                     }
                 } else if excess >= 0.02 && comfort_left {
                     // reached, but with the arms straighter than a driver holds them: the seat
