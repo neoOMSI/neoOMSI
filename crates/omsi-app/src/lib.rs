@@ -39,6 +39,7 @@ mod puddles;
 mod quit;
 mod rain;
 mod real_time;
+mod run_statistics;
 mod scene;
 mod schedule;
 mod schedule_paper;
@@ -428,6 +429,11 @@ pub(crate) fn make_app(
         schedule: None,
         humans: None,
         duty: None,
+        last_report: None,
+        report_view: None,
+        report_pending: false,
+        report_status: String::new(),
+        report_save_rx: None,
         duty_places: false,
         hud: None,
         navigator: None,

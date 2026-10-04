@@ -283,6 +283,8 @@ impl App {
                     },
                     menu_disabled,
                     menu_kind,
+                    report: self.report_view.as_ref(),
+                    report_status: &self.report_status,
                     menu_head,
                     menu_preview,
                     pane_first: self

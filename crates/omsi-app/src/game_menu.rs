@@ -64,6 +64,7 @@ impl App {
     }
 
     pub(crate) fn close_game_menu(&mut self) {
+        self.report_view = None;
         if self.menu_edit_icao {
             if let Some(w) = self.window.as_ref() {
                 w.set_ime_allowed(false);
@@ -1017,6 +1018,10 @@ impl App {
 
     pub(crate) fn menu_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode) {
         self.menu_kbd = true;
+        if self.report_view.is_some() {
+            self.run_report_key(event_loop, code);
+            return;
+        }
         if self.key_capture.is_some() {
             self.capture_key(code);
             return;
@@ -1109,6 +1114,9 @@ impl App {
     }
 
     pub(crate) fn menu_len(&self) -> usize {
+        if let Some(report) = self.report_view.as_ref() {
+            return report.trip.stops.len();
+        }
         match self.chooser {
             Some(_) => self.admin_list.as_ref().unwrap_or(&self.vehicle_list).len(),
             None => self.game_menu_items().len(),
@@ -1116,6 +1124,14 @@ impl App {
     }
 
     pub(crate) fn menu_choose(&mut self, event_loop: &ActiveEventLoop, k: usize) {
+        if self.report_view.is_some() {
+            match k {
+                0 => self.save_run_report(),
+                1 => self.close_game_menu(),
+                _ => {}
+            }
+            return;
+        }
         self.menu_top = if self.chooser.is_some() {
             self.ui.as_ref().map(|u| u.menu_start as f32)
         } else {
@@ -1132,6 +1148,8 @@ impl App {
             return;
         };
         match id {
+            "report_current" => self.open_run_report(true),
+            "report_last" => self.open_run_report(false),
             "resume" => self.close_game_menu(),
             "options" => self.open_list(crate::game_lists::ListKind::Options(0)),
             "vehicle" => self.open_list(crate::game_lists::ListKind::Vehicle(0)),
@@ -1312,7 +1330,16 @@ impl App {
     }
 
     pub(crate) fn game_menu_items(&self) -> Vec<(&'static str, &'static str)> {
+        if self.report_view.is_some() {
+            return vec![("report_save", "Save as text…"), ("resume", "Continue")];
+        }
         let mut v: Vec<(&'static str, &'static str)> = game_menu_for(&self.args).to_vec();
+        if self.duty.is_some() {
+            v.insert(1, ("report_current", "Current trip evaluation…"));
+        }
+        if self.last_report.is_some() {
+            v.insert(1, ("report_last", "Last trip evaluation…"));
+        }
         let mut at = 1;
         if self.on_foot.is_some() && self.player.is_some() {
             v.insert(at, ("tobus", "Back to my bus"));

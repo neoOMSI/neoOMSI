@@ -2889,6 +2889,11 @@ impl Humans {
         (entry, exit)
     }
 
+    pub(crate) fn any_door_open(v: &VehicleInstance) -> bool {
+        let (entry, exit) = Self::doors_open(v, 8, 8);
+        entry.into_iter().chain(exit).any(|open| open)
+    }
+
     /// The buses passengers deal with this frame.
     fn gather_buses(
         &mut self,

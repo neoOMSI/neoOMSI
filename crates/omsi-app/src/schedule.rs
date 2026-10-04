@@ -3812,6 +3812,8 @@ pub struct PlayerDuty {
     /// Where `trips` begins in the tour: a picked trip is a duty of its own, and a saved
     /// situation counts the trip under way from the tour's first.
     pub first_trip: usize,
+    pub(crate) statistics: crate::run_statistics::TripLog,
+    completed_report: Option<crate::run_statistics::Report>,
     /// Next stop to serve on the current trip.
     pub next_stop: usize,
     /// True while the bus stands at the next stop.
@@ -4271,6 +4273,8 @@ impl Schedule {
             trips,
             trip_index,
             first_trip,
+            statistics: Default::default(),
+            completed_report: None,
             next_stop: 0,
             at_stop: false,
             arrived_late: None,
@@ -4683,6 +4687,10 @@ impl PlayerDuty {
         &self.trips[self.trip_index]
     }
 
+    pub(crate) fn take_completed_report(&mut self) -> Option<crate::run_statistics::Report> {
+        self.completed_report.take()
+    }
+
     pub fn trip_done(&self) -> bool {
         self.done
     }
@@ -4913,6 +4921,9 @@ impl PlayerDuty {
             return false;
         }
         let back = stop < self.next_stop;
+        if !back {
+            self.statistics.skip(self.next_stop, stop);
+        }
         self.next_stop = stop;
         self.at_stop = false;
         self.arrived_late = None;
@@ -4925,6 +4936,7 @@ impl PlayerDuty {
 
     fn set_trip(&mut self, index: usize) {
         self.trip_index = index;
+        self.statistics = Default::default();
         self.next_stop = 0;
         self.at_stop = false;
         self.done = false;
@@ -5050,6 +5062,7 @@ impl PlayerDuty {
             trip.stops[k].name.trim(),
             self.next_stop + 1
         );
+        self.statistics.skip(self.next_stop, k);
         self.next_stop = k;
     }
 
@@ -5111,14 +5124,18 @@ impl PlayerDuty {
                     self.held_back = false;
                     if !self.at_stop {
                         self.arrived_late = Some(day_time - stop.arr);
+                        self.statistics.arrive(self.next_stop, day_time);
                     }
                     self.at_stop = true;
-                    if self.next_stop == last {
+                    if self.next_stop == last && !self.done {
+                        self.completed_report =
+                            Some(self.statistics.report(trip, &self.tour, true));
                         self.done = true;
                     }
                 } else if self.at_stop && d > LEFT_STOP {
                     self.at_stop = false;
                     let late = day_time - stop.dep;
+                    self.statistics.depart(self.next_stop, day_time);
                     self.left_late = Some(late);
                     // (OMSI counts a stop only with its arrival: the original)
                     if let (true, Some(arrived)) = (stop.stops, self.arrived_late.take()) {
@@ -5512,6 +5529,8 @@ mod tests {
             trips: vec![trip],
             trip_index: 0,
             first_trip: 0,
+            statistics: Default::default(),
+            completed_report: None,
             next_stop: 0,
             at_stop: false,
             arrived_late: None,
@@ -5572,6 +5591,8 @@ mod tests {
             trips: vec![trip],
             trip_index: 0,
             first_trip: 0,
+            statistics: Default::default(),
+            completed_report: None,
             next_stop: 0,
             at_stop: false,
             arrived_late: None,
@@ -5641,6 +5662,8 @@ mod tests {
             trips,
             trip_index: 1,
             first_trip: 0,
+            statistics: Default::default(),
+            completed_report: None,
             next_stop: 0,
             at_stop: false,
             arrived_late: None,
@@ -5679,12 +5702,28 @@ mod tests {
         d.advance(glam::DVec3::new(1000.0, 0.0, 0.0), 57640.0);
         assert_eq!((d.trip_index, d.next_stop), (2, 0));
         assert!(d.take_trip_change());
+        // The completed report survives the automatic change to the next trip.
+        let report = d.take_completed_report().unwrap();
+        assert_eq!(report.actual[0].arrival, Some(now + 60.0));
+        assert_eq!(report.actual[0].departure, Some(54480.0));
+        assert_eq!(report.actual[1].arrival, Some(57630.0));
+        assert_eq!(report.actual[1].departure, None);
+        assert!(d.take_completed_report().is_none());
         // The final trip, unlike the earlier layover, completes the duty when its last stop
         // is reached.
         d.advance(glam::DVec3::new(1000.0, 0.0, 0.0), 57660.0);
         d.advance(glam::DVec3::new(1050.0, 0.0, 0.0), 57670.0);
         d.advance(glam::DVec3::new(500.0, 0.0, 0.0), 59400.0);
         assert!(d.duty_done());
+        let report = d.take_completed_report().unwrap();
+        assert_eq!(report.actual[0].arrival, Some(57640.0));
+        assert_eq!(report.actual[0].departure, Some(57670.0));
+        assert_eq!(report.actual[1].arrival, Some(59400.0));
+        d.advance(glam::DVec3::new(500.0, 0.0, 0.0), 59401.0);
+        assert!(
+            d.take_completed_report().is_none(),
+            "completion is reported once"
+        );
     }
 
     #[test]
@@ -5705,6 +5744,8 @@ mod tests {
             trips,
             trip_index: 0,
             first_trip: 0,
+            statistics: Default::default(),
+            completed_report: None,
             next_stop: 0,
             at_stop: false,
             arrived_late: None,
@@ -5746,6 +5787,8 @@ mod tests {
             trips: vec![service, passenger],
             trip_index: 0,
             first_trip: 0,
+            statistics: Default::default(),
+            completed_report: None,
             next_stop: 1,
             at_stop: false,
             arrived_late: None,

@@ -27,6 +27,13 @@ pub(crate) struct App {
     pub(crate) schedule: Option<schedule::Schedule>,
     pub(crate) humans: Option<humans::Humans>,
     pub(crate) duty: Option<schedule::PlayerDuty>,
+    pub(crate) last_report: Option<run_statistics::Report>,
+    pub(crate) report_view: Option<run_statistics::Report>,
+    pub(crate) report_pending: bool,
+    pub(crate) report_status: String,
+    pub(crate) report_save_rx:
+        Option<std::sync::mpsc::Receiver<std::io::Result<Option<std::path::PathBuf>>>>,
+    /// The duty was told the places of the stops beyond the loaded tiles.
     pub(crate) duty_places: bool,
     pub(crate) hud: Option<hud::Hud>,
     pub(crate) navigator: Option<navigator::Navigator>,

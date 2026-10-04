@@ -7,6 +7,7 @@ impl App {
     pub(super) fn redraw_world(&mut self, event_loop: &ActiveEventLoop, f: &Frame) {
         let Frame { dt, .. } = *f;
         let __t = Instant::now();
+        self.tick_run_report_save();
         self.tick_lan(dt);
         *self.profile.entry("lan").or_default() += __t.elapsed().as_secs_f64();
         self.tick_on_foot(if self.paused { 0.0 } else { dt });
@@ -129,6 +130,7 @@ impl App {
         *self.profile.entry("humans").or_default() += __t.elapsed().as_secs_f64();
         self.foot_after_humans();
         let mut next_trip_notice = None;
+        let mut completed_report = None;
         let duty_done = if let (Some(d), Some(p), Some(w), false) = (
             self.duty.as_mut(),
             self.player.as_mut(),
@@ -144,6 +146,7 @@ impl App {
             if let Some((arrival, departure)) = d.update(&mut p.vehicle, self.clock.time) {
                 self.career.stop_served(arrival, departure);
             }
+            completed_report = d.take_completed_report();
             let trip_changed = d.take_trip_change();
             if trip_changed && p.duty_typed {
                 let (trip, stop) = d.trip_for_ibis();
@@ -171,12 +174,18 @@ impl App {
         } else {
             false
         };
+        if let Some(mut report) = completed_report {
+            self.report_context(&mut report);
+            self.last_report = Some(report);
+            self.report_pending = true;
+        }
         if duty_done {
             self.duty = None;
             self.service_msg = Some(("Duty complete: free drive".into(), 5.0));
         } else if let Some(msg) = next_trip_notice {
             self.service_msg = Some((msg, 5.0));
         }
+        self.maybe_open_run_report();
         if let Some(p) = self.player.as_mut() {
             let riders = self.humans.as_ref().map(|h| h.riding()).unwrap_or(0);
             p.vehicle.host.humans_count = riders as f32;

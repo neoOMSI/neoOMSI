@@ -1888,6 +1888,7 @@ _version: 2
   de: "Spielcontroller ein/aus"
 
 "Continue":
+  de: "Weiter"
 
 "Join and drive":
 
@@ -2256,3 +2257,104 @@ _version: 2
   de: "Wartung"
 "Teleport":
   de: "Teleport"
+"Trip evaluation":
+  de: "Fahrtauswertung"
+
+"Trip complete":
+  de: "Fahrt abgeschlossen"
+
+"Current trip":
+  de: "Aktuelle Fahrt"
+
+"Current trip evaluation…":
+  de: "Aktuelle Fahrtauswertung…"
+
+"Last trip evaluation…":
+  de: "Letzte Fahrtauswertung…"
+
+"Save as text…":
+  de: "Als Text speichern…"
+
+"Save trip evaluation":
+  de: "Fahrtauswertung speichern"
+
+"Could not save trip evaluation":
+  de: "Fahrtauswertung konnte nicht gespeichert werden"
+
+"Arrival":
+  de: "Ankunft"
+
+"Departure":
+  de: "Abfahrt"
+
+"Planned":
+  de: "Soll"
+
+"Actual":
+  de: "Ist"
+
+"Difference":
+  de: "Abweichung"
+
+"Status":
+  de: "Status"
+
+"Arrival planned":
+  de: "Ankunft Soll"
+
+"Arrival actual":
+  de: "Ankunft Ist"
+
+"Arrival difference":
+  de: "Ankunft Abweichung"
+
+"Departure planned":
+  de: "Abfahrt Soll"
+
+"Departure actual":
+  de: "Abfahrt Ist"
+
+"Departure difference":
+  de: "Abfahrt Abweichung"
+
+"Skipped":
+  de: "Ausgelassen"
+
+"Not recorded":
+  de: "Nicht erfasst"
+
+"Passing stop":
+  de: "Durchfahrt"
+
+"Late / too early":
+  de: "Spät / zu früh"
+
+"Late":
+  de: "Verspätet"
+
+"Too early":
+  de: "Zu früh"
+
+"At stop":
+  de: "An Haltestelle"
+
+"On time":
+  de: "Pünktlich"
+
+"Times: HH:MM:SS · differences in seconds":
+  de: "Zeiten: HH:MM:SS · Abweichungen in Sekunden"
+
+"Positive difference = late; negative difference = early. Missing observations are shown as —.":
+  de: "Positive Abweichung = verspätet; negative Abweichung = zu früh. Fehlende Werte werden als — angezeigt."
+
+"↑ ↓ / Page Up / Page Down scroll · Ctrl+S save · Esc continue":
+  de: "↑ ↓ / Bild auf / Bild ab scrollen · Strg+S speichern · Esc weiter"
+
+"Bus stop":
+  de: "Haltestelle"
+
+"Saving trip evaluation…":
+  de: "Fahrtauswertung wird gespeichert…"
+
+"Incomplete":
+  de: "Unvollständig"

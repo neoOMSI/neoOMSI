@@ -9,6 +9,8 @@
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont, VariableFont};
 use omsi_render::{Renderer, Scene, TextureId};
 
+mod run_report;
+
 /// Roboto (Apache 2.0), the interface font.
 const ROBOTO: &[u8] = include_bytes!("../../../assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
 pub(crate) const PAUSE_NOTICE: &str = "Paused  ·  P to go on";
@@ -410,6 +412,8 @@ pub struct Frame<'a> {
     pub tags: Vec<((f32, f32), String, String, f32)>,
     /// What kind of menu the lines belong to.
     pub menu_kind: MenuKind,
+    pub report: Option<&'a crate::run_statistics::Report>,
+    pub report_status: &'a str,
     /// The open list's title and the small line above it (the line a tour list is of).
     pub menu_head: Option<(String, String)>,
     /// The timetable of the chosen line or tour, beside the list.
@@ -2079,6 +2083,11 @@ impl Ui {
             self.anim.clear();
             return;
         };
+        if let Some(report) = f.report {
+            self.draw_run_report(r, scene, f, report, sel);
+            self.menu_overlay_range = overlay_start..scene.overlays.len();
+            return;
+        }
         // a settings window has its own layout
         if f.menu_kind == MenuKind::Options && f.menu_tabs.is_some() {
             self.draw_settings(r, scene, f, sel, items);
