@@ -31,7 +31,7 @@ mod sys {
     pub const SIG_DFL: Handler = 0;
     pub const SIG_IGN: Handler = 1;
     pub const SIG_ERR: Handler = usize::MAX;
-    extern "C" {
+    unsafe extern "C" {
         pub fn signal(sig: i32, handler: Handler) -> Handler;
         pub fn raise(sig: i32) -> i32;
     }
