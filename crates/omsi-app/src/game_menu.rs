@@ -1252,7 +1252,7 @@ impl App {
                 self.close_game_menu();
                 self.get_up();
             }
-            "reset" => {
+            "reset_vehicle" => {
                 self.close_game_menu();
                 if let Some(p) = self.player.as_ref() {
                     let (at, heading) = (p.vehicle.position, p.vehicle.heading);

@@ -819,7 +819,7 @@ pub(super) fn vehicle_pages(app: &App) -> Vec<Page> {
             "Put back on its wheels",
             "Reset",
             "Return the vehicle to an upright position",
-            "reset",
+            "reset_vehicle",
         ));
         service.push(button("Reload this vehicle", "Reload", "Read the vehicle's files again (.bus, model and sound configuration, scripts) and drive it from here", "reload"));
     }
