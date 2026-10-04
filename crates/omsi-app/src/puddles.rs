@@ -9,6 +9,8 @@
 use glam::{DVec3, Vec3};
 use omsi_render::SmokeParticle;
 
+const PUDDLE_SPREAD: f32 = 0.45;
+
 /// The puddle mask `enhanced.wgsl` paints on a `[moisture]` road, evaluated on the CPU with
 /// the same two octaves of value noise so a splash starts exactly where the reflection does.
 /// `wet_road` is the moisture-weighted wetness at this point (global wetness where the
@@ -20,7 +22,7 @@ pub fn puddle_coverage(x: f64, y: f64, wet_road: f32) -> f32 {
     let (wx, wy) = (x as f32, y as f32);
     let pn = vnoise(wx * 0.22 + 17.3, wy * 0.22 - 9.1) * 0.65
         + vnoise(wx * 0.9 - 4.0, wy * 0.9 + 8.0) * 0.35;
-    let t = 1.0 - wet_road * 1.15;
+    let t = 1.0 - wet_road * PUDDLE_SPREAD;
     smoothstep(t - 0.06, t + 0.06, pn)
 }
 
@@ -217,14 +219,27 @@ mod tests {
     }
 
     #[test]
-    fn a_road_wet_through_is_all_puddle() {
+    fn a_road_wet_through_has_puddles_in_patches() {
+        let mut full_puddles = 0;
+        let mut half_puddles = 0;
         for i in 0..500 {
             let (x, y) = (i as f64 * 0.77, i as f64 * 1.9);
-            assert!(
-                puddle_coverage(x, y, 1.0) > 0.99,
-                "dry island at ({x}, {y}) on a soaked road"
-            );
+            full_puddles += (puddle_coverage(x, y, 1.0) > 0.5) as usize;
+            half_puddles += (puddle_coverage(x, y, 0.5) > 0.5) as usize;
         }
+        let full_coverage = full_puddles as f32 / 500.0;
+        let half_coverage = half_puddles as f32 / 500.0;
+        assert!(
+            (0.15..=0.50).contains(&full_coverage),
+            "a soaked road should have puddles in patches, got {:.0}% coverage",
+            full_coverage * 100.0
+        );
+        assert!(
+            half_coverage < full_coverage * 0.5,
+            "puddles should cover less than half as much at half wetness: {:.0}% vs {:.0}%",
+            half_coverage * 100.0,
+            full_coverage * 100.0
+        );
     }
 
     #[test]
