@@ -21,6 +21,18 @@ const HEADLIGHT_INTENSITY: f32 = 45.0;
 /// at 7 m; this gives 20, 12 and 5 there. (At 1 it was 60, 40 and 15.)
 const VANILLA_HEADLIGHT_INTENSITY: f32 = 0.2;
 
+/// `[spotlight]` range is content-authored.  In particular, full beams commonly use a
+/// substantially longer range than dipped beams, so it must not be capped to the latter.
+fn headlight_radius(range: f32) -> f32 {
+    range.max(10.0)
+}
+
+/// Keep the existing one-metre core for a typical 40 m dipped beam, while making a longer
+/// content-authored full beam equally useful at the same fraction of its range.
+fn headlight_core(range: f32) -> f32 {
+    headlight_radius(range) / 40.0
+}
+
 /// Lighting parameters for the renderer from the daylight model.
 pub fn lighting_from(d: &Daylight, fog_range: f32) -> Lighting {
     // fog density from the weather's visibility range (an object at `range` is ~90% fogged)
@@ -259,7 +271,7 @@ pub fn vehicle_lights(
                     // shone every way, on the bus's own body and saloon)
                     lights.push(PointLight {
                         position: at,
-                        radius: vals[9].clamp(10.0, 45.0),
+                        radius: headlight_radius(vals[9]),
                         color,
                         intensity: VANILLA_HEADLIGHT_INTENSITY / sides.len() as f32
                             * (0.3 + 0.7 * night),
@@ -268,15 +280,17 @@ pub fn vehicle_lights(
                         mode: LightMode::Vanilla,
                         ..Default::default()
                     });
-                    // enhanced: falling off with the square of the distance from a one-metre core
+                    // enhanced: fall off with the square of the distance from a core scaled to
+                    // the authored range.  A fixed one-metre core made a 125 m full beam fade
+                    // almost completely by the time it reached beyond a dipped beam.
                     lights.push(PointLight {
                         position: at,
-                        radius: vals[9].clamp(10.0, 60.0),
+                        radius: headlight_radius(vals[9]),
                         color,
                         intensity: HEADLIGHT_INTENSITY / sides.len() as f32,
                         direction: d,
                         cone,
-                        core: 1.0,
+                        core: headlight_core(vals[9]),
                         // (a plain spot, as Direct3D lights OMSI's road: the low-beam profile's
                         // bright band under a hard cut-off has nothing like it in the original)
                         beam: 0.0,
@@ -293,6 +307,20 @@ pub fn vehicle_lights(
 
 /// Map lights and scenery coronas are only drawn this close to the camera.
 const MAP_LIGHT_RANGE: f64 = 600.0;
+
+#[cfg(test)]
+mod tests {
+    use super::{headlight_core, headlight_radius};
+
+    #[test]
+    fn full_beam_range_is_not_capped_to_dipped_beam_distance() {
+        // Studio Polygon Renown's third `[spotlight]` (full beam) has a 125 m range.
+        assert_eq!(headlight_radius(125.0), 125.0);
+        // The 40 m dipped beam keeps its existing one-metre core; full beam scales with range.
+        assert_eq!(headlight_core(40.0), 1.0);
+        assert_eq!(headlight_core(125.0), 3.125);
+    }
+}
 const CORONA_RANGE: f64 = 1500.0;
 /// How far the camera may move before the nearby static lights are gathered again.
 const NEAR_MARGIN: f64 = 100.0;
