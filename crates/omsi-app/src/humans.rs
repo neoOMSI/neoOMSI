@@ -1835,11 +1835,11 @@ impl Humans {
 
     /// `limited`: said only when the same file has not been said for 10 s (greetings and
     /// complaints; the ticket asked for, "thanks" and the missing change always are).
-    fn say_ex(&mut self, i: usize, name: &str, limited: bool) {
+    fn say_ex(&mut self, i: usize, name: &str, limited: bool) -> bool {
         // the player may have silenced them (settings), all but the ticket they ask for
         match self.voices {
-            2 => return,
-            1 if !name.starts_with("Ticket_") => return,
+            2 => return false,
+            1 if !name.starts_with("Ticket_") => return false,
             _ => {}
         }
         // Greetings and complaints: one at a time for the whole bus. OMSI only keeps
@@ -1847,7 +1847,7 @@ impl Humans {
         // boarding every other one said hello - the saloon never stopped talking, which
         // is not how the original sounds: a few words now and then.
         if limited && self.time - self.last_chat < CHAT_PAUSE && self.time >= self.last_chat {
-            return;
+            return false;
         }
         // (without a `[voicepath]` the pack's own folder: Berlin_1 and Berlin_86 carry the
         // voices themselves and name no path; the later packs point at theirs)
@@ -1857,21 +1857,44 @@ impl Humans {
             }
             _ => t.path.parent().map(|p| p.to_path_buf()),
         }) else {
-            return;
+            return false;
         };
         let voice = self.people[i].ty.def.voice.trim().to_string();
         if voice.is_empty() {
-            return;
+            return false;
         }
         let dir = omsi_cfg::resolve_path(&base, &voice);
-        let path = omsi_cfg::resolve_path(&dir, &format!("{name}.wav"));
-        if !omsi_cfg::vfs::is_file(&path) {
-            return;
-        }
+        let primary = omsi_cfg::resolve_path(&dir, &format!("{name}.wav"));
+        let path = if omsi_cfg::vfs::is_file(&primary) {
+            primary
+        } else if name.starts_with("TooBad_") {
+            // Some map-specific ticket packs (for example Bowdenham V5) define the
+            // passenger types but ship no driving-complaint samples.  Use OMSI's
+            // standard Berlin voices of the same type when they are installed, so the
+            // simulation feedback is not silently lost with such content.
+            let standard = omsi_cfg::resolve_path(&self.root, "TicketPacks\\Berlin_86");
+            let fallback = omsi_cfg::resolve_path(
+                &omsi_cfg::resolve_path(&standard, &voice),
+                &format!("{name}.wav"),
+            );
+            if !omsi_cfg::vfs::is_file(&fallback) {
+                return false;
+            }
+            if debug_pax() {
+                log::info!(
+                    "pax voice {name}: {} is missing; using {}",
+                    primary.display(),
+                    fallback.display()
+                );
+            }
+            fallback
+        } else {
+            return false;
+        };
         if limited {
             if let Some(&t) = self.voice_said.get(&path) {
                 if self.time - t < 10.0 && self.time >= t {
-                    return;
+                    return false;
                 }
             }
         }
@@ -1890,6 +1913,7 @@ impl Humans {
             position: self.people[i].position + DVec3::new(0.0, 0.0, 1.6),
             path,
         });
+        true
     }
 
     fn rand(&mut self) -> u64 {

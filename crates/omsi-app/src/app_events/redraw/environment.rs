@@ -151,18 +151,15 @@ impl App {
                             }));
                     }
                 }
-                if let (Some(amb), Some(a)) = (self.ambience.as_mut(), self.audio.as_ref()) {
-                    let steps = self
-                        .humans
-                        .as_mut()
-                        .map(|h| h.take_footfalls())
-                        .unwrap_or_default();
-                    for line in self
-                        .humans
-                        .as_mut()
-                        .map(|h| h.take_voice_lines())
-                        .unwrap_or_default()
-                    {
+                // Passenger dialogue is not ambience: it must remain audible when the
+                // ambience subsystem is unavailable or has been disabled.
+                let voices = self
+                    .humans
+                    .as_mut()
+                    .map(|h| h.take_voice_lines())
+                    .unwrap_or_default();
+                if let Some(a) = self.audio.as_ref() {
+                    for line in voices {
                         if let Some(clip) = a.load_clip(&line.path) {
                             a.play(
                                 clip,
@@ -172,13 +169,22 @@ impl App {
                                     looping: false,
                                     position: Some(line.position.as_vec3()),
                                     doppler: true,
-                                    range: 3.0,
+                                    // A passenger at the rear of a single-decker bus should
+                                    // still be clearly heard from the driver's seat.
+                                    range: 8.0,
                                     lowpass_hz: 0.0,
                                     important: false,
                                 },
                             );
                         }
                     }
+                }
+                if let (Some(amb), Some(a)) = (self.ambience.as_mut(), self.audio.as_ref()) {
+                    let steps = self
+                        .humans
+                        .as_mut()
+                        .map(|h| h.take_footfalls())
+                        .unwrap_or_default();
                     let inside = self.in_cab;
                     let __tm = Instant::now();
                     amb.update(

@@ -309,6 +309,9 @@ pub(super) struct RideComfort {
     swings: u32,
     /// The last hard bend or braking (+0x790, ms).
     hard_ms: f64,
+    /// `VehicleInstance::crashes` seen on the previous frame.  A collision is discrete;
+    /// its acceleration can be averaged away before the passenger tick sees it.
+    crashes: u32,
 }
 
 impl RideComfort {
@@ -316,14 +319,23 @@ impl RideComfort {
     /// and `long` forward, m/s and m/s²): how much this frame upsets the riders - 0, 0.05
     /// for the fifth and every further swing of the throttle and brake less than 4 s apart,
     /// 0.1 for a bend taken at over 3 m/s² or braking or pulling away at over 5 m/s² (once
-    /// a second at most).
-    pub(super) fn step(&mut self, dt: f32, now_ms: f64, speed: f32, lat: f32, long: f32) -> f32 {
+    /// a second at most).  A newly reported collision is also a 0.15 jolt, so an impact
+    /// cannot disappear when the physics acceleration is averaged over a frame.
+    pub(super) fn step(
+        &mut self,
+        dt: f32,
+        now_ms: f64,
+        speed: f32,
+        lat: f32,
+        long: f32,
+        crashes: u32,
+    ) -> f32 {
         let w = speed.abs().min(1.0);
         let kf = (10.0 * dt).min(0.5);
         let ks = dt.min(0.5);
         self.fast_long = w * long * kf + (1.0 - kf) * self.fast_long;
         self.slow_lat = w * lat * ks + (1.0 - ks) * self.slow_lat;
-        let mut k = 0.0;
+        let mut k: f32 = 0.0;
         if self.fast_long > 0.2 && !self.up {
             if now_ms < self.swing_ms + 4000.0 {
                 self.swings += 1;
@@ -354,6 +366,10 @@ impl RideComfort {
             }
             self.hard_ms = now_ms;
         }
+        if crashes > self.crashes {
+            k = k.max(0.15);
+        }
+        self.crashes = crashes;
         k
     }
 }
@@ -1921,6 +1937,17 @@ impl Humans {
         let Some((w, h)) = self.pax_world(&p, buses, bus_ix) else {
             return;
         };
+        // Ticket packs provide a "Thanks" line rather than a dedicated goodbye.  Use it
+        // occasionally as the passenger leaves, but never after a serious bad-ride complaint.
+        let chat = self.tickets.as_ref().map(|t| t.chattiness).unwrap_or(0.0);
+        if bn.id == BusId::Player
+            && p.complaint < 3
+            && (self.rand_f() as f32) < chat
+            && !self.say_ex(i, "Thanks_1", true)
+        {
+            // A few otherwise compatible packs omit the numbered variant.
+            self.say_ex(i, "Thanks", true);
+        }
         let stop = reg.next;
         let pp = self.pax_mut(i).unwrap();
         pp.inside = None;
@@ -2003,7 +2030,7 @@ impl Humans {
         let a = v.physics.a_trans;
         let k = self
             .comfort
-            .step(dt, self.time * 1000.0, v.physics.speed, a.x, a.y);
+            .step(dt, self.time * 1000.0, v.physics.speed, a.x, a.y, v.crashes);
         if k <= 0.0 {
             return;
         }
@@ -2044,10 +2071,18 @@ impl Humans {
                 );
             }
             match c {
-                1 => self.say_ex(i, "TooBad_A", true),
-                2 => self.say_ex(i, "TooBad_B", true),
+                1 => {
+                    self.say_ex(i, "TooBad_A", true);
+                }
+                2 => {
+                    self.say_ex(i, "TooBad_B", true);
+                }
                 _ => {
                     self.say_ex(i, "TooBad_C", true);
+                    // OMSI's RL_PassDlg_TooBad_C appears when the complaint becomes
+                    // serious enough for passengers to leave.  The earlier complaints
+                    // are heard, but do not interrupt the driver with a HUD warning.
+                    self.message = Some("Passengers want to leave because of your driving.".into());
                     self.set_task(i, Task::InBusToExit, buses, bus_ix, world);
                 }
             }
@@ -2122,11 +2157,21 @@ impl Humans {
         }
         let k = 1 + self.rand() % 2;
         match code {
-            1 => self.say_ex(i, &format!("TooDark_{k}"), true),
-            2 => self.say_ex(i, &format!("TooLate_{k}"), true),
-            3 => self.say_ex(i, &format!("TooHot_{k}"), true),
-            4 => self.say_ex(i, &format!("TooCold_{k}"), true),
-            5 => self.say_ex(i, "TooWet_1", true),
+            1 => {
+                self.say_ex(i, &format!("TooDark_{k}"), true);
+            }
+            2 => {
+                self.say_ex(i, &format!("TooLate_{k}"), true);
+            }
+            3 => {
+                self.say_ex(i, &format!("TooHot_{k}"), true);
+            }
+            4 => {
+                self.say_ex(i, &format!("TooCold_{k}"), true);
+            }
+            5 => {
+                self.say_ex(i, "TooWet_1", true);
+            }
             _ => {
                 if (self.rand_f() as f32) < chat {
                     let h = (self.time_of_day.rem_euclid(86_400.0) / 3600.0).floor() as i32;
@@ -2401,7 +2446,7 @@ mod tests {
             let mut t = 0.0;
             while t < secs {
                 let (v, lat, long) = f(t);
-                let k = c.step(dt, (t + 10.0) * 1000.0, v, lat, long);
+                let k = c.step(dt, (t + 10.0) * 1000.0, v, lat, long, 0);
                 if k > 0.0 {
                     jolts.push((t, k));
                 }
@@ -2463,6 +2508,13 @@ mod tests {
         );
         // standing, nothing counts
         assert!(run(&|_| (0.0, 5.0, -8.0), 5.0).is_empty());
+
+        // A registered impact must count even if the fixed physics frame has already
+        // averaged its sharp deceleration away by the time the passengers run.
+        let mut impact = RideComfort::default();
+        assert_eq!(impact.step(dt, 1_000.0, 10.0, 0.0, 0.0, 0), 0.0);
+        assert_eq!(impact.step(dt, 1_020.0, 0.0, 0.0, 0.0, 1), 0.15);
+        assert_eq!(impact.step(dt, 1_040.0, 0.0, 0.0, 0.0, 1), 0.0);
     }
 
     #[test]
