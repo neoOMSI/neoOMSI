@@ -28,7 +28,6 @@ use self::{style::*, text::*};
 
 /// Roboto (Apache 2.0), the interface font.
 const ROBOTO: &[u8] = include_bytes!("../../../../assets/fonts/Roboto-VariableFont_wdth,wght.ttf");
-pub const PAUSE_NOTICE: &str = "Paused  ·  P to go on";
 
 /// A rendered text: its texture and size in pixels.
 #[derive(Clone, Copy)]

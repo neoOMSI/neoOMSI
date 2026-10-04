@@ -31,9 +31,6 @@ impl App {
             self.scene.as_mut(),
         ) {
             let mut lines: Vec<String> = Vec::new();
-            if self.paused {
-                lines.push(ui::PAUSE_NOTICE.into());
-            }
             let names = describe::names(&self.args.root, &self.settings.language);
             let tooltip = self.hover.as_ref().map(|h| names.control(h));
             if self.editor.is_some() {
