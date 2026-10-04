@@ -9815,8 +9815,9 @@ fn scenery_texture_selection(
 
 /// The Direct3D material of a slot as OMSI sets it: a `[matl_allcolor]` (diffuse rgba,
 /// ambient rgb, specular rgb, emissive rgb, power) replaces the o3d file's material. Returns (diffuse colour, emissive colour, specular colour and power).
-/// The diffuse colour modulates the texture; its alpha only counts where there is no
-/// texture (with one, the texture's alpha is used alone, as D3D's default stage does).
+/// OMSI uses a texture's own colour for an ordinary o3d material; its diffuse value is used
+/// only without a texture. A `[matl_allcolor]` explicitly replaces that material and still
+/// tints the texture. The diffuse alpha only counts where there is no texture.
 /// The emissive colour lights the texture by itself (the NL202's interior display, the
 /// lamps of a traffic light); the specular term is the sun's highlight.
 fn d3d_material(
@@ -9843,12 +9844,16 @@ fn d3d_material(
             0.0
         }
     };
-    let color = [
-        clamp01(diffuse[0]),
-        clamp01(diffuse[1]),
-        clamp01(diffuse[2]),
-        if textured { 1.0 } else { clamp01(diffuse[3]) },
-    ];
+    let color = if textured && allcolor.is_none() {
+        [1.0; 4]
+    } else {
+        [
+            clamp01(diffuse[0]),
+            clamp01(diffuse[1]),
+            clamp01(diffuse[2]),
+            if textured { 1.0 } else { clamp01(diffuse[3]) },
+        ]
+    };
     let emissive = emissive.map(clamp01);
     let specular = specular.map(clamp01);
     // D3D ignores the specular colour without a power to raise the highlight to
@@ -13035,8 +13040,9 @@ mod material_tests {
             texture: "int_glass.tga".into(),
         };
         let (color, emissive, specular, ambient) = d3d_material(&m, None, true);
-        // textured: the texture's alpha alone counts
-        assert_eq!(color, [0.64, 0.64, 0.64, 1.0]);
+        // Textured o3d materials retain their authored texture colours. In particular, the
+        // Bowdenham white street-sign mesh carries a green diffuse value which OMSI ignores.
+        assert_eq!(color, [1.0; 4]);
         assert_eq!(emissive, [0.0; 3]);
         assert_eq!(specular, [1.0, 1.0, 1.0, 96.0]);
         // Omsi.exe's o3d slot: a white ambient, whatever the diffuse colour (0x7c62f8)
