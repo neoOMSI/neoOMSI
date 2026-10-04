@@ -2331,6 +2331,7 @@ fn probe_tile(
     let lx = (x - key.0 as f64 * tile_size()) as f32;
     let ly = (y - key.1 as f64 * tile_size()) as f32;
     let mut probe = omsi_geometry::Probe::default();
+    let mut normal = None;
     if let Some(s) = surface {
         probe = s.drive.probe(lx, ly, top as f32);
         // a painted layer is no step: road markings made as `[surface]` objects or as
@@ -2349,6 +2350,9 @@ fn probe_tile(
                 _ => break,
             }
         }
+        normal = probe
+            .below
+            .and_then(|z| s.drive.contact_below(lx, ly, z + 0.0001).map(|(_, n)| n));
     }
     // On a road the wheel stands on the road, as in OMSI: the terrain under it or over it
     // (an embankment the road runs under, ground poking through the asphalt) is no
@@ -2373,6 +2377,9 @@ fn probe_tile(
         // there (a surface without a collision), it still carries rather than let the
         // vehicle drop out of the world
         if !cut || (probe.below.is_none() && h <= top as f32) {
+            if h <= top as f32 && probe.below.is_none_or(|z| h > z) {
+                normal = Some(omsi_geometry::terrain_normal(terrain.unwrap(), lx, ly));
+            }
             probe = probe.merge(omsi_geometry::Probe::of(h, top as f32));
         }
     }
@@ -2391,6 +2398,7 @@ fn probe_tile(
     omsi_sim::rigid::GroundProbe {
         below: probe.below.map(|z| z as f64),
         above: probe.above.map(|z| z as f64),
+        normal,
     }
 }
 

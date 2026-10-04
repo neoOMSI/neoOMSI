@@ -1056,6 +1056,25 @@ pub fn terrain_height(t: &Terrain, x: f32, y: f32) -> f32 {
     t.sample(x, y)
 }
 
+/// Geometric normal of the same terrain triangle selected by `Terrain::sample`.
+pub fn terrain_normal(t: &Terrain, x: f32, y: f32) -> Vec3 {
+    let n = t.cells as f32;
+    let cell = omsi_map::tile_size() as f32 / n;
+    let fx = (x / cell).clamp(0.0, n - 1e-4);
+    let fy = (y / cell).clamp(0.0, n - 1e-4);
+    let (ix, iy) = (fx.floor() as usize, fy.floor() as usize);
+    let h00 = t.height_at(ix, iy);
+    let h10 = t.height_at(ix + 1, iy);
+    let h01 = t.height_at(ix, iy + 1);
+    let h11 = t.height_at(ix + 1, iy + 1);
+    let (dx, dy) = if fx - ix as f32 >= fy - iy as f32 {
+        (h10 - h00, h11 - h10)
+    } else {
+        (h11 - h01, h01 - h00)
+    };
+    Vec3::new(-dx / cell, -dy / cell, 1.0).normalize()
+}
+
 /// Rotation of a map object: heading (Z), pitch (X), bank (Y). The position is kept apart
 /// as the instance origin (f64). Pitched first, then banked, then turned, as Omsi.exe puts
 /// an object down (sub_79cb18: RotationX(pitch) · RotationZ(bank) · RotationY(heading)) - a
@@ -2526,6 +2545,16 @@ impl DriveGrid {
     /// Highest road face below the point, with its upward geometric normal.
     /// Reflections need the actual plane rather than a raster texel's height.
     pub fn surface_below(&self, x: f32, y: f32, top: f32) -> Option<(f32, Vec3)> {
+        self.surface_below_impl(x, y, top, false)
+    }
+
+    /// Wheel-contact height, including `.surf` displacement, and the selected mesh normal.
+    /// The displacement changes spring travel, not the underlying triangle's normal.
+    pub fn contact_below(&self, x: f32, y: f32, top: f32) -> Option<(f32, Vec3)> {
+        self.surface_below_impl(x, y, top, true)
+    }
+
+    fn surface_below_impl(&self, x: f32, y: f32, top: f32, contact: bool) -> Option<(f32, Vec3)> {
         if self.cells == 0 || x < 0.0 || y < 0.0 {
             return None;
         }
@@ -2550,7 +2579,17 @@ impl DriveGrid {
             if l1.min(l2).min(l3) < -1e-4 {
                 continue;
             }
-            let z = l1 * a.z + l2 * b.z + l3 * c.z;
+            let mut z = l1 * a.z + l2 * b.z + l3 * c.z;
+            if contact {
+                if let Ok(surf_index) = self
+                    .surf_tris
+                    .binary_search_by_key(&i, |surf| surf.triangle)
+                {
+                    let surf = &self.surf_tris[surf_index];
+                    let uv = surf.uv[0] * l1 + surf.uv[1] * l2 + surf.uv[2] * l3;
+                    z += self.surf_maps[surf.map as usize].sample(uv);
+                }
+            }
             if z <= top && best.is_none_or(|(old, _)| z > old) {
                 let n = (b - a).cross(c - a).normalize();
                 best = Some((z, if n.z < 0.0 { -n } else { n }));

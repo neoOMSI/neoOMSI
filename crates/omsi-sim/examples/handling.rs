@@ -27,6 +27,7 @@ fn main() {
     let flat = |_x: f64, _y: f64, _t: f64| GroundProbe {
         below: Some(0.0),
         above: None,
+        normal: None,
     };
     println!(
         "{:<34} {:>6} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6} {:>6}",

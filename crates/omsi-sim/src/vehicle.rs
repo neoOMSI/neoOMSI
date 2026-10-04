@@ -1427,13 +1427,42 @@ impl VehicleInstance {
         let m_wheel = self.get(self.v_m_wheel);
         // each wheel: its own brake force, and its share of the vehicle's (the rolling
         // resistance's share is the physics' own)
-        let n = (self.v_wheels.len() * 2).max(1) as f32;
+        let road_train = self.rigid.is_some()
+            && self.contact.is_some()
+            && !self
+                .trailers
+                .iter()
+                .any(|t| t.track.is_some() || t.ty.def.kind == omsi_vehicle::VehicleKind::Other(2));
+        let trailer_wheels = if road_train {
+            self.trailers.iter().map(|t| t.ty.def.axles.len() * 2).sum()
+        } else {
+            0
+        };
+        let n = (self.v_wheels.len() * 2 + trailer_wheels).max(1) as f32;
         let shared = self.get(self.v_brakeforce).max(0.0) / n;
         let brakes: Vec<f32> = self
             .v_wheels
             .iter()
             .flat_map(|a| a.iter().map(|w| self.get(w[4]).max(0.0) + shared))
             .collect();
+        if road_train {
+            let rear_brakes: Vec<Vec<f32>> = self
+                .trailers
+                .iter()
+                .map(|t| {
+                    t.v_brakes
+                        .iter()
+                        .map(|&id| self.get(id).max(0.0) + shared)
+                        .collect()
+                })
+                .collect();
+            for (t, brakes) in self.trailers.iter_mut().zip(rear_brakes) {
+                t.frame_brakes = brakes;
+                for id in t.v_brakes.iter().flatten() {
+                    self.state.vars[*id as usize] = 0.0;
+                }
+            }
+        }
         // Read, the brake forces go back to 0, as Omsi.exe clears them every frame before
         // the scripts run (0x7e58d9..0x7e5930): a script sets them each frame it brakes. Kept,
         // a mod that brakes only inside an {if} (a retarder, a stop brake, its own physics)
@@ -1673,17 +1702,201 @@ impl VehicleInstance {
             .collect()
     }
 
+    /// Prepare an independent body for every road section. AI and rail vehicles retain
+    /// their track placement. The dynamic path exchanges actual joint reactions.
+    fn prepare_road_train(&mut self, lead: &mut crate::rigid::RigidBody) -> bool {
+        if self.contact.is_none()
+            || self.trailers.is_empty()
+            || self
+                .trailers
+                .iter()
+                .any(|t| t.track.is_some() || t.ty.def.kind == omsi_vehicle::VehicleKind::Other(2))
+        {
+            lead.train_driven_wheels = 0;
+            lead.rear_joint = None;
+            lead.rear_roll_moment = 0.0;
+            return false;
+        }
+        let mut parent_origin = lead.origin();
+        let mut parent_rot = lead.orientation;
+        let mut parent_velocity = lead.velocity;
+        for t in &mut self.trailers {
+            if t.rigid.is_none() {
+                let mut rb = crate::rigid::RigidBody::from_definition(
+                    &t.ty.def,
+                    &t.ty.hub_heights(t.first_axle),
+                );
+                let heading = if t.pivot.is_some() {
+                    t.heading
+                } else {
+                    self.heading
+                };
+                rb.place(t.position, heading + if t.reversed { 180.0 } else { 0.0 });
+                let joint = parent_origin + parent_rot.mul_vec3(t.coupling_back).as_dvec3();
+                rb.position = joint
+                    - rb.orientation
+                        .mul_vec3(t.coupling_front - rb.body_center)
+                        .as_dvec3();
+                rb.velocity = parent_velocity;
+                rb.front_joint = Some(t.coupling_front);
+                rb.curvature_override = Some(0.0);
+                rb.joint_locks_roll =
+                    t.ty.def
+                        .coupling_front_character
+                        .is_some_and(|c| c[3] != 0.0);
+                rb.wheel_walls = self.wheel_walls;
+                t.rigid = Some(rb);
+            }
+            let rb = t.rigid.as_mut().unwrap();
+            rb.friction = lead.friction;
+            rb.wheel_walls = self.wheel_walls;
+            for (i, w) in rb.wheels.iter_mut().enumerate() {
+                let axle = t.first_axle + i / 2;
+                let side = if i % 2 == 0 { "L" } else { "R" };
+                w.spring_factor = self
+                    .ty
+                    .program
+                    .var(&format!("Axle_Springfactor_{axle}_{side}"))
+                    .map(|id| self.state.vars[id as usize])
+                    .unwrap_or(1.0);
+            }
+            parent_origin = rb.origin();
+            parent_rot = rb.orientation;
+            parent_velocity = rb.velocity;
+        }
+        let driven = lead.wheels.iter().filter(|w| w.driven).count()
+            + self
+                .trailers
+                .iter()
+                .map(|t| {
+                    t.rigid
+                        .as_ref()
+                        .unwrap()
+                        .wheels
+                        .iter()
+                        .filter(|w| w.driven)
+                        .count()
+                })
+                .sum::<usize>();
+        // 0x7b0114 sums the physical attachment list at +0x1e0, not the road
+        // vehicle chain at +0x4dc. Each road section carries its own mass; the joint
+        // reaction transfers its drive and suspension forces to the body in front.
+        for t in &mut self.trailers {
+            t.rigid.as_mut().unwrap().train_driven_wheels = driven;
+        }
+        lead.train_driven_wheels = driven;
+        true
+    }
+
+    fn step_road_train(
+        &mut self,
+        lead: &mut crate::rigid::RigidBody,
+        dt: f32,
+        torque: f32,
+        probe: &dyn Fn(f64, f64, f64) -> crate::rigid::GroundProbe,
+    ) {
+        for t in &mut self.trailers {
+            t.rigid
+                .as_mut()
+                .unwrap()
+                .step(dt, torque, &t.frame_brakes, 0.0, probe);
+        }
+        // Position/orientation correction precedes the velocity correction; the reaction
+        // is bounded to 100 kN per axis and averaged with the leader's previous force.
+        // Reference: 0x7e0b34 (pose), 0x7e131c (velocity/force), 0x7b0178 (effective mass).
+        let mut parent = lead;
+        for t in &mut self.trailers {
+            let child = t.rigid.as_mut().unwrap();
+            let point = parent.origin() + parent.orientation.mul_vec3(t.coupling_back).as_dvec3();
+            let relative = parent.orientation.inverse() * child.orientation;
+            let (mut alpha, mut pitch, roll) = relative.to_euler(glam::EulerRot::ZXY);
+            if t.reversed {
+                alpha = (alpha - std::f32::consts::PI).rem_euclid(std::f32::consts::TAU);
+            }
+            alpha = (alpha + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            if let Some([max, beta_min, beta_max, kind]) = t.ty.def.coupling_front_character {
+                if kind != 0.0 {
+                    let limited = alpha.clamp(-max.to_radians().abs(), max.to_radians().abs());
+                    if limited != alpha {
+                        parent.holding = false;
+                        child.holding = false;
+                    }
+                    alpha = limited;
+                    pitch = -(-pitch).clamp(beta_min.to_radians(), beta_max.to_radians());
+                    child.orientation = parent.orientation
+                        * Quat::from_rotation_z(
+                            alpha
+                                + if t.reversed {
+                                    std::f32::consts::PI
+                                } else {
+                                    0.0
+                                },
+                        )
+                        * Quat::from_rotation_x(pitch);
+                } else {
+                    let _ = roll;
+                }
+            }
+            child.position = point
+                - child
+                    .orientation
+                    .mul_vec3(t.coupling_front - child.body_center)
+                    .as_dvec3();
+            let force = child.match_joint_velocity(
+                t.coupling_front,
+                parent.joint_velocity(t.coupling_back),
+                dt,
+            );
+            let old = parent.rear_joint.map(|(_, f)| f).unwrap_or(Vec3::ZERO);
+            parent.rear_joint = Some((t.coupling_back, (old - force) * 0.5));
+            parent.rear_roll_moment = if child.joint_locks_roll {
+                child.exported_roll_moment
+            } else {
+                0.0
+            };
+            let lever = t.coupling_front.y - child.rot_pnt_long;
+            let parent_angle =
+                ((t.coupling_back.y - parent.rot_pnt_long) * parent.curvature).atan();
+            child.curvature_override = Some(if lever.abs() > 1e-4 {
+                (parent_angle + alpha).tan() / lever
+            } else {
+                0.0
+            });
+            t.joint_angles = Some([alpha.to_degrees(), -pitch.to_degrees()]);
+            t.position = child.origin();
+            let (h, p, b) = child.heading_pitch_bank();
+            t.heading = h + if t.reversed { 180.0 } else { 0.0 };
+            t.pitch = if t.reversed { -p } else { p };
+            t.bank = if t.reversed { -b } else { b };
+            t.pivot = Some(
+                t.position
+                    + child
+                        .orientation
+                        .mul_vec3(Vec3::new(0.0, t.axle_long, 0.0))
+                        .as_dvec3(),
+            );
+            parent = child;
+        }
+    }
+
     fn step_rigid(&mut self, dt: f32, m_wheel: f32, brakes: &[f32], steer: f32) {
         let mut rb = self.rigid.take().unwrap();
         for (i, w) in rb.wheels.iter_mut().enumerate() {
             w.spring_factor = self.spring_factor(i / 2, i % 2);
         }
-        rb.coupled = self.coupled_parts();
+        let road_train = self.prepare_road_train(&mut rb);
+        rb.coupled = if road_train {
+            Vec::new()
+        } else {
+            self.coupled_parts()
+        };
         {
             let ground = self.ground.clone();
             let flat = |_: f64, _: f64, _: f64| crate::rigid::GroundProbe {
                 below: Some(0.0),
                 above: None,
+                normal: None,
             };
             let from_ground = |x: f64, y: f64, top: f64| {
                 let z = ground.as_ref().and_then(|g| g(x, y));
@@ -1691,16 +1904,19 @@ impl VehicleInstance {
                     Some(z) if z > top => crate::rigid::GroundProbe {
                         below: None,
                         above: Some(z),
+                        normal: None,
                     },
                     z => crate::rigid::GroundProbe {
                         below: z,
                         above: None,
+                        normal: None,
                     },
                 }
             };
             // one session for the whole step: the tyres ask for a few hundred points close
             // together, and it looks the tiles under them up once
-            let session = self.contact.as_ref().map(|c| c.session());
+            let contact = self.contact.clone();
+            let session = contact.as_ref().map(|c| c.session());
             let probe: &dyn Fn(f64, f64, f64) -> crate::rigid::GroundProbe =
                 match (&session, &self.ground) {
                     (Some(s), _) => s.as_ref(),
@@ -1793,6 +2009,12 @@ impl VehicleInstance {
             }
             self.touching = touching;
         }
+        if road_train {
+            let contact = self.contact.clone().unwrap();
+            let probe = contact.session();
+            // The reference corrects joint pose/velocity after collision readback.
+            self.step_road_train(&mut rb, dt, m_wheel, probe.as_ref());
+        }
         if let Some(hit) = worst {
             if omsi_cfg::env::var_os("OMSI_DEBUG_PHYSICS").is_some() {
                 log::info!(
@@ -1832,6 +2054,13 @@ impl VehicleInstance {
             .wheels
             .iter()
             .find(|w| w.driven)
+            .or_else(|| {
+                self.trailers
+                    .iter()
+                    .filter_map(|t| t.rigid.as_ref())
+                    .flat_map(|r| r.wheels.iter())
+                    .find(|w| w.driven)
+            })
             .or(rb.wheels.first())
             .map(|w| w.rpm)
             .unwrap_or(0.0);
@@ -3266,6 +3495,10 @@ pub struct TrailerPart {
     axle_z: Option<f64>,
     /// How fast the axle's height moves (m/s), for the road part's springs (see `follow`).
     axle_vz: f64,
+    /// The driven rear section has its own body and wheel states.
+    rigid: Option<crate::rigid::RigidBody>,
+    frame_brakes: Vec<f32>,
+    joint_angles: Option<[f32; 2]>,
     /// The track under its turning axle, when it runs on rails (`VehicleInstance::retrail`):
     /// it stands at the track's height, not on whatever the ground probe finds there.
     track: Option<DVec3>,
@@ -3444,6 +3677,9 @@ impl TrailerPart {
             bank: 0.0,
             axle_z: None,
             axle_vz: 0.0,
+            rigid: None,
+            frame_brakes: Vec::new(),
+            joint_angles: None,
             track: None,
             v_alpha: program.var(&format!("articulation_{joint}_alpha")),
             v_beta: program.var(&format!("articulation_{joint}_beta")),
@@ -3521,6 +3757,9 @@ impl TrailerPart {
     /// A trailer follows its tractor's heading; it pitches between the coupling and the
     /// ground under its axle, and leans as the vehicle does.
     pub fn body_rotation(&self) -> Mat4 {
+        if let Some(rb) = &self.rigid {
+            return Mat4::from_quat(rb.orientation);
+        }
         let (h, p, b) = if self.reversed {
             (self.heading + 180.0, -self.pitch, -self.bank)
         } else {
@@ -3567,6 +3806,8 @@ impl TrailerPart {
     /// Put this part where another source says it is (a LAN player's rear section): the
     /// pivot is set so that the next follow step keeps this heading.
     pub fn set_pose(&mut self, position: DVec3, heading: f64) {
+        self.rigid = None;
+        self.joint_angles = None;
         self.heading = heading;
         let rot = self.body_rotation();
         let c = position + rot.transform_point3(self.coupling_front).as_dvec3();
@@ -3581,6 +3822,8 @@ impl TrailerPart {
         self.pivot = None;
         self.axle_z = None;
         self.track = None;
+        self.rigid = None;
+        self.joint_angles = None;
     }
 
     /// Where this part couples to the part in front of it, in the world, with the leading
@@ -3615,162 +3858,183 @@ impl TrailerPart {
             lead.unwrap_or((main.position, main.body_rotation(), main.heading));
         let c = lead_pos + lead_rot.transform_point3(self.coupling_back).as_dvec3();
         // the height its axle had (the new one eases from it; nothing after a move)
-        let prev_z = self.pivot.and(self.axle_z);
-        let pivot = match self.pivot {
-            Some(p) => p,
-            None => {
-                // start straight behind the leading vehicle
+        let (lift, sag, ground_z) = if let Some(rb) = &self.rigid {
+            self.position = rb.origin();
+            let (heading, pitch, bank) = rb.heading_pitch_bank();
+            self.heading = if self.reversed {
+                heading + 180.0
+            } else {
+                heading
+            };
+            self.pitch = if self.reversed { -pitch } else { pitch };
+            self.bank = if self.reversed { -bank } else { bank };
+            self.ground_lift = rb
+                .wheels
+                .iter()
+                .map(|w| w.radius - w.attach.z - w.compression)
+                .sum::<f32>()
+                / rb.wheels.len().max(1) as f32;
+            (self.ground_lift as f64, Vec::<f32>::new(), None::<f64>)
+        } else {
+            let prev_z = self.pivot.and(self.axle_z);
+            let pivot = match self.pivot {
+                Some(p) => p,
+                None => {
+                    // start straight behind the leading vehicle
+                    let h = main.heading.to_radians();
+                    c - DVec3::new(h.sin(), h.cos(), 0.0) * self.length as f64
+                }
+            };
+            let mut dir = (c - pivot).truncate();
+            if dir.length() < 1e-3 {
                 let h = main.heading.to_radians();
-                c - DVec3::new(h.sin(), h.cos(), 0.0) * self.length as f64
+                dir = glam::DVec2::new(h.sin(), h.cos());
             }
-        };
-        let mut dir = (c - pivot).truncate();
-        if dir.length() < 1e-3 {
-            let h = main.heading.to_radians();
-            dir = glam::DVec2::new(h.sin(), h.cos());
-        }
-        let mut dir = dir.normalize();
-        let mut heading = dir.x.atan2(dir.y).to_degrees();
-        // `[coupling_front_character]`: a bus joint (type != 0) stops hard at its max
-        // alpha (Omsi.exe 0x7e0848); the rear section's axle is dragged sideways there
-        // instead of jackknifing through the part in front.
-        if let Some([amax, _, _, kind]) = self.ty.def.coupling_front_character {
-            if kind != 0.0 && amax > 0.0 {
-                let a = amax as f64;
-                let rel = ((lead_heading - heading + 540.0) % 360.0) - 180.0;
-                if rel.abs() > a {
-                    heading = lead_heading - rel.clamp(-a, a);
-                    let h = heading.to_radians();
-                    dir = glam::DVec2::new(h.sin(), h.cos());
+            let mut dir = dir.normalize();
+            let mut heading = dir.x.atan2(dir.y).to_degrees();
+            // `[coupling_front_character]`: a bus joint (type != 0) stops hard at its max
+            // alpha (Omsi.exe 0x7e0f2b..0x7e0fcb); the rear section's axle is dragged sideways there
+            // instead of jackknifing through the part in front.
+            if let Some([amax, _, _, kind]) = self.ty.def.coupling_front_character {
+                if kind != 0.0 && amax > 0.0 {
+                    let a = amax as f64;
+                    let rel = ((lead_heading - heading + 540.0) % 360.0) - 180.0;
+                    if rel.abs() > a {
+                        heading = lead_heading - rel.clamp(-a, a);
+                        let h = heading.to_radians();
+                        dir = glam::DVec2::new(h.sin(), h.cos());
+                    }
                 }
             }
-        }
-        self.heading = heading;
-        let new_pivot = c - DVec3::new(dir.x, dir.y, 0.0) * self.length as f64;
-        let ds = (new_pivot - pivot).truncate().length() as f32;
-        self.odometer += ds * (main.physics.velocity_kmh().signum().max(0.0) * 2.0 - 1.0).max(-1.0);
-        self.pivot = Some(new_pivot);
-        // Its springs: an AI copy sits `[ai_deltaheight]` low like its tractor; a driven one
-        // as far down as the scripts' `Axle_Springfactor` lets the load press it.
-        let ai = main.var("AI").map(|v| v > 0.5).unwrap_or(false);
-        let shows = !self.ty.suspension_axles.is_empty();
-        let mut sag = Vec::with_capacity(self.rest.len());
-        for (a, (offset, load, k)) in self.rest.iter().enumerate() {
-            let axle = self.first_axle + a;
-            let compression = if ai {
-                if shows {
-                    -self.ty.def.ai_delta_height
+            self.heading = heading;
+            let new_pivot = c - DVec3::new(dir.x, dir.y, 0.0) * self.length as f64;
+            let ds = (new_pivot - pivot).truncate().length() as f32;
+            self.odometer +=
+                ds * (main.physics.velocity_kmh().signum().max(0.0) * 2.0 - 1.0).max(-1.0);
+            self.pivot = Some(new_pivot);
+            // Its springs: an AI copy sits `[ai_deltaheight]` low like its tractor; a driven one
+            // as far down as the scripts' `Axle_Springfactor` lets the load press it.
+            let ai = main.var("AI").map(|v| v > 0.5).unwrap_or(false);
+            let shows = !self.ty.suspension_axles.is_empty();
+            let mut sag = Vec::with_capacity(self.rest.len());
+            for (a, (offset, load, k)) in self.rest.iter().enumerate() {
+                let axle = self.first_axle + a;
+                let compression = if ai {
+                    if shows {
+                        -self.ty.def.ai_delta_height
+                    } else {
+                        0.0
+                    }
+                } else if self.ty.suspension_axles.contains(&axle) {
+                    let factor = main
+                        .var(&format!("Axle_Springfactor_{axle}_L"))
+                        .unwrap_or(1.0)
+                        .max(0.05);
+                    (load / (k * factor)).min(crate::rigid::BUMP)
                 } else {
                     0.0
+                };
+                for side in ["L", "R"] {
+                    if let Some(id) = main
+                        .ty
+                        .program
+                        .var(&format!("Axle_Suspension_{axle}_{side}"))
+                    {
+                        main.state.vars[id as usize] = -compression;
+                    }
                 }
-            } else if self.ty.suspension_axles.contains(&axle) {
-                let factor = main
-                    .var(&format!("Axle_Springfactor_{axle}_L"))
-                    .unwrap_or(1.0)
-                    .max(0.05);
-                (load / (k * factor)).min(crate::rigid::BUMP)
-            } else {
-                0.0
+                sag.push(offset - compression);
+            }
+            let lift = sag.iter().sum::<f32>() as f64 / sag.len().max(1) as f64;
+            self.ground_lift = lift as f32;
+            // On rails: the track's height where it was put on it (the ground probe found the
+            // platform edge or the embankment beside a bend, and the car jumped up and down).
+            let on_track = self
+                .track
+                .filter(|t| (t.truncate() - new_pivot.truncate()).length() < 1.0)
+                .map(|t| t.z);
+            // the height of the part's origin over its axle (where the ground has none: level
+            // with the coupling, as before)
+            let level = c.z - self.coupling_front.z as f64;
+            // the ground under its axle: what the wheels stand on where the world says, else the
+            // plain height sampler
+            let ground_z = match (on_track, &main.contact, &main.ground) {
+                (Some(_), _, _) => None,
+                (None, Some(g), _) => {
+                    // Looked for from above the coupling's level as well as from the part's own
+                    // height: from its own height alone, a rear section that had once dropped
+                    // under a viaduct's deck (a frame's step at the ramp, a gap at a joint) only
+                    // ever found the ground beneath and hung there under the bridge while the
+                    // front section drove on above (#135).
+                    let top = self.position.z.max(level) + 1.5;
+                    g.probe(new_pivot.x, new_pivot.y, top).below
+                }
+                (None, None, Some(g)) => g(new_pivot.x, new_pivot.y),
+                _ => None,
             };
-            for side in ["L", "R"] {
-                if let Some(id) = main
-                    .ty
-                    .program
-                    .var(&format!("Axle_Suspension_{axle}_{side}"))
-                {
-                    main.state.vars[id as usize] = -compression;
-                }
-            }
-            sag.push(offset - compression);
-        }
-        let lift = sag.iter().sum::<f32>() as f64 / sag.len().max(1) as f64;
-        self.ground_lift = lift as f32;
-        // On rails: the track's height where it was put on it (the ground probe found the
-        // platform edge or the embankment beside a bend, and the car jumped up and down).
-        let on_track = self
-            .track
-            .filter(|t| (t.truncate() - new_pivot.truncate()).length() < 1.0)
-            .map(|t| t.z);
-        // the height of the part's origin over its axle (where the ground has none: level
-        // with the coupling, as before)
-        let level = c.z - self.coupling_front.z as f64;
-        // the ground under its axle: what the wheels stand on where the world says, else the
-        // plain height sampler
-        let ground_z = match (on_track, &main.contact, &main.ground) {
-            (Some(_), _, _) => None,
-            (None, Some(g), _) => {
-                // Looked for from above the coupling's level as well as from the part's own
-                // height: from its own height alone, a rear section that had once dropped
-                // under a viaduct's deck (a frame's step at the ramp, a gap at a joint) only
-                // ever found the ground beneath and hung there under the bridge while the
-                // front section drove on above (#135).
-                let top = self.position.z.max(level) + 1.5;
-                g.probe(new_pivot.x, new_pivot.y, top).below
-            }
-            (None, None, Some(g)) => g(new_pivot.x, new_pivot.y),
-            _ => None,
-        };
-        // A height far from where the coupling holds the part is another level's: the AI's
-        // ground lookup knows only x and y and gives the highest road there, which under a
-        // bridge is the deck (or, on the deck, a road that runs on beneath it) - the trailer
-        // of a lorry and the rear of an articulated bus stood up on the bridge or down under
-        // it (#140). Level with the coupling instead. With the world's faces the part may
-        // stand lower than the coupling on a grade, but never metres under it: that is the
-        // road under a bridge seen through a gap in the deck (#135).
-        let ground_z = ground_z.filter(|z| {
-            if main.contact.is_some() {
-                z + lift - level > -3.0
-            } else {
-                (z + lift - level).abs() < 1.5
-            }
-        });
-        let axle_z = match on_track.or(ground_z.map(|z| z + lift)) {
-            Some(z) if on_track.is_some() => z,
-            Some(z) if main.contact.is_some() && dt > 0.0 => {
-                // On the road the part stands on its springs as the part in front does in
-                // Omsi.exe (each section is a body of its own on the same wheel springs): a
-                // bump under its axle is a jolt that swings out, not a height eased into over
-                // a sixth of a second, which smoothed every bump away under the rear of an
-                // articulated bus. (Sprung at about 1.6 Hz, a little damped, as a bus body.)
-                let from = prev_z.unwrap_or(z);
-                if (z - from).abs() > 0.5 {
-                    self.axle_vz = 0.0;
-                    z
+            // A height far from where the coupling holds the part is another level's: the AI's
+            // ground lookup knows only x and y and gives the highest road there, which under a
+            // bridge is the deck (or, on the deck, a road that runs on beneath it) - the trailer
+            // of a lorry and the rear of an articulated bus stood up on the bridge or down under
+            // it (#140). Level with the coupling instead. With the world's faces the part may
+            // stand lower than the coupling on a grade, but never metres under it: that is the
+            // road under a bridge seen through a gap in the deck (#135).
+            let ground_z = ground_z.filter(|z| {
+                if main.contact.is_some() {
+                    z + lift - level > -3.0
                 } else {
-                    let (w, zeta) = (2.0 * std::f64::consts::PI * 1.6, 0.35);
-                    let h = (dt as f64).min(0.05);
-                    let acc = w * w * (z - from) - 2.0 * zeta * w * self.axle_vz;
-                    self.axle_vz = (self.axle_vz + acc * h).clamp(-3.0, 3.0);
-                    from + self.axle_vz * h
+                    (z + lift - level).abs() < 1.5
                 }
-            }
-            Some(z) => {
-                // The sampled surface is not perfectly smooth (a centimetre of wobble along
-                // the railway ballast every metre or two), and a car that follows every
-                // sample shivers up and down. Ease towards it instead: a slope still comes
-                // through within a fraction of a second, the wobble does not.
-                let from = prev_z.unwrap_or(z);
-                let dz = z - from;
-                if dz.abs() > 0.5 {
-                    z
-                } else {
-                    from + dz * (dt as f64 * 6.0).min(1.0)
+            });
+            let axle_z = match on_track.or(ground_z.map(|z| z + lift)) {
+                Some(z) if on_track.is_some() => z,
+                Some(z) if main.contact.is_some() && dt > 0.0 => {
+                    // On the road the part stands on its springs as the part in front does in
+                    // Omsi.exe (each section is a body of its own on the same wheel springs): a
+                    // bump under its axle is a jolt that swings out, not a height eased into over
+                    // a sixth of a second, which smoothed every bump away under the rear of an
+                    // articulated bus. (Sprung at about 1.6 Hz, a little damped, as a bus body.)
+                    let from = prev_z.unwrap_or(z);
+                    if (z - from).abs() > 0.5 {
+                        self.axle_vz = 0.0;
+                        z
+                    } else {
+                        let (w, zeta) = (2.0 * std::f64::consts::PI * 1.6, 0.35);
+                        let h = (dt as f64).min(0.05);
+                        let acc = w * w * (z - from) - 2.0 * zeta * w * self.axle_vz;
+                        self.axle_vz = (self.axle_vz + acc * h).clamp(-3.0, 3.0);
+                        from + self.axle_vz * h
+                    }
                 }
-            }
-            None => level,
+                Some(z) => {
+                    // The sampled surface is not perfectly smooth (a centimetre of wobble along
+                    // the railway ballast every metre or two), and a car that follows every
+                    // sample shivers up and down. Ease towards it instead: a slope still comes
+                    // through within a fraction of a second, the wobble does not.
+                    let from = prev_z.unwrap_or(z);
+                    let dz = z - from;
+                    if dz.abs() > 0.5 {
+                        z
+                    } else {
+                        from + dz * (dt as f64 * 6.0).min(1.0)
+                    }
+                }
+                None => level,
+            };
+            self.axle_z = Some(axle_z);
+            // The part hangs at the coupling in front and stands on its axle behind: its pitch is
+            // the slope between them (it was drawn level at the axle's height, and on a grade or
+            // a crest the joint came apart by a hand's breadth or more). It leans as the vehicle
+            // it is coupled to does.
+            let rise = c.z - (axle_z + self.coupling_front.z as f64);
+            self.pitch =
+                (rise.atan2(self.length.max(0.5) as f64).to_degrees() as f32).clamp(-15.0, 15.0);
+            self.bank = main.bank;
+            // the trailer origin: coupling_front sits at c
+            let rot = self.body_rotation();
+            self.position = c - rot.transform_point3(self.coupling_front).as_dvec3();
+            (lift, sag, ground_z)
         };
-        self.axle_z = Some(axle_z);
-        // The part hangs at the coupling in front and stands on its axle behind: its pitch is
-        // the slope between them (it was drawn level at the axle's height, and on a grade or
-        // a crest the joint came apart by a hand's breadth or more). It leans as the vehicle
-        // it is coupled to does.
-        let rise = c.z - (axle_z + self.coupling_front.z as f64);
-        self.pitch =
-            (rise.atan2(self.length.max(0.5) as f64).to_degrees() as f32).clamp(-15.0, 15.0);
-        self.bank = main.bank;
-        // the trailer origin: coupling_front sits at c
-        let rot = self.body_rotation();
-        self.position = c - rot.transform_point3(self.coupling_front).as_dvec3();
         // The joint's angles (degrees) for its plates and bellows and for the scripts: alpha
         // about the vertical axis - the stock articulation.osc's jackknife protection brakes
         // at |alpha| > 47° - and beta about the transverse axis. (The horizontal angle went
@@ -3799,6 +4063,10 @@ impl TrailerPart {
         // grows as the rear axle sinks): taken the other way round the bellows bent away
         // from the rear section on any grade, their folds sheared and a gap opened at one end)
         let beta = lead_pitch - self.pitch as f64;
+        let (alpha, beta) = self
+            .joint_angles
+            .map(|[a, b]| (a as f64, b as f64))
+            .unwrap_or((alpha, beta));
         if let Some(id) = self.v_alpha {
             main.state.vars[id as usize] = (alpha * ARTICULATION_SIGN) as f32;
         }
@@ -3825,6 +4093,25 @@ impl TrailerPart {
                 {
                     main.state.vars[id as usize] = rpm;
                 }
+            }
+        }
+        if let Some(rb) = &self.rigid {
+            for (i, w) in rb.wheels.iter().enumerate() {
+                let axle = self.first_axle + i / 2;
+                let side = if i % 2 == 0 { "L" } else { "R" };
+                for (name, value) in [
+                    ("Wheel_Rotation", w.rotation_deg.to_radians()),
+                    ("Wheel_RotationSpeed", w.rpm),
+                    ("Axle_Steering", w.steer),
+                    ("Axle_Suspension", -w.compression.max(0.0)),
+                ] {
+                    if let Some(id) = main.ty.program.var(&format!("{name}_{axle}_{side}")) {
+                        main.state.vars[id as usize] = value;
+                    }
+                }
+            }
+            if let Some(w) = rb.wheels.iter().find(|w| w.driven) {
+                main.put(main.v_n_wheel, w.rpm);
             }
         }
         for (i, a) in self.animators.iter_mut().enumerate() {
@@ -3859,6 +4146,9 @@ impl TrailerPart {
 impl VehicleInstance {
     /// Rotation of the vehicle body (model frame → world, without translation).
     pub fn body_rotation(&self) -> Mat4 {
+        if let Some(rb) = &self.rigid {
+            return Mat4::from_quat(rb.orientation);
+        }
         let q = Quat::from_rotation_z((-self.heading).to_radians() as f32)
             * Quat::from_rotation_x(self.pitch.to_radians())
             * Quat::from_rotation_y(self.bank.to_radians());
@@ -4127,6 +4417,7 @@ mod tests {
                 .filter(|h| *h <= top)
                 .fold(None, |a: Option<f64>, b| Some(a.map_or(b, |a| a.max(b)))),
             above: None,
+            normal: None,
         };
         let faces: &dyn crate::rigid::Ground = &faces;
         // the plain sampler: the highest face at (x, y), which is the deck
@@ -4143,6 +4434,7 @@ mod tests {
         let empty = |_x: f64, _y: f64, _top: f64| crate::rigid::GroundProbe {
             below: None,
             above: Some(deck),
+            normal: None,
         };
         let empty: &dyn crate::rigid::Ground = &empty;
         assert_eq!(wheel_ground(Some(empty), Some(plain), wheel), Some(deck));
@@ -4537,16 +4829,19 @@ mod tests {
                 crate::rigid::GroundProbe {
                     below: Some(10.0),
                     above: None,
+                    normal: None,
                 }
             } else if deck {
                 crate::rigid::GroundProbe {
                     below: Some(0.0),
                     above: Some(10.0),
+                    normal: None,
                 }
             } else {
                 crate::rigid::GroundProbe {
                     below: Some(0.0),
                     above: None,
+                    normal: None,
                 }
             }
         };
@@ -4754,9 +5049,9 @@ pub fn relative_humidity(t: f32, abs_hum: f32) -> f32 {
 /// The tyres' friction coefficient on the road under them: `street_cond` as the weather sets
 /// it (0 dry … 1 wet, 1 … 2 snow from packed to fresh) and the air temperature (°C), below
 /// which a wet road freezes (the stock "Ueberfrierende Naesse" weather). Dry asphalt 0.85,
-/// wet 0.6, snow 0.3, black ice 0.12 - textbook values for truck tyres; OMSI keeps its
-/// friction inside ode.dll and only hands `StreetCond` to the scripts, so these are not
-/// read off it.
+/// wet 0.6, snow 0.3, black ice 0.12. These are the existing approximate coefficients.
+/// The reference also chooses friction per contacted texture/surface (0x7e0368);
+/// that material information is not yet carried through this fallback.
 pub fn road_grip(street_cond: f32, temperature: f32) -> f32 {
     const DRY: f32 = 0.85;
     const WET: f32 = 0.6;
