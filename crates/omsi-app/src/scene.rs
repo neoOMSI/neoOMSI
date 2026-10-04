@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 use glam::{DVec2, DVec3, Mat4};
 use hashbrown::HashMap;
 use omsi_geometry::{
-    MeshData, SplineCurve, TileSurface, build_spline_mesh, build_terrain_mesh, mesh_from_o3d,
-    object_rotation,
+    HeightMap, MeshData, SplineCurve, SurfFaces, TileSurface, build_spline_mesh,
+    build_terrain_mesh, mesh_from_o3d, object_rotation,
 };
 use omsi_map::{GlobalCfg, Terrain, tile_size};
 use omsi_model::{MaterialDef, MeshDef, Model};
@@ -34,6 +34,8 @@ pub struct ObjectType {
     pub model_dir: PathBuf,
     /// LOD 0 meshes (mesh data, o3d materials, model material overrides).
     pub meshes: Vec<(MeshData, Vec<omsi_o3d::Material>, Vec<MaterialDef>)>,
+    /// `.surf` maps for the first `[mesh]` of a `[surface]` object.
+    pub surface_maps: Option<Arc<SurfFaces>>,
     /// `[visible] var value` per mesh, parallel to `meshes`.
     pub mesh_visible: Vec<Option<(String, f32)>>,
     /// Model mesh definition index and pivot per loaded mesh (parallel to `meshes`).
@@ -380,6 +382,8 @@ pub struct LightObject {
 pub struct SplineType {
     pub def: Spline,
     pub dir: PathBuf,
+    /// `.surf` maps by the spline's material slots.
+    pub surface_maps: Option<Arc<SurfFaces>>,
 }
 
 #[derive(Debug, Default)]
@@ -611,9 +615,8 @@ pub struct StagedTile {
     splines: Vec<StagedSpline>,
     /// The whole spline meshes, in the order of `splines`, until the tile is placed.
     meshes: Mutex<Option<Vec<Arc<MeshData>>>>,
-    /// The `[heightprofile]` surfaces of the tile's splines (local to `origin`) with their
-    /// world bounds: what the wheels roll on.
-    drive: Vec<(MeshData, [f64; 4])>,
+    /// The splines' wheel-contact meshes (local to `origin`) with their world bounds.
+    drive: Vec<StagedDrive>,
     /// Lanes, taken when the tile is loaded for the first time.
     lanes: Mutex<Vec<Lane>>,
     /// The street lanes' points of the tile's splines, kept for good (what an object's box
@@ -626,6 +629,15 @@ pub struct StagedTile {
     /// What reading the tile counted (missing types, empty car parks, rows, attachments).
     counts: LoadStats,
     resolved: std::sync::OnceLock<Arc<Resolved>>,
+}
+
+enum StagedDrive {
+    HeightProfiles(MeshData, [f64; 4]),
+    DrawnMesh {
+        mesh: MeshData,
+        bounds: [f64; 4],
+        surface_maps: Option<Arc<SurfFaces>>,
+    },
 }
 
 /// A staged tile's final ground and where its objects finally stand.
@@ -1858,6 +1870,67 @@ pub fn texture_dirs(root: &Path, content_dir: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// Load a texture's adjacent OMSI surface height map. Both the filename as authored by the
+/// spline/material and the actual texture selected by OMSI's resolver can have a `.surf`
+/// sidecar (for example `road.bmp.surf` beside a selected `road.dds`).
+fn surface_height_map(name: &str, dirs: &[PathBuf]) -> Option<Arc<HeightMap>> {
+    if omsi_cfg::env::var_os("OMSI_NO_SURF").is_some() || name.trim().is_empty() {
+        return None;
+    }
+    static MAPS: std::sync::OnceLock<Mutex<HashMap<PathBuf, (u64, Option<Arc<HeightMap>>)>>>
+        = std::sync::OnceLock::new();
+    let generation = omsi_cfg::content_generation();
+    let cache = MAPS.get_or_init(|| Mutex::new(HashMap::new()));
+    let dirs_ref: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+    let mut candidates = Vec::new();
+    if let Some(texture) = omsi_texture::find_texture(name, &dirs_ref) {
+        candidates.push(PathBuf::from(format!("{}.surf", texture.display())));
+    }
+    let requested = format!("{}.surf", name.trim().replace('\\', "/"));
+    for dir in dirs {
+        let path = omsi_cfg::resolve_path(dir, &requested);
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    }
+    for path in candidates {
+        if let Some((seen, map)) = cache.lock().get(&path).cloned() {
+            if map.is_some() || seen == generation {
+                if map.is_some() {
+                    return map;
+                }
+                continue;
+            }
+        }
+        let map = if omsi_cfg::vfs::is_file(&path) {
+            omsi_texture::decode_file(&path)
+                .ok()
+                .and_then(|image| HeightMap::from_rgba(image.width, image.height, &image.rgba))
+                .map(Arc::new)
+        } else {
+            None
+        };
+        cache.lock().insert(path, (generation, map.clone()));
+        if map.is_some() {
+            return map;
+        }
+    }
+    None
+}
+
+/// Surface maps indexed exactly like a mesh's material slots; absent sidecars leave a slot
+/// flat and allocate no per-face data in the drive grid.
+fn surface_faces<'a>(names: impl IntoIterator<Item = &'a str>, dirs: &[PathBuf]) -> Option<Arc<SurfFaces>> {
+    if omsi_cfg::env::var_os("OMSI_NO_SURF").is_some() {
+        return None;
+    }
+    let slots: Vec<Option<Arc<HeightMap>>> = names
+        .into_iter()
+        .map(|name| surface_height_map(name, dirs))
+        .collect();
+    slots.iter().any(Option::is_some).then(|| Arc::new(SurfFaces { slots }))
+}
+
 pub struct World {
     pub root: PathBuf,
     pub global: GlobalCfg,
@@ -3079,6 +3152,18 @@ impl World {
                     overrides.iter_mut().for_each(|o| subst(&mut o.texture));
                 }
             }
+            let surface_maps = if sco.surface {
+                let dirs = texture_dirs(&self.root, &model_dir);
+                mesh_def_index
+                    .iter()
+                    .position(|&d| d == 0)
+                    .and_then(|k| meshes.get(k))
+                    .and_then(|(_, materials, _)| {
+                        surface_faces(materials.iter().map(|m| m.texture.as_str()), &dirs)
+                    })
+            } else {
+                None
+            };
             let paint_scheme_count = paint_schemes.len();
             // scripts (or an empty program) for objects that are scripted or animated
             let animated = mesh_def_index.iter().any(|d| {
@@ -3188,6 +3273,7 @@ impl World {
                 model,
                 model_dir,
                 meshes,
+                surface_maps,
                 mesh_visible,
                 mesh_def_index,
                 mesh_pivots,
@@ -3225,9 +3311,16 @@ impl World {
             .ok()
             .map(|def| {
                 omsi_geometry::register_half_cant_width(rel, &def);
+                let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                let dirs = texture_dirs(&self.root, &dir);
+                let surface_maps = surface_faces(
+                    def.textures.iter().map(|texture| texture.file.as_str()),
+                    &dirs,
+                );
                 Arc::new(SplineType {
-                    dir: path.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
+                    dir,
                     def,
+                    surface_maps,
                 })
             });
         self.spline_types
@@ -3974,7 +4067,7 @@ impl World {
                     omsi_geometry::build_height_profile_mesh(&st.def, &curve, s.mirror, origin);
                 if !hp.is_empty() {
                     let b = mesh_bounds(&hp, &Mat4::IDENTITY, origin);
-                    out.drive.push((hp, b));
+                    out.drive.push(StagedDrive::HeightProfiles(hp, b));
                 }
             }
             let mesh = build_spline_mesh(&st.def, &curve, s.mirror, origin);
@@ -4122,12 +4215,26 @@ impl World {
                 // the rasters only need the shape; the whole mesh waits for the upload
                 let shape = MeshData {
                     positions: mesh.positions.clone(),
+                    uvs: st
+                        .surface_maps
+                        .as_ref()
+                        .map(|_| mesh.uvs.clone())
+                        .unwrap_or_default(),
+                    ranges: st
+                        .surface_maps
+                        .as_ref()
+                        .map(|_| mesh.ranges.clone())
+                        .unwrap_or_default(),
                     indices: mesh.indices.clone(),
                     ..Default::default()
                 };
                 // (every spline the game draws: Omsi.exe asks them all, roads or not)
                 if !heightprofile_ground() {
-                    out.drive.push((shape.clone(), bounds));
+                    out.drive.push(StagedDrive::DrawnMesh {
+                        mesh: shape.clone(),
+                        bounds,
+                        surface_maps: st.surface_maps.clone(),
+                    });
                 }
                 let drivable = st.def.paths.iter().any(|pd| pd.kind == 0 || pd.kind == 1);
                 let overlay = !st.def.profiles.is_empty()
@@ -5651,17 +5758,37 @@ impl World {
                             sp.drivable,
                         );
                     }
-                    // what the wheels roll on: the splines' height profiles
-                    for (hp, b) in &q.drive {
-                        if !outside(b) {
-                            ts.add_height_profiles(
-                                hp,
+                    // The drawn spline mesh is the wheel surface; height profiles remain the
+                    // optional A/B fallback selected by OMSI_HEIGHTPROFILE_GROUND.
+                    for drive in &q.drive {
+                        let bounds = match drive {
+                            StagedDrive::HeightProfiles(_, bounds)
+                            | StagedDrive::DrawnMesh { bounds, .. } => bounds,
+                        };
+                        if outside(bounds) {
+                            continue;
+                        }
+                        match drive {
+                            StagedDrive::HeightProfiles(mesh, _) => ts.add_height_profiles(
+                                mesh,
                                 scenery_draw_position(q.origin, true),
                                 tx,
                                 ty,
-                            );
-                            wheel_meshes += 1;
+                            ),
+                            StagedDrive::DrawnMesh {
+                                mesh,
+                                surface_maps,
+                                ..
+                            } => ts.add_drive_mesh(
+                                mesh,
+                                &Mat4::IDENTITY,
+                                scenery_draw_position(q.origin, true),
+                                tx,
+                                ty,
+                                surface_maps.as_deref(),
+                            ),
                         }
+                        wheel_meshes += 1;
                     }
                 }
                 // the surfaces and [terrainhole] cutters of this tile and the ones around it
@@ -5754,6 +5881,7 @@ impl World {
                                     scenery_draw_position(pose.pos, true),
                                     tx,
                                     ty,
+                                    ot.surface_maps.as_deref(),
                                 );
                                 wheel_meshes += 1;
                             }
@@ -8905,7 +9033,14 @@ impl World {
                 .iter()
                 .map(|s| s.shape.heap_bytes())
                 .sum::<usize>()
-                + st.drive.iter().map(|d| d.0.heap_bytes()).sum::<usize>()
+                + st
+                    .drive
+                    .iter()
+                    .map(|d| match d {
+                        StagedDrive::HeightProfiles(mesh, _) => mesh.heap_bytes(),
+                        StagedDrive::DrawnMesh { mesh, .. } => mesh.heap_bytes(),
+                    })
+                    .sum::<usize>()
                 + st.base_terrain.heights.capacity() * 4;
             staged_bytes += st
                 .meshes
@@ -13987,26 +14122,31 @@ mod tests {
         let ty = Arc::new(SplineType {
             def: def("curb.dds"),
             dir: PathBuf::new(),
+            surface_maps: None,
         });
         let other = Arc::new(SplineType {
             def: def("other.dds"),
             dir: PathBuf::new(),
+            surface_maps: None,
         });
         let other_dir = Arc::new(SplineType {
             def: def("curb.dds"),
             dir: PathBuf::from("another_pack"),
+            surface_maps: None,
         });
         let mut tested = def("curb.dds");
         tested.textures[0].alpha = 1;
         let tested = Arc::new(SplineType {
             def: tested,
             dir: PathBuf::new(),
+            surface_maps: None,
         });
         let mut blended = def("curb.dds");
         blended.textures[0].alpha = 2;
         let blended = Arc::new(SplineType {
             def: blended,
             dir: PathBuf::new(),
+            surface_maps: None,
         });
         let mut compatible = def("curb.dds");
         compatible.path = PathBuf::from("another_profile.sli");
@@ -14017,6 +14157,7 @@ mod tests {
         let compatible = Arc::new(SplineType {
             def: compatible,
             dir: PathBuf::new(),
+            surface_maps: None,
         });
         let mesh = |x: f32, length: f32| {
             Arc::new(MeshData {

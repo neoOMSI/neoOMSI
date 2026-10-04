@@ -5,6 +5,69 @@
 use glam::{DVec2, DVec3, Mat4, Quat, Vec2, Vec3};
 use omsi_map::{MapSpline, Terrain, tile_size};
 use omsi_scenery::Spline;
+use std::sync::Arc;
+
+/// A texture's OMSI `.surf` height map. Its red channel is centred at 128 and displaces
+/// the wheel's contact height by at most two centimetres in either direction.
+#[derive(Debug, Clone)]
+pub struct HeightMap {
+    width: usize,
+    height: usize,
+    red: Arc<[u8]>,
+}
+
+impl HeightMap {
+    /// Keep just the linear red channel from a decoded RGBA image.
+    pub fn from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<HeightMap> {
+        let width = width as usize;
+        let height = height as usize;
+        let pixels = width.checked_mul(height)?;
+        if width == 0 || height == 0 || rgba.len() < pixels.checked_mul(4)? {
+            return None;
+        }
+        let red = rgba.chunks_exact(4).take(pixels).map(|p| p[0]).collect::<Vec<_>>();
+        Some(HeightMap {
+            width,
+            height,
+            red: red.into(),
+        })
+    }
+
+    /// Sample the repeating texture with bilinear filtering. The last interval reaches the
+    /// final texel without wrapping its second sample back to the first one.
+    pub fn sample(&self, uv: Vec2) -> f32 {
+        if !uv.is_finite() {
+            return 0.0;
+        }
+        let sample_axis = |coord: f32, size: usize| {
+            if size <= 1 {
+                return (0usize, 0usize, 0.0f32);
+            }
+            let p = coord.rem_euclid(1.0) * (size - 1) as f32;
+            let i0 = (p.floor() as usize).min(size - 2);
+            let i1 = i0 + 1;
+            (i0, i1, (p - i0 as f32).clamp(0.0, 1.0))
+        };
+        let (x0, x1, tx) = sample_axis(uv.x, self.width);
+        let (y0, y1, ty) = sample_axis(uv.y, self.height);
+        let at = |x: usize, y: usize| self.red[y * self.width + x] as f32 / 255.0;
+        let a = at(x0, y0) * (1.0 - tx) + at(x1, y0) * tx;
+        let b = at(x0, y1) * (1.0 - tx) + at(x1, y1) * tx;
+        0.02 * ((a * (1.0 - ty) + b * ty) * 2.0 - 1.0)
+    }
+}
+
+/// Height maps by the material slots in a mesh. Faces in a slot without a map stay flat.
+#[derive(Debug, Clone, Default)]
+pub struct SurfFaces {
+    pub slots: Vec<Option<Arc<HeightMap>>>,
+}
+
+impl SurfFaces {
+    pub fn is_empty(&self) -> bool {
+        self.slots.iter().all(Option::is_none)
+    }
+}
 
 /// A renderable triangle mesh with one texture per material slot.
 #[derive(Debug, Clone, Default)]
@@ -1308,6 +1371,55 @@ mod tests {
     }
 
     #[test]
+    fn surf_height_map_is_red_channel_bilinear_and_repeating() {
+        let solid = |red| HeightMap::from_rgba(1, 1, &[red, 0, 0, 255]).unwrap();
+        assert!((solid(0).sample(Vec2::ZERO) + 0.02).abs() < 1e-6);
+        assert!((solid(255).sample(Vec2::ZERO) - 0.02).abs() < 1e-6);
+        let map = HeightMap::from_rgba(
+            2,
+            2,
+            &[
+                0, 9, 9, 255, 255, 0, 0, 255, 255, 0, 0, 255, 0, 9, 9, 255,
+            ],
+        )
+        .unwrap();
+        assert!(map.sample(Vec2::splat(0.5)).abs() < 1e-6);
+        assert!((map.sample(Vec2::new(-0.5, 0.5)) - map.sample(Vec2::new(0.5, 0.5))).abs() < 1e-6);
+    }
+
+    #[test]
+    fn drive_mesh_lifts_only_mapped_material_faces() {
+        let mesh = MeshData {
+            positions: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(10.0, 0.0, 0.0),
+                Vec3::new(0.0, 10.0, 0.0),
+                Vec3::new(10.0, 10.0, 0.0),
+            ],
+            uvs: vec![Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE],
+            indices: vec![0, 1, 2, 1, 3, 2],
+            ranges: vec![(0, 3, 0), (3, 3, 1)],
+            ..Default::default()
+        };
+        let mapped = Arc::new(HeightMap::from_rgba(1, 1, &[255, 0, 0, 255]).unwrap());
+        let surfaces = SurfFaces {
+            slots: vec![Some(mapped), None],
+        };
+        let mut tile = TileSurface::new(300);
+        tile.add_drive_mesh(
+            &mesh,
+            &Mat4::IDENTITY,
+            DVec3::ZERO,
+            0,
+            0,
+            Some(&surfaces),
+        );
+        tile.finish();
+        assert_eq!(tile.drive.probe(2.0, 2.0, 0.01).above, Some(0.02));
+        assert_eq!(tile.drive.probe(8.0, 2.0, 0.01).below, Some(0.0));
+    }
+
+    #[test]
     fn reflection_surface_uses_the_nearby_face_and_its_grade() {
         let mut grid = DriveGrid::default();
         let plane = |height: f32| {
@@ -2269,11 +2381,21 @@ pub struct DriveGrid {
     /// Per triangle: a wall top ([`is_wall_top`]), never stood on - a wall where it stands
     /// over the ground (see [`DriveGrid::probe_walls`]).
     pub ridge: Vec<bool>,
+    /// Sparse UVs for just the wheel-contact faces that have a `.surf` map.
+    surf_tris: Vec<SurfTriangle>,
+    surf_maps: Vec<Arc<HeightMap>>,
     cells: usize,
     cell: f32,
     /// Per cell, the range of `items` that lists its triangles (`cells² + 1` offsets).
     start: Vec<u32>,
     items: Vec<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct SurfTriangle {
+    triangle: u32,
+    map: u32,
+    uv: [Vec2; 3],
 }
 
 impl DriveGrid {
@@ -2284,6 +2406,8 @@ impl DriveGrid {
     pub fn heap_bytes(&self) -> usize {
         self.tris.capacity() * std::mem::size_of::<[Vec3; 3]>()
             + self.ridge.capacity()
+            + self.surf_tris.capacity() * std::mem::size_of::<SurfTriangle>()
+            + self.surf_maps.capacity() * std::mem::size_of::<Arc<HeightMap>>()
             + self.start.capacity() * 4
             + self.items.capacity() * 4
     }
@@ -2296,13 +2420,30 @@ impl DriveGrid {
 
     /// Add a triangle, a wall top or not.
     pub fn push_kind(&mut self, p: [Vec3; 3], ridge: bool) {
+        self.push_inner(p, ridge, None);
+    }
+
+    fn push_inner(&mut self, p: [Vec3; 3], ridge: bool, surf: Option<(u32, [Vec2; 3])>) {
         let nrm = (p[1] - p[0]).cross(p[2] - p[0]);
         let len = nrm.length();
         if len < 1e-6 || nrm.z.abs() / len < 0.3 {
             return;
         }
+        let triangle = self.tris.len() as u32;
         self.tris.push(p);
         self.ridge.push(ridge);
+        if let Some((map, uv)) = surf {
+            self.surf_tris.push(SurfTriangle { triangle, map, uv });
+        }
+    }
+
+    fn map_index(&mut self, map: &Arc<HeightMap>) -> u32 {
+        if let Some(i) = self.surf_maps.iter().position(|m| Arc::ptr_eq(m, map)) {
+            return i as u32;
+        }
+        let i = self.surf_maps.len() as u32;
+        self.surf_maps.push(map.clone());
+        i
     }
 
     /// Bucket the triangles of a tile `tile` metres wide; those entirely outside are dropped.
@@ -2313,8 +2454,14 @@ impl DriveGrid {
         let mut ranges: Vec<(usize, usize, usize, usize)> = Vec::with_capacity(self.tris.len());
         let mut keep = Vec::with_capacity(self.tris.len());
         let mut keep_ridge = Vec::with_capacity(self.tris.len());
+        let mut keep_surf = Vec::with_capacity(self.surf_tris.len());
+        let mut surf_index = 0;
         self.ridge.resize(self.tris.len(), false);
-        for (t, r) in self.tris.iter().zip(self.ridge.iter()) {
+        for (i, (t, r)) in self.tris.iter().zip(self.ridge.iter()).enumerate() {
+            let surf = self
+                .surf_tris
+                .get(surf_index)
+                .filter(|s| s.triangle as usize == i);
             let (lo_x, hi_x) = (
                 t[0].x.min(t[1].x).min(t[2].x),
                 t[0].x.max(t[1].x).max(t[2].x),
@@ -2324,15 +2471,25 @@ impl DriveGrid {
                 t[0].y.max(t[1].y).max(t[2].y),
             );
             if hi_x < 0.0 || hi_y < 0.0 || lo_x > tile || lo_y > tile {
+                if surf.is_some() {
+                    surf_index += 1;
+                }
                 continue;
             }
             let c = |v: f32| ((v / self.cell).floor().max(0.0) as usize).min(n - 1);
             ranges.push((c(lo_x), c(hi_x), c(lo_y), c(hi_y)));
             keep.push(*t);
             keep_ridge.push(*r);
+            if let Some(surf) = surf {
+                let mut surf = surf.clone();
+                surf.triangle = keep.len() as u32 - 1;
+                keep_surf.push(surf);
+                surf_index += 1;
+            }
         }
         self.tris = keep;
         self.ridge = keep_ridge;
+        self.surf_tris = keep_surf;
         let mut count = vec![0u32; n * n + 1];
         for &(x0, x1, y0, y1) in &ranges {
             for y in y0..=y1 {
@@ -2434,7 +2591,18 @@ impl DriveGrid {
             if l1 < EPS || l2 < EPS || l3 < EPS {
                 continue;
             }
-            out = out.merge(Probe::of(l1 * a.z + l2 * b.z + l3 * c.z, z_top));
+            let mut z = l1 * a.z + l2 * b.z + l3 * c.z;
+            if !ridges {
+                if let Ok(surf_index) = self
+                    .surf_tris
+                    .binary_search_by_key(&i, |surf| surf.triangle)
+                {
+                    let surf = &self.surf_tris[surf_index];
+                    let uv = surf.uv[0] * l1 + surf.uv[1] * l2 + surf.uv[2] * l3;
+                    z += self.surf_maps[surf.map as usize].sample(uv);
+                }
+            }
+            out = out.merge(Probe::of(z, z_top));
         }
         out
     }
@@ -2693,9 +2861,8 @@ impl TileSurface {
         }
     }
 
-    /// Add a mesh the wheels stand on: a spline's height profile, a surface object, or a low
-    /// object with a `[collision_mesh]` (a traffic island) that cuts no ground. The probe
-    /// takes the highest face below the axle, so a bridge deck overhead is never picked.
+    /// Add the mesh the wheels stand on. When material slots have `.surf` maps, retain only
+    /// mapped faces' UVs so the wheel probe can sample their texture height.
     pub fn add_drive_mesh(
         &mut self,
         mesh: &MeshData,
@@ -2703,11 +2870,22 @@ impl TileSurface {
         origin: DVec3,
         tx: i32,
         ty: i32,
+        surfaces: Option<&SurfFaces>,
     ) {
         let ident = *transform == Mat4::IDENTITY;
         let off =
             (origin - DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0)).as_vec3();
-        for tri in mesh.indices.chunks_exact(3) {
+        let slot_maps: Vec<Option<u32>> = surfaces
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.slots
+                    .iter()
+                    .map(|map| map.as_ref().map(|map| self.drive.map_index(map)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut range_index = 0;
+        for (triangle_index, tri) in mesh.indices.chunks_exact(3).enumerate() {
             let mut p = [Vec3::ZERO; 3];
             for k in 0..3 {
                 let v = mesh.positions[tri[k] as usize];
@@ -2717,7 +2895,25 @@ impl TileSurface {
                     transform.transform_point3(v)
                 }) + off;
             }
-            self.drive.push(p);
+            let index_start = (triangle_index * 3) as u32;
+            while range_index < mesh.ranges.len()
+                && index_start >= mesh.ranges[range_index].0 + mesh.ranges[range_index].1
+            {
+                range_index += 1;
+            }
+            let slot = mesh
+                .ranges
+                .get(range_index)
+                .filter(|r| index_start >= r.0 && index_start < r.0 + r.1)
+                .map(|r| r.2);
+            let surf = slot
+                .and_then(|slot| slot_maps.get(slot as usize).copied().flatten())
+                .and_then(|map| {
+                    let uv = [tri[0], tri[1], tri[2]]
+                        .map(|i| mesh.uvs.get(i as usize).copied());
+                    Some((map, [uv[0]?, uv[1]?, uv[2]?]))
+                });
+            self.drive.push_inner(p, false, surf);
         }
     }
 
