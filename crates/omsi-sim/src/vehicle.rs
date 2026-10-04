@@ -990,6 +990,7 @@ pub struct VehicleInstance {
     /// the coupled parts and the scripts still run every frame.
     pub ai_visuals: bool,
     ai_visuals_missed: f32,
+    pub ai_lights: bool,
     var_index: HashMap<String, omsi_script::VarId>,
     /// Where each mesh's material properties come from, resolved against `var_index`
     /// (rebuilt when the vehicle gains engine variables).
@@ -1263,6 +1264,7 @@ impl VehicleInstance {
             cabin_air: None,
             ai_visuals: true,
             ai_visuals_missed: 0.0,
+            ai_lights: false,
             var_index,
             props_plan: PropsPlan::default(),
         }
@@ -2336,6 +2338,7 @@ impl VehicleInstance {
                 _ => 0.0,
             },
         };
+        self.ai_lights = ai.lights;
         for (name, v) in [
             ("AI", 1.0),
             ("AI_Blinker_L", matches!(ai.blinker, 1 | 3) as i32 as f32),

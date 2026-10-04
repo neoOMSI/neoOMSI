@@ -58,10 +58,10 @@ mod placement_tests {
         std::fs::write(
             &script,
             concat!(
-                "{init}\n{end}\n{frame}\n",
-                "(L.$.BusStop) \"\" $= !\n{if}\n",
-                "\"Busstop\\\" $+ (L.$.BusStop) $+ \".png\" $+ (S.$.Texture)\n",
-                "{endif}\n{end}\n",
+            "{init}\n{end}\n{frame}\n",
+            "(L.$.BusStop) \"\" $= !\n{if}\n",
+            "\"Busstop\\\" $+ (L.$.BusStop) $+ \".png\" $+ (S.$.Texture)\n",
+            "{endif}\n{end}\n",
             ),
         )
         .unwrap();
@@ -291,6 +291,13 @@ impl SceneryInstance {
 
     /// Give the pages the object's variables and time, apply what they did (variables,
     /// triggers) and return their new pictures: (script texture index, width, height, RGBA).
+    /// Draw every page again on the next [`Self::update_html_textures`].
+    pub fn invalidate_html(&mut self) {
+        for t in self.html_textures.iter_mut() {
+            t.renderer.invalidate();
+        }
+    }
+
     pub fn update_html_textures(&mut self) -> Vec<(usize, u32, u32, Vec<u8>)> {
         if self.html_textures.is_empty() {
             return Vec::new();

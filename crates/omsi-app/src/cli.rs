@@ -27,7 +27,7 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) radius: Option<i32>,
     /// How far around the camera the window keeps tiles loaded (m); `view_distance` in the
-    /// settings file, 1200 m by default.
+    /// settings file, 900 m by default.
     #[arg(long = "view-distance")]
     pub(crate) view_distance: Option<f64>,
     /// Load every tile of the map.

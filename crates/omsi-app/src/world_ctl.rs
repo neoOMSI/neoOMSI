@@ -609,6 +609,9 @@ impl App {
         }
         let mut next = self.placed.remove(0);
         if let Some(a) = self.audio.as_ref() {
+            if let Some(mut s) = next.sounds.take() {
+                s.stop_all(a);
+            }
             next.load_sounds(a);
         }
         if let Some(h) = self.humans.as_mut() {
@@ -631,9 +634,9 @@ impl App {
     pub(crate) fn metar_locked(&self) -> bool {
         self.settings.metar_sync
             && !self
-                .lan
-                .as_ref()
-                .is_some_and(|l| l.role == omsi_net::Role::Client)
+            .lan
+            .as_ref()
+            .is_some_and(|l| l.role == omsi_net::Role::Client)
     }
 
     pub(crate) fn metar_station(&self) -> String {
@@ -795,9 +798,9 @@ impl App {
     pub(crate) fn real_time_locked(&self) -> bool {
         self.settings.time_sync
             && !self
-                .lan
-                .as_ref()
-                .is_some_and(|l| l.role == omsi_net::Role::Client)
+            .lan
+            .as_ref()
+            .is_some_and(|l| l.role == omsi_net::Role::Client)
     }
 
     pub(crate) fn sync_real_time(&mut self) {
@@ -884,9 +887,9 @@ impl App {
         }
         if !self.settings.time_sync
             || self
-                .lan
-                .as_ref()
-                .is_some_and(|l| l.role == omsi_net::Role::Client)
+            .lan
+            .as_ref()
+            .is_some_and(|l| l.role == omsi_net::Role::Client)
         {
             self.clock = clock;
         }
@@ -945,7 +948,7 @@ impl App {
             self.clock.day_of_year,
             snow,
         )
-        .1;
+            .1;
         let Some((was_date, was_season)) = self.world_day.clone() else {
             self.world_day = Some((date, omsi_texture::season_folder()));
             return;

@@ -241,8 +241,8 @@ impl App {
                     "view_look_up",
                     "view_look_down",
                 ]
-                .iter()
-                .position(|x| *x == n)
+                    .iter()
+                    .position(|x| *x == n)
                 {
                     self.pad_look[k] = *down;
                     return false;
@@ -378,8 +378,8 @@ impl App {
                     if self.settings.head_tracking
                         && self.headtrack.is_none()
                         && self
-                            .headtrack_failed
-                            .is_none_or(|t| t.elapsed().as_secs_f32() > 5.0)
+                        .headtrack_failed
+                        .is_none_or(|t| t.elapsed().as_secs_f32() > 5.0)
                     {
                         self.headtrack =
                             crate::headtrack::HeadTracker::start(self.settings.head_tracking_port);
@@ -627,6 +627,32 @@ impl App {
                 q.sync_transforms(r, scene, false);
             }
         }
+
+        if self.player.is_none() {
+            if let Some(a) = self.audio.as_ref() {
+                a.follow_device();
+            }
+            if let (Some(a), Some(cam)) = (self.audio.as_ref(), self.camera.as_ref()) {
+                let (reverb_time, reverb_mix) = self
+                    .world
+                    .as_ref()
+                    .map(|w| w.reverb_at(cam.position))
+                    .unwrap_or((0.0, 0.0));
+                a.set_listener(omsi_audio::Listener {
+                    position: cam.position.as_vec3(),
+                    forward: cam.forward(),
+                    right: cam.right(),
+                    master: if self.paused {
+                        0.0
+                    } else {
+                        self.settings.volume.clamp(0.0, 1.0)
+                    },
+                    reverb_time,
+                    reverb_mix,
+                });
+            }
+        }
+        self.update_placed_sounds();
         if let Some(a) = self.audio.as_ref() {
             match self.player.as_ref() {
                 Some(p) => {

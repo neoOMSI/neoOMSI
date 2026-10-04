@@ -43,6 +43,8 @@ use crate::scene::World;
 use crate::traffic::Traffic;
 use glam::{DVec2, DVec3, Mat4, Vec3};
 use hashbrown::{HashMap, HashSet};
+
+const HUMAN_SHADOW_RANGE: f64 = 45.0;
 use omsi_render::{AlphaMode, Camera, MaterialId, MeshId, Renderer, Scene};
 use omsi_sim::VehicleInstance;
 use omsi_sim::crowd::{self, Block, CrowdParams, PathGraph, Walker};
@@ -2201,6 +2203,7 @@ impl Humans {
             let mats = self.gpu_materials[&key].clone();
             let id = renderer.add_mesh(scene, &hm.data);
             let inst = renderer.add_instance(scene, id, position, Mat4::IDENTITY, mats);
+            renderer.set_omsi_caster(scene, inst, true);
             meshes.push((id, inst));
         }
         // walking pace 1.1 m/s +- 0.2, as Omsi.exe draws it for everybody (0x625758:
@@ -4937,9 +4940,11 @@ impl Humans {
                 0.0
             };
             p.lit += (lit_to - p.lit) * (sdt / 0.4).min(1.0);
+            let casts = (p.position - from).length() < HUMAN_SHADOW_RANGE;
             for (_, inst) in &p.meshes {
                 renderer.set_transform(scene, *inst, at, xf);
                 renderer.set_interior(scene, *inst, p.lit * 0.5);
+                renderer.set_casts_shadow(scene, *inst, casts);
             }
             if self.avatar_hidden.contains_key(&p.id)
                 && omsi_cfg::env::var_os("OMSI_DEBUG_FOOT").is_some()

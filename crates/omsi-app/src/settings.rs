@@ -567,6 +567,8 @@ impl Settings {
                 "render_scale" => {
                     s.render_scale = if v.eq_ignore_ascii_case("auto") {
                         0.0
+                    } else if v.eq_ignore_ascii_case("off") {
+                        1.0
                     } else {
                         match v.trim_end_matches('%').parse::<f32>() {
                             Ok(x) if x > 1.5 => (x / 100.0).clamp(0.5, 1.0),
@@ -925,7 +927,6 @@ impl Settings {
         });
         s.enhanced = s.graphics == "enhanced";
         if s.classic() {
-            s.shadows = false;
             s.ssao = false;
             s.detail_textures = false;
         }
@@ -1171,7 +1172,7 @@ mod tests {
         assert_eq!(Settings::from_text("enhanced=0\n").graphics, "vanilla_plus");
         assert_eq!(Settings::from_text("enhanced=1\n").graphics, "enhanced");
         let v = Settings::from_text("graphics=vanilla\nshadows=1\nssao=1\n");
-        assert!(v.classic() && !v.shadows && !v.ssao && !v.detail_textures && !v.enhanced);
+        assert!(v.classic() && v.shadows && !v.ssao && !v.detail_textures && !v.enhanced);
         assert!(Settings::from_text("graphics=enhanced\nenhanced=0\n").enhanced);
         assert_eq!(graphics_mode("Vanilla+"), "vanilla_plus");
         assert_eq!(graphics_mode("OMSI 2"), "vanilla");

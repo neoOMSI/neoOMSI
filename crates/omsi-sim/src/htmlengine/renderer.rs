@@ -407,6 +407,10 @@ impl HtmlRenderer for EngineRenderer {
         }
     }
 
+    fn invalidate(&mut self) {
+        self.dirty = true;
+    }
+
     fn poll_frame(&mut self) -> Option<Vec<u8>> {
         self.clock();
         self.run_timers();

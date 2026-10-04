@@ -51,6 +51,18 @@ impl App {
                 apply_weather(&mut p.vehicle, w, self.wetness);
             }
         }
+        for q in self.placed.iter_mut() {
+            let lm = self
+                .world
+                .as_ref()
+                .and_then(|w| w.light_map_light_at(q.vehicle.position));
+            q.vehicle
+                .set_var("Envir_Brightness", daylight.envir_brightness(lm));
+            q.vehicle.host.sun_alt = daylight.altitude_deg;
+            if let Some(w) = &self.weather {
+                apply_weather(&mut q.vehicle, w, self.wetness);
+            }
+        }
         let __t = Instant::now();
         if let Some(wt) = &self.weather {
             lights::set_cone_strength(wt.fog.0, precip_of(wt).1, daylight.night);
@@ -76,6 +88,7 @@ impl App {
             if let Some(p) = self.player.as_ref() {
                 vehicles.push(&p.vehicle);
             }
+            vehicles.extend(self.placed.iter().map(|q| &q.vehicle));
             if let Some(t) = self.traffic.as_ref() {
                 vehicles.extend(t.cars.iter().map(|c| &c.vehicle));
             }

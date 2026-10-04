@@ -57,6 +57,7 @@ const MAX_REQUESTS: usize = 32;
 pub trait HtmlRenderer: Send {
     fn set_vars(&mut self, num: &[(String, f32)], strs: &[(String, String)]);
     fn poll_frame(&mut self) -> Option<Vec<u8>>;
+    fn invalidate(&mut self) {}
     fn take_events(&mut self) -> Vec<(String, f32)>;
     /// Triggers the page pressed (`omsi.trigger(name)`) since the last call.
     fn take_triggers(&mut self) -> Vec<String> {
@@ -94,7 +95,7 @@ pub trait HtmlRenderer: Send {
 }
 
 pub type BackendFactory =
-    fn(width: u32, height: u32, html: &str, api: PageApi) -> Box<dyn HtmlRenderer>;
+fn(width: u32, height: u32, html: &str, api: PageApi) -> Box<dyn HtmlRenderer>;
 
 static BACKEND: OnceLock<BackendFactory> = OnceLock::new();
 
@@ -305,7 +306,7 @@ pub struct HtmlTexture {
     pub script_index: usize,
     pub width: u32,
     pub height: u32,
-    renderer: Box<dyn HtmlRenderer>,
+    pub(crate) renderer: Box<dyn HtmlRenderer>,
     last_num: HashMap<String, f32>,
     last_str: HashMap<String, String>,
     /// The vehicle snapshot the page has seen.

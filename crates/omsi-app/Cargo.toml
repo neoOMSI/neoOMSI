@@ -16,6 +16,11 @@ path = "src/lib.rs"
 name = "neoomsi"
 path = "src/main.rs"
 
+[features]
+# This will add the dev ui (ImGui) only in dev builds, so this can't be in a release build.
+default = ["devtools"]
+devtools = ["dep:imgui", "dep:bytemuck", "omsi-render/devtools"]
+
 [build-dependencies]
 winresource = "0.1"
 
@@ -58,6 +63,8 @@ gilrs = "0.11"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 sha2 = "0.11"
 rust-i18n = "4"
+imgui = { version = "0.12", optional = true }
+bytemuck = { workspace = true, optional = true }
 # updates: the release archives from GitHub
 zip = { version = "8", default-features = false, features = ["deflate"] }
 

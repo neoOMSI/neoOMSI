@@ -19,6 +19,9 @@ log.workspace = true
 anyhow.workspace = true
 winit.workspace = true
 
+[features]
+devtools = []
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Foundation"] }
 

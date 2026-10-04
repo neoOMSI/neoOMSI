@@ -1,5 +1,3 @@
-//! The window's events: winit's `ApplicationHandler` for `App`.
-
 mod governor;
 mod info;
 mod mouse_actions;
@@ -13,7 +11,6 @@ pub(crate) use self::info::*;
 
 use super::*;
 
-/// How fast a stick turns the head, fully pushed (degrees a second, see `Analog::look`).
 const LOOK_STICK_DEG_S: f32 = 120.0;
 
 impl ApplicationHandler for App {
@@ -21,8 +18,6 @@ impl ApplicationHandler for App {
         self.resumed_impl(event_loop);
     }
 
-    /// A phone put the app into the background: its window's surface goes (made again on
-    /// `resumed`), the fingers and the held keys are let go.
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         self.surface = None;
         self.touch.drop_gpu();
@@ -34,6 +29,12 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        #[cfg(all(feature = "devtools", debug_assertions))]
+        if let Some(d) = self.devtools.as_mut() {
+            if d.event(&event) {
+                return;
+            }
+        }
         match event {
             WindowEvent::CloseRequested => {
                 self.finish_vr_nav_edit();
@@ -100,7 +101,6 @@ impl ApplicationHandler for App {
             if self.mouse_look {
                 if !self.cursor_looks() {
                     if self.view == "outside" {
-                        // F3 chase orbits at its own gain, not the head's.
                         self.sync_view_look();
                         let (y, p) = chase_orbit_step(
                             self.look.0,
@@ -139,9 +139,6 @@ impl ApplicationHandler for App {
         }
     }
 
-    /// Every way out ends here (Escape, the window's close button, Cmd+Q, --exit-after, a
-    /// quit signal): the session is written and the LAN peers hear that we left, before
-    /// anything else is torn down (Cmd+Q ends the process without returning from the loop).
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         game_lists::flush_settings(true);
         self.finish_session();
@@ -149,9 +146,6 @@ impl ApplicationHandler for App {
             drop(lan);
             log::info!("LAN: left the session");
         }
-        // the tunnel's cloudflared and the WebSocket gateway go with the game (kept in a
-        // static, which Rust never drops: cloudflared outlived every session, holding the
-        // port and a public tunnel open)
         lan::close_public_gateway();
         drop(lan::StatusFileGuard);
         log::info!("Shutting down");

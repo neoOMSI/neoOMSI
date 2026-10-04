@@ -22,6 +22,8 @@ struct Camera {
     flags: vec4<f32>,        // x detail texturing, y enhanced graphics, z never set (see fs_main's end), w close cascade half range
     light_view_proj_close: mat4x4<f32>,
     wind: vec4<f32>,         // the player's vehicle's velocity (m/s, world): the airstream on its glass
+    spot_vp: array<mat4x4<f32>, 8>, // the spot light shadow maps' matrices (see `spot_shadow`)
+    spot_info: vec4<f32>,    // x tile width, y tile height (uv of the far map's texture), z the far cascade's share of its height, w tile pixels
 };
 
 // 1 when the point lies inside the player's vehicle (its [boundingbox], shrunk a little so
@@ -281,6 +283,7 @@ struct PointLight {
     color: vec4<f32>, // rgb, w intensity
     dir: vec4<f32>,   // spot direction, w cosine of the outer cone (< -1.5: a point light)
     extra: vec4<f32>, // enhanced path: cosine of the inner cone, core radius, beam gain, radius
+    occ: vec4<f32>,   // x: first occluder entry, y: how many (box entries, see lib.rs `Occluder`)
 };
 @group(0) @binding(3) var<storage, read> lights: array<PointLight>;
 // per cell CELL_CAP light indices, 0xffffffff = empty
@@ -822,13 +825,17 @@ fn shadow_close(world: vec3<f32>, n: vec3<f32>, ndl: f32, thin: bool) -> vec2<f3
     return vec2<f32>(shadow_pcf_close(uv, lp.z, slope, camera.shadow.y), w);
 }
 
+fn far_uv(uv: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(uv.x, uv.y * camera.spot_info.z);
+}
+
 fn shadow_pcf_far(uv: vec2<f32>, z: f32, slope: vec2<f32>, texel: f32) -> f32 {
     let bias = SHADOW_BIAS_FAR / SHADOW_DEPTH_RANGE;
     // (corners first, as in `shadow_pcf_atlas`)
     var corners = 0.0;
     for (var k = 0; k < 5; k = k + 1) {
         let o = SHADOW_OFFSETS[SHADOW_CORNERS[k]] * texel * 2.2;
-        corners = corners + textureSampleCompareLevel(t_shadow_far, s_shadow, uv + o, z + dot(slope, o) - bias);
+        corners = corners + textureSampleCompareLevel(t_shadow_far, s_shadow, far_uv(uv + o), z + dot(slope, o) - bias);
     }
     if (corners <= 0.0 || corners >= 5.0) {
         return corners * 0.2;
@@ -836,7 +843,7 @@ fn shadow_pcf_far(uv: vec2<f32>, z: f32, slope: vec2<f32>, texel: f32) -> f32 {
     var sum = corners;
     for (var k = 0; k < 11; k = k + 1) {
         let o = SHADOW_OFFSETS[SHADOW_REST[k]] * texel * 2.2;
-        sum = sum + textureSampleCompareLevel(t_shadow_far, s_shadow, uv + o, z + dot(slope, o) - bias);
+        sum = sum + textureSampleCompareLevel(t_shadow_far, s_shadow, far_uv(uv + o), z + dot(slope, o) - bias);
     }
     return sum / 16.0;
 }
@@ -890,6 +897,120 @@ fn sun_shadow(world_in: vec3<f32>, n: vec3<f32>, thin: bool) -> f32 {
 // `map_k`: how much of the map's lamps a surface takes (0 on a light-mapped road in the
 // classic picture, whose lamps are in its light map); a vehicle's own lights (dir.x 1, see
 // lib.rs `gpu_light`) always shine - the headlights lit no road at all in vanilla.
+// 0 when one of the light's occluder boxes (a wall, a roof) stands between `p` and the
+// light, else 1. A box entry: pos = centre xy, z0, half x; color = half y, z1, cos, sin of
+// its heading.
+// A spot light's shadow map (an 8 tile atlas under the far cascade): 1 lit, 0 in shadow.
+// The point is pulled a little towards the light, more with the distance, instead of a depth
+// bias that would have to follow the perspective depth.
+fn spot_shadow(slot: u32, lpos: vec3<f32>, p: vec3<f32>) -> f32 {
+    let to_l = lpos - p;
+    let d = length(to_l);
+    let pb = p + to_l / max(d, 1e-3) * (0.06 + 0.012 * d);
+    let lp = camera.spot_vp[slot] * vec4<f32>(pb, 1.0);
+    if (lp.w <= 0.0) {
+        return 1.0;
+    }
+    let ndc = lp.xyz / lp.w;
+    if (abs(ndc.x) >= 0.97 || abs(ndc.y) >= 0.97 || ndc.z <= 0.0 || ndc.z >= 1.0) {
+        return 1.0;
+    }
+    let info = camera.spot_info;
+    let col = f32(slot % 4u);
+    let row = f32(slot / 4u);
+    let tu = ndc.x * 0.5 + 0.5;
+    let tv = 0.5 - ndc.y * 0.5;
+    let uv = vec2<f32>((col + tu) * info.x, info.z + (row + tv) * info.y);
+    let o = vec2<f32>(info.x, info.y) / info.w * 0.75;
+    var sum = 0.0;
+    sum = sum + textureSampleCompareLevel(t_shadow_far, s_shadow, uv + vec2<f32>(-o.x, -o.y), ndc.z);
+    sum = sum + textureSampleCompareLevel(t_shadow_far, s_shadow, uv + vec2<f32>(o.x, -o.y), ndc.z);
+    sum = sum + textureSampleCompareLevel(t_shadow_far, s_shadow, uv + vec2<f32>(-o.x, o.y), ndc.z);
+    sum = sum + textureSampleCompareLevel(t_shadow_far, s_shadow, uv + vec2<f32>(o.x, o.y), ndc.z);
+    // fades out towards the edge of the map, where the light's cone is nearly gone anyway
+    let edge = clamp((0.97 - max(abs(ndc.x), abs(ndc.y))) * 12.0, 0.0, 1.0);
+    return mix(1.0, sum * 0.25, edge);
+}
+
+fn light_shadow(l: PointLight, p: vec3<f32>) -> f32 {
+    let slot = u32(l.occ.z + 0.5);
+    if (slot > 0u && slot <= 8u) {
+        let m = spot_shadow(slot - 1u, l.pos.xyz, p);
+        if (m <= 0.0) {
+            return 0.0;
+        }
+        return m * light_shadow_boxes(l, p);
+    }
+    return light_shadow_boxes(l, p);
+}
+
+fn light_shadow_boxes(l: PointLight, p: vec3<f32>) -> f32 {
+    let count = u32(l.occ.y + 0.5);
+    if (count == 0u) {
+        return 1.0;
+    }
+    let first = u32(l.occ.x + 0.5);
+    let b = l.pos.xyz;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let o = lights[first + i];
+        if (o.extra.x > 0.5) {
+            let e1 = o.color.xyz - o.pos.xyz;
+            let e2 = o.dir.xyz - o.pos.xyz;
+            let sd = b - p;
+            let h = cross(sd, e2);
+            let det = dot(e1, h);
+            if (abs(det) < 1e-9) {
+                continue;
+            }
+            let f = 1.0 / det;
+            let s0 = p - o.pos.xyz;
+            let u = f * dot(s0, h);
+            if (u < -0.002 || u > 1.002) {
+                continue;
+            }
+            let q = cross(s0, e1);
+            let v = f * dot(sd, q);
+            if (v < -0.002 || u + v > 1.002) {
+                continue;
+            }
+            let t = f * dot(e2, q);
+            if (t > 0.0 && t < 0.97) {
+                return 0.0;
+            }
+            continue;
+        }
+        let ca = o.color.z;
+        let sa = o.color.w;
+        let c = o.pos.xy;
+        let ra = p.xy - c;
+        let rb = b.xy - c;
+        let a3 = vec3<f32>(ra.x * ca - ra.y * sa, ra.x * sa + ra.y * ca, p.z);
+        let b3 = vec3<f32>(rb.x * ca - rb.y * sa, rb.x * sa + rb.y * ca, b.z);
+        if (o.pos.w < 0.0) {
+            // a container (the body a lamp sits in): the light reaches only what is inside it,
+            // and a hand's breadth through the windows
+            if (abs(a3.x) > -o.pos.w + 0.3 || abs(a3.y) > o.color.x + 0.3 || a3.z < o.pos.z + 0.6 || a3.z > o.color.y + 0.3) {
+                return 0.0;
+            }
+            continue;
+        }
+        let mx = min(0.04, o.pos.w * 0.4);
+        let my = min(0.04, o.color.x * 0.4);
+        let lo = vec3<f32>(-o.pos.w + mx, -o.color.x + my, o.pos.z + 0.04);
+        let hi = vec3<f32>(o.pos.w - mx, o.color.x - my, o.color.y - 0.04);
+        let d = b3 - a3;
+        let dd = select(d, vec3<f32>(1e-6), abs(d) < vec3<f32>(1e-6));
+        let u0 = (lo - a3) / dd;
+        let u1 = (hi - a3) / dd;
+        let tmin = max(max(min(u0.x, u1.x), min(u0.y, u1.y)), min(u0.z, u1.z));
+        let tmax = min(min(max(u0.x, u1.x), max(u0.y, u1.y)), max(u0.z, u1.z));
+        if (tmax > max(tmin, 0.0) && tmin < 0.97) {
+            return 0.0;
+        }
+    }
+    return 1.0;
+}
+
 fn point_lights(p: vec3<f32>, n: vec3<f32>, map_k: f32) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
     let cell = camera.light_grid.z;
@@ -918,13 +1039,19 @@ fn point_lights(p: vec3<f32>, n: vec3<f32>, map_k: f32) -> vec3<f32> {
             // times (see above), so it is three times what it was, to keep the lamp pools
             let r0 = l.pos.w * 0.125;
             let att = min(1.0, (r0 * r0) / max(dist * dist, 0.01)) * clamp(1.0 - dist / l.pos.w, 0.0, 1.0) * 3.75;
-            let ndl = max(dot(n, d / max(dist, 0.01)), 0.15);
+            let ndl = max(dot(n, d / max(dist, 0.01)), 0.0);
             var k = select(map_k, 1.0, l.dir.x > 0.5 && l.dir.w < -1.5);
             if (l.dir.w >= -1.5) {
                 // a spot (a vehicle's [spotlight], as Direct3D lights with it): full inside
                 // the inner cone, fading to nothing at the outer one; nothing behind it
                 let c = dot(-d / max(dist, 0.01), l.dir.xyz);
                 k = smoothstep(l.dir.w, max(l.extra.x, l.dir.w + 1e-3), c);
+            }
+            if (ndl <= 0.0 || k <= 0.0 || att < 0.003) {
+                continue;
+            }
+            if (n.z > 0.7) {
+                k = k * light_shadow(l, p + n * 0.08);
             }
             sum = sum + l.color.rgb * l.color.w * att * ndl * k;
         }
@@ -1045,12 +1172,39 @@ fn finite_or(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
     return select(fallback, v, all_finite(v));
 }
 
+fn wipe_texel(c: vec2<i32>, z: f32) -> f32 {
+    let m = textureLoad(t_trans, c, 0);
+    let depth = dot(m.rg, vec2<f32>(256.0, 1.0)) * (64.0 / 257.0) - 32.0;
+    let code = m.a * 255.0 - 8.0;
+    let wet = select(code * (2.0 / 247.0), code * 0.005, code < 0.0);
+    return select(m.b, wet, abs(depth - z) <= 0.1);
+}
+
+fn wipe_mask_wet(uv: vec2<f32>, z: f32) -> f32 {
+    let dims = textureDimensions(t_trans);
+    let hi = vec2<i32>(dims) - vec2<i32>(1);
+    var sum = 0.0;
+    for (var k = 0; k < 4; k = k + 1) {
+        let o = vec2<f32>(select(-0.5, 0.5, (k & 1) == 1), select(-0.5, 0.5, (k & 2) == 2));
+        let p = uv * vec2<f32>(dims) - 0.5 + o;
+        let base = floor(p);
+        let f = p - base;
+        let w = f * f * (3.0 - 2.0 * f);
+        let c = vec2<i32>(base);
+        let a = wipe_texel(clamp(c, vec2<i32>(0), hi), z);
+        let b = wipe_texel(clamp(c + vec2<i32>(1, 0), vec2<i32>(0), hi), z);
+        let d = wipe_texel(clamp(c + vec2<i32>(0, 1), vec2<i32>(0), hi), z);
+        let e = wipe_texel(clamp(c + vec2<i32>(1, 1), vec2<i32>(0), hi), z);
+        sum = sum + mix(mix(a, b, w.x), mix(d, e, w.x), w.y);
+    }
+    return sum * 0.25;
+}
+
 fn window_wetness(in: FsIn) -> f32 {
     if (material.wipe_bounds.z != 0.0) {
         let mask = sample_transmap(in.wipe_uv.xy);
-        let depth = dot(mask.rg, vec2<f32>(256.0, 1.0)) * (64.0 / 257.0) - 32.0;
         let inside = all(in.wipe_uv.xy >= vec2<f32>(0.0)) && all(in.wipe_uv.xy <= vec2<f32>(1.0));
-        return select(mask.b, (mask.a * 255.0 - 8.0) * (2.0 / 247.0), inside && abs(depth - in.wipe_uv.z) <= 0.1);
+        return select(mask.b, wipe_mask_wet(in.wipe_uv.xy, in.wipe_uv.z), inside);
     }
     return in.params.x;
 }
@@ -1216,15 +1370,18 @@ fn rain_glass(world: vec3<f32>, uv: vec2<f32>, n: vec3<f32>, water: f32, t: f32,
     let gradient = vec2<f32>((water_dx * duy.y - water_dy * dux.y) / (det * su),
                             (water_dy * dux.x - water_dx * duy.x) / (det * sv));
     if (wiped_film > 0.01 && collectors.a <= 0.01) {
-        // The age gradient follows the actual sweep. Fine, directional residual
-        // streaks briefly distort the view, without repopulating the pane with drops.
+        // Thin, even residual film that fades out; no per-sweep streak pattern.
         var along = vec2<f32>(0.0, 1.0);
-        if (length(gradient) > 0.01) { along = normalize(vec2<f32>(dot(gradient, side), dot(gradient, down))); }
+        let gl = length(gradient);
+        if (gl > 1e-4) {
+            let gd = normalize(vec2<f32>(dot(gradient, side), dot(gradient, down)));
+            along = normalize(mix(along, gd, smoothstep(0.02, 0.4, gl)));
+        }
         let across = vec2<f32>(-along.y, along.x);
-        let streak = rain_patches(vec2<f32>(dot(q, across) * 600.0, dot(q, along) * 4.0));
-        let strength = wiped_film * (0.012 + 0.018 * streak.x);
-        g.cover = strength;
-        g.n = normalize(out + (side_w * across.x + down_w * across.y) * (streak.y - 0.5) * wiped_film * 0.003);
+        let streak = rain_patches(vec2<f32>(dot(q, across) * 14.0, dot(q, along) * 0.5));
+        let film = smoothstep(0.0, 1.0, wiped_film);
+        g.cover = film * (0.010 + 0.010 * streak.x);
+        g.n = normalize(out + (side_w * across.x + down_w * across.y) * (streak.y - 0.5) * film * 0.0012);
         return g;
     }
     var slope = clamp(-0.00005 * vec2<f32>(dot(gradient, side), dot(gradient, down)), vec2<f32>(-0.15), vec2<f32>(0.15)) * best;
@@ -1787,8 +1944,9 @@ fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
         let vdir = normalize(in.world - camera.cam_pos.xyz);
         let facing = clamp(-dot(vdir, n), 0.0, 1.0);
         let fresnel = pow(1.0 - facing, 4.0);
-        lit = lit * mix(1.0, 0.55, wet);
-        let sheen = camera.sky_color.rgb * 0.5 + camera.sun_color.rgb * camera.sun_dir.w * 0.35;
+        let lamp_part = albedo * material.color.rgb * lamp_light;
+        lit = lit * mix(1.0, 0.55, wet) + lamp_part * (0.45 * wet);
+        let sheen = camera.sky_color.rgb * 0.5 + camera.sun_color.rgb * camera.sun_dir.w * 0.35 + lamp_light * (0.6 + 0.8 * fresnel);
         lit = mix(lit, sheen, clamp(fresnel * wet * 0.85, 0.0, 0.8));
     }
     // snow: the ground, the roads and every upward-facing surface whiten under it
@@ -1809,7 +1967,8 @@ fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
         lit = mix(lit, white, cover * (0.55 + 0.35 * tex.a));
     }
     let dist = distance(in.world, camera.cam_pos.xyz);
-    let f = 1.0 - exp(-fog_distance(in.world) * camera.fog.w);
+    // (no fog below a visibility of ~23 km: a clear day has none)
+    let f = select(0.0, 1.0 - exp(-fog_distance(in.world) * camera.fog.w), camera.fog.w > 5e-4);
     var rgb = mix(lit, camera.fog.xyz, clamp(f, 0.0, 1.0));
     if (camera.flags.z > 0.0) {
         // Never taken: flags.z (the old enhanced look's aerial perspective) is always 0

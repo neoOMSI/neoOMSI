@@ -1,9 +1,6 @@
-//! The interface and the picture of a frame.
-
 use super::*;
 
 impl App {
-    /// The interface, the picture itself, screenshots and the end of the session.
     pub(super) fn redraw_render(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -13,6 +10,10 @@ impl App {
         let Frame {
             now, raw_dt, dt, ..
         } = *f;
+        #[cfg(all(feature = "devtools", debug_assertions))]
+        self.dev_actions(event_loop);
+        #[cfg(all(feature = "devtools", debug_assertions))]
+        let dev_extra = self.dev_gather();
         let menu_lines = if self.game_menu.is_some() {
             self.game_menu_items()
         } else {
@@ -206,10 +207,10 @@ impl App {
                     || ui.chat.hovered
                     || map_open
                     || (!vr_active
-                        && self
-                            .navigator
-                            .as_ref()
-                            .is_some_and(|n| n.over_panel(cx, cy)));
+                    && self
+                    .navigator
+                    .as_ref()
+                    .is_some_and(|n| n.over_panel(cx, cy)));
                 let dropdown = self
                     .dropdown
                     .as_ref()
@@ -334,6 +335,7 @@ impl App {
         let mut lighting = match self.weather.as_ref() {
             Some(w) => {
                 self.wetness = road_wetness(precip_of(w).1, dt as f64, self.wetness);
+                set_cloud_day(self.clock.year, self.clock.day_of_year);
                 weather_lighting(
                     &daylight,
                     w,
@@ -389,10 +391,10 @@ impl App {
             .map(|p| lights::vehicle_velocity(&p.vehicle))
             .unwrap_or_default()
             - self
-                .weather
-                .as_ref()
-                .map(crate::rain::weather_wind)
-                .unwrap_or_default();
+            .weather
+            .as_ref()
+            .map(rain::weather_wind)
+            .unwrap_or_default();
         lighting.animation_time = Some(self.clock.run_time as f32);
         lighting.led_glow = self.settings.led_glow as f32 * 0.25;
         lighting.led_mips = self.settings.led_mips;
@@ -437,14 +439,7 @@ impl App {
                     }
                 }
             }
-            // A window that is hidden (another app covers it, another Space) gets
-            // no frames on macOS. OMSI_RENDER_OCCLUDED=1 draws them into a texture
-            // of the window's size anyway and waits for the GPU as a present would,
-            // so frame times can be measured with the window out of sight.
             let __t = Instant::now();
-            // OMSI_HIDE_WINDOW=from,to: treat the window as hidden between these
-            // seconds of the session (the frame is acquired and dropped unshown), to
-            // check the hidden-window path without covering the window by hand
             let hide_test = omsi_cfg::env::var("OMSI_HIDE_WINDOW").ok().and_then(|v| {
                 let mut it = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok());
                 Some((it.next()?, it.next()?))
@@ -455,47 +450,47 @@ impl App {
             let acquired = match s.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(_)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(_)
-                    if hidden_now =>
-                {
-                    wgpu::CurrentSurfaceTexture::Occluded
-                }
+                if hidden_now =>
+                    {
+                        wgpu::CurrentSurfaceTexture::Occluded
+                    }
                 other => other,
             };
             let (frame, stand_in) = match acquired {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (Some(frame), None),
                 wgpu::CurrentSurfaceTexture::Occluded
-                    if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
-                {
-                    let (w, h) = (s.config.width, s.config.height);
-                    if self
-                        .stand_in
-                        .as_ref()
-                        .map(|t| (t.width(), t.height()) != (w, h))
-                        .unwrap_or(true)
+                if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
                     {
-                        self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
-                            label: Some("hidden window"),
-                            size: wgpu::Extent3d {
-                                width: w,
-                                height: h,
-                                depth_or_array_layers: 1,
-                            },
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: r.format(),
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                            view_formats: &[],
-                        }));
-                    }
-                    (
-                        None,
-                        self.stand_in
+                        let (w, h) = (s.config.width, s.config.height);
+                        if self
+                            .stand_in
                             .as_ref()
-                            .map(|t| t.create_view(&Default::default())),
-                    )
-                }
+                            .map(|t| (t.width(), t.height()) != (w, h))
+                            .unwrap_or(true)
+                        {
+                            self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
+                                label: Some("hidden window"),
+                                size: wgpu::Extent3d {
+                                    width: w,
+                                    height: h,
+                                    depth_or_array_layers: 1,
+                                },
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D2,
+                                format: r.format(),
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                view_formats: &[],
+                            }));
+                        }
+                        (
+                            None,
+                            self.stand_in
+                                .as_ref()
+                                .map(|t| t.create_view(&Default::default())),
+                        )
+                    }
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     reconfigure = true;
                     (None, None)
@@ -512,14 +507,6 @@ impl App {
                 .or(stand_in);
             if let Some(view) = view {
                 let __t = Instant::now();
-                // One mirror a turn, in turn, at most MIRROR_RATE pictures a second in
-                // all: a mirror costs half the main picture's CPU time, and at 140 fps
-                // five mirrors were each redrawn 28 times a second, a small picture
-                // that nobody can tell from 15.
-                // Every mirror at least MIRROR_MIN_HZ, though: with eight of them (the
-                // Procity) at 25 fps each was redrawn three times a second, and the
-                // street jerked past in them - up to two a frame then (each costs a
-                // few milliseconds of the frame).
                 if self.settings.mirror_size == 0 {
                     self.mirror_budget = 0.0;
                     self.mirrors_seen = 0;
@@ -555,8 +542,6 @@ impl App {
                     let vr_active = false;
                     let rate = {
                         if vr_active {
-                            // Preserve the user's total redraw budget. A negative
-                            // value explicitly requests every mirror each frame.
                             omsi_cfg::env::var("OMSI_OPENXR_MIRROR_RATE")
                                 .ok()
                                 .and_then(|s| s.parse::<f32>().ok())
@@ -573,10 +558,6 @@ impl App {
                                 .min(max_hz * self.mirrors_seen.max(1) as f32)
                         }
                     };
-                    // The desktop camera does not follow the headset. Culling by
-                    // its frustum can leave a mirror visible in VR uninitialised
-                    // (black). Refresh all bus mirrors in VR, still taking turns
-                    // within the configured budget; keep desktop visibility culling.
                     let mirror_view = if vr_active {
                         None
                     } else {
@@ -609,11 +590,11 @@ impl App {
                     }
                     while (self.in_cab || near)
                         && drawn
-                            < (if vr_active {
-                                draw_limit
-                            } else {
-                                self.mirrors_seen.clamp(1, 2)
-                            })
+                        < (if vr_active {
+                        draw_limit
+                    } else {
+                        self.mirrors_seen.clamp(1, 2)
+                    })
                         && (vr_active || self.mirror_budget >= 1.0)
                     {
                         let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) else {
@@ -703,6 +684,34 @@ impl App {
                     );
                 }
                 self.touch.render(r, &view, s.config.width, s.config.height);
+                #[cfg(all(feature = "devtools", debug_assertions))]
+                {
+                    let snap = devtools::Snapshot {
+                        adapter: r.adapter_name.clone(),
+                        format: r.format(),
+                        surface: (s.config.width, s.config.height),
+                        dt_ms: raw_dt * 1000.0,
+                        fps: self.fps,
+                        msaa: r.options.msaa,
+                        anisotropy: r.options.anisotropy,
+                        shadow_size: r.options.shadow_size,
+                        ssao: r.options.ssao,
+                        fxaa: r.options.fxaa,
+                        reflections: r.options.reflections,
+                        render_scale: r.options.render_scale,
+                        meshes: scene.meshes.len(),
+                        textures: scene.textures.len(),
+                        materials: scene.materials.len(),
+                        instances: scene.instances.len(),
+                        lights: scene.lights.len(),
+                        interior_lights: scene.interior_lights.len(),
+                        coronas: scene.coronas.len(),
+                    };
+                    let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32);
+                    self.devtools
+                        .get_or_insert_with(devtools::DevTools::new)
+                        .render(r, &view, scale, &snap, &dev_extra);
+                }
                 *self.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
                 if omsi_cfg::env::var_os("OMSI_PROFILE_GPU").is_some() {
                     let __t = Instant::now();
@@ -712,7 +721,6 @@ impl App {
                 let __t = Instant::now();
                 match frame {
                     Some(frame) => {
-                        // (without V-sync max_fps paces the frames: waiting for the compositor's frame callback cost a missed refresh each slow frame)
                         if self.settings.vsync {
                             win.pre_present_notify();
                         }
@@ -724,12 +732,6 @@ impl App {
                 }
                 *self.profile.entry("present").or_default() += __t.elapsed().as_secs_f64();
             } else {
-                // Nothing to draw into (a hidden window): the simulation goes on at
-                // a display's pace instead of spinning a core a thousand times a
-                // second. What it uploaded (traffic instances, streamed tiles,
-                // people, the navigator) waits in wgpu's staging buffers until the
-                // next submit, so submit nothing to let them go: without it a hidden
-                // window on Ahlheim grew by 100 MB a second (5.6 GB after 55 s).
                 let __t = Instant::now();
                 r.queue.submit(std::iter::empty::<wgpu::CommandBuffer>());
                 let _ = r.device.poll(wgpu::PollType::Poll);
@@ -743,9 +745,6 @@ impl App {
                 .ok()
                 .and_then(|v| v.parse::<u32>().ok())
                 .unwrap_or(self.settings.max_fps);
-            // 0 = the screen's refresh rate: frames the screen never shows only heat the
-            // machine (with V-sync off and no limit an M4 drew 300 frames a second in the
-            // depot and ran hot); 1000 and more = no limit at all
             let max_fps = if max_fps == 0 {
                 self.window
                     .as_ref()

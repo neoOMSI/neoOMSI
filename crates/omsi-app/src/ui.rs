@@ -574,6 +574,29 @@ impl Ui {
                 }
             }
         }
+        // watermark with git version / build id
+        {
+            let text = format!(
+                "neoOMSI {} #{}",
+                env!("CARGO_PKG_VERSION"),
+                crate::startup::BUILD
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("unknown")
+            );
+
+            let was_flat = self.text.flat;
+            self.text.flat = true;
+            let l = self
+                .text
+                .label(r, scene, &text, (14.0 * s) as u32, [255, 255, 255, 255]);
+            self.text.flat = was_flat;
+            let x1 = f.width - 10.0 * s;
+            let y1 = f.height - 8.0 * s;
+            scene
+                .overlays
+                .push((l.tex, [x1 - l.w as f32, y1 - l.h as f32, x1, y1]));
+        }
         // the top of the windows in the corners: the notes on the left start on the line of
         // the timetable and a tutorial page on the right (14 px down, they stood higher)
         let corner_top = 60.0 * s;
@@ -2096,8 +2119,8 @@ impl Ui {
         let back_txt = omsi_ui::tr("Back").into_owned();
         let back_footer = (timetable_kind || kind == MenuKind::List)
             && items
-                .last()
-                .is_some_and(|&(id, l)| id == "back" && l == back_txt.as_str());
+            .last()
+            .is_some_and(|&(id, l)| id == "back" && l == back_txt.as_str());
         let nl = items.len() - back_footer as usize;
         let foot_h = if back_footer { 48.0 * s } else { 0.0 };
         let fixed_h =
@@ -2236,10 +2259,10 @@ impl Ui {
             // (none in the other lists: "Back" there stands apart under them, without a line)
             let apart = k > start
                 && match kind {
-                    MenuKind::Game => matches!(id, "save" | "admin" | "quit"),
-                    MenuKind::Lines => id == "free",
-                    _ => false,
-                };
+                MenuKind::Game => matches!(id, "save" | "admin" | "quit"),
+                MenuKind::Lines => id == "free",
+                _ => false,
+            };
             if apart {
                 let sy = (ry - 2.0 * s).round();
                 scene
@@ -2775,15 +2798,15 @@ impl Ui {
         let rows = ((room / row_h).floor() as usize).clamp(1, n_items.max(1));
         let start = lead
             + match (n_items > rows, f.menu_top) {
-                (false, _) => 0,
-                (true, Some(top)) => (top.max(0.0).round() as usize)
-                    .saturating_sub(lead)
-                    .min(n_items - rows),
-                (true, None) => sel
-                    .saturating_sub(lead)
-                    .saturating_sub(rows / 2)
-                    .min(n_items - rows),
-            };
+            (false, _) => 0,
+            (true, Some(top)) => (top.max(0.0).round() as usize)
+                .saturating_sub(lead)
+                .min(n_items - rows),
+            (true, None) => sel
+                .saturating_sub(lead)
+                .saturating_sub(rows / 2)
+                .min(n_items - rows),
+        };
         self.menu_start = start;
         self.menu_rows = rows;
         self.menu_row_h = row_h;

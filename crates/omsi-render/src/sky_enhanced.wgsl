@@ -21,18 +21,18 @@
 // redraw starts the steps at another random point and is blended into what is there, so
 // the grain of a few dozen steps averages out over the frames.
 const CLOUD_BOTTOM: f32 = 1400.0;
-const CLOUD_TOP: f32 = 2800.0;
+const CLOUD_TOP: f32 = 4200.0;
 const EARTH_R: f32 = 6371000.0;
-const CLOUD_STEPS: i32 = 56;
+const CLOUD_STEPS: i32 = 64;
 // Extinction per metre of the densest cloud.
-const CLOUD_SIGMA: f32 = 0.035;
+const CLOUD_SIGMA: f32 = 0.04;
 const CLOUD_SHAPE_PERIOD: f32 = 13000.0;
 const CLOUD_DETAIL_PERIOD: f32 = 420.0;
 const CLOUD_DETAIL_STRENGTH: f32 = 0.3;
-const CLOUD_EDGE_SOFTNESS: f32 = 0.12;
+const CLOUD_EDGE_SOFTNESS: f32 = 0.16;
 const CLOUD_BOTTOM_SOFTNESS: f32 = 0.2;
 const CLOUD_MAX_DIST: f32 = 60000.0;
-const CLOUD_MS_GAIN: f32 = 2.4;
+const CLOUD_MS_GAIN: f32 = 4.0;
 
 @group(1) @binding(6) var t_cloud_shape: texture_2d<f32>;
 @group(1) @binding(7) var t_cloud_detail: texture_3d<f32>;
@@ -139,7 +139,7 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
     let sky_top = sh_irradiance(vec3<f32>(0.0, 0.0, 1.0)) / PI;
     let ground = sh_irradiance(vec3<f32>(0.0, 0.0, -1.0)) / PI;
     let cos_sun = dot(d, sd);
-    let coverage = cloud_coverage(cloud_ground(d, t0));
+    let coverage = mix(cloud_coverage(cloud_ground(d, t0)), 1.0, closed);
     var trans = 1.0;
     var acc = vec3<f32>(0.0);
     var hit = 0.0;
@@ -173,15 +173,16 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
             for (var o = 0; o < 3; o = o + 1) {
                 let phase = mix(hg_phase(cos_sun, 0.8 * c), hg_phase(cos_sun, -0.2 * c), 0.5);
                 direct = direct + sun * a * phase * exp(-od * b);
-                a = a * 0.5;
-                b = b * 0.4;
+                a = a * 0.6;
+                b = b * 0.3;
                 c = c * 0.5;
             }
             // (single scattering and three octaves hold only part of the light a cloud
             // scatters on inside it; a cumulus's sunlit side is about as bright as white
             // paper in the sun, E/π, which this factor brings it to)
             let amb = mix(ground * 0.45 + sky_top * 0.55, sky_top * 1.1, clamp(h * 1.4, 0.0, 1.0));
-            let light = direct * CLOUD_MS_GAIN + amb;
+            let powder = mix(1.0, 1.0 - exp(-sigma * 600.0), 0.5);
+            let light = (direct * powder * CLOUD_MS_GAIN + amb * 1.6 * mix(0.55, 1.0, smoothstep(0.0, 0.55, h))) * (1.0 - 0.3 * closed);
             // Frostbite: the light scattered over the step, dimmed by the cloud before it
             let dt = exp(-sigma * ds);
             acc = acc + trans * light * (1.0 - dt);
@@ -202,16 +203,7 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
     let a = (1.0 - trans) * fade * horizon_fade;
     acc = mix(acc, below * (1.0 - trans), aerial) * fade * horizon_fade;
     var col = acc + (1.0 - a) * below;
-    let deck = below * (0.75 + 0.35 * cloud_cover_at(cloud_ground(d, max(t0, 1.0)), 4.0).x);
-    col = mix(col, deck, closed);
-    // the high, thin layer
-    let drift = camera.clouds.yz * 2500.0;
-    let t_hi = 7000.0 / max(d.z, 0.02);
-    let p_hi = cloud_ground(d, t_hi);
-    let hi = cloud_fbm((p_hi + drift * 1.7) / 2500.0);
-    let hi_cover = clamp((hi - 0.6 + camera.clouds.x * 0.2) * 2.0, 0.0, 1.0) * clamp(d.z * 8.0, 0.0, 1.0) * 0.35 * (1.0 - a) * (1.0 - closed);
-    col = mix(col, (enh.sun_disc.rgb * enh.lights.w * max(sd.z, 0.0) * 0.6 / PI + sky_top) * 0.9, hi_cover);
-    return vec4<f32>(col, max(max(a, hi_cover), closed));
+    return vec4<f32>(col, a);
 }
 
 // Sky radiance towards d without the sun's disc: the table, the clouds, the air.
@@ -234,6 +226,7 @@ fn sky_radiance(d: vec3<f32>, pix: f32) -> vec3<f32> {
 @fragment
 fn fs_enhanced(in: VsOut) -> @location(0) vec4<f32> {
     let d = normalize(in.dir);
+    let star_pix = length(fwidth(d));
     let pre = enh.exposure.x;
     // the cube is drawn from its own eye (lib.rs Probe::cube_eye): look the clouds' base up
     // from there, so the sky does not slide with a camera that moved since
@@ -261,7 +254,25 @@ fn fs_enhanced(in: VsOut) -> @location(0) vec4<f32> {
     }
     // the dome is drawn pre-exposed; the disc is kept within what the target and the glow
     // filter handle
-    return vec4<f32>(min(col * pre, vec3<f32>(4000.0)), 1.0);
+    // (with the night at brightness 0 the table scale is ~0 and the cube holds huge values:
+    // a non-finite pixel must not take the stars with it)
+    let col_bits = bitcast<vec3<u32>>(col) & vec3<u32>(0x7f800000u);
+    if (!all(col_bits != vec3<u32>(0x7f800000u))) {
+        col = vec3<f32>(0.0);
+    }
+    var out_col = min(col * pre, vec3<f32>(4000.0));
+    // stars: added in picture units, so neither the night's brightness setting nor the
+    // exposure dims them; only at night, above the horizon, behind clouds and fog
+    {
+        let night_f = 1.0 - smoothstep(-0.25, -0.05, sd.z);
+        if (night_f > 0.001 && d.z > 0.0) {
+            let h0s = camera.cam_pos.z - enh.fog.z;
+            let ts = air_of(d, 30000.0, h0s, h0s + 30000.0 * max(d.z, 0.0), 0.0).a;
+            let vis = night_f * smoothstep(0.0, 0.08, d.z) * (1.0 - cube.a) * ts;
+            out_col = out_col + star_field(d, star_pix, camera.post.y, camera.sky.x) * vis * 0.6;
+        }
+    }
+    return vec4<f32>(out_col, 1.0);
 }
 
 // --- the reflection probe: a cube map of the sky seen from the camera, drawn now and then

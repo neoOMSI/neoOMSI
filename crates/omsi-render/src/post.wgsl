@@ -69,7 +69,8 @@ fn src_unmasked(uv: vec2<f32>, texel: vec2<f32>, x: f32, y: f32) -> vec3<f32> {
     let c = clean(textureSampleLevel(t_src, s_lin, at, 0.0).rgb);
     let screen = step(0.5, m.r);
     let led = step(0.5, m.g);
-    return c * (1.0 - screen) + c * (led * p.c.w) * screen;
+    let led_glow = min(c * (led * p.c.w), vec3<f32>(10.0));
+    return c * (1.0 - screen) + led_glow * screen;
 }
 
 // --- the glow: 13-tap downsampling (the first level with Karis' average, so that a single

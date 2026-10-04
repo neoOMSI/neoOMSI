@@ -218,7 +218,7 @@ impl CustomWeather {
             _ => "-1",
         };
         omsi_content::weather::Weather {
-            path: std::path::PathBuf::from(c.encode()),
+            path: PathBuf::from(c.encode()),
             name: "Custom weather".into(),
             description: "User-defined weather".into(),
             fog: (c.visibility_m, 1.0),
@@ -258,7 +258,7 @@ pub(crate) fn load_weather(args: &Args) -> omsi_content::weather::Weather {
     let rel = args
         .weather
         .clone()
-        .filter(|w| !crate::weather_cycle::is_cycle(Some(w)))
+        .filter(|w| !weather_cycle::is_cycle(Some(w)))
         .unwrap_or_else(|| "Weather/#CAVOK.owt".into());
     if let Some(w) = CustomWeather::parse(&rel).map(|c| c.to_weather()) {
         log::info!(
@@ -362,7 +362,7 @@ pub(crate) fn setup_sky(
     let cover = typed.or_else(|| {
         omsi_texture::decode_file(&omsi_cfg::resolve_path(&args.root, "Texture\\clouds.tga")).ok()
     });
-    let t = std::time::Instant::now();
+    let t = Instant::now();
     let field = cloud_field(cover.as_ref());
     log::debug!(
         "cloud field made in {:.0} ms",
@@ -577,7 +577,40 @@ pub(crate) fn clouds_of(w: &omsi_content::weather::Weather, drift: [f32; 2]) -> 
     } else {
         0.5
     };
-    (density, drift)
+    
+    let seed = cloud_seed();
+    (density, [drift[0] + seed[0], drift[1] + seed[1]])
+}
+
+static CLOUD_DAY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+pub(crate) fn set_cloud_day(year: i32, day_of_year: i32) {
+    CLOUD_DAY.store(
+        (year as u32)
+            .wrapping_mul(1000)
+            .wrapping_add(day_of_year as u32),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+fn cloud_seed() -> [f32; 2] {
+    static SESSION: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let session = *SESSION.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() ^ (d.as_secs() as u32))
+            .unwrap_or(1)
+    });
+    let day = CLOUD_DAY.load(std::sync::atomic::Ordering::Relaxed);
+    let mut h = session ^ day.wrapping_mul(0x9e37_79b9);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    [
+        (h & 0xffff) as f32 / 65536.0 * 28.0,
+        (h >> 16) as f32 / 65536.0 * 28.0,
+    ]
 }
 
 /// The clouds' drift after `time` seconds of a steady wind (see `cloud_drift_step`).
@@ -649,6 +682,7 @@ pub(crate) fn weather_lighting(
         .to_ascii_lowercase()
         .starts_with("overcast");
     lighting.shadows = shadows && !overcast && w.fog.0 > 350.0;
+    lighting.light_shadows = shadows;
     lighting
 }
 
@@ -671,7 +705,7 @@ pub(crate) fn apply_weather(
     let (kind, rate) = precip_of(w);
     v.host.precip_type = kind as f32;
     v.host.precip_rate = rate;
-    v.host.wind = crate::rain::weather_wind(w);
+    v.host.wind = rain::weather_wind(w);
     v.host.street_cond = street_condition(w, wetness);
     v.set_var("PrecipType", kind as f32);
     v.set_var("PrecipRate", rate);
@@ -716,9 +750,9 @@ pub(crate) fn initial_wetness(w: &omsi_content::weather::Weather) -> f32 {
 }
 
 /// The airports OMSI's METAR list (`Weather/ICAO.txt`) offers: (ICAO, "ICAO - name").
-pub(crate) fn metar_airports(root: &std::path::Path) -> Vec<(String, String)> {
+pub(crate) fn metar_airports(root: &Path) -> Vec<(String, String)> {
     static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Vec<(String, String)>>>,
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<(String, String)>>>,
     > = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     if let Some(v) = cache
@@ -790,7 +824,7 @@ pub(crate) fn try_metar(icao: &str) -> Option<omsi_content::weather::Weather> {
     let t = text?;
     log::info!("current weather at {icao}: {t}");
     let mut w = omsi_content::weather::from_metar(&icao, &t);
-    w.path = std::path::PathBuf::from(format!("metar:{icao}"));
+    w.path = PathBuf::from(format!("metar:{icao}"));
     Some(w)
 }
 
@@ -829,6 +863,6 @@ pub(crate) fn from_report(s: &str) -> Option<omsi_content::weather::Weather> {
         return None;
     }
     let mut w = omsi_content::weather::from_metar(icao, raw);
-    w.path = std::path::PathBuf::from(format!("metar:{icao}"));
+    w.path = PathBuf::from(format!("metar:{icao}"));
     Some(w)
 }

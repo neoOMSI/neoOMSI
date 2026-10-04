@@ -17,7 +17,7 @@ use omsi_sim::ai_motion::{
     pull_out_ramps,
 };
 use omsi_sim::collision::Obb;
-use omsi_sim::traffic::{
+pub(crate) use omsi_sim::traffic::{
     AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, TrafficLightController, arrival_time,
 };
 use omsi_sim::vehicle::AiFrame;

@@ -185,7 +185,7 @@ impl App {
     pub(crate) fn mouse_steers_in_view(&self) -> bool {
         self.player.is_some()
             && (matches!(self.view.as_str(), "driver" | "outside" | "pax")
-                || (self.view == "free" && !self.ego))
+            || (self.view == "free" && !self.ego))
     }
 
     pub(crate) fn cursor_looks(&self) -> bool {
@@ -557,6 +557,45 @@ impl App {
             .as_ref()
             .zip(self.surface.as_ref())
             .map(|(cam, s)| self.cockpit_cursor_ray(cam, (s.config.width, s.config.height)));
+        {
+            let k = if pressed {
+                ray.and_then(|(o, d, s)| self.placed_target(o, d, s))
+            } else {
+                self.placed_grab.take()
+            };
+            if let (Some(k), Some((o, d, spread))) = (k, ray) {
+                self.drag_delta = (0.0, 0.0);
+                if let Some(p) = self.placed.get_mut(k) {
+                    if pressed {
+                        if let Some((page, u, v)) = p.html_hit(o, d) {
+                            p.release();
+                            p.html_pointer(page, u, v, omsi_sim::htmltex::PointerKind::Down);
+                            self.html_pressed = Some((page, u, v));
+                            self.placed_grab = Some(k);
+                            self.dragging = false;
+                            return;
+                        }
+                        self.dragging = p.click(o, d, spread).is_some();
+                        self.placed_grab = Some(k);
+                    } else {
+                        if let Some((page, u, v)) = self.html_pressed.take() {
+                            let (u, v) = p
+                                .html_hit(o, d)
+                                .filter(|h| h.0 == page)
+                                .map_or((u, v), |h| (h.1, h.2));
+                            p.html_pointer(page, u, v, omsi_sim::htmltex::PointerKind::Up);
+                        } else {
+                            p.release();
+                        }
+                        self.dragging = false;
+                    }
+                }
+                return;
+            }
+            if self.player.is_none() {
+                return;
+            }
+        }
         if let (Some(p), Some((o, d, spread))) = (self.player.as_mut(), ray) {
             self.drag_delta = (0.0, 0.0);
             p.occlude_controls = self.view == "outside";
@@ -653,13 +692,64 @@ impl App {
             return;
         }
         let (dx, dy) = std::mem::take(&mut self.drag_delta);
-        if let Some(p) = self.player.as_mut() {
+        if let Some(p) = self.placed_grab.and_then(|k| self.placed.get_mut(k)) {
+            p.drag(dx, dy);
+        } else if let Some(p) = self.player.as_mut() {
             p.drag(dx, dy);
         }
     }
 
+    pub(crate) fn placed_in_reach(&self) -> Option<usize> {
+        let c = self.camera.as_ref()?;
+        let mut best: Option<(usize, f64)> = None;
+        for (k, q) in self.placed.iter().enumerate() {
+            let v = &q.vehicle;
+            let near = std::iter::once((v.position, v.heading, v.ty.def.bounding_box))
+                .chain(
+                    v.trailers
+                        .iter()
+                        .map(|t| (t.position, t.heading, t.ty.def.bounding_box)),
+                )
+                .any(|(at, heading, bb)| part_in_reach(c.position, at, heading, bb));
+            let d = (v.position - c.position).length();
+            if near && best.map(|b| d < b.1).unwrap_or(true) {
+                best = Some((k, d));
+            }
+        }
+        best.map(|b| b.0)
+    }
+
+    pub(crate) fn placed_target(&self, o: glam::DVec3, d: glam::Vec3, spread: f32) -> Option<usize> {
+        if let Some(p) = self.player.as_ref() {
+            let (f, hand) = p.hovered_part(o, d, spread);
+            if f.is_some() || hand {
+                return None;
+            }
+        }
+        let eye = self.camera.as_ref()?.position;
+        let mut best: Option<(usize, f64)> = None;
+        for (k, q) in self.placed.iter().enumerate() {
+            let v = &q.vehicle;
+            let near = std::iter::once((v.position, v.heading, v.ty.def.bounding_box))
+                .chain(v.trailers.iter().map(|t| (t.position, t.heading, t.ty.def.bounding_box)))
+                .any(|(at, heading, bb)| part_in_reach(eye, at, heading, bb));
+            if !near {
+                continue;
+            }
+            let (f, hand) = q.hovered_part(o, d, spread);
+            let dist = (v.position - eye).length();
+            if (f.is_some() || hand) && best.map(|b| dist < b.1).unwrap_or(true) {
+                best = Some((k, dist));
+            }
+        }
+        best.map(|b| b.0)
+    }
+
     pub(crate) fn foot_reaches_bus(&self) -> bool {
         if self.foot_bus() == Some(crate::humans::BusId::Player) {
+            return true;
+        }
+        if self.placed_in_reach().is_some() {
             return true;
         }
         match (self.player.as_ref(), self.camera.as_ref()) {
@@ -712,11 +802,11 @@ impl App {
         #[cfg(windows)]
         if !self.mouse_drive
             && self.vr.as_ref().is_some_and(|vr| {
-                vr.needs_cursor_surface(
-                    self.cursor,
-                    self.game_menu.is_some() || self.chooser.is_some(),
-                )
-            })
+            vr.needs_cursor_surface(
+                self.cursor,
+                self.game_menu.is_some() || self.chooser.is_some(),
+            )
+        })
         {
             let surface = self
                 .player
@@ -746,17 +836,32 @@ impl App {
             self.surface.as_ref(),
         ) {
             (Some(p), Some(cam), Some(s))
-                if self.view != "free"
-                    && (self.view != "foot" || self.foot_reaches_bus())
-                    && !(self.vr_active()
-                        && self.mouse_drive
-                        && matches!(self.view.as_str(), "driver" | "pax")) =>
-            {
-                let (o, d, spread) =
-                    self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
-                p.hovered_part(o, d, spread)
-            }
+            if self.view != "free"
+                && (self.view != "foot" || self.foot_reaches_bus())
+                && !(self.vr_active()
+                && self.mouse_drive
+                && matches!(self.view.as_str(), "driver" | "pax")) =>
+                {
+                    let (o, d, spread) =
+                        self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
+                    p.hovered_part(o, d, spread)
+                }
             _ => (None, false),
+        };
+        let found = if found.0.is_none() && !found.1 && self.view != "free" {
+            match (self.camera.as_ref(), self.surface.as_ref()) {
+                (Some(cam), Some(s)) => {
+                    let (o, d, spread) =
+                        self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
+                    match self.placed_target(o, d, spread) {
+                        Some(k) => self.placed[k].hovered_part(o, d, spread),
+                        None => found,
+                    }
+                }
+                _ => found,
+            }
+        } else {
+            found
         };
         let (found, hand) = found;
         self.hover_hand = hand;
@@ -823,9 +928,9 @@ impl App {
             || u.menu_time.iter().any(|r| inside(r))
             || u.menu_ctl.iter().flatten().any(|r| inside(r))
             || u.menu_rects
-                .iter()
-                .enumerate()
-                .any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
+            .iter()
+            .enumerate()
+            .any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
         if clickable { 1 } else { 0 }
     }
 }

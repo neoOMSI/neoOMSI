@@ -33,14 +33,6 @@ impl Drop {
     fn radius(&self) -> f32 {
         self.radius
     }
-
-    pub fn displace(&mut self, pos: Vec2, velocity: Vec2) {
-        self.pos = pos;
-        self.previous = pos;
-        self.velocity = velocity;
-        // A blade removes the old trail too; it must not reappear behind the blade.
-        self.tail.fill(pos);
-    }
 }
 
 pub(super) struct Drops {
@@ -152,7 +144,12 @@ impl Drops {
                 }
             }
             for drop in &mut self.drops {
-                let wet = wetness(drop.pos).clamp(0.0, 1.0);
+                let wet = wetness(drop.pos);
+                if !wet.is_finite() {
+                    drop.water = 0.0; // off the glass: removed below
+                    continue;
+                }
+                let wet = wet.clamp(0.0, 1.0);
                 let r = (drop.radius() * 1000.0).max(0.4);
                 let outward = (drop.pos.x / self.size.x * 2.0 - 1.0) * spread;
                 let force = gravity + (air + Vec2::new(outward, 0.0)) / r;

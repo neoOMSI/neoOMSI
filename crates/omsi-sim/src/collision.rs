@@ -606,6 +606,28 @@ impl MeshObstacle {
         }
     }
 
+    pub fn triangles_near(&self, b: &Obb, out: &mut Vec<[DVec3; 3]>) {
+        if !self.bounds.overlaps_plan(b) {
+            return;
+        }
+        let (s, c) = self.heading.sin_cos();
+        let mut done: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for i in self.shape.near(self.to_local(b.center), b.radius()) {
+            let t = self.shape.part_tri[i as usize];
+            if !done.insert(t) {
+                continue;
+            }
+            out.push(self.shape.tris[t as usize].map(|v| {
+                let v = v.as_dvec3();
+                DVec3::new(
+                    self.pos.x + v.x * c + v.y * s,
+                    self.pos.y - v.x * s + v.y * c,
+                    self.pos.z + v.z,
+                )
+            }));
+        }
+    }
+
     /// World point → object frame (plan view).
     fn to_local(&self, p: DVec2) -> DVec2 {
         let (s, c) = self.heading.sin_cos();
@@ -734,6 +756,14 @@ impl CollisionWorld {
         let mut out: Vec<Obb> = self.near(b).into_iter().map(|i| self.boxes[i]).collect();
         for i in self.meshes_near(b) {
             out.extend(self.meshes[i].parts_near(b, solid));
+        }
+        out
+    }
+
+    pub fn triangles_near(&self, b: &Obb) -> Vec<[DVec3; 3]> {
+        let mut out = Vec::new();
+        for i in self.meshes_near(b) {
+            self.meshes[i].triangles_near(b, &mut out);
         }
         out
     }

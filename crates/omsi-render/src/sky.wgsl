@@ -97,6 +97,123 @@ fn cloud_cover_at(p: vec2<f32>, lod: f32) -> vec3<f32> {
     return vec3<f32>(clamp((shape - thr) / 0.14, 0.0, 1.0), t.a, clamp((smooth_shape - thr) / 0.14, 0.0, 1.0));
 }
 
+fn cloud_layer_basic(d: vec3<f32>, below: vec3<f32>, pix: f32, jitter: f32) -> vec4<f32> {
+    if (camera.clouds.x <= 0.001 || d.z <= -0.01 || camera.cam_pos.z + eye_off.z > CLOUD_BOTTOM) {
+        return vec4<f32>(below, 0.0);
+    }
+    let t0 = cloud_shell(d, CLOUD_BOTTOM);
+    if (t0 < 0.0 || t0 > CLOUD_MAX_DIST) {
+        return vec4<f32>(below, 0.0);
+    }
+    let sd = normalize(camera.sun_dir.xyz);
+    let closed = smoothstep(0.8, 1.0, camera.clouds.x);
+    let t1 = min(cloud_shell(d, CLOUD_TOP), min(t0 + 12000.0, CLOUD_MAX_DIST + 6000.0));
+    let steps = 56;
+    let ds = (t1 - t0) / f32(steps);
+    let lod = log2(max(t0 * pix * f32(textureDimensions(t_cloud_shape).x) / CLOUD_SHAPE_PERIOD, 1.0));
+    let sun_up = clamp(sd.z * 4.0 + 0.3, 0.0, 1.0);
+    let sun = camera.sun_color.rgb * 1.3 * sun_up;
+    let sky_top = camera.ambient.rgb * mix(0.5, 1.5, sun_up) + camera.sky_color.rgb * 0.3;
+    let ground = camera.ambient.rgb * 0.5 * mix(0.4, 1.0, sun_up);
+    let cos_sun = dot(d, sd);
+    var coverage = cloud_coverage(cloud_ground(d, t0));
+    coverage = mix(coverage, 1.0, closed);
+    var trans = 1.0;
+    var acc = vec3<f32>(0.0);
+    var hit = 0.0;
+    var hit_w = 0.0;
+    var t = t0 + ds * jitter;
+    for (var i = 0; i < steps; i = i + 1) {
+        let p = vec3<f32>(cloud_ground(d, t), cloud_height(d, t));
+        let h = (p.z - CLOUD_BOTTOM) / (CLOUD_TOP - CLOUD_BOTTOM);
+        let sigma = cloud_sigma(p, h, coverage, lod, true);
+        if (sigma > 1e-6) {
+            var od = 0.0;
+            var ls = 40.0;
+            var lt = ls * 0.5;
+            for (var k = 0; k < 5; k = k + 1) {
+                let q = p + sd * lt;
+                let hq = (q.z - CLOUD_BOTTOM) / (CLOUD_TOP - CLOUD_BOTTOM);
+                if (hq >= 1.0) {
+                    break;
+                }
+                od = od + cloud_sigma(q, hq, coverage, lod + 1.0, k < 2) * ls;
+                ls = ls * 1.8;
+                lt = lt + ls;
+            }
+            var direct = vec3<f32>(0.0);
+            var a = 1.0;
+            var b = 1.0;
+            var c = 1.0;
+            for (var o = 0; o < 3; o = o + 1) {
+                let phase = mix(hg_phase(cos_sun, 0.8 * c), hg_phase(cos_sun, -0.2 * c), 0.5);
+                direct = direct + sun * a * phase * exp(-od * b);
+                a = a * 0.6;
+                b = b * 0.3;
+                c = c * 0.5;
+            }
+            let amb = mix(ground * 0.6 + sky_top * 0.5, sky_top * 1.1, clamp(h * 1.4, 0.0, 1.0));
+            let powder = mix(1.0, 1.0 - exp(-sigma * 600.0), 0.5);
+            let light = (direct * powder * CLOUD_MS_GAIN * PI + amb * 1.6 * mix(0.55, 1.0, smoothstep(0.0, 0.55, h))) * (1.0 - 0.3 * closed);
+            let dt = exp(-sigma * ds);
+            acc = acc + trans * light * (1.0 - dt);
+            hit = hit + t * trans * (1.0 - dt);
+            hit_w = hit_w + trans * (1.0 - dt);
+            trans = trans * dt;
+            if (trans < 0.01) {
+                break;
+            }
+        }
+        t = t + ds;
+    }
+    let dist = select(t0, hit / max(hit_w, 1e-4), hit_w > 1e-4);
+    let aerial = 1.0 - exp(-dist / 22000.0);
+    let fade = 1.0 - smoothstep(40000.0, CLOUD_MAX_DIST, dist);
+    let horizon_fade = smoothstep(-0.01, 0.02, d.z);
+    let alpha = (1.0 - trans) * fade * horizon_fade;
+    let lit = mix(min(acc, vec3<f32>(1.6)), below * (1.0 - trans), aerial) * fade * horizon_fade;
+    return vec4<f32>(lit + (1.0 - alpha) * below, alpha);
+}
+
+fn star_hash3(p: vec3<f32>) -> vec3<f32> {
+    let c = bitcast<vec3<u32>>(vec3<i32>(floor(p)));
+    var v = c * 1664525u + vec3<u32>(1013904223u);
+    v.x = v.x + v.y * v.z;
+    v.y = v.y + v.z * v.x;
+    v.z = v.z + v.x * v.y;
+    v = v ^ (v >> vec3<u32>(16u));
+    v.x = v.x + v.y * v.z;
+    v.y = v.y + v.z * v.x;
+    v.z = v.z + v.x * v.y;
+    return vec3<f32>(v >> vec3<u32>(8u)) * (1.0 / 16777216.0);
+}
+
+fn star_field(d: vec3<f32>, pix: f32, time: f32, sun_az: f32) -> vec3<f32> {
+    let ca = cos(sun_az);
+    let sa = sin(sun_az);
+    let q = vec3<f32>(d.x * ca - d.y * sa, d.x * sa + d.y * ca, d.z);
+    let S = 110.0;
+    let p = q * S;
+    let cell = floor(p);
+    let h = star_hash3(cell);
+    if (h.x > 0.16) {
+        return vec3<f32>(0.0);
+    }
+    let r = star_hash3(cell + vec3<f32>(7.0, 3.0, 5.0));
+    let pos = cell + vec3<f32>(0.3) + r * 0.4;
+    let dist = length(p - pos);
+    let rad = clamp(pix * S, 0.045, 0.1);
+    let bright = 0.25 + 1.6 * h.y * h.y * h.y;
+    let tw = 0.85 + 0.15 * sin(time * (2.0 + 4.0 * h.z) + h.y * 40.0);
+    let peak = bright * tw * min(1.0, (0.06 / rad) + 0.35);
+    var k = exp(-(dist * dist) / (2.0 * rad * rad * 0.25));
+    let f = fract(p);
+    let e = min(min(f.x, 1.0 - f.x), min(min(f.y, 1.0 - f.y), min(f.z, 1.0 - f.z)));
+    k = k * smoothstep(0.0, 0.2, e);
+    let tint = mix(vec3<f32>(0.75, 0.85, 1.0), vec3<f32>(1.0, 0.85, 0.65), r.z);
+    return tint * peak * k;
+}
+
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) dir: vec3<f32>,
@@ -117,6 +234,7 @@ fn vs_main(@location(0) pos: vec3<f32>) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let d = normalize(in.dir);
+    let star_pix = length(fwidth(d));
     let az = atan2(d.x, d.y);
     let u = fract((az - camera.sky.x) / 6.2831853 + 0.5);
     let elev = asin(clamp(d.z, -1.0, 1.0));
@@ -125,33 +243,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let uv = vec2<f32>(u, v);
     let c = textureSample(t_day, s_sky, uv).rgb * camera.sky.y + textureSample(t_twilight, s_sky, uv).rgb * camera.sky.z * 0.8 + textureSample(t_night, s_sky, uv).rgb * camera.sky.w * 0.6;
     var col = c;
-    if (camera.clouds.x > 0.001 && d.z > 0.01) {
-        // a flat layer 1500 m up drawn from the cloud field (weather_setup::cloud_field)
-        let t = 1500.0 / d.z;
-        let p = cloud_ground(d, t);
-        // how many texels of the field a pixel covers there: the far clouds are drawn from a
-        // smaller mip (no shimmering, no grain)
-        let lod = log2(max(t * length(fwidth(d)) / max(d.z, 0.05) / CLOUD_FIELD_TILE * 512.0, 1.0));
-        let c = cloud_cover_at(p, lod);
-        // a closing cover (Overcast: a sky that rains) is one grey deck, no blue between
-        let closed = smoothstep(0.8, 1.0, camera.clouds.x);
-        let cover = mix(smoothstep(0.0, 1.0, c.x), 1.0, closed) * clamp((d.z - 0.01) * 7.0, 0.0, 1.0);
-        // lit by the same light as the scene (envir.cfg's sun and ambient at this sun
-        // height): white by day, warm at sunrise, and at night barely lighter than the night
-        // sky - never the pale blots a fixed twilight colour made at night; a little grey in
-        // the thick middle of a big cloud
-        let core = 1.0 - 0.2 * smoothstep(0.45, 1.0, c.x) * (0.5 + 0.5 * c.y);
-        let sun_up = clamp(camera.sun_dir.z * 4.0 + 0.3, 0.0, 1.0);
-        let lit = camera.sun_color.rgb * 1.1 * sun_up + camera.ambient.rgb * mix(0.5, 1.5, sun_up) + camera.sky_color.rgb * 0.3;
-        var cloud_col = max(min(lit, vec3<f32>(0.97)) * core, col * 1.12);
-        // the deck greys over
-        cloud_col = cloud_col * (1.0 - 0.3 * closed) * mix(1.0, 0.85 + 0.3 * c.x, closed);
-        col = mix(col, cloud_col, cover);
+    // stars at night, fading out with the night weight, horizon and cloud cover
+    let star_vis = (1.0 - smoothstep(-0.25, -0.05, camera.sun_dir.z)) * smoothstep(0.0, 0.08, d.z) * (1.0 - 0.9 * clamp(camera.clouds.x, 0.0, 1.0));
+    var cloud_a = 0.0;
+    if (camera.clouds.x > 0.001 && d.z > -0.01) {
+        let ign = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+        let cl = cloud_layer_basic(d, col, length(fwidth(d)), ign);
+        col = cl.rgb;
+        cloud_a = cl.a;
+    }
+    
+    if (star_vis > 0.001) {
+        col = col + star_field(d, star_pix, camera.post.y, camera.sky.x) * star_vis * (1.0 - cloud_a);
     }
     // fog swallows the horizon, and a thick fog (a few hundred metres of sight) the whole
     // sky: the blue does not show through ground fog
-    let horizon = clamp(1.0 - elev / 0.12, 0.0, 1.0) * clamp(camera.fog.w * 1500.0, 0.0, 1.0);
-    let whole = clamp(camera.fog.w * 150.0 - 0.15, 0.0, 1.0) * clamp(1.0 - elev / 1.2, 0.35, 1.0);
+    let fw = select(0.0, camera.fog.w, camera.fog.w > 5e-4);
+    let horizon = clamp(1.0 - elev / 0.12, 0.0, 1.0) * clamp(fw * 1500.0, 0.0, 1.0);
+    let whole = clamp(fw * 150.0 - 0.15, 0.0, 1.0) * clamp(1.0 - elev / 1.2, 0.35, 1.0);
     let f = max(horizon, whole);
     return vec4<f32>(mix(col, camera.fog.xyz, f), 1.0);
 }

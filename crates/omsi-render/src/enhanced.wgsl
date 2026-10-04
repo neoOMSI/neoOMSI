@@ -170,7 +170,8 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
     if (x < 0 || y < 0 || x >= i32(side) || y >= i32(side)) {
         return sum;
     }
-    let a = max(sf.rough * sf.rough, 0.02);
+    // a lamp is not a mirror's point source: no sharp dot of it on glass or wet paint
+    let a = max(sf.rough * sf.rough, 0.3);
     let nv = max(dot(n, v), 1e-4);
     let base = (u32(y) * side + u32(x)) * CELL_CAP;
     for (var j = 0u; j < CELL_CAP; j = j + 1u) {
@@ -200,6 +201,11 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         if (l.dir.w > -1.5) {
             let cd = dot(-ld, l.dir.xyz);
             e = e * smoothstep(l.dir.w, l.extra.x, cd);
+            if (l.extra.z < 0.0) {
+                let s = smoothstep(l.dir.w, l.extra.x, cd);
+                let hot = smoothstep(l.extra.x, 1.0, cd);
+                e = e * mix(0.3, 1.0, s * s) * (1.0 + 0.25 * hot);
+            }
             if (l.extra.z > 0.0) {
                 // a low beam: brightest just under its cut-off, where it reaches far down
                 // the road (the gain keeps the light on a flat road from falling off with
@@ -208,7 +214,22 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
                 let axis = max(-l.dir.z, 0.05);
                 let gain = clamp(axis * axis / max(drop * drop, 1e-6), 1.0, l.extra.z);
                 e = e * mix(1.0, gain, smoothstep(-0.04, 0.0, drop));
+                // a dipped beam's cut-off: sharp just under the horizon on the oncoming
+                // side, kicked up on the kerb side (right-hand traffic), a little scatter above
+                let fwd = -ld;
+                let hr = vec2<f32>(l.dir.y, -l.dir.x);
+                let hl = max(length(hr), 1e-4);
+                let hf = max(length(fwd.xy), 1e-4);
+                let lat = dot(fwd.xy / hf, hr / hl);
+                let allowed = mix(-0.012, 0.11, smoothstep(0.0, 0.3, lat));
+                e = e * mix(0.02, 1.0, 1.0 - smoothstep(allowed, allowed + 0.025, fwd.z));
             }
+        }
+        if (e < 0.003 || (!thin && dot(n, ld) <= 0.0)) {
+            continue;
+        }
+        if (n.z > 0.7) {
+            e = e * light_shadow(l, p + n * 0.08);
         }
         if (e <= 0.0) {
             continue;
@@ -282,7 +303,7 @@ fn fs_enhanced(in: FsIn) -> EnhancedOut {
     let screen = material.flags.x > 0.5;
     // an LED panel's dots stay in the glow's source (`post.wgsl`), the other screens'
     // letters stay out of it
-    let led = select(0.0, 1.0, material.emissive.w < -1.5);
+    let led = select(0.0, step(0.5, c.a), material.emissive.w < -1.5);
     var out: EnhancedOut;
     out.color = c;
     // The sub-0.5 range of g carries water's occluded sky weight; LED detection uses
@@ -550,7 +571,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // plastic in every headlight)
     let dry_snow = 1.0 - clamp(enh.weather.y, 0.0, 1.0);
     let wet_road = camera.shadow.w * material.params2.z * outside * dry_snow;
-    let wet_any = camera.shadow.w * outside * select(0.35, 0.0, glass) * dry_snow;
+    let wet_any = camera.shadow.w * outside * select(0.35, 0.0, glass || material.emissive.w < -1.5) * dry_snow;
     var puddle = 0.0;
     if (wet_road > 0.0) {
         albedo = albedo * mix(1.0, 0.5, wet_road);
@@ -765,7 +786,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // --- the lamps, the cabin light and what glows by itself
     // ([nomaplighting] objects are not lit by the map's lamps; light-mapped roads are, with
     // the tile light map on top)
-    let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3);
+    let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 + 0.9 * wet_road);
     // [interiorlight]: OMSI adds its lamps' light to the lit meshes whatever the daylight,
     // so a switched-on saloon is brighter by day as well and only stands out more at night.
     // Taken as a lamp against the daylight exposure it vanished by day altogether.
