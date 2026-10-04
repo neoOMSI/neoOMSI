@@ -4687,6 +4687,12 @@ impl PlayerDuty {
         self.done
     }
 
+    /// Whether the player has completed the final trip of the tour.  A completed trip with
+    /// another one waiting is only a layover and must keep the duty active.
+    pub fn duty_done(&self) -> bool {
+        self.done && self.trip_index + 1 == self.trips.len()
+    }
+
     /// Service/depot legs have no public line and use the HOF's
     /// `Betriebsfahrt` destination. They remain part of the duty, but the
     /// player's IBIS should use the next public leg while the bus is waiting.
@@ -5669,9 +5675,16 @@ mod tests {
         // ... but once its end is reached
         d.advance(glam::DVec3::new(1000.0, 0.0, 0.0), 57630.0);
         assert!(d.done && !d.take_trip_change());
+        assert!(!d.duty_done(), "the following trip keeps the duty active");
         d.advance(glam::DVec3::new(1000.0, 0.0, 0.0), 57640.0);
         assert_eq!((d.trip_index, d.next_stop), (2, 0));
         assert!(d.take_trip_change());
+        // The final trip, unlike the earlier layover, completes the duty when its last stop
+        // is reached.
+        d.advance(glam::DVec3::new(1000.0, 0.0, 0.0), 57660.0);
+        d.advance(glam::DVec3::new(1050.0, 0.0, 0.0), 57670.0);
+        d.advance(glam::DVec3::new(500.0, 0.0, 0.0), 59400.0);
+        assert!(d.duty_done());
     }
 
     #[test]

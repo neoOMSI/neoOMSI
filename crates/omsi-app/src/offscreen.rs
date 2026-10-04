@@ -703,7 +703,7 @@ pub(crate) fn run_offscreen(
         }
         if let Some(player) = player.as_mut() {
             player.tick_startup(dt);
-            if let Some(d) = duty.as_mut() {
+            let duty_done = if let Some(d) = duty.as_mut() {
                 if let Some(stop) = player.html_next_stop.take() {
                     if d.skip_to(stop) {
                         let (trip, k) = d.trip_for_ibis();
@@ -725,6 +725,14 @@ pub(crate) fn run_offscreen(
                 {
                     log::warn!("driver timetable paper: {e:#}");
                 }
+                d.duty_done()
+            } else {
+                false
+            };
+            if duty_done {
+                duty = None;
+                player.vehicle.host.schedule_active = 0.0;
+                player.vehicle.set_var("schedule_active", 0.0);
             }
             career.tick(
                 dt,
