@@ -114,6 +114,12 @@ impl Material {
             || self.env_mask == Some(id)
             || self.bump.map(|b| b.0) == Some(id)
     }
+
+    /// `[matl_transmap]` was given, its file there or not (the shader's
+    /// `has_transmap_declared`).
+    pub fn transmap_declared(&self) -> bool {
+        (self.uniform.params2[3] + 0.5) as u32 & 2 != 0
+    }
 }
 
 /// The material manager's settings beyond the maps of `add_material_all`: depth handling,
@@ -1028,9 +1034,13 @@ impl Renderer {
     /// Envir_Brightness` on their transmapped body and roof (`[matl_alpha] 1`), which is 0
     /// at night, and scaled by it the whole roof went at dusk - with alpha to coverage
     /// under MSAA the colour pass drew none of its samples - while in OMSI it stays.
-    pub fn clamp_slot_alpha(alpha: f32, material_alpha: AlphaMode) -> f32 {
+    /// Except a blended slot with a declared `[matl_transmap]`: OMSI 2 takes its alpha from
+    /// the transmap alone, so the ICU400 sign controller's screen (`\S:1` under a
+    /// `signController_alphaScale` no script sets) still shows its text.
+    pub fn clamp_slot_alpha(alpha: f32, material_alpha: AlphaMode, transmap_declared: bool) -> f32 {
         match material_alpha {
             AlphaMode::Opaque | AlphaMode::Test => 1.0,
+            AlphaMode::Blend if transmap_declared => 1.0,
             AlphaMode::Blend => alpha,
         }
     }

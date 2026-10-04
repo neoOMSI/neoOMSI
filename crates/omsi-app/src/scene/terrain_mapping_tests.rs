@@ -88,6 +88,7 @@ fn mapped_splines_and_objects_use_uncut_base_while_ground_keeps_paint() {
     assert_eq!(object.meshes.len(), 1);
     let spline = Arc::new(SplineType {
         dir: fixture.0.clone(),
+        surface_maps: None,
         def: Spline {
             path: fixture.0.join("mapped.sli"),
             textures: vec![omsi_scenery::sli::SplineTexture {
@@ -200,4 +201,28 @@ fn mapped_splines_and_objects_use_uncut_base_while_ground_keeps_paint() {
         assert!(material.nightmap.is_some());
         assert!(!instance.ground_layer);
     }
+}
+
+#[test]
+fn surf_height_map_is_loaded_from_a_mounted_zip_sidecar() {
+    use std::io::Write;
+
+    let fixture = Fixture::new();
+    let archive_path = fixture.0.join("surf-pack.zip");
+    let mut bmp = Vec::new();
+    image::codecs::bmp::BmpEncoder::new(&mut bmp)
+        .encode(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    let mut archive = zip::ZipWriter::new(std::fs::File::create(&archive_path).unwrap());
+    for file in ["Texture/road.bmp", "Texture/road.bmp.surf"] {
+        archive
+            .start_file(file, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(&bmp).unwrap();
+    }
+    archive.finish().unwrap();
+    let mount = omsi_cfg::vfs::mount_zip(&archive_path).unwrap();
+    let map = surface_height_map("road.bmp", &[mount.join("Texture")])
+        .expect("the sidecar in the mounted content archive must load");
+    assert!((map.sample(glam::Vec2::ZERO) - 0.02).abs() < 1e-6);
 }
