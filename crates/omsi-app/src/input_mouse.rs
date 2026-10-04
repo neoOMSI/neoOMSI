@@ -598,7 +598,6 @@ impl App {
         }
         if let (Some(p), Some((o, d, spread))) = (self.player.as_mut(), ray) {
             self.drag_delta = (0.0, 0.0);
-            p.occlude_controls = self.view == "outside";
             if pressed {
                 if let Some((page, u, v)) = p.html_hit(o, d) {
                     p.release();
@@ -825,10 +824,6 @@ impl App {
             if let Some(vr) = self.vr.as_mut() {
                 vr.set_cursor_surface(surface.as_ref().and_then(|s| s.0), surface.map(|s| s.1));
             }
-        }
-        let outside = self.view == "outside";
-        if let Some(p) = self.player.as_mut() {
-            p.occlude_controls = outside;
         }
         let found = match (
             self.player.as_ref(),

@@ -497,7 +497,6 @@ pub(crate) fn spawn_player(
         press_info: (true, 0.0),
         auto_drag: None,
         pressed_trailer_mesh: None,
-        occlude_controls: false,
         startup: None,
         startup_at: None,
         give_ticket: false,
