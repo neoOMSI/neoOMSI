@@ -2420,6 +2420,7 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
     // neoOMSI's own: what passengers say, OMSI's route arrows, getting up from the seat
     for (k, d) in [
         ("pax_voices", json!("all")),
+        ("pax_prefer_seats", json!(false)),
         ("nav_arrows", json!(false)),
         ("nav_ai", json!(true)),
         ("nav_topbar", json!(true)),
@@ -2557,6 +2558,7 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
             | "fullscreen"
             | "vsync"
             | "exact_fare"
+            | "pax_prefer_seats"
             | "detail_textures"
             | "texture_compression"
             | "chat"
@@ -3215,6 +3217,10 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         )
     ));
     text.push_str(&format!("look_sens={}\nsteer_look_angle={}\nsteer_look_response={}\ntime_sync={}\nmetar_sync={}\nmetar_station={}\n", f("look_sens", 1.0).clamp(0.1, 2.0), f("steer_look_angle", 30.0).clamp(0.0, 60.0), f("steer_look_response", 0.25).clamp(0.05, 1.0), b("time_sync", false), b("metar_sync", false), v.get("metar_station").and_then(|x| x.as_str()).unwrap_or("").chars().filter(|c| c.is_ascii_alphabetic()).take(4).collect::<String>().to_ascii_uppercase()));
+    text.push_str(&format!(
+        "pax_prefer_seats={}\n",
+        b("pax_prefer_seats", false)
+    ));
     let written: Vec<String> = text
         .lines()
         .filter_map(|l| l.split_once('='))
@@ -3926,6 +3932,7 @@ mod tests {
         let mut v = settings_from_text(None);
         for (k, x) in [
             ("steer_look", json!(true)),
+            ("pax_prefer_seats", json!(true)),
             ("discord_status", json!(false)),
             ("launcher_rest", json!(false)),
             ("camera_collision", json!(false)),
@@ -3946,6 +3953,7 @@ mod tests {
         let back = settings_from_text(Some(&settings_to_text(&v, None)));
         for k in [
             "steer_look",
+            "pax_prefer_seats",
             "discord_status",
             "launcher_rest",
             "camera_collision",
@@ -3969,6 +3977,16 @@ mod tests {
                 .unwrap()
         );
         assert!(settings_from_text(None)["launcher_rest"].as_bool().unwrap());
+        assert_eq!(settings_from_text(None)["pax_prefer_seats"], json!(false));
+        let saved = settings_to_text(
+            &settings_from_text(Some("pax_prefer_seats=0\n")),
+            Some("pax_prefer_seats=1\n"),
+        );
+        assert_eq!(saved.matches("pax_prefer_seats=").count(), 1);
+        assert_eq!(
+            settings_from_text(Some(&saved))["pax_prefer_seats"],
+            json!(false)
+        );
         let prior = settings_from_text(Some("discord_status=1\ndiscord_status=0\n"));
         assert!(!prior["discord_status"].as_bool().unwrap());
         let mut enabled = prior;

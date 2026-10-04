@@ -1864,6 +1864,14 @@ fn gameplay_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
         "Passengers pay the exact fare",
         "exact_fare",
     );
+    toggle_setting(
+        ui,
+        s,
+        dirty,
+        c.row(),
+        "Passengers prefer available seats",
+        "pax_prefer_seats",
+    );
     let mut pd = get(s, "pax_density").as_f64().unwrap_or(1.0) as f32;
     if ui.slider(
         "s-pax",
@@ -5047,6 +5055,7 @@ mod settings_tests {
         let gameplay = vec![
             "s-board",
             "set-exact_fare",
+            "set-pax_prefer_seats",
             "s-pax",
             "s-unsched",
             "s-maxsched",
@@ -5176,6 +5185,16 @@ mod settings_tests {
         let mut s = all_rows();
         assert_eq!(click(1, "s-go-keys", &mut s).controls, Some(0));
         assert_eq!(click(1, "s-go-pads", &mut s).controls, Some(1));
+    }
+
+    #[test]
+    fn passenger_seat_preference_can_be_enabled_and_disabled() {
+        let mut s = core::settings_from_text(None);
+        assert_eq!(s["pax_prefer_seats"], json!(false));
+        click(4, "set-pax_prefer_seats", &mut s);
+        assert_eq!(s["pax_prefer_seats"], json!(true));
+        click(4, "set-pax_prefer_seats", &mut s);
+        assert_eq!(s["pax_prefer_seats"], json!(false));
     }
 
     #[test]

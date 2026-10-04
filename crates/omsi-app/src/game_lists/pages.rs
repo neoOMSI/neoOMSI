@@ -118,6 +118,12 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
             "No change is given at the cash desk",
         ),
         pick("boarding", "Boarding", "How passengers get their tickets"),
+        switch_row(
+            app,
+            "pax_prefer_seats",
+            "Passengers prefer available seats",
+            "Passengers take a free seat when boarding; standing places are used when all seats are taken",
+        ),
         pick("maintenance", "Maintenance", later),
         switch_row(
             app,

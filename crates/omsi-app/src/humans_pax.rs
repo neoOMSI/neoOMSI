@@ -692,13 +692,18 @@ impl Humans {
             .is_some_and(|s| s.buses.iter().any(|b| b.0 == bus))
     }
 
-    /// sub_7e910c: a free place of the bus, at random (none free: nobody gets on).
-    pub(super) fn reserve_place(&mut self, bus: BusId, n: usize) -> Option<usize> {
+    /// A random free place (sub_7e910c), with optional neoOMSI seat preference.
+    /// No free place: nobody gets on.
+    pub(super) fn reserve_place(&mut self, bus: BusId, places: &[Seat]) -> Option<usize> {
+        let n = places.len();
         let seats = self.seats.entry(bus).or_insert_with(|| vec![false; n]);
         if seats.len() < n {
             seats.resize(n, false);
         }
-        let free: Vec<usize> = (0..n).filter(|k| !seats[*k]).collect();
+        let mut free: Vec<usize> = (0..n).filter(|k| !seats[*k]).collect();
+        if self.prefer_seats && free.iter().any(|&k| places[k].seated) {
+            free.retain(|&k| places[k].seated);
+        }
         if free.is_empty() {
             return None;
         }
@@ -1619,7 +1624,7 @@ impl Humans {
                 let Some(stop) = p.stop else { return };
                 if let Some(bn) = bn {
                     if bn.speed.abs() < 3.0 && self.in_stop_box(stop, bn.id) {
-                        if let Some(k) = self.reserve_place(bn.id, bn.cabin.seats.len()) {
+                        if let Some(k) = self.reserve_place(bn.id, &bn.cabin.seats) {
                             let (tk, id) = self.decide_pax_ticket(i, bn);
                             let price = self
                                 .tickets

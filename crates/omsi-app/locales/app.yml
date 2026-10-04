@@ -445,6 +445,10 @@ _version: 2
   de: "Einfach einsteigen"
 "Passengers pay the exact fare":
   de: "Fahrgäste zahlen passend"
+"Passengers prefer available seats":
+  de: "Fahrgäste bevorzugen freie Sitzplätze"
+"Passengers take a free seat when boarding; standing places are used when all seats are taken":
+  de: "Fahrgäste wählen beim Einsteigen einen freien Sitzplatz; Stehplätze werden genutzt, wenn alle Sitze belegt sind"
 "Passenger voices":
   de: "Fahrgaststimmen"
 "Greetings and tickets":

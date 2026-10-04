@@ -35,6 +35,9 @@ pub struct Settings {
     /// ticket key or the printer); `walk` - they just walk into the saloon (a flat-fare
     /// or ticket-machine service).
     pub boarding: String,
+    /// neoOMSI extension: reserve a seated place before using standing places.
+    /// Off by default to preserve OMSI's random choice among all free places.
+    pub pax_prefer_seats: bool,
     /// Procedural detail (fractal) texturing of the ground and large walls when close.
     pub detail_textures: bool,
     /// Passengers pay the exact fare (no change to give at the cash desk).
@@ -333,6 +336,7 @@ impl Settings {
             ui_scale_window: true,
             navigator_corner: "bottom-left".into(),
             boarding: "auto".into(),
+            pax_prefer_seats: false,
             detail_textures: true,
             exact_fare: true,
             enhanced: false,
@@ -518,6 +522,7 @@ impl Settings {
                 }
                 "navigator_corner" => s.navigator_corner = v.to_ascii_lowercase(),
                 "boarding" => s.boarding = v.to_ascii_lowercase(),
+                "pax_prefer_seats" => s.pax_prefer_seats = b(v),
                 "detail_textures" | "fractal" => s.detail_textures = b(v),
                 "exact_fare" => s.exact_fare = b(v),
                 "enhanced" => s.enhanced = b(v),
@@ -990,6 +995,10 @@ impl Settings {
             self.units, self.discord_status as u8, self.discord_app_id
         ));
         text.push_str(&format!("auto_shift={}\n", self.auto_shift as u8));
+        text.push_str(&format!(
+            "pax_prefer_seats={}\n",
+            self.pax_prefer_seats as u8
+        ));
         text
     }
 
@@ -1098,6 +1107,15 @@ pub fn view_distance() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passenger_seat_preference_is_opt_in_and_round_trips() {
+        assert!(!Settings::from_text("").pax_prefer_seats);
+        let enabled = Settings::from_text("pax_prefer_seats=1\n");
+        assert!(enabled.pax_prefer_seats);
+        assert_eq!(Settings::from_text(&enabled.to_text()), enabled);
+        assert!(!Settings::from_text("pax_prefer_seats=0\n").pax_prefer_seats);
+    }
 
     #[test]
     fn old_files_board_automatically() {

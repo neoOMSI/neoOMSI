@@ -423,6 +423,7 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "info_bar" => app.info_bar,
         "nav_arrows" => app.navigator.as_ref().map_or(s.nav_arrows, |n| n.arrows),
         "exact_fare" => s.exact_fare,
+        "pax_prefer_seats" => s.pax_prefer_seats,
         "collision_pedestrians" => s.collision_pedestrians,
         "ssao" => s.ssao,
         "detail_textures" => s.detail_textures,
@@ -658,6 +659,10 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         "exact_fare" => {
             app.settings.exact_fare = on;
             Some(("exact_fare", bit))
+        }
+        "pax_prefer_seats" => {
+            app.settings.pax_prefer_seats = on;
+            Some(("pax_prefer_seats", bit))
         }
         "collision_pedestrians" => {
             app.settings.collision_pedestrians = on;
