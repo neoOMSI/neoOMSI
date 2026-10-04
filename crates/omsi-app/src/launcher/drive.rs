@@ -2016,12 +2016,18 @@ fn step_roadbook(l: &mut Launcher, r: Rect) {
         y - v.y
     });
     if let Some((index, dep)) = start_at {
-        let time = (dep / 60.0).floor() as i32;
+        let time = duty_preparation_time(dep);
         l.state.choice.time = time;
         l.state.choice.start_trip = Some((line.name.clone(), tour.number.clone(), index, time));
         l.state.touched();
     }
     ibis_box(l, Rect::new(r.x, r.bottom() - ibis_h, r.w, ibis_h));
+}
+
+/// The launcher time picker works in whole minutes. Start three minutes before a selected
+/// trip so that the player always has at least the 2½-minute setup window.
+fn duty_preparation_time(departure: f64) -> i32 {
+    ((departure / 60.0).floor() as i32 - 3).max(0)
 }
 
 pub(super) fn ibis_box(l: &mut Launcher, r: Rect) {
@@ -2522,6 +2528,13 @@ pub(crate) fn nearest_airport(root: &str, map: &str) -> String {
 #[cfg(test)]
 mod vehicle_picker_tests {
     use super::*;
+
+    #[test]
+    fn selected_trip_has_three_minutes_of_preparation_time() {
+        assert_eq!(duty_preparation_time(12.0 * 3600.0), 12 * 60 - 3);
+        assert_eq!(duty_preparation_time(8.0 * 3600.0 + 45.0), 8 * 60 - 3);
+        assert_eq!(duty_preparation_time(2.0 * 60.0), 0);
+    }
 
     fn vehicle(
         folder: &str,
