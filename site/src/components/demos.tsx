@@ -1,4 +1,9 @@
-import type { CSSProperties, ReactNode } from 'react';
+import {
+	createContext,
+	useContext,
+	type CSSProperties,
+	type ReactNode
+} from 'react';
 import { Icon } from './icons';
 
 const EM = 2048 / 2400;
@@ -145,33 +150,53 @@ const Toggle = ({ text, on, h }: { text: string; on: boolean; h: number }) => (
 
 const TABS = ['Bus', 'Route', 'Time & weather', 'Roadbook'];
 
+// Tabs only react to clicks when a Launcher provides a handler.
+const TabContext = createContext<((tab: number) => void) | null>(null);
+
 const Panel = ({
 	active,
 	children
 }: {
 	active: number;
 	children: ReactNode;
-}) => (
-	<div className="app">
-		<div className="a-tabs">
-			{TABS.map((t, i) => (
-				<span
-					key={t}
-					className={i === active ? 'on' : ''}
-					style={line(
-						40,
-						13,
-						i === active ? 500 : 400,
-						i === active ? TEXT : DIM
-					)}
-				>
-					{t}
-				</span>
-			))}
+}) => {
+	const onTab = useContext(TabContext);
+	return (
+		<div className="app">
+			<div className="a-tabs" role={onTab ? 'tablist' : undefined}>
+				{TABS.map((t, i) => (
+					<span
+						key={t}
+						className={`${i === active ? 'on' : ''}${onTab ? ' a-tab-btn' : ''}`}
+						role={onTab ? 'tab' : undefined}
+						aria-selected={onTab ? i === active : undefined}
+						tabIndex={onTab ? 0 : undefined}
+						onClick={onTab ? () => onTab(i) : undefined}
+						onKeyDown={
+							onTab
+								? (e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											onTab(i);
+										}
+									}
+								: undefined
+						}
+						style={line(
+							40,
+							13,
+							i === active ? 500 : 400,
+							i === active ? TEXT : DIM
+						)}
+					>
+						{t}
+					</span>
+				))}
+			</div>
+			<div className="a-body">{children}</div>
 		</div>
-		<div className="a-body">{children}</div>
-	</div>
-);
+	);
+};
 
 function BusRow({
 	title,
@@ -653,6 +678,110 @@ function Weather() {
 	);
 }
 
+const STOPS = [
+	['Hauptbahnhof', '07:12', '0.0 km', 'done'],
+	['Lindenallee', '07:16', '0.9 km', 'done'],
+	['Marktplatz', '07:21', '2.1 km', 'now'],
+	['Schulzentrum', '07:27', '3.4 km', ''],
+	['Stadtpark', '07:33', '4.8 km', ''],
+	['Rathaus', '07:40', '6.2 km', '']
+] as const;
+
+function Roadbook() {
+	return (
+		<Panel active={3}>
+			<div className="flex">
+				<Label h={36} style={{ width: 110, flex: 'none' }}>
+					Tour
+				</Label>
+				<Select
+					value="Line 24 · Tour 2 (07:12 - 08:40)"
+					style={{ flex: 1 }}
+				/>
+			</div>
+			<div style={{ marginTop: 8 }}>
+				<Toggle text="Show the roadbook while driving" on h={36} />
+			</div>
+			<Toggle text="Announce the next stop" on h={36} />
+			<div className="flex justify-between" style={{ marginTop: 8 }}>
+				<Heading>Trip 1 of 6</Heading>
+				<span style={line(26, 11.5, 400, DIM)}>
+					Hauptbahnhof → Rathaus
+				</span>
+			</div>
+			<div className="a-list" style={{ marginTop: 2, paddingRight: 6 }}>
+				{STOPS.map(([name, time, dist, state]) => (
+					<div
+						key={name}
+						className={`a-row${state === 'now' ? ' sel' : ''}`}
+						style={{ height: 40 }}
+					>
+						<At x={22}>
+							<Icon
+								name={
+									state === 'done'
+										? 'check'
+										: state === 'now'
+											? 'directions_bus'
+											: 'flag'
+								}
+								size={16}
+								color={
+									state === 'now'
+										? ACCENT
+										: state === 'done'
+											? DIM
+											: FAINT
+								}
+							/>
+						</At>
+						<Text
+							style={{
+								left: 44,
+								...line(
+									40,
+									13,
+									state === 'now' ? 700 : 500,
+									state === 'now' ? ACCENT : DIM
+								)
+							}}
+						>
+							{time}
+						</Text>
+						<Text
+							style={{
+								left: 100,
+								right: 90,
+								...line(
+									40,
+									13,
+									state === 'now' ? 500 : 400,
+									state === 'done' ? DIM : TEXT
+								)
+							}}
+						>
+							{name}
+						</Text>
+						<Text
+							className="text-right"
+							style={{
+								right: 12,
+								width: 70,
+								...line(40, 11.5, 400, DIM)
+							}}
+						>
+							{dist}
+						</Text>
+					</div>
+				))}
+			</div>
+			<div style={line(30, 11.5, 400, DIM)}>
+				6 trips · Mon-Fri · Trip duration 1 hour 28 minutes
+			</div>
+		</Panel>
+	);
+}
+
 const MAP = {
 	w: 360,
 	h: 223,
@@ -1019,25 +1148,47 @@ function Navigator() {
 	);
 }
 
-export const DEMOS = [
+const VIEWS = [Bus, Route, Weather, Roadbook];
+
+export const LAUNCHER_INFO = [
 	{
 		title: 'Choose a bus',
-		text: 'Every bus in your OMSI 2 folder, sorted by maker, with its liveries and a 3D preview.',
-		Demo: Bus
+		text: 'Every bus in your OMSI 2 folder, sorted by maker, with its liveries and a 3D preview.'
 	},
 	{
 		title: 'Pick a line and a tour',
-		text: "Lines and tours come straight from the map's timetable.",
-		Demo: Route
+		text: "Lines and tours come straight from the map's timetable."
 	},
 	{
 		title: 'Set the time and the weather',
-		text: 'Any date and season, live METAR weather, or a cycle that changes while you drive.',
-		Demo: Weather
+		text: 'Any date and season, live METAR weather, or a cycle that changes while you drive.'
 	},
 	{
-		title: 'Drive with the navigator',
-		text: 'Your speed, the next turn and the next stops, with your delay at a glance.',
-		Demo: Navigator
+		title: 'Follow the roadbook',
+		text: 'Every stop of your tour with its scheduled time and distance, ready before you pull out.'
 	}
 ];
+
+// Controlled by the page so the description next to the mockup can follow the tab.
+export function Launcher({
+	tab,
+	onTab
+}: {
+	tab: number;
+	onTab: (tab: number) => void;
+}) {
+	const View = VIEWS[tab];
+	return (
+		<TabContext.Provider value={onTab}>
+			<div style={{ width: 'max-content' }}>
+				<View />
+			</div>
+		</TabContext.Provider>
+	);
+}
+
+export const NAVIGATOR = {
+	title: 'Drive with the navigator',
+	text: 'Your speed, the next turn and the next stops, with your delay at a glance.',
+	Demo: Navigator
+};

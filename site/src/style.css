@@ -247,6 +247,7 @@
   .a-tabs { @apply mx-4 mt-2 flex h-[42px]; box-shadow: inset 0 -1px var(--a-edge); }
   .a-tabs span { @apply h-[42px] flex-1 text-center; }
   .a-tabs span.on { box-shadow: inset 0 -2px var(--a-accent); }
+  .a-tabs span.a-tab-btn { @apply cursor-pointer select-none outline-none transition-colors hover:bg-white/[.04] focus-visible:bg-white/[.06]; }
   .a-body { @apply px-[18px] pt-4 pb-4; }
   .a-at { @apply absolute top-1/2 flex -translate-x-1/2 -translate-y-1/2; }
   .a-text { @apply absolute truncate; }

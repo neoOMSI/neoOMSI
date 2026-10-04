@@ -1,8 +1,8 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import wordmark from '../../../assets/logos/neoOMSI-wordmark.png?trim';
 import wordmarkLight from '../../../assets/logos/neoOMSI-wordmark-light.png?trim';
 import { DISCORD, visitorBuild } from '../content/data';
-import { DEMOS } from '../components/demos';
+import { LAUNCHER_INFO, Launcher, NAVIGATOR } from '../components/demos';
 import { HOME_FAQ } from '../content/faq';
 import { date, latestRelease, version } from '../lib/github';
 import { useAsync } from '../lib/hooks';
@@ -151,6 +151,28 @@ function Stage({
 	);
 }
 
+function LauncherShowcase() {
+	const [tab, setTab] = useState(0);
+	const { title, text } = LAUNCHER_INFO[tab];
+	return (
+		<article className="showcase wide lg:col-span-2">
+			<div className="showcase-text">
+				<p>
+					<span className="font-semibold text-heading">{title}.</span>{' '}
+					{text}
+				</p>
+				<p className="mt-4 text-[15px] text-muted/80">
+					Click Bus, Route, Time &amp; weather or Roadbook in the
+					mockup to switch screens.
+				</p>
+			</div>
+			<Stage backdrop={BACKDROPS[tab]}>
+				<Launcher tab={tab} onTab={setTab} />
+			</Stage>
+		</article>
+	);
+}
+
 function Line() {
 	const canvas = useRef<HTMLCanvasElement>(null);
 	const stops = useRef<HTMLElement[]>([]);
@@ -290,26 +312,18 @@ export function Home() {
 						</span>
 					</h2>
 					<div className="mt-12 grid gap-4 lg:grid-cols-2">
-						{DEMOS.map(({ title, text, Demo }, i) => {
-							const wide = i === 0 || i === DEMOS.length - 1;
-							const flip = i === DEMOS.length - 1;
-							return (
-								<article
-									key={title}
-									className={`showcase${wide ? ' wide lg:col-span-2' : ''}${flip ? ' flip' : ''}`}
-								>
-									<p className="showcase-text">
-										<span className="font-semibold text-heading">
-											{title}.
-										</span>{' '}
-										{text}
-									</p>
-									<Stage backdrop={BACKDROPS[i]}>
-										<Demo />
-									</Stage>
-								</article>
-							);
-						})}
+						<LauncherShowcase />
+						<article className="showcase wide flip lg:col-span-2">
+							<p className="showcase-text">
+								<span className="font-semibold text-heading">
+									{NAVIGATOR.title}.
+								</span>{' '}
+								{NAVIGATOR.text}
+							</p>
+							<Stage backdrop={BACKDROPS[3]}>
+								<NAVIGATOR.Demo />
+							</Stage>
+						</article>
 					</div>
 				</div>
 			</section>
