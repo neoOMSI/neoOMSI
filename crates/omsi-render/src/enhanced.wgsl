@@ -373,6 +373,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         if (material.emissive.w < -1.5 && enh.led.y < msk_lod) {
             tm = textureSampleLevel(t_trans, s_diffuse, buv, enh.led.y);
         }
+        tm = diffuse_border(tm, in.uv - in.params.zw);
         tex.a = select(1.0, tm.a, material.params.w > 0.5);
         if (terrain && material.params.x > 1.5) {
             // Coverage belongs to the brush mask, not the angle-dependent diffuse mip.

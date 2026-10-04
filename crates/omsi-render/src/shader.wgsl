@@ -372,6 +372,12 @@ fn diffuse_border(tex: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return select(tex, border, material.flags.y > 0.5 && material.flags.y < 1.5 && outside);
 }
 
+// [matl_texadress_border] holds for the transmap's stage too: outside [0, 1] it reads the
+// border colour's alpha instead of stretching the texture's edge rows (the ICU400's text).
+fn sample_transmap_at(uv: vec2<f32>) -> vec4<f32> {
+    return diffuse_border(sample_transmap(tex_address(uv)), uv);
+}
+
 // [matl_texadress_mirroronce]: Direct3D mirrors the coordinates once about 0 and clamps
 // them beyond; the clamping sampler does the rest.
 fn tex_address(uv: vec2<f32>) -> vec2<f32> {
@@ -645,7 +651,7 @@ fn fs_shadow(in: FsIn) {
 fn fs_puddle_glass_depth(in: FsIn) {
     var a = diffuse_border(textureSample(t_diffuse, s_diffuse, tex_address(in.uv)), in.uv).a;
     if (material.params.z > 0.5) {
-        let tm = sample_transmap(tex_address(in.uv - in.params.zw));
+        let tm = sample_transmap_at(in.uv - in.params.zw);
         a = select(1.0, tm.a, material.params.w > 0.5);
     }
     if (a * material.color.a * in.params.x < 0.002) {
@@ -669,7 +675,7 @@ fn fs_shadow_test(in: FsIn) {
     var a = select(diffuse_border(textureSample(t_diffuse, s_diffuse, duv), duv).a, 1.0, material.params.x > 1.5 && material.params.z < 0.5);
     if (material.params.z > 0.5) {
         // (the transmap stays where it is: [texcoordtransX/Y] only moves the diffuse stage)
-        let tm = sample_transmap(tex_address(in.uv - in.params.zw));
+        let tm = sample_transmap_at(in.uv - in.params.zw);
         a = select(1.0, tm.a, material.params.w > 0.5);
     }
     if (a < 0.5) {
@@ -702,7 +708,7 @@ fn fs_transmap_depth(in: FsIn) {
     if (material.params.z < 0.5) {
         discard;
     }
-    let tm = sample_transmap(tex_address(in.uv - in.params.zw));
+    let tm = sample_transmap_at(in.uv - in.params.zw);
     let a = select(1.0, tm.a, material.params.w > 0.5) * in.params.x;
     // Only what the colour pass will cover completely may hide what lies behind it: a
     // texel that is merely more opaque than not (the dimmer and anti-aliased dots of a
@@ -1723,7 +1729,7 @@ fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
         // is opaque, as D3D samples it: the WH UK AI cars' paint layer has a black 24-bit
         // `transmap_null.tga`, read as luminance the paint was invisible);
         // for terrain the map is the per-tile surface mask in tile space
-        let tm = sample_transmap(buv);
+        let tm = sample_transmap_at(in.uv - in.params.zw);
         tex.a = select(1.0, tm.a, material.params.w > 0.5);
         if (material.extra.x > 0.5 && material.params.x > 1.5) {
             // A painted ground layer. The brush mask is coarse (0.6-3 m per texel) and
