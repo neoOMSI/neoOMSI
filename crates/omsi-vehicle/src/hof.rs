@@ -273,18 +273,15 @@ pub fn depot_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// The depot file of `dir` called `name`: by its file name (without `.hof`) or its `[name]`.
+/// The depot file of `dir` called `name`: by its file name (with or without `.hof`) or its
+/// `[name]`.
 pub fn depot_in(dir: &Path, name: &str) -> Option<Hof> {
     let name = name.trim();
     if name.is_empty() {
         return None;
     }
     let files = depot_files(dir);
-    if let Some(f) = files.iter().find(|f| {
-        f.file_stem()
-            .map(|s| s.to_string_lossy().trim().eq_ignore_ascii_case(name))
-            .unwrap_or(false)
-    }) {
+    if let Some(f) = files.iter().find(|f| depot_file_matches(f, name)) {
         if let Ok(h) = Hof::load(f) {
             return Some(h);
         }
@@ -293,6 +290,17 @@ pub fn depot_in(dir: &Path, name: &str) -> Option<Hof> {
         .iter()
         .filter(|f| Hof::read_name(f).is_some_and(|n| n.trim().eq_ignore_ascii_case(name)))
         .find_map(|f| Hof::load(f).ok())
+}
+
+fn depot_file_matches(path: &Path, name: &str) -> bool {
+    [path.file_stem(), path.file_name()]
+        .into_iter()
+        .flatten()
+        .any(|part| {
+            part.to_string_lossy()
+                .trim()
+                .eq_ignore_ascii_case(name.trim())
+        })
 }
 
 /// The depot file called `name` in any vehicle folder of any content root (`Vehicles/*/`).
@@ -399,5 +407,13 @@ mod tests {
             h.info_busstop_lists[2],
             vec!["Hauptbahnhof", "Markt", "Bergerfuerth"]
         );
+    }
+
+    #[test]
+    fn depot_file_match_accepts_the_name_shown_in_the_vehicle_menu() {
+        let file = Path::new("Vehicles/Test/Bowdenham V5_Legacy.hof");
+        assert!(depot_file_matches(file, "Bowdenham V5_Legacy"));
+        assert!(depot_file_matches(file, "Bowdenham V5_Legacy.hof"));
+        assert!(!depot_file_matches(file, "Bowdenham V5"));
     }
 }
