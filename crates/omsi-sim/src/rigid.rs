@@ -1219,11 +1219,7 @@ impl RigidBody {
                     }
                 }
 
-                let contact_ground = if omsi_suspension() {
-                    road.below.map(|z| (z, 0.0, 0.0))
-                } else {
-                    found[i]
-                };
+                let contact_ground = found[i];
                 let Some((_, slope, contact_dx)) = contact_ground.filter(|_| tyre_f > 0.0) else {
                     // off the ground the wheel keeps its turning (a brake stops it)
                     let (drive_w, brake_w) = (
@@ -1260,9 +1256,7 @@ impl RigidBody {
                 // already leans with it and adds nothing; the tyre's static load does the
                 // pushing - the damping kick as the tyre meets the edge is taken by the
                 // wheel's own mass.
-                let step = if omsi_suspension() {
-                    Vec3::ZERO
-                } else {
+                let step = {
                     let normal = (Vec3::Z - fwd_h * slope).normalize();
                     let carried = tyre_static.min(w.max_force * 2.0);
                     (normal - up * normal.dot(up)) * (carried / normal.dot(up).max(0.3))
