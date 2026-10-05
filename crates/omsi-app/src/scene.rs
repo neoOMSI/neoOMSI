@@ -2985,7 +2985,7 @@ impl World {
             root: root.to_path_buf(),
             global,
             map_dir,
-            map_detail: crate::settings::map_detail(),
+            map_detail: crate::settings::map_detail(root),
             parklist: Mutex::new(HashMap::new()),
             mirror_textures: Mutex::new(Vec::new()),
             chrono_dirs: parking_lot::RwLock::new(chrono_dirs),

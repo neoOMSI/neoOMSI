@@ -345,6 +345,7 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("1000", "Unlimited"),
         ],
         "map_detail" => vec![
+            ("auto", "OMSI setting"),
             ("0", "Low"),
             ("1", "Normal"),
             ("2", "Full"),

@@ -143,8 +143,8 @@ pub struct Settings {
     /// The original's `performance_minObjSize`: objects smaller on the screen than this are
     /// not drawn (its presets say 0.013; 0.020 for slow machines, smaller keeps more).
     pub min_obj_size: f32,
-    /// Maximum saved map detail loaded (0..2; 255 shows all authored levels).
-    pub map_detail: u8,
+    /// Maximum saved map detail (0..255); -1 follows the OMSI installation setting.
+    pub map_detail: i16,
     /// The original's `performance_maxObjDist` (m): objects farther away are not drawn
     /// (0 = no limit). `auto` (-1) takes `view_distance` when the file sets one, else 900 m
     /// (the original's high presets).
@@ -380,7 +380,7 @@ impl Settings {
             momentary_gears: false,
             auto_shift: false,
             min_obj_size: 0.013,
-            map_detail: 2,
+            map_detail: -1,
             max_obj_dist: -1.0,
             max_fps: 0,
             chat: true,
@@ -616,7 +616,14 @@ impl Settings {
                 "auto_shift" => s.auto_shift = b(v),
                 "auto_ibis" => s.auto_ibis = b(v),
                 "map_detail" | "maxcomplexity_map" => {
-                    s.map_detail = v.parse::<u8>().unwrap_or(s.map_detail);
+                    s.map_detail = if v.eq_ignore_ascii_case("auto") {
+                        -1
+                    } else {
+                        v.parse::<i16>()
+                            .ok()
+                            .filter(|n| (-1..=255).contains(n))
+                            .unwrap_or(s.map_detail)
+                    };
                 }
                 "min_obj_size" | "performance_minobjsize" => {
                     s.min_obj_size = v
@@ -1033,7 +1040,14 @@ impl Settings {
             "pax_prefer_seats={}\n",
             self.pax_prefer_seats as u8
         ));
-        text.push_str(&format!("map_detail={}\n", self.map_detail));
+        text.push_str(&format!(
+            "map_detail={}\n",
+            if self.map_detail < 0 {
+                "auto".to_string()
+            } else {
+                self.map_detail.to_string()
+            }
+        ));
         text
     }
 
@@ -1130,11 +1144,21 @@ pub fn graphics_mode(v: &str) -> &'static str {
 
 /// Snapshot the selected map detail when opening a map; tile workers use this value
 /// throughout a session. Changing it in the UI takes effect on the next map load.
-pub fn map_detail() -> u8 {
+pub fn map_detail(root: &std::path::Path) -> u8 {
     let text = Settings::path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_default();
-    Settings::from_text(&text).map_detail
+    resolve_map_detail(&Settings::from_text(&text), root)
+}
+
+fn resolve_map_detail(settings: &Settings, root: &std::path::Path) -> u8 {
+    if settings.map_detail >= 0 {
+        settings.map_detail as u8
+    } else {
+        omsi_content::options::Options::load(&root.join("options.cfg"))
+            .map(|o| o.i32("maxcomplexity_map", 2).clamp(0, 255) as u8)
+            .unwrap_or(2)
+    }
 }
 
 /// `view_distance=<metres>` of the settings file: how far around the camera the map's tiles
@@ -1421,12 +1445,12 @@ mod map_detail_tests {
 
     #[test]
     fn map_complexity_alias_and_selection_round_trip() {
-        assert_eq!(Settings::from_text("").map_detail, 2);
+        assert_eq!(Settings::from_text("").map_detail, -1);
         for limit in [0, 1, 2, 255] {
             let settings = Settings::from_text(&format!("maxcomplexity_map={limit}\n"));
             assert_eq!(settings.map_detail, limit);
             assert_eq!(Settings::from_text(&settings.to_text()).map_detail, limit);
         }
-        assert_eq!(Settings::from_text("map_detail=-1\n").map_detail, 2);
+        assert_eq!(Settings::from_text("map_detail=bad\n").map_detail, -1);
     }
 }

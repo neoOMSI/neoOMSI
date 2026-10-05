@@ -1235,6 +1235,7 @@ fn graphics_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
         "Map complexity",
         "map_detail",
         &[
+            ("auto", "OMSI setting"),
             ("0", "Low"),
             ("1", "Normal"),
             ("2", "Full"),
