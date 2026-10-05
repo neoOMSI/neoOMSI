@@ -622,7 +622,12 @@ impl Humans {
         dt: f32,
     ) -> Want {
         let pos2 = self.people[i].position.truncate();
-        let pace = self.people[i].pace;
+        let person = &self.people[i];
+        let pace = if self.ik {
+            super::natural_pace(&person.ty.def, person.pace)
+        } else {
+            person.pace
+        };
         if walk.leg >= walk.legs.len() {
             return Want::stand(None, Activity::Stand);
         }

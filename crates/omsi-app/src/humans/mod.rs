@@ -54,6 +54,8 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod figures;
+use figures::{load_figures, slot_key};
 mod passengers;
 use passengers as pax;
 mod buses;
@@ -108,6 +110,7 @@ pub struct Eye {
     pub fwd: DVec3,
     /// Cosine of half the diagonal field of view, with a margin.
     pub cos_half: f64,
+    pub fov_y: f64,
 }
 
 impl Eye {
@@ -117,6 +120,7 @@ impl Eye {
         Eye {
             pos: cam.position,
             fwd: cam.forward().as_dvec3().normalize_or_zero(),
+            fov_y: (cam.fov_deg as f64).to_radians().max(1e-3),
             cos_half: (half_diag + 10f64.to_radians())
                 .min(89f64.to_radians())
                 .cos(),
@@ -170,6 +174,7 @@ pub struct Humans {
     network: PassengerNetwork,
     render: RenderResources,
     types: Vec<Arc<HumanType>>,
+    alternates: HashMap<String, Vec<Arc<HumanType>>>,
     pub people: Vec<Person>,
     rng: u64,
     next_id: u32,
@@ -328,46 +333,7 @@ impl Humans {
     }
 
     pub fn new(root: &Path) -> Humans {
-        let mut types = Vec::new();
-        // `Humans/<group>/*.hum` of every content root (an installed map or mod brings its
-        // own people); a file of the same group and name higher up replaces the stock one
-        let mut roots = omsi_cfg::content_dirs("Humans");
-        if roots.is_empty() {
-            roots.push(root.join("Humans"));
-        }
-        // (group, file name, path), sorted by group and name as the single folder used to be
-        let mut found: Vec<(std::ffi::OsString, std::ffi::OsString, std::path::PathBuf)> =
-            Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for r in &roots {
-            for (group, is_dir) in omsi_cfg::vfs::list_dir(r).unwrap_or_default() {
-                if !is_dir {
-                    continue;
-                }
-                let d = r.join(&group);
-                for (n, _) in omsi_cfg::vfs::list_dir(&d).unwrap_or_default() {
-                    let lower = n.to_string_lossy().to_ascii_lowercase();
-                    if !lower.ends_with(".hum") || lower.contains("driver") {
-                        continue;
-                    }
-                    if seen.insert(format!(
-                        "{}/{lower}",
-                        group.to_string_lossy().to_ascii_lowercase()
-                    )) {
-                        found.push((group.clone(), n.clone(), d.join(&n)));
-                    }
-                }
-            }
-        }
-        found.sort();
-        let files: Vec<std::path::PathBuf> = found.into_iter().map(|(_, _, p)| p).collect();
-        for f in files {
-            match HumanType::load(&f) {
-                Ok(t) => types.push(Arc::new(t)),
-                Err(e) => log::warn!("human {}: {e:#}", f.display()),
-            }
-        }
-        log::info!("humans: {} types", types.len());
+        let (types, alternates) = load_figures(root);
         if omsi_cfg::env::var_os("OMSI_DEBUG_HUMANS").is_some() {
             for t in &types {
                 let (mut lo, mut hi) = (f32::MAX, f32::MIN);
@@ -384,6 +350,7 @@ impl Humans {
             }
         }
         Humans {
+            alternates,
             avatars: Avatars {
                 avatars: HashMap::new(),
                 avatar_cmds: HashMap::new(),
@@ -430,6 +397,8 @@ impl Humans {
                 handed: Vec::new(),
             },
             render: RenderResources {
+                blob: None,
+                spare_blobs: Vec::new(),
                 hidden: Vec::new(),
                 gpu_textures: HashMap::new(),
                 gpu_materials: HashMap::new(),
@@ -747,42 +716,7 @@ impl Humans {
                 p.pos = position;
             }
         }
-        // Not a twin of somebody standing near: two of the same figure in the same clothes
-        // side by side at a stop was the first thing one noticed. A few tries for a figure
-        // nobody near wears (then at least other clothes); with few figures installed some
-        // repeat anyway.
-        let near: Vec<(usize, usize)> = self
-            .people
-            .iter()
-            .filter(|q| (q.position - position).truncate().length() < 30.0)
-            .map(|q| (Arc::as_ptr(&q.ty) as usize, q.variant))
-            .collect();
-        let mut choice: Option<(usize, usize)> = None;
-        for attempt in 0..10 {
-            let pick = (self.rand() % self.types.len() as u64) as usize;
-            let idx = kind.map(|k| k % self.types.len()).unwrap_or(pick);
-            let t = &self.types[idx];
-            let tk = Arc::as_ptr(t) as usize;
-            // the default clothes or one of the `.cti` variants, alike likely
-            let n_var = t.variants.len() as u64 + 1;
-            let v0 = (self.rand() % n_var) as usize;
-            // a clothing variant nobody near wears in this figure
-            let var = (0..n_var as usize)
-                .map(|k| (v0 + k) % n_var as usize)
-                .find(|v| !near.contains(&(tk, *v)));
-            let figure_free = !near.iter().any(|n| n.0 == tk);
-            match var {
-                Some(v) if figure_free || attempt >= 6 || kind.is_some() => {
-                    choice = Some((idx, v));
-                    break;
-                }
-                Some(v) if choice.is_none() => choice = Some((idx, v)),
-                None if choice.is_none() && attempt == 9 => choice = Some((idx, v0)),
-                _ => {}
-            }
-        }
-        let (idx, variant) = choice.unwrap_or((0, 0));
-        let ty = self.types[idx].clone();
+        let (ty, variant) = self.pick_figure(position, kind);
         let mut initial_seat = None;
         if self.ik {
             if let State::Pax(p) = &mut state {
@@ -801,13 +735,14 @@ impl Humans {
         }
         let tkey = Arc::as_ptr(&ty) as usize;
         let mut meshes = Vec::new();
-        for (mi, hm) in ty.meshes.iter().enumerate() {
+        for mi in 0..ty.mesh_count() {
+            let (level, hm) = ty.mesh_at(mi);
             let key = (tkey, variant, mi);
             // somebody of this type has gone: their mesh and instance
             if let Some((id, inst)) = self.render.spare.get_mut(&key).and_then(|v| v.pop()) {
                 self.render.hidden.retain(|h| *h != inst);
                 renderer.set_transform(scene, inst, position, Mat4::IDENTITY);
-                renderer.set_params(scene, inst, &[], true, &[]);
+                renderer.set_params(scene, inst, &[], level == 0, &[]);
                 meshes.push((id, inst));
                 continue;
             }
@@ -856,6 +791,9 @@ impl Humans {
             let id = renderer.add_mesh(scene, &hm.data);
             let inst = renderer.add_instance(scene, id, position, Mat4::IDENTITY, mats);
             renderer.set_omsi_caster(scene, inst, true);
+            if level > 0 {
+                renderer.set_params(scene, inst, &[], false, &[]);
+            }
             meshes.push((id, inst));
         }
         // walking pace 1.1 m/s +- 0.2, as Omsi.exe draws it for everybody (0x625758:
@@ -880,6 +818,9 @@ impl Humans {
         }
         self.people.push(Person {
             render: PersonRender {
+                level: 0,
+                blob: None,
+                blob_shown: false,
                 mirror_seat: None,
                 active_bones: None,
                 meshes,
@@ -1046,6 +987,26 @@ impl Humans {
             list.len(),
             path.display()
         );
+        for ty in &picked {
+            let key = slot_key(&ty.def.path);
+            let Some(parent) = ty.def.path.parent() else {
+                continue;
+            };
+            for (name, is_dir) in omsi_cfg::vfs::list_dir(parent).unwrap_or_default() {
+                let path = parent.join(name);
+                if is_dir || !figures::is_alternate(&path) || slot_key(&path) != key {
+                    continue;
+                }
+                let candidates = self.alternates.entry(key.clone()).or_default();
+                if candidates.iter().any(|t| t.def.path == path) {
+                    continue;
+                }
+                match HumanType::load(&path) {
+                    Ok(ty) => candidates.push(Arc::new(ty)),
+                    Err(error) => log::warn!("human {}: {error:#}", path.display()),
+                }
+            }
+        }
         self.types = picked;
     }
 
@@ -1418,4 +1379,30 @@ fn wrap_heading(h: f64) -> f64 {
 /// The angle between two headings (degrees, 0..180).
 fn angle_between(a: f64, b: f64) -> f64 {
     ((b - a + 540.0).rem_euclid(360.0) - 180.0).abs()
+}
+
+pub(super) fn person_hash(id: u32, n: u32) -> f64 {
+    let mut x = (id as u64) << 32 | n as u64;
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^= x >> 31;
+    (x >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Walking speed by age and height, `omsi` (Omsi.exe's 0.9..1.3 m/s draw) setting where in
+/// the range a person is: about 1.35 m/s for an adult, 1.0 at 75, 1.1 for a young child.
+pub(super) fn natural_pace(def: &omsi_content::Human, omsi: f64) -> f64 {
+    let age = def.age.map_or(40.0, |a| a as f64);
+    let by_age = match age {
+        a if a < 8.0 => 1.0,
+        a if a < 13.0 => 1.0 + (a - 8.0) * 0.06,
+        a if a < 60.0 => 1.35,
+        a => (1.35 - (a - 60.0) * 0.022).max(0.8),
+    };
+    let tall = if age >= 13.0 && def.height > 1.0 {
+        (def.height as f64 / 1.75).sqrt().clamp(0.9, 1.07)
+    } else {
+        1.0
+    };
+    by_age * tall * (1.0 + 0.5 * (omsi - 1.1))
 }

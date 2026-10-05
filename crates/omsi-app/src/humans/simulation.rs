@@ -200,6 +200,7 @@ impl Humans {
         // the passengers (sub_6ffc7c)
         let mut taken_ticket = false;
         let mut remove: Vec<usize> = Vec::new();
+        let passenger_origins: Vec<_> = self.people.iter().map(|p| p.position).collect();
         self.pax_frame(
             dt,
             world,
@@ -387,6 +388,7 @@ impl Humans {
                 self.carry(i, dt, &buses, &bus_ix, wants[i].face);
             }
         }
+        self.pax_room(dt, &passenger_origins, &buses, &bus_ix);
         self.animate(dt, world, &buses, &bus_ix);
         remove.sort_unstable();
         remove.dedup();

@@ -2,9 +2,53 @@ use super::*;
 
 const HUMAN_SHADOW_RANGE: f64 = 45.0;
 
+fn contact_shadow(renderer: &Renderer, scene: &mut Scene) -> (MeshId, MaterialId) {
+    const N: u32 = 64;
+    let mut rgba = Vec::with_capacity((N * N * 4) as usize);
+    let edge = (-4.5f32).exp();
+    for y in 0..N {
+        for x in 0..N {
+            let u = (x as f32 + 0.5) / N as f32 * 2.0 - 1.0;
+            let v = (y as f32 + 0.5) / N as f32 * 2.0 - 1.0;
+            let r2 = u * u + v * v;
+            let a = 0.6 * (((-4.5 * r2).exp() - edge) / (1.0 - edge)).max(0.0);
+            rgba.extend_from_slice(&[0, 0, 0, (a * 255.0).round() as u8]);
+        }
+    }
+    let tex = renderer.add_texture_data(
+        scene,
+        &omsi_texture::gpu::TextureData::from_image(omsi_texture::Image {
+            width: N,
+            height: N,
+            rgba,
+            has_alpha: true,
+        }),
+    );
+    let corners = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)];
+    let mesh = omsi_geometry::MeshData {
+        positions: corners.iter().map(|&(x, y)| Vec3::new(x, y, 0.0)).collect(),
+        normals: vec![Vec3::Z; 4],
+        uvs: corners
+            .iter()
+            .map(|&(x, y)| glam::Vec2::new(x + 0.5, 0.5 - y))
+            .collect(),
+        ranges: vec![(0, 6, 0)],
+        indices: vec![0, 2, 1, 0, 3, 2],
+        one_sided: false,
+    };
+    let mat = renderer.add_material(scene, Some(tex), AlphaMode::Blend, [1.0; 4], false);
+    // drawn with the ground, before the bus: writing depth, it hid the bus floor under it
+    renderer.set_no_z_write(scene, mat, true);
+    (renderer.add_mesh(scene, &mesh), mat)
+}
+
 impl Humans {
     /// Someone has gone: hidden, and their meshes kept for the next person of the type.
     pub(super) fn retire(&mut self, p: &Person) {
+        if let Some(blob) = p.render.blob {
+            self.render.hidden.push(blob);
+            self.render.spare_blobs.push(blob);
+        }
         let tkey = Arc::as_ptr(&p.ty) as usize;
         for (mi, m) in p.render.meshes.iter().enumerate() {
             self.render.hidden.push(m.1);
@@ -34,6 +78,18 @@ impl Humans {
         let mut due: Vec<bool> = Vec::with_capacity(self.people.len());
         for (k, p) in self.people.iter_mut().enumerate() {
             p.render.since_posed = p.render.since_posed.saturating_add(1);
+            let distance = (p.position - from).length();
+            let fov = eye.map_or(1.0, |e| e.fov_y);
+            let size = if distance <= p.ty.radius() as f64 {
+                f32::MAX
+            } else {
+                (2.0 * p.ty.radius() as f64 / (distance * fov)) as f32
+            };
+            let level = p.ty.level_at(size, Some(p.render.level));
+            if level != p.render.level {
+                p.render.level = level;
+                p.render.skinned = false;
+            }
             let d = p.position + DVec3::Z * 0.9 - from;
             let dist = d.length();
             let visible = match eye {
@@ -96,7 +152,11 @@ impl Humans {
                 if posed.ok {
                     posed.bones
                 } else {
-                    omsi_sim::human::slots_from_omsi(&anim.bones(&ty.omsi))
+                    omsi_sim::human::slots_from_omsi_grounded(
+                        &anim.bones(&ty.omsi),
+                        &ty.rig,
+                        anim.angles[0].abs() < 45.0 && anim.angles[1].abs() < 45.0,
+                    )
                 }
             } else {
                 omsi_sim::human::slots_from_omsi(&anim.bones(&ty.omsi))
@@ -106,15 +166,16 @@ impl Humans {
                 return;
             }
             // (the same bones as the mesh was made with: nothing to skin or upload)
-            if skins.len() == ty.meshes.len()
+            if skins.len() == ty.mesh_count()
                 && skin_bones
                     .as_ref()
                     .is_some_and(|b| b.iter().zip(&bones).all(|(a, c)| a.abs_diff_eq(*c, 1e-6)))
             {
                 return;
             }
-            skins.resize_with(ty.meshes.len(), Default::default);
-            for (k, m) in ty.meshes.iter().enumerate() {
+            skins.resize_with(ty.mesh_count(), Default::default);
+            for k in 0..ty.mesh_count() {
+                let (_, m) = ty.mesh_at(k);
                 let (pos, nrm) = &mut skins[k];
                 skin(m, &bones, pos, nrm);
             }
@@ -142,7 +203,7 @@ impl Humans {
                 if p.render.pose_changed || !p.render.skinned {
                     for (k, (id, _)) in p.render.meshes.iter().enumerate() {
                         if let Some((pos, nrm)) = p.render.skins.get(k) {
-                            renderer.update_mesh(scene, *id, pos, nrm, &p.ty.meshes[k].data.uvs);
+                            renderer.update_mesh(scene, *id, pos, nrm, &p.ty.mesh_at(k).1.data.uvs);
                         }
                     }
                 }
@@ -191,12 +252,60 @@ impl Humans {
                     go
                 );
             }
-            if let Some(hide) = self.avatars.avatar_hidden.get_mut(&p.id) {
-                // (the first-person view: the avatar's own body out of the picture; set
-                // every frame, the posing would show it again)
-                for (_, inst) in &p.render.meshes {
-                    renderer.set_params(scene, *inst, &[], !*hide, &[]);
+            let hidden = self
+                .avatars
+                .avatar_hidden
+                .get(&p.id)
+                .copied()
+                .unwrap_or(false);
+            let seated = if self.ik {
+                p.pose.sit_amount() > 0.1
+            } else {
+                p.anim.angles[0].abs() >= 45.0 || p.anim.angles[1].abs() >= 45.0
+            };
+            let show_blob = !hidden && !seated && (at - from).length() < 90.0;
+            if show_blob && p.render.blob.is_none() {
+                let instance = match self.render.spare_blobs.pop() {
+                    Some(instance) => {
+                        self.render.hidden.retain(|i| *i != instance);
+                        instance
+                    }
+                    None => {
+                        let (mesh, mat) = *self
+                            .render
+                            .blob
+                            .get_or_insert_with(|| contact_shadow(renderer, scene));
+                        renderer.add_shadow_blob_instance(
+                            scene,
+                            mesh,
+                            at,
+                            Mat4::IDENTITY,
+                            vec![mat],
+                        )
+                    }
+                };
+                p.render.blob = Some(instance);
+            }
+            if let Some(blob) = p.render.blob {
+                if show_blob != p.render.blob_shown {
+                    renderer.set_params(scene, blob, &[], show_blob, &[]);
+                    p.render.blob_shown = show_blob;
                 }
+                if show_blob {
+                    let size = p.ty.def.height.clamp(0.9, 2.1) / 1.75 * 0.6;
+                    let stretch = 1.0 + 0.3 * (p.vel.length() as f32 / 1.5).min(1.0);
+                    let scale = Mat4::from_scale(Vec3::new(size, size * 1.15 * stretch, 1.0));
+                    renderer.set_transform(scene, blob, at + DVec3::Z * 0.01, xf * scale);
+                }
+            }
+            for (k, (_, inst)) in p.render.meshes.iter().enumerate() {
+                renderer.set_params(
+                    scene,
+                    *inst,
+                    &[],
+                    !hidden && p.ty.mesh_at(k).0 == p.render.level,
+                    &[],
+                );
             }
             if let Some(t) = self.trace.as_mut() {
                 // OMSI_TRACE_PAX: where the mesh is drawn and where its ankles are, per frame
@@ -256,6 +365,8 @@ impl Humans {
 }
 
 pub(in crate::humans) struct RenderResources {
+    pub(in crate::humans) blob: Option<(MeshId, MaterialId)>,
+    pub(in crate::humans) spare_blobs: Vec<usize>,
     pub(in crate::humans) hidden: Vec<usize>,
     /// GPU side of the human types, shared by everyone of a type: textures by file and the
     /// materials of every (type, mesh) - each person used to upload its own copies - and
@@ -273,6 +384,9 @@ pub(in crate::humans) struct RenderResources {
 /// GPU instances, skin caches and eased drawing state never own passenger motion.
 pub(super) struct PersonRender {
     /// Host-provided place for a remote viewer; it never reserves or simulates a seat.
+    pub(super) level: usize,
+    pub(super) blob: Option<usize>,
+    pub(super) blob_shown: bool,
     pub(super) mirror_seat: Option<usize>,
     pub(super) active_bones: Option<[glam::Affine3A; omsi_sim::human::SLOTS]>,
     pub(super) meshes: Vec<(MeshId, usize)>,

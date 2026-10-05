@@ -1,5 +1,68 @@
 use super::*;
 
+impl Humans {
+    pub(in crate::humans) fn pax_room(
+        &mut self,
+        dt: f32,
+        origins: &[DVec3],
+        buses: &[BusNow],
+        bus_ix: &HashMap<BusId, usize>,
+    ) {
+        if !self.ik || dt <= 0.0 {
+            return;
+        }
+        let dt = dt as f64;
+        let mut walkers = Vec::new();
+        let mut movers = Vec::new();
+        for (i, person) in self.people.iter().enumerate() {
+            if person.place != Place::Ground || person.remote {
+                continue;
+            }
+            let mut walker = Walker::new(person.position.truncate(), BODY_OUTSIDE, 0);
+            walker.fixed = true;
+            walker.vel = person.vel;
+            if let State::Pax(pax) = &person.state {
+                let target = if pax.target_bus {
+                    pax.bus
+                        .and_then(|id| bus_ix.get(&id))
+                        .map_or(pax.target, |&k| buses[k].world(pax.target.as_vec3()))
+                } else {
+                    pax.target
+                };
+                if pax.inside.is_none()
+                    && pax.doorway.is_none()
+                    && matches!(
+                        pax.task,
+                        Task::ToBus | Task::WalkingToBus | Task::WalkingToBusstop
+                    )
+                    && pax.speed > 0.05
+                    && (target - pax.pos).truncate().length() >= 0.8
+                {
+                    walker.pos = origins[i].truncate();
+                    walker.want = (person.position.truncate() - walker.pos) / dt;
+                    walker.vel = walker.want;
+                    walker.give = 0.7;
+                    walker.fixed = false;
+                    movers.push((walkers.len(), i));
+                }
+            }
+            walkers.push(walker);
+        }
+        if movers.is_empty() {
+            return;
+        }
+        // Vehicle bounds include the entry itself; door routing owns that clearance.
+        crowd::step(&mut walkers, &[], &CrowdParams::default(), dt);
+        for (k, i) in movers {
+            let shift =
+                (walkers[k].pos - self.people[i].position.truncate()).clamp_length_max(0.8 * dt);
+            self.pax_mut(i).unwrap().pos += shift.extend(0.0);
+            self.people[i].position += shift.extend(0.0);
+            self.people[i].vel += shift / dt;
+        }
+    }
+}
+
 /// A point of the cabin's path network with its links in the file's order: the point at
 /// the other end, the points reached through it (sub_72410c), the link's index, its room
 /// height and step sounds.
@@ -211,7 +274,6 @@ impl Humans {
         }
         let bn_in = p0.inside.and_then(|b| bus_ix.get(&b).map(|k| &buses[*k]));
         let bn_t = p0.bus.and_then(|b| bus_ix.get(&b).map(|k| &buses[*k]));
-        // the path point walked to is the target
         let mut target = p0.target;
         let mut target_bus = p0.target_bus;
         // (kept as the target, +0x5bd: waiting short of the point, state 6, goes on facing
@@ -249,7 +311,6 @@ impl Humans {
                 }
             }
         }
-        // the target in the person's own frame
         let tgt = match (target_bus, p0.inside) {
             (true, Some(_)) => target,
             (true, None) => match bn_t {
@@ -322,6 +383,33 @@ impl Humans {
             (Obstruction::Clear, true, true)
         };
         let settling = self.ik && self.people[i].pose.settling();
+        let natural = self.ik;
+        let person = &self.people[i];
+        let mut pace = if natural && p0.inside.is_none() && p0.doorway.is_none() {
+            crate::humans::natural_pace(&person.ty.def, p0.walk_speed as f64) as f32
+        } else {
+            p0.walk_speed
+        };
+        if natural
+            && p0.inside.is_none()
+            && matches!(p0.task, Task::ToBus | Task::WalkingToBus)
+            && bn_t.is_some_and(|b| b.speed.abs() < 0.5)
+            && dist > 6.0
+        {
+            pace = match person.age {
+                age if age < 60.0 && crate::humans::person_hash(person.id, 3) < 0.75 => {
+                    let base = if age < 13.0 {
+                        2.4
+                    } else if age < 40.0 {
+                        3.0
+                    } else {
+                        2.5
+                    };
+                    base * (0.9 + 0.2 * crate::humans::person_hash(person.id, 4) as f32)
+                }
+                _ => pace * 1.15,
+            };
+        }
         let p = self.pax_mut(i).unwrap();
         // Inside a bus, people going opposite ways along the aisle or the stairs stood face to
         // face for good (the whole upper deck of a double-decker on its way out, the people
@@ -369,7 +457,7 @@ impl Humans {
                 slope = if h > 0.0 { d.z / h } else { f64::INFINITY };
             }
             p.speed_des = if block < Obstruction::Facing {
-                p.walk_speed
+                pace
             } else {
                 0.0
             };
@@ -397,14 +485,33 @@ impl Humans {
         if st == Movement::ToTarget && p.free_r && p.obstruction == Obstruction::Facing {
             dh = -1.745;
         }
+        if natural && st != Movement::Turning {
+            if st == Movement::ToTarget || (st == Movement::AlongPath && p.pt == p.pt_target) {
+                let left = if p.short { dist - 0.7 } else { dist };
+                p.speed_des = p.speed_des.min((4.0 * left.max(0.0)).sqrt() + 0.1);
+            }
+            p.speed_des *= (dh.cos() as f32).max(0.0);
+        }
         if st != Movement::Turning {
-            if dh.abs() > 1.0 {
+            if !natural && dh.abs() > 1.0 {
                 p.speed = 0.0;
             }
             let diff = p.speed_des - p.speed;
-            p.speed += diff.signum() * diff.abs().min(5.0 * dt_ms / 1000.0);
+            let rate = if !natural || block >= Obstruction::Facing {
+                5.0
+            } else if diff < 0.0 {
+                3.0
+            } else {
+                1.8
+            };
+            p.speed += diff.signum() * diff.abs().min(rate * dt);
         }
-        let turn = dh.signum() * dh.abs().min(dt_ms as f64 / 150.0);
+        let turn = dh.signum()
+            * if natural {
+                (dh.abs() * (dt as f64 / 0.12).min(1.0)).min(4.5 * dt as f64)
+            } else {
+                dh.abs().min(dt_ms as f64 / 150.0)
+            };
         p.yaw = wrap(p.yaw + turn);
         if st == Movement::Turning {
             return;

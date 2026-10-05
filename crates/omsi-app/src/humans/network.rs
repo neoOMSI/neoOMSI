@@ -276,28 +276,6 @@ impl Humans {
         }
     }
 
-    /// The human type of a file relative to a content root (`Humans/…/x.hum`).
-    pub fn type_by_file(&self, file: &str) -> Option<usize> {
-        let want = file.replace('\\', "/").to_ascii_lowercase();
-        self.types.iter().position(|t| {
-            t.def
-                .path
-                .to_string_lossy()
-                .replace('\\', "/")
-                .to_ascii_lowercase()
-                .ends_with(&want)
-        })
-    }
-
-    /// The file of a human type relative to its content root (`Humans/…/x.hum`).
-    pub fn type_file(ty: &HumanType) -> String {
-        let p = ty.def.path.to_string_lossy().replace('\\', "/");
-        match p.to_ascii_lowercase().rfind("/humans/") {
-            Some(k) => p[k + 1..].to_string(),
-            None => p,
-        }
-    }
-
     /// One of the host's people appears here (client).
     pub fn mirror_add(
         &mut self,

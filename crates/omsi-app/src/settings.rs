@@ -112,6 +112,7 @@ pub struct Settings {
     pub units: String,
     /// What passengers say: `all`, `tickets` (only what they ask for) or `off`.
     pub pax_voices: String,
+    pub pax_models: String,
     /// Procedural IK animations for passengers and pedestrians; false uses OMSI 2 style.
     pub pax_ik: bool,
     /// OMSI 2's route arrows over the road (as well as or instead of the navigator).
@@ -370,6 +371,7 @@ impl Settings {
             language: "ENG".into(),
             units: "metric".into(),
             pax_voices: "all".into(),
+            pax_models: "omsi".into(),
             pax_ik: true,
             nav_arrows: false,
             nav_ai: true,
@@ -610,6 +612,15 @@ impl Settings {
                     }
                 }
                 "pax_ik" | "ik" => s.pax_ik = b(v),
+                "pax_motion" => s.pax_ik = !v.eq_ignore_ascii_case("omsi"),
+                "pax_models" => {
+                    s.pax_models = if v.eq_ignore_ascii_case("realistic") {
+                        "realistic"
+                    } else {
+                        "omsi"
+                    }
+                    .into()
+                }
                 "nav_arrows" => s.nav_arrows = b(v),
                 "nav_ai" => s.nav_ai = b(v),
                 "nav_topbar" => s.nav_topbar = b(v),
@@ -1062,6 +1073,11 @@ impl Settings {
                 self.map_detail.to_string()
             }
         ));
+        text.push_str(&format!(
+            "pax_models={}\npax_motion={}\n",
+            self.pax_models,
+            if self.pax_ik { "natural" } else { "omsi" }
+        ));
         text.push_str(&format!("pax_ik={}\n", self.pax_ik as u8));
         text
     }
@@ -1358,6 +1374,22 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);
+    }
+
+    #[test]
+    fn passenger_motion_aliases_preserve_old_settings_and_round_trip() {
+        for (text, natural) in [
+            ("pax_motion=omsi", false),
+            ("pax_motion=natural", true),
+            ("pax_ik=0", false),
+            ("ik=1", true),
+        ] {
+            let settings = Settings::from_text(&format!("{text}\npax_models=realistic\n"));
+            assert_eq!(settings.pax_ik, natural);
+            assert_eq!(settings.pax_models, "realistic");
+            assert_eq!(Settings::from_text(&settings.to_text()), settings);
+        }
+        assert_eq!(Settings::from_text("pax_models=unknown").pax_models, "omsi");
     }
 
     #[test]

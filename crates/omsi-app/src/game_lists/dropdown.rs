@@ -413,6 +413,8 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("pay", "The driver sells the ticket"),
             ("walk", "Just walk in"),
         ],
+        "pax_models" => vec![("omsi", "OMSI 2"), ("realistic", "Realistic")],
+        "pax_motion" => vec![("natural", "Natural"), ("omsi", "OMSI 2")],
         "pax_voices" => vec![
             ("all", "Greetings and tickets"),
             ("tickets", "Only the ticket asked for"),

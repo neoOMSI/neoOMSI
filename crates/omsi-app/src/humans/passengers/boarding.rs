@@ -106,7 +106,15 @@ impl Humans {
                 if let (Some(s), Some(k)) = (stop, spot) {
                     self.free_spot(s, k);
                 }
-                let gather = stop.and_then(|s| self.stops.get(&s)).map(|s| s.gather);
+                let spread = if self.ik {
+                    1.8 * (2.0 * crate::humans::person_hash(self.people[i].id, 5) - 1.0)
+                } else {
+                    0.0
+                };
+                let gather = stop.and_then(|s| self.stops.get(&s)).map(|s| {
+                    let heading = s.heading.to_radians();
+                    s.gather + DVec3::new(heading.sin(), heading.cos(), 0.0) * spread
+                });
                 let p = self.pax_mut(i).unwrap();
                 p.ticket = fare.0;
                 p.ticket_id = fare.1;

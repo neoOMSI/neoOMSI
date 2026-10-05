@@ -23,6 +23,162 @@ fn noop_renderer() -> Renderer {
 }
 
 #[test]
+fn omsi_comparison_mode_preserves_the_original_rendered_bones() {
+    let f = Fixture::new();
+    let mut person = f.person(5, State::Standing, false);
+    for _ in 0..120 {
+        person.finish_animation(
+            false,
+            &omsi_sim::human_omsi::AnimInput {
+                kind: 1,
+                speed: 1.3,
+                moved: 1.3 / 60.0,
+                dt_ms: 1000.0 / 60.0,
+                room_height: 50.0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            person.render.active_bones.unwrap(),
+            omsi_sim::human::slots_from_omsi(&person.anim.bones(&person.ty.omsi))
+        );
+    }
+}
+
+#[test]
+fn switching_lod_uses_the_current_pose_and_recycles_contact_shadows() {
+    use omsi_sim::human::{HumanMesh, Influence, PoseInput, hand_slot};
+    let f = Fixture::new();
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mut ty = HumanType::load(&f.root.join("person.hum")).unwrap();
+    let data = omsi_geometry::MeshData {
+        positions: vec![
+            Vec3::new(0.7, 0.0, 1.4),
+            Vec3::new(0.8, 0.0, 1.4),
+            Vec3::new(0.7, 0.0, 1.5),
+        ],
+        normals: vec![Vec3::Y; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        ranges: vec![(0, 3, 0)],
+        ..Default::default()
+    };
+    let mesh = || HumanMesh {
+        data: data.clone(),
+        materials: vec![omsi_o3d::Material::default()],
+        bones: vec![(6, vec![(0, 1.0), (1, 1.0), (2, 1.0)])],
+        skin: vec![
+            Influence {
+                n: 1,
+                slot: [hand_slot(1) as u8, 0, 0, 0],
+                weight: [1.0, 0.0, 0.0, 0.0]
+            };
+            3
+        ],
+        alpha: vec![0],
+    };
+    ty.meshes = vec![mesh()];
+    ty.lower = vec![(1, mesh())];
+    ty.levels = vec![(0.25, f32::MAX), (0.0, 0.25)];
+    let mut h = Humans::new(&f.root);
+    h.types.push(Arc::new(ty));
+    h.map_humans_done = true;
+    h.ik = true;
+    let i = h
+        .spawn(
+            &f.world,
+            &renderer,
+            &mut scene,
+            DVec3::ZERO,
+            0.0,
+            State::Standing,
+        )
+        .unwrap();
+    let p = &mut h.people[i];
+    for _ in 0..60 {
+        p.pose.advance(
+            &p.ty.rig,
+            &PoseInput {
+                activity: Activity::Sit,
+                seat: Some(Vec3::new(0.0, -0.15, 0.5)),
+                ..Default::default()
+            },
+            0.1,
+        );
+    }
+    assert!(p.pose.sit_amount() > 0.98);
+    p.finish_animation(true, &Default::default());
+    for (distance, expected) in [(2.0, 0), (30.0, 1), (2.0, 0)] {
+        h.sync(&renderer, &mut scene, DVec3::new(0.0, -distance, 1.0));
+        let p = &h.people[i];
+        assert_eq!(p.render.level, expected);
+        for (k, (_, instance)) in p.render.meshes.iter().enumerate() {
+            assert_eq!(
+                scene.instances[*instance].visible,
+                p.ty.mesh_at(k).0 == expected
+            );
+            assert_ne!(p.render.skins[k].0, p.ty.mesh_at(k).1.data.positions);
+            assert!(p.render.skins[k].0.iter().all(|v| v.is_finite()));
+        }
+        assert!(p.render.blob.is_none());
+    }
+    h.people[i].pose = omsi_sim::human::Pose::new(1);
+    let rig = h.people[i].ty.rig.clone();
+    h.people[i].pose.advance(&rig, &PoseInput::default(), 0.1);
+    h.people[i].finish_animation(true, &Default::default());
+    h.sync(&renderer, &mut scene, DVec3::new(0.0, -2.0, 1.0));
+    let blob = h.people[i].render.blob.unwrap();
+    let retired = h.people.remove(i);
+    h.retire(&retired);
+    let i = h
+        .spawn(
+            &f.world,
+            &renderer,
+            &mut scene,
+            DVec3::ZERO,
+            0.0,
+            State::Standing,
+        )
+        .unwrap();
+    h.sync(&renderer, &mut scene, DVec3::new(0.0, -2.0, 1.0));
+    assert_eq!(h.people[i].render.blob, Some(blob));
+    assert!(scene.instances[blob].visible);
+}
+
+#[test]
+fn natural_ground_avoidance_keeps_roots_coherent_and_leaves_waiters_fixed() {
+    let f = Fixture::new();
+    for natural in [false, true] {
+        let mut h = Humans::new(&f.root);
+        h.ik = natural;
+        let mut moving = Pax::new(1.0);
+        moving.task = Task::ToBus;
+        moving.target = DVec3::new(0.0, 10.0, 0.0);
+        moving.speed = 1.0;
+        moving.pos = DVec3::new(0.0, 0.1, 0.0);
+        let mut person = f.person(1, State::Pax(Box::new(moving)), false);
+        person.position = DVec3::new(0.0, 0.1, 0.0);
+        person.vel = DVec2::Y;
+        h.people.push(person);
+        let mut waiter = f.person(2, State::Standing, false);
+        waiter.position = DVec3::new(0.1, 0.6, 0.0);
+        h.people.push(waiter);
+        let before = h.people[0].position;
+        let fixed = h.people[1].position;
+        h.pax_room(0.1, &[DVec3::ZERO, fixed], &[], &HashMap::new());
+        assert_eq!(h.people[0].position, h.pax(0).unwrap().pos);
+        assert_eq!(h.people[1].position, fixed);
+        assert!((h.people[0].position - before).length() <= 0.080001);
+        if natural {
+            assert_ne!(h.people[0].position, before);
+        } else {
+            assert_eq!(h.people[0].position, before);
+        }
+    }
+}
+
+#[test]
 fn overlapping_stops_cannot_spawn_people_in_the_same_physical_waiting_place() {
     let f = Fixture::new();
     let renderer = noop_renderer();
@@ -1170,6 +1326,9 @@ impl Fixture {
     fn person(&self, id: u32, state: State, remote: bool) -> Person {
         Person {
             render: PersonRender {
+                level: 0,
+                blob: None,
+                blob_shown: false,
                 mirror_seat: None,
                 active_bones: None,
                 meshes: vec![],

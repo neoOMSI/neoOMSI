@@ -29,10 +29,21 @@ impl Person {
     /// Cache the bones selected for this frame so footstep timing and drawing agree,
     /// including the existing invalid-procedural-pose fallback.
     pub(super) fn finish_animation(&mut self, procedural: bool, input: &AnimInput) -> bool {
-        let legacy = self.anim.advance(&self.ty.omsi, input);
         let posed = self.pose.bones(&self.ty.rig);
+        let input = AnimInput {
+            natural: procedural,
+            seed: self.id,
+            ..*input
+        };
+        let legacy = self.anim.advance(&self.ty.omsi, &input);
         self.render.active_bones = Some(if procedural && posed.ok {
             posed.bones
+        } else if procedural {
+            omsi_sim::human::slots_from_omsi_grounded(
+                &self.anim.bones(&self.ty.omsi),
+                &self.ty.rig,
+                self.anim.angles[0].abs() < 45.0 && self.anim.angles[1].abs() < 45.0,
+            )
         } else {
             omsi_sim::human::slots_from_omsi(&self.anim.bones(&self.ty.omsi))
         });
@@ -205,6 +216,8 @@ impl Humans {
                             look,
                             smooth: x.smooth,
                             dt_ms,
+                            natural: self.ik,
+                            seed: p.id,
                         },
                         pack,
                     )

@@ -282,17 +282,6 @@ impl Humans {
     }
 
     /// Put `ty` among the figures (once) and give its index: the player's own figure.
-    pub fn type_index(&mut self, ty: Arc<HumanType>) -> usize {
-        if let Some(i) = self
-            .types
-            .iter()
-            .position(|t| Arc::ptr_eq(t, &ty) || t.def.path == ty.def.path)
-        {
-            return i;
-        }
-        self.types.push(ty);
-        self.types.len() - 1
-    }
 
     /// Where the doors of vehicle `v` are now (outside, in the world), entries first.
     pub fn vehicle_doors(&mut self, v: &VehicleInstance) -> Vec<DVec3> {

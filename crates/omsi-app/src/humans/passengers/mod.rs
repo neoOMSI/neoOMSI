@@ -29,8 +29,8 @@
 //!   stands at a stop - and on along the pavement as a pedestrian.
 //! * `WalkingToBusstop` (6): back to a waiting place of the stop, then waiting again.
 //!
-//! People do not avoid each other: somebody within 0.6 m in front stops them (sub_626860),
-//! a person facing them makes them turn aside once, and that is all.
+//! Local blockers, door queues and bounded aisle recovery constrain cabin movement.
+//! Natural movement adds crowd steering outside the bus.
 
 use super::*;
 
