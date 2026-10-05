@@ -428,6 +428,8 @@ pub struct HumanType {
     pub model: Model,
     pub model_dir: PathBuf,
     pub meshes: Vec<HumanMesh>,
+    pub levels: Vec<(f32, f32)>,
+    pub lower: Vec<(usize, HumanMesh)>,
     pub joints: Joints,
     pub rig: Rig,
     /// Clothing variants: the `[item]`s of the `.cti` files in the model's `[CTC]` folder
@@ -450,9 +452,9 @@ impl HumanType {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_default();
-        let mut meshes = Vec::new();
-        if !model.lods.is_empty() {
-            for md in model.lod_meshes(0) {
+        let load_level = |level: usize| -> Result<Vec<HumanMesh>> {
+            let mut meshes = Vec::new();
+            for md in model.lod_meshes(level) {
                 let p = omsi_cfg::resolve_path(&model_dir, &md.file);
                 let m =
                     omsi_o3d::load_mesh(&p).with_context(|| format!("loading {}", p.display()))?;
@@ -499,18 +501,52 @@ impl HumanType {
                     alpha,
                 });
             }
+            Ok(meshes)
+        };
+        let mut order: Vec<usize> = (0..model.lods.len()).collect();
+        order.sort_by(|a, b| model.lods[*b].min_size.total_cmp(&model.lods[*a].min_size));
+        let mut meshes = match order.first() {
+            Some(&l) => load_level(l)?,
+            None => Vec::new(),
+        };
+        let mut levels = vec![(
+            order.first().map_or(0.0, |&l| model.lods[l].min_size),
+            f32::MAX,
+        )];
+        let mut lower = Vec::new();
+        for &l in order.iter().skip(1) {
+            let min = model.lods[l].min_size;
+            let posable = match load_level(l) {
+                Ok(ms) => Some(ms).filter(|ms| {
+                    !ms.is_empty()
+                        && ms
+                            .iter()
+                            .all(|m| m.bones.iter().any(|(id, _)| slot_of(*id).is_some()))
+                }),
+                Err(e) => {
+                    log::warn!("{}: LOD {l}: {e:#}", path.display());
+                    None
+                }
+            };
+            // a level that cannot be posed is left out: the one above it reaches down instead
+            let Some(ms) = posable else {
+                levels.last_mut().unwrap().0 = min;
+                continue;
+            };
+            let above = levels.last().unwrap().0;
+            levels.push((min, above));
+            lower.extend(ms.into_iter().map(|m| (levels.len() - 1, m)));
         }
+        levels.last_mut().unwrap().0 = 0.0;
         let mut joints = Joints::from_links(&def.links);
         fit_leg_joints(&mut joints, &meshes, path);
         fit_arm_joints(&mut joints, &meshes);
         let rig = Rig::measure(&def, &joints, &meshes);
-        for m in meshes.iter_mut() {
+        for m in meshes.iter_mut().chain(lower.iter_mut().map(|(_, m)| m)) {
             split_feet(m, &rig);
         }
-        // The `[CTC]` folder is relative to the .hum file's folder (`Texture\man02` is
-        // Humans/Other/texture/man02). An add-on that put that folder straight into its own
-        // folder instead (GSPNS: Humans/GSPNS/man02, with the default texture in it too) is
-        // found by the folder's last name; OMSI would show that person untextured.
+        // `[CTC]` is relative to the .hum's folder; an add-on that put it into its own folder (GSPNS)
+        // is found by the folder's last name
         let mut variants = Vec::new();
         let mut extra_dirs: Vec<PathBuf> = Vec::new();
         for c in &model.ctc {
@@ -552,9 +588,34 @@ impl HumanType {
             model,
             model_dir,
             meshes,
+            levels,
+            lower,
             variants,
             extra_dirs,
         })
+    }
+
+    pub fn mesh_count(&self) -> usize {
+        self.meshes.len() + self.lower.len()
+    }
+
+    pub fn mesh_at(&self, k: usize) -> (usize, &HumanMesh) {
+        match self.meshes.get(k) {
+            Some(m) => (0, m),
+            None => {
+                let (level, m) = &self.lower[k - self.meshes.len()];
+                (*level, m)
+            }
+        }
+    }
+
+    pub fn radius(&self) -> f32 {
+        self.rig.head_top.max(0.5)
+    }
+
+    /// `current` is kept until the size is 10 % beyond its range: no flicker at a boundary.
+    pub fn level_at(&self, size: f32, current: Option<usize>) -> usize {
+        level_at(&self.levels, size, current)
     }
 
     pub fn texture_dirs(&self, root: &Path) -> Vec<PathBuf> {
@@ -2502,9 +2563,190 @@ pub fn skin(
     }
 }
 
+fn level_at(levels: &[(f32, f32)], size: f32, current: Option<usize>) -> usize {
+    let holds = |(min, max): (f32, f32), margin: f32| {
+        size >= min * (1.0 - margin) && (max >= f32::MAX || size < max * (1.0 + margin))
+    };
+    if let Some(l) = current.filter(|l| levels.get(*l).is_some_and(|r| holds(*r, 0.1))) {
+        return l;
+    }
+    levels.iter().position(|r| holds(*r, 0.0)).unwrap_or(0)
+}
+
+fn grounded_foot(shin: &Affine3A, rig: &Rig, side: usize) -> Option<Affine3A> {
+    let rest = rig.ankle[side];
+    let ankle = shin.transform_point3(rest);
+    let fwd = shin.transform_vector3(Vec3::Y);
+    let flat = Vec2::new(fwd.x, fwd.y).length();
+    if !ankle.is_finite() || flat < 1e-4 {
+        return None;
+    }
+    let natural = fwd.z.atan2(flat);
+    // the lowest of heel and toe tip below the floor at pitch `a` (toes up for a > 0)
+    let sunk = |a: f32| {
+        let (s, c) = a.sin_cos();
+        let heel = rig.heel * s - rig.ankle_h * c;
+        let toe = rig.toe * s - rig.ankle_h * c;
+        rig.sole - (ankle.z + heel.min(toe))
+    };
+    if sunk(natural) <= 0.0 {
+        return None;
+    }
+    let pitch = if sunk(0.0) >= 0.0 {
+        0.0
+    } else {
+        let (mut ok, mut bad) = (0.0f32, natural);
+        for _ in 0..12 {
+            let mid = 0.5 * (ok + bad);
+            if sunk(mid) > 0.0 {
+                bad = mid;
+            } else {
+                ok = mid;
+            }
+        }
+        ok
+    };
+    let yaw = (-fwd.x).atan2(fwd.y);
+    Some(
+        Affine3A::from_translation(ankle)
+            * Affine3A::from_rotation_z(yaw)
+            * Affine3A::from_rotation_x(pitch)
+            * Affine3A::from_translation(-rest),
+    )
+}
+
+pub fn slots_from_omsi_grounded(
+    b: &[Affine3A; crate::human_omsi::BONES],
+    rig: &Rig,
+    standing: bool,
+) -> [Affine3A; SLOTS] {
+    let sunk = (0..2)
+        .map(|side| rig.sole + rig.ankle_h - b[SHIN[side]].transform_point3(rig.ankle[side]).z)
+        .fold(0.0f32, f32::max);
+    let lift = if standing && sunk < 0.2 {
+        Affine3A::from_translation(Vec3::Z * sunk)
+    } else {
+        Affine3A::IDENTITY
+    };
+    let mut out = [Affine3A::IDENTITY; SLOTS];
+    for (o, m) in out.iter_mut().zip(b) {
+        *o = lift * *m;
+    }
+    for side in 0..2 {
+        let shin = out[SHIN[side]];
+        let foot = grounded_foot(&shin, rig, side).unwrap_or(shin);
+        out[FOOT[side]] = foot;
+        out[TOE[side]] = foot;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_lods_load_in_size_order_and_skip_unweighted_rest_meshes() {
+        let root = std::env::temp_dir().join(format!("omsi-human-lods-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mesh = |weighted: bool| {
+            let mut bytes = vec![0x84, 0x19, 1, 0x17, 3, 0];
+            for x in [0.7f32, 0.8, 0.9] {
+                for value in [x, 0.0, 1.4, 0.0, 1.0, 0.0, 0.0, 0.0] {
+                    bytes.extend(value.to_le_bytes());
+                }
+            }
+            bytes.extend([0x49, 1, 0, 0, 0, 1, 0, 2, 0, 0, 0]);
+            if weighted {
+                bytes.extend([0x54, 1, 0, 6]);
+                bytes.extend(b"hand_r");
+                bytes.extend(3u16.to_le_bytes());
+                for vertex in 0..3u16 {
+                    bytes.extend(vertex.to_le_bytes());
+                    bytes.extend(1.0f32.to_le_bytes());
+                }
+            }
+            bytes
+        };
+        std::fs::write(root.join("high.o3d"), mesh(true)).unwrap();
+        std::fs::write(root.join("low.o3d"), mesh(true)).unwrap();
+        std::fs::write(root.join("static.o3d"), mesh(false)).unwrap();
+        std::fs::write(
+            root.join("human.hum"),
+            "[model]\nmodel.cfg\n[humangeom]\n0.18\n1.77\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("model.cfg"),
+            "[LOD]\n0\n[mesh]\nlow.o3d\n[LOD]\n0.3\n[mesh]\nhigh.o3d\n[LOD]\n0.1\n[mesh]\nstatic.o3d\n",
+        )
+        .unwrap();
+        let human = HumanType::load(&root.join("human.hum")).unwrap();
+        assert_eq!(human.levels, vec![(0.1, f32::MAX), (0.0, 0.1)]);
+        assert_eq!(human.mesh_count(), 2);
+        for k in 0..human.mesh_count() {
+            let (_, mesh) = human.mesh_at(k);
+            assert_eq!(mesh.skin.len(), 3);
+            assert!(mesh.skin.iter().all(|v| v.slot[0] as usize == HAND[1]));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_level_is_kept_until_the_size_is_well_past_its_range() {
+        let levels = [(0.25, f32::MAX), (0.08, 0.25), (0.0, 0.08)];
+        assert_eq!(level_at(&levels, f32::MAX, None), 0);
+        assert_eq!(level_at(&levels, 0.3, None), 0);
+        assert_eq!(level_at(&levels, 0.1, None), 1);
+        assert_eq!(level_at(&levels, 0.01, None), 2);
+        assert_eq!(level_at(&levels, 0.24, Some(0)), 0);
+        assert_eq!(level_at(&levels, 0.2, Some(0)), 1);
+        assert_eq!(level_at(&levels, 0.26, Some(1)), 1);
+        assert_eq!(level_at(&levels, 0.3, Some(1)), 0);
+        assert_eq!(level_at(&[(0.0, f32::MAX)], 0.5, Some(3)), 0);
+    }
+
+    #[test]
+    fn walking_feet_stay_out_of_the_floor() {
+        let def = Human {
+            links: vec![
+                0.09, 0.0, 0.92, 0.09, -0.03, 0.53, 0.02, 1.17, 0.18, -0.05, 1.43, 0.44, -0.04,
+                1.41, -0.02, 1.55, 0.69, -0.03, 1.43, 0.9, -0.03, 1.43,
+            ],
+            height: 1.78,
+            walk_param: [1.4, 66.0, 1.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        let rig = Rig::measure(&def, &Joints::from_links(&def.links), &[]);
+        let omsi = crate::human_omsi::OmsiRig::new(&def);
+        let mut anim = crate::human_omsi::OmsiAnim::default();
+        let mut worst = 0.0f32;
+        for _ in 0..240 {
+            anim.advance(
+                &omsi,
+                &crate::human_omsi::AnimInput {
+                    kind: 1,
+                    speed: 1.3,
+                    moved: 1.3 / 60.0,
+                    room_height: 50.0,
+                    dt_ms: 1000.0 / 60.0,
+                    ..Default::default()
+                },
+            );
+            let slots = slots_from_omsi_grounded(&anim.bones(&omsi), &rig, true);
+            for side in 0..2 {
+                for y in [rig.heel, rig.toe] {
+                    let p = rig.ankle[side] + Vec3::new(0.0, y, -rig.ankle_h);
+                    worst = worst.max(rig.sole - slots[FOOT[side]].transform_point3(p).z);
+                }
+            }
+        }
+        assert!(
+            worst < 0.005,
+            "a foot sank {:.1} cm into the floor",
+            worst * 100.0
+        );
+    }
 
     #[test]
     #[ignore = "requires OMSI_ROOT; writes target/human-head-audit.tsv"]

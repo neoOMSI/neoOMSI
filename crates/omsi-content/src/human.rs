@@ -15,6 +15,9 @@ pub struct Human {
     pub walk_param: [f32; 5],
     pub mass: f32,
     pub age: Option<i32>,
+    /// neoOMSI's own `[neo_weight]`: how often an alternate figure is drawn against the
+    /// type it stands in for (1 each); OMSI passes over the unknown keyword.
+    pub weight: Option<f32>,
 }
 
 impl Human {
@@ -39,6 +42,14 @@ impl Human {
                 "walk_param" => h.walk_param = r.f32s::<5>(),
                 "mass" => h.mass = r.f32(),
                 "age" => h.age = Some(r.i32()),
+                "neo_weight" => {
+                    h.weight = r
+                        .str()
+                        .replace(',', ".")
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|w| w.is_finite() && *w >= 0.0);
+                }
                 _ => {}
             }
         }

@@ -123,3 +123,17 @@ fn ticket_items_keep_texture_bindings_and_script_variables_in_file_order() {
         vec![("visible".into(), 1.0), ("price".into(), 2.5)]
     );
 }
+
+#[test]
+fn alternate_weights_accept_only_finite_nonnegative_values() {
+    for (value, expected) in [
+        ("0", Some(0.0)),
+        ("0.25", Some(0.25)),
+        ("-1", None),
+        ("NaN", None),
+        ("inf", None),
+    ] {
+        let input = Input::new("hum", &format!("[neo_weight]\n{value}\n"));
+        assert_eq!(Human::load(&input.0).unwrap().weight, expected);
+    }
+}

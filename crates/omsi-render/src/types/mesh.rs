@@ -127,34 +127,30 @@ impl Renderer {
         normals: &[Vec3],
         uvs: &[glam::Vec2],
     ) {
-        let vertices: Vec<Vertex> = positions
-            .iter()
-            .zip(normals)
-            .zip(uvs)
-            .map(|((p, n), uv)| Vertex {
-                pos: p.to_array(),
-                normal: n.to_array(),
-                uv: uv.to_array(),
-            })
-            .collect();
-        let bytes: &[u8] = bytemuck::cast_slice(&vertices);
         let m = &mut scene.meshes[id];
-        if (m.vertex_buf.size() as usize) < bytes.len() {
+        let n = positions.len().min(normals.len()).min(uvs.len());
+        if (m.vertex_buf.size() as usize) < n * std::mem::size_of::<Vertex>() {
             return;
+        }
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        let mut verts: Vec<Vertex> = Vec::with_capacity(n);
+        for ((p, nrm), uv) in positions.iter().zip(normals).zip(uvs) {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+            verts.push(Vertex {
+                pos: p.to_array(),
+                normal: nrm.to_array(),
+                uv: uv.to_array(),
+            });
         }
         {
             let mut pending = self.pending_meshes.borrow_mut();
             match pending.iter_mut().find(|(mid, _)| *mid == id) {
-                Some(e) => e.1 = bytes.to_vec(),
-                None => pending.push((id, bytes.to_vec())),
+                Some(e) => e.1 = verts,
+                None => pending.push((id, verts)),
             }
         }
-        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-        for p in positions {
-            lo = lo.min(*p);
-            hi = hi.max(*p);
-        }
-        if !positions.is_empty() {
+        if n > 0 {
             m.bounds_center = (lo + hi) * 0.5;
             m.bounds_radius = (hi - m.bounds_center).length();
             Self::mesh_bounds_changed(scene, id);
@@ -163,10 +159,11 @@ impl Renderer {
 
     pub(crate) fn flush_pending_meshes(&self, scene: &Scene, _encoder: &mut wgpu::CommandEncoder) {
         let pending = std::mem::take(&mut *self.pending_meshes.borrow_mut());
-        for (id, b) in &pending {
+        for (id, verts) in &pending {
             let Some(m) = scene.meshes.get(*id) else {
                 continue;
             };
+            let b: &[u8] = bytemuck::cast_slice(verts);
             let len = (b.len() as u64) / 4 * 4;
             if len == 0 || m.vertex_buf.size() < len {
                 continue;
