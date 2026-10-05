@@ -121,6 +121,9 @@ pub(crate) struct Args {
     /// Passengers at bus stops (window and offscreen).
     #[arg(long)]
     pub(crate) passengers: bool,
+    /// Procedural inverse kinematics (IK) for passengers and pedestrians.
+    #[arg(long)]
+    pub(crate) pax_ik: Option<bool>,
     /// Start with this many passengers already seated in the player's bus.
     #[arg(long, default_value_t = 0)]
     pub(crate) riders: usize,

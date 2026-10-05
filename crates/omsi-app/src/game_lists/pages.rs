@@ -144,6 +144,12 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
             "Passengers pay the exact fare",
             "No change is given at the cash desk",
         ),
+        switch_row(
+            app,
+            "pax_ik",
+            "Experimental passenger animations (IK)",
+            "Off uses OMSI 2-style passenger animations",
+        ),
         pick("boarding", "Boarding", "How passengers get their tickets"),
         switch_row(
             app,

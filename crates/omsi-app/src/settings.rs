@@ -112,6 +112,8 @@ pub struct Settings {
     pub units: String,
     /// What passengers say: `all`, `tickets` (only what they ask for) or `off`.
     pub pax_voices: String,
+    /// Procedural IK animations for passengers and pedestrians; false uses OMSI 2 style.
+    pub pax_ik: bool,
     /// OMSI 2's route arrows over the road (as well as or instead of the navigator).
     pub nav_arrows: bool,
     /// The other (AI) vehicles as dots on the navigator's and the city map.
@@ -368,6 +370,7 @@ impl Settings {
             language: "ENG".into(),
             units: "metric".into(),
             pax_voices: "all".into(),
+            pax_ik: true,
             nav_arrows: false,
             nav_ai: true,
             nav_topbar: true,
@@ -606,6 +609,7 @@ impl Settings {
                         _ => "all".into(),
                     }
                 }
+                "pax_ik" | "ik" => s.pax_ik = b(v),
                 "nav_arrows" => s.nav_arrows = b(v),
                 "nav_ai" => s.nav_ai = b(v),
                 "nav_topbar" => s.nav_topbar = b(v),
@@ -1058,6 +1062,7 @@ impl Settings {
                 self.map_detail.to_string()
             }
         ));
+        text.push_str(&format!("pax_ik={}\n", self.pax_ik as u8));
         text
     }
 

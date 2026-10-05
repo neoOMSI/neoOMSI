@@ -1963,6 +1963,14 @@ fn gameplay_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
         "Passengers prefer available seats",
         "pax_prefer_seats",
     );
+    toggle_setting(
+        ui,
+        s,
+        dirty,
+        c.row(),
+        "Procedural passenger animations (off: OMSI 2 style)",
+        "pax_ik",
+    );
     let mut pd = get(s, "pax_density").as_f64().unwrap_or(1.0) as f32;
     if ui.slider(
         "s-pax",
@@ -5537,6 +5545,7 @@ mod settings_tests {
             "s-board",
             "set-exact_fare",
             "set-pax_prefer_seats",
+            "set-pax_ik",
             "s-pax",
             "s-unsched",
             "s-maxsched",

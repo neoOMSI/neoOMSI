@@ -1,0 +1,330 @@
+use super::*;
+
+const HUMAN_SHADOW_RANGE: f64 = 45.0;
+
+impl Humans {
+    /// Someone has gone: hidden, and their meshes kept for the next person of the type.
+    pub(super) fn retire(&mut self, p: &Person) {
+        let tkey = Arc::as_ptr(&p.ty) as usize;
+        for (mi, m) in p.render.meshes.iter().enumerate() {
+            self.render.hidden.push(m.1);
+            self.render
+                .spare
+                .entry((tkey, p.variant, mi))
+                .or_default()
+                .push(*m);
+        }
+    }
+
+    /// Skin the people due for a new pose and push transforms to the renderer. Near people
+    /// are posed every frame, far ones every few frames and people out of view rarely; the
+    /// posing and skinning run in parallel.
+    pub fn sync(&mut self, renderer: &Renderer, scene: &mut Scene, camera: DVec3) {
+        for inst in self.render.hidden.drain(..) {
+            renderer.set_params(scene, inst, &[], false, &[]);
+        }
+        let started = std::time::Instant::now();
+        self.render.sync_frame = self.render.sync_frame.wrapping_add(1);
+        let eye = self.eye;
+        let from = eye.map(|e| e.pos).unwrap_or(camera);
+        // synced only now and then (offscreen snapshots): everybody is posed afresh
+        let all = self.time - self.last_sync > 0.12;
+        let sdt = (self.time - self.last_sync).clamp(0.0, 0.5) as f32;
+        self.last_sync = self.time;
+        let mut due: Vec<bool> = Vec::with_capacity(self.people.len());
+        for (k, p) in self.people.iter_mut().enumerate() {
+            p.render.since_posed = p.render.since_posed.saturating_add(1);
+            let d = p.position + DVec3::Z * 0.9 - from;
+            let dist = d.length();
+            let visible = match eye {
+                Some(e) => dist < 4.0 || d.dot(e.fwd) / dist.max(1e-3) > e.cos_half - 0.15,
+                None => true,
+            };
+            // everybody the eye can make out is posed every frame: a pose every other
+            // frame at 12-30 m moved walkers in steps and made planted feet shiver
+            // (within 30 m everybody, seen or not: the mirrors show the people behind the
+            // bus, who were posed every twelfth frame and moved in jerks there)
+            let every = if dist < 30.0 {
+                1
+            } else if !visible {
+                12
+            } else if dist < 45.0 {
+                1
+            } else if dist < 90.0 {
+                2
+            } else if dist < 160.0 {
+                3
+            } else {
+                6
+            };
+            let every = if p.vel.length_squared() < 1e-4 && dist > 20.0 {
+                every * 2
+            } else {
+                every
+            };
+            // spread the far ones over the frames
+            let turn = (self.render.sync_frame + k as u32) % every == 0;
+            due.push(
+                !p.render.skinned
+                    || all
+                    || (p.render.since_posed >= every
+                        && (turn || p.render.since_posed >= 2 * every)),
+            );
+        }
+        let n_due = due.iter().filter(|d| **d).count();
+        let ik = self.ik;
+        let pose_one = move |p: &mut Person| {
+            let Person {
+                anim,
+                pose,
+                ty,
+                render:
+                    PersonRender {
+                        skins,
+                        skin_bones,
+                        pose_changed,
+                        active_bones,
+                        ..
+                    },
+                ..
+            } = p;
+            *pose_changed = false;
+            let bones = if let Some(bones) = active_bones {
+                *bones
+            } else if ik {
+                let posed = pose.bones(&ty.rig);
+                if posed.ok {
+                    posed.bones
+                } else {
+                    omsi_sim::human::slots_from_omsi(&anim.bones(&ty.omsi))
+                }
+            } else {
+                omsi_sim::human::slots_from_omsi(&anim.bones(&ty.omsi))
+            };
+            if bones.iter().any(|b| !b.is_finite()) && !skins.is_empty() {
+                // keep the last good mesh (the rest pose would be the file's T-pose)
+                return;
+            }
+            // (the same bones as the mesh was made with: nothing to skin or upload)
+            if skins.len() == ty.meshes.len()
+                && skin_bones
+                    .as_ref()
+                    .is_some_and(|b| b.iter().zip(&bones).all(|(a, c)| a.abs_diff_eq(*c, 1e-6)))
+            {
+                return;
+            }
+            skins.resize_with(ty.meshes.len(), Default::default);
+            for (k, m) in ty.meshes.iter().enumerate() {
+                let (pos, nrm) = &mut skins[k];
+                skin(m, &bones, pos, nrm);
+            }
+            *skin_bones = Some(bones);
+            *pose_changed = true;
+        };
+        // a handful is quicker on this thread than handed to the pool
+        if n_due >= 8 {
+            self.people
+                .par_iter_mut()
+                .zip(due.par_iter())
+                .with_min_len(2)
+                .filter(|(_, go)| **go)
+                .for_each(|(p, _)| pose_one(p));
+        } else {
+            self.people
+                .iter_mut()
+                .zip(&due)
+                .filter(|(_, go)| **go)
+                .for_each(|(p, _)| pose_one(p));
+        }
+        let upload = std::time::Instant::now();
+        for (p, &go) in self.people.iter_mut().zip(&due) {
+            if go {
+                if p.render.pose_changed || !p.render.skinned {
+                    for (k, (id, _)) in p.render.meshes.iter().enumerate() {
+                        if let Some((pos, nrm)) = p.render.skins.get(k) {
+                            renderer.update_mesh(scene, *id, pos, nrm, &p.ty.meshes[k].data.uvs);
+                        }
+                    }
+                }
+                p.render.skinned = true;
+                p.render.since_posed = 0;
+                p.render.posed_at = (p.position, p.heading);
+            }
+            // riders go with their bus; on the ground a mesh not posed this frame goes on
+            // with the body too (left where it was posed, a far walker moved in jerks -
+            // its feet slide a few centimetres instead, which nobody sees at that distance)
+            let (at, heading) = match (p.puppet, p.place) {
+                (_, Place::Ground) if go => p.render.posed_at,
+                _ => (p.position, p.heading),
+            };
+            // (riders with the tilt of their floor)
+            let tilt = if matches!(p.place, Place::Bus(..)) {
+                p.tilt
+            } else {
+                Mat4::IDENTITY
+            };
+            let xf = tilt * Mat4::from_rotation_z((-heading).to_radians() as f32);
+            let lit_to = if matches!(p.place, Place::Bus(..)) {
+                p.interior
+            } else {
+                0.0
+            };
+            p.render.lit += (lit_to - p.render.lit) * (sdt / 0.4).min(1.0);
+            let casts = (p.position - from).length() < HUMAN_SHADOW_RANGE;
+            for (_, inst) in &p.render.meshes {
+                renderer.set_transform(scene, *inst, at, xf);
+                renderer.set_interior(scene, *inst, p.render.lit * 0.5);
+                renderer.set_cabin(scene, *inst, matches!(p.place, Place::Bus(..)));
+                renderer.set_casts_shadow(scene, *inst, casts);
+            }
+            if self.avatars.avatar_hidden.contains_key(&p.id)
+                && omsi_cfg::env::var_os("OMSI_DEBUG_FOOT").is_some()
+                && self.render.sync_frame % 30 == 0
+            {
+                log::info!(
+                    "avatar drawn at ({:.2}, {:.2}, {:.2}) heading {:.0} place {:?} go {}",
+                    at.x,
+                    at.y,
+                    at.z,
+                    heading,
+                    matches!(p.place, Place::Ground),
+                    go
+                );
+            }
+            if let Some(hide) = self.avatars.avatar_hidden.get_mut(&p.id) {
+                // (the first-person view: the avatar's own body out of the picture; set
+                // every frame, the posing would show it again)
+                for (_, inst) in &p.render.meshes {
+                    renderer.set_params(scene, *inst, &[], !*hide, &[]);
+                }
+            }
+            if let Some(t) = self.trace.as_mut() {
+                // OMSI_TRACE_PAX: where the mesh is drawn and where its ankles are, per frame
+                if (at - from).length() < 40.0 {
+                    use std::io::Write;
+                    let a = |k: usize| at + (xf.transform_vector3(p.render.ankles[k])).as_dvec3();
+                    let (l, r) = (a(0), a(1));
+                    let details = match &p.state {
+                        State::Pax(x) => format!(
+                            "{},{},{},{},{},{},{}",
+                            x.task.name(),
+                            x.movement,
+                            x.stop.map(|s| s.to_string()).unwrap_or_default(),
+                            x.door.map(|s| s.to_string()).unwrap_or_default(),
+                            x.pt.map(|s| s.to_string()).unwrap_or_default(),
+                            x.pt_target.map(|s| s.to_string()).unwrap_or_default(),
+                            p.why
+                        ),
+                        _ => format!(",,,,,,{}", p.why),
+                    };
+                    let _ = writeln!(
+                        t,
+                        "{:.4},{},{},{},{},{:.4},{:.4},{:.4},{:.2},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3},{}",
+                        self.time,
+                        p.id,
+                        p.state.name(),
+                        matches!(p.place, Place::Ground) as u8,
+                        go as u8,
+                        at.x,
+                        at.y,
+                        at.z,
+                        heading,
+                        l.x,
+                        l.y,
+                        l.z,
+                        r.x,
+                        r.y,
+                        r.z,
+                        p.vel.x,
+                        p.vel.y,
+                        details
+                    );
+                }
+            }
+        }
+        self.pose_stats.0 += 1;
+        self.pose_stats.1 += n_due;
+        self.pose_stats.2 += started.elapsed().as_secs_f64() * 1000.0;
+        self.pose_stats.3 += upload.elapsed().as_secs_f64() * 1000.0;
+    }
+
+    pub fn sync_money(&mut self, renderer: &Renderer, scene: &mut Scene, bus: &VehicleInstance) {
+        if let Some(m) = self.money.as_mut() {
+            m.sync(renderer, scene, bus);
+        }
+    }
+}
+
+pub(in crate::humans) struct RenderResources {
+    pub(in crate::humans) hidden: Vec<usize>,
+    /// GPU side of the human types, shared by everyone of a type: textures by file and the
+    /// materials of every (type, mesh) - each person used to upload its own copies - and
+    /// the meshes and instances of the people who have gone, taken over by the next person
+    /// of the same type (the skinned vertices are rewritten anyway). Without that every
+    /// passenger who ever appeared kept a mesh, its textures and materials on the GPU.
+    pub(in crate::humans) gpu_textures: HashMap<PathBuf, Option<omsi_render::TextureId>>,
+    /// Per (type, clothing variant, mesh): its materials, and the meshes and instances of
+    /// people who have gone, kept for the next person dressed alike.
+    pub(in crate::humans) gpu_materials: HashMap<(usize, usize, usize), Vec<MaterialId>>,
+    pub(in crate::humans) spare: HashMap<(usize, usize, usize), Vec<(MeshId, usize)>>,
+    pub(in crate::humans) sync_frame: u32,
+}
+
+/// GPU instances, skin caches and eased drawing state never own passenger motion.
+pub(super) struct PersonRender {
+    /// Host-provided place for a remote viewer; it never reserves or simulates a seat.
+    pub(super) mirror_seat: Option<usize>,
+    pub(super) active_bones: Option<[glam::Affine3A; omsi_sim::human::SLOTS]>,
+    pub(super) meshes: Vec<(MeshId, usize)>,
+    /// Skinned positions and normals, per mesh.
+    pub(super) skins: Vec<(Vec<Vec3>, Vec<Vec3>)>,
+    /// The bones the skins were made with, and whether this frame's pose changed them
+    /// (somebody standing still keeps the mesh of the frame before: skinning and uploading
+    /// thirty waiting people every frame took 2 ms of the frame at a bus station).
+    pub(super) skin_bones: Option<[glam::Affine3A; omsi_sim::human::SLOTS]>,
+    pub(super) pose_changed: bool,
+    /// The interior light as drawn: it follows `interior` over a moment (stepping through
+    /// the door, people lit up and went dark again from one frame to the next).
+    pub(super) lit: f32,
+    /// Whether this person has ever been posed (an unposed model is the file's T-pose).
+    pub(super) skinned: bool,
+    /// Frames since the last pose and where the person stood then (the
+    /// feet of a mesh posed a frame ago stay on the floor when it is drawn there).
+    pub(super) since_posed: u32,
+    pub(super) posed_at: (DVec3, f64),
+    /// Ankles of the last pose (model frame), for `OMSI_TRACE_PAX`.
+    pub(super) ankles: [Vec3; 2],
+}
+
+impl Humans {
+    /// Coins the driver handed out (from the host's GiveChangeCoin list) onto the change point.
+    pub fn give_change(
+        &mut self,
+        world: &World,
+        renderer: &Renderer,
+        scene: &mut Scene,
+        coins: &[usize],
+    ) {
+        if coins.is_empty() {
+            return;
+        }
+        let point = self.buses.player_cabin.as_ref().and_then(|c| {
+            c.data
+                .change_points
+                .first()
+                .or(c.data.money_points.first())
+                .cloned()
+        });
+        if let (Some(m), Some(pt)) = (self.money.as_mut(), point) {
+            m.place(
+                world,
+                renderer,
+                scene,
+                coins,
+                Vec3::from(pt.pos),
+                pt.var,
+                true,
+            );
+        }
+    }
+}

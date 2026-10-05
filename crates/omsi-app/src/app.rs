@@ -699,6 +699,8 @@ impl App {
                         "tickets" => 1,
                         _ => 0,
                     };
+                    let ik = self.args.pax_ik.unwrap_or(self.settings.pax_ik);
+                    h.set_ik(ik);
                     if let Some(p) = self.player.as_mut() {
                         h.set_cabin(&mut p.vehicle);
                         h.ticket_key = ticket_key_name(&self.args.root, &p.bindings);

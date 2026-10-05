@@ -161,6 +161,7 @@ pub(crate) fn run_offscreen(
         .unwrap_or_default();
     let mut humans_off = if args.passengers || args.lan_join.is_some() {
         let mut h = humans::Humans::new(&args.root);
+        h.set_ik(args.pax_ik.unwrap_or(settings.pax_ik));
         if let Some(seed) = lan_seed {
             h.set_lan_seed(seed);
         }

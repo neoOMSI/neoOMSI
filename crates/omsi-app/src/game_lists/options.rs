@@ -443,6 +443,7 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "nav_arrows" => app.navigator.as_ref().map_or(s.nav_arrows, |n| n.arrows),
         "exact_fare" => s.exact_fare,
         "pax_prefer_seats" => s.pax_prefer_seats,
+        "pax_ik" => app.args.pax_ik.unwrap_or(s.pax_ik),
         "collision_pedestrians" => s.collision_pedestrians,
         "ssao" => s.ssao,
         "detail_textures" => s.detail_textures,
@@ -688,6 +689,10 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         "pax_prefer_seats" => {
             app.settings.pax_prefer_seats = on;
             Some(("pax_prefer_seats", bit))
+        }
+        "pax_ik" => {
+            app.settings.pax_ik = on;
+            Some(("pax_ik", bit))
         }
         "collision_pedestrians" => {
             app.settings.collision_pedestrians = on;
