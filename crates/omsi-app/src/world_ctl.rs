@@ -851,6 +851,27 @@ impl App {
         if let Some(tr) = self.traffic.as_mut() {
             tr.day_time += secs;
         }
+        let mirrored = self.traffic.as_ref().is_some_and(|tr| tr.is_mirror());
+        if !mirrored {
+            let day_time = self.traffic.as_ref().map(|tr| tr.day_time);
+            if let (Some(w), Some(tr), Some(r), Some(scene)) = (
+                self.world.as_ref(),
+                self.traffic.as_mut(),
+                self.renderer.as_ref(),
+                self.scene.as_mut(),
+            ) {
+                tr.reset_population(w, r, scene);
+            }
+            if let (Some(s), Some(day_time)) = (self.schedule.as_mut(), day_time) {
+                s.refresh_time(&self.clock, day_time);
+            }
+            if let Some(h) = self.humans.as_mut() {
+                h.reset_population();
+            }
+            self.populate_t = 0.0;
+            self.humans_populate_t = 0.0;
+            self.first_populate = true;
+        }
         if let Some(p) = self.player.as_mut() {
             p.vehicle.host.clock = self.clock.clone();
         }

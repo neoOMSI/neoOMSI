@@ -3183,6 +3183,32 @@ impl Humans {
         }
     }
 
+    /// Clear time-dependent people while keeping riders on the player's bus and avatars.
+    pub fn reset_population(&mut self) {
+        let avatars: std::collections::HashSet<u32> = self.avatars.values().copied().collect();
+        for i in (0..self.people.len()).rev() {
+            let keep = matches!(self.people[i].place, Place::Bus(BusId::Player, _))
+                || avatars.contains(&self.people[i].id);
+            if !keep {
+                self.release(i);
+                let p = self.people.swap_remove(i);
+                self.retire(&p);
+            }
+        }
+        self.seats.retain(|bus, _| *bus == BusId::Player);
+        self.odometer.retain(|bus, _| *bus == BusId::Player);
+        self.pax_req.retain(|bus, _| *bus == BusId::Player);
+        self.last_door_open.retain(|bus, _| *bus == BusId::Player);
+        self.stops.clear();
+        self.ai_visits.clear();
+        self.holds.clear();
+        self.ai_requests.clear();
+        self.stop_targets = None;
+        self.stop_names = None;
+        self.started = false;
+        self.stroll_timer = 0.0;
+    }
+
     /// Everyone and everything that belongs to bus `from` belongs to `to` now.
     fn remap_bus(&mut self, from: BusId, to: BusId) {
         let fix = |b: &mut BusId| {

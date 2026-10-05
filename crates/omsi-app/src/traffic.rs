@@ -7367,6 +7367,36 @@ impl Traffic {
         true
     }
 
+    /// Remove the current traffic population before rebuilding it for a new clock time.
+    pub fn reset_population(
+        &mut self,
+        world: &World,
+        renderer: &Renderer,
+        scene: &mut Scene,
+    ) {
+        for c in std::mem::take(&mut self.cars) {
+            self.orphan_sounds.extend(c.sounds);
+            for r in std::iter::once(c.render).chain(c.trailer_renders) {
+                world.release_vehicle(renderer, scene, r);
+            }
+        }
+        for (_, mut driver) in std::mem::take(&mut self.drivers) {
+            driver.hide(renderer, scene);
+            self.driver_pool.push(driver);
+        }
+        self.dormant.clear();
+        self.removed_scheduled.clear();
+        self.stop_wishes = None;
+        self.framed_spawns.clear();
+        self.held_at_red = 0;
+        self.initial = true;
+        self.last_overtaker = None;
+        self.first_turner = None;
+        self.first_red = None;
+        self.first_yield = None;
+        self.first_passer = None;
+    }
+
     /// Obstacle boxes of all AI vehicles (for the player's collisions), with the rear
     /// sections of articulated buses and the trailers.
     pub fn boxes(&self, near: DVec3, radius: f64) -> Vec<omsi_sim::collision::Obb> {

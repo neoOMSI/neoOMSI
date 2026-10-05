@@ -960,6 +960,39 @@ impl Schedule {
         );
     }
 
+    /// Reset non-player timetable activity after the game clock is changed manually.
+    pub fn refresh_time(&mut self, clock: &omsi_sim::SimClock, day_time: f64) {
+        self.day = clock.date_code();
+        self.day_bits = day_bits(&self.calendar, clock);
+        self.next_day_bit = 1 << ((clock.weekday() + 1) % 7);
+        self.day_base = day_time - clock.time;
+        self.date_clock = clock.clone();
+        self.last_tod = clock.time;
+        for i in 0..self.departures.len() {
+            if !self.is_player_tour(i) {
+                self.departures[i].spawned = false;
+            }
+        }
+        self.pending.clear();
+        self.waiting.clear();
+        self.running.clear();
+        self.car_departure.clear();
+        self.retry_at.clear();
+        self.startup.clear();
+        self.later_layover.clear();
+        self.awaiting.clear();
+        self.shared_stand.clear();
+        self.purge_player_tour = false;
+        self.seen_generation = 0;
+        self.last_retry = f64::NEG_INFINITY;
+        self.fleet_check = f64::NEG_INFINITY;
+        self.boards_made = f64::NEG_INFINITY;
+        self.next_number = 0;
+        self.fleet_reading.clear();
+        self.fleet_ready.lock().clear();
+        self.assign_car_use();
+    }
+
     /// The timetable bus on the road that runs departure `k` (not one that has been let go).
     fn tour_bus(&self, k: usize, traffic: &Traffic) -> Option<usize> {
         traffic
