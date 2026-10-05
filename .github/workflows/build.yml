@@ -2,9 +2,9 @@ name: Build
 
 on:
   schedule:
-    # Local German time, DST-aware. Seven minutes past midnight avoids GitHub's
-    # documented top-of-hour scheduling peak while still being a midnight nightly.
-    - cron: '7 0 * * *'
+    # Early morning German time, DST-aware. Running at 03:37 avoids both
+    # midnight UTC traffic and top-of-hour GitHub Actions scheduling peaks.
+    - cron: '37 3 * * *'
       timezone: 'Europe/Berlin'
   push:
     tags: ['v*']
