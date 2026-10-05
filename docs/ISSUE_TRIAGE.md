@@ -76,7 +76,6 @@ When an issue occurs only with a specific add-on map or vehicle, evaluate whethe
 - If the issue is due to broken scripts or syntax errors that also fail in OMSI 2, it is outside project scope.
 - If OMSI 2 accommodates the mod via a discoverable fallback, document the general engine rule and label `scope: parity`.
 
-
 ## Feature requests
 
 During the parity-focused phase, features that deliberately diverge from or extend OMSI 2 are secondary to core engine parity. Feature requests may be tagged `scope: extension` and closed or held as discussions to keep the issue tracker focused on engine stabilization.

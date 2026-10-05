@@ -6,12 +6,12 @@ neoOMSI maintains a clear distinction between rapid development snapshots and st
 
 neoOMSI follows Semantic Versioning (`MAJOR.MINOR.PATCH`) during pre-1.0 development:
 
-| Type | Format | Example |
-| --- | --- | --- |
-| **Nightly** | `0.x.y-nightly.g<short-sha>` | `0.2.0-nightly.gdb76899d` |
-| **Release Candidate** | `v0.x.y-rc.<n>` | `v0.2.0-rc.1` |
-| **Stable** | `v0.x.y` | `v0.2.0` |
-| **Patch** | `v0.x.y+1` | `v0.2.1` |
+| Type                  | Format                       | Example                   |
+| --------------------- | ---------------------------- | ------------------------- |
+| **Nightly**           | `0.x.y-nightly.g<short-sha>` | `0.2.0-nightly.gdb76899d` |
+| **Release Candidate** | `v0.x.y-rc.<n>`              | `v0.2.0-rc.1`             |
+| **Stable**            | `v0.x.y`                     | `v0.2.0`                  |
+| **Patch**             | `v0.x.y+1`                   | `v0.2.1`                  |
 
 `1.0.0` is reserved for achieving comprehensive behavioral parity across the OMSI 2.2.032 baseline, not simply for elapsed development time.
 
@@ -66,12 +66,14 @@ When `main` reaches a stabilization milestone:
 ### 4. Tagging the Stable release
 
 Once an RC exhibits no known release blockers:
+
 - Tag the **exact commit** of the final accepted RC as the Stable release (e.g. `v0.4.0`).
 - Avoid pushing last-minute, unvalidated changes between the final RC and the release tag.
 
 ### 5. Patch releases
 
 If critical issues are identified post-release:
+
 - Fixes are applied directly to the corresponding `release/x.y` branch.
 - Tag and publish a patch release (e.g. `v0.4.1`).
 - Mirror the fix into `main`.

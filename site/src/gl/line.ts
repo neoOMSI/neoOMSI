@@ -1,16 +1,28 @@
-import { mountShader, reducedMotion, vec3 } from './shader'
-import type { Theme } from '../lib/theme'
+import { mountShader, reducedMotion, vec3 } from "./shader";
+import type { Theme } from "../lib/theme";
 
-const MAX_POINTS = 12
-const SPEED = 170
-const DWELL = 1.6
+const MAX_POINTS = 12;
+const SPEED = 170;
+const DWELL = 1.6;
 
 const PALETTES = {
-  dark: { bg: '#0f0f0f', route: '#fd6b00', stop: '#0f0f0f', ring: '#fafafa', bus: '#fafafa' },
-  light: { bg: '#ffffff', route: '#fd6b00', stop: '#ffffff', ring: '#18181b', bus: '#18181b' },
-}
+  dark: {
+    bg: "#0f0f0f",
+    route: "#fd6b00",
+    stop: "#0f0f0f",
+    ring: "#fafafa",
+    bus: "#fafafa",
+  },
+  light: {
+    bg: "#ffffff",
+    route: "#fd6b00",
+    stop: "#ffffff",
+    ring: "#18181b",
+    bus: "#18181b",
+  },
+};
 
-const fragment = (COLORS: (typeof PALETTES)['dark']) => `
+const fragment = (COLORS: (typeof PALETTES)["dark"]) => `
 uniform vec2 u_points[${MAX_POINTS}];
 uniform float u_count;
 uniform float u_active;
@@ -60,91 +72,111 @@ void main() {
 
   gl_FragColor = vec4(color, 1.0);
 }
-`
+`;
 
-export function mountLine(canvas: HTMLCanvasElement, anchors: HTMLElement[], theme: Theme): () => void {
-  const still = reducedMotion()
-  let active = -1
+export function mountLine(
+  canvas: HTMLCanvasElement,
+  anchors: HTMLElement[],
+  theme: Theme,
+): () => void {
+  const still = reducedMotion();
+  let active = -1;
 
   const path = (canvas: HTMLCanvasElement, dpr: number) => {
-    const box = canvas.getBoundingClientRect()
+    const box = canvas.getBoundingClientRect();
     const stops = anchors.map((a) => {
-      const r = a.getBoundingClientRect()
-      return [(r.left + r.width / 2 - box.left) * dpr, (r.top + r.height / 2 - box.top) * dpr] as [number, number]
-    })
-    const [first, last] = [stops[0], stops[stops.length - 1]]
-    const vertical = stops.length > 1 && Math.abs(stops[1][1] - first[1]) > Math.abs(stops[1][0] - first[0])
-    const w = box.width * dpr
-    const h = box.height * dpr
-    const start: [number, number] = vertical ? [first[0], 0] : [-30 * dpr, first[1]]
-    const end: [number, number] = vertical ? [last[0], h] : [w + 30 * dpr, last[1]]
-    return [start, ...stops, end]
-  }
+      const r = a.getBoundingClientRect();
+      return [
+        (r.left + r.width / 2 - box.left) * dpr,
+        (r.top + r.height / 2 - box.top) * dpr,
+      ] as [number, number];
+    });
+    const [first, last] = [stops[0], stops[stops.length - 1]];
+    const vertical =
+      stops.length > 1 &&
+      Math.abs(stops[1][1] - first[1]) > Math.abs(stops[1][0] - first[0]);
+    const w = box.width * dpr;
+    const h = box.height * dpr;
+    const start: [number, number] = vertical
+      ? [first[0], 0]
+      : [-30 * dpr, first[1]];
+    const end: [number, number] = vertical
+      ? [last[0], h]
+      : [w + 30 * dpr, last[1]];
+    return [start, ...stops, end];
+  };
 
   const busAt = (points: [number, number][], seconds: number, dpr: number) => {
-    const lengths = points.slice(1).map((p, i) => Math.hypot(p[0] - points[i][0], p[1] - points[i][1]))
-    const legs = lengths.map((l) => l / (SPEED * dpr))
-    const period = legs.reduce((a, b) => a + b, 0) + DWELL * (points.length - 2)
-    let t = still ? legs[0] : seconds % period
+    const lengths = points
+      .slice(1)
+      .map((p, i) => Math.hypot(p[0] - points[i][0], p[1] - points[i][1]));
+    const legs = lengths.map((l) => l / (SPEED * dpr));
+    const period =
+      legs.reduce((a, b) => a + b, 0) + DWELL * (points.length - 2);
+    let t = still ? legs[0] : seconds % period;
     for (let i = 0; i < lengths.length; i++) {
-      const [a, b] = [points[i], points[i + 1]]
-      const heading = [(b[0] - a[0]) / lengths[i], (b[1] - a[1]) / lengths[i]]
+      const [a, b] = [points[i], points[i + 1]];
+      const heading = [(b[0] - a[0]) / lengths[i], (b[1] - a[1]) / lengths[i]];
       if (t <= legs[i]) {
-        const k = t / legs[i]
-        return { x: a[0] + (b[0] - a[0]) * k, y: a[1] + (b[1] - a[1]) * k, heading }
+        const k = t / legs[i];
+        return {
+          x: a[0] + (b[0] - a[0]) * k,
+          y: a[1] + (b[1] - a[1]) * k,
+          heading,
+        };
       }
-      t -= legs[i]
+      t -= legs[i];
       if (i < lengths.length - 1) {
-        if (t <= DWELL) return { x: b[0], y: b[1], heading }
-        t -= DWELL
+        if (t <= DWELL) return { x: b[0], y: b[1], heading };
+        t -= DWELL;
       }
     }
-    const last = points[points.length - 1]
-    return { x: last[0], y: last[1], heading: [1, 0] }
-  }
+    const last = points[points.length - 1];
+    return { x: last[0], y: last[1], heading: [1, 0] };
+  };
 
-  const colors = PALETTES[theme]
+  const colors = PALETTES[theme];
   const shader = mountShader({
     canvas,
     fragment: fragment(colors),
     fallback: colors.bg,
     animate: true,
     resize(gl, uniform, { dpr }) {
-      gl.uniform1f(uniform('u_dpr'), dpr)
+      gl.uniform1f(uniform("u_dpr"), dpr);
     },
     frame(gl, uniform, seconds) {
-      const dpr = canvas.width / Math.max(canvas.clientWidth, 1)
-      const points = path(canvas, dpr)
-      const flat = new Float32Array(MAX_POINTS * 2)
-      points.slice(0, MAX_POINTS).forEach((p, i) => flat.set(p, i * 2))
-      gl.uniform2fv(uniform('u_points'), flat)
-      gl.uniform1f(uniform('u_count'), Math.min(points.length, MAX_POINTS))
-      gl.uniform1f(uniform('u_active'), active + 1)
-      const bus = busAt(points, seconds, dpr)
-      gl.uniform2f(uniform('u_bus'), bus.x, bus.y)
-      gl.uniform2f(uniform('u_heading'), bus.heading[0], bus.heading[1])
+      const dpr = canvas.width / Math.max(canvas.clientWidth, 1);
+      const points = path(canvas, dpr);
+      const flat = new Float32Array(MAX_POINTS * 2);
+      points.slice(0, MAX_POINTS).forEach((p, i) => flat.set(p, i * 2));
+      gl.uniform2fv(uniform("u_points"), flat);
+      gl.uniform1f(uniform("u_count"), Math.min(points.length, MAX_POINTS));
+      gl.uniform1f(uniform("u_active"), active + 1);
+      const bus = busAt(points, seconds, dpr);
+      gl.uniform2f(uniform("u_bus"), bus.x, bus.y);
+      gl.uniform2f(uniform("u_heading"), bus.heading[0], bus.heading[1]);
     },
-  })
+  });
 
-  const links = anchors.map((a) => a.closest('a')!)
+  const links = anchors.map((a) => a.closest("a")!);
   const listeners = links.map((link, i) => {
-    const enter = () => ((active = i), shader.draw())
-    const leave = () => ((active = -1), shader.draw())
-    link.addEventListener('pointerenter', enter)
-    link.addEventListener('pointerleave', leave)
-    link.addEventListener('focus', enter)
-    link.addEventListener('blur', leave)
+    const enter = () => ((active = i), shader.draw());
+    const leave = () => ((active = -1), shader.draw());
+    link.addEventListener("pointerenter", enter);
+    link.addEventListener("pointerleave", leave);
+    link.addEventListener("focus", enter);
+    link.addEventListener("blur", leave);
     return () => {
-      link.removeEventListener('pointerenter', enter)
-      link.removeEventListener('pointerleave', leave)
-      link.removeEventListener('focus', enter)
-      link.removeEventListener('blur', leave)
-    }
-  })
-  document.fonts.ready.then(() => shader.draw())
+      link.removeEventListener("pointerenter", enter);
+      link.removeEventListener("pointerleave", leave);
+      link.removeEventListener("focus", enter);
+      link.removeEventListener("blur", leave);
+    };
+  });
+  document.fonts.ready.then(() => shader.draw());
 
   return () => {
-    listeners.forEach((off) => off())
-    shader.destroy()
-  }
+    listeners.forEach((off) => off());
+    shader.destroy();
+  };
 }

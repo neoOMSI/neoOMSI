@@ -4,10 +4,10 @@ on:
   schedule:
     # Early morning German time, DST-aware. Running at 03:37 avoids both
     # midnight UTC traffic and top-of-hour GitHub Actions scheduling peaks.
-    - cron: '37 3 * * *'
-      timezone: 'Europe/Berlin'
+    - cron: "37 3 * * *"
+      timezone: "Europe/Berlin"
   push:
-    tags: ['v*']
+    tags: ["v*"]
   workflow_dispatch:
 
 concurrency:
@@ -97,7 +97,7 @@ jobs:
     env:
       neoomsi_VERSION: ${{ needs.version.outputs.version }}
       neoomsi_TARGET: ${{ matrix.target }}
-      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

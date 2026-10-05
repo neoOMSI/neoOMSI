@@ -30,30 +30,30 @@ neoOMSI targets the observable behavior of **OMSI 2.2.032** while replacing the 
 
 ### Goals
 
-* **Behavioral compatibility:** Existing OMSI 2 content should run without conversion, with behavior verified against OMSI 2.2.032 subsystem by subsystem.
-* **Modern engine:** 64-bit, multithreaded resource loading, modern graphics APIs, and no arbitrary memory limits.
-* **Clean-room implementation:** No proprietary OMSI source code, decompiled binaries, or game assets are included.
+- **Behavioral compatibility:** Existing OMSI 2 content should run without conversion, with behavior verified against OMSI 2.2.032 subsystem by subsystem.
+- **Modern engine:** 64-bit, multithreaded resource loading, modern graphics APIs, and no arbitrary memory limits.
+- **Clean-room implementation:** No proprietary OMSI source code, decompiled binaries, or game assets are included.
 
 ## Documentation
 
 Detailed documentation and policies live in dedicated guides:
 
-| Guide | Description |
-| --- | --- |
-| [User guide](docs/USER_GUIDE.md) | How to run neoOMSI, launcher options, and keybindings |
-| [Building](docs/BUILDING.md) | Platform prerequisites and build instructions |
-| [Contributing](CONTRIBUTING.md) | Guidelines for contributors and PR expectations |
-| [Development workflow](docs/DEVELOPMENT.md) | Branching model, review standards, and dev scripts |
-| [Compatibility](docs/COMPATIBILITY.md) | Parity policy and OMSI 2 verification process |
-| [Issue triage](docs/ISSUE_TRIAGE.md) | How issues are classified, verified, and triaged |
-| [Releasing & versioning](docs/RELEASING.md) | Release cadence, nightly builds, and versioning |
+| Guide                                       | Description                                           |
+| ------------------------------------------- | ----------------------------------------------------- |
+| [User guide](docs/USER_GUIDE.md)            | How to run neoOMSI, launcher options, and keybindings |
+| [Building](docs/BUILDING.md)                | Platform prerequisites and build instructions         |
+| [Contributing](CONTRIBUTING.md)             | Guidelines for contributors and PR expectations       |
+| [Development workflow](docs/DEVELOPMENT.md) | Branching model, review standards, and dev scripts    |
+| [Compatibility](docs/COMPATIBILITY.md)      | Parity policy and OMSI 2 verification process         |
+| [Issue triage](docs/ISSUE_TRIAGE.md)        | How issues are classified, verified, and triaged      |
+| [Releasing & versioning](docs/RELEASING.md) | Release cadence, nightly builds, and versioning       |
 
 ## Quickstart
 
 For local development and testing, run the fast development builds:
 
-* **Windows:** `scripts\dev-windows.cmd`
-* **macOS:** `sh scripts/dev-macos.sh`
+- **Windows:** `scripts\dev-windows.cmd`
+- **macOS:** `sh scripts/dev-macos.sh`
 
 Or compile with Cargo:
 

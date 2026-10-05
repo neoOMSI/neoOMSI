@@ -17,25 +17,25 @@ This guide covers running neoOMSI, essential keybindings, and common configurati
 
 ### Driving controls
 
-| Action | Primary Key | Alternative |
-| --- | --- | --- |
-| **Throttle** | `W` | `Up Arrow` |
-| **Brake** | `S` | `Down Arrow` |
-| **Steer Left** | `A` | `Left Arrow` |
-| **Steer Right** | `D` | `Right Arrow` |
-| **Mouse Steering** | `O` | Toggles mouse steering on/off |
+| Action             | Primary Key | Alternative                   |
+| ------------------ | ----------- | ----------------------------- |
+| **Throttle**       | `W`         | `Up Arrow`                    |
+| **Brake**          | `S`         | `Down Arrow`                  |
+| **Steer Left**     | `A`         | `Left Arrow`                  |
+| **Steer Right**    | `D`         | `Right Arrow`                 |
+| **Mouse Steering** | `O`         | Toggles mouse steering on/off |
 
 ### Vehicle operations
 
-| Action | Key | Description |
-| --- | --- | --- |
-| **Battery / Ignition** | `E` | Inserts key and powers electrical system |
-| **Engine Starter** | `M` | Hold to crank engine until started |
-| **Drive Gear (D)** | `Shift + D` | Engages forward drive |
-| **Neutral (N)** | `N` | Neutral gear |
-| **Reverse (R)** | `R` | Reverse gear |
-| **Parking Brake** | `.` | Toggles handbrake |
-| **Quick Autostart** | `Shift + U` | Automates the complete startup sequence |
+| Action                 | Key         | Description                              |
+| ---------------------- | ----------- | ---------------------------------------- |
+| **Battery / Ignition** | `E`         | Inserts key and powers electrical system |
+| **Engine Starter**     | `M`         | Hold to crank engine until started       |
+| **Drive Gear (D)**     | `Shift + D` | Engages forward drive                    |
+| **Neutral (N)**        | `N`         | Neutral gear                             |
+| **Reverse (R)**        | `R`         | Reverse gear                             |
+| **Parking Brake**      | `.`         | Toggles handbrake                        |
+| **Quick Autostart**    | `Shift + U` | Automates the complete startup sequence  |
 
 ### Camera & cockpit
 
@@ -85,15 +85,15 @@ You can launch directly into a specific scenario using command-line arguments:
 neoomsi --map maps/Grundorf/global.cfg --bus Vehicles/MAN_SD200/MAN_SD80.bus
 ```
 
-| Flag | Description |
-| --- | --- |
-| `--root <path>` | Path to the OMSI 2 base directory |
-| `--map <path>` | Path to the map global configuration (`maps/.../global.cfg`) |
-| `--bus <path>` | Vehicle file to load (`Vehicles/.../*.bus`) |
-| `--weather <path>` | Weather profile to apply (`Weather/*.owt`) |
-| `--time <HH:MM>` | Initial simulation time |
-| `--date <YYYY-MM-DD>` | Initial simulation date |
-| `--enhanced` | Enable enhanced physically based rendering mode |
+| Flag                  | Description                                                  |
+| --------------------- | ------------------------------------------------------------ |
+| `--root <path>`       | Path to the OMSI 2 base directory                            |
+| `--map <path>`        | Path to the map global configuration (`maps/.../global.cfg`) |
+| `--bus <path>`        | Vehicle file to load (`Vehicles/.../*.bus`)                  |
+| `--weather <path>`    | Weather profile to apply (`Weather/*.owt`)                   |
+| `--time <HH:MM>`      | Initial simulation time                                      |
+| `--date <YYYY-MM-DD>` | Initial simulation date                                      |
+| `--enhanced`          | Enable enhanced physically based rendering mode              |
 
 ## Modding
 

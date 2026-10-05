@@ -1,154 +1,201 @@
-import mark from '../../../assets/icons/app/neoomsi-512.png'
-import { DISCORD, DOCS, OPENOMSI, REPO, SITE } from '../content/data'
-import { esc, plain, render } from '../content/docs'
-import { FAQ, OPENOMSI_FAQ, type Question } from '../content/faq'
-import { absolute } from './routes'
+import mark from "../../../assets/icons/app/neoomsi-512.png";
+import { DISCORD, DOCS, OPENOMSI, REPO, SITE } from "../content/data";
+import { esc, plain, render } from "../content/docs";
+import { FAQ, OPENOMSI_FAQ, type Question } from "../content/faq";
+import { absolute } from "./routes";
 
 export interface Meta {
-  title: string
-  description: string
-  path: string
-  noindex?: boolean
-  type?: 'website' | 'article'
-  schema?: object[]
+  title: string;
+  description: string;
+  path: string;
+  noindex?: boolean;
+  type?: "website" | "article";
+  schema?: object[];
 }
 
-export const OG_IMAGE = { path: 'og.png', width: 1200, height: 630 }
+export const OG_IMAGE = { path: "og.png", width: 1200, height: 630 };
 
 export const DESCRIPTION =
-  'neoOMSI is an open-source reimplementation of OMSI 2 in Rust, targeting OMSI 2.2.032 compatibility on a modern 64-bit engine.'
+  "neoOMSI is an open-source reimplementation of OMSI 2 in Rust, targeting OMSI 2.2.032 compatibility on a modern 64-bit engine.";
 
 const ORG = {
-  '@type': 'Organization',
-  '@id': `${SITE}#org`,
-  name: 'neoOMSI',
+  "@type": "Organization",
+  "@id": `${SITE}#org`,
+  name: "neoOMSI",
   url: SITE,
   logo: new URL(mark, SITE).href,
   sameAs: [`https://github.com/${REPO}`, DISCORD],
-}
+};
 
-const WEBSITE = { '@type': 'WebSite', '@id': `${SITE}#website`, name: 'neoOMSI', url: SITE, inLanguage: 'en', publisher: { '@id': ORG['@id'] } }
+const WEBSITE = {
+  "@type": "WebSite",
+  "@id": `${SITE}#website`,
+  name: "neoOMSI",
+  url: SITE,
+  inLanguage: "en",
+  publisher: { "@id": ORG["@id"] },
+};
 
 const APP = {
-  '@type': 'SoftwareApplication',
-  '@id': `${SITE}#app`,
-  name: 'neoOMSI',
+  "@type": "SoftwareApplication",
+  "@id": `${SITE}#app`,
+  name: "neoOMSI",
   description: DESCRIPTION,
   url: SITE,
-  downloadUrl: absolute('/download/'),
+  downloadUrl: absolute("/download/"),
   image: absolute(OG_IMAGE.path),
-  applicationCategory: 'GameApplication',
-  applicationSubCategory: 'Bus simulator',
-  operatingSystem: 'Windows 10, Windows 11, macOS 11, Linux, Android 8.0',
-  softwareRequirements: 'An installed copy of OMSI 2',
-  programmingLanguage: 'Rust',
+  applicationCategory: "GameApplication",
+  applicationSubCategory: "Bus simulator",
+  operatingSystem: "Windows 10, Windows 11, macOS 11, Linux, Android 8.0",
+  softwareRequirements: "An installed copy of OMSI 2",
+  programmingLanguage: "Rust",
   isAccessibleForFree: true,
-  license: 'https://www.gnu.org/licenses/gpl-3.0.html',
-  offers: { '@type': 'Offer', price: '0', priceCurrency: 'EUR' },
-  publisher: { '@id': ORG['@id'] },
-  isBasedOn: { '@type': 'SoftwareSourceCode', name: 'openOMSI', codeRepository: OPENOMSI.repo, license: 'https://opensource.org/license/mit' },
-}
+  license: "https://www.gnu.org/licenses/gpl-3.0.html",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "EUR" },
+  publisher: { "@id": ORG["@id"] },
+  isBasedOn: {
+    "@type": "SoftwareSourceCode",
+    name: "openOMSI",
+    codeRepository: OPENOMSI.repo,
+    license: "https://opensource.org/license/mit",
+  },
+};
 
 const faqPage = (list: Question[]) => ({
-  '@type': 'FAQPage',
-  mainEntity: list.map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
-})
+  "@type": "FAQPage",
+  mainEntity: list.map(({ q, a }) => ({
+    "@type": "Question",
+    name: q,
+    acceptedAnswer: { "@type": "Answer", text: a },
+  })),
+});
 
 const crumbs = (...items: [string, string][]) => ({
-  '@type': 'BreadcrumbList',
-  itemListElement: [['neoOMSI', '/'] as [string, string], ...items].map(([name, path], i) => ({ '@type': 'ListItem', position: i + 1, name, item: absolute(path) })),
-})
+  "@type": "BreadcrumbList",
+  itemListElement: [["neoOMSI", "/"] as [string, string], ...items].map(
+    ([name, path], i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name,
+      item: absolute(path),
+    }),
+  ),
+});
 
-const clip = (text: string, n = 158) => (text.length <= n ? text : `${text.slice(0, text.lastIndexOf(' ', n - 3))}...`)
+const clip = (text: string, n = 158) =>
+  text.length <= n ? text : `${text.slice(0, text.lastIndexOf(" ", n - 3))}...`;
 
-const STATIC: Record<string, Omit<Meta, 'path'>> = {
-  '/': {
-    title: 'neoOMSI: OMSI 2 reimplemented in Rust',
+const STATIC: Record<string, Omit<Meta, "path">> = {
+  "/": {
+    title: "neoOMSI: OMSI 2 reimplemented in Rust",
     description: DESCRIPTION,
     schema: [APP],
   },
-  '/download': {
-    title: 'Download neoOMSI for Windows, macOS and Linux',
+  "/download": {
+    title: "Download neoOMSI for Windows, macOS and Linux",
     description:
-      'Download the latest neoOMSI builds for Windows, macOS or Linux, or the dedicated server. Android is supported through local builds. Requires an installed copy of OMSI 2.',
-    schema: [APP, crumbs(['Download', '/download/'])],
+      "Download the latest neoOMSI builds for Windows, macOS or Linux, or the dedicated server. Android is supported through local builds. Requires an installed copy of OMSI 2.",
+    schema: [APP, crumbs(["Download", "/download/"])],
   },
-  '/releases': {
-    title: 'neoOMSI releases and changelog',
-    description: 'Every neoOMSI release and what changed, newest first, with packaged downloads for Windows, macOS, Linux and the dedicated server.',
-    schema: [crumbs(['Releases', '/releases/'])],
-  },
-  '/issues': {
-    title: 'neoOMSI issues: bugs and feature requests',
-    description: 'Open and closed neoOMSI bug reports and feature requests, tracked on GitHub. See what is being worked on or report a problem with a map, bus or mod.',
-    schema: [crumbs(['Issues', '/issues/'])],
-  },
-  '/faq': {
-    title: 'neoOMSI FAQ: OMSI 2 on Mac, Linux and Android, mods and more',
+  "/releases": {
+    title: "neoOMSI releases and changelog",
     description:
-      'Answers about neoOMSI: whether you need OMSI 2, playing OMSI 2 on Mac, Linux and Android, mods, multiplayer, memory limits and how neoOMSI differs from openOMSI.',
-    schema: [faqPage(FAQ), crumbs(['FAQ', '/faq/'])],
+      "Every neoOMSI release and what changed, newest first, with packaged downloads for Windows, macOS, Linux and the dedicated server.",
+    schema: [crumbs(["Releases", "/releases/"])],
   },
-  '/openomsi': {
-    title: 'neoOMSI vs openOMSI: how the two OMSI 2 recreations compare',
+  "/issues": {
+    title: "neoOMSI issues: bugs and feature requests",
     description:
-      'Compare neoOMSI and openOMSI by project goals, compatibility focus and release model, and see how to switch between them.',
-    type: 'article',
-    schema: [faqPage(OPENOMSI_FAQ), crumbs(['neoOMSI vs openOMSI', '/openomsi/'])],
+      "Open and closed neoOMSI bug reports and feature requests, tracked on GitHub. See what is being worked on or report a problem with a map, bus or mod.",
+    schema: [crumbs(["Issues", "/issues/"])],
   },
-}
+  "/faq": {
+    title: "neoOMSI FAQ: OMSI 2 on Mac, Linux and Android, mods and more",
+    description:
+      "Answers about neoOMSI: whether you need OMSI 2, playing OMSI 2 on Mac, Linux and Android, mods, multiplayer, memory limits and how neoOMSI differs from openOMSI.",
+    schema: [faqPage(FAQ), crumbs(["FAQ", "/faq/"])],
+  },
+  "/openomsi": {
+    title: "neoOMSI vs openOMSI: how the two OMSI 2 recreations compare",
+    description:
+      "Compare neoOMSI and openOMSI by project goals, compatibility focus and release model, and see how to switch between them.",
+    type: "article",
+    schema: [
+      faqPage(OPENOMSI_FAQ),
+      crumbs(["neoOMSI vs openOMSI", "/openomsi/"]),
+    ],
+  },
+};
 
-export const PAGES = [...Object.keys(STATIC), ...DOCS.map((d) => `/docs/${d.slug}`)]
+export const PAGES = [
+  ...Object.keys(STATIC),
+  ...DOCS.map((d) => `/docs/${d.slug}`),
+];
 
 export function meta(path: string): Meta {
-  const page = STATIC[path]
-  if (page) return { ...page, path }
+  const page = STATIC[path];
+  if (page) return { ...page, path };
 
-  const slug = path.match(/^\/docs\/([\w-]+)$/)?.[1]
-  const entry = DOCS.find((d) => d.slug === slug)
-  const doc = entry && render(entry.file)
+  const slug = path.match(/^\/docs\/([\w-]+)$/)?.[1];
+  const entry = DOCS.find((d) => d.slug === slug);
+  const doc = entry && render(entry.file);
   if (entry && doc) {
-    const description = clip(plain(doc.lead) || `${doc.title} for neoOMSI, the open-source OMSI 2 recreation in Rust.`)
+    const description = clip(
+      plain(doc.lead) ||
+        `${doc.title} for neoOMSI, the open-source OMSI 2 recreation in Rust.`,
+    );
     return {
       title: `${doc.title}: neoOMSI docs`,
       description,
       path,
-      type: 'article',
+      type: "article",
       schema: [
         {
-          '@type': 'TechArticle',
+          "@type": "TechArticle",
           headline: doc.title,
           description,
           url: absolute(`${path}/`),
           image: absolute(OG_IMAGE.path),
-          inLanguage: 'en',
-          isPartOf: { '@id': WEBSITE['@id'] },
-          publisher: { '@id': ORG['@id'] },
-          about: { '@id': APP['@id'] },
+          inLanguage: "en",
+          isPartOf: { "@id": WEBSITE["@id"] },
+          publisher: { "@id": ORG["@id"] },
+          about: { "@id": APP["@id"] },
         },
-        crumbs(['Docs', '/docs/user-guide/'], [doc.title, `${path}/`]),
+        crumbs(["Docs", "/docs/user-guide/"], [doc.title, `${path}/`]),
       ],
-    }
+    };
   }
 
-  const issue = path.match(/^\/issues\/(\d+)$/)?.[1]
-  if (issue) return { title: `Issue #${issue} | neoOMSI`, description: STATIC['/issues'].description, path, noindex: true }
+  const issue = path.match(/^\/issues\/(\d+)$/)?.[1];
+  if (issue)
+    return {
+      title: `Issue #${issue} | neoOMSI`,
+      description: STATIC["/issues"].description,
+      path,
+      noindex: true,
+    };
 
-  return { title: 'Page not found | neoOMSI', description: DESCRIPTION, path, noindex: true }
+  return {
+    title: "Page not found | neoOMSI",
+    description: DESCRIPTION,
+    path,
+    noindex: true,
+  };
 }
 
-const canonical = (path: string) => absolute(path === '/' || /\/\d+$/.test(path) ? path : `${path}/`)
+const canonical = (path: string) =>
+  absolute(path === "/" || /\/\d+$/.test(path) ? path : `${path}/`);
 
-const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c')
+const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c");
 
 export function headTags(m: Meta) {
-  const url = canonical(m.path)
-  const image = absolute(OG_IMAGE.path)
+  const url = canonical(m.path);
+  const image = absolute(OG_IMAGE.path);
   const tags = [
     `<title>${esc(m.title)}</title>`,
     `<meta name="description" content="${esc(m.description)}">`,
-    `<meta name="robots" content="${m.noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large, max-snippet:-1'}">`,
-    `<meta property="og:type" content="${m.type ?? 'website'}">`,
+    `<meta name="robots" content="${m.noindex ? "noindex, follow" : "index, follow, max-image-preview:large, max-snippet:-1"}">`,
+    `<meta property="og:type" content="${m.type ?? "website"}">`,
     '<meta property="og:site_name" content="neoOMSI">',
     '<meta property="og:locale" content="en_US">',
     `<meta property="og:title" content="${esc(m.title)}">`,
@@ -162,9 +209,11 @@ export function headTags(m: Meta) {
     `<meta name="twitter:title" content="${esc(m.title)}">`,
     `<meta name="twitter:description" content="${esc(m.description)}">`,
     `<meta name="twitter:image" content="${image}">`,
-  ]
-  if (!m.noindex) tags.splice(3, 0, `<link rel="canonical" href="${url}">`)
+  ];
+  if (!m.noindex) tags.splice(3, 0, `<link rel="canonical" href="${url}">`);
   if (!m.noindex)
-    tags.push(`<script type="application/ld+json">${json({ '@context': 'https://schema.org', '@graph': [ORG, WEBSITE, ...(m.schema ?? [])] })}</script>`)
-  return tags.map((t) => t.replace(/^<(\w+)/, '<$1 data-head')).join('\n')
+    tags.push(
+      `<script type="application/ld+json">${json({ "@context": "https://schema.org", "@graph": [ORG, WEBSITE, ...(m.schema ?? [])] })}</script>`,
+    );
+  return tags.map((t) => t.replace(/^<(\w+)/, "<$1 data-head")).join("\n");
 }

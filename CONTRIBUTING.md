@@ -21,16 +21,15 @@ Thanks for your interest in contributing. neoOMSI optimizes for **correctness, s
    - User-visible PRs must include a small fragment under `.changes/` (e.g. `.changes/<pr-number>.<category>.md`).
    - Details: [.changes/README.md](.changes/README.md).
 4. **Open your Pull Request:**
-   - Document the *what*, *why*, and how you validated the change.
+   - Document the _what_, _why_, and how you validated the change.
    - For `parity/` changes, provide reference evidence against OMSI 2.2.032.
 
 ## Deep-dive guides
 
-| Topic | Document |
-| :--- | :--- |
-| **Development & Review** | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
-| **OMSI 2 Compatibility** | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
-| **Building & Testing** | [docs/BUILDING.md](docs/BUILDING.md) |
-| **Issue Triage** | [docs/ISSUE_TRIAGE.md](docs/ISSUE_TRIAGE.md) |
-| **Releasing & Versioning** | [docs/RELEASING.md](docs/RELEASING.md) |
-
+| Topic                      | Document                                       |
+| :------------------------- | :--------------------------------------------- |
+| **Development & Review**   | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)     |
+| **OMSI 2 Compatibility**   | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
+| **Building & Testing**     | [docs/BUILDING.md](docs/BUILDING.md)           |
+| **Issue Triage**           | [docs/ISSUE_TRIAGE.md](docs/ISSUE_TRIAGE.md)   |
+| **Releasing & Versioning** | [docs/RELEASING.md](docs/RELEASING.md)         |

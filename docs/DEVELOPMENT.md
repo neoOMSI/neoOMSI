@@ -71,6 +71,7 @@ cargo build --release
 ### Review standards
 
 Pull requests merged into `main` require:
+
 - At least **two approving reviews** from maintainers.
 - Passing continuous integration checks.
 - For `parity/` changes: reference OMSI 2.2.032 evidence verifying expected behavior (see [Compatibility](COMPATIBILITY.md)).
@@ -83,4 +84,3 @@ Once the required reviews and checks have passed, the PR author should normally 
 - Bug fixes should include a unit or integration test reproducing the original issue whenever practical.
 - Parsers, format deserializers, and math routines must have direct unit test coverage.
 - Tests must **never** bundle proprietary OMSI 2 game assets. Where test fixtures are required, use synthetic mock data or optionally read from `OMSI_ROOT` (see [Building from source](BUILDING.md#running-tests)).
-

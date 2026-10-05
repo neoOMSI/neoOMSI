@@ -4,8 +4,8 @@ on:
   issues:
     types: [opened, reopened]
   schedule:
-    - cron: '17 3 * * *'
-      timezone: 'Europe/Berlin'
+    - cron: "17 3 * * *"
+      timezone: "Europe/Berlin"
   workflow_dispatch:
 
 permissions:

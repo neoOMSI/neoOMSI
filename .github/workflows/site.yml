@@ -3,10 +3,26 @@ name: Website
 
 on:
   pull_request:
-    paths: ["site/**", "docs/**", "assets/logos/**", "assets/icons/app/**", "README.md", ".github/workflows/site.yml"]
+    paths:
+      [
+        "site/**",
+        "docs/**",
+        "assets/logos/**",
+        "assets/icons/app/**",
+        "README.md",
+        ".github/workflows/site.yml",
+      ]
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", "assets/logos/**", "assets/icons/app/**", "README.md", ".github/workflows/site.yml"]
+    paths:
+      [
+        "site/**",
+        "docs/**",
+        "assets/logos/**",
+        "assets/icons/app/**",
+        "README.md",
+        ".github/workflows/site.yml",
+      ]
   workflow_dispatch:
 
 permissions:
