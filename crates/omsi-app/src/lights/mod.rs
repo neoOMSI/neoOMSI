@@ -1,22 +1,22 @@
 use crate::scene::{LightSwitch, World};
 use glam::{DVec3, Vec3};
-use omsi_render::{Corona, LightMode, Lighting, PointLight, Scene, SCREEN_CONE};
+use omsi_render::{Corona, LightMode, Lighting, PointLight, SCREEN_CONE, Scene};
 use omsi_sim::{Daylight, VehicleInstance};
 
-mod settings;
-mod weather;
-mod vehicle;
-mod glow;
-mod consts;
-mod occlusion;
 mod collect;
+mod consts;
+mod glow;
+mod occlusion;
+mod settings;
 mod sprites;
+mod vehicle;
+mod weather;
 
-pub(crate) use settings::*;
-pub use weather::*;
-pub use vehicle::*;
-pub use glow::*;
-use consts::*;
-use occlusion::*;
 pub use collect::*;
+use consts::*;
+pub use glow::*;
+use occlusion::*;
+pub(crate) use settings::*;
 pub use sprites::*;
+pub use vehicle::*;
+pub use weather::*;

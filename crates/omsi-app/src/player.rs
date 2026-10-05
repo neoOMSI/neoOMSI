@@ -381,12 +381,12 @@ fn doorways(ty: &omsi_sim::VehicleType) -> Option<Vec<Vec<String>>> {
         }
         let parts: Vec<Vec<String>> = match (g.first(), g.get(1)) {
             (Some(a), Some(b))
-            if !reach(a).is_empty()
-                && !reach(b).is_empty()
-                && !reach(a).iter().any(|w| reach(b).contains(w)) =>
-                {
-                    vec![vec![a.clone()], vec![b.clone()]]
-                }
+                if !reach(a).is_empty()
+                    && !reach(b).is_empty()
+                    && !reach(a).iter().any(|w| reach(b).contains(w)) =>
+            {
+                vec![vec![a.clone()], vec![b.clone()]]
+            }
             _ => vec![g.clone()],
         };
         for part in parts {
@@ -507,8 +507,8 @@ pub(crate) fn door_trigger_closes(program: &omsi_script::Program, name: &str) ->
     };
     if b.ops.len() > 6
         || b.ops
-        .iter()
-        .any(|op| matches!(op, omsi_script::Op::Macro(_)))
+            .iter()
+            .any(|op| matches!(op, omsi_script::Op::Macro(_)))
     {
         return false;
     }
@@ -1106,7 +1106,7 @@ impl Player {
                 } else {
                     "Putting the vehicle into service ..."
                 }
-                    .to_string();
+                .to_string();
             }
             log::info!("auto-start given up after 20 s: begun again");
         }
@@ -1677,8 +1677,8 @@ impl Player {
             "motor_n",
             "motor_rpm",
         ]
-            .iter()
-            .find_map(|v| self.vehicle.var(v)) else {
+        .iter()
+        .find_map(|v| self.vehicle.var(v)) else {
             return;
         };
         let kmh = self.vehicle.physics.velocity_kmh().abs();
@@ -2460,10 +2460,10 @@ impl Player {
         let (eye, yaw, pitch, roll) = self.vehicle.camera_world_full(turned);
         let eye = eye
             + self
-            .vehicle
-            .body_rotation()
-            .transform_vector3(self.head + self.seat)
-            .as_dvec3();
+                .vehicle
+                .body_rotation()
+                .transform_vector3(self.head + self.seat)
+                .as_dvec3();
         Camera {
             position: eye,
             yaw,
@@ -2537,11 +2537,11 @@ impl Player {
     pub(crate) fn pax_camera_count(&self) -> usize {
         self.vehicle.ty.def.cameras_pax.len()
             + self
-            .vehicle
-            .trailers
-            .iter()
-            .map(|t| t.ty.def.cameras_pax.len())
-            .sum::<usize>()
+                .vehicle
+                .trailers
+                .iter()
+                .map(|t| t.ty.def.cameras_pax.len())
+                .sum::<usize>()
     }
 
     /// How many driver cameras the bus has, its coupled parts' included: Omsi.exe's
@@ -2550,11 +2550,11 @@ impl Player {
     pub(crate) fn driver_camera_count(&self) -> usize {
         self.vehicle.ty.def.cameras_driver.len()
             + self
-            .vehicle
-            .trailers
-            .iter()
-            .map(|t| t.ty.def.cameras_driver.len())
-            .sum::<usize>()
+                .vehicle
+                .trailers
+                .iter()
+                .map(|t| t.ty.def.cameras_driver.len())
+                .sum::<usize>()
     }
 
     /// The driver camera chosen past the front's own: the coupled part it is on and the
@@ -2692,10 +2692,10 @@ impl Player {
                     yaw: c.yaw
                         + look.0
                         + if view == "driver" {
-                        self.steer_look
-                    } else {
-                        0.0
-                    },
+                            self.steer_look
+                        } else {
+                            0.0
+                        },
                     pitch: (c.pitch + look.1).clamp(-89.0, 89.0),
                     ..c.clone()
                 };
@@ -2748,8 +2748,8 @@ impl Player {
 pub(crate) fn orbit_pivot(position: DVec3, heading_deg: f64, center: [f32; 3]) -> DVec3 {
     position
         + glam::Mat4::from_rotation_z((-(heading_deg as f32)).to_radians())
-        .transform_point3(Vec3::new(center[0], center[1], center[2]))
-        .as_dvec3()
+            .transform_point3(Vec3::new(center[0], center[1], center[2]))
+            .as_dvec3()
 }
 
 /// Put a vehicle's meshes where its state says (animations, visibility, lights, the

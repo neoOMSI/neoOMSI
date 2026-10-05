@@ -1,6 +1,10 @@
 use super::*;
 
-pub fn particle_sprites(set: &omsi_sim::particles::ParticleSet, smoke: &mut Vec<omsi_render::SmokeParticle>, coronas: &mut Vec<Corona>) {
+pub fn particle_sprites(
+    set: &omsi_sim::particles::ParticleSet,
+    smoke: &mut Vec<omsi_render::SmokeParticle>,
+    coronas: &mut Vec<Corona>,
+) {
     for (p, def) in set.particles() {
         let alpha = p.alpha();
         if alpha <= 0.002 {
@@ -18,7 +22,12 @@ pub fn particle_sprites(set: &omsi_sim::particles::ParticleSet, smoke: &mut Vec<
                 ..Default::default()
             });
         } else {
-            smoke.push(omsi_render::SmokeParticle { position: p.pos, size: p.size() * 0.5, color: p.color, alpha });
+            smoke.push(omsi_render::SmokeParticle {
+                position: p.pos,
+                size: p.size() * 0.5,
+                color: p.color,
+                alpha,
+            });
         }
     }
 }
@@ -37,17 +46,26 @@ pub(super) struct CoronaTextures {
     pub(super) root: Option<std::path::PathBuf>,
 }
 
-pub(super) static CORONA_TEXTURES: std::sync::Mutex<Option<CoronaTextures>> = std::sync::Mutex::new(None);
+pub(super) static CORONA_TEXTURES: std::sync::Mutex<Option<CoronaTextures>> =
+    std::sync::Mutex::new(None);
 
 pub fn set_corona_root(root: &std::path::Path) {
     let mut g = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
-    let t = g.get_or_insert_with(|| CoronaTextures { ids: Default::default(), pending: Vec::new(), root: None });
+    let t = g.get_or_insert_with(|| CoronaTextures {
+        ids: Default::default(),
+        pending: Vec::new(),
+        root: None,
+    });
     t.root = Some(root.to_path_buf());
 }
 
 pub(super) fn texture_id_of(path: std::path::PathBuf) -> u16 {
     let mut g = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
-    let t = g.get_or_insert_with(|| CoronaTextures { ids: Default::default(), pending: Vec::new(), root: None });
+    let t = g.get_or_insert_with(|| CoronaTextures {
+        ids: Default::default(),
+        pending: Vec::new(),
+        root: None,
+    });
     if let Some(id) = t.ids.get(&path) {
         return *id;
     }
@@ -58,12 +76,24 @@ pub(super) fn texture_id_of(path: std::path::PathBuf) -> u16 {
 }
 
 pub fn corona_texture_id(model_dir: &std::path::Path, name: &str) -> u16 {
-    static KNOWN: std::sync::Mutex<Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>> = std::sync::Mutex::new(None);
+    static KNOWN: std::sync::Mutex<
+        Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>,
+    > = std::sync::Mutex::new(None);
     let key = (model_dir.to_path_buf(), name.to_string());
-    if let Some(&id) = KNOWN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)) {
+    if let Some(&id) = KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&key))
+    {
         return id;
     }
-    let root = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|t| t.root.clone()).unwrap_or_default();
+    let root = CORONA_TEXTURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|t| t.root.clone())
+        .unwrap_or_default();
     let mut id = 0;
     for d in crate::scene::texture_dirs(&root, model_dir) {
         let p = omsi_cfg::resolve_path(&d, name);
@@ -72,20 +102,44 @@ pub fn corona_texture_id(model_dir: &std::path::Path, name: &str) -> u16 {
             break;
         }
     }
-    KNOWN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(key, id);
+    KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(Default::default)
+        .insert(key, id);
     id
 }
 
 pub(super) fn stock_texture_id(name: &str) -> u16 {
-    static KNOWN: std::sync::Mutex<Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>> = std::sync::Mutex::new(None);
-    let root = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|t| t.root.clone()).unwrap_or_default();
+    static KNOWN: std::sync::Mutex<
+        Option<std::collections::HashMap<(std::path::PathBuf, String), u16>>,
+    > = std::sync::Mutex::new(None);
+    let root = CORONA_TEXTURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|t| t.root.clone())
+        .unwrap_or_default();
     let key = (root, name.to_string());
-    if let Some(&id) = KNOWN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)) {
+    if let Some(&id) = KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&key))
+    {
         return id;
     }
     let p = omsi_cfg::resolve_path(&key.0, &format!("Texture/{name}"));
-    let id = if omsi_cfg::vfs::is_file(&p) { texture_id_of(p) } else { 0 };
-    KNOWN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(key, id);
+    let id = if omsi_cfg::vfs::is_file(&p) {
+        texture_id_of(p)
+    } else {
+        0
+    };
+    KNOWN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(Default::default)
+        .insert(key, id);
     id
 }
 
@@ -122,8 +176,14 @@ pub(super) static CONE: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomic
 pub(super) static CONE_NIGHT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 pub fn set_cone_strength(fog_visibility_m: f32, _precip: f32, night: f32) {
-    CONE.store(fog_visibility_m.to_bits(), std::sync::atomic::Ordering::Relaxed);
-    CONE_NIGHT.store(night.clamp(0.0, 1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+    CONE.store(
+        fog_visibility_m.to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    CONE_NIGHT.store(
+        night.clamp(0.0, 1.0).to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 pub(super) fn cone_weather() -> (f32, f32) {

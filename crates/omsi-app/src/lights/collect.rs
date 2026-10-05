@@ -36,7 +36,11 @@ pub(super) struct NearBuild {
 
 pub(super) static NEAR_LIGHTS: std::sync::Mutex<Option<NearLights>> = std::sync::Mutex::new(None);
 
-pub(super) type LampVis = (Option<DVec3>, std::collections::HashMap<[i64; 3], (bool, u32)>, u32);
+pub(super) type LampVis = (
+    Option<DVec3>,
+    std::collections::HashMap<[i64; 3], (bool, u32)>,
+    u32,
+);
 pub(super) static LAMP_VIS: std::sync::LazyLock<std::sync::Mutex<LampVis>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new((None, Default::default(), 0)));
 
@@ -94,7 +98,9 @@ pub fn collect(
                         LightSwitch::Night => daylight.lamps_on as i32 as f32,
                         LightSwitch::Variable(_) => daylight.lamps_on as i32 as f32,
                     };
-                    if on <= 0.0 || (c.corona.position - camera_pos).length() > CORONA_RANGE + NEAR_MARGIN {
+                    if on <= 0.0
+                        || (c.corona.position - camera_pos).length() > CORONA_RANGE + NEAR_MARGIN
+                    {
                         return None;
                     }
                     let mut corona = c.corona;
@@ -130,7 +136,10 @@ pub fn collect(
                 }
                 b.lights.push(l);
             }
-            while b.li >= b.src_lights.len() && b.ci < b.src_coronas.len() && t_build.elapsed().as_micros() < 4000 {
+            while b.li >= b.src_lights.len()
+                && b.ci < b.src_coronas.len()
+                && t_build.elapsed().as_micros() < 4000
+            {
                 let c = b.src_coronas[b.ci];
                 b.ci += 1;
                 if enclosure(&coll, c.position).is_none() {
@@ -156,7 +165,9 @@ pub fn collect(
         near.light_vis.resize(near.lights.len(), true);
         near.corona_vis.resize(near.coronas.len(), true);
         let total = near.lights.len() + near.coronas.len();
-        if !near.vis_valid || (near.vis_cursor >= total && (near.vis_centre - camera_pos).length() > OCC_RECHECK) {
+        if !near.vis_valid
+            || (near.vis_cursor >= total && (near.vis_centre - camera_pos).length() > OCC_RECHECK)
+        {
             near.vis_eye = camera_pos;
             near.vis_centre = camera_pos;
             near.vis_cursor = 0;
@@ -172,7 +183,8 @@ pub fn collect(
                 near.light_vis[i] = (p - eye).length() > OCC_LIGHT_RANGE || sees(&coll, eye, p);
             } else {
                 let p = near.coronas[i - nl].position;
-                near.corona_vis[i - nl] = (p - eye).length() > OCC_CORONA_RANGE || sees(&coll, eye, p);
+                near.corona_vis[i - nl] =
+                    (p - eye).length() > OCC_CORONA_RANGE || sees(&coll, eye, p);
             }
             near.vis_cursor += 1;
             budget -= 1;
@@ -181,7 +193,9 @@ pub fn collect(
             near.lights
                 .iter()
                 .zip(&near.light_vis)
-                .filter(|(l, vis)| **vis && (l.position - camera_pos).length() < MAP_LIGHT_RANGE.min(visible_range))
+                .filter(|(l, vis)| {
+                    **vis && (l.position - camera_pos).length() < MAP_LIGHT_RANGE.min(visible_range)
+                })
                 .map(|(l, _)| *l),
         );
         scene.coronas.extend(
@@ -197,7 +211,12 @@ pub fn collect(
     // metres, as for the map's own lights: the ray went through the collision world for
     // every lamp in range every frame)
     let mut lamp_vis = LAMP_VIS.lock().unwrap_or_else(|e| e.into_inner());
-    if lamp_vis.0.is_none() || lamp_vis.0.map(|c| (c - camera_pos).length() > OCC_RECHECK).unwrap_or(true) {
+    if lamp_vis.0.is_none()
+        || lamp_vis
+            .0
+            .map(|c| (c - camera_pos).length() > OCC_RECHECK)
+            .unwrap_or(true)
+    {
         lamp_vis.0 = Some(camera_pos);
         lamp_vis.2 = lamp_vis.2.wrapping_add(1);
         if lamp_vis.1.len() > 20000 {
@@ -217,7 +236,10 @@ pub fn collect(
                 (lamp.pos.y * 2.0).round() as i64,
                 (lamp.pos.z * 2.0).round() as i64,
             ];
-            let entry = lamp_vis.1.entry(key).or_insert((true, epoch.wrapping_sub(1)));
+            let entry = lamp_vis
+                .1
+                .entry(key)
+                .or_insert((true, epoch.wrapping_sub(1)));
             if entry.1 != epoch && rays > 0 {
                 rays -= 1;
                 *entry = (sees(&coll, camera_pos, lamp.pos), epoch);
@@ -246,7 +268,15 @@ pub fn collect(
     }
     if omsi_cfg::env::var_os("OMSI_DEBUG_PARTICLES").is_some() {
         if let Some(p) = scene.smoke.first() {
-            log::info!("smoke: {} particles from objects, first at ({:.1}, {:.1}, {:.1}) size {:.2} alpha {:.2}", scene.smoke.len(), p.position.x, p.position.y, p.position.z, p.size, p.alpha);
+            log::info!(
+                "smoke: {} particles from objects, first at ({:.1}, {:.1}, {:.1}) size {:.2} alpha {:.2}",
+                scene.smoke.len(),
+                p.position.x,
+                p.position.y,
+                p.position.z,
+                p.size,
+                p.alpha
+            );
         }
     }
     let t_particles = std::time::Instant::now();
@@ -274,8 +304,9 @@ pub fn collect(
     // of the vehicles' lamps are judged by one test for the whole vehicle)
     // (each vehicle keeps the last answers of its mesh walks and asks again for an eighth of
     // them a frame, the whole-vehicle answer every eighth frame)
-    static VEH_OCC: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<usize, (bool, Vec<bool>)>>> =
-        std::sync::LazyLock::new(Default::default);
+    static VEH_OCC: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<usize, (bool, Vec<bool>)>>,
+    > = std::sync::LazyLock::new(Default::default);
     static OCC_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let frame = OCC_FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut veh_occ = VEH_OCC.lock().unwrap_or_else(|e| e.into_inner());
@@ -290,7 +321,13 @@ pub fn collect(
             continue;
         }
         let first_corona = scene.coronas.len();
-        vehicle_lights(v, &mut scene.coronas, &mut scene.lights, night, spill_ok[vi]);
+        vehicle_lights(
+            v,
+            &mut scene.coronas,
+            &mut scene.lights,
+            night,
+            spill_ok[vi],
+        );
         let seen_world = world.light_occluders.lock().clone();
         let sections = body_sections(v);
         let vkey = *v as *const VehicleInstance as usize;
@@ -351,9 +388,23 @@ pub fn collect(
         c.size > 0.05
     });
     if omsi_cfg::env::var_os("OMSI_DEBUG_CONES").is_some() {
-        log::info!("cones: visibility {vis:.0} m, dark {night:.2}, {} cones of {} coronas", scene.coronas.iter().filter(|c| c.beam).count(), scene.coronas.len());
+        log::info!(
+            "cones: visibility {vis:.0} m, dark {night:.2}, {} cones of {} coronas",
+            scene.coronas.iter().filter(|c| c.beam).count(),
+            scene.coronas.len()
+        );
         for c in scene.coronas.iter().filter(|c| c.beam).take(4) {
-            log::info!("  cone at ({:.1}, {:.1}, {:.1}) dir {:?} radius {:.2} half angles {:.0}/{:.0} deg tex {}", c.position.x, c.position.y, c.position.z, c.direction, c.size, c.inner_cos.to_degrees(), c.cone_cos.to_degrees(), c.texture);
+            log::info!(
+                "  cone at ({:.1}, {:.1}, {:.1}) dir {:?} radius {:.2} half angles {:.0}/{:.0} deg tex {}",
+                c.position.x,
+                c.position.y,
+                c.position.z,
+                c.direction,
+                c.size,
+                c.inner_cos.to_degrees(),
+                c.cone_cos.to_degrees(),
+                c.texture
+            );
         }
     }
     {
@@ -371,22 +422,37 @@ pub fn collect(
                         .iter()
                         .enumerate()
                         .filter(|(_, m)| {
-                            scene.materials.get(**m).is_some_and(|m| if led { m.is_led() } else { m.is_screen() && !m.is_led() })
+                            scene.materials.get(**m).is_some_and(|m| {
+                                if led {
+                                    m.is_led()
+                                } else {
+                                    m.is_screen() && !m.is_led()
+                                }
+                            })
                         })
                         .map(|(k, m)| {
                             let gate = i.slot_light.get(k).copied().unwrap_or(1.0).clamp(0.0, 1.0);
                             let seen = |t: Option<usize>| {
-                                t.and_then(|t| scene.tex_luma.lock().ok().and_then(|l| l.get(&t).copied()))
+                                t.and_then(|t| {
+                                    scene.tex_luma.lock().ok().and_then(|l| l.get(&t).copied())
+                                })
                             };
                             // a screen throws only the light it shows: a black or switched-off
                             // script / HTML picture throws none; an LED panel (its dots are the
                             // alpha of its `\S:n` script texture) only as many dots as are lit
                             let mat = scene.materials.get(*m);
                             let (shown, colour) = if led {
-                                (seen(mat.and_then(|m| m.transmap.map(|t| t.0))).map(|(_, a, _)| a).unwrap_or(0.0), LED_COLOR)
+                                (
+                                    seen(mat.and_then(|m| m.transmap.map(|t| t.0)))
+                                        .map(|(_, a, _)| a)
+                                        .unwrap_or(0.0),
+                                    LED_COLOR,
+                                )
                             } else {
                                 // (the light takes the colour of the picture)
-                                seen(mat.and_then(|m| m.texture)).map(|(c, _, rgb)| (c, rgb)).unwrap_or((0.0, SCREEN_COLOR))
+                                seen(mat.and_then(|m| m.texture))
+                                    .map(|(c, _, rgb)| (c, rgb))
+                                    .unwrap_or((0.0, SCREEN_COLOR))
                             };
                             let fx = if led {
                                 1.0
@@ -395,11 +461,21 @@ pub fn collect(
                             } else {
                                 screen_fx(3)
                             };
-                            (gate * (shown * if led { 8.0 } else { 3.0 }).clamp(0.0, 1.0) * fx, colour, k)
+                            (
+                                gate * (shown * if led { 8.0 } else { 3.0 }).clamp(0.0, 1.0) * fx,
+                                colour,
+                                k,
+                            )
                         })
-                        .fold((0.0f32, SCREEN_COLOR, usize::MAX), |a, b| if b.0 > a.0 { b } else { a })
+                        .fold((0.0f32, SCREEN_COLOR, usize::MAX), |a, b| {
+                            if b.0 > a.0 { b } else { a }
+                        })
                 };
-                let led_gate = if glow > 0.0 { gate(true) } else { (0.0, SCREEN_COLOR, usize::MAX) };
+                let led_gate = if glow > 0.0 {
+                    gate(true)
+                } else {
+                    (0.0, SCREEN_COLOR, usize::MAX)
+                };
                 let (led, (g, colour, slot)) = if led_gate.0 > 0.01 {
                     (true, led_gate)
                 } else {
@@ -419,7 +495,10 @@ pub fn collect(
                 let (c, dir) = match face {
                     Some((n, centre)) => {
                         let d = i.transform.transform_vector3(*n).normalize_or_zero();
-                        (i.origin + i.transform.transform_point3(*centre).as_dvec3(), d)
+                        (
+                            i.origin + i.transform.transform_point3(*centre).as_dvec3(),
+                            d,
+                        )
                     }
                     None => (i.world_centre(), Vec3::ZERO),
                 };
@@ -436,16 +515,29 @@ pub fn collect(
             } else {
                 vehicles
                     .iter()
-                    .min_by(|a, b| (a.position - c).length().total_cmp(&(b.position - c).length()))
+                    .min_by(|a, b| {
+                        (a.position - c)
+                            .length()
+                            .total_cmp(&(b.position - c).length())
+                    })
                     .filter(|v| (v.position - c).length() < 20.0)
                     .map(|v| {
-                        let b = v.ty.def.bounding_box.unwrap_or([2.5, 12.0, 3.0, 0.0, 0.0, 0.0]);
+                        let b =
+                            v.ty.def
+                                .bounding_box
+                                .unwrap_or([2.5, 12.0, 3.0, 0.0, 0.0, 0.0]);
                         let h = v.heading.to_radians();
-                        let (fwd, right) = (DVec3::new(h.sin(), h.cos(), 0.0), DVec3::new(h.cos(), -h.sin(), 0.0));
+                        let (fwd, right) = (
+                            DVec3::new(h.sin(), h.cos(), 0.0),
+                            DVec3::new(h.cos(), -h.sin(), 0.0),
+                        );
                         let d = c - v.position;
                         let lx = d.dot(right) - b[3] as f64;
                         let ly = d.dot(fwd) - b[4] as f64;
-                        let (ex, ey) = (lx.abs() - (b[0] as f64 * 0.5 - 0.5), ly.abs() - (b[1] as f64 * 0.5 - 0.5));
+                        let (ex, ey) = (
+                            lx.abs() - (b[0] as f64 * 0.5 - 0.5),
+                            ly.abs() - (b[1] as f64 * 0.5 - 0.5),
+                        );
                         if ex <= 0.0 && ey <= 0.0 {
                             DVec3::ZERO
                         } else if ex > ey {
@@ -511,7 +603,11 @@ pub fn collect(
                 .collect::<Vec<_>>()
         );
     }
-    scene.lights.sort_by(|a, b| (a.position - camera_pos).length_squared().total_cmp(&(b.position - camera_pos).length_squared()));
+    scene.lights.sort_by(|a, b| {
+        (a.position - camera_pos)
+            .length_squared()
+            .total_cmp(&(b.position - camera_pos).length_squared())
+    });
     let generation = world
         .tiles_generation
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -522,7 +618,10 @@ pub fn collect(
     if total.as_millis() > 40 {
         static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-        if last.map(|t| t.elapsed().as_secs_f32() > 2.0).unwrap_or(true) {
+        if last
+            .map(|t| t.elapsed().as_secs_f32() > 2.0)
+            .unwrap_or(true)
+        {
             *last = Some(std::time::Instant::now());
             log::info!(
                 "lights.collect {:.0} ms: map lights {:.0}, lamp objects + vehicles {:.0} (lamp loop {:.0}, particles {:.0}, vehicles {:.0}), occluders {:.0} ({} lights, {} coronas, {} occluders, {} vehicles)",

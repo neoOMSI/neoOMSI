@@ -124,13 +124,24 @@ pub(crate) struct InteriorCfg {
 }
 
 impl InteriorCfg {
-    pub(crate) const DEFAULT: Self = Self { off: false, gain: 1.0, range: 1.0, color: [1.0, 1.0, 1.0], shift: [0.0; 3] };
+    pub(crate) const DEFAULT: Self = Self {
+        off: false,
+        gain: 1.0,
+        range: 1.0,
+        color: [1.0, 1.0, 1.0],
+        shift: [0.0; 3],
+    };
 }
 
 pub(super) static INTERIOR: std::sync::Mutex<Vec<InteriorCfg>> = std::sync::Mutex::new(Vec::new());
 
 pub(crate) fn interior_cfg(i: usize) -> InteriorCfg {
-    INTERIOR.lock().unwrap_or_else(|e| e.into_inner()).get(i).copied().unwrap_or(InteriorCfg::DEFAULT)
+    INTERIOR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(i)
+        .copied()
+        .unwrap_or(InteriorCfg::DEFAULT)
 }
 
 pub(crate) fn set_interior_cfg(i: usize, c: InteriorCfg) {
@@ -145,7 +156,8 @@ pub(crate) fn reset_interior_cfg() {
     INTERIOR.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
-pub(super) static SETTINGS: std::sync::Mutex<LightSettings> = std::sync::Mutex::new(LightSettings::DEFAULT);
+pub(super) static SETTINGS: std::sync::Mutex<LightSettings> =
+    std::sync::Mutex::new(LightSettings::DEFAULT);
 
 pub(crate) fn settings() -> LightSettings {
     *SETTINGS.lock().unwrap_or_else(|e| e.into_inner())
@@ -169,7 +181,8 @@ pub(super) fn lamp_aim(d: Vec3, cfg: &LightSettings, bc: &BeamCfg) -> Vec3 {
     let d = d.normalize_or_zero();
     let yawed = glam::Quat::from_rotation_z((cfg.lamp_yaw + bc.yaw).to_radians()) * d;
     let right = yawed.cross(Vec3::Z).normalize_or_zero();
-    (glam::Quat::from_axis_angle(right, (cfg.lamp_pitch + bc.pitch).to_radians()) * yawed).normalize_or_zero()
+    (glam::Quat::from_axis_angle(right, (cfg.lamp_pitch + bc.pitch).to_radians()) * yawed)
+        .normalize_or_zero()
 }
 
 pub(crate) fn lamp_shift(dir: Vec3, cfg: &LightSettings) -> DVec3 {

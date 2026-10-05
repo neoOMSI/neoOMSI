@@ -39,9 +39,10 @@ pub(super) fn enclosure(coll: &omsi_sim::collision::CollisionWorld, p: DVec3) ->
         return None;
     }
     // a point inside a solid part (a lamp sunk into a wall or a ceiling)
-    if parts.iter().any(|o| {
-        o.half.x >= 0.1 && o.half.y >= 0.1 && seg_hit(p, p + DVec3::Z * 1e-3, o).is_some()
-    }) {
+    if parts
+        .iter()
+        .any(|o| o.half.x >= 0.1 && o.half.y >= 0.1 && seg_hit(p, p + DVec3::Z * 1e-3, o).is_some())
+    {
         return Some(0.0);
     }
     let nearest = |dir: DVec3, len: f64| -> Option<f64> {
@@ -184,7 +185,10 @@ pub(super) fn assign_occluders(
 ) {
     scene.occluders.clear();
     let mut bodies: Vec<(omsi_sim::collision::Obb, omsi_render::Occluder)> = Vec::new();
-    for v in vehicles.iter().filter(|v| (v.position - camera_pos).length() < SHADOW_RANGE + 60.0) {
+    for v in vehicles
+        .iter()
+        .filter(|v| (v.position - camera_pos).length() < SHADOW_RANGE + 60.0)
+    {
         let mut sections = vec![(body_box(&v.ty), v.body_rotation(), v.position)];
         for t in &v.trailers {
             sections.push((body_box(&t.ty), t.body_rotation(), t.position));
@@ -208,7 +212,10 @@ pub(super) fn assign_occluders(
         }
     }
     let mut guard = OCC_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let cache = guard.get_or_insert_with(|| OccCache { generation, map: Default::default() });
+    let cache = guard.get_or_insert_with(|| OccCache {
+        generation,
+        map: Default::default(),
+    });
     if cache.generation != generation || cache.map.len() > 4000 {
         cache.generation = generation;
         cache.map.clear();
@@ -226,7 +233,9 @@ pub(super) fn assign_occluders(
             continue;
         }
         if spot {
-            if shadowed_spots >= SHADOW_SPOTS || (l.position - camera_pos).length() > SPOT_SHADOW_RANGE {
+            if shadowed_spots >= SHADOW_SPOTS
+                || (l.position - camera_pos).length() > SPOT_SHADOW_RANGE
+            {
                 continue;
             }
             shadowed_spots += 1;
@@ -238,7 +247,13 @@ pub(super) fn assign_occluders(
         }
         // (a moving vehicle's window light would make a new key every frame at half a metre:
         // it takes 2 m cells and a reach that much longer)
-        let (grid, extra) = if spill { (0.5, 2.0) } else if spot { (1.0, 0.0) } else { (2.0, 0.0) };
+        let (grid, extra) = if spill {
+            (0.5, 2.0)
+        } else if spot {
+            (1.0, 0.0)
+        } else {
+            (2.0, 0.0)
+        };
         let dir_key = if spot {
             ((l.direction.x.atan2(l.direction.y).to_degrees() / 10.0).round() as i32) * 64
                 + (l.cone[1] * 100.0).round() as i32 * 4096
@@ -272,7 +287,11 @@ pub(super) fn assign_occluders(
         let first = scene.occluders.len() as u32;
         scene.occluders.extend_from_slice(occ);
         for (o, oc) in &bodies {
-            let body_reach = if spot { l.radius.min(SPOT_REACH as f32) } else { l.radius.min(SHADOW_REACH as f32) };
+            let body_reach = if spot {
+                l.radius.min(SPOT_REACH as f32)
+            } else {
+                l.radius.min(SHADOW_REACH as f32)
+            };
             if (o.center - l.position.truncate()).length() < o.radius() + body_reach as f64 {
                 let at = (l.position, l.position + DVec3::Z * 1e-3);
                 let core = omsi_sim::collision::Obb {
@@ -329,7 +348,11 @@ pub(super) fn body_sections(v: &VehicleInstance) -> Vec<(Option<[f32; 6]>, glam:
     sections
 }
 
-pub(super) fn body_hides(sections: &[(Option<[f32; 6]>, glam::Mat4, DVec3)], camera_pos: DVec3, c: DVec3) -> bool {
+pub(super) fn body_hides(
+    sections: &[(Option<[f32; 6]>, glam::Mat4, DVec3)],
+    camera_pos: DVec3,
+    c: DVec3,
+) -> bool {
     for &(bb, inv, origin) in sections {
         let Some(b) = bb else { continue };
         let e = inv.transform_point3((camera_pos - origin).as_vec3());
@@ -393,7 +416,11 @@ pub(super) fn blocked_by_meshes(
         let mut parts = seen.obstacles_near(&probe);
         parts.extend(coll.obstacles_near(&probe));
         for o in parts {
-            if o.mass != 0.0 || o.pole.is_some() || o.half.x.max(o.half.y) < 0.1 || o.z1 - o.z0 < 0.8 {
+            if o.mass != 0.0
+                || o.pole.is_some()
+                || o.half.x.max(o.half.y) < 0.1
+                || o.z1 - o.z0 < 0.8
+            {
                 continue;
             }
             if seg_hit(eye, eye + DVec3::Z * 1e-3, &o).is_some() {

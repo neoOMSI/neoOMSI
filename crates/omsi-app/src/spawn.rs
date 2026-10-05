@@ -275,8 +275,8 @@ pub(crate) fn spawn_player(
                     pos.y,
                     pos.z + 1.5,
                 )
-                    .below
-                    .is_none()
+                .below
+                .is_none()
                 {
                     // nothing under the place at all (the marker came out under the ground):
                     // on the ground above, not in the void under the map
@@ -410,10 +410,7 @@ pub(crate) fn spawn_player(
     // the loaded tiles, and the bus is one of its centres)
     let terrains = world.terrains.clone();
     let surfaces = world.surfaces.clone();
-    vehicle.contact = Some(Arc::new(scene::DriveGround {
-        terrains,
-        surfaces,
-    }));
+    vehicle.contact = Some(Arc::new(scene::DriveGround { terrains, surfaces }));
     let objects = settings::Settings::load().collision_objects;
     vehicle.collision = objects.then(|| world.collision.lock().clone());
     vehicle.wheel_walls = objects;
@@ -629,9 +626,9 @@ pub(crate) fn spawn_player(
                 .map(|f| {
                     !f.is_empty()
                         && def
-                        .file
-                        .to_ascii_lowercase()
-                        .contains(&f.to_ascii_lowercase())
+                            .file
+                            .to_ascii_lowercase()
+                            .contains(&f.to_ascii_lowercase())
                 })
                 .unwrap_or(false)
             {
@@ -756,9 +753,13 @@ fn open_front_door(p: &mut Player) {
         .into_iter()
         .next();
     let is_open = |p: &Player| {
-        target
-            .is_some_and(|id| p.vehicle.state.vars.get(id as usize).is_some_and(|x| *x > 0.5))
-            || leaf
+        target.is_some_and(|id| {
+            p.vehicle
+                .state
+                .vars
+                .get(id as usize)
+                .is_some_and(|x| *x > 0.5)
+        }) || leaf
             .as_ref()
             .is_some_and(|l| p.vehicle.var(l).is_some_and(|x| x > 0.5))
     };
@@ -781,7 +782,12 @@ fn open_front_door(p: &mut Player) {
 }
 
 fn headlights_off(p: &mut Player) {
-    if p.vehicle.ty.program.trigger("kw_scheinwerfer_toggle").is_none() {
+    if p.vehicle
+        .ty
+        .program
+        .trigger("kw_scheinwerfer_toggle")
+        .is_none()
+    {
         return;
     }
     for _ in 0..4 {

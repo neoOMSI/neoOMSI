@@ -18,10 +18,17 @@ pub(super) fn ai_spotlight(lamps: &[[f32; 3]]) -> Option<[f32; 12]> {
     let front: Vec<&[f32; 3]> = lamps.iter().filter(|l| nose - l[1] < 0.4).collect();
     let n = front.len() as f32;
     let z = front.iter().map(|l| l[2]).sum::<f32>() / n;
-    Some([0.0, nose, z, 0.0, 1.0, -0.05, 255.0, 245.0, 225.0, 40.0, 30.0, 70.0])
+    Some([
+        0.0, nose, z, 0.0, 1.0, -0.05, 255.0, 245.0, 225.0, 40.0, 30.0, 70.0,
+    ])
 }
 
-pub(super) fn spot_face(lamp: Option<f32>, edge: Option<f32>, apex_y: f32, dir: f32) -> Option<f32> {
+pub(super) fn spot_face(
+    lamp: Option<f32>,
+    edge: Option<f32>,
+    apex_y: f32,
+    dir: f32,
+) -> Option<f32> {
     let fwd = |y: f32| y * dir;
     let lamp = lamp.filter(|l| fwd(*l) > fwd(apex_y));
     let face = match (lamp, edge) {
@@ -45,7 +52,11 @@ pub fn lighting_from(d: &Daylight, fog_range: f32) -> Lighting {
         fog_density: density,
         sky_color: d.sky,
         night: d.night,
-        night_maps: Some(if d.lamps_on || d.night >= 0.5 { 1.0 } else { 0.0 }),
+        night_maps: Some(if d.lamps_on || d.night >= 0.5 {
+            1.0
+        } else {
+            0.0
+        }),
         sun_azimuth: d.azimuth_rad,
         sky_weights: d.sky_weights,
         envir_tint: d.envir_tint,
@@ -99,11 +110,12 @@ pub fn apply_weather(
         l.ambient *= 1.0 + 0.35 * snow;
         l.secondary *= 1.0 + 0.2 * snow;
         let day = 1.0 - 0.93 * l.night.clamp(0.0, 1.0);
-        l.fog_color = l.fog_color.lerp(Vec3::new(0.86, 0.88, 0.92) * day, 0.4 * snow);
+        l.fog_color = l
+            .fog_color
+            .lerp(Vec3::new(0.86, 0.88, 0.92) * day, 0.4 * snow);
     }
     l.snow = snow;
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -34,7 +34,10 @@ pub fn set_screen_fx(i: usize, v: f32) {
 }
 
 pub fn reset_screen_fx() {
-    for (i, v) in [HTML_GLOW, HTML_LIGHT, SCRIPT_GLOW, SCRIPT_LIGHT].into_iter().enumerate() {
+    for (i, v) in [HTML_GLOW, HTML_LIGHT, SCRIPT_GLOW, SCRIPT_LIGHT]
+        .into_iter()
+        .enumerate()
+    {
         set_screen_fx(i, v);
     }
 }
