@@ -619,7 +619,10 @@ mod tests {
         ));
         explicit.inherit_model_tags(&model);
         assert_eq!(explicit.render_type, RenderType::Normal);
-        assert!(!explicit.surface);
+        assert!(
+            explicit.surface,
+            "a numeric render queue does not negate [surface] presence"
+        );
     }
 
     #[test]
