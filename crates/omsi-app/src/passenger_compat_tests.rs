@@ -151,7 +151,8 @@ fn natural_ground_avoidance_keeps_roots_coherent_and_leaves_waiters_fixed() {
     let f = Fixture::new();
     for natural in [false, true] {
         let mut h = Humans::new(&f.root);
-        h.ik = natural;
+        h.set_ik(false);
+        h.set_natural(natural);
         let mut moving = Pax::new(1.0);
         moving.task = Task::ToBus;
         moving.target = DVec3::new(0.0, 10.0, 0.0);
@@ -1496,6 +1497,29 @@ fn reachable_seats_are_preferred_and_reservations_are_unique() {
 }
 
 #[test]
+fn natural_entry_queues_add_load_and_retain_a_walkers_current_door() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    let person = |id, door| {
+        let mut pax = Pax::new(1.1);
+        pax.task = Task::WalkingToBus;
+        pax.bus = Some(BusId::Player);
+        pax.door = door;
+        f.person(id, State::Pax(Box::new(pax)), false)
+    };
+    h.people.push(person(1, Some(0)));
+    let retained = h.door_queues(0, BusId::Player, 2);
+    h.pax_mut(0).unwrap().door = None;
+    let without_hysteresis = h.door_queues(0, BusId::Player, 2);
+    assert!((retained[0] - (without_hysteresis[0] - 1.5)).abs() < 1e-6);
+
+    h.people.push(person(2, Some(0)));
+    let with_queue = h.door_queues(0, BusId::Player, 2);
+    assert!((with_queue[0] - (without_hysteresis[0] + 2.0)).abs() < 1e-6);
+    assert_eq!(with_queue[1], without_hysteresis[1]);
+}
+
+#[test]
 fn a_complete_journey_validates_rides_requests_an_exit_and_joins_the_sidewalk() {
     complete_journey(TicketAction::Stamp);
 }
@@ -1791,6 +1815,7 @@ fn an_unknown_terminus_keeps_service_distinct_from_explicit_all_exit() {
 fn opening_another_exit_preserves_the_current_path_progress() {
     let f = Fixture::new();
     let mut h = Humans::new(&f.root);
+    h.set_natural(false);
     let mut b = bus(cabin());
     b.exit_open = vec![false, true];
     let mut p = Pax::new(1.1);
@@ -1818,6 +1843,78 @@ fn opening_another_exit_preserves_the_current_path_progress() {
     let p = h.pax(0).unwrap();
     assert_eq!((p.pt, p.pt_target, p.door), (Some(1), Some(3), Some(1)));
     assert_eq!(p.pos, DVec3::Y * 0.6, "no snapping back to a path point");
+}
+
+#[test]
+fn natural_closed_exit_wait_holds_its_reachable_path_then_uses_an_open_exit() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    let mut b = bus(cabin());
+    b.exit_open = vec![false, true];
+    let mut p = Pax::new(1.1);
+    p.task = Task::Nothing;
+    p.bus = Some(b.id);
+    p.inside = Some(b.id);
+    p.door_wait = 3.0;
+    p.pos = b.cabin.graph.points[1].as_dvec3();
+    h.people.push(f.person(7, State::Pax(Box::new(p)), false));
+    let ix = [(b.id, 0)].into_iter().collect();
+    let regs = [(
+        b.id,
+        pax::BusAtStops {
+            next: Some(1),
+            at: Some(1),
+            ..Default::default()
+        },
+    )]
+    .into_iter()
+    .collect();
+    h.set_task(0, Task::InBusToExit, &[b.clone()], &ix, &f.world);
+    assert_eq!(h.pax(0).unwrap().door_wait, 0.0);
+    {
+        let pax = h.pax_mut(0).unwrap();
+        pax.pt = Some(1);
+        pax.pt_target = Some(0);
+        pax.door = Some(0);
+        pax.movement = Movement::AlongPath;
+        pax.timer = 0.0;
+    }
+
+    h.task_to_exit(0, 0.05, &[b.clone()], &ix, &regs, &f.world, None);
+    assert_eq!(
+        (
+            h.pax(0).unwrap().pt,
+            h.pax(0).unwrap().pt_target,
+            h.pax(0).unwrap().door
+        ),
+        (Some(1), Some(0), Some(0)),
+        "keep approaching the reachable closed exit"
+    );
+
+    {
+        let pax = h.pax_mut(0).unwrap();
+        pax.pt = Some(0);
+        pax.pt_target = Some(0);
+        pax.door = Some(0);
+        pax.movement = Movement::AtPathEnd;
+        pax.pos = b.cabin.graph.points[0].as_dvec3();
+    }
+    for waited in 1..5 {
+        h.pax_mut(0).unwrap().timer = 0.0;
+        h.task_to_exit(0, 0.05, &[b.clone()], &ix, &regs, &f.world, None);
+        let pax = h.pax(0).unwrap();
+        assert_eq!((pax.pt_target, pax.door), (Some(0), Some(0)));
+        assert_eq!(pax.door_wait, waited as f32);
+    }
+
+    h.pax_mut(0).unwrap().timer = 0.0;
+    h.task_to_exit(0, 0.05, &[b], &ix, &regs, &f.world, None);
+    let pax = h.pax(0).unwrap();
+    assert_eq!(
+        (pax.pt, pax.pt_target, pax.door),
+        (Some(0), Some(3), Some(1))
+    );
+    assert_eq!(pax.movement, Movement::AlongPath);
 }
 
 #[test]

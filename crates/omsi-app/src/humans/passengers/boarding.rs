@@ -8,6 +8,36 @@ use glam::{DVec3, Vec3};
 use hashbrown::HashMap;
 use omsi_sim::{human::Activity, traffic::Network};
 
+fn least_busy_entry(
+    points: &[Vec3],
+    here: Vec3,
+    list: &[Option<usize>],
+    buyer: bool,
+    flags: &[(bool, bool)],
+    open: &[bool],
+    queue: &[f32],
+) -> Option<usize> {
+    let pick = |buyer: bool| {
+        list.iter()
+            .enumerate()
+            .filter_map(|(k, pt)| {
+                let pt = (*pt)?;
+                let q = *points.get(pt)?;
+                let (sells_not, button) = flags.get(k).copied().unwrap_or((false, false));
+                if (!open.get(k).copied().unwrap_or(false) && !button) || (buyer && sells_not) {
+                    return None;
+                }
+                let d = here - q;
+                let walk = Vec3::new(d.x, d.y, d.z * 5.0).length();
+                let sale = if !buyer && !sells_not { 4.0 } else { 0.0 };
+                Some((walk + sale + queue.get(k).copied().unwrap_or(0.0), pt))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|choice| choice.1)
+    };
+    pick(buyer).or_else(|| if buyer { pick(false) } else { None })
+}
+
 impl Humans {
     /// sub_62e42c: a new task and what it starts with.
     pub(in crate::humans) fn set_task(
@@ -106,7 +136,7 @@ impl Humans {
                 if let (Some(s), Some(k)) = (stop, spot) {
                     self.free_spot(s, k);
                 }
-                let spread = if self.ik {
+                let spread = if self.natural {
                     1.8 * (2.0 * crate::humans::person_hash(self.people[i].id, 5) - 1.0)
                 } else {
                     0.0
@@ -148,7 +178,7 @@ impl Humans {
                     return;
                 };
                 let km = self.buses.odometer.get(&bn.id).copied().unwrap_or(0.0);
-                let detailed = bn.id == BusId::Player || self.ik;
+                let detailed = bn.id == BusId::Player || self.ik || self.natural;
                 let all = bn.cabin.all_points();
                 let door_idx = self.pax(i).unwrap().door;
                 let p = self.pax_mut(i).unwrap();
@@ -240,6 +270,7 @@ impl Humans {
                     };
                     p.short = true;
                     p.timer = 1.0;
+                    p.door_wait = 0.0;
                     p.seat.take()
                 };
                 if let Some(d) = exit_door {
@@ -429,20 +460,66 @@ impl Humans {
         let open: Vec<bool> = (0..list.len())
             .map(|k| bn.entry_open.get(k).copied().unwrap_or(false))
             .collect();
-        let pt = bn.cabin.omsi_nearest(
-            here,
-            &list,
-            p.ticket == TicketAction::Buy,
-            false,
-            Some(&flags),
-            Some(&open),
-        );
+        let pt = if self.natural {
+            let queue = self.door_queues(i, bn.id, list.len());
+            least_busy_entry(
+                &bn.cabin.graph.points,
+                here,
+                &list,
+                p.ticket == TicketAction::Buy,
+                &flags,
+                &open,
+                &queue,
+            )
+        } else {
+            None
+        }
+        .or_else(|| {
+            bn.cabin.omsi_nearest(
+                here,
+                &list,
+                p.ticket == TicketAction::Buy,
+                false,
+                Some(&flags),
+                Some(&open),
+            )
+        });
         let p = self.pax_mut(i).unwrap();
         if let Some(q) = pt.and_then(|k| bn.cabin.graph.points.get(k)) {
             p.target = q.as_dvec3();
             p.target_bus = true;
         }
         p.door = pt.and_then(|t| list.iter().position(|e| *e == Some(t)));
+    }
+
+    /// Queue cost for each entry, with a stable per-person bias and hysteresis.
+    pub(in crate::humans) fn door_queues(&self, i: usize, bus: BusId, n: usize) -> Vec<f32> {
+        let mut queue = vec![0.0; n];
+        for (j, person) in self.people.iter().enumerate() {
+            let State::Pax(pax) = &person.state else {
+                continue;
+            };
+            if j != i
+                && pax.bus == Some(bus)
+                && pax.task == Task::WalkingToBus
+                && pax.inside.is_none()
+                && let Some(door) = pax.door.filter(|door| *door < n)
+            {
+                queue[door] += 2.0;
+            }
+        }
+        let id = self.people[i].id;
+        for (door, cost) in queue.iter_mut().enumerate() {
+            *cost += 3.0 * (crate::humans::person_hash(id, 20 + door as u32) as f32 - 0.5);
+        }
+        if let Some(door) = self
+            .pax(i)
+            .and_then(|pax| pax.door)
+            .filter(|door| *door < n)
+        {
+            queue[door] -= 1.5;
+        }
+        queue
     }
 
     /// sub_62a628: along the paths to the place reserved.
@@ -698,17 +775,39 @@ impl Humans {
                         None,
                     )
                 });
-                let exit = from.and_then(|from| bn.cabin.nearest_exit(from, &bn.exit_open));
-                let pp = self.pax_mut(i).unwrap();
-                if let Some((door, target)) = exit {
-                    if pp.door != Some(door) || pp.pt_target != Some(target) {
-                        pp.pt = from;
-                        pp.pt_target = Some(target);
-                        pp.door = Some(door);
-                        pp.movement = Movement::AlongPath;
+                let holds_closed_route = self.natural
+                    && !door_open
+                    && p.door.zip(p.pt_target).is_some_and(|(door, target)| {
+                        bn.cabin.exits.get(door).and_then(|exit| exit.point) == Some(target)
+                            && p.pt.is_some_and(|point| {
+                                point == target || bn.cabin.route_next(point, target).is_some()
+                            })
+                    });
+                let waiting_at_closed_exit = holds_closed_route
+                    && matches!(p.movement, Movement::AtPathEnd | Movement::ShortOfPathEnd);
+                let mut replan = !holds_closed_route;
+                {
+                    let pp = self.pax_mut(i).unwrap();
+                    if waiting_at_closed_exit {
+                        pp.door_wait += 1.0;
+                        replan = pp.door_wait >= 5.0;
+                    } else if !holds_closed_route {
+                        pp.door_wait = 0.0;
                     }
-                } else {
-                    self.people[i].why = "no reachable exit";
+                }
+                if replan {
+                    let exit = from.and_then(|from| bn.cabin.nearest_exit(from, &bn.exit_open));
+                    let pp = self.pax_mut(i).unwrap();
+                    if let Some((door, target)) = exit {
+                        if pp.door != Some(door) || pp.pt_target != Some(target) {
+                            pp.pt = from;
+                            pp.pt_target = Some(target);
+                            pp.door = Some(door);
+                            pp.movement = Movement::AlongPath;
+                        }
+                    } else {
+                        self.people[i].why = "no reachable exit";
+                    }
                 }
             }
             if bn.id == BusId::Player {
@@ -792,5 +891,38 @@ impl Humans {
             );
         }
         self.walk_street(i, w, h, stop, net);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::least_busy_entry;
+    use glam::Vec3;
+
+    #[test]
+    fn natural_entry_choice_uses_queue_load_after_reachability_and_door_rules() {
+        let points = [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::new(0.0, 5.0, 0.0)];
+        let here = Vec3::ZERO;
+        let list = [None, Some(1), Some(2), Some(3)];
+        let flags = [(false, false), (true, true), (true, false), (false, false)];
+        let open = [false, false, true, true];
+        let queue = [0.0, 100.0, 0.0, 100.0];
+
+        assert_eq!(
+            least_busy_entry(&points, here, &list, false, &flags, &open, &queue),
+            Some(2),
+            "skip the unreachable nearest door and prefer the open unqueued door"
+        );
+        assert_eq!(
+            least_busy_entry(&points, here, &list, true, &flags, &open, &queue),
+            Some(3),
+            "a buyer must use the reachable selling door"
+        );
+        let no_sales = [None, Some(1), Some(2), None];
+        assert_eq!(
+            least_busy_entry(&points, here, &no_sales, true, &flags, &open, &queue),
+            Some(2),
+            "a buyer falls back to another eligible door when none can sell"
+        );
     }
 }

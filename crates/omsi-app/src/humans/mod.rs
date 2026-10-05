@@ -211,6 +211,8 @@ pub struct Humans {
     pub exit_req: Vec<bool>,
     /// Procedural inverse kinematics animation enabled.
     pub ik: bool,
+    /// Natural movement and gait, independent of the skeletal pose used to draw people.
+    pub natural: bool,
     /// Feet put down since the app last collected them (see [`Humans::take_footfalls`]).
     footfalls: Vec<ambience::Footfall>,
     /// `[trafficdensity_passenger]` factor for the current hour (set by the app).
@@ -430,6 +432,7 @@ impl Humans {
             ik: omsi_cfg::env::var("OMSI_PAX_IK")
                 .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
                 .unwrap_or(true),
+            natural: true,
             footfalls: Vec::new(),
             density: 1.0,
             time_of_day: 12.0 * 3600.0,
@@ -475,6 +478,10 @@ impl Humans {
             }
         }
         self.ik = ik;
+    }
+
+    pub fn set_natural(&mut self, natural: bool) {
+        self.natural = natural;
     }
 
     /// Clear time-dependent people while keeping player-bus riders, avatars, and pending

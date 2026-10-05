@@ -584,7 +584,7 @@ impl Humans {
         });
         let seatheight = self.people[i].ty.def.seat_height;
         let p = &mut self.people[i];
-        let input = match seated.as_ref() {
+        let mut input = match seated.as_ref() {
             Some((b, s, bn)) => {
                 // on the seat, in its bus's frame (set_task(7): the feet the human's seat
                 // height under the seat point, facing the way the seat does)
@@ -674,6 +674,7 @@ impl Humans {
                 }
             }
         };
+        input.natural = self.natural;
         let (frame, origin, heading) = match p.place {
             Place::Bus(b, l) => (b.space(), l.as_dvec3(), p.lheading),
             _ => (0, p.position, p.heading),

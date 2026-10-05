@@ -623,7 +623,7 @@ impl Humans {
     ) -> Want {
         let pos2 = self.people[i].position.truncate();
         let person = &self.people[i];
-        let pace = if self.ik {
+        let pace = if self.natural {
             super::natural_pace(&person.ty.def, person.pace)
         } else {
             person.pace

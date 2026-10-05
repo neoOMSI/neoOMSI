@@ -8,7 +8,7 @@ impl Humans {
         buses: &[BusNow],
         bus_ix: &HashMap<BusId, usize>,
     ) {
-        if !self.ik || dt <= 0.0 {
+        if !self.natural || dt <= 0.0 {
             return;
         }
         let dt = dt as f64;
@@ -383,7 +383,7 @@ impl Humans {
             (Obstruction::Clear, true, true)
         };
         let settling = self.ik && self.people[i].pose.settling();
-        let natural = self.ik;
+        let natural = self.natural;
         let person = &self.people[i];
         let mut pace = if natural && p0.inside.is_none() && p0.doorway.is_none() {
             crate::humans::natural_pace(&person.ty.def, p0.walk_speed as f64) as f32

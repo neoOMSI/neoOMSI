@@ -145,6 +145,12 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
             "No change is given at the cash desk",
         ),
         pick("pax_motion", "Passenger movement", "Natural movement or OMSI 2 comparison mode"),
+        switch_row(
+            app,
+            "pax_ik",
+            "Procedural passenger animation",
+            "Use procedural poses instead of OMSI 2 animation poses",
+        ),
         pick("pax_models", "Passenger models", "RealisticPax applies on the next start"),
         pick("boarding", "Boarding", "How passengers get their tickets"),
         switch_row(

@@ -68,6 +68,7 @@ pub(super) fn sync_live(app: &mut App) {
         h.boarding = s.boarding.clone();
         h.prefer_seats = s.pax_prefer_seats;
         h.set_ik(app.args.pax_ik.unwrap_or(s.pax_ik));
+        h.set_natural(s.pax_motion == "natural");
         h.voices = match s.pax_voices.as_str() {
             "off" => 2,
             "tickets" => 1,

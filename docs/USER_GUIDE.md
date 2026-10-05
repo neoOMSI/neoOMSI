@@ -103,11 +103,11 @@ Set `OMSI_NO_SURF=1` before starting neoOMSI to disable OMSI `.surf` height maps
 
 ## Passenger models and movement
 
-**Settings → Gameplay → Passenger movement** selects natural movement or the
-OMSI 2 comparison mode. The existing `pax_ik` setting and `--pax-ik` option still
-select the same modes.
+**Settings → Gameplay → Passenger movement** selects Natural or OMSI 2 movement.
+**Procedural passenger animation** independently selects the pose system; `pax_ik`
+and `--pax-ik` control it (`ik` remains a settings alias).
 
-**Passenger models → Realistic** uses an installed `Packs/RealisticPax` in the
-content folder after restarting the game. Without that pack, installed OMSI
-passengers remain available. Build instructions are in
-[RealisticPax](../tools/realistic-pax/README.md).
+To use realistic models, install `Packs/RealisticPax` in a content folder, then
+select **Passenger models → Realistic** and restart. Build and licensing details
+are in [RealisticPax](../tools/realistic-pax/README.md). Without the pack, installed
+OMSI passengers remain in use.

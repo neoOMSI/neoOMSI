@@ -31,14 +31,14 @@ impl Person {
     pub(super) fn finish_animation(&mut self, procedural: bool, input: &AnimInput) -> bool {
         let posed = self.pose.bones(&self.ty.rig);
         let input = AnimInput {
-            natural: procedural,
             seed: self.id,
             ..*input
         };
         let legacy = self.anim.advance(&self.ty.omsi, &input);
+        let grounded = procedural || input.natural;
         self.render.active_bones = Some(if procedural && posed.ok {
             posed.bones
-        } else if procedural {
+        } else if grounded {
             omsi_sim::human::slots_from_omsi_grounded(
                 &self.anim.bones(&self.ty.omsi),
                 &self.ty.rig,
@@ -93,7 +93,7 @@ impl Humans {
             let mut ik_hold = 0.0;
             let mut facing: Option<f64> = None;
 
-            let (input, footstep) = match &p.state {
+            let (mut input, footstep) = match &p.state {
                 State::Pax(x) => {
                     let bn = x.inside.and_then(|b| bus_ix.get(&b).map(|k| &buses[*k]));
                     // a point of the bus in the person's own frame, Direct3D's axes
@@ -216,7 +216,7 @@ impl Humans {
                             look,
                             smooth: x.smooth,
                             dt_ms,
-                            natural: self.ik,
+                            natural: self.natural,
                             seed: p.id,
                         },
                         pack,
@@ -289,6 +289,7 @@ impl Humans {
                     )
                 }
             };
+            input.natural = self.natural;
             if ik_activity == Activity::Sit {
                 let aligned = facing
                     .map(|f| crowd::angle_diff(heading, f).abs() < 30.0)

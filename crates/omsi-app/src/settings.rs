@@ -113,7 +113,9 @@ pub struct Settings {
     /// What passengers say: `all`, `tickets` (only what they ask for) or `off`.
     pub pax_voices: String,
     pub pax_models: String,
-    /// Procedural IK animations for passengers and pedestrians; false uses OMSI 2 style.
+    /// Natural passenger and pedestrian movement; `omsi` uses the original movement.
+    pub pax_motion: String,
+    /// Procedural IK posing for passengers and pedestrians, independently of movement.
     pub pax_ik: bool,
     /// OMSI 2's route arrows over the road (as well as or instead of the navigator).
     pub nav_arrows: bool,
@@ -372,6 +374,7 @@ impl Settings {
             units: "metric".into(),
             pax_voices: "all".into(),
             pax_models: "omsi".into(),
+            pax_motion: "natural".into(),
             pax_ik: true,
             nav_arrows: false,
             nav_ai: true,
@@ -612,7 +615,14 @@ impl Settings {
                     }
                 }
                 "pax_ik" | "ik" => s.pax_ik = b(v),
-                "pax_motion" => s.pax_ik = !v.eq_ignore_ascii_case("omsi"),
+                "pax_motion" => {
+                    s.pax_motion = if v.eq_ignore_ascii_case("omsi") {
+                        "omsi"
+                    } else {
+                        "natural"
+                    }
+                    .into()
+                }
                 "pax_models" => {
                     s.pax_models = if v.eq_ignore_ascii_case("realistic") {
                         "realistic"
@@ -1075,8 +1085,7 @@ impl Settings {
         ));
         text.push_str(&format!(
             "pax_models={}\npax_motion={}\n",
-            self.pax_models,
-            if self.pax_ik { "natural" } else { "omsi" }
+            self.pax_models, self.pax_motion
         ));
         text.push_str(&format!("pax_ik={}\n", self.pax_ik as u8));
         text
@@ -1377,18 +1386,32 @@ mod tests {
     }
 
     #[test]
-    fn passenger_motion_aliases_preserve_old_settings_and_round_trip() {
-        for (text, natural) in [
-            ("pax_motion=omsi", false),
-            ("pax_motion=natural", true),
-            ("pax_ik=0", false),
-            ("ik=1", true),
-        ] {
-            let settings = Settings::from_text(&format!("{text}\npax_models=realistic\n"));
-            assert_eq!(settings.pax_ik, natural);
-            assert_eq!(settings.pax_models, "realistic");
-            assert_eq!(Settings::from_text(&settings.to_text()), settings);
+    fn passenger_motion_and_procedural_ik_are_independent_and_round_trip() {
+        assert_eq!(Settings::default().pax_motion, "natural");
+        assert!(Settings::default().pax_ik);
+        for motion in ["natural", "omsi"] {
+            for ik in [false, true] {
+                let settings = Settings::from_text(&format!(
+                    "pax_motion={motion}\npax_ik={}\npax_models=realistic\n",
+                    ik as u8
+                ));
+                assert_eq!(settings.pax_motion, motion);
+                assert_eq!(settings.pax_ik, ik);
+                assert_eq!(settings.pax_models, "realistic");
+                assert_eq!(Settings::from_text(&settings.to_text()), settings);
+            }
         }
+        let reversed = Settings::from_text("pax_ik=0\npax_motion=natural\n");
+        assert_eq!(reversed.pax_motion, "natural");
+        assert!(!reversed.pax_ik);
+        let reversed = Settings::from_text("pax_motion=omsi\npax_ik=1\n");
+        assert_eq!(reversed.pax_motion, "omsi");
+        assert!(reversed.pax_ik);
+        assert!(!Settings::from_text("ik=0\n").pax_ik);
+        assert_eq!(
+            Settings::from_text("pax_motion=unknown").pax_motion,
+            "natural"
+        );
         assert_eq!(Settings::from_text("pax_models=unknown").pax_models, "omsi");
     }
 

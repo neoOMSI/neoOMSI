@@ -129,6 +129,7 @@ impl Humans {
         }
         let n_due = due.iter().filter(|d| **d).count();
         let ik = self.ik;
+        let natural = self.natural;
         let pose_one = move |p: &mut Person| {
             let Person {
                 anim,
@@ -158,6 +159,12 @@ impl Humans {
                         anim.angles[0].abs() < 45.0 && anim.angles[1].abs() < 45.0,
                     )
                 }
+            } else if natural {
+                omsi_sim::human::slots_from_omsi_grounded(
+                    &anim.bones(&ty.omsi),
+                    &ty.rig,
+                    anim.angles[0].abs() < 45.0 && anim.angles[1].abs() < 45.0,
+                )
             } else {
                 omsi_sim::human::slots_from_omsi(&anim.bones(&ty.omsi))
             };
@@ -383,10 +390,10 @@ pub(in crate::humans) struct RenderResources {
 
 /// GPU instances, skin caches and eased drawing state never own passenger motion.
 pub(super) struct PersonRender {
-    /// Host-provided place for a remote viewer; it never reserves or simulates a seat.
     pub(super) level: usize,
     pub(super) blob: Option<usize>,
     pub(super) blob_shown: bool,
+    /// Host-provided seat hint for a remote viewer; it does not reserve a local place.
     pub(super) mirror_seat: Option<usize>,
     pub(super) active_bones: Option<[glam::Affine3A; omsi_sim::human::SLOTS]>,
     pub(super) meshes: Vec<(MeshId, usize)>,

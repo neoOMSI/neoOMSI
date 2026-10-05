@@ -1983,6 +1983,14 @@ fn gameplay_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
         "pax_motion",
         &[("natural", "Natural"), ("omsi", "OMSI 2")],
     );
+    toggle_setting(
+        ui,
+        s,
+        dirty,
+        c.row(),
+        "Procedural passenger animation",
+        "pax_ik",
+    );
     let mut pd = get(s, "pax_density").as_f64().unwrap_or(1.0) as f32;
     if ui.slider(
         "s-pax",
@@ -5559,6 +5567,7 @@ mod settings_tests {
             "set-pax_prefer_seats",
             "s-paxmodels",
             "s-paxmotion",
+            "set-pax_ik",
             "s-pax",
             "s-unsched",
             "s-maxsched",

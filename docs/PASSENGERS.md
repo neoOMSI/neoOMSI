@@ -24,7 +24,9 @@ LAN transfers use protocol 7 and stable identities. The host retains a passenger
 acceptance; rejection restores its waiting task. A transfer completes only on its session
 receipt.
 
-Rendering and procedural poses do not own passenger simulation state.
+Rendering and procedural poses do not own passenger simulation state. `pax_motion` selects
+natural or OMSI-style movement; `pax_ik` independently selects procedural or OMSI animation
+poses. RealisticPax models are optional and load only when installed and selected.
 
 Run focused and workspace tests with:
 

@@ -128,6 +128,8 @@ pub(in crate::humans) struct Pax {
     pub bad_at: [f32; 3],
     /// Distance moved this frame (+0x644, `LastMovedDist`).
     pub moved: f32,
+    /// Seconds waiting at a closed reachable exit before trying an open alternative.
+    pub door_wait: f32,
 }
 
 impl Pax {
@@ -197,6 +199,7 @@ impl Pax {
             complaint: Complaint::None,
             bad_at: [0.0; 3],
             moved: 0.0,
+            door_wait: 0.0,
         }
     }
 }

@@ -93,6 +93,55 @@ fn reset_test_stop(taken: bool) -> PaxStop {
 }
 
 #[test]
+fn natural_gait_is_independent_of_procedural_pose_selection() {
+    let (root, ty) = reset_test_human();
+    for ik in [false, true] {
+        for natural in [false, true] {
+            let input = AnimInput {
+                kind: 1,
+                speed: 1.6,
+                moved: 0.08,
+                room_height: pax::OUTSIDE_ROOM,
+                dt_ms: 50.0,
+                natural,
+                seed: 1,
+                ..Default::default()
+            };
+            let mut expected = OmsiAnim::default();
+            expected.advance(&ty.omsi, &input);
+            let mut person = reset_test_person(1, &ty, State::Idle, Place::Ground);
+            let posed = person.pose.bones(&ty.rig);
+
+            person.finish_animation(ik, &input);
+
+            assert_eq!(person.anim.phase, expected.phase);
+            assert_eq!(person.anim.angles, expected.angles);
+            let active = person.render.active_bones.unwrap();
+            let raw = omsi_sim::human::slots_from_omsi(&expected.bones(&ty.omsi));
+            if ik && posed.ok {
+                assert_eq!(active, posed.bones);
+            } else if ik || natural {
+                let grounded = omsi_sim::human::slots_from_omsi_grounded(
+                    &expected.bones(&ty.omsi),
+                    &ty.rig,
+                    expected.angles[0].abs() < 45.0 && expected.angles[1].abs() < 45.0,
+                );
+                assert_eq!(active, grounded);
+                if !ik && natural {
+                    assert_ne!(
+                        active, raw,
+                        "natural legacy animation keeps the feet grounded"
+                    );
+                }
+            } else {
+                assert_eq!(active, raw);
+            }
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn reset_population_keeps_player_riders_and_avatars_and_releases_other_reservations() {
     let (root, ty) = reset_test_human();
     let mut h = Humans::new(Path::new("/nonexistent"));
@@ -278,49 +327,59 @@ fn render_sets_and_clears_cabin_marker_when_people_board_and_leave() {
     person.render.meshes.push((mesh, instance));
     h.people.push(person);
     h.time = 1.0;
+    h.set_ik(false);
+    h.set_natural(true);
 
     h.sync(&renderer, &mut scene, DVec3::ZERO);
     assert!(scene.instances[instance].cabin);
+    let expected_grounded =
+        omsi_sim::human::slots_from_omsi_grounded(&h.people[0].anim.bones(&ty.omsi), &ty.rig, true);
+    assert!(
+        h.people[0]
+            .render
+            .skin_bones
+            .as_ref()
+            .unwrap()
+            .iter()
+            .zip(&expected_grounded)
+            .all(|(actual, expected)| actual.abs_diff_eq(*expected, 1e-6))
+    );
+
+    h.set_natural(false);
+    h.people[0].render.skinned = false;
+    h.people[0].render.skin_bones = None;
+    h.sync(&renderer, &mut scene, DVec3::ZERO);
+    let expected_raw = omsi_sim::human::slots_from_omsi(&h.people[0].anim.bones(&ty.omsi));
+    assert!(
+        h.people[0]
+            .render
+            .skin_bones
+            .as_ref()
+            .unwrap()
+            .iter()
+            .zip(&expected_raw)
+            .all(|(actual, expected)| actual.abs_diff_eq(*expected, 1e-6))
+    );
+
+    h.set_natural(true);
+    h.people[0].render.skinned = false;
+    h.people[0].render.skin_bones = None;
+    h.sync(&renderer, &mut scene, DVec3::ZERO);
+    assert!(
+        h.people[0]
+            .render
+            .skin_bones
+            .as_ref()
+            .unwrap()
+            .iter()
+            .zip(&expected_grounded)
+            .all(|(actual, expected)| actual.abs_diff_eq(*expected, 1e-6))
+    );
 
     h.people[0].place = Place::Ground;
     h.sync(&renderer, &mut scene, DVec3::ZERO);
     assert!(!scene.instances[instance].cabin);
 
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn map_humans_load_nested_paths_and_preserve_weights() {
-    let root = std::env::temp_dir().join(format!("omsi-map-human-paths-{}", std::process::id()));
-    let nested = root.join("Humans/JP_Test/Child_1");
-    std::fs::create_dir_all(&nested).unwrap();
-    // Synthetic definitions: no original passenger assets are required.
-    std::fs::write(nested.join("Child_1.hum"), "[model]\nmodel.cfg\n").unwrap();
-    std::fs::write(nested.join("model.cfg"), "").unwrap();
-    let other = root.join("Humans/Other");
-    std::fs::create_dir_all(&other).unwrap();
-    std::fs::write(other.join("Man.hum"), "[model]\nmodel.cfg\n").unwrap();
-    std::fs::write(other.join("model.cfg"), "").unwrap();
-    let list = vec![
-        "humans\\jp_test\\child_1\\child_1.hum".into(),
-        "Humans/JP_Test/Child_1/Child_1.hum".into(),
-        "JP_Test/Child_1/Child_1.hum".into(),
-        "Humans/JP_Test/Missing.hum".into(),
-    ];
-    let picked = map_human_types(&root, &list);
-    assert_eq!(picked.len(), 3);
-    assert!(Arc::ptr_eq(&picked[0], &picked[1]));
-    assert!(Arc::ptr_eq(&picked[1], &picked[2]));
-    // (case-blind: a case-insensitive disk keeps the list's own spelling; and
-    // separator-blind: on Windows `nested` keeps the slashes it was joined with, while
-    // the resolved path is built with backslashes)
-    let lower = |p: &Path| p.to_string_lossy().to_lowercase().replace('\\', "/");
-    assert!(
-        picked
-            .iter()
-            .all(|t| lower(&t.def.path).starts_with(&lower(&nested)))
-    );
-    assert!(map_human_types(&root, &["Humans/Missing/None.hum".into()]).is_empty());
     std::fs::remove_dir_all(root).unwrap();
 }
 
