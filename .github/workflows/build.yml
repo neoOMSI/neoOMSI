@@ -68,42 +68,14 @@ jobs:
       - name: Build
         shell: cmd
         run: scripts\build-windows.cmd ${{ matrix.target }}
-      - name: DirectX shader compiler
-        continue-on-error: true
+      - name: DirectX shader compiler and Visual C++ runtime
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download -R microsoft/DirectXShaderCompiler --pattern "dxc_*.zip" -D dxc
-          $zip = Get-ChildItem dxc/*.zip | Where-Object { $_.Name -notmatch "linux|pdb" } | Select-Object -First 1
-          Expand-Archive $zip.FullName -DestinationPath dxc/x
-          $arch = if ("${{ matrix.arch }}" -eq "arm64") { "arm64" } else { "x64" }
-          Copy-Item "dxc/x/bin/$arch/dxcompiler.dll", "dxc/x/bin/$arch/dxil.dll" dist/windows/
-      - name: Visual C++ runtime
-        shell: pwsh
-        run: |
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
-          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\${{ matrix.arch }}\Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
-          $dir = if ($crt) { $crt.FullName } elseif ("${{ matrix.arch }}" -eq "x64") { "$env:SystemRoot\System32" } else { throw "no ARM64 Visual C++ runtime in $vs" }
-          foreach ($dll in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll") {
-            Copy-Item (Join-Path $dir $dll) dist/windows/
-          }
+        run: powershell -ExecutionPolicy Bypass -File scripts/ci/setup-windows-deps.ps1 -Arch ${{ matrix.arch }}
       - name: Package
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force out | Out-Null
-          $out = (Resolve-Path out).Path
-          Copy-Item README.md, LICENSE dist/windows/
-          New-Item -ItemType Directory -Force dist/server | Out-Null
-          Copy-Item dist/windows/neoomsi.exe, dist/windows/vcruntime140.dll, dist/windows/vcruntime140_1.dll, dist/windows/msvcp140.dll, scripts/server/start.cmd, LICENSE dist/server/
-          Copy-Item docs/SERVER.md dist/server/README.md
-          New-Item -ItemType File -Force dist/server/.neoomsi-content | Out-Null
-          Push-Location dist/windows
-          7z a -tzip -mx=5 "$out/neoOMSI-$env:neoomsi_VERSION-windows-${{ matrix.arch }}.zip" *
-          Pop-Location
-          Push-Location dist/server
-          7z a -tzip -mx=5 "$out/neoOMSI-$env:neoomsi_VERSION-server-windows-${{ matrix.arch }}.zip" *
-          Pop-Location
+        run: powershell -ExecutionPolicy Bypass -File scripts/ci/package-windows.ps1 -Arch ${{ matrix.arch }} -Version $env:neoomsi_VERSION
       - uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
@@ -138,10 +110,7 @@ jobs:
       - name: Build
         run: scripts/build-macos.sh
       - name: Package
-        run: |
-          mkdir -p out
-          cp README.md LICENSE dist/macos/
-          cd dist/macos && ditto -c -k --sequesterRsrc . "../../out/neoOMSI-$neoomsi_VERSION-macos-${{ matrix.arch }}.zip"
+        run: bash scripts/ci/package-posix.sh macos ${{ matrix.arch }} $neoomsi_VERSION
       - uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.arch }}
@@ -188,12 +157,7 @@ jobs:
         if: matrix.arch == 'x64'
         run: cargo nextest run --locked --release -p omsi-render -E 'test(shaders_validate_and_match_the_uniforms)'
       - name: Package
-        run: |
-          mkdir -p out
-          cp README.md LICENSE dist/linux/
-          cp LICENSE dist/server/
-          (cd dist/linux && zip -qr "../../out/neoOMSI-$neoomsi_VERSION-linux-${{ matrix.arch }}.zip" .)
-          (cd dist/server && zip -qr "../../out/neoOMSI-$neoomsi_VERSION-server-linux-${{ matrix.arch }}.zip" .)
+        run: bash scripts/ci/package-posix.sh linux ${{ matrix.arch }} $neoomsi_VERSION
       - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
@@ -219,117 +183,6 @@ jobs:
         with:
           path: out
           merge-multiple: true
-      - name: Publish v${{ needs.version.outputs.version }}
+      - name: Publish release
         shell: bash
-        run: |
-          set -euo pipefail
-          ls -l out
-
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            # Stable/RC releases prefer the prepared CHANGELOG section. If release
-            # preparation has not compiled it yet, fall back to all pending fragments.
-            awk -v v="## $VERSION" 'index($0, v) == 1 && (length($0) == length(v) || substr($0, length(v) + 1, 1) == " ") {f = 1; next} f && /^## / {exit} f {print}' CHANGELOG.md > changes.md
-            if ! grep -q '[^[:space:]]' changes.md; then
-              bash scripts/render-changelog-fragments.sh changes.md
-            fi
-          else
-            # Nightlies show only fragments changed since the previous rolling
-            # nightly. The first nightly falls back to all pending fragments.
-            if git rev-parse --verify --quiet refs/tags/nightly >/dev/null; then
-              previous_nightly="$(git rev-parse refs/tags/nightly)"
-              fragments=()
-              while IFS= read -r fragment; do
-                [ "$fragment" = ".changes/README.md" ] && continue
-                [ -f "$fragment" ] && fragments+=("$fragment")
-              done < <(git diff --name-only "$previous_nightly" "$GITHUB_SHA" -- '.changes/*.md')
-
-              if [ "${#fragments[@]}" -gt 0 ]; then
-                bash scripts/render-changelog-fragments.sh changes.md "${fragments[@]}"
-              else
-                : > changes.md
-              fi
-            else
-              bash scripts/render-changelog-fragments.sh changes.md
-            fi
-          fi
-
-          if ! grep -q '[^[:space:]]' changes.md; then
-            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-              echo "- Small changes and fixes." > changes.md
-            else
-              echo "- No notable user-facing changes since the previous nightly." > changes.md
-            fi
-          fi
-
-          download_base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
-
-          cat > notes.md <<NOTES
-          > **Early development build.** Expect bugs. An original OMSI 2 installation is required; neoOMSI does not include game content.
-
-          **Source:** [\`${GITHUB_SHA:0:8}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) · **Build:** [#${GITHUB_RUN_NUMBER}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
-
-          ## What's changed
-
-          NOTES
-          cat changes.md >> notes.md
-          cat >> notes.md <<NOTES
-
-          ## Downloads
-
-          | Platform | Game | Dedicated server |
-          | --- | --- | --- |
-          | Windows x64 | [\`neoOMSI-$VERSION-windows-x64.zip\`]($download_base/neoOMSI-$VERSION-windows-x64.zip) | [\`neoOMSI-$VERSION-server-windows-x64.zip\`]($download_base/neoOMSI-$VERSION-server-windows-x64.zip) |
-          | Windows ARM64 | [\`neoOMSI-$VERSION-windows-arm64.zip\`]($download_base/neoOMSI-$VERSION-windows-arm64.zip) | [\`neoOMSI-$VERSION-server-windows-arm64.zip\`]($download_base/neoOMSI-$VERSION-server-windows-arm64.zip) |
-          | macOS (Apple silicon) | [\`neoOMSI-$VERSION-macos-arm64.zip\`]($download_base/neoOMSI-$VERSION-macos-arm64.zip) | — |
-          | macOS (Intel) | [\`neoOMSI-$VERSION-macos-x64.zip\`]($download_base/neoOMSI-$VERSION-macos-x64.zip) | — |
-          | Linux x64 | [\`neoOMSI-$VERSION-linux-x64.zip\`]($download_base/neoOMSI-$VERSION-linux-x64.zip) | [\`neoOMSI-$VERSION-server-linux-x64.zip\`]($download_base/neoOMSI-$VERSION-server-linux-x64.zip) |
-          | Linux ARM64 | [\`neoOMSI-$VERSION-linux-arm64.zip\`]($download_base/neoOMSI-$VERSION-linux-arm64.zip) | [\`neoOMSI-$VERSION-server-linux-arm64.zip\`]($download_base/neoOMSI-$VERSION-server-linux-arm64.zip) |
-          NOTES
-
-          if [ "$PRERELEASE" = "true" ]; then
-            flag="--prerelease"
-          else
-            flag="--prerelease=false"
-          fi
-
-          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
-            if gh release view "$TAG" >/dev/null 2>&1; then
-              # Upload first: a failed build/upload never destroys the last usable nightly.
-              gh release upload "$TAG" out/*.zip --clobber
-
-              # Move the rolling tag only after all new assets are present.
-              gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" \
-                -f sha="$GITHUB_SHA" -F force=true >/dev/null
-
-              gh release edit "$TAG" \
-                --title "neoOMSI $VERSION" \
-                --notes-file notes.md \
-                "$flag"
-
-              # The version is part of each asset name, so remove assets from older
-              # nightlies after the new release is safely in place.
-              current_prefix="neoOMSI-$VERSION-"
-              while IFS= read -r asset; do
-                [ -n "$asset" ] || continue
-                case "$asset" in
-                  "$current_prefix"*) ;;
-                  *) gh release delete-asset "$TAG" "$asset" --yes ;;
-                esac
-              done < <(gh release view "$TAG" --json assets --jq '.assets[].name')
-            else
-              gh release create "$TAG" out/*.zip \
-                --target "$GITHUB_SHA" \
-                --title "neoOMSI $VERSION" \
-                --notes-file notes.md \
-                "$flag"
-            fi
-          elif gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" out/*.zip --clobber
-            gh release edit "$TAG" --title "neoOMSI $VERSION" --notes-file notes.md "$flag"
-          else
-            gh release create "$TAG" out/*.zip \
-              --verify-tag \
-              --title "neoOMSI $VERSION" \
-              --notes-file notes.md \
-              "$flag"
-          fi
+        run: bash scripts/ci/publish-release.sh

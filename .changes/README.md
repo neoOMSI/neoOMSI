@@ -28,5 +28,5 @@ Fixed keyboard steering return behaviour to match OMSI 2.
 Use the reviewer-approved `skip-changelog` label for trivial changes that should not appear
 in release notes.
 
-Nightlies show fragments changed since the previous rolling nightly. Stable release
+Nightlies show fragments changed since the previous nightly. Stable release
 preparation compiles all pending fragments into `CHANGELOG.md` and removes them.

@@ -40,53 +40,7 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_HEAD: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          # Manual runs always execute the full test suite.
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "run-tests=true" >> "$GITHUB_OUTPUT"
-            echo "Manual run: tests required."
-            exit 0
-          fi
-
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            range="$PR_BASE...$PR_HEAD"
-          elif [ "$EVENT_NAME" = "push" ]; then
-            # A branch creation or otherwise unavailable previous revision
-            # cannot be compared safely, so run the tests.
-            if [ -z "$PUSH_BEFORE" ] || \
-               [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
-              echo "run-tests=true" >> "$GITHUB_OUTPUT"
-              echo "No usable previous revision: tests required."
-              exit 0
-            fi
-
-            range="$PUSH_BEFORE..$PUSH_HEAD"
-          else
-            # Fail safe for future trigger types.
-            echo "run-tests=true" >> "$GITHUB_OUTPUT"
-            echo "Unknown event type: tests required."
-            exit 0
-          fi
-
-          echo "Checking changes in $range"
-
-          changed="$(git diff --name-only "$range")"
-
-          echo "Changed files:"
-          printf '%s\n' "$changed"
-
-          # Files that can affect the Rust workspace or its tests.
-          if printf '%s\n' "$changed" | grep -Eq \
-            '^(crates/|tools/|Cargo\.toml$|Cargo\.lock$|\.cargo/|rust-toolchain$|rust-toolchain\.toml$|\.github/workflows/test\.yml$|\.github/actions/)'
-          then
-            echo "run-tests=true" >> "$GITHUB_OUTPUT"
-            echo "Test-relevant changes detected."
-          else
-            echo "run-tests=false" >> "$GITHUB_OUTPUT"
-            echo "No test-relevant changes detected."
-          fi
+        run: bash scripts/ci/detect-test-changes.sh
 
   test:
     name: Workspace tests

@@ -26,7 +26,7 @@ v0.2.0
 v0.2.1
 ```
 
-Nightly releases update a rolling `nightly` tag on GitHub Releases rather than creating a permanent git tag per run.
+Nightly snapshots publish under versioned tags (e.g. `v0.2.0-nightly.g<sha>`) on GitHub Releases.
 
 ## Release workflow
 
@@ -47,7 +47,7 @@ main branch (trunk)
 
 Automated CI builds run nightly at 00:07 in `Europe/Berlin` (and on manual workflow dispatch) for Windows, macOS, and Linux. Nightlies provide immediate visibility into recent changes but carry no guarantee against regressions. Android packages are built locally using `scripts/build-android.sh`.
 
-The public Nightly version uses the source commit (`0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. The rolling `nightly` release shows changelog fragments changed since the previous nightly; the first nightly falls back to all pending fragments.
+The public Nightly version uses the source commit (`0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. Each nightly release shows changelog fragments changed since the previous release, falling back to all pending fragments when none are found.
 
 ### 2. Preparing a Stable release
 
