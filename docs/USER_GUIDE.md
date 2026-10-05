@@ -77,6 +77,16 @@ The option can also be changed through the in-game **Options → Gameplay** menu
 apply to subsequent place reservations in player and timetable buses. In `settings.cfg`,
 the option is stored as `pax_prefer_seats=1` (enabled) or `pax_prefer_seats=0` (disabled).
 
+## Wet-road reflections
+
+Vanilla, Vanilla+ and Enhanced show reflections of buses, buildings and scenery in
+wet-road puddles. Enable reflections in the graphics settings, or set `reflections=1`
+in `settings.cfg`.
+
+Puddle reflections remain visible from inside the bus through its windows and rain
+films. Glass tint and raindrops affect the view, including the reflections outside.
+Each graphics mode keeps its own lighting and colour treatment.
+
 ## Command-line options
 
 You can launch directly into a specific scenario using command-line arguments:
