@@ -1,36 +1,4 @@
-//! Passengers, as Omsi.exe runs them.
-//!
-//! A passenger is one of the original's `THumanBeingInst`s with a *task* (+0x6c5, named by
-//! sub_62465c) and a *movement state* (+0x6c4). Every frame the human's tick (sub_62a6a0)
-//! first moves the person by the state - straight at a target (1), along the vehicle's
-//! `paths.cfg` network from point to point (5), standing (0, 3, 7) or turning on the spot
-//! (9) - and then lets the task look at the world and switch the state or the task
-//! (sub_62e42c sets up a new task):
-//!
-//! * `WaitingForBus` (1): at a waiting place of the stop. A bus of theirs listed at the stop
-//!   - within 60 m, facing the stop's way (sub_61f238) - that still rolls faster than 2 m/s,
-//!   or stands in the stop's box, sends them to the stop's gather point (task 2).
-//! * task 2 (no name): walking to the gather point, 0.7 m short of it. When the bus stands
-//!   (under 3 m/s) in the box, a free place in it is reserved (sub_7e910c: a random free
-//!   `[passpos]`, seat or standing place - no free place, nobody gets on), the ticket is
-//!   decided (sub_5ce4e0) and they walk to the bus (3).
-//! * `WalkingToBus` (3): to the nearest entry that is open or has a button (and sells
-//!   tickets when they buy one), 0.5 m outside the bus side until they are level with it;
-//!   a shut door is asked for (`PAX_Entry<n>_Req`) and waited at 0.7 m. In the doorway
-//!   they greet the driver or complain (the player's bus only) and board (4).
-//! * `WalkingInBusToPlace` (4): along the paths to the validator (stamping for a second,
-//!   `ev_Stamper`) or the cash desk (the ticket sale with the player) and on to the place
-//!   reserved. In any bus but the player's they are at their place at once.
-//! * `SittingInBus` (7): until the bus's next stop (the stop it is listed at) is theirs,
-//!   or it passed their alternative stop and drove on a random part of the way, or - with
-//!   no destination - it drove 1..20 km; a bus at its terminus empties.
-//! * `WalkingInBusToExit` (5): stop request (`int_haltewunsch`), to the nearest exit, 0.7
-//!   m short of it while it is shut (`PAX_Exit<n>_Req`), out when it is open and the bus
-//!   stands at a stop - and on along the pavement as a pedestrian.
-//! * `WalkingToBusstop` (6): back to a waiting place of the stop, then waiting again.
-//!
-//! Local blockers, door queues and bounded aisle recovery constrain cabin movement.
-//! Natural movement adds crowd steering outside the bus.
+//! Passenger movement runs before lifecycle decisions in each frame.
 
 use super::*;
 

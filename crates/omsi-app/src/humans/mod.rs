@@ -173,7 +173,10 @@ pub struct Humans {
     voice: PassengerVoices,
     network: PassengerNetwork,
     render: RenderResources,
+    /// Append-only registry; indices are shared with LAN and avatars.
     types: Vec<Arc<HumanType>>,
+    /// Weighted local spawn slots into `types`; duplicate indices represent map weights.
+    population: Vec<usize>,
     alternates: HashMap<String, Vec<Arc<HumanType>>>,
     pub people: Vec<Person>,
     rng: u64,
@@ -270,7 +273,7 @@ pub struct Humans {
     /// Where the time of this tick went (stage, ms since the one before), for the slow
     /// ticks OMSI_PROFILE reports.
     tick_stages: Vec<(&'static str, f64)>,
-    /// `types` has been cut down to the map's `humans.txt`.
+    /// The map's weighted population has been set up from `humans.txt`.
     map_humans_done: bool,
     /// Simulation time of the last `sync`.
     last_sync: f64,
@@ -318,6 +321,14 @@ fn map_human_types(root: &Path, list: &[String]) -> Vec<Arc<HumanType>> {
     picked
 }
 
+fn human_file_key(path: &str) -> String {
+    let path = path.replace('\\', "/").to_ascii_lowercase();
+    match path.rfind("humans/") {
+        Some(k) => path[k + 7..].to_string(),
+        None => path,
+    }
+}
+
 impl Humans {
     fn next_person_id(&mut self) -> u32 {
         while self.people.iter().any(|person| person.id == self.next_id) {
@@ -331,11 +342,12 @@ impl Humans {
     /// initial pedestrian selection and their generated identities identical on
     /// the host and clients; subsequent movement remains simulation-local.
     pub fn set_lan_seed(&mut self, seed: u64) {
-        self.rng = (seed ^ 0xA5A5_5A5A_1F2E_3D4C) as u64 | 1;
+        self.rng = (seed ^ 0xA5A5_5A5A_1F2E_3D4C) | 1;
     }
 
     pub fn new(root: &Path) -> Humans {
         let (types, alternates) = load_figures(root);
+        let population = (0..types.len()).collect();
         if omsi_cfg::env::var_os("OMSI_DEBUG_HUMANS").is_some() {
             for t in &types {
                 let (mut lo, mut hi) = (f32::MAX, f32::MIN);
@@ -408,6 +420,7 @@ impl Humans {
                 sync_frame: 0,
             },
             types,
+            population,
             people: Vec::new(),
             rng: 0x1234_5678_9ABC_DEF1,
             next_id: 1,
@@ -707,7 +720,10 @@ impl Humans {
         kind: Option<usize>,
     ) -> Option<usize> {
         self.use_map_humans(world);
-        if self.types.is_empty() {
+        if self.types.is_empty()
+            || kind.is_some_and(|index| index >= self.types.len())
+            || (kind.is_none() && self.population.is_empty())
+        {
             return None;
         }
         // on the surface they will walk on, not on the bare terrain under a pavement
@@ -960,42 +976,60 @@ impl Humans {
         if list.is_empty() {
             return;
         }
-        // the people installed already (any content root, mods too), matched by the path
-        // below `Humans/`; an entry not among them (a pack nested deeper than the scan) is
-        // loaded from its own path
-        let key = |p: &str| -> String {
-            let p = p.replace('\\', "/").to_ascii_lowercase();
-            match p.rfind("humans/") {
-                Some(k) => p[k + 7..].to_string(),
-                None => p,
-            }
-        };
-        let mut picked: Vec<Arc<HumanType>> = Vec::new();
+        // Match installed paths first, then load entries from packs outside the initial scan.
+        let mut population = Vec::new();
         for line in &list {
-            let want = key(line.trim());
-            match self
+            let want = human_file_key(line.trim());
+            let exact = self
                 .types
                 .iter()
-                .find(|t| key(&t.def.path.to_string_lossy()) == want)
-            {
-                Some(t) => picked.push(t.clone()),
-                None => picked.extend(map_human_types(&world.root, std::slice::from_ref(line))),
+                .position(|ty| human_file_key(&ty.def.path.to_string_lossy()) == want);
+            let index = exact.or_else(|| {
+                if figures::is_alternate(Path::new(&want)) {
+                    let slot = slot_key(Path::new(&want));
+                    let alternate = self
+                        .alternates
+                        .get(&slot)
+                        .and_then(|types| {
+                            types
+                                .iter()
+                                .find(|ty| human_file_key(&ty.def.path.to_string_lossy()) == want)
+                        })
+                        .cloned();
+                    alternate.map(|ty| self.type_index(ty))
+                } else {
+                    None
+                }
+            });
+            if let Some(index) = index {
+                population.push(index);
+            } else {
+                population.extend(
+                    map_human_types(&world.root, std::slice::from_ref(line))
+                        .into_iter()
+                        .map(|ty| self.type_index(ty)),
+                );
             }
         }
         // (a list that names nobody to be found keeps everybody: a map without people
         // looked broken)
-        if picked.is_empty() {
+        if population.is_empty() {
             log::warn!("humans.txt of the map names nobody installed: keeping all people");
             return;
         }
         log::info!(
             "humans: {} of {} map entries loaded from {}",
-            picked.len(),
+            population.len(),
             list.len(),
             path.display()
         );
-        for ty in &picked {
+        let mut slots = HashSet::new();
+        for &index in &population {
+            let ty = self.types[index].clone();
             let key = slot_key(&ty.def.path);
+            if !slots.insert(key.clone()) {
+                continue;
+            }
             let Some(parent) = ty.def.path.parent() else {
                 continue;
             };
@@ -1014,7 +1048,7 @@ impl Humans {
                 }
             }
         }
-        self.types = picked;
+        self.population = population;
     }
 
     /// People the moving bus has just knocked down. OMSI counts them in the driver's

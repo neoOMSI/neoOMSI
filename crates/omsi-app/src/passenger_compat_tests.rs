@@ -82,8 +82,7 @@ fn switching_lod_uses_the_current_pose_and_recycles_contact_shadows() {
     ty.lower = vec![(1, mesh())];
     ty.levels = vec![(0.25, f32::MAX), (0.0, 0.25)];
     let mut h = Humans::new(&f.root);
-    h.types.push(Arc::new(ty));
-    h.map_humans_done = true;
+    set_population(&mut h, [Arc::new(ty)]);
     h.ik = true;
     let i = h
         .spawn(
@@ -186,8 +185,7 @@ fn overlapping_stops_cannot_spawn_people_in_the_same_physical_waiting_place() {
     let mut scene = renderer.new_scene();
     for height in [0.0, 0.5] {
         let mut h = Humans::new(&f.root);
-        h.types.push(f.human.clone());
-        h.map_humans_done = true;
+        set_population(&mut h, [f.human.clone()]);
         h.ik = true;
         for id in [1, 2] {
             let mut s = stop(DVec3::new(2.0, 2.0, 0.0), 0.0, "Shared platform");
@@ -231,8 +229,7 @@ fn host_id_collisions_cannot_consume_a_local_fare_owner_or_alias_an_avatar() {
     let renderer = noop_renderer();
     let mut scene = renderer.new_scene();
     let mut h = Humans::new(&f.root);
-    h.types.push(f.human.clone());
-    h.map_humans_done = true;
+    set_population(&mut h, [f.human.clone()]);
     let host_id = (1 << 30) + 7;
     let mut p = Pax::new(1.1);
     p.task = Task::InBusToPlace;
@@ -770,8 +767,7 @@ fn a_spawned_waiting_root_and_pose_are_on_the_final_floor_before_rendering() {
         (0.75, 2.1, -90.0),
     ] {
         let mut h = Humans::new(&f.root);
-        h.types.push(f.scaled_human(stature));
-        h.map_humans_done = true;
+        set_population(&mut h, [f.scaled_human(stature)]);
         h.ik = true;
         let mut s = stop(DVec3::new(2.0, 2.0, 0.0), 0.0, "Origin");
         s.spots[0].pos = DVec3::new(2.0, 2.0, if height == 0.0 { -0.25 } else { height as f64 });
@@ -1294,6 +1290,19 @@ fn missing_waiting_spot_keeps_a_grant_retryable_without_consuming_the_mirror() {
 }
 
 impl Fixture {
+    fn human_at(&self, file: &str, weight: Option<f32>) -> Arc<HumanType> {
+        let path = self.root.join(file);
+        let parent = path.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        std::fs::write(parent.join("model.cfg"), "").unwrap();
+        let mut definition = std::fs::read_to_string(self.root.join("person.hum")).unwrap();
+        if let Some(weight) = weight {
+            definition.push_str(&format!("\n[neo_weight]\n{weight}\n"));
+        }
+        std::fs::write(&path, definition).unwrap();
+        Arc::new(HumanType::load(&path).unwrap())
+    }
+
     fn scaled_human(&self, stature: f32) -> Arc<HumanType> {
         let path = self.root.join(format!("scaled-{stature}.hum"));
         let links = [
@@ -1450,6 +1459,127 @@ fn bus(cabin: Arc<Cabin>) -> BusNow {
         terminus: None,
         out_of_service: false,
     }
+}
+
+fn set_population(h: &mut Humans, types: impl IntoIterator<Item = Arc<HumanType>>) {
+    for ty in types {
+        let index = h.type_index(ty);
+        h.population.push(index);
+    }
+    h.map_humans_done = true;
+}
+
+#[test]
+fn registering_a_weightless_lan_alternate_does_not_add_a_local_spawn_weight() {
+    let f = Fixture::new();
+    let base = f.human_at("Humans/Other/Man.hum", None);
+    let alternate = f.human_at("Humans/Other/Man~Alt.hum", Some(0.0));
+    let mut h = Humans::new(&f.root);
+    h.types.clear();
+    h.population.clear();
+    h.alternates.clear();
+    set_population(&mut h, [base.clone()]);
+    h.alternates
+        .insert(figures::slot_key(&base.def.path), vec![alternate.clone()]);
+
+    let index = h
+        .type_by_file(&Humans::type_file(&alternate))
+        .expect("registered LAN figure");
+
+    assert_eq!(index, 1);
+    assert_eq!(h.population, [0]);
+    assert!(Arc::ptr_eq(&h.types[index], &alternate));
+    for _ in 0..64 {
+        let (picked, _) = h.pick_figure(DVec3::ZERO, None);
+        assert!(Arc::ptr_eq(&picked, &base));
+    }
+    let (forced, _) = h.pick_figure(DVec3::ZERO, Some(index));
+    assert!(Arc::ptr_eq(&forced, &alternate));
+}
+
+#[test]
+fn map_population_keeps_duplicate_weights_explicit_alternates_and_registry_indices() {
+    let f = Fixture::new();
+    let base_a = f.human_at("Humans/Test/A.hum", None);
+    let base_b = f.human_at("Humans/Test/B.hum", None);
+    let group_alt = f.human_at("Humans/Test/B~Group.hum", Some(1.0));
+    let explicit_alt = f.human_at("Humans/Test/B~Blue.hum", Some(1.0));
+    let mut h = Humans::new(&f.root);
+    h.types.clear();
+    h.population.clear();
+    h.alternates.clear();
+    h.types.extend([base_a.clone(), base_b.clone()]);
+    h.population.extend([0, 1]);
+    let group_index = h.type_index(group_alt.clone());
+    h.alternates
+        .insert(figures::slot_key(&base_b.def.path), vec![group_alt.clone()]);
+    std::fs::write(
+        f.world.map_dir.join("humans.txt"),
+        "Humans/Test/A.hum\nHumans/Test/A.hum\nHumans/Test/B.hum\nHumans/Test/B~Blue.hum\n",
+    )
+    .unwrap();
+
+    h.use_map_humans(&f.world);
+
+    assert_eq!(group_index, 2);
+    assert_eq!(h.population, [0, 0, 1, 3]);
+    assert!(Arc::ptr_eq(&h.types[0], &base_a));
+    assert!(Arc::ptr_eq(&h.types[1], &base_b));
+    assert!(Arc::ptr_eq(&h.types[2], &group_alt));
+    assert_eq!(
+        Humans::type_file(&h.types[3]),
+        Humans::type_file(&explicit_alt),
+        "the map's explicit alternate stays the selected model"
+    );
+    assert_eq!(h.type_index(group_alt), group_index);
+    assert_eq!(h.type_index(explicit_alt.clone()), 3);
+
+    h.population = vec![3];
+    let (picked, _) = h.pick_figure(DVec3::ZERO, None);
+    assert_eq!(
+        Humans::type_file(&picked),
+        Humans::type_file(&explicit_alt),
+        "explicit alternate population slots do not sample their group's alternatives"
+    );
+}
+
+#[test]
+fn avatar_type_selection_uses_weighted_population_not_registry_length() {
+    let f = Fixture::new();
+    let base_a = f.human_at("Humans/Test/A.hum", None);
+    let base_b = f.human_at("Humans/Test/B.hum", None);
+    let lan_alt = f.human_at("Humans/Test/B~Lan.hum", Some(0.0));
+    let mut h = Humans::new(&f.root);
+    h.types.clear();
+    h.population.clear();
+    h.alternates.clear();
+    h.types.extend([base_a, base_b.clone()]);
+    h.population.extend([0, 0, 1]);
+    h.map_humans_done = true;
+    assert_eq!(h.type_index(lan_alt.clone()), 2);
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+
+    h.avatar(
+        1,
+        &f.world,
+        &renderer,
+        &mut scene,
+        AvatarCmd {
+            pos: DVec3::ZERO,
+            heading: 0.0,
+            vel: DVec2::ZERO,
+            lift: 0.0,
+            seat: None,
+            floor: None,
+            aboard: None,
+        },
+        2,
+    );
+
+    assert_eq!(h.people.len(), 1);
+    assert!(Arc::ptr_eq(&h.people[0].ty, &base_b));
+    assert!(!Arc::ptr_eq(&h.people[0].ty, &lan_alt));
 }
 
 fn stop(pos: DVec3, heading: f64, name: &str) -> PaxStop {

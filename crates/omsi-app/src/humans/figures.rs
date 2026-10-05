@@ -33,6 +33,12 @@ pub(super) fn slot_key(path: &Path) -> String {
     }
 }
 
+fn type_path_key(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase()
+}
+
 pub(super) fn load_figures(
     root: &Path,
 ) -> (Vec<Arc<HumanType>>, HashMap<String, Vec<Arc<HumanType>>>) {
@@ -97,9 +103,18 @@ impl Humans {
             .collect();
         let mut choice: Option<(Arc<HumanType>, usize)> = None;
         for attempt in 0..10 {
-            let pick = (self.rand() % self.types.len() as u64) as usize;
-            let mut t = self.types[kind.map(|k| k % self.types.len()).unwrap_or(pick)].clone();
-            if let (None, Some(alts)) = (kind, self.alternates.get(&slot_key(&t.def.path))) {
+            let index = match kind {
+                Some(index) => index,
+                None => {
+                    let slot = (self.rand() % self.population.len() as u64) as usize;
+                    self.population[slot]
+                }
+            };
+            let mut t = self.types[index].clone();
+            if kind.is_none()
+                && !is_alternate(&t.def.path)
+                && let Some(alts) = self.alternates.get(&slot_key(&t.def.path))
+            {
                 let weight = |t: &HumanType| t.def.weight.unwrap_or(1.0) as f64;
                 let alts = alts.clone();
                 let all = weight(&t) + alts.iter().map(|a| weight(a)).sum::<f64>();
@@ -126,15 +141,14 @@ impl Humans {
                 _ => {}
             }
         }
-        choice.unwrap_or_else(|| (self.types[0].clone(), 0))
+        choice.expect("the final attempt selects a figure even when none is nearby")
     }
 
+    /// Register a model at a stable index without adding it to local population weights.
     pub fn type_index(&mut self, ty: Arc<HumanType>) -> usize {
-        if let Some(i) = self
-            .types
-            .iter()
-            .position(|t| Arc::ptr_eq(t, &ty) || t.def.path == ty.def.path)
-        {
+        if let Some(i) = self.types.iter().position(|t| {
+            Arc::ptr_eq(t, &ty) || type_path_key(&t.def.path) == type_path_key(&ty.def.path)
+        }) {
             return i;
         }
         self.types.push(ty);
@@ -190,6 +204,14 @@ mod tests {
         assert_eq!(
             slot_key(Path::new("Humans/Other/man01.hum")),
             "other/man01.hum"
+        );
+    }
+
+    #[test]
+    fn type_registry_paths_ignore_case_and_separator_spelling() {
+        assert_eq!(
+            type_path_key(Path::new(r"C:\OMSI\Humans\Group\Man.hum")),
+            type_path_key(Path::new("c:/omsi/humans/group/man.hum"))
         );
     }
 

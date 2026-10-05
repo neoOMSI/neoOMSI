@@ -64,8 +64,14 @@ impl Humans {
             .copied()
             .filter(|id| self.people.iter().any(|p| p.id == *id));
         if known.is_none() {
+            self.use_map_humans(world);
+            let Some(&type_index) = self
+                .population
+                .get((kind % self.population.len().max(1) as u64) as usize)
+            else {
+                return;
+            };
             let state = State::Idle;
-            let n = self.types.len().max(1) as u64;
             let Some(i) = self.spawn_as(
                 world,
                 renderer,
@@ -73,7 +79,7 @@ impl Humans {
                 cmd.pos,
                 cmd.heading,
                 state,
-                Some((kind % n) as usize),
+                Some(type_index),
             ) else {
                 return;
             };
@@ -280,8 +286,6 @@ impl Humans {
         let trailers = part_frames(v, &cabin);
         Some(train_point(v.position, &v.body_rotation(), &trailers, door))
     }
-
-    /// Put `ty` among the figures (once) and give its index: the player's own figure.
 
     /// Where the doors of vehicle `v` are now (outside, in the world), entries first.
     pub fn vehicle_doors(&mut self, v: &VehicleInstance) -> Vec<DVec3> {
