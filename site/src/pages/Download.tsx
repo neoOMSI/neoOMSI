@@ -37,9 +37,14 @@ const INSTALL: Record<string, ReactNode> = {
 	),
 	Android: (
 		<>
-			Install the <code>.apk</code>, allow access to all files, and copy
-			the whole OMSI&nbsp;2 folder to <code>neoOMSI/OMSI 2</code> on the
-			phone.
+			Android packages are currently built locally rather than published
+			by the automated release workflow. See{' '}
+			<a className="link" href={url(docPath('BUILDING'))}>
+				Building
+			</a>
+			. After building, install the <code>.apk</code>, allow access to
+			all files, and copy the whole OMSI&nbsp;2 folder to{' '}
+			<code>neoOMSI/OMSI 2</code> on the device.
 		</>
 	)
 };

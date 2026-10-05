@@ -17,7 +17,7 @@ const FEATURES = [
 	[
 		'sync_alt',
 		'Behavioral parity',
-		'Community maps, buses, splines and scripts run as expected, without manual conversions.'
+		'Targets OMSI 2.2.032 behavior so existing maps, buses, splines and scripts can run without manual conversion.'
 	],
 	[
 		'speed',
@@ -32,7 +32,7 @@ const FEATURES = [
 	[
 		'install_desktop',
 		'Cross-platform',
-		'Native builds for Windows, macOS, Linux and Android, built automatically for every release.'
+		'Native support for Windows, macOS, Linux and Android from the same Rust codebase.'
 	],
 	[
 		'departure_board',
@@ -52,12 +52,12 @@ const FEATURES = [
 	[
 		'public',
 		'Clean-room and open source',
-		'No proprietary binaries or copyrighted assets. GPL-3.0-or-later, developed in the open.'
+		'No proprietary OMSI binaries or game assets are included. GPL-3.0-or-later, developed in the open.'
 	],
 	[
 		'check_circle',
 		'Regression tested',
-		'Automated tests guard compatibility, subsystem by subsystem.'
+		'Focused regression tests protect verified compatibility behavior from regressions.'
 	]
 ];
 
@@ -88,7 +88,7 @@ const STEPS: [string, ReactNode][] = [
 ];
 
 const STOPS = [
-	['Download', 'For Windows, macOS, Linux and Android', url('/download/')],
+	['Download', 'Windows, macOS, Linux; Android builds locally', url('/download/')],
 	['User guide', 'Setup, controls and options', url(docPath('USER_GUIDE'))],
 	['Releases', 'Every version and what changed', url('/releases/')],
 	['Discord', 'Talk to players and developers', DISCORD]
@@ -207,10 +207,11 @@ export function Home() {
 				</h1>
 				<p className="mt-7 max-w-[32em] text-[20px] leading-relaxed text-muted">
 					<span className="text-heading">
-						OMSI 2, recreated from scratch in Rust.
+						OMSI 2, reimplemented in Rust.
 					</span>{' '}
-					Full compatibility with every map, bus and mod, on a modern
-					64-bit engine for Windows, macOS, Linux and Android.
+					Built for existing OMSI 2 maps, buses and mods, with
+					compatibility verified against OMSI 2.2.032 on a modern
+					64-bit engine.
 				</p>
 				<div className="mt-7 flex flex-wrap gap-3">
 					<a className="btn gap-2" href={url('/download/')}>
@@ -336,8 +337,8 @@ export function Home() {
 						Your maps, your buses, your mods.
 					</h2>
 					<p className="mt-3 text-muted">
-						neoOMSI reads them straight from your OMSI&nbsp;2 folder
-						and never changes it.
+						neoOMSI reads them from your OMSI&nbsp;2 installation
+						without modifying it.
 					</p>
 				</div>
 				<Line />

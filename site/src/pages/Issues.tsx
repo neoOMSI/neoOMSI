@@ -148,8 +148,9 @@ export function Issues() {
 			<PageHead>
 				<h1 className="display">Issues</h1>
 				<p className="mt-6 max-w-[34em] text-[19px] text-muted">
-					Bugs and wishes, tracked on GitHub. Reporting one needs a
-					GitHub account.
+					Bug reports, compatibility issues and feature requests are
+					tracked on GitHub. A GitHub account is required to report
+					or comment.
 				</p>
 				<div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
 					<a

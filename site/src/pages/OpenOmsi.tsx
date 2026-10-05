@@ -12,8 +12,8 @@ const ROWS: [string, ReactNode, ReactNode][] = [
 	['Multiplayer server', 'Yes, Windows and Linux', 'Yes'],
 	[
 		'Goal',
-		'Play exactly like OMSI 2',
-		'Full compatibility with existing OMSI 2 content'
+		'Behavioral parity with OMSI 2.2.032',
+		'Compatibility with existing OMSI 2 content'
 	],
 	['Free and open source', 'Yes', 'Yes'],
 	['Status', 'Early release', 'Early release']
@@ -22,15 +22,16 @@ const ROWS: [string, ReactNode, ReactNode][] = [
 const FOCUS: [string, string, ReactNode][] = [
 	[
 		'check_circle',
-		'More stable',
-		'Two team members check every change before it goes in, and automatic tests make sure fixed bugs stay fixed.'
+		'Review process',
+		'Changes to main require two approvals, passing required checks and resolved review threads.'
 	],
 	[
 		'sync_alt',
-		'Plays like the original',
+		'Verified parity',
 		<>
-			Each part of the game is checked against OMSI&nbsp;2 until it
-			behaves the same. See{' '}
+			Compatibility-sensitive behavior is checked against
+			OMSI&nbsp;2.2.032 and covered by focused regression tests where
+			practical. See{' '}
 			<a className="link" href={url(docPath('COMPATIBILITY'))}>
 				Compatibility
 			</a>
@@ -39,16 +40,16 @@ const FOCUS: [string, string, ReactNode][] = [
 	],
 	[
 		'public',
-		'Nothing copied from OMSI 2',
-		'It only reads the files of the copy you own.'
+		'Clean-room boundaries',
+		'neoOMSI does not ship OMSI 2 binaries or game assets and reads content from a copy you provide.'
 	],
 	[
 		'autorenew',
-		'Tested releases',
+		'Release model',
 		<>
-			Changes are bundled into proper releases that are tested before
-			they come out. Want the newest fixes sooner? Try the nightly
-			build. See{' '}
+			Recent development is available through rolling Nightly builds.
+			Release Candidates and Stable releases mark stabilization
+			milestones. See{' '}
 			<a className="link" href={url('/releases/')}>
 				Releases
 			</a>
@@ -159,8 +160,8 @@ export function OpenOmsi() {
 					<h2 className="section-title">How the projects relate</h2>
 					<div className="max-w-[40em] space-y-4">
 						<p>
-							neoOMSI has its own team, its own releases and its
-							own place to report bugs. It is not connected to
+							neoOMSI has its own team, releases and issue
+							tracker, and is maintained independently from
 							openOMSI.
 						</p>
 						<p>

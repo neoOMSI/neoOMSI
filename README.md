@@ -27,13 +27,13 @@
 
 ## About neoOMSI
 
-neoOMSI reproduces the observable behavior of **OMSI 2.2.032** while replacing the underlying legacy engine with a clean, modern, multithreaded 64-bit architecture (DirectX 12, Vulkan, and Metal via `wgpu`).
+neoOMSI targets the observable behavior of **OMSI 2.2.032** while replacing the underlying legacy engine with a clean, modern, multithreaded 64-bit architecture (DirectX 12, Vulkan, and Metal via `wgpu`).
 
 ### Goals
 
-* **Behavioral compatibility:** Existing OMSI 2 content (maps, buses, scripts) works accurately out of the box.
+* **Behavioral compatibility:** Existing OMSI 2 content should run without conversion, with behavior verified against OMSI 2.2.032 subsystem by subsystem.
 * **Modern engine:** 64-bit, multithreaded resource loading, modern graphics APIs, and no arbitrary memory limits.
-* **Clean-room implementation:** Independent Rust codebase without proprietary source code, decompiled binaries, or assets.
+* **Clean-room implementation:** No proprietary OMSI source code, decompiled binaries, or game assets are included.
 
 ## Documentation
 

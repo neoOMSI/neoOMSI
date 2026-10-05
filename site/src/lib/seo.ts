@@ -16,7 +16,7 @@ export interface Meta {
 export const OG_IMAGE = { path: 'og.png', width: 1200, height: 630 }
 
 export const DESCRIPTION =
-  'neoOMSI is a free, open-source recreation of OMSI 2 in Rust. Play your OMSI 2 maps, buses and mods on a 64-bit engine for Windows, macOS, Linux and Android.'
+  'neoOMSI is an open-source reimplementation of OMSI 2 in Rust, targeting OMSI 2.2.032 compatibility on a modern 64-bit engine.'
 
 const ORG = {
   '@type': 'Organization',
@@ -63,19 +63,19 @@ const clip = (text: string, n = 158) => (text.length <= n ? text : `${text.slice
 
 const STATIC: Record<string, Omit<Meta, 'path'>> = {
   '/': {
-    title: 'neoOMSI: OMSI 2 recreated in Rust for PC, Mac, Linux and Android',
+    title: 'neoOMSI: OMSI 2 reimplemented in Rust',
     description: DESCRIPTION,
     schema: [APP],
   },
   '/download': {
-    title: 'Download neoOMSI for Windows, macOS, Linux and Android',
+    title: 'Download neoOMSI for Windows, macOS and Linux',
     description:
-      'Download the latest neoOMSI build for Windows, macOS, Linux or Android, or the dedicated server. Free and open source, needs an installed copy of OMSI 2.',
+      'Download the latest neoOMSI builds for Windows, macOS or Linux, or the dedicated server. Android is supported through local builds. Requires an installed copy of OMSI 2.',
     schema: [APP, crumbs(['Download', '/download/'])],
   },
   '/releases': {
     title: 'neoOMSI releases and changelog',
-    description: 'Every neoOMSI version and what changed, newest first, with downloads for Windows, macOS, Linux, Android and the dedicated server.',
+    description: 'Every neoOMSI release and what changed, newest first, with packaged downloads for Windows, macOS, Linux and the dedicated server.',
     schema: [crumbs(['Releases', '/releases/'])],
   },
   '/issues': {
@@ -92,7 +92,7 @@ const STATIC: Record<string, Omit<Meta, 'path'>> = {
   '/openomsi': {
     title: 'neoOMSI vs openOMSI: how the two OMSI 2 recreations compare',
     description:
-      'neoOMSI and openOMSI both let you play OMSI 2 with your own maps, buses and mods. See how they differ and how to switch to neoOMSI.',
+      'Compare neoOMSI and openOMSI by project goals, compatibility focus and release model, and see how to switch between them.',
     type: 'article',
     schema: [faqPage(OPENOMSI_FAQ), crumbs(['neoOMSI vs openOMSI', '/openomsi/'])],
   },

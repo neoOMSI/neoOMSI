@@ -6,7 +6,7 @@ export interface Question {
 export const FAQ: Question[] = [
   {
     q: 'What is neoOMSI?',
-    a: 'neoOMSI is a free, open-source recreation of the bus simulator OMSI 2, written from scratch in Rust. It plays the maps, buses and mods of an installed OMSI 2 on a modern 64-bit engine with native builds for Windows, macOS, Linux and Android.',
+    a: 'neoOMSI is a free, open-source reimplementation of the bus simulator OMSI 2 in Rust. It targets the observable behavior of OMSI 2.2.032 while running your existing OMSI 2 content on a modern 64-bit engine.',
   },
   {
     q: 'Is neoOMSI free?',
@@ -30,11 +30,11 @@ export const FAQ: Question[] = [
   },
   {
     q: 'Can I play OMSI 2 on Android?',
-    a: 'Yes, with neoOMSI. The Android build runs on arm64 phones and tablets with Android 8.0 or newer. Install the APK, allow access to all files and copy your whole OMSI 2 folder to neoOMSI/OMSI 2 on the device.',
+    a: 'Android arm64 is supported, but Android packages are currently built locally rather than published by the automated release workflow. See the building documentation for the APK build process and device setup.',
   },
   {
     q: 'Which platforms does neoOMSI support?',
-    a: 'neoOMSI has native builds for Windows 10 and 11 (x64), Windows 11 on ARM, macOS 11 or newer (Apple silicon and Intel), Linux (x64 and ARM64) and Android 8.0 or newer (arm64). There is also a dedicated server for Windows and Linux.',
+    a: 'Automated releases cover Windows 10/11 (x64), Windows 11 on ARM, macOS 11 or newer (Apple silicon and Intel), and Linux (x64 and ARM64). Android arm64 is supported through local builds. A dedicated server is available for Windows and Linux.',
   },
   {
     q: 'Does neoOMSI change my OMSI 2 installation?',
@@ -54,7 +54,7 @@ export const FAQ: Question[] = [
   },
   {
     q: 'What is the difference between neoOMSI and openOMSI?',
-    a: 'neoOMSI is built to be the more stable choice. Two team members check every change, and changes are bundled into proper releases that are tested before they come out. Both are separate projects that play your own OMSI 2 maps, buses and mods.',
+    a: 'neoOMSI is maintained independently with its own review, compatibility and release policies. It targets OMSI 2.2.032 behavior and uses rolling Nightly builds plus Release Candidates and Stable releases. Both projects require your own OMSI 2 content.',
   },
   {
     q: 'Is neoOMSI affiliated with the makers of OMSI 2?',
@@ -62,7 +62,7 @@ export const FAQ: Question[] = [
   },
   {
     q: 'Is neoOMSI finished?',
-    a: 'No. neoOMSI is an early release. Expect bugs, missing features and changes between versions. A new build is published for every change, and the Releases page lists what changed.',
+    a: 'No. neoOMSI is in early development. Expect bugs, missing features and behavior changes. Rolling Nightly builds provide recent development snapshots, while Release Candidates and Stable releases mark tested milestones.',
   },
   {
     q: 'How do I install mods in neoOMSI?',

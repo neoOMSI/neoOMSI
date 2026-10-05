@@ -30,7 +30,7 @@ export const PLATFORMS: Build[] = [
   { key: 'macos-x64', name: 'macOS (Intel)', family: 'macOS', arch: 'Intel', note: 'Intel Macs, macOS 11 or newer', os: 'mac-intel' },
   { key: 'linux-x64', name: 'Linux', family: 'Linux', arch: 'x64', note: 'x86-64 with Vulkan drivers', os: 'linux' },
   { key: 'linux-arm64', name: 'Linux on ARM', family: 'Linux', arch: 'ARM64', note: 'ARM64 with Vulkan drivers', os: 'linux-arm' },
-  { key: 'android-arm64', ext: 'apk', name: 'Android', family: 'Android', arch: 'APK', note: 'arm64 phones and tablets, Android 8.0 or newer', os: 'android' },
+  { key: 'android-arm64', ext: 'apk', name: 'Android', family: 'Android', arch: 'APK', note: 'arm64; built locally, not in automated releases', os: 'android' },
 ]
 
 export const SERVERS: Build[] = [
