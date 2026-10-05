@@ -143,6 +143,8 @@ pub struct Settings {
     /// The original's `performance_minObjSize`: objects smaller on the screen than this are
     /// not drawn (its presets say 0.013; 0.020 for slow machines, smaller keeps more).
     pub min_obj_size: f32,
+    /// Maximum saved map detail loaded (0..2; 255 shows all authored levels).
+    pub map_detail: u8,
     /// The original's `performance_maxObjDist` (m): objects farther away are not drawn
     /// (0 = no limit). `auto` (-1) takes `view_distance` when the file sets one, else 900 m
     /// (the original's high presets).
@@ -378,6 +380,7 @@ impl Settings {
             momentary_gears: false,
             auto_shift: false,
             min_obj_size: 0.013,
+            map_detail: 2,
             max_obj_dist: -1.0,
             max_fps: 0,
             chat: true,
@@ -612,6 +615,9 @@ impl Settings {
                 "momentary_gears" | "gear_buttons_hold" => s.momentary_gears = b(v),
                 "auto_shift" => s.auto_shift = b(v),
                 "auto_ibis" => s.auto_ibis = b(v),
+                "map_detail" | "maxcomplexity_map" => {
+                    s.map_detail = v.parse::<u8>().unwrap_or(s.map_detail);
+                }
                 "min_obj_size" | "performance_minobjsize" => {
                     s.min_obj_size = v
                         .parse::<f32>()
@@ -1027,6 +1033,7 @@ impl Settings {
             "pax_prefer_seats={}\n",
             self.pax_prefer_seats as u8
         ));
+        text.push_str(&format!("map_detail={}\n", self.map_detail));
         text
     }
 
@@ -1119,6 +1126,15 @@ pub fn graphics_mode(v: &str) -> &'static str {
         "vanilla" | "classic" | "original" | "omsi" | "omsi2" | "omsi_2" => "vanilla",
         _ => "vanilla_plus",
     }
+}
+
+/// Snapshot the selected map detail when opening a map; tile workers use this value
+/// throughout a session. Changing it in the UI takes effect on the next map load.
+pub fn map_detail() -> u8 {
+    let text = Settings::path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    Settings::from_text(&text).map_detail
 }
 
 /// `view_distance=<metres>` of the settings file: how far around the camera the map's tiles
@@ -1397,4 +1413,20 @@ pub fn save_mirror_offsets(bus: &std::path::Path, offsets: &[[f32; 2]]) {
         let _ = std::fs::create_dir_all(d);
     }
     let _ = std::fs::write(&p, lines.join("\n") + "\n");
+}
+
+#[cfg(test)]
+mod map_detail_tests {
+    use super::*;
+
+    #[test]
+    fn map_complexity_alias_and_selection_round_trip() {
+        assert_eq!(Settings::from_text("").map_detail, 2);
+        for limit in [0, 1, 2, 255] {
+            let settings = Settings::from_text(&format!("maxcomplexity_map={limit}\n"));
+            assert_eq!(settings.map_detail, limit);
+            assert_eq!(Settings::from_text(&settings.to_text()).map_detail, limit);
+        }
+        assert_eq!(Settings::from_text("map_detail=-1\n").map_detail, 2);
+    }
 }

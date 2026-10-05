@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MapObject {
+    /// Saved map detail, compared with `[maxcomplexity_map]` at loading.
+    pub detail: u8,
     pub file: String,
     pub id: i64,
     pub pos: [f64; 3],
@@ -32,6 +34,8 @@ pub struct MapObject {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MapSpline {
+    /// Saved map detail, compared with `[maxcomplexity_map]` at loading.
+    pub detail: u8,
     pub file: String,
     pub id: i64,
     pub prev_id: i64,
@@ -92,6 +96,8 @@ pub struct MapRule {
 /// direction), interval, range, tilt flag, string count, strings.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SplineAttachment {
+    /// Saved map detail, compared with `[maxcomplexity_map]` at loading.
+    pub detail: u8,
     pub file: String,
     pub id: i64,
     pub spline_index: i32,
@@ -296,9 +302,11 @@ impl Tile {
                     // level and its coordinates for IDs, and its objects hung on the wrong
                     // parents.
                     let attach = k == "attachobj";
-                    if has(t.version, 9) {
-                        let _detail = r.line();
-                    }
+                    let detail = if has(t.version, 9) {
+                        r.i32().clamp(0, 255) as u8
+                    } else {
+                        0
+                    };
                     let file_name = r.str().to_string();
                     let id = if has(t.version, 6) {
                         r.i64()
@@ -365,6 +373,7 @@ impl Tile {
                         }
                     }
                     let o = MapObject {
+                        detail,
                         file: file_name,
                         id,
                         pos,
@@ -389,9 +398,11 @@ impl Tile {
                     // before version 11 one line links the spline to the one written before
                     // it - -1 for none - instead of the IDs of both neighbours, before 5 there
                     // is no cant, before 14 no skew, before 11 no texture offset)
-                    if has(t.version, 9) {
-                        let _detail = r.line();
-                    }
+                    let detail = if has(t.version, 9) {
+                        r.i32().clamp(0, 255) as u8
+                    } else {
+                        0
+                    };
                     let file_name = r.str().to_string();
                     let id = if has(t.version, 6) {
                         r.i64()
@@ -454,6 +465,7 @@ impl Tile {
                         _ => (nums[0], nums[1], nums[2]),
                     };
                     t.splines.push(MapSpline {
+                        detail,
                         file: file_name,
                         id,
                         prev_id,
@@ -481,9 +493,11 @@ impl Tile {
                 }
                 "splineattachement" | "splineattachement_repeater" => {
                     // (the detail level from version 9 on, the IDCode from 6 on, as for objects)
-                    if has(t.version, 9) {
-                        let _detail = r.line();
-                    }
+                    let detail = if has(t.version, 9) {
+                        r.i32().clamp(0, 255) as u8
+                    } else {
+                        0
+                    };
                     let repeater = if k.ends_with("repeater") {
                         let tile = r.i64().max(0) as usize;
                         let first = r.i64().max(0) as usize;
@@ -517,6 +531,7 @@ impl Tile {
                         Vec::new()
                     };
                     t.spline_attachments.push(SplineAttachment {
+                        detail,
                         file: file_name,
                         id,
                         spline_index,
@@ -716,6 +731,62 @@ impl Tile {
         unmatched
     }
 
+    /// Filter a simulation copy after chronology and reference indices are resolved.
+    /// Editors keep the raw tile. Spline slots must survive because rows address them
+    /// by index, even when a preceding spline is outside the selected detail level.
+    pub fn limit_detail(&mut self, limit: u8, editor: bool) {
+        if editor {
+            return;
+        }
+        let mut rejected = std::collections::HashSet::new();
+        self.objects.retain(|o| {
+            if o.detail > limit {
+                rejected.insert(o.id);
+                false
+            } else {
+                true
+            }
+        });
+        for s in &mut self.splines {
+            s.deleted |= s.detail > limit;
+        }
+        self.spline_attachments.retain(|a| {
+            let spline = usize::try_from(a.spline_index)
+                .ok()
+                .and_then(|i| self.splines.get(i));
+            if a.detail > limit || spline.is_some_and(|s| s.deleted) {
+                rejected.insert(a.id);
+                false
+            } else {
+                true
+            }
+        });
+        // Several repeater rows may name the same id: an accepted instance keeps its
+        // anchor available even if another row was omitted.
+        for id in self
+            .objects
+            .iter()
+            .map(|o| o.id)
+            .chain(self.spline_attachments.iter().map(|a| a.id))
+        {
+            rejected.remove(&id);
+        }
+        loop {
+            let before = self.attach_objects.len();
+            self.attach_objects.retain(|o| {
+                if o.detail > limit || o.parent_id.is_some_and(|id| rejected.contains(&id)) {
+                    rejected.insert(o.id);
+                    false
+                } else {
+                    true
+                }
+            });
+            if self.attach_objects.len() == before {
+                break;
+            }
+        }
+    }
+
     /// Tile coordinates from a file name like `tile_-1_12.map`.
     pub fn coords_from_name(name: &str) -> Option<(i32, i32)> {
         let stem = name.strip_suffix(".map")?.strip_prefix("tile_")?;
@@ -732,7 +803,7 @@ mod tests {
         Tile::parse(&CfgFile::from_str("tile_0_0.map", text))
     }
 
-    const BASE: &str = "[version]\n14\n\n\
+    pub(super) const BASE: &str = "[version]\n14\n\n\
 [spline]\n0\nSplines\\road.sli\n100\n0\n101\n10\n0\n20\n0\n50\n0\n0\n0\n0\n0\n0\n0\n0\n\n\
 [spline]\n0\nSplines\\road.sli\n101\n100\n0\n10\n0\n70\n0\n30\n0\n0\n0\n0\n0\n0\n0\n0\n\n\
 Object Nr. 0\n[object]\n0\nSceneryobjects\\pole.sco\n7\n5\n6\n0.25\n90\n0\n0\n0\n\n\
@@ -897,5 +968,111 @@ Object Nr. 3\n[splineAttachement_repeater]\n0\n12\n5\nSceneryobjects\\lamp.sco\n
         assert_eq!(t.spline_attachments.last().unwrap().spline_index, 2);
         assert_eq!(t.objects[0].rules.len(), 1);
         assert_eq!(t.objects[0].rules[0].kind, "speedlimit");
+    }
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::*;
+
+    #[test]
+    fn detail_is_saved_for_objects_splines_and_rows() {
+        let text = super::tests::BASE
+            .replace("[object]\n0", "[object]\n2")
+            .replace("[attachObj]\n0", "[attachObj]\n1")
+            .replace("[spline]\n0", "[spline]\n1")
+            .replace("[splineAttachement]\n0", "[splineAttachement]\n2")
+            .replace(
+                "[splineAttachement_repeater]\n0",
+                "[splineAttachement_repeater]\n1",
+            );
+        let tile = Tile::parse(&CfgFile::from_str("tile_0_0.map", &text));
+        assert_eq!(tile.objects[0].detail, 2);
+        assert_eq!(tile.attach_objects[0].detail, 1);
+        assert!(tile.splines.iter().all(|s| s.detail == 1));
+        assert_eq!(tile.spline_attachments[0].detail, 2);
+        assert_eq!(tile.spline_attachments[1].detail, 1);
+    }
+
+    #[test]
+    fn filtering_preserves_spline_indices_and_removes_dependent_attachments() {
+        let mut tile = Tile {
+            objects: vec![
+                MapObject {
+                    id: 1,
+                    detail: 2,
+                    ..Default::default()
+                },
+                MapObject {
+                    id: 2,
+                    detail: 1,
+                    ..Default::default()
+                },
+            ],
+            attach_objects: vec![
+                MapObject {
+                    id: 4,
+                    parent_id: Some(3),
+                    ..Default::default()
+                },
+                MapObject {
+                    id: 3,
+                    parent_id: Some(1),
+                    ..Default::default()
+                },
+                MapObject {
+                    id: 5,
+                    parent_id: Some(2),
+                    ..Default::default()
+                },
+            ],
+            splines: vec![
+                MapSpline {
+                    id: 10,
+                    detail: 2,
+                    ..Default::default()
+                },
+                MapSpline {
+                    id: 11,
+                    ..Default::default()
+                },
+            ],
+            spline_attachments: vec![
+                SplineAttachment {
+                    id: 20,
+                    spline_index: 0,
+                    ..Default::default()
+                },
+                SplineAttachment {
+                    id: 21,
+                    spline_index: 1,
+                    ..Default::default()
+                },
+                SplineAttachment {
+                    id: 22,
+                    spline_index: 1,
+                    detail: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let raw = tile.clone();
+        tile.limit_detail(1, true);
+        assert_eq!(tile, raw, "editor override preserves every saved record");
+        tile.limit_detail(1, false);
+        assert_eq!(
+            tile.objects.iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(
+            tile.attach_objects.iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec![5]
+        );
+        assert_eq!(tile.splines.len(), 2);
+        assert!(tile.splines[0].deleted);
+        assert!(!tile.splines[1].deleted);
+        assert_eq!(tile.spline_attachments.len(), 1);
+        assert_eq!(tile.spline_attachments[0].spline_index, 1);
     }
 }

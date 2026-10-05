@@ -449,6 +449,7 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
             "Detail texturing up close",
             "The ground and large walls get fine grain when close",
         ),
+        pick("map_detail", "Map complexity", later),
         pick("view_distance", "View distance", later),
         pick("max_obj_dist", "Object distance", later),
         pick("min_obj_size", "Small objects", later),

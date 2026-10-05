@@ -1230,6 +1230,21 @@ fn graphics_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
         ui,
         s,
         dirty,
+        "s-mapdetail",
+        c.row(),
+        "Map complexity",
+        "map_detail",
+        &[
+            ("0", "Low"),
+            ("1", "Normal"),
+            ("2", "Full"),
+            ("255", "All authored levels"),
+        ],
+    );
+    sel_setting(
+        ui,
+        s,
+        dirty,
         "s-view",
         c.row(),
         "View distance",

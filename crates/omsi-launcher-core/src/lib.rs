@@ -180,6 +180,9 @@ pub fn omsi_options(root: &Path) -> Option<OmsiOptions> {
     if let Some(x) = num("maxfps").filter(|_| !cfg!(target_os = "android")) {
         v["max_fps"] = json!(x.max(0.0) as i64);
     }
+    if let Some(x) = num("maxcomplexity_map") {
+        v["map_detail"] = json!(x.clamp(0.0, 255.0) as u8);
+    }
     if let Some(x) = num("performance_minobjsize") {
         v["min_obj_size"] = json!(x.clamp(0.0, 0.2));
     }
@@ -2872,6 +2875,7 @@ pub fn option_presets() -> Vec<(String, Value)> {
         if !cfg!(target_os = "android") {
             v["max_fps"] = json!(o.i32("maxfps", 0).max(0));
         }
+        v["map_detail"] = json!(o.i32("maxcomplexity_map", 2).clamp(0, 255));
         v["min_obj_size"] = json!(o.f32("performance_minobjsize", 0.013) as f64);
         v["max_obj_dist"] =
             json!((o.f32("performance_maxobjdist", 900.0).round() as i64).to_string());

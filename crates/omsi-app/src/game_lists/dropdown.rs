@@ -344,6 +344,12 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("144", "144 fps"),
             ("1000", "Unlimited"),
         ],
+        "map_detail" => vec![
+            ("0", "Low"),
+            ("1", "Normal"),
+            ("2", "Full"),
+            ("255", "All authored levels"),
+        ],
         "view_distance" => vec![
             ("auto", "Default (900 m)"),
             ("600", "600 m - fastest"),

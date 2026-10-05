@@ -2006,6 +2006,8 @@ pub struct World {
     pub root: PathBuf,
     pub global: GlobalCfg,
     pub map_dir: PathBuf,
+    /// Detail snapshot for this map session; raw editor tiles remain unfiltered.
+    map_detail: u8,
     /// Indexed parked car lists of the map, loaded when a parking space uses one.
     parklist: Mutex<HashMap<usize, Vec<String>>>,
     /// Render textures of the player's mirrors (`reflexionN.bmp`), by camera index.
@@ -2983,6 +2985,7 @@ impl World {
             root: root.to_path_buf(),
             global,
             map_dir,
+            map_detail: crate::settings::map_detail(),
             parklist: Mutex::new(HashMap::new()),
             mirror_textures: Mutex::new(Vec::new()),
             chrono_dirs: parking_lot::RwLock::new(chrono_dirs),
@@ -3437,7 +3440,9 @@ impl World {
                 let mut positions = Vec::new();
                 let mut signs = Vec::new();
                 let mut roads = Vec::new();
-                let Some(tile) = crate::tiles::read_tile(path, &self.chrono_dirs.read()) else {
+                let Some(tile) =
+                    crate::tiles::read_tile(path, &self.chrono_dirs.read(), self.map_detail)
+                else {
                     return (lanes, positions, signs, roads);
                 };
                 let origin2 = DVec2::new(tx as f64 * tile_size(), ty as f64 * tile_size());
@@ -3806,7 +3811,12 @@ impl World {
         if let Some(ix) = g.as_ref() {
             return ix.clone();
         }
-        let mut built = MapIndex::build(&self.map_tiles(), &self.chrono_dirs.read(), &self.root);
+        let mut built = MapIndex::build(
+            &self.map_tiles(),
+            &self.chrono_dirs.read(),
+            &self.root,
+            self.map_detail,
+        );
         // the index's object positions go to `object_positions` (kept once, not twice: 345 000
         // objects on Ahlheim took 30 MB in each)
         let objects = std::mem::take(&mut built.objects);
@@ -4080,7 +4090,8 @@ impl World {
             counts: LoadStats::default(),
             resolved: std::sync::OnceLock::new(),
         };
-        let Some(tile) = crate::tiles::read_tile(path, &self.chrono_dirs.read()) else {
+        let Some(tile) = crate::tiles::read_tile(path, &self.chrono_dirs.read(), self.map_detail)
+        else {
             return out;
         };
         // a tile with water carries one surface with a height at each corner. As in Omsi.exe
