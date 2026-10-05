@@ -2818,6 +2818,7 @@ pub(crate) fn sync_vehicle_transforms(
         renderer.set_slot_light(scene, *inst, &p.slot_light);
         renderer.set_slot_night(scene, *inst, &p.slot_night);
         renderer.set_interior(scene, *inst, p.interior);
+        renderer.set_cabin(scene, *inst, !def.illumination_interior.is_empty());
     }
     for (t, r) in vehicle.trailers.iter().zip(trailer_renders.iter()) {
         for (i, inst) in r.instances.iter().enumerate() {
@@ -2850,6 +2851,7 @@ pub(crate) fn sync_vehicle_transforms(
             renderer.set_slot_light(scene, *inst, &p.slot_light);
             renderer.set_slot_night(scene, *inst, &p.slot_night);
             renderer.set_interior(scene, *inst, p.interior);
+            renderer.set_cabin(scene, *inst, !def.illumination_interior.is_empty());
         }
     }
     scene::sync_vehicle_textures(renderer, scene, vehicle, render, &mut { usize::MAX });

@@ -4949,6 +4949,7 @@ impl Humans {
             for (_, inst) in &p.meshes {
                 renderer.set_transform(scene, *inst, at, xf);
                 renderer.set_interior(scene, *inst, p.lit * 0.5);
+                renderer.set_cabin(scene, *inst, matches!(p.place, Place::Bus(..)));
                 renderer.set_casts_shadow(scene, *inst, casts);
             }
             if self.avatar_hidden.contains_key(&p.id)

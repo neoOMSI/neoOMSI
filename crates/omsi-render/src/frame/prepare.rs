@@ -34,7 +34,10 @@ impl Renderer {
     ) {
         let m =
             (Mat4::from_translation((i.origin - ro).as_vec3()) * i.transform).to_cols_array_2d();
-        let vis = if i.visible { 1.0 } else { 0.0 };
+        // The fractional part remains the visibility flag used by the vertex shader.
+        // The second unit carries the static cabin marker to the fragment shader without
+        // growing the per-instance buffer.
+        let vis = if i.visible { 1.0 + i.cabin as u8 as f32 } else { 0.0 };
         for (k, a) in i.slot_alpha.iter().enumerate() {
             mats.push(m);
             let uv = i.slot_uv.get(k).copied().unwrap_or([0.0; 2]);

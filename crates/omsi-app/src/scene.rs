@@ -11673,7 +11673,13 @@ impl World {
         // (the Sprinter's, the Mercus's, the Urbino 15's saloon showed through half their
         // panels drawn so while `[matl_noZcheck]` still took their inner glass out of the
         // depth test; OMSI_NO_MODEL_ORDER=1 draws opaque parts first again)
-        if ordered && omsi_cfg::env::var_os("OMSI_NO_MODEL_ORDER").is_none() {
+        // A shared AI vehicle has to take the renderer's ordinary opaque-then-blended
+        // path.  Moving every one of its meshes into the ordered pass also moves its
+        // opaque cabin and body subsets there; with several traffic vehicles around, a
+        // window can then be composed before the solid geometry that should occlude it.
+        // The player's vehicle remains model-ordered where an authored blended body needs
+        // OMSI's exact subset order.
+        if ordered && key.is_none() && omsi_cfg::env::var_os("OMSI_NO_MODEL_ORDER").is_none() {
             log::debug!("{}: drawn in model order (a blended slot writes depth before an opaque one)", vt.def.path.display());
             for &i in &instances {
                 if scene.instances.get(i).is_some_and(|x| !x.blob) {

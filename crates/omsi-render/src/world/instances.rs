@@ -79,6 +79,7 @@ impl Renderer {
             slot_uv: vec![[0.0; 2]; slots],
             interior: 0.0,
             interior_lamps: 0,
+            cabin: false,
             base: 0,
             bounds: InstanceBounds::default(),
             surface: false,
@@ -130,6 +131,7 @@ impl Renderer {
             slot_uv: vec![[0.0; 2]; slots],
             interior: 0.0,
             interior_lamps: 0,
+            cabin: false,
             base: 0,
             bounds: InstanceBounds::default(),
             surface: true,
@@ -266,6 +268,14 @@ impl Renderer {
         let i = &mut scene.instances[instance];
         if (i.interior - interior).abs() > 1e-4 {
             i.interior = interior;
+            Self::mark_changed(scene, instance);
+        }
+    }
+
+    pub fn set_cabin(&self, scene: &mut Scene, instance: usize, cabin: bool) {
+        let i = &mut scene.instances[instance];
+        if i.cabin != cabin {
+            i.cabin = cabin;
             Self::mark_changed(scene, instance);
         }
     }

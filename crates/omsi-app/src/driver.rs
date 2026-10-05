@@ -960,6 +960,7 @@ impl DriverFigure {
             renderer.set_transform(scene, *inst, at, xf);
             renderer.set_interior(scene, *inst, 0.0);
             renderer.set_interior_lamps(scene, *inst, first, count);
+            renderer.set_cabin(scene, *inst, true);
         }
     }
 }
