@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import mark from "../../assets/logos/icon-gradient.svg?trim";
-import wordmark from "../../assets/logos/wordmark-gradient-dark.svg?trim";
-import wordmarkLight from "../../assets/logos/wordmark-gradient-light.svg?trim";
+import mark from "../../assets/logos/icon-gradient.svg";
+import wordmark from "../../assets/logos/wordmark-gradient-dark.svg";
+import wordmarkLight from "../../assets/logos/wordmark-gradient-light.svg";
 import { DISCORD, DOCS, REPO } from "./content/data";
 import { useRoute } from "./lib/hooks";
 import { Icon } from "./components/icons";
@@ -39,14 +39,14 @@ function Header({ path, wide }: { path: string; wide: boolean }) {
           className="flex shrink-0 items-center"
           aria-label="neoOMSI home"
         >
-          <img className="-my-2 -ml-1.5 size-10" src={mark} alt="" />
+          <img className="size-8 sm:hidden" src={mark} alt="neoOMSI" />
           <img
-            className="logo-dark ml-1 h-4 w-auto"
+            className="logo-dark hidden h-4 w-auto sm:block"
             src={wordmark}
             alt="neoOMSI"
           />
           <img
-            className="logo-light ml-1 h-4 w-auto"
+            className="logo-light hidden h-4 w-auto sm:block"
             src={wordmarkLight}
             alt="neoOMSI"
           />

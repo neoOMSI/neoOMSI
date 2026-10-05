@@ -16,7 +16,7 @@ function trim(): Plugin {
     },
     async load(id) {
       const [file, query] = id.split("?");
-      if (query !== "trim") return;
+      if (query !== "trim" || file.endsWith(".svg")) return;
       this.addWatchFile(file);
       const source = await sharp(file).trim().png().toBuffer();
       if (!build)

@@ -161,7 +161,7 @@
   }
   [data-theme="light"] .logo-dark,
   :root:not([data-theme="light"]) .logo-light {
-    display: none;
+    display: none !important;
   }
   #nav a {
     @apply whitespace-nowrap border-b-2 border-transparent py-1 text-muted transition-colors hover:text-ink;

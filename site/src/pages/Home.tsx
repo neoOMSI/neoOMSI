@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import wordmark from "../../../assets/logos/wordmark-gradient-dark.svg?trim";
-import wordmarkLight from "../../../assets/logos/wordmark-gradient-light.svg?trim";
+import wordmark from "../../../assets/logos/wordmark-gradient-dark.svg";
+import wordmarkLight from "../../../assets/logos/wordmark-gradient-light.svg";
 import { DISCORD, visitorBuild } from "../content/data";
 import { DEMOS } from "../components/demos";
 import { HOME_FAQ } from "../content/faq";
