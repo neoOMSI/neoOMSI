@@ -5138,8 +5138,7 @@ impl World {
                 }
                 continue;
             }
-            let is_surface = !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-                || ot.sco.surface;
+            let is_surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
             if check_objects && is_surface {
                 let over = pos.z - ground_at(pos.x, pos.y);
                 if !(-1.0..=3.0).contains(&over) {
@@ -5785,9 +5784,7 @@ impl World {
                         }
                         // Laid on the ground (the terrain is cut under it): a `[surface]` object
                         // and one drawn as a ground layer (`[rendertype]`).
-                        let surface =
-                            !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-                                || ot.sco.surface;
+                        let surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
                         if !surface {
                             continue;
                         }
@@ -7413,9 +7410,7 @@ impl World {
                             t.terrain_slots.clone(),
                         )
                     };
-                    let surface =
-                        !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-                            || ot.sco.surface;
+                    let surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
                     let render_phase = scenery_render_phase(ot.sco.render_type);
                     let draw_pos = scenery_draw_position(pos, drawn_on_surfaces(&ot.sco));
                     let has_lower = !type_lods.is_empty();
@@ -8388,9 +8383,7 @@ impl World {
             let Some(ot) = types.iter().find(|t| t.sco.path == eo.sco) else {
                 continue;
             };
-            if ot.sco.surface
-                || !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-            {
+            if ot.sco.surface || ot.sco.render_type.is_ground_layer() {
                 continue;
             }
             let (mut n, mut inn, mut z0, mut z1) = (0usize, 0usize, f32::MAX, f32::MIN);
@@ -15216,3 +15209,7 @@ pub(crate) static SPLINE_ENDS: std::sync::LazyLock<
 #[cfg(test)]
 #[path = "scene/crossing_tests.rs"]
 mod crossing_tests;
+
+#[cfg(test)]
+#[path = "scene/render_queue_tests.rs"]
+mod render_queue_tests;

@@ -17,6 +17,13 @@ pub enum RenderType {
     AfterVehicles,
 }
 
+impl RenderType {
+    /// Ground passes are distinct from the numeric queues for ordinary scenery.
+    pub fn is_ground_layer(self) -> bool {
+        matches!(self, Self::PreSurface | Self::Surface | Self::OnSurface)
+    }
+}
+
 /// Parse the OMSI `[rendertype]` spelling used by both a .sco and its model.cfg.
 pub fn parse_render_type(value: &str) -> RenderType {
     match value.trim().to_ascii_lowercase().as_str() {
@@ -660,5 +667,28 @@ mod tests {
         ));
         assert!(!o.surface_explicit && !o.surface);
         assert_eq!(o.model.meshes.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod render_queue_tests {
+    use super::*;
+
+    #[test]
+    fn numeric_draw_queues_do_not_turn_fixed_props_into_ground_layers() {
+        for queue in ["0", "1", "3", "4"] {
+            let sco = SceneryObject::parse(&CfgFile::from_str(
+                "prop.sco",
+                &format!(
+                    "[fixed]\n[boundingbox]\n2\n2\n3\n0\n0\n1.5\n[rendertype]\n{queue}\n[mesh]\nprop.o3d\n"
+                ),
+            ));
+            assert!(sco.fixed);
+            assert!(!sco.surface);
+            assert!(!sco.render_type.is_ground_layer(), "queue {queue}");
+        }
+        for queue in ["presurface", "surface", "on_surface"] {
+            assert!(parse_render_type(queue).is_ground_layer());
+        }
     }
 }
