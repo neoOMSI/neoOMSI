@@ -1444,6 +1444,30 @@ mod map_detail_tests {
     use super::*;
 
     #[test]
+    fn automatic_detail_follows_installed_options_and_explicit_selection_wins() {
+        let root = std::env::temp_dir().join(format!(
+            "neoomsi-detail-options-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let automatic = Settings::from_text("map_detail=auto\n");
+        let missing = resolve_map_detail(&automatic, &root);
+        std::fs::write(root.join("options.cfg"), "[maxcomplexity_map]\n1\n").unwrap();
+        let inherited = resolve_map_detail(&automatic, &root);
+        let explicit = resolve_map_detail(&Settings::from_text("map_detail=2\n"), &root);
+        let actual = root.canonicalize().unwrap();
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        assert!(actual.starts_with(&temp) && actual != temp);
+        std::fs::remove_dir_all(actual).unwrap();
+        assert_eq!(missing, 2);
+        assert_eq!(inherited, 1);
+        assert_eq!(explicit, 2);
+    }
+    #[test]
     fn map_complexity_alias_and_selection_round_trip() {
         assert_eq!(Settings::from_text("").map_detail, -1);
         for limit in [0, 1, 2, 255] {
