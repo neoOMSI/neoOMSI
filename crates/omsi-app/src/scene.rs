@@ -24,6 +24,9 @@ use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+#[path = "scene/parity_acceptance_tests.rs"]
+mod parity_acceptance_tests;
 
 /// A loaded scenery object type: model meshes + material descriptions.
 pub struct ObjectType {
