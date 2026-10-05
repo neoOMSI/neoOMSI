@@ -329,9 +329,8 @@ impl SceneryObject {
                 "nocollision" => o.no_collision = true,
                 // (and `[fixed]` with it, as Omsi.exe sets both at 0x7b6823)
                 "surface" => {
-                    // A bare tag means true. Peek so an immediately following
-                    // keyword (e.g. `[mesh]`) is not consumed as its optional value.
-                    o.surface = r.clone().word() != "0";
+                    // Presence flag: the next line is not a boolean parameter.
+                    o.surface = true;
                     o.surface_explicit = true;
                     o.fixed = true;
                 }
@@ -658,7 +657,7 @@ mod tests {
             " \t[surface] \t\n0\n[mesh]\nswitch.o3d\n",
         ));
         assert!(o.surface_explicit);
-        assert!(!o.surface);
+        assert!(o.surface && o.fixed);
         assert_eq!(o.model.meshes.len(), 1);
 
         let o = SceneryObject::parse(&CfgFile::from_str(
@@ -689,6 +688,24 @@ mod render_queue_tests {
         }
         for queue in ["presurface", "surface", "on_surface"] {
             assert!(parse_render_type(queue).is_ground_layer());
+        }
+    }
+}
+
+#[cfg(test)]
+mod surface_presence_tests {
+    use super::*;
+
+    #[test]
+    fn a_surface_tag_before_a_mesh_does_not_consume_the_mesh() {
+        for suffix in ["", "0\n", "1\n"] {
+            let o = SceneryObject::parse(&CfgFile::from_str(
+                "surface.sco",
+                &format!("[surface]\n{suffix}[mesh]\nroad.o3d\n"),
+            ));
+            assert!(o.surface && o.fixed && o.surface_explicit);
+            assert_eq!(o.model.meshes.len(), 1);
+            assert_eq!(o.model.meshes[0].file, "road.o3d");
         }
     }
 }
