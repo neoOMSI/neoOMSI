@@ -15224,3 +15224,7 @@ mod crossing_tests;
 #[cfg(test)]
 #[path = "scene/render_queue_tests.rs"]
 mod render_queue_tests;
+
+#[cfg(test)]
+#[path = "scene/detail_loading_tests.rs"]
+mod detail_loading_tests;
