@@ -1,8 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="assets/logos/neoOMSI-primary-stacked.png">
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logos/neoOMSI-wordmark.png">
-    <img alt="neoOMSI" src="assets/logos/neoOMSI-wordmark-light.png" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logos/wordmark-gradient-dark.svg">
+    <img alt="neoOMSI" src="assets/logos/wordmark-gradient-light.svg" width="420">
   </picture>
 </p>
 

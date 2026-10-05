@@ -141,7 +141,7 @@ ${s.DOCS.map((d) => s.source(d.file)!.trim().replace(/^#/gm, '##')).join('\n\n')
 
 const { width, height } = s.OG_IMAGE
 const mark = await sharp(app('neoomsi-512.png')).trim().resize({ height: 220 }).png().toBuffer()
-const wordmark = await sharp(join(import.meta.dirname, '../assets/logos/neoOMSI-wordmark.png')).trim().resize({ width: 600 }).png().toBuffer()
+const wordmark = await sharp(join(import.meta.dirname, '../assets/logos/wordmark-gradient-dark.png')).trim().resize({ width: 600 }).png().toBuffer()
 const [m, w] = await Promise.all([sharp(mark).metadata(), sharp(wordmark).metadata()])
 const gap = 64
 const left = Math.round((width - m.width! - gap - w.width!) / 2)

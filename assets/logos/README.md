@@ -1,7 +1,5 @@
 # neoOMSI Brand Assets
 
-The graphical assets in this directory (including official logos and wordmarks) represent the visual identity and trademarks of the neoOMSI project.
+This directory contains the standalone neoOMSI symbol and wordmark in gradient and monochrome color variants. The `dark` wordmark is light-colored for dark backgrounds; the `light` wordmark is dark-colored for light backgrounds. The symbol and wordmark are intentionally separate assets.
 
-These assets are **not** licensed under the GNU General Public License.
-
-For usage guidelines, permissions, and redistribution rules, please refer to [TRADEMARKS.md](../../TRADEMARKS.md).
+For usage guidelines, permissions, and redistribution rules, see [TRADEMARKS.md](../../TRADEMARKS.md).

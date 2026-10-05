@@ -110,9 +110,9 @@ pub struct Ui {
     images: hashbrown::HashMap<std::path::PathBuf, Option<(TextureId, u32, u32)>>,
     /// The loading screen's background (the map's picture), looked for once per load.
     pub loading_bg: Option<Option<(TextureId, u32, u32)>>,
-    /// The loading screen's full-screen picture (`assets/backgrounds/loading-screen.jpg`).
+    /// The loading screen's full-screen picture (`assets/backgrounds/loading-screen.png`).
     loading_art: Option<Option<(TextureId, u32, u32)>>,
-    /// The wordmark bottom left (`assets/logos/neoOMSI-wordmark.png`, cut to its content).
+    /// The wordmark bottom left (`assets/logos/wordmark-gradient-dark.png`, cut to its content).
     loading_logo: Option<Option<(TextureId, u32, u32)>>,
     /// The wordmark cut to its content, full size, and its renderings at exact pixel heights.
     logo_src: Option<image::RgbaImage>,

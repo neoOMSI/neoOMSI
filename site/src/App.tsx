@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import mark from '../../assets/icons/app/neoomsi-512.png';
-import wordmark from '../../assets/logos/neoOMSI-wordmark.png?trim';
-import wordmarkLight from '../../assets/logos/neoOMSI-wordmark-light.png?trim';
+import mark from '../../assets/logos/icon-gradient.svg?trim';
+import wordmark from '../../assets/logos/wordmark-gradient-dark.svg?trim';
+import wordmarkLight from '../../assets/logos/wordmark-gradient-light.svg?trim';
 import { DISCORD, DOCS, REPO } from './content/data';
 import { useRoute } from './lib/hooks';
 import { Icon } from './components/icons';
