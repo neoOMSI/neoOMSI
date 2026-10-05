@@ -136,7 +136,7 @@ pub struct Renderer {
     pub(crate) draw_audit_at: std::time::Instant,
     pub(crate) encoding_pool: Option<rayon::ThreadPool>,
     pub(crate) _device_poller: Option<DevicePoller>,
-    pub(crate) pending_meshes: std::cell::RefCell<Vec<(MeshId, Vec<u8>)>>,
+    pub(crate) pending_meshes: std::cell::RefCell<Vec<(MeshId, Vec<Vertex>)>>,
     pub(crate) freed: std::cell::OnceCell<Freed>,
 }
 

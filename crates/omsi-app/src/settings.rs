@@ -112,6 +112,11 @@ pub struct Settings {
     pub units: String,
     /// What passengers say: `all`, `tickets` (only what they ask for) or `off`.
     pub pax_voices: String,
+    pub pax_models: String,
+    /// Natural passenger and pedestrian movement; `omsi` uses the original movement.
+    pub pax_motion: String,
+    /// Procedural IK posing for passengers and pedestrians, independently of movement.
+    pub pax_ik: bool,
     /// OMSI 2's route arrows over the road (as well as or instead of the navigator).
     pub nav_arrows: bool,
     /// The other (AI) vehicles as dots on the navigator's and the city map.
@@ -143,6 +148,8 @@ pub struct Settings {
     /// The original's `performance_minObjSize`: objects smaller on the screen than this are
     /// not drawn (its presets say 0.013; 0.020 for slow machines, smaller keeps more).
     pub min_obj_size: f32,
+    /// Maximum saved map detail (0..255); -1 follows the OMSI installation setting.
+    pub map_detail: i16,
     /// The original's `performance_maxObjDist` (m): objects farther away are not drawn
     /// (0 = no limit). `auto` (-1) takes `view_distance` when the file sets one, else 900 m
     /// (the original's high presets).
@@ -366,6 +373,9 @@ impl Settings {
             language: "ENG".into(),
             units: "metric".into(),
             pax_voices: "all".into(),
+            pax_models: "omsi".into(),
+            pax_motion: "natural".into(),
+            pax_ik: true,
             nav_arrows: false,
             nav_ai: true,
             nav_topbar: true,
@@ -379,6 +389,7 @@ impl Settings {
             momentary_gears: false,
             auto_shift: false,
             min_obj_size: 0.013,
+            map_detail: -1,
             max_obj_dist: -1.0,
             max_fps: 0,
             chat: true,
@@ -603,6 +614,23 @@ impl Settings {
                         _ => "all".into(),
                     }
                 }
+                "pax_ik" | "ik" => s.pax_ik = b(v),
+                "pax_motion" => {
+                    s.pax_motion = if v.eq_ignore_ascii_case("omsi") {
+                        "omsi"
+                    } else {
+                        "natural"
+                    }
+                    .into()
+                }
+                "pax_models" => {
+                    s.pax_models = if v.eq_ignore_ascii_case("realistic") {
+                        "realistic"
+                    } else {
+                        "omsi"
+                    }
+                    .into()
+                }
                 "nav_arrows" => s.nav_arrows = b(v),
                 "nav_ai" => s.nav_ai = b(v),
                 "nav_topbar" => s.nav_topbar = b(v),
@@ -614,6 +642,16 @@ impl Settings {
                 "momentary_gears" | "gear_buttons_hold" => s.momentary_gears = b(v),
                 "auto_shift" => s.auto_shift = b(v),
                 "auto_ibis" => s.auto_ibis = b(v),
+                "map_detail" | "maxcomplexity_map" => {
+                    s.map_detail = if v.eq_ignore_ascii_case("auto") {
+                        -1
+                    } else {
+                        v.parse::<i16>()
+                            .ok()
+                            .filter(|n| (-1..=255).contains(n))
+                            .unwrap_or(s.map_detail)
+                    };
+                }
                 "min_obj_size" | "performance_minobjsize" => {
                     s.min_obj_size = v
                         .parse::<f32>()
@@ -1037,6 +1075,19 @@ impl Settings {
             "pax_prefer_seats={}\n",
             self.pax_prefer_seats as u8
         ));
+        text.push_str(&format!(
+            "map_detail={}\n",
+            if self.map_detail < 0 {
+                "auto".to_string()
+            } else {
+                self.map_detail.to_string()
+            }
+        ));
+        text.push_str(&format!(
+            "pax_models={}\npax_motion={}\n",
+            self.pax_models, self.pax_motion
+        ));
+        text.push_str(&format!("pax_ik={}\n", self.pax_ik as u8));
         text
     }
 
@@ -1128,6 +1179,25 @@ pub fn graphics_mode(v: &str) -> &'static str {
         "enhanced" | "1" => "enhanced",
         "vanilla" | "classic" | "original" | "omsi" | "omsi2" | "omsi_2" => "vanilla",
         _ => "vanilla_plus",
+    }
+}
+
+/// Snapshot the selected map detail when opening a map; tile workers use this value
+/// throughout a session. Changing it in the UI takes effect on the next map load.
+pub fn map_detail(root: &std::path::Path) -> u8 {
+    let text = Settings::path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    resolve_map_detail(&Settings::from_text(&text), root)
+}
+
+fn resolve_map_detail(settings: &Settings, root: &std::path::Path) -> u8 {
+    if settings.map_detail >= 0 {
+        settings.map_detail as u8
+    } else {
+        omsi_content::options::Options::load(&root.join("options.cfg"))
+            .map(|o| o.i32("maxcomplexity_map", 2).clamp(0, 255) as u8)
+            .unwrap_or(2)
     }
 }
 
@@ -1316,6 +1386,36 @@ mod tests {
     }
 
     #[test]
+    fn passenger_motion_and_procedural_ik_are_independent_and_round_trip() {
+        assert_eq!(Settings::default().pax_motion, "natural");
+        assert!(Settings::default().pax_ik);
+        for motion in ["natural", "omsi"] {
+            for ik in [false, true] {
+                let settings = Settings::from_text(&format!(
+                    "pax_motion={motion}\npax_ik={}\npax_models=realistic\n",
+                    ik as u8
+                ));
+                assert_eq!(settings.pax_motion, motion);
+                assert_eq!(settings.pax_ik, ik);
+                assert_eq!(settings.pax_models, "realistic");
+                assert_eq!(Settings::from_text(&settings.to_text()), settings);
+            }
+        }
+        let reversed = Settings::from_text("pax_ik=0\npax_motion=natural\n");
+        assert_eq!(reversed.pax_motion, "natural");
+        assert!(!reversed.pax_ik);
+        let reversed = Settings::from_text("pax_motion=omsi\npax_ik=1\n");
+        assert_eq!(reversed.pax_motion, "omsi");
+        assert!(reversed.pax_ik);
+        assert!(!Settings::from_text("ik=0\n").pax_ik);
+        assert_eq!(
+            Settings::from_text("pax_motion=unknown").pax_motion,
+            "natural"
+        );
+        assert_eq!(Settings::from_text("pax_models=unknown").pax_models, "omsi");
+    }
+
+    #[test]
     fn discord_settings_round_trip_and_default_enabled() {
         assert!(Settings::default().discord_status);
         let settings = Settings {
@@ -1407,4 +1507,44 @@ pub fn save_mirror_offsets(bus: &std::path::Path, offsets: &[[f32; 2]]) {
         let _ = std::fs::create_dir_all(d);
     }
     let _ = std::fs::write(&p, lines.join("\n") + "\n");
+}
+
+#[cfg(test)]
+mod map_detail_tests {
+    use super::*;
+
+    #[test]
+    fn automatic_detail_follows_installed_options_and_explicit_selection_wins() {
+        let root = std::env::temp_dir().join(format!(
+            "neoomsi-detail-options-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let automatic = Settings::from_text("map_detail=auto\n");
+        let missing = resolve_map_detail(&automatic, &root);
+        std::fs::write(root.join("options.cfg"), "[maxcomplexity_map]\n1\n").unwrap();
+        let inherited = resolve_map_detail(&automatic, &root);
+        let explicit = resolve_map_detail(&Settings::from_text("map_detail=2\n"), &root);
+        let actual = root.canonicalize().unwrap();
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        assert!(actual.starts_with(&temp) && actual != temp);
+        std::fs::remove_dir_all(actual).unwrap();
+        assert_eq!(missing, 2);
+        assert_eq!(inherited, 1);
+        assert_eq!(explicit, 2);
+    }
+    #[test]
+    fn map_complexity_alias_and_selection_round_trip() {
+        assert_eq!(Settings::from_text("").map_detail, -1);
+        for limit in [0, 1, 2, 255] {
+            let settings = Settings::from_text(&format!("maxcomplexity_map={limit}\n"));
+            assert_eq!(settings.map_detail, limit);
+            assert_eq!(Settings::from_text(&settings.to_text()).map_detail, limit);
+        }
+        assert_eq!(Settings::from_text("map_detail=bad\n").map_detail, -1);
+    }
 }

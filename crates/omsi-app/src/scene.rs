@@ -24,6 +24,9 @@ use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+#[path = "scene/parity_acceptance_tests.rs"]
+mod parity_acceptance_tests;
 
 /// A loaded scenery object type: model meshes + material descriptions.
 pub struct ObjectType {
@@ -477,7 +480,7 @@ pub struct LoadStats {
     pub ground_aligned: usize,
     pub ground_aligned_tiles: usize,
     pub ground_moved_most: Option<(f32, f64, f64)>,
-    /// Tiles a crossing's `[crossing_heightdeformation]` changed, and crossings warped.
+    /// Tiles with terrain deformation, and placed definitions with local height deformation.
     pub ground_deformed_tiles: usize,
     pub crossings_warped: usize,
 }
@@ -497,7 +500,7 @@ impl LoadStats {
         }
         if self.ground_deformed_tiles > 0 || self.crossings_warped > 0 {
             log::info!(
-                "crossings deform the terrain on {} tiles; {} crossings warped onto the ground",
+                "crossings deform the terrain on {} tiles; {} crossings use a local height field",
                 self.ground_deformed_tiles,
                 self.crossings_warped
             );
@@ -709,8 +712,6 @@ enum StagedDrive {
 /// A staged tile's final ground and where its objects finally stand.
 struct Resolved {
     terrain: Arc<Terrain>,
-    /// Crossings warped onto the ground: object index → its own meshes.
-    warped: HashMap<usize, Arc<Vec<MeshData>>>,
     /// By object index; None for an attachment without its parent or attachment point.
     poses: Vec<Option<Pose>>,
     unattached: usize,
@@ -772,7 +773,6 @@ pub struct PlacedObject {
     key: i64,
     controller: Option<usize>,
     strings: Vec<String>,
-    warped: Option<Arc<Vec<MeshData>>>,
     /// `[varparent]` of the record.
     var_parent: Option<i64>,
     /// A car on a `[carpark_p]` space.
@@ -2009,6 +2009,8 @@ pub struct World {
     pub root: PathBuf,
     pub global: GlobalCfg,
     pub map_dir: PathBuf,
+    /// Detail snapshot for this map session; raw editor tiles remain unfiltered.
+    map_detail: u8,
     /// Indexed parked car lists of the map, loaded when a parking space uses one.
     parklist: Mutex<HashMap<usize, Vec<String>>>,
     /// Render textures of the player's mirrors (`reflexionN.bmp`), by camera index.
@@ -2986,6 +2988,7 @@ impl World {
             root: root.to_path_buf(),
             global,
             map_dir,
+            map_detail: crate::settings::map_detail(root),
             parklist: Mutex::new(HashMap::new()),
             mirror_textures: Mutex::new(Vec::new()),
             chrono_dirs: parking_lot::RwLock::new(chrono_dirs),
@@ -3282,30 +3285,15 @@ impl World {
                 .iter()
                 .map(|d| model.meshes[*d].shadow)
                 .collect();
-            let deform = sco.crossing_height_deformation.as_ref().and_then(|f| {
-                let mp = omsi_cfg::resolve_path(&omsi_cfg::resolve_path(&model_dir, "model"), f);
-                let mp = if omsi_cfg::vfs::is_file(&mp) {
-                    mp
-                } else {
-                    omsi_cfg::resolve_path(&model_dir, f)
-                };
-                match omsi_o3d::load_mesh(&mp) {
-                    Ok(m) => Some(mesh_from_o3d(&m)),
-                    Err(e) => {
-                        log::warn!("crossing height deformation {}: {e}", mp.display());
-                        None
-                    }
-                }
-            });
-            // Omsi.exe hands the deformation mesh to the model loader, which drapes every
-            // [mesh] of the object onto it and rebuilds the normals from the faces
-            // (D3DXComputeNormals): the file's normals of a crossing are never used.
-            if deform.is_some() {
+            let deform = load_crossing_field(&sco, &model_dir);
+            // Deformation belongs to the definition's local frame, before placement.
+            // Share the result across instances, every visual LOD and the collision mesh.
+            if let Some(field) = &deform {
                 for (mesh, _, _) in meshes
                     .iter_mut()
                     .chain(lower_lods.iter_mut().flat_map(|l| l.1.iter_mut()))
                 {
-                    omsi_geometry::compute_normals_d3d(mesh);
+                    deform_mesh(mesh, field);
                 }
             }
             // [terrainhole] <mesh>: the cutter that takes the ground away under a junction
@@ -3330,7 +3318,7 @@ impl World {
                     }
                 })
                 .collect();
-            let collision = sco
+            let mut collision = sco
                 .collision_mesh
                 .as_ref()
                 .filter(|_| !sco.no_collision)
@@ -3352,6 +3340,9 @@ impl World {
                         .map_err(|e| log::debug!("collision mesh {}: {e}", mp.display()))
                         .ok()
                 });
+            if let (Some(mesh), Some(field)) = (&mut collision, &deform) {
+                deform_mesh(mesh, field);
+            }
             Some(Arc::new(ObjectType {
                 sco,
                 sound_path: Default::default(),
@@ -3425,6 +3416,7 @@ impl World {
         use rayon::prelude::*;
         let t0 = std::time::Instant::now();
         let scos: Mutex<HashMap<String, Option<Arc<SceneryObject>>>> = Mutex::new(HashMap::new());
+        let fields: Mutex<HashMap<PathBuf, Option<Arc<MeshData>>>> = Mutex::new(HashMap::new());
         let sco_of = |file: &str| -> Option<Arc<SceneryObject>> {
             let key = file.trim().to_ascii_lowercase().replace('\\', "/");
             if let Some(v) = scos.lock().get(&key) {
@@ -3451,7 +3443,9 @@ impl World {
                 let mut positions = Vec::new();
                 let mut signs = Vec::new();
                 let mut roads = Vec::new();
-                let Some(tile) = crate::tiles::read_tile(path, &self.chrono_dirs.read()) else {
+                let Some(tile) =
+                    crate::tiles::read_tile(path, &self.chrono_dirs.read(), self.map_detail)
+                else {
                     return (lanes, positions, signs, roads);
                 };
                 let origin2 = DVec2::new(tx as f64 * tile_size(), ty as f64 * tile_size());
@@ -3540,10 +3534,29 @@ impl World {
                     );
                     positions.push((o.id, pos));
                     if !sco.paths.is_empty() {
+                        // The navigator needs the same path elevations without loading
+                        // an object's visual meshes or textures.
+                        let field = fields
+                            .lock()
+                            .entry(sco.path.clone())
+                            .or_insert_with(|| {
+                                let sco_dir = sco.path.parent().unwrap_or(&self.root);
+                                let model_path = sco
+                                    .model_file
+                                    .as_ref()
+                                    .map(|f| omsi_cfg::resolve_path(sco_dir, f));
+                                let model_dir = model_path
+                                    .as_deref()
+                                    .and_then(Path::parent)
+                                    .unwrap_or(sco_dir);
+                                load_crossing_field(&sco, model_dir).map(Arc::new)
+                            })
+                            .clone();
                         lanes.extend(object_lanes(
                             &sco,
                             pos,
-                            [o.rot[0], 0.0, 0.0],
+                            object_rotation(omsi_geometry::map_rotation(o.rot)),
+                            field.as_deref(),
                             None,
                             (tx, ty),
                             o.id,
@@ -3801,7 +3814,12 @@ impl World {
         if let Some(ix) = g.as_ref() {
             return ix.clone();
         }
-        let mut built = MapIndex::build(&self.map_tiles(), &self.chrono_dirs.read(), &self.root);
+        let mut built = MapIndex::build(
+            &self.map_tiles(),
+            &self.chrono_dirs.read(),
+            &self.root,
+            self.map_detail,
+        );
         // the index's object positions go to `object_positions` (kept once, not twice: 345 000
         // objects on Ahlheim took 30 MB in each)
         let objects = std::mem::take(&mut built.objects);
@@ -4075,7 +4093,8 @@ impl World {
             counts: LoadStats::default(),
             resolved: std::sync::OnceLock::new(),
         };
-        let Some(tile) = crate::tiles::read_tile(path, &self.chrono_dirs.read()) else {
+        let Some(tile) = crate::tiles::read_tile(path, &self.chrono_dirs.read(), self.map_detail)
+        else {
             return out;
         };
         // a tile with water carries one surface with a height at each corner. As in Omsi.exe
@@ -4598,8 +4617,7 @@ impl World {
         )
     }
 
-    /// Where a staged object stands before the ground is edited: crossings are warped and
-    /// the ground deformed from there.
+    /// Where a staged object stands before optional terrain alignment.
     fn provisional_pose(
         st: &StagedTile,
         o: &StagedObject,
@@ -4648,7 +4666,6 @@ impl World {
     ) -> Resolved {
         let key = (st.tx, st.ty);
         let (terrain, aligned_points, biggest, deformed) = self.final_ground(key, src);
-        let warped = self.warp_crossings(st, src);
         let ground_at = |x: f64, y: f64| -> f64 {
             let actual_key = (
                 (x / tile_size()).floor() as i32,
@@ -4769,141 +4786,12 @@ impl World {
         }
         Resolved {
             terrain: Arc::new(terrain),
-            warped,
             poses: final_poses,
             unattached,
             aligned_points,
             biggest,
             deformed,
         }
-    }
-
-    /// The crossings of `st` warped onto the ground: object index → its own meshes.
-    ///
-    /// A junction plate is one flat object covering a couple of hundred metres, and the
-    /// roads running into it do not all lie at its height. `[crossing_heightdeformation]`
-    /// names a coarse height field in the plate's own frame: every vertex of the plate is
-    /// raised by it, so the plate keeps its kerbs and camber and its arms meet their roads.
-    fn warp_crossings(
-        &self,
-        st: &StagedTile,
-        src: &HashMap<(i32, i32), Arc<StagedTile>>,
-    ) -> HashMap<usize, Arc<Vec<MeshData>>> {
-        let mut out: HashMap<usize, Arc<Vec<MeshData>>> = HashMap::new();
-        let plates: Vec<(usize, Pose, &MeshData)> = st
-            .objects
-            .iter()
-            .enumerate()
-            .filter_map(|(i, o)| {
-                Some((
-                    i,
-                    Self::provisional_pose(st, o, src)?,
-                    o.ot.deform.as_ref()?,
-                ))
-            })
-            .collect();
-        if plates.is_empty() {
-            return out;
-        }
-        for (oi, Pose { pos, rot: _ }, base) in plates {
-            let ot = &st.objects[oi].ot;
-            // A plate the map leaves far from the ground is a dead record (Spandau has one
-            // junction stored at height zero in a field 31 m up). Warping it onto the terrain
-            // would hoist a white slab into the meadow; left where the map puts it, it stays
-            // buried and out of sight, as in the original.
-            if let Some(t) = Self::base_ground(src, pos.x, pos.y) {
-                if (pos.z - t).abs() > 12.0 {
-                    continue;
-                }
-            }
-            // the base mesh in object space, as a height lookup
-            let height_of = |x: f32, y: f32| -> Option<f32> {
-                let mut best: Option<f32> = None;
-                for t in base.indices.chunks_exact(3) {
-                    let (a, b, c) = (
-                        base.positions[t[0] as usize],
-                        base.positions[t[1] as usize],
-                        base.positions[t[2] as usize],
-                    );
-                    let det = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
-                    if det.abs() < 1e-9 {
-                        continue;
-                    }
-                    let l1 = ((b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y)) / det;
-                    let l2 = ((x - a.x) * (c.y - a.y) - (c.x - a.x) * (y - a.y)) / det;
-                    let l0 = 1.0 - l1 - l2;
-                    if l0 >= -1e-4 && l1 >= -1e-4 && l2 >= -1e-4 {
-                        let h = l0 * a.z + l2 * b.z + l1 * c.z;
-                        best = Some(best.map_or(h, |o: f32| o.max(h)));
-                    }
-                }
-                best
-            };
-            // `[crossing_heightdeformation]` is a height field in the plate's own frame (a
-            // plane or a few faces around 0): every vertex of the plate is raised by it where
-            // it stands, and the ground is pressed onto the same field (`final_ground`). The
-            // Juliusturm junction's field is a 3.5 % plane, -0.62 m under its west arm and
-            // +0.76 m under its east one - exactly where the roads arriving and leaving lie
-            // (34.91 and 36.29 m round the plate's 35.53 m). Pressed onto the terrain and the
-            // nearby roads instead, the plate sagged into a trough with a 0.8 m wall at one
-            // end. Past the field's edge a vertex takes the height of its nearest corner.
-            let corners: Vec<glam::Vec3> = base.positions.clone();
-            let mut meshes = Vec::with_capacity(ot.meshes.len());
-            let mut moved = 0usize;
-            let mut biggest = 0f32;
-            for (mesh, _, _) in &ot.meshes {
-                let mut m = mesh.clone();
-                for v in m.positions.iter_mut() {
-                    let d = height_of(v.x, v.y).unwrap_or_else(|| {
-                        corners
-                            .iter()
-                            .min_by(|p, q| {
-                                (p.truncate() - v.truncate())
-                                    .length_squared()
-                                    .total_cmp(&(q.truncate() - v.truncate()).length_squared())
-                            })
-                            .map(|p| p.z)
-                            .unwrap_or(0.0)
-                    });
-                    if d.abs() > 0.001 {
-                        v.z += d;
-                        moved += 1;
-                        biggest = biggest.max(d.abs());
-                    }
-                }
-                // (the normals of the draped mesh, as Omsi.exe makes them after draping)
-                omsi_geometry::compute_normals_d3d(&mut m);
-                meshes.push(m);
-            }
-            if biggest > 1.0 && omsi_cfg::env::var_os("OMSI_DEBUG_WARP").is_some() {
-                let (lo, hi) = base
-                    .positions
-                    .iter()
-                    .fold((f32::MAX, f32::MIN), |a, p| (a.0.min(p.z), a.1.max(p.z)));
-                log::info!(
-                    "crossing {} at ({:.1}, {:.1}, {:.1}) moved up to {biggest:.2} m (field {lo:.2}..{hi:.2}, {} points)",
-                    ot.sco.path.display(),
-                    pos.x,
-                    pos.y,
-                    pos.z,
-                    base.positions.len()
-                );
-            }
-            if moved > 0 {
-                log::debug!(
-                    "crossing {} at ({:.0}, {:.0}) raised by its height field",
-                    ot.sco
-                        .path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy(),
-                    pos.x,
-                    pos.y
-                );
-                out.insert(oi, Arc::new(meshes));
-            }
-        }
-        out
     }
 
     /// The ground of tile `key`: the tile's `.terrain` as Omsi.exe loads it, which the objects
@@ -5088,7 +4976,7 @@ impl World {
         let check_objects = omsi_cfg::env::var_os("OMSI_CHECK_OBJECTS").is_some();
         let debug_float = omsi_cfg::env::var_os("OMSI_DEBUG_FLOAT").is_some();
         let index = self.index();
-        for (oi, (o, fp)) in st.objects.iter().zip(res.poses.iter()).enumerate() {
+        for (o, fp) in st.objects.iter().zip(res.poses.iter()) {
             let Some(Pose { pos, rot: xf }) = *fp else {
                 continue;
             };
@@ -5254,7 +5142,8 @@ impl World {
                     lanes.extend(object_lanes(
                         &ot.sco,
                         pos,
-                        [heading, 0.0, 0.0],
+                        xf,
+                        ot.deform.as_ref(),
                         controller,
                         key,
                         o.id,
@@ -5263,8 +5152,7 @@ impl World {
                 }
                 continue;
             }
-            let is_surface = !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-                || ot.sco.surface;
+            let is_surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
             if check_objects && is_surface {
                 let over = pos.z - ground_at(pos.x, pos.y);
                 if !(-1.0..=3.0).contains(&over) {
@@ -5283,42 +5171,16 @@ impl World {
                 }
             }
             if first_load {
-                let mut own = object_lanes(
+                lanes.extend(object_lanes(
                     &ot.sco,
                     pos,
-                    [heading, 0.0, 0.0],
+                    xf,
+                    ot.deform.as_ref(),
                     controller,
                     key,
                     o.id,
                     &o.rules,
-                );
-                // An object tilted on a slope (the map's pitch and bank) tilts its paths with
-                // it, as the whole object matrix places them in Omsi.exe: laid out by the
-                // heading alone, a junction on a hill had flat lanes through a sloping plate
-                // and its traffic drove into the road on one side and over it on the other.
-                let yaw = omsi_geometry::object_rotation([heading, 0.0, 0.0]);
-                let tilt = xf * yaw.inverse();
-                if !tilt.abs_diff_eq(Mat4::IDENTITY, 1e-5) {
-                    for l in own.iter_mut() {
-                        for q in l.points.iter_mut() {
-                            *q = pos + tilt.transform_point3((*q - pos).as_vec3()).as_dvec3();
-                        }
-                        l.refresh();
-                    }
-                }
-                // a junction plate raised by its height field carries its paths with it
-                if let (Some(field), true) = (ot.deform.as_ref(), res.warped.contains_key(&oi)) {
-                    let inv = xf.inverse();
-                    for l in own.iter_mut() {
-                        for q in l.points.iter_mut() {
-                            let local = inv.transform_point3((*q - pos).as_vec3());
-                            if let Some(d) = field_height(field, local.x, local.y) {
-                                q.z += d as f64;
-                            }
-                        }
-                    }
-                }
-                lanes.extend(own);
+                ));
             }
             // What vehicles hit, as OMSI gives it to ODE: the `[collision_mesh]` as a
             // triangle mesh when there is one (it wins over a `[boundingbox]`), else the
@@ -5649,7 +5511,6 @@ impl World {
                 key: o.key,
                 controller,
                 strings: o.extra.clone(),
-                warped: res.warped.get(&oi).cloned(),
                 var_parent: o.lamp_parent,
                 parked: o.parked,
                 editable: o.map_object && matches!(o.place, Placement::Ground { .. }),
@@ -5674,7 +5535,7 @@ impl World {
             s.ground_aligned += res.aligned_points;
             s.ground_aligned_tiles += (res.aligned_points > 0) as usize;
             s.ground_deformed_tiles += res.deformed as usize;
-            s.crossings_warped += res.warped.len();
+            s.crossings_warped += st.objects.iter().filter(|o| o.ot.deform.is_some()).count();
             if let Some(b) = res.biggest {
                 if s.ground_moved_most.map(|m| b.0 > m.0).unwrap_or(true) {
                     s.ground_moved_most = Some(b);
@@ -5909,7 +5770,7 @@ impl World {
                             ts.add_outline(ring, tx, ty);
                         }
                     }
-                    for (oi, (o, pose)) in q.objects.iter().zip(res.poses.iter()).enumerate() {
+                    for (o, pose) in q.objects.iter().zip(res.poses.iter()) {
                         let Some(pose) = pose else { continue };
                         let ot = &o.ot;
                         // Editor-only helpers and trees do not cut terrain.
@@ -5937,16 +5798,11 @@ impl World {
                         }
                         // Laid on the ground (the terrain is cut under it): a `[surface]` object
                         // and one drawn as a ground layer (`[rendertype]`).
-                        let surface =
-                            !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-                                || ot.sco.surface;
+                        let surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
                         if !surface {
                             continue;
                         }
-                        let meshes: Vec<&MeshData> = match res.warped.get(&oi) {
-                            Some(w) => w.iter().collect(),
-                            None => ot.meshes.iter().map(|(m, _, _)| m).collect(),
-                        };
+                        let meshes = ot.meshes.iter().map(|(m, _, _)| m);
                         // What the wheels stand on is Omsi.exe's ground query (0x7a0814): the
                         // terrain, the splines, and of the objects only the `[surface]` ones
                         // (the tile's list of them, 0x79eb63) - and of those only the first
@@ -5963,7 +5819,7 @@ impl World {
                             .surface
                             .then(|| ot.mesh_def_index.iter().position(|&d| d == 0))
                             .flatten();
-                        for (k, mesh) in meshes.into_iter().enumerate() {
+                        for (k, mesh) in meshes.enumerate() {
                             let b = mesh_bounds(mesh, &pose.rot, pose.pos);
                             if outside(&b) {
                                 continue;
@@ -7538,7 +7394,6 @@ impl World {
                         key: collision_key,
                         controller,
                         strings,
-                        warped,
                         var_parent,
                         parked,
                         editable,
@@ -7569,9 +7424,7 @@ impl World {
                             t.terrain_slots.clone(),
                         )
                     };
-                    let surface =
-                        !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-                            || ot.sco.surface;
+                    let surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
                     let render_phase = scenery_render_phase(ot.sco.render_type);
                     let draw_pos = scenery_draw_position(pos, drawn_on_surfaces(&ot.sco));
                     let has_lower = !type_lods.is_empty();
@@ -7650,22 +7503,7 @@ impl World {
                     } else {
                         None
                     };
-                    // a crossing warped onto the ground has meshes of its own
-                    let own_meshes: Option<Vec<(MeshId, Vec<MaterialId>)>> =
-                        warped.as_ref().map(|ms| {
-                            ms.iter()
-                                .zip(type_meshes.iter())
-                                .map(|(m, (_, mats))| {
-                                    let id = gpu.add_mesh(renderer, scene, m);
-                                    scene.meshes[id].source =
-                                        Some(ot.sco.path.display().to_string());
-                                    tg.meshes.push(id);
-                                    (id, mats.clone())
-                                })
-                                .collect()
-                        });
-                    let mut mesh_list: Vec<(MeshId, Vec<MaterialId>)> =
-                        own_meshes.unwrap_or_else(|| type_meshes.clone());
+                    let mut mesh_list = type_meshes.clone();
                     // [terrainmapping] slots: drawn with the uncut base ground, from a mesh
                     // of this placement's own (see split_terrain_mapped); (level, mesh, id)
                     let mut ground_meshes: Vec<(usize, usize, MeshId)> = Vec::new();
@@ -7680,10 +7518,7 @@ impl World {
                                 .map(|t| t.2)
                                 .collect();
                             let src = if level == 0 {
-                                warped
-                                    .as_ref()
-                                    .and_then(|w| w.get(mi))
-                                    .or(ot.meshes.get(mi).map(|m| &m.0))
+                                ot.meshes.get(mi).map(|m| &m.0)
                             } else {
                                 ot.lower_lods
                                     .get(level - 1)
@@ -7695,14 +7530,7 @@ impl World {
                             if ground.is_empty() {
                                 continue;
                             }
-                            // (a crossing warped onto the ground has a mesh of its own; the
-                            // rest of every other object is the same for all its placements)
-                            let rest_id = if level == 0 && warped.is_some() {
-                                let id = gpu.add_mesh(renderer, scene, &terrain_rest(src, &slots));
-                                scene.meshes[id].source = Some(ot.sco.path.display().to_string());
-                                tg.meshes.push(id);
-                                id
-                            } else if let Some(&(_, id)) = gpu.types[&tkey]
+                            let rest_id = if let Some(&(_, id)) = gpu.types[&tkey]
                                 .terrain_rest
                                 .iter()
                                 .find(|r| r.0 == (level, mi))
@@ -8569,9 +8397,7 @@ impl World {
             let Some(ot) = types.iter().find(|t| t.sco.path == eo.sco) else {
                 continue;
             };
-            if ot.sco.surface
-                || !matches!(ot.sco.render_type, omsi_scenery::sco::RenderType::Normal)
-            {
+            if ot.sco.surface || ot.sco.render_type.is_ground_layer() {
                 continue;
             }
             let (mut n, mut inn, mut z0, mut z1) = (0usize, 0usize, f32::MAX, f32::MIN);
@@ -9163,13 +8989,7 @@ impl World {
                 .map(|m| m.iter().map(|x| x.heap_bytes()).sum::<usize>())
                 .unwrap_or(0);
             if let Some(r) = st.resolved.get() {
-                staged_bytes += r
-                    .warped
-                    .values()
-                    .flat_map(|v| v.iter())
-                    .map(|m| m.heap_bytes())
-                    .sum::<usize>()
-                    + r.terrain.heights.capacity() * 4;
+                staged_bytes += r.terrain.heights.capacity() * 4;
             }
         }
         let (mut rasters, mut drive, mut tris) = (0usize, 0usize, 0usize);
@@ -13900,30 +13720,22 @@ fn traffic_light_program_enabled(sco: &SceneryObject, has_signals: bool) -> bool
 fn object_lanes(
     sco: &SceneryObject,
     pos: DVec3,
-    rot: [f64; 3],
+    xf: Mat4,
+    deform: Option<&MeshData>,
     controller: Option<usize>,
     tile: (i32, i32),
     id: i64,
     rules: &[omsi_map::MapRule],
 ) -> Vec<Lane> {
     let mut out = Vec::new();
-    let heading = rot[0];
-    let h = heading.to_radians();
-    let (sh, ch) = (h.sin(), h.cos());
-    // local (x east, y north) → world for an object turned clockwise by `heading`
-    let to_world = |x: f64, y: f64| DVec2::new(x * ch + y * sh, -x * sh + y * ch);
+    let transform = xf.as_dmat4();
     for (pi, p) in sco.paths.iter().enumerate() {
         let v = &p.params;
         if v.len() < 11 {
             continue;
         }
-        let start_local = to_world(v[0] as f64, v[1] as f64);
-        let start = DVec3::new(
-            pos.x + start_local.x,
-            pos.y + start_local.y,
-            pos.z + v[2] as f64,
-        );
-        let (path_heading, radius, length) = (v[3] as f64 + heading, v[4] as f64, v[5] as f64);
+        let start = DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64);
+        let (path_heading, radius, length) = (v[3] as f64, v[4] as f64, v[5] as f64);
         if length <= 0.01 {
             continue;
         }
@@ -14000,6 +13812,18 @@ fn object_lanes(
                 })
                 .unwrap_or_default();
             l.reversed = reverse;
+            // Build locally, deform locally, then place. Hidden and visible junctions use
+            // the same operation; refresh only after all spatial changes are complete.
+            for q in &mut l.points {
+                let mut local = *q;
+                if let Some(field) = deform {
+                    if let Some(d) = field_height(field, local.x as f32, local.y as f32) {
+                        local.z += d as f64;
+                    }
+                }
+                *q = pos + transform.transform_point3(local);
+            }
+            l.refresh();
             l.traffic_light = controller.and_then(|c| {
                 sco.path_traffic_light
                     .get(pi)
@@ -15314,6 +15138,35 @@ fn is_street_sign(file: &str) -> bool {
     .any(|k| name.contains(k))
 }
 
+/// Load only the crossing field, also used by the mesh-free navigation pass.
+fn load_crossing_field(sco: &SceneryObject, model_dir: &Path) -> Option<MeshData> {
+    let file = sco.crossing_height_deformation.as_ref()?;
+    let path = omsi_cfg::resolve_path(&omsi_cfg::resolve_path(model_dir, "model"), file);
+    let path = if omsi_cfg::vfs::is_file(&path) {
+        path
+    } else {
+        omsi_cfg::resolve_path(model_dir, file)
+    };
+    match omsi_o3d::load_mesh(&path) {
+        Ok(mesh) => Some(mesh_from_o3d(&mesh)),
+        Err(e) => {
+            log::warn!("crossing height deformation {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Apply a crossing field before any map placement. Vertices outside the field stay
+/// unchanged: a nearby corner is not an authored height at that position.
+fn deform_mesh(mesh: &mut MeshData, field: &MeshData) {
+    for p in &mut mesh.positions {
+        if let Some(d) = field_height(field, p.x, p.y) {
+            p.z += d;
+        }
+    }
+    omsi_geometry::compute_normals_d3d(mesh);
+}
+
 /// The height of a `[crossing_heightdeformation]` field at (x, y) of its object's frame.
 fn field_height(m: &MeshData, x: f32, y: f32) -> Option<f32> {
     let mut best: Option<f32> = None;
@@ -15366,3 +15219,15 @@ fn night_texture_name(texture: &str) -> String {
 pub(crate) static SPLINE_ENDS: std::sync::LazyLock<
     Mutex<HashMap<i64, (DVec3, DVec3, i64, i64, String)>>,
 > = std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+#[path = "scene/crossing_tests.rs"]
+mod crossing_tests;
+
+#[cfg(test)]
+#[path = "scene/render_queue_tests.rs"]
+mod render_queue_tests;
+
+#[cfg(test)]
+#[path = "scene/detail_loading_tests.rs"]
+mod detail_loading_tests;

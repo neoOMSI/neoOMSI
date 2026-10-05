@@ -272,6 +272,20 @@ pub(crate) fn prepare(
             Err(e) => log::warn!("content folder {}: {e}", c.display()),
         }
     }
+    if settings::Settings::load().pax_models == "realistic" {
+        if let Some(content) = content_dir() {
+            let pack = content.join("Packs/RealisticPax");
+            if pack.join("Humans").is_dir() {
+                omsi_cfg::add_content_root(pack.clone());
+                log::info!("realistic passengers: {}", pack.display());
+            } else {
+                log::warn!(
+                    "RealisticPax is missing at {}; using installed passengers",
+                    pack.display()
+                );
+            }
+        }
+    }
     for z in &args.content_zip {
         if let Err(e) = omsi_cfg::add_content_zip(z) {
             log::warn!("content zip {}: {e}", z.display());

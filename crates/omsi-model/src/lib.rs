@@ -571,10 +571,7 @@ impl Model {
     pub fn handle_keyword(&mut self, k: &str, r: &mut CfgReader) -> bool {
         match k {
             "rendertype" => self.render_type = Some(r.word().to_ascii_lowercase()),
-            "surface" => {
-                let value = r.word();
-                self.surface = Some(value != "0");
-            }
+            "surface" => self.surface = Some(true),
             "lod" => {
                 let min_size = r.f32();
                 // Meshes written before the first [LOD] belong to that first level: OMSI gives
@@ -1466,5 +1463,23 @@ mod tests {
         assert_eq!(d.len(), 2);
         let chain = d.iter().find(|d| d.texture == "chain.dds").unwrap();
         assert!(chain.envmap.is_some() && chain.alpha_set && chain.alpha == 1);
+    }
+}
+
+#[cfg(test)]
+mod surface_presence_tests {
+    use super::*;
+
+    #[test]
+    fn surface_is_a_presence_flag_and_preserves_the_following_mesh() {
+        for suffix in ["", "0\n", "1\n"] {
+            let model = Model::parse(&omsi_cfg::CfgFile::from_str(
+                "model.cfg",
+                &format!("[surface]\n{suffix}[mesh]\nroad.o3d\n"),
+            ));
+            assert_eq!(model.surface, Some(true));
+            assert_eq!(model.meshes.len(), 1);
+            assert_eq!(model.meshes[0].file, "road.o3d");
+        }
     }
 }

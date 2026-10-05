@@ -493,18 +493,31 @@ impl PathGraph {
 
     /// Walking distance from path point `a` to every path point (infinite when unreachable).
     pub fn distances_from(&self, a: usize) -> Vec<f32> {
+        self.routing_from(a).0
+    }
+
+    /// Shortest distances and first steps from `a`, respecting directed links. First
+    /// steps are assigned during relaxation, so even zero-length links cannot form loops.
+    pub fn routing_from(&self, a: usize) -> (Vec<f32>, Vec<Option<usize>>) {
         let n = self.points.len();
         let mut dist = vec![f32::INFINITY; n];
+        let mut first = vec![None; n];
+        let mut hops = vec![usize::MAX; n];
         if a >= n {
-            return dist;
+            return (dist, first);
         }
         let mut done = vec![false; n];
         dist[a] = 0.0;
+        hops[a] = 0;
         loop {
             let mut u = usize::MAX;
             let mut best = f32::INFINITY;
             for i in 0..n {
-                if !done[i] && dist[i] < best {
+                if !done[i]
+                    && dist[i].is_finite()
+                    && (dist[i] < best
+                        || (dist[i] == best && (u == usize::MAX || hops[i] < hops[u])))
+                {
                     best = dist[i];
                     u = i;
                 }
@@ -514,12 +527,14 @@ impl PathGraph {
             }
             done[u] = true;
             for &(v, w) in &self.adj[u] {
-                if dist[u] + w < dist[v] {
+                if dist[u] + w < dist[v] || (dist[u] + w == dist[v] && hops[u] + 1 < hops[v]) {
                     dist[v] = dist[u] + w;
+                    hops[v] = hops[u] + 1;
+                    first[v] = if u == a { Some(v) } else { first[u] };
                 }
             }
         }
-        dist
+        (dist, first)
     }
 
     /// Path points linked to `i` (either way).

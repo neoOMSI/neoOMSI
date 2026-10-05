@@ -161,6 +161,8 @@ struct Mirror {
     on: bool,
     cars: HashMap<u32, Track<CarState>>,
     people: HashMap<u32, Track<PersonState>>,
+    pending_grants: HashMap<u32, omsi_net::passenger::PassengerGrant>,
+    accepted_grants: HashSet<u32>,
     descs: HashMap<Key, Desc>,
     /// Descriptions asked for and when.
     wanted: HashMap<Key, Instant>,
@@ -229,6 +231,9 @@ pub struct LanWorld {
     trace_opened: bool,
     /// Host: the parking spaces whose cars have driven off, as the world has them now.
     departed: Vec<i64>,
+    /// Passenger id -> (owning peer, immutable journey, time until the next retry).
+    handovers: HashMap<u32, (u32, omsi_net::passenger::PassengerGrant, f32)>,
+    next_transfer: u64,
 }
 
 fn quant(x: f64, y: f64, z: f64, h: f64) -> [i64; 4] {
@@ -534,6 +539,11 @@ impl LanWorld {
                 .play
                 .step(now, now + up.offset.unwrap_or(0.0) - INTERP_DELAY, 500.0);
             for (pid, track) in &up.tracks {
+                // The original remains frozen until ACK. An upstream pose can overtake
+                // that ACK on UDP; drawing its copy now would duplicate the passenger.
+                if self.handovers.get(pid).is_some_and(|h| h.0 == *peer) {
+                    continue;
+                }
                 let Some((a, b, k)) = track.around(render_ms) else {
                     continue;
                 };
@@ -591,15 +601,61 @@ impl LanWorld {
             h.lan_centers = centers;
         }
         // waiting people a client's bus takes
+        for (peer, id, transfer, accepted) in lan.take_grant_acks() {
+            if self
+                .handovers
+                .get(&id)
+                .is_some_and(|h| h.0 == peer && h.1.transfer == transfer)
+            {
+                self.handovers.remove(&id);
+                if let Some(h) = humans.as_deref_mut() {
+                    h.finish_handover(id, accepted);
+                }
+            }
+        }
+        let connected: HashSet<u32> = lan.peers().map(|p| p.pose.id).collect();
+        self.handovers.retain(|id, (peer, grant, retry)| {
+            if !connected.contains(peer) {
+                if let Some(h) = humans.as_deref_mut() {
+                    h.finish_handover(*id, false);
+                }
+                return false;
+            }
+            *retry -= dt;
+            if *retry <= 0.0 {
+                lan.answer_claim(*peer, std::slice::from_ref(grant), &[]);
+                *retry = 0.5;
+            }
+            true
+        });
         for (id, ids) in lan.take_claims() {
-            let granted = humans
-                .as_deref_mut()
-                .map(|h| h.hand_over(id, &ids))
-                .unwrap_or_default();
+            let mut granted = Vec::new();
+            for person in &ids {
+                match self.handovers.get(person) {
+                    Some((owner, grant, _)) if *owner == id => granted.push(grant.clone()),
+                    Some(_) => {}
+                    None => {
+                        if let Some(h) = humans.as_deref_mut() {
+                            for mut grant in h.hand_over(
+                                &[*person],
+                                crate::humans::BusId::Ai(crate::humans::remote_bus_id(id)),
+                            ) {
+                                self.next_transfer = self
+                                    .next_transfer
+                                    .checked_add(1)
+                                    .expect("passenger transfer counter overflow");
+                                grant.transfer = self.next_transfer;
+                                self.handovers.insert(*person, (id, grant.clone(), 0.5));
+                                granted.push(grant);
+                            }
+                        }
+                    }
+                }
+            }
             let denied: Vec<u32> = ids
                 .iter()
                 .copied()
-                .filter(|i| !granted.contains(i))
+                .filter(|i| !granted.iter().any(|g| g.id == *i))
                 .collect();
             if !granted.is_empty() || !denied.is_empty() {
                 log::info!(
@@ -616,7 +672,7 @@ impl LanWorld {
             lan.answer_claim(id, &granted, &denied);
             if let Some(v) = self.views.get_mut(&id) {
                 for g in &granted {
-                    v.sent.remove(&(true, *g));
+                    v.sent.remove(&(true, g.id));
                 }
             }
         }
@@ -979,6 +1035,8 @@ impl LanWorld {
             }
             m.cars.clear();
             m.people.clear();
+            m.pending_grants.clear();
+            m.accepted_grants.clear();
             m.drawn_cars.clear();
             m.drawn_people.clear();
             m.shown.clear();
@@ -1028,6 +1086,9 @@ impl LanWorld {
                     .push(ms, c);
             }
             for p in f.people {
+                if m.accepted_grants.contains(&p.id) {
+                    continue;
+                }
                 m.people
                     .entry(p.id)
                     .or_insert_with(|| Track {
@@ -1332,27 +1393,29 @@ impl LanWorld {
         m.people.retain(|_, t| t.heard.elapsed() < forget);
         if let Some(h) = humans.as_deref_mut() {
             // the host's answers to our claims
-            for (ids, granted) in lan.take_grants() {
-                for id in ids {
-                    if granted {
-                        if h.grant(id) {
-                            m.granted += 1;
-                            log::info!(
-                                "LAN: the host hands waiting passenger {id} over to our bus"
-                            );
-                        } else {
-                            // the host has let them go (they are ours now, and the host
-                            // says no more of them): a copy kept here would stand at the
-                            // stop for good, one more after every stop
-                            h.mirror_remove(id);
-                        }
-                        m.people.remove(&id);
-                        m.drawn_people.remove(&id);
-                    } else {
-                        m.denied += 1;
-                    }
+            for grant in lan.take_grants() {
+                if m.accepted_grants.contains(&grant.id) {
+                    lan.acknowledge_grant(grant.id, grant.transfer, true);
+                } else {
+                    m.pending_grants.entry(grant.id).or_insert(grant);
                 }
             }
+            m.denied += lan.take_denied().len() as u32;
+            m.pending_grants.retain(|id, grant| {
+                match h.grant_eligible(grant) {
+                    None => return true,
+                    Some(false) => { lan.acknowledge_grant(*id, grant.transfer, false); return false; }
+                    Some(true) => {},
+                }
+                if !h.grant(grant) { return true; }
+                m.granted += 1;
+                m.accepted_grants.insert(*id);
+                m.people.remove(id);
+                m.drawn_people.remove(id);
+                lan.acknowledge_grant(*id, grant.transfer, true);
+                log::info!("LAN: the host hands waiting passenger {id} over to our bus, destination {:?}, ride {:.1} km", grant.destination, grant.ride_km);
+                false
+            });
             let gone: Vec<u32> = m
                 .drawn_people
                 .iter()

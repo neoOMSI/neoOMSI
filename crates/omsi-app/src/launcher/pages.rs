@@ -1234,6 +1234,22 @@ fn graphics_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
         ui,
         s,
         dirty,
+        "s-mapdetail",
+        c.row(),
+        "Map complexity",
+        "map_detail",
+        &[
+            ("auto", "OMSI setting"),
+            ("0", "Low"),
+            ("1", "Normal"),
+            ("2", "Full"),
+            ("255", "All authored levels"),
+        ],
+    );
+    sel_setting(
+        ui,
+        s,
+        dirty,
         "s-view",
         c.row(),
         "View distance",
@@ -1946,6 +1962,34 @@ fn gameplay_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
         c.row(),
         "Passengers prefer available seats",
         "pax_prefer_seats",
+    );
+    sel_setting(
+        ui,
+        s,
+        dirty,
+        "s-paxmodels",
+        c.row(),
+        "Passenger models (next start)",
+        "pax_models",
+        &[("omsi", "OMSI 2"), ("realistic", "Realistic")],
+    );
+    sel_setting(
+        ui,
+        s,
+        dirty,
+        "s-paxmotion",
+        c.row(),
+        "Passenger movement",
+        "pax_motion",
+        &[("natural", "Natural"), ("omsi", "OMSI 2")],
+    );
+    toggle_setting(
+        ui,
+        s,
+        dirty,
+        c.row(),
+        "Procedural passenger animation",
+        "pax_ik",
     );
     let mut pd = get(s, "pax_density").as_f64().unwrap_or(1.0) as f32;
     if ui.slider(
@@ -5455,6 +5499,7 @@ mod settings_tests {
             "s-view",
             "s-maxobj",
             "s-minobj",
+            "s-mapdetail",
             "s-mirror",
             "s-mirror-refresh",
             "s-texmem",
@@ -5520,6 +5565,9 @@ mod settings_tests {
             "s-board",
             "set-exact_fare",
             "set-pax_prefer_seats",
+            "s-paxmodels",
+            "s-paxmotion",
+            "set-pax_ik",
             "s-pax",
             "s-unsched",
             "s-maxsched",

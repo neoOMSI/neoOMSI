@@ -146,6 +146,8 @@ pub struct Rig {
     pub shoulder: [Vec3; 2],
     pub elbow: [Vec3; 2],
     pub wrist: [Vec3; 2],
+    /// Rest direction of the weighted hand, separate from the forearm axis.
+    pub hand_axis: [Vec3; 2],
     pub waist: Vec3,
     pub neck: Vec3,
     /// What the head turns about: at the neck's height, under the middle of the head. The
@@ -153,9 +155,13 @@ pub struct Rig {
     /// head of aXYZ man02), and the head turned about it swung off the collar - a broken
     /// neck whenever the passenger looked to the side.
     pub head_pivot: Vec3,
+    /// Maximum independent head articulation, radians; uncertain rigs use a small turn.
+    pub head_turn_limit: f32,
     /// Between the hip joints.
     pub pelvis: Vec3,
     pub thigh: f32,
+    /// Front surface above the thigh axis, including the model's clothing.
+    pub thigh_radius: f32,
     pub shin: f32,
     pub upper_arm: f32,
     pub forearm: f32,
@@ -198,9 +204,12 @@ impl Rig {
                 top = top.max(p.z);
             }
             for (i, inf) in m.skin.iter().enumerate() {
+                let Some(position) = m.data.positions.get(i).filter(|p| p.is_finite()) else {
+                    continue;
+                };
                 if (0..inf.n as usize).any(|k| inf.slot[k] as usize == HEAD && inf.weight[k] > 0.5)
                 {
-                    head_sum += m.data.positions[i];
+                    head_sum += *position;
                     head_n += 1;
                 }
             }
@@ -208,7 +217,9 @@ impl Rig {
                 if (0..inf.n as usize)
                     .any(|k| inf.slot[k] as usize == SHIN[1] && inf.weight[k] > 0.5)
                 {
-                    shin.push(m.data.positions[i]);
+                    if let Some(position) = m.data.positions.get(i).filter(|p| p.is_finite()) {
+                        shin.push(*position);
+                    }
                 }
             }
         }
@@ -252,6 +263,22 @@ impl Rig {
         let ankle = Vec3::new(ax, ay, sole + ankle_h);
         let foot_len = toe_y - heel_y;
         let hip = j.hip;
+        let thigh_axis = knee - hip;
+        let mut thigh_front: Vec<f32> = limb_vertices(meshes, &[THIGH[1]])
+            .into_iter()
+            .filter_map(|p| {
+                let along = (p - hip).dot(thigh_axis) / thigh_axis.length_squared();
+                (0.1..0.7)
+                    .contains(&along)
+                    .then_some((p - hip - thigh_axis * along).y.max(0.0))
+            })
+            .collect();
+        thigh_front.sort_by(f32::total_cmp);
+        let thigh_radius = if thigh_front.is_empty() {
+            0.05 * scale
+        } else {
+            thigh_front[(thigh_front.len() - 1) * 95 / 100]
+        };
         let shoulder = j.shoulder;
         let elbow = if (j.elbow - j.shoulder).length() > 0.1 {
             j.elbow
@@ -268,12 +295,28 @@ impl Rig {
         } else {
             j.neck.z + 0.2 * scale
         };
+        let hand_vertices = limb_vertices(meshes, &[HAND[1]]);
+        let hand_axis = if hand_vertices.is_empty() {
+            j.finger - wrist
+        } else {
+            hand_vertices.iter().sum::<Vec3>() / hand_vertices.len() as f32 - wrist
+        }
+        .normalize_or((wrist - elbow).normalize_or(Vec3::X));
         let seat_lift = if def.seat_height > 0.2 {
             (hip.z - def.seat_height).clamp(0.05, 0.2)
         } else {
             0.1 * scale
         };
         let wp = def.walk_param;
+        let head_center = (head_n > 20).then(|| head_sum / head_n as f32);
+        let head_reliable = head_center.is_some_and(|c| {
+            c.is_finite()
+                && j.neck.z > j.shoulder.z + 0.02 * scale
+                && j.neck.z - j.shoulder.z < 0.35 * scale
+                && c.z > j.neck.z
+                && c.z <= head_top
+                && (c - j.neck).truncate().length() < 0.2 * scale
+        });
         Rig {
             hip: [mirror(hip), hip],
             knee: [mirror(knee), knee],
@@ -281,16 +324,18 @@ impl Rig {
             shoulder: [mirror(shoulder), shoulder],
             elbow: [mirror(elbow), elbow],
             wrist: [mirror(wrist), wrist],
+            hand_axis: [mirror(hand_axis), hand_axis],
             waist: j.waist,
             neck: j.neck,
-            head_pivot: if head_n > 20 {
+            head_pivot: if head_reliable {
                 // the middle of the neck itself at the linked height: the vertices of the
                 // mesh there (the neck's cross-section, under the head, not the collar)
                 let c = head_sum / head_n as f32;
                 let (mut sum, mut n) = (Vec3::ZERO, 0u32);
                 for m in meshes {
                     for p in &m.data.positions {
-                        if (p.z - j.neck.z).abs() < 0.03
+                        if p.is_finite()
+                            && (p.z - j.neck.z).abs() < 0.03
                             && Vec2::new(p.x - c.x, p.y - c.y).length() < 0.09
                         {
                             sum += *p;
@@ -303,17 +348,19 @@ impl Rig {
                 } else {
                     Vec3::new(c.x, j.neck.y + (c.y - j.neck.y) * 0.75, j.neck.z)
                 };
-                // (never further than 12 cm from the linked point)
+                // Independent head rotation must not detach the weighted collar.
                 Vec3::new(
                     j.neck.x,
-                    j.neck.y + (at.y - j.neck.y).clamp(-0.12, 0.12),
+                    j.neck.y + (at.y - j.neck.y).clamp(-0.02 * scale, 0.02 * scale),
                     j.neck.z,
                 )
             } else {
                 j.neck
             },
+            head_turn_limit: (if head_reliable { 20.0_f32 } else { 8.0_f32 }).to_radians(),
             pelvis: Vec3::new(0.0, hip.y, hip.z),
             thigh: (knee - hip).length().max(0.2),
+            thigh_radius,
             shin: (ankle - knee).length().max(0.2),
             upper_arm: (elbow - shoulder).length(),
             forearm: (wrist - elbow).length(),
@@ -381,6 +428,8 @@ pub struct HumanType {
     pub model: Model,
     pub model_dir: PathBuf,
     pub meshes: Vec<HumanMesh>,
+    pub levels: Vec<(f32, f32)>,
+    pub lower: Vec<(usize, HumanMesh)>,
     pub joints: Joints,
     pub rig: Rig,
     /// Clothing variants: the `[item]`s of the `.cti` files in the model's `[CTC]` folder
@@ -403,9 +452,9 @@ impl HumanType {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_default();
-        let mut meshes = Vec::new();
-        if !model.lods.is_empty() {
-            for md in model.lod_meshes(0) {
+        let load_level = |level: usize| -> Result<Vec<HumanMesh>> {
+            let mut meshes = Vec::new();
+            for md in model.lod_meshes(level) {
                 let p = omsi_cfg::resolve_path(&model_dir, &md.file);
                 let m =
                     omsi_o3d::load_mesh(&p).with_context(|| format!("loading {}", p.display()))?;
@@ -452,17 +501,52 @@ impl HumanType {
                     alpha,
                 });
             }
+            Ok(meshes)
+        };
+        let mut order: Vec<usize> = (0..model.lods.len()).collect();
+        order.sort_by(|a, b| model.lods[*b].min_size.total_cmp(&model.lods[*a].min_size));
+        let mut meshes = match order.first() {
+            Some(&l) => load_level(l)?,
+            None => Vec::new(),
+        };
+        let mut levels = vec![(
+            order.first().map_or(0.0, |&l| model.lods[l].min_size),
+            f32::MAX,
+        )];
+        let mut lower = Vec::new();
+        for &l in order.iter().skip(1) {
+            let min = model.lods[l].min_size;
+            let posable = match load_level(l) {
+                Ok(ms) => Some(ms).filter(|ms| {
+                    !ms.is_empty()
+                        && ms
+                            .iter()
+                            .all(|m| m.bones.iter().any(|(id, _)| slot_of(*id).is_some()))
+                }),
+                Err(e) => {
+                    log::warn!("{}: LOD {l}: {e:#}", path.display());
+                    None
+                }
+            };
+            // a level that cannot be posed is left out: the one above it reaches down instead
+            let Some(ms) = posable else {
+                levels.last_mut().unwrap().0 = min;
+                continue;
+            };
+            let above = levels.last().unwrap().0;
+            levels.push((min, above));
+            lower.extend(ms.into_iter().map(|m| (levels.len() - 1, m)));
         }
+        levels.last_mut().unwrap().0 = 0.0;
         let mut joints = Joints::from_links(&def.links);
         fit_leg_joints(&mut joints, &meshes, path);
+        fit_arm_joints(&mut joints, &meshes);
         let rig = Rig::measure(&def, &joints, &meshes);
-        for m in meshes.iter_mut() {
+        for m in meshes.iter_mut().chain(lower.iter_mut().map(|(_, m)| m)) {
             split_feet(m, &rig);
         }
-        // The `[CTC]` folder is relative to the .hum file's folder (`Texture\man02` is
-        // Humans/Other/texture/man02). An add-on that put that folder straight into its own
-        // folder instead (GSPNS: Humans/GSPNS/man02, with the default texture in it too) is
-        // found by the folder's last name; OMSI would show that person untextured.
+        // `[CTC]` is relative to the .hum's folder; an add-on that put it into its own folder (GSPNS)
+        // is found by the folder's last name
         let mut variants = Vec::new();
         let mut extra_dirs: Vec<PathBuf> = Vec::new();
         for c in &model.ctc {
@@ -504,9 +588,34 @@ impl HumanType {
             model,
             model_dir,
             meshes,
+            levels,
+            lower,
             variants,
             extra_dirs,
         })
+    }
+
+    pub fn mesh_count(&self) -> usize {
+        self.meshes.len() + self.lower.len()
+    }
+
+    pub fn mesh_at(&self, k: usize) -> (usize, &HumanMesh) {
+        match self.meshes.get(k) {
+            Some(m) => (0, m),
+            None => {
+                let (level, m) = &self.lower[k - self.meshes.len()];
+                (*level, m)
+            }
+        }
+    }
+
+    pub fn radius(&self) -> f32 {
+        self.rig.head_top.max(0.5)
+    }
+
+    /// `current` is kept until the size is 10 % beyond its range: no flicker at a boundary.
+    pub fn level_at(&self, size: f32, current: Option<usize>) -> usize {
+        level_at(&self.levels, size, current)
     }
 
     pub fn texture_dirs(&self, root: &Path) -> Vec<PathBuf> {
@@ -550,6 +659,52 @@ impl HumanType {
     }
 }
 
+/// Dominantly weighted finite vertices of the selected limb bones.
+fn limb_vertices(meshes: &[HumanMesh], slots: &[usize]) -> Vec<Vec3> {
+    meshes
+        .iter()
+        .flat_map(|m| {
+            m.skin.iter().enumerate().filter_map(|(i, inf)| {
+                (0..inf.n as usize)
+                    .any(|k| slots.contains(&(inf.slot[k] as usize)) && inf.weight[k] > 0.5)
+                    .then(|| m.data.positions.get(i).copied())
+                    .flatten()
+                    .filter(|p| p.is_finite())
+            })
+        })
+        .collect()
+}
+
+/// Repair authored arm pivots that fall outside their weighted limb segment.
+/// Valid authored points retain their original position.
+fn fit_arm_joints(j: &mut Joints, meshes: &[HumanMesh]) {
+    let scale = (j.neck.z / 1.55).clamp(0.6, 1.3);
+    for (joint, slot) in [
+        (&mut j.shoulder, UPPER[1]),
+        (&mut j.elbow, FORE[1]),
+        (&mut j.hand, HAND[1]),
+    ] {
+        let verts = limb_vertices(meshes, &[slot]);
+        if verts.len() < 8 {
+            continue;
+        }
+        let (lo, hi) = verts.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| {
+            (lo.min(*p), hi.max(*p))
+        });
+        let margin = Vec3::splat(0.06 * scale);
+        if joint.is_finite() && joint.cmpge(lo - margin).all() && joint.cmple(hi + margin).all() {
+            continue;
+        }
+        // In OMSI's rest frame the right arm extends towards +x. Use the
+        // proximal cross-section, not the centre of the whole limb.
+        let proximal: Vec<_> = verts
+            .iter()
+            .filter(|p| p.x <= lo.x + 0.025 * scale)
+            .collect();
+        *joint = proximal.iter().map(|p| **p).sum::<Vec3>() / proximal.len() as f32;
+    }
+}
+
 /// A leg joint of `[links]` that lies outside the leg it belongs to is the author's slip:
 /// the GSPNS man04 and man041 give the right hip at x = 0.6 m and the knee at 0.83 m, where
 /// the mesh's thigh is at 0.08. OMSI's rotations about those points hardly show it (the
@@ -557,21 +712,8 @@ impl HumanType {
 /// them reaches its foot 0.8 m out to the side and crosses the legs. Such a coordinate is
 /// taken from the mesh instead: the middle of the limb's vertices at the joint's height.
 fn fit_leg_joints(j: &mut Joints, meshes: &[HumanMesh], path: &Path) {
-    let verts = |slots: &[usize]| -> Vec<Vec3> {
-        let mut out = Vec::new();
-        for m in meshes {
-            for (i, inf) in m.skin.iter().enumerate() {
-                if (0..inf.n as usize)
-                    .any(|k| slots.contains(&(inf.slot[k] as usize)) && inf.weight[k] > 0.5)
-                {
-                    out.push(m.data.positions[i]);
-                }
-            }
-        }
-        out
-    };
-    let thigh = verts(&[THIGH[1]]);
-    let knee_region = verts(&[THIGH[1], SHIN[1]]);
+    let thigh = limb_vertices(meshes, &[THIGH[1]]);
+    let knee_region = limb_vertices(meshes, &[THIGH[1], SHIN[1]]);
     let fit = |joint: &mut Vec3, limb: &[Vec3], what: &str| {
         if limb.len() < 8 {
             return;
@@ -882,6 +1024,11 @@ pub struct Pose {
     /// Balance against the floor's acceleration: lean (m/s² equivalent) and its rate.
     lean: Vec2,
     lean_v: Vec2,
+    /// A one-shot balance loss after an emergency longitudinal jolt.
+    stumble_time: f32,
+    stumble_cooldown: f32,
+    stumble_dir: Vec2,
+    stumble_strength: f32,
     /// Pelvis height offset kept from the last frame (rises are smoothed).
     drop: f32,
     /// Floor under the body relative to the origin (smoothed), from the planted feet.
@@ -1038,6 +1185,10 @@ impl Pose {
             breath: 0.0,
             lean: Vec2::ZERO,
             lean_v: Vec2::ZERO,
+            stumble_time: 0.0,
+            stumble_cooldown: 0.0,
+            stumble_dir: Vec2::Y,
+            stumble_strength: 0.0,
             drop: 0.0,
             body_floor: 0.0,
             style: [0.0; 4],
@@ -1067,6 +1218,41 @@ impl Pose {
     /// 0 standing … 1 seated.
     pub fn sit_amount(&self) -> f32 {
         self.sit
+    }
+
+    /// Floor frame, foot-root origin and heading used by the current pose.
+    pub fn floor_pose(&self) -> (u64, DVec3, f64) {
+        (self.frame, self.origin, self.heading)
+    }
+
+    /// A newly streamed walk surface raises/lowers the ground root and its planted
+    /// contacts together. This is a floor correction, not a walking step.
+    pub fn set_ground_height(&mut self, height: f64) {
+        if !self.init || self.frame != 0 {
+            return;
+        }
+        let delta = height - self.origin.z;
+        self.origin.z = height;
+        // The bench stays at its map position when a streamed pavement corrects
+        // the feet. Keep its stored model-space point in the same world position.
+        if self.sit > 0.0 {
+            self.seat.z -= delta as f32;
+        }
+        for foot in &mut self.feet {
+            foot.pos.z += delta;
+            foot.from_ankle.z += delta;
+            foot.to.z += delta;
+            foot.from_floor += delta;
+            foot.to_floor += delta;
+            foot.land_z += delta;
+        }
+    }
+
+    fn stumble_factor(&self) -> f32 {
+        if self.stumble_strength <= 0.0 {
+            return 0.0;
+        }
+        smoothstep(0.0, 0.18, self.stumble_time) * (1.0 - smoothstep(0.5, 1.2, self.stumble_time))
     }
 
     /// Sitting down or getting up is under way: the person should not walk off yet.
@@ -1253,6 +1439,9 @@ impl Pose {
         self.landed = false;
         // a new floor frame (boarding, getting off): keep the feet where they are
         if self.init && input.frame != self.frame {
+            // A balance recovery belongs to its floor, never to the next doorway/world frame.
+            self.stumble_strength = 0.0;
+            self.stumble_time = 0.0;
             let dyaw = angle_diff(self.heading, input.heading);
             for k in 0..2 {
                 let f = self.feet[k];
@@ -1280,19 +1469,22 @@ impl Pose {
             self.origin = input.origin;
             self.heading = input.heading;
             self.vel = input.velocity;
+            // Relative foot/body height is unchanged by re-expressing the same root
+            // in another floor frame. Resetting it would drop the pelvis at handoff.
         }
         // first frame, or a jump no step could follow: stand where they are
-        let jumped = self.init
+        let was_init = self.init;
+        let jumped = was_init
             && ((input.origin - self.origin).truncate().length() > 1.5
                 || (input.origin.z - self.origin.z).abs() > 1.0);
-        if !self.init || jumped {
+        if !was_init || jumped {
             self.init = true;
             self.frame = input.frame;
             self.origin = input.origin;
             self.heading = input.heading;
             self.vel = input.velocity;
             self.reset_feet(rig, input);
-            if input.activity == Activity::Sit && input.seat.is_some() {
+            if !was_init && input.activity == Activity::Sit && input.seat.is_some() {
                 self.sit = 1.0;
             }
             self.gait = false;
@@ -1307,7 +1499,7 @@ impl Pose {
             };
             let a = ((input.velocity - self.vel).dot(fwd) as f32) / dt;
             self.accel += (a.clamp(-4.0, 4.0) - self.accel) * ease_k(dt, 0.25);
-            self.speed += (v_now - self.speed) * ease_k(dt, 0.12);
+            self.speed += (v_now - self.speed) * ease_k(dt, 0.25);
         }
         self.vel = input.velocity;
         self.origin = input.origin;
@@ -1320,6 +1512,10 @@ impl Pose {
             self.seat = s;
         }
         if wants_sit {
+            if self.sit < 0.01 {
+                self.body_floor = 0.0;
+                self.reset_feet(rig, input);
+            }
             self.sit = approach(self.sit, 1.0, dt / 1.3);
         } else {
             self.sit = approach(self.sit, 0.0, dt / 1.1);
@@ -1358,6 +1554,29 @@ impl Pose {
             hold_to,
             dt / if hold_to > self.hold { 0.7 } else { 1.3 },
         );
+
+        self.stumble_cooldown = (self.stumble_cooldown - dt).max(0.0);
+        if self.stumble_strength > 0.0 {
+            self.stumble_time += dt;
+            if self.stumble_time >= 1.2 {
+                self.stumble_strength = 0.0;
+            }
+        }
+        let longitudinal = input.sway.y.abs().min(6.0);
+        // Ordinary jolts stay with the balance spring; only an emergency impulse lurches a
+        // standing passenger, with handholds raising the limit.
+        let threshold = 3.2 + input.hold.clamp(0.0, 1.0) * 1.0 + self.style[0] * 0.2;
+        if self.stumble_strength <= 0.0
+            && self.stumble_cooldown <= 0.0
+            && input.activity == Activity::Stand
+            && !wants_sit
+            && longitudinal > threshold
+        {
+            self.stumble_dir = (-input.sway).normalize_or(Vec2::Y);
+            self.stumble_strength = ((longitudinal - threshold) / 1.5).clamp(0.0, 1.0);
+            self.stumble_time = 0.0;
+            self.stumble_cooldown = 3.0;
+        }
 
         // balance against the bus: a damped spring pulled by the floor's acceleration
         let pull = -input.sway.clamp(Vec2::splat(-4.0), Vec2::splat(4.0));
@@ -1476,7 +1695,7 @@ impl Pose {
                 for side in 0..2 {
                     let f = &self.feet[side];
                     let u = (self.phase + if side == 0 { 0.0 } else { 0.5 }) % 1.0;
-                    if f.walk && u >= beta - 0.04 {
+                    if f.walk && u >= beta - LIFT_LOOKAHEAD {
                         // lifts now anyway
                         continue;
                     }
@@ -1507,8 +1726,8 @@ impl Pose {
                     f.planted = false;
                     f.walk = false;
                     f.t = 0.0;
-                    f.dur = 0.26;
-                    f.lift = 0.05 * rig.scale;
+                    f.dur = 0.34;
+                    f.lift = 0.03 * rig.scale;
                     f.to_sampled = DVec2::splat(f64::MAX);
                     f.land_z = f.pos.z;
                     f.land_wait = 0.0;
@@ -1755,6 +1974,7 @@ impl Pose {
         let beta = stance_fraction(speed);
         let ph = self.phase * TAU;
         let sit = self.sit;
+        let stumble = self.stumble_factor();
         let s_ease = smoothstep(0.0, 1.0, sit);
         // hips move back first and come down later (and the other way round getting up)
         let s_back = smoothstep(0.0, 0.75, sit);
@@ -1831,6 +2051,13 @@ impl Pose {
             foot_fwd[side] = yaw_quat(yaw_l) * Vec3::Y;
             foot_yaw[side] = yaw_l;
         }
+        if stumble > 0.0 {
+            let step =
+                self.stumble_dir.extend(0.0) * ((0.04 + 0.12 * self.stumble_strength) * stumble);
+            for ankle in &mut ankle_t {
+                *ankle += step + Vec3::Z * ((0.04 + 0.12 * self.stumble_strength) * stumble);
+            }
+        }
 
         // --- pelvis ---
         let sway = rig.hip_sway.sqrt();
@@ -1838,11 +2065,8 @@ impl Pose {
         let lat_walk = -0.022 * rig.scale * sway.min(1.3) * (ph - 0.25).sin() * intensity;
         let lat_idle = self.shift * still * (1.0 - s_ease);
         let run = run_factor(self.speed);
-        let bob = -0.018
-            * rig.scale
-            * intensity
-            * (1.0 + 1.8 * run)
-            * (0.5 + 0.5 * (2.0 * ph - 0.35).cos());
+        // Let toe-off carry the step; keep the pelvis bounce small.
+        let bob = 0.005 * rig.scale * intensity * (1.0 + 0.6 * run) * (2.0 * ph - 0.35).cos();
         let lean_acc = (self.accel * 1.8).clamp(-6.0, 7.0) * walk;
         let pelvis_roll = d(3.5) * sway * intensity * (ph - 0.35).sin()
             - d(2.2) * (self.shift / (0.03 * rig.scale)) * still * (1.0 - s_ease);
@@ -1879,18 +2103,10 @@ impl Pose {
             rig.pelvis.y + 0.02 * walk,
             stand_z + bob + self.body_floor,
         ) + bus_shift;
-        // `self.seat` puts the pelvis a fixed distance (`SEAT_FRONT` in humans.rs) in
-        // front of the hip point, the same for every human type because the shared cabin
-        // that computed it has no rig to ask. Redone here with this rig's own
-        // `seat_front()` (from its actual thigh length), the knee lands where this body's
-        // legs naturally put it instead of at the average distance - on a long bench with
-        // no footwell to hide a mismatch in, a longer-legged rig forced to the average
-        // distance bent its knee enough to poke through the seat ahead.
-        let seated_c = Vec3::new(
-            self.seat.x,
-            -rig.seat_front() + 0.03,
-            self.seat.z + rig.seat_lift,
-        );
+        // The caller aligns the foot root using this rig's leg length. The seat point
+        // then owns pelvis placement; recomputing an average offset here would put a
+        // different-sized human ahead of or behind the actual seat.
+        let seated_c = Vec3::new(self.seat.x, self.seat.y + 0.03, self.seat.z + rig.seat_lift);
         let mut pc = Vec3::new(
             stand_c.x + (seated_c.x - stand_c.x) * s_back,
             stand_c.y + (seated_c.y - stand_c.y) * s_back,
@@ -1905,8 +2121,13 @@ impl Pose {
         let reach_max = (rig.thigh + rig.shin) * 0.997;
         let mut need = 0.0f32;
         if sit < 0.5 {
-            // (a foot in the air need not be reached)
+            // A foot at the end of stance is about to lift, so it need not pull the pelvis down.
             for side in (0..2).filter(|&k| self.feet[k].planted) {
+                let f = self.feet[side];
+                let u = (self.phase + if side == 0 { 0.0 } else { 0.5 }) % 1.0;
+                if f.walk && self.gait && u >= beta - LIFT_LOOKAHEAD {
+                    continue;
+                }
                 let hip_at = pc + pelvis_q * (rig.hip[side] - rig.pelvis);
                 let dv = ankle_t[side] - hip_at;
                 let horiz = dv.truncate().length();
@@ -1936,7 +2157,7 @@ impl Pose {
             + reach_twist;
         let trunk_lean = d(3.0 * walk + lean_acc)
             + d(34.0) * bump
-            + d(12.0 - 4.0) * s_ease
+            + d(8.0 + 10.0 * (1.0 - self.grip)) * s_ease
             + d(0.7) * breath
             + d(lean_bus.y * 2.4)
             + reach_lean * 0.6
@@ -1953,8 +2174,9 @@ impl Pose {
             - 0.5 * trunk_lean.to_degrees().max(0.0);
         let head_world =
             yaw_quat(self.head.x.clamp(-72.0, 72.0)) * Quat::from_rotation_x(d(head_pitch));
-        let head_rel = limit_quat(trunk_rot.inverse() * head_world, d(45.0));
-        let head_m = trunk_m * about(rig.head_pivot, head_rel);
+        let head_rel = limit_quat(trunk_rot.inverse() * head_world, rig.head_turn_limit);
+        let pivot = rig.neck + (rig.head_pivot - rig.neck).clamp_length_max(0.02 * rig.scale);
+        let head_m = trunk_m * about(pivot, head_rel);
 
         // --- legs ---
         let mut out_bones = [Affine3A::IDENTITY; SLOTS];
@@ -2074,13 +2296,20 @@ impl Pose {
             // leg is), a little out from the body, the elbow bending more going forward
             let arm_fwd = if side == 0 { -ph.cos() } else { ph.cos() };
             let swing = arm_amp * arm_fwd - d(3.0) * walk
+                + d((8.0 + 22.0 * self.stumble_strength) * stumble)
+                    * (if side == 0 { 1.0 } else { -1.0 })
                 + d(20.0) * bump * (1.0 - s_down)
                 + d(2.0 + 1.5 * self.style[3]);
-            let abd = d(9.0 + 1.5 * self.style[0] + 2.0 * walk) + d(0.6) * breath * still;
+            let abd = d(9.0
+                + 1.5 * self.style[0]
+                + 2.0 * walk
+                + (15.0 + 35.0 * self.stumble_strength) * stumble)
+                + d(0.6) * breath * still;
             // (running: the elbows held bent near a right angle)
             let flex = d(13.0 + 3.0 * self.style[3])
                 + d(16.0) * intensity * (0.5 + 0.5 * arm_fwd)
                 + d(8.0) * bump
+                + d((10.0 + 20.0 * self.stumble_strength) * stumble)
                 + d(62.0) * run;
             let inward = d(16.0);
             let a = Quat::from_rotation_x(swing) * Vec3::new(s * abd.sin(), 0.0, -abd.cos());
@@ -2096,9 +2325,20 @@ impl Pose {
             // seated: hands on the thighs
             let hip_at = posed.hip[side];
             let knee_at = posed.knee[side];
-            let lap =
-                hip_at + (knee_at - hip_at) * 0.55 + Vec3::new(-s * 0.02, 0.0, 0.11 * rig.scale);
-            let lap_pole = pelvis_q * Vec3::new(s * 0.5, -1.0, -0.2);
+            let thigh_dir = (knee_at - hip_at).normalize_or(Vec3::Y);
+            let thigh_up = (Vec3::Z - thigh_dir * thigh_dir.z).normalize_or(Vec3::Z);
+            let lap_base =
+                hip_at + thigh_up * (rig.thigh_radius + 0.015 * rig.scale) - Vec3::X * s * 0.015;
+            // Shorter arms rest nearer the hips rather than hovering above
+            // a fixed mid-thigh target that they cannot reach.
+            let shoulder_delta = sh_at - lap_base;
+            let nearest = shoulder_delta.dot(thigh_dir);
+            let perpendicular_sq = (shoulder_delta.length_squared() - nearest * nearest).max(0.0);
+            let reach = (rig.upper_arm + rig.forearm) * 0.99;
+            let span = (reach * reach - perpendicular_sq).max(0.0).sqrt();
+            let along = (rig.thigh * 0.35).min(nearest + span).max(0.0);
+            let lap = lap_base + thigh_dir * along;
+            let lap_pole = pelvis_q * Vec3::new(s * 0.7, -0.5, -0.5);
             let sit_w = smoothstep(0.35, 1.0, sit);
             let mut target = hang_wrist.lerp(lap, sit_w);
             let mut pole = hang_pole.normalize_or(-Vec3::Y).lerp(lap_pole, sit_w);
@@ -2160,7 +2400,19 @@ impl Pose {
             let a0 = rig.elbow[side] - rig.shoulder[side];
             let c0 = rig.wrist[side] - rig.elbow[side];
             let r_upper = bone_rot(a0, Vec3::Y, a1, f1);
-            let r_fore = bone_rot(c0, Vec3::Y, c1, f1_fore);
+            let mut r_fore = bone_rot(c0, Vec3::Y, c1, f1_fore);
+            // Rest the palms on the thighs. The elbow's bend plane alone does
+            // not define forearm pronation and left the hands on their edges.
+            let lap_w = sit_w
+                * (1.0 - self.hold)
+                * (1.0 - self.grip)
+                * (1.0 - if side == 1 { self.reach } else { 0.0 });
+            if lap_w > 0.0 {
+                let rest = bone_rot(c0, -Vec3::Z, c1, -Vec3::Z);
+                r_fore = Mat3A::from_quat(
+                    Quat::from_mat3a(&r_fore).slerp(Quat::from_mat3a(&rest), lap_w),
+                );
+            }
             // the wrist: relaxed, a little flexed towards the palm (down in the T-pose);
             // flat for the desk
             let hinge0 = c0
@@ -2169,6 +2421,13 @@ impl Pose {
                 .normalize_or(Vec3::Y);
             let wrist_flex = d(10.0) * (1.0 - if side == 1 { self.reach } else { 0.0 });
             let mut r_hand = r_fore * Mat3A::from_axis_angle(hinge0, wrist_flex);
+            if lap_w > 0.0 {
+                let along_thigh = (knee_at - hip_at).normalize_or(Vec3::Y);
+                let rest = bone_rot(rig.hand_axis[side], -Vec3::Z, along_thigh, -Vec3::Z);
+                let fore = Quat::from_mat3a(&r_fore);
+                let wrist = limit_quat(fore.inverse() * Quat::from_mat3a(&rest), d(45.0));
+                r_hand = Mat3A::from_quat(Quat::from_mat3a(&r_hand).slerp(fore * wrist, lap_w));
+            }
             if let (true, Some(frames)) = (self.grip > 0.0, self.grip_frame) {
                 // round the rim: the knuckles along it, the palm against it (the rest hand
                 // lies palm down along the forearm); the wrist bends 80 degrees at most
@@ -2202,6 +2461,9 @@ impl Pose {
     }
 }
 
+/// How soon before lift-off a planted foot can stop pulling the body down.
+const LIFT_LOOKAHEAD: f32 = 0.04;
+
 /// How far (m) the hips would have to sink to reach a planted foot before it steps up.
 const CATCH_UP: f32 = 0.13;
 
@@ -2234,13 +2496,13 @@ fn stance_pitch(u: f32, beta: f32, walk: f32) -> f32 {
 
 /// Foot pitch at heel strike (degrees, toes up).
 fn heel_pitch(walk: f32) -> f32 {
-    16.0 * walk.clamp(0.3, 1.0)
+    12.0 * walk.clamp(0.3, 1.0)
 }
 
 fn toe_pitch(u: f32, beta: f32, walk: f32) -> f32 {
     let from = beta - 0.28;
     let t = ((u - from) / (beta - from)).clamp(0.0, 1.0);
-    -48.0 * walk.clamp(0.25, 1.0) * t * t
+    -30.0 * walk.clamp(0.25, 1.0) * t * t
 }
 
 /// Limit a rotation to `max` radians.
@@ -2301,9 +2563,432 @@ pub fn skin(
     }
 }
 
+fn level_at(levels: &[(f32, f32)], size: f32, current: Option<usize>) -> usize {
+    let holds = |(min, max): (f32, f32), margin: f32| {
+        size >= min * (1.0 - margin) && (max >= f32::MAX || size < max * (1.0 + margin))
+    };
+    if let Some(l) = current.filter(|l| levels.get(*l).is_some_and(|r| holds(*r, 0.1))) {
+        return l;
+    }
+    levels.iter().position(|r| holds(*r, 0.0)).unwrap_or(0)
+}
+
+fn grounded_foot(shin: &Affine3A, rig: &Rig, side: usize) -> Option<Affine3A> {
+    let rest = rig.ankle[side];
+    let ankle = shin.transform_point3(rest);
+    let fwd = shin.transform_vector3(Vec3::Y);
+    let flat = Vec2::new(fwd.x, fwd.y).length();
+    if !ankle.is_finite() || flat < 1e-4 {
+        return None;
+    }
+    let natural = fwd.z.atan2(flat);
+    // the lowest of heel and toe tip below the floor at pitch `a` (toes up for a > 0)
+    let sunk = |a: f32| {
+        let (s, c) = a.sin_cos();
+        let heel = rig.heel * s - rig.ankle_h * c;
+        let toe = rig.toe * s - rig.ankle_h * c;
+        rig.sole - (ankle.z + heel.min(toe))
+    };
+    if sunk(natural) <= 0.0 {
+        return None;
+    }
+    let pitch = if sunk(0.0) >= 0.0 {
+        0.0
+    } else {
+        let (mut ok, mut bad) = (0.0f32, natural);
+        for _ in 0..12 {
+            let mid = 0.5 * (ok + bad);
+            if sunk(mid) > 0.0 {
+                bad = mid;
+            } else {
+                ok = mid;
+            }
+        }
+        ok
+    };
+    let yaw = (-fwd.x).atan2(fwd.y);
+    Some(
+        Affine3A::from_translation(ankle)
+            * Affine3A::from_rotation_z(yaw)
+            * Affine3A::from_rotation_x(pitch)
+            * Affine3A::from_translation(-rest),
+    )
+}
+
+pub fn slots_from_omsi_grounded(
+    b: &[Affine3A; crate::human_omsi::BONES],
+    rig: &Rig,
+    standing: bool,
+) -> [Affine3A; SLOTS] {
+    let sunk = (0..2)
+        .map(|side| rig.sole + rig.ankle_h - b[SHIN[side]].transform_point3(rig.ankle[side]).z)
+        .fold(0.0f32, f32::max);
+    let lift = if standing && sunk < 0.2 {
+        Affine3A::from_translation(Vec3::Z * sunk)
+    } else {
+        Affine3A::IDENTITY
+    };
+    let mut out = [Affine3A::IDENTITY; SLOTS];
+    for (o, m) in out.iter_mut().zip(b) {
+        *o = lift * *m;
+    }
+    for side in 0..2 {
+        let shin = out[SHIN[side]];
+        let foot = grounded_foot(&shin, rig, side).unwrap_or(shin);
+        out[FOOT[side]] = foot;
+        out[TOE[side]] = foot;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_lods_load_in_size_order_and_skip_unweighted_rest_meshes() {
+        let root = std::env::temp_dir().join(format!("omsi-human-lods-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mesh = |weighted: bool| {
+            let mut bytes = vec![0x84, 0x19, 1, 0x17, 3, 0];
+            for x in [0.7f32, 0.8, 0.9] {
+                for value in [x, 0.0, 1.4, 0.0, 1.0, 0.0, 0.0, 0.0] {
+                    bytes.extend(value.to_le_bytes());
+                }
+            }
+            bytes.extend([0x49, 1, 0, 0, 0, 1, 0, 2, 0, 0, 0]);
+            if weighted {
+                bytes.extend([0x54, 1, 0, 6]);
+                bytes.extend(b"hand_r");
+                bytes.extend(3u16.to_le_bytes());
+                for vertex in 0..3u16 {
+                    bytes.extend(vertex.to_le_bytes());
+                    bytes.extend(1.0f32.to_le_bytes());
+                }
+            }
+            bytes
+        };
+        std::fs::write(root.join("high.o3d"), mesh(true)).unwrap();
+        std::fs::write(root.join("low.o3d"), mesh(true)).unwrap();
+        std::fs::write(root.join("static.o3d"), mesh(false)).unwrap();
+        std::fs::write(
+            root.join("human.hum"),
+            "[model]\nmodel.cfg\n[humangeom]\n0.18\n1.77\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("model.cfg"),
+            "[LOD]\n0\n[mesh]\nlow.o3d\n[LOD]\n0.3\n[mesh]\nhigh.o3d\n[LOD]\n0.1\n[mesh]\nstatic.o3d\n",
+        )
+        .unwrap();
+        let human = HumanType::load(&root.join("human.hum")).unwrap();
+        assert_eq!(human.levels, vec![(0.1, f32::MAX), (0.0, 0.1)]);
+        assert_eq!(human.mesh_count(), 2);
+        for k in 0..human.mesh_count() {
+            let (_, mesh) = human.mesh_at(k);
+            assert_eq!(mesh.skin.len(), 3);
+            assert!(mesh.skin.iter().all(|v| v.slot[0] as usize == HAND[1]));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_level_is_kept_until_the_size_is_well_past_its_range() {
+        let levels = [(0.25, f32::MAX), (0.08, 0.25), (0.0, 0.08)];
+        assert_eq!(level_at(&levels, f32::MAX, None), 0);
+        assert_eq!(level_at(&levels, 0.3, None), 0);
+        assert_eq!(level_at(&levels, 0.1, None), 1);
+        assert_eq!(level_at(&levels, 0.01, None), 2);
+        assert_eq!(level_at(&levels, 0.24, Some(0)), 0);
+        assert_eq!(level_at(&levels, 0.2, Some(0)), 1);
+        assert_eq!(level_at(&levels, 0.26, Some(1)), 1);
+        assert_eq!(level_at(&levels, 0.3, Some(1)), 0);
+        assert_eq!(level_at(&[(0.0, f32::MAX)], 0.5, Some(3)), 0);
+    }
+
+    #[test]
+    fn walking_feet_stay_out_of_the_floor() {
+        let def = Human {
+            links: vec![
+                0.09, 0.0, 0.92, 0.09, -0.03, 0.53, 0.02, 1.17, 0.18, -0.05, 1.43, 0.44, -0.04,
+                1.41, -0.02, 1.55, 0.69, -0.03, 1.43, 0.9, -0.03, 1.43,
+            ],
+            height: 1.78,
+            walk_param: [1.4, 66.0, 1.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        let rig = Rig::measure(&def, &Joints::from_links(&def.links), &[]);
+        let omsi = crate::human_omsi::OmsiRig::new(&def);
+        let mut anim = crate::human_omsi::OmsiAnim::default();
+        let mut worst = 0.0f32;
+        for _ in 0..240 {
+            anim.advance(
+                &omsi,
+                &crate::human_omsi::AnimInput {
+                    kind: 1,
+                    speed: 1.3,
+                    moved: 1.3 / 60.0,
+                    room_height: 50.0,
+                    dt_ms: 1000.0 / 60.0,
+                    ..Default::default()
+                },
+            );
+            let slots = slots_from_omsi_grounded(&anim.bones(&omsi), &rig, true);
+            for side in 0..2 {
+                for y in [rig.heel, rig.toe] {
+                    let p = rig.ankle[side] + Vec3::new(0.0, y, -rig.ankle_h);
+                    worst = worst.max(rig.sole - slots[FOOT[side]].transform_point3(p).z);
+                }
+            }
+        }
+        assert!(
+            worst < 0.005,
+            "a foot sank {:.1} cm into the floor",
+            worst * 100.0
+        );
+    }
+
+    #[test]
+    #[ignore = "requires OMSI_ROOT; writes target/human-head-audit.tsv"]
+    fn audit_installed_human_head_poses() {
+        fn humans(dir: &Path, files: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                let ty = entry.file_type().unwrap();
+                if ty.is_dir() {
+                    humans(&entry.path(), files);
+                } else if entry
+                    .path()
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("hum"))
+                {
+                    files.push(entry.path());
+                }
+            }
+        }
+        let root = PathBuf::from(omsi_cfg::env::var_os("OMSI_ROOT").expect("requires OMSI_ROOT"));
+        let mut files = vec![];
+        humans(&root.join("Humans"), &mut files);
+        files.sort();
+        let mut report = String::from(
+            "human\tpivot\tindependent_limit_deg\tmax_collar_delta_m\tinvalid_poses\tstatus\n",
+        );
+        let mut suspicious = 0;
+        for file in files {
+            let human = match HumanType::load(&file) {
+                Ok(h) => h,
+                Err(error) => {
+                    report.push_str(&format!(
+                        "{}\t-\t-\t-\t-\tload_error: {}\n",
+                        file.display(),
+                        error.to_string().replace(['\t', '\n'], " ")
+                    ));
+                    suspicious += 1;
+                    continue;
+                }
+            };
+            let r = &human.rig;
+            let mut maximum = 0.0_f32;
+            let mut invalid = 0;
+            for activity in [
+                Activity::Stand,
+                Activity::Walk,
+                Activity::Sit,
+                Activity::Pay,
+            ] {
+                for look in [
+                    None,
+                    Some(Vec3::new(-10.0, 0.1, 10.0)),
+                    Some(Vec3::new(10.0, 0.1, -10.0)),
+                ] {
+                    let mut pose = Pose::new(7);
+                    for _ in 0..90 {
+                        pose.advance(
+                            r,
+                            &PoseInput {
+                                activity,
+                                look,
+                                seat: (activity == Activity::Sit).then_some(Vec3::new(
+                                    0.0,
+                                    -r.seat_front(),
+                                    0.5,
+                                )),
+                                velocity: if activity == Activity::Walk {
+                                    DVec2::Y
+                                } else {
+                                    DVec2::ZERO
+                                },
+                                ..Default::default()
+                            },
+                            1.0 / 60.0,
+                        );
+                        let posed = pose.bones(r);
+                        invalid += usize::from(!posed.ok);
+                        maximum = maximum.max(
+                            (posed.bones[HEAD].transform_point3(r.neck)
+                                - posed.bones[MAIN].transform_point3(r.neck))
+                            .length(),
+                        );
+                    }
+                }
+            }
+            let bad = invalid > 0 || !r.head_pivot.is_finite() || maximum > 0.025 * r.scale;
+            suspicious += usize::from(bad);
+            report.push_str(&format!(
+                "{}\t{:?}\t{:.1}\t{:.5}\t{}\t{}\n",
+                file.display(),
+                r.head_pivot,
+                r.head_turn_limit.to_degrees(),
+                maximum,
+                invalid,
+                if bad { "suspicious" } else { "ok" }
+            ));
+        }
+        let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        std::fs::create_dir_all(&target).unwrap();
+        let path = target.join("human-head-audit.tsv");
+        std::fs::write(&path, report).unwrap();
+        println!(
+            "{} suspicious/load-error human definitions; report {}",
+            suspicious,
+            path.display()
+        );
+    }
+
+    #[test]
+    fn head_turns_keep_the_collar_attached_to_the_trunk() {
+        let mut r = rig();
+        r.head_pivot = r.neck + Vec3::Y * 0.12;
+        for yaw in [-180.0, -90.0, 0.0, 90.0, 180.0] {
+            for pitch in [-90.0, 0.0, 90.0] {
+                let mut p = Pose::new(8);
+                p.advance(&r, &PoseInput::default(), 1.0 / 60.0);
+                p.head = Vec2::new(yaw, pitch);
+                let posed = p.bones(&r);
+                let head_anchor = posed.bones[HEAD].transform_point3(r.neck);
+                let collar = posed.bones[MAIN].transform_point3(r.neck);
+                assert!(
+                    (head_anchor - collar).length() <= 0.025 * r.scale,
+                    "head detached at yaw {yaw} pitch {pitch}: {head_anchor:?} vs {collar:?}"
+                );
+                assert!(posed.ok && posed.bones.iter().all(|b| b.is_finite()));
+            }
+        }
+    }
+
+    #[test]
+    fn minimal_and_nonfinite_human_links_keep_head_transforms_finite() {
+        for links in [vec![], vec![f32::NAN; 22], vec![f32::INFINITY; 22]] {
+            let def = Human {
+                links,
+                ..Default::default()
+            };
+            let j = Joints::from_links(&def.links);
+            let r = Rig::measure(&def, &j, &[]);
+            let mut p = Pose::new(2);
+            for _ in 0..120 {
+                p.advance(
+                    &r,
+                    &PoseInput {
+                        look: Some(Vec3::new(100.0, 0.0, -100.0)),
+                        ..Default::default()
+                    },
+                    1.0 / 60.0,
+                );
+                assert!(p.bones(&r).bones.iter().all(|b| b.is_finite()));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OMSI_ROOT; writes target/human-arm-audit.tsv"]
+    fn audit_installed_human_arm_meshes() {
+        let root = PathBuf::from(omsi_cfg::env::var_os("OMSI_ROOT").expect("OMSI_ROOT"));
+        let mut files = std::collections::BTreeSet::new();
+        for map in ["Grundorf", "Bad_Huegelsdorf_2020"] {
+            let text = omsi_cfg::decode_text(
+                &std::fs::read(root.join(format!("maps/{map}/humans.txt"))).unwrap(),
+            );
+            for name in text.lines().map(str::trim).filter(|s| !s.is_empty()) {
+                files.insert(omsi_cfg::resolve_path(&root, name));
+            }
+        }
+        let mut report = String::from("human\tactivity\tside\tjoint_wrist\tskinned_hand\tgap_m\n");
+        let mut count = 0;
+        let mut max_gap = 0.0_f32;
+        for file in files {
+            let h = HumanType::load(&file).unwrap();
+            for activity in [
+                Activity::Stand,
+                Activity::Walk,
+                Activity::Sit,
+                Activity::Pay,
+            ] {
+                let mut pose = Pose::new(5);
+                for _ in 0..90 {
+                    pose.advance(
+                        &h.rig,
+                        &PoseInput {
+                            activity,
+                            seat: (activity == Activity::Sit).then_some(Vec3::new(
+                                0.0,
+                                -h.rig.seat_front(),
+                                0.5,
+                            )),
+                            velocity: if activity == Activity::Walk {
+                                DVec2::Y
+                            } else {
+                                DVec2::ZERO
+                            },
+                            ..Default::default()
+                        },
+                        1.0 / 60.0,
+                    );
+                }
+                let posed = pose.bones(&h.rig);
+                assert!(posed.ok);
+                for side in 0..2 {
+                    let mut center = Vec3::ZERO;
+                    let mut total = 0.0;
+                    for mesh in &h.meshes {
+                        let mut positions = vec![];
+                        let mut normals = vec![];
+                        skin(mesh, &posed.bones, &mut positions, &mut normals);
+                        for (i, inf) in mesh.skin.iter().enumerate() {
+                            for k in 0..inf.n as usize {
+                                if inf.slot[k] as usize == HAND[side] {
+                                    center += positions[i] * inf.weight[k];
+                                    total += inf.weight[k];
+                                }
+                            }
+                        }
+                    }
+                    if total > 0.0 {
+                        center /= total;
+                        let gap = (center - posed.wrist[side]).length();
+                        assert!(
+                            center.is_finite() && gap < 0.22 * h.rig.scale,
+                            "{} {activity:?}: hand does not follow wrist ({gap})",
+                            file.display()
+                        );
+                        max_gap = max_gap.max(gap);
+                        count += 1;
+                        report.push_str(&format!(
+                            "{}\t{activity:?}\t{side}\t{:?}\t{center:?}\t{gap:.5}\n",
+                            file.display(),
+                            posed.wrist[side]
+                        ));
+                    }
+                }
+            }
+        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/human-arm-audit.tsv");
+        std::fs::write(&path, report).unwrap();
+        println!(
+            "{count} skinned hand poses audited; maximum wrist-to-hand centroid distance {max_gap:.3} m; report {}",
+            path.display()
+        );
+    }
 
     #[test]
     fn standard_bone_names_have_engine_ids() {
@@ -2314,9 +2999,13 @@ mod tests {
 
     /// A rig like the stock adults', without a mesh.
     fn rig() -> Rig {
+        rig_at_scale(1.0)
+    }
+
+    fn rig_at_scale(scale: f32) -> Rig {
         let def = Human {
-            height: 1.77,
-            seat_height: 0.82,
+            height: 1.77 * scale,
+            seat_height: 0.82 * scale,
             links: vec![
                 0.09, 0.0, 0.92, 0.09, -0.03, 0.53, 0.02, 1.17, 0.18, -0.05, 1.43, 0.44, -0.04,
                 1.41, -0.02, 1.55, 0.69, -0.03, 1.43, 0.9, -0.03, 1.43,
@@ -2324,6 +3013,10 @@ mod tests {
             walk_param: [1.4, 80.0, 1.0, 1.0, 0.0],
             ..Default::default()
         };
+        let mut def = def;
+        for link in &mut def.links {
+            *link *= scale;
+        }
         let j = Joints::from_links(&def.links);
         Rig::measure(&def, &j, &[])
     }
@@ -2403,6 +3096,47 @@ mod tests {
                 posed.wrist[side].x
             );
         }
+    }
+
+    #[test]
+    fn emergency_braking_stumbles_a_standing_passenger() {
+        let r = rig();
+        let mut p = Pose::new(8);
+        let dt = 1.0 / 60.0;
+        p.advance(&r, &PoseInput::default(), dt);
+        for _ in 0..30 {
+            p.advance(
+                &r,
+                &PoseInput {
+                    activity: Activity::Stand,
+                    sway: Vec2::new(0.0, -2.0),
+                    hold: 1.0,
+                    ..Default::default()
+                },
+                dt,
+            );
+        }
+        assert_eq!(p.stumble_strength, 0.0);
+        for _ in 0..22 {
+            p.advance(
+                &r,
+                &PoseInput {
+                    activity: Activity::Stand,
+                    sway: Vec2::new(0.0, -5.5),
+                    hold: 1.0,
+                    ..Default::default()
+                },
+                dt,
+            );
+        }
+        let posed = p.bones(&r);
+        let pelvis = posed.bones[HIP].transform_point3(r.pelvis);
+        assert!(p.stumble_factor() > 0.9);
+        assert!(
+            (pelvis - r.pelvis).length() < 0.3,
+            "passenger moved {pelvis:?}"
+        );
+        assert!(posed.ok && posed.bones.iter().all(|b| b.is_finite()));
     }
 
     #[test]
@@ -2572,6 +3306,230 @@ mod tests {
         assert!(p.sit_amount() == 0.0);
         let hips = (posed.hip[0] + posed.hip[1]) * 0.5;
         assert!(hips.z > r.pelvis.z - 0.05, "stood up: {:?}", hips);
+    }
+
+    #[test]
+    fn invalid_arm_pivots_are_fitted_to_the_mesh_without_changing_valid_links() {
+        let r = rig();
+        let original = Joints {
+            hip: r.hip[1],
+            knee: r.knee[1],
+            waist: r.waist,
+            shoulder: r.shoulder[1],
+            elbow: r.elbow[1],
+            neck: r.neck,
+            hand: r.wrist[1],
+            finger: Vec3::new(0.9, -0.03, 1.43),
+        };
+        let mut mesh = HumanMesh {
+            data: MeshData::default(),
+            materials: vec![],
+            bones: vec![],
+            skin: vec![],
+            alpha: vec![],
+        };
+        for (slot, from, to) in [
+            (UPPER[1], original.shoulder, original.elbow),
+            (FORE[1], original.elbow, original.hand),
+            (HAND[1], original.hand, original.finger),
+        ] {
+            for x in [from.x, to.x] {
+                for y in [-0.01, 0.01] {
+                    for z in [-0.01, 0.01] {
+                        mesh.data
+                            .positions
+                            .push(Vec3::new(x, from.y + y, from.z + z));
+                        mesh.data.normals.push(-Vec3::Z);
+                        mesh.skin.push(Influence {
+                            n: 1,
+                            slot: [slot as u8, 0, 0, 0],
+                            weight: [1.0, 0.0, 0.0, 0.0],
+                        });
+                    }
+                }
+            }
+        }
+        let meshes = [mesh];
+        let mut valid = original;
+        fit_arm_joints(&mut valid, &meshes);
+        assert_eq!(valid.shoulder, original.shoulder);
+        assert_eq!(valid.elbow, original.elbow);
+        assert_eq!(valid.hand, original.hand);
+        let mut bad = original;
+        // A wrist inside the upper arm reverses the forearm's rest axis.
+        bad.hand = Vec3::new(0.38, 0.05, 1.38);
+        fit_arm_joints(&mut bad, &meshes);
+        assert!((bad.hand - original.hand).length() < 0.025);
+        let def = Human {
+            height: 1.77,
+            seat_height: 0.82,
+            ..Default::default()
+        };
+        let measured = Rig::measure(&def, &bad, &meshes);
+        for activity in [Activity::Stand, Activity::Walk, Activity::Sit] {
+            let mut pose = Pose::new(5);
+            pose.advance(
+                &measured,
+                &PoseInput {
+                    activity,
+                    seat: (activity == Activity::Sit).then_some(Vec3::new(
+                        0.0,
+                        -measured.seat_front(),
+                        0.5,
+                    )),
+                    ..Default::default()
+                },
+                0.0,
+            );
+            let p = pose.bones(&measured);
+            let mut positions = vec![];
+            let mut normals = vec![];
+            skin(&meshes[0], &p.bones, &mut positions, &mut normals);
+            for (i, inf) in meshes[0].skin.iter().enumerate() {
+                if inf.slot[0] as usize == HAND[1] {
+                    assert!(
+                        (positions[i] - p.wrist[1]).length() < 0.24,
+                        "hand mesh detached from its joint"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn seated_hands_rest_palm_down_on_the_thighs_with_relaxed_elbows() {
+        for scale in [0.75, 1.0, 1.2] {
+            let r = rig_at_scale(scale);
+            for height in [0.35 * scale, 0.5 * scale, 0.7 * scale] {
+                let mut pose = Pose::new(5);
+                let input = PoseInput {
+                    activity: Activity::Sit,
+                    seat: Some(Vec3::new(0.0, -r.seat_front(), height)),
+                    ..Default::default()
+                };
+                pose.advance(&r, &input, 0.0);
+                let p = pose.bones(&r);
+                assert!(p.ok);
+                for side in 0..2 {
+                    let thigh = p.knee[side] - p.hip[side];
+                    let along = (p.wrist[side] - p.hip[side]).dot(thigh) / thigh.length_squared();
+                    let surface = p.hip[side] + thigh * along;
+                    assert!((0.1..0.45).contains(&along), "wrist off the thigh: {along}");
+                    assert!(
+                        (p.wrist[side].z - surface.z).abs() < 0.08 * r.scale,
+                        "hands float above the thighs: {:?} vs {surface:?}",
+                        p.wrist[side]
+                    );
+                    let palm = p.bones[HAND[side]].transform_vector3(-Vec3::Z).normalize();
+                    assert!(palm.dot(-Vec3::Z) > 0.85, "palm twists sideways: {palm:?}");
+                    let shoulder = p.bones[MAIN].transform_point3(r.shoulder[side]);
+                    assert!(p.elbow[side].z < shoulder.z - 0.1 * r.scale);
+                    assert!(p.elbow[side].x * SIDE[side] > p.hip[side].x * SIDE[side]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn seated_hands_rest_above_the_weighted_clothing_surface() {
+        let base = rig();
+        let joints = Joints {
+            hip: base.hip[1],
+            knee: base.knee[1],
+            waist: base.waist,
+            shoulder: base.shoulder[1],
+            elbow: base.elbow[1],
+            neck: base.neck,
+            hand: base.wrist[1],
+            finger: Vec3::new(0.9, -0.03, 1.43),
+        };
+        let mut mesh = HumanMesh {
+            data: MeshData::default(),
+            materials: vec![],
+            bones: vec![],
+            skin: vec![],
+            alpha: vec![],
+        };
+        for along in [0.2, 0.6] {
+            for x in [-0.05, 0.05] {
+                for y in [-0.12, 0.12] {
+                    mesh.data
+                        .positions
+                        .push(joints.hip.lerp(joints.knee, along) + Vec3::new(x, y, 0.0));
+                    mesh.skin.push(Influence {
+                        n: 1,
+                        slot: [THIGH[1] as u8, 0, 0, 0],
+                        weight: [1.0, 0.0, 0.0, 0.0],
+                    });
+                }
+            }
+        }
+        let def = Human {
+            height: 1.77,
+            seat_height: 0.82,
+            ..Default::default()
+        };
+        let r = Rig::measure(&def, &joints, &[mesh]);
+        assert!((r.thigh_radius - 0.12).abs() < 0.001);
+        let mut pose = Pose::new(5);
+        pose.advance(
+            &r,
+            &PoseInput {
+                activity: Activity::Sit,
+                seat: Some(Vec3::new(0.0, -r.seat_front(), 0.5)),
+                ..Default::default()
+            },
+            0.0,
+        );
+        let p = pose.bones(&r);
+        for side in 0..2 {
+            let thigh = (p.knee[side] - p.hip[side]).normalize();
+            let normal = (Vec3::Z - thigh * thigh.z).normalize();
+            let above = (p.wrist[side] - p.hip[side]).dot(normal);
+            assert!(
+                above >= r.thigh_radius,
+                "wrist inside the rendered thigh: {above}"
+            );
+            assert!(
+                above < r.thigh_radius + 0.035 * r.scale,
+                "wrist floats above the surface: {above}"
+            );
+        }
+    }
+
+    #[test]
+    fn seated_arm_placement_stays_continuous_while_sitting_and_getting_up() {
+        let r = rig();
+        let mut pose = Pose::new(5);
+        pose.advance(&r, &PoseInput::default(), 0.0);
+        let mut previous = pose.bones(&r);
+        for activity in [Activity::Sit, Activity::Stand] {
+            for _ in 0..100 {
+                pose.advance(
+                    &r,
+                    &PoseInput {
+                        activity,
+                        seat: (activity == Activity::Sit).then_some(Vec3::new(
+                            0.0,
+                            -r.seat_front(),
+                            0.5,
+                        )),
+                        ..Default::default()
+                    },
+                    1.0 / 60.0,
+                );
+                let current = pose.bones(&r);
+                assert!(current.ok);
+                for side in 0..2 {
+                    assert!((current.wrist[side] - previous.wrist[side]).length() < 0.035);
+                    assert!((current.elbow[side] - previous.elbow[side]).length() < 0.04);
+                    let old = Quat::from_mat3a(&previous.bones[HAND[side]].matrix3);
+                    let new = Quat::from_mat3a(&current.bones[HAND[side]].matrix3);
+                    assert!(old.angle_between(new) < 0.25, "hand rotation snapped");
+                }
+                previous = current;
+            }
+        }
     }
 
     #[test]

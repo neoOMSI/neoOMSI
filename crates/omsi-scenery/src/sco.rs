@@ -17,6 +17,13 @@ pub enum RenderType {
     AfterVehicles,
 }
 
+impl RenderType {
+    /// Ground passes are distinct from the numeric queues for ordinary scenery.
+    pub fn is_ground_layer(self) -> bool {
+        matches!(self, Self::PreSurface | Self::Surface | Self::OnSurface)
+    }
+}
+
 /// Parse the OMSI `[rendertype]` spelling used by both a .sco and its model.cfg.
 pub fn parse_render_type(value: &str) -> RenderType {
     match value.trim().to_ascii_lowercase().as_str() {
@@ -322,9 +329,8 @@ impl SceneryObject {
                 "nocollision" => o.no_collision = true,
                 // (and `[fixed]` with it, as Omsi.exe sets both at 0x7b6823)
                 "surface" => {
-                    // A bare tag means true. Peek so an immediately following
-                    // keyword (e.g. `[mesh]`) is not consumed as its optional value.
-                    o.surface = r.clone().word() != "0";
+                    // Presence flag: the next line is not a boolean parameter.
+                    o.surface = true;
                     o.surface_explicit = true;
                     o.fixed = true;
                 }
@@ -613,7 +619,10 @@ mod tests {
         ));
         explicit.inherit_model_tags(&model);
         assert_eq!(explicit.render_type, RenderType::Normal);
-        assert!(!explicit.surface);
+        assert!(
+            explicit.surface,
+            "a numeric render queue does not negate [surface] presence"
+        );
     }
 
     #[test]
@@ -651,7 +660,7 @@ mod tests {
             " \t[surface] \t\n0\n[mesh]\nswitch.o3d\n",
         ));
         assert!(o.surface_explicit);
-        assert!(!o.surface);
+        assert!(o.surface && o.fixed);
         assert_eq!(o.model.meshes.len(), 1);
 
         let o = SceneryObject::parse(&CfgFile::from_str(
@@ -660,5 +669,46 @@ mod tests {
         ));
         assert!(!o.surface_explicit && !o.surface);
         assert_eq!(o.model.meshes.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod render_queue_tests {
+    use super::*;
+
+    #[test]
+    fn numeric_draw_queues_do_not_turn_fixed_props_into_ground_layers() {
+        for queue in ["0", "1", "3", "4"] {
+            let sco = SceneryObject::parse(&CfgFile::from_str(
+                "prop.sco",
+                &format!(
+                    "[fixed]\n[boundingbox]\n2\n2\n3\n0\n0\n1.5\n[rendertype]\n{queue}\n[mesh]\nprop.o3d\n"
+                ),
+            ));
+            assert!(sco.fixed);
+            assert!(!sco.surface);
+            assert!(!sco.render_type.is_ground_layer(), "queue {queue}");
+        }
+        for queue in ["presurface", "surface", "on_surface"] {
+            assert!(parse_render_type(queue).is_ground_layer());
+        }
+    }
+}
+
+#[cfg(test)]
+mod surface_presence_tests {
+    use super::*;
+
+    #[test]
+    fn a_surface_tag_before_a_mesh_does_not_consume_the_mesh() {
+        for suffix in ["", "0\n", "1\n"] {
+            let o = SceneryObject::parse(&CfgFile::from_str(
+                "surface.sco",
+                &format!("[surface]\n{suffix}[mesh]\nroad.o3d\n"),
+            ));
+            assert!(o.surface && o.fixed && o.surface_explicit);
+            assert_eq!(o.model.meshes.len(), 1);
+            assert_eq!(o.model.meshes[0].file, "road.o3d");
+        }
     }
 }

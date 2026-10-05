@@ -110,7 +110,8 @@ pub struct Ui {
     images: hashbrown::HashMap<std::path::PathBuf, Option<(TextureId, u32, u32)>>,
     /// The loading screen's background (the map's picture), looked for once per load.
     pub loading_bg: Option<Option<(TextureId, u32, u32)>>,
-    /// The loading screen's full-screen picture (`assets/backgrounds/loading-screen.png`).
+    /// The loading screen's full-screen picture
+    /// TODO: Add support for many pictures and randomize them on start-up
     loading_art: Option<Option<(TextureId, u32, u32)>>,
     /// The wordmark bottom left (`assets/logos/wordmark-gradient-dark.png`, cut to its content).
     loading_logo: Option<Option<(TextureId, u32, u32)>>,

@@ -1,0 +1,1465 @@
+{
+  "slots": {
+    "Humans/Other/man01.hum": "Adults/Male_Adult_01",
+    "Humans/Other/man02.hum": "Adults/Male_Adult_02",
+    "Humans/Other/man03.hum": "Adults/Male_Adult_03",
+    "Humans/Other/man04.hum": "Adults/Male_Adult_04",
+    "Humans/Other/man05.hum": "Adults/Male_Adult_05",
+    "Humans/aXYZ/man01.hum": "Adults/Male_Adult_06",
+    "Humans/aXYZ/man02.hum": "Adults/Male_Adult_07",
+    "Humans/Krummenaab/man04.hum": "Adults/Male_Adult_08",
+    "Humans/Other/woman02.hum": "Adults/Female_Adult_01",
+    "Humans/Other/woman03.hum": "Adults/Female_Adult_02",
+    "Humans/Other/woman04.hum": "Adults/Female_Adult_03",
+    "Humans/aXYZ/woman01.hum": "Adults/Female_Adult_04",
+    "Humans/aXYZ/woman02.hum": "Adults/Female_Adult_05",
+    "Humans/aXYZ/woman03.hum": "Adults/Female_Adult_06",
+    "Humans/aXYZ/MeCaT07W28.hum": "Adults/Female_Adult_07",
+    "Humans/aXYZ/MeCaT04B01.hum": "Children/Male_Child_01",
+    "Humans/aXYZ/MeCaT04G02.hum": "Children/Female_Child_01"
+  },
+  "alternates": {
+    "Humans/Other/man01.hum": [
+      "Adults/Male_Adult_09",
+      "Adults/Male_Adult_17",
+      "Professions/Business_Male_01",
+      "Professions/Construction_Male_02",
+      "Professions/Gardener_Male_01"
+    ],
+    "Humans/Other/man02.hum": [
+      "Adults/Male_Adult_10",
+      "Adults/Male_Adult_18",
+      "Professions/Business_Male_02",
+      "Professions/Construction_Male_03"
+    ],
+    "Humans/Other/man03.hum": [
+      "Adults/Male_Adult_11",
+      "Adults/Male_Adult_19",
+      "Professions/Business_Male_03",
+      "Professions/Construction_Male_04"
+    ],
+    "Humans/Other/man04.hum": [
+      "Adults/Male_Adult_12",
+      "Adults/Male_Adult_20",
+      "Professions/Business_Male_04",
+      "Professions/Construction_Male_05",
+      "Professions/Wood_Male_01"
+    ],
+    "Humans/Other/man05.hum": [
+      "Adults/Male_Adult_13",
+      "Adults/Male_Adult_21",
+      "Professions/Business_Male_05",
+      "Professions/Construction_Male_06"
+    ],
+    "Humans/aXYZ/man01.hum": [
+      "Adults/Male_Adult_14",
+      "Professions/Business_Male_06",
+      "Professions/Construction_Male_07"
+    ],
+    "Humans/aXYZ/man02.hum": [
+      "Adults/Male_Adult_15",
+      "Professions/Business_Male_07",
+      "Professions/Construction_Male_08"
+    ],
+    "Humans/Krummenaab/man04.hum": [
+      "Adults/Male_Adult_16",
+      "Professions/Construction_Male_01",
+      "Professions/Delivery_Male_01"
+    ],
+    "Humans/Other/woman02.hum": [
+      "Adults/Female_Adult_08",
+      "Adults/Female_Adult_15",
+      "Professions/Business_Female_01"
+    ],
+    "Humans/Other/woman03.hum": [
+      "Adults/Female_Adult_09",
+      "Adults/Female_Adult_16",
+      "Professions/Business_Female_02"
+    ],
+    "Humans/Other/woman04.hum": [
+      "Adults/Female_Adult_10",
+      "Adults/Female_Adult_17",
+      "Professions/Business_Female_03"
+    ],
+    "Humans/aXYZ/woman01.hum": [
+      "Adults/Female_Adult_11",
+      "Adults/Female_Party_01",
+      "Professions/Business_Female_04"
+    ],
+    "Humans/aXYZ/woman02.hum": [
+      "Adults/Female_Adult_12",
+      "Adults/Female_Party_02"
+    ],
+    "Humans/aXYZ/woman03.hum": [
+      "Adults/Female_Adult_13",
+      "Professions/Construction_Female_01"
+    ],
+    "Humans/aXYZ/MeCaT07W28.hum": [
+      "Adults/Female_Adult_14"
+    ],
+    "Humans/aXYZ/MeCaT04B01.hum": [
+      "Children/Male_Child_02"
+    ],
+    "Humans/aXYZ/MeCaT04G02.hum": [
+      "Children/Female_Child_02"
+    ]
+  },
+  "weights": {
+    "Adults/Female_Adult_06": 0.25,
+    "Adults/Female_Adult_10": 0.25,
+    "Adults/Male_Adult_15": 0.15,
+    "Adults/Male_Adult_19": 0.15,
+    "Adults/Male_Adult_21": 0.15,
+    "Professions/Business": 1.0,
+    "Professions/Wood": 1.0,
+    "Professions/Delivery": 0.6,
+    "Professions/Gardener": 0.5,
+    "Professions/Construction": 0.5
+  },
+  "generated": [
+    {
+      "name": "MH_Boy_01",
+      "slot": "Humans/aXYZ/MeCaT04B01.hum",
+      "age": 9,
+      "spec": {
+        "name": "MH_Boy_01",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.15,
+          "weight": 0.538,
+          "muscle": 0.44,
+          "height": 0.663,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow005.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "short04.mhclo",
+        "clothes": [
+          "male_casualsuit05.mhclo",
+          "shoes06.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Girl_01",
+      "slot": "Humans/aXYZ/MeCaT04G02.hum",
+      "age": 8,
+      "spec": {
+        "name": "MH_Girl_01",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.1312,
+          "weight": 0.56,
+          "muscle": 0.533,
+          "height": 0.538,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_caucasian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow001.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "bob02.mhclo",
+        "clothes": [
+          "female_casualsuit02.mhclo",
+          "shoes01.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Boy_02",
+      "slot": "Humans/aXYZ/MeCaT04B01.hum",
+      "age": 9,
+      "spec": {
+        "name": "MH_Boy_02",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.15,
+          "weight": 0.42,
+          "muscle": 0.593,
+          "height": 0.329,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow007.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "short02.mhclo",
+        "clothes": [
+          "male_casualsuit05.mhclo",
+          "shoes02.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Girl_02",
+      "slot": "Humans/aXYZ/MeCaT04G02.hum",
+      "age": 8,
+      "spec": {
+        "name": "MH_Girl_02",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.1312,
+          "weight": 0.474,
+          "muscle": 0.48,
+          "height": 0.345,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.85,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_african_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow006.mhclo",
+        "eyelashes": "eyelashes01.mhclo",
+        "hair": "braid01.mhclo",
+        "clothes": [
+          "female_casualsuit02.mhclo",
+          "shoes06.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Boy_03",
+      "slot": "Humans/aXYZ/MeCaT04B01.hum",
+      "age": 7,
+      "spec": {
+        "name": "MH_Boy_03",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.1125,
+          "weight": 0.555,
+          "muscle": 0.421,
+          "height": 0.488,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow002.mhclo",
+        "eyelashes": "eyelashes01.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit05.mhclo",
+          "shoes06.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Girl_03",
+      "slot": "Humans/aXYZ/MeCaT04G02.hum",
+      "age": 10,
+      "spec": {
+        "name": "MH_Girl_03",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.1688,
+          "weight": 0.477,
+          "muscle": 0.563,
+          "height": 0.358,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_caucasian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow011.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "ponytail01.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Boy_04",
+      "slot": "Humans/aXYZ/MeCaT04B01.hum",
+      "age": 12,
+      "spec": {
+        "name": "MH_Boy_04",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.2098,
+          "weight": 0.468,
+          "muscle": 0.493,
+          "height": 0.418,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow008.mhclo",
+        "eyelashes": "eyelashes01.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit05.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Girl_04",
+      "slot": "Humans/aXYZ/MeCaT04G02.hum",
+      "age": 13,
+      "spec": {
+        "name": "MH_Girl_04",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.2321,
+          "weight": 0.467,
+          "muscle": 0.442,
+          "height": 0.481,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_caucasian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow009.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "bob01.mhclo",
+        "clothes": [
+          "female_casualsuit02.mhclo",
+          "shoes01.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Boy_05",
+      "slot": "Humans/aXYZ/MeCaT04B01.hum",
+      "age": 10,
+      "spec": {
+        "name": "MH_Boy_05",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.1688,
+          "weight": 0.506,
+          "muscle": 0.49,
+          "height": 0.312,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow009.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "short04.mhclo",
+        "clothes": [
+          "male_casualsuit03.mhclo",
+          "shoes03.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Girl_05",
+      "slot": "Humans/aXYZ/MeCaT04G02.hum",
+      "age": 13,
+      "spec": {
+        "name": "MH_Girl_05",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.2321,
+          "weight": 0.575,
+          "muscle": 0.567,
+          "height": 0.504,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_caucasian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow003.mhclo",
+        "eyelashes": "eyelashes01.mhclo",
+        "hair": "ponytail01.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes02.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Boy_06",
+      "slot": "Humans/aXYZ/MeCaT04B01.hum",
+      "age": 12,
+      "spec": {
+        "name": "MH_Boy_06",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.2098,
+          "weight": 0.56,
+          "muscle": 0.533,
+          "height": 0.568,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.0,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_asian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow011.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "short04.mhclo",
+        "clothes": [
+          "male_casualsuit02.mhclo",
+          "shoes03.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Girl_06",
+      "slot": "Humans/aXYZ/MeCaT04G02.hum",
+      "age": 7,
+      "spec": {
+        "name": "MH_Girl_06",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.1125,
+          "weight": 0.409,
+          "muscle": 0.461,
+          "height": 0.45,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.0,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_asian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow002.mhclo",
+        "eyelashes": "eyelashes01.mhclo",
+        "hair": "long01.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes06.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Boy_07",
+      "slot": "Humans/aXYZ/MeCaT04B01.hum",
+      "age": 9,
+      "spec": {
+        "name": "MH_Boy_07",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.15,
+          "weight": 0.599,
+          "muscle": 0.562,
+          "height": 0.517,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.0,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_asian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow007.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit01.mhclo",
+          "shoes01.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Girl_07",
+      "slot": "Humans/aXYZ/MeCaT04G02.hum",
+      "age": 13,
+      "spec": {
+        "name": "MH_Girl_07",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.2321,
+          "weight": 0.42,
+          "muscle": 0.404,
+          "height": 0.482,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.0,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_asian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow002.mhclo",
+        "eyelashes": "eyelashes01.mhclo",
+        "hair": "bob02.mhclo",
+        "clothes": [
+          "female_casualsuit02.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_TeenBoy_01",
+      "slot": "Humans/Other/man01.hum",
+      "age": 17,
+      "spec": {
+        "name": "MH_TeenBoy_01",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.3214,
+          "weight": 0.549,
+          "muscle": 0.488,
+          "height": 0.528,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow008.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "short04.mhclo",
+        "clothes": [
+          "male_casualsuit04.mhclo",
+          "shoes03.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_TeenGirl_01",
+      "slot": "Humans/Other/woman02.hum",
+      "age": 14,
+      "spec": {
+        "name": "MH_TeenGirl_01",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.2545,
+          "weight": 0.582,
+          "muscle": 0.414,
+          "height": 0.649,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.15,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_asian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow007.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "bob02.mhclo",
+        "clothes": [
+          "female_casualsuit02.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_TeenBoy_02",
+      "slot": "Humans/Other/man02.hum",
+      "age": 16,
+      "spec": {
+        "name": "MH_TeenBoy_02",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.2991,
+          "weight": 0.439,
+          "muscle": 0.419,
+          "height": 0.537,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.15,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "young_asian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow006.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit03.mhclo",
+          "shoes03.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_TeenGirl_02",
+      "slot": "Humans/Other/woman03.hum",
+      "age": 15,
+      "spec": {
+        "name": "MH_TeenGirl_02",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.2768,
+          "weight": 0.408,
+          "muscle": 0.355,
+          "height": 0.516,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.15,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "young_asian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow012.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "ponytail01.mhclo",
+        "clothes": [
+          "female_sportsuit01.mhclo",
+          "shoes03.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_OldWoman_01",
+      "slot": "Humans/aXYZ/MeCaT07W28.hum",
+      "age": 74,
+      "spec": {
+        "name": "MH_OldWoman_01",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.8769,
+          "weight": 0.62,
+          "muscle": 0.256,
+          "height": 0.308,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.85,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "old_african_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow005.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "bob01.mhclo",
+        "clothes": [
+          "female_elegantsuit01.mhclo",
+          "shoes06.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldMan_01",
+      "slot": "Humans/Other/man03.hum",
+      "age": 68,
+      "spec": {
+        "name": "MH_OldMan_01",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.8308,
+          "weight": 0.583,
+          "muscle": 0.396,
+          "height": 0.641,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "old_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow008.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit01.mhclo",
+          "shoes06.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldWoman_02",
+      "slot": "Humans/aXYZ/MeCaT07W28.hum",
+      "age": 71,
+      "spec": {
+        "name": "MH_OldWoman_02",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.8538,
+          "weight": 0.573,
+          "muscle": 0.381,
+          "height": 0.362,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "old_caucasian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow011.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "bob02.mhclo",
+        "clothes": [
+          "female_elegantsuit01.mhclo",
+          "shoes05.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldMan_02",
+      "slot": "Humans/Other/man04.hum",
+      "age": 78,
+      "spec": {
+        "name": "MH_OldMan_02",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.9077,
+          "weight": 0.491,
+          "muscle": 0.321,
+          "height": 0.34,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "old_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow005.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "short02.mhclo",
+        "clothes": [
+          "male_casualsuit01.mhclo",
+          "shoes04.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldWoman_03",
+      "slot": "Humans/aXYZ/MeCaT07W28.hum",
+      "age": 81,
+      "spec": {
+        "name": "MH_OldWoman_03",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.9308,
+          "weight": 0.478,
+          "muscle": 0.341,
+          "height": 0.41,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.85,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "old_african_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow005.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "short03.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes04.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldMan_03",
+      "slot": "Humans/Other/man05.hum",
+      "age": 70,
+      "spec": {
+        "name": "MH_OldMan_03",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.8462,
+          "weight": 0.545,
+          "muscle": 0.367,
+          "height": 0.322,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.85,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "old_african_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow005.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit03.mhclo",
+          "shoes06.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldWoman_04",
+      "slot": "Humans/aXYZ/woman03.hum",
+      "age": 84,
+      "spec": {
+        "name": "MH_OldWoman_04",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.9538,
+          "weight": 0.631,
+          "muscle": 0.303,
+          "height": 0.582,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.85,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "old_african_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow007.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "short03.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes02.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldMan_04",
+      "slot": "Humans/aXYZ/man01.hum",
+      "age": 82,
+      "spec": {
+        "name": "MH_OldMan_04",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.9385,
+          "weight": 0.473,
+          "muscle": 0.373,
+          "height": 0.403,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.15,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "old_asian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow006.mhclo",
+        "eyelashes": "eyelashes01.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit01.mhclo",
+          "shoes06.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldWoman_05",
+      "slot": "Humans/Other/woman02.hum",
+      "age": 66,
+      "spec": {
+        "name": "MH_OldWoman_05",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.8154,
+          "weight": 0.511,
+          "muscle": 0.36,
+          "height": 0.652,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.85,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "old_african_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow001.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "bob01.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes04.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldMan_05",
+      "slot": "Humans/aXYZ/man02.hum",
+      "age": 82,
+      "spec": {
+        "name": "MH_OldMan_05",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.9385,
+          "weight": 0.594,
+          "muscle": 0.334,
+          "height": 0.538,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "old_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow007.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "short02.mhclo",
+        "clothes": [
+          "male_casualsuit05.mhclo",
+          "shoes02.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldWoman_06",
+      "slot": "Humans/Other/woman03.hum",
+      "age": 71,
+      "spec": {
+        "name": "MH_OldWoman_06",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.8538,
+          "weight": 0.576,
+          "muscle": 0.336,
+          "height": 0.492,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.85,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "old_african_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow007.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "short03.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes01.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_OldMan_06",
+      "slot": "Humans/Krummenaab/man04.hum",
+      "age": 82,
+      "spec": {
+        "name": "MH_OldMan_06",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.9385,
+          "weight": 0.502,
+          "muscle": 0.408,
+          "height": 0.25,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.3,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "old_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow001.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "short02.mhclo",
+        "clothes": [
+          "male_casualsuit04.mhclo",
+          "shoes04.mhclo"
+        ]
+      },
+      "walk": [
+        1.1,
+        70.0,
+        0.5,
+        0.6,
+        0.0
+      ]
+    },
+    {
+      "name": "MH_Man_01",
+      "slot": "Humans/aXYZ/man01.hum",
+      "age": 43,
+      "spec": {
+        "name": "MH_Man_01",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.6385,
+          "weight": 0.826,
+          "muscle": 0.491,
+          "height": 0.425,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.15,
+            "asian": 0.0
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "middleage_caucasian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow003.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit03.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Woman_01",
+      "slot": "Humans/aXYZ/woman02.hum",
+      "age": 43,
+      "spec": {
+        "name": "MH_Woman_01",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.6385,
+          "weight": 0.835,
+          "muscle": 0.535,
+          "height": 0.511,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "middleage_caucasian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow005.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "ponytail01.mhclo",
+        "clothes": [
+          "female_casualsuit02.mhclo",
+          "shoes03.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Man_02",
+      "slot": "Humans/aXYZ/man02.hum",
+      "age": 51,
+      "spec": {
+        "name": "MH_Man_02",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.7,
+          "weight": 0.802,
+          "muscle": 0.514,
+          "height": 0.53,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.15,
+            "african": 0.0,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "middleage_asian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow004.mhclo",
+        "eyelashes": "eyelashes04.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_casualsuit03.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Woman_02",
+      "slot": "Humans/aXYZ/woman03.hum",
+      "age": 37,
+      "spec": {
+        "name": "MH_Woman_02",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.5923,
+          "weight": 0.359,
+          "muscle": 0.442,
+          "height": 0.454,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.85,
+            "african": 0.0,
+            "asian": 0.15
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "middleage_caucasian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow008.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "braid01.mhclo",
+        "clothes": [
+          "female_casualsuit01.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Man_03",
+      "slot": "Humans/Krummenaab/man04.hum",
+      "age": 45,
+      "spec": {
+        "name": "MH_Man_03",
+        "phenotype": {
+          "gender": 1.0,
+          "age": 0.6538,
+          "weight": 0.742,
+          "muscle": 0.369,
+          "height": 0.467,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.15,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "male_generic.proxy",
+        "skin_mhmat": "middleage_asian_male.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow004.mhclo",
+        "eyelashes": "eyelashes02.mhclo",
+        "hair": "short01.mhclo",
+        "clothes": [
+          "male_elegantsuit01.mhclo",
+          "shoes04.mhclo"
+        ]
+      }
+    },
+    {
+      "name": "MH_Woman_03",
+      "slot": "Humans/Other/woman02.hum",
+      "age": 50,
+      "spec": {
+        "name": "MH_Woman_03",
+        "phenotype": {
+          "gender": 0.0,
+          "age": 0.6923,
+          "weight": 0.753,
+          "muscle": 0.565,
+          "height": 0.656,
+          "proportions": 0.5,
+          "cupsize": 0.5,
+          "firmness": 0.5,
+          "race": {
+            "caucasian": 0.0,
+            "african": 0.15,
+            "asian": 0.85
+          }
+        },
+        "rig": "game_engine",
+        "proxy": "female_generic.proxy",
+        "skin_mhmat": "middleage_asian_female.mhmat",
+        "skin_material_type": "MAKESKIN",
+        "eyes": "low-poly.mhclo",
+        "eyebrows": "eyebrow001.mhclo",
+        "eyelashes": "eyelashes03.mhclo",
+        "hair": "bob02.mhclo",
+        "clothes": [
+          "female_elegantsuit01.mhclo",
+          "shoes06.mhclo"
+        ]
+      }
+    }
+  ]
+}

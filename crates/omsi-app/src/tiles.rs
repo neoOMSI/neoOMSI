@@ -190,6 +190,7 @@ impl MapIndex {
         tiles: &[(usize, i32, i32, PathBuf)],
         chrono_dirs: &[PathBuf],
         root: &Path,
+        detail_limit: u8,
     ) -> MapIndex {
         /// What one tile adds besides its own index part: its rows (key, spline, start
         /// distance, interval) and its repeaters (master key, spline, first object index).
@@ -206,7 +207,7 @@ impl MapIndex {
         let parts: Vec<Option<(MapIndex, RowParts, LightParts)>> = tiles
             .par_iter()
             .map(|(gi, tx, ty, path)| {
-                let tile = read_tile(path, chrono_dirs)?;
+                let tile = read_tile(path, chrono_dirs, detail_limit)?;
                 let mut part = MapIndex::default();
                 part.traffic_light_parents = traffic_light_parents(&tile, |file| {
                     let key = file.replace('/', "\\").to_ascii_lowercase();
@@ -514,7 +515,7 @@ fn spline_cover(tile: &Tile, origin: DVec2) -> [f64; 4] {
 
 /// A tile file with the chrono folders active on the sim date applied; None (logged) when
 /// the file cannot be read.
-pub fn read_tile(path: &Path, chrono_dirs: &[PathBuf]) -> Option<Tile> {
+pub fn read_tile(path: &Path, chrono_dirs: &[PathBuf], detail_limit: u8) -> Option<Tile> {
     let mut tile = match Tile::load(path) {
         Ok(t) => t,
         Err(e) => {
@@ -546,6 +547,7 @@ pub fn read_tile(path: &Path, chrono_dirs: &[PathBuf]) -> Option<Tile> {
             tile.fit_to_world_grid(ty);
         }
     }
+    tile.limit_detail(detail_limit, false);
     Some(tile)
 }
 
@@ -1526,7 +1528,7 @@ mod tests {
             .iter()
             .map(|t| (t.index, t.x, t.y, map_dir.join(&t.file)))
             .collect::<Vec<_>>();
-        let index = MapIndex::build(&tiles, &[], &root);
+        let index = MapIndex::build(&tiles, &[], &root, 255);
         assert_eq!(index.tiles_failed, 0);
         assert!(
             index.traffic_light_parents.contains(&4174),

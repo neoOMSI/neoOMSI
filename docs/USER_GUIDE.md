@@ -100,3 +100,14 @@ neoomsi --map maps/Grundorf/global.cfg --bus Vehicles/MAN_SD200/MAN_SD80.bus
 Place add-on content into the `Mods/` directory alongside the `neoomsi` executable. neoOMSI mounts add-ons into its virtual filesystem without altering original OMSI 2 files.
 
 Set `OMSI_NO_SURF=1` before starting neoOMSI to disable OMSI `.surf` height maps for an A/B comparison of wheel contact.
+
+## Passenger models and movement
+
+**Settings → Gameplay → Passenger movement** selects Natural or OMSI 2 movement.
+**Procedural passenger animation** independently selects the pose system; `pax_ik`
+and `--pax-ik` control it (`ik` remains a settings alias).
+
+To use realistic models, install `Packs/RealisticPax` in a content folder, then
+select **Passenger models → Realistic** and restart. Build and licensing details
+are in [RealisticPax](../tools/realistic-pax/README.md). Without the pack, installed
+OMSI passengers remain in use.

@@ -735,50 +735,55 @@ pub(crate) fn spawn_player(
 
 fn open_front_door(p: &mut Player) {
     let groups = door_keys(&p.vehicle.ty);
-    let Some(group) = groups.first() else {
-        return;
-    };
-    if group.len() == 1 && group[0] == "bus_dooraft" {
-        return;
-    }
-    let Some(first) = group.first() else {
-        return;
-    };
-    let name = match first.split_once('|') {
-        Some((open, _)) => open.to_string(),
-        None => first.clone(),
-    };
-    let target = door_trigger_target(&p.vehicle.ty.program, &name);
-    let leaf = trigger_leaves(&p.vehicle.ty.program, &name)
-        .into_iter()
-        .next();
-    let is_open = |p: &Player| {
-        target.is_some_and(|id| {
-            p.vehicle
-                .state
-                .vars
-                .get(id as usize)
-                .is_some_and(|x| *x > 0.5)
-        }) || leaf
-            .as_ref()
-            .is_some_and(|l| p.vehicle.var(l).is_some_and(|x| x > 0.5))
-    };
-    if !is_open(p) {
-        p.vehicle.trigger(&name);
-        for _ in 0..3 {
-            p.vehicle.update(1.0 / 30.0);
+    let mut ids: Vec<usize> = Vec::new();
+    match groups.first() {
+        Some(group) => {
+            if group.len() == 1 && group[0] == "bus_dooraft" {
+                return;
+            }
+            for key in group {
+                let name = key.split('|').next().unwrap_or(key).to_string();
+                if let Some(id) = door_trigger_target(&p.vehicle.ty.program, &name) {
+                    ids.push(id as usize);
+                }
+                let leaves = trigger_leaves(&p.vehicle.ty.program, &name);
+                for (i, n) in p.vehicle.ty.program.var_names.iter().enumerate() {
+                    let l = n.to_ascii_lowercase();
+                    let hit = leaves.iter().any(|leaf| {
+                        let num = leaf.trim_start_matches("door_");
+                        l == *leaf || l == format!("doortarget_{num}")
+                    });
+                    if hit {
+                        ids.push(i);
+                    }
+                }
+            }
+        }
+        None => {
+            for (i, n) in p.vehicle.ty.program.var_names.iter().enumerate() {
+                let l = n.to_ascii_lowercase();
+                let rest = l
+                    .strip_prefix("doortarget_")
+                    .or_else(|| l.strip_prefix("door_"));
+                if rest.is_some_and(|r| r.chars().next().is_some_and(|c| c.is_ascii_digit())) {
+                    ids.push(i);
+                }
+            }
         }
     }
-    if is_open(p) {
+    if ids.is_empty() {
         return;
     }
-    if let Some(x) = target.and_then(|id| p.vehicle.state.vars.get_mut(id as usize)) {
-        *x = 1.0;
+    ids.sort_unstable();
+    ids.dedup();
+    for _ in 0..60 {
+        for &i in &ids {
+            if let Some(x) = p.vehicle.state.vars.get_mut(i) {
+                *x = 1.0;
+            }
+        }
+        p.vehicle.update(1.0 / 30.0);
     }
-    if let Some(l) = &leaf {
-        p.vehicle.set_var(l, 1.0);
-    }
-    p.vehicle.update(1.0 / 30.0);
 }
 
 fn headlights_off(p: &mut Player) {

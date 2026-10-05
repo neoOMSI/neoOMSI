@@ -180,6 +180,9 @@ pub fn omsi_options(root: &Path) -> Option<OmsiOptions> {
     if let Some(x) = num("maxfps").filter(|_| !cfg!(target_os = "android")) {
         v["max_fps"] = json!(x.max(0.0) as i64);
     }
+    if let Some(x) = num("maxcomplexity_map") {
+        v["map_detail"] = json!(x.clamp(0.0, 255.0) as u8);
+    }
     if let Some(x) = num("performance_minobjsize") {
         v["min_obj_size"] = json!(x.clamp(0.0, 0.2));
     }
@@ -2312,6 +2315,7 @@ pub fn get_settings() -> Result<Value> {
 /// `texmemlimit=` would undo the page's `texture_memory=`).
 // (`navigator_opacity`: the opacity was the navigator's before it was the whole interface's)
 const SETTING_ALIASES: &[(&str, &str)] = &[
+    ("ik", "pax_ik"),
     ("af", "anisotropy"),
     ("ambient_occlusion", "ssao"),
     ("fractal", "detail_textures"),
@@ -2422,6 +2426,9 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
     // neoOMSI's own: what passengers say, OMSI's route arrows, getting up from the seat
     for (k, d) in [
         ("pax_voices", json!("all")),
+        ("pax_models", json!("omsi")),
+        ("pax_motion", json!("natural")),
+        ("pax_ik", json!(true)),
         ("pax_prefer_seats", json!(false)),
         ("nav_arrows", json!(false)),
         ("nav_ai", json!(true)),
@@ -2599,6 +2606,21 @@ pub fn settings_from_text(text: Option<&str>) -> Value {
             // (-1: no parked cars at all, #864)
             "ai_max_parked" => {
                 v[&k] = json!(val.parse::<f64>().map(|x| x.max(-1.0) as i64).unwrap_or(0))
+            }
+            "pax_ik" => v["pax_ik"] = json!(b(val)),
+            "pax_motion" => {
+                v["pax_motion"] = json!(if val.eq_ignore_ascii_case("omsi") {
+                    "omsi"
+                } else {
+                    "natural"
+                })
+            }
+            "pax_models" => {
+                v["pax_models"] = json!(if val.eq_ignore_ascii_case("realistic") {
+                    "realistic"
+                } else {
+                    "omsi"
+                })
             }
             "drive_keys" | "navigator_corner" | "boarding" | "render_scale" | "pax_voices" => {
                 v[&k] = json!(val)
@@ -2875,6 +2897,7 @@ pub fn option_presets() -> Vec<(String, Value)> {
         if !cfg!(target_os = "android") {
             v["max_fps"] = json!(o.i32("maxfps", 0).max(0));
         }
+        v["map_detail"] = json!(o.i32("maxcomplexity_map", 2).clamp(0, 255));
         v["min_obj_size"] = json!(o.f32("performance_minobjsize", 0.013) as f64);
         v["max_obj_dist"] =
             json!((o.f32("performance_maxobjdist", 900.0).round() as i64).to_string());
@@ -3260,6 +3283,21 @@ pub fn settings_to_text(v: &Value, old: Option<&str>) -> String {
         )
     ));
     text.push_str(&format!("look_sens={}\nsteer_look_angle={}\nsteer_look_response={}\ntime_sync={}\nmetar_sync={}\nmetar_station={}\n", f("look_sens", 1.0).clamp(0.1, 2.0), f("steer_look_angle", 30.0).clamp(0.0, 60.0), f("steer_look_response", 0.25).clamp(0.05, 1.0), b("time_sync", false), b("metar_sync", false), v.get("metar_station").and_then(|x| x.as_str()).unwrap_or("").chars().filter(|c| c.is_ascii_alphabetic()).take(4).collect::<String>().to_ascii_uppercase()));
+    let motion = if v.get("pax_motion").and_then(|v| v.as_str()) == Some("omsi") {
+        "omsi"
+    } else {
+        "natural"
+    };
+    text.push_str(&format!(
+        "pax_models={}\npax_motion={}\npax_ik={}\n",
+        if v.get("pax_models").and_then(|v| v.as_str()) == Some("realistic") {
+            "realistic"
+        } else {
+            "omsi"
+        },
+        motion,
+        b("pax_ik", true)
+    ));
     text.push_str(&format!(
         "atmosphere_brightness={}\n",
         f("atmosphere_brightness", 1.0).clamp(0.0, 2.0)
@@ -4332,6 +4370,37 @@ mod tests {
         let text = settings_to_text(&v, Some(old));
         assert!(text.lines().any(|l| l == "ui_opacity=0.5"), "{text}");
         assert!(!text.contains("navigator_opacity"), "{text}");
+    }
+
+    #[test]
+    fn passenger_motion_and_ik_are_independent_and_round_trip() {
+        for motion in ["natural", "omsi"] {
+            for ik in [false, true] {
+                let value = settings_from_text(Some(&format!(
+                    "pax_motion={motion}\npax_ik={}\npax_models=realistic\n",
+                    ik as u8
+                )));
+                assert_eq!(value["pax_motion"], motion);
+                assert_eq!(value["pax_ik"], ik);
+                assert_eq!(value["pax_models"], "realistic");
+                let text = settings_to_text(&value, None);
+                assert!(text.contains(&format!("pax_motion={motion}\npax_ik={}", ik as u8)));
+                let round_trip = settings_from_text(Some(&text));
+                assert_eq!(round_trip["pax_motion"], motion);
+                assert_eq!(round_trip["pax_ik"], ik);
+            }
+        }
+        assert_eq!(
+            settings_from_text(Some("pax_ik=0\n"))["pax_motion"],
+            "natural"
+        );
+        assert_eq!(settings_from_text(Some("pax_ik=0\n"))["pax_ik"], false);
+        let old = settings_from_text(Some("ik=0\npax_motion=natural\n"));
+        assert_eq!(old["pax_motion"], "natural");
+        assert_eq!(old["pax_ik"], false);
+        let text = settings_to_text(&old, Some("ik=0\n"));
+        assert!(text.contains("pax_motion=natural\npax_ik=0"));
+        assert!(!text.lines().any(|line| line == "ik=0"));
     }
 
     #[test]

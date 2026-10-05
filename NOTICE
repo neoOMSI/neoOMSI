@@ -20,3 +20,23 @@ created for OMSI 2. Loading, mounting, executing, or distributing third-party
 OMSI content (such as maps, vehicles, meshes, textures, audio files, scripts,
 or DLL plugins through public interfaces) does not subject those third-party
 works to the terms of the GNU General Public License.
+
+--------------------------------------------------------------------------------
+Optional Realistic Passengers (tools/realistic-pax):
+
+The scripts in tools/realistic-pax download third-party assets and build a
+passenger pack from them on the user's machine. None of these assets are part
+of the neoOMSI repository or its releases:
+
+- Microsoft Rocketbox avatars, Copyright (c) Microsoft Corporation, MIT License
+  (https://github.com/microsoft/Microsoft-Rocketbox). The built pack carries
+  the license as LICENSE-Rocketbox.md.
+- MakeHuman base mesh, targets and system assets, released under CC0 1.0
+  Universal by Data Collection AB, Joel Palmius and Jonas Hauquier
+  (http://www.makehumancommunity.org). The built pack carries the notice as
+  LICENSE-MakeHuman.txt.
+- MPFB, the MakeHuman add-on for Blender (GPL-3.0-or-later), runs only inside
+  Blender during the build; none of it is included in the pack.
+
+The pack's .hum files are derived from the user's own OMSI 2 installation, so a
+built pack is for personal use and must not be redistributed.

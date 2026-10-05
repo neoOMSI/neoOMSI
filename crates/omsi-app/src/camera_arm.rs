@@ -297,6 +297,33 @@ pub struct Blocker {
     pub radius: f64,
 }
 
+const STANDING_RADIUS: f64 = 0.22;
+
+fn standing_body_rays(root: DVec3) -> impl Iterator<Item = (DVec3, DVec3)> {
+    [0.55, 1.0, 1.5].into_iter().flat_map(move |height| {
+        let center = root + DVec3::Z * height;
+        [0.0_f64, 45.0, 90.0, 135.0].into_iter().map(move |angle| {
+            let (s, c) = angle.to_radians().sin_cos();
+            let dir = DVec3::new(c, s, 0.0);
+            (center - dir * STANDING_RADIUS, dir)
+        })
+    })
+}
+
+/// Test the occupied torso space against opaque scenery, using its triangles
+/// rather than a shelter's enclosing box, which also contains usable seats.
+pub(crate) fn standing_space_blocked(world: &World, root: DVec3) -> bool {
+    let extent = glam::DVec2::splat(STANDING_RADIUS);
+    let candidates = world.camera_blockers(root.truncate() - extent, root.truncate() + extent);
+    candidates.into_iter().any(|(ot, b)| {
+        ot.camera_shape().is_some_and(|shape| {
+            standing_body_rays(root).any(|(origin, dir)| {
+                ray_object(&ot, shape, b.pos, &b.xf, origin, dir, STANDING_RADIUS * 2.0).is_some()
+            })
+        })
+    })
+}
+
 /// Where along the ray (origin, unit dir) up to `max` it first meets a solid triangle of
 /// the placed object, if it does.
 fn ray_object(
@@ -686,6 +713,40 @@ mod tests {
         // nothing nearer than the limit, nothing off to the side
         assert_eq!(bvh.ray(Vec3::ZERO, Vec3::Y, 1.5), None);
         assert_eq!(bvh.ray(Vec3::new(3.0, 0.0, 0.0), Vec3::Y, 100.0), None);
+    }
+
+    #[test]
+    fn waiting_body_probe_rejects_walls_but_keeps_clear_shelter_interior() {
+        // An advertising panel through the marker's torso. The same marker
+        // half a metre away is clear, even under the shelter's roof.
+        let panel = [
+            Vec3::new(0.0, -2.0, 0.4),
+            Vec3::new(0.0, 2.0, 0.4),
+            Vec3::new(0.0, 2.0, 2.0),
+            Vec3::new(0.0, -2.0, 2.0),
+        ];
+        let roof = [
+            Vec3::new(-2.0, -2.0, 2.2),
+            Vec3::new(2.0, -2.0, 2.2),
+            Vec3::new(2.0, 2.0, 2.2),
+            Vec3::new(-2.0, 2.0, 2.2),
+        ];
+        let bvh = TriBvh::build(vec![
+            [panel[0], panel[1], panel[2]],
+            [panel[0], panel[2], panel[3]],
+            [roof[0], roof[1], roof[2]],
+            [roof[0], roof[2], roof[3]],
+        ]);
+        let blocked = |root| {
+            standing_body_rays(root).any(|(o, d)| {
+                bvh.ray(o.as_vec3(), d.as_vec3(), (STANDING_RADIUS * 2.0) as f32)
+                    .is_some()
+            })
+        };
+        assert!(blocked(DVec3::ZERO));
+        assert!(blocked(DVec3::new(0.15, 0.0, 0.0)));
+        assert!(!blocked(DVec3::new(0.5, 0.0, 0.0)));
+        assert!(!blocked(DVec3::new(-0.5, 0.0, 0.0)));
     }
 
     #[test]

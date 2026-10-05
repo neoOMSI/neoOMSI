@@ -581,6 +581,63 @@ fn pump(
     }
 }
 
+#[test]
+fn passenger_journeys_and_receipts_cross_the_real_session() {
+    let mut host = LanSession::host(28113, "host", world("m"), true).unwrap();
+    let port = host.local_addr().unwrap().port();
+    let mut client = LanSession::join(
+        &format!("127.0.0.1:{port}"),
+        "client",
+        world("m"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let poses = [pose(1.0), pose(2.0)];
+    pump(&mut [&mut host, &mut client], &poses, 80, |s| {
+        s[1].connected
+    });
+    assert!(client.connected);
+    let grant = passenger::PassengerGrant {
+        id: 7,
+        transfer: 42,
+        stop: 13,
+        spot: 0,
+        destination: Some("Königsrath, Bf. Ausstieg".into()),
+        alternative: Some("Bf. Pause".into()),
+        alternative_m: 200.0,
+        ride_km: 12.5,
+        line_destination: Some("Trip".into()),
+        allowed_termini: Some(vec!["KÖNIGSRATH".into()]),
+    };
+    client.claim(&[7]);
+    pump(&mut [&mut host, &mut client], &poses, 40, |s| {
+        !s[0].claims.is_empty()
+    });
+    assert_eq!(host.take_claims(), vec![(client.my_id, vec![7])]);
+    // A repeated grant carries the same immutable context after a lost response.
+    for _ in 0..2 {
+        host.answer_claim(client.my_id, std::slice::from_ref(&grant), &[]);
+        pump(&mut [&mut host, &mut client], &poses, 40, |s| {
+            !s[1].grants.is_empty()
+        });
+        assert_eq!(client.take_grants(), vec![grant.clone()]);
+        client.acknowledge_grant(7, 42, true);
+        pump(&mut [&mut host, &mut client], &poses, 40, |s| {
+            !s[0].grant_acks.is_empty()
+        });
+        assert_eq!(host.take_grant_acks(), vec![(client.my_id, 7, 42, true)]);
+    }
+    client.acknowledge_grant(7, 41, false);
+    pump(&mut [&mut host, &mut client], &poses, 40, |s| {
+        !s[0].grant_acks.is_empty()
+    });
+    assert_eq!(
+        host.take_grant_acks(),
+        vec![(client.my_id, 7, 41, false)],
+        "old receipts retain their transfer identity"
+    );
+}
+
 fn find(s: &LanSession, x: f64) -> Option<&Peer> {
     s.peers()
         .find(|p| p.has_pose && p.has_info && (p.pose.x - x).abs() < 0.01)
