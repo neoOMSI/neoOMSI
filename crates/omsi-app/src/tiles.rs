@@ -803,10 +803,10 @@ fn place_on(
         .unwrap_or(far == 0);
     let end = len
         + if chain_ends {
-        CHAIN_END_TOLERANCE
-    } else {
-        1e-6
-    };
+            CHAIN_END_TOLERANCE
+        } else {
+            1e-6
+        };
     let mut out = Vec::new();
     loop {
         if interval > 0.0 && j as f64 * interval > range + 1e-6 {
@@ -890,10 +890,10 @@ pub fn tile_row_objects(
     let interval = att.interval.max(0.0);
     let last = start.d0
         + if interval > 0.0 {
-        (att.range.max(0.0) / interval + 1e-6).floor() * interval
-    } else {
-        0.0
-    };
+            (att.range.max(0.0) / interval + 1e-6).floor() * interval
+        } else {
+            0.0
+        };
     let mut out: Vec<(usize, RowObject)> = place_on(att, own, origin, index, start)
         .into_iter()
         .map(|o| (si, o))
@@ -937,8 +937,8 @@ pub fn tile_row_objects(
                     acc,
                 },
             )
-                .into_iter()
-                .map(|o| (ni, o)),
+            .into_iter()
+            .map(|o| (ni, o)),
         );
         cur = ni;
     }
@@ -967,7 +967,7 @@ fn loader_pool() -> &'static rayon::ThreadPool {
             .map(|n| n.get())
             .unwrap_or(4)
             / 3)
-            .max(2);
+        .max(2);
         rayon::ThreadPoolBuilder::new()
             .num_threads(n)
             .thread_name(|i| format!("tile loader {i}"))
@@ -1174,16 +1174,16 @@ impl Streamer {
             centers,
             self.load_radius,
         )
-            .into_iter()
-            .map(|i| &self.tiles[i])
-            .filter(|t| {
-                !loaded.contains(&(t.0, t.1))
-                    && !self.requested.contains(&(t.0, t.1))
-                    && !self.failed.contains(&(t.0, t.1))
-            })
-            .map(|t| (Self::nearest(centers, t.0, t.1), t.clone()))
-            .filter(|(d, _)| *d <= self.load_radius)
-            .collect();
+        .into_iter()
+        .map(|i| &self.tiles[i])
+        .filter(|t| {
+            !loaded.contains(&(t.0, t.1))
+                && !self.requested.contains(&(t.0, t.1))
+                && !self.failed.contains(&(t.0, t.1))
+        })
+        .map(|t| (Self::nearest(centers, t.0, t.1), t.clone()))
+        .filter(|(d, _)| *d <= self.load_radius)
+        .collect();
         out.sort_by(|a, b| a.0.total_cmp(&b.0));
         out
     }
@@ -1250,8 +1250,8 @@ impl Streamer {
                 .world
                 .upload_step(renderer, scene, &mut p, Some(deadline))
                 && self
-                .world
-                .place_step(renderer, scene, &mut p, Some(deadline));
+                    .world
+                    .place_step(renderer, scene, &mut p, Some(deadline));
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             if self
                 .initial
@@ -1674,7 +1674,7 @@ mod tests {
             -normal.x * heading.sin() + normal.y * heading.cos(),
             normal.z,
         )
-            .as_vec3();
+        .as_vec3();
         for own_heading in [0.0, 90.0, 180.0, -90.0, 27.0] {
             let att = SplineAttachment {
                 tilt: true,

@@ -30,7 +30,7 @@ fn cached_bounds_follow_transforms_skinning_and_recycled_resources() {
             ..Default::default()
         },
     ))
-        .expect("test renderer");
+    .expect("test renderer");
     let mut scene = renderer.new_scene();
     scene.cache_bounds = true;
     let material = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [1.0; 4], true);
@@ -185,9 +185,7 @@ fn pipeline_codes_cover_the_table() {
     }
     assert_eq!(seen.len(), PIPE_KINDS as usize * 4);
     assert_eq!(pipe_code(PIPE_OPAQUE, false, false), 0);
-    assert!(
-        pipe_code(PIPE_ALPHA_TEST, true, true) < pipe_code(PIPE_BLEND_NO_WRITE, false, false)
-    );
+    assert!(pipe_code(PIPE_ALPHA_TEST, true, true) < pipe_code(PIPE_BLEND_NO_WRITE, false, false));
 }
 
 #[test]

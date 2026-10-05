@@ -684,7 +684,7 @@ impl Settings {
                         "eco" | "economy" => "eco",
                         _ => "full",
                     }
-                        .into()
+                    .into()
                 }
                 "texture_memory" | "texmemlimit" => {
                     s.texture_memory = v
@@ -933,7 +933,7 @@ impl Settings {
             } else {
                 "vanilla_plus"
             }
-                .to_string()
+            .to_string()
         });
         s.enhanced = s.graphics == "enhanced";
         if s.classic() {

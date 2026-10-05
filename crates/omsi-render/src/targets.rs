@@ -51,10 +51,10 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | if self.puddles.is_some() {
-                wgpu::TextureUsages::COPY_SRC
-            } else {
-                wgpu::TextureUsages::empty()
-            },
+                    wgpu::TextureUsages::COPY_SRC
+                } else {
+                    wgpu::TextureUsages::empty()
+                },
             view_formats: &[],
         });
         // Half-resolution AO uses one quarter of the pixels; the blur masks the lower resolution.

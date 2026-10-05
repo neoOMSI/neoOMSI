@@ -185,7 +185,7 @@ impl App {
     pub(crate) fn mouse_steers_in_view(&self) -> bool {
         self.player.is_some()
             && (matches!(self.view.as_str(), "driver" | "outside" | "pax")
-            || (self.view == "free" && !self.ego))
+                || (self.view == "free" && !self.ego))
     }
 
     /// The raycast camera is steering: the mouse turns the view, the middle of the
@@ -738,7 +738,12 @@ impl App {
         best.map(|b| b.0)
     }
 
-    pub(crate) fn placed_target(&self, o: glam::DVec3, d: glam::Vec3, spread: f32) -> Option<usize> {
+    pub(crate) fn placed_target(
+        &self,
+        o: glam::DVec3,
+        d: glam::Vec3,
+        spread: f32,
+    ) -> Option<usize> {
         if let Some(p) = self.player.as_ref() {
             let (f, hand) = p.hovered_part(o, d, spread);
             if f.is_some() || hand {
@@ -750,7 +755,11 @@ impl App {
         for (k, q) in self.placed.iter().enumerate() {
             let v = &q.vehicle;
             let near = std::iter::once((v.position, v.heading, v.ty.def.bounding_box))
-                .chain(v.trailers.iter().map(|t| (t.position, t.heading, t.ty.def.bounding_box)))
+                .chain(
+                    v.trailers
+                        .iter()
+                        .map(|t| (t.position, t.heading, t.ty.def.bounding_box)),
+                )
                 .any(|(at, heading, bb)| part_in_reach(eye, at, heading, bb));
             if !near {
                 continue;
@@ -821,11 +830,11 @@ impl App {
         #[cfg(windows)]
         if !self.mouse_drive
             && self.vr.as_ref().is_some_and(|vr| {
-            vr.needs_cursor_surface(
-                self.cursor,
-                self.game_menu.is_some() || self.chooser.is_some(),
-            )
-        })
+                vr.needs_cursor_surface(
+                    self.cursor,
+                    self.game_menu.is_some() || self.chooser.is_some(),
+                )
+            })
         {
             let surface = self
                 .player
@@ -851,16 +860,16 @@ impl App {
             self.surface.as_ref(),
         ) {
             (Some(p), Some(cam), Some(s))
-            if self.view != "free"
-                && (self.view != "foot" || self.foot_reaches_bus())
-                && !(self.vr_active()
-                && self.mouse_drive
-                && matches!(self.view.as_str(), "driver" | "pax")) =>
-                {
-                    let (o, d, spread) =
-                        self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
-                    p.hovered_part(o, d, spread)
-                }
+                if self.view != "free"
+                    && (self.view != "foot" || self.foot_reaches_bus())
+                    && !(self.vr_active()
+                        && self.mouse_drive
+                        && matches!(self.view.as_str(), "driver" | "pax")) =>
+            {
+                let (o, d, spread) =
+                    self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
+                p.hovered_part(o, d, spread)
+            }
             _ => (None, false),
         };
         let found = if found.0.is_none() && !found.1 && self.view != "free" {
@@ -943,9 +952,9 @@ impl App {
             || u.menu_time.iter().any(|r| inside(r))
             || u.menu_ctl.iter().flatten().any(|r| inside(r))
             || u.menu_rects
-            .iter()
-            .enumerate()
-            .any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
+                .iter()
+                .enumerate()
+                .any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
         if clickable { 1 } else { 0 }
     }
 }

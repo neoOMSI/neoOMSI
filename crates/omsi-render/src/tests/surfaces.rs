@@ -17,7 +17,7 @@ fn enhanced_masked_and_uncut_ground_share_lighting() {
             ..Default::default()
         },
     ))
-        .expect("test renderer");
+    .expect("test renderer");
     let mut scene = renderer.new_scene();
     let mut texture = |rgba: [u8; 4]| {
         renderer.add_texture(
@@ -34,17 +34,9 @@ fn enhanced_masked_and_uncut_ground_share_lighting() {
     let grey = texture([100, 100, 100, 255]);
     let opaque = texture([255; 4]);
     let transparent = texture([100, 100, 100, 0]);
-    let masked = renderer.add_terrain_material(
-        &mut scene,
-        Some(grey),
-        Some(opaque),
-        None,
-        1.0,
-        None,
-        0.0,
-    );
-    let uncut =
-        renderer.add_terrain_material(&mut scene, Some(grey), None, None, 1.0, None, 0.0);
+    let masked =
+        renderer.add_terrain_material(&mut scene, Some(grey), Some(opaque), None, 1.0, None, 0.0);
+    let uncut = renderer.add_terrain_material(&mut scene, Some(grey), None, None, 1.0, None, 0.0);
     let cut = renderer.add_terrain_material(
         &mut scene,
         Some(grey),
@@ -54,8 +46,7 @@ fn enhanced_masked_and_uncut_ground_share_lighting() {
         None,
         0.0,
     );
-    let foliage =
-        renderer.add_material(&mut scene, Some(grey), AlphaMode::Test, [1.0; 4], false);
+    let foliage = renderer.add_material(&mut scene, Some(grey), AlphaMode::Test, [1.0; 4], false);
     let cut_foliage = renderer.add_material(
         &mut scene,
         Some(transparent),
@@ -351,8 +342,7 @@ fn presurface_reveals_excavation_before_terrain_is_drawn() {
         (1, true, true),
         (4, true, true),
     ] {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let mut renderer = pollster::block_on(Renderer::new_with(
             &instance,
             None,
@@ -366,7 +356,7 @@ fn presurface_reveals_excavation_before_terrain_is_drawn() {
                 ..Default::default()
             },
         ))
-            .expect("test renderer");
+        .expect("test renderer");
         let mut scene = renderer.new_scene();
         let green = renderer.add_material(
             &mut scene,
@@ -521,22 +511,21 @@ fn declared_transmap_ignores_slot_alpha() {
     ))
     .expect("noop renderer");
     let mut scene = renderer.new_scene();
-    let blended =
-        |scene: &mut Scene, transmap: Option<(TextureId, bool)>, extra: MaterialExtra| {
-            renderer.add_material_extra(
-                scene,
-                None,
-                AlphaMode::Blend,
-                [1.0; 4],
-                true,
-                transmap,
-                None,
-                None,
-                None,
-                [0.0; 3],
-                extra,
-            )
-        };
+    let blended = |scene: &mut Scene, transmap: Option<(TextureId, bool)>, extra: MaterialExtra| {
+        renderer.add_material_extra(
+            scene,
+            None,
+            AlphaMode::Blend,
+            [1.0; 4],
+            true,
+            transmap,
+            None,
+            None,
+            None,
+            [0.0; 3],
+            extra,
+        )
+    };
     // declared, its file missing: no transmap texture bound
     let declared = blended(
         &mut scene,
@@ -641,9 +630,9 @@ fn surface_depth_coverage_excludes_glass_and_terrain_masks() {
             .position(|p| *p == RenderPhase::OnSurface)
             .unwrap()
             < order
-            .iter()
-            .position(|p| *p == RenderPhase::BeforeNormal)
-            .unwrap()
+                .iter()
+                .position(|p| *p == RenderPhase::BeforeNormal)
+                .unwrap()
     );
 }
 

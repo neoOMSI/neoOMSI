@@ -73,7 +73,10 @@ pub(super) fn slide(from: DVec2, to: DVec2, boxes: &[Obb]) -> Slide {
     let d = to - from;
     let len = d.length();
     if boxes.is_empty() || len < 1e-9 {
-        return Slide { pos: to, blocked: false };
+        return Slide {
+            pos: to,
+            blocked: false,
+        };
     }
     let n = (len / MAX_SUBSTEP).ceil().clamp(1.0, 32.0) as usize;
     let step = d / n as f64;
@@ -107,12 +110,8 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
     let delta = f.vel * dt;
     let boxes = (env.solids)(from + delta, feet);
     let dir = delta.normalize_or_zero();
-    let high = |q: DVec2| {
-        (env.ground)(q, feet, MAX_SEEN).is_some_and(|g| g - feet > STEP_UP)
-    };
-    let walkable = |q: DVec2| {
-        dir == DVec2::ZERO || !(high(q) && high(q + dir * (RADIUS + 0.5)))
-    };
+    let high = |q: DVec2| (env.ground)(q, feet, MAX_SEEN).is_some_and(|g| g - feet > STEP_UP);
+    let walkable = |q: DVec2| dir == DVec2::ZERO || !(high(q) && high(q + dir * (RADIUS + 0.5)));
 
     let full = slide(from, from + delta, &boxes);
     let mut p = if walkable(full.pos) {

@@ -3,7 +3,6 @@
 use super::*;
 
 impl Ui {
-
     pub fn scene_replaced(&mut self) {
         self.text.labels.clear();
         self.images.clear();
@@ -78,10 +77,7 @@ impl Ui {
             let text = format!(
                 "neoOMSI {} #{}",
                 env!("CARGO_PKG_VERSION"),
-                f.build
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("unknown")
+                f.build.split_whitespace().next().unwrap_or("unknown")
             );
 
             let was_flat = self.text.flat;
@@ -446,7 +442,9 @@ impl Ui {
             if f.crosshair {
                 let pointer = self.text.crosshair(r, scene);
                 let (cx, cy, d) = (f.width * 0.5, f.height * 0.5, 3.5 * s);
-                scene.overlays.push((pointer, [cx - d, cy - d, cx + d, cy + d]));
+                scene
+                    .overlays
+                    .push((pointer, [cx - d, cy - d, cx + d, cy + d]));
             }
         }
         self.text.end_frame(r, scene);

@@ -257,9 +257,10 @@ impl Renderer {
         let full = omsi_cfg::env::var_os("OMSI_FULL_GPU").is_some();
         let weak = !full
             && (info.backend == wgpu::Backend::Gl
-            || cfg!(target_os = "android")
-            || (info.device_type == wgpu::DeviceType::IntegratedGpu && info.backend != wgpu::Backend::Metal)
-            || vram.is_some_and(|v| v <= 2560));
+                || cfg!(target_os = "android")
+                || (info.device_type == wgpu::DeviceType::IntegratedGpu
+                    && info.backend != wgpu::Backend::Metal)
+                || vram.is_some_and(|v| v <= 2560));
         let modest = !full && !weak && vram.is_some_and(|v| v <= 4200);
         let options = if weak {
             log::warn!(
@@ -339,8 +340,8 @@ impl Renderer {
         let takes = |flags: wgpu::TextureFormatFeatureFlags, f: wgpu::TextureFormat, n: u32| {
             flags.sample_count_supported(n)
                 && (n == 1
-                || f.is_depth_stencil_format()
-                || flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE))
+                    || f.is_depth_stencil_format()
+                    || flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE))
         };
         let adapter_table_needed = !targets.iter().all(|&f| {
             takes(
@@ -396,9 +397,9 @@ impl Renderer {
             .features()
             .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
             || !adapter
-            .get_downlevel_capabilities()
-            .flags
-            .contains(wgpu::DownlevelFlags::WEBGPU_TEXTURE_FORMAT_SUPPORT);
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::WEBGPU_TEXTURE_FORMAT_SUPPORT);
         let flags_of = |f: wgpu::TextureFormat| {
             if adapter_table {
                 adapter.get_texture_format_features(f).flags
@@ -1151,7 +1152,7 @@ impl Renderer {
                         let y = f32(i32(i >> 1u) * 4 - 1);
                         return vec4<f32>(x, y, 1.0, 1.0);
                     }"
-                        .into(),
+                    .into(),
                 ),
             });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1505,7 +1506,9 @@ impl Renderer {
             })
         };
         let wire_ok = cfg!(all(feature = "devtools", debug_assertions))
-            && device.features().contains(wgpu::Features::POLYGON_MODE_LINE);
+            && device
+                .features()
+                .contains(wgpu::Features::POLYGON_MODE_LINE);
         let wire_for = |f: wgpu::TextureFormat, fs: &str| -> Option<Vec<wgpu::RenderPipeline>> {
             if !wire_ok {
                 return None;
@@ -1526,8 +1529,8 @@ impl Renderer {
         };
         let leave_out_enhanced = options.no_enhanced
             && (cfg!(target_os = "android")
-            || adapter_name.to_ascii_lowercase().contains("opengl")
-            || GL_BACKEND.load(std::sync::atomic::Ordering::Relaxed));
+                || adapter_name.to_ascii_lowercase().contains("opengl")
+                || GL_BACKEND.load(std::sync::atomic::Ordering::Relaxed));
         let hdr_pass = (!leave_out_enhanced).then(|| PassPipelines {
             pipelines: scene_pipelines(hdr_format, "fs_enhanced"),
             wire_pipelines: wire_for(hdr_format, "fs_enhanced"),
@@ -1815,7 +1818,7 @@ impl Renderer {
                 (2, false),
                 (2, true),
             ]
-                .map(|(kind, cull)| make_prepass_samples(kind, cull, msaa))
+            .map(|(kind, cull)| make_prepass_samples(kind, cull, msaa))
         });
         log::info!("renderer: compiling the mip maps shaders");
         let mip_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2447,7 +2450,9 @@ impl Renderer {
         log::info!("renderer: compiling the upscaler shaders");
         let upscale_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("upscale"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/post/upscale.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/post/upscale.wgsl").into(),
+            ),
         });
         let upscale_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("upscale"),

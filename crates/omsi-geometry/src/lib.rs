@@ -25,7 +25,11 @@ impl HeightMap {
         if width == 0 || height == 0 || rgba.len() < pixels.checked_mul(4)? {
             return None;
         }
-        let red = rgba.chunks_exact(4).take(pixels).map(|p| p[0]).collect::<Vec<_>>();
+        let red = rgba
+            .chunks_exact(4)
+            .take(pixels)
+            .map(|p| p[0])
+            .collect::<Vec<_>>();
         Some(HeightMap {
             width,
             height,
@@ -1397,9 +1401,7 @@ mod tests {
         let map = HeightMap::from_rgba(
             2,
             2,
-            &[
-                0, 9, 9, 255, 255, 0, 0, 255, 255, 0, 0, 255, 0, 9, 9, 255,
-            ],
+            &[0, 9, 9, 255, 255, 0, 0, 255, 255, 0, 0, 255, 0, 9, 9, 255],
         )
         .unwrap();
         assert!(map.sample(Vec2::splat(0.5)).abs() < 1e-6);
@@ -1425,14 +1427,7 @@ mod tests {
             slots: vec![Some(mapped), None],
         };
         let mut tile = TileSurface::new(300);
-        tile.add_drive_mesh(
-            &mesh,
-            &Mat4::IDENTITY,
-            DVec3::ZERO,
-            0,
-            0,
-            Some(&surfaces),
-        );
+        tile.add_drive_mesh(&mesh, &Mat4::IDENTITY, DVec3::ZERO, 0, 0, Some(&surfaces));
         tile.finish();
         assert_eq!(tile.drive.probe(2.0, 2.0, 0.01).above, Some(0.02));
         assert_eq!(tile.drive.probe(8.0, 2.0, 0.01).below, Some(0.0));
@@ -2948,8 +2943,7 @@ impl TileSurface {
             let surf = slot
                 .and_then(|slot| slot_maps.get(slot as usize).copied().flatten())
                 .and_then(|map| {
-                    let uv = [tri[0], tri[1], tri[2]]
-                        .map(|i| mesh.uvs.get(i as usize).copied());
+                    let uv = [tri[0], tri[1], tri[2]].map(|i| mesh.uvs.get(i as usize).copied());
                     Some((map, [uv[0]?, uv[1]?, uv[2]?]))
                 });
             self.drive.push_inner(p, false, surf);

@@ -224,7 +224,7 @@ impl App {
                         size.height.max(1),
                         vsync,
                     )
-                        .ok();
+                    .ok();
                     self.last = Instant::now();
                 }
             }
@@ -362,11 +362,11 @@ impl App {
             let dpi = win.scale_factor() as f32;
             let scale = dpi
                 * ui::size_factor(
-                s.config.height as f32,
-                dpi,
-                self.settings.ui_scale,
-                self.settings.ui_scale_window,
-            );
+                    s.config.height as f32,
+                    dpi,
+                    self.settings.ui_scale,
+                    self.settings.ui_scale_window,
+                );
             ui.loading_bg = Some(None);
             ui.loading(
                 r,
@@ -442,11 +442,11 @@ impl App {
             let dpi = win.scale_factor() as f32;
             let scale = dpi
                 * ui::size_factor(
-                s.config.height as f32,
-                dpi,
-                self.settings.ui_scale,
-                self.settings.ui_scale_window,
-            );
+                    s.config.height as f32,
+                    dpi,
+                    self.settings.ui_scale,
+                    self.settings.ui_scale_window,
+                );
             ui.loading(
                 r,
                 scene,
@@ -864,11 +864,11 @@ impl App {
             let dpi = win.scale_factor() as f32;
             let scale = dpi
                 * ui::size_factor(
-                s.config.height as f32,
-                dpi,
-                self.settings.ui_scale,
-                self.settings.ui_scale_window,
-            );
+                    s.config.height as f32,
+                    dpi,
+                    self.settings.ui_scale,
+                    self.settings.ui_scale_window,
+                );
             ui.loading(
                 &renderer,
                 &mut scene,
@@ -970,12 +970,12 @@ impl App {
         w.update_texture_budget(r, scene, &centers, false);
         if centers.is_empty()
             || !streamer.update(
-            r,
-            scene,
-            &centers,
-            std::time::Duration::from_millis(6),
-            self.audio.as_ref(),
-        )
+                r,
+                scene,
+                &centers,
+                std::time::Duration::from_millis(6),
+                self.audio.as_ref(),
+            )
         {
             return;
         }

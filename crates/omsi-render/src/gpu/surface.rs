@@ -10,10 +10,10 @@ impl Drop for SurfaceState<'_> {
     fn drop(&mut self) {
         if !std::thread::panicking()
             && self
-            .lost
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_none()
+                .lost
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
         {
             // SAFETY: dropped only here, once
             unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };

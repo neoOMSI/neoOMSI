@@ -81,7 +81,9 @@ impl WindowWipers {
                 let v = a.variable.to_ascii_lowercase();
                 v.contains("wiper") || v.contains("wisch")
             }) && ["wiper", "wisch"].iter().any(|s| name.contains(s))
-                && !["arm", "wash", "wasser", "schalter", "switch", "hebel", "motor"]
+                && ![
+                    "arm", "wash", "wasser", "schalter", "switch", "hebel", "motor",
+                ]
                 .iter()
                 .any(|s| name.contains(s))
         });
@@ -96,8 +98,8 @@ impl WindowWipers {
             if !animated
                 || !["wiper", "wisch"].iter().any(|s| name.contains(s))
                 || ["wash", "wasser", "schalter", "switch", "hebel", "motor"]
-                .iter()
-                .any(|s| name.contains(s))
+                    .iter()
+                    .any(|s| name.contains(s))
             {
                 continue;
             }
@@ -107,12 +109,12 @@ impl WindowWipers {
             let is_arm = name.contains("arm");
             if is_arm
                 && (separate_blade
-                || vehicle.ty.model.meshes.iter().any(|d| {
-                let n = d.file.to_ascii_lowercase();
-                n.contains("wischerblatt")
-                    || n.contains("wiperblade")
-                    || n.contains("wiper_blade")
-            }))
+                    || vehicle.ty.model.meshes.iter().any(|d| {
+                        let n = d.file.to_ascii_lowercase();
+                        n.contains("wischerblatt")
+                            || n.contains("wiperblade")
+                            || n.contains("wiper_blade")
+                    }))
             {
                 continue;
             }
@@ -150,23 +152,23 @@ impl WindowWipers {
                     let controlled = vm.overrides.iter().any(|m| {
                         omsi_sim::vehicle::override_slot(&vm.materials, m) == Some(slot)
                             && m.alphascale.as_deref().is_some_and(|v| {
-                            matches!(
+                                matches!(
                                     v.trim().to_ascii_lowercase().as_str(),
                                     "rain_window_front_wetness"
                                         | "rain_window_wiped_wetness"
                                         | "rain_window_norm_wetness"
                                 )
-                        })
+                            })
                     });
                     if !controlled
                         || render
-                        .variants
-                        .iter()
-                        .any(|v| v.mesh == mesh && v.slot == slot)
+                            .variants
+                            .iter()
+                            .any(|v| v.mesh == mesh && v.slot == slot)
                         || vm.overrides.iter().any(|m| {
-                        omsi_sim::vehicle::override_slot(&vm.materials, m) == Some(slot)
-                            && (m.use_script_texture.is_some() || m.use_text_texture.is_some())
-                    })
+                            omsi_sim::vehicle::override_slot(&vm.materials, m) == Some(slot)
+                                && (m.use_script_texture.is_some() || m.use_text_texture.is_some())
+                        })
                     {
                         continue;
                     }
@@ -465,8 +467,8 @@ impl WindowWipers {
                     film.drops.drops.retain(|d| {
                         d.pos.cmpge(Vec2::ZERO).all()
                             && (d.pos * Vec2::new(bounds[2].abs(), bounds[3]))
-                            .cmplt(Vec2::ONE)
-                            .all()
+                                .cmplt(Vec2::ONE)
+                                .all()
                             && film.points[drop_pixel(d.pos, bounds)].is_finite()
                     });
                 } else {
@@ -770,10 +772,10 @@ fn film_points_in_cab(
                 }
                 let p = lo
                     + size
-                    * Vec2::new(
-                    (x as f32 + 0.5) / SIZE as f32,
-                    (y as f32 + 0.5) / SIZE as f32,
-                );
+                        * Vec2::new(
+                            (x as f32 + 0.5) / SIZE as f32,
+                            (y as f32 + 0.5) / SIZE as f32,
+                        );
                 let u = (p - a2).perp_dot(c2 - a2) / det;
                 let v = (b2 - a2).perp_dot(p - a2) / det;
                 if u >= -0.001 && v >= -0.001 && u + v <= 1.001 {
@@ -907,7 +909,7 @@ fn push_water(
                 } else {
                     level
                 }
-                    .min(2.0);
+                .min(2.0);
             }
         }
     }
@@ -953,7 +955,7 @@ fn drain_water(
                     let j = ny as usize * SIZE + nx as usize;
                     if !points[j].is_finite()
                         || (pane_depth(points[j], bounds) - pane_depth(points[i], bounds)).abs()
-                        > 0.1
+                            > 0.1
                     {
                         continue;
                     }
@@ -1079,8 +1081,8 @@ impl SweepTriangle {
             (self.v * cell).abs().element_sum(),
             ((self.u + self.v) * cell).abs().element_sum(),
         )
-            .max(Vec3::splat(1e-6))
-            .recip()
+        .max(Vec3::splat(1e-6))
+        .recip()
     }
 
     fn coverage(&self, p: Vec3, filter: Vec3) -> f32 {
@@ -1157,7 +1159,7 @@ mod tests {
             Vec3::new(0.1, 0.04, 1.0),
             false,
         )
-            .unwrap();
+        .unwrap();
         assert!(sweep.contains(Vec3::new(0.045, 0.1, 0.5)));
         assert!(!sweep.contains(Vec3::new(0.09, 0.1, 0.5)));
         assert!(sweep.crosses(Vec3::new(0.045, 0.1, 1.1), Vec3::new(0.045, 0.1, 0.2)));
@@ -1280,14 +1282,18 @@ mod tests {
             end,
             start.map(|p| p + Vec3::X * 0.2),
         );
-        assert!(points
-            .iter()
-            .zip(&wet)
-            .any(|(p, w)| p.x > 0.22 && p.x < 0.38 && *w <= 0.004));
-        assert!(points
-            .iter()
-            .zip(&wet)
-            .all(|(p, w)| p.x >= 0.15 || *w == 1.0));
+        assert!(
+            points
+                .iter()
+                .zip(&wet)
+                .any(|(p, w)| p.x > 0.22 && p.x < 0.38 && *w <= 0.004)
+        );
+        assert!(
+            points
+                .iter()
+                .zip(&wet)
+                .all(|(p, w)| p.x >= 0.15 || *w == 1.0)
+        );
         assert!(wet.iter().all(|w| *w <= 2.0));
         let mut dry = vec![0.0; SIZE * SIZE];
         assert!(!wipe(&mut dry, &points, bounds, start, end));

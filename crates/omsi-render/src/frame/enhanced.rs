@@ -48,7 +48,13 @@ impl Renderer {
         self.sky_state = Some(st);
     }
 
-    pub(crate) fn prepare_enhanced(&mut self, lighting: &Lighting, cam_rel: Vec3, ro: DVec3, dt: f32) -> bool {
+    pub(crate) fn prepare_enhanced(
+        &mut self,
+        lighting: &Lighting,
+        cam_rel: Vec3,
+        ro: DVec3,
+        dt: f32,
+    ) -> bool {
         let s = lighting.sun_dir.normalize_or_zero();
         let visibility = 2.3 / lighting.fog_density.max(1e-6);
         let haze = (8000.0 / visibility).clamp(1.0, 6.0) + 2.0 * lighting.rain;
@@ -195,7 +201,12 @@ impl Renderer {
                 0.0,
             ],
             eye: eye_off.extend(0.0).to_array(),
-            led: [lighting.led_glow, lighting.led_mips, lighting.html_glow, lighting.script_glow],
+            led: [
+                lighting.led_glow,
+                lighting.led_mips,
+                lighting.html_glow,
+                lighting.script_glow,
+            ],
         };
         self.queue
             .write_buffer(&self.enh_buf, 0, bytemuck::bytes_of(&u));

@@ -53,12 +53,21 @@ pub(super) fn draw_boxes(
 
 #[cfg(all(feature = "devtools", debug_assertions))]
 
-pub(super) fn draw_beams(ui: &imgui::Ui, cam: &omsi_render::Camera, size: (u32, u32), beams: &[BeamMark]) {
+pub(super) fn draw_beams(
+    ui: &imgui::Ui,
+    cam: &omsi_render::Camera,
+    size: (u32, u32),
+    beams: &[BeamMark],
+) {
     let vp = cam.view_proj(size.0 as f32 / size.1.max(1) as f32, cam.position);
     let list = ui.get_background_draw_list();
     for b in beams {
         // (yellow: the fog cone's start, cyan: the headlight's start; the ray tapers off along 12 m of its axis)
-        let col = if b.cone { [1.0, 0.9, 0.1, 1.0] } else { [0.1, 0.9, 1.0, 1.0] };
+        let col = if b.cone {
+            [1.0, 0.9, 0.1, 1.0]
+        } else {
+            [0.1, 0.9, 1.0, 1.0]
+        };
         let p = glam::DVec3::from(b.pos);
         let d = glam::Vec3::from(b.dir).normalize_or_zero().as_dvec3();
         let Some(pa) = project(&vp, cam.position, p, size) else {
@@ -75,16 +84,25 @@ pub(super) fn draw_beams(ui: &imgui::Ui, cam: &omsi_render::Camera, size: (u32, 
             };
             let f = (1.0 - t) as f32;
             let c = [col[0], col[1], col[2], 0.15 + 0.85 * f * f];
-            list.add_line(prev, next, c).thickness(0.8 + 1.7 * f).build();
+            list.add_line(prev, next, c)
+                .thickness(0.8 + 1.7 * f)
+                .build();
             prev = next;
         }
         list.add_circle(pa, 6.0, col).thickness(2.0).build();
-        list.add_line([pa[0] - 9.0, pa[1]], [pa[0] + 9.0, pa[1]], col).build();
-        list.add_line([pa[0], pa[1] - 9.0], [pa[0], pa[1] + 9.0], col).build();
+        list.add_line([pa[0] - 9.0, pa[1]], [pa[0] + 9.0, pa[1]], col)
+            .build();
+        list.add_line([pa[0], pa[1] - 9.0], [pa[0], pa[1] + 9.0], col)
+            .build();
     }
 }
 
-pub(super) fn draw_doors(ui: &imgui::Ui, cam: &omsi_render::Camera, size: (u32, u32), doors: &[DoorDbg]) {
+pub(super) fn draw_doors(
+    ui: &imgui::Ui,
+    cam: &omsi_render::Camera,
+    size: (u32, u32),
+    doors: &[DoorDbg],
+) {
     let vp = cam.view_proj(size.0 as f32 / size.1.max(1) as f32, cam.position);
     let list = ui.get_background_draw_list();
     for d in doors {

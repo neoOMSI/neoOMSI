@@ -52,7 +52,7 @@ fn rear_sections_are_not_listed_and_lead_to_their_front() {
         dir.join("G Trail.bus"),
         "[scriptshare]\n\n[coupling_front]\n0\n4\n0.3\n",
     )
-        .unwrap();
+    .unwrap();
     std::fs::write(dir.join("Solo.bus"), "[friendlyname]\nMB\nO530\nDefault\n").unwrap();
     std::fs::write(dir.join("Solo_KI.bus"), "[model]\nx.cfg\n").unwrap();
     let main = Vehicle::load(&dir.join("G Main.bus")).unwrap();
@@ -78,12 +78,12 @@ fn rear_sections_are_not_listed_and_lead_to_their_front() {
         dir.join("L Main.bus"),
         "[friendlyname]\nMB\nO530GL\nDefault\n\n[couple_back]\nL Trail.bus\nfalse\n",
     )
-        .unwrap();
+    .unwrap();
     std::fs::write(
         dir.join("L Trail.bus"),
         "[friendlyname]\nMB\nO530GL\nDefault\n\n[coupling_front]\n0\n4\n0.3\n",
     )
-        .unwrap();
+    .unwrap();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap()
         .flatten()

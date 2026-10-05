@@ -1,11 +1,11 @@
-mod prepare;
+mod batching;
 mod enhanced;
 mod light_pass;
-mod shadows;
-mod batching;
+mod prepare;
 mod render;
 mod render_inner;
+mod shadows;
 
-pub use shadows::*;
 pub(crate) use batching::*;
 pub(crate) use render::*;
+pub use shadows::*;

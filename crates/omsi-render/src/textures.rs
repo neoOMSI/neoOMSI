@@ -314,7 +314,11 @@ impl Renderer {
         {
             static UPLOADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let tick = UPLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let known = scene.tex_luma.lock().map(|m| m.contains_key(&id)).unwrap_or(true);
+            let known = scene
+                .tex_luma
+                .lock()
+                .map(|m| m.contains_key(&id))
+                .unwrap_or(true);
             if !known || (tick + id) % 4 == 0 {
                 let n = (img.rgba.len() / 4).max(1);
                 let step = (n / 1024).max(1);
@@ -333,9 +337,16 @@ impl Renderer {
                     rgb[2] += w * px[2] as f32;
                 }
                 let peak = rgb[0].max(rgb[1]).max(rgb[2]);
-                let colour = if peak > 1e-6 { [rgb[0] / peak, rgb[1] / peak, rgb[2] / peak] } else { [0.0; 3] };
+                let colour = if peak > 1e-6 {
+                    [rgb[0] / peak, rgb[1] / peak, rgb[2] / peak]
+                } else {
+                    [0.0; 3]
+                };
                 if let Ok(mut m) = scene.tex_luma.lock() {
-                    m.insert(id, (sum / cnt.max(1) as f32, asum / cnt.max(1) as f32, colour));
+                    m.insert(
+                        id,
+                        (sum / cnt.max(1) as f32, asum / cnt.max(1) as f32, colour),
+                    );
                 }
             }
         }
@@ -491,9 +502,9 @@ impl Renderer {
                 m.env_mask,
                 m.bump.map(|b| b.0),
             ]
-                .iter()
-                .flatten()
-                .any(|t| set.contains(t));
+            .iter()
+            .flatten()
+            .any(|t| set.contains(t));
             if !uses {
                 continue;
             }
@@ -548,19 +559,19 @@ pub fn prepare_texture(
     let (w, h) = (data.width.max(1), data.height.max(1));
     if data.levels.is_empty()
         || (data.format == PixelFormat::Rgba8
-        && data.levels.len() == 1
-        && data.gpu_mips
-        && w > 1
-        && h > 1)
+            && data.levels.len() == 1
+            && data.gpu_mips
+            && w > 1
+            && h > 1)
     {
         return None;
     }
     if data.format.is_compressed()
         && (!device
-        .features()
-        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-        || w % 4 != 0
-        || h % 4 != 0)
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+            || w % 4 != 0
+            || h % 4 != 0)
     {
         return None;
     }

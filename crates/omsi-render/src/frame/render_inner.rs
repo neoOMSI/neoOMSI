@@ -84,8 +84,8 @@ impl Renderer {
             && self.options.fxaa
             && self.options.msaa <= 1
             && !(lighting.enhanced
-            && self.hdr_pass.is_some()
-            && omsi_cfg::env::var_os("OMSI_NO_ENHANCED").is_none())
+                && self.hdr_pass.is_some()
+                && omsi_cfg::env::var_os("OMSI_NO_ENHANCED").is_none())
             && omsi_cfg::env::var_os("OMSI_NO_FXAA").is_none();
         let enhanced_view = lighting.enhanced
             && self.hdr_pass.is_some()
@@ -97,9 +97,9 @@ impl Renderer {
         let glass_key: Option<GlassKey> = glass_on.then_some((enhanced_view, width, height));
         let glass_ok = with_overlays
             && self
-            .glass_live
-            .take()
-            .is_some_and(|k| Some(k) == scene.glass_key && Some(k) == glass_key);
+                .glass_live
+                .take()
+                .is_some_and(|k| Some(k) == scene.glass_key && Some(k) == glass_key);
         let scaled =
             (width, height) != (full_w, full_h) || vanilla_fxaa || (glass_on && !enhanced_view);
         let scene_target: Option<(wgpu::TextureView, wgpu::BindGroup)> = if scaled {
@@ -118,8 +118,8 @@ impl Renderer {
             && self.hdr_pass.is_some()
             && omsi_cfg::env::var_os("OMSI_NO_ENHANCED").is_none()
             && (with_overlays
-            || xr_view
-            || omsi_cfg::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
+                || xr_view
+                || omsi_cfg::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
         let enhanced = enhanced_frame;
         let spot_plan = lighting.light_shadows
             && (with_overlays || (xr_view && !second_eye))
@@ -252,11 +252,11 @@ impl Renderer {
             (near_m.project_point3(cam_rel) - near_wanted.project_point3(cam_rel)).length() > 0.03;
         let redraw_near = draw_shadows
             && (near_age >= 1
-            || near_jumped
-            || near_m == Mat4::IDENTITY
-            || near_origin != scene.render_origin
-            || near_sun.dot(sun) < 0.99999
-            || omsi_cfg::env::var_os("OMSI_SHADOW_NEAR_EVERY_FRAME").is_some());
+                || near_jumped
+                || near_m == Mat4::IDENTITY
+                || near_origin != scene.render_origin
+                || near_sun.dot(sun) < 0.99999
+                || omsi_cfg::env::var_os("OMSI_SHADOW_NEAR_EVERY_FRAME").is_some());
         let light_view_proj = if let Some((_, _, near, _, _)) = shared_xr_shadows {
             near
         } else if !shadows {
@@ -279,11 +279,11 @@ impl Renderer {
             (far_m.project_point3(cam_rel) - far_wanted.project_point3(cam_rel)).length() > 0.12;
         let redraw_far = draw_shadows
             && (far_age >= 3
-            || far_moved
-            || far_m == Mat4::IDENTITY
-            || far_origin != scene.render_origin
-            || far_sun.dot(sun) < 0.99999
-            || omsi_cfg::env::var_os("OMSI_SHADOW_FAR_EVERY_FRAME").is_some());
+                || far_moved
+                || far_m == Mat4::IDENTITY
+                || far_origin != scene.render_origin
+                || far_sun.dot(sun) < 0.99999
+                || omsi_cfg::env::var_os("OMSI_SHADOW_FAR_EVERY_FRAME").is_some());
         if redraw_far && omsi_cfg::env::var_os("OMSI_DEBUG_SHADOW_FAR").is_some() {
             log::info!(
                 "far shadow redrawn: age {far_age} moved {far_moved} origin {} sun {:.6}",
@@ -351,7 +351,7 @@ impl Renderer {
                         SPOT_NEAR,
                         p.far,
                     )
-                        .to_cols_array_2d();
+                    .to_cols_array_2d();
                 }
             }
             let sz = self.options.shadow_size as f32;
@@ -384,12 +384,12 @@ impl Renderer {
                 .to_array(),
             ambient: (lighting.ambient
                 * if enhanced {
-                1.0
-            } else {
-                night_scale(lighting.night, lighting.atmosphere_brightness)
-            })
-                .extend(lighting.snow.clamp(0.0, 1.0))
-                .to_array(),
+                    1.0
+                } else {
+                    night_scale(lighting.night, lighting.atmosphere_brightness)
+                })
+            .extend(lighting.snow.clamp(0.0, 1.0))
+            .to_array(),
             fog: lighting.fog_color.extend(lighting.fog_density).to_array(),
             sun_color: lighting
                 .sun_color
@@ -397,16 +397,16 @@ impl Renderer {
                 .to_array(),
             sky_color: (lighting.secondary
                 * if enhanced {
-                1.0
-            } else {
-                night_scale(lighting.night, lighting.atmosphere_brightness)
-            })
-                .extend(if lighting.classic && !enhanced {
                     1.0
                 } else {
-                    0.0
+                    night_scale(lighting.night, lighting.atmosphere_brightness)
                 })
-                .to_array(),
+            .extend(if lighting.classic && !enhanced {
+                1.0
+            } else {
+                0.0
+            })
+            .to_array(),
             light_grid: grid,
             sky: [
                 lighting.sun_azimuth,
@@ -1172,9 +1172,9 @@ impl Renderer {
                         }
                         if mat.alpha == AlphaMode::Blend
                             && inst
-                            .slot_alpha
-                            .get(*slot as usize)
-                            .is_some_and(|a| *a < 1.0 / 512.0)
+                                .slot_alpha
+                                .get(*slot as usize)
+                                .is_some_and(|a| *a < 1.0 / 512.0)
                         {
                             continue;
                         }
@@ -1401,7 +1401,7 @@ impl Renderer {
                 SPOT_NEAR,
                 pose.far,
             )
-                .to_cols_array_2d();
+            .to_cols_array_2d();
             self.queue
                 .write_buffer(&self.spot_cam_bufs[k], 0, bytemuck::bytes_of(&cu_spot));
             let tile = self.spot_tile;
@@ -1921,11 +1921,11 @@ impl Renderer {
         }
         let puddles_on = puddles_wanted
             && main_batches
-            .iter()
-            .any(|b| scene.materials[b.material as usize].uniform.params2[2] > 0.0)
+                .iter()
+                .any(|b| scene.materials[b.material as usize].uniform.params2[2] > 0.0)
             && self.prepare_puddle_reflections(
-            width, height, camera, aspect, projection, &cu, lighting,
-        );
+                width, height, camera, aspect, projection, &cu, lighting,
+            );
         if puddles_on {
             self.encode_puddle_reflections(
                 &mut encoder,

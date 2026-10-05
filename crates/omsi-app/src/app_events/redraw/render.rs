@@ -174,13 +174,15 @@ impl App {
                     nav.frame(r, scene, &frame);
                     nav.enabled = old_enabled;
                     nav.opacity = old_opacity;
-                    *self.profile.entry("hud.navigator").or_default() += __tn.elapsed().as_secs_f64();
+                    *self.profile.entry("hud.navigator").or_default() +=
+                        __tn.elapsed().as_secs_f64();
                     if nav.arrows {
                         if let Some(w) = self.world.as_ref() {
-                            let spots =
-                                nav.arrow_spots(self.traffic.as_ref().map(|t| &t.net), 350.0, &|id| {
-                                    w.object_positions.lock().get(&id).map(|p| (p.0, p.1[0]))
-                                });
+                            let spots = nav.arrow_spots(
+                                self.traffic.as_ref().map(|t| &t.net),
+                                350.0,
+                                &|id| w.object_positions.lock().get(&id).map(|p| (p.0, p.1[0])),
+                            );
                             self.route_arrows.tick(dt, w, r, scene, &spots);
                         }
                     }
@@ -194,11 +196,14 @@ impl App {
                     .unwrap_or(1.0);
                 let (w, h) = (s.config.width as f32, s.config.height as f32);
                 self.remotes.chat.disabled = !self.settings.chat;
-                let chat = (!screenshot_mode && self.lan.is_some() && self.settings.chat).then(|| ui::ChatView {
-                    lines: &self.remotes.chat.lines,
-                    typing: self.remotes.chat.typing.as_deref(),
-                    error: self.remotes.chat.error(),
-                });
+                let chat =
+                    (!screenshot_mode && self.lan.is_some() && self.settings.chat).then(|| {
+                        ui::ChatView {
+                            lines: &self.remotes.chat.lines,
+                            typing: self.remotes.chat.typing.as_deref(),
+                            error: self.remotes.chat.error(),
+                        }
+                    });
                 ui.chat.hidden = self.remotes.chat.hidden;
                 let tags = if !screenshot_mode && self.settings.name_tags {
                     self.camera
@@ -216,10 +221,10 @@ impl App {
                     || ui.chat.hovered
                     || map_open
                     || (!vr_active
-                    && self
-                    .navigator
-                    .as_ref()
-                    .is_some_and(|n| n.over_panel(cx, cy)));
+                        && self
+                            .navigator
+                            .as_ref()
+                            .is_some_and(|n| n.over_panel(cx, cy)));
                 let dropdown = self
                     .dropdown
                     .as_ref()
@@ -412,10 +417,10 @@ impl App {
             .map(|p| lights::vehicle_velocity(&p.vehicle))
             .unwrap_or_default()
             - self
-            .weather
-            .as_ref()
-            .map(rain::weather_wind)
-            .unwrap_or_default();
+                .weather
+                .as_ref()
+                .map(rain::weather_wind)
+                .unwrap_or_default();
         lighting.animation_time = Some(self.clock.run_time as f32);
         lighting.led_glow = self.settings.led_glow as f32 * 0.25;
         lights::set_led_glow(lighting.led_glow);
@@ -476,47 +481,47 @@ impl App {
             let acquired = match s.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(_)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(_)
-                if hidden_now =>
-                    {
-                        wgpu::CurrentSurfaceTexture::Occluded
-                    }
+                    if hidden_now =>
+                {
+                    wgpu::CurrentSurfaceTexture::Occluded
+                }
                 other => other,
             };
             let (frame, stand_in) = match acquired {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (Some(frame), None),
                 wgpu::CurrentSurfaceTexture::Occluded
-                if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
+                    if omsi_cfg::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
+                {
+                    let (w, h) = (s.config.width, s.config.height);
+                    if self
+                        .stand_in
+                        .as_ref()
+                        .map(|t| (t.width(), t.height()) != (w, h))
+                        .unwrap_or(true)
                     {
-                        let (w, h) = (s.config.width, s.config.height);
-                        if self
-                            .stand_in
-                            .as_ref()
-                            .map(|t| (t.width(), t.height()) != (w, h))
-                            .unwrap_or(true)
-                        {
-                            self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
-                                label: Some("hidden window"),
-                                size: wgpu::Extent3d {
-                                    width: w,
-                                    height: h,
-                                    depth_or_array_layers: 1,
-                                },
-                                mip_level_count: 1,
-                                sample_count: 1,
-                                dimension: wgpu::TextureDimension::D2,
-                                format: r.format(),
-                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                                view_formats: &[],
-                            }));
-                        }
-                        (
-                            None,
-                            self.stand_in
-                                .as_ref()
-                                .map(|t| t.create_view(&Default::default())),
-                        )
+                        self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("hidden window"),
+                            size: wgpu::Extent3d {
+                                width: w,
+                                height: h,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: r.format(),
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            view_formats: &[],
+                        }));
                     }
+                    (
+                        None,
+                        self.stand_in
+                            .as_ref()
+                            .map(|t| t.create_view(&Default::default())),
+                    )
+                }
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     reconfigure = true;
                     (None, None)
@@ -616,11 +621,11 @@ impl App {
                     }
                     while (self.in_cab || near)
                         && drawn
-                        < (if vr_active {
-                        draw_limit
-                    } else {
-                        self.mirrors_seen.clamp(1, 2)
-                    })
+                            < (if vr_active {
+                                draw_limit
+                            } else {
+                                self.mirrors_seen.clamp(1, 2)
+                            })
                         && (vr_active || self.mirror_budget >= 1.0)
                     {
                         let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) else {
@@ -733,7 +738,10 @@ impl App {
                         interior_lights: scene.interior_lights.len(),
                         coronas: scene.coronas.len(),
                     };
-                    let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32);
+                    let scale = self
+                        .window
+                        .as_ref()
+                        .map_or(1.0, |w| w.scale_factor() as f32);
                     self.devtools
                         .get_or_insert_with(devtools::DevTools::new)
                         .render(r, &view, scale, &snap, &dev_extra);

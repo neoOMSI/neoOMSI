@@ -16,9 +16,9 @@ mod run_report;
 mod settings;
 mod shapes;
 mod style;
-mod text;
 #[cfg(test)]
 mod tests;
+mod text;
 mod view;
 mod widgets;
 

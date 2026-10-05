@@ -1,12 +1,12 @@
-mod renderer;
 mod build;
 mod gpu_env;
+mod renderer;
 mod shader_src;
-mod timers;
 mod surface;
+mod timers;
 
-pub use renderer::*;
 pub use gpu_env::*;
+pub use renderer::*;
 pub(crate) use shader_src::*;
-pub(crate) use timers::*;
 pub use surface::*;
+pub(crate) use timers::*;

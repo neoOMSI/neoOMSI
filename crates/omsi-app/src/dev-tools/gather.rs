@@ -4,10 +4,8 @@ use omsi_sim::collision::Obb;
 
 impl crate::App {
     pub(crate) fn dev_gather(&self) -> Extra {
-        let (boxes_on, radius, tours_on) = self
-            .devtools
-            .as_ref()
-            .map_or((false, 25.0, false), |d| {
+        let (boxes_on, radius, tours_on) =
+            self.devtools.as_ref().map_or((false, 25.0, false), |d| {
                 (d.wants_boxes(), d.box_radius(), d.wants_tours())
             });
         let foot = self.on_foot.as_ref().map(|f| FootInfo {
@@ -58,7 +56,8 @@ impl crate::App {
                 .as_ref()
                 .map(|f| f.pos)
                 .or_else(|| self.camera.as_ref().map(|c| c.position));
-            at.map(|at| self.dev_hitboxes(at, radius)).unwrap_or_default()
+            at.map(|at| self.dev_hitboxes(at, radius))
+                .unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -122,10 +121,22 @@ impl crate::App {
         if crate::lights::settings().beam_marker {
             if let (Some(scene), Some(cam)) = (self.scene.as_ref(), self.camera.as_ref()) {
                 for c in scene.coronas.iter().filter(|c| c.beam) {
-                    beams.push(BeamMark { pos: [c.position.x, c.position.y, c.position.z], dir: c.direction.to_array(), cone: true });
+                    beams.push(BeamMark {
+                        pos: [c.position.x, c.position.y, c.position.z],
+                        dir: c.direction.to_array(),
+                        cone: true,
+                    });
                 }
-                for l in scene.lights.iter().filter(|l| l.beam != 0.0 && l.direction.length_squared() > 0.1) {
-                    beams.push(BeamMark { pos: [l.position.x, l.position.y, l.position.z], dir: l.direction.to_array(), cone: false });
+                for l in scene
+                    .lights
+                    .iter()
+                    .filter(|l| l.beam != 0.0 && l.direction.length_squared() > 0.1)
+                {
+                    beams.push(BeamMark {
+                        pos: [l.position.x, l.position.y, l.position.z],
+                        dir: l.direction.to_array(),
+                        cone: false,
+                    });
                 }
                 let at = cam.position;
                 beams.sort_by(|a, b| {
@@ -145,14 +156,22 @@ impl crate::App {
                 .model
                 .interior_lights
                 .iter()
-                .map(|l| InteriorInfo { variable: l.variable.clone(), pos: l.pos, color: l.color, range: l.range })
+                .map(|l| InteriorInfo {
+                    variable: l.variable.clone(),
+                    pos: l.pos,
+                    color: l.color,
+                    range: l.range,
+                })
                 .collect(),
             walk_points: walk_paths(&p.vehicle.ty.def).0,
             walk_links: walk_paths(&p.vehicle.ty.def).1,
         });
         let pose = self.player.as_ref().map(|p| {
             let v = &p.vehicle;
-            ([v.position.x, v.position.y, v.position.z], v.body_rotation())
+            (
+                [v.position.x, v.position.y, v.position.z],
+                v.body_rotation(),
+            )
         });
         Extra {
             pose,
@@ -281,8 +300,15 @@ fn walk_paths(def: &omsi_vehicle::Vehicle) -> (Vec<[f32; 3]>, Vec<(i32, i32, boo
     let (pts, links) = def
         .paths
         .as_ref()
-        .and_then(|rel| omsi_vehicle::VehiclePaths::load(&omsi_cfg::resolve_path(def.dir(), rel)).ok())
-        .map(|vp| (vp.points.iter().map(|q| q.pos).collect::<Vec<[f32; 3]>>(), vp.links))
+        .and_then(|rel| {
+            omsi_vehicle::VehiclePaths::load(&omsi_cfg::resolve_path(def.dir(), rel)).ok()
+        })
+        .map(|vp| {
+            (
+                vp.points.iter().map(|q| q.pos).collect::<Vec<[f32; 3]>>(),
+                vp.links,
+            )
+        })
         .unwrap_or_default();
     *c = Some((def.path.clone(), pts.clone(), links.clone()));
     (pts, links)

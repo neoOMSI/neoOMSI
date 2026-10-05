@@ -83,9 +83,7 @@ impl Pipelines {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            size_of::<Uniform>() as u64
-                        ),
+                        min_binding_size: wgpu::BufferSize::new(size_of::<Uniform>() as u64),
                     },
                     count: None,
                 },
@@ -203,9 +201,7 @@ impl Pipelines {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(
-                        size_of::<VehicleUniform>() as u64
-                    ),
+                    min_binding_size: wgpu::BufferSize::new(size_of::<VehicleUniform>() as u64),
                 },
                 count: None,
             }],

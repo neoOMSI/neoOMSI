@@ -100,7 +100,14 @@ fn info_carries_the_ibis_values_and_an_older_info_has_none() {
     p.texts = vec![format!("{0}@{0}@{0}", "Hauptbahnhof    ")];
     p.freetex = vec![r"..\..\Anzeigen\SteckSchilder\E.bmp".into()];
     p.hof = 0x5A4D_0C31;
-    p.ibis = vec![Some(1205.0), Some(5.0), None, Some(0.0), Some(-1.0), Some(12.5)];
+    p.ibis = vec![
+        Some(1205.0),
+        Some(5.0),
+        None,
+        Some(0.0),
+        Some(-1.0),
+        Some(12.5),
+    ];
     let text = p.encode_info();
     let q = Pose::decode_info(&text.split('|').collect::<Vec<_>>()).unwrap();
     assert_eq!((q.hof, &q.ibis), (p.hof, &p.ibis));

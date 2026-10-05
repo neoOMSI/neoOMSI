@@ -58,10 +58,10 @@ mod placement_tests {
         std::fs::write(
             &script,
             concat!(
-            "{init}\n{end}\n{frame}\n",
-            "(L.$.BusStop) \"\" $= !\n{if}\n",
-            "\"Busstop\\\" $+ (L.$.BusStop) $+ \".png\" $+ (S.$.Texture)\n",
-            "{endif}\n{end}\n",
+                "{init}\n{end}\n{frame}\n",
+                "(L.$.BusStop) \"\" $= !\n{if}\n",
+                "\"Busstop\\\" $+ (L.$.BusStop) $+ \".png\" $+ (S.$.Texture)\n",
+                "{endif}\n{end}\n",
             ),
         )
         .unwrap();

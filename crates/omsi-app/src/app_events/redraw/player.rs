@@ -291,8 +291,8 @@ impl App {
                     "view_look_up",
                     "view_look_down",
                 ]
-                    .iter()
-                    .position(|x| *x == n)
+                .iter()
+                .position(|x| *x == n)
                 {
                     self.pad_look[k] = *down;
                     return false;
@@ -428,8 +428,8 @@ impl App {
                     if self.settings.head_tracking
                         && self.headtrack.is_none()
                         && self
-                        .headtrack_failed
-                        .is_none_or(|t| t.elapsed().as_secs_f32() > 5.0)
+                            .headtrack_failed
+                            .is_none_or(|t| t.elapsed().as_secs_f32() > 5.0)
                     {
                         self.headtrack =
                             crate::headtrack::HeadTracker::start(self.settings.head_tracking_port);

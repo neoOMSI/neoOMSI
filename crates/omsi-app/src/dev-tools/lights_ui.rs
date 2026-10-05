@@ -17,7 +17,15 @@ pub(super) fn lights_window(ui: &imgui::Ui, open: &mut bool) {
             ui.slider("Corona / Cone", 0.0, 4.0, &mut s.corona);
             ui.separator();
             ui.text("HTML & Scripting textures");
-            for (i, n) in ["HTML Texture Glow", "HTML Texture Light", "Script Texture Glow", "Script Texture Light"].iter().enumerate() {
+            for (i, n) in [
+                "HTML Texture Glow",
+                "HTML Texture Light",
+                "Script Texture Glow",
+                "Script Texture Light",
+            ]
+            .iter()
+            .enumerate()
+            {
                 let mut g = crate::lights::screen_fx(i);
                 if ui.slider(format!("{n}##fx{i}"), 0.0, 4.0, &mut g) {
                     crate::lights::set_screen_fx(i, g);
@@ -59,7 +67,13 @@ pub(super) fn interior_panel(ui: &imgui::Ui, extra: &Extra, actions: &mut Vec<Ac
         if ui.collapsing_header(label, imgui::TreeNodeFlags::empty()) {
             ui.text_disabled(format!(
                 "pos {:.2} {:.2} {:.2}  range {:.2}  color {:.0} {:.0} {:.0}",
-                src.pos[0], src.pos[1], src.pos[2], src.range, src.color[0], src.color[1], src.color[2]
+                src.pos[0],
+                src.pos[1],
+                src.pos[2],
+                src.range,
+                src.color[0],
+                src.color[1],
+                src.color[2]
             ));
             let mut on = !c.off;
             ui.checkbox(format!("Enabled##il{i}"), &mut on);
@@ -123,7 +137,12 @@ fn beam_panel(ui: &imgui::Ui, s: &mut crate::lights::LightSettings) {
     if ui.collapsing_header("High Beam", imgui::TreeNodeFlags::DEFAULT_OPEN) {
         ui.slider("Gain##high", 0.0, 3.0, &mut s.high_beam);
         ui.slider("Range (global x)##high", 0.5, 4.0, &mut s.high_beam_range);
-        ui.slider("Spread (global x)##high", 0.25, 3.0, &mut s.high_beam_spread);
+        ui.slider(
+            "Spread (global x)##high",
+            0.25,
+            3.0,
+            &mut s.high_beam_spread,
+        );
         beam_controls(ui, "high", &mut s.high);
     }
 }
@@ -133,10 +152,25 @@ fn beam_controls(ui: &imgui::Ui, id: &str, b: &mut crate::lights::BeamCfg) {
     ui.slider(format!("Intensity x##{id}b"), 0.0, 4.0, &mut b.gain);
     ui.slider(format!("Range x##{id}b"), 0.1, 4.0, &mut b.range);
     ui.slider(format!("Core x##{id}b"), 0.1, 4.0, &mut b.core);
-    ui.slider(format!("Inner Angle +deg##{id}b"), -60.0, 60.0, &mut b.inner_add);
-    ui.slider(format!("Outer Angle +deg##{id}b"), -60.0, 60.0, &mut b.outer_add);
+    ui.slider(
+        format!("Inner Angle +deg##{id}b"),
+        -60.0,
+        60.0,
+        &mut b.inner_add,
+    );
+    ui.slider(
+        format!("Outer Angle +deg##{id}b"),
+        -60.0,
+        60.0,
+        &mut b.outer_add,
+    );
     ui.slider(format!("Yaw (deg, left +)##{id}b"), -30.0, 30.0, &mut b.yaw);
-    ui.slider(format!("Pitch (deg, up +)##{id}b"), -30.0, 30.0, &mut b.pitch);
+    ui.slider(
+        format!("Pitch (deg, up +)##{id}b"),
+        -30.0,
+        30.0,
+        &mut b.pitch,
+    );
     ui.slider(format!("Forward (m)##{id}b"), -5.0, 5.0, &mut b.forward);
     ui.slider(format!("Right (m)##{id}b"), -3.0, 3.0, &mut b.side);
     ui.slider(format!("Height (m)##{id}b"), -3.0, 3.0, &mut b.height);

@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
+use super::lights_ui;
 use super::types::*;
 use super::util::*;
-use super::lights_ui;
 use imgui::Condition;
 use omsi_render::devtools as rdev;
 
@@ -42,7 +42,12 @@ pub(super) fn server(ui: &imgui::Ui, open: &mut bool, extra: &Extra, actions: &m
         });
 }
 
-pub(super) fn connect(ui: &imgui::Ui, open: &mut bool, connect_addr: &mut String, actions: &mut Vec<Action>) {
+pub(super) fn connect(
+    ui: &imgui::Ui,
+    open: &mut bool,
+    connect_addr: &mut String,
+    actions: &mut Vec<Action>,
+) {
     if !*open {
         return;
     }
@@ -70,7 +75,8 @@ pub(super) fn lan(ui: &imgui::Ui, open: &mut bool, lan_port: &mut i32, actions: 
         .opened(open)
         .size([320.0, 110.0], Condition::FirstUseEver)
         .build(|| {
-            ui.input_int("UDP port (0 = default)", &mut *lan_port).build();
+            ui.input_int("UDP port (0 = default)", &mut *lan_port)
+                .build();
             *lan_port = (*lan_port).clamp(0, 65535);
             if ui.button("Open") {
                 actions.push(Action::OpenLan(*lan_port as u16));

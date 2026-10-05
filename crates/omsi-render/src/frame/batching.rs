@@ -34,11 +34,11 @@ pub(crate) fn batch_items(
         let start = list.len() as u32;
         while k < items.len()
             && (
-            items[k].pipe,
-            items[k].mesh,
-            items[k].range,
-            items[k].material,
-        ) == (d.pipe, d.mesh, d.range, d.material)
+                items[k].pipe,
+                items[k].mesh,
+                items[k].range,
+                items[k].material,
+            ) == (d.pipe, d.mesh, d.range, d.material)
         {
             list.push(items[k].entry);
             k += 1;
@@ -174,7 +174,11 @@ pub(crate) fn surface_instance_code(
     }
 }
 
-pub(crate) fn horizontal_sort_distance(origin: DVec3, render_origin: DVec3, camera_relative: Vec3) -> f32 {
+pub(crate) fn horizontal_sort_distance(
+    origin: DVec3,
+    render_origin: DVec3,
+    camera_relative: Vec3,
+) -> f32 {
     let p = (origin - render_origin).as_vec3() - camera_relative;
     glam::Vec2::new(p.x, p.y).length()
 }

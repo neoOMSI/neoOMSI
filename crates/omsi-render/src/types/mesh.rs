@@ -84,9 +84,13 @@ pub(crate) fn make_mesh(device: &wgpu::Device, queue: &wgpu::Queue, data: &MeshD
                 }
             }
         }
-        acc
-            .into_iter()
-            .map(|(n, p, c)| (n.normalize_or_zero(), if c > 0 { p / c as f32 } else { Vec3::ZERO }))
+        acc.into_iter()
+            .map(|(n, p, c)| {
+                (
+                    n.normalize_or_zero(),
+                    if c > 0 { p / c as f32 } else { Vec3::ZERO },
+                )
+            })
             .collect()
     };
     GpuMesh {

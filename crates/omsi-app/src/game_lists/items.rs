@@ -166,12 +166,12 @@ pub(super) fn hof_label(p: &std::path::Path) -> String {
         .filter(|n| !n.trim().is_empty())
     {
         Some(n)
-        if !file
-            .to_ascii_lowercase()
-            .starts_with(&n.trim().to_ascii_lowercase()) =>
-            {
-                format!("{}  ({file})", n.trim())
-            }
+            if !file
+                .to_ascii_lowercase()
+                .starts_with(&n.trim().to_ascii_lowercase()) =>
+        {
+            format!("{}  ({file})", n.trim())
+        }
         _ => file,
     }
 }
@@ -211,8 +211,8 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                     .filter(|l| {
                         l.user_allowed
                             && l.tours
-                            .iter()
-                            .any(|t| tour_listed(sch, &l.name, t, app.clock.time))
+                                .iter()
+                                .any(|t| tour_listed(sch, &l.name, t, app.clock.time))
                     })
                     .collect();
                 lines.sort_by(|a, b| natural(&a.name, &b.name));

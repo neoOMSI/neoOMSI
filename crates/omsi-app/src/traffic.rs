@@ -7368,12 +7368,7 @@ impl Traffic {
     }
 
     /// Remove the current traffic population before rebuilding it for a new clock time.
-    pub fn reset_population(
-        &mut self,
-        world: &World,
-        renderer: &Renderer,
-        scene: &mut Scene,
-    ) {
+    pub fn reset_population(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
         for c in std::mem::take(&mut self.cars) {
             self.orphan_sounds.extend(c.sounds);
             for r in std::iter::once(c.render).chain(c.trailer_renders) {

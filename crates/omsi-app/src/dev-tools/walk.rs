@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
+use super::lights_ui;
 use super::types::*;
 use super::util::*;
-use super::lights_ui;
 use imgui::Condition;
 use omsi_render::devtools as rdev;
 
@@ -62,7 +62,9 @@ pub(super) fn window(ui: &imgui::Ui, open: &mut bool, extra: &Extra) {
                     ),
                 );
             }
-            ui.text_disabled("door line: green open, red closed; lane needs along -1.2..len+1, lateral <= 1.0");
+            ui.text_disabled(
+                "door line: green open, red closed; lane needs along -1.2..len+1, lateral <= 1.0",
+            );
             ui.text_disabled("green scenery, orange vehicles, yellow poles");
         });
 }

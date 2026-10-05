@@ -698,12 +698,12 @@ impl Renderer {
         // enhanced shader must not brighten it as it does a display (see shaders/enhanced/scene_lighting.wgsl)
         let mirror = unlit
             && texture
-            .and_then(|t| scene.textures.get(t))
-            .is_some_and(|t| {
-                t.texture
-                    .usage()
-                    .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
-            });
+                .and_then(|t| scene.textures.get(t))
+                .is_some_and(|t| {
+                    t.texture
+                        .usage()
+                        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                });
         let uniform = MaterialUniform {
             wipe_bounds: [0.0; 4],
             color,
@@ -749,10 +749,10 @@ impl Renderer {
                 // part that may be metal (see the shaders)
                 (if env_mask.is_some() { 1.0 } else { 0.0 })
                     + if extra.transmap_declared || transmap.is_some() {
-                    2.0
-                } else {
-                    0.0
-                }
+                        2.0
+                    } else {
+                        0.0
+                    }
                     + if extra.metal_ok { 4.0 } else { 0.0 },
             ],
             emissive: [

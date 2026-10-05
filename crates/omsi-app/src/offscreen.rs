@@ -113,9 +113,7 @@ pub(crate) fn run_offscreen(
                 }
                 d.update(&mut p.vehicle, parse_time(&args.time));
                 let mut fonts = world.fonts.lock();
-                if let Err(e) =
-                    schedule_paper::update_vehicle(&mut p.vehicle, &d, &mut fonts)
-                {
+                if let Err(e) = schedule_paper::update_vehicle(&mut p.vehicle, &d, &mut fonts) {
                     log::warn!("driver timetable paper: {e:#}");
                 }
                 log::info!(
@@ -321,13 +319,8 @@ pub(crate) fn run_offscreen(
             while s < len {
                 let (p, _) = l.at(s);
                 if (p.truncate() - center.truncate()).length() < 400.0 {
-                    let g = scene::drive_probe(
-                        &world.terrains,
-                        &world.surfaces,
-                        p.x,
-                        p.y,
-                        p.z + 0.5,
-                    );
+                    let g =
+                        scene::drive_probe(&world.terrains, &world.surfaces, p.x, p.y, p.z + 0.5);
                     // and a wall there: a 2 m box from 0.3 m to 3 m over the ground, against
                     // the objects' collision meshes (the id of the first one it touches)
                     let base = g.below.unwrap_or(p.z);
@@ -447,8 +440,7 @@ pub(crate) fn run_offscreen(
                             srv_metar_rx = None;
                             // (a failed download is tried again in a minute)
                             let wait = if report.is_some() { 600 } else { 60 };
-                            srv_metar_due =
-                                Instant::now() + std::time::Duration::from_secs(wait);
+                            srv_metar_due = Instant::now() + std::time::Duration::from_secs(wait);
                             if let Some(w) = report {
                                 if let Some(wire) = report_wire(&w) {
                                     if wire != l.weather() {
@@ -463,8 +455,7 @@ pub(crate) fn run_offscreen(
                         }
                         Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
                             srv_metar_rx = None;
-                            srv_metar_due =
-                                Instant::now() + std::time::Duration::from_secs(60);
+                            srv_metar_due = Instant::now() + std::time::Duration::from_secs(60);
                         }
                         _ => {}
                     }
@@ -575,10 +566,10 @@ pub(crate) fn run_offscreen(
                 Some(c) => c,
                 None => match player.as_ref() {
                     Some(p)
-                    if args.cam.is_none() && args.view != "free" && args.follow.is_none() =>
-                        {
-                            p.camera(&args.view, &camera)
-                        }
+                        if args.cam.is_none() && args.view != "free" && args.follow.is_none() =>
+                    {
+                        p.camera(&args.view, &camera)
+                    }
                     _ => Camera {
                         position: camera.position,
                         yaw: camera.yaw,
@@ -721,9 +712,7 @@ pub(crate) fn run_offscreen(
                     player.set_duty_destination(trip, stop);
                 }
                 let mut fonts = world.fonts.lock();
-                if let Err(e) =
-                    schedule_paper::update_vehicle(&mut player.vehicle, d, &mut fonts)
-                {
+                if let Err(e) = schedule_paper::update_vehicle(&mut player.vehicle, d, &mut fonts) {
                     log::warn!("driver timetable paper: {e:#}");
                 }
                 d.duty_done()
@@ -849,10 +838,10 @@ pub(crate) fn run_offscreen(
                                 .filter(|(k, s, d)| {
                                     *d < 6.0
                                         && ((net.lanes[*k].at(*s).1 as f64 - v.heading + 540.0)
-                                        .rem_euclid(360.0)
-                                        - 180.0)
-                                        .abs()
-                                        < 80.0
+                                            .rem_euclid(360.0)
+                                            - 180.0)
+                                            .abs()
+                                            < 80.0
                                 })
                                 .min_by(|a, b| a.2.total_cmp(&b.2))
                             {
@@ -950,7 +939,7 @@ pub(crate) fn run_offscreen(
                         at.y,
                         at.z + 1.5,
                     )
-                        .below;
+                    .below;
                     let lost = under.is_none_or(|g| at.z < g - 0.6);
                     if i % 15 == 0 || lost {
                         log::info!(
@@ -1962,7 +1951,7 @@ pub(crate) fn run_offscreen(
                     let run = |v: &mut omsi_sim::VehicleInstance,
                                name: Option<&str>,
                                d: (f32, f32)|
-                               -> (bool, Vec<f32>, Vec<f32>, Vec<String>) {
+                     -> (bool, Vec<f32>, Vec<f32>, Vec<String>) {
                         restore(v);
                         v.host.fired_triggers.clear();
                         v.host.fired_file_triggers.clear();
@@ -2014,7 +2003,7 @@ pub(crate) fn run_offscreen(
                                 .filter(|&k| {
                                     !noisy[k]
                                         && (differs(after[k], idle[k])
-                                        || differs(held[k], idle_held[k]))
+                                            || differs(held[k], idle_held[k]))
                                 })
                                 .collect();
                             played = sounds
@@ -3392,10 +3381,10 @@ fn tyre_lows(v: &omsi_sim::VehicleInstance, world: &World) -> Vec<(DVec3, f64)> 
         let def = &v.ty.model.meshes[vm.def_index];
         if !v.mesh_props[i].visible
             || !def.animations.iter().any(|an| {
-            an.variable
-                .to_ascii_lowercase()
-                .starts_with("wheel_rotation_")
-        })
+                an.variable
+                    .to_ascii_lowercase()
+                    .starts_with("wheel_rotation_")
+            })
         {
             continue;
         }
@@ -3436,10 +3425,10 @@ fn vehicle_camera(player: &Player, camera: &mut Camera) {
     if v.len() >= 5 {
         camera.position = player.vehicle.position
             + player
-            .vehicle
-            .body_rotation()
-            .transform_point3(Vec3::new(v[0], v[1], v[2]))
-            .as_dvec3();
+                .vehicle
+                .body_rotation()
+                .transform_point3(Vec3::new(v[0], v[1], v[2]))
+                .as_dvec3();
         camera.yaw = player.vehicle.heading as f32 + v[3];
         camera.pitch = v[4];
         camera.near = 0.02;

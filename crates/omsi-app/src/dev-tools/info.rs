@@ -1,11 +1,18 @@
 #![allow(unused_imports)]
+use super::lights_ui;
 use super::types::*;
 use super::util::*;
-use super::lights_ui;
 use imgui::Condition;
 use omsi_render::devtools as rdev;
 
-pub(super) fn graphics(ui: &imgui::Ui, open: &mut bool, snap: &Snapshot, history: &[f32], names: &[String], mode: usize) {
+pub(super) fn graphics(
+    ui: &imgui::Ui,
+    open: &mut bool,
+    snap: &Snapshot,
+    history: &[f32],
+    names: &[String],
+    mode: usize,
+) {
     if !*open {
         return;
     }

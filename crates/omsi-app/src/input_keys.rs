@@ -253,9 +253,9 @@ impl App {
         }
         if pressed
             && self
-            .bound_actions(code)
-            .iter()
-            .any(|a| a == "navigator_close")
+                .bound_actions(code)
+                .iter()
+                .any(|a| a == "navigator_close")
         {
             if let Some(n) = self.navigator.as_mut().filter(|n| n.map_open()) {
                 n.toggle_map();
@@ -355,9 +355,9 @@ impl App {
             if pressed
                 && !repeat
                 && self
-                .bound_actions(code)
-                .iter()
-                .any(|a| a == "toggle_fullscreen")
+                    .bound_actions(code)
+                    .iter()
+                    .any(|a| a == "toggle_fullscreen")
             {
                 self.game_action("toggle_fullscreen");
                 return;
@@ -423,9 +423,9 @@ impl App {
             if pressed
                 && !repeat
                 && self
-                .bound_actions(code)
-                .iter()
-                .any(|a| a == "open_mainmenue")
+                    .bound_actions(code)
+                    .iter()
+                    .any(|a| a == "open_mainmenue")
             {
                 self.open_game_menu();
                 return;
@@ -537,7 +537,7 @@ impl App {
                 let ctrl_alt_held = (self.keys.contains(&KeyCode::ControlLeft)
                     || self.keys.contains(&KeyCode::ControlRight))
                     && (self.keys.contains(&KeyCode::AltLeft)
-                    || self.keys.contains(&KeyCode::AltRight));
+                        || self.keys.contains(&KeyCode::AltRight));
                 if self.view != "free" && !repeat && !shift_held && !(ctrl_alt_held && pressed) {
                     if let Some(a) = fallback_action(code, wasd) {
                         p.axes.set(a, pressed);
@@ -635,7 +635,7 @@ impl App {
                     } else {
                         "Desktop VR mirror off"
                     }
-                        .into(),
+                    .into(),
                     2.0,
                 ));
             }
@@ -677,10 +677,10 @@ impl App {
                         let h = (p.vehicle.heading as f32).to_radians();
                         cam.position = p.vehicle.position
                             + glam::DVec3::new(
-                            -(h.sin() as f64) * 25.0,
-                            -(h.cos() as f64) * 25.0,
-                            30.0,
-                        );
+                                -(h.sin() as f64) * 25.0,
+                                -(h.cos() as f64) * 25.0,
+                                30.0,
+                            );
                         cam.yaw = p.vehicle.heading as f32;
                         cam.pitch = -45.0;
                     }

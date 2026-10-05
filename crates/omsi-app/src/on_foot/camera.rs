@@ -47,7 +47,13 @@ impl App {
         }
     }
 
-    pub(super) fn foot_camera(&mut self, f: &mut OnFoot, body: Option<(DVec3, f64, DVec3)>, free: bool, dt: f32) {
+    pub(super) fn foot_camera(
+        &mut self,
+        f: &mut OnFoot,
+        body: Option<(DVec3, f64, DVec3)>,
+        free: bool,
+        dt: f32,
+    ) {
         let Some(cam) = self.camera.as_mut() else {
             return;
         };
@@ -130,7 +136,18 @@ impl App {
         let body = self.humans.as_ref().and_then(|h| h.avatar_body(AVATAR_KEY));
         log::info!(
             "foot: inside {:?} pos ({:.2}, {:.2}, {:.2}) heading {:.0} yaw {:.0} vel ({:.2}, {:.2}) lift {:.2} seat {:?} cam {:?} body {:?}",
-            f.inside, f.pos.x, f.pos.y, f.pos.z, f.heading, f.yaw, f.vel.x, f.vel.y, f.lift, f.seat, f.cam, body
+            f.inside,
+            f.pos.x,
+            f.pos.y,
+            f.pos.z,
+            f.heading,
+            f.yaw,
+            f.vel.x,
+            f.vel.y,
+            f.lift,
+            f.seat,
+            f.cam,
+            body
         );
     }
 }

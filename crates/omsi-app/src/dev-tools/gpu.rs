@@ -303,12 +303,12 @@ impl DevTools {
                     if let DrawCmd::Elements {
                         count,
                         cmd_params:
-                        DrawCmdParams {
-                            clip_rect,
-                            vtx_offset,
-                            idx_offset,
-                            ..
-                        },
+                            DrawCmdParams {
+                                clip_rect,
+                                vtx_offset,
+                                idx_offset,
+                                ..
+                            },
                     } = cmd
                     {
                         let x0 = clip_rect[0].clamp(0.0, w as f32) as u32;

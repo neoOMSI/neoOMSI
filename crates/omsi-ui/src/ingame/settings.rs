@@ -54,15 +54,15 @@ impl Ui {
         let rows = ((room / row_h).floor() as usize).clamp(1, n_items.max(1));
         let start = lead
             + match (n_items > rows, f.menu_top) {
-            (false, _) => 0,
-            (true, Some(top)) => (top.max(0.0).round() as usize)
-                .saturating_sub(lead)
-                .min(n_items - rows),
-            (true, None) => sel
-                .saturating_sub(lead)
-                .saturating_sub(rows / 2)
-                .min(n_items - rows),
-        };
+                (false, _) => 0,
+                (true, Some(top)) => (top.max(0.0).round() as usize)
+                    .saturating_sub(lead)
+                    .min(n_items - rows),
+                (true, None) => sel
+                    .saturating_sub(lead)
+                    .saturating_sub(rows / 2)
+                    .min(n_items - rows),
+            };
         self.menu_start = start;
         self.menu_rows = rows;
         self.menu_row_h = row_h;

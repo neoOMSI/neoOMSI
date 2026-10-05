@@ -59,8 +59,8 @@ impl Ui {
         let back_txt = crate::tr("Back").into_owned();
         let back_footer = (timetable_kind || kind == MenuKind::List)
             && items
-            .last()
-            .is_some_and(|&(id, l)| id == "back" && l == back_txt.as_str());
+                .last()
+                .is_some_and(|&(id, l)| id == "back" && l == back_txt.as_str());
         let nl = items.len() - back_footer as usize;
         let foot_h = if back_footer { 48.0 * s } else { 0.0 };
         let fixed_h =
@@ -186,10 +186,10 @@ impl Ui {
             let is_back = id == "back" && label == back_txt.as_str();
             let apart = k > start
                 && match kind {
-                MenuKind::Game => matches!(id, "save" | "admin" | "quit"),
-                MenuKind::Lines => id == "free",
-                _ => false,
-            };
+                    MenuKind::Game => matches!(id, "save" | "admin" | "quit"),
+                    MenuKind::Lines => id == "free",
+                    _ => false,
+                };
             if apart {
                 let sy = (ry - 2.0 * s).round();
                 scene

@@ -1,11 +1,17 @@
 #![allow(unused_imports)]
+use super::lights_ui;
 use super::types::*;
 use super::util::*;
-use super::lights_ui;
 use imgui::Condition;
 use omsi_render::devtools as rdev;
 
-pub(super) fn cockpit(ui: &imgui::Ui, open: &mut bool, extra: &Extra, cockpit_filter: &mut String, actions: &mut Vec<Action>) {
+pub(super) fn cockpit(
+    ui: &imgui::Ui,
+    open: &mut bool,
+    extra: &Extra,
+    cockpit_filter: &mut String,
+    actions: &mut Vec<Action>,
+) {
     if !*open {
         return;
     }
@@ -35,7 +41,13 @@ pub(super) fn cockpit(ui: &imgui::Ui, open: &mut bool, extra: &Extra, cockpit_fi
         });
 }
 
-pub(super) fn actions(ui: &imgui::Ui, open: &mut bool, extra: &Extra, vehicle_filter: &mut String, actions: &mut Vec<Action>) {
+pub(super) fn actions(
+    ui: &imgui::Ui,
+    open: &mut bool,
+    extra: &Extra,
+    vehicle_filter: &mut String,
+    actions: &mut Vec<Action>,
+) {
     if !*open {
         return;
     }
@@ -63,7 +75,11 @@ pub(super) fn actions(ui: &imgui::Ui, open: &mut bool, extra: &Extra, vehicle_fi
             ui.separator();
             let f = vehicle_filter.to_ascii_lowercase();
             ui.child_window("##vehicle_actions").build(|| {
-                for a in v.actions.iter().filter(|a| f.is_empty() || a.to_ascii_lowercase().contains(&f)) {
+                for a in v
+                    .actions
+                    .iter()
+                    .filter(|a| f.is_empty() || a.to_ascii_lowercase().contains(&f))
+                {
                     if ui.button(a) {
                         actions.push(Action::Vehicle(a.clone()));
                     }

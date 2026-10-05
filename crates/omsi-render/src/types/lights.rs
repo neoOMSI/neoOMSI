@@ -33,7 +33,9 @@ impl PointLight {
     /// and casts no shadow of its own - it is not worth a shadow map or an occluder walk
     /// that would start over each metre the bus moves.
     pub fn is_screen(&self) -> bool {
-        self.mode == LightMode::Enhanced && self.cone == SCREEN_CONE && self.direction.length_squared() > 1e-6
+        self.mode == LightMode::Enhanced
+            && self.cone == SCREEN_CONE
+            && self.direction.length_squared() > 1e-6
     }
 }
 
@@ -123,11 +125,11 @@ pub(crate) fn drawn_by(l: &PointLight, enhanced: bool) -> bool {
     l.radius > 0.0
         && l.intensity > 0.0
         && l.mode
-        != if enhanced {
-        LightMode::Vanilla
-    } else {
-        LightMode::Enhanced
-    }
+            != if enhanced {
+                LightMode::Vanilla
+            } else {
+                LightMode::Enhanced
+            }
 }
 
 pub(crate) fn gpu_light(l: &PointLight, p: Vec3) -> GpuPointLight {

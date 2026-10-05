@@ -1002,9 +1002,9 @@ impl App {
                             | crate::game_lists::ListKind::Hofs
                             | crate::game_lists::ListKind::Spots
                     ) =>
-                    {
-                        self.close_game_menu()
-                    }
+                {
+                    self.close_game_menu()
+                }
                 None => self.menu_top = None,
             }
             return;
@@ -1393,11 +1393,7 @@ impl App {
             if let (Some(cam), Some(p)) = (self.camera.as_mut(), self.player.as_ref()) {
                 let h = (p.vehicle.heading as f32).to_radians();
                 cam.position = p.vehicle.position
-                    + glam::DVec3::new(
-                    -(h.sin() as f64) * 25.0,
-                    -(h.cos() as f64) * 25.0,
-                    30.0,
-                );
+                    + glam::DVec3::new(-(h.sin() as f64) * 25.0, -(h.cos() as f64) * 25.0, 30.0);
                 cam.yaw = p.vehicle.heading as f32;
                 cam.pitch = -45.0;
             }
@@ -1472,9 +1468,9 @@ impl App {
     pub(crate) fn menu_item_off(&self, k: usize) -> bool {
         self.chooser.is_none()
             && self
-            .game_menu_items()
-            .get(k)
-            .is_some_and(|m| self.menu_disabled_ids().contains(&m.0))
+                .game_menu_items()
+                .get(k)
+                .is_some_and(|m| self.menu_disabled_ids().contains(&m.0))
     }
 
     pub(crate) fn menu_step(&self, from: usize, n: usize, down: bool) -> usize {

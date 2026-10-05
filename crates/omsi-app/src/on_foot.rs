@@ -166,7 +166,11 @@ impl OnFoot {
 
     fn sanitize(&mut self) {
         if !self.pos.is_finite() {
-            self.pos = if self.safe.is_finite() { self.safe } else { DVec3::ZERO };
+            self.pos = if self.safe.is_finite() {
+                self.safe
+            } else {
+                DVec3::ZERO
+            };
             self.vel = DVec2::ZERO;
             self.lift = 0.0;
             self.vz = 0.0;
@@ -266,9 +270,9 @@ impl App {
                 .as_ref()
                 .map(|f| f.cam == FootCam::Free)
                 .unwrap_or(false) =>
-                {
-                    false
-                }
+            {
+                false
+            }
             KeyCode::KeyG => {
                 if pressed && !repeat {
                     self.use_seat();
@@ -295,7 +299,11 @@ impl App {
     }
 
     pub(crate) fn tick_on_foot(&mut self, dt: f32) {
-        let dt = if dt.is_finite() { dt.clamp(0.0, MAX_DT) } else { 0.0 };
+        let dt = if dt.is_finite() {
+            dt.clamp(0.0, MAX_DT)
+        } else {
+            0.0
+        };
         if self.foot_arrive() {
             return;
         }
@@ -379,9 +387,20 @@ impl App {
         let exempt = bus.exempt;
         let solids = |at: DVec2, feet: f64| self.foot_solids(at, feet, exempt);
         let ground = |p: DVec2, feet: f64, reach: f64| {
-            if exempt.is_some() { None } else { self.foot_ground(p, feet, reach) }
+            if exempt.is_some() {
+                None
+            } else {
+                self.foot_ground(p, feet, reach)
+            }
         };
-        collision::move_body(f, dt, &MoveEnv { solids: &solids, ground: &ground });
+        collision::move_body(
+            f,
+            dt,
+            &MoveEnv {
+                solids: &solids,
+                ground: &ground,
+            },
+        );
         if let Some(path) = bus.door {
             cabin::door_lane(f, path, dt);
         }

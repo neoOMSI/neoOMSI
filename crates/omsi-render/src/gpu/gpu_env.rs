@@ -2,7 +2,8 @@ use crate::*;
 
 pub static ADAPTER_TEXTURE_MB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-pub(crate) static GL_BACKEND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) static GL_BACKEND: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 pub fn gl_backend() -> bool {
     GL_BACKEND.load(std::sync::atomic::Ordering::Relaxed)

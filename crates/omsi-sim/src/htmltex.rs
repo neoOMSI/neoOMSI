@@ -95,7 +95,7 @@ pub trait HtmlRenderer: Send {
 }
 
 pub type BackendFactory =
-fn(width: u32, height: u32, html: &str, api: PageApi) -> Box<dyn HtmlRenderer>;
+    fn(width: u32, height: u32, html: &str, api: PageApi) -> Box<dyn HtmlRenderer>;
 
 static BACKEND: OnceLock<BackendFactory> = OnceLock::new();
 

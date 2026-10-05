@@ -89,7 +89,8 @@ impl Ui {
 
     pub(super) fn ensure_logo(&mut self) {
         if self.loading_logo.is_none() {
-            static LOGO: &[u8] = include_bytes!("../../../../assets/logos/wordmark-gradient-dark.png");
+            static LOGO: &[u8] =
+                include_bytes!("../../../../assets/logos/wordmark-gradient-dark.png");
             self.loading_logo = Some(image::load_from_memory(LOGO).ok().map(|i| {
                 let mut i = i.into_rgba8();
                 let (w, h) = i.dimensions();

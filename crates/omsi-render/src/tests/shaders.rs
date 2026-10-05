@@ -7,12 +7,27 @@ fn shaders_validate_and_match_the_uniforms() {
         ("scene", scene_shader_source(false)),
         ("sky", sky_shader_source()),
         ("corona", corona_shader_source()),
-        ("post", include_str!("../../shaders/post/post.wgsl").to_string()),
-        ("ssao", include_str!("../../shaders/post/ssao.wgsl").to_string()),
+        (
+            "post",
+            include_str!("../../shaders/post/post.wgsl").to_string(),
+        ),
+        (
+            "ssao",
+            include_str!("../../shaders/post/ssao.wgsl").to_string(),
+        ),
         ("puddles", puddles::shader_source()),
-        ("upscale", include_str!("../../shaders/post/upscale.wgsl").to_string()),
-        ("mip", include_str!("../../shaders/post/mip.wgsl").to_string()),
-        ("xr_ui", include_str!("../../shaders/ui/xr_ui.wgsl").to_string()),
+        (
+            "upscale",
+            include_str!("../../shaders/post/upscale.wgsl").to_string(),
+        ),
+        (
+            "mip",
+            include_str!("../../shaders/post/mip.wgsl").to_string(),
+        ),
+        (
+            "xr_ui",
+            include_str!("../../shaders/ui/xr_ui.wgsl").to_string(),
+        ),
     ];
     let sizes: &[(&str, usize)] = &[
         ("Enhanced", std::mem::size_of::<EnhancedUniform>()),
@@ -34,15 +49,15 @@ fn shaders_validate_and_match_the_uniforms() {
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         )
-            .validate(&module)
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         let (module, info) = naga::back::pipeline_constants::process_overrides(
             &module,
             &info,
             None,
             &Default::default(),
         )
-            .unwrap_or_else(|e| panic!("{name}: overrides: {e:?}"));
+        .unwrap_or_else(|e| panic!("{name}: overrides: {e:?}"));
         let (module, info) = (module.into_owned(), info.into_owned());
         #[cfg(target_os = "macos")]
         let options = naga::back::msl::Options {
@@ -56,7 +71,7 @@ fn shaders_validate_and_match_the_uniforms() {
             &options,
             &naga::back::msl::PipelineOptions::default(),
         )
-            .unwrap_or_else(|e| panic!("{name}: Metal: {e:?}"));
+        .unwrap_or_else(|e| panic!("{name}: Metal: {e:?}"));
         for entry in &module.entry_points {
             let pipeline = naga::back::spv::PipelineOptions {
                 shader_stage: entry.stage,
@@ -79,11 +94,7 @@ fn shaders_validate_and_match_the_uniforms() {
                     } else {
                         std::mem::offset_of!(CameraUniform, spot_vp)
                     };
-                    assert_eq!(
-                        layouter[h].size as usize,
-                        prefix,
-                        "{name}: Camera prefix"
-                    );
+                    assert_eq!(layouter[h].size as usize, prefix, "{name}: Camera prefix");
                 }
                 continue;
             }
@@ -105,21 +116,21 @@ fn the_scene_shader_translates_to_glsl() {
     use wgpu::naga;
     use wgpu::naga::back::glsl;
     let src = scene_shader_source(true);
-    let module = naga::front::wgsl::parse_str(&src)
-        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+    let module =
+        naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     )
-        .validate(&module)
-        .expect("validate");
+    .validate(&module)
+    .expect("validate");
     let (module, info) = naga::back::pipeline_constants::process_overrides(
         &module,
         &info,
         None,
         &Default::default(),
     )
-        .expect("overrides");
+    .expect("overrides");
     for version in [
         glsl::Version::Embedded {
             version: 310,
@@ -146,8 +157,8 @@ fn the_scene_shader_translates_to_glsl() {
                 &pipeline,
                 Default::default(),
             )
-                .and_then(|mut w| w.write())
-                .unwrap_or_else(|e| panic!("{version:?} {}: {e:?}", entry.name));
+            .and_then(|mut w| w.write())
+            .unwrap_or_else(|e| panic!("{version:?} {}: {e:?}", entry.name));
             assert!(
                 !out.contains("invariant gl_FragCoord"),
                 "{version:?} {}",

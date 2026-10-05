@@ -35,7 +35,11 @@ impl Renderer {
         let m =
             (Mat4::from_translation((i.origin - ro).as_vec3()) * i.transform).to_cols_array_2d();
         // Visibility plus the cabin marker for the shader.
-        let vis = if i.visible { 1.0 + i.cabin as u8 as f32 } else { 0.0 };
+        let vis = if i.visible {
+            1.0 + i.cabin as u8 as f32
+        } else {
+            0.0
+        };
         for (k, a) in i.slot_alpha.iter().enumerate() {
             mats.push(m);
             let uv = i.slot_uv.get(k).copied().unwrap_or([0.0; 2]);
@@ -150,7 +154,8 @@ impl Renderer {
                             &scene.cpu_params[start as usize * 2..end as usize * 2],
                         );
                         let (mo, po) = (start as u64 * 64, start as u64 * 32);
-                        if mo + mb.len() as u64 <= buf.size() && po + pb.len() as u64 <= params_buf.size()
+                        if mo + mb.len() as u64 <= buf.size()
+                            && po + pb.len() as u64 <= params_buf.size()
                         {
                             self.queue.write_buffer(buf, mo, mb);
                             self.queue.write_buffer(params_buf, po, pb);
@@ -191,7 +196,9 @@ impl Renderer {
             &scene.params_buf,
             &scene.camera_bind_group,
         ) {
-            if buf.size() as usize >= bytes.len() && params_buf.size() as usize >= cpu_param_bytes.len() {
+            if buf.size() as usize >= bytes.len()
+                && params_buf.size() as usize >= cpu_param_bytes.len()
+            {
                 self.queue.write_buffer(buf, 0, bytes);
                 self.queue.write_buffer(params_buf, 0, cpu_param_bytes);
                 scene.dirty = false;

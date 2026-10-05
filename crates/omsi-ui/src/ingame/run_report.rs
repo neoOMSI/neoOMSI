@@ -186,8 +186,8 @@ impl Ui {
                 "Actual",
                 "Difference",
             ]
-                .iter()
-                .enumerate()
+            .iter()
+            .enumerate()
             {
                 self.report_label(
                     r,

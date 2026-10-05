@@ -137,7 +137,7 @@ impl Renderer {
                     Vec4::new(1.0, -1.0, 0.0, 1.0),
                     Vec4::new(-1.0, -1.0, 0.0, 1.0),
                 ]
-                    .map(|p| transforms[eye] * p);
+                .map(|p| transforms[eye] * p);
                 if let Some(item) = prepare(id, quad) {
                     prepared[eye].push(item);
                 }

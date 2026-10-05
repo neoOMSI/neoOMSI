@@ -1,6 +1,6 @@
 use super::collision::push_out;
-use super::{OnFoot, RADIUS};
 use super::vehicle::cabin_local;
+use super::{OnFoot, RADIUS};
 use crate::App;
 use glam::{DVec2, DVec3};
 
@@ -18,7 +18,11 @@ pub(super) struct BusStep {
 
 impl BusStep {
     fn none() -> BusStep {
-        BusStep { inside_moved: false, exempt: None, door: None }
+        BusStep {
+            inside_moved: false,
+            exempt: None,
+            door: None,
+        }
     }
 }
 
@@ -34,7 +38,10 @@ impl App {
                 .map(|x| x.1)
                 .unwrap_or(0.0)
                 .to_radians();
-            let (bf, br) = (DVec2::new(hd.sin(), hd.cos()), DVec2::new(hd.cos(), -hd.sin()));
+            let (bf, br) = (
+                DVec2::new(hd.sin(), hd.cos()),
+                DVec2::new(hd.cos(), -hd.sin()),
+            );
             let step = glam::Vec2::new((f.vel.dot(br) * dt) as f32, (f.vel.dot(bf) * dt) as f32);
             let grace = f.door_grace > 0.0;
             if let Some((l, w)) = h.cabin_walk(bus, local, step, grace) {
@@ -50,7 +57,9 @@ impl App {
                 let mut leaves = false;
                 let mut near_open = false;
                 for (inside, outside, _, open) in h.cabin_doors(bus) {
-                    if (inside.z - l.z).abs() > 0.8 || (inside.truncate() - l.truncate()).length() >= 0.6 {
+                    if (inside.z - l.z).abs() > 0.8
+                        || (inside.truncate() - l.truncate()).length() >= 0.6
+                    {
                         continue;
                     }
                     near_open |= open;
@@ -74,10 +83,24 @@ impl App {
             }
             f.lift = 0.0;
             f.vz = 0.0;
-            return BusStep { inside_moved: true, exempt: None, door: None };
+            return BusStep {
+                inside_moved: true,
+                exempt: None,
+                door: None,
+            };
         }
         let mut out = BusStep::none();
-        let mut best: Option<(f64, crate::humans::BusId, glam::Vec3, glam::DVec3, DVec2, DVec2, f64, f64, f64)> = None;
+        let mut best: Option<(
+            f64,
+            crate::humans::BusId,
+            glam::Vec3,
+            glam::DVec3,
+            DVec2,
+            DVec2,
+            f64,
+            f64,
+            f64,
+        )> = None;
         let mut best_open = false;
         for bus in h.bus_ids_near(f.pos, 25.0) {
             for (inside, outside, _, open) in h.cabin_doors(bus) {

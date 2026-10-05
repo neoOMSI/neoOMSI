@@ -50,9 +50,9 @@ pub(crate) fn sky_input_differs(a: &atmosphere::SkyInput, b: &atmosphere::SkyInp
         || !near(a.ground_albedo, b.ground_albedo, 0.01)
         || !near(a.night_light, b.night_light, 0.01)
         || a.tint
-        .iter()
-        .zip(&b.tint)
-        .any(|(x, y)| (*x - *y).abs().max_element() > 0.01)
+            .iter()
+            .zip(&b.tint)
+            .any(|(x, y)| (*x - *y).abs().max_element() > 0.01)
 }
 
 pub(crate) fn half_to_f32(b: u16) -> f32 {
@@ -72,7 +72,9 @@ pub(crate) fn origin_key(origin: DVec3) -> [u64; 3] {
         .map(|v| if v == 0.0 { 0 } else { v.to_bits() })
 }
 
-pub(crate) fn nearest_by_origin(items: impl IntoIterator<Item = (DVec3, f32)>) -> HashMap<[u64; 3], f32> {
+pub(crate) fn nearest_by_origin(
+    items: impl IntoIterator<Item = (DVec3, f32)>,
+) -> HashMap<[u64; 3], f32> {
     let mut out: HashMap<[u64; 3], f32> = HashMap::new();
     for (origin, d) in items {
         if origin.is_nan() {
@@ -85,7 +87,10 @@ pub(crate) fn nearest_by_origin(items: impl IntoIterator<Item = (DVec3, f32)>) -
     out
 }
 
-pub(crate) fn in_scope<'s, R>(pool: Option<&rayon::ThreadPool>, op: impl FnOnce(&rayon::Scope<'s>) -> R) -> R {
+pub(crate) fn in_scope<'s, R>(
+    pool: Option<&rayon::ThreadPool>,
+    op: impl FnOnce(&rayon::Scope<'s>) -> R,
+) -> R {
     match pool {
         Some(p) => p.in_place_scope(op),
         None => rayon::in_place_scope(op),
@@ -123,7 +128,10 @@ pub(crate) fn run_parts<T: Send>(
     out.into_iter().map(|o| o.expect("render part")).collect()
 }
 
-pub(crate) fn point_in_vehicle_box(p: DVec3, (origin, heading, bb): &(DVec3, f64, [f32; 6])) -> bool {
+pub(crate) fn point_in_vehicle_box(
+    p: DVec3,
+    (origin, heading, bb): &(DVec3, f64, [f32; 6]),
+) -> bool {
     let d = (p - *origin).as_vec3();
     let (sh, ch) = (*heading as f32).to_radians().sin_cos();
     let x = d.x * ch - d.y * sh - bb[3];

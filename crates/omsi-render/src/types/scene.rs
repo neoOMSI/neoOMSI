@@ -194,10 +194,10 @@ impl Scene {
             &self.corona_buf,
             &self.draw_buf,
         ]
-            .iter()
-            .filter_map(|b| b.as_ref())
-            .map(|b| b.size())
-            .sum();
+        .iter()
+        .filter_map(|b| b.as_ref())
+        .map(|b| b.size())
+        .sum();
         (tex, mesh, other)
     }
 }

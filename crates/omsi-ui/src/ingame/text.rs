@@ -122,7 +122,12 @@ pub(super) fn font_for(roboto: &FontVec, c: char) -> &FontVec {
 }
 
 /// `text` as straight-alpha RGBA: the glyphs in `color` over a dark outline.
-pub(super) fn render_text(font: &FontVec, text: &str, px: f32, color: [u8; 4]) -> omsi_texture::Image {
+pub(super) fn render_text(
+    font: &FontVec,
+    text: &str,
+    px: f32,
+    color: [u8; 4],
+) -> omsi_texture::Image {
     let f = font.as_scaled(PxScale::from(px));
     let stroke = outline_px(px);
     let pad = stroke.ceil() as i32 + 1;

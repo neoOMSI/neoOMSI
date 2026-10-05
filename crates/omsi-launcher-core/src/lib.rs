@@ -344,8 +344,8 @@ fn mount_archives(content: &Path) {
         .filter(|p| {
             p.is_file()
                 && p.extension()
-                .map(|e| e.eq_ignore_ascii_case("zip"))
-                .unwrap_or(false)
+                    .map(|e| e.eq_ignore_ascii_case("zip"))
+                    .unwrap_or(false)
         })
         .collect();
     zips.sort();
@@ -573,13 +573,13 @@ fn inbox_entries(content: &Path) -> Vec<PathBuf> {
                 || name.eq_ignore_ascii_case(install::UNINSTALLED)
                 || name.eq_ignore_ascii_case("README.txt"))
                 && (p.is_dir()
-                || p.extension()
-                .map(|x| {
-                    ["zip", "7z", "rar"]
-                        .iter()
-                        .any(|ext| x.eq_ignore_ascii_case(ext))
-                })
-                .unwrap_or(false))
+                    || p.extension()
+                        .map(|x| {
+                            ["zip", "7z", "rar"]
+                                .iter()
+                                .any(|ext| x.eq_ignore_ascii_case(ext))
+                        })
+                        .unwrap_or(false))
         })
         .collect();
     v.sort();
@@ -1909,10 +1909,10 @@ pub fn ibis_info(bus: &str, hof_name: &str, line: &str) -> Result<IbisInfo> {
     for t in &hof.info_trips {
         let matches = t.line.trim().eq_ignore_ascii_case(line.trim())
             || (!line_digits.is_empty()
-            && t.code
-            .trim_start_matches('0')
-            .starts_with(line_digits.trim_start_matches('0'))
-            && t.code.len() >= line_digits.len());
+                && t.code
+                    .trim_start_matches('0')
+                    .starts_with(line_digits.trim_start_matches('0'))
+                && t.code.len() >= line_digits.len());
         if !matches {
             continue;
         }
@@ -3487,12 +3487,12 @@ mod save_slot_tests {
             dir.join("Slot 1.osn"),
             utf16("\r\n[name]\r\nSlot 1: SD202, 09:00\r\n[description]\r\nx\r\n"),
         )
-            .unwrap();
+        .unwrap();
         std::fs::write(
             dir.join("Slot 2.osn"),
             utf16("[name]\r\nSlot 2: NG272, 10:30\r\n"),
         )
-            .unwrap();
+        .unwrap();
         std::fs::write(dir.join("notes.txt"), "not a situation").unwrap();
         let mut names: Vec<String> = save_slots(&dir).into_iter().map(|s| s.name).collect();
         names.sort();
@@ -3962,7 +3962,7 @@ mod tests {
             &model,
             "[mesh]\r\n..\\..\\..\\Sceneryobjects\\X\\a.o3d\r\n..\\..\\..\\Other\\b.o3d\r\n",
         )
-            .unwrap();
+        .unwrap();
         let packs = super::missing_packs_of(&model);
         omsi_cfg::remove_content_root(&root);
         let _ = std::fs::remove_dir_all(&root);
@@ -4119,7 +4119,7 @@ mod tests {
                 ..d
             },
         )
-            .unwrap();
+        .unwrap();
         assert!(!alone.iter().any(|x| x == "--whole-tour"));
     }
 
@@ -4128,7 +4128,7 @@ mod tests {
         let old: Duty = serde_json::from_str(
             r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00"}"#,
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(old.plate, None);
         let typed: Duty = serde_json::from_str(r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00","plate":"B-AB 1234"}"#).unwrap();
         assert_eq!(typed.plate.as_deref(), Some("B-AB 1234"));
@@ -4140,7 +4140,7 @@ mod tests {
         let d: Duty = serde_json::from_str(
             r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00","number":"4711"}"#,
         )
-            .unwrap();
+        .unwrap();
         let a = duty_args_from_root(Path::new("C:/OMSI 2"), &d).unwrap();
         assert!(
             a.windows(2).any(|w| w[0] == "--number" && w[1] == "4711"),

@@ -56,7 +56,13 @@ pub(crate) fn spot_view_proj(pos: Vec3, dir: Vec3, fov: f32, near: f32, far: f32
 }
 
 impl Renderer {
-    pub(crate) fn plan_spot_shadows(&self, scene: &Scene, cam: DVec3, enhanced: bool, plan: bool) -> Vec<u32> {
+    pub(crate) fn plan_spot_shadows(
+        &self,
+        scene: &Scene,
+        cam: DVec3,
+        enhanced: bool,
+        plan: bool,
+    ) -> Vec<u32> {
         let mut out = vec![0u32; scene.lights.len()];
         let mut st = self.spot_state.borrow_mut();
         let mut cands: Vec<(f32, usize, SpotPose)> = Vec::new();
@@ -138,7 +144,8 @@ impl Renderer {
                 let prio = match slots[k].drawn {
                     None => 1000.0 + *score,
                     Some(d) => {
-                        let moved = (d.pos - pose.pos).length() > 0.04 || d.dir.dot(pose.dir) < 0.99999;
+                        let moved =
+                            (d.pos - pose.pos).length() > 0.04 || d.dir.dot(pose.dir) < 0.99999;
                         if moved {
                             10.0 + *score
                         } else if slots[k].age >= SPOT_REDRAW_AGE {

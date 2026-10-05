@@ -3,7 +3,6 @@
 use super::*;
 
 impl TextCache {
-    
     pub(super) fn vr_pointer(&mut self, r: &Renderer, scene: &mut Scene) -> TextureId {
         let key = ("\u{0}vr_pointer_dot".to_string(), 0, [0, 0, 0, 0]);
         if let Some(label) = self.labels.get_mut(&key) {

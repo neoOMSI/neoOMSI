@@ -50,8 +50,8 @@ impl App {
             && event.text.as_deref() == Some("/")
             && event.physical_key != PhysicalKey::Code(KeyCode::NumpadDivide)
             && self.game_keys.iter().any(|b| {
-            b.action.eq_ignore_ascii_case("chat_open") && b.scan_code == 53 && b.chord() == 0
-        })
+                b.action.eq_ignore_ascii_case("chat_open") && b.scan_code == 53 && b.chord() == 0
+            })
             && self.lan.is_some()
             && !lan::chat_open(&self.remotes)
         {

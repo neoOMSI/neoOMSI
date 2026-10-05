@@ -577,7 +577,7 @@ pub(crate) fn clouds_of(w: &omsi_content::weather::Weather, drift: [f32; 2]) -> 
     } else {
         0.5
     };
-    
+
     let seed = cloud_seed();
     (density, [drift[0] + seed[0], drift[1] + seed[1]])
 }

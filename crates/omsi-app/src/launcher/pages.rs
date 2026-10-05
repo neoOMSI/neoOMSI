@@ -151,11 +151,11 @@ pub fn profile(l: &mut Launcher, area: Rect) {
     let half = (inner.w - GAP) * 0.5;
     if !names.is_empty()
         && l.ui.select(
-        "profile",
-        Rect::new(inner.x, inner.y, half, ROW),
-        &mut sel,
-        &names,
-    )
+            "profile",
+            Rect::new(inner.x, inner.y, half, ROW),
+            &mut sel,
+            &names,
+        )
     {
         l.state.config.profile = names[sel].clone();
         let _ = core::save_config(&l.state.config);
@@ -540,10 +540,10 @@ fn sel_setting(
     let mut sel = values.iter().position(|v| {
         *v == cur
             || v.parse::<f64>()
-            .ok()
-            .zip(cur.parse::<f64>().ok())
-            .map(|(a, b)| (a - b).abs() < 1e-6)
-            .unwrap_or(false)
+                .ok()
+                .zip(cur.parse::<f64>().ok())
+                .map(|(a, b)| (a - b).abs() < 1e-6)
+                .unwrap_or(false)
     });
     if sel.is_none() && !cur.is_empty() {
         // a value written by hand gets an entry of its own
@@ -944,28 +944,28 @@ fn graphics_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
                         let cur = get(s, k);
                         cur == v
                             || cur
-                            .as_f64()
-                            .zip(v.as_f64())
-                            .map(|(a, b)| (a - b).abs() < 1e-6)
-                            .unwrap_or(false)
+                                .as_f64()
+                                .zip(v.as_f64())
+                                .map(|(a, b)| (a - b).abs() < 1e-6)
+                                .unwrap_or(false)
                             || cur
-                            .as_str()
-                            .zip(v.as_f64())
-                            .map(|(a, b)| {
-                                a.parse::<f64>()
-                                    .map(|a| (a - b).abs() < 1e-6)
-                                    .unwrap_or(false)
-                            })
-                            .unwrap_or(false)
+                                .as_str()
+                                .zip(v.as_f64())
+                                .map(|(a, b)| {
+                                    a.parse::<f64>()
+                                        .map(|a| (a - b).abs() < 1e-6)
+                                        .unwrap_or(false)
+                                })
+                                .unwrap_or(false)
                             || cur
-                            .as_f64()
-                            .zip(v.as_str())
-                            .map(|(a, b)| {
-                                b.parse::<f64>()
-                                    .map(|b| (a - b).abs() < 1e-6)
-                                    .unwrap_or(false)
-                            })
-                            .unwrap_or(false)
+                                .as_f64()
+                                .zip(v.as_str())
+                                .map(|(a, b)| {
+                                    b.parse::<f64>()
+                                        .map(|b| (a - b).abs() < 1e-6)
+                                        .unwrap_or(false)
+                                })
+                                .unwrap_or(false)
                     })
                 })
                 .unwrap_or(false)
@@ -1116,7 +1116,16 @@ fn graphics_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
             *dirty = 0.3;
         }
         let mut atmo = get(s, "atmosphere_brightness").as_f64().unwrap_or(1.0) as f32;
-        if ui.slider("s-atmo", c.row(), &mut atmo, 0.0, 2.0, 0.05, "Atmosphere brightness", &|v| format!("{v:.2}")) {
+        if ui.slider(
+            "s-atmo",
+            c.row(),
+            &mut atmo,
+            0.0,
+            2.0,
+            0.05,
+            "Atmosphere brightness",
+            &|v| format!("{v:.2}"),
+        ) {
             s["atmosphere_brightness"] = json!((atmo / 0.05).round() * 0.05);
             *dirty = 0.3;
         }
@@ -2579,8 +2588,8 @@ pub fn controls(l: &mut Launcher, area: Rect) {
         ("Driving & the bus", "The bus's own keys", "vehicles"),
         ("The game", "Menus, views, pausing", "game"),
     ]
-        .iter()
-        .enumerate()
+    .iter()
+    .enumerate()
     {
         let r = Rect::new(
             body.x + sec as f32 * (half + GAP * 2.0),
@@ -2649,8 +2658,8 @@ pub fn controls(l: &mut Launcher, area: Rect) {
             .map(|(i, a, s, m)| {
                 let clash = *s != 0
                     && list
-                    .iter()
-                    .any(|(j, _, s2, m2)| j != i && s2 == s && m2 == m);
+                        .iter()
+                        .any(|(j, _, s2, m2)| j != i && s2 == s && m2 == m);
                 (
                     *i,
                     action_text(names, a),
@@ -2676,8 +2685,8 @@ pub fn controls(l: &mut Launcher, area: Rect) {
         if shown.is_empty()
             && new_action.len() > 1
             && new_action
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
         {
             if l.ui.button(
                 &format!("kb-add-{sec}"),
@@ -2907,13 +2916,13 @@ fn game_controllers(l: &mut Launcher, body: Rect) {
     let mut sel = pv.selected;
     let several = devices.len()
         + connected
-        .iter()
-        .filter(|c| {
-            !devices
-                .iter()
-                .any(|d| crate::controllers::names_match(&d.name, &c.name))
-        })
-        .count()
+            .iter()
+            .filter(|c| {
+                !devices
+                    .iter()
+                    .any(|d| crate::controllers::names_match(&d.name, &c.name))
+            })
+            .count()
         > 1;
     let mut assign = pv.assign && several;
     let list_r = Rect::new(inner.x - 6.0, inner.y, inner.w + 12.0, inner.h - 58.0);
@@ -3401,11 +3410,11 @@ fn game_controllers(l: &mut Launcher, body: Rect) {
             let mut inv = d.axes[a].map(|x| x.1).unwrap_or(false);
             if d.axes[a].is_some()
                 && ui.toggle(
-                &format!("pad-inv-{a}"),
-                Rect::new(bar.right() + GAP + sel_w + GAP, r.y, inv_w, r.h),
-                &mut inv,
-                "Reversed",
-            )
+                    &format!("pad-inv-{a}"),
+                    Rect::new(bar.right() + GAP + sel_w + GAP, r.y, inv_w, r.h),
+                    &mut inv,
+                    "Reversed",
+                )
             {
                 if let Some(x) = d.axes[a].as_mut() {
                     x.1 = inv;
@@ -3976,12 +3985,12 @@ fn wizard(
     }
     let skip = w.step >= 2
         && ui.button(
-        "wiz-skip",
-        Rect::new(r.right() - 260.0, by, 110.0, 36.0),
-        "Skip",
-        None,
-        ButtonKind::Normal,
-    );
+            "wiz-skip",
+            Rect::new(r.right() - 260.0, by, 110.0, 36.0),
+            "Skip",
+            None,
+            ButtonKind::Normal,
+        );
     let next = ui.button(
         "wiz-next",
         Rect::new(r.right() - 140.0, by, 140.0, 36.0),
@@ -4036,8 +4045,8 @@ fn wizard(
     let axes = wizard_result(&w.rest, &w.at);
     if feedback
         && axes
-        .iter()
-        .any(|a| matches!(a, Some((crate::controllers::Func::Steering, _))))
+            .iter()
+            .any(|a| matches!(a, Some((crate::controllers::Func::Steering, _))))
     {
         return None;
     }
@@ -4158,12 +4167,12 @@ fn feedback_setup(
     }
     if !*active
         && ui.button(
-        "wiz-ff-finish",
-        Rect::new(r.right() - 140.0, by, 140.0, 36.0),
-        "Finish",
-        Some("check"),
-        ButtonKind::Primary,
-    )
+            "wiz-ff-finish",
+            Rect::new(r.right() - 140.0, by, 140.0, 36.0),
+            "Finish",
+            Some("check"),
+            ButtonKind::Primary,
+        )
     {
         d.axes = axes;
         d.ff_invert = Some(w.ff_choice.or(d.ff_invert).unwrap_or(global_invert));

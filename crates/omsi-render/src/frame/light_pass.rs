@@ -9,7 +9,8 @@ impl Renderer {
         plan_spots: bool,
     ) -> [f32; 4] {
         let ro = scene.render_origin;
-        let spot_slots = self.plan_spot_shadows(scene, ro + cam_rel.as_dvec3(), enhanced, plan_spots);
+        let spot_slots =
+            self.plan_spot_shadows(scene, ro + cam_rel.as_dvec3(), enhanced, plan_spots);
         let side = LIGHT_GRID_SIDE;
         let half = side as f32 * LIGHT_CELL * 0.5;
         let origin = [
@@ -38,7 +39,9 @@ impl Renderer {
             let idx = gpu_lights.len() as u32;
             gpu_lights.push(gpu_light(l, p));
             gpu_lights[idx as usize].occ[2] = spot_slots[li] as f32;
-            if l.occ_count > 0 && (l.occ_first as usize + l.occ_count as usize) <= scene.occluders.len() {
+            if l.occ_count > 0
+                && (l.occ_first as usize + l.occ_count as usize) <= scene.occluders.len()
+            {
                 occ_users.push((idx as usize, l.occ_first));
                 gpu_lights[idx as usize].occ[1] = l.occ_count as f32;
             }
