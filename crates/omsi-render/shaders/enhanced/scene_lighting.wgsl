@@ -514,9 +514,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         // the pane instead of leaving a flat pale surface at normal incidence.
         rough = 0.04;
         // the pane's [matl_envmap] factor says how much it mirrors (its alpha is its
-        // transparency, never a mask): from glass's own 4 % up to 8 % for a factor of 1.
-        // The old 12 % cap made an AI bus viewed from outside look like a pale mirror next
-        // to its unreflective matrix surround, especially in bright streets.
+        // transparency, never a mask): 4 % to 8 % for a factor of 1.
         f0 = vec3<f32>(clamp(0.04 + 0.02 * min(material.params2.y, 1.0), 0.04, 0.06));
     } else if (reflective_env) {
         // Paint reflects its few per cent through a smooth clear coat; much more than a few
@@ -669,9 +667,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
             let a = max(rough * rough, 0.012);
             let h = normalize(s + v);
             let spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(f0, dot(v, h));
-            // OMSI's window materials carry their tint and any authored environment map;
-            // they are not polished paint. A full physical sun highlight made an AI bus's
-            // windscreen flare into a large white disc and obscured the street behind it.
+            // Window highlights are weaker than polished paint.
             direct = e_sun * nl * (sf.albedo / PI * (vec3<f32>(1.0) - f_schlick(f0, nl)) + spec * select(1.0, 0.12, glass));
         }
     }
@@ -693,11 +689,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     let fr = f_schlick(f0, nv);
     // inside the player's vehicle the light comes in through the windows and off the
     // cabin's own walls: less of it, and neither as blue nor as directional as the sky's
-    // `weather_outside_n` can identify the player's cabin from the camera box, but a
-    // traffic vehicle has no such box in the uniform.  Its model already tells us which
-    // meshes its `[interiorlight]`s illuminate; carry that static cabin marker per
-    // instance so its daytime seats, driver and fittings receive the same indirect cabin
-    // light rather than reading as an unlit outdoor silhouette behind clear glass.
+    // AI cabin meshes need indirect cabin light too.
     let cabin_mesh = in.params.y > 1.5;
     let in_cab = max(1.0 - outside, select(0.0, 1.0, cabin_mesh));
     // The cab's light is one even ambient already (cab_e below); the screen-space occlusion
@@ -784,18 +776,14 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // (a wet road mirrors the sky probe as well; and what reflects nothing keeps the light
     // the Fresnel term took off its ambient above - at a grazing angle that term is near 1,
     // and the far road and ground went dark with no reflection in its place, #374)
-    // A transparent slot alone is not a request for a bright sky reflection. OMSI only
-    // supplies that image where the material declares `[matl_envmap]`; treating every
-    // recognised pane as reflective put a milky mirror over AI windscreens and their
-    // transparent view of the street.
+    // Only declared envmaps receive a sky reflection.
     let reflects = reflective_env || pbr_reflects || is_water || wet_road > 0.0;
     var reflection = select(vec3<f32>(0.0), env * env_brdf(f0, rough, nv) * spec_occ * select(1.0, wet_road, !(reflective_env || glass || pbr_reflects || is_water)), reflects);
     if (!reflects) {
         ambient = e_amb * sf.albedo / PI;
     }
     if (glass) {
-        // Transparent bus panes need a readable outside reflection from the driver's
-        // viewpoint; opaque paint must never receive this boost.
+        // Keep glass reflections subtle.
         reflection = reflection * 0.20 * (1.0 - 0.85 * own_pane);
     }
     // --- the lamps, the cabin light and what glows by itself
@@ -897,8 +885,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         let cover = smoothstep(0.0, 0.05, alpha);
         let refl_rgb = reflection * pre * cover;
         let rl = dot(refl_rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-        // A pane passes most light. Do not add a Fresnel veil where OMSI supplied no
-        // environment map at all; that is transmission, not a reflected image.
+        // Reflection adds opacity only when an envmap is declared.
         let reflected_opacity = select(0.0, clamp(rl * 0.15 + fr.g, 0.0, 0.15), reflective_env);
         let a2 = clamp(alpha + (1.0 - alpha) * reflected_opacity * (1.0 - 0.85 * own_pane) * cover, alpha, 1.0);
         let c = (rgb * alpha + refl_rgb) / max(a2, 1e-3);
