@@ -541,7 +541,9 @@ impl LanWorld {
             for (pid, track) in &up.tracks {
                 // The original remains frozen until ACK. An upstream pose can overtake
                 // that ACK on UDP; drawing its copy now would duplicate the passenger.
-                if self.handovers.get(pid).is_some_and(|h| h.0 == *peer) { continue; }
+                if self.handovers.get(pid).is_some_and(|h| h.0 == *peer) {
+                    continue;
+                }
                 let Some((a, b, k)) = track.around(render_ms) else {
                     continue;
                 };
@@ -600,15 +602,23 @@ impl LanWorld {
         }
         // waiting people a client's bus takes
         for (peer, id, transfer, accepted) in lan.take_grant_acks() {
-            if self.handovers.get(&id).is_some_and(|h| h.0 == peer && h.1.transfer == transfer) {
+            if self
+                .handovers
+                .get(&id)
+                .is_some_and(|h| h.0 == peer && h.1.transfer == transfer)
+            {
                 self.handovers.remove(&id);
-                if let Some(h) = humans.as_deref_mut() { h.finish_handover(id, accepted); }
+                if let Some(h) = humans.as_deref_mut() {
+                    h.finish_handover(id, accepted);
+                }
             }
         }
         let connected: HashSet<u32> = lan.peers().map(|p| p.pose.id).collect();
         self.handovers.retain(|id, (peer, grant, retry)| {
             if !connected.contains(peer) {
-                if let Some(h) = humans.as_deref_mut() { h.finish_handover(*id, false); }
+                if let Some(h) = humans.as_deref_mut() {
+                    h.finish_handover(*id, false);
+                }
                 return false;
             }
             *retry -= dt;
@@ -623,18 +633,30 @@ impl LanWorld {
             for person in &ids {
                 match self.handovers.get(person) {
                     Some((owner, grant, _)) if *owner == id => granted.push(grant.clone()),
-                    Some(_) => {},
-                    None => if let Some(h) = humans.as_deref_mut() {
-                        for mut grant in h.hand_over(&[*person], crate::humans::BusId::Ai(crate::humans::remote_bus_id(id))) {
-                            self.next_transfer = self.next_transfer.checked_add(1).expect("passenger transfer counter overflow");
-                            grant.transfer = self.next_transfer;
-                            self.handovers.insert(*person, (id, grant.clone(), 0.5));
-                            granted.push(grant);
+                    Some(_) => {}
+                    None => {
+                        if let Some(h) = humans.as_deref_mut() {
+                            for mut grant in h.hand_over(
+                                &[*person],
+                                crate::humans::BusId::Ai(crate::humans::remote_bus_id(id)),
+                            ) {
+                                self.next_transfer = self
+                                    .next_transfer
+                                    .checked_add(1)
+                                    .expect("passenger transfer counter overflow");
+                                grant.transfer = self.next_transfer;
+                                self.handovers.insert(*person, (id, grant.clone(), 0.5));
+                                granted.push(grant);
+                            }
                         }
-                    },
+                    }
                 }
             }
-            let denied: Vec<u32> = ids.iter().copied().filter(|i| !granted.iter().any(|g| g.id == *i)).collect();
+            let denied: Vec<u32> = ids
+                .iter()
+                .copied()
+                .filter(|i| !granted.iter().any(|g| g.id == *i))
+                .collect();
             if !granted.is_empty() || !denied.is_empty() {
                 log::info!(
                     "LAN: player {id}'s bus takes {} waiting passenger(s) {:?}{}",
@@ -1064,7 +1086,9 @@ impl LanWorld {
                     .push(ms, c);
             }
             for p in f.people {
-                if m.accepted_grants.contains(&p.id) { continue; }
+                if m.accepted_grants.contains(&p.id) {
+                    continue;
+                }
                 m.people
                     .entry(p.id)
                     .or_insert_with(|| Track {

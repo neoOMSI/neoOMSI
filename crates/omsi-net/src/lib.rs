@@ -80,10 +80,10 @@
 pub mod addrs;
 pub mod bridge;
 pub mod official;
+pub mod passenger;
 pub mod tunnel;
 pub mod wire;
 pub mod world;
-pub mod passenger;
 pub mod ws;
 
 use std::cell::Cell;
@@ -2193,7 +2193,10 @@ impl LanSession {
         for grant in granted {
             match grant.encode() {
                 Some(text) => self.send(text.as_bytes(), to),
-                None => log::warn!("passenger {} has an invalid or oversized journey; cannot transfer it", grant.id),
+                None => log::warn!(
+                    "passenger {} has an invalid or oversized journey; cannot transfer it",
+                    grant.id
+                ),
             }
         }
         for chunk in denied.chunks(64).filter(|c| !c.is_empty()) {
@@ -2227,15 +2230,22 @@ impl LanSession {
         std::mem::take(&mut self.grants)
     }
 
-    pub fn take_denied(&mut self) -> Vec<u32> { std::mem::take(&mut self.denied) }
+    pub fn take_denied(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.denied)
+    }
 
     pub fn acknowledge_grant(&self, person: u32, transfer: u64, accepted: bool) {
         if let Some(host) = self.host {
-            self.send(format!("GACK|{}|{person}|{transfer}|{}", self.my_id, accepted as u8).as_bytes(), host);
+            self.send(
+                format!("GACK|{}|{person}|{transfer}|{}", self.my_id, accepted as u8).as_bytes(),
+                host,
+            );
         }
     }
 
-    pub fn take_grant_acks(&mut self) -> Vec<(u32, u32, u64, bool)> { std::mem::take(&mut self.grant_acks) }
+    pub fn take_grant_acks(&mut self) -> Vec<(u32, u32, u64, bool)> {
+        std::mem::take(&mut self.grant_acks)
+    }
 
     /// Bytes of the shared world sent so far (host).
     pub fn world_sent(&self) -> u64 {
@@ -2783,7 +2793,9 @@ impl LanSession {
                 }
                 ("GRANT", Role::Client) => {
                     if self.grants.len() < 256 {
-                        if let Some(grant) = passenger::PassengerGrant::decode(&parts) { self.grants.push(grant); }
+                        if let Some(grant) = passenger::PassengerGrant::decode(&parts) {
+                            self.grants.push(grant);
+                        }
                     }
                 }
                 ("DENY", Role::Client) => {
@@ -2793,15 +2805,31 @@ impl LanSession {
                         .take(64)
                         .collect();
                     if !list.is_empty() {
-                        self.denied.extend(list.into_iter().take(256usize.saturating_sub(self.denied.len())));
+                        self.denied.extend(
+                            list.into_iter()
+                                .take(256usize.saturating_sub(self.denied.len())),
+                        );
                     }
                 }
                 ("GACK", Role::Host) => {
-                    let Some(id) = field(&parts, 1).parse::<u32>().ok() else { continue };
-                    if self.checked_peer(id, from, MESSAGE_RATE, false).is_none() { continue; }
-                    if let (Ok(person), Ok(transfer), Some(accepted)) = (field(&parts, 2).parse::<u32>(), field(&parts, 3).parse::<u64>(),
-                        match field(&parts, 4) { "0" => Some(false), "1" => Some(true), _ => None }) {
-                        if self.grant_acks.len() < 256 { self.grant_acks.push((id, person, transfer, accepted)); }
+                    let Some(id) = field(&parts, 1).parse::<u32>().ok() else {
+                        continue;
+                    };
+                    if self.checked_peer(id, from, MESSAGE_RATE, false).is_none() {
+                        continue;
+                    }
+                    if let (Ok(person), Ok(transfer), Some(accepted)) = (
+                        field(&parts, 2).parse::<u32>(),
+                        field(&parts, 3).parse::<u64>(),
+                        match field(&parts, 4) {
+                            "0" => Some(false),
+                            "1" => Some(true),
+                            _ => None,
+                        },
+                    ) {
+                        if self.grant_acks.len() < 256 {
+                            self.grant_acks.push((id, person, transfer, accepted));
+                        }
                     }
                 }
                 ("SAY", Role::Client) => {

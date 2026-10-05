@@ -513,8 +513,11 @@ impl PathGraph {
             let mut u = usize::MAX;
             let mut best = f32::INFINITY;
             for i in 0..n {
-                if !done[i] && dist[i].is_finite()
-                    && (dist[i] < best || (dist[i] == best && (u == usize::MAX || hops[i] < hops[u]))) {
+                if !done[i]
+                    && dist[i].is_finite()
+                    && (dist[i] < best
+                        || (dist[i] == best && (u == usize::MAX || hops[i] < hops[u])))
+                {
                     best = dist[i];
                     u = i;
                 }

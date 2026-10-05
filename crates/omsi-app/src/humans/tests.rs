@@ -1,5 +1,294 @@
 use super::*;
 
+fn reset_test_human() -> (PathBuf, Arc<HumanType>) {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "omsi-reset-human-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("model.cfg"), "").unwrap();
+    std::fs::write(
+        root.join("person.hum"),
+        "[model]\nmodel.cfg\n[humangeom]\n0.18\n1.77\n[seatheight]\n0.82\n[links]\n0.09\n0\n0.92\n0.09\n-0.03\n0.53\n0.02\n1.17\n0.18\n-0.05\n1.43\n0.44\n-0.04\n1.41\n-0.02\n1.55\n0.69\n-0.03\n1.43\n0.9\n-0.03\n1.43\n",
+    )
+    .unwrap();
+    let ty = Arc::new(HumanType::load(&root.join("person.hum")).unwrap());
+    (root, ty)
+}
+
+fn reset_test_person(id: u32, ty: &Arc<HumanType>, state: State, place: Place) -> Person {
+    Person {
+        render: PersonRender {
+            level: 0,
+            blob: None,
+            blob_shown: false,
+            mirror_seat: None,
+            active_bones: None,
+            meshes: Vec::new(),
+            skins: Vec::new(),
+            skin_bones: None,
+            pose_changed: false,
+            lit: 0.0,
+            skinned: false,
+            since_posed: 0,
+            posed_at: (DVec3::ZERO, 0.0),
+            ankles: [Vec3::ZERO; 2],
+        },
+        id,
+        ty: ty.clone(),
+        variant: 0,
+        position: DVec3::ZERO,
+        heading: 0.0,
+        lheading: 0.0,
+        place,
+        vel: DVec2::ZERO,
+        pace: 1.1,
+        activity: Activity::Stand,
+        anim: OmsiAnim::default(),
+        pose: omsi_sim::human::Pose::new(id),
+        state,
+        t_state: 0.0,
+        interior: 0.0,
+        tilt: Mat4::IDENTITY,
+        age: 40.0,
+        stuck: 0.0,
+        ghost: 0.0,
+        car_wait: 0.0,
+        detour: 0.0,
+        detour_side: 0.0,
+        why: "",
+        puppet: None,
+        remote: false,
+    }
+}
+
+fn reset_test_stop(taken: bool) -> PaxStop {
+    PaxStop {
+        name: "Stop".into(),
+        alias: String::new(),
+        pos: DVec3::ZERO,
+        heading: 0.0,
+        gather: DVec3::ZERO,
+        spots: vec![WaitSpot {
+            pos: DVec3::ZERO,
+            face: 0.0,
+            height: 0.0,
+        }],
+        taken: vec![taken],
+        enter_max: 0.0,
+        enter_min: 0.0,
+        length: 0.0,
+        lane: None,
+        was_near: false,
+        near: false,
+        clock_ms: 0.0,
+        want: 0,
+        factor: 1.0,
+        buses: Vec::new(),
+        dests: Vec::new(),
+        lines: Vec::new(),
+    }
+}
+
+#[test]
+fn reset_population_keeps_player_riders_and_avatars_and_releases_other_reservations() {
+    let (root, ty) = reset_test_human();
+    let mut h = Humans::new(Path::new("/nonexistent"));
+
+    let mut rider = Pax::new(1.1);
+    rider.bus = Some(BusId::Player);
+    rider.inside = Some(BusId::Player);
+    rider.seat = Some(0);
+    h.people.push(reset_test_person(
+        1,
+        &ty,
+        State::Pax(Box::new(rider)),
+        Place::Bus(BusId::Player, Vec3::ZERO),
+    ));
+
+    h.people
+        .push(reset_test_person(2, &ty, State::Idle, Place::Ground));
+    h.avatars.avatars.insert(99, 2);
+    h.avatars.avatar_hidden.insert(2, true);
+
+    let mut approaching = Pax::new(1.1);
+    approaching.bus = Some(BusId::Player);
+    approaching.seat = Some(1);
+    h.people.push(reset_test_person(
+        3,
+        &ty,
+        State::Pax(Box::new(approaching)),
+        Place::Ground,
+    ));
+
+    h.buses.seats.insert(BusId::Player, vec![true, true]);
+    h.buses.seats.insert(BusId::Ai(7), vec![true]);
+    h.buses.odometer.insert(BusId::Player, 12.0);
+    h.buses.odometer.insert(BusId::Ai(7), 4.0);
+    h.buses
+        .pax_req
+        .insert(BusId::Player, (vec![true], vec![false]));
+    h.buses
+        .pax_req
+        .insert(BusId::Ai(7), (vec![false], vec![true]));
+    h.buses.last_door_open.insert(BusId::Player, 9.0);
+    h.buses.last_door_open.insert(BusId::Ai(7), 8.0);
+    h.buses
+        .bus_motion
+        .insert(BusId::Player, (1.0, 2.0, DVec2::ZERO));
+    h.buses
+        .bus_motion
+        .insert(BusId::Ai(7), (3.0, 4.0, DVec2::ZERO));
+    h.buses.served_stop = Some(5);
+    h.buses.ai_visits.insert(7, (5, 8.0));
+    h.buses.holds.push((7, 2.5));
+    h.buses.ai_requests.push((7, vec![true], vec![false]));
+    h.desk.desk_busy = Some(3);
+    h.desk.pardons = 2;
+    h.desk.pardon_max = 3;
+    h.request = Some(("Single".into(), 2.5));
+    h.paid = Some((5.0, 2.5));
+    h.change_due = Some(2.5);
+    h.stops.insert(5, reset_test_stop(false));
+    h.walking.started = true;
+    h.walking.stroll_timer = 0.75;
+    h.stop_targets = Some(HashMap::new());
+    h.stop_names = Some(HashMap::new());
+
+    h.reset_population();
+
+    assert_eq!(h.people.iter().map(|p| p.id).collect::<Vec<_>>(), [1, 2]);
+    assert!(h.avatars.avatar_hidden[&2]);
+    assert_eq!(h.buses.seats[&BusId::Player], [true, false]);
+    assert!(!h.buses.seats.contains_key(&BusId::Ai(7)));
+    assert_eq!(
+        h.buses.odometer.keys().copied().collect::<Vec<_>>(),
+        [BusId::Player]
+    );
+    assert_eq!(
+        h.buses.pax_req.keys().copied().collect::<Vec<_>>(),
+        [BusId::Player]
+    );
+    assert_eq!(
+        h.buses.last_door_open.keys().copied().collect::<Vec<_>>(),
+        [BusId::Player]
+    );
+    assert_eq!(
+        h.buses.bus_motion.keys().copied().collect::<Vec<_>>(),
+        [BusId::Player]
+    );
+    assert!(h.stops.is_empty());
+    assert!(h.buses.ai_visits.is_empty());
+    assert!(h.buses.holds.is_empty());
+    assert!(h.buses.ai_requests.is_empty());
+    assert_eq!(h.buses.served_stop, None);
+    assert_eq!(h.desk.desk_busy, None);
+    assert_eq!(h.desk.pardons, 0);
+    assert_eq!(h.request, None);
+    assert_eq!(h.paid, None);
+    assert_eq!(h.change_due, None);
+    assert!(!h.walking.started);
+    assert_eq!(h.walking.stroll_timer, 0.0);
+    assert_eq!(h.stop_targets, None);
+    assert_eq!(h.stop_names, None);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn reset_population_preserves_pending_transfer_until_ack_or_rejection() {
+    let (root, ty) = reset_test_human();
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    for (id, stop, bus) in [(4, 6, 700), (5, 7, 701)] {
+        let mut pax = Pax::new(1.1);
+        pax.task = Task::AwaitingTransfer;
+        pax.stop = Some(stop);
+        pax.spot = Some(0);
+        pax.handover_bus = Some(BusId::Ai(bus));
+        h.people.push(reset_test_person(
+            id,
+            &ty,
+            State::Pax(Box::new(pax)),
+            Place::Ground,
+        ));
+        h.stops.insert(stop, reset_test_stop(true));
+    }
+    h.network.handed.push((2, 22));
+
+    h.reset_population();
+
+    assert_eq!(h.people.iter().map(|p| p.id).collect::<Vec<_>>(), [4, 5]);
+    assert!(h.stops[&6].taken[0]);
+    assert!(h.stops[&7].taken[0]);
+    assert!(h.network.handed.is_empty());
+
+    h.finish_handover(4, false);
+    assert!(matches!(
+        &h.people[0].state,
+        State::Pax(pax) if pax.task == Task::WaitingForBus && pax.handover_bus.is_none()
+    ));
+    assert!(h.stops[&6].taken[0]);
+
+    h.finish_handover(5, true);
+    assert_eq!(h.people.iter().map(|p| p.id).collect::<Vec<_>>(), [4]);
+    assert!(!h.stops[&7].taken[0]);
+    assert_eq!(h.network.handed, [(7, 701)]);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn render_sets_and_clears_cabin_marker_when_people_board_and_leave() {
+    let (root, mut ty) = reset_test_human();
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::NOOP;
+    descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+    let instance = wgpu::Instance::new(descriptor);
+    let renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        omsi_render::RenderOptions::default(),
+    ))
+    .unwrap();
+    let mut scene = renderer.new_scene();
+    Arc::get_mut(&mut ty)
+        .unwrap()
+        .meshes
+        .push(omsi_sim::human::HumanMesh {
+            data: omsi_geometry::MeshData {
+                positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+                normals: vec![Vec3::Z; 3],
+                uvs: vec![glam::Vec2::ZERO; 3],
+                ranges: vec![(0, 3, 0)],
+                indices: vec![0, 1, 2],
+                one_sided: false,
+            },
+            materials: Vec::new(),
+            bones: Vec::new(),
+            skin: vec![omsi_sim::human::Influence::default(); 3],
+            alpha: Vec::new(),
+        });
+    let mesh = renderer.add_mesh(&mut scene, &ty.meshes[0].data);
+    let instance = renderer.add_instance(&mut scene, mesh, DVec3::ZERO, Mat4::IDENTITY, Vec::new());
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    let mut person = reset_test_person(1, &ty, State::Idle, Place::Bus(BusId::Player, Vec3::ZERO));
+    person.render.meshes.push((mesh, instance));
+    h.people.push(person);
+    h.time = 1.0;
+
+    h.sync(&renderer, &mut scene, DVec3::ZERO);
+    assert!(scene.instances[instance].cabin);
+
+    h.people[0].place = Place::Ground;
+    h.sync(&renderer, &mut scene, DVec3::ZERO);
+    assert!(!scene.instances[instance].cabin);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn map_humans_load_nested_paths_and_preserve_weights() {
     let root = std::env::temp_dir().join(format!("omsi-map-human-paths-{}", std::process::id()));
