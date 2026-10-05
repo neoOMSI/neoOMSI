@@ -33,7 +33,7 @@ main
 ├── perf/...         (performance optimizations)
 ├── docs/...         (documentation updates)
 ├── chore/...        (tooling and build infrastructure)
-└── release/x.y      (temporary stabilization branches)
+└── release/x.y      (release stabilization and current stable line)
 ```
 
 ### Working with branches
@@ -44,7 +44,7 @@ main
 
 ### Release branches
 
-Temporary `release/x.y` branches are created only to stabilize Release Candidates. Normal development continues unhindered on `main`. See [Releasing & versioning](RELEASING.md).
+`release/x.y` branches are created to stabilize Release Candidates and are retained for the currently supported stable line so patch releases can be cut without disturbing `main`. Once the next stable minor release is published, the previous release branch may be deleted. See [Releasing & versioning](RELEASING.md).
 
 ## Local development and testing
 
@@ -75,6 +75,8 @@ Pull requests merged into `main` require:
 - Passing continuous integration checks.
 - For `parity/` changes: reference OMSI 2.2.032 evidence verifying expected behavior (see [Compatibility](COMPATIBILITY.md)).
 - A changelog fragment for any user-visible change (see [.changes/README.md](../.changes/README.md)).
+
+Once the required reviews and checks have passed, the PR author should normally perform the merge. Reviewers should leave the final merge to the author unless the author asks them to merge, the author is unavailable, or a maintainer has a clear operational reason to merge directly.
 
 ## Testing guidelines
 

@@ -76,6 +76,8 @@ If critical issues are identified post-release:
 - Tag and publish a patch release (e.g. `v0.4.1`).
 - Mirror the fix into `main`.
 
+Only the latest stable minor line is actively maintained. Its `release/x.y` branch remains available for patches until the next stable minor release is published. Older release branches may then be deleted; their tags and published releases remain permanent, and a maintenance branch can be recreated from a tag if an exceptional backport is ever required.
+
 ## Changelog management
 
 To prevent merge conflicts across concurrent pull requests, contributors add small fragment files under `.changes/` instead of editing `CHANGELOG.md` directly:

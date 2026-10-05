@@ -1,0 +1,70 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened, reopened]
+  schedule:
+    - cron: '17 3 * * *'
+      timezone: 'Europe/Berlin'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  classify:
+    name: Ensure triage status
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-slim
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - name: Add untriaged status when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          labels="$(gh issue view "$ISSUE" --repo "$REPO" --json labels --jq '.labels[].name')"
+          if printf '%s\n' "$labels" | grep -q '^status: '; then
+            echo "Issue already has a status label."
+            exit 0
+          fi
+
+          gh issue edit "$ISSUE" --repo "$REPO" --add-label "status: untriaged"
+
+  needs-info:
+    name: Needs-info cleanup
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-slim
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Close inactive needs-info issues
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cutoff="$(date -u -d '14 days ago' +%s)"
+
+          gh issue list             --repo "$REPO"             --state open             --label "status: needs-info"             --limit 1000             --json number,updatedAt,labels             --jq '.[] | [.number, .updatedAt, ([.labels[].name] | join("|"))] | @tsv' |
+          while IFS=$'\t' read -r number updated labels; do
+            [ -n "$number" ] || continue
+
+            if [[ "|$labels|" == *"|triage: protected|"* ]]; then
+              echo "#$number is protected."
+              continue
+            fi
+
+            updated_epoch="$(date -u -d "$updated" +%s)"
+            if (( updated_epoch > cutoff )); then
+              continue
+            fi
+
+            gh issue comment "$number"               --repo "$REPO"               --body "Closing this report because the requested information has not been provided for 14 days. If the missing reproduction details, logs, or comparison evidence become available, please ask for the issue to be reopened or file a new report with that information."
+
+            gh issue close "$number"               --repo "$REPO"               --reason "not planned"
+          done

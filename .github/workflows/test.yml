@@ -115,7 +115,7 @@ jobs:
         run: cargo nextest run --workspace --locked
 
   required:
-    name: Required
+    name: Tests
     needs: [changes, test]
     if: always()
     runs-on: ubuntu-slim

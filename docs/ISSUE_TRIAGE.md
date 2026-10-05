@@ -63,6 +63,12 @@ Maintainers review incoming issues regularly:
    - **Out of scope / pure extension:** Label `scope: extension` and defer or close if not aligned with current phase goals.
    - **Incomplete / non-reproducible:** Close with an explanation of what details are required to re-evaluate.
 
+## Automated triage
+
+New or reopened issues without a status label receive `status: untriaged` automatically.
+
+Issues labeled `status: needs-info` are closed after 14 days without activity unless they also carry `triage: protected`. Any new activity resets the timer. If the requested information becomes available later, the issue may be reopened or resubmitted with the missing details.
+
 ## Mod-specific reports
 
 When an issue occurs only with a specific add-on map or vehicle, evaluate whether the content exposes a general OMSI rule that neoOMSI implements incorrectly (see [Compatibility policy](COMPATIBILITY.md#mod-specific-issues)):
