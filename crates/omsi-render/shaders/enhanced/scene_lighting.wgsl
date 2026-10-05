@@ -254,9 +254,6 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
 // most of the sky, and the dashboard lies right under the windscreen.
 const CAB_AMBIENT: f32 = 1.15;
 
-// Keep the shader puddle mask in sync with omsi-app's wheel-splash mask.
-const PUDDLE_SPREAD: f32 = 0.45;
-
 /// The mip level a pixel's footprint asks for, in levels of the texture whose size is
 /// `texels` (the usual `log2` of the larger derivative, held at 0 and up). An LED panel is
 /// sampled with this, held at `enh.led.y` (`Lighting::led_mips`): 0 point-samples it, which
@@ -318,6 +315,19 @@ fn fs_enhanced(in: FsIn) -> EnhancedOut {
     let coverage = select(select(c.a, 1.0, screen), 0.0, in.params2.w > 1.5);
     let night_g = select(0.0, 0.75, night_lit);
     out.mask = vec4<f32>(select(0.0, 1.0, screen), max(max(led, night_g), puddle_weight.y * 0.49), puddle_weight.x, coverage);
+    return out;
+}
+
+// Classic lighting carries only the puddle mask through the HDR target; the scene
+// itself is copied back unchanged after its reflections are resolved.
+@fragment
+fn fs_vanilla_reflections(in: FsIn) -> EnhancedOut {
+    var weight = 0.0;
+    let c = shade_vanilla(in, &weight);
+    let coverage = select(c.a, 0.0, in.params2.w > 1.5);
+    var out: EnhancedOut;
+    out.color = c;
+    out.mask = vec4<f32>(0.0, weight * 0.49, weight, coverage);
     return out;
 }
 

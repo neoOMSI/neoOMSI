@@ -94,12 +94,6 @@ impl Renderer {
             && scene.glass_slot.is_some()
             && (lighting.rain > 0.001 || lighting.wetness > 0.02)
             && omsi_cfg::env::var_os("OMSI_NO_GLASS_PICTURE").is_none();
-        let glass_key: Option<GlassKey> = glass_on.then_some((enhanced_view, width, height));
-        let glass_ok = with_overlays
-            && self
-                .glass_live
-                .take()
-                .is_some_and(|k| Some(k) == scene.glass_key && Some(k) == glass_key);
         let scaled =
             (width, height) != (full_w, full_h) || vanilla_fxaa || (glass_on && !enhanced_view);
         let scene_target: Option<(wgpu::TextureView, wgpu::BindGroup)> = if scaled {
@@ -121,6 +115,15 @@ impl Renderer {
                 || xr_view
                 || omsi_cfg::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
         let enhanced = enhanced_frame;
+        let puddles_wanted = with_overlays
+            && self.puddles.is_some()
+            && self.options.reflections
+            && lighting.wetness * (1.0 - lighting.snow.clamp(0.0, 1.0)) > 0.05
+            && scene.materials.iter().any(|m| m.uniform.params2[2] > 0.0)
+            && debug_view() == 0.0
+            && omsi_cfg::env::var_os("OMSI_NO_PUDDLE_REFLECTIONS").is_none();
+        let reflection_frame = !enhanced && puddles_wanted && self.reflection_pass.is_some();
+        let masked_frame = enhanced || reflection_frame;
         let spot_plan = lighting.light_shadows
             && (with_overlays || (xr_view && !second_eye))
             && omsi_cfg::env::var_os("OMSI_NO_LIGHT_SHADOWS").is_none();
@@ -134,14 +137,19 @@ impl Renderer {
             && self.options.ssao
             && self.ssao_pipeline.is_some()
             && omsi_cfg::env::var_os("OMSI_NO_AO").is_none();
-        let prepass_on = ao_on || (enhanced && (with_overlays || xr_view));
+        let prepass_on = ao_on || glass_on || (masked_frame && (with_overlays || xr_view));
         if prepass_on && self.ensure_ao(width, height) {
             scene.dirty = true;
             scene.model_buf = None;
             self.hdr_targets.clear();
         }
-        if enhanced {
+        if masked_frame {
             self.hdr_targets(width, height);
+        }
+        if glass_on {
+            self.prepare_glass_behind(
+                scene, width, height, if masked_frame { HDR_FORMAT } else { self.format },
+            );
         }
         let dt = {
             let now = std::time::Instant::now();
@@ -470,7 +478,7 @@ impl Renderer {
             flags: [
                 if lighting.detail { 1.0 } else { 0.0 },
                 if enhanced { 1.0 } else { 0.0 },
-                if glass_ok { -1.0 } else { 0.0 },
+                if glass_on { -1.0 } else { 0.0 },
                 if shadows { SHADOW_RANGE_CLOSE } else { 0.0 },
             ],
             light_view_proj_close: light_view_proj_close.to_cols_array_2d(),
@@ -488,12 +496,6 @@ impl Renderer {
         let probe_redraw = enhanced
             && (lead_view || self.sky_state.is_none())
             && self.prepare_enhanced(lighting, cam_rel, ro, dt);
-        let puddles_wanted = enhanced
-            && with_overlays
-            && self.options.reflections
-            && lighting.wetness * (1.0 - lighting.snow.clamp(0.0, 1.0)) > 0.05
-            && debug_view() == 0.0
-            && omsi_cfg::env::var_os("OMSI_NO_PUDDLE_REFLECTIONS").is_none();
         stage(self, "setup", "mirror.setup");
         let debug_draws = omsi_cfg::env::var_os("OMSI_DEBUG_DRAWS").is_some();
         let debug_cull = omsi_cfg::env::var_os("OMSI_DEBUG_CULL").is_some();
@@ -1282,16 +1284,22 @@ impl Renderer {
             }
         }
         stage(self, "items", "mirror.items");
+        let mut rain_batches = Vec::new();
+        if glass_on {
+            let (rain, main): (Vec<_>, Vec<_>) = main_batches.into_iter().partition(|b| {
+                scene.materials[b.material as usize].uniform.emissive[3] > 1.5
+            });
+            rain_batches = rain;
+            main_batches = main;
+        }
         self.upload_draw_list(scene, &list);
         stage(self, "upload", "mirror.upload");
         let main_bundles = if omsi_cfg::env::var_os("OMSI_NO_BUNDLES").is_none() {
-            let (pp, format) = if enhanced {
-                (
-                    self.hdr_pass.as_ref().expect("enhanced pipelines"),
-                    wgpu::TextureFormat::Rgba16Float,
-                )
+            let pp = self.main_pass(enhanced, reflection_frame);
+            let format = if masked_frame {
+                wgpu::TextureFormat::Rgba16Float
             } else {
-                (&self.pass, self.format)
+                self.format
             };
             record_bundles(
                 &self.device,
@@ -1623,7 +1631,11 @@ impl Renderer {
             }
         }
         let single = self.options.msaa <= 1;
-        let share_depth = prepass_on && single && self.ao.is_some() && !has_presurface;
+        let share_depth = prepass_on
+            && single
+            && self.ao.is_some()
+            && !has_presurface
+            && !puddles_wanted;
         let targets = if share_depth {
             None
         } else {
@@ -1683,13 +1695,28 @@ impl Renderer {
             msaa_prepass && self.prepass_msaa_pipelines.is_some() && targets.is_some();
         let mut main_parts: Vec<wgpu::CommandEncoder> = Vec::new();
         {
-            let sky = lighting.sky_color;
+            let sky = if reflection_frame && lighting.classic {
+                let decode = |v: f32| {
+                    if v <= 0.04045 {
+                        v / 12.92
+                    } else {
+                        ((v + 0.055) / 1.055).powf(2.4)
+                    }
+                };
+                Vec3::new(
+                    decode(lighting.sky_color.x),
+                    decode(lighting.sky_color.y),
+                    decode(lighting.sky_color.z),
+                )
+            } else {
+                lighting.sky_color
+            };
             let msaa_color = targets.as_ref().map(|t| &t.0);
             let depth_view: &wgpu::TextureView = match &targets {
                 Some(t) => &t.1,
                 None => &self.ao.as_ref().unwrap().depth_view,
             };
-            let hdr = if enhanced {
+            let hdr = if masked_frame {
                 self.hdr_targets.get(&(width, height))
             } else {
                 None
@@ -1708,11 +1735,7 @@ impl Renderer {
                         }
                     }
                 };
-            let pp = if enhanced {
-                self.hdr_pass.as_ref().expect("enhanced pipelines")
-            } else {
-                &self.pass
-            };
+            let pp = self.main_pass(enhanced, reflection_frame);
             let mask_attachment = hdr.map(|h| wgpu::RenderPassColorAttachment {
                 view: h.mask_msaa.as_ref().unwrap_or(&h.mask),
                 depth_slice: None,
@@ -1909,7 +1932,7 @@ impl Renderer {
                     }
                 }
             }
-            if !overlays.is_empty() && !enhanced && !scaled {
+            if !overlays.is_empty() && !masked_frame && !scaled {
                 pass.set_pipeline(&self.overlay_pipeline);
                 for (k, _) in overlays.iter().enumerate() {
                     if let Some((_, _, bg, _)) = scene.overlay_res.get(k) {
@@ -1939,6 +1962,80 @@ impl Renderer {
                 tset.as_ref(),
                 &mut timed,
             );
+        }
+        if glass_on {
+            let hdr = masked_frame.then(|| &self.hdr_targets[&(width, height)]);
+            let view = hdr.map_or(scene_view, |h| {
+                h.puddles.as_ref().filter(|_| puddles_on).map_or(&h.view, |p| &p.view)
+            });
+            let behind = self.glass_picture.as_ref().unwrap();
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: view.texture(), mip_level: 0, origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: behind.texture(), mip_level: 0, origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            );
+            let colours = [
+                Some(wgpu::RenderPassColorAttachment {
+                    view, depth_slice: None, resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                }),
+                hdr.map(|h| wgpu::RenderPassColorAttachment {
+                    view: &h.mask, depth_slice: None, resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                }),
+            ];
+            let pipes = &self.main_pass(enhanced, reflection_frame).rain_pipelines;
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rain on current scene"),
+                color_attachments: &colours[..if hdr.is_some() { 2 } else { 1 }],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.ao.as_ref().unwrap().depth_view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
+            encode_batches(&mut pass, scene, &rain_batches, |pipe| &pipes[pipe as usize]);
+        }
+        if reflection_frame {
+            let h = &self.hdr_targets[&(width, height)];
+            let bg = h
+                .puddles
+                .as_ref()
+                .filter(|_| puddles_on)
+                .map_or(&h.classic_bg, |p| &p.classic_bg);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("classic reflections present"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: scene_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.copy_pipeline);
+            pass.set_bind_group(0, bg, &[]);
+            pass.draw(0..3, 0..1);
+            if !overlays.is_empty() && !scaled {
+                pass.set_pipeline(&self.overlay_pipeline_1x);
+                draw_overlays(&mut pass, scene, overlays.len());
+            }
         }
         if enhanced {
             let secs = |tau: f32| {
@@ -2095,46 +2192,6 @@ impl Renderer {
                     if vanilla_fxaa { 1.0 } else { 0.0 },
                 ]),
             );
-            if glass_key.is_some_and(|k| !k.0) {
-                if self.glass_prev.as_ref().map(|g| g.1) != Some((width, height)) {
-                    let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("picture behind the glass"),
-                        size: wgpu::Extent3d {
-                            width: (width / 2).max(1),
-                            height: (height / 2).max(1),
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: self.format,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                            | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    });
-                    self.glass_prev = Some((tex.create_view(&Default::default()), (width, height)));
-                }
-                let view = &self.glass_prev.as_ref().unwrap().0;
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("picture behind the glass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&self.upscale_pipeline);
-                pass.set_bind_group(0, bg, &[]);
-                pass.draw(0..3, 0..1);
-            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("upscale"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2158,10 +2215,6 @@ impl Renderer {
                 pass.set_pipeline(&self.overlay_pipeline_1x);
                 draw_overlays(&mut pass, scene, overlays.len());
             }
-        }
-        if let Some(k) = glass_key {
-            self.glass_live = Some(k);
-            self.show_glass_behind(scene, k);
         }
         stage(self, "encode", "mirror.encode");
         let big = shadow_batches.iter().map(|b| b.len()).sum::<usize>() + prepass_batches.len()

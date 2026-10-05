@@ -7,7 +7,6 @@ impl Renderer {
             textures: Vec::new(),
             tex_luma: Default::default(),
             glass_slot: None,
-            glass_key: None,
             materials: Vec::new(),
             instances: Vec::new(),
             render_origin: DVec3::ZERO,

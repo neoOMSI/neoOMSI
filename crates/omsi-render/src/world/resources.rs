@@ -65,27 +65,41 @@ impl Renderer {
         self.texture_aspect = None;
     }
 
-    pub(crate) fn show_glass_behind(&self, scene: &mut Scene, key: GlassKey) {
+    /// Refraction reads the current scene before films are drawn, avoiding feedback.
+    pub(crate) fn prepare_glass_behind(
+        &mut self,
+        scene: &mut Scene,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) {
         let Some(id) = scene.glass_slot else { return };
-        if scene.glass_key == Some(key) {
-            return;
+        if self.glass_picture.as_ref().is_none_or(|v| {
+            v.texture().width() != width
+                || v.texture().height() != height
+                || v.texture().format() != format
+        }) {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("current picture behind glass"),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            self.glass_picture = Some(texture.create_view(&Default::default()));
         }
-        let view = if key.0 {
-            self.hdr_targets
-                .get(&(key.1, key.2))
-                .and_then(|h| h.down.first())
-                .cloned()
-        } else {
-            self.glass_prev
-                .as_ref()
-                .filter(|g| g.1 == (key.1, key.2))
-                .map(|g| g.0.clone())
-        };
-        let Some(view) = view else { return };
-        scene.textures[id] =
-            GpuTexture::showing(self.black_texture.texture.clone(), view, (key.1, key.2));
-        self.rebind_textures(scene, &[id]);
-        scene.glass_key = Some(key);
+        let view = self.glass_picture.as_ref().unwrap();
+        if scene.textures[id].view != *view {
+            scene.textures[id] = GpuTexture::showing(
+                view.texture().clone(), view.clone(), (width, height),
+            );
+            self.rebind_textures(scene, &[id]);
+        }
     }
 
     pub fn set_sky_textures(&self, scene: &mut Scene, textures: [TextureId; 3]) {

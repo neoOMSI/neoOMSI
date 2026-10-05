@@ -949,10 +949,12 @@ impl Renderer {
                     depth_write: bool,
                     cull: bool,
                     bias: i32,
-                    alpha_to_coverage: bool| {
-            let use_alpha_to_coverage = alpha_to_coverage && msaa > 1;
+                    alpha_to_coverage: bool,
+                    samples: u32| {
+            let use_alpha_to_coverage = alpha_to_coverage && samples > 1;
+            let label = format!("{fs} ({format:?})");
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("omsi"),
+                label: Some(&label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
@@ -983,7 +985,7 @@ impl Renderer {
                     },
                 }),
                 multisample: wgpu::MultisampleState {
-                    count: msaa,
+                    count: samples,
                     mask: !0,
                     alpha_to_coverage_enabled: use_alpha_to_coverage,
                 },
@@ -1019,7 +1021,7 @@ impl Renderer {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(-24);
-        let scene_pipelines = |f: wgpu::TextureFormat, fs: &str| -> Vec<wgpu::RenderPipeline> {
+        let scene_pipelines = |f: wgpu::TextureFormat, fs: &str, samples: u32| -> Vec<wgpu::RenderPipeline> {
             let mut out = Vec::with_capacity(PIPE_KINDS as usize * 4);
             for kind in 0..PIPE_KINDS {
                 let blend = (kind == PIPE_BLEND || kind == PIPE_BLEND_NO_WRITE)
@@ -1039,6 +1041,7 @@ impl Renderer {
                             cull,
                             if surface { bias } else { 0 },
                             kind == PIPE_ALPHA_TEST,
+                            samples,
                         ));
                     }
                 }
@@ -1509,14 +1512,15 @@ impl Renderer {
                 return None;
             }
             wire_flag.set(true);
-            let v = scene_pipelines(f, fs);
+            let v = scene_pipelines(f, fs, msaa);
             wire_flag.set(false);
             Some(v)
         };
         #[cfg(all(feature = "devtools", debug_assertions))]
         devtools::set_wireframe_supported(wire_ok);
         let pass = PassPipelines {
-            pipelines: scene_pipelines(format, "fs_main"),
+            pipelines: scene_pipelines(format, "fs_main", msaa),
+            rain_pipelines: scene_pipelines(format, "fs_main", 1),
             wire_pipelines: wire_for(format, "fs_main"),
             corona_pipeline: corona_pipeline_for(format, "fs_main", screen),
             smoke_pipeline: corona_pipeline_for(format, "fs_smoke", alpha_blend),
@@ -1525,11 +1529,20 @@ impl Renderer {
         let leave_out_enhanced = options.no_enhanced
             && cfg!(target_os = "android");
         let hdr_pass = (!leave_out_enhanced).then(|| PassPipelines {
-            pipelines: scene_pipelines(hdr_format, "fs_enhanced"),
+            pipelines: scene_pipelines(hdr_format, "fs_enhanced", msaa),
+            rain_pipelines: scene_pipelines(hdr_format, "fs_enhanced", 1),
             wire_pipelines: wire_for(hdr_format, "fs_enhanced"),
             corona_pipeline: corona_pipeline_for(hdr_format, "fs_enhanced", additive),
             smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke_enhanced", alpha_blend),
             sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced"),
+        });
+        let reflection_pass = (!leave_out_enhanced).then(|| PassPipelines {
+            pipelines: scene_pipelines(hdr_format, "fs_vanilla_reflections", msaa),
+            rain_pipelines: scene_pipelines(hdr_format, "fs_vanilla_reflections", 1),
+            wire_pipelines: wire_for(hdr_format, "fs_vanilla_reflections"),
+            corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen),
+            smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend),
+            sky_pipeline: sky_pipeline_for(hdr_format, "fs_main"),
         });
         let sky_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -2482,7 +2495,7 @@ impl Renderer {
             bind_group_layouts: &[Some(&upscale_layout)],
             immediate_size: 0,
         });
-        let upscale_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let upscale_pipeline_for = |entry| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("upscale"),
             layout: Some(&upscale_pl),
             vertex: wgpu::VertexState {
@@ -2500,7 +2513,7 @@ impl Renderer {
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &upscale_shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(entry),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: None,
@@ -2511,6 +2524,8 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let upscale_pipeline = upscale_pipeline_for("fs_main");
+        let copy_pipeline = upscale_pipeline_for("fs_copy");
         let upscale_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("upscale params"),
             size: 16,
@@ -2523,11 +2538,11 @@ impl Renderer {
         Renderer {
             _device_poller: DevicePoller::start(&device),
             upscale_pipeline,
+            copy_pipeline,
             upscale_layout,
             upscale_buf,
             scale_targets: HashMap::new(),
-            glass_prev: None,
-            glass_live: None,
+            glass_picture: None,
             target_use: HashMap::new(),
             dynamic_scale: std::cell::Cell::new(1.0),
             flicker: std::cell::RefCell::new(HashMap::new()),
@@ -2551,6 +2566,7 @@ impl Renderer {
             lm_place: std::cell::Cell::new((0.0, 0.0, 0.0)),
             hdr_targets: HashMap::new(),
             puddles,
+            reflection_pass,
             post,
             post_layout,
             post_buf,

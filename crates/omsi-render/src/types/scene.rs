@@ -17,8 +17,6 @@ pub struct GpuMesh {
     pub slot_faces: Vec<(Vec3, Vec3)>,
 }
 
-pub(crate) type GlassKey = (bool, u32, u32);
-
 #[derive(Clone, Copy, Default)]
 pub(crate) struct InstanceBounds {
     pub(crate) centre: Vec3,
@@ -127,7 +125,6 @@ pub struct Scene {
     /// channel, alpha 0..1; colour = the lit pixels' mean hue, its brightest channel 1.
     pub tex_luma: std::sync::Mutex<std::collections::HashMap<TextureId, (f32, f32, [f32; 3])>>,
     pub(crate) glass_slot: Option<TextureId>,
-    pub(crate) glass_key: Option<GlassKey>,
     pub materials: Vec<Material>,
     pub instances: Vec<Instance>,
     pub render_origin: DVec3,

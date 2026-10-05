@@ -16,6 +16,8 @@ pub(crate) struct HdrTargets {
     pub(crate) meter_bg: wgpu::BindGroup,
     pub(crate) tonemap_bg: [wgpu::BindGroup; 2],
     pub(crate) fxaa_bg: wgpu::BindGroup,
+    /// Present classic shading directly without Enhanced grading.
+    pub(crate) classic_bg: wgpu::BindGroup,
     /// Allocated only when wet roads need scene reflections in the main view.
     pub(crate) puddles: Option<puddles::Targets>,
 }
@@ -192,7 +194,9 @@ impl Renderer {
             let usage = if samples > 1 {
                 wgpu::TextureUsages::RENDER_ATTACHMENT
             } else {
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
             };
             self.device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -287,6 +291,7 @@ impl Renderer {
         ];
         // FXAA samples the screen mask as `t_base` to leave screens unchanged.
         let fxaa_bg = bg(&ldr, &mask, none);
+        let classic_bg = self.picture_group(&view);
         self.hdr_targets.insert(
             (w, h),
             HdrTargets {
@@ -302,6 +307,7 @@ impl Renderer {
                 meter_bg,
                 tonemap_bg,
                 fxaa_bg,
+                classic_bg,
                 puddles: None,
             },
         );

@@ -334,13 +334,14 @@ pub(crate) struct Targets {
     trace: wgpu::TextureView,
     blur: wgpu::TextureView,
     filtered: wgpu::TextureView,
-    view: wgpu::TextureView,
+    pub(crate) view: wgpu::TextureView,
     trace_bg: wgpu::BindGroup,
     blur_x_bg: wgpu::BindGroup,
     blur_y_bg: wgpu::BindGroup,
     resolve_bg: wgpu::BindGroup,
     pub(crate) down_bg: wgpu::BindGroup,
     pub(crate) tonemap_bg: [wgpu::BindGroup; 2],
+    pub(crate) classic_bg: wgpu::BindGroup,
 }
 
 fn trace_size(w: u32, h: u32) -> (u32, u32) {
@@ -388,7 +389,8 @@ impl Targets {
                     dimension: wgpu::TextureDimension::D2,
                     format: HDR_FORMAT,
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
                     view_formats: &[],
                 })
                 .create_view(&Default::default())
@@ -415,6 +417,7 @@ impl Targets {
         let blur = target("puddle reflection horizontal filter", size);
         let filtered = target("puddle reflection filtered", size);
         let view = target("scene with puddle reflections", (w, h));
+        let classic_bg = r.picture_group(&view);
         let binding = |binding, view| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(view),
@@ -488,6 +491,7 @@ impl Targets {
             resolve_bg,
             down_bg,
             tonemap_bg,
+            classic_bg,
         }
     }
 }
@@ -506,7 +510,7 @@ impl Renderer {
         if self.puddles.is_none()
             || self.ao.is_none()
             || self.probe.is_none()
-            || self.sky_state.is_none()
+            || (cu.post[0] > 0.5 && self.sky_state.is_none())
         {
             return false;
         }
@@ -537,13 +541,22 @@ impl Renderer {
                 camera.near,
             )
         });
-        let st = self.sky_state.as_ref().unwrap();
-        let surround = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
-            .into_iter()
-            .map(|n| atmosphere::sh_irradiance(&st.sh, n))
-            .sum::<Vec3>()
-            * (0.25 / (6.0 * std::f32::consts::PI));
-        let pre = self.exposure.unwrap_or(0.0).exp();
+        let enhanced = cu.post[0] > 0.5;
+        let surround = if enhanced {
+            let st = self.sky_state.as_ref().unwrap();
+            [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
+                .into_iter()
+                .map(|n| atmosphere::sh_irradiance(&st.sh, n))
+                .sum::<Vec3>()
+                * (0.25 / (6.0 * std::f32::consts::PI))
+        } else {
+            lighting.secondary * 0.5 + lighting.sun_color * lighting.sun_intensity * 0.35
+        };
+        let pre = if enhanced {
+            self.exposure.unwrap_or(0.0).exp()
+        } else {
+            1.0
+        };
         let ro = (camera.position / 100.0).floor() * 100.0;
         let origins = vehicle_origins(lighting, camera);
         let mut parts = [<VehicleBox as bytemuck::Zeroable>::zeroed(); 4];
@@ -594,7 +607,13 @@ impl Renderer {
             vehicle_info: [
                 origins.len() as f32,
                 w as f32,
-                h as f32,
+                if enhanced {
+                    1.0
+                } else if lighting.classic {
+                    0.0
+                } else {
+                    -1.0
+                },
                 lighting.inside.map_or(0.0, |(_, hd, _)| {
                     let r = (hd as f32).to_radians();
                     lighting.glass_wind.x * r.sin() + lighting.glass_wind.y * r.cos()
@@ -846,7 +865,7 @@ fn reflection_glass(u: &MaterialUniform) -> bool {
     u.extra[0] < 0.5
         && u.params[0] > 1.5
         && u.params[1] < 0.5
-        && u.bump[2] > 0.5
+        && (u.bump[2] > 0.5 || u.emissive[3] > 0.5)
         && u.bump[3] < 0.5
         && u.emissive[3] < 1.5
         && (u.params2[1] > 0.0 || u.params[2] > 0.5 || u.emissive[3] > 0.5)
@@ -918,7 +937,6 @@ mod tests {
             [0.0; 3],
             0.0,
             MaterialExtra {
-                no_z_write: true,
                 glass: true,
                 ..Default::default()
             },
@@ -957,7 +975,7 @@ mod tests {
             near: 0.1,
             far: 100.0,
         };
-        let lighting = Lighting {
+        let mut lighting = Lighting {
             enhanced: true,
             wetness: 1.0,
             shadows: false,
@@ -1006,22 +1024,176 @@ mod tests {
             buffer.unmap();
             depth
         }
-        for size in [64, 48, 64] {
-            r.render_to_image(&mut scene, size, size, &camera, &lighting)
-                .unwrap();
-            let targets = r.hdr_targets[&(size, size)].puddles.as_ref().unwrap();
-            assert_eq!(
-                targets.source_depth,
-                *r.ao.as_ref().unwrap().depth_view.texture()
+        for inside in [false, true] {
+            lighting.inside =
+                inside.then_some((DVec3::ZERO, 0.0, [12.0, 12.0, 12.0, 0.0, 0.0, 0.0]));
+            for size in [64, 48, 64] {
+                r.render_to_image(&mut scene, size, size, &camera, &lighting)
+                    .unwrap();
+                let targets = r.hdr_targets[&(size, size)].puddles.as_ref().unwrap();
+                assert_eq!(
+                    targets.source_depth,
+                    *r.ao.as_ref().unwrap().depth_view.texture()
+                );
+                let receiver = depth_at_centre(&r, &targets.source_depth, size);
+                let hit = depth_at_centre(&r, &targets.hit_depth, size);
+                assert!(
+                    (receiver - 0.009009).abs() < 1e-5,
+                    "opaque receiver: {receiver}"
+                );
+                let expected_hit = if inside { receiver } else { 0.019019 };
+                assert!(
+                    (hit - expected_hit).abs() < 1e-5,
+                    "glass hit: {hit}; inside={inside}"
+                );
+            }
+        }
+    }
+
+    fn test_quad(
+        r: &Renderer,
+        scene: &mut Scene,
+        positions: [[f32; 3]; 4],
+        normal: Vec3,
+        material: MaterialId,
+    ) -> usize {
+        let mesh = r.add_mesh(
+            scene,
+            &MeshData {
+                positions: positions.map(Vec3::from).to_vec(),
+                normals: vec![normal; 4],
+                uvs: vec![
+                    glam::Vec2::ZERO,
+                    glam::Vec2::X,
+                    glam::Vec2::ONE,
+                    glam::Vec2::Y,
+                ],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ranges: vec![(0, 6, 0)],
+                one_sided: false,
+            },
+        );
+        r.add_instance(scene, mesh, DVec3::ZERO, Mat4::IDENTITY, vec![material])
+    }
+
+    #[test]
+    #[ignore = "requires a graphics adapter; renders wet roads through bus glass"]
+    fn wet_scene_reflections_survive_bus_glass_in_every_graphics_mode() {
+        for msaa in [1, 4] {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let mut r = pollster::block_on(Renderer::new_with(
+                &instance,
+                None,
+                Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                RenderOptions {
+                    msaa,
+                    ssao: false,
+                    fxaa: false,
+                    shadow_size: 1024,
+                    render_scale: 1.0,
+                    ..Default::default()
+                },
+            ))
+            .expect("test renderer");
+            let mut scene = r.new_scene();
+            let material = |scene: &mut Scene, colour, unlit, moisture, extra: MaterialExtra| {
+                r.add_material_inner(
+                    scene,
+                    None,
+                    if extra.glass || extra.rain_film {
+                        AlphaMode::Blend
+                    } else {
+                        AlphaMode::Opaque
+                    },
+                    colour,
+                    unlit,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    [0.0; 3],
+                    moisture,
+                    extra,
+                )
+            };
+            let road = material(
+                &mut scene, [0.25, 0.25, 0.25, 1.0], false, 1.0, MaterialExtra::default(),
             );
-            // Read both textures below through an immutable renderer borrow.
-            let receiver = depth_at_centre(&r, &targets.source_depth, size);
-            let hit = depth_at_centre(&r, &targets.hit_depth, size);
-            assert!(
-                (receiver - 0.009009).abs() < 1e-5,
-                "opaque receiver: {receiver}"
+            let red = material(
+                &mut scene, [1.0, 0.01, 0.01, 1.0], true, 0.0, MaterialExtra::default(),
             );
-            assert!((hit - 0.019019).abs() < 1e-5, "glass hit: {hit}");
+            // Legacy bus panes may write colour-pass depth while remaining transparent.
+            let pane = material(
+                &mut scene, [0.25, 0.3, 0.35, 0.15], false, 0.0,
+                MaterialExtra { glass: true, ..Default::default() },
+            );
+            let film = material(
+                &mut scene, [1.0; 4], false, 0.0,
+                MaterialExtra { rain_film: true, no_z_write: true, ..Default::default() },
+            );
+            test_quad(
+                &r, &mut scene,
+                [[-20.0, 0.0, 0.0], [20.0, 0.0, 0.0], [20.0, 30.0, 0.0], [-20.0, 30.0, 0.0]],
+                Vec3::Z, road,
+            );
+            test_quad(
+                &r, &mut scene,
+                [[-3.0, 10.0, 0.0], [3.0, 10.0, 0.0], [3.0, 10.0, 5.0], [-3.0, 10.0, 5.0]],
+                -Vec3::Y, red,
+            );
+            let window = test_quad(
+                &r, &mut scene,
+                [[-3.0, 1.0, -1.0], [3.0, 1.0, -1.0], [3.0, 1.0, 6.0], [-3.0, 1.0, 6.0]],
+                -Vec3::Y, pane,
+            );
+            let rain = test_quad(
+                &r, &mut scene,
+                [[-3.0, 0.99, -1.0], [3.0, 0.99, -1.0], [3.0, 0.99, 6.0], [-3.0, 0.99, 6.0]],
+                -Vec3::Y, film,
+            );
+            let camera = Camera {
+                position: DVec3::new(0.0, 0.0, 2.0),
+                yaw: 0.0,
+                pitch: -10.0,
+                roll: 0.0,
+                fov_deg: 70.0,
+                near: 0.1,
+                far: 100.0,
+            };
+            for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+                let lighting = Lighting {
+                    enhanced,
+                    classic,
+                    wetness: 1.0,
+                    rain: 0.8,
+                    shadows: false,
+                    inside: Some((camera.position, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 0.0])),
+                    ..Default::default()
+                };
+                for glass in 0..3 {
+                    r.set_params(&mut scene, window, &[], glass > 0, &[]);
+                    r.set_params(&mut scene, rain, &[], glass == 2, &[]);
+                    r.options.reflections = false;
+                    let without = r
+                        .render_to_image(&mut scene, 128, 128, &camera, &lighting)
+                        .unwrap();
+                    r.options.reflections = true;
+                    let with = r
+                        .render_to_image(&mut scene, 128, 128, &camera, &lighting)
+                        .unwrap();
+                    // The red wall is above this region, so red here must be its reflection.
+                    let red_change: i64 = with[128 * 70 * 4..]
+                        .chunks_exact(4)
+                        .zip(without[128 * 70 * 4..].chunks_exact(4))
+                        .map(|(a, b)| (a[0] as i64 - a[1] as i64) - (b[0] as i64 - b[1] as i64))
+                        .sum();
+                    assert!(
+                        red_change > 1000,
+                        "missing reflection: {red_change}; MSAA={msaa}, enhanced={enhanced}, classic={classic}, glass={glass}"
+                    );
+                }
+            }
         }
     }
 

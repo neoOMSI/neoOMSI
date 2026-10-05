@@ -12,6 +12,7 @@ struct PuddleParams {
     // xy: projection z coefficients, z: diagnostic view (0 normally), w: hit thickness
     projection_trace: vec4<f32>,
     vehicle_plane: vec4<f32>,
+    // x: player vehicle count, y: scene width, z: -1 Vanilla+, 0 Vanilla, 1 Enhanced, w: wake direction
     vehicle_info: vec4<f32>,
     vehicle_parts: array<PuddleVehicleBox, 4>,
 };
@@ -55,10 +56,17 @@ fn finite_colour(c: vec3<f32>) -> vec3<f32> {
     let exponent = bitcast<vec3<u32>>(c) & vec3<u32>(0x7f800000u);
     return select(vec3<f32>(0.0), clamp(c, vec3<f32>(0.0), vec3<f32>(65000.0)), all(exponent != vec3<u32>(0x7f800000u)));
 }
+fn reflection_colour(c: vec3<f32>) -> vec3<f32> {
+    return select(c, puddle_srgb_encode(c), abs(p.vehicle_info.z) < 0.5);
+}
+fn scene_colour(c: vec3<f32>) -> vec3<f32> {
+    return select(c, puddle_srgb_decode(c), abs(p.vehicle_info.z) < 0.5);
+}
 fn trace_miss(depth: f32) -> vec4<f32> {
     return vec4<f32>(select(vec3<f32>(0.0), vec3<f32>(1.0, 0.0, 0.0), p.projection_trace.z == 2.0), depth);
 }
 fn fallback_light(direction: vec3<f32>, px: vec2<i32>) -> vec3<f32> {
+    if (p.vehicle_info.z < 0.5) { return p.sky.rgb; }
     let lod = 0.03 * (p.origin_rain.w - 1.0);
     let sky = finite_colour(textureSampleLevel(t_probe, s_linear, direction.xzy, lod).rgb * p.sky.w);
     let open = smoothstep(-0.05, 0.35, direction.z);
@@ -142,7 +150,7 @@ fn fs_trace(in: PuddleVertex) -> @location(0) vec4<f32> {
         if (vehicle.a > 0.01) {
             if (p.projection_trace.z == 2.0) { return vec4<f32>(0.0, 1.0, 0.0, depth); }
             if (p.projection_trace.z == 3.0) { return vec4<f32>(finite_colour(vehicle.rgb), depth); }
-            return vec4<f32>(finite_colour(vehicle.rgb) - fallback_light(direction, px) * vehicle.a, depth);
+            return vec4<f32>((reflection_colour(finite_colour(vehicle.rgb / max(vehicle.a, 1e-5))) - fallback_light(direction, px)) * vehicle.a, depth);
         }
     }
     let start = world + normal * 0.025 + direction * 0.08;
@@ -204,7 +212,7 @@ fn fs_trace(in: PuddleVertex) -> @location(0) vec4<f32> {
                 if (p.projection_trace.z == 2.0) { return vec4<f32>(0.0, 1.0, 0.0, depth); }
                 if (p.projection_trace.z == 3.0) { return vec4<f32>(colour, depth); }
                 // Replace the reflected sky light rather than adding a second reflection.
-                return vec4<f32>((colour - fallback_light(direction, px)) * confidence, depth);
+                return vec4<f32>((reflection_colour(colour) - fallback_light(direction, px)) * confidence, depth);
             }
         }
         previous = t;
@@ -275,5 +283,5 @@ fn fs_resolve(in: PuddleVertex) -> @location(0) vec4<f32> {
         }
     }
     if (p.projection_trace.z > 1.0) { return vec4<f32>(max(sum / max(total, 1e-5), vec3<f32>(0.0)), 1.0); }
-    return vec4<f32>(max(base.rgb + sum / max(total, 1e-5) * weight, vec3<f32>(0.0)), base.a);
+    return vec4<f32>(scene_colour(max(reflection_colour(base.rgb) + sum / max(total, 1e-5) * weight, vec3<f32>(0.0))), base.a);
 }

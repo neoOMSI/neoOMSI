@@ -12,6 +12,8 @@ pub(crate) struct PostPipelines {
 }
 
 pub(crate) struct PassPipelines {
+    /// Rain films are drawn after resolving the scene and its puddle reflections.
+    pub(crate) rain_pipelines: Vec<wgpu::RenderPipeline>,
     pub(crate) pipelines: Vec<wgpu::RenderPipeline>,
     pub(crate) wire_pipelines: Option<Vec<wgpu::RenderPipeline>>,
     pub(crate) corona_pipeline: wgpu::RenderPipeline,
@@ -67,6 +69,7 @@ pub struct Renderer {
     pub options: RenderOptions,
     pub(crate) hdr_targets: HashMap<(u32, u32), HdrTargets>,
     pub(crate) puddles: Option<puddles::Pipelines>,
+    pub(crate) reflection_pass: Option<PassPipelines>,
     pub(crate) post: PostPipelines,
     pub(crate) post_layout: wgpu::BindGroupLayout,
     pub(crate) post_buf: wgpu::Buffer,
@@ -109,11 +112,11 @@ pub struct Renderer {
     pub(crate) out_of_memory: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) device_lost: Arc<std::sync::Mutex<Option<String>>>,
     pub(crate) upscale_pipeline: wgpu::RenderPipeline,
+    pub(crate) copy_pipeline: wgpu::RenderPipeline,
     pub(crate) upscale_layout: wgpu::BindGroupLayout,
     pub(crate) upscale_buf: wgpu::Buffer,
     pub(crate) scale_targets: HashMap<(u32, u32), (wgpu::TextureView, wgpu::BindGroup)>,
-    pub(crate) glass_prev: Option<(wgpu::TextureView, (u32, u32))>,
-    pub(crate) glass_live: Option<GlassKey>,
+    pub(crate) glass_picture: Option<wgpu::TextureView>,
     pub(crate) target_use: HashMap<(u32, u32), std::time::Instant>,
     pub(crate) dynamic_scale: std::cell::Cell<f32>,
     pub(crate) flicker: std::cell::RefCell<HashMap<usize, bool>>,
@@ -138,6 +141,37 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    pub(crate) fn picture_group(&self, view: &wgpu::TextureView) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("present picture"),
+            layout: &self.upscale_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.upscale_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+            ],
+        })
+    }
+
+    pub(crate) fn main_pass(&self, enhanced: bool, reflections: bool) -> &PassPipelines {
+        if enhanced {
+            self.hdr_pass.as_ref().expect("enhanced pipelines")
+        } else if reflections {
+            self.reflection_pass.as_ref().expect("reflection pipelines")
+        } else {
+            &self.pass
+        }
+    }
+
     pub fn format(&self) -> wgpu::TextureFormat {
         self.format
     }
@@ -192,7 +226,9 @@ impl Renderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = tex.create_view(&Default::default());

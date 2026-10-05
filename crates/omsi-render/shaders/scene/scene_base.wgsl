@@ -19,12 +19,14 @@ struct Camera {
     inside_a: vec4<f32>,     // player vehicle box: origin xyz, sin(heading)
     inside_b: vec4<f32>,     // cos(heading), half extents xyz
     inside_c: vec4<f32>,     // box centre offset xyz, w = 1 when there is a box
-    flags: vec4<f32>,        // x detail texturing, y enhanced graphics, z never set (see fs_main's end), w close cascade half range
+    flags: vec4<f32>,        // x detail texturing, y enhanced graphics, z < 0: current scene for rain refraction, w close cascade half range
     light_view_proj_close: mat4x4<f32>,
     wind: vec4<f32>,         // the player's vehicle's velocity (m/s, world): the airstream on its glass
     spot_vp: array<mat4x4<f32>, 8>, // the spot light shadow maps' matrices (see `spot_shadow`)
     spot_info: vec4<f32>,    // x tile width, y tile height (uv of the far map's texture), z the far cascade's share of its height, w tile pixels
 };
+
+const PUDDLE_SPREAD: f32 = 0.45;
 
 // 1 when the point lies inside the player's vehicle (its [boundingbox], shrunk a little so
 // that the outer skin, the glass and the roof stay outside): weather stays out of the cab.
@@ -649,6 +651,11 @@ fn fs_shadow(in: FsIn) {
 // AO still leave glass transparent. Reject absent/fully faded layers and texture holes.
 @fragment
 fn fs_puddle_glass_depth(in: FsIn) {
+    // From the cabin, the player's pane is in front of the street at every ray sample.
+    // Keep that pane transparent to reflection rays; other vehicles' glass still reflects.
+    if (inside_vehicle(camera.cam_pos.xyz) * near_player_vehicle(in.world) > 0.5) {
+        discard;
+    }
     var a = diffuse_border(textureSample(t_diffuse, s_diffuse, tex_address(in.uv)), in.uv).a;
     if (material.params.z > 0.5) {
         let tm = sample_transmap_at(in.uv - in.params.zw);
@@ -1627,11 +1634,11 @@ fn rain_through(g: RainGlass, v: vec3<f32>) -> vec3<f32> {
 }
 
 // What the eye sees along `through` (the way out of a drop, `rain_through`) from the drop
-// at `world`: the street behind the glass as the last frame drew it, looked up where that
+// at `world`: the current street behind the glass, including its puddle reflections, looked up where that
 // way meets it a few metres on - through a drop's rim the way bends far round, so the
 // drop holds the whole street small and upside down, the sky at its bottom, as a real
 // one does. The rain film's reflection slot holds that picture (see `Renderer::glass_slot`);
-// without it (a mirror's view, the first frame of the rain) or off the picture's edge,
+// without it (a mirror's view) or off the picture's edge,
 // `fallback` (the sky's colours). `scale` takes the picture into the caller's units.
 fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale: f32, scatter: f32) -> vec3<f32> {
     if (camera.flags.z > -0.5 || dot(through, through) < 1e-4) {
@@ -1691,8 +1698,8 @@ fn rain_env_vanilla(d: vec3<f32>) -> vec3<f32> {
     return mix(ground, sky, smoothstep(-0.06, 0.04, d.z));
 }
 
-@fragment
-fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
+fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>) -> vec4<f32> {
+    *puddle_weight = 0.0;
     if (material.emissive.w > 1.5) {
         // a pane's film of water: drops, not the sliding texture
         let v = normalize(camera.cam_pos.xyz - in.world);
@@ -1966,10 +1973,20 @@ fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
         let vdir = normalize(in.world - camera.cam_pos.xyz);
         let facing = clamp(-dot(vdir, n), 0.0, 1.0);
         let fresnel = pow(1.0 - facing, 4.0);
+        let puddle_wet = wet * (1.0 - clamp(camera.ambient.w, 0.0, 1.0));
+        let pattern_xy = world_pattern_xy(in.world);
+        let pn = vnoise_f(pattern_xy, 0.22, vec2<f32>(17.3, -9.1)) * 0.65
+            + vnoise_f(pattern_xy, 0.9, vec2<f32>(-4.0, 8.0)) * 0.35;
+        let puddle_t = 1.0 - puddle_wet * PUDDLE_SPREAD;
+        let puddle = smoothstep(puddle_t - 0.06, puddle_t + 0.06, pn)
+            * smoothstep(0.75, 0.95, n.z);
+        let water = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
+        let weight = clamp(mix(fresnel * puddle_wet * 0.85, water * puddle_wet, puddle), 0.0, 0.9);
         let lamp_part = albedo * material.color.rgb * lamp_light;
         lit = lit * mix(1.0, 0.55, wet) + lamp_part * (0.45 * wet);
         let sheen = camera.sky_color.rgb * 0.5 + camera.sun_color.rgb * camera.sun_dir.w * 0.35 + lamp_light * (0.6 + 0.8 * fresnel);
         lit = mix(lit, sheen, clamp(fresnel * wet * 0.85, 0.0, 0.8));
+        *puddle_weight = weight * puddle;
     }
     // snow: the ground, the roads and every upward-facing surface whiten under it
     // (not on a shadow blob: whitened, it lit the snow under the bus instead of shading it)
@@ -1991,6 +2008,7 @@ fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
     let dist = distance(in.world, camera.cam_pos.xyz);
     // (no fog below a visibility of ~23 km: a clear day has none)
     let f = select(0.0, 1.0 - exp(-fog_distance(in.world) * camera.fog.w), camera.fog.w > 5e-4);
+    *puddle_weight *= 1.0 - clamp(f, 0.0, 1.0);
     var rgb = mix(lit, camera.fog.xyz, clamp(f, 0.0, 1.0));
     if (camera.flags.z > 0.0) {
         // Never taken: flags.z (the old enhanced look's aerial perspective) is always 0
@@ -2012,4 +2030,10 @@ fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
     }
     a = a * clamp(window_wetness(in), 0.0, 1.0);
     return vec4<f32>(rgb, a);
+}
+
+@fragment
+fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
+    var unused = 0.0;
+    return shade_vanilla(in, &unused);
 }

@@ -186,3 +186,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(col, 1.0);
 }
+
+@fragment
+fn fs_copy(in: VsOut) -> @location(0) vec4<f32> {
+    // Present a single-sampled HDR scene without applying the Enhanced tone curve.
+    return textureLoad(t_src, vec2<i32>(in.clip.xy), 0);
+}
