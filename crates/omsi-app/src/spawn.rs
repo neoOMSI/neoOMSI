@@ -18,7 +18,7 @@ pub(crate) fn player_bus_path(root: &Path, bus: &str) -> Result<PathBuf> {
     };
     // (a rail vehicle couples at both ends by nature: a locomotive or a tram is driven as
     // it is)
-    if (fronts.is_empty() && !def.is_rear_section()) || crate::rail_drive::is_rail(&def) {
+    if (fronts.is_empty() && !def.is_rear_section()) || rail_drive::is_rail(&def) {
         return Ok(path);
     }
     match fronts.first() {
@@ -195,7 +195,7 @@ pub(crate) fn spawn_player(
         vt.program.blocks.len(),
         vt.program.var_names.len()
     );
-    let doors = crate::player::door_keys(&vt);
+    let doors = door_keys(&vt);
     if !doors.is_empty() {
         let keys: Vec<String> = doors
             .iter()
@@ -206,7 +206,7 @@ pub(crate) fn spawn_player(
     }
     let mut host = omsi_sim::VehicleHost::new(start_clock(args));
     // the maintenance condition of the options (AI vehicles never wear)
-    host.wear_lifespan = crate::settings::Settings::load().wear_lifespan();
+    host.wear_lifespan = settings::Settings::load().wear_lifespan();
     host.hof = find_hof(args, world, &vt);
     host.font_lib = Some(world.fonts.clone());
     if !world.ticket_pack.trim().is_empty() {
@@ -214,7 +214,7 @@ pub(crate) fn spawn_player(
         match omsi_content::tickets::TicketPack::load(&p) {
             Ok(t) => {
                 log::info!("ticket pack {}: {} tickets", p.display(), t.tickets.len());
-                host.tickets = Some(std::sync::Arc::new(t));
+                host.tickets = Some(Arc::new(t));
             }
             Err(e) => log::warn!("{e}"),
         }
@@ -268,15 +268,15 @@ pub(crate) fn spawn_player(
                 // (a bridge over the place, a lower level) is not this one
                 if let Some(g) = world.stand_height(pos.x, pos.y, pos.z) {
                     vehicle.position.z = g;
-                } else if crate::scene::drive_probe(
+                } else if scene::drive_probe(
                     &world.terrains,
                     &world.surfaces,
                     pos.x,
                     pos.y,
                     pos.z + 1.5,
                 )
-                .below
-                .is_none()
+                    .below
+                    .is_none()
                 {
                     // nothing under the place at all (the marker came out under the ground):
                     // on the ground above, not in the void under the map
@@ -391,7 +391,7 @@ pub(crate) fn spawn_player(
     // ground following through the loaded tiles (road surfaces first, then terrain)
     let terrains = world.terrains.clone();
     let surfaces = world.surfaces.clone();
-    vehicle.ground = Some(std::sync::Arc::new(move |x, y| {
+    vehicle.ground = Some(Arc::new(move |x, y| {
         let tx = (x / omsi_map::tile_size()).floor() as i32;
         let ty = (y / omsi_map::tile_size()).floor() as i32;
         let lx = (x - tx as f64 * omsi_map::tile_size()) as f32;
@@ -410,15 +410,15 @@ pub(crate) fn spawn_player(
     // the loaded tiles, and the bus is one of its centres)
     let terrains = world.terrains.clone();
     let surfaces = world.surfaces.clone();
-    vehicle.contact = Some(std::sync::Arc::new(scene::DriveGround {
+    vehicle.contact = Some(Arc::new(scene::DriveGround {
         terrains,
         surfaces,
     }));
-    let objects = crate::settings::Settings::load().collision_objects;
+    let objects = settings::Settings::load().collision_objects;
     vehicle.collision = objects.then(|| world.collision.lock().clone());
     vehicle.wheel_walls = objects;
     // a rail vehicle rides the track (its position comes from the rails, not the tyres)
-    let rail_bound = crate::rail_drive::is_rail(&vt.def);
+    let rail_bound = rail_drive::is_rail(&vt.def);
     if rail_bound {
         log::info!("rail: {} is bound to the rails", vt.def.path.display());
     }
@@ -479,7 +479,7 @@ pub(crate) fn spawn_player(
             .map(|c| c.mesh_parts())
             .unwrap_or(0)
     );
-    let bindings = omsi_content::KeyboardCfg::load(&crate::startup::keyboard_cfg(&args.root))
+    let bindings = omsi_content::KeyboardCfg::load(&keyboard_cfg(&args.root))
         .map(|k| k.with_game_defaults().vehicles)
         .unwrap_or_default();
     static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -511,13 +511,13 @@ pub(crate) fn spawn_player(
         head_omega: Vec3::ZERO,
         steer_look: 0.0,
         seat: Vec3::ZERO,
-        mirror_offsets: crate::settings::mirror_offsets(&vt.def.path),
+        mirror_offsets: settings::mirror_offsets(&vt.def.path),
         mirrors_dirty: false,
         take_change: false,
         toggled_up: Default::default(),
-        momentary_gears: crate::settings::Settings::load().momentary_gears,
-        auto_ibis: crate::settings::Settings::load().auto_ibis,
-        auto_shift: crate::settings::Settings::load().auto_shift,
+        momentary_gears: settings::Settings::load().momentary_gears,
+        auto_ibis: settings::Settings::load().auto_ibis,
+        auto_shift: settings::Settings::load().auto_shift,
         auto_shift_wait: 0.0,
         auto_shift_idle: 0.0,
         side_lights_by_l: false,
@@ -529,7 +529,7 @@ pub(crate) fn spawn_player(
         ibis_background: false,
         arm: Default::default(),
         blinker_key_state: 0,
-        blinker_cancel: crate::settings::Settings::load().blinker_cancel,
+        blinker_cancel: settings::Settings::load().blinker_cancel,
     };
     for _ in 0..3 {
         p.vehicle.update(1.0 / 30.0);
@@ -590,6 +590,10 @@ pub(crate) fn spawn_player(
             log::warn!("trigger {name} not found");
         }
     }
+    if args.situation_vars.is_empty() {
+        open_front_door(&mut p);
+        headlights_off(&mut p);
+    }
     if omsi_cfg::env::var_os("OMSI_DEBUG_MESHES").is_some() {
         for (i, vm) in p.vehicle.ty.meshes.iter().enumerate() {
             let def = &p.vehicle.ty.model.meshes[vm.def_index];
@@ -625,9 +629,9 @@ pub(crate) fn spawn_player(
                 .map(|f| {
                     !f.is_empty()
                         && def
-                            .file
-                            .to_ascii_lowercase()
-                            .contains(&f.to_ascii_lowercase())
+                        .file
+                        .to_ascii_lowercase()
+                        .contains(&f.to_ascii_lowercase())
                 })
                 .unwrap_or(false)
             {
@@ -723,13 +727,71 @@ pub(crate) fn spawn_player(
             log::info!("${v} = {:?}", p.vehicle.str_var(v));
         }
     }
-    p.driver = crate::driver::DriverFigure::new(world, renderer, scene, &p.vehicle, 0);
+    p.driver = driver::DriverFigure::new(world, renderer, scene, &p.vehicle, 0);
     p.sync_transforms(
         renderer,
         scene,
         matches!(args.view.as_str(), "driver" | "pax"),
     );
     Ok(Some(p))
+}
+
+fn open_front_door(p: &mut Player) {
+    let groups = door_keys(&p.vehicle.ty);
+    let Some(group) = groups.first() else {
+        return;
+    };
+    if group.len() == 1 && group[0] == "bus_dooraft" {
+        return;
+    }
+    let Some(first) = group.first() else {
+        return;
+    };
+    let name = match first.split_once('|') {
+        Some((open, _)) => open.to_string(),
+        None => first.clone(),
+    };
+    let target = door_trigger_target(&p.vehicle.ty.program, &name);
+    let leaf = trigger_leaves(&p.vehicle.ty.program, &name)
+        .into_iter()
+        .next();
+    let is_open = |p: &Player| {
+        target
+            .is_some_and(|id| p.vehicle.state.vars.get(id as usize).is_some_and(|x| *x > 0.5))
+            || leaf
+            .as_ref()
+            .is_some_and(|l| p.vehicle.var(l).is_some_and(|x| x > 0.5))
+    };
+    if !is_open(p) {
+        p.vehicle.trigger(&name);
+        for _ in 0..3 {
+            p.vehicle.update(1.0 / 30.0);
+        }
+    }
+    if is_open(p) {
+        return;
+    }
+    if let Some(x) = target.and_then(|id| p.vehicle.state.vars.get_mut(id as usize)) {
+        *x = 1.0;
+    }
+    if let Some(l) = &leaf {
+        p.vehicle.set_var(l, 1.0);
+    }
+    p.vehicle.update(1.0 / 30.0);
+}
+
+fn headlights_off(p: &mut Player) {
+    if p.vehicle.ty.program.trigger("kw_scheinwerfer_toggle").is_none() {
+        return;
+    }
+    for _ in 0..4 {
+        if !p.vehicle.var("Spot_Select").is_some_and(|s| s >= 0.0) {
+            break;
+        }
+        p.action("kw_scheinwerfer_toggle", true);
+        p.action("kw_scheinwerfer_toggle", false);
+        p.vehicle.update(1.0 / 30.0);
+    }
 }
 
 /// The paint scheme a vehicle wears: the one named (or numbered) by `--paint`; none named is

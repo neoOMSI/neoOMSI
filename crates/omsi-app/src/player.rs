@@ -72,7 +72,7 @@ pub(crate) struct Player {
     pub(crate) trailer_renders: Vec<scene::VehicleRender>,
     pub(crate) axes: omsi_sim::KeyboardAxes,
     /// A game controller's pedals and steering this frame (they win over the keys).
-    pub(crate) analog: crate::controllers::Analog,
+    pub(crate) analog: controllers::Analog,
     /// The interior cameras chosen (OMSI's
     /// `view_interiorcam_minus`/`_plus`): the driver's and the passengers' camera numbers.
     pub(crate) cam_choice: (usize, usize),
@@ -94,7 +94,7 @@ pub(crate) struct Player {
     pub(crate) startup: Option<omsi_sim::startup::StartUp>,
     /// When the running auto-start began (one that has gone on for long is given up by the
     /// next Shift+U).
-    pub(crate) startup_at: Option<std::time::Instant>,
+    pub(crate) startup_at: Option<Instant>,
     /// The ticket key was pressed this frame (sell the requested ticket).
     pub(crate) give_ticket: bool,
     /// OMSI's `change_give` / `change_take` keys: hand the passenger
@@ -105,7 +105,7 @@ pub(crate) struct Player {
     pub(crate) hand_coupled: usize,
     /// Bound to the rails (see `rail_drive`), and where on them once it is placed.
     pub(crate) rail_bound: bool,
-    pub(crate) rail: Option<crate::rail_drive::RailDrive>,
+    pub(crate) rail: Option<rail_drive::RailDrive>,
     /// The driver camera chosen before the timetable or ticket desk camera took over.
     pub(crate) cam_before_special: Option<usize>,
     /// The actions a key started, by its scan code: its release lets go of the same ones,
@@ -144,7 +144,7 @@ pub(crate) struct Player {
     /// [`Player::headlights_with_side_lights`]).
     pub(crate) side_lights_by_l: bool,
     /// The driver figure at the wheel (see `driver.rs`).
-    pub(crate) driver: Option<crate::driver::DriverFigure>,
+    pub(crate) driver: Option<driver::DriverFigure>,
     /// The duty's trip to type into the IBIS once the auto-start has the electrics on:
     /// (line, terminus, the trip's stops, the stop the bus is at: its index and name).
     pub(crate) ibis_duty: Option<(String, String, Vec<String>, (usize, String))>,
@@ -256,7 +256,7 @@ fn door_leaf_of(var: &str) -> Option<String> {
 
 /// The door leaves a trigger moves: the leaf variables (or their targets) it stores, itself
 /// or in its macros; failing that, the ones it reads.
-fn trigger_leaves(program: &omsi_script::Program, name: &str) -> Vec<String> {
+pub(crate) fn trigger_leaves(program: &omsi_script::Program, name: &str) -> Vec<String> {
     fn walk(
         program: &omsi_script::Program,
         block: omsi_script::BlockId,
@@ -1114,7 +1114,7 @@ impl Player {
         let s = omsi_sim::startup::StartUp::new(&self.vehicle, &bound);
         let shutting_down = s.shutting_down();
         self.startup = Some(s);
-        self.startup_at = Some(std::time::Instant::now());
+        self.startup_at = Some(Instant::now());
         if shutting_down {
             "Switching the vehicle off ...".to_string()
         } else {
@@ -1173,22 +1173,6 @@ impl Player {
         let light_out = !omsi_sim::Daylight::compute(&self.vehicle.host.clock, None).lamps_on;
         if light_out {
             return;
-        }
-        // the headlights as well (the bus was put into service at night with its saloon
-        // lit and its headlights off): the light switch key once, where the headlights are
-        // off (`Spot_Select` < 0, the stock scripts' "no spotlight")
-        let headlights_off = self.vehicle.var("Spot_Select").is_some_and(|s| s < 0.0);
-        if headlights_off
-            && self
-            .vehicle
-            .ty
-            .program
-            .trigger("kw_scheinwerfer_toggle")
-            .is_some()
-        {
-            self.action("kw_scheinwerfer_toggle", true);
-            self.action("kw_scheinwerfer_toggle", false);
-            log::info!("auto-start: headlights switched on after dark");
         }
         if self.vehicle.ty.model.interior_lights.is_empty() {
             return;
@@ -1652,7 +1636,7 @@ impl Player {
     pub(crate) fn gate_gear(&self) -> Option<i32> {
         let program = &self.vehicle.ty.program;
         program.trigger("kw_s_1")?;
-        let v = crate::input_script::gate_gear_var(program).and_then(|v| self.vehicle.var(&v));
+        let v = gate_gear_var(program).and_then(|v| self.vehicle.var(&v));
         Some(v.unwrap_or(0.0).round() as i32)
     }
 
@@ -2177,7 +2161,7 @@ impl Player {
         }
         let (_, i) = best?;
         let def = &self.vehicle.ty.model.meshes[self.vehicle.ty.meshes[i].def_index];
-        let name = std::path::Path::new(&def.file.replace('\\', "/"))
+        let name = Path::new(&def.file.replace('\\', "/"))
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| def.file.clone());
@@ -2401,7 +2385,7 @@ impl Player {
             inside,
         );
         if self.render.window_wipers.is_none() {
-            self.render.window_wipers = Some(crate::window_wipers::WindowWipers::new(
+            self.render.window_wipers = Some(window_wipers::WindowWipers::new(
                 renderer,
                 scene,
                 &self.vehicle,
@@ -2516,7 +2500,7 @@ impl Player {
     pub(crate) fn camera_clipped(
         &mut self,
         mut cam: Camera,
-        world: &scene::World,
+        world: &World,
         dist: f32,
         dt: f32,
     ) -> Camera {
@@ -2615,10 +2599,10 @@ impl Player {
                 .iter()
                 .position(|x| std::ptr::eq(x, c))
                 .unwrap_or(0);
-            let aimed = crate::camera_util::mirror_view(
+            let aimed = mirror_view(
                 &self.vehicle,
                 c,
-                crate::camera_util::driver_eye(self),
+                driver_eye(self),
                 self.mirror_offsets.get(k).copied().unwrap_or([0.0; 2]),
             );
             let (eye, yaw, pitch, roll) = self.vehicle.camera_world_full(&aimed);
