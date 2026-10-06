@@ -5,6 +5,16 @@
 use std::process::Command;
 
 fn main() {
+    let channel = std::env::var("neoomsi_BUILD_CHANNEL").unwrap_or_else(|error| match error {
+        std::env::VarError::NotPresent => "developer".into(),
+        std::env::VarError::NotUnicode(_) => panic!("neoomsi_BUILD_CHANNEL must be Unicode"),
+    });
+    assert!(
+        matches!(channel.as_str(), "stable" | "rc" | "nightly" | "developer"),
+        "invalid neoomsi_BUILD_CHANNEL: {channel}; expected stable, rc, nightly or developer"
+    );
+    println!("cargo:rustc-env=neoomsi_BUILD_CHANNEL={channel}");
+    println!("cargo:rerun-if-env-changed=neoomsi_BUILD_CHANNEL");
     let git = |args: &[&str]| -> Option<String> {
         let out = Command::new("git").args(args).output().ok()?;
         out.status

@@ -507,7 +507,7 @@ pub(crate) fn make_app(
         pad_look: [false; 4],
         teleport_pick: false,
         discord: None,
-        discord_t: 0.0,
+        discord_next_update: Instant::now(),
         headtrack: None,
         headtrack_failed: None,
         controllers: None,

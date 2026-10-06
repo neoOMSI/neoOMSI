@@ -15,6 +15,12 @@ neoOMSI follows Semantic Versioning (`MAJOR.MINOR.PATCH`) during pre-1.0 develop
 
 `1.0.0` is reserved for achieving comprehensive behavioral parity across the OMSI 2.2.032 baseline, not simply for elapsed development time.
 
+## Build identity
+
+Release CI stamps `neoomsi_BUILD_CHANNEL` as `stable`, `rc`, or `nightly` alongside
+`neoomsi_VERSION`. Builds without an explicit channel are `developer`, including
+local optimized builds.
+
 ## Tags
 
 Milestone git tags are created strictly for official releases:

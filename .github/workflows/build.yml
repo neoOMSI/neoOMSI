@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-slim
     outputs:
       version: ${{ steps.v.outputs.version }}
+      channel: ${{ steps.v.outputs.channel }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -33,11 +34,18 @@ jobs:
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             v="${GITHUB_REF_NAME#v}"
+            case "$v" in
+              *-nightly.*) channel=nightly ;;
+              *-rc.*) channel=rc ;;
+              *) channel=stable ;;
+            esac
           else
+            channel=nightly
             short_sha="${GITHUB_SHA:0:8}"
             v="$(sh scripts/version.sh)-nightly.g${short_sha}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
       - shell: bash
         run: |
           echo "### neoOMSI ${{ steps.v.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
@@ -56,6 +64,7 @@ jobs:
             arch: arm64
     env:
       neoomsi_VERSION: ${{ needs.version.outputs.version }}
+      neoomsi_BUILD_CHANNEL: ${{ needs.version.outputs.channel }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -96,6 +105,7 @@ jobs:
             arch: x64
     env:
       neoomsi_VERSION: ${{ needs.version.outputs.version }}
+      neoomsi_BUILD_CHANNEL: ${{ needs.version.outputs.channel }}
       neoomsi_TARGET: ${{ matrix.target }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
@@ -131,6 +141,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       neoomsi_VERSION: ${{ needs.version.outputs.version }}
+      neoomsi_BUILD_CHANNEL: ${{ needs.version.outputs.channel }}
       RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
     steps:
       - uses: actions/checkout@v7

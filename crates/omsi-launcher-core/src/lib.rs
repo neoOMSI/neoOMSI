@@ -3378,6 +3378,9 @@ pub fn bus_preview(bus: &str, paint: &str) -> Result<String> {
 
 #[derive(Deserialize, Default, Debug, Clone)]
 pub struct Duty {
+    /// Transient Discord session identity passed by the desktop launcher, never saved.
+    #[serde(skip)]
+    pub discord_session_start: Option<u64>,
     pub map: String,
     pub bus: String,
     pub paint: Option<String>,
@@ -3423,6 +3426,19 @@ pub struct Duty {
     /// A situation file to continue (the map's `laststn.osn`): nothing else of the duty.
     #[serde(default)]
     pub situation: Option<String>,
+}
+
+#[cfg(test)]
+mod discord_session_tests {
+    #[test]
+    fn session_start_is_not_loaded_from_saved_duties() {
+        let duty: super::Duty = serde_json::from_value(serde_json::json!({
+            "map": "Map", "bus": "Bus", "time": "09:00",
+            "discord_session_start": 1234,
+        }))
+        .unwrap();
+        assert_eq!(duty.discord_session_start, None);
+    }
 }
 
 /// The situation the game left on `map` last (`laststn.osn` in the map's folder: the

@@ -391,7 +391,11 @@ impl State {
         self.stamp.is_some()
     }
 
-    pub fn spawn_launch(&mut self, d: core::Duty) {
+    pub fn spawn_launch(&mut self, mut d: core::Duty) {
+        #[cfg(not(target_os = "android"))]
+        {
+            d.discord_session_start = Some(crate::discord::session_started());
+        }
         self.launch_hold = Some(Instant::now());
         self.launched_pid = None;
         self.spawn(move || Msg::Launched(core::launch(&d).map_err(|e| format!("{e:#}"))));
@@ -726,6 +730,7 @@ impl State {
             })
             .filter(|m| m.to_ascii_lowercase().contains("maps/"));
         core::Duty {
+            discord_session_start: None,
             map: host_map.unwrap_or_else(|| c.map.clone()),
             bus: c.bus.clone(),
             paint: Some(c.paint.clone()).filter(|p| !p.is_empty()),

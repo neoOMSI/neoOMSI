@@ -108,7 +108,7 @@ pub(crate) struct App {
     pub(crate) pad_look: [bool; 4],
     pub(crate) teleport_pick: bool,
     pub(crate) discord: Option<discord::Discord>,
-    pub(crate) discord_t: f32,
+    pub(crate) discord_next_update: Instant,
     pub(crate) headtrack: Option<headtrack::HeadTracker>,
     pub(crate) headtrack_failed: Option<Instant>,
     pub(crate) controllers: Option<controllers::Controllers>,
@@ -491,7 +491,67 @@ impl App {
         }
     }
 
+    #[cfg(not(target_os = "android"))]
+    pub(crate) fn update_discord(&mut self, loading: bool) {
+        if self.args.server.is_some() || !self.settings.discord_status {
+            if let Some(discord) = self.discord.as_ref() {
+                discord.stop();
+                if discord.is_finished() {
+                    self.discord.take();
+                }
+            }
+            return;
+        }
+        if let Some(discord) = self.discord.as_ref() {
+            if discord.is_stopping() {
+                if !discord.is_finished() {
+                    return;
+                }
+                self.discord.take();
+                self.discord_next_update = Instant::now();
+            }
+        }
+        let now = Instant::now();
+        if now < self.discord_next_update {
+            return;
+        }
+        self.discord_next_update = now + std::time::Duration::from_secs(5);
+        if self.discord.is_none() {
+            self.discord = discord::Discord::start(&self.settings.discord_app_id);
+        }
+        if let Some(discord) = self.discord.as_ref() {
+            let bus = self.player.as_ref().map(|p| {
+                let definition = &p.vehicle.ty.def;
+                let short =
+                    omsi_launcher_lib::vehicle_type_label(&definition.type_name, &definition.path);
+                let full = omsi_launcher_lib::display_bus_name(&format!(
+                    "{} {short}",
+                    definition.manufacturer
+                ));
+                (short, full)
+            });
+            let duty = self
+                .duty
+                .as_ref()
+                .map(|d| (d.line.as_str(), d.tour.as_str()));
+            discord.set(discord::Presence::for_game(
+                self.world.as_ref().map(|w| w.global.name.as_str()),
+                bus.as_ref()
+                    .map(|(short, full)| (short.as_str(), full.as_str())),
+                duty,
+                self.lan.is_some(),
+                loading,
+                self.paused,
+            ));
+        }
+    }
+
     pub(crate) fn load_world_now(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_os = "android"))]
+        {
+            self.discord_next_update = Instant::now();
+            self.update_discord(true);
+        }
         if let Some(l) = self.lan.as_mut() {
             lan::adopt_host_world(&mut self.args, l, &mut self.remotes);
         }

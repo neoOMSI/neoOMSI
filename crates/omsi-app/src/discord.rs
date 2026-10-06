@@ -2,13 +2,12 @@
 
 use std::io::{self, Read, Write};
 use std::sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-// Shared test application; replace centrally if a different application is used for release.
-pub(crate) const DEFAULT_APP_ID: &str = "1555504817110122526";
+pub(crate) const DEFAULT_APP_ID: &str = "1556953294340104262";
 const MAX_FRAME: usize = 64 * 1024;
 #[cfg(not(test))]
 const POLL: Duration = Duration::from_millis(100);
@@ -34,49 +33,136 @@ pub(crate) struct Presence {
     pub large_text: String,
 }
 
+/// One session survives worker restarts and the launcher's child game processes.
+pub(crate) fn session_started() -> u64 {
+    static STARTED: OnceLock<u64> = OnceLock::new();
+    *STARTED.get_or_init(|| match std::env::var("OMSI_DISCORD_SESSION_START") {
+        Ok(value) => value
+            .parse()
+            .expect("OMSI_DISCORD_SESSION_START must be a Unix timestamp"),
+        Err(std::env::VarError::NotPresent) => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_secs(),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            panic!("OMSI_DISCORD_SESSION_START must be Unicode")
+        }
+    })
+}
+
+fn build_label(channel: &str, version: &str) -> String {
+    let label = match channel {
+        "stable" => "Stable",
+        "rc" => "RC",
+        "nightly" => "Nightly",
+        "developer" => "Developer",
+        _ => unreachable!("build script validates the channel"),
+    };
+    let version = if matches!(channel, "nightly" | "developer") {
+        version
+            .split_once("-nightly.")
+            .map_or(version, |(base, _)| base)
+    } else {
+        version
+    };
+    format!("{label} {version}")
+}
+
+fn status_text(status: &str, multiplayer: bool) -> String {
+    let suffix = if multiplayer { " · Multiplayer" } else { "" };
+    let build = build_label(env!("neoomsi_BUILD_CHANNEL"), crate::startup::VERSION);
+    let budget = 120 - status.chars().count() - suffix.chars().count() - 3;
+    format!("{status} · {}{suffix}", compact(&build, budget))
+}
+
+fn build_tooltip() -> String {
+    // The commit identifies the binary; omit the date to leave room for bus details.
+    let commit = crate::startup::BUILD
+        .split_whitespace()
+        .next()
+        .unwrap_or("unknown");
+    format!("neoOMSI {} · {commit}", crate::startup::VERSION)
+}
+
+fn game_tooltip(bus: Option<&str>, tour: Option<&str>, build: &str) -> String {
+    let build = compact(build, 60);
+    let tour = tour.map(|tour| format!("Tour {}", compact(tour, 16)));
+    let suffix = match tour {
+        Some(tour) => format!("{tour} · {build}"),
+        None => build,
+    };
+    match bus {
+        Some(bus) => format!(
+            "{} · {suffix}",
+            compact(bus, 120 - suffix.chars().count() - 3)
+        ),
+        None => suffix,
+    }
+}
+
 impl Presence {
     pub(crate) fn for_game(
         map: Option<&str>,
         bus: Option<(&str, &str)>,
         duty: Option<(&str, &str)>,
         multiplayer: bool,
+        loading: bool,
+        paused: bool,
     ) -> Option<Self> {
-        let map = map.filter(|name| !name.trim().is_empty())?;
-        let bus = bus.map(|(short, full)| {
-            let short = short.trim();
-            let full = full.trim();
-            (if short.is_empty() { full } else { short }, full)
-        });
-        let details = match duty {
-            Some((line, _)) => format!("{} · Line {}", compact(map, 24), line.trim()),
-            None => compact(map, 24),
-        };
-        let mut state = match (bus, duty) {
-            (Some((short, _)), Some((_, tour))) => {
-                format!("{} · Tour {}", compact(short, 16), tour.trim())
-            }
-            (Some((short, _)), None) => format!("{} · Free drive", compact(short, 16)),
-            (None, _) => "On foot".to_string(),
-        };
-        if multiplayer {
-            state.push_str(" · Multiplayer");
+        let map = map.map(str::trim).filter(|name| !name.is_empty());
+        if map.is_none() && !loading {
+            return None;
         }
-        let large_text = match bus {
-            Some((_, full)) => format!("neoOMSI · {map} · {full}"),
-            None => format!("neoOMSI · {map}"),
+        let line = duty
+            .map(|(line, _)| line.trim())
+            .filter(|line| !line.is_empty());
+        let details = match (map, line) {
+            (Some(map), Some(line)) => {
+                let line = compact(line, 40);
+                format!(
+                    "{} · Line {line}",
+                    compact(map, 120 - 8 - line.chars().count())
+                )
+            }
+            (Some(map), None) => compact(map, 120),
+            (None, _) => "Preparing a drive".into(),
         };
+        let status = if loading {
+            "Loading"
+        } else if paused {
+            "Paused"
+        } else if bus.is_none() {
+            "On foot"
+        } else if line.is_some() {
+            "Driving"
+        } else {
+            "Free drive"
+        };
+        let bus_name = bus
+            .map(|(short, full)| {
+                if full.trim().is_empty() {
+                    short.trim()
+                } else {
+                    full.trim()
+                }
+            })
+            .filter(|name| !name.is_empty());
+        let tour = duty
+            .map(|(_, tour)| tour.trim())
+            .filter(|tour| !tour.is_empty());
+        let large_text = game_tooltip(bus_name, tour, &build_tooltip());
         Some(Self {
             details,
-            state,
+            state: status_text(status, multiplayer),
             large_text,
         })
     }
 
     pub(crate) fn for_launcher(enabled: bool, launching: bool, game_running: bool) -> Option<Self> {
         (enabled && !launching && !game_running).then(|| Self {
-            details: "In launcher".into(),
-            state: "Preparing a drive".into(),
-            large_text: "neoOMSI".into(),
+            details: "Preparing a drive".into(),
+            state: status_text("In launcher", false),
+            large_text: compact(&build_tooltip(), 120),
         })
     }
 }
@@ -368,24 +454,25 @@ fn nonce(value: &serde_json::Value) -> Option<&str> {
     value.get("nonce")?.as_str()
 }
 
+fn application_id(app_id: &str) -> Option<&str> {
+    let app_id = app_id.trim();
+    let app_id = if app_id.is_empty() {
+        DEFAULT_APP_ID
+    } else {
+        app_id
+    };
+    app_id.chars().all(|c| c.is_ascii_digit()).then_some(app_id)
+}
+
 impl Discord {
     pub(crate) fn start(app_id: &str) -> Option<Self> {
-        let app_id = if app_id.trim().is_empty() {
-            DEFAULT_APP_ID
-        } else {
-            app_id.trim()
-        };
-        if !app_id.chars().all(|c| c.is_ascii_digit()) {
-            return None;
-        }
+        let app_id = application_id(app_id)?;
         let wanted = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let worker_wanted = wanted.clone();
         let worker_stop = stop.clone();
         let app_id = app_id.to_string();
-        let started = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let started = session_started();
         let worker = std::thread::Builder::new()
             .name("discord-rich-presence".into())
             .spawn(move || run(app_id, worker_wanted, worker_stop, started))
@@ -486,7 +573,6 @@ fn run_with<T: Read + Write>(
             continue;
         }
 
-        let current = wanted.lock().ok().and_then(|w| w.clone());
         if !ready && connected_at.is_some_and(|at| at.elapsed() > RESPONSE_TIMEOUT) {
             pipe = None;
             connected_at = None;
@@ -497,19 +583,22 @@ fn run_with<T: Read + Write>(
                 pipe = None;
                 continue;
             }
-        } else if ready
-            && shown.as_ref() != Some(&current)
-            && last_update.elapsed() >= UPDATE_INTERVAL
-        {
-            sequence += 1;
-            let activity = current.as_ref().map(|p| activity(p, started, true));
-            let msg = serde_json::json!({ "cmd": "SET_ACTIVITY", "args": { "pid": std::process::id(), "activity": activity }, "nonce": sequence.to_string() }).to_string();
-            if write_frame(pipe.as_mut().unwrap(), 1, msg.as_bytes()).is_err() {
-                pipe = None;
-                continue;
+        } else if ready && last_update.elapsed() >= UPDATE_INTERVAL {
+            let current = {
+                let wanted = wanted.lock().expect("Discord presence lock poisoned");
+                (shown.as_ref() != Some(&*wanted)).then(|| wanted.clone())
+            };
+            if let Some(current) = current {
+                sequence += 1;
+                let activity = current.as_ref().map(|p| activity(p, started, true));
+                let msg = serde_json::json!({ "cmd": "SET_ACTIVITY", "args": { "pid": std::process::id(), "activity": activity }, "nonce": sequence.to_string() }).to_string();
+                if write_frame(pipe.as_mut().unwrap(), 1, msg.as_bytes()).is_err() {
+                    pipe = None;
+                    continue;
+                }
+                waiting_for = Some((sequence.to_string(), Instant::now(), current, true));
+                last_update = Instant::now();
             }
-            waiting_for = Some((sequence.to_string(), Instant::now(), current, true));
-            last_update = Instant::now();
         }
 
         match read_frame(pipe.as_mut().unwrap(), &mut pending) {
@@ -638,31 +727,121 @@ mod tests {
     }
 
     #[test]
-    fn presence_requires_a_map_and_describes_session() {
+    fn presence_describes_session_and_status_priority() {
         assert_eq!(
-            Presence::for_game(None, Some(("Bus", "Bus")), None, false),
+            Presence::for_game(None, None, None, false, false, false),
             None
         );
-        assert_eq!(Presence::for_game(Some(" "), None, None, false), None);
         assert_eq!(
-            Presence::for_game(
-                Some("Map"),
+            Presence::for_game(Some(" "), None, None, false, false, false),
+            None
+        );
+        for (bus, duty, loading, paused, status) in [
+            (
                 Some(("Bus", "Full bus name")),
                 Some((" 5 ", " 2 ")),
-                true
+                false,
+                false,
+                "Driving",
             ),
-            Some(Presence {
-                details: "Map · Line 5".into(),
-                state: "Bus · Tour 2 · Multiplayer".into(),
-                large_text: "neoOMSI · Map · Full bus name".into(),
-            })
-        );
+            (
+                Some(("Bus", "Full bus name")),
+                None,
+                false,
+                false,
+                "Free drive",
+            ),
+            (None, None, false, false, "On foot"),
+            (None, None, false, true, "Paused"),
+            (None, None, true, true, "Loading"),
+        ] {
+            let p = Presence::for_game(Some("Map"), bus, duty, true, loading, paused).unwrap();
+            assert!(p.state.starts_with(&format!("{status} · ")));
+            assert!(p.state.ends_with(" · Multiplayer"));
+            assert!(p.large_text.contains(crate::startup::VERSION));
+            if duty.is_some() {
+                assert_eq!(p.details, "Map · Line 5");
+                assert!(p.large_text.contains("Full bus name"));
+                assert!(p.large_text.contains("Tour 2"));
+            }
+        }
+        let loading = Presence::for_game(None, None, None, false, true, false).unwrap();
+        assert_eq!(loading.details, "Preparing a drive");
+        assert!(loading.state.starts_with("Loading · "));
+    }
+
+    #[test]
+    fn session_start_is_stable_across_calls() {
+        let first = session_started();
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(session_started(), first);
         assert_eq!(
-            Presence::for_game(Some("Map"), None, None, false)
-                .unwrap()
-                .state,
-            "On foot"
+            activity(&Presence::default(), first, true)["timestamps"]["start"],
+            first
         );
+    }
+
+    #[test]
+    fn long_bus_names_keep_tour_and_build_visible() {
+        let build = "neoOMSI 0.2.0-nightly.g12345678 · 12345678";
+        for name in [
+            "Very long manufacturer and bus variant ".repeat(8),
+            "🚌".repeat(150),
+        ] {
+            let tooltip = game_tooltip(Some(&name), Some("123"), build);
+            assert!(tooltip.chars().count() <= 120);
+            assert!(tooltip.contains("… · Tour 123 · "));
+            assert!(tooltip.ends_with(build));
+        }
+        assert_eq!(
+            game_tooltip(Some("MAN NL202"), Some("1"), build),
+            format!("MAN NL202 · Tour 1 · {build}")
+        );
+        assert_eq!(game_tooltip(None, None, build), build);
+    }
+
+    #[test]
+    fn build_labels_distinguish_release_channels() {
+        for (channel, version, expected) in [
+            ("stable", "0.2.0", "Stable 0.2.0"),
+            ("rc", "0.2.0-rc.1", "RC 0.2.0-rc.1"),
+            ("nightly", "0.2.0-nightly.g12345678", "Nightly 0.2.0"),
+            ("developer", "0.2.0", "Developer 0.2.0"),
+            ("developer", "0.2.0-nightly.g12345678", "Developer 0.2.0"),
+        ] {
+            assert_eq!(build_label(channel, version), expected);
+        }
+    }
+
+    #[test]
+    fn empty_fields_and_unicode_names_are_bounded() {
+        let name = "🚌".repeat(150);
+        let line = "線".repeat(150);
+        let p = Presence::for_game(
+            Some(&name),
+            Some(("", "")),
+            Some((&line, "")),
+            true,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(p.details.chars().count(), 120);
+        assert!(p.state.chars().count() <= 120);
+        assert!(p.large_text.chars().count() <= 120);
+        assert!(!p.large_text.contains("Tour"));
+        let p = Presence::for_game(
+            Some("Map"),
+            Some(("", "MAN NL202")),
+            Some((" ", " ")),
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(p.details, "Map");
+        assert!(p.state.starts_with("Free drive · "));
+        assert!(p.large_text.contains("MAN NL202"));
     }
 
     #[test]
@@ -805,6 +984,89 @@ mod tests {
     }
 
     #[test]
+    fn updates_are_deduplicated_throttled_and_cleared() {
+        struct TimedPipe {
+            pipe: std::net::TcpStream,
+            sent: Arc<Mutex<Vec<Instant>>>,
+        }
+        impl Read for TimedPipe {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.pipe.read(buffer)
+            }
+        }
+        impl Write for TimedPipe {
+            fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+                if buffer.len() > 8 {
+                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buffer[8..]) {
+                        if value["cmd"] == "SET_ACTIVITY" {
+                            self.sent.lock().unwrap().push(Instant::now());
+                        }
+                    }
+                }
+                self.pipe.write(buffer)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.pipe.flush()
+            }
+        }
+        let (client, mut peer) = pair();
+        let presence = Presence::for_launcher(true, false, false).unwrap();
+        let wanted = Arc::new(Mutex::new(Some(presence.clone())));
+        let stop = Arc::new(AtomicBool::new(false));
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let worker_wanted = wanted.clone();
+        let worker_stop = stop.clone();
+        let worker_sent = sent.clone();
+        let worker = std::thread::spawn(move || {
+            let mut pipe = Some(TimedPipe {
+                pipe: client,
+                sent: worker_sent,
+            });
+            run_with(
+                DEFAULT_APP_ID.into(),
+                worker_wanted,
+                worker_stop,
+                1234,
+                move || pipe.take(),
+            );
+        });
+        let deadline = Instant::now() + Duration::from_secs(3);
+        receive(&mut peer, deadline);
+        ready_fragmented(&mut peer);
+        let first = receive(&mut peer, deadline);
+        acknowledge(&mut peer, &first);
+        *wanted.lock().unwrap() = Some(presence.clone());
+        std::thread::sleep(UPDATE_INTERVAL * 4);
+        assert_eq!(
+            sent.lock().unwrap().len(),
+            1,
+            "identical presence was resent"
+        );
+
+        let mut changed = presence;
+        changed.state = "Paused".into();
+        *wanted.lock().unwrap() = Some(changed);
+        let second = receive(&mut peer, deadline);
+        acknowledge(&mut peer, &second);
+        *wanted.lock().unwrap() = None;
+        let clear = receive(&mut peer, deadline);
+        let clear_json: serde_json::Value = serde_json::from_slice(&clear.body).unwrap();
+        assert!(clear_json["args"]["activity"].is_null());
+        acknowledge(&mut peer, &clear);
+        {
+            let times = sent.lock().unwrap();
+            assert_eq!(times.len(), 3);
+            assert!(
+                times
+                    .windows(2)
+                    .all(|pair| pair[1].duration_since(pair[0]) >= UPDATE_INTERVAL)
+            );
+        }
+        stop.store(true, Ordering::Release);
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn unanswered_activity_times_out_and_reconnects() {
         use std::sync::atomic::AtomicUsize;
 
@@ -863,7 +1125,8 @@ mod tests {
     #[test]
     fn launcher_yields_to_games_and_respects_the_switch() {
         let idle = Presence::for_launcher(true, false, false).unwrap();
-        assert_eq!(idle.details, "In launcher");
+        assert_eq!(idle.details, "Preparing a drive");
+        assert!(idle.state.starts_with("In launcher · "));
         assert_eq!(Presence::for_launcher(false, false, false), None);
         assert_eq!(Presence::for_launcher(true, true, false), None);
         assert_eq!(Presence::for_launcher(true, false, true), None);
@@ -903,47 +1166,6 @@ mod tests {
     }
 
     #[test]
-    fn short_bus_label_preserves_full_name_in_tooltip() {
-        let presence = Presence::for_game(
-            Some("Grundorf"),
-            Some((
-                "MB O550 Euro3 Automatik",
-                "Thueringer Wald MB O550 Euro3 Automatik",
-            )),
-            Some(("76", "1")),
-            false,
-        )
-        .unwrap();
-        assert_eq!(presence.details, "Grundorf · Line 76");
-        assert_eq!(presence.state, "MB O550 Euro3… · Tour 1");
-        assert!(
-            presence
-                .large_text
-                .contains("Thueringer Wald MB O550 Euro3 Automatik")
-        );
-        assert_eq!(compact("🚌".repeat(20).as_str(), 16).chars().count(), 16);
-    }
-
-    #[test]
-    fn a_driven_bus_with_an_empty_type_uses_its_full_name() {
-        for short in ["", "   "] {
-            let free =
-                Presence::for_game(Some("Grundorf"), Some((short, "MAN NL202")), None, false)
-                    .unwrap();
-            assert_eq!(free.state, "MAN NL202 · Free drive");
-            let duty = Presence::for_game(
-                Some("Grundorf"),
-                Some((short, "MAN NL202")),
-                Some(("76", "1")),
-                false,
-            )
-            .unwrap();
-            assert_eq!(duty.state, "MAN NL202 · Tour 1");
-            assert!(duty.large_text.ends_with("MAN NL202"));
-        }
-    }
-
-    #[test]
     fn frame_reader_performs_only_one_read_per_poll() {
         struct ByteReader {
             bytes: std::io::Cursor<Vec<u8>>,
@@ -971,7 +1193,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_application_id_uses_shared_test_id() {
-        assert_eq!(DEFAULT_APP_ID, "1555504817110122526");
+    fn default_application_is_neoomsi_and_overrides_are_preserved() {
+        assert_eq!(application_id(""), Some("1556953294340104262"));
+        assert_eq!(application_id("   "), Some(DEFAULT_APP_ID));
+        assert_eq!(application_id(" 123456 "), Some("123456"));
+        assert_eq!(application_id("invalid"), None);
     }
 }

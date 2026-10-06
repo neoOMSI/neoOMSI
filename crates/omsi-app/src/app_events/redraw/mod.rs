@@ -22,6 +22,8 @@ impl App {
     // the order matters: the player's vehicle moves before the people are placed in it, and the
     // day's light made by the environment is the picture's
     pub(super) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_os = "android"))]
+        self.update_discord(self.starting.is_some());
         if !self.redraw_begin(event_loop) {
             return;
         }

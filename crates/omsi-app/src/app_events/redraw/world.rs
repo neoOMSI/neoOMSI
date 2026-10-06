@@ -236,44 +236,6 @@ impl App {
                 8.0,
             ));
         }
-        #[cfg(not(target_os = "android"))]
-        {
-            self.discord_t -= dt;
-            if self.discord_t <= 0.0 {
-                self.discord_t = 5.0;
-                if self.args.server.is_none()
-                    && self.discord.is_none()
-                    && self.settings.discord_status
-                {
-                    self.discord = discord::Discord::start(&self.settings.discord_app_id);
-                }
-                if let Some(d) = self.discord.as_ref() {
-                    let bus = self.player.as_ref().map(|p| {
-                        let definition = &p.vehicle.ty.def;
-                        let short = omsi_launcher_lib::vehicle_type_label(
-                            &definition.type_name,
-                            &definition.path,
-                        );
-                        let full = omsi_launcher_lib::display_bus_name(&format!(
-                            "{} {short}",
-                            definition.manufacturer
-                        ));
-                        (short, full)
-                    });
-                    let duty = self
-                        .duty
-                        .as_ref()
-                        .map(|d| (d.line.as_str(), d.tour.as_str()));
-                    d.set(discord::Presence::for_game(
-                        self.world.as_ref().map(|w| w.global.name.as_str()),
-                        bus.as_ref()
-                            .map(|(short, full)| (short.as_str(), full.as_str())),
-                        duty,
-                        self.lan.is_some(),
-                    ));
-                }
-            }
-        }
         let plugins = self.plugins.get_or_insert_with(plugins::load);
         if !plugins.is_empty() && !self.paused {
             let info = plugins::game_info(self);

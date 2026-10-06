@@ -341,9 +341,12 @@ pub fn start(game: &Path, args: &[String], d: &crate::Duty, profile: &str) -> Re
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
-    let child = std::process::Command::new(game)
-        .args(args)
-        .env("OMSI_INSTANCE", &id)
+    let mut command = std::process::Command::new(game);
+    command.args(args).env("OMSI_INSTANCE", &id);
+    if let Some(started) = d.discord_session_start {
+        command.env("OMSI_DISCORD_SESSION_START", started.to_string());
+    }
+    let child = command
         .stdout(file)
         .stderr(err)
         .spawn()
