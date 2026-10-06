@@ -93,14 +93,18 @@ pub(crate) fn session_started() -> u64 {
     )
 }
 
-fn build_label(channel: &str, version: &str) -> String {
-    let label = match channel {
+fn build_channel_label(channel: &str) -> &'static str {
+    match channel {
         "stable" => "Stable",
         "rc" => "RC",
         "nightly" => "Nightly",
         "developer" => "Developer",
         _ => unreachable!("build script validates the channel"),
-    };
+    }
+}
+
+fn build_label(channel: &str, version: &str) -> String {
+    let label = build_channel_label(channel);
     let version = if matches!(channel, "nightly" | "developer") {
         version
             .split_once("-nightly.")
@@ -118,28 +122,24 @@ fn status_text(status: &str, multiplayer: bool) -> String {
     format!("{status} · {}{suffix}", compact(&build, budget))
 }
 
-fn build_tooltip() -> String {
-    // The commit identifies the binary; omit the date to leave room for bus details.
-    let commit = crate::startup::BUILD
+fn build_tooltip(channel: &str, build: &str) -> String {
+    let commit = build
         .split_whitespace()
         .next()
-        .unwrap_or("unknown");
-    format!("neoOMSI {} · {commit}", crate::startup::VERSION)
+        .unwrap_or("unknown")
+        .trim_end_matches('+');
+    format!("neoOMSI · {} g{commit}", build_channel_label(channel))
 }
 
-fn game_tooltip(bus: Option<&str>, tour: Option<&str>, build: &str) -> String {
-    let build = compact(build, 60);
+fn game_tooltip(bus: Option<&str>, tour: Option<&str>) -> String {
     let tour = tour.map(|tour| format!("Tour {}", compact(tour, 16)));
-    let suffix = match tour {
-        Some(tour) => format!("{tour} · {build}"),
-        None => build,
-    };
-    match bus {
-        Some(bus) => format!(
-            "{} · {suffix}",
-            compact(bus, 120 - suffix.chars().count() - 3)
-        ),
-        None => suffix,
+    match (bus, tour) {
+        (Some(bus), Some(tour)) => {
+            format!("{} · {tour}", compact(bus, 120 - tour.chars().count() - 3))
+        }
+        (Some(bus), None) => compact(bus, 120),
+        (None, Some(tour)) => tour,
+        (None, None) => "neoOMSI".into(),
     }
 }
 
@@ -193,7 +193,7 @@ impl Presence {
         let tour = duty
             .map(|(_, tour)| tour.trim())
             .filter(|tour| !tour.is_empty());
-        let large_text = game_tooltip(bus_name, tour, &build_tooltip());
+        let large_text = game_tooltip(bus_name, tour);
         Some(Self {
             details,
             state: status_text(status, multiplayer),
@@ -205,7 +205,10 @@ impl Presence {
         (enabled && !launching && !game_running).then(|| Self {
             details: "Preparing a drive".into(),
             state: status_text("In launcher", false),
-            large_text: compact(&build_tooltip(), 120),
+            large_text: compact(
+                &build_tooltip(env!("neoomsi_BUILD_CHANNEL"), crate::startup::BUILD),
+                120,
+            ),
         })
     }
 }
@@ -801,7 +804,7 @@ mod tests {
             let p = Presence::for_game(Some("Map"), bus, duty, true, loading, paused).unwrap();
             assert!(p.state.starts_with(&format!("{status} · ")));
             assert!(p.state.ends_with(" · Multiplayer"));
-            assert!(p.large_text.contains(crate::startup::VERSION));
+            assert!(!p.large_text.contains(crate::startup::VERSION));
             if duty.is_some() {
                 assert_eq!(p.details, "Map · Line 5");
                 assert!(p.large_text.contains("Full bus name"));
@@ -858,22 +861,29 @@ mod tests {
     }
 
     #[test]
-    fn long_bus_names_keep_tour_and_build_visible() {
-        let build = "neoOMSI 0.2.0-nightly.g12345678 · 12345678";
+    fn long_bus_names_keep_tour_without_build_details() {
         for name in [
             "Very long manufacturer and bus variant ".repeat(8),
             "🚌".repeat(150),
         ] {
-            let tooltip = game_tooltip(Some(&name), Some("123"), build);
+            let tooltip = game_tooltip(Some(&name), Some("123"));
             assert!(tooltip.chars().count() <= 120);
-            assert!(tooltip.contains("… · Tour 123 · "));
-            assert!(tooltip.ends_with(build));
+            assert!(tooltip.ends_with("Tour 123"));
+            assert!(!tooltip.contains("0.2.0"));
         }
         assert_eq!(
-            game_tooltip(Some("MAN NL202"), Some("1"), build),
-            format!("MAN NL202 · Tour 1 · {build}")
+            game_tooltip(Some("MAN NL202"), Some("1")),
+            "MAN NL202 · Tour 1"
         );
-        assert_eq!(game_tooltip(None, None, build), build);
+        assert_eq!(game_tooltip(None, None), "neoOMSI");
+    }
+
+    #[test]
+    fn launcher_tooltip_shows_build_channel_and_commit_once() {
+        assert_eq!(
+            build_tooltip("developer", "913a34d2+ 2026-10-06 12:00"),
+            "neoOMSI · Developer g913a34d2"
+        );
     }
 
     #[test]
