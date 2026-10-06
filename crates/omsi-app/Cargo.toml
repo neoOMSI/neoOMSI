@@ -48,6 +48,7 @@ anyhow.workspace = true
 clap.workspace = true
 log.workspace = true
 env_logger.workspace = true
+getrandom = "0.4"
 rayon.workspace = true
 omsi-net = { path = "../omsi-net" }
 omsi-ui = { path = "../omsi-ui" }

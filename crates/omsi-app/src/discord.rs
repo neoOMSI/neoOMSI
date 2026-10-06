@@ -33,24 +33,47 @@ pub(crate) struct Presence {
     pub large_text: String,
 }
 
+const DEVELOPER_TIMESTAMP_RANGE: u64 = 1_000_000_000;
+
+/// Return a random Unix timestamp from 1970 through 2001 for the developer-build gag.
+fn absurd_developer_timestamp() -> u64 {
+    let mut bytes = [0; 8];
+    match getrandom::fill(&mut bytes) {
+        Ok(()) => u64::from_le_bytes(bytes) % DEVELOPER_TIMESTAMP_RANGE,
+        Err(error) => {
+            log::warn!("Discord: couldn't randomize developer session timestamp: {error}");
+            0
+        }
+    }
+}
+
+fn new_session_started(now: u64, developer_build: bool) -> u64 {
+    if developer_build {
+        absurd_developer_timestamp()
+    } else {
+        now
+    }
+}
+
 fn session_started_once(
     started: &OnceLock<u64>,
     configured: Result<String, std::env::VarError>,
     now: u64,
+    developer_build: bool,
 ) -> u64 {
     *started.get_or_init(|| match configured {
         Ok(value) => value.parse().unwrap_or_else(|error| {
             log::warn!(
                 "Discord: invalid OMSI_DISCORD_SESSION_START ({error}); starting a new session"
             );
-            now
+            new_session_started(now, developer_build)
         }),
-        Err(std::env::VarError::NotPresent) => now,
+        Err(std::env::VarError::NotPresent) => new_session_started(now, developer_build),
         Err(std::env::VarError::NotUnicode(_)) => {
             log::warn!(
                 "Discord: OMSI_DISCORD_SESSION_START is not Unicode; starting a new session"
             );
-            now
+            new_session_started(now, developer_build)
         }
     })
 }
@@ -61,7 +84,13 @@ pub(crate) fn session_started() -> u64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
-    session_started_once(&STARTED, std::env::var("OMSI_DISCORD_SESSION_START"), now)
+    let developer_build = env!("neoomsi_BUILD_CHANNEL") == "developer";
+    session_started_once(
+        &STARTED,
+        std::env::var("OMSI_DISCORD_SESSION_START"),
+        now,
+        developer_build,
+    )
 }
 
 fn build_label(channel: &str, version: &str) -> String {
@@ -788,17 +817,38 @@ mod tests {
     fn invalid_session_start_falls_back_to_now() {
         let started = OnceLock::new();
         assert_eq!(
-            session_started_once(&started, Ok("invalid".into()), 1234),
+            session_started_once(&started, Ok("invalid".into()), 1234, false),
             1234
+        );
+    }
+
+    #[test]
+    fn developer_session_gets_one_absurd_start_time() {
+        let started = OnceLock::new();
+        let first = session_started_once(
+            &started,
+            Err(std::env::VarError::NotPresent),
+            2_000_000_000,
+            true,
+        );
+        assert!(first < DEVELOPER_TIMESTAMP_RANGE);
+        assert_eq!(
+            session_started_once(
+                &started,
+                Err(std::env::VarError::NotPresent),
+                2_000_000_001,
+                true,
+            ),
+            first
         );
     }
 
     #[test]
     fn session_start_is_stable_across_calls() {
         let started = OnceLock::new();
-        let first = session_started_once(&started, Ok("1507665886".into()), 2_000_000_000);
+        let first = session_started_once(&started, Ok("1507665886".into()), 2_000_000_000, false);
         assert_eq!(
-            session_started_once(&started, Ok("invalid".into()), 2_000_000_001),
+            session_started_once(&started, Ok("invalid".into()), 2_000_000_001, false),
             first
         );
         assert_eq!(
