@@ -121,6 +121,101 @@ pub(super) fn interior_panel(ui: &imgui::Ui, extra: &Extra, actions: &mut Vec<Ac
     }
 }
 
+pub(super) fn spots_panel(
+    ui: &imgui::Ui,
+    s: &mut crate::lights::LightSettings,
+    extra: &Extra,
+) {
+    if ui.collapsing_header("Window Light (lit saloon)", imgui::TreeNodeFlags::DEFAULT_OPEN) {
+        let m = &mut s.spill;
+        ui.checkbox("Enabled##sp", &mut m.on);
+        ui.checkbox("Show Markers (orange)##sp", &mut m.marker);
+        ui.slider("Intensity x##sp", 0.0, 4.0, &mut m.gain);
+        ui.slider("Range x##sp", 0.1, 4.0, &mut m.range);
+        ui.slider("Core x##sp", 0.1, 4.0, &mut m.core);
+        ui.slider("Spread x (cone width)##sp", 0.2, 3.0, &mut m.spread);
+        ui.slider("Inner Angle +deg##sp", -20.0, 60.0, &mut m.inner_add);
+        ui.slider("Outer Angle +deg##sp", -40.0, 90.0, &mut m.outer_add);
+        ui.slider("Tilt +deg (down)##sp", -30.0, 60.0, &mut m.tilt_add);
+        ui.slider("Shines up to (m from body)##sp", 5.0, 300.0, &mut m.reach);
+        ui.slider("Max vehicles##sp", 0, 256, &mut m.vehicles);
+        if ui.button("Reset Window Light##sp") {
+            *m = crate::lights::SpillCfg::DEFAULT;
+        }
+    }
+    if ui.collapsing_header("Extra Spotlights ([spotlight_2])", imgui::TreeNodeFlags::DEFAULT_OPEN) {
+        let m = &mut s.spot2;
+        ui.checkbox("Enabled##s2", &mut m.on);
+        ui.checkbox("Show Markers (green)##s2", &mut m.marker);
+        ui.slider("Intensity x##s2", 0.0, 4.0, &mut m.gain);
+        ui.slider("Range x##s2", 0.1, 4.0, &mut m.range);
+        ui.slider("Core x##s2", 0.1, 4.0, &mut m.core);
+        ui.slider("Inner Angle +deg##s2", -60.0, 60.0, &mut m.inner_add);
+        ui.slider("Outer Angle +deg##s2", -60.0, 60.0, &mut m.outer_add);
+        ui.slider("Height (m)##s2", -3.0, 3.0, &mut m.height);
+        if ui.button("Reset Extra Spotlights##s2") {
+            *m = crate::lights::Spot2Cfg::DEFAULT;
+        }
+    }
+    let Some(v) = extra.vehicle.as_ref() else {
+        return;
+    };
+    if ui.collapsing_header("Outside Light Sources", imgui::TreeNodeFlags::DEFAULT_OPEN) {
+        ui.text("All outside sources (global)");
+        let m = &mut s.src;
+        ui.checkbox("Sources throw light##src", &mut m.on);
+        ui.slider("Intensity x##src", 0.0, 4.0, &mut m.gain);
+        ui.slider("Spread x (how far)##src", 0.1, 4.0, &mut m.spread);
+        ui.slider("Core x##src", 0.1, 4.0, &mut m.core);
+        ui.checkbox("Only the way it faces (cone)##src", &mut m.directional);
+        if m.directional {
+            ui.slider("Inner Angle (deg)##src", 1.0, 179.0, &mut m.inner);
+            ui.slider("Outer Angle (deg)##src", 1.0, 179.0, &mut m.outer);
+        } else {
+            ui.text_disabled("Everywhere (all round)");
+        }
+        if ui.button("Reset Source Light##src") {
+            *m = crate::lights::SourceCfg::DEFAULT;
+        }
+        ui.separator();
+        if ui.button("Reset Outside Sources") {
+            crate::lights::reset_exterior_cfg();
+        }
+        ui.same_line();
+        ui.text_disabled(format!("{} sources", v.exterior.len()));
+        for (i, src) in v.exterior.iter().enumerate() {
+            let mut c = crate::lights::exterior_cfg(i);
+            let label = format!("E{i} {}##el{i}", src.variable);
+            if ui.collapsing_header(label, imgui::TreeNodeFlags::empty()) {
+                ui.text_disabled(format!(
+                    "pos {:.2} {:.2} {:.2}  size {:.2}  color {:.0} {:.0} {:.0}",
+                    src.pos[0],
+                    src.pos[1],
+                    src.pos[2],
+                    src.range,
+                    src.color[0],
+                    src.color[1],
+                    src.color[2]
+                ));
+                let mut on = !c.off;
+                ui.checkbox(format!("Enabled##el{i}"), &mut on);
+                c.off = !on;
+                ui.slider(format!("Intensity x##el{i}"), 0.0, 4.0, &mut c.gain);
+                ui.slider(format!("Size x##el{i}"), 0.0, 4.0, &mut c.size);
+                ui.slider(format!("Spread x##el{i}"), 0.1, 4.0, &mut c.spread);
+                ui.slider(format!("Right (m)##el{i}"), -3.0, 3.0, &mut c.shift[0]);
+                ui.slider(format!("Forward (m)##el{i}"), -3.0, 3.0, &mut c.shift[1]);
+                ui.slider(format!("Height (m)##el{i}"), -3.0, 3.0, &mut c.shift[2]);
+                ui.color_edit3(format!("Tint##el{i}"), &mut c.color);
+                if ui.button(format!("Reset##el{i}")) {
+                    c = crate::lights::ExteriorCfg::DEFAULT;
+                }
+            }
+            crate::lights::set_exterior_cfg(i, c);
+        }
+    }
+}
+
 pub(super) fn vehicle_panel(ui: &imgui::Ui, s: &mut crate::lights::LightSettings) {
     if ui.collapsing_header("Headlights", imgui::TreeNodeFlags::DEFAULT_OPEN) {
         ui.checkbox("Force High Beam", &mut s.force_high_beam);
@@ -150,6 +245,7 @@ pub(super) fn vehicle_panel(ui: &imgui::Ui, s: &mut crate::lights::LightSettings
     ui.separator();
     if ui.button("Reset Vehicle Lights") {
         let d = crate::lights::LightSettings::DEFAULT;
+        let (sp, s2) = (s.spill, s.spot2);
         let (wb, wn, co, ms, ll) = (
             s.weather_boost,
             s.weather_night,
@@ -159,6 +255,8 @@ pub(super) fn vehicle_panel(ui: &imgui::Ui, s: &mut crate::lights::LightSettings
         );
         *s = d;
         s.map_spot = ms;
+        s.spill = sp;
+        s.spot2 = s2;
         s.lamp_light = ll;
         s.weather_boost = wb;
         s.weather_night = wn;

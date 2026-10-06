@@ -21,13 +21,29 @@ pub fn vehicle_lights(
             None => v.body_rotation(),
         }
     };
-    coronas.extend(crate::scene::model_lights_faded(
+    let own_rot = v.body_rotation();
+    for (mut c, owner) in crate::scene::model_lights_owned(
         &ty.model,
         &mesh_xf,
         v.position,
         &value_of,
         &v.light_fade,
-    ));
+    ) {
+        let ec = exterior_cfg(owner);
+        if ec.off {
+            continue;
+        }
+        c.brightness *= ec.gain;
+        c.size *= ec.size.max(0.0);
+        c.spread = ec.spread.max(0.05);
+        c.color = [
+            c.color[0] * ec.color[0],
+            c.color[1] * ec.color[1],
+            c.color[2] * ec.color[2],
+        ];
+        c.position += own_rot.transform_vector3(Vec3::from(ec.shift)).as_dvec3();
+        coronas.push(c);
+    }
     for t in &v.trailers {
         let part_mesh_xf = |def_index: usize| -> glam::Mat4 {
             match t.ty.meshes.iter().position(|m| m.def_index == def_index) {
@@ -180,94 +196,61 @@ pub fn vehicle_lights(
     for t in &v.trailers {
         spotlights_2(&t.ty.model, t.body_rotation(), t.position, &value_of, night, lights);
     }
-    if spill && night > 0.05 {
+    if spill && cfg.spill.on && night > 0.05 {
         let mut sections: Vec<(&omsi_model::Model, Option<[f32; 6]>, glam::Mat4, DVec3)> =
             vec![(&ty.model, body_box(ty), body, v.position)];
         for t in &v.trailers {
             sections.push((&t.ty.model, body_box(&t.ty), t.body_rotation(), t.position));
         }
-        let tilt = INTERIOR_SPILL_TILT.to_radians();
+        let sp = cfg.spill;
+        let tilt = (INTERIOR_SPILL_TILT + sp.tilt_add).to_radians();
         let cone = [
-            INTERIOR_SPILL_INNER.to_radians().cos(),
-            INTERIOR_SPILL_OUTER.to_radians().cos(),
+            ((INTERIOR_SPILL_INNER + sp.inner_add) * sp.spread.max(0.05))
+                .clamp(1.0, 179.0)
+                .to_radians()
+                .cos(),
+            ((INTERIOR_SPILL_OUTER + sp.outer_add) * sp.spread.max(0.05))
+                .clamp(1.0, 179.0)
+                .to_radians()
+                .cos(),
         ];
-        for (model, bb, xf, origin) in sections {
-            let mut count = 0usize;
-            let mut sum = Vec3::ZERO;
-            let mut color = Vec3::ZERO;
-            let mut lamp_y: Vec<f32> = Vec::new();
-            for il in &model.interior_lights {
-                if value_of(&il.variable) >= 0.5 {
-                    count += 1;
-                    sum += Vec3::from(il.pos);
-                    color += Vec3::from(il.color);
-                    lamp_y.push(il.pos[1]);
-                }
-            }
-            if count == 0 {
+        let spill_r = spill_radius(&sp);
+        for (model, _bb, xf, origin) in sections {
+            let lit: Vec<usize> = (0..model.interior_lights.len())
+                .filter(|&li| {
+                    let il = &model.interior_lights[li];
+                    value_of(&il.variable) >= 0.5 && !interior_cfg(li).off
+                })
+                .collect();
+            if lit.is_empty() {
                 continue;
             }
-            let c = sum / count as f32;
-            let c = Vec3::new(c.x, c.y, c.z.min(INTERIOR_SPILL_HEIGHT));
-            let color = color / count as f32 / 255.0;
-            let color = (color * (1.0 - INTERIOR_SPILL_WHITE)
-                + Vec3::splat(color.max_element()) * INTERIOR_SPILL_WHITE)
-                .to_array();
-            let (half_w, half_l, cx, cy) = match bb {
-                Some(b) => (
-                    b[0] * 0.5 + INTERIOR_SPILL_OUTSET,
-                    b[1] * 0.5 + INTERIOR_SPILL_OUTSET,
-                    b[3],
-                    b[4],
-                ),
-                None => (1.25 - INTERIOR_SPILL_INSET, 4.0, 0.0, c.y),
-            };
-            let strength = (count.min(INTERIOR_SPILL_MAX) as f32 / INTERIOR_SPILL_MAX as f32)
-                .max(0.25)
-                * night.clamp(0.0, 1.0);
-            let mut faces = vec![
-                (
-                    Vec3::new(c.x, cy + half_l, c.z),
-                    Vec3::Y,
-                    INTERIOR_SPILL_END,
-                ),
-                (
-                    Vec3::new(c.x, cy - half_l, c.z),
-                    -Vec3::Y,
-                    INTERIOR_SPILL_END,
-                ),
-            ];
-            let (y_lo, y_hi) = lamp_y
-                .iter()
-                .fold((f32::MAX, f32::MIN), |a, y| (a.0.min(*y), a.1.max(*y)));
-            let bins = (count / 2).clamp(1, INTERIOR_SPILL_ALONG);
-            let span = (y_hi - y_lo).max(1e-3);
-            let mut acc = vec![(0.0f32, 0usize); bins];
-            for y in &lamp_y {
-                let k = (((y - y_lo) / span * bins as f32) as usize).min(bins - 1);
-                acc[k].0 += y;
-                acc[k].1 += 1;
-            }
-            let used = acc.iter().filter(|a| a.1 > 0).count().max(1);
-            let side_gain = INTERIOR_SPILL_SIDE * 2.0 / used.max(2) as f32;
-            for (sum_y, n) in acc.into_iter().filter(|a| a.1 > 0) {
-                let y = sum_y / n as f32;
-                faces.push((Vec3::new(cx + half_w, y, c.z), Vec3::X, side_gain));
-                faces.push((Vec3::new(cx - half_w, y, c.z), -Vec3::X, side_gain));
-            }
-            for (at, out, gain) in faces {
-                let dir = (out * tilt.cos() - Vec3::Z * tilt.sin()).normalize();
-                lights.push(PointLight {
-                    position: origin + xf.transform_point3(at).as_dvec3(),
-                    radius: INTERIOR_SPILL_RADIUS,
-                    color,
-                    intensity: gain * strength,
-                    direction: xf.transform_vector3(dir).normalize_or_zero(),
-                    cone,
-                    core: INTERIOR_SPILL_CORE,
-                    mode: LightMode::Enhanced,
-                    ..Default::default()
-                });
+            let strength = night.clamp(0.0, 1.0) * sp.gain;
+            for li in lit {
+                let il = &model.interior_lights[li];
+                let ic = interior_cfg(li);
+                let at = Vec3::from(il.pos) + Vec3::from(ic.shift);
+                let col = Vec3::from(il.color) / 255.0 * Vec3::from(ic.color);
+                let color = (col * (1.0 - INTERIOR_SPILL_WHITE)
+                    + Vec3::splat(col.max_element()) * INTERIOR_SPILL_WHITE)
+                    .to_array();
+                let sides = [Vec3::X, -Vec3::X];
+                let gain = INTERIOR_SPILL_LAMP * ic.gain * strength / sides.len() as f32;
+                for out in sides {
+                    let dir = (out * tilt.cos() - Vec3::Z * tilt.sin()).normalize();
+                    lights.push(PointLight {
+                        position: origin + xf.transform_point3(at).as_dvec3(),
+                        radius: spill_r,
+                        color,
+                        intensity: gain,
+                        direction: xf.transform_vector3(dir).normalize_or_zero(),
+                        cone,
+                        core: INTERIOR_SPILL_CORE * sp.core.max(0.01),
+                        mode: LightMode::Enhanced,
+                        shadow_first: true,
+                        ..Default::default()
+                    });
+                }
             }
         }
     }

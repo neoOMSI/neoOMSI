@@ -15,6 +15,7 @@ pub(crate) struct VehicleEditor {
     pub draw: bool,
     pub show_walk: bool,
     pub show_interior: bool,
+    pub show_exterior: bool,
     pub status: String,
 }
 
@@ -32,6 +33,7 @@ impl VehicleEditor {
             draw: true,
             show_walk: true,
             show_interior: true,
+            show_exterior: true,
             status: String::new(),
         }
     }
@@ -68,6 +70,7 @@ pub(crate) fn window(
     ed: &mut VehicleEditor,
     extra: &Extra,
     lights: impl FnOnce(&imgui::Ui),
+    spots: impl FnOnce(&imgui::Ui),
     interior: impl FnOnce(&imgui::Ui),
 ) {
     let mut open = ed.open;
@@ -82,6 +85,10 @@ pub(crate) fn window(
             if let Some(_bar) = ui.tab_bar("##vehicle_editor_tabs") {
                 if let Some(_t) = ui.tab_item("Lights") {
                     lights(ui);
+                }
+                if let Some(_t) = ui.tab_item("Vehicle Lights") {
+                    ui.checkbox("Show outside sources in world", &mut ed.show_exterior);
+                    spots(ui);
                 }
                 if let Some(_t) = ui.tab_item("Interior Lights") {
                     ui.checkbox("Show sources in world", &mut ed.show_interior);
@@ -288,6 +295,41 @@ pub(crate) fn draw_world(ui: &imgui::Ui, ed: &VehicleEditor, extra: &Extra, size
                     format!("#{i}"),
                 );
             }
+        }
+    }
+    if let (true, Some(v)) = (ed.show_exterior, extra.vehicle.as_ref()) {
+        for (i, src) in v.exterior.iter().enumerate() {
+            let c = crate::lights::exterior_cfg(i);
+            let q = [
+                src.pos[0] + c.shift[0],
+                src.pos[1] + c.shift[1],
+                src.pos[2] + c.shift[2],
+            ];
+            let Some(a) = crate::devtools::project(&vp, cam.position, world(q), size) else {
+                continue;
+            };
+            let m = src.color[0].max(src.color[1]).max(src.color[2]).max(1.0);
+            let col = [
+                src.color[0] / m,
+                src.color[1] / m,
+                src.color[2] / m,
+                if c.off { 0.35 } else { 1.0 },
+            ];
+            list.add_rect([a[0] - 6.0, a[1] - 6.0], [a[0] + 6.0, a[1] + 6.0], col)
+                .filled(true)
+                .build();
+            list.add_rect(
+                [a[0] - 8.0, a[1] - 8.0],
+                [a[0] + 8.0, a[1] + 8.0],
+                [1.0, 1.0, 1.0, col[3]],
+            )
+                .thickness(1.5)
+                .build();
+            list.add_text(
+                [a[0] + 10.0, a[1] - 6.0],
+                [1.0, 1.0, 1.0, col[3]],
+                format!("E{i}"),
+            );
         }
     }
     if !ed.draw {

@@ -22,7 +22,7 @@ struct Camera {
     flags: vec4<f32>,        // x detail texturing, y enhanced graphics, z < 0: current scene for rain refraction, w close cascade half range
     light_view_proj_close: mat4x4<f32>,
     wind: vec4<f32>,         // the player's vehicle's velocity (m/s, world): the airstream on its glass
-    spot_vp: array<mat4x4<f32>, 8>, // the spot light shadow maps' matrices (see `spot_shadow`)
+    spot_vp: array<mat4x4<f32>, 32>, // the spot light shadow maps' matrices (see `spot_shadow`)
     spot_info: vec4<f32>,    // x tile width, y tile height (uv of the far map's texture), z the far cascade's share of its height, w tile pixels
 };
 
@@ -290,7 +290,7 @@ struct PointLight {
 @group(0) @binding(3) var<storage, read> lights: array<PointLight>;
 // per cell CELL_CAP light indices, 0xffffffff = empty
 @group(0) @binding(4) var<storage, read> grid: array<u32>;
-const CELL_CAP: u32 = 32u;
+const CELL_CAP: u32 = 64u;
 
 @group(1) @binding(0) var t_diffuse: texture_2d<f32>;
 @group(1) @binding(1) var s_diffuse: sampler;
@@ -913,7 +913,7 @@ fn sun_shadow(world_in: vec3<f32>, n: vec3<f32>, thin: bool) -> f32 {
 // 0 when one of the light's occluder boxes (a wall, a roof) stands between `p` and the
 // light, else 1. A box entry: pos = centre xy, z0, half x; color = half y, z1, cos, sin of
 // its heading.
-// A spot light's shadow map (an 8 tile atlas under the far cascade): 1 lit, 0 in shadow.
+// A spot light's shadow map (a 32 tile atlas under the far cascade): 1 lit, 0 in shadow.
 // The point is pulled a little towards the light, more with the distance, instead of a depth
 // bias that would have to follow the perspective depth.
 fn spot_shadow(slot: u32, lpos: vec3<f32>, p: vec3<f32>) -> f32 {
@@ -947,7 +947,7 @@ fn spot_shadow(slot: u32, lpos: vec3<f32>, p: vec3<f32>) -> f32 {
 
 fn light_shadow(l: PointLight, p: vec3<f32>) -> f32 {
     let slot = u32(l.occ.z + 0.5);
-    if (slot > 0u && slot <= 8u) {
+    if (slot > 0u && slot <= 32u) {
         let m = spot_shadow(slot - 1u, l.pos.xyz, p);
         if (m <= 0.0) {
             return 0.0;

@@ -254,9 +254,9 @@ pub fn collect(
     let mut lamp_vis = LAMP_VIS.lock().unwrap_or_else(|e| e.into_inner());
     if lamp_vis.0.is_none()
         || lamp_vis
-            .0
-            .map(|c| (c - camera_pos).length() > OCC_RECHECK)
-            .unwrap_or(true)
+        .0
+        .map(|c| (c - camera_pos).length() > OCC_RECHECK)
+        .unwrap_or(true)
     {
         lamp_vis.0 = Some(camera_pos);
         lamp_vis.2 = lamp_vis.2.wrapping_add(1);
@@ -342,17 +342,21 @@ pub fn collect(
     // the shaders test every pixel); OMSI_NO_SPILL=1 switches it off altogether
     let spill_ok: Vec<bool> = {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let off = *OFF.get_or_init(|| omsi_cfg::env::var_os("OMSI_NO_SPILL").is_some());
+        let sp = settings().spill;
+        let off = *OFF.get_or_init(|| omsi_cfg::env::var_os("OMSI_NO_SPILL").is_some()) || !sp.on;
         let mut order: Vec<(f64, usize)> = vehicles
             .iter()
             .enumerate()
-            .map(|(i, v)| ((v.position - camera_pos).length(), i))
-            .filter(|(d, _)| *d < SPILL_RANGE)
+            .map(|(i, v)| {
+                let half = body_box(&v.ty).map_or(0.0, |b| b[1] as f64 * 0.5);
+                (((v.position - camera_pos).length() - half).max(0.0), i)
+            })
+            .filter(|(d, _)| *d < sp.reach as f64)
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut ok = vec![false; vehicles.len()];
         if !off {
-            for (_, i) in order.into_iter().take(SPILL_VEHICLES) {
+            for (_, i) in order.into_iter().take(sp.vehicles.max(0) as usize) {
                 ok[i] = true;
             }
         }
@@ -363,7 +367,7 @@ pub fn collect(
     // (each vehicle keeps the last answers of its mesh walks and asks again for an eighth of
     // them a frame, the whole-vehicle answer every eighth frame)
     static VEH_OCC: std::sync::LazyLock<
-        std::sync::Mutex<std::collections::HashMap<usize, (bool, Vec<bool>)>>,
+        std::sync::Mutex<std::collections::HashMap<usize, (bool, std::collections::HashMap<[i32; 3], bool>)>>,
     > = std::sync::LazyLock::new(Default::default);
     static OCC_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let frame = OCC_FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -389,7 +393,13 @@ pub fn collect(
         let seen_world = world.light_occluders.lock().clone();
         let sections = body_sections(v);
         let vkey = *v as *const VehicleInstance as usize;
-        let entry = veh_occ.entry(vkey).or_insert_with(|| (false, Vec::new()));
+        let entry = veh_occ
+            .entry(vkey)
+            .or_insert_with(|| (false, Default::default()));
+        if entry.1.len() > 256 {
+            entry.1.clear();
+        }
+        let inv = sections[0].1;
         if (frame + vi) % 8 == 0 {
             entry.0 = blocked_by_meshes(&coll, &seen_world, camera_pos, v.position);
         }
@@ -399,17 +409,29 @@ pub fn collect(
         let far_hidden = !near_v && entry.0;
         // (only this vehicle's own coronas are tested, not every one of the scene so far)
         let mut mine = scene.coronas.split_off(first_corona);
-        entry.1.resize(mine.len(), false);
+        corona_lights(
+            &mine,
+            0.3 + 0.7 * night.clamp(0.0, 1.0),
+            SRC_MAX_VEHICLE,
+            &mut scene.lights,
+        );
         let mut ci = 0usize;
         mine.retain_mut(|c| {
             let i = ci;
             ci += 1;
+            let q = inv.transform_point3((c.position - v.position).as_vec3());
+            let key = [
+                (q.x * 10.0).round() as i32,
+                (q.y * 10.0).round() as i32,
+                (q.z * 10.0).round() as i32,
+            ];
             let blocked = near_v && !body_hides(&sections, camera_pos, c.position) && {
                 if (i + frame) % 8 == 0 && mesh_tests > 0 {
                     mesh_tests -= 1;
-                    entry.1[i] = blocked_by_meshes(&coll, &seen_world, camera_pos, c.position);
+                    let b = blocked_by_meshes(&coll, &seen_world, camera_pos, c.position);
+                    entry.1.insert(key, b);
                 }
-                entry.1[i]
+                entry.1.get(&key).copied().unwrap_or(false)
             };
             if body_hides(&sections, camera_pos, c.position) || far_hidden || blocked {
                 return false;
@@ -423,12 +445,6 @@ pub fn collect(
             }
             true
         });
-        corona_lights(
-            &mine,
-            0.3 + 0.7 * night.clamp(0.0, 1.0),
-            SRC_MAX_VEHICLE,
-            &mut scene.lights,
-        );
         scene.coronas.extend(mine);
         particle_sprites(&v.particles, &mut scene.smoke, &mut scene.coronas);
         for t in &v.trailers {

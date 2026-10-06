@@ -40,8 +40,8 @@ fn main() {
     }
 }
 
-/// `MAJOR.MINOR` from the VERSION file, then the number of commits since that file last
-/// changed (the CI passes the same number in `neoomsi_VERSION`).
+/// A nightly version `MAJOR.MINOR.PATCH-nightly.g<hash>` from the VERSION file and the
+/// commit (the CI passes the release's version in `neoomsi_VERSION`).
 fn version(git: &dyn Fn(&[&str]) -> Option<String>) -> String {
     if let Ok(v) = std::env::var("neoomsi_VERSION") {
         if !v.trim().is_empty() {
@@ -50,12 +50,11 @@ fn version(git: &dyn Fn(&[&str]) -> Option<String>) -> String {
     }
     let base = std::fs::read_to_string("../../VERSION")
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "0.0".into());
-    let n = git(&["log", "-1", "--format=%H", "--", "VERSION"])
-        .filter(|h| !h.is_empty())
-        .and_then(|h| git(&["rev-list", "--count", &format!("{h}..HEAD")]))
-        .unwrap_or_else(|| "0".into());
-    format!("{base}.{n}")
+        .unwrap_or_else(|_| "0.0.0".into());
+    match git(&["rev-parse", "--short=8", "HEAD"]).filter(|h| !h.is_empty()) {
+        Some(h) => format!("{base}-nightly.g{h}"),
+        None => format!("{base}-nightly"),
+    }
 }
 
 fn windows_icon() {

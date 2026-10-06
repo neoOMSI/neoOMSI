@@ -36,14 +36,14 @@ impl Launcher {
         match self.update.status() {
             // "install updates without asking"
             Status::Available(r)
-                if self.setting("update_auto", false)
-                    && !self.update.dismissed
-                    && !self.update.auto_started =>
-            {
-                self.update.auto_started = true;
-                log::info!("update: installing {} by itself (update_auto)", r.version);
-                self.update.install(r);
-            }
+            if self.setting("update_auto", false)
+                && !self.update.dismissed
+                && !self.update.auto_started =>
+                {
+                    self.update.auto_started = true;
+                    log::info!("update: installing {} by itself (update_auto)", r.version);
+                    self.update.install(r);
+                }
             Status::Restarting(r) => {
                 if !self.update.relaunched {
                     self.update.relaunched = true;
@@ -99,7 +99,11 @@ impl Launcher {
             Status::Available(rel) => {
                 self.ui.icon("system_update", icon_at, 26.0, ACCENT);
                 self.ui.text_in(
-                    &format!("neoOMSI {} is available", rel.version),
+                    &format!(
+                        "neoOMSI {}{} is available",
+                        rel.version,
+                        if rel.prerelease { " (pre-release)" } else { "" }
+                    ),
                     title_r,
                     18.0,
                     Weight::Bold,
@@ -462,12 +466,12 @@ impl Launcher {
             && cfg!(windows)
             && api != "dx12"
             && self.ui.button(
-                "crash-dx12",
-                Rect::new(inner.x + 200.0, by, 170.0, 38.0),
-                "Use DirectX 12",
-                Some("monitor"),
-                ButtonKind::Normal,
-            )
+            "crash-dx12",
+            Rect::new(inner.x + 200.0, by, 170.0, 38.0),
+            "Use DirectX 12",
+            Some("monitor"),
+            ButtonKind::Normal,
+        )
         {
             self.state.settings["graphics_api"] = serde_json::json!("dx12");
             self.state.settings_dirty = 0.3;

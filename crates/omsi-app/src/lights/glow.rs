@@ -2,8 +2,8 @@ use super::*;
 // (the spill lights sit just outside the body's box: inside it they counted as "in the skin" and the body neither held nor shaded their light, so it went through the bodywork)
 // (a vehicle farther than this from the camera gets no window light: up to ten lights with
 // occluders each, for a glow a few pixels wide - the cost on a weak graphics card)
-pub(super) const SPILL_RANGE: f64 = 30.0;
-pub(super) const SPILL_VEHICLES: usize = 3;
+pub(super) const SPILL_RANGE: f64 = 70.0;
+pub(super) const SPILL_VEHICLES: usize = 64;
 pub(super) static LED_GLOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 pub fn set_led_glow(v: f32) {
@@ -47,17 +47,37 @@ pub fn corona_light(c: &Corona, dark: f32) -> Option<PointLight> {
     if c.beam || c.halo || c.flags & 8 != 0 || c.brightness <= 0.01 {
         return None;
     }
-    let out = if c.direction.length_squared() > 1e-6 {
+    let sc = settings().src;
+    if !sc.on {
+        return None;
+    }
+    let faces = c.direction.length_squared() > 1e-6;
+    let out = if faces {
         c.direction.normalize() * SRC_OUTSET
     } else {
         Vec3::ZERO
     };
+    let radius = SRC_RADIUS
+        * (0.6 + 0.4 * c.size.clamp(0.0, 1.0))
+        * c.spread.max(0.05)
+        * sc.spread.max(0.05);
+    let (direction, cone) = if sc.directional && faces {
+        let half = |deg: f32| (deg.clamp(1.0, 179.0) * 0.5).to_radians().cos();
+        (
+            c.direction.normalize(),
+            [half(sc.inner.min(sc.outer)), half(sc.outer)],
+        )
+    } else {
+        (Vec3::ZERO, [1.0, 0.0])
+    };
     Some(PointLight {
         position: c.position + out.as_dvec3(),
-        radius: SRC_RADIUS * (0.6 + 0.4 * c.size.clamp(0.0, 1.0)),
+        radius,
         color: c.color,
-        intensity: c.brightness.min(1.5) * SRC_GAIN * dark,
-        core: SRC_CORE,
+        intensity: c.brightness.min(1.5) * SRC_GAIN * dark * sc.gain,
+        core: (SRC_CORE * sc.core.max(0.01)).min(radius),
+        direction,
+        cone,
         mode: LightMode::Both,
         ..Default::default()
     })
@@ -76,7 +96,13 @@ pub fn corona_lights(coronas: &[Corona], dark: f32, max: usize, out: &mut Vec<Po
             ])
         })
         .collect();
-    found.sort_by(|a, b| b.intensity.total_cmp(&a.intensity));
+    found.sort_by(|a, b| {
+        b.intensity
+            .total_cmp(&a.intensity)
+            .then(a.position.x.total_cmp(&b.position.x))
+            .then(a.position.y.total_cmp(&b.position.y))
+            .then(a.position.z.total_cmp(&b.position.z))
+    });
     found.truncate(max);
     out.extend(found);
 }

@@ -28,6 +28,9 @@ impl Renderer {
             if !drawn_by(l, enhanced) {
                 continue;
             }
+            if l.shadow_first && spot_slots[li] == 0 {
+                continue;
+            }
             let p = (l.position - ro).as_vec3();
             let x0 = ((p.x - l.radius - origin[0]) / LIGHT_CELL).floor();
             let x1 = ((p.x + l.radius - origin[0]) / LIGHT_CELL).floor();

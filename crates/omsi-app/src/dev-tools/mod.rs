@@ -175,7 +175,7 @@ impl DevTools {
                 }
             }
             vehicle_editor::draw_world(ui, editor, extra, (w, h));
-            if crate::lights::settings().beam_marker {
+            if !extra.beams.is_empty() {
                 if let Some(cam) = extra.cam.as_ref() {
                     draw_beams(ui, cam, (w, h), &extra.beams);
                 }
@@ -185,15 +185,16 @@ impl DevTools {
 
             lights_ui::lights_window(ui, &mut show.lights);
             if editor.open {
-                let mut s = crate::lights::settings();
+                let s = std::cell::RefCell::new(crate::lights::settings());
                 vehicle_editor::window(
                     ui,
                     editor,
                     extra,
-                    |ui| lights_ui::vehicle_panel(ui, &mut s),
+                    |ui| lights_ui::vehicle_panel(ui, &mut s.borrow_mut()),
+                    |ui| lights_ui::spots_panel(ui, &mut s.borrow_mut(), extra),
                     |ui| lights_ui::interior_panel(ui, extra, actions),
                 );
-                crate::lights::set_settings(s);
+                crate::lights::set_settings(s.into_inner());
             }
             vehicle_ui::cockpit(ui, &mut show.cockpit, extra, cockpit_filter, actions);
             vehicle_ui::actions(ui, &mut show.vehicle, extra, vehicle_filter, actions);

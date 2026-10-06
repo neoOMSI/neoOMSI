@@ -13,7 +13,8 @@ pub fn spotlights_2(
     }
     let cfg = settings();
     let bc = cfg.low;
-    if !bc.on {
+    let sc = cfg.spot2;
+    if !bc.on || !sc.on {
         return;
     }
     let bad = weather_darkness();
@@ -29,11 +30,11 @@ pub fn spotlights_2(
             vals[8] / 255.0 * cfg.lamp_color[2] * bc.color[2],
         ];
         let (inner, outer) = (
-            vals[10] + cfg.lamp_inner_add + bc.inner_add,
-            vals[11] + cfg.lamp_outer_add + bc.outer_add,
+            vals[10] + cfg.lamp_inner_add + bc.inner_add + sc.inner_add,
+            vals[11] + cfg.lamp_outer_add + bc.outer_add + sc.outer_add,
         );
         let cone = [half(inner.min(outer)), half(outer)];
-        let radius = headlight_radius(vals[9]) * cfg.lamp_range.max(0.05) * bc.range.max(0.05);
+        let radius = headlight_radius(vals[9]) * cfg.lamp_range.max(0.05) * bc.range.max(0.05) * sc.range.max(0.05);
         let mirrored = !sp.no_mirror && vals[0].abs() > 0.01;
         let sides: &[f32] = if mirrored { &[1.0, -1.0] } else { &[1.0] };
         for side in sides {
@@ -42,6 +43,7 @@ pub fn spotlights_2(
             let d = xf.transform_vector3(local_dir).normalize_or_zero();
             let at = origin
                 + xf.transform_point3(local_pos).as_dvec3()
+                + DVec3::Z * sc.height as f64
                 + lamp_shift(d, &cfg)
                 + shift(d, bc.forward, bc.side, bc.height);
             let lamp = PointLight {
@@ -53,13 +55,16 @@ pub fn spotlights_2(
                 ..Default::default()
             };
             lights.push(PointLight {
-                intensity: cfg.vanilla * (0.3 + 0.7 * night),
+                intensity: cfg.vanilla * (0.3 + 0.7 * night) * sc.gain,
                 mode: LightMode::Vanilla,
                 ..lamp
             });
             lights.push(PointLight {
-                intensity: cfg.headlight * (1.0 + bad * cfg.weather_boost) * bc.gain,
-                core: headlight_core(radius) * cfg.lamp_core.max(0.01) * bc.core.max(0.01),
+                intensity: cfg.headlight * (1.0 + bad * cfg.weather_boost) * bc.gain * sc.gain,
+                core: headlight_core(radius)
+                    * cfg.lamp_core.max(0.01)
+                    * bc.core.max(0.01)
+                    * sc.core.max(0.01),
                 beam: cfg.low_beam_gain,
                 mode: LightMode::Enhanced,
                 ..lamp

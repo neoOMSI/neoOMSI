@@ -63,7 +63,9 @@ pub(super) fn draw_beams(
     let list = ui.get_background_draw_list();
     for b in beams {
         // (yellow: the fog cone's start, cyan: the headlight's start; the ray tapers off along 12 m of its axis)
-        let col = if b.cone {
+        let col = if let Some(t) = b.tint {
+            [t[0], t[1], t[2], 1.0]
+        } else if b.cone {
             [1.0, 0.9, 0.1, 1.0]
         } else {
             [0.1, 0.9, 1.0, 1.0]

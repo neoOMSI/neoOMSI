@@ -118,25 +118,73 @@ impl crate::App {
             .join("quicksave.osn")
             .exists();
         let mut beams: Vec<BeamMark> = Vec::new();
-        if crate::lights::settings().beam_marker {
+        let ls = crate::lights::settings();
+        if ls.beam_marker || ls.spill.marker || ls.spot2.marker {
             if let (Some(scene), Some(cam)) = (self.scene.as_ref(), self.camera.as_ref()) {
-                for c in scene.coronas.iter().filter(|c| c.beam) {
-                    beams.push(BeamMark {
-                        pos: [c.position.x, c.position.y, c.position.z],
-                        dir: c.direction.to_array(),
-                        cone: true,
-                    });
+                if ls.beam_marker {
+                    for c in scene.coronas.iter().filter(|c| c.beam) {
+                        beams.push(BeamMark {
+                            pos: [c.position.x, c.position.y, c.position.z],
+                            dir: c.direction.to_array(),
+                            cone: true,
+                            tint: None,
+                        });
+                    }
+                    for l in scene
+                        .lights
+                        .iter()
+                        .filter(|l| l.beam != 0.0 && l.direction.length_squared() > 0.1)
+                    {
+                        beams.push(BeamMark {
+                            pos: [l.position.x, l.position.y, l.position.z],
+                            dir: l.direction.to_array(),
+                            cone: false,
+                            tint: None,
+                        });
+                    }
                 }
-                for l in scene
-                    .lights
-                    .iter()
-                    .filter(|l| l.beam != 0.0 && l.direction.length_squared() > 0.1)
-                {
-                    beams.push(BeamMark {
-                        pos: [l.position.x, l.position.y, l.position.z],
-                        dir: l.direction.to_array(),
-                        cone: false,
-                    });
+                if ls.spill.marker {
+                    let r = crate::lights::spill_radius(&ls.spill);
+                    for l in scene
+                        .lights
+                        .iter()
+                        .filter(|l| l.radius == r && l.direction.length_squared() > 0.1)
+                    {
+                        beams.push(BeamMark {
+                            pos: [l.position.x, l.position.y, l.position.z],
+                            dir: l.direction.to_array(),
+                            cone: false,
+                            tint: Some([1.0, 0.5, 0.1]),
+                        });
+                    }
+                }
+                if ls.spot2.marker {
+                    if let Some(p) = self.player.as_ref() {
+                        let v = &p.vehicle;
+                        let body = v.body_rotation();
+                        for sp in &v.ty.model.spotlights_2 {
+                            let on = sp.variable.trim().parse::<f32>().ok().or_else(|| v.var(sp.variable.trim())).unwrap_or(0.0);
+                            if on < 0.5 {
+                                continue;
+                            }
+                            let vals = sp.values;
+                            let mirrored = !sp.no_mirror && vals[0].abs() > 0.01;
+                            let sides: &[f32] = if mirrored { &[1.0, -1.0] } else { &[1.0] };
+                            for side in sides {
+                                let at = v.position
+                                    + body
+                                    .transform_point3(glam::Vec3::new(vals[0] * side, vals[1], vals[2]))
+                                    .as_dvec3();
+                                let d = body.transform_vector3(glam::Vec3::new(vals[3] * side, vals[4], vals[5]));
+                                beams.push(BeamMark {
+                                    pos: [at.x, at.y, at.z],
+                                    dir: d.to_array(),
+                                    cone: false,
+                                    tint: Some([0.2, 1.0, 0.2]),
+                                });
+                            }
+                        }
+                    }
                 }
                 let at = cam.position;
                 beams.sort_by(|a, b| {
@@ -144,7 +192,7 @@ impl crate::App {
                     let db = (glam::DVec3::from(b.pos) - at).length_squared();
                     da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
                 });
-                beams.truncate(24);
+                beams.truncate(32);
             }
         }
         let vehicle = self.player.as_ref().map(|p| VehicleInfo {
@@ -161,6 +209,28 @@ impl crate::App {
                     pos: l.pos,
                     color: l.color,
                     range: l.range,
+                })
+                .collect(),
+            exterior: p
+                .vehicle
+                .ty
+                .model
+                .meshes
+                .iter()
+                .flat_map(|m| {
+                    let a = m.light_enh.iter().map(|l| InteriorInfo {
+                        variable: l.variable.clone(),
+                        pos: l.pos,
+                        color: l.color,
+                        range: l.size,
+                    });
+                    let b = m.light_enh_2.iter().map(|l| InteriorInfo {
+                        variable: l.variable.clone(),
+                        pos: l.pos,
+                        color: l.color,
+                        range: l.size,
+                    });
+                    a.chain(b)
                 })
                 .collect(),
             walk_points: walk_paths(&p.vehicle.ty.def).0,

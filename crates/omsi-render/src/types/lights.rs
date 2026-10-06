@@ -23,6 +23,7 @@ pub struct PointLight {
     pub mode: LightMode,
     pub occ_first: u32,
     pub occ_count: u32,
+    pub shadow_first: bool,
 }
 
 /// The cone of a screen's light (cos of the inner and outer half angle).
@@ -53,6 +54,7 @@ impl Default for PointLight {
             mode: LightMode::Both,
             occ_first: 0,
             occ_count: 0,
+            shadow_first: false,
         }
     }
 }
@@ -93,6 +95,7 @@ pub struct Corona {
     pub beam: bool,
     pub beam_width: f32,
     pub halo: bool,
+    pub spread: f32,
 }
 
 impl Default for Corona {
@@ -113,23 +116,24 @@ impl Default for Corona {
             beam: false,
             beam_width: 0.0,
             halo: false,
+            spread: 1.0,
         }
     }
 }
 
 pub(crate) const LIGHT_CELL: f32 = 25.0;
 pub(crate) const LIGHT_GRID_SIDE: usize = 64;
-pub(crate) const LIGHT_CELL_CAP: usize = 32;
+pub(crate) const LIGHT_CELL_CAP: usize = 64;
 
 pub(crate) fn drawn_by(l: &PointLight, enhanced: bool) -> bool {
     l.radius > 0.0
         && l.intensity > 0.0
         && l.mode
-            != if enhanced {
-                LightMode::Vanilla
-            } else {
-                LightMode::Enhanced
-            }
+        != if enhanced {
+        LightMode::Vanilla
+    } else {
+        LightMode::Enhanced
+    }
 }
 
 pub(crate) fn gpu_light(l: &PointLight, p: Vec3) -> GpuPointLight {

@@ -69,6 +69,7 @@ pub(crate) struct VehicleInfo {
     pub actions: Vec<String>,
     pub controls: Vec<(usize, String)>,
     pub interior: Vec<InteriorInfo>,
+    pub exterior: Vec<InteriorInfo>,
     pub walk_points: Vec<[f32; 3]>,
     pub walk_links: Vec<(i32, i32, bool)>,
 }
@@ -84,6 +85,7 @@ pub(crate) struct BeamMark {
     pub pos: [f64; 3],
     pub dir: [f32; 3],
     pub cone: bool,
+    pub tint: Option<[f32; 3]>,
 }
 
 pub(crate) struct Extra {

@@ -364,7 +364,7 @@ impl Renderer {
             }
             let sz = self.options.shadow_size as f32;
             let tile = self.spot_tile as f32;
-            let h = sz + 2.0 * tile;
+            let h = sz + SPOT_ROWS as f32 * tile;
             (m, [tile / sz, tile / h, sz / h, tile])
         };
         let cu = CameraUniform {

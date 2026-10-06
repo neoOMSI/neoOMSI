@@ -1069,7 +1069,7 @@ impl Renderer {
             label: Some("shadow map far"),
             size: wgpu::Extent3d {
                 width: shadow_size,
-                height: shadow_size + 2 * spot_tile,
+                height: shadow_size + SPOT_ROWS as u32 * spot_tile,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,

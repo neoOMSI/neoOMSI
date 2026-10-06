@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex};
 pub const REPO: &str = "neoOMSI/neoOMSI";
 pub const REPO_URL: &str = "https://github.com/neoOMSI/neoOMSI";
 const LATEST_API: &str = "https://api.github.com/repos/neoOMSI/neoOMSI/releases/latest";
+const RELEASES_API: &str = "https://api.github.com/repos/neoOMSI/neoOMSI/releases?per_page=20";
 
 /// A release newer than this build, with the file for this platform.
 #[derive(Clone, Debug, PartialEq)]
@@ -47,6 +48,7 @@ pub struct Release {
     pub size: u64,
     /// `sha256:<hex>` as GitHub lists it for the asset (None for releases older than that).
     pub sha256: Option<String>,
+    pub prerelease: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -199,22 +201,46 @@ pub fn current_version() -> &'static str {
     crate::startup::VERSION
 }
 
-/// `0.1.7` / `v0.1.7` as numbers (missing parts are 0).
-fn version_parts(v: &str) -> Vec<u64> {
-    v.trim()
-        .trim_start_matches(['v', 'V'])
-        .split(['.', '-', '+'])
-        .map_while(|p| p.parse::<u64>().ok())
-        .collect()
+/// `v0.2.0-nightly.g7c89058f` as its numbers (`0.2.0`) and its pre-release part
+/// (`nightly.g7c89058f`, None for a stable version).
+fn split_version(v: &str) -> (Vec<u64>, Option<String>) {
+    let v = v.trim().trim_start_matches(['v', 'V']);
+    let v = v.split('+').next().unwrap_or("");
+    let (core, pre) = match v.split_once('-') {
+        Some((c, p)) => (c, Some(p.to_string()).filter(|p| !p.is_empty())),
+        None => (v, None),
+    };
+    let nums = core.split('.').map_while(|p| p.parse::<u64>().ok()).collect();
+    (nums, pre)
 }
 
-/// Whether `candidate` is a newer version than `current`.
+/// Order of two versions by their numbers; at the same numbers a stable version is above a
+/// nightly, and two nightlies are equal (their hashes have no order).
+fn order(a: &str, b: &str) -> std::cmp::Ordering {
+    let ((mut x, px), (mut y, py)) = (split_version(a), split_version(b));
+    let n = x.len().max(y.len());
+    x.resize(n, 0);
+    y.resize(n, 0);
+    x.cmp(&y).then_with(|| py.is_some().cmp(&px.is_some()))
+}
+
+/// Whether `candidate` is a newer version than `current`. A different nightly of the same
+/// numbers counts as newer (the caller lists the newest first).
 pub fn newer(candidate: &str, current: &str) -> bool {
-    let (mut a, mut b) = (version_parts(candidate), version_parts(current));
-    let n = a.len().max(b.len());
-    a.resize(n, 0);
-    b.resize(n, 0);
-    !a.is_empty() && a > b
+    let (nums, pre) = split_version(candidate);
+    if nums.is_empty() {
+        return false;
+    }
+    let (_, cur_pre) = split_version(current);
+    match order(candidate, current) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Equal => {
+            pre.is_some()
+                && cur_pre.is_some()
+                && pre != cur_pre
+        }
+        std::cmp::Ordering::Less => false,
+    }
 }
 
 /// The release file for this platform, as `build.yml` names it.
@@ -270,23 +296,54 @@ fn short_error(e: &ureq::Error) -> String {
     }
 }
 
-/// The latest release when it is newer than this build and has a file for this platform.
+/// The newest release (pre-releases included) when it is newer than this build and has a
+/// file for this platform.
 pub fn latest() -> anyhow::Result<Option<Release>> {
-    let url = omsi_cfg::env::var("OMSI_UPDATE_URL").unwrap_or_else(|_| LATEST_API.to_string());
-    let v: serde_json::Value = serde_json::from_str(&fetch_text(&url)?)?;
-    parse_release(&v, current_version())
+    let current = current_version();
+    if let Ok(url) = omsi_cfg::env::var("OMSI_UPDATE_URL") {
+        let v: serde_json::Value = serde_json::from_str(&fetch_text(&url)?)?;
+        return pick_release(&v, current);
+    }
+    match fetch_text(RELEASES_API)
+        .and_then(|t| Ok(serde_json::from_str::<serde_json::Value>(&t)?))
+    {
+        Ok(v) => pick_release(&v, current),
+        Err(e) => {
+            // (no list: fall back to the latest stable release)
+            log::warn!("update check: release list: {e:#}");
+            let v: serde_json::Value = serde_json::from_str(&fetch_text(LATEST_API)?)?;
+            pick_release(&v, current)
+        }
+    }
 }
 
-/// A release described as the GitHub API does, when newer than `current`.
+/// The newest offerable release of a list (or of a single release object).
+fn pick_release(v: &serde_json::Value, current: &str) -> anyhow::Result<Option<Release>> {
+    let Some(list) = v.as_array() else {
+        return parse_release(v, current);
+    };
+    let mut best: Option<Release> = None;
+    for r in list {
+        if let Some(r) = parse_release(r, current)? {
+            // (the list is newest first: of equal versions the first stays)
+            if best
+                .as_ref()
+                .map(|b| order(&r.version, &b.version).is_gt())
+                .unwrap_or(true)
+            {
+                best = Some(r);
+            }
+        }
+    }
+    Ok(best)
+}
+
 fn parse_release(v: &serde_json::Value, current: &str) -> anyhow::Result<Option<Release>> {
     let tag = v["tag_name"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("the release has no tag"))?;
     let version = tag.trim_start_matches(['v', 'V']).to_string();
-    if v["draft"].as_bool() == Some(true)
-        || v["prerelease"].as_bool() == Some(true)
-        || !newer(&version, current)
-    {
+    if v["draft"].as_bool() == Some(true) || !newer(&version, current) {
         return Ok(None);
     }
     let Some(want) = asset_name(&version) else {
@@ -317,6 +374,7 @@ fn parse_release(v: &serde_json::Value, current: &str) -> anyhow::Result<Option<
             .as_str()
             .and_then(|d| d.strip_prefix("sha256:"))
             .map(|h| h.to_ascii_lowercase()),
+        prerelease: v["prerelease"].as_bool() == Some(true),
     }))
 }
 
@@ -829,6 +887,20 @@ mod tests {
         let mut n = v.clone();
         n["assets"] = serde_json::json!([]);
         assert!(parse_release(&n, "0.1.7").unwrap().is_none());
+        // a pre-release is offered too, and flagged
+        let mut p = v.clone();
+        p["prerelease"] = serde_json::json!(true);
+        assert!(parse_release(&p, "0.1.7").unwrap().unwrap().prerelease);
+        // from a list the newest one wins
+        let list = serde_json::json!([v.clone(), p]);
+        assert_eq!(pick_release(&list, "0.1.7").unwrap().unwrap().version, "0.1.9");
+        // nightlies: `0.2.0-nightly.<hash>`
+        assert!(newer("v0.2.0-nightly.g7c89058f", "0.1.9"));
+        assert!(newer("0.2.0-nightly.gaaaaaaaa", "0.2.0-nightly.gbbbbbbbb"));
+        assert!(!newer("0.2.0-nightly.gaaaaaaaa", "0.2.0-nightly.gaaaaaaaa"));
+        assert!(!newer("0.2.0-nightly.gaaaaaaaa", "0.2.0"));
+        assert!(newer("0.2.0", "0.2.0-nightly.gaaaaaaaa"));
+        assert!(newer("0.2.1-nightly.gaaaaaaaa", "0.2.0"));
     }
 
     #[test]

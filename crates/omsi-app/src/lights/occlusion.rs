@@ -69,7 +69,7 @@ pub(super) fn enclosure(coll: &omsi_sim::collision::CollisionWorld, p: DVec3) ->
 pub(super) const SHADOW_RANGE: f64 = 50.0;
 pub(super) const SHADOW_REACH: f64 = 25.0;
 pub(super) const SHADOW_MAX: usize = 32;
-pub(super) const SHADOW_LIGHTS: usize = 16;
+pub(super) const SHADOW_LIGHTS: usize = 32;
 pub(super) const POINT_TRI_MAX: usize = 10;
 pub(super) const POINT_TRI_MIN_AREA: f64 = 0.4;
 pub(super) const SHADOW_SPOTS: usize = 8;
@@ -255,11 +255,12 @@ pub(super) fn assign_occluders(
     let mut lights = std::mem::take(&mut scene.lights);
     let mut shadowed = 0usize;
     let mut shadowed_spots = 0usize;
+    let spill_r = spill_radius(&settings().spill);
     let mut gathers = 0usize;
     for l in lights.iter_mut() {
         l.occ_first = 0;
         l.occ_count = 0;
-        let spill = l.radius == INTERIOR_SPILL_RADIUS;
+        let spill = l.radius == spill_r;
         let spot = !spill && l.direction.length_squared() > 0.5;
         if l.radius <= 0.0 || l.is_screen() {
             continue;
@@ -286,7 +287,8 @@ pub(super) fn assign_occluders(
         } else {
             (2.0, 0.0)
         };
-        let dir_key = if spot {
+        let aimed = spot || spill;
+        let dir_key = if aimed {
             ((l.direction.x.atan2(l.direction.y).to_degrees() / 10.0).round() as i32) * 64
                 + (l.cone[1] * 100.0).round() as i32 * 4096
                 + (l.direction.z.clamp(-1.0, 1.0) * 8.0).round() as i32
@@ -306,9 +308,7 @@ pub(super) fn assign_occluders(
                 continue;
             }
             gathers += 1;
-            let made = if spill {
-                Vec::new()
-            } else if spot {
+            let made = if aimed {
                 gather_spot_occluders(seen, l.position, l.direction, l.radius, l.cone[1])
             } else {
                 gather_occluders(coll, seen, l.position, l.radius + extra)
@@ -319,6 +319,9 @@ pub(super) fn assign_occluders(
         let first = scene.occluders.len() as u32;
         scene.occluders.extend_from_slice(occ);
         for (o, oc) in &bodies {
+            if spill {
+                break;
+            }
             let body_reach = if spot {
                 l.radius.min(SPOT_REACH as f32)
             } else {
@@ -367,8 +370,8 @@ pub(super) fn body_box(ty: &omsi_sim::VehicleType) -> Option<[f32; 6]> {
     })
 }
 
-pub(super) const BODY_INNER: f32 = 0.25;
-pub(super) const BODY_SKIN: f32 = 0.15;
+pub(super) const BODY_INNER: f32 = 0.4;
+pub(super) const BODY_SKIN: f32 = 0.3;
 
 /// A vehicle's bodies for `body_hides`: box, inverse of the body's turn, origin (made once
 /// per vehicle and frame, not per corona).
