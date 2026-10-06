@@ -119,6 +119,7 @@ pub struct Renderer {
     pub(crate) upscale_buf: wgpu::Buffer,
     pub(crate) scale_targets: HashMap<(u32, u32), (wgpu::TextureView, wgpu::BindGroup)>,
     pub(crate) glass_picture: Option<wgpu::TextureView>,
+    pub(crate) glass_snapshot_source: Option<(wgpu::TextureView, wgpu::BindGroup)>,
     pub(crate) target_use: HashMap<(u32, u32), std::time::Instant>,
     pub(crate) dynamic_scale: std::cell::Cell<f32>,
     pub(crate) flicker: std::cell::RefCell<HashMap<usize, bool>>,

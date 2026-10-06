@@ -73,6 +73,7 @@ impl Renderer {
         height: u32,
     ) {
         let Some(id) = scene.glass_slot else { return };
+        // TODO 960×540 max
         let (width, height) = (width.div_ceil(2).max(1), height.div_ceil(2).max(1));
         let format = self.glass_picture_format;
         if self.glass_picture.as_ref().is_none_or(|v| {

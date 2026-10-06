@@ -2556,6 +2556,7 @@ impl Renderer {
             upscale_buf,
             scale_targets: HashMap::new(),
             glass_picture: None,
+            glass_snapshot_source: None,
             target_use: HashMap::new(),
             dynamic_scale: std::cell::Cell::new(1.0),
             flicker: std::cell::RefCell::new(HashMap::new()),

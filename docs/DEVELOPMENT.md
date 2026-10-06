@@ -92,6 +92,8 @@ films are drawn. The separate snapshot avoids reading from the active colour att
 It uses half the scene width and height (rounded up, at least one texel), with a bilinear
 downsample that preserves the scene's colour values without tonemapping or bloom filtering.
 The scattering offsets are scaled to preserve their radius in scene pixels.
+The downsample bind group is cached for the current source texture view and recreated
+only when that view changes, including after target recreation or a reflection toggle.
 
 The renderer requests `RG11B10UFLOAT_RENDERABLE` when supported and stores the snapshot
 in `Rg11b10Ufloat` (4 bytes per texel); only RGB is used for refraction. Devices without

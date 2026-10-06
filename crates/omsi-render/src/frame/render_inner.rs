@@ -1966,9 +1966,12 @@ impl Renderer {
             let view = hdr.map_or(scene_view, |h| {
                 h.puddles.as_ref().filter(|_| puddles_on).map_or(&h.view, |p| &p.view)
             });
+            if self.glass_snapshot_source.as_ref().is_none_or(|(source, _)| source != view) {
+                self.glass_snapshot_source = Some((view.clone(), self.picture_group(view)));
+            }
+            let (_, bg) = self.glass_snapshot_source.as_ref().unwrap();
             let behind = self.glass_picture.as_ref().unwrap();
             {
-                let bg = self.picture_group(view);
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("half resolution scene behind glass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1984,7 +1987,7 @@ impl Renderer {
                     multiview_mask: None,
                 });
                 pass.set_pipeline(&self.glass_snapshot_pipeline);
-                pass.set_bind_group(0, &bg, &[]);
+                pass.set_bind_group(0, bg, &[]);
                 pass.draw(0..3, 0..1);
             }
             let colours = [
