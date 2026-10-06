@@ -1961,7 +1961,10 @@ impl Renderer {
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
-                    compilation_options: Default::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[("OUTPUT_SRGB", if target.is_srgb() { 1.0 } else { 0.0 })],
+                        ..Default::default()
+                    },
                 }),
                 multiview_mask: None,
                 cache: None,

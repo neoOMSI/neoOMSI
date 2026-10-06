@@ -2,9 +2,11 @@
 // the screen - nothing that paints over it. A glow that only real highlights produce
 // (a wide blur of the picture mixed in at a few per cent: a lamp a hundred times brighter
 // than white spreads, a white wall does not), automatic exposure that meters the picture
-// and follows it slowly within a narrow range, the shoulder of the Khronos PBR Neutral
-// tone curve (it leaves colours below it as they are), dithering against banding, FXAA.
+// and follows it slowly within a narrow range, a neutral highlight shoulder and
+// gentle luminance-only midtone lift, dithering against banding, FXAA.
 // The vanilla path never runs this.
+override OUTPUT_SRGB: bool = true;
+
 struct PostParams {
     // x glow strength, y how far the metering may darken (EV), z brighten (EV),
     // w adaptation this frame (0..1; 1 = at once)
@@ -167,16 +169,9 @@ fn fs_adapt(in: VsOut) -> @location(0) vec4<f32> {
 
 // --- the picture
 
-// Khronos PBR Neutral's shoulder: colours below it pass unchanged, highlights roll off
-// towards white and lose saturation only as much as they must. Its toe is left out: it
-// takes the smallest channel almost entirely off anything darker than 0.08 (x -> 6.25 x²),
-// which crushed shade, cabins and the night to black and turned what was left of them
-// into strong colour casts.
 fn pbr_neutral(color: vec3<f32>) -> vec3<f32> {
     let start = 0.8;
-    // (more than Khronos' 0.15: a sky many times brighter than white next to a low sun
-    // turns white, as on film, instead of a flat peach)
-    let desat = 0.45;
+    let desat = 0.15;
     var c = color;
     let peak = max(c.r, max(c.g, c.b));
     if (peak < start) {
@@ -206,22 +201,6 @@ fn night_vision(c: vec3<f32>, strength: f32, pre: f32) -> vec3<f32> {
     return mix(c, night, rods * strength);
 }
 
-// More colour instead of grey
-fn vividness(c: vec3<f32>) -> vec3<f32> {
-    let sat_all = 1.28;
-    let vibrance = 0.9;
-    let l = luma(c);
-    let mx = max(c.r, max(c.g, c.b));
-    let mn = min(c.r, min(c.g, c.b));
-    let s = select(0.0, (mx - mn) / mx, mx > 1e-5);
-    let k = mix(sat_all * (1.0 + vibrance * (1.0 - s) * (1.0 - s)), 1.0, smoothstep(0.45, 0.9, s) * 0.8);
-    // (dark pixels keep their colour as they are: the night's tint is the night vision's)
-    let w = smoothstep(0.004, 0.06, l);
-    let out = vec3<f32>(l) + (c - vec3<f32>(l)) * mix(1.0, k, w);
-    // (a little contrast too: flat mid tones read as grey)
-    return max(pow(max(out, vec3<f32>(0.0)) / 0.18, vec3<f32>(1.035)) * 0.18, vec3<f32>(0.0));
-}
-
 fn to_srgb(c: vec3<f32>) -> vec3<f32> {
     let lo = c * 12.92;
     let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
@@ -234,6 +213,13 @@ fn from_srgb(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
+fn display_output(encoded: vec3<f32>) -> vec3<f32> {
+    if (OUTPUT_SRGB) {
+        return from_srgb(encoded);
+    }
+    return encoded;
+}
+
 fn graded(in: VsOut) -> vec3<f32> {
     let hdr = clean(textureSampleLevel(t_src, s_lin, in.uv, 0.0).rgb);
     let glow = clean(textureSampleLevel(t_base, s_lin, in.uv, 0.0).rgb);
@@ -244,7 +230,11 @@ fn graded(in: VsOut) -> vec3<f32> {
     if (p.c.y > 0.0) {
         c = night_vision(c, p.c.y, p.c.z);
     }
-    c = vividness(pbr_neutral(c * pow(2.0, ev)));
+    c *= exp2(ev);
+    // Open midtones uniformly across RGB; leave deep shadows and bright highlights alone
+    let y = luma(c);
+    let midtones = smoothstep(0.02, 0.12, y) * (1.0 - smoothstep(0.45, 1.0, y));
+    c = pbr_neutral(c * exp2(0.18 * midtones));
     var e = to_srgb(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
     // triangular dither of one code value: no bands in the sky's gradient
     let px = in.clip.xy;
@@ -254,10 +244,10 @@ fn graded(in: VsOut) -> vec3<f32> {
     return e;
 }
 
-// straight to the (sRGB) target
+// Straight to the display target, with exactly one sRGB encoding on store.
 @fragment
 fn fs_tonemap(in: VsOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(from_srgb(clamp(graded(in), vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
+    return vec4<f32>(display_output(clamp(graded(in), vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
 }
 
 // into the gamma-encoded target FXAA reads, with its luma in alpha
@@ -281,7 +271,7 @@ fn fs_fxaa(in: VsOut) -> @location(0) vec4<f32> {
     // the bus's own screens as they are: FXAA took half the contrast out of their
     // letters (the screen mask is this pass's t_base)
     if (textureSampleLevel(t_base, s_lin, uv, 0.0).r > 0.5) {
-        return vec4<f32>(from_srgb(rgbm.rgb), 1.0);
+        return vec4<f32>(display_output(rgbm.rgb), 1.0);
     }
     let m = rgbm.a;
     let n = lum_at(uv + vec2<f32>(0.0, -1.0) * texel);
@@ -292,7 +282,7 @@ fn fs_fxaa(in: VsOut) -> @location(0) vec4<f32> {
     let lo = min(m, min(min(n, s), min(e, w)));
     let range = hi - lo;
     if (range < max(0.0312, hi * 0.125)) {
-        return vec4<f32>(from_srgb(rgbm.rgb), 1.0);
+        return vec4<f32>(display_output(rgbm.rgb), 1.0);
     }
     let nw = lum_at(uv + vec2<f32>(-1.0, -1.0) * texel);
     let ne = lum_at(uv + vec2<f32>(1.0, -1.0) * texel);
@@ -372,5 +362,5 @@ fn fs_fxaa(in: VsOut) -> @location(0) vec4<f32> {
     } else {
         fuv.x = fuv.x + blend * stp;
     }
-    return vec4<f32>(from_srgb(textureSampleLevel(t_src, s_lin, fuv, 0.0).rgb), 1.0);
+    return vec4<f32>(display_output(textureSampleLevel(t_src, s_lin, fuv, 0.0).rgb), 1.0);
 }
