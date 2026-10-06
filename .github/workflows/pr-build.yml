@@ -1,0 +1,80 @@
+name: PR Build
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: pr-build-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/build')
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      should_build: ${{ steps.request.outputs.should_build }}
+      matrix: ${{ steps.request.outputs.matrix }}
+      source_repository: ${{ steps.request.outputs.source_repository }}
+      source_ref: ${{ steps.request.outputs.source_ref }}
+      version: ${{ steps.request.outputs.version }}
+      short_sha: ${{ steps.request.outputs.short_sha }}
+      request_label: ${{ steps.request.outputs.request_label }}
+      status_comment_id: ${{ steps.request.outputs.status_comment_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Resolve build request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/pr-build-request.mjs
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-target.yml
+    with:
+      platform: ${{ matrix.platform }}
+      arch: ${{ matrix.arch }}
+      runner: ${{ matrix.runner }}
+      target: ${{ matrix.target }}
+      version: ${{ needs.prepare.outputs.version }}
+      channel: developer
+      source_repository: ${{ needs.prepare.outputs.source_repository }}
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      cache_write: false
+      direct_artifact: true
+      retention_days: 1
+
+  report:
+    needs: [prepare, build]
+    if: always() && needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-slim
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Update PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS_COMMENT_ID: ${{ needs.prepare.outputs.status_comment_id }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+          REQUEST_LABEL: ${{ needs.prepare.outputs.request_label }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: node scripts/ci/pr-build-report.mjs

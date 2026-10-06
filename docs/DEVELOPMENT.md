@@ -79,6 +79,28 @@ Pull requests merged into `main` require:
 
 Once the required reviews and checks have passed, the PR author should normally perform the merge. Reviewers should leave the final merge to the author unless the author asks them to merge, the author is unavailable, or a maintainer has a clear operational reason to merge directly.
 
+### On-demand PR builds
+
+Repository members with write access can trigger on-demand test builds directly from a pull request by commenting:
+
+```text
+/build
+```
+
+Specific targets or all targets can be requested:
+
+```text
+/build windows-x64
+/build windows-arm64
+/build linux-x64
+/build linux-arm64
+/build macos-x64
+/build macos-arm64
+/build all
+```
+
+Once the build finishes, the status comment is updated with download links for the packaged artifacts (retained for 1 day).
+
 ## Testing guidelines
 
 - Bug fixes should include a unit or integration test reproducing the original issue whenever practical.

@@ -1,0 +1,197 @@
+name: Build target
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: Target operating system identifier used by the packaging scripts.
+        required: true
+        type: string
+      arch:
+        description: Target architecture identifier used by the packaging scripts.
+        required: true
+        type: string
+      runner:
+        description: GitHub-hosted runner label.
+        required: true
+        type: string
+      target:
+        description: Optional Rust target triple.
+        required: false
+        default: ""
+        type: string
+      version:
+        description: Version embedded into and used to package the build.
+        required: true
+        type: string
+      channel:
+        description: neoOMSI build channel.
+        required: true
+        type: string
+      source_repository:
+        description: Repository containing the source commit to build.
+        required: true
+        type: string
+      source_ref:
+        description: Exact source commit SHA to build.
+        required: true
+        type: string
+      cache_write:
+        description: Whether this build may save Rust cache entries.
+        required: false
+        default: false
+        type: boolean
+      direct_artifact:
+        description: Upload only the client ZIP as an unwrapped downloadable artifact.
+        required: false
+        default: false
+        type: boolean
+      retention_days:
+        description: Artifact retention period in days.
+        required: false
+        default: 1
+        type: number
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  neoomsi_VERSION: ${{ inputs.version }}
+  neoomsi_BUILD_CHANNEL: ${{ inputs.channel }}
+  neoomsi_TARGET: ${{ inputs.target }}
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Rust toolchain
+        if: inputs.target == ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust toolchain with target
+        if: inputs.target != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ inputs.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ inputs.target != '' && inputs.target || inputs.arch }}
+          save-if: ${{ inputs.cache_write }}
+
+      # A PR can modify scripts/ci/setup-windows-deps.ps1. Do not execute that
+      # untrusted version while GH_TOKEN is present. PR builds use the copy from
+      # the trusted default-branch commit that loaded this reusable workflow.
+      - name: Checkout trusted Windows CI helper
+        if: inputs.platform == 'windows' && inputs.direct_artifact
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .trusted-ci
+          sparse-checkout: scripts/ci/setup-windows-deps.ps1
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Prepare Windows package directory
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force dist/windows | Out-Null
+
+      - name: DirectX shader compiler and Visual C++ runtime
+        if: inputs.platform == 'windows' && !inputs.direct_artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: powershell -ExecutionPolicy Bypass -File scripts/ci/setup-windows-deps.ps1 -Arch ${{ inputs.arch }}
+
+      - name: DirectX shader compiler and Visual C++ runtime
+        if: inputs.platform == 'windows' && inputs.direct_artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: powershell -ExecutionPolicy Bypass -File .trusted-ci/scripts/ci/setup-windows-deps.ps1 -Arch ${{ inputs.arch }}
+
+      - name: Build
+        if: inputs.platform == 'windows'
+        shell: cmd
+        run: scripts\build-windows.cmd ${{ inputs.target }}
+
+      - name: Package
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/ci/package-windows.ps1 -Arch ${{ inputs.arch }} -Version $env:neoomsi_VERSION
+
+      - name: Build
+        if: inputs.platform == 'macos'
+        shell: bash
+        run: scripts/build-macos.sh
+
+      - name: Package
+        if: inputs.platform == 'macos'
+        shell: bash
+        run: bash scripts/ci/package-posix.sh macos ${{ inputs.arch }} "$neoomsi_VERSION"
+
+      - name: System libraries
+        if: inputs.platform == 'linux'
+        shell: bash
+        run: bash scripts/ci/setup-linux-deps.sh
+
+      - name: Build the game
+        if: inputs.platform == 'linux'
+        shell: bash
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+        run: scripts/build-linux.sh
+
+      - name: Build the server
+        if: inputs.platform == 'linux'
+        shell: bash
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+        run: scripts/build-server.sh
+
+      - name: Install cargo-nextest
+        if: inputs.platform == 'linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Validate shaders
+        if: inputs.platform == 'linux' && inputs.arch == 'x64'
+        shell: bash
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+        run: cargo nextest run --locked --release -p render -E 'test(shaders_validate_and_match_the_uniforms)'
+
+      - name: Package
+        if: inputs.platform == 'linux'
+        shell: bash
+        run: bash scripts/ci/package-posix.sh linux ${{ inputs.arch }} "$neoomsi_VERSION"
+
+      - name: Upload packaged build
+        if: ${{ !inputs.direct_artifact }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.platform }}-${{ inputs.arch }}
+          path: out/*.zip
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+      - name: Upload direct PR build
+        if: inputs.direct_artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/neoOMSI-${{ inputs.version }}-${{ inputs.platform }}-${{ inputs.arch }}.zip
+          archive: false
+          retention-days: ${{ inputs.retention_days }}
