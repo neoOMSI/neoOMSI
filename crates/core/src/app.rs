@@ -16,6 +16,8 @@ pub(crate) struct App {
     pub(crate) window: Option<Arc<Window>>,
     pub(crate) surface: Option<SurfaceState<'static>>,
     pub(crate) renderer: Option<Renderer>,
+    /// Pending size during a resize drag.
+    pub(crate) resize_pending: Option<(Instant, winit::dpi::PhysicalSize<u32>)>,
     #[cfg(windows)]
     pub(crate) vr: Option<openxr::Vr>,
     pub(crate) scene: Option<Scene>,

@@ -34,6 +34,18 @@ pub(crate) struct AoTargets {
 const GLOW_LEVELS: usize = 6;
 
 impl Renderer {
+    /// Discard targets sized for the old surface.
+    pub fn discard_resize_targets(&mut self) {
+        self.depth = None;
+        self.ao = None;
+        self.target_use.clear();
+        self.scale_targets.clear();
+        self.msaa_targets.clear();
+        self.hdr_targets.clear();
+        self.glass_picture = None;
+        self.glass_snapshot_source = None;
+    }
+
     pub(crate) fn ensure_ao(&mut self, w: u32, h: u32) -> bool {
         if self.ao.as_ref().map(|a| a.size == (w, h)).unwrap_or(false) {
             return false;

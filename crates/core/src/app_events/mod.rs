@@ -42,9 +42,7 @@ impl ApplicationHandler for App {
                 platform::exit(event_loop);
             }
             WindowEvent::Resized(size) => {
-                if let (Some(s), Some(r)) = (self.surface.as_mut(), self.renderer.as_ref()) {
-                    s.resize(r, size.width, size.height);
-                }
+                self.resize_pending = Some((Instant::now(), size));
             }
             WindowEvent::Focused(true) => {
                 self.window_focused = true;
@@ -143,10 +141,13 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         game_lists::flush_settings(false);
         if self.mouse_edge != 0.0 && !self.mouse_drive {
             self.mouse_edge = 0.0;
+        }
+        if self.wait_for_resize(event_loop) {
+            return;
         }
         if let Some(w) = &self.window {
             w.request_redraw();

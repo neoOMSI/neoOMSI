@@ -424,6 +424,7 @@ pub(crate) fn make_app(
         window: None,
         surface: None,
         renderer: None,
+        resize_pending: None,
         #[cfg(windows)]
         vr: None,
         scene: None,

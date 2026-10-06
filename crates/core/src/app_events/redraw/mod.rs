@@ -24,6 +24,9 @@ impl App {
     pub(super) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(not(target_os = "android"))]
         self.update_discord(self.starting.is_some());
+        if !self.apply_pending_resize() {
+            return;
+        }
         if !self.redraw_begin(event_loop) {
             return;
         }

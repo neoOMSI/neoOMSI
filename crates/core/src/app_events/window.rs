@@ -2,7 +2,45 @@
 
 use super::*;
 
+const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
 impl App {
+    /// Apply a settled resize.
+    pub(crate) fn apply_pending_resize(&mut self) -> bool {
+        let Some((changed, size)) = self.resize_pending else {
+            return true;
+        };
+        if changed.elapsed() < RESIZE_SETTLE || size.width == 0 || size.height == 0 {
+            return false;
+        }
+        self.resize_pending = None;
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.discard_resize_targets();
+        }
+        if let (Some(surface), Some(renderer)) = (self.surface.as_mut(), self.renderer.as_ref()) {
+            surface.resize(renderer, size.width, size.height);
+        }
+        // Do not count idle resize time as a slow frame.
+        self.last = Instant::now();
+        self.governor = (0.0, 0, 0.0);
+        true
+    }
+
+    pub(crate) fn wait_for_resize(&self, event_loop: &ActiveEventLoop) -> bool {
+        let Some((changed, size)) = self.resize_pending else {
+            return false;
+        };
+        if size.width == 0 || size.height == 0 {
+            return true;
+        }
+        let deadline = changed + RESIZE_SETTLE;
+        if Instant::now() < deadline {
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(deadline));
+            return true;
+        }
+        false
+    }
+
     pub(super) fn on_focus_lost(&mut self) {
         self.finish_vr_nav_edit();
         self.window_focused = false;
