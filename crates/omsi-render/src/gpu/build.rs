@@ -360,6 +360,7 @@ impl Renderer {
         {
             required_features |= adapter.features() & wgpu::Features::POLYGON_MODE_LINE;
         }
+        required_features |= adapter.features() & wgpu::Features::RG11B10UFLOAT_RENDERABLE;
         if intel_vulkan_safe {
             required_features = wgpu::Features::empty();
         }
@@ -2495,7 +2496,7 @@ impl Renderer {
             bind_group_layouts: &[Some(&upscale_layout)],
             immediate_size: 0,
         });
-        let upscale_pipeline_for = |entry| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let upscale_pipeline_for = |entry, target_format| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("upscale"),
             layout: Some(&upscale_pl),
             vertex: wgpu::VertexState {
@@ -2515,7 +2516,7 @@ impl Renderer {
                 module: &upscale_shader,
                 entry_point: Some(entry),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format,
+                    format: target_format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -2524,8 +2525,18 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        let upscale_pipeline = upscale_pipeline_for("fs_main");
-        let copy_pipeline = upscale_pipeline_for("fs_copy");
+        let upscale_pipeline = upscale_pipeline_for("fs_main", format);
+        let copy_pipeline = upscale_pipeline_for("fs_copy", format);
+        let glass_picture_format = if device
+            .features()
+            .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
+        {
+            wgpu::TextureFormat::Rg11b10Ufloat
+        } else {
+            HDR_FORMAT
+        };
+        let glass_snapshot_pipeline =
+            upscale_pipeline_for("fs_glass_snapshot", glass_picture_format);
         let upscale_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("upscale params"),
             size: 16,
@@ -2539,6 +2550,8 @@ impl Renderer {
             _device_poller: DevicePoller::start(&device),
             upscale_pipeline,
             copy_pipeline,
+            glass_snapshot_pipeline,
+            glass_picture_format,
             upscale_layout,
             upscale_buf,
             scale_targets: HashMap::new(),

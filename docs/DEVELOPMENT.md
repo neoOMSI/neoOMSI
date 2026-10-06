@@ -84,3 +84,18 @@ Once the required reviews and checks have passed, the PR author should normally 
 - Bug fixes should include a unit or integration test reproducing the original issue whenever practical.
 - Parsers, format deserializers, and math routines must have direct unit test coverage.
 - Tests must **never** bundle proprietary OMSI 2 game assets. Where test fixtures are required, use synthetic mock data or optionally read from `OMSI_ROOT` (see [Building from source](BUILDING.md#running-tests)).
+
+## Rain refraction snapshot
+
+Rain films sample the current resolved scene after puddle reflections and before the
+films are drawn. The separate snapshot avoids reading from the active colour attachment.
+It uses half the scene width and height (rounded up, at least one texel), with a bilinear
+downsample that preserves the scene's colour values without tonemapping or bloom filtering.
+The scattering offsets are scaled to preserve their radius in scene pixels.
+
+The renderer requests `RG11B10UFLOAT_RENDERABLE` when supported and stores the snapshot
+in `Rg11b10Ufloat` (4 bytes per texel); only RGB is used for refraction. Devices without
+that feature use `Rgba16Float` (8 bytes per texel) at the same half resolution. At 1920×1080,
+the compact snapshot's texture payload is approximately 1.98 MiB, compared with 15.82 MiB
+for a full-resolution `Rgba16Float` snapshot. These sizes exclude allocation overhead and
+do not measure total process VRAM usage.

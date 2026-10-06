@@ -113,6 +113,8 @@ pub struct Renderer {
     pub(crate) device_lost: Arc<std::sync::Mutex<Option<String>>>,
     pub(crate) upscale_pipeline: wgpu::RenderPipeline,
     pub(crate) copy_pipeline: wgpu::RenderPipeline,
+    pub(crate) glass_snapshot_pipeline: wgpu::RenderPipeline,
+    pub(crate) glass_picture_format: wgpu::TextureFormat,
     pub(crate) upscale_layout: wgpu::BindGroupLayout,
     pub(crate) upscale_buf: wgpu::Buffer,
     pub(crate) scale_targets: HashMap<(u32, u32), (wgpu::TextureView, wgpu::BindGroup)>,

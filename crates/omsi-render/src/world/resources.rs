@@ -65,15 +65,16 @@ impl Renderer {
         self.texture_aspect = None;
     }
 
-    /// Refraction reads the current scene before films are drawn, avoiding feedback.
+    /// Refraction reads a half-resolution current scene before films are drawn, avoiding feedback.
     pub(crate) fn prepare_glass_behind(
         &mut self,
         scene: &mut Scene,
         width: u32,
         height: u32,
-        format: wgpu::TextureFormat,
     ) {
         let Some(id) = scene.glass_slot else { return };
+        let (width, height) = (width.div_ceil(2).max(1), height.div_ceil(2).max(1));
+        let format = self.glass_picture_format;
         if self.glass_picture.as_ref().is_none_or(|v| {
             v.texture().width() != width
                 || v.texture().height() != height
@@ -86,8 +87,7 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::COPY_SRC
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });

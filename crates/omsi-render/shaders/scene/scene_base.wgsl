@@ -1651,9 +1651,7 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     let ndc = c.xy / c.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     let inside = smoothstep(0.0, 0.06, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
-    // A wet film scatters the view. Filter the existing clean scene picture locally:
-    // clear glass has a sub-texel footprint, heavy water softens several pixels.
-    let offset = vec2<f32>(1.0, 0.6) * scatter * 4.0 / vec2<f32>(textureDimensions(t_env));
+    let offset = vec2<f32>(1.0, 0.6) * scatter * 4.0 / (vec2<f32>(textureDimensions(t_env)) * 2.0);
     let a = textureSampleLevel(t_env, s_diffuse, clamp(uv - offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
     let b = textureSampleLevel(t_env, s_diffuse, clamp(uv + offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
     let seen = finite_or((a + b) * (0.5 * scale), fallback);
