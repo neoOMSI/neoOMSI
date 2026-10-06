@@ -33,21 +33,35 @@ pub(crate) struct Presence {
     pub large_text: String,
 }
 
+fn session_started_once(
+    started: &OnceLock<u64>,
+    configured: Result<String, std::env::VarError>,
+    now: u64,
+) -> u64 {
+    *started.get_or_init(|| match configured {
+        Ok(value) => value.parse().unwrap_or_else(|error| {
+            log::warn!(
+                "Discord: invalid OMSI_DISCORD_SESSION_START ({error}); starting a new session"
+            );
+            now
+        }),
+        Err(std::env::VarError::NotPresent) => now,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            log::warn!(
+                "Discord: OMSI_DISCORD_SESSION_START is not Unicode; starting a new session"
+            );
+            now
+        }
+    })
+}
+
 /// One session survives worker restarts and the launcher's child game processes.
 pub(crate) fn session_started() -> u64 {
     static STARTED: OnceLock<u64> = OnceLock::new();
-    *STARTED.get_or_init(|| match std::env::var("OMSI_DISCORD_SESSION_START") {
-        Ok(value) => value
-            .parse()
-            .expect("OMSI_DISCORD_SESSION_START must be a Unix timestamp"),
-        Err(std::env::VarError::NotPresent) => SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock must be after the Unix epoch")
-            .as_secs(),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            panic!("OMSI_DISCORD_SESSION_START must be Unicode")
-        }
-    })
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    session_started_once(&STARTED, std::env::var("OMSI_DISCORD_SESSION_START"), now)
 }
 
 fn build_label(channel: &str, version: &str) -> String {
@@ -771,10 +785,22 @@ mod tests {
     }
 
     #[test]
+    fn invalid_session_start_falls_back_to_now() {
+        let started = OnceLock::new();
+        assert_eq!(
+            session_started_once(&started, Ok("invalid".into()), 1234),
+            1234
+        );
+    }
+
+    #[test]
     fn session_start_is_stable_across_calls() {
-        let first = session_started();
-        std::thread::sleep(Duration::from_millis(1100));
-        assert_eq!(session_started(), first);
+        let started = OnceLock::new();
+        let first = session_started_once(&started, Ok("1507665886".into()), 2_000_000_000);
+        assert_eq!(
+            session_started_once(&started, Ok("invalid".into()), 2_000_000_001),
+            first
+        );
         assert_eq!(
             activity(&Presence::default(), first, true)["timestamps"]["start"],
             first
