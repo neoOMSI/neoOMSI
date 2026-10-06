@@ -1,0 +1,67 @@
+name: OMSI compatibility issue
+description: The same content or scenario behaves differently in OMSI 2.2.032 and neoOMSI
+labels: ["bug", "scope: parity", "status: untriaged"]
+type: Bug
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when neoOMSI and **OMSI 2.2.032** produce different results for the same scenario.
+
+        Compare the same content, inputs, and relevant settings in both programs. The goal is to document a reproducible compatibility rule, not just that something "looks wrong".
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Test scenario
+      description: Describe the exact setup and smallest reproduction. Include the map, vehicle, mod/add-on, relevant settings, and content version/source when they affect the result.
+      placeholder: |
+        Content:
+        Relevant settings:
+        Steps:
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: neoomsi-result
+    attributes:
+      label: neoOMSI result
+      description: Describe exactly what neoOMSI does. Attach screenshots, video, errors, or relevant log excerpts here when they help establish the difference.
+      placeholder: What is observable in neoOMSI?
+    validations:
+      required: true
+
+  - type: textarea
+    id: omsi-result
+    attributes:
+      label: OMSI 2.2.032 result
+      description: Describe the result from OMSI 2.2.032 under the same conditions. Be specific enough that another person could verify the comparison.
+      placeholder: What does OMSI 2.2.032 do differently?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: neoOMSI version
+      description: Use the exact version shown by neoOMSI, a nightly identifier, or a commit SHA. Avoid values such as "latest".
+      placeholder: 0.2.0-nightly.g8742a619
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: neoOMSI operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Android
+        - Other / compatibility layer
+    validations:
+      required: true

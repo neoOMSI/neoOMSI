@@ -1,53 +1,30 @@
-name: Feature Request
-description: Suggest an intentional neoOMSI extension beyond OMSI 2
+name: Feature request
+description: Propose an intentional neoOMSI capability beyond OMSI 2 compatibility
 labels: ["enhancement", "scope: extension", "status: untriaged"]
+type: Feature
+
 body:
   - type: markdown
     attributes:
       value: |
-        neoOMSI is currently prioritising OMSI 2.2.032 compatibility.
-        If OMSI 2 already supports the behaviour you are requesting, please use the Bug / Compatibility Report instead.
-        Valid extension ideas may be deferred until the relevant subsystem has reached a stable compatibility baseline.
+        neoOMSI is currently compatibility-first. Use this form for intentional extensions beyond OMSI 2.
+
+        If OMSI 2.2.032 already supports the behavior and neoOMSI does not, file an **OMSI compatibility issue** instead. Valid extensions may be deferred while the relevant subsystem is still being stabilized for compatibility.
 
   - type: textarea
     id: problem
     attributes:
-      label: What problem would this solve?
-      description: Explain the user or content-author problem, not only the proposed implementation.
+      label: What problem should this solve?
+      description: Explain the user, content-author, or developer need that exists today. Start with the problem rather than a preferred implementation.
+      placeholder: What is difficult, missing, or unnecessarily limited today?
     validations:
       required: true
 
   - type: textarea
-    id: proposal
+    id: outcome
     attributes:
-      label: Proposed behaviour
-      description: Describe what neoOMSI should do.
+      label: Desired behavior
+      description: Describe what should become possible or observable. Include important compatibility constraints if the extension must not change existing OMSI behavior or content semantics.
+      placeholder: What should neoOMSI do once this is implemented?
     validations:
       required: true
-
-  - type: dropdown
-    id: omsi
-    attributes:
-      label: Is this behaviour already available in OMSI 2.2.032?
-      options:
-        - "No – this is an intentional extension beyond OMSI 2"
-        - "Yes – please file a Bug / Compatibility report instead"
-        - "Not sure"
-    validations:
-      required: true
-
-  - type: textarea
-    id: compatibility
-    attributes:
-      label: Compatibility impact
-      description: Could this change alter existing OMSI behaviour, file semantics or mod compatibility?
-    validations:
-      required: false
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives considered
-      description: Existing workarounds or simpler approaches.
-    validations:
-      required: false

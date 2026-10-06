@@ -1,75 +1,53 @@
-name: Bug / Compatibility Report
-description: Report broken behaviour or a difference from OMSI 2
+name: Bug report
+description: A neoOMSI defect, crash, or regression that does not require an OMSI comparison
 labels: ["bug", "status: untriaged"]
+type: Bug
+
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the report. neoOMSI is currently compatibility-first.
-        If this differs from OMSI 2, testing the same content in OMSI 2.2.032 is especially useful.
+        Use this form for something that is broken in neoOMSI itself.
+
+        If the same map, vehicle, mod, or scenario works in **OMSI 2.2.032** but behaves differently in neoOMSI, use the **OMSI compatibility issue** form instead.
 
   - type: textarea
-    id: description
+    id: observed
     attributes:
       label: What happened?
-      description: Describe the observable problem clearly.
+      description: Describe one observable problem. Include the exact error message, screenshot, video, or relevant log excerpt here when useful. Avoid guessing at the cause unless you verified it.
+      placeholder: Describe what you saw and when it happened.
     validations:
       required: true
 
   - type: textarea
-    id: steps
+    id: reproduction
     attributes:
-      label: Steps to reproduce
-      description: Give the smallest reliable reproduction you can.
+      label: How can we reproduce it?
+      description: Give the smallest reliable sequence. Name the map, vehicle, add-on, settings, or input only when they matter. If the problem is intermittent, describe the conditions and approximate frequency.
       placeholder: |
-        1.
-        2.
-        3.
+        1. Start ...
+        2. Open / load ...
+        3. Do ...
+        4. Observe ...
     validations:
       required: true
-
-  - type: textarea
-    id: content
-    attributes:
-      label: Content used
-      description: Map, vehicle, plugin or other OMSI content involved. Include version/source when relevant.
-    validations:
-      required: false
 
   - type: textarea
     id: expected
     attributes:
-      label: Expected behaviour
-      description: What should happen instead?
+      label: What should happen instead?
+      description: Describe the expected observable result, not a proposed implementation.
+      placeholder: Describe the result you expected.
     validations:
       required: true
-
-  - type: dropdown
-    id: omsi-comparison
-    attributes:
-      label: OMSI 2.2.032 comparison
-      description: Did you test the same scenario in OMSI 2.2.032?
-      options:
-        - "Yes – OMSI behaves differently"
-        - "Yes – OMSI has the same problem"
-        - "Not tested"
-        - "Not applicable"
-    validations:
-      required: true
-
-  - type: textarea
-    id: omsi-result
-    attributes:
-      label: What does OMSI 2.2.032 do?
-      description: If tested, describe the result and use the same content/settings where possible.
-    validations:
-      required: false
 
   - type: input
     id: version
     attributes:
       label: neoOMSI version
-      placeholder: e.g. 0.2.0-nightly.g8742a619
+      description: Use the exact version shown by neoOMSI, a nightly identifier, or a commit SHA. Avoid values such as "latest".
+      placeholder: 0.2.0-nightly.g8742a619
     validations:
       required: true
 
@@ -79,25 +57,9 @@ body:
       label: Operating system
       options:
         - Windows
-        - macOS
         - Linux
+        - macOS
         - Android
+        - Other / compatibility layer
     validations:
       required: true
-
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs
-      description: Paste relevant errors or logs. Remove personal information first.
-      render: shell
-    validations:
-      required: false
-
-  - type: textarea
-    id: screenshots
-    attributes:
-      label: Screenshots / video
-      description: Add visual evidence if it helps demonstrate the difference.
-    validations:
-      required: false
