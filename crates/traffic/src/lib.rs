@@ -11,9 +11,13 @@ use hashbrown::HashMap;
 
 pub mod capabilities;
 pub mod ids;
+pub mod routing;
+pub mod service;
 
 pub use capabilities::*;
 pub use ids::*;
+pub use routing::*;
+pub use service::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneKind {
