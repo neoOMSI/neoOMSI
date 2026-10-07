@@ -1,7 +1,7 @@
 use super::{AVATAR_KEY, FootCam, OnFoot, wrap};
 use crate::App;
 use crate::humans::AvatarCmd;
-use glam::DVec3;
+use glam::{DVec3, Quat, Vec3};
 
 impl App {
     pub(super) fn foot_avatar(&mut self, f: &mut OnFoot, show: bool) {
@@ -86,10 +86,37 @@ impl App {
         }
         let dy = ((f.yaw - f.eye_yaw + 540.0).rem_euclid(360.0)) - 180.0;
         f.eye_yaw = (f.eye_yaw + dy * k as f32).rem_euclid(360.0);
+        f.eye_pitch += (f.pitch - f.eye_pitch) * k as f32;
+        // the vehicle's tilt (kneeling, slopes, bank) carries the view of a passenger along
+        let target = match (f.seat.map(|s| s.0).or(f.inside.map(|i| i.0)), f.settle > 0.0) {
+            (Some(bus), false) => self
+                .humans
+                .as_ref()
+                .and_then(|h| h.bus_tilt(bus, at))
+                .map(|m| Quat::from_mat4(&m).normalize())
+                .unwrap_or(Quat::IDENTITY),
+            _ => Quat::IDENTITY,
+        };
+        f.tilt = f.tilt.slerp(target, (1.0 - (-dt64 * 12.0).exp()) as f32);
+        let (sy, cy) = f.eye_yaw.to_radians().sin_cos();
+        let (sp, cp) = f.eye_pitch.to_radians().sin_cos();
+        let fwd = f.tilt * Vec3::new(sy * cp, cy * cp, sp);
+        let up = f.tilt * Vec3::Z;
+        let r0 = Vec3::new(fwd.y, -fwd.x, 0.0).normalize_or_zero();
+        let (yaw, pitch, roll) = if r0 == Vec3::ZERO {
+            (f.eye_yaw, f.eye_pitch, 0.0)
+        } else {
+            let u0 = r0.cross(fwd);
+            (
+                fwd.x.atan2(fwd.y).to_degrees().rem_euclid(360.0),
+                fwd.z.clamp(-1.0, 1.0).asin().to_degrees(),
+                up.dot(r0).atan2(up.dot(u0)).to_degrees(),
+            )
+        };
         cam.position = at;
-        cam.yaw = f.eye_yaw;
-        cam.pitch += (f.pitch - cam.pitch) * k as f32;
-        cam.roll += (0.0 - cam.roll) * k as f32;
+        cam.yaw = yaw;
+        cam.pitch = pitch;
+        cam.roll = roll;
     }
 
     pub(crate) fn foot_after_humans(&mut self) {
