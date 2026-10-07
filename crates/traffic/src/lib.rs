@@ -9,8 +9,10 @@
 use glam::{DVec2, DVec3};
 use hashbrown::HashMap;
 
+pub mod capabilities;
 pub mod ids;
 
+pub use capabilities::*;
 pub use ids::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

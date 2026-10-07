@@ -61,6 +61,7 @@ mod sound_events;
 mod threads;
 mod tiles;
 mod traffic;
+mod traffic_runtime;
 mod ui;
 mod window_drops;
 mod window_wipers;

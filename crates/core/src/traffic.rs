@@ -18,8 +18,8 @@ use ::simulation::ai_motion::{
 };
 use ::simulation::collision::Obb;
 pub(crate) use ::simulation::traffic::{
-    AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, RAIL_APPROACH, TrafficLightController,
-    arrival_time,
+    AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, TrafficLightController,
+    VehicleCapabilities, arrival_time,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -135,6 +135,8 @@ pub struct BusSetup {
 pub struct AiCar {
     /// Stable id for references from other systems (passengers).
     pub id: u64,
+    /// Validated, immutable physical capabilities (extents, class, brake configuration).
+    pub caps: VehicleCapabilities,
     /// The random seed it was made with and its paint scheme: a car that goes out of range
     /// and comes back is the same car (`DormantCar`).
     pub seed: u64,
@@ -3250,7 +3252,13 @@ impl Traffic {
             state.accel = state.accel.max(1.0);
             state.min_gap = state.min_gap.max(2.2);
         }
-        let (front, rear, half_width) = extents(&ty, if bus.is_some() { 12.0 } else { 4.5 });
+        let caps = crate::traffic_runtime::content::capabilities(
+            &ty,
+            state.veh_type,
+            state.max_speed_kmh,
+            if bus.is_some() { 12.0 } else { 4.5 },
+        );
+        let (front, rear, half_width) = (caps.front, caps.rear, caps.half_width);
         state.front = front;
         state.rear = rear;
         state.length = front + rear;
@@ -3333,6 +3341,7 @@ impl Traffic {
         let track_start = at_track_start.then(|| state.odometer as f64 - state.s as f64);
         self.cars.push(AiCar {
             id,
+            caps,
             state,
             vehicle,
             render,
@@ -8645,7 +8654,8 @@ impl Traffic {
         }
         vehicle.position = pos;
         vehicle.heading = heading;
-        let (front, rear, half_width) = extents(&ty, 4.5);
+        let caps = crate::traffic_runtime::content::capabilities(&ty, 0, 50.0, 4.5);
+        let (front, rear, half_width) = (caps.front, caps.rear, caps.half_width);
         let mut state = AiState::new(0, 0.0, id);
         state.front = front;
         state.rear = rear;
@@ -8653,6 +8663,7 @@ impl Traffic {
         let body = AiBody::new(&ty.def, MotionKind::Road);
         self.cars.push(AiCar {
             id,
+            caps,
             state,
             vehicle,
             render,
