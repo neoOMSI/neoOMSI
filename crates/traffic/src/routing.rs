@@ -6,6 +6,34 @@
 
 use crate::ids::{LaneId, TripId};
 
+/// The outcome of compiling a timetable trip onto the loaded network.
+///
+/// `Invalid` and `PendingTiles` are different states: an invalid trip has no loaded lane
+/// and no tile that could bring one, while a pending trip is still waiting for its tiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteStatus {
+    /// Every step resolved to a lane.
+    Complete,
+    /// Some step's tile is in the map but its lanes are not loaded yet.
+    PendingTiles,
+    /// No step could be resolved: the trip does not exist or its content is missing.
+    Invalid,
+}
+
+impl RouteStatus {
+    pub fn is_complete(self) -> bool {
+        self == RouteStatus::Complete
+    }
+
+    pub fn is_invalid(self) -> bool {
+        self == RouteStatus::Invalid
+    }
+
+    pub fn is_pending(self) -> bool {
+        self == RouteStatus::PendingTiles
+    }
+}
+
 /// A position on a planned route.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RouteProgress {
@@ -38,6 +66,16 @@ impl RouteProgress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_status_distinguishes_pending_from_invalid() {
+        assert!(RouteStatus::Complete.is_complete());
+        assert!(!RouteStatus::Complete.is_invalid());
+        assert!(RouteStatus::PendingTiles.is_pending());
+        assert!(!RouteStatus::PendingTiles.is_invalid());
+        assert!(RouteStatus::Invalid.is_invalid());
+        assert_ne!(RouteStatus::PendingTiles, RouteStatus::Invalid);
+    }
 
     #[test]
     fn progress_keeps_the_route_occurrence() {

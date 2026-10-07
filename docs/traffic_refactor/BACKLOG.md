@@ -90,10 +90,43 @@ specified. No item above requires a live queue reproduction to begin Stage 1.
 - `Traffic` fields are private behind query/command accessors; caller groups migrated
   (C5a–C5d, C6); the LAN mirror applies host state via a command.
 - Runtime selector added at session start (`OMSI_TRAFFIC_RUNTIME`, only `current`).
-- Remaining (large, documented in [DEPENDENCIES.md](DEPENDENCIES.md)): `AiCar` asset fields
-  still public (presentation store is Stage 3/6); contract adoption (`VehicleId` on
-  `AiCar.id`, `Reason` for `why`, `StopTarget`/`RouteProgress` at the boundary); scheduler/
-  passenger/time-reset internal redesign (Stages 5–6).
+- The fixed 20 ms clock now runs in the window and offscreen paths (`traffic::scenario::SIM_DT`
+  / `MAX_SIM_STEPS`, `advance_fixed_clock`), and `s1_replay_partitions.rs` checks that
+  15/30/60/144 FPS partitions decision-for-decision agree.
+- Contract adoption done: `AiCar.id` and the id-typed traffic state are `VehicleId`;
+  `AiCar.why` is a typed `Reason` (projected to the `OMSI_TRACE_AI` label); `trip_route`
+  returns a `RouteStatus` (`Complete`/`PendingTiles`/`Invalid`).
+- Remaining (documented in [DEPENDENCIES.md](DEPENDENCIES.md)): `AiCar` asset fields still
+  public (presentation store is Stage 3/6); scheduler/passenger/time-reset internal redesign
+  (Stages 5–6); the timetable route compiler still lives in `schedule.rs` and is wired to the
+  new status rather than moved into `traffic::routing`.
 - `A6`–`A8` (snapshot, single pose owner, service machine) remain Stage 3/6 targets; their
   contracts are seeded by `diagnostics.rs` and `service.rs`. Full berth arbitration for S3
   is Stage 6.
+
+## Stage 2 progress
+
+- `D1` `[crossingproblem]` is carried into `Lane::crossing_problem`; its decision semantics
+  stay unestablished and are reported by `Network::validate` (`UnresolvedCrossingProblem`).
+- `D2` `[blockpath]` is a typed `BlockRule { path, mode }`; both values reach the network,
+  the mode is kept as data and a nonzero mode is reported (`UnresolvedBlockMode`).
+- Conflict compilation is height-aware (`MEET_CLEARANCE`): a bridge no longer conflicts with
+  the road below only because their plan views cross.
+- `Network::validate` (`traffic::validation`) reports empty/zero-length lanes, bad widths and
+  speeds, duplicate keys, ambiguous joins, and unresolved content flags. Wired to
+  `OMSI_DEBUG_NETWORK` in `core`.
+- `Network::version` is bumped whenever lanes or links change.
+- `[ai_brakeperformance]` keeps all five values with the vehicle as provenance; only element
+  4 (stop shift) is consumed so far.
+- Stop targets compile through `traffic::service::compile_stop_target`, which validates the
+  serviceable platform side, the docking position, and keeps the route occurrence separate
+  from the geometry; malformed berths return `StopTargetError`.
+
+### Stage 2 remaining
+
+- The route compiler consolidation (moving `slots`/`skip_detours`/`bridge_gaps`/connectors
+  into `traffic::routing`) and full `StopTarget` adoption at the `schedule`/`bus_service`
+  boundary remain; `trip_route` already returns the typed `RouteStatus`.
+- Spline speed limits now honour `[rule] kill`, but the remaining normalization/provenance
+  for traffic-light associations and vehicle restrictions is still reported rather than
+  enforced.

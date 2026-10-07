@@ -11,7 +11,7 @@ macro_rules! id_type {
     ($name:ident, $inner:ty, $doc:literal) => {
         #[doc = $doc]
         #[repr(transparent)]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
         pub struct $name(pub $inner);
 
         impl $name {
@@ -43,6 +43,36 @@ macro_rules! id_type {
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        // Comparing a handle with its raw value is convenient while legacy containers still
+        // speak numbers; the identity is still carried as the typed handle.
+        impl PartialEq<$inner> for $name {
+            #[inline]
+            fn eq(&self, other: &$inner) -> bool {
+                self.0 == *other
+            }
+        }
+
+        impl PartialEq<$name> for $inner {
+            #[inline]
+            fn eq(&self, other: &$name) -> bool {
+                *self == other.0
+            }
+        }
+
+        impl PartialOrd<$inner> for $name {
+            #[inline]
+            fn partial_cmp(&self, other: &$inner) -> Option<std::cmp::Ordering> {
+                self.0.partial_cmp(other)
+            }
+        }
+
+        impl PartialOrd<$name> for $inner {
+            #[inline]
+            fn partial_cmp(&self, other: &$name) -> Option<std::cmp::Ordering> {
+                self.partial_cmp(&other.0)
             }
         }
     };
@@ -79,7 +109,8 @@ mod tests {
     #[test]
     fn ids_compare_by_value_and_order() {
         assert!(VehicleId(2) > VehicleId(1));
-        assert_eq!(VehicleId(3), 3u64.into());
+        assert_eq!(VehicleId(3), VehicleId(3));
+        assert_eq!(VehicleId(3), 3u64);
         assert_ne!(LaneId(1), LaneId(2));
     }
 

@@ -164,6 +164,22 @@ mod tests {
     }
 
     #[test]
+    fn all_five_brake_values_are_kept_even_though_only_one_is_used() {
+        let values = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let caps = VehicleCapabilities::from_extents(
+            1.0,
+            1.0,
+            1.0,
+            CapabilitySource::BoundingBox,
+            2,
+            50.0,
+            Some(values),
+        );
+        assert_eq!(caps.brake_performance, Some(values));
+        assert_eq!(caps.brake_performance.unwrap()[4], 5.0);
+    }
+
+    #[test]
     fn class_round_trips_through_ai_veh_type() {
         for v in 0..=4 {
             assert_eq!(VehicleClass::from_ai_veh_type(v).ai_veh_type(), v);

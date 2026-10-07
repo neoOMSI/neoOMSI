@@ -135,7 +135,7 @@ pub struct BusSetup {
 
 pub struct AiCar {
     /// Stable id for references from other systems (passengers).
-    pub id: u64,
+    pub id: VehicleId,
     /// Validated, immutable physical capabilities (extents, class, brake configuration).
     pub caps: VehicleCapabilities,
     /// The random seed it was made with and its paint scheme: a car that goes out of range
@@ -152,10 +152,10 @@ pub struct AiCar {
     /// a queue is seconds, a jam that never clears grows without bound.
     pub stopped: f32,
     /// The car it follows now (its id), when one is close ahead.
-    pub lead_car: Option<u64>,
+    pub lead_car: Option<VehicleId>,
     /// A car it does not take for its lead until the time given: two that had each other
     /// for their lead (see `Traffic::break_lead_pairs`).
-    pub ignore_lead: Option<(u64, f64)>,
+    pub ignore_lead: Option<(VehicleId, f64)>,
     /// Seconds it has crept along below 1 m/s (a claim of one that crawls in a jam of its
     /// own is no car about to come either).
     pub crawl: f32,
@@ -181,26 +181,25 @@ pub struct AiCar {
     /// Seconds since it was put on the road are fewer than this: its speed was a guess.
     pub fresh: f32,
     /// The car it lets go first at the next merge (by id).
-    pub merge_after: Option<u64>,
+    pub merge_after: Option<VehicleId>,
     /// What holds it (`OMSI_DEBUG_TRAFFIC`, for cars standing for long).
     pub holding: Option<String>,
-    /// What held the car back this frame (for OMSI_TRACE_AI): the constraint nearest ahead
-    /// ("lead", "light", "yield", "merge", "keep_back", "people", "pull_out", "service",
-    /// "end", "" for none) and its distance ahead of the front (m).
-    pub why: (&'static str, f32),
+    /// What held the car back this frame (for OMSI_TRACE_AI): the typed constraint nearest
+    /// ahead and its distance ahead of the front (m). [`Reason::NONE`] means nothing did.
+    pub why: (Reason, f32),
     /// Something made it wait this frame: a stop point, or a car or an obstacle close ahead.
     pub held: bool,
     /// The vehicle (by id) whose body stands in this car's way off its lanes this frame
     /// (`Traffic::body_in_way`).
-    pub geo_block: Option<u64>,
+    pub geo_block: Option<VehicleId>,
     /// What it keeps behind (by id) and the gap to it, as of its last step.
-    pub lead_info: Option<(u64, f32)>,
+    pub lead_info: Option<(VehicleId, f32)>,
     /// What it waited for at its last junction (`OMSI_DEBUG_STUCK` only).
     pub junction_why: String,
     /// Giving way: where it waits (distance from its origin to the line).
     pub wait_at: Option<f32>,
     /// The vehicle (by id) standing half out of the lane that this car is squeezing past.
-    pub squeeze: Option<u64>,
+    pub squeeze: Option<VehicleId>,
     /// How far behind something standing (a bus at its stop, the player's bus) this car
     /// stops, so that it can steer out round it later (m, front bumper to the other's body;
     /// from its own steering, `pull_out_room`).
@@ -513,7 +512,7 @@ const DESPAWN_FACTOR: f64 = 1.6;
 /// away and new ones made up around the player: the traffic followed the player about, and
 /// a car driven past was never seen again.
 pub struct DormantCar {
-    pub id: u64,
+    pub id: VehicleId,
     pub ty: Arc<VehicleType>,
     pub kind: LaneKind,
     pub lane: usize,
@@ -618,7 +617,7 @@ pub struct Traffic {
     /// Who wants a timetable bus to stop (`Humans::stop_wishes`): the buses somebody
     /// aboard wants to get off, the stops where somebody waits. None without passengers:
     /// every bus then serves every stop.
-    stop_wishes: Option<(hashbrown::HashSet<u64>, hashbrown::HashSet<i64>)>,
+    stop_wishes: Option<(hashbrown::HashSet<VehicleId>, hashbrown::HashSet<i64>)>,
     /// Seconds the player's vehicle has been standing.
     player_still: f32,
     /// Time of day (seconds since midnight); light cycles and timetables run on it.
@@ -633,15 +632,15 @@ pub struct Traffic {
     daylight: Option<::simulation::Daylight>,
     next_id: u64,
     /// The last car that started an overtake and when (for chase-camera debugging).
-    last_overtaker: Option<(u64, f32)>,
+    last_overtaker: Option<(VehicleId, f32)>,
     /// The first car that entered a turning lane and when (`--follow turn`).
-    first_turner: Option<(u64, f32)>,
+    first_turner: Option<(VehicleId, f32)>,
     /// The first car that stopped at a red light (`--follow red`), the first that gave way
     /// at a junction (`--follow yield`), the first that pulled out onto the other side of
     /// the road round an obstacle or squeezed past a bus at its stop (`--follow pass`).
-    first_red: Option<(u64, f32)>,
-    first_yield: Option<(u64, f32)>,
-    first_passer: Option<(u64, f32)>,
+    first_red: Option<(VehicleId, f32)>,
+    first_yield: Option<(VehicleId, f32)>,
+    first_passer: Option<(VehicleId, f32)>,
     /// `[trafficdensity_road]` curve of the map: (hour, factor).
     density_curve: Vec<(f32, f32)>,
     /// The options' `[AIUnschedFactor]`: the share of the random traffic.
@@ -668,7 +667,7 @@ pub struct Traffic {
     /// `OMSI_TRACE_AI=<file.csv>`: every car's pose, steering and speed, every frame.
     trace: Option<std::io::BufWriter<std::fs::File>>,
     /// Cars already reported for a hard bend (`OMSI_DEBUG_TRAFFIC`).
-    logged_hard: hashbrown::HashSet<u64>,
+    logged_hard: hashbrown::HashSet<VehicleId>,
     /// `OMSI_DEBUG_LIGHTS=all|near|<controller>,…`: which programs log their changes, and
     /// the states they showed last.
     light_log: Option<String>,
@@ -677,7 +676,7 @@ pub struct Traffic {
     debug_population: bool,
     /// Cars placed since the last look inside the view frustum (hidden behind something):
     /// (id, position). `OMSI_POPULATION_SHOTS` photographs them to check.
-    framed_spawns: Vec<(u64, DVec3)>,
+    framed_spawns: Vec<(VehicleId, DVec3)>,
     /// The player's vehicle as of the last tick (nothing is put on the road on top of it).
     player: Option<PlayerBox>,
     /// The player's bus has right of way over the traffic (its script's `TrafficPriority`,
@@ -690,7 +689,7 @@ pub struct Traffic {
     others: Vec<(u32, PlayerBox)>,
     /// The drivers at the wheel of the timetable buses near the camera, by car id (see
     /// `driver.rs`; made within `DRIVER_NEAR` m of the camera, let go beyond twice that).
-    drivers: HashMap<u64, crate::driver::DriverFigure>,
+    drivers: HashMap<VehicleId, crate::driver::DriverFigure>,
     /// Figures let go by their bus, hidden, for the next one (their GPU meshes stay).
     driver_pool: Vec<crate::driver::DriverFigure>,
     /// Where the last `tick` spent its time (s, OMSI_PROFILE): who is on which lane and the
@@ -699,14 +698,14 @@ pub struct Traffic {
     /// Seconds each of them has stood still.
     others_still: HashMap<u32, f32>,
     /// Per car: `AiCar::geo_block` of the frame before (who waits for whom by geometry).
-    geo_prev: Vec<Option<u64>>,
+    geo_prev: Vec<Option<VehicleId>>,
     /// Car index by id (as of the start of the tick).
-    index_of: HashMap<u64, usize>,
+    index_of: HashMap<VehicleId, usize>,
     /// `pull_out_room` by vehicle file.
     pull_out_rooms: HashMap<std::path::PathBuf, f32>,
     /// Timetable buses taken off the road because the tile under them was unloaded (their
     /// ids), for the timetable to put them back when the tiles come again.
-    removed_scheduled: Vec<u64>,
+    removed_scheduled: Vec<VehicleId>,
     /// One-way lanes that have had their reverse twin added (`add_reverse_twins`).
     twinned: hashbrown::HashSet<usize>,
     /// Bodies besides the AI vehicles' that no timetable vehicle may be put into: the
@@ -748,6 +747,22 @@ pub fn vehicle_bodies(v: &VehicleInstance) -> Vec<::simulation::collision::Obb> 
         ));
     }
     out
+}
+
+/// Log the content defects of a freshly compiled network (`OMSI_DEBUG_NETWORK`). The
+/// network is not changed: wrong or ambiguous content is diagnosed for its owner.
+fn report_network_defects(net: &Network) {
+    if ::legacy_config::env::var_os("OMSI_DEBUG_NETWORK").is_none() {
+        return;
+    }
+    let d = net.validate();
+    if d.is_clean() {
+        return;
+    }
+    log::warn!("traffic network: {} content defects", d.len());
+    for defect in d.defects.iter().take(40) {
+        log::warn!("  {defect:?}");
+    }
 }
 
 /// Persist an automatic failure capture as a self-contained text trace.
@@ -1181,7 +1196,7 @@ impl Traffic {
     }
 
     /// Take the ids of scheduled buses whose ground was unloaded under them.
-    pub fn take_removed_scheduled(&mut self) -> Vec<u64> {
+    pub fn take_removed_scheduled(&mut self) -> Vec<VehicleId> {
         std::mem::take(&mut self.removed_scheduled)
     }
 
@@ -1336,23 +1351,23 @@ impl Traffic {
     }
 
     /// The last car that started an overtake and when (chase-camera debugging).
-    pub fn last_overtaker(&self) -> Option<(u64, f32)> {
+    pub fn last_overtaker(&self) -> Option<(VehicleId, f32)> {
         self.last_overtaker
     }
 
-    pub fn first_turner(&self) -> Option<(u64, f32)> {
+    pub fn first_turner(&self) -> Option<(VehicleId, f32)> {
         self.first_turner
     }
 
-    pub fn first_red(&self) -> Option<(u64, f32)> {
+    pub fn first_red(&self) -> Option<(VehicleId, f32)> {
         self.first_red
     }
 
-    pub fn first_yield(&self) -> Option<(u64, f32)> {
+    pub fn first_yield(&self) -> Option<(VehicleId, f32)> {
         self.first_yield
     }
 
-    pub fn first_passer(&self) -> Option<(u64, f32)> {
+    pub fn first_passer(&self) -> Option<(VehicleId, f32)> {
         self.first_passer
     }
 
@@ -1380,12 +1395,12 @@ impl Traffic {
             .map(|c| {
                 let slow = c.state.speed < 0.05;
                 let no_reason =
-                    c.why.0.is_empty() && c.junction_why.is_empty() && c.holding.is_none();
+                    c.why.0.is_none() && c.junction_why.is_empty() && c.holding.is_none();
                 if slow && no_reason {
                     stationary_without_reason = true;
                 }
                 VehicleSnapshot {
-                    id: VehicleId(c.id),
+                    id: c.id,
                     lane: LaneId(c.state.lane),
                     s: c.state.s,
                     speed: c.state.speed,
@@ -1455,7 +1470,7 @@ impl Traffic {
     }
 
     /// Take the recorded in-frame spawns (for the population-shots diagnostic).
-    pub fn take_framed_spawns(&mut self) -> Vec<(u64, DVec3)> {
+    pub fn take_framed_spawns(&mut self) -> Vec<(VehicleId, DVec3)> {
         std::mem::take(&mut self.framed_spawns)
     }
 
@@ -1481,6 +1496,7 @@ impl Traffic {
             log::info!("traffic: the map drives on the left");
         }
         net.link(1.5);
+        report_network_defects(&net);
         let mut types = Vec::new();
         let mut groups: Vec<::map::ailists::UnschedGroup> = Vec::new();
         let mut group_uvg: Vec<Option<usize>> = Vec::new();
@@ -2521,7 +2537,7 @@ impl Traffic {
         let far = self.spawn_radius * DESPAWN_FACTOR;
         self.advance_dormant();
         // the cars somebody stands behind
-        let queued: std::collections::HashSet<u64> = self
+        let queued: std::collections::HashSet<VehicleId> = self
             .cars
             .iter()
             .filter(|c| c.stopped > 5.0)
@@ -2622,7 +2638,7 @@ impl Traffic {
                     speed: c.state.speed.max(2.0),
                     seed: c.seed,
                     scheme: c.scheme,
-                    walk: c.seed ^ c.id.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+                    walk: c.seed ^ c.id.get().wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
                 });
                 self.orphan_sounds.extend(c.sounds);
                 for r in std::iter::once(c.render).chain(c.trailer_renders) {
@@ -3377,7 +3393,7 @@ impl Traffic {
             } else {
                 Some((seed >> 8) as usize % ty.paint_schemes.len().min(AI_SCHEMES))
             };
-            let id = self.next_id;
+            let id = VehicleId(self.next_id);
             self.next_id += 1;
             self.dormant.push(DormantCar {
                 id,
@@ -3409,10 +3425,10 @@ impl Traffic {
         ty: Arc<VehicleType>,
         seed: u64,
         scheme: Option<Option<usize>>,
-        id: Option<u64>,
+        id: Option<VehicleId>,
         speed: Option<f32>,
         bus: Option<BusSetup>,
-    ) -> u64 {
+    ) -> VehicleId {
         let mut host = ::simulation::VehicleHost::new(::simulation::SimClock::default());
         host.font_lib = Some(world.fonts.clone());
         if let Some(b) = &bus {
@@ -3612,7 +3628,7 @@ impl Traffic {
             0.0
         };
         let id = id.unwrap_or_else(|| {
-            let id = self.next_id;
+            let id = VehicleId(self.next_id);
             self.next_id += 1;
             id
         });
@@ -3665,7 +3681,7 @@ impl Traffic {
             fresh: 1.5,
             merge_after: None,
             holding: None,
-            why: ("", 0.0),
+            why: (Reason::NONE, 0.0),
             held: false,
             geo_block: None,
             lead_info: None,
@@ -4677,7 +4693,7 @@ impl Traffic {
         t_need: f32,
         strict: bool,
         by_lane: &HashMap<usize, Vec<(usize, f32, f32, bool)>>,
-    ) -> Option<(u64, f32)> {
+    ) -> Option<(VehicleId, f32)> {
         let limit = self.net.lanes[opp].speed_limit_kmh / 3.6;
         let look = (limit.clamp(8.0, 20.0) * (t_need + 1.0) + 20.0).min(300.0);
         let lanes = self.net.upstream(opp, from, look, 48);
@@ -5692,13 +5708,13 @@ impl Traffic {
     /// along its lane (on the same lane; else the lower number) stops taking the other for
     /// its lead for a few seconds and drives off.
     fn break_lead_pairs(&mut self) {
-        let index: HashMap<u64, usize> = self
+        let index: HashMap<VehicleId, usize> = self
             .cars
             .iter()
             .enumerate()
             .map(|(k, c)| (c.id, k))
             .collect();
-        let mut pairs: Vec<(usize, u64)> = Vec::new();
+        let mut pairs: Vec<(usize, VehicleId)> = Vec::new();
         for (a, c) in self.cars.iter().enumerate() {
             let Some(bid) = c.lead_car else { continue };
             let Some(&b) = index.get(&bid) else { continue };
@@ -6366,9 +6382,7 @@ impl Traffic {
             let mut parked_ahead = false;
             let mut parked_box: Option<Obb> = None;
             let kerb_swerve: Option<f32>;
-            let mut squeeze: Option<u64> = None;
-            self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
-            let mut change_cached = self.cars[i].state.change;
+            let mut squeeze: Option<VehicleId> = None;
             {
                 let car = &self.cars[i];
                 let st = &car.state;
@@ -6756,18 +6770,18 @@ impl Traffic {
                 .into_iter()
                 .flatten()
                 .reduce(f32::min);
-            let mut why: (&'static str, f32) = ("", f32::MAX);
-            for (name, v) in [
-                ("light", light),
-                ("yield", yield_at),
-                ("merge", merge_wait),
-                ("keep_back", keep_back),
-                ("people", people),
-                ("pull_out", parked_wait),
+            let mut why: (Reason, f32) = (Reason::NONE, f32::MAX);
+            for (reason, v) in [
+                (Reason::RedSignal, light),
+                (Reason::Yield, yield_at),
+                (Reason::Yield, merge_wait),
+                (Reason::Leader, keep_back),
+                (Reason::Pedestrian, people),
+                (Reason::PullOut, parked_wait),
             ] {
                 if let Some(v) = v {
                     if v < why.1 {
-                        why = (name, v);
+                        why = (reason, v);
                     }
                 }
             }
@@ -6790,7 +6804,7 @@ impl Traffic {
                         way: &way,
                         day_time: self.day_time,
                         dt,
-                        id: car.id,
+                        id: car.id.get(),
                         stopped: car.stopped,
                         passing: car.passing.is_some(),
                         kerb_swerve,
@@ -6799,7 +6813,7 @@ impl Traffic {
                     if let Some(at) = service.step(&mut car.state, &mut car.vehicle, &ctx) {
                         stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
                         if at < why.1 {
-                            why = ("service", at);
+                            why = (Reason::StopTarget, at);
                         }
                     }
                 } else if car.passing.is_none() && car.park.is_none() {
@@ -6834,7 +6848,7 @@ impl Traffic {
                                 let at = d + st.front + 0.3;
                                 stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
                                 if at < why.1 {
-                                    why = ("park", at);
+                                    why = (Reason::Parking, at);
                                 }
                                 st.signal = 2;
                                 st.signal_time = st.signal_time.max(1.0);
@@ -6928,7 +6942,7 @@ impl Traffic {
                         let at = end - 0.5;
                         stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
                         if at < why.1 {
-                            why = ("end", at);
+                            why = (Reason::InvalidRoute, at);
                         }
                         let b = service.unwrap();
                         if !b.route_open && st.speed < 0.3 && !b.trip_done() {
@@ -7004,16 +7018,16 @@ impl Traffic {
             let lane_before = car.state.lane;
             let lead_now = lead.map(|l| l.0);
             car.why = match (why.1 < f32::MAX, lead_now) {
-                (_, Some(l)) if l.gap + car.state.front < why.1 => (
-                    match lead.and_then(|l| l.1) {
-                        Some(usize::MAX) => "player",
-                        Some(_) => "lead",
-                        None => "parked",
-                    },
-                    l.gap,
-                ),
+                (_, Some(l)) if l.gap + car.state.front < why.1 => {
+                    let reason = match lead.and_then(|l| l.1) {
+                        Some(usize::MAX) => Reason::Leader,
+                        Some(_) => Reason::Leader,
+                        None => Reason::Parking,
+                    };
+                    (reason, l.gap)
+                }
                 (true, _) => (why.0, why.1 - car.state.front),
-                _ => ("", 0.0),
+                _ => (Reason::NONE, 0.0),
             };
             if car.fresh > 0.0 {
                 car.fresh -= dt;
@@ -7069,7 +7083,7 @@ impl Traffic {
             if ::legacy_config::env::var("OMSI_DEBUG_CAR")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
-                == Some(car.id)
+                == Some(car.id.get())
             {
                 let up: Vec<usize> = car.state.upcoming().take(4).collect();
                 log::info!(
@@ -7126,7 +7140,7 @@ impl Traffic {
                 // hard braking is for emergencies: say what asked for it
                 let who = match lead.and_then(|l| l.1) {
                     Some(usize::MAX) => "the player".to_string(),
-                    Some(_) => format!("car {}", lead_id.unwrap_or(0)),
+                    Some(_) => format!("car {}", lead_id.map(|v| v.get()).unwrap_or(0)),
                     None if lead.is_some() => "a parked car".to_string(),
                     None => "-".to_string(),
                 };
@@ -7451,7 +7465,7 @@ impl Traffic {
                     c.state.rear,
                     c.half_width,
                     c.is_bus() as i32,
-                    c.why.0,
+                    c.why.0.trace_label(),
                     c.why.1.min(999.0),
                     c.bus.as_ref().map(|b| b.phase),
                     self.net.lanes[c.state.lane].at(c.state.s).0.z
@@ -7573,7 +7587,7 @@ impl Traffic {
                 if (fa.z - fb.z).abs() > 3.0 || !fa.overlaps(fb, -0.2) {
                     return;
                 }
-                let key = (ca.id.min(other), ca.id.max(other));
+                let key = (ca.id.get().min(other), ca.id.get().max(other));
                 let mut m = seen.lock();
                 if m.get(&key).is_some_and(|t| self.time - *t < 10.0) {
                     return;
@@ -7594,7 +7608,7 @@ impl Traffic {
                     continue;
                 }
                 let cb = &self.cars[fb.car];
-                hit(cb.id, fb, format!("car {} ({})", cb.id, why(cb)));
+                hit(cb.id.get(), fb, format!("car {} ({})", cb.id, why(cb)));
             }
             for (id, fb) in &boxes {
                 hit(
@@ -8000,7 +8014,7 @@ impl Traffic {
         world: &World,
         renderer: &Renderer,
         scene: &mut Scene,
-        id: u64,
+        id: VehicleId,
     ) -> bool {
         let Some(i) = self.cars.iter().position(|c| c.id == id) else {
             return false;
@@ -8055,7 +8069,7 @@ impl Traffic {
                 // bulldozer
                 let h = c.vehicle.heading.to_radians();
                 let v = glam::DVec2::new(h.sin(), h.cos()) * c.state.speed as f64;
-                let (mass, id) = (c.vehicle.physics.mass_kg, c.id);
+                let (mass, id) = (c.vehicle.physics.mass_kg, c.id.get());
                 let rear = c.vehicle.trailers.iter().filter_map(move |t| {
                     t.ty.def.bounding_box.map(|bb| {
                         ::simulation::collision::Obb::from_box(bb, t.position, t.heading)
@@ -8072,7 +8086,7 @@ impl Traffic {
     }
 
     /// Position and heading of a car by id (None once it is gone).
-    pub fn car_pose(&self, id: u64) -> Option<(DVec3, f64)> {
+    pub fn car_pose(&self, id: VehicleId) -> Option<(DVec3, f64)> {
         self.cars
             .iter()
             .find(|c| c.id == id)
@@ -8094,7 +8108,7 @@ impl Traffic {
     /// Tell a scheduled bus's script who wants in or out (`PAX_Entry<i>_Req`,
     /// `PAX_Exit<i>_Req`): the stock AI door scripts open the rear doors only for a stop
     /// request, which comes from the exit requests.
-    pub fn set_pax_requests(&mut self, id: u64, entry: &[bool], exit: &[bool]) {
+    pub fn set_pax_requests(&mut self, id: VehicleId, entry: &[bool], exit: &[bool]) {
         if let Some(c) = self.cars.iter_mut().find(|c| c.id == id) {
             for (i, r) in entry.iter().enumerate() {
                 c.vehicle
@@ -8115,10 +8129,13 @@ impl Traffic {
         alighting: hashbrown::HashSet<u64>,
         waiting: hashbrown::HashSet<i64>,
     ) {
-        self.stop_wishes = Some((alighting, waiting));
+        self.stop_wishes = Some((
+            alighting.into_iter().map(VehicleId).collect(),
+            waiting,
+        ));
     }
 
-    pub fn hold_boarding(&mut self, id: u64, secs: f32, in_doorway: bool) {
+    pub fn hold_boarding(&mut self, id: VehicleId, secs: f32) {
         if let Some(c) = self.cars.iter_mut().find(|c| c.id == id) {
             if let Some(b) = c.bus.as_mut() {
                 b.hold(secs, in_doorway);
@@ -8148,7 +8165,7 @@ impl Traffic {
             return;
         };
         let dt = self.last_dt.max(1.0 / 120.0);
-        let mut keep: Vec<u64> = Vec::new();
+        let mut keep: Vec<VehicleId> = Vec::new();
         for c in &self.cars {
             if !c.is_bus() || c.gone {
                 continue;
@@ -8172,7 +8189,7 @@ impl Traffic {
                         }
                     }
                     None => {
-                        crate::driver::DriverFigure::new(world, renderer, scene, &c.vehicle, c.id)
+                        crate::driver::DriverFigure::new(world, renderer, scene, &c.vehicle, c.id.get())
                     }
                 };
                 match figure {
@@ -8186,7 +8203,7 @@ impl Traffic {
                 f.update(renderer, scene, &c.vehicle, &c.render, dt, true, false);
             }
         }
-        let gone: Vec<u64> = self
+        let gone: Vec<VehicleId> = self
             .drivers
             .keys()
             .copied()
@@ -8587,9 +8604,7 @@ impl Traffic {
         let mut added = self.net.lanes.len()..self.net.lanes.len();
         if n > 0 {
             added = self.net.extend(new, 1.5);
-            for l in &mut self.net.lanes[added.clone()] {
-                weigh_lane_density(l, &self.uvg_defaults, &self.uvg_share);
-            }
+            report_network_defects(&self.net);
             self.street_weight += self.net.lanes[added.clone()]
                 .iter()
                 .filter_map(street_lane_weight)
@@ -8895,7 +8910,7 @@ impl Traffic {
             return;
         }
         self.mirror = on;
-        let ids: Vec<u64> = self.cars.iter().map(|c| c.id).collect();
+        let ids: Vec<VehicleId> = self.cars.iter().map(|c| c.id).collect();
         for id in ids {
             self.remove_car(world, renderer, scene, id);
         }
@@ -8932,7 +8947,7 @@ impl Traffic {
         world: &World,
         renderer: &Renderer,
         scene: &mut Scene,
-        id: u64,
+        id: VehicleId,
         ty: Arc<VehicleType>,
         scheme: Option<usize>,
         scheduled: bool,
@@ -8961,7 +8976,7 @@ impl Traffic {
         vehicle.heading = heading;
         let caps = crate::traffic_runtime::content::capabilities(&ty, 0, 50.0, 4.5);
         let (front, rear, half_width) = (caps.front, caps.rear, caps.half_width);
-        let mut state = AiState::new(0, 0.0, id);
+        let mut state = AiState::new(0, 0.0, id.get());
         state.front = front;
         state.rear = rear;
         state.length = front + rear;
@@ -8990,7 +9005,7 @@ impl Traffic {
             fresh: 0.0,
             merge_after: None,
             holding: None,
-            why: ("", 0.0),
+            why: (Reason::NONE, 0.0),
             held: false,
             geo_block: None,
             lead_info: None,

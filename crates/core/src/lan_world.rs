@@ -712,9 +712,9 @@ impl LanWorld {
                     if (p - at).truncate().length() > CAR_RADIUS || c.id > nw::MAX_ID as u64 {
                         continue;
                     }
-                    let key = (false, c.id as u32);
+                    let key = (false, c.id.get() as u32);
                     seen.insert(key);
-                    ids_hash ^= fnv(&c.id.to_le_bytes());
+                    ids_hash ^= fnv(&c.id.get().to_le_bytes());
                     let d = describe_car(args, c);
                     let h = fnv(d.encode().as_bytes());
                     if view.described.get(&key) != Some(&h) {
@@ -734,7 +734,7 @@ impl LanWorld {
                     }
                     view.sent.insert(key, (q, 0.0));
                     frame.cars.push(CarState {
-                        id: c.id as u32,
+                        id: c.id.get() as u32,
                         x: p.x,
                         y: p.y,
                         z: p.z,
@@ -1180,7 +1180,7 @@ impl LanWorld {
                 .filter(|id| !m.cars.contains_key(id))
                 .collect();
             for id in gone {
-                t.remove_car(world, renderer, scene, id as u64);
+                t.remove_car(world, renderer, scene, crate::traffic::VehicleId(id as u64));
                 m.drawn_cars.remove(&id);
                 m.shown.remove(&id);
                 m.odometer.remove(&id);
@@ -1239,7 +1239,7 @@ impl LanWorld {
                     world,
                     renderer,
                     scene,
-                    id as u64,
+                    crate::traffic::VehicleId(id as u64),
                     ty,
                     scheme.map(|s| s as usize),
                     scheduled,
@@ -1249,8 +1249,12 @@ impl LanWorld {
                 m.drawn_cars.insert(id);
             }
             // where each is now, and what its scripts make of it
-            let index: HashMap<u64, usize> =
-                t.cars().iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+            let index: HashMap<u64, usize> = t
+                .cars()
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.id.get(), i))
+                .collect();
             let mut work: Vec<(usize, CarState, f64)> = Vec::new();
             for (id, track) in &m.cars {
                 let Some(&i) = index.get(&(*id as u64)) else {
@@ -1465,7 +1469,7 @@ impl LanWorld {
                     for c in t
                         .cars()
                         .iter()
-                        .filter(|c| m.drawn_cars.contains(&(c.id as u32)))
+                        .filter(|c| m.drawn_cars.contains(&(c.id.get() as u32)))
                     {
                         let p = c.vehicle.position;
                         let _ = writeln!(
@@ -1643,7 +1647,7 @@ fn describe_car(args: &Args, c: &crate::traffic::AiCar) -> Desc {
         (String::new(), String::new())
     };
     Desc::Car {
-        id: c.id as u32,
+        id: c.id.get() as u32,
         file: relative_file(&c.vehicle.ty.def.path, &args.root),
         scheme: c
             .render
@@ -1669,7 +1673,7 @@ fn describe(
             file: Humans::type_file(&p),
         })
     } else {
-        let c = traffic?.cars().iter().find(|c| c.id == r.id as u64)?;
+        let c = traffic?.cars().iter().find(|c| c.id.get() == r.id as u64)?;
         Some(describe_car(args, c))
     }
 }

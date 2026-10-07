@@ -1,9 +1,15 @@
-# Traffic AI refactor — Stage 0 preparation
+# Traffic AI refactor — preparation and progress
 
-Stage 0 of the [Traffic AI refactor plan](../TRAFFIC_AI_REFACTOR_PLAN.md) is lightweight
-preparation. It produces the starting backlog, an integration/test inventory, the first
+Stage 0 of the [Traffic AI refactor plan](../TRAFFIC_AI_REFACTOR_PLAN.md) was the lightweight
+preparation that produced the starting backlog, an integration/test inventory, the first
 synthetic scenario specifications, and the decision/blocked-reason capture specification
-required at the Stage 1 seam. It changes no runtime behaviour.
+required at the Stage 1 seam.
+
+Stage 1 (extract boundaries, fixed clock, stable identities, typed reasons) and Stage 2
+(validate the network and content semantics) have since landed; see the progress sections in
+[BACKLOG.md](BACKLOG.md) and [DEPENDENCIES.md](DEPENDENCIES.md) for what is done and what
+remains. The route-compiler consolidation into `traffic::routing` and full `StopTarget`
+adoption at the `schedule`/`bus_service` boundary are the main Stage 2 leftovers.
 
 - Source revision: `35a460a54e51ed28f9fb081b4adf16c8c73993a8` (the plan's `35a460a`).
 - Reference baseline: OMSI 2.2.032 (see [Compatibility](../COMPATIBILITY.md)).

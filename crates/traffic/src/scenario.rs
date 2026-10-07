@@ -7,6 +7,13 @@
 
 use crate::diagnostics::{Capture, TraceHeader};
 
+/// Fixed simulation step for the traffic domain (s): decisions run at a stable rate,
+/// independent of the render frame rate. Rendering may run at any rate on top.
+pub const SIM_DT: f32 = 0.02;
+/// Most fixed steps to run in one frame; a long stall is bounded and the rest of the debt
+/// is kept (capped) rather than silently lost or turned into one huge step.
+pub const MAX_SIM_STEPS: u32 = 8;
+
 /// A fixed-step headless scenario description.
 #[derive(Debug, Clone)]
 pub struct Scenario {
@@ -56,11 +63,18 @@ where
 /// sequence of fixed steps depends only on the elapsed time, not on how it was partitioned
 /// into render frames (below the cap), which is what makes replays frame-rate independent.
 pub fn advance_fixed_clock(accum: &mut f32, frame_dt: f32, dt: f32, max_steps: u32) -> u32 {
-    *accum = (*accum + frame_dt).min(dt * max_steps as f32);
-    let mut steps = 0;
-    while *accum >= dt && steps < max_steps {
-        *accum -= dt;
-        steps += 1;
+    if dt <= 0.0 {
+        return 0;
+    }
+    // Cap the debt at one step more than a frame may catch up, so a long stall is bounded
+    // yet a little debt survives for the next frame instead of being silently dropped.
+    *accum = (*accum + frame_dt).min(dt * (max_steps + 1) as f32);
+    // A single division avoids the rounding drift of repeated subtraction, which otherwise
+    // drops a decision tick over a long run at high frame rates and makes replays diverge.
+    let steps = (*accum / dt).floor().min(max_steps as f32) as u32;
+    *accum -= dt * steps as f32;
+    if *accum < 0.0 {
+        *accum = 0.0;
     }
     steps
 }

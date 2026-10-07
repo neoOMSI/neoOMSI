@@ -1226,7 +1226,7 @@ impl Humans {
                     .map(|e| (c.vehicle.position - e.pos).length())
                     .unwrap_or(f64::MAX);
                 if (c.vehicle.position - near).length().min(from_eye) > 400.0
-                    && !riding.contains(&c.id)
+                    && !riding.contains(&c.id.get())
                 {
                     continue;
                 }
@@ -1241,11 +1241,11 @@ impl Humans {
                 };
                 let since = match stop {
                     Some(s) => {
-                        let v = match self.buses.ai_visits.get(&c.id) {
+                        let v = match self.buses.ai_visits.get(&c.id.get()) {
                             Some(&(vs, t0)) if vs == s => (vs, t0),
                             _ => (s, self.time),
                         };
-                        visits.insert(c.id, v);
+                        visits.insert(c.id.get(), v);
                         self.time - v.1
                     }
                     None => 0.0,
@@ -1274,7 +1274,7 @@ impl Humans {
                 }
                 self.buses
                     .seats
-                    .entry(BusId::Ai(c.id))
+                    .entry(BusId::Ai(c.id.get()))
                     .or_insert_with(|| vec![false; cabin.seats.len()]);
                 let (half, centre) = bb_of(&c.vehicle);
                 let trailers = part_frames(&c.vehicle, &cabin);
@@ -1293,8 +1293,7 @@ impl Humans {
                     passenger_termini: terminus.iter().cloned().collect(),
                     terminus,
                     out_of_service: false,
-                    final_stop,
-                    id: BusId::Ai(c.id),
+                    id: BusId::Ai(c.id.get()),
                     walk_open: None,
                     cabin,
                     pos: c.vehicle.position,
@@ -1315,7 +1314,7 @@ impl Humans {
             let alive: HashSet<u64> = t
                 .cars()
                 .iter()
-                .map(|c| c.id)
+                .map(|c| c.id.get())
                 .chain(
                     self.network
                         .remote_now

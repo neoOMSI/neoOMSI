@@ -21,6 +21,7 @@ pub mod rules;
 pub mod scenario;
 pub mod service;
 pub mod signals;
+pub mod validation;
 
 pub use capabilities::*;
 pub use diagnostics::*;
@@ -32,6 +33,7 @@ pub use rules::*;
 pub use scenario::*;
 pub use service::*;
 pub use signals::*;
+pub use validation::*;
 
 #[cfg(test)]
 mod tests;

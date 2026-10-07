@@ -187,8 +187,13 @@ impl App {
                         }
                         (Some((key, name)), Some(sch), Some(t), Some(w)) => {
                             if nav.wants_route(&key, t.lanes_generation()) {
-                                let (lanes, complete) = sch.trip_route(w, t, &name);
-                                nav.set_route(&key, lanes, complete, t.lanes_generation());
+                                let (lanes, status) = sch.trip_route(w, t, &name);
+                                nav.set_route(
+                                    &key,
+                                    lanes,
+                                    status.is_complete(),
+                                    t.lanes_generation(),
+                                );
                             }
                         }
                         _ => nav.clear_route(),

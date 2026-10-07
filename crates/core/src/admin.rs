@@ -348,7 +348,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                 app.renderer.as_ref(),
                 app.scene.as_mut(),
             ) {
-                let ids: Vec<u64> = t
+                let ids: Vec<crate::traffic::VehicleId> = t
                     .cars()
                     .iter()
                     .filter(|c| !c.is_bus())

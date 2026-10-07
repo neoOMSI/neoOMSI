@@ -36,11 +36,14 @@ core ─┘                          (never the reverse)
 
 ## Current state after Stage 1
 
-- `crates/traffic/src/` is split by responsibility: `network.rs` (topology/geometry),
-  `rules.rs` (path priority and per-group density), `signals.rs` (light programs),
-  `following.rs` (`AiState`, `Lead`, lane-change/route state), `tests.rs` (the inline
-  algorithm tests), plus the Stage 1 contract modules `ids.rs`, `capabilities.rs`,
-  `routing.rs`, `service.rs`, `diagnostics.rs`. `lib.rs` is declarations and re-exports.
+- `crates/traffic/src/` is split by responsibility: `network.rs` (topology/geometry,
+  `BlockRule`/`crossing_problem` content rules, versioned updates), `rules.rs` (path priority
+  and per-group density), `signals.rs` (light programs), `following.rs` (`AiState`, `Lead`,
+  lane-change/route state), `validation.rs` (`Network::validate`/`NetworkDefect`),
+  `tests.rs` (the inline algorithm tests), plus the contract modules `ids.rs`,
+  `capabilities.rs`, `routing.rs` (`RouteStatus`), `service.rs`
+  (`compile_stop_target`/`StopTargetError`), `diagnostics.rs`. `lib.rs` is declarations and
+  re-exports.
 - `crates/simulation/src/traffic.rs` is a re-export shim (`pub use ::traffic::*;`).
 - `crates/core/src/traffic_runtime/` holds `content.rs` (capability adapter) and the adapter
   modules `vehicles.rs`, `passengers.rs`, `presentation.rs`, `replication.rs`.
@@ -65,13 +68,13 @@ core ─┘                          (never the reverse)
   `sounds`, `body`) and those fields are still public. Moving them behind a presentation
   store is Stage 3/6 work; the LAN mirror now applies host state through
   `Traffic::apply_host_car` instead of writing fields.
-- Contract types are introduced but not fully adopted: `VehicleId` is not yet `AiCar.id`,
-  `Reason` is not yet `AiCar.why` (the legacy labels `light`/`merge`/`keep_back`/`stop`
-  do not map cleanly onto the schema reasons — a design task), `StopTarget`/`RouteProgress`
-  are not yet used at the schedule boundary.
-- Scheduler, passenger exchange, pause, and time-reset are aligned only at the clock
-  boundary (the fixed tick + an explicit accumulator reset on time jumps); their internal
-  redesign belongs to Stages 5–6.
+- Contract adoption: `AiCar.id` and the id-typed traffic state are `VehicleId`; `AiCar.why`
+  is a typed `Reason` projected to the `OMSI_TRACE_AI` label; `trip_route` returns a
+  `RouteStatus`. `StopTarget`/`RouteProgress` are compiled by `traffic::service` /
+  `traffic::routing` but are not yet used at the `schedule`/`bus_service` boundary.
+- Scheduler, passenger exchange, pause, and time-reset are aligned at the clock boundary
+  (the fixed tick `traffic::scenario::SIM_DT` + an explicit accumulator reset on time jumps)
+  in both the window and offscreen paths; their internal redesign belongs to Stages 5–6.
 - `simulation` keeps `LaneKind` (street/sidewalk/rail/air); rail/air motion stays in
   `simulation` and is adapted later rather than forced through car following.
 - `following.rs` still bundles routing/maneuver state; finer `routing.rs`/`maneuvers.rs`/

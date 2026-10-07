@@ -38,6 +38,23 @@ pub enum Reason {
 }
 
 impl Reason {
+    /// The "no constraint" marker, so an optional reason can be a plain [`Reason`].
+    pub const NONE: Reason = Reason::Unknown(u16::MAX);
+
+    /// Whether this is [`Reason::NONE`].
+    pub fn is_none(self) -> bool {
+        matches!(self, Reason::Unknown(u16::MAX))
+    }
+
+    /// The short label for the `OMSI_TRACE_AI` column; empty when there is no reason.
+    pub fn trace_label(self) -> &'static str {
+        if self.is_none() {
+            ""
+        } else {
+            self.label()
+        }
+    }
+
     /// The short label used by the existing frame trace.
     pub fn label(self) -> &'static str {
         match self {

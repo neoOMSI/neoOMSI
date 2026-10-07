@@ -112,11 +112,11 @@ impl App {
             if let Some(t) = self.traffic.as_mut() {
                 let (alighting, waiting) = h.stop_wishes();
                 t.set_stop_wishes(alighting, waiting);
-                for (id, secs, in_doorway) in h.take_holds() {
-                    t.hold_boarding(id, secs, in_doorway);
+                for (id, secs) in h.take_holds() {
+                    t.hold_boarding(crate::traffic::VehicleId(id), secs);
                 }
                 for (id, entry, exit) in h.take_ai_requests() {
-                    t.set_pax_requests(id, &entry, &exit);
+                    t.set_pax_requests(crate::traffic::VehicleId(id), &entry, &exit);
                 }
             }
             if let Some(m) = h.take_message() {

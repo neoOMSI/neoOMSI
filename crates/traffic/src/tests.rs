@@ -535,6 +535,102 @@ use crate::following::smooth01;
         assert!(shallow.before >= 7.0 && shallow.after >= 7.0, "{shallow:?}");
     }
 
+    fn crossing_pair(b_z: f64) -> Network {
+        let key = |path: u16| {
+            Some(LaneKey {
+                tile: (0, 0),
+                id: 1,
+                path,
+            })
+        };
+        let mut a = LaneBuilder::arc(
+            DVec3::new(0.0, -20.0, 0.0),
+            0.0,
+            40.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        let mut b = LaneBuilder::arc(
+            DVec3::new(20.0, 0.0, b_z),
+            270.0,
+            40.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        a.source = 2;
+        a.key = key(0);
+        b.source = 2;
+        b.key = key(1);
+        let mut net = Network {
+            lanes: vec![a, b],
+            ..Default::default()
+        };
+        net.link(1.5);
+        net
+    }
+
+    #[test]
+    fn a_bridge_does_not_conflict_with_the_road_below() {
+        // Their plan views cross, but the other lane is 6 m up: different roads.
+        let bridge = crossing_pair(6.0);
+        assert!(
+            bridge.conflicts[0].is_empty(),
+            "a bridge conflicts with the road below: {:?}",
+            bridge.conflicts[0]
+        );
+        // Level with it, they do meet at the crossing.
+        let level = crossing_pair(0.0);
+        assert!(level.conflicts[0].contains(&1));
+    }
+
+    #[test]
+    fn a_blockpath_entry_is_a_conflict_even_without_a_crossing() {
+        // Two parallel paths of one object that never touch: `[blockpath]` makes them
+        // each other's obstacle, and its mode is kept as data.
+        let key = |path: u16| {
+            Some(LaneKey {
+                tile: (0, 0),
+                id: 7,
+                path,
+            })
+        };
+        let mut a = LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 40.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        let mut b = LaneBuilder::polyline(
+            vec![DVec3::new(10.0, 0.0, 0.0), DVec3::new(10.0, 40.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        a.source = 2;
+        a.key = key(0);
+        a.blocks = vec![crate::network::BlockRule { path: 1, mode: 2 }];
+        b.source = 2;
+        b.key = key(1);
+        let mut net = Network {
+            lanes: vec![a, b],
+            ..Default::default()
+        };
+        net.link(1.5);
+        assert!(
+            net.conflicts[0].contains(&1) && net.conflicts[1].contains(&0),
+            "the blockpath was not honoured: {:?}",
+            net.conflicts
+        );
+        // The unresolved mode is reported, not discarded.
+        assert!(net
+            .validate()
+            .defects
+            .iter()
+            .any(|d| matches!(d, crate::validation::NetworkDefect::UnresolvedBlockMode { .. })));
+    }
+
     #[test]
     fn a_driver_with_a_choice_keeps_out_of_a_dead_end() {
         // a lane that forks: one way ends after 50 m, the other runs round a long loop

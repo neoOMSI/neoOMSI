@@ -1,5 +1,6 @@
 use glam::{DVec2, DVec3};
 use hashbrown::HashMap;
+use crate::ids::NetworkVersion;
 use crate::rules::{DEFAULT_PRIORITY, pool_density};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +30,17 @@ pub struct LaneKey {
     pub tile: (i32, i32),
     pub id: i64,
     pub path: u16,
+}
+
+/// One `[blockpath] <path> <mode>` entry: another `[path]` of the same object this lane
+/// blocks while it is taken. The mode's full meaning is not established; it is kept as
+/// content data (with provenance at the adapter) rather than discarded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockRule {
+    /// The other `[path]` index of the same object.
+    pub path: u16,
+    /// The second `[blockpath]` value, semantics unresolved.
+    pub mode: u16,
 }
 
 /// A sampled lane: points with headings, in world coordinates.
@@ -89,7 +101,10 @@ pub struct Lane {
     pub priority: f32,
     /// Other `[path]`s of its object this lane blocks while taken (`[blockpath]`), beyond
     /// the places where they cross.
-    pub blocks: Vec<u16>,
+    pub blocks: Vec<BlockRule>,
+    /// `[crossingproblem]` after this `[path]`: a vehicle on it keeps the junction clear.
+    /// Its exact decision semantics are not established; it is carried as content data.
+    pub crossing_problem: bool,
 }
 
 
@@ -315,6 +330,7 @@ impl LaneBuilder {
             right: None,
             priority: DEFAULT_PRIORITY,
             blocks: Vec::new(),
+            crossing_problem: false,
         }
     }
 
@@ -424,6 +440,25 @@ pub struct Network {
     /// The map drives on the left (`global.cfg` `[lht]`): priority to the left, the
     /// oncoming lane on the right, turning right across the oncoming traffic.
     pub left_hand: bool,
+    /// Bumped whenever lanes or links change, so callers can invalidate cached route and
+    /// conflict work. Starts at a nonzero value so a default-built network is versioned.
+    pub version: NetworkVersion,
+}
+
+impl Network {
+    /// The current network version (changes when lanes or their links change).
+    pub fn version(&self) -> NetworkVersion {
+        let mut v = self.version;
+        if v.get() == 0 {
+            v = NetworkVersion(1);
+        }
+        v
+    }
+
+    /// Mark the network changed (a streamed tile added lanes or links).
+    pub fn bump_version(&mut self) {
+        self.version = NetworkVersion(self.version().get().wrapping_add(1).max(1));
+    }
 }
 
 /// `Network::reach` is counted up to this far (m).
@@ -455,6 +490,9 @@ pub struct Crossing {
 pub const MEET_DIST: f64 = 2.6;
 /// A meeting place reaches at most this far either side of the crossing point (m).
 const MEET_MAX: f32 = 14.0;
+/// Two lanes whose centre lines cross in plan but whose bodies are this far apart
+/// vertically (m) do not meet: a bridge does not conflict with the road under it.
+pub const MEET_CLEARANCE: f64 = 4.0;
 
 /// How far before and after distance `at` of lane `a` its centre line stays within
 /// `MEET_DIST` of lane `b`'s (in half-metre steps, at least the half metre around the point).
@@ -766,13 +804,20 @@ impl Network {
                     } else {
                         polyline_crossing(a, b)
                     };
+                    // A lane above another (a bridge over the road below) does not meet it
+                    // just because their plan views cross: require the bodies to share height.
+                    let place = place.filter(|&(sa, sb)| {
+                        (a.at(sa).0.z - b.at(sb).0.z).abs() <= MEET_CLEARANCE
+                    });
                     // `[blockpath]`: the object says the two are in each other's way even
                     // where their lines do not cross - the whole of both is the meeting place
                     let (pa, pb) = (
                         a.key.map(|k| k.path).unwrap_or(u16::MAX),
                         b.key.map(|k| k.path).unwrap_or(u16::MAX),
                     );
-                    if place.is_none() && (a.blocks.contains(&pb) || b.blocks.contains(&pa)) {
+                    let blocked = a.blocks.iter().any(|r| r.path == pb)
+                        || b.blocks.iter().any(|r| r.path == pa);
+                    if place.is_none() && blocked {
                         let (la, lb) = (a.length(), b.length());
                         self.conflicts[i].push(j);
                         self.conflicts[j].push(i);
@@ -994,6 +1039,7 @@ impl Network {
 
     /// Connect lane ends to lane starts that lie within `tol` metres with a compatible heading.
     pub fn link(&mut self, tol: f64) {
+        self.bump_version();
         self.by_key.clear();
         for (i, l) in self.lanes.iter().enumerate() {
             if let Some(k) = l.key {
@@ -1457,6 +1503,7 @@ impl Network {
         // every lane now leads (a dead end may go on into the new tiles)
         self.conflicts_from(first);
         self.update_reach_from(first);
+        self.bump_version();
         first..end
     }
 
