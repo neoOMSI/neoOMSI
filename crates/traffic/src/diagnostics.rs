@@ -142,6 +142,28 @@ pub enum ServicePhase {
     ServiceFault(Reason),
 }
 
+impl ServicePhase {
+    /// Only a bus docked at a valid berth may open its doors: no boarding far up a queue.
+    pub fn may_board(&self) -> bool {
+        matches!(self, ServicePhase::Boarding)
+    }
+
+    /// Whether the bus still occupies a berth (docking through merge-out).
+    pub fn holds_berth(&self) -> bool {
+        matches!(
+            self,
+            ServicePhase::Docking
+                | ServicePhase::Boarding
+                | ServicePhase::ClosingDoors
+                | ServicePhase::WaitingToMerge
+        )
+    }
+
+    pub fn is_fault(&self) -> bool {
+        matches!(self, ServicePhase::ServiceFault(_))
+    }
+}
+
 /// How a wait is classified, so legitimate service is not treated as an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitClass {
