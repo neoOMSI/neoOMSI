@@ -1,0 +1,11 @@
+[package]
+name = "traffic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless traffic domain: lane network, rules, signals, routing, following, and AI road-vehicle state"
+
+[dependencies]
+glam.workspace = true
+hashbrown.workspace = true
+log.workspace = true
