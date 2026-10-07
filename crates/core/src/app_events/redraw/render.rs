@@ -186,9 +186,9 @@ impl App {
                             }
                         }
                         (Some((key, name)), Some(sch), Some(t), Some(w)) => {
-                            if nav.wants_route(&key, t.lanes_generation) {
+                            if nav.wants_route(&key, t.lanes_generation()) {
                                 let (lanes, complete) = sch.trip_route(w, t, &name);
-                                nav.set_route(&key, lanes, complete, t.lanes_generation);
+                                nav.set_route(&key, lanes, complete, t.lanes_generation());
                             }
                         }
                         _ => nav.clear_route(),
@@ -258,7 +258,7 @@ impl App {
                     if nav.arrows {
                         if let Some(w) = self.world.as_ref() {
                             let spots = nav.arrow_spots(
-                                self.traffic.as_ref().map(|t| &t.net),
+                                self.traffic.as_ref().map(|t| t.net()),
                                 350.0,
                                 &|id| w.object_positions.lock().get(&id).map(|p| (p.0, p.1[0])),
                             );

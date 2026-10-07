@@ -112,7 +112,7 @@ impl App {
             }
             vehicles.extend(self.placed.iter().map(|q| &q.vehicle));
             if let Some(t) = self.traffic.as_ref() {
-                vehicles.extend(t.cars.iter().map(|c| &c.vehicle));
+                vehicles.extend(t.cars().iter().map(|c| &c.vehicle));
             }
             vehicles.extend(self.remotes.remotes.values().map(|r| r.vehicle()));
             let __tc = Instant::now();
@@ -176,7 +176,7 @@ impl App {
                 );
                 if let Some(t) = self.traffic.as_ref() {
                     buses.extend(
-                        t.cars
+                        t.cars()
                             .iter()
                             .filter(|c| {
                                 c.is_bus() && (c.vehicle.position - cam.position).length() < 40.0

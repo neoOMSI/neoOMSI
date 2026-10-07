@@ -349,7 +349,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                 app.scene.as_mut(),
             ) {
                 let ids: Vec<u64> = t
-                    .cars
+                    .cars()
                     .iter()
                     .filter(|c| !c.is_bus())
                     .map(|c| c.id)

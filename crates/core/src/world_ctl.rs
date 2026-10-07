@@ -1009,7 +1009,7 @@ impl App {
         // flown there (#235). (the height of the point does not matter: the nearest by the
         // ground plan)
         let nets = [
-            self.traffic.as_ref().map(|t| &t.net),
+            self.traffic.as_ref().map(|t| t.net()),
             self.navigator.as_ref().and_then(|n| n.map_net()),
         ];
         let Some((net, (lane, s, _))) = nets.into_iter().flatten().find_map(|net| {

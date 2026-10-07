@@ -1184,7 +1184,7 @@ impl App {
                         p,
                         &self.args,
                         &w,
-                        self.traffic.as_ref().map(|t| &t.net),
+                        self.traffic.as_ref().map(|t| t.net()),
                         std::time::Duration::from_millis(1500),
                     );
                 }

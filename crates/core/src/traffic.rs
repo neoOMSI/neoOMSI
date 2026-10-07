@@ -554,7 +554,7 @@ fn weigh_lane_density(
 }
 
 pub struct Traffic {
-    pub net: Network,
+    net: Network,
     /// Sum of the spawn weights of every street lane, updated only as tiles add lanes.
     street_weight: f64,
     /// Parked cars standing in or beside a lane: per lane, (distance along it, signed
@@ -566,10 +566,10 @@ pub struct Traffic {
     /// and stay here.
     parked_waiting: Vec<DVec3>,
     /// Tiles whose lanes the network has (lanes stay once they are in).
-    pub lane_tiles: hashbrown::HashSet<(i32, i32)>,
+    lane_tiles: hashbrown::HashSet<(i32, i32)>,
     /// Counts the times tiles brought their lanes: whoever resolved something against the
     /// network and missed a part of it looks again when this changes.
-    pub lanes_generation: u64,
+    lanes_generation: u64,
     /// AI vehicle types with weight, the lane kind they run on (`[type]` 2 rail, 3 air)
     /// and their group in `groups`.
     types: Vec<(Arc<VehicleType>, f32, LaneKind, usize)>,
@@ -585,26 +585,24 @@ pub struct Traffic {
     /// for the first entry its medium density, for any other that of the first entry, 2 of
     /// the second, and so on. It applies on the paths without a rule for the group.
     uvg_defaults: Arc<Vec<i32>>,
-    /// Per `unsched_vehgroups.txt` entry, its traffic factor over the first entry's.
-    uvg_share: Vec<f32>,
-    pub cars: Vec<AiCar>,
+    cars: Vec<AiCar>,
     /// The random cars out of range (see `DormantCar`).
-    pub dormant: Vec<DormantCar>,
+    dormant: Vec<DormantCar>,
     /// `time` when the dormant cars last moved on.
     dormant_time: f32,
     rng: u64,
     /// Target number of cars around the camera.
-    pub target: usize,
+    target: usize,
     /// Made only so that the light programs run (no traffic, no timetable): nobody is put
     /// on the roads - no aircraft, no parked car pulling out - while `target` is 0.
-    pub lights_only: bool,
-    pub spawn_radius: f64,
-    pub time: f32,
+    lights_only: bool,
+    spawn_radius: f64,
+    time: f32,
     /// Renders of cars that have gone, given back at the next `sync`.
     released: Vec<VehicleRender>,
     /// Where the camera is (the window sets it before `sync`): far cars show their script
     /// textures as stand-ins.
-    pub camera: Option<DVec3>,
+    camera: Option<DVec3>,
     /// Sound sets of despawned cars, stopped at the next audio update.
     orphan_sounds: Vec<::audio::SoundSet>,
     lights: Vec<TrafficLightController>,
@@ -615,7 +613,7 @@ pub struct Traffic {
     sound_cfgs: HashMap<std::path::PathBuf, Option<Arc<::legacy_vehicle::SoundCfg>>>,
     root: std::path::PathBuf,
     /// Car-frames spent waiting for a red light (statistics).
-    pub held_at_red: usize,
+    held_at_red: usize,
     /// Who wants a timetable bus to stop (`Humans::stop_wishes`): the buses somebody
     /// aboard wants to get off, the stops where somebody waits. None without passengers:
     /// every bus then serves every stop.
@@ -623,45 +621,43 @@ pub struct Traffic {
     /// Seconds the player's vehicle has been standing.
     player_still: f32,
     /// Time of day (seconds since midnight); light cycles and timetables run on it.
-    pub day_time: f64,
+    day_time: f64,
     /// How fast the clock runs (the time speed): the timetable keeps to it.
-    pub time_scale: f64,
+    time_scale: f64,
     /// Day of the week (0 Monday … 6 Sunday) for the traffic density curves.
-    pub weekday: i32,
+    weekday: i32,
     /// Street lights on → AI vehicles switch their lights on.
-    pub night: bool,
+    night: bool,
     /// The light of the day, for the cars' `Envir_Brightness` (see `sync`).
-    pub daylight: Option<::simulation::Daylight>,
+    daylight: Option<::simulation::Daylight>,
     next_id: u64,
     /// The last car that started an overtake and when (for chase-camera debugging).
-    pub last_overtaker: Option<(u64, f32)>,
+    last_overtaker: Option<(u64, f32)>,
     /// The first car that entered a turning lane and when (`--follow turn`).
-    pub first_turner: Option<(u64, f32)>,
+    first_turner: Option<(u64, f32)>,
     /// The first car that stopped at a red light (`--follow red`), the first that gave way
     /// at a junction (`--follow yield`), the first that pulled out onto the other side of
     /// the road round an obstacle or squeezed past a bus at its stop (`--follow pass`).
-    pub first_red: Option<(u64, f32)>,
-    pub first_yield: Option<(u64, f32)>,
-    pub first_passer: Option<(u64, f32)>,
+    first_red: Option<(u64, f32)>,
+    first_yield: Option<(u64, f32)>,
+    first_passer: Option<(u64, f32)>,
     /// `[trafficdensity_road]` curve of the map: (hour, factor).
-    pub density_curve: Vec<(f32, f32)>,
+    density_curve: Vec<(f32, f32)>,
     /// The options' `[AIUnschedFactor]`: the share of the random traffic.
-    pub unsched_factor: f32,
+    unsched_factor: f32,
     /// The options' `[AIMaxCountScheduled]` (0 = no limit).
-    pub max_scheduled: u32,
+    max_scheduled: u32,
     /// Where the player looks from (set every frame).
-    pub viewer: Option<Viewer>,
+    viewer: Option<Viewer>,
     /// Buildings that hide what is behind them (the player's collision world).
-    pub occluders: Option<Arc<::simulation::collision::CollisionWorld>>,
+    occluders: Option<Arc<::simulation::collision::CollisionWorld>>,
     /// Pedestrians on the footpaths: (lane, distance along it), for giving way at crossings
     /// and for the pedestrian lights' request buttons.
-    pub walkers: Vec<(usize, f32)>,
+    walkers: Vec<(usize, f32)>,
     /// Everybody on foot on the ground: position, velocity and whether they are waiting
     /// at a stop (set every frame) - the cars stop for anybody in their way, not only on
     /// a crossing.
-    pub people: Vec<(DVec2, DVec2, bool)>,
-    /// Spatial broadphase grid for people on foot, rebuilt each tick for O(1) corridor queries.
-    pub people_grid: HashMap<(i32, i32), Vec<usize>>,
+    people: Vec<(DVec2, DVec2, bool)>,
     /// No car has been placed yet: the first population may fill the view.
     initial: bool,
     /// Seconds of the last tick (the lamp scripts run in `sync`).
@@ -680,26 +676,17 @@ pub struct Traffic {
     debug_population: bool,
     /// Cars placed since the last look inside the view frustum (hidden behind something):
     /// (id, position). `OMSI_POPULATION_SHOTS` photographs them to check.
-    pub framed_spawns: Vec<(u64, DVec3)>,
+    framed_spawns: Vec<(u64, DVec3)>,
     /// The player's vehicle as of the last tick (nothing is put on the road on top of it).
     player: Option<PlayerBox>,
     /// The player's bus has right of way over the traffic (its script's `TrafficPriority`,
     /// OMSI: priority 1000 over the types' own): cars keep out of the way it is about
     /// to take for longer.
-    pub player_priority: bool,
-    /// The indicators (1 left, 2 right) of the player's bus and of the `others` by id, set
-    /// before each `tick`: they pick the branch at the next fork when asking for lights.
-    pub player_blinker: u8,
-    pub blinkers: HashMap<u32, u8>,
+    player_priority: bool,
     /// The LAN players' vehicles (their session ids and boxes as for the player), set
     /// before each `tick`: the cars stop behind them and go round them as round the
     /// player's bus.
-    pub others: Vec<(u32, PlayerBox)>,
-    /// Rail lanes ahead of the players' trams and trains (lane, distance, front, train),
-    /// set before each `tick`. A neoOMSI extension: OMSI requests no lights for them.
-    pub rail_ahead: Vec<(usize, f32, f32, bool)>,
-    /// The vehicle files of the map's `.zug` trains (see `train_cars`).
-    train_cars: hashbrown::HashSet<String>,
+    others: Vec<(u32, PlayerBox)>,
     /// The drivers at the wheel of the timetable buses near the camera, by car id (see
     /// `driver.rs`; made within `DRIVER_NEAR` m of the camera, let go beyond twice that).
     drivers: HashMap<u64, crate::driver::DriverFigure>,
@@ -707,7 +694,7 @@ pub struct Traffic {
     driver_pool: Vec<crate::driver::DriverFigure>,
     /// Where the last `tick` spent its time (s, OMSI_PROFILE): who is on which lane and the
     /// light programs, every car's plan, the bodies and scripts on the workers.
-    pub tick_split: [f64; 3],
+    tick_split: [f64; 3],
     /// Seconds each of them has stood still.
     others_still: HashMap<u32, f32>,
     /// Per car: `AiCar::geo_block` of the frame before (who waits for whom by geometry).
@@ -718,19 +705,19 @@ pub struct Traffic {
     pull_out_rooms: HashMap<std::path::PathBuf, f32>,
     /// Timetable buses taken off the road because the tile under them was unloaded (their
     /// ids), for the timetable to put them back when the tiles come again.
-    pub removed_scheduled: Vec<u64>,
+    removed_scheduled: Vec<u64>,
     /// One-way lanes that have had their reverse twin added (`add_reverse_twins`).
     twinned: hashbrown::HashSet<usize>,
     /// Bodies besides the AI vehicles' that no timetable vehicle may be put into: the
     /// player's vehicle and the LAN players' (set before each `Schedule::tick`).
-    pub keep_clear: Vec<::simulation::collision::Obb>,
+    keep_clear: Vec<::simulation::collision::Obb>,
     /// LAN play: this game draws the host's traffic instead of its own (`lan_world`).
     mirror: bool,
     /// Count only the cars within this distance of this point when filling up (the
     /// population around a LAN player, `populate_lan_centers`).
     count_near: Option<(DVec3, f64)>,
     /// LAN play: where the other players are (host): the traffic is kept around them too.
-    pub lan_centers: Vec<DVec3>,
+    lan_centers: Vec<DVec3>,
 }
 
 /// `[boundingbox]` of a vehicle that gives none.
@@ -1190,6 +1177,23 @@ impl Traffic {
         std::mem::take(&mut self.removed_scheduled)
     }
 
+    /// Carry a scheduled bus's route and stops on as new tiles load, then replan.
+    pub fn extend_scheduled_route(
+        &mut self,
+        ci: usize,
+        lanes: Vec<usize>,
+        stops: Vec<(usize, f32, f32, f64, i64, f32)>,
+    ) {
+        let car = &mut self.cars[ci];
+        car.state.route.extend(lanes);
+        if let Some(b) = car.bus.as_mut() {
+            b.stops
+                .extend(stops.into_iter().map(crate::bus_service::Stop::from_tuple));
+        }
+        car.state.planned_next = None;
+        car.state.plan_next(&self.net);
+    }
+
     /// Number of dormant (out-of-range) AI cars.
     pub fn dormant_count(&self) -> usize {
         self.dormant.len()
@@ -1262,6 +1266,57 @@ impl Traffic {
     /// The current network generation (bumped when streamed lanes are added).
     pub fn lanes_generation(&self) -> u64 {
         self.lanes_generation
+    }
+
+    /// Whether a tile's lanes have been loaded into the network.
+    pub fn has_lane_tile(&self, tile: (i32, i32)) -> bool {
+        self.lane_tiles.contains(&tile)
+    }
+
+    /// How many vehicles are currently held at a red light.
+    pub fn held_at_red(&self) -> usize {
+        self.held_at_red
+    }
+
+    /// The traffic network.
+    pub fn net(&self) -> &Network {
+        &self.net
+    }
+
+    /// The out-of-range (dormant) cars.
+    pub fn dormant(&self) -> &[DormantCar] {
+        &self.dormant
+    }
+
+    /// Seconds of simulation time elapsed.
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// Where the last tick spent its time.
+    pub fn tick_split(&self) -> [f64; 3] {
+        self.tick_split
+    }
+
+    /// The last car that started an overtake and when (chase-camera debugging).
+    pub fn last_overtaker(&self) -> Option<(u64, f32)> {
+        self.last_overtaker
+    }
+
+    pub fn first_turner(&self) -> Option<(u64, f32)> {
+        self.first_turner
+    }
+
+    pub fn first_red(&self) -> Option<(u64, f32)> {
+        self.first_red
+    }
+
+    pub fn first_yield(&self) -> Option<(u64, f32)> {
+        self.first_yield
+    }
+
+    pub fn first_passer(&self) -> Option<(u64, f32)> {
+        self.first_passer
     }
 
     /// The current daylight values.

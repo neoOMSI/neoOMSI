@@ -1341,7 +1341,7 @@ impl LanWorld {
                     })
                     .collect();
                 let mut run: Vec<(&mut ::simulation::VehicleInstance, &AiFrame)> = t
-                    .cars
+                    .cars_mut()
                     .iter_mut()
                     .enumerate()
                     .filter_map(|(i, car)| frames.get(&i).map(|f| (&mut car.vehicle, f)))
@@ -1467,7 +1467,7 @@ impl LanWorld {
                 self.trace_t = 0.1;
                 if let Some(t) = traffic.as_deref() {
                     for c in t
-                        .cars
+                        .cars()
                         .iter()
                         .filter(|c| m.drawn_cars.contains(&(c.id as u32)))
                     {
@@ -1673,7 +1673,7 @@ fn describe(
             file: Humans::type_file(&p),
         })
     } else {
-        let c = traffic?.cars.iter().find(|c| c.id == r.id as u64)?;
+        let c = traffic?.cars().iter().find(|c| c.id == r.id as u64)?;
         Some(describe_car(args, c))
     }
 }

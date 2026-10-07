@@ -100,7 +100,7 @@ impl App {
                         if let Some(c) = self
                             .traffic
                             .as_mut()
-                            .and_then(|t| t.cars.iter_mut().find(|c| c.id == id))
+                            .and_then(|t| t.cars_mut().iter_mut().find(|c| c.id == id))
                         {
                             c.vehicle.host.fired_sounds.push(::simulation::host::FiredSound::Trigger {
                                 name: "ev_Stamper".into(),

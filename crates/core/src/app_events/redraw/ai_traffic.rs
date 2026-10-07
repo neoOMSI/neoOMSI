@@ -142,7 +142,7 @@ impl App {
             *self.profile.entry("traffic.tick").or_default() += __t2.elapsed().as_secs_f64();
             for (k, v) in ["traffic.tick.lanes", "traffic.tick.plan", "traffic.tick.ai"]
                 .into_iter()
-                .zip(t.tick_split)
+                .zip(t.tick_split())
             {
                 *self.profile.entry(k).or_default() += v;
             }

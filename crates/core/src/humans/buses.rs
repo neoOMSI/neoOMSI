@@ -1220,7 +1220,7 @@ impl Humans {
                 })
                 .collect();
             let mut visits = HashMap::new();
-            for c in t.cars.iter().filter(|c| c.is_bus()) {
+            for c in t.cars().iter().filter(|c| c.is_bus()) {
                 let from_eye = self
                     .eye
                     .map(|e| (c.vehicle.position - e.pos).length())
@@ -1313,7 +1313,7 @@ impl Humans {
             }
             self.buses.ai_visits = visits;
             let alive: HashSet<u64> = t
-                .cars
+                .cars()
                 .iter()
                 .map(|c| c.id)
                 .chain(
