@@ -80,3 +80,16 @@ Not a stage gate; runs alongside Stages 1–9.
 
 The extraction boundary (`A1`) and the scenarios in [SCENARIOS.md](SCENARIOS.md) are
 specified. No item above requires a live queue reproduction to begin Stage 1.
+
+## Stage 1 progress
+
+- `A1` crate extraction: done (batch B). `A2` stable ids: types landed (C1); core field
+  adoption follows with the facade. `A3` capabilities + route/stop types: done as contracts
+  (C2, C3); boundary adoption continues. `A4` typed reasons: types landed (C4); adoption
+  continues. `A5` fixed clock: landed for the window path (D2). `A9` runner/trace/capture:
+  capture schema and S1/S2 headless scenarios landed (D1); S3 and automatic in-run capture
+  wiring remain.
+- `A6`–`A8` (snapshot, single pose owner, service machine) are Stage 3/6 targets; their
+  contracts are seeded by `diagnostics.rs` and `service.rs`.
+- Remaining Stage 1 work: `C5b`–`C5d` caller-group migrations (presentation, population,
+  LAN) and `C6` field privatization.
