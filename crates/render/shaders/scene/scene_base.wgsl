@@ -433,7 +433,9 @@ struct VsOut {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) params: vec4<f32>,
-    @location(4) params2: vec4<f32>,
+    // Encoded instance data must stay exact: interpolating lamp code 1 can round it
+    // below 1, where interior_lamps treats it as full scalar cabin brightness.
+    @location(4) @interpolate(flat) params2: vec4<f32>,
     // the D3D material's highlight, lit at the vertex as Omsi.exe's fixed function lights
     // it: from the sun (light A) and from the light above (light B)
     @location(5) spec_sun: vec3<f32>,
@@ -449,7 +451,7 @@ struct FsIn {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) params: vec4<f32>,
-    @location(4) params2: vec4<f32>,
+    @location(4) @interpolate(flat) params2: vec4<f32>,
     @location(5) spec_sun: vec3<f32>,
     @location(6) spec_sky: vec3<f32>,
     @location(7) wipe_uv: vec3<f32>,

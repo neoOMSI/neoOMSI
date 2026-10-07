@@ -1,6 +1,123 @@
 use crate::*;
 
 #[test]
+#[ignore = "requires a graphics adapter; checks cabin lamp codes across perspective triangles"]
+fn first_cabin_lamp_off_matches_no_cabin_light() {
+    let adapter = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &adapter,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    let mut scene = renderer.new_scene();
+    let texture = renderer.add_texture(
+        &mut scene,
+        &::texture::Image::solid([48, 48, 48, 255]),
+        false,
+    );
+    let material =
+        renderer.add_material(&mut scene, Some(texture), AlphaMode::Opaque, [1.0; 4], false);
+    let mesh = renderer.add_mesh(
+        &mut scene,
+        &MeshData {
+            // Unequal depths exercise perspective interpolation, including values that
+            // round just below 1 when a constant lamp code is interpolated as a float.
+            positions: vec![
+                Vec3::new(-3.1, 1.2, -2.7),
+                Vec3::new(3.3, 4.7, -2.3),
+                Vec3::new(2.8, 4.1, 2.9),
+                Vec3::new(-2.6, 1.8, 2.5),
+            ],
+            normals: vec![-Vec3::Y; 4],
+            uvs: vec![glam::Vec2::splat(0.5); 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            ranges: vec![(0, 6, 0)],
+            one_sided: false,
+        },
+    );
+    let object = renderer.add_instance(
+        &mut scene,
+        mesh,
+        DVec3::ZERO,
+        Mat4::IDENTITY,
+        vec![material],
+    );
+    let first = renderer.alloc_interior_lights(&mut scene, 1);
+    assert_eq!(first, 0);
+    renderer.set_interior_light(
+        &mut scene,
+        first,
+        PointLight {
+            position: DVec3::new(0.0, -1.0, 2.0),
+            radius: 100.0,
+            core: 3.0,
+            intensity: 0.0,
+            ..Default::default()
+        },
+    );
+    let camera = Camera {
+        position: DVec3::ZERO,
+        yaw: 0.0,
+        pitch: -3.7,
+        roll: 2.3,
+        fov_deg: 85.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    for enhanced in [false, true] {
+        scene.interior_lights[first as usize].intensity = 0.0;
+        let lighting = Lighting {
+            enhanced,
+            sun_intensity: 0.0,
+            secondary: Vec3::ZERO,
+            ambient: Vec3::splat(0.05),
+            shadows: false,
+            detail: false,
+            ..Default::default()
+        };
+        renderer.set_interior_lamps(&mut scene, object, 0, 0);
+        let unlit = renderer
+            .render_to_image(&mut scene, 256, 192, &camera, &lighting)
+            .unwrap();
+        renderer.set_interior_lamps(&mut scene, object, first, 1);
+        let lamp_off = renderer
+            .render_to_image(&mut scene, 256, 192, &camera, &lighting)
+            .unwrap();
+        let changed = unlit
+            .chunks_exact(4)
+            .zip(lamp_off.chunks_exact(4))
+            .filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 2))
+            .count();
+        assert_eq!(
+            changed, 0,
+            "lamp 0 off changed {changed} pixels (enhanced={enhanced})"
+        );
+        scene.interior_lights[first as usize].intensity = 1.0;
+        let lamp_on = renderer
+            .render_to_image(&mut scene, 256, 192, &camera, &lighting)
+            .unwrap();
+        let brighter = lamp_off
+            .chunks_exact(4)
+            .zip(lamp_on.chunks_exact(4))
+            .filter(|(a, b)| b[0] > a[0].saturating_add(4))
+            .count();
+        assert!(
+            brighter > 100,
+            "lamp 0 on must light the surface (enhanced={enhanced})"
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; renders terrain and foliage lighting"]
 fn enhanced_masked_and_uncut_ground_share_lighting() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
