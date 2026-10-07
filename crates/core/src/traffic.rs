@@ -1445,6 +1445,7 @@ impl Traffic {
     /// Build the network from the lanes collected by `World::build_scene` and load the AI
     /// car types of the map's `ailists.cfg` (the `[aigroup_2]` groups that are not depots).
     pub fn new(root: &Path, world: &World, target: usize) -> Result<Traffic> {
+        log::info!("traffic runtime: {:?}", crate::traffic_runtime::selected());
         let (lanes, parked_cars, lane_tiles) = take_from_tiles(world);
         let mut net = Network {
             lanes,
