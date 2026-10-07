@@ -1,5 +1,5 @@
-//! Bounded screen-space puddles, with a small planar capture of the player's vehicle
-//! for its complete geometry. Both use at most 518400 pixels.
+//! Bounded screen-space puddles, with planar vehicle and unobstructed world captures.
+//! Reflection rays and each capture use at most 518400 pixels.
 
 use super::*;
 
@@ -50,6 +50,7 @@ pub(crate) struct Pipelines {
     blur_y: wgpu::RenderPipeline,
     resolve: wgpu::RenderPipeline,
     glass: [wgpu::RenderPipeline; 2],
+    world: Vec<wgpu::RenderPipeline>,
     vehicle: Vec<wgpu::RenderPipeline>,
     chassis: wgpu::RenderPipeline,
     vehicle_params: wgpu::Buffer,
@@ -108,6 +109,7 @@ impl Pipelines {
                     wgpu::TextureViewDimension::D2,
                 ),
                 texture(8, float, wgpu::TextureViewDimension::D2),
+                texture(9, float, wgpu::TextureViewDimension::D2),
             ],
         });
         let params = device.create_buffer(&wgpu::BufferDescriptor {
@@ -230,9 +232,57 @@ impl Pipelines {
             immediate_size: 0,
         });
         let mut vehicle = Vec::new();
+        let mut world = Vec::new();
+        let surface_bias = ::legacy_config::env::var("OMSI_SURFACE_BIAS")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(-24);
         for kind in 0..PIPE_KINDS {
             for cull in [false, true] {
-                for _surface in [false, true] {
+                for surface in [false, true] {
+                    let bias = if surface { surface_bias } else { 0 };
+                    world.push(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("puddle world without cabin"),
+                        layout: Some(&glass_layout),
+                        vertex: wgpu::VertexState {
+                            module: scene_shader,
+                            entry_point: Some("vs_main"),
+                            buffers: &[Some(wgpu::VertexBufferLayout {
+                                array_stride: size_of::<Vertex>() as u64,
+                                step_mode: wgpu::VertexStepMode::Vertex,
+                                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
+                            })],
+                            compilation_options: Default::default(),
+                        },
+                        primitive: one_sided_primitive(cull),
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: DEPTH_FORMAT,
+                            depth_write_enabled: Some(kind != PIPE_BLEND_NO_WRITE),
+                            depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                            stencil: Default::default(),
+                            bias: wgpu::DepthBiasState {
+                                constant: -bias,
+                                slope_scale: if bias != 0 { -bias.signum() as f32 * 2.0 } else { 0.0 },
+                                clamp: 0.0,
+                            },
+                        }),
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: scene_shader,
+                            entry_point: Some(if kind == PIPE_SURFACE_DEPTH { "fs_surface_depth" } else { "fs_puddle_world" }),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: HDR_FORMAT,
+                                blend: (kind == PIPE_BLEND || kind == PIPE_BLEND_NO_WRITE).then_some(wgpu::BlendState::ALPHA_BLENDING),
+                                write_mask: if kind == PIPE_SURFACE_DEPTH { wgpu::ColorWrites::empty() } else { wgpu::ColorWrites::ALL },
+                            })],
+                            compilation_options: wgpu::PipelineCompilationOptions {
+                                constants: &[("ALPHA_TEST", if kind == PIPE_ALPHA_TEST { 1.0 } else { 0.0 })],
+                                ..Default::default()
+                            },
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    }));
                     let mut primitive = one_sided_primitive(cull);
                     // Mirroring reverses winding. Keep authored one-sided geometry.
                     primitive.front_face = wgpu::FrontFace::Ccw;
@@ -314,6 +364,7 @@ impl Pipelines {
             blur_y: pipeline("fs_blur_y"),
             resolve: pipeline("fs_resolve"),
             glass,
+            world,
             vehicle,
             chassis,
             vehicle_params,
@@ -327,6 +378,7 @@ impl Pipelines {
 pub(crate) struct Targets {
     size: (u32, u32),
     source_depth: wgpu::Texture,
+    world_view: Option<wgpu::TextureView>,
     hit_depth: wgpu::Texture,
     hit_depth_view: wgpu::TextureView,
     vehicle_view: wgpu::TextureView,
@@ -353,15 +405,16 @@ fn trace_size(w: u32, h: u32) -> (u32, u32) {
 }
 
 impl Targets {
-    fn new(r: &Renderer, hdr: &HdrTargets, w: u32, h: u32) -> Self {
+    fn new(r: &Renderer, hdr: &HdrTargets, w: u32, h: u32, cabin: bool) -> Self {
         let pipelines = r.puddles.as_ref().unwrap();
         let size = trace_size(w, h);
         let source_depth = r.ao.as_ref().unwrap().depth_view.texture().clone();
+        let hit_size = if cabin { size } else { (w, h) };
         let hit_depth = r.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("puddle hit depth including glass"),
             size: wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: hit_size.0,
+                height: hit_size.1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -396,6 +449,7 @@ impl Targets {
                 .create_view(&Default::default())
         };
         let trace = target("puddle reflection rays", size);
+        let world_view = cabin.then(|| target("puddle world without cabin", size));
         let vehicle_view = target("puddle player vehicle", size);
         let vehicle_depth = r
             .device
@@ -442,6 +496,7 @@ impl Targets {
                     binding(6, &r.probe.as_ref().unwrap().view),
                     binding(7, &hit_depth_view),
                     binding(8, &vehicle_view),
+                    binding(9, world_view.as_ref().unwrap_or(&hdr.view)),
                 ],
             })
         };
@@ -477,6 +532,7 @@ impl Targets {
         Self {
             size,
             source_depth,
+            world_view,
             hit_depth,
             hit_depth_view,
             vehicle_view,
@@ -519,12 +575,12 @@ impl Renderer {
         };
         // A previously used size can outlive the AO depth after a resize/another view.
         // Rebind the current receiver texture instead of tracing against an old frame.
-        if hdr
-            .puddles
-            .as_ref()
-            .is_none_or(|t| t.source_depth != *self.ao.as_ref().unwrap().depth_view.texture())
-        {
-            let targets = Targets::new(self, hdr, w, h);
+        let cabin = camera_in_vehicle(lighting, camera);
+        if hdr.puddles.as_ref().is_none_or(|t| {
+            t.source_depth != *self.ao.as_ref().unwrap().depth_view.texture()
+                || t.world_view.is_some() != cabin
+        }) {
+            let targets = Targets::new(self, hdr, w, h, cabin);
             log::info!(
                 "puddle reflections: {}x{} rays, at most 48 steps; resolve {w}x{h}",
                 targets.size.0,
@@ -653,6 +709,17 @@ impl Renderer {
         // and batches with it; selecting a mesh alone would reflect all of them at one height.
         let origins = vehicle_origins(lighting, camera);
         let vehicle_batches = player_vehicle_batches(scene, batches, draw_list, &origins);
+        let world_batches = targets.world_view.as_ref().map(|_| {
+            let origins: Vec<_> = lighting
+                .inside
+                .iter()
+                .chain(lighting.puddle_parts.iter())
+                .take(4)
+                .map(|(o, _, _)| *o)
+                .collect();
+            let own = vehicle_entries(scene, &origins);
+            filter_entry_batches(batches, draw_list, |entry| !own.contains(&entry))
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("puddle player vehicle"),
@@ -694,23 +761,83 @@ impl Renderer {
                 });
             }
         }
-        let copy = |texture| wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::DepthOnly,
-        };
-        encoder.copy_texture_to_texture(
-            copy(&targets.source_depth),
-            copy(&targets.hit_depth),
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
+        let source_batches = world_batches.as_deref().unwrap_or(batches);
+        if let Some(world_view) = &targets.world_view {
+            // Colour and hit depth must describe the same unobstructed world. Merely
+            // skipping near depth hits still samples the wiper's colour from the main view.
+            let enhanced = lighting.enhanced
+                && self.hdr_pass.is_some()
+                && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none();
+            let sky = if lighting.classic && !enhanced {
+                lighting.sky_color.map(|v| {
+                    if v <= 0.04045 {
+                        v / 12.92
+                    } else {
+                        ((v + 0.055) / 1.055).powf(2.4)
+                    }
+                })
+            } else {
+                lighting.sky_color
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("puddle world without cabin"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: world_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: sky.x as f64,
+                            g: sky.y as f64,
+                            b: sky.z as f64,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &targets.hit_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: pass_timer(queries, timed, "puddle world"),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
+            if let Some(sky) = &scene.sky_bind_group {
+                pass.set_pipeline(&self.main_pass(enhanced, !enhanced).reflection_sky_pipeline);
+                pass.set_bind_group(1, sky, &[]);
+                pass.set_vertex_buffer(0, Some(self.sky_mesh.0.slice(..)));
+                pass.set_index_buffer(self.sky_mesh.1.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.sky_mesh.2, 0, 0..1);
+            }
+            pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
+            encode_batches(&mut pass, scene, source_batches, |pipe| {
+                &pipelines.world[pipe as usize]
+            });
+        } else {
+            let copy = |texture| wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::DepthOnly,
+            };
+            encoder.copy_texture_to_texture(
+                copy(&targets.source_depth),
+                copy(&targets.hit_depth),
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         if ::legacy_config::env::var_os("OMSI_NO_PUDDLE_GLASS_DEPTH").is_none()
-            && batches
+            && source_batches
                 .iter()
                 .any(|b| reflection_glass(&scene.materials[b.material as usize].uniform))
         {
@@ -733,7 +860,7 @@ impl Renderer {
             encode_batches_filtered(
                 &mut pass,
                 scene,
-                batches,
+                source_batches,
                 |b| reflection_glass(&scene.materials[b.material as usize].uniform),
                 |pipe| &pipelines.glass[(pipe % 4 / 2) as usize],
             );
@@ -784,6 +911,23 @@ fn reflection_plane(point: DVec3, normal: Vec3, origin: DVec3) -> Vec4 {
     normal.extend(normal.dot((point - origin).as_vec3()))
 }
 
+// Match the shader's cabin test, including its centre offset and heading. The
+// capture is unnecessary on foot, where the player's vehicle should remain visible.
+fn camera_in_vehicle(lighting: &Lighting, camera: &Camera) -> bool {
+    let Some((origin, heading, bounds)) = lighting.inside else {
+        return false;
+    };
+    let d = (camera.position - origin).as_vec3();
+    let (sh, ch) = (heading as f32).to_radians().sin_cos();
+    let local = Vec3::new(d.x * ch - d.y * sh, d.x * sh + d.y * ch, d.z)
+        - Vec3::new(bounds[3], bounds[4], bounds[5]);
+    let half = Vec3::new(bounds[0], bounds[1], bounds[2]) * 0.5;
+    local.x.abs() < half.x - 0.03
+        && local.y.abs() < half.y - 0.03
+        && local.z > -half.z - 0.6
+        && local.z < half.z - 0.03
+}
+
 fn vehicle_origins(lighting: &Lighting, camera: &Camera) -> Vec<DVec3> {
     if lighting.puddle_ground.is_none()
         || ::legacy_config::env::var_os("OMSI_NO_PUDDLE_VEHICLE").is_some()
@@ -808,7 +952,11 @@ fn player_vehicle_batches(
     list: &[u32],
     origins: &[DVec3],
 ) -> Vec<Batch> {
-    let entries: std::collections::HashSet<u32> = scene
+    selected_entry_batches(batches, list, &vehicle_entries(scene, origins))
+}
+
+fn vehicle_entries(scene: &Scene, origins: &[DVec3]) -> std::collections::HashSet<u32> {
+    scene
         .instances
         .iter()
         .filter(|i| {
@@ -819,8 +967,7 @@ fn player_vehicle_batches(
                 && origins.iter().any(|o| i.origin.distance_squared(*o) < 0.01)
         })
         .flat_map(|i| i.base..i.base + i.materials.len() as u32)
-        .collect();
-    selected_entry_batches(batches, list, &entries)
+        .collect()
 }
 
 fn selected_entry_batches(
@@ -828,11 +975,19 @@ fn selected_entry_batches(
     list: &[u32],
     entries: &std::collections::HashSet<u32>,
 ) -> Vec<Batch> {
+    filter_entry_batches(batches, list, |entry| entries.contains(&entry))
+}
+
+fn filter_entry_batches(
+    batches: &[Batch],
+    list: &[u32],
+    include: impl Fn(u32) -> bool,
+) -> Vec<Batch> {
     let mut out = Vec::new();
     for b in batches {
         let mut start = None;
         for index in b.instances.clone() {
-            if entries.contains(&list[index as usize]) {
+            if include(list[index as usize]) {
                 start.get_or_insert(index);
             } else if let Some(first) = start.take() {
                 out.push(Batch {
@@ -958,13 +1113,16 @@ mod tests {
                     one_sided: false,
                 },
             );
-            r.add_instance(
+            let instance = r.add_instance(
                 &mut scene,
                 mesh,
                 DVec3::ZERO,
                 Mat4::IDENTITY,
                 vec![material],
             );
+            if material == pane {
+                r.set_roof(&mut scene, instance, Some(6.0));
+            }
         }
         let camera = Camera {
             position: DVec3::ZERO,
@@ -981,7 +1139,8 @@ mod tests {
             shadows: false,
             ..Default::default()
         };
-        fn depth_at_centre(r: &Renderer, texture: &wgpu::Texture, size: u32) -> f32 {
+        fn depth_at_centre(r: &Renderer, texture: &wgpu::Texture) -> f32 {
+            let size = texture.width();
             let buffer = r.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("test reflection depth"),
                 size: 256 * size as u64,
@@ -1024,7 +1183,7 @@ mod tests {
             buffer.unmap();
             depth
         }
-        for inside in [false, true] {
+        for inside in [false, true, false, true] {
             lighting.inside =
                 inside.then_some((DVec3::ZERO, 0.0, [12.0, 12.0, 12.0, 0.0, 0.0, 0.0]));
             for size in [64, 48, 64] {
@@ -1035,8 +1194,13 @@ mod tests {
                     targets.source_depth,
                     *r.ao.as_ref().unwrap().depth_view.texture()
                 );
-                let receiver = depth_at_centre(&r, &targets.source_depth, size);
-                let hit = depth_at_centre(&r, &targets.hit_depth, size);
+                assert_eq!(targets.world_view.is_some(), inside);
+                assert_eq!(
+                    targets.hit_depth.width(),
+                    if inside { size / 2 } else { size }
+                );
+                let receiver = depth_at_centre(&r, &targets.source_depth);
+                let hit = depth_at_centre(&r, &targets.hit_depth);
                 assert!(
                     (receiver - 0.009009).abs() < 1e-5,
                     "opaque receiver: {receiver}"
@@ -1048,6 +1212,223 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires a graphics adapter; checks moving cabin geometry in puddles"]
+    fn moving_wipers_do_not_change_unoccluded_puddle_reflections() {
+        for msaa in [1, 4] {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let mut r = pollster::block_on(Renderer::new_with(
+                &instance,
+                None,
+                Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                RenderOptions {
+                    msaa,
+                    ssao: false,
+                    fxaa: false,
+                    shadow_size: 1024,
+                    render_scale: 1.0,
+                    ..Default::default()
+                },
+            ))
+            .expect("test renderer");
+            let mut scene = r.new_scene();
+            let road = r.add_material_wet(
+                &mut scene,
+                None,
+                AlphaMode::Opaque,
+                [0.25, 0.25, 0.25, 1.0],
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                [0.0; 3],
+                1.0,
+            );
+            let red = r.add_material(
+                &mut scene,
+                None,
+                AlphaMode::Opaque,
+                [1.0, 0.01, 0.01, 1.0],
+                true,
+            );
+            let black = r.add_material(
+                &mut scene,
+                None,
+                AlphaMode::Opaque,
+                [0.01, 0.01, 0.01, 1.0],
+                true,
+            );
+            let no_write = r.add_material(
+                &mut scene,
+                None,
+                AlphaMode::Blend,
+                [0.01, 0.01, 0.01, 1.0],
+                true,
+            );
+            r.set_no_z_write(&mut scene, no_write, true);
+            test_quad(
+                &r,
+                &mut scene,
+                [
+                    [-20.0, 0.0, 0.0],
+                    [20.0, 0.0, 0.0],
+                    [20.0, 30.0, 0.0],
+                    [-20.0, 30.0, 0.0],
+                ],
+                Vec3::Z,
+                road,
+            );
+            test_quad(
+                &r,
+                &mut scene,
+                [
+                    [-3.0, 10.0, 0.0],
+                    [3.0, 10.0, 0.0],
+                    [3.0, 10.0, 5.0],
+                    [-3.0, 10.0, 5.0],
+                ],
+                -Vec3::Y,
+                red,
+            );
+            let wiper = test_quad(
+                &r,
+                &mut scene,
+                [
+                    [-0.05, 1.0, 2.0],
+                    [0.05, 1.0, 2.0],
+                    [0.05, 1.0, 3.0],
+                    [-0.05, 1.0, 3.0],
+                ],
+                -Vec3::Y,
+                black,
+            );
+            r.set_roof(&mut scene, wiper, Some(4.0));
+            let camera = Camera {
+                position: DVec3::new(0.0, 0.0, 2.0),
+                yaw: 0.0,
+                pitch: -10.0,
+                roll: 0.0,
+                fov_deg: 70.0,
+                near: 0.1,
+                far: 100.0,
+            };
+            for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+                let lighting = Lighting {
+                    enhanced,
+                    classic,
+                    wetness: 1.0,
+                    rain: 0.0,
+                    shadows: false,
+                    animation_time: Some(0.0),
+                    // No planar vehicle capture: isolate the screen-space source.
+                    inside: Some((DVec3::ZERO, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 2.0])),
+                    ..Default::default()
+                };
+                r.set_params(&mut scene, wiper, &[], false, &[]);
+                r.options.reflections = false;
+                let dry = r
+                    .render_to_image(&mut scene, 128, 128, &camera, &lighting)
+                    .unwrap();
+                r.options.reflections = true;
+                let baseline = r
+                    .render_to_image(&mut scene, 128, 128, &camera, &lighting)
+                    .unwrap();
+                let baseline_trace = reflection_trace_pixels(&r);
+                let reflected_red: i64 = baseline[128 * 70 * 4..]
+                    .chunks_exact(4)
+                    .zip(dry[128 * 70 * 4..].chunks_exact(4))
+                    .map(|(a, b)| (a[0] as i64 - a[1] as i64) - (b[0] as i64 - b[1] as i64))
+                    .sum();
+                assert!(
+                    reflected_red > 1000,
+                    "reflection must remain visible: {reflected_red}"
+                );
+                for material in [black, no_write] {
+                    r.set_material(&mut scene, wiper, 0, material);
+                    r.set_params(&mut scene, wiper, &[], true, &[]);
+                    for x in [-0.35, 0.0, 0.35] {
+                        r.set_transform(
+                            &mut scene,
+                            wiper,
+                            DVec3::ZERO,
+                            Mat4::from_translation(Vec3::new(x, 0.0, 0.0)),
+                        );
+                        let with = r
+                            .render_to_image(&mut scene, 128, 128, &camera, &lighting)
+                            .unwrap();
+                        assert_ne!(
+                            &baseline[..128 * 60 * 4],
+                            &with[..128 * 60 * 4],
+                            "wiper must still be drawn"
+                        );
+                        // Compare HDR reflection rays before metering/bloom. A moving
+                        // dark blade can legitimately change Enhanced's exposure.
+                        assert!(
+                            baseline_trace == reflection_trace_pixels(&r),
+                            "wiper changed reflection rays; MSAA={msaa}, enhanced={enhanced}, classic={classic}, material={material}, x={x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn reflection_trace_pixels(r: &Renderer) -> Vec<u8> {
+        let texture = r.hdr_targets[&(128, 128)]
+            .puddles
+            .as_ref()
+            .unwrap()
+            .trace
+            .texture();
+        let (w, h) = (texture.width(), texture.height());
+        let stride = (w * 8).div_ceil(256) * 256;
+        let buffer = r.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test reflection rays"),
+            size: (stride * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = r.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(stride),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        r.queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |v| {
+            tx.send(v).unwrap();
+        });
+        r.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let pixels = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped reflection rays")
+            .to_vec();
+        buffer.unmap();
+        pixels
     }
 
     fn test_quad(
@@ -1152,6 +1533,8 @@ mod tests {
                 [[-3.0, 0.99, -1.0], [3.0, 0.99, -1.0], [3.0, 0.99, 6.0], [-3.0, 0.99, 6.0]],
                 -Vec3::Y, film,
             );
+            r.set_roof(&mut scene, window, Some(6.0));
+            r.set_roof(&mut scene, rain, Some(6.0));
             let camera = Camera {
                 position: DVec3::new(0.0, 0.0, 2.0),
                 yaw: 0.0,
@@ -1168,7 +1551,7 @@ mod tests {
                     wetness: 1.0,
                     rain: 0.8,
                     shadows: false,
-                    inside: Some((camera.position, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 0.0])),
+                    inside: Some((DVec3::ZERO, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 2.0])),
                     ..Default::default()
                 };
                 for glass in 0..3 {
@@ -1252,7 +1635,17 @@ fn vehicle_capture_splits_shared_batches_without_drawing_ai_entries() {
         instances: 0..6,
     };
     let own = [11, 12, 13, 14].into_iter().collect();
-    let selected = selected_entry_batches(&[batch], &[11, 12, 32, 13, 45, 14], &own);
+    let batches = [batch];
+    let list = [11, 12, 32, 13, 45, 14];
+    let selected = selected_entry_batches(&batches, &list, &own);
+    let world = filter_entry_batches(&batches, &list, |entry| !own.contains(&entry));
+    assert_eq!(
+        world
+            .iter()
+            .map(|b| b.instances.clone())
+            .collect::<Vec<_>>(),
+        vec![2..3, 4..5]
+    );
     assert_eq!(
         selected
             .iter()

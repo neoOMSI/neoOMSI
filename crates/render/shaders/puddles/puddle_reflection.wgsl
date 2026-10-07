@@ -26,6 +26,9 @@ struct PuddleParams {
 // Opaque scene depth plus reflective windows; receiver reconstruction uses t_depth.
 @group(0) @binding(7) var t_hit_depth: texture_depth_2d;
 @group(0) @binding(8) var t_vehicle: texture_2d<f32>;
+// In the cabin this is a bounded world capture without its foreground vehicle.
+// t_scene remains the full main picture used by the final resolve.
+@group(0) @binding(9) var t_reflection_scene: texture_2d<f32>;
 
 struct PuddleVertex {
     @builtin(position) clip: vec4<f32>,
@@ -38,8 +41,8 @@ fn vs_main(@builtin(vertex_index) i: u32) -> PuddleVertex {
     return PuddleVertex(vec4<f32>(x, y, 0.0, 1.0), vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5));
 }
 
-fn scene_pixel(uv: vec2<f32>) -> vec2<i32> {
-    let size = vec2<i32>(textureDimensions(t_scene));
+fn hit_pixel(uv: vec2<f32>) -> vec2<i32> {
+    let size = vec2<i32>(textureDimensions(t_hit_depth));
     return clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
 }
 fn world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
@@ -183,7 +186,7 @@ fn fs_trace(in: PuddleVertex) -> @location(0) vec4<f32> {
     for (var i = 1; i <= steps; i++) {
         let t = end * f32(i) / f32(steps);
         let at = uv0 + duv * t;
-        let seen = textureLoad(t_hit_depth, scene_pixel(at), 0);
+        let seen = textureLoad(t_hit_depth, hit_pixel(at), 0);
         let delta = linear_depth(mix(z0, z1, t)) - linear_depth(seen);
         if (seen > 0.0 && delta >= 0.0) {
             var lo = previous;
@@ -192,12 +195,12 @@ fn fs_trace(in: PuddleVertex) -> @location(0) vec4<f32> {
             // empty space behind them instead of stretching the object's edge into water.
             for (var j = 0; j < 5 && previous_delta < 0.0; j++) {
                 let mid = (lo + hi) * 0.5;
-                let md = textureLoad(t_hit_depth, scene_pixel(uv0 + duv * mid), 0);
+                let md = textureLoad(t_hit_depth, hit_pixel(uv0 + duv * mid), 0);
                 if (md > 0.0 && linear_depth(mix(z0, z1, mid)) >= linear_depth(md)) { hi = mid; }
                 else { lo = mid; }
             }
             let hit_uv = uv0 + duv * hi;
-            let hit_depth = textureLoad(t_hit_depth, scene_pixel(hit_uv), 0);
+            let hit_depth = textureLoad(t_hit_depth, hit_pixel(hit_uv), 0);
             let hit_linear = linear_depth(hit_depth);
             let gap = linear_depth(mix(z0, z1, hi)) - hit_linear;
             let hit_world = world_pos(hit_uv, hit_depth);
@@ -208,7 +211,7 @@ fn fs_trace(in: PuddleVertex) -> @location(0) vec4<f32> {
                 && dot(hit_world - world, normal) > 0.05) {
                 let border = min(min(hit_uv.x, hit_uv.y), min(1.0 - hit_uv.x, 1.0 - hit_uv.y));
                 let confidence = smoothstep(0.0, 0.04, border) * (1.0 - smoothstep(75.0, 100.0, distance));
-                let colour = finite_colour(textureSampleLevel(t_scene, s_linear, hit_uv, 0.0).rgb);
+                let colour = finite_colour(textureSampleLevel(t_reflection_scene, s_linear, hit_uv, 0.0).rgb);
                 if (p.projection_trace.z == 2.0) { return vec4<f32>(0.0, 1.0, 0.0, depth); }
                 if (p.projection_trace.z == 3.0) { return vec4<f32>(colour, depth); }
                 // Replace the reflected sky light rather than adding a second reflection.

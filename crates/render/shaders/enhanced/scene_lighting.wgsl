@@ -376,7 +376,7 @@ fn fs_enhanced(in: FsIn) -> EnhancedOut {
 @fragment
 fn fs_vanilla_reflections(in: FsIn) -> EnhancedOut {
     var weight = 0.0;
-    let c = shade_vanilla(in, &weight);
+    let c = shade_vanilla(in, &weight, false);
     let coverage = select(c.a, 0.0, in.params2.w > 1.5);
     var out: EnhancedOut;
     out.color = c;
@@ -1002,10 +1002,23 @@ fn water_ripple(p: vec2<f32>, t: f32) -> vec2<f32> {
     return g;
 }
 
-// Shade the complete local vehicle from the reflected eye. Main-camera ambient
-// occlusion is not applicable to this view beneath the road.
+// The cabin's reflection source uses the normal eye, but excludes its vehicle.
+// Its bounded resolution and depth differ from the main camera's AO texture.
+@fragment
+fn fs_puddle_world(input: FsIn) -> @location(0) vec4<f32> {
+    if (material.emissive.w > 1.5) { discard; }
+    if (camera.post.x > 0.5) {
+        var unused = vec2<f32>(0.0);
+        return shade_enhanced(input, &unused, true, camera.cam_pos.xyz);
+    }
+    var unused = 0.0;
+    return shade_vanilla(input, &unused, true);
+}
+
 @fragment
 fn fs_puddle_vehicle(input: FsIn) -> @location(0) vec4<f32> {
+    // Shade the complete local vehicle from the reflected eye. Main-camera AO
+    // is not applicable to this view beneath the road.
     // One reflected camera for the complete vehicle, including its transparent panes.
     let plane = vehicle_reflection.plane;
     let height = dot(plane.xyz, input.world) - plane.w;

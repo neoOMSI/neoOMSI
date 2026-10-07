@@ -1466,7 +1466,9 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Float32x3],
         };
-        let sky_pipeline_for = |f: wgpu::TextureFormat, fs: &str| {
+        let sky_pipeline_for = |f: wgpu::TextureFormat, fs: &str, samples: u32, world: bool| {
+            let targets = color_targets(f, None, wgpu::ColorWrites::COLOR, false);
+            let target_count = if world { 1 } else { targets.len() };
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("sky"),
                 layout: Some(&sky_pl),
@@ -1490,14 +1492,14 @@ impl Renderer {
                     bias: Default::default(),
                 }),
                 multisample: wgpu::MultisampleState {
-                    count: msaa,
+                    count: samples,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &sky_shader,
                     entry_point: Some(fs),
-                    targets: &color_targets(f, None, wgpu::ColorWrites::COLOR, false),
+                    targets: &targets[..target_count],
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
@@ -1525,7 +1527,8 @@ impl Renderer {
             wire_pipelines: wire_for(format, "fs_main"),
             corona_pipeline: corona_pipeline_for(format, "fs_main", screen),
             smoke_pipeline: corona_pipeline_for(format, "fs_smoke", alpha_blend),
-            sky_pipeline: sky_pipeline_for(format, "fs_main"),
+            sky_pipeline: sky_pipeline_for(format, "fs_main", msaa, false),
+            reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", 1, true),
         };
         let leave_out_enhanced = options.no_enhanced
             && cfg!(target_os = "android");
@@ -1535,7 +1538,8 @@ impl Renderer {
             wire_pipelines: wire_for(hdr_format, "fs_enhanced"),
             corona_pipeline: corona_pipeline_for(hdr_format, "fs_enhanced", additive),
             smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke_enhanced", alpha_blend),
-            sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced"),
+            sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced", msaa, false),
+            reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced", 1, true),
         });
         let reflection_pass = (!leave_out_enhanced).then(|| PassPipelines {
             pipelines: scene_pipelines(hdr_format, "fs_vanilla_reflections", msaa),
@@ -1543,7 +1547,8 @@ impl Renderer {
             wire_pipelines: wire_for(hdr_format, "fs_vanilla_reflections"),
             corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen),
             smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend),
-            sky_pipeline: sky_pipeline_for(hdr_format, "fs_main"),
+            sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", msaa, false),
+            reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", 1, true),
         });
         let sky_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
