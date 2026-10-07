@@ -825,13 +825,15 @@ impl App {
                 self.service_msg = Some((msg.into(), 4.0));
             }
             "toggle_fullscreen" => {
-                if let Some(win) = self.window.as_ref() {
-                    win.set_fullscreen(if win.fullscreen().is_some() {
-                        None
-                    } else {
-                        Some(winit::window::Fullscreen::Borderless(None))
-                    });
-                }
+                let mode = if self.window.as_ref().is_some_and(|win| win.fullscreen().is_some()) {
+                    "windowed"
+                } else {
+                    "fullscreen"
+                };
+                ::config::set_setting("graphics", "window_mode", mode);
+                ::config::set_setting("graphics", "fullscreen", mode != "windowed");
+                let _ = ::config::save();
+                crate::game_lists::apply_window_mode(self, mode);
             }
             "screenshot" => self.take_screenshot(),
             "toggle_editor" => self.toggle_editor(),

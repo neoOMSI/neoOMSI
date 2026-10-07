@@ -242,6 +242,10 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                     }
                 } else if ::config::DEFAULTS.iter().any(|(c, k, _)| *c == "graphics" && *k == key) {
                     gfx_set(key, value);
+                    if key == "window_mode" {
+                        ::config::set_setting("graphics", "fullscreen", value != "windowed");
+                        super::options::apply_window_mode(app, value);
+                    }
                     let _ = ::config::save();
                 } else {
                     remember_setting(key, value);
@@ -363,6 +367,11 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("vanilla", "Vanilla (as OMSI 2)"),
             ("vanilla_plus", "Vanilla+"),
             ("enhanced", "Enhanced"),
+        ],
+        "window_mode" => vec![
+            ("windowed", "Windowed"),
+            ("borderless", "Windowed Borderless"),
+            ("fullscreen", "Fullscreen"),
         ],
         "msaa" => vec![
             ("1", "Off"),

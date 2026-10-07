@@ -2347,7 +2347,7 @@ const SETTINGS: &[(&str, &str, &str, Kind)] = &[
     ("shadows", "graphics", "shadows", Bool),
     ("shadow_size", "graphics", "shadow_size", Int(0, i64::MAX)),
     ("detail_textures", "graphics", "detail_textures", Bool),
-    ("fullscreen", "graphics", "fullscreen", Bool),
+    ("window_mode", "graphics", "window_mode", Choice(&["windowed", "borderless", "fullscreen"])),
     ("vsync", "graphics", "vsync", Bool),
     ("texture_memory", "graphics", "texture_memory", Int(0, i64::MAX)),
     ("texture_compression", "graphics", "texture_compression", Bool),

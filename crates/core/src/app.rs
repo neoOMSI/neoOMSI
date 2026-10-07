@@ -259,8 +259,17 @@ impl App {
         if let Some(at) = at {
             attrs = attrs.with_position(at);
         }
-        if ::config::get_bool("graphics", "fullscreen").unwrap_or(false) {
-            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        let mut window_mode = ::config::get_string("graphics", "window_mode")
+            .unwrap_or_else(|| "windowed".into());
+        if window_mode == "windowed" && ::config::get_bool("graphics", "fullscreen").unwrap_or(false) {
+            window_mode = "borderless".into();
+        }
+        let start_exclusive = window_mode == "fullscreen";
+        match window_mode.as_str() {
+            "borderless" => {
+                attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+            }
+            _ => {}
         }
         if ::legacy_config::env::var_os("OMSI_BACKGROUND").is_some() {
             attrs = attrs.with_active(false);
@@ -343,6 +352,14 @@ impl App {
                 return;
             }
         };
+        if start_exclusive {
+            let fullscreen = window
+                .current_monitor()
+                .and_then(|monitor| monitor.video_modes().next())
+                .map(winit::window::Fullscreen::Exclusive)
+                .unwrap_or(winit::window::Fullscreen::Borderless(None));
+            window.set_fullscreen(Some(fullscreen));
+        }
         let (sw, sh) = renderer.scene_size(size.width, size.height);
         log::info!(
             "window: {}x{} pixels (scale factor {:.2}), 3D picture {sw}x{sh}, present mode {:?}",

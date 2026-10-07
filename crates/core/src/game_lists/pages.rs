@@ -493,12 +493,7 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
         .flatten()
         .collect();
     let display: Vec<(String, String)> = vec![
-        switch_row(
-            app,
-            "fullscreen",
-            "Fullscreen",
-            "Switches the window between windowed and fullscreen",
-        ),
+        pick("window_mode", "Window mode", "Changes how the game fills your display"),
         switch_row(app, "vsync", "V-sync", "Waits for the screen's refresh"),
         pick("max_fps", "Frame limit", "Frames a second at most"),
         switch_row(

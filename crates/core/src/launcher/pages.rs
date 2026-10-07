@@ -612,6 +612,9 @@ fn cfg_sel(ui: &mut Ui, name: &str, r: Rect, label: &str, key: &str, options: &[
         &labels,
     ) {
         crate::game_lists::gfx_set(key, &values[sel]);
+        if key == "window_mode" {
+            ::config::set_setting("graphics", "fullscreen", values[sel] != "windowed");
+        }
         let _ = ::config::save();
     }
 }
@@ -1205,9 +1208,18 @@ fn graphics_tab(ui: &mut Ui, s: &Value, cols: [Rect; 2]) -> [f32; 2] {
         c.row(), "Clouds", "clouds");
     let left = c.used();
     let mut c = Col::new(ui, cols[1], "Display");
-    cfg_toggle(
+    cfg_sel(
         ui,
-        c.row(), "Fullscreen", "fullscreen");
+        "s-window-mode",
+        c.row(),
+        "Window mode",
+        "window_mode",
+        &[
+            ("windowed", "Windowed"),
+            ("borderless", "Windowed Borderless"),
+            ("fullscreen", "Fullscreen"),
+        ],
+    );
     cfg_toggle(
         ui,
         c.row(), "V-sync", "vsync");

@@ -230,6 +230,7 @@ mod tests {
     #[test]
     fn defaults_and_set() {
         reset_all();
+        assert_eq!(get_string("graphics", "window_mode"), Some("windowed".to_string()));
         assert_eq!(get_bool("graphics", "fullscreen"), Some(false));
         set_setting("graphics", "fullscreen", true);
         assert_eq!(get_bool("graphics", "fullscreen"), Some(true));

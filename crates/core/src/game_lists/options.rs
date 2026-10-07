@@ -870,3 +870,21 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         _ => None,
     }
 }
+
+pub(crate) fn apply_window_mode(app: &App, mode: &str) {
+    let Some(window) = app.window.as_ref() else {
+        return;
+    };
+    let fullscreen = match mode {
+        "borderless" => Some(winit::window::Fullscreen::Borderless(None)),
+        "fullscreen" => Some(
+            window
+                .current_monitor()
+                .and_then(|monitor| monitor.video_modes().next())
+                .map(winit::window::Fullscreen::Exclusive)
+                .unwrap_or(winit::window::Fullscreen::Borderless(None)),
+        ),
+        _ => None,
+    };
+    window.set_fullscreen(fullscreen);
+}
