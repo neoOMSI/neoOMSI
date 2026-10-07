@@ -337,6 +337,12 @@ pub(crate) fn make_app(
         place_on_duty(&mut args);
     }
     applog::log_system();
+    if args.drive_keys.eq_ignore_ascii_case("simple")
+        && let Some(k) = config::get_string("gameplay", "drive-keys")
+        && !k.eq_ignore_ascii_case("simple")
+    {
+        args.drive_keys = k;
+    }
     ENHANCED.store(
         (config::get_string("graphics", "graphics").as_deref() == Some("enhanced")) || args.enhanced || legacy_config::env::var_os("OMSI_ENHANCED").is_some(),
         std::sync::atomic::Ordering::Relaxed,

@@ -466,6 +466,11 @@ impl Humans {
         Some((bn.world(local), bn.heading))
     }
 
+    pub fn bus_tilt(&self, bus: BusId, at: DVec3) -> Option<Mat4> {
+        let bn = self.buses.last_buses.iter().find(|b| b.id == bus)?;
+        Some(bn.tilt_at(bn.to_local(at)))
+    }
+
     /// The free seat of bus `bus` nearest the world point `at` (for a walker inside it).
     pub fn seat_nearest(&self, bus: BusId, at: DVec3, reach: f64) -> Option<usize> {
         let bn = self.buses.last_buses.iter().find(|b| b.id == bus)?;
