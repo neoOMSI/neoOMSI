@@ -255,6 +255,40 @@ fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a * scale, 1.0);
 }
 
+// Smoke ([smoke] particles): a sprite turned to the viewer as `vs_main` turns a plain one,
+// then turned by `extra.x` about the line of sight and pulled `extra.y` metres towards the
+// viewer (both 0 for Vanilla, which leaves it exactly as `vs_main` draws it).
+@vertex
+fn vs_smoke(in: CoronaIn) -> CoronaOut {
+    var out: CoronaOut;
+    let corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
+    let c = corners[in.vid % 6u];
+    let to_cam = camera.cam_pos.xyz - in.pos;
+    let dist = length(to_cam);
+    let view_dir = to_cam / max(dist, 0.001);
+    let right0 = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), view_dir));
+    let up0 = cross(view_dir, right0);
+    let ca = cos(in.extra.x);
+    let sa = sin(in.extra.x);
+    let right = right0 * ca + up0 * sa;
+    let up = up0 * ca - right0 * sa;
+    let size = max(in.size, dist * 0.002) * 0.9;
+    let pull = min(max(in.extra.y, 0.0), dist * 0.9);
+    let wp = in.pos + (right * c.x + up * c.y) * size + view_dir * pull;
+    let brightness = in.color.a;
+    out.clip = camera.view_proj * vec4<f32>(wp, 1.0);
+    out.uv = c * 0.5 + 0.5;
+    out.color = in.color;
+    out.kind = 0.0;
+    out.star = 0.0;
+    out.beam = 0.0;
+    out.cone = vec2<f32>(0.0, 0.0);
+    if (!(brightness > 0.001) || (bitcast<u32>(brightness) & 0x7f800000u) == 0x7f800000u) {
+        out.clip = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+    }
+    return out;
+}
+
 // Smoke ([smoke] particles): the smoke texture tinted with the particle's colour, lit by the
 // scene's ambient and sun light, blended with its alpha (the particle's times the texture's).
 fn smoke_color(in: CoronaOut) -> vec4<f32> {

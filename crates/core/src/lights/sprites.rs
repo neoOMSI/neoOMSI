@@ -5,8 +5,16 @@ pub fn particle_sprites(
     smoke: &mut Vec<::render::SmokeParticle>,
     coronas: &mut Vec<Corona>,
 ) {
+    let classic = crate::startup::CLASSIC.load(std::sync::atomic::Ordering::Relaxed);
     for (p, def) in set.particles() {
-        let alpha = p.alpha();
+        // (Vanilla+ and Enhanced draw smoke smaller, thinning as it spreads, and turned)
+        let (alpha, radius, angle, pull) = if classic || def.emissive {
+            (p.alpha(), p.size() * 0.5, 0.0, 0.0)
+        } else {
+            let radius = smoke_diameter(p) * 0.5;
+            let (angle, pull) = smoke_turn_and_pull(p, radius);
+            (smoke_alpha(p), radius, angle, pull)
+        };
         if alpha <= 0.002 {
             continue;
         }
@@ -24,12 +32,46 @@ pub fn particle_sprites(
         } else {
             smoke.push(::render::SmokeParticle {
                 position: p.pos,
-                size: p.size() * 0.5,
+                size: radius,
                 color: p.color,
                 alpha,
+                angle,
+                pull,
             });
         }
     }
+}
+
+/// The share of the `[smoke]` sizes Vanilla+ and Enhanced draw: a real exhaust plume starts
+/// at the pipe and widens by about a fifth of its way, several times less than vehicles give.
+const SMOKE_SIZE: f32 = 0.3;
+
+/// Vanilla+ and Enhanced smoke: the puff's width (m).
+fn smoke_diameter(p: &::simulation::particles::Particle) -> f32 {
+    p.size() * SMOKE_SIZE
+}
+
+/// Vanilla+ and Enhanced smoke: the vehicle's initial alpha at its start size, spread over
+/// the puff's area as it grows; faded in quickly (the plume is densest at the pipe) and out
+/// towards the end of its life.
+fn smoke_alpha(p: &::simulation::particles::Particle) -> f32 {
+    let smooth = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let t = p.age / p.life.max(1e-3);
+    let d = smoke_diameter(p).max(0.05);
+    let amount = p.alpha0.clamp(0.0, 1.0) * p.size0.max(0.0).powi(2);
+    let alpha = (amount / (d * d)).min(1.0);
+    alpha * smooth(0.0, 0.06, p.age) * (1.0 - smooth(0.4, 1.0, t))
+}
+
+/// Vanilla+ and Enhanced smoke: each puff slowly turning from its own angle (one turn for
+/// all shows the picture's pattern), and drawn its radius (at most 2 m) towards the viewer
+/// so that the ground does not cut a hard edge through it.
+fn smoke_turn_and_pull(p: &::simulation::particles::Particle, radius: f32) -> (f32, f32) {
+    let angle = p.seed * std::f32::consts::TAU + (p.seed - 0.5) * 0.8 * p.age;
+    (angle, radius.min(2.0))
 }
 
 pub fn load_smoke_texture(renderer: &mut ::render::Renderer, root: &std::path::Path) {
@@ -202,4 +244,58 @@ pub(super) fn visible_range() -> f64 {
 pub fn vehicle_velocity(v: &::simulation::VehicleInstance) -> glam::Vec3 {
     let h = v.heading.to_radians();
     glam::Vec3::new(h.sin() as f32, h.cos() as f32, 0.0) * v.physics.speed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::simulation::particles::Particle;
+
+    fn puff(age: f32, seed: f32) -> Particle {
+        Particle {
+            pos: glam::DVec3::ZERO,
+            vel: Vec3::ZERO,
+            age,
+            life: 2.0,
+            size0: 0.5,
+            grow: 3.0,
+            alpha0: 0.2,
+            alpha1: 10.0,
+            color: [0.66, 0.66, 0.8],
+            brake: 0.95,
+            gravity: -0.2,
+            seed,
+        }
+    }
+
+    /// Vanilla+ smoke starts and ends invisible.
+    #[test]
+    fn smoke_fades_in_and_out() {
+        assert_eq!(smoke_alpha(&puff(0.0, 0.5)), 0.0);
+        assert!(smoke_alpha(&puff(1.999, 0.5)) < 1e-3);
+        assert!(smoke_alpha(&puff(0.3, 0.5)) > 0.1);
+    }
+
+    /// A Vanilla+ puff keeps its smoke while it spreads: alpha times area stays the same.
+    #[test]
+    fn smoke_spreads_its_amount() {
+        let (young, old) = (puff(0.3, 0.5), puff(0.6, 0.5));
+        assert_eq!(smoke_diameter(&young), young.size() * SMOKE_SIZE);
+        let amount = |p: &Particle| smoke_alpha(p) * smoke_diameter(p).powi(2);
+        assert!((amount(&young) - amount(&old)).abs() < 1e-4);
+        assert!(smoke_alpha(&old) < smoke_alpha(&young));
+    }
+
+    /// Puffs are turned by their seed and pulled towards the viewer by their radius (2 m at most).
+    #[test]
+    fn smoke_turns_by_seed_and_pulls_by_radius() {
+        let (a, pull) = smoke_turn_and_pull(&puff(0.0, 0.25), 0.7);
+        assert!((a - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert_eq!(pull, 0.7);
+        assert_eq!(smoke_turn_and_pull(&puff(0.0, 0.25), 5.0).1, 2.0);
+        assert_ne!(
+            smoke_turn_and_pull(&puff(1.0, 0.1), 1.0).0,
+            smoke_turn_and_pull(&puff(1.0, 0.6), 1.0).0
+        );
+    }
 }

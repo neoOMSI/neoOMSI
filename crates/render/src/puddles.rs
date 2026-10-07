@@ -1490,6 +1490,8 @@ mod tests {
                                 size: 0.8,
                                 color: [1.0, 0.0, 0.0],
                                 alpha: 1.0,
+                                angle: 0.0,
+                                pull: 0.0,
                             });
                         } else {
                             scene.coronas.push(Corona {

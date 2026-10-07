@@ -40,6 +40,8 @@ pub struct Particle {
     pub color: [f32; 3],
     pub brake: f32,
     pub gravity: f32,
+    /// 0..1, fixed at birth: varies how the renderer draws it (its sprite's turn).
+    pub seed: f32,
 }
 
 impl Particle {
@@ -246,6 +248,9 @@ impl ParticleSet {
             color,
             brake: self.draw(&def.brake, value),
             gravity: self.draw(&def.gravity, value),
+            // (read off the generator without advancing it: the particles' motion keeps
+            // the same random sequence)
+            seed: (self.rng >> 40) as f32 / (1u64 << 24) as f32,
         }
     }
 }
