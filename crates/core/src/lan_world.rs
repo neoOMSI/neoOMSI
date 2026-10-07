@@ -1285,29 +1285,25 @@ impl LanWorld {
             }
             let mut shown: Vec<(usize, u32)> = Vec::new();
             for (i, c, _) in &work {
-                let car = t.car_mut(*i);
-                let before = car.vehicle.position;
+                let before = t.car_vehicle_pos(*i);
                 let now_p = DVec3::new(c.x, c.y, c.z);
                 let moved = (now_p - before).truncate().length() as f32;
                 let odo = m.odometer.entry(c.id).or_insert(0.0);
                 if moved < 30.0 {
                     *odo += moved * c.speed.signum();
                 }
-                car.vehicle.position = now_p;
-                car.vehicle.heading = c.heading as f64;
-                car.vehicle.pitch = c.pitch;
-                car.vehicle.bank = c.bank;
-                car.state.speed = c.speed;
-                car.state.blinker = c.blinker as i32;
-                car.state.braking = c.brake;
-                if let Some(b) = car.bus.as_mut() {
-                    b.phase = if c.at_station == 1 {
-                        crate::bus_service::Phase::Boarding
-                    } else {
-                        crate::bus_service::Phase::Running
-                    };
-                }
-                car.body.steer = c.steer;
+                t.apply_host_car(
+                    *i,
+                    now_p,
+                    c.heading as f64,
+                    c.pitch,
+                    c.bank,
+                    c.speed,
+                    c.blinker as i32,
+                    c.brake,
+                    c.at_station == 1,
+                    c.steer,
+                );
                 shown.push((*i, c.id));
             }
             // the scripts (lamps, indicators, doors, wheels) run in parallel, as the

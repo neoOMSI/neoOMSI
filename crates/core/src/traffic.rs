@@ -1271,6 +1271,45 @@ impl Traffic {
         self.lan_centers = centers;
     }
 
+    /// A car's realized world position (for the LAN mirror's odometer).
+    pub fn car_vehicle_pos(&self, ci: usize) -> DVec3 {
+        self.cars[ci].vehicle.position
+    }
+
+    /// Apply a host-replicated car state (LAN client mirror): pose, speed, blinker, brake,
+    /// station phase, and steering. Running the scripts is the motion adapter's job.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_host_car(
+        &mut self,
+        ci: usize,
+        pose: DVec3,
+        heading: f64,
+        pitch: f32,
+        bank: f32,
+        speed: f32,
+        blinker: i32,
+        brake: bool,
+        at_station: bool,
+        steer: f32,
+    ) {
+        let car = &mut self.cars[ci];
+        car.vehicle.position = pose;
+        car.vehicle.heading = heading;
+        car.vehicle.pitch = pitch;
+        car.vehicle.bank = bank;
+        car.state.speed = speed;
+        car.state.blinker = blinker;
+        car.state.braking = brake;
+        if let Some(b) = car.bus.as_mut() {
+            b.phase = if at_station {
+                crate::bus_service::Phase::Boarding
+            } else {
+                crate::bus_service::Phase::Running
+            };
+        }
+        car.body.steer = steer;
+    }
+
     /// The current network generation (bumped when streamed lanes are added).
     pub fn lanes_generation(&self) -> u64 {
         self.lanes_generation
@@ -1289,16 +1328,6 @@ impl Traffic {
     /// The traffic network.
     pub fn net(&self) -> &Network {
         &self.net
-    }
-
-    /// The out-of-range (dormant) cars.
-    pub fn dormant(&self) -> &[DormantCar] {
-        &self.dormant
-    }
-
-    /// Seconds of simulation time elapsed.
-    pub fn time(&self) -> f32 {
-        self.time
     }
 
     /// Where the last tick spent its time.
@@ -1339,11 +1368,6 @@ impl Traffic {
             input_digest: 0,
         };
         self.capture = Some((path, Capture::new(header, capacity)));
-    }
-
-    /// Whether the automatic capture has fired and been written.
-    pub fn capture_fired(&self) -> bool {
-        self.capture_written
     }
 
     /// Sample one tick into the rolling capture and persist it on the first trigger.
