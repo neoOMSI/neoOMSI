@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// Fixed simulation step for the traffic domain: decisions run at a stable rate,
+/// independent of the render frame rate. Rendering may run at any rate on top.
+pub(super) const SIM_DT: f32 = 0.02;
+/// Most fixed steps to run in one frame; a long stall is bounded and the rest of the
+/// debt is kept (capped) rather than silently lost or turned into one huge step.
+pub(super) const MAX_SIM_STEPS: u32 = 8;
+
 impl App {
     /// Tile streaming and the AI traffic.
     pub(super) fn redraw_traffic(&mut self, f: &Frame) {
@@ -118,11 +125,13 @@ impl App {
                     .as_ref()
                     .and_then(|p| p.vehicle.var("TrafficPriority"))
                     .is_some_and(|v| v > 0.5);
-                t.rail_ahead = match self.world.as_ref() {
-                    Some(w) => rail_ahead(t, w, self.player.as_ref(), &self.remotes),
-                    None => Vec::new(),
-                };
-                t.tick(dt, self.player.as_ref().map(|p| player_outline(p)));
+                self.sim_accum = (self.sim_accum + dt).min(SIM_DT * MAX_SIM_STEPS as f32);
+                let mut steps = 0;
+                while self.sim_accum >= SIM_DT && steps < MAX_SIM_STEPS {
+                    t.tick(SIM_DT, self.player.as_ref().map(|p| player_outline(p)));
+                    self.sim_accum -= SIM_DT;
+                    steps += 1;
+                }
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());
                     let rail = self

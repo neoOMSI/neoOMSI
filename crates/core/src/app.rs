@@ -138,6 +138,8 @@ pub(crate) struct App {
     pub(crate) shot: Option<PathBuf>,
     pub(crate) screenshot_mode: Option<ScreenshotMode>,
     pub(crate) paused: bool,
+    /// Simulation-time debt for the fixed traffic tick (seconds), carried between frames.
+    pub(crate) sim_accum: f32,
     pub(crate) game_menu: Option<usize>,
     pub(crate) lab_menu: Option<ui::PauseState>,
     pub(crate) lab_map_direct: bool,
