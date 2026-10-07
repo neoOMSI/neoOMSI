@@ -1165,6 +1165,31 @@ impl Traffic {
         self.cars.len()
     }
 
+    /// The active AI cars.
+    pub fn cars(&self) -> &[AiCar] {
+        &self.cars
+    }
+
+    /// The active AI cars, mutably (population/schedule commands only).
+    pub fn cars_mut(&mut self) -> &mut Vec<AiCar> {
+        &mut self.cars
+    }
+
+    /// One active AI car.
+    pub fn car(&self, ci: usize) -> &AiCar {
+        &self.cars[ci]
+    }
+
+    /// One active AI car, mutably.
+    pub fn car_mut(&mut self, ci: usize) -> &mut AiCar {
+        &mut self.cars[ci]
+    }
+
+    /// Take the ids of scheduled buses whose ground was unloaded under them.
+    pub fn take_removed_scheduled(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.removed_scheduled)
+    }
+
     /// Number of dormant (out-of-range) AI cars.
     pub fn dormant_count(&self) -> usize {
         self.dormant.len()
