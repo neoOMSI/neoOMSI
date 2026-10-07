@@ -18,6 +18,7 @@ pub mod ids;
 pub mod network;
 pub mod routing;
 pub mod rules;
+pub mod scenario;
 pub mod service;
 pub mod signals;
 
@@ -28,6 +29,7 @@ pub use ids::*;
 pub use network::*;
 pub use routing::*;
 pub use rules::*;
+pub use scenario::*;
 pub use service::*;
 pub use signals::*;
 

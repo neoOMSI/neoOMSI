@@ -1118,6 +1118,9 @@ impl App {
                                 t.precache_random(&w, &renderer, &mut scene);
                             }
                             t.set_day_time(parse_time(&self.args.time));
+                            if let Ok(path) = legacy_config::env::var("OMSI_CAPTURE") {
+                                t.enable_capture(path.into(), 8192);
+                            }
                             self.traffic = Some(t);
                         }
                         Err(e) => log::error!("traffic: {e:#}"),

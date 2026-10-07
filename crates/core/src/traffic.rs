@@ -18,8 +18,9 @@ use ::simulation::ai_motion::{
 };
 use ::simulation::collision::Obb;
 pub(crate) use ::simulation::traffic::{
-    AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, TrafficLightController,
-    VehicleCapabilities, arrival_time,
+    AiState, Aspect, Capture, CaptureTrigger, LaneId, LaneKind, Lead, MAX_BRAKE, Network, NetworkVersion,
+    Reason, TickSnapshot, TraceHeader, TrafficLightController, VehicleCapabilities, VehicleId,
+    VehicleSnapshot, TRACE_VERSION, arrival_time,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -718,6 +719,10 @@ pub struct Traffic {
     count_near: Option<(DVec3, f64)>,
     /// LAN play: where the other players are (host): the traffic is kept around them too.
     lan_centers: Vec<DVec3>,
+    /// Optional automatic failure capture: where to persist it and the rolling trace.
+    capture: Option<(std::path::PathBuf, Capture)>,
+    /// The capture has already been persisted (persist once per run).
+    capture_written: bool,
 }
 
 /// `[boundingbox]` of a vehicle that gives none.
@@ -745,30 +750,33 @@ pub fn vehicle_bodies(v: &VehicleInstance) -> Vec<::simulation::collision::Obb> 
     out
 }
 
-/// `bodies` of a vehicle standing with its origin at `from`, heading `from_heading`, moved
-/// with it to `to`, heading `to_heading` (degrees, clockwise from north).
-pub fn bodies_moved(
-    bodies: &[::simulation::collision::Obb],
-    from: DVec3,
-    from_heading: f64,
-    to: DVec3,
-    to_heading: f64,
-) -> Vec<::simulation::collision::Obb> {
-    let (h0, h1) = (from_heading.to_radians(), to_heading.to_radians());
-    let (fwd0, right0) = (DVec2::new(h0.sin(), h0.cos()), DVec2::new(h0.cos(), -h0.sin()));
-    let (fwd1, right1) = (DVec2::new(h1.sin(), h1.cos()), DVec2::new(h1.cos(), -h1.sin()));
-    bodies
-        .iter()
-        .map(|b| {
-            let d = b.center - from.truncate();
-            let mut m = *b;
-            m.center = to.truncate() + fwd1 * d.dot(fwd0) + right1 * d.dot(right0);
-            m.heading = b.heading + h1 - h0;
-            m.z0 += to.z - from.z;
-            m.z1 += to.z - from.z;
-            m
-        })
-        .collect()
+/// Persist an automatic failure capture as a self-contained text trace.
+fn write_capture(path: &std::path::Path, cap: &Capture) {
+    use std::io::Write;
+    let Ok(mut f) = std::fs::File::create(path) else {
+        log::warn!("traffic capture: cannot write {}", path.display());
+        return;
+    };
+    let _ = writeln!(
+        f,
+        "trace_version={} seed={} tick_hz={} network_version={}",
+        cap.header.trace_version, cap.header.seed, cap.header.tick_hz, cap.header.network_version
+    );
+    for t in &cap.ticks {
+        for v in &t.vehicles {
+            let _ = writeln!(
+                f,
+                "tick={} time={:.3} id={} lane={} s={:.2} speed={:.2} binding={:?}",
+                t.tick, t.sim_time, v.id, v.lane, v.s, v.speed, v.binding
+            );
+        }
+    }
+    for e in &cap.events {
+        let _ = writeln!(f, "event {e:?}");
+    }
+    let _ = writeln!(f, "decision_hash={:016X}", cap.decision_hash());
+    let _ = writeln!(f, "trigger={:?}", cap.trigger);
+    log::warn!("traffic capture written to {}", path.display());
 }
 
 /// Cruising speed of an AI aircraft where its flight path sets no limit (km/h): an
@@ -1319,6 +1327,79 @@ impl Traffic {
         self.first_passer
     }
 
+    /// Start the first automatic failure capture, persisted to `path` when a trigger fires.
+    pub fn enable_capture(&mut self, path: std::path::PathBuf, capacity: usize) {
+        let header = TraceHeader {
+            trace_version: TRACE_VERSION,
+            source_revision: env!("CARGO_PKG_VERSION").to_string(),
+            platform: std::env::consts::OS.to_string(),
+            seed: self.rng,
+            tick_hz: 50.0,
+            network_version: NetworkVersion(self.lanes_generation),
+            input_digest: 0,
+        };
+        self.capture = Some((path, Capture::new(header, capacity)));
+    }
+
+    /// Whether the automatic capture has fired and been written.
+    pub fn capture_fired(&self) -> bool {
+        self.capture_written
+    }
+
+    /// Sample one tick into the rolling capture and persist it on the first trigger.
+    fn sample_capture(&mut self) {
+        let network_version = NetworkVersion(self.lanes_generation);
+        let mut stationary_without_reason = false;
+        let vehicles: Vec<VehicleSnapshot> = self
+            .cars
+            .iter()
+            .map(|c| {
+                let slow = c.state.speed < 0.05;
+                let no_reason =
+                    c.why.0.is_empty() && c.junction_why.is_empty() && c.holding.is_none();
+                if slow && no_reason {
+                    stationary_without_reason = true;
+                }
+                VehicleSnapshot {
+                    id: VehicleId(c.id),
+                    lane: LaneId(c.state.lane),
+                    s: c.state.s,
+                    speed: c.state.speed,
+                    front: c.state.front,
+                    rear: c.state.rear,
+                    constraints: if slow && no_reason {
+                        vec![Reason::Unknown(0)]
+                    } else {
+                        Vec::new()
+                    },
+                    binding: if slow && no_reason {
+                        Some(Reason::Unknown(0))
+                    } else {
+                        None
+                    },
+                }
+            })
+            .collect();
+        let tick = self.time.max(0.0) as u64;
+        let snap = TickSnapshot {
+            tick,
+            sim_time: self.time as f64,
+            network_version,
+            vehicles,
+        };
+        let Some((path, cap)) = self.capture.as_mut() else {
+            return;
+        };
+        cap.push_tick(snap);
+        if stationary_without_reason {
+            cap.note_trigger(CaptureTrigger::StationaryWithoutReason);
+        }
+        if cap.captured() && !self.capture_written {
+            self.capture_written = true;
+            write_capture(path, cap);
+        }
+    }
+
     /// The current daylight values.
     pub fn set_daylight(&mut self, daylight: ::simulation::Daylight) {
         self.daylight = Some(daylight);
@@ -1737,6 +1818,8 @@ impl Traffic {
             mirror: false,
             count_near: None,
             lan_centers: Vec::new(),
+            capture: None,
+            capture_written: false,
         };
         t.sort_parked(parked_cars, lanes);
         Ok(t)
@@ -7359,6 +7442,9 @@ impl Traffic {
             // the renders go back to the world at the next sync
             self.released.push(c.render);
             self.released.extend(c.trailer_renders);
+        }
+        if self.capture.is_some() {
+            self.sample_capture();
         }
     }
 

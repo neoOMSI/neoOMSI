@@ -67,6 +67,9 @@ pub(crate) fn run_offscreen(
         if args.traffic > 0 {
             t.precache_random(&world, &renderer, &mut scene);
         }
+        if let Ok(path) = ::legacy_config::env::var("OMSI_CAPTURE") {
+            t.enable_capture(path.into(), 8192);
+        }
         Some(t)
     };
     let mut schedule = if args.schedule {
