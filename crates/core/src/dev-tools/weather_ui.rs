@@ -187,6 +187,20 @@ fn status(ui: &imgui::Ui, wi: &WeatherInfo) {
         wi.precip.1 * 100.0
     ));
     ui.text(format!(
+        "Cloud density {:.2}   Drift {:.0} / {:.0}",
+        wi.density, wi.drift[0], wi.drift[1]
+    ));
+    for (i, l) in wi.layers.iter().enumerate() {
+        ui.text_disabled(format!(
+            "Layer {}: {:.2} {:.2} {:.2} {:.2}",
+            i + 1,
+            l[0],
+            l[1],
+            l[2],
+            l[3]
+        ));
+    }
+    ui.text(format!(
         "Road wetness {:.0}%   Street cond {:.2}   Snow {}{}",
         wi.wetness * 100.0,
         wi.street_cond,
@@ -457,6 +471,10 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
             }
         }
     }
+    if ui.button("From current") && !locked {
+        actions.push(Action::WeatherFromCurrent);
+    }
+    ui.same_line();
     if ui.button("Randomize") {
         let mut r = |a: f32, b: f32| a + (b - a) * tool.rand();
         let rain = r(0.0, 1.0);

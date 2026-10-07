@@ -496,8 +496,6 @@ impl App {
         // (a key changed is a key the player wants: the ready-made layouts would ignore it)
         if sec == 0 && self.args.drive_keys != "omsi" {
             self.args.drive_keys = "omsi".into();
-            ::config::set_setting("gameplay", "drive-keys", "omsi");
-            let _ = ::config::save();
         }
         self.reopen_keys(sec, target);
     }

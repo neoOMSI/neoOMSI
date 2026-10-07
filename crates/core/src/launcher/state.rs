@@ -1564,14 +1564,17 @@ pub fn crash_of(log: &std::path::Path) -> Option<(String, String)> {
     }
     let at = lost.or_else(|| {
         lines.iter().rposition(|l| {
-            l.contains("the game stopped on an error") || (l.contains(" ERROR ") && !recovered(l))
+            l.contains("the game stopped on an error") || ((l.contains(" ERROR ") || l.contains("[Error]") || l.contains("[Crash]")) && !recovered(l))
         })
     })?;
-    let first = lines[at]
-        .split_once("] ")
-        .map(|x| x.1)
-        .unwrap_or(lines[at])
-        .trim();
+    let mut first = lines[at];
+    while first.starts_with('[') {
+        match first.split_once("] ") {
+            Some((_, rest)) => first = rest,
+            None => break,
+        }
+    }
+    let first = first.trim();
     // (a panic's message is on the following lines)
     let mut what = first.to_string();
     for l in lines.iter().skip(at + 1).take(6) {

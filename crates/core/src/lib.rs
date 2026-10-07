@@ -135,16 +135,25 @@ pub fn run() -> Result<()> {
     restart_with_allocator_settings();
     #[cfg(windows)]
     attach_parent_console();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let args = Args::parse();
+    let bare = std::env::args().len() == 1;
+    logging::init(if args.launcher || (bare && !args.menu) {
+        "launcher"
+    } else {
+        "game"
+    });
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if render::catching() {
             log::warn!("caught by the renderer: {info}");
             return;
         }
-        log::error!(
-            "the game stopped on an error (build {BUILD}): {info}\n{}",
-            std::backtrace::Backtrace::force_capture()
+        logging::crash(
+            None,
+            &format!(
+                "the game stopped on an error (build {BUILD}): {info}\n{}",
+                std::backtrace::Backtrace::force_capture()
+            ),
         );
         default_hook(info);
     }));
@@ -159,8 +168,6 @@ pub fn run() -> Result<()> {
             ""
         }
     );
-    let args = Args::parse();
-    let bare = std::env::args().len() == 1;
     let Some((args, server_cfg)) = prepare(args, bare)? else {
         return Ok(());
     };
@@ -330,12 +337,6 @@ pub(crate) fn make_app(
         place_on_duty(&mut args);
     }
     applog::log_system();
-    if args.drive_keys.eq_ignore_ascii_case("simple")
-        && let Some(k) = config::get_string("gameplay", "drive-keys")
-        && !k.eq_ignore_ascii_case("simple")
-    {
-        args.drive_keys = k;
-    }
     ENHANCED.store(
         (config::get_string("graphics", "graphics").as_deref() == Some("enhanced")) || args.enhanced || legacy_config::env::var_os("OMSI_ENHANCED").is_some(),
         std::sync::atomic::Ordering::Relaxed,

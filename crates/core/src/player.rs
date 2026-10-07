@@ -187,7 +187,7 @@ pub(crate) struct Player {
 /// `Inputs/keyboard.cfg` gives W the wipers, S the viewpoint and **D the D of the automatic
 /// gearbox**, so those three are reached by holding shift (Shift+D selects D), and the bus
 /// can still be put into gear. `--drive-keys arrows` leaves W/A/S/D to OMSI entirely.
-/// The driving keys of a control preset (`drive_keys` in the settings):
+/// The driving keys of a control preset (`--drive-keys`):
 /// `omsi` - only the original layout of Inputs/keyboard.cfg (Shift + numpad), nothing extra;
 /// `simple` - W/S/A/D and Up/Down drive (plain Left/Right keep OMSI's interior camera
 /// switch, view_interiorcam_minus/plus, Omsi.exe 0x706278; A/D steer); `wasd` - W/S/A/D only;

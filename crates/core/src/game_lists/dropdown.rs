@@ -202,10 +202,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
         }
         "pick" => {
             if let Some((key, value)) = arg.split_once(' ') {
-                if key == "drive_keys" {
-                    ::config::set_setting("gameplay", "drive-keys", value);
-                    let _ = ::config::save();
-                } else if key == "boarding" {
+                if key == "boarding" {
                     ::config::set_setting("gameplay", "boarding", value);
                     let _ = ::config::save();
                 } else if key == "ai_unsched_factor" {
@@ -440,12 +437,6 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("4000", "4 GB"),
             ("6000", "6 GB"),
         ],
-        "drive_keys" => vec![
-            ("omsi", "Custom controls (Controls page)"),
-            ("simple", "W A S D + arrows"),
-            ("wasd", "W A S D only"),
-            ("arrows", "Arrow keys only"),
-        ],
         "units" => vec![
             ("metric", "Metric (km/h, km, °C)"),
             ("uk", "UK (mph, miles, °C)"),
@@ -538,9 +529,7 @@ pub(super) fn select_state(
     key: &str,
 ) -> (Vec<(&'static str, &'static str)>, Option<usize>, String) {
     let options = select_options(key);
-    let cur = if key == "drive_keys" {
-        ::config::get_string("gameplay", "drive-keys").unwrap_or_default()
-    } else if key == "boarding" {
+    let cur = if key == "boarding" {
         ::config::get_string("gameplay", "boarding").unwrap_or_default()
     } else if key == "ai_unsched_factor" {
         ::config::get_float("ai", "unsched_factor")

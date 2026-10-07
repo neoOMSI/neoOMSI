@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/legacy-config",
     "crates/config",
+    "crates/logging",
     "crates/legacy-script",
     "crates/legacy-o3d",
     "crates/model",
@@ -38,6 +39,7 @@ anyhow = "1"
 thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 encoding_rs = "0.8"
 glam = "0.33"
 rayon = "1.10"

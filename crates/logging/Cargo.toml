@@ -1,0 +1,11 @@
+[package]
+name = "logging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "This module will handle all log related things: saving, writing etc."
+
+[dependencies]
+config = { path = "../config" }
+log.workspace = true
+chrono.workspace = true

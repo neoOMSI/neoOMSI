@@ -27,6 +27,7 @@ winresource = "0.1"
 [dependencies]
 legacy-config = { path = "../legacy-config" }
 config = { path = "../config" }
+logging = { path = "../logging" }
 map = { path = "../map" }
 scenery = { path = "../scenery" }
 model = { path = "../model" }
@@ -48,7 +49,6 @@ pollster.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 log.workspace = true
-env_logger.workspace = true
 getrandom = "0.4"
 rayon.workspace = true
 network = { path = "../network" }

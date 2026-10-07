@@ -198,7 +198,6 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
         .flatten()
         .collect();
     let controls: Vec<(String, String)> = vec![
-        pick("drive_keys", "Driving keys", "Which keys drive the vehicle"),
         Some(opens(
             "Key bindings",
             "Set every key of the bus and of the game",
