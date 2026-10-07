@@ -10,11 +10,13 @@ use glam::{DVec2, DVec3};
 use hashbrown::HashMap;
 
 pub mod capabilities;
+pub mod diagnostics;
 pub mod ids;
 pub mod routing;
 pub mod service;
 
 pub use capabilities::*;
+pub use diagnostics::*;
 pub use ids::*;
 pub use routing::*;
 pub use service::*;
