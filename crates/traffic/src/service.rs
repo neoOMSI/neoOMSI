@@ -46,6 +46,8 @@ pub struct StopTarget {
     pub stop: StopId,
     /// Which directed occurrence of the route (loops can serve a stop twice).
     pub occurrence: u32,
+    /// Index into the vehicle's route of the lane the stop is on.
+    pub route_index: usize,
     pub side: PlatformSide,
     /// Where the front of the vehicle comes to rest along the lane (m).
     pub s: f32,
@@ -60,6 +62,7 @@ impl StopTarget {
     pub fn new(
         stop: StopId,
         occurrence: u32,
+        route_index: usize,
         side: PlatformSide,
         s: f32,
         bay: f32,
@@ -68,10 +71,25 @@ impl StopTarget {
         StopTarget {
             stop,
             occurrence,
+            route_index,
             side,
             s,
             bay,
             depart,
+        }
+    }
+
+    /// The legacy schedule tuple `(route_index, s, bay, depart, stop id, side code)`.
+    #[allow(clippy::type_complexity)]
+    pub fn from_tuple(t: (usize, f32, f32, f64, i64, f32)) -> StopTarget {
+        StopTarget {
+            stop: StopId(t.4),
+            occurrence: 0,
+            route_index: t.0,
+            side: PlatformSide::from_code(t.5),
+            s: t.1,
+            bay: t.2,
+            depart: t.3,
         }
     }
 }
@@ -132,7 +150,7 @@ pub fn compile_stop_target(
     } else {
         lateral - vehicle.half_width + 0.3
     };
-    Ok(StopTarget::new(stop, occurrence, side, s, bay, depart))
+    Ok(StopTarget::new(stop, occurrence, ri, side, s, bay, depart))
 }
 
 #[cfg(test)]
@@ -259,9 +277,10 @@ mod tests {
 
     #[test]
     fn a_stop_target_keeps_occurrence_and_geometry_separate() {
-        let t = StopTarget::new(StopId(99), 3, PlatformSide::Left, 42.0, -1.8, 36000.0);
+        let t = StopTarget::new(StopId(99), 3, 5, PlatformSide::Left, 42.0, -1.8, 36000.0);
         assert_eq!(t.stop, StopId(99));
         assert_eq!(t.occurrence, 3);
+        assert_eq!(t.route_index, 5);
         assert_eq!(t.side, PlatformSide::Left);
         assert_eq!(t.s, 42.0);
         assert_eq!(t.bay, -1.8);

@@ -70,8 +70,8 @@ core ─┘                          (never the reverse)
   `Traffic::apply_host_car` instead of writing fields.
 - Contract adoption: `AiCar.id` and the id-typed traffic state are `VehicleId`; `AiCar.why`
   is a typed `Reason` projected to the `OMSI_TRACE_AI` label; `trip_route` returns a
-  `RouteStatus`. `StopTarget`/`RouteProgress` are compiled by `traffic::service` /
-  `traffic::routing` but are not yet used at the `schedule`/`bus_service` boundary.
+  `RouteStatus`; `StopTarget` has replaced `bus_service::Stop`; the timetable route compiler
+  (`compile_route`/`bridge_gaps`/`way_between`) lives in `traffic::routing`.
 - Scheduler, passenger exchange, pause, and time-reset are aligned at the clock boundary
   (the fixed tick `traffic::scenario::SIM_DT` + an explicit accumulator reset on time jumps)
   in both the window and offscreen paths; their internal redesign belongs to Stages 5–6.

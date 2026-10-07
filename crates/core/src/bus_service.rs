@@ -7,41 +7,8 @@
 //! for the script to turn into motion - the car moves, the script only animates it.
 
 use ::simulation::VehicleInstance;
-use ::simulation::traffic::{AiState, LaneKind, Network};
+use ::simulation::traffic::{AiState, LaneKind, Network, StopTarget};
 use std::collections::VecDeque;
-
-/// One stop of the trip, on the car's route.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Stop {
-    /// Index into the car's route of the lane the stop is on.
-    pub ri: usize,
-    /// Where the front of the bus comes to rest, along that lane (m).
-    pub s: f32,
-    /// How far right of the lane's middle the stop's bay lies (m).
-    pub bay: f32,
-    /// Timetable departure (seconds of the day).
-    pub depart: f64,
-    /// The stop's map object (its `[busstop]` strings weigh who gets off there).
-    pub id: i64,
-    /// The side the platform lies on (see `tiles::stop_side`): 0 = right, 1 = the other,
-    /// 2 = both. A bus whose doors are on both sides opens only these (it reads the value
-    /// as `AI_Scheduled_AtStation_Side`).
-    pub side: f32,
-}
-
-impl Stop {
-    #[allow(clippy::type_complexity)]
-    pub fn from_tuple(t: (usize, f32, f32, f64, i64, f32)) -> Stop {
-        Stop {
-            ri: t.0,
-            s: t.1,
-            bay: t.2,
-            depart: t.3,
-            id: t.4,
-            side: t.5,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -61,7 +28,7 @@ pub enum Phase {
 
 #[derive(Debug, Clone)]
 pub struct BusService {
-    pub stops: VecDeque<Stop>,
+    pub stops: VecDeque<StopTarget>,
     pub phase: Phase,
     /// Seconds in the current phase.
     pub phase_t: f32,
@@ -156,7 +123,7 @@ pub struct Ctx<'a> {
 }
 
 impl BusService {
-    pub fn new(stops: Vec<Stop>) -> BusService {
+    pub fn new(stops: Vec<StopTarget>) -> BusService {
         BusService {
             stops: stops.into(),
             phase: Phase::Running,
@@ -187,7 +154,7 @@ impl BusService {
     /// the front stop's while it boards, else 0 (nobody at a stop, nothing to open).
     pub fn at_station_side(&self) -> f32 {
         if self.phase == Phase::Boarding {
-            self.stops.front().map(|s| s.side).unwrap_or(0.0)
+            self.stops.front().map(|s| s.side.code()).unwrap_or(0.0)
         } else {
             0.0
         }
@@ -226,7 +193,7 @@ impl BusService {
     }
 
     /// A new trip (the tour's next, or the rest of a trip).
-    pub fn restart(&mut self, stops: Vec<Stop>, layover: bool) {
+    pub fn restart(&mut self, stops: Vec<StopTarget>, layover: bool) {
         self.near_d = f32::INFINITY;
         self.serve = None;
         self.stops = stops.into();
@@ -245,13 +212,14 @@ impl BusService {
     /// A stop it serves whoever wants it or not: the trip's first (a layover) and last, the
     /// ones its timetable says it always serves, and any stop it would reach more than
     /// `EARLY_STOP` early (`EARLY_STOP_SHORT` at a stop marked for it).
-    fn must_serve(&self, stop: &Stop, day_time: f64) -> bool {
-        let last = self.is_last(stop);
+    fn must_serve(&self, stop: &StopTarget, day_time: f64) -> bool {
+        let id = stop.stop.get();
+        let last = (self.stops.len() == 1 && !self.route_open) || self.last_stop == Some(id);
         let early = stop.depart - day_time;
         last || self.layover
             || early > EARLY_STOP
-            || self.always.contains(&stop.id)
-            || (early > EARLY_STOP_SHORT && self.serve_early.contains(&stop.id))
+            || self.always.contains(&id)
+            || (early > EARLY_STOP_SHORT && self.serve_early.contains(&id))
     }
 
     fn is_last(&self, stop: &Stop) -> bool {
@@ -265,7 +233,7 @@ impl BusService {
                 "t={:.1}: timetable bus {} serves its stop {:?}",
                 ctx.day_time,
                 ctx.id,
-                self.stops.front().map(|s| s.id)
+                self.stops.front().map(|s| s.stop)
             );
         }
         let layover = std::mem::take(&mut self.layover);
@@ -431,7 +399,7 @@ impl BusService {
             // measured from the new lane the stop was suddenly 20-30 m behind, and the bus -
             // blinker on, pulled into the bay - drove on without opening its doors.
             let crept_past = self.near_d < 12.0 && speed < 4.0;
-            if stop.ri < st.route_index {
+            if stop.route_index < st.route_index {
                 if crept_past {
                     self.near_d = f32::INFINITY;
                     self.arrive(ctx, stop.depart, (st.lane, st.s));
@@ -443,7 +411,7 @@ impl BusService {
                 self.serve = None;
                 continue;
             }
-            let d = st.route_distance(ctx.net, stop.ri, stop.s);
+            let d = st.route_distance(ctx.net, stop.route_index, stop.s);
             // near enough to see whether anybody wants it (a train keeps to its stations)
             if self.serve.is_none() && d < SKIP_DECIDE {
                 let rail = ctx
@@ -461,7 +429,7 @@ impl BusService {
                         "t={:.1}: timetable bus {} passes its stop {}: nobody gets off or on",
                         ctx.day_time,
                         ctx.id,
-                        stop.id
+                        stop.stop
                     );
                 }
                 self.stops.pop_front();
@@ -562,7 +530,7 @@ mod tests {
 
     #[test]
     fn only_the_ends_of_the_trip_and_an_early_bus_stop_for_nobody() {
-        let stop = |id: i64, depart: f64| Stop::from_tuple((0, 0.0, 0.0, depart, id, 0.0));
+        let stop = |id: i64, depart: f64| StopTarget::from_tuple((0, 0.0, 0.0, depart, id, 0.0));
         let mut s = BusService::new(vec![stop(1, 100.0), stop(2, 200.0), stop(3, 300.0)]);
         s.last_stop = Some(3);
         // on time at a stop in the middle: only if somebody wants it
@@ -736,7 +704,7 @@ mod tests {
 
     #[test]
     fn station_side_comes_from_the_stop_it_boards_at() {
-        let stop = |side: f32| Stop::from_tuple((0, 0.0, 0.0, 0.0, 1, side));
+        let stop = |side: f32| StopTarget::from_tuple((0, 0.0, 0.0, 0.0, 1, side));
         let mut s = BusService::new(vec![stop(1.0)]);
         // off a stop: nothing to open
         s.phase = Phase::Running;

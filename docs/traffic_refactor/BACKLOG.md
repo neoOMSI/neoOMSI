@@ -120,13 +120,18 @@ specified. No item above requires a live queue reproduction to begin Stage 1.
   4 (stop shift) is consumed so far.
 - Stop targets compile through `traffic::service::compile_stop_target`, which validates the
   serviceable platform side, the docking position, and keeps the route occurrence separate
-  from the geometry; malformed berths return `StopTargetError`.
+  from the geometry; malformed berths return `StopTargetError`. `StopTarget` has replaced
+  `bus_service::Stop` at the boundary, carrying the route index and typed platform side.
+- The route compiler now lives in `traffic::routing` (`compile_route`, `RouteStepState`,
+  `RouteCompilation`, `joins`, `bridge_gaps`, `way_between`); `schedule` builds the map keys
+  and a tile-state closure and no longer owns the direction selection, detour skipping, or
+  gap bridging. `trip_route` and `trip_route_in` both go through it.
 
 ### Stage 2 remaining
 
-- The route compiler consolidation (moving `slots`/`skip_detours`/`bridge_gaps`/connectors
-  into `traffic::routing`) and full `StopTarget` adoption at the `schedule`/`bus_service`
-  boundary remain; `trip_route` already returns the typed `RouteStatus`.
 - Spline speed limits now honour `[rule] kill`, but the remaining normalization/provenance
   for traffic-light associations and vehicle restrictions is still reported rather than
-  enforced.
+  enforced. This is a Stage 5 concern.
+- The `Traffic` orchestrator in `core/src/traffic.rs` is still large: its behaviour layers
+  (world/perception/junctions/maneuvers/service/population/presentation) are the Stages 3–7
+  extraction, not Stage 2.

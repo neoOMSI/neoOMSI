@@ -13,7 +13,7 @@
 use traffic::{PlatformSide, ServicePhase, StopId, StopTarget};
 
 fn stop_target() -> StopTarget {
-    StopTarget::new(StopId(7001), 0, PlatformSide::Right, 120.0, -1.8, 36000.0)
+    StopTarget::new(StopId(7001), 0, 0, PlatformSide::Right, 120.0, -1.8, 36000.0)
 }
 
 fn berth_holders(phases: &[ServicePhase]) -> usize {

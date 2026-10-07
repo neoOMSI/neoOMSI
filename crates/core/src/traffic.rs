@@ -19,8 +19,8 @@ use ::simulation::ai_motion::{
 use ::simulation::collision::Obb;
 pub(crate) use ::simulation::traffic::{
     AiState, Aspect, Capture, CaptureTrigger, LaneId, LaneKind, Lead, MAX_BRAKE, Network, NetworkVersion,
-    Reason, TickSnapshot, TraceHeader, TrafficLightController, VehicleCapabilities, VehicleId,
-    VehicleSnapshot, TRACE_VERSION, arrival_time,
+    Reason, StopTarget, TickSnapshot, TraceHeader, TrafficLightController, VehicleCapabilities,
+    VehicleId, VehicleSnapshot, TRACE_VERSION, arrival_time,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -127,7 +127,7 @@ const PLAYER_BOX_MARGIN: f32 = 0.5;
 pub struct BusSetup {
     /// The trip's lanes, as far as the loaded tiles have them.
     pub route: Vec<usize>,
-    pub stops: Vec<crate::bus_service::Stop>,
+    pub stops: Vec<StopTarget>,
     /// Fleet number and registration (`number`, `ident` string variables).
     pub number: Option<(String, String)>,
     pub hof: Option<Arc<::legacy_vehicle::Hof>>,
@@ -280,7 +280,7 @@ impl AiCar {
 
     /// The next stop: (route index, distance along that lane).
     pub fn next_stop(&self) -> Option<(usize, f32)> {
-        self.bus.as_ref()?.stops.front().map(|s| (s.ri, s.s))
+        self.bus.as_ref()?.stops.front().map(|s| (s.route_index, s.s))
     }
 
     /// Seconds it will still stand at its stop.
@@ -1211,7 +1211,7 @@ impl Traffic {
         car.state.route.extend(lanes);
         if let Some(b) = car.bus.as_mut() {
             b.stops
-                .extend(stops.into_iter().map(crate::bus_service::Stop::from_tuple));
+                .extend(stops.into_iter().map(StopTarget::from_tuple));
         }
         car.state.planned_next = None;
         car.state.plan_next(&self.net);
@@ -3601,7 +3601,7 @@ impl Traffic {
         let at_stop = bus
             .as_ref()
             .and_then(|b| b.stops.first())
-            .filter(|st| st.ri == 0 && (st.s - s).abs() < 1.5);
+            .filter(|st| st.route_index == 0 && (st.s - s).abs() < 1.5);
         if let Some(st) = at_stop {
             state.speed = 0.0;
             if st.bay.abs() > 0.01 {
@@ -3784,7 +3784,7 @@ impl Traffic {
             route,
             stops: stops
                 .into_iter()
-                .map(crate::bus_service::Stop::from_tuple)
+                .map(StopTarget::from_tuple)
                 .collect(),
             number,
             hof,
@@ -6796,7 +6796,7 @@ impl Traffic {
                             || service
                             .stops
                             .front()
-                            .is_some_and(|s| waiting.contains(&s.id))
+                            .is_some_and(|s| waiting.contains(&s.stop.get()))
                     });
                     let ctx = crate::bus_service::Ctx {
                         wanted,
@@ -7979,7 +7979,7 @@ impl Traffic {
         car.gone = false;
         let stops = stops
             .into_iter()
-            .map(crate::bus_service::Stop::from_tuple)
+            .map(StopTarget::from_tuple)
             .collect();
         match car.bus.as_mut() {
             Some(b) => b.restart(stops, layover),
