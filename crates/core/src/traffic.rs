@@ -1249,6 +1249,21 @@ impl Traffic {
         self.night = night;
     }
 
+    /// Whether AI vehicles currently switch their lights on.
+    pub fn night(&self) -> bool {
+        self.night
+    }
+
+    /// The centres the LAN host last sent for replication.
+    pub fn set_lan_centers(&mut self, centers: Vec<DVec3>) {
+        self.lan_centers = centers;
+    }
+
+    /// The current network generation (bumped when streamed lanes are added).
+    pub fn lanes_generation(&self) -> u64 {
+        self.lanes_generation
+    }
+
     /// The current daylight values.
     pub fn set_daylight(&mut self, daylight: ::simulation::Daylight) {
         self.daylight = Some(daylight);

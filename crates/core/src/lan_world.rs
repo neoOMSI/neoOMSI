@@ -595,7 +595,7 @@ impl LanWorld {
             .collect();
         let centers: Vec<DVec3> = players.iter().map(|p| p.1).collect();
         if let Some(t) = traffic.as_deref_mut() {
-            t.lan_centers = centers.clone();
+            t.set_lan_centers(centers.clone());
         }
         if let Some(h) = humans.as_deref_mut() {
             h.lan_centers = centers;
@@ -707,7 +707,7 @@ impl LanWorld {
             let mut descs: Vec<Desc> = Vec::new();
             let mut ids_hash = 0u64;
             if let Some(t) = t_ref {
-                for c in &t.cars {
+                for c in t.cars() {
                     let p = c.vehicle.position;
                     if (p - at).truncate().length() > CAR_RADIUS || c.id > nw::MAX_ID as u64 {
                         continue;
@@ -745,7 +745,7 @@ impl LanWorld {
                         steer: c.body.steer,
                         blinker: c.state.blinker.clamp(0, 3) as u8,
                         brake: c.state.braking,
-                        lights: t.night,
+                        lights: t.night(),
                         at_station: if c.at_station() {
                             1
                         } else if !c.vehicle.station_released() {
@@ -1250,7 +1250,7 @@ impl LanWorld {
             }
             // where each is now, and what its scripts make of it
             let index: HashMap<u64, usize> =
-                t.cars.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+                t.cars().iter().enumerate().map(|(i, c)| (c.id, i)).collect();
             let mut work: Vec<(usize, CarState, f64)> = Vec::new();
             for (id, track) in &m.cars {
                 let Some(&i) = index.get(&(*id as u64)) else {
@@ -1285,7 +1285,7 @@ impl LanWorld {
             }
             let mut shown: Vec<(usize, u32)> = Vec::new();
             for (i, c, _) in &work {
-                let car = &mut t.cars[*i];
+                let car = t.car_mut(*i);
                 let before = car.vehicle.position;
                 let now_p = DVec3::new(c.x, c.y, c.z);
                 let moved = (now_p - before).truncate().length() as f32;
@@ -1319,7 +1319,7 @@ impl LanWorld {
                 // which side each stands at its stop is the host's own timetable state)
                 let sides: HashMap<usize, f32> = work
                     .iter()
-                    .map(|(i, _, _)| (*i, t.cars[*i].at_station_side()))
+                    .map(|(i, _, _)| (*i, t.car(*i).at_station_side()))
                     .collect();
                 let frames: HashMap<usize, AiFrame> = work
                     .iter()
@@ -1363,7 +1363,7 @@ impl LanWorld {
                 if m.shown.get(&id) == Some(&want) {
                     continue;
                 }
-                let car = &mut t.cars[i];
+                let car = t.car_mut(i);
                 let path = car.vehicle.ty.def.path.clone();
                 let hof = m
                     .hofs
