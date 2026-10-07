@@ -1160,6 +1160,26 @@ fn crossing_arrival(
 }
 
 impl Traffic {
+    /// Number of active AI cars (read-only query; prefer this over the `cars` field).
+    pub fn car_count(&self) -> usize {
+        self.cars.len()
+    }
+
+    /// Number of dormant (out-of-range) AI cars.
+    pub fn dormant_count(&self) -> usize {
+        self.dormant.len()
+    }
+
+    /// The current random-traffic population target.
+    pub fn target(&self) -> usize {
+        self.target
+    }
+
+    /// Set the random-traffic population target.
+    pub fn set_target(&mut self, target: usize) {
+        self.target = target;
+    }
+
     /// Make the population deterministic for a LAN room.  The room's session id is
     /// shared by the host and every client, so the same map/time produces the same
     /// initial cars instead of each process inventing a different world.
