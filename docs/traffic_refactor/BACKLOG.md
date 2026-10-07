@@ -83,13 +83,14 @@ specified. No item above requires a live queue reproduction to begin Stage 1.
 
 ## Stage 1 progress
 
-- `A1` crate extraction: done (batch B). `A2` stable ids: types landed (C1); core field
-  adoption follows with the facade. `A3` capabilities + route/stop types: done as contracts
-  (C2, C3); boundary adoption continues. `A4` typed reasons: types landed (C4); adoption
-  continues. `A5` fixed clock: landed for the window path (D2). `A9` runner/trace/capture:
-  capture schema and S1/S2 headless scenarios landed (D1); S3 and automatic in-run capture
-  wiring remain.
+- `A1` crate extraction: done. `A2` stable ids: done (contract + accessors). `A3`
+  capabilities + route/stop types: done as contracts with the content adapter. `A4` typed
+  reasons: done as contracts. `A5` fixed clock: done for the window path. `A9` runner/trace/
+  capture: capture schema, `Capture`, and S1/S2/S3 headless scenarios landed; in-run
+  automatic capture wiring continues.
+- Stage 1 batches: B (extract), C1–C4 (contracts), C5a–C5d (caller-group migration), C6
+  (`Traffic` fields private behind accessors), D1 (runner/trace/scenarios), D2 (fixed tick)
+  all landed. `lib.rs` was split into `network`/`rules`/`signals`/`following`/`tests`.
 - `A6`–`A8` (snapshot, single pose owner, service machine) are Stage 3/6 targets; their
-  contracts are seeded by `diagnostics.rs` and `service.rs`.
-- Remaining Stage 1 work: `C5b`–`C5d` caller-group migrations (presentation, population,
-  LAN) and `C6` field privatization.
+  contracts are seeded by `diagnostics.rs` and `service.rs`. Full berth arbitration for S3
+  is Stage 6.

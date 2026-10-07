@@ -34,31 +34,32 @@ core ─┘                          (never the reverse)
 | L6 engine integration | `core::traffic_runtime` (to create) | `VehicleInstance`, scripts, assets, rendering, audio, passengers, LAN |
 | Cross-cutting diagnostics | `traffic::diagnostics` | Typed reasons, trace records, metrics, capture |
 
-## Current state after Stage 1 (batches B, C1–C5a, D1, D2)
+## Current state after Stage 1
 
-- `crates/traffic/src/lib.rs` holds the code formerly in `crates/simulation/src/traffic.rs`,
-  unchanged except for severing a debug-only `legacy_config::env` call (behaviour-equivalent
-  `std::env::var_os`) so the crate stays minimal.
-- `crates/simulation/src/traffic.rs` is a re-export shim.
-- New domain modules: `ids.rs` (stable `VehicleId`/`LaneId`/`StopId`/`TripId`/`DutyId`/
-  `NetworkVersion`), `capabilities.rs` (`VehicleCapabilities`, `VehicleClass`,
-  `CapabilitySource`), `routing.rs` (`RouteProgress`), `service.rs` (`StopTarget`,
-  `PlatformSide`), `diagnostics.rs` (`Reason`, `Constraint`, `JunctionState`, `ServicePhase`,
-  `TraceEvent`, `TRACE_VERSION`, `Capture`).
+- `crates/traffic/src/` is split by responsibility: `network.rs` (topology/geometry),
+  `rules.rs` (path priority and per-group density), `signals.rs` (light programs),
+  `following.rs` (`AiState`, `Lead`, lane-change/route state), `tests.rs` (the inline
+  algorithm tests), plus the Stage 1 contract modules `ids.rs`, `capabilities.rs`,
+  `routing.rs`, `service.rs`, `diagnostics.rs`. `lib.rs` is declarations and re-exports.
+- `crates/simulation/src/traffic.rs` is a re-export shim (`pub use ::traffic::*;`).
 - `crates/core/src/traffic_runtime/` holds `content.rs` (capability adapter) and the adapter
-  modules `vehicles.rs`, `passengers.rs`, `presentation.rs`, `replication.rs`. Query methods
-  on `Traffic` (`car_count`, `dormant_count`, `target`, `set_target`) are the first migrated
-  caller group; the rest migrate caller-group by caller-group.
-- Headless scenarios: `crates/traffic/tests/s1_red_queue.rs` (red queue discharge) and
-  `s2_blocked_exit.rs` (blocked downstream storage) run with no renderer or OMSI assets.
-  S3 (shared stop) needs the service adapter and is not yet executable headlessly.
+  modules `vehicles.rs`, `passengers.rs`, `presentation.rs`, `replication.rs`.
+- `Traffic` state is **private**: every field is accessed through query/command methods
+  (`car_count`, `cars`, `car`, `net`, `target`, `set_*`, `take_removed_scheduled`,
+  `extend_scheduled_route`, `set_world_inputs`, `set_presentation`-style setters, …).
+  Caller groups (read-only, presentation/audio, population/schedule, LAN) were migrated in
+  batches C5a–C5d; no module outside `traffic` writes a `Traffic` field directly.
+- Headless scenarios: `crates/traffic/tests/s1_red_queue.rs`, `s2_blocked_exit.rs`, and
+  `s3_shared_stop.rs` run with no renderer or OMSI assets. S3 pins the service-phase
+  contract (one berth holder, once-only service, no boarding upstream); full berth
+  arbitration remains Stage 6.
 - Fixed ticking: the frame-driven window path steps AI decisions on a fixed 20 ms tick with
   bounded catch-up (`core/src/app_events/redraw/ai_traffic.rs`); the offscreen path already
   used a fixed 1/30 s step.
-- The module split named in the plan beyond the above is done incrementally as each
-  boundary is needed.
 - `simulation` keeps `LaneKind` (street/sidewalk/rail/air); rail/air motion stays in
   `simulation` and is adapted later rather than forced through car following.
+- `following.rs` still bundles routing/maneuver state; finer `routing.rs`/`maneuvers.rs`/
+  `junctions.rs` extraction belongs to Stages 3/5/7, not this move.
 
 ## Deletion rule
 
