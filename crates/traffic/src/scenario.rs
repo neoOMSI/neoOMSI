@@ -49,6 +49,22 @@ where
     capture
 }
 
+/// Advance a fixed-step accumulator by one render frame.
+///
+/// Returns how many fixed `dt` steps to run this frame. The debt is capped at `max_steps`
+/// frames' worth, so a long stall is bounded rather than turned into one huge step. The
+/// sequence of fixed steps depends only on the elapsed time, not on how it was partitioned
+/// into render frames (below the cap), which is what makes replays frame-rate independent.
+pub fn advance_fixed_clock(accum: &mut f32, frame_dt: f32, dt: f32, max_steps: u32) -> u32 {
+    *accum = (*accum + frame_dt).min(dt * max_steps as f32);
+    let mut steps = 0;
+    while *accum >= dt && steps < max_steps {
+        *accum -= dt;
+        steps += 1;
+    }
+    steps
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +107,33 @@ mod tests {
         assert_eq!(capture.ticks.len(), 10);
         assert_eq!(capture.ticks.front().unwrap().tick, 0);
         assert_eq!(capture.ticks.back().unwrap().tick, 9);
+    }
+
+    #[test]
+    fn the_same_time_partitioned_into_frames_runs_the_same_ticks() {
+        let dt = 0.02f32;
+        let mut a = 0.0f32;
+        let mut steps_a = 0u32;
+        for _ in 0..30 {
+            steps_a += advance_fixed_clock(&mut a, 1.0 / 30.0, dt, 8);
+        }
+        let mut b = 0.0f32;
+        let mut steps_b = 0u32;
+        for _ in 0..60 {
+            steps_b += advance_fixed_clock(&mut b, 1.0 / 60.0, dt, 8);
+        }
+        assert_eq!(steps_a, steps_b, "frame partition changed the tick count");
+        assert_eq!(steps_a, 50);
+        assert!((a - b).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_long_stall_is_bounded_and_keeps_debt() {
+        let dt = 0.02f32;
+        let mut accum = 0.0f32;
+        let steps = advance_fixed_clock(&mut accum, 10.0, dt, 8);
+        assert_eq!(steps, 8, "catch-up must be bounded");
+        assert!(accum > 0.0, "remaining debt is kept, not lost");
+        assert!(accum <= dt * 8.0);
     }
 }

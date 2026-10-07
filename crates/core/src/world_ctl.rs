@@ -107,6 +107,9 @@ impl App {
                 if let Some(t) = self.traffic.as_mut() {
                     t.set_day_time(time);
                 }
+                // a time jump is an explicit reset: do not let the fixed clock catch up
+                // the whole jump as one enormous motion update
+                self.sim_accum = 0.0;
             }
             lan::WorldUpdate::Slew(s) => {
                 self.clock.time = (self.clock.time + s).clamp(0.0, 86399.999);
@@ -885,6 +888,7 @@ impl App {
         if let Some(tr) = self.traffic.as_mut() {
             tr.advance_day_time(gap);
         }
+        self.sim_accum = 0.0;
         if let Some(p) = self.player.as_mut() {
             p.vehicle.host.clock = self.clock.clone();
         }
@@ -921,6 +925,7 @@ impl App {
         if let Some(tr) = self.traffic.as_mut() {
             tr.advance_day_time(secs);
         }
+        self.sim_accum = 0.0;
         let mirrored = self.traffic.as_ref().is_some_and(|tr| tr.is_mirror());
         if !mirrored {
             let day_time = self.traffic.as_ref().map(|tr| tr.day_time());

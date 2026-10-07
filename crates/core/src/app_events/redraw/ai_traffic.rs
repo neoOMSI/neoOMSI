@@ -122,12 +122,14 @@ impl App {
                         .and_then(|p| p.vehicle.var("TrafficPriority"))
                         .is_some_and(|v| v > 0.5),
                 );
-                self.sim_accum = (self.sim_accum + dt).min(SIM_DT * MAX_SIM_STEPS as f32);
-                let mut steps = 0;
-                while self.sim_accum >= SIM_DT && steps < MAX_SIM_STEPS {
+                let steps = ::simulation::traffic::advance_fixed_clock(
+                    &mut self.sim_accum,
+                    dt,
+                    SIM_DT,
+                    MAX_SIM_STEPS,
+                );
+                for _ in 0..steps {
                     t.tick(SIM_DT, self.player.as_ref().map(|p| player_outline(p)));
-                    self.sim_accum -= SIM_DT;
-                    steps += 1;
                 }
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());
