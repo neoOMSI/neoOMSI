@@ -83,14 +83,17 @@ specified. No item above requires a live queue reproduction to begin Stage 1.
 
 ## Stage 1 progress
 
-- `A1` crate extraction: done. `A2` stable ids: done (contract + accessors). `A3`
-  capabilities + route/stop types: done as contracts with the content adapter. `A4` typed
-  reasons: done as contracts. `A5` fixed clock: done for the window path. `A9` runner/trace/
-  capture: capture schema, `Capture`, and S1/S2/S3 headless scenarios landed; in-run
-  automatic capture wiring continues.
-- Stage 1 batches: B (extract), C1–C4 (contracts), C5a–C5d (caller-group migration), C6
-  (`Traffic` fields private behind accessors), D1 (runner/trace/scenarios), D2 (fixed tick)
-  all landed. `lib.rs` was split into `network`/`rules`/`signals`/`following`/`tests`.
-- `A6`–`A8` (snapshot, single pose owner, service machine) are Stage 3/6 targets; their
+- `A1` extraction (batches B, split) done; `A2` stable ids introduced; `A3` capabilities +
+  route/stop types introduced with the content adapter; `A4` typed reasons introduced; `A5`
+  fixed clock done and frame-partition independent (tested); `A9` runner + trace schema +
+  `Capture` + automatic capture wired + S1/S2/S3 done.
+- `Traffic` fields are private behind query/command accessors; caller groups migrated
+  (C5a–C5d, C6); the LAN mirror applies host state via a command.
+- Runtime selector added at session start (`OMSI_TRAFFIC_RUNTIME`, only `current`).
+- Remaining (large, documented in [DEPENDENCIES.md](DEPENDENCIES.md)): `AiCar` asset fields
+  still public (presentation store is Stage 3/6); contract adoption (`VehicleId` on
+  `AiCar.id`, `Reason` for `why`, `StopTarget`/`RouteProgress` at the boundary); scheduler/
+  passenger/time-reset internal redesign (Stages 5–6).
+- `A6`–`A8` (snapshot, single pose owner, service machine) remain Stage 3/6 targets; their
   contracts are seeded by `diagnostics.rs` and `service.rs`. Full berth arbitration for S3
   is Stage 6.

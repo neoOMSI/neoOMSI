@@ -50,12 +50,28 @@ core ─┘                          (never the reverse)
   Caller groups (read-only, presentation/audio, population/schedule, LAN) were migrated in
   batches C5a–C5d; no module outside `traffic` writes a `Traffic` field directly.
 - Headless scenarios: `crates/traffic/tests/s1_red_queue.rs`, `s2_blocked_exit.rs`, and
-  `s3_shared_stop.rs` run with no renderer or OMSI assets. S3 pins the service-phase
-  contract (one berth holder, once-only service, no boarding upstream); full berth
-  arbitration remains Stage 6.
-- Fixed ticking: the frame-driven window path steps AI decisions on a fixed 20 ms tick with
-  bounded catch-up (`core/src/app_events/redraw/ai_traffic.rs`); the offscreen path already
-  used a fixed 1/30 s step.
+  `s3_shared_stop.rs` run with no renderer or OMSI assets. `traffic::scenario` provides the
+  runner; `advance_fixed_clock` makes the fixed tick frame-partition independent (tested).
+- Automatic failure capture: `Traffic::enable_capture(path, capacity)` (from `OMSI_CAPTURE`)
+  builds a `traffic::Capture`, samples each tick, and persists a self-contained text trace
+  on the first trigger (stationary without a reason).
+- Session-start runtime selector: `core::traffic_runtime::selected()` reads
+  `OMSI_TRAFFIC_RUNTIME` once when `Traffic::new` runs; only `current` exists during
+  migration. A live vehicle is never switched between state models.
+
+### Stage 1 remaining (documented, not claimed done)
+
+- `AiCar` still bundles behaviour with assets (`vehicle`, `render`, `trailer_renders`,
+  `sounds`, `body`) and those fields are still public. Moving them behind a presentation
+  store is Stage 3/6 work; the LAN mirror now applies host state through
+  `Traffic::apply_host_car` instead of writing fields.
+- Contract types are introduced but not fully adopted: `VehicleId` is not yet `AiCar.id`,
+  `Reason` is not yet `AiCar.why` (the legacy labels `light`/`merge`/`keep_back`/`stop`
+  do not map cleanly onto the schema reasons — a design task), `StopTarget`/`RouteProgress`
+  are not yet used at the schedule boundary.
+- Scheduler, passenger exchange, pause, and time-reset are aligned only at the clock
+  boundary (the fixed tick + an explicit accumulator reset on time jumps); their internal
+  redesign belongs to Stages 5–6.
 - `simulation` keeps `LaneKind` (street/sidewalk/rail/air); rail/air motion stays in
   `simulation` and is adapted later rather than forced through car following.
 - `following.rs` still bundles routing/maneuver state; finer `routing.rs`/`maneuvers.rs`/
@@ -63,6 +79,6 @@ core ─┘                          (never the reverse)
 
 ## Deletion rule
 
-Do not remove the shim, the `Traffic` public fields, or any compatibility re-export until
-its callers have migrated (see `TEST_INVENTORY.md` for the caller groups). A temporary
-re-export must have a named migration target in the Stage 1 backlog (`A1`–`A5`, `A9`).
+Do not remove the shim or any compatibility re-export until its callers have migrated to
+`crates/traffic` directly (see `TEST_INVENTORY.md` for the caller groups). A temporary
+re-export must have a named migration target in the Stage 1 backlog.
