@@ -132,17 +132,19 @@ pub(crate) fn traffic_inputs(
     render: &::render::RenderOptions,
 ) {
     if let Some(c) = cam {
-        t.viewer = Some(
+        t.set_viewer(Some(
             traffic::Viewer::new(c, aspect, fog)
                 .with_culling(render.min_obj_size, render.max_obj_dist),
-        );
+        ));
     }
-    t.weekday = clock.weekday();
-    t.walkers = humans.map(|h| h.strollers()).unwrap_or_default();
-    t.people = humans.map(|h| h.on_foot()).unwrap_or_default();
-    // the player's obstacle boxes follow the streamed tiles; without a player the world's
-    // own are asked
-    t.occluders = player.and_then(|p| p.vehicle.collision.clone());
+    t.set_world_inputs(
+        clock.weekday(),
+        humans.map(|h| h.strollers()).unwrap_or_default(),
+        humans.map(|h| h.on_foot()).unwrap_or_default(),
+        // the player's obstacle boxes follow the streamed tiles; without a player the
+        // world's own are asked
+        player.and_then(|p| p.vehicle.collision.clone()),
+    );
 }
 
 /// Posts (`[crashmode_pole]`) the vehicle knocked over this frame: laid on the ground from

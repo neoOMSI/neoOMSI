@@ -67,17 +67,18 @@ impl App {
                 t.populate_seen(w, r, scene, center, view);
                 *self.profile.entry("traffic.populate").or_default() +=
                     __t5.elapsed().as_secs_f64();
-                t.keep_clear = self
+                let mut keep_clear = self
                     .player
                     .as_ref()
                     .map(|p| traffic::vehicle_bodies(&p.vehicle))
                     .unwrap_or_default();
-                t.keep_clear.extend(
+                keep_clear.extend(
                     self.remotes
                         .remotes
                         .values()
                         .flat_map(|r| traffic::vehicle_bodies(r.vehicle())),
                 );
+                t.set_keep_clear(keep_clear);
                 if let Some(s) = self.schedule.as_mut() {
                     let window = if self.first_populate {
                         20.0 * 60.0
@@ -85,7 +86,7 @@ impl App {
                         2.5
                     };
                     let __t6 = Instant::now();
-                    s.tick(w, t, r, scene, t.day_time, window);
+                    s.tick(w, t, r, scene, t.day_time(), window);
                     *self.profile.entry("traffic.schedule").or_default() +=
                         __t6.elapsed().as_secs_f64();
                 }
@@ -108,23 +109,19 @@ impl App {
             // Omsi switches the AI's lights on below a light value of 0.75, before
             // the street lamps (0.6), and off after them in the morning
             let daylight = ::simulation::Daylight::compute(&self.clock, self.envir.as_ref());
-            t.night = daylight.brightness < 0.75 || gloomy;
-            t.daylight = Some(daylight);
+            t.set_night(daylight.brightness < 0.75 || gloomy);
+            t.set_daylight(daylight);
             let __t2 = Instant::now();
-            t.others = lan_outlines(&self.remotes);
-            t.others
-                .extend(own_outlines(self.player.as_ref(), &self.placed));
-            t.blinkers = lan_blinkers(&self.remotes);
-            t.player_blinker = self
-                .player
-                .as_ref()
-                .map_or(0, |p| rail_drive::blinker_of(&p.vehicle));
+            let mut others = lan_outlines(&self.remotes);
+            others.extend(own_outlines(self.player.as_ref(), &self.placed));
+            t.set_external_actors(others);
             if !self.paused {
-                t.player_priority = self
-                    .player
-                    .as_ref()
-                    .and_then(|p| p.vehicle.var("TrafficPriority"))
-                    .is_some_and(|v| v > 0.5);
+                t.set_player_priority(
+                    self.player
+                        .as_ref()
+                        .and_then(|p| p.vehicle.var("TrafficPriority"))
+                        .is_some_and(|v| v > 0.5),
+                );
                 self.sim_accum = (self.sim_accum + dt).min(SIM_DT * MAX_SIM_STEPS as f32);
                 let mut steps = 0;
                 while self.sim_accum >= SIM_DT && steps < MAX_SIM_STEPS {
@@ -171,7 +168,7 @@ impl App {
             }
             *self.profile.entry("traffic.audio").or_default() += __t3.elapsed().as_secs_f64();
             let __t4 = Instant::now();
-            t.camera = self.camera.as_ref().map(|c| c.position);
+            t.set_camera(self.camera.as_ref().map(|c| c.position));
             t.sync(w, r, scene);
             *self.profile.entry("traffic.sync").or_default() += __t4.elapsed().as_secs_f64();
         }

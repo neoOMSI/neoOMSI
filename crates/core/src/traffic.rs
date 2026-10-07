@@ -1180,6 +1180,85 @@ impl Traffic {
         self.target = target;
     }
 
+    /// The per-frame view inputs the population and lighting use.
+    pub fn set_viewer(&mut self, viewer: Option<Viewer>) {
+        self.viewer = viewer;
+    }
+
+    /// The per-frame world inputs: day of week, footpath walkers, pedestrians, occluders.
+    pub fn set_world_inputs(
+        &mut self,
+        weekday: i32,
+        walkers: Vec<(usize, f32)>,
+        people: Vec<(DVec2, DVec2, bool)>,
+        occluders: Option<Arc<::simulation::collision::CollisionWorld>>,
+    ) {
+        self.weekday = weekday;
+        self.walkers = walkers;
+        self.people = people;
+        self.occluders = occluders;
+    }
+
+    /// Replace the player/LAN bodies traffic must keep clear of.
+    pub fn set_keep_clear(&mut self, boxes: Vec<Obb>) {
+        self.keep_clear = boxes;
+    }
+
+    /// Replace the external road users (player/remote outlines) traffic sees this tick.
+    pub fn set_external_actors(&mut self, others: Vec<(u32, PlayerBox)>) {
+        self.others = others;
+    }
+
+    /// Whether the player's vehicle has traffic priority (opens depot gates on request).
+    pub fn set_player_priority(&mut self, priority: bool) {
+        self.player_priority = priority;
+    }
+
+    /// Where the camera is, for population visibility.
+    pub fn set_camera(&mut self, camera: Option<DVec3>) {
+        self.camera = camera;
+    }
+
+    /// Whether AI vehicles switch their lights on.
+    pub fn set_night(&mut self, night: bool) {
+        self.night = night;
+    }
+
+    /// The current daylight values.
+    pub fn set_daylight(&mut self, daylight: ::simulation::Daylight) {
+        self.daylight = Some(daylight);
+    }
+
+    /// The engine's time-speed factor.
+    pub fn set_time_scale(&mut self, scale: f64) {
+        self.time_scale = scale;
+    }
+
+    /// Whether only the light programs run (no vehicles yet).
+    pub fn set_lights_only(&mut self, lights_only: bool) {
+        self.lights_only = lights_only;
+    }
+
+    /// The calendar/service time schedules use.
+    pub fn day_time(&self) -> f64 {
+        self.day_time
+    }
+
+    /// Set the calendar/service time.
+    pub fn set_day_time(&mut self, day_time: f64) {
+        self.day_time = day_time;
+    }
+
+    /// Advance the calendar/service time.
+    pub fn advance_day_time(&mut self, dt: f64) {
+        self.day_time += dt;
+    }
+
+    /// Take the recorded in-frame spawns (for the population-shots diagnostic).
+    pub fn take_framed_spawns(&mut self) -> Vec<(u64, DVec3)> {
+        std::mem::take(&mut self.framed_spawns)
+    }
+
     /// Make the population deterministic for a LAN room.  The room's session id is
     /// shared by the host and every client, so the same map/time produces the same
     /// initial cars instead of each process inventing a different world.

@@ -57,10 +57,10 @@ pub(crate) fn run_offscreen(
     // (and without traffic it still runs the light programs and switches the lamps)
     let mut traffic = {
         let mut t = traffic::Traffic::new(&args.root, &world, args.traffic)?;
-        t.lights_only = !(args.traffic > 0
+        t.set_lights_only(!(args.traffic > 0
             || args.schedule
             || rail_drive::args_rail(args)
-            || args.lan_join.is_some());
+            || args.lan_join.is_some()));
         if let Some(seed) = lan_seed {
             t.set_lan_seed(seed);
         }
@@ -336,15 +336,15 @@ pub(crate) fn run_offscreen(
         }
     }
     if let Some(t) = traffic.as_mut() {
-        t.day_time = parse_time(&args.time);
+        t.set_day_time(parse_time(&args.time));
         let daylight = ::simulation::Daylight::compute(
             &start_clock(args),
             ::content::Envir::load(&args.root.join("envir.cfg"))
                 .ok()
                 .as_ref(),
         );
-        t.night = daylight.brightness < 0.75;
-        t.daylight = Some(daylight);
+        t.set_night(daylight.brightness < 0.75);
+        t.set_daylight(daylight);
         t.populate(&world, &renderer, &mut scene, center);
     }
     // OMSI_GROUND_SAMPLE=<csv>: what the wheels stand on every metre along the street lanes
@@ -655,7 +655,7 @@ pub(crate) fn run_offscreen(
                 // `OMSI_POPULATION_SHOTS=1` (with OMSI_DEBUG_POPULATION): a picture from the
                 // viewer whenever a car was put inside its frustum (behind something), with
                 // where on the picture it stands - to see that it really is hidden
-                let framed = std::mem::take(&mut t.framed_spawns);
+                let framed = t.take_framed_spawns();
                 if !framed.is_empty() && ::legacy_config::env::var_os("OMSI_POPULATION_SHOTS").is_some() {
                     t.sync(&world, &renderer, &mut scene);
                     if let Some(p) = player.as_mut() {
@@ -710,37 +710,36 @@ pub(crate) fn run_offscreen(
                 // frame until they are all out, as the window does)
                 if i % 60 == 0 || s.pending() > 0 {
                     // no timetable vehicle is put into the player's bus or a LAN player's
-                    t.keep_clear = player
+                    let mut keep_clear = player
                         .as_ref()
                         .map(|p| traffic::vehicle_bodies(&p.vehicle))
                         .unwrap_or_default();
-                    t.keep_clear.extend(
+                    keep_clear.extend(
                         remotes_off
                             .remotes
                             .values()
                             .flat_map(|r| traffic::vehicle_bodies(r.vehicle())),
                     );
+                    t.set_keep_clear(keep_clear);
                     s.tick(
                         &world,
                         t,
                         &renderer,
                         &mut scene,
-                        t.day_time,
+                        t.day_time(),
                         if i == 0 { 20.0 * 60.0 } else { 2.5 },
                     );
                 }
             }
-            t.others = lan_outlines(&remotes_off);
-            t.others.extend(own_outlines(player.as_ref(), &[]));
-            t.blinkers = lan_blinkers(&remotes_off);
-            t.player_blinker = player
-                .as_ref()
-                .map_or(0, |p| rail_drive::blinker_of(&p.vehicle));
-            t.player_priority = player
-                .as_ref()
-                .and_then(|p| p.vehicle.var("TrafficPriority"))
-                .is_some_and(|v| v > 0.5);
-            t.rail_ahead = rail_ahead(t, &world, player.as_ref(), &remotes_off);
+            let mut others = lan_outlines(&remotes_off);
+            others.extend(own_outlines(player.as_ref(), &[]));
+            t.set_external_actors(others);
+            t.set_player_priority(
+                player
+                    .as_ref()
+                    .and_then(|p| p.vehicle.var("TrafficPriority"))
+                    .is_some_and(|v| v > 0.5),
+            );
             t.tick(dt, player.as_ref().map(|p| player_outline(p)));
             world.set_switches(&t.switch_requests());
             world.set_signals(&t.signal_aspects(&world.signal_routes, None));
@@ -1609,7 +1608,7 @@ pub(crate) fn run_offscreen(
                 c.state.speed * 3.6,
                 c.bus.as_ref().map(|b| b.stops.len()).unwrap_or(0),
                 c.at_station(),
-                c.standing_for(t.day_time),
+                c.standing_for(t.day_time()),
                 c.bus.as_ref().map(|b| b.delay).unwrap_or(0.0)
             );
             if ::legacy_config::env::var_os("OMSI_DEBUG_PROPS").is_some() {

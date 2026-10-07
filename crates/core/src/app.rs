@@ -1110,14 +1110,14 @@ impl App {
                 {
                     match traffic::Traffic::new(&self.args.root, &w, self.args.traffic) {
                         Ok(mut t) => {
-                            t.lights_only = !populated;
+                            t.set_lights_only(!populated);
                             if let Some(lan) = self.lan.as_ref() {
                                 t.set_lan_seed(lan::population_seed(lan));
                             }
                             if self.args.traffic > 0 {
                                 t.precache_random(&w, &renderer, &mut scene);
                             }
-                            t.day_time = parse_time(&self.args.time);
+                            t.set_day_time(parse_time(&self.args.time));
                             self.traffic = Some(t);
                         }
                         Err(e) => log::error!("traffic: {e:#}"),
