@@ -1,6 +1,38 @@
 use crate::*;
 
 impl Renderer {
+    pub(crate) fn encode_particles(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        scene: &Scene,
+        smoke_pipeline: &wgpu::RenderPipeline,
+        corona_pipeline: &wgpu::RenderPipeline,
+    ) {
+        if scene.smoke_count > 0 && ::legacy_config::env::var_os("OMSI_NO_SMOKE").is_none() {
+            if let Some(sb) = &scene.smoke_buf {
+                pass.set_pipeline(smoke_pipeline);
+                pass.set_bind_group(1, &self.smoke_bind_group, &[]);
+                pass.set_vertex_buffer(0, Some(sb.slice(..)));
+                pass.draw(0..6, 0..scene.smoke_count);
+            }
+        }
+        if scene.corona_count > 0 && ::legacy_config::env::var_os("OMSI_NO_CORONAS").is_none() {
+            if let Some(cb) = &scene.corona_buf {
+                pass.set_pipeline(corona_pipeline);
+                pass.set_vertex_buffer(0, Some(cb.slice(..)));
+                for &(tex, first, count) in &scene.corona_runs {
+                    let bg = self
+                        .corona_textures
+                        .get(tex as usize)
+                        .and_then(|b| b.as_ref())
+                        .unwrap_or(&self.corona_bind_group);
+                    pass.set_bind_group(1, bg, &[]);
+                    pass.draw(0..6, first..first + count);
+                }
+            }
+        }
+    }
+
     pub(crate) fn prepare_lights(
         &self,
         scene: &mut Scene,
@@ -177,7 +209,8 @@ impl Renderer {
                     color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
                     dir: [0.0, 0.0, 0.0, -1.0],
                     up: [0.0, 0.0, 1.0, 2.0],
-                    extra: [-2.0, 0.0, 0.0, 1.0],
+                    // Smoke uses an ordinary billboard; extra.w = 1 selects a fog cone.
+                    extra: [-2.0, 0.0, 0.0, 0.0],
                 }
             })
             .collect();

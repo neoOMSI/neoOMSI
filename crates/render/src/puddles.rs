@@ -768,6 +768,7 @@ impl Renderer {
             let enhanced = lighting.enhanced
                 && self.hdr_pass.is_some()
                 && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none();
+            let pp = self.main_pass(enhanced, !enhanced);
             let sky = if lighting.classic && !enhanced {
                 lighting.sky_color.map(|v| {
                     if v <= 0.04045 {
@@ -809,7 +810,7 @@ impl Renderer {
             });
             pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             if let Some(sky) = &scene.sky_bind_group {
-                pass.set_pipeline(&self.main_pass(enhanced, !enhanced).reflection_sky_pipeline);
+                pass.set_pipeline(&pp.reflection_sky_pipeline);
                 pass.set_bind_group(1, sky, &[]);
                 pass.set_vertex_buffer(0, Some(self.sky_mesh.0.slice(..)));
                 pass.set_index_buffer(self.sky_mesh.1.slice(..), wgpu::IndexFormat::Uint32);
@@ -819,6 +820,14 @@ impl Renderer {
             encode_batches(&mut pass, scene, source_batches, |pipe| {
                 &pipelines.world[pipe as usize]
             });
+            // Match the main view's particle order, textures, blending and exposure,
+            // using single-sample pipelines against the unobstructed world's depth.
+            self.encode_particles(
+                &mut pass,
+                scene,
+                &pp.reflection_smoke_pipeline,
+                &pp.reflection_corona_pipeline,
+            );
         } else {
             let copy = |texture| wgpu::TexelCopyTextureInfo {
                 texture,
@@ -956,6 +965,8 @@ fn player_vehicle_batches(
 }
 
 fn vehicle_entries(scene: &Scene, origins: &[DVec3]) -> std::collections::HashSet<u32> {
+    // core::scene's vehicle loader sets roof from the same bounding box that supplies
+    // Lighting::inside/puddle_parts. Animated meshes retain their vehicle's origin.
     scene
         .instances
         .iter()
@@ -1371,6 +1382,133 @@ mod tests {
                         assert!(
                             baseline_trace == reflection_trace_pixels(&r),
                             "wiper changed reflection rays; MSAA={msaa}, enhanced={enhanced}, classic={classic}, material={material}, x={x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a graphics adapter; checks cabin reflections of coronas and smoke"]
+    fn cabin_reflections_preserve_particles_and_world_occlusion() {
+        for msaa in [1, 4] {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let mut r = pollster::block_on(Renderer::new_with(
+                &instance,
+                None,
+                Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                RenderOptions {
+                    msaa,
+                    ssao: false,
+                    fxaa: false,
+                    shadow_size: 1024,
+                    render_scale: 1.0,
+                    ..Default::default()
+                },
+            ))
+            .expect("test renderer");
+            let mut scene = r.new_scene();
+            let road = r.add_material_wet(
+                &mut scene,
+                None,
+                AlphaMode::Opaque,
+                [0.25, 0.25, 0.25, 1.0],
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                [0.0; 3],
+                1.0,
+            );
+            let wall = r.add_material(
+                &mut scene,
+                None,
+                AlphaMode::Opaque,
+                [0.1, 0.1, 0.1, 1.0],
+                true,
+            );
+            test_quad(
+                &r,
+                &mut scene,
+                [
+                    [-20.0, 0.0, 0.0],
+                    [20.0, 0.0, 0.0],
+                    [20.0, 30.0, 0.0],
+                    [-20.0, 30.0, 0.0],
+                ],
+                Vec3::Z,
+                road,
+            );
+            test_quad(
+                &r,
+                &mut scene,
+                [
+                    [-3.0, 10.0, 0.0],
+                    [3.0, 10.0, 0.0],
+                    [3.0, 10.0, 5.0],
+                    [-3.0, 10.0, 5.0],
+                ],
+                -Vec3::Y,
+                wall,
+            );
+            let camera = Camera {
+                position: DVec3::new(0.0, 0.0, 2.0),
+                yaw: 0.0,
+                pitch: -10.0,
+                roll: 0.0,
+                fov_deg: 70.0,
+                near: 0.1,
+                far: 100.0,
+            };
+            for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+                let lighting = Lighting {
+                    enhanced,
+                    classic,
+                    wetness: 1.0,
+                    shadows: false,
+                    animation_time: Some(0.0),
+                    inside: Some((DVec3::ZERO, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 2.0])),
+                    ..Default::default()
+                };
+                scene.coronas.clear();
+                scene.smoke.clear();
+                r.render_to_image(&mut scene, 128, 128, &camera, &lighting)
+                    .unwrap();
+                let baseline = reflection_trace_pixels(&r);
+                for smoke in [false, true] {
+                    for (y, visible) in [(9.0, true), (12.0, false)] {
+                        scene.coronas.clear();
+                        scene.smoke.clear();
+                        let position = DVec3::new(0.0, y, 2.0);
+                        if smoke {
+                            scene.smoke.push(SmokeParticle {
+                                position,
+                                size: 0.8,
+                                color: [1.0, 0.0, 0.0],
+                                alpha: 1.0,
+                            });
+                        } else {
+                            scene.coronas.push(Corona {
+                                position,
+                                size: 0.8,
+                                color: [1.0, 0.0, 0.0],
+                                brightness: 1.0,
+                                ..Default::default()
+                            });
+                        }
+                        r.render_to_image(&mut scene, 128, 128, &camera, &lighting)
+                            .unwrap();
+                        assert!(!r.gpu_error.load(std::sync::atomic::Ordering::Relaxed));
+                        // Read reflection rays before exposure adaptation and bloom: changes
+                        // here must come from the reflected particle, not its direct image.
+                        let changed = baseline != reflection_trace_pixels(&r);
+                        assert_eq!(
+                            changed, visible,
+                            "particle reflection: smoke={smoke}, y={y}, MSAA={msaa}, enhanced={enhanced}, classic={classic}"
                         );
                     }
                 }

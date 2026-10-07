@@ -18,6 +18,9 @@ pub(crate) struct PassPipelines {
     pub(crate) wire_pipelines: Option<Vec<wgpu::RenderPipeline>>,
     pub(crate) corona_pipeline: wgpu::RenderPipeline,
     pub(crate) smoke_pipeline: wgpu::RenderPipeline,
+    /// Single-sample HDR captures have one colour attachment and no material mask.
+    pub(crate) reflection_corona_pipeline: wgpu::RenderPipeline,
+    pub(crate) reflection_smoke_pipeline: wgpu::RenderPipeline,
     pub(crate) sky_pipeline: wgpu::RenderPipeline,
     pub(crate) reflection_sky_pipeline: wgpu::RenderPipeline,
 }

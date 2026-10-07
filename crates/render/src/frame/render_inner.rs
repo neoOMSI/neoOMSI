@@ -1907,29 +1907,7 @@ impl Renderer {
                 pass.execute_bundles(main_bundles[tail..].iter());
                 pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             }
-            if scene.smoke_count > 0 && ::legacy_config::env::var_os("OMSI_NO_SMOKE").is_none() {
-                if let Some(sb) = &scene.smoke_buf {
-                    pass.set_pipeline(&pp.smoke_pipeline);
-                    pass.set_bind_group(1, &self.smoke_bind_group, &[]);
-                    pass.set_vertex_buffer(0, Some(sb.slice(..)));
-                    pass.draw(0..6, 0..scene.smoke_count);
-                }
-            }
-            if scene.corona_count > 0 && ::legacy_config::env::var_os("OMSI_NO_CORONAS").is_none() {
-                if let Some(cb) = &scene.corona_buf {
-                    pass.set_pipeline(&pp.corona_pipeline);
-                    pass.set_vertex_buffer(0, Some(cb.slice(..)));
-                    for &(tex, first, count) in &scene.corona_runs {
-                        let bg = self
-                            .corona_textures
-                            .get(tex as usize)
-                            .and_then(|b| b.as_ref())
-                            .unwrap_or(&self.corona_bind_group);
-                        pass.set_bind_group(1, bg, &[]);
-                        pass.draw(0..6, first..first + count);
-                    }
-                }
-            }
+            self.encode_particles(&mut pass, scene, &pp.smoke_pipeline, &pp.corona_pipeline);
             if !overlays.is_empty() && !masked_frame && !scaled {
                 pass.set_pipeline(&self.overlay_pipeline);
                 for (k, _) in overlays.iter().enumerate() {
