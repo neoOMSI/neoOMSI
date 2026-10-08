@@ -278,7 +278,11 @@ impl Traffic {
             })
             .collect();
         self.junctions.begin_tick((self.time * 1000.0).max(0.0) as u64);
-        let mut emergency_ways: Vec<_> = self.cars.iter().map(|c| self.way_lanes(&c.state, 160.0)).collect();
+        let prepare_emergency = self.player_emergency || self.junctions.has_emergency_reservations()
+            || junction_actors.iter().any(|a| a.emergency);
+        let mut emergency_ways: Vec<_> = if prepare_emergency {
+            self.cars.iter().map(|c| self.way_lanes(&c.state, 160.0)).collect()
+        } else { Vec::new() };
         let mut junction_on_lane = by_lane.clone();
         let mut junction_coming = coming.clone();
         if let Some((actor, way)) = player.and_then(|p| safety::external_actor(&self.net, p, self.player_emergency)) {
@@ -287,9 +291,12 @@ impl Traffic {
             for &(l, d) in way.iter().skip(1) {
                 junction_coming.entry(l).or_default().push((index, d));
             }
-            junction_actors.push(actor); emergency_ways.push(way);
+            junction_actors.push(actor);
+            if prepare_emergency { emergency_ways.push(way); }
         }
-        self.junctions.prepare_emergencies(&self.net, &junction_actors, &emergency_ways, &junction_on_lane);
+        if prepare_emergency {
+            self.junctions.prepare_emergencies(&self.net, &junction_actors, &emergency_ways, &junction_on_lane);
+        }
         let emergency_drives: Vec<_> = junction_actors.iter().zip(&emergency_ways)
             .filter(|(a, _)| a.emergency).map(|(a, way)| ::traffic::EmergencyDrive {
                 vehicle: a.id, way: way.clone(), front: a.front, speed: a.speed,
@@ -391,17 +398,10 @@ impl Traffic {
                 }
             })
             .collect();
-        let maneuver_intents: Vec<ManeuverIntent> = maneuver_actors
-            .iter()
-            .map(|a| ManeuverIntent {
-                vehicle: a.id,
-                target: a
-                    .change
-                    .map(|c| LaneId(c.to))
-                    .or_else(|| required_target(&self.net, a).map(LaneId)),
-                required: true,
-            })
-            .collect();
+        let intent_scene = ManeuverScene { static_clearance: None, net: &self.net, occupancy: &occupancy,
+            actors: &maneuver_actors, people: &[], time: self.time, dt, tick: (self.time * 1000.0).max(0.0) as u64 };
+        let maneuver_intents: Vec<ManeuverIntent> = maneuver_actors.iter().zip(&self.cars)
+            .map(|(a, c)| self.maneuvers.intent(&intent_scene, a, &c.maneuver)).collect();
         self.maneuvers
             .begin_tick(&maneuver_intents, (self.time * 1000.0).max(0.0) as u64);
         for i in 0..self.cars.len() {
@@ -971,7 +971,7 @@ impl Traffic {
                     if let Some(at) = decision.stop_at {
                         stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
                     }
-                    if let Some(binding) = decision.binding {
+                    if let Some(binding) = decision.binding.or(decision.stop_at.map(|_| Reason::StopTarget)) {
                         let at = decision.stop_at.unwrap_or(0.0);
                         if at < why.1 {
                             why = (binding, at);
@@ -1375,16 +1375,9 @@ impl Traffic {
                         contact.as_deref(),
                     );
                     if let Some(before) = before {
-                        let mut actor = ManeuverActor::new(VehicleId(0), state.lane, state.s);
-                        actor.front = state.front; actor.rear = state.rear;
-                        actor.half_width = caps.half_width;
-                        actor.height = safety::vehicle_height(vehicle);
-                        let sample = |b: &AiBody| {
-                            let h = b.heading.to_radians();
-                            ::traffic::perception::SweepSample { p: b.position, d: 0.0, dir: DVec2::new(h.sin(), h.cos()) }
-                        };
-                        if !safety::scenery_clear(road_collision, &[sample(body)], &actor)
-                            && safety::scenery_clear(road_collision, &[sample(&before)], &actor)
+                        let moved = body.position != before.position || body.heading != before.heading;
+                        if moved && road_collision.hit(&safety::road_body_box(vehicle, body, caps)).is_some()
+                            && road_collision.hit(&safety::road_body_box(vehicle, &before, caps)).is_none()
                         {
                             **body = before;
                             body.stop_motion();

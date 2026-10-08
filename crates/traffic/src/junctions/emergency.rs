@@ -10,6 +10,9 @@ pub(super) struct EmergencyReservation {
 }
 
 impl JunctionCoordinator {
+    pub fn has_emergency_reservations(&self) -> bool {
+        !self.emergency_reservations.is_empty()
+    }
     /// Freeze requests once per tick. Stable IDs choose among simultaneous requests;
     /// vehicles already inside retain their reservation until their rear has cleared.
     pub fn prepare_emergencies(

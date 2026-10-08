@@ -17,6 +17,7 @@ mod util;
 mod vehicle_editor;
 mod vehicle_ui;
 mod walk;
+mod traffic_ui;
 mod weather_ui;
 mod translation;
 
@@ -40,6 +41,7 @@ struct Show {
     connect: bool,
     lan: bool,
     walk: bool,
+    traffic: bool,
     translation: bool,
     perf: bool,
     weather: bool,
@@ -69,6 +71,7 @@ pub(crate) struct DevTools {
     tr_tool: translation::TranslationTool,
     perf: perf::PerfTool,
     weather_tool: weather_ui::WeatherTool,
+    traffic_tool: traffic_ui::TrafficTool,
 }
 
 impl DevTools {
@@ -115,6 +118,7 @@ impl DevTools {
                 connect: false,
                 lan: false,
                 walk: false,
+                traffic: false,
                 translation: false,
                 perf: false,
                 weather: false,
@@ -131,6 +135,7 @@ impl DevTools {
             tr_tool: translation::TranslationTool::new(),
             perf: perf::PerfTool::new(),
             weather_tool: weather_ui::WeatherTool::new(),
+            traffic_tool: traffic_ui::TrafficTool::default(),
             box_radius: 25.0,
         }
     }
@@ -149,6 +154,10 @@ impl DevTools {
 
     pub(crate) fn wants_tours(&self) -> bool {
         self.visible && self.show.tours
+    }
+
+    pub(crate) fn traffic_request(&self) -> Option<(f64, u64)> {
+        (self.visible && self.show.traffic).then_some((self.traffic_tool.radius as f64, self.traffic_tool.selected.max(0) as u64))
     }
 
     pub(crate) fn render(
@@ -193,6 +202,7 @@ impl DevTools {
             let tr_tool = &mut self.tr_tool;
             let perf_tool = &mut self.perf;
             let weather_tool = &mut self.weather_tool;
+            let traffic_tool = &mut self.traffic_tool;
             let ui = self.ctx.new_frame();
 
             if *show_boxes {
@@ -243,6 +253,7 @@ impl DevTools {
             net::connect(ui, &mut show.connect, connect_addr, actions);
             net::lan(ui, &mut show.lan, lan_port, actions);
             walk::window(ui, &mut show.walk, extra);
+            traffic_ui::window(ui, &mut show.traffic, traffic_tool, snap, extra, actions, (w, h));
             translation::window(ui, &mut show.translation, tr_tool);
             perf::window(ui, &mut show.perf, perf_tool, snap, extra);
             weather_ui::window(ui, &mut show.weather, weather_tool, extra, actions);

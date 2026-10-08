@@ -18,6 +18,9 @@ pub(super) fn draw(
     let mut mode = *mode_ref;
     if let Some(_bar) = ui.begin_main_menu_bar() {
         if let Some(_m) = ui.begin_menu("Game") {
+            if ui.menu_item_config("Traffic AI").selected(show.traffic).build() {
+                show.traffic = !show.traffic;
+            }
             if ui.menu_item_config("Map Info").selected(show.map).build() {
                 show.map = !show.map;
             }

@@ -445,6 +445,15 @@ impl ManeuverCoordinator {
         self.approved.get(&id).copied()
     }
 
+    /// Submit optional changes through the same arbitration as route-required changes.
+    /// Discovery only reads the frozen scene; trajectory validation happens at commitment.
+    pub fn intent(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &ManeuverState) -> ManeuverIntent {
+        let required = actor.change.map(|c| c.to).or_else(||
+            if actor.at_stop { None } else { required_target(scene.net, actor) });
+        let target = required.or_else(|| self.discretionary_wish(scene, actor, state).map(|w| w.0));
+        ManeuverIntent { vehicle: actor.id, target: target.map(LaneId), required: required.is_some() }
+    }
+
     /// How many vehicles hold an approved lane change this tick (a health/leak check).
     pub fn active_count(&self) -> usize {
         self.approved.len()
@@ -457,14 +466,11 @@ impl ManeuverCoordinator {
         self.tick = tick;
         self.approved.clear();
         self.claimants.clear();
-        for it in intents {
+        let mut ordered: Vec<_> = intents.iter().collect();
+        ordered.sort_by_key(|it| (!it.required, it.vehicle));
+        for it in ordered {
             let Some(t) = it.target else { continue };
-            match self.claimants.get(&t) {
-                Some(&cur) if cur <= it.vehicle => {}
-                _ => {
-                    self.claimants.insert(t, it.vehicle);
-                }
-            }
+            self.claimants.entry(t).or_insert(it.vehicle);
         }
         for (lane, vehicle) in &self.claimants {
             self.approved.insert(*vehicle, *lane);
@@ -639,6 +645,7 @@ impl ManeuverCoordinator {
         state: &mut ManeuverState,
     ) -> Option<ManeuverDecision> {
         let net = scene.net;
+        if actor.at_stop { return None; }
         let to = required_target(net, actor)?;
         let kind = if actor.route_next == Some(to) {
             ChangeKind::RouteChange
@@ -695,10 +702,41 @@ impl ManeuverCoordinator {
         actor: &ManeuverActor,
         state: &mut ManeuverState,
     ) -> Option<ManeuverDecision> {
+        let (to, dir, code) = self.discretionary_wish(scene, actor, state)?;
+        if state.dwell_code != code {
+            state.dwell = DISCRETIONARY_DWELL;
+            state.dwell_code = code;
+            return None;
+        }
+        if state.dwell > 0.0 { return None; }
+        if dir != state.last_side && state.last_side != 0
+            && scene.time - state.last_change_time < OSCILLATION_WINDOW
+        {
+            state.dwell = DISCRETIONARY_DWELL;
+            return None;
+        }
+        let s_to = scene.net.beside_s(actor.lane, to, actor.s);
+        if self.approved(actor.id) != Some(LaneId(to)) { return None; }
+        let ramp = if code == 3 { 8.0 } else { (actor.speed * 3.0).max(12.0) };
+        if !self.can_merge_ramp(scene, actor, to, s_to, ramp) {
+            state.pass_retry = scene.time + 0.5;
+            return None;
+        }
+        state.change_to = Some(to);
+        state.change_dir = dir;
+        state.dwell_code = 0;
+        let mut d = ManeuverDecision::new(ManeuverPhase::LaneChange);
+        d.change = Some(ChangeCommand::new(to, dir, if code == 3 { ChangeKind::Bypass } else { ChangeKind::Change }));
+        d.target_lane = Some(LaneId(to));
+        Some(d)
+    }
+
+    fn discretionary_wish(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &ManeuverState) -> Option<(usize, i32, i16)> {
         if actor.lane_kind != LaneKind::Street
             || state.change_cooldown > 0.0
-            || actor.speed < 4.0
-            || actor.stopped > 0.0
+            || actor.at_stop || actor.light_hold || actor.yielding
+            || state.park.is_some() || state.passing.is_some() || state.pull_out > 0.0
+            || scene.time < state.pass_retry
         {
             return None;
         }
@@ -707,7 +745,6 @@ impl ManeuverCoordinator {
         if lane.length() - actor.s < (actor.speed * 5.5 + 10.0).max(40.0) {
             return None;
         }
-        let frac = actor.s / lane.length().max(1.0);
         let limit = (lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6;
         let lht = net.left_hand;
         let (pass_side, keep_side, pass_dir, keep_dir) = if lht {
@@ -719,62 +756,37 @@ impl ManeuverCoordinator {
         let mut wish: Option<(usize, i32, i16)> = None;
         if let Some(left) = pass_side {
             if self.open_to(net, actor, left) {
-                let s_left = frac * net.lanes[left].length();
-                if let Some((gap, v)) = self.nearest_ahead_on_way(scene, actor, 45.0) {
+                let s_left = net.beside_s(actor.lane, left, actor.s);
+                if let Some((gap, v, owner)) = self.nearest_ahead_on_way(scene, actor, 45.0) {
+                    let standing = v < 0.3 && scene.actors.iter().find(|a| a.id == owner)
+                        .map(|a| a.at_stop || (a.stopped > 25.0 && !a.light_hold && !a.yielding))
+                        .unwrap_or(actor.stopped > 10.0);
+                    let bypass = standing && (actor.speed > 0.5 || actor.stopped >= 3.0);
                     if v < limit * 0.7
                         && v < actor.speed + 1.0
-                        && gap > 8.0
+                        && (bypass || (actor.speed >= 4.0 && actor.stopped <= 0.0))
+                        && gap > if bypass { actor.min_gap } else { 8.0 }
                         && self.lane_clear(scene, actor.id, left, s_left, 20.0, 50.0)
-                        && self.can_merge(scene, actor, left, s_left)
                     {
-                        wish = Some((left, pass_dir, 1));
+                        wish = Some((left, pass_dir, if bypass { 3 } else { 1 }));
                     }
                 }
             }
         }
         // Keep to the correct side when that lane is free.
-        if wish.is_none() {
+        if wish.is_none() && actor.speed >= 4.0 && actor.stopped <= 0.0 {
             if let Some(right) = keep_side {
                 if self.open_to(net, actor, right) {
-                    let s_right = frac * net.lanes[right].length();
+                    let s_right = net.beside_s(actor.lane, right, actor.s);
                     if net.lanes[right].length() - s_right > 40.0
                         && self.lane_clear(scene, actor.id, right, s_right, 30.0, 70.0)
-                        && self.can_merge(scene, actor, right, s_right)
                     {
                         wish = Some((right, keep_dir, 2));
                     }
                 }
             }
         }
-        let (to, dir, code) = wish?;
-        // Hysteresis: the same wish must persist before it commits.
-        if state.dwell_code != code {
-            state.dwell = DISCRETIONARY_DWELL;
-            state.dwell_code = code;
-            return None;
-        }
-        if state.dwell > 0.0 {
-            return None;
-        }
-        // Oscillation guard: do not flip to the other side soon after a change.
-        if dir != state.last_side
-            && state.last_side != 0
-            && scene.time - state.last_change_time < OSCILLATION_WINDOW
-        {
-            state.dwell = DISCRETIONARY_DWELL;
-            return None;
-        }
-        let s_to = frac * net.lanes[to].length();
-        if self.approved(actor.id) == Some(LaneId(to)) && self.can_merge(scene, actor, to, s_to) {
-            state.change_to = Some(to);
-            state.change_dir = dir;
-            state.dwell_code = 0;
-            let mut d = ManeuverDecision::new(ManeuverPhase::LaneChange);
-            d.change = Some(ChangeCommand::new(to, dir, ChangeKind::Change));
-            d.target_lane = Some(LaneId(to));
-            return Some(d);
-        }
-        None
+        wish
     }
 
     // ---- passing -----------------------------------------------------------------------
@@ -1208,6 +1220,10 @@ impl ManeuverCoordinator {
         to: usize,
         s_to: f32,
     ) -> bool {
+        self.can_merge_ramp(scene, actor, to, s_to, (actor.speed * 3.0).max(12.0))
+    }
+
+    fn can_merge_ramp(&self, scene: &ManeuverScene, actor: &ManeuverActor, to: usize, s_to: f32, ramp: f32) -> bool {
         if to >= scene.net.lanes.len() {
             return false;
         }
@@ -1247,7 +1263,6 @@ impl ManeuverCoordinator {
         let (to_p, _) = scene.net.lanes[to].at(s_to);
         let h = h.to_radians() as f64;
         let target = (to_p - from_p).truncate().dot(DVec2::new(h.cos(), -h.sin())) as f32;
-        let ramp = (actor.speed * 3.0).max(12.0);
         let lat = |d: f32| actor.lateral + (target - actor.lateral) * smooth01((d / ramp).clamp(0.0, 1.0));
         if !self.sweep_clear(scene, actor, &lat, ramp, 0.0) {
             return false;
@@ -1279,22 +1294,20 @@ impl ManeuverCoordinator {
         scene: &ManeuverScene,
         actor: &ManeuverActor,
         look: f32,
-    ) -> Option<(f32, f32)> {
+    ) -> Option<(f32, f32, VehicleId)> {
         let way = way_of(scene.net, actor, look + 30.0);
-        let mut best: Option<(f32, f32)> = None;
+        let mut best: Option<(f32, f32, VehicleId)> = None;
         for &(lane, off) in &way {
             for iv in scene.occupancy.intervals(LaneId(lane)) {
                 if iv.owner == actor.id || iv.foreign {
                     continue;
                 }
-                let at = off + iv.s;
-                let gap = at - actor.front - (if off < 0.0 { actor.s } else { 0.0 });
-                let gap = if at < 0.0 { continue } else { gap };
+                let gap = off + iv.rear - actor.front;
                 if gap < 0.0 || gap > look {
                     continue;
                 }
                 if best.map(|b| gap < b.0).unwrap_or(true) {
-                    best = Some((gap, iv.speed));
+                    best = Some((gap, iv.speed, iv.owner));
                 }
             }
         }

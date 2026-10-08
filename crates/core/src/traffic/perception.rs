@@ -159,7 +159,8 @@ impl Traffic {
                         // already let in (the order is kept, it does not flip frame by frame)
                         let t_me = (before - me.front).max(0.0) / me.speed.max(1.0);
                         let dist_them = (theirs - other.state.front).max(0.0);
-                        let t_them = if other.yielding || other.light_hold {
+                        let t_them = if other.yielding || other.light_hold
+                            || (other.at_stop() && other.state.speed < 0.3) {
                             f32::MAX
                         } else if other.state.speed < 0.5 {
                             time_to(dist_them, 0.0, other.state.accel) + other.state.reaction
@@ -647,6 +648,8 @@ impl Traffic {
         let me = car.id;
         // What the car is pulling out round does not stop it.
         let mut ignore: Vec<VehicleId> = ignore_external.to_vec();
+        // Own primary body and articulated sections are never a leader/obstacle.
+        ignore.push(me);
         if car.maneuver.passing.map(|p| !p.aborted).unwrap_or(false)
             || st.change.map(|c| c.bypass).unwrap_or(false)
         {
@@ -694,7 +697,7 @@ impl Traffic {
             d += step;
         }
         let hit = occupancy.swept_clearance(&samples, car.half_width as f64, &ignore)?;
-        let j = self.cars.iter().position(|c| c.id == hit.owner)?;
+        let j = *self.index_of.get(&hit.owner)?;
         let dir = samples
             .iter()
             .find(|s| s.d == hit.d)
