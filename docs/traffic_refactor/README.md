@@ -14,7 +14,14 @@ streaming and recovery) have since landed; see the progress sections in
 remains. Stage 4 makes the realized body the single pose owner; Stages 5–8 add the
 `traffic::junctions`, `traffic::service`, `traffic::maneuvers` and `traffic::population`
 owners, each reading a frozen per-tick scene and returning typed decisions while `core` stays
-the adapter. Stage 9 (calibration, performance, cutover and legacy deletion) remains.
+the adapter.
+
+Stage 9 (calibration, performance, cutover and legacy deletion) has landed: parameter
+provenance is centralized, the domain benchmark and accelerated soak measure and guard the
+budgets, `ev_AI_Horn` is restored as presentation-only feedback, and the `simulation::traffic`
+shim plus the dead `OMSI_TRAFFIC_RUNTIME` selector were removed so **one** production road-AI
+runtime remains. See [PERFORMANCE.md](PERFORMANCE.md) and
+[MAINTAINER_GUIDE.md](MAINTAINER_GUIDE.md).
 
 - Source revision: `35a460a54e51ed28f9fb081b4adf16c8c73993a8` (the plan's `35a460a`).
 - Reference baseline: OMSI 2.2.032 (see [Compatibility](../COMPATIBILITY.md)).
@@ -29,6 +36,8 @@ the adapter. Stage 9 (calibration, performance, cutover and legacy deletion) rem
 | [TEST_INVENTORY.md](TEST_INVENTORY.md) | Source revision, existing tests and callers, the `dt` seam, existing tooling | "record the source revision and inventory existing tests/callers" |
 | [SCENARIOS.md](SCENARIOS.md) | First three synthetic scenario specifications and provisional measurement targets | "define the first synthetic scenario specifications ... set initial behavior targets as provisional" |
 | [TRACE_SCHEMA.md](TRACE_SCHEMA.md) | Field-level decision/blocked-reason capture and the first extraction boundary | "define the minimum decision/blocked-reason capture to add at the Stage 1 seam" |
+| [PERFORMANCE.md](PERFORMANCE.md) | Measured domain tick cost, allocation/memory, streaming cost and the 60-minute soak | "measured benchmark report" |
+| [MAINTAINER_GUIDE.md](MAINTAINER_GUIDE.md) | Module ownership, how to explain a vehicle, parameter provenance, remaining limitations | "concise maintainer guide" |
 
 ## Exit gate
 

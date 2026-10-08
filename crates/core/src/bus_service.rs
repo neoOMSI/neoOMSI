@@ -10,7 +10,7 @@
 //! understands. The body is still moved by the same following controller; this module only
 //! says where to stop and what the service state is.
 
-use ::simulation::traffic::{ServicePhase, ServiceState, StopTarget};
+use ::traffic::{ServicePhase, ServiceState, StopTarget};
 use std::collections::VecDeque;
 
 /// The engine-side half of a scheduled bus: the content the domain does not own.
@@ -69,11 +69,6 @@ impl BusService {
         self.state.at_stop()
     }
 
-    /// The next stop: (route index, distance along that lane).
-    pub fn next_stop(&self) -> Option<(usize, f32)> {
-        self.stops.front().map(|s| (s.route_index, s.s))
-    }
-
     /// Seconds it expects to stand where it is yet (for the traffic behind: worth going
     /// round, or worth waiting for).
     pub fn standing_for(&self, day_time: f64) -> f32 {
@@ -104,15 +99,15 @@ impl BusService {
 
     /// The berth of the front stop, if any, against the vehicle's planned route. A stop whose
     /// lane has not been loaded yet has no berth (the service reports `RoutePending`).
-    pub fn front_berth(&self, route: &[usize]) -> Option<::simulation::traffic::BerthGeometry> {
+    pub fn front_berth(&self, route: &[usize]) -> Option<::traffic::BerthGeometry> {
         let target = self.stops.front()?;
         let lane = route.get(target.route_index).copied()?;
-        Some(::simulation::traffic::BerthGeometry::from_target(target, lane))
+        Some(::traffic::BerthGeometry::from_target(target, lane))
     }
 
     /// The content-derived stop policy for the front stop.
-    pub fn policy(&self) -> ::simulation::traffic::StopPolicy {
-        ::simulation::traffic::StopPolicy {
+    pub fn policy(&self) -> ::traffic::StopPolicy {
+        ::traffic::StopPolicy {
             always: self.always.clone(),
             serve_early: self.serve_early.clone(),
             last_stop: self.last_stop,
@@ -126,8 +121,8 @@ impl BusService {
 pub fn script_feedback(
     vehicle: &::simulation::VehicleInstance,
     phase: ServicePhase,
-) -> ::simulation::traffic::ScriptFeedback {
-    use ::simulation::traffic::ScriptFeedback;
+) -> ::traffic::ScriptFeedback {
+    use ::traffic::ScriptFeedback;
     match phase {
         ServicePhase::ClosingDoors | ServicePhase::WaitingToMerge | ServicePhase::Departing => {
             match vehicle.var("AI_Scheduled_AtStation") {
@@ -175,7 +170,7 @@ pub fn stop_shift(ty: &::simulation::VehicleType, rail: bool) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::simulation::traffic::{PlatformSide, StopId};
+    use ::traffic::{PlatformSide, StopId};
 
     fn stop(id: i64, depart: f64) -> StopTarget {
         StopTarget::from_tuple((0, 0.0, 0.0, depart, id, 0.0))

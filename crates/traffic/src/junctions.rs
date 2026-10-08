@@ -18,6 +18,13 @@
 //!     (reservation refusal).
 //!   - [`BlockMode::Oncoming`] (2): the other is the oncoming/return path; this vehicle may
 //!     reserve but must not enter until the other has committed (entry refusal).
+//!
+//! ## Tuning provenance
+//!
+//! The decision-zone constants below carry their unit and rationale on each item; they are
+//! **provisional** neoOMSI targets. The legality itself is **content** (`[blockpath]`,
+//! `[crossingproblem]`, signal programs). The full table is in
+//! `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
 
 use crate::diagnostics::{JunctionState, Reason};
 use crate::following::{AiState, Lead, MAX_BRAKE};
@@ -403,6 +410,11 @@ impl JunctionCoordinator {
     /// Who this vehicle is currently waiting behind at a junction, if anyone.
     pub fn blocked_by(&self, id: VehicleId) -> Option<VehicleId> {
         self.wait_for.get(&id).copied()
+    }
+
+    /// How many vehicles currently hold a junction commitment (a health/leak check).
+    pub fn commitment_count(&self) -> usize {
+        self.commitments.len()
     }
 
     /// Begin a tick: refresh the arbiter from committed claims and clear the ephemeral exit

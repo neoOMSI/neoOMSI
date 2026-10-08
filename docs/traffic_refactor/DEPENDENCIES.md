@@ -16,8 +16,9 @@ core ─┘                          (never the reverse)
 - `traffic` is a domain crate. It must **never** depend on `core`, `simulation`, `render`,
   `audio`, `map`, `scenery`, `content`, `legacy-script`, `network`, or any asset/OS runtime.
 - Both `simulation` and `core` may depend on `traffic`.
-- `simulation::traffic` is currently a shim (`pub use ::traffic::*;`) so existing callers
-  keep working. The shim is deleted only after all callers import `traffic` directly.
+- `simulation::traffic` was a shim (`pub use ::traffic::*;`) during migration. Stage 9
+  migrated every caller to import `traffic` directly and **deleted the shim**; `core` now
+  depends on `traffic` directly. `simulation` no longer depends on `traffic`.
 - Check the invariant with `cargo tree -p traffic`: only `glam`, `hashbrown`, `log` and
   their transitive leaves may appear.
 
@@ -336,8 +337,28 @@ core ─┘                          (never the reverse)
 - Performance and soak budgets (100/500/1000 vehicles, 60-minute streaming/time-reset runs)
   have no harness yet and stay provisional for Stage 9.
 
-## Deletion rule
+## Current state after Stage 9
 
-Do not remove the shim or any compatibility re-export until its callers have migrated to
-`crates/traffic` directly (see `TEST_INVENTORY.md` for the caller groups). A temporary
-re-export must have a named migration target in the Stage 1 backlog.
+- The replacement is the **only** production road-AI runtime. The `simulation::traffic`
+  re-export shim and the `pub mod traffic` declaration are gone; the unused `traffic`
+  dependency was removed from `simulation`, and `core` depends on `traffic` directly.
+- The `RuntimeKind` / `selected()` / `OMSI_TRAFFIC_RUNTIME` session selector and the empty
+  `core::traffic_runtime::{vehicles, passengers, presentation, replication}` stubs were
+  removed; `core::traffic_runtime::content` remains as the content-to-capability adapter.
+- No persisted or network traffic schema changed: `PROTOCOL` stays 7 and a `.osn` situation
+  never stores AI traffic (it is rebuilt on load). Only the diagnostic capture schema changed
+  (`TRACE_VERSION` 7, the `Horn` event).
+- Parameter provenance is centralized; the units/rationale/provenance table and the
+  remaining content limitations are in [MAINTAINER_GUIDE.md](MAINTAINER_GUIDE.md).
+- Performance and soak evidence is in [PERFORMANCE.md](PERFORMANCE.md): the domain benchmark
+  (`crates/traffic/benches/domain.rs`) and the accelerated 60-minute soak
+  (`crates/traffic/tests/s9_soak.rs`).
+- Full `AiCar` field encapsulation and moving the dormant kinematics into the domain remain
+  documented, deferred work (Stages 10+).
+
+### Deletion rule (retired)
+
+The Stage 1 rule — do not remove a shim/compatibility re-export until its callers migrate —
+has been satisfied: every caller now imports `crates/traffic` directly, so the shim and the
+migration-only runtime selector were deleted. New temporary re-exports should repeat the same
+rule: a named migration target, removed once the callers move.

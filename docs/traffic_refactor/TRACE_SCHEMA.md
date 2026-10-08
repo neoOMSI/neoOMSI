@@ -9,7 +9,9 @@ replayable, unlike those ad-hoc dumps.
 ## Versioning
 
 - `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change bumps
-  it. It is currently **6**: Stage 8 added the per-vehicle `lifecycle`
+  it. It is currently **7**: Stage 9 added the `Horn { vehicle, reason }` event (a documented
+  provisional `ev_AI_Horn` trigger; presentation feedback only) and centralized parameter
+  provenance. Stage 8 added the per-vehicle `lifecycle`
   (`Active`/`Dormant`/`Pending`/`Removed`), the spawn-denial reasons `NoPath`, `NoGround`,
   `AtCapacity` and `EntranceBusy`, and the lifecycle events `SpawnRetried`, `DormantEntered`,
   `DormantReactivated` and `TopologyRequested`, the single writer of admission being
@@ -121,14 +123,16 @@ StopArrival, BoardingPermission, CloseRequest, Departure, TripComplete,
 DutyHandover, Fault(reason), Removal(reason), ClaimGranted, ClaimReleased,
 BerthGranted, BerthReleased, SpawnAdmitted, SpawnDenied(reason),
 SpawnRetried(request), DormantEntered(vehicle), DormantReactivated(vehicle),
-TopologyRequested(tile)
+TopologyRequested(tile), Horn(vehicle, reason)
 ```
 
 `schedule`, passengers, scripts, and LAN adapters consume these through typed boundaries.
 Removal must notify schedule and passengers and release resources exactly once.
 `SpawnAdmitted`/`SpawnDenied` are the population owner's decisions; `DormantEntered`/
 `DormantReactivated` are the logical dormant lifecycle, and `TopologyRequested` records a
-loaded tile wanted ahead of a route frontier.
+loaded tile wanted ahead of a route frontier. `Horn` records a provisional `ev_AI_Horn`
+dispatch; it is presentation feedback only and never resolves a blocked maneuver (the exact
+legacy trigger is unestablished).
 
 ## Valid waits vs errors
 

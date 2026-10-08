@@ -7,7 +7,7 @@
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
 /// Version of the capture schema. Any field addition, removal, or semantic change bumps it.
-pub const TRACE_VERSION: u32 = 6;
+pub const TRACE_VERSION: u32 = 7;
 
 /// Why a vehicle cannot proceed at full freedom. Every active cause is preserved; one of
 /// them is the binding constraint.
@@ -357,6 +357,14 @@ pub enum TraceEvent {
     /// A loaded tile is wanted ahead of a route frontier before a vehicle reaches it.
     TopologyRequested {
         tile: (i32, i32),
+    },
+    /// An AI driver sounded its horn at the binding constraint. Presentation feedback only:
+    /// it never grants entry, releases a claim or otherwise resolves a blocked maneuver.
+    /// The exact legacy trigger of `ev_AI_Horn` is unestablished; this records the documented
+    /// provisional neoOMSI trigger (see the maintainer guide).
+    Horn {
+        vehicle: VehicleId,
+        reason: Reason,
     },
 }
 

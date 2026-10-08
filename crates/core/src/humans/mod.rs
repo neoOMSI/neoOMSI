@@ -48,7 +48,7 @@ use ::simulation::VehicleInstance;
 use ::simulation::crowd::{self, Block, CrowdParams, PathGraph, Walker};
 use ::simulation::human::{Activity, HumanType, skin};
 use ::simulation::human_omsi::{AnimInput, OmsiAnim};
-use ::simulation::traffic::{LaneKind, Network};
+use ::traffic::{LaneKind, Network};
 use ::legacy_vehicle::PassengerCabin;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};

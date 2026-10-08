@@ -9,7 +9,7 @@ use hashbrown::HashMap;
 use ::render::{Renderer, Scene};
 use ::simulation::ai_motion::{AiBody, MotionKind};
 use ::simulation::collision::Obb;
-pub(crate) use ::simulation::traffic::{
+pub(crate) use ::traffic::{
     AiState, Aspect, BodyFootprint, Capture, CaptureTrigger, ChangeInfo, ChangeKind,
     JunctionActor, JunctionCoordinator, JunctionDecision, JunctionScene, JunctionState, LaneId,
     LaneKind, Lead, ManeuverActor, ManeuverCoordinator, ManeuverInputs,
@@ -21,7 +21,7 @@ pub(crate) use ::simulation::traffic::{
     RemovalCause, SpawnClass, SpawnFacts, SpawnOutcome, SpawnRequest, SpawnRequestId,
     TraceEvent, DORMANT_CAP_FACTOR,
 };
-use ::simulation::traffic::{
+use ::traffic::{
     BerthIntent, ServiceActor, ServiceCoordinator, ServiceInputs, ServicePhase, ServiceScene,
     StopDemand, STOP_REACH,
 };
@@ -62,6 +62,16 @@ pub fn warm_up(world: &World, ty: &Arc<VehicleType>, hof: Option<Arc<::legacy_ve
 /// A car edging out round something standing keeps to `PULL_OUT_ACCEL` until its front is
 /// this far past the obstacle's rear (m).
 const PRIORITY_WARN_GAP: f32 = 60.0;
+
+/// Seconds a car may stand held at low speed behind a non-moving obstruction before its
+/// driver sounds the horn (s). This is a documented provisional neoOMSI trigger: the
+/// reference establishes only that `ev_AI_Horn` exists, not its original trigger. It is
+/// presentation feedback and never grants entry or releases a claim.
+const HORN_HOLD: f32 = 3.0;
+/// Minimum seconds between two horns from the same car (s), so a queue does not beep.
+const HORN_COOLDOWN: f32 = 8.0;
+/// Above this speed (m/s) a car is moving, not held, and does not sound the horn.
+const HORN_SPEED: f32 = 1.0;
 
 /// Room an oncoming vehicle needs beside a car (m from the car's side to the middle of the
 /// oncoming lane): its half width and a margin.
@@ -147,6 +157,8 @@ pub struct AiCar {
     /// stops, so that it can steer out round it later (m, front bumper to the other's body;
     /// from its own steering, `pull_out_room`).
     pub pass_room: f32,
+    /// Seconds until this car may sound its horn (`ev_AI_Horn`) again (s); see `HORN_HOLD`.
+    pub horn_cooldown: f32,
     /// The traffic light it waited for in the last frame: distance from its origin.
     pub light_at: Option<f32>,
     /// A rail vehicle: the track it has come along, (odometer, point), oldest first -
@@ -250,21 +262,6 @@ impl Footprint {
             half_w: b.half.x,
             speed,
             z: b.z0,
-        }
-    }
-
-    /// The footprint as a collision box (no height range).
-    fn obb(&self) -> Obb {
-        Obb {
-            center: self.center,
-            half: DVec2::new(self.half_w, self.half_len),
-            heading: self.fwd.x.atan2(self.fwd.y),
-            z0: f64::MIN,
-            z1: f64::MAX,
-            velocity: DVec2::ZERO,
-            mass: 0.0,
-            pole: None,
-            id: -1,
         }
     }
 
@@ -440,7 +437,7 @@ pub struct DormantCar {
 /// player (memory: a dormant car is a few dozen bytes, but each one woken is a full vehicle).
 const MAP_POPULATION_FACTOR: f32 = 8.0;
 
-fn street_lane_weight(l: &::simulation::traffic::Lane) -> Option<f64> {
+fn street_lane_weight(l: &::traffic::Lane) -> Option<f64> {
     (l.kind == LaneKind::Street && !l.no_cars && l.density > 0.0 && l.length() >= 8.0)
         .then(|| l.length() as f64 * l.density.clamp(0.05, 4.0) as f64)
 }
@@ -1426,7 +1423,6 @@ impl Traffic {
     /// Build the network from the lanes collected by `World::build_scene` and load the AI
     /// car types of the map's `ailists.cfg` (the `[aigroup_2]` groups that are not depots).
     pub fn new(root: &Path, world: &World, target: usize) -> Result<Traffic> {
-        log::info!("traffic runtime: {:?}", crate::traffic_runtime::selected());
         let (lanes, parked_cars, lane_tiles) = take_from_tiles(world);
         let mut net = Network {
             lanes,
@@ -1668,7 +1664,7 @@ impl Traffic {
         let prio = net
             .lanes
             .iter()
-            .filter(|l| (l.priority - ::simulation::traffic::DEFAULT_PRIORITY).abs() > 0.5)
+            .filter(|l| (l.priority - ::traffic::DEFAULT_PRIORITY).abs() > 0.5)
             .count();
         log::info!(
             "traffic: {} lanes ({turning} turning, {with_side} with a neighbour, {turn_lanes} where a turn lane applies, {closed} closed to cars of which {closed_junctions} are junctions, {quiet} with less traffic by [rule], {prio} with a [rule] priority), {} AI vehicle types in {} groups, {} light programs, {} lamps",
@@ -2171,7 +2167,7 @@ impl Traffic {
 
     /// How much of group `g`'s traffic `lane` carries: the path's `[rule] trafficdensity`
     /// for the group, else the group's default (see `uvg_defaults`).
-    fn lane_group_density(&self, lane: &::simulation::traffic::Lane, g: usize) -> f32 {
+    fn lane_group_density(&self, lane: &::traffic::Lane, g: usize) -> f32 {
         match self.group_uvg.get(g).copied().flatten() {
             Some(u) => lane.pool_density(&self.uvg_defaults, u),
             None => lane.density,
@@ -3015,7 +3011,7 @@ impl Traffic {
                         .net
                         .reach
                         .get(*i)
-                        .map(|r| *r >= ::simulation::traffic::DEAD_END)
+                        .map(|r| *r >= ::traffic::DEAD_END)
                         .unwrap_or(true)
                 })
                 // as many cars on a lane as metres of it (times its density): counted per
@@ -3145,13 +3141,13 @@ impl Traffic {
                     .net
                     .reach
                     .get(req.lane)
-                    .map(|r| *r >= ::simulation::traffic::DEAD_END)
+                    .map(|r| *r >= ::traffic::DEAD_END)
                     .unwrap_or(true);
             let continuation = self
                 .net
                 .reach
                 .get(req.lane)
-                .map(|r| *r >= ::simulation::traffic::DEAD_END)
+                .map(|r| *r >= ::traffic::DEAD_END)
                 .unwrap_or(true);
             let visible = kind == LaneKind::Air || self.initial || self.may_appear(world, p);
             facts.insert(
@@ -3792,6 +3788,7 @@ impl Traffic {
             wait_at: None,
             squeeze: None,
             pass_room,
+            horn_cooldown: 0.0,
             light_at: None,
             rail_trail: Default::default(),
             track_start,
@@ -4306,17 +4303,15 @@ impl Traffic {
         None
     }
 
-    /// The light that holds a car at the start of `way[k]`: that lane's light, unless the
-    /// car has already gone through a light of the same crossing object on the way there
-    /// (the lanes before it, back to where it came into that object). A car turning right
-    /// went on green and then stopped as it came round the corner, at the light of the
-    /// cross traffic on the path its turn joins - a stop line in mid-junction nobody sees.
-    fn light_at_entry(&self, way: &[(usize, f32)], k: usize) -> Option<(usize, usize)> {
-        ::simulation::traffic::light_at_entry(&self.net, way, k)
-    }
-
-    fn way_lanes_into(&self, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
-        out.clear();
+    fn way_lanes(&self, st: &AiState, within: f32) -> Vec<(usize, f32)> {
+        let mut out = vec![(st.lane, -st.s)];
+        let mut d = self.net.lanes[st.lane].length() - st.s;
+        let plan: Vec<usize> = match st.change {
+            Some(c) => std::iter::once(c.to)
+                .chain(st.change_plan.iter().copied())
+                .collect(),
+            None => st.upcoming().collect(),
+        };
         if let Some(c) = st.change {
             // over on the new lane: its distances count from the same place
             out.push((c.to, -c.s_to));
@@ -4839,7 +4834,7 @@ impl Traffic {
                     .net
                     .lanes
                     .get(c.state.lane)
-                    .map(|l| l.kind == ::simulation::traffic::LaneKind::Rail)
+                    .map(|l| l.kind == ::traffic::LaneKind::Rail)
                     .unwrap_or(false)
             })
             .map(|c| {
@@ -4915,7 +4910,7 @@ impl Traffic {
                 .net
                 .lanes
                 .get(st.lane)
-                .map(|l| l.kind != ::simulation::traffic::LaneKind::Rail)
+                .map(|l| l.kind != ::traffic::LaneKind::Rail)
                 .unwrap_or(true)
             {
                 continue;
@@ -5667,6 +5662,39 @@ impl Traffic {
                         why = (reason, v);
                     }
                 }
+            }
+            // An AI driver sounds its horn (`ev_AI_Horn`) when held standing at low speed
+            // behind a non-moving obstruction. This is a documented provisional neoOMSI
+            // trigger (the reference proves only that the event exists), it is presentation
+            // feedback only, and it is never a way to resolve a blocked maneuver: it does not
+            // touch stop_at, claims or admission. The script ignores an event it has none of.
+            let mut horn_reason: Option<Reason> = None;
+            {
+                let car = &mut self.cars[i];
+                car.horn_cooldown = (car.horn_cooldown - dt).max(0.0);
+                if car.horn_cooldown <= 0.0
+                    && !car.is_bus()
+                    && !car.is_rail()
+                    && car.stopped >= HORN_HOLD
+                    && car.state.speed < HORN_SPEED
+                    && matches!(
+                        why.0,
+                        Reason::Leader
+                            | Reason::Pedestrian
+                            | Reason::Yield
+                            | Reason::OccupiedExit
+                            | Reason::JunctionClaim
+                            | Reason::Passing
+                    )
+                {
+                    car.horn_cooldown = HORN_COOLDOWN;
+                    let _ = car.vehicle.trigger("ev_AI_Horn");
+                    horn_reason = Some(why.0);
+                }
+            }
+            if let Some(reason) = horn_reason {
+                let vehicle = self.cars[i].id;
+                self.emit_trace(TraceEvent::Horn { vehicle, reason });
             }
             self.cars[i].held = stop_at.is_some() || lead.map(|l| l.0.gap < 12.0).unwrap_or(false);
             // a timetable bus: its stops (see `bus_service`); any other car keeps to the middle
@@ -6785,7 +6813,7 @@ impl Traffic {
             }
             let o = &self.net.lanes[l];
             let pts: Vec<DVec3> = o.points.iter().rev().copied().collect();
-            let mut t = ::simulation::traffic::LaneBuilder::polyline(pts, o.kind, o.width);
+            let mut t = ::traffic::LaneBuilder::polyline(pts, o.kind, o.width);
             t.key = o.key;
             t.reversed = !o.reversed;
             t.speed_limit_kmh = o.speed_limit_kmh;
@@ -6850,7 +6878,7 @@ impl Traffic {
                 DVec3::new(xy.x, xy.y, p0.z + (p1.z - p0.z) * t)
             })
             .collect();
-        let mut l = ::simulation::traffic::LaneBuilder::polyline(pts, la.kind, la.width);
+        let mut l = ::traffic::LaneBuilder::polyline(pts, la.kind, la.width);
         l.speed_limit_kmh = la.speed_limit_kmh.min(lb.speed_limit_kmh);
         l.name = "(timetable connector)".into();
         l.density = 0.0;
@@ -7764,7 +7792,7 @@ fn train_cars(root: &Path, lists: &::map::ailists::AiLists) -> hashbrown::HashSe
 fn take_from_tiles(
     world: &World,
 ) -> (
-    Vec<::simulation::traffic::Lane>,
+    Vec<::traffic::Lane>,
     Vec<(DVec3, f64)>,
     Vec<(i32, i32)>,
 ) {
@@ -7777,7 +7805,7 @@ fn take_from_tiles(
     // every run, and so is the random traffic drawn from them (a run can be repeated to
     // look at what a car did).
     new.sort_by(|a, b| {
-        let first = |l: &::simulation::traffic::Lane| {
+        let first = |l: &::traffic::Lane| {
             l.points
                 .first()
                 .map(|p| (p.x.to_bits(), p.y.to_bits()))
@@ -7947,6 +7975,7 @@ impl Traffic {
             scheme: None,
             squeeze: None,
             pass_room: 0.0,
+            horn_cooldown: 0.0,
             light_at: None,
             rail_trail: Default::default(),
             track_start: None,
@@ -8181,7 +8210,7 @@ mod road_scale_tests {
 
 #[cfg(test)]
 mod junction_arrival_tests {
-    use ::simulation::traffic::{crossing_arrival, AiState};
+    use ::traffic::{crossing_arrival, AiState};
 
     #[test]
     fn stopped_queue_does_not_predict_a_restart() {
@@ -8239,7 +8268,7 @@ mod junction_arrival_tests {
 mod group_density_tests {
     use super::player_reach_ahead;
     use glam::DVec2;
-    use ::simulation::traffic::pool_density as uvg_density;
+    use ::traffic::pool_density as uvg_density;
 
     /// Berlin-Spandau's `unsched_vehgroups.txt`: NormalCars 1, Trucks 0, Commercials 1,
     /// Ambulance 1, GDRCars 0.

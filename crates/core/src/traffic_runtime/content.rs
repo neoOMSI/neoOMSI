@@ -1,7 +1,7 @@
 //! Translation from loaded vehicle content to validated domain capabilities.
 
 use ::simulation::VehicleType;
-use ::simulation::traffic::{CapabilitySource, VehicleCapabilities};
+use ::traffic::{CapabilitySource, VehicleCapabilities};
 
 /// Build a vehicle's immutable capabilities from its loaded type and AI class.
 pub(crate) fn capabilities(

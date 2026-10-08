@@ -134,7 +134,7 @@ pub struct SceneryObject {
     pub traffic_lights: Vec<TrafficLight>,
     pub approach_dist: Option<f32>,
     /// `[traffic_light_stop] light time if_request`: the cycle clock halts at `time` (see
-    /// `::simulation::traffic::LightStop`).
+    /// `::traffic::LightStop`).
     pub traffic_light_stop: Vec<[f32; 3]>,
     /// `[traffic_light_jump] light time if_request jump_to`.
     pub traffic_light_jump: Vec<[f32; 4]>,

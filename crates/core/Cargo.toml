@@ -37,6 +37,7 @@ texture = { path = "../texture" }
 geometry = { path = "../geometry" }
 render = { path = "../render" }
 simulation = { path = "../simulation" }
+traffic = { path = "../traffic" }
 legacy-plugin = { path = "../legacy-plugin" }
 # the game's allocator (see lib.rs)
 mimalloc = { version = "0.1", default-features = false }

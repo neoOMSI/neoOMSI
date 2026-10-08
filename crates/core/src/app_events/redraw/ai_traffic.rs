@@ -4,10 +4,10 @@ use super::*;
 
 /// Fixed simulation step for the traffic domain: decisions run at a stable rate,
 /// independent of the render frame rate. Rendering may run at any rate on top.
-pub(super) const SIM_DT: f32 = ::simulation::traffic::SIM_DT;
+pub(super) const SIM_DT: f32 = ::traffic::SIM_DT;
 /// Most fixed steps to run in one frame; a long stall is bounded and the rest of the
 /// debt is kept (capped) rather than silently lost or turned into one huge step.
-pub(super) const MAX_SIM_STEPS: u32 = ::simulation::traffic::MAX_SIM_STEPS;
+pub(super) const MAX_SIM_STEPS: u32 = ::traffic::MAX_SIM_STEPS;
 
 impl App {
     /// Tile streaming and the AI traffic.
@@ -122,7 +122,7 @@ impl App {
                         .and_then(|p| p.vehicle.var("TrafficPriority"))
                         .is_some_and(|v| v > 0.5),
                 );
-                let steps = ::simulation::traffic::advance_fixed_clock(
+                let steps = ::traffic::advance_fixed_clock(
                     &mut self.sim_accum,
                     dt,
                     SIM_DT,

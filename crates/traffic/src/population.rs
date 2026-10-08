@@ -22,6 +22,12 @@
 //!
 //! Like the other owners this module holds no `Capture`; it returns typed decisions and the
 //! adapter forwards the [`TraceEvent`]s.
+//!
+//! ## Tuning provenance
+//!
+//! The constants below carry their unit in the name and their rationale on each item, and are
+//! **provisional** neoOMSI targets (plan sections 6 and 8): the map supplies demand, not these
+//! admission bounds. The full table is in `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
 
 use crate::diagnostics::{Reason, TraceEvent};
 use crate::ids::VehicleId;
@@ -293,6 +299,11 @@ impl PopulationCoordinator {
 
     pub fn queue_len(&self) -> usize {
         self.queue.len()
+    }
+
+    /// How many tiles are wanted ahead of a route frontier.
+    pub fn topology_len(&self) -> usize {
+        self.topology.len()
     }
 
     /// Whether another request fits in the bounded queue.

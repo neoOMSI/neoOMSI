@@ -113,6 +113,19 @@ spawn demand and multiple viewers/LAN players" acceptance rows executable agains
 | `s8_dormant_reactivation.rs` | A dormant actor whose wake spot is occupied or ungrounded stays dormant; once the gap clears it is placed back, and no reactivation overlaps. |
 | `s8_lan_authority.rs` | A mirror client makes no population decisions; the host is the single authority; an authority change or time reset preserves duty ownership without duplicating it. |
 
+## Stage 9 performance and soak harnesses (headless)
+
+Stage 9 adds the measurement harnesses and freezes the performance/soak targets. They are
+asset-free and redistributable:
+
+| Harness | Required behaviour |
+| --- | --- |
+| `crates/traffic/benches/domain.rs` | p50/p95/p99 domain tick cost, allocation rate and peak memory at 100/500/1000 active vehicles under ordinary and congested junction loads, plus streaming update cost. `harness = false`, std only (adds no dependency). |
+| `crates/traffic/tests/s9_soak.rs` | A dense mixed 60-minute churn (180,000 ticks) across junction, population, service and maneuver owners with periodic network invalidation; every commitment/berth/queue is released and the bounded queues stay bounded. The short version runs in the normal suite; the 60-minute run is `#[ignore]`d. |
+
+Measured results and the named-hardware budget are in [PERFORMANCE.md](PERFORMANCE.md); the
+parameter provenance is in [MAINTAINER_GUIDE.md](MAINTAINER_GUIDE.md).
+
 ## Provisional measurement targets
 
 NeoOMSI targets, not constants established by the reference report. Each is calibrated as
@@ -125,10 +138,10 @@ its stage becomes runnable; performance and soak budgets are frozen before Stage
 | Progress | Each clearance scenario has a deadline from blocker removal to first movement and to full discharge, derived from route length, acceleration, and reaction limits; no single global timeout | Stages 4–5 |
 | Service | Exactly one physical/logical owner per duty instance; once-only served/skipped stop events; zero false arrivals and duplicate trip spawns; zero departures with known unsafe door/doorway state | Stage 6 |
 | Population | Bounded demand/admission (no unbounded queue), zero overlapping spawns, dormant identity/duty preserved across streaming and time resets, host-only authority | Stage 8 |
-| Natural motion | Record acceleration, jerk, lateral acceleration, steering rate, headway, emergency-brake frequency, unnecessary stop/restart cycles, manoeuvre reversals, and delay after a usable gap; normal driving within the comfort envelope, emergency exceptions carry a reason | Stages 4, 9 |
+| Natural motion | Record acceleration, jerk, lateral acceleration, steering rate, headway, emergency-brake frequency, unnecessary stop/restart cycles, manoeuvre reversals, and delay after a usable gap; normal driving within the comfort envelope, emergency exceptions carry a reason | Stages 4, 9; depth in Stage 10 |
 | Replay | Seeded repeat runs preserve decision/event hashes on the same platform; reordered storage or worker count has no semantic effect; cross-platform uses documented float tolerances | Stage 1, 9 |
-| Performance | Benchmarks at 100, 500, and 1000 active road vehicles under ordinary and congested junction loads; record p50/p95/p99 tick cost, allocation rate, memory, streaming cost on named hardware | Stage 9 (no harness exists yet) |
-| Soak | 60-minute seeded dense mixed-traffic run plus repeated streaming/time-reset cycles; no unresolved claim/berth/duty leak, no unbounded pending-queue growth, no unexplained persistent stall | Stage 9 |
+| Performance | Benchmarks at 100, 500, and 1000 active road vehicles under ordinary and congested junction loads; record p50/p95/p99 tick cost, allocation rate, memory, streaming cost on named hardware | **Finalised (Stage 9)**: worst domain tick 1.14 ms p99 = 5.7 % of the 20 ms tick; see [PERFORMANCE.md](PERFORMANCE.md) |
+| Soak | 60-minute seeded dense mixed-traffic run plus repeated streaming/time-reset cycles; no unresolved claim/berth/duty leak, no unbounded pending-queue growth, no unexplained persistent stall | **Finalised (Stage 9)**: accelerated 180,000-tick soak passes; see [PERFORMANCE.md](PERFORMANCE.md) |
 
 ## Exit gate
 

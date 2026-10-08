@@ -21,6 +21,15 @@
 //! 3. discretionary maneuvers (overtaking, keeping to the correct lane);
 //! 4. optional maneuvers (passing a standing obstruction) - waiting is correct when the
 //!    whole outbound+return trajectory cannot be checked clear.
+//!
+//! ## Tuning provenance
+//!
+//! The constants below have their unit in the name and their rationale on each item. Their
+//! provenance is one of: **content** (imported from map/vehicle data), **observed** (OMSI
+//! compatibility), **improvement** (a deliberate neoOMSI behaviour change) or **provisional**
+//! (unverified tuning). The maneuver set is **improvement/provisional** (plan section 6) except
+//! where a content length is passed in. The full table is in
+//! `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
 
 use crate::diagnostics::{ManeuverPhase, Reason};
 use crate::following::{arrival_time, ramp_progress_for, smooth01};
@@ -421,6 +430,11 @@ impl ManeuverCoordinator {
     /// The lane change approved for `id` this tick, if any.
     pub fn approved(&self, id: VehicleId) -> Option<LaneId> {
         self.approved.get(&id).copied()
+    }
+
+    /// How many vehicles hold an approved lane change this tick (a health/leak check).
+    pub fn active_count(&self) -> usize {
+        self.approved.len()
     }
 
     /// Begin a tick: order the submitted lane-change wishes by target lane and stable id, so

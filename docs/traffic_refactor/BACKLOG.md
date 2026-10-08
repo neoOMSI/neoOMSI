@@ -35,8 +35,8 @@ behaviour; the exact semantics of unresolved fields stay `unknown` until their o
 | --- | --- | --- | --- | --- |
 | `D1` | Retain the per-path `[crossingproblem]` flag through network compilation and establish its decision semantics | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), [assembly/007b432c.asm](H:/marcel_omsi/assembly/007b432c.asm) `007b788a`/`007b78c6` | 2, 5 | done (Stage 5: keep-clear entry refusal) |
 | `D2` | Retain both `[blockpath]` values as a typed block rule with mode; determine directional/admission/occupancy meaning | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), `007b78d3`/`007b79cb`/`007b7a4a` | 2, 3, 5 | done (Stage 5: `BlockMode` Occupy/Reserve/Oncoming) |
-| `D3` | Audit and import all five `[ai_brakeperformance]` values; only element 4 is consumed today | [`crates/vehicle/src/vehicle/parse.rs`](../../crates/vehicle/src/vehicle/parse.rs), [`bus_service::stop_shift`](../../crates/core/src/bus_service.rs) | 2, 4, 6 | partial |
-| `D4` | Add the `ev_AI_Horn` behaviour event through the script adapter with cooldown and diagnostics | `007db679`/`007db683`; [Traffic AI guide](H:/marcel_omsi/subsystems/traffic_ai.md) | 7, 9 | deferred (Stage 7: the reference proves the event, not its trigger; presentation feedback must not resolve a blocked maneuver — Stage 9) |
+| `D3` | Audit and import all five `[ai_brakeperformance]` values; only element 4 is consumed today | [`crates/vehicle/src/vehicle/parse.rs`](../../crates/vehicle/src/vehicle/parse.rs), [`bus_service::stop_shift`](../../crates/core/src/bus_service.rs) | 2, 4, 6 | done (Stage 4 `BrakingCapability` keeps all five; element 4 verified, braking strength a documented provisional class fallback; Stage 9 documents the provenance) |
+| `D4` | Add the `ev_AI_Horn` behaviour event through the script adapter with cooldown and diagnostics | `007db679`/`007db683`; [Traffic AI guide](H:/marcel_omsi/subsystems/traffic_ai.md) | 7, 9 | done (Stage 9: provisional cooldown trigger through the script adapter + `TraceEvent::Horn`; the exact legacy trigger stays unknown, presentation-only, never resolves a blocked maneuver) |
 | `D5` | Honour script-facing station state (`AI_Scheduled_AtStation`) and separate safe fallback from unsafe doors | [functions/007eab20.md](H:/marcel_omsi/functions/007eab20.md), `007eb4bc` | 6 | done (Stage 6: typed `ScriptFeedback`) |
 | `D6` | Re-establish stop length, boarding region, docking reach (`BAY_REACH`) and lateral placement as separate concepts | `00620004.asm` shows `00620058` is list traversal, not metadata; [`bus_service`](../../crates/core/src/bus_service.rs) | 2, 6 | done (Stage 6: `BerthGeometry`) |
 | `D7` | Remove the unconditional full-exit override after `GRIDLOCK_WAIT`; models admission, occupancy, recovery separately | [`Traffic::junction_stop`](../../crates/core/src/traffic.rs) | 5 | done (Stage 5) |
@@ -470,4 +470,44 @@ scenario passes:
 | The streaming removal branch skipping `junctions`/`services`/`maneuvers` release | `population.release` plus the existing coordinator releases on every removal path | Resources and duty notifications are released exactly once, including a car removed by tile unload. |
 | `fill_map`'s inline `MAP_POPULATION_FACTOR` cap with unregistered dormant cars | `PopulationCoordinator::dormant_has_room` + `enter_dormant` | The whole-map dormant population is bounded by the owner and its identity/duty are registered for reactivation. |
 | No tile demand ahead of a route frontier | `request_topology_tile` + `topology_centers` fed to the streamer | A bus reaches loaded ground where feasible instead of stopping at the loaded edge. |
+
+## Stage 9 progress
+
+- **Calibration and parameter provenance.** Every tuning constant carries its unit in the name
+  and its rationale on the item; each owner module's header states the provenance class
+  (content / observed / improvement / provisional). The full units/rationale/provenance table
+  is in [MAINTAINER_GUIDE.md](MAINTAINER_GUIDE.md). `D3` braking stays a documented
+  provisional class fallback; dormant kinematics and multi-berth/multi-lane parking are
+  documented content limitations.
+- **`D4` `ev_AI_Horn`** is restored through the script adapter: a per-car cooldown and a
+  conservative documented trigger (held standing at low speed behind a non-moving
+  obstruction), with a new `TraceEvent::Horn`; `TRACE_VERSION` is 7. It is presentation
+  feedback only and never resolves a blocked maneuver.
+- **Benchmarks.** `crates/traffic/benches/domain.rs` is a `harness = false`, std-only benchmark
+  (no dependency added) measuring p50/p95/p99 domain tick cost, allocation rate and peak
+  memory at 100/500/1000 vehicles under ordinary and congested junction loads, plus streaming
+  update cost. Numbers and budget are in [PERFORMANCE.md](PERFORMANCE.md); the worst measured
+  domain tick is 1.14 ms p99, 5.7 % of the 20 ms fixed tick.
+- **Soak.** `crates/traffic/tests/s9_soak.rs` runs the full 60-minute simulation (180,000
+  ticks) across junction, population, service and maneuver churn with periodic network
+  invalidation, asserting every commitment/berth/queue is released and bounded. It passes in
+  ~40 s; the short version runs in the normal suite.
+- **Cutover and deletion.** All `simulation::traffic` callers migrated to `::traffic`; the
+  `crates/simulation/src/traffic.rs` shim, the `pub mod traffic` declaration and the unused
+  `traffic` dependency were removed. The `RuntimeKind`/`OMSI_TRAFFIC_RUNTIME` rollback switch
+  and the empty `core::traffic_runtime` stubs are gone; `core` now depends on `traffic`
+  directly. No persisted/network traffic schema changed (`PROTOCOL` stays 7; `.osn` never
+  stores AI traffic). Dead helpers (`Footprint::obb`, `Traffic::light_at_entry`,
+  `BusService::next_stop`) removed.
+- **Only one production road-AI runtime remains.** `AiState::drive` is the current domain
+  following controller (not legacy); full `AiCar` encapsulation is deferred (documented).
+
+### Stage 9 replacement reason trail
+
+| Removed | Replacement / state | Why it is safe |
+| --- | --- | --- |
+| `simulation::traffic` re-export shim and its `traffic` dependency | All callers import `::traffic` directly; `core` gains a direct `traffic` dependency | Every caller migrated; the domain crate is the single implementation. |
+| `RuntimeKind` / `selected()` / `OMSI_TRAFFIC_RUNTIME` | Deleted | The selector was dead (result only logged) and there is no second runtime to roll back to. |
+| Empty `core::traffic_runtime::{vehicles, passengers, presentation, replication}` stubs | Deleted; `content.rs` remains | They were doc-comment-only placeholders; the adapters live in `core::Traffic`. |
+| `Footprint::obb`, `Traffic::light_at_entry`, `BusService::next_stop` | Deleted | Unused dead code surfaced by `cargo check`. |
 

@@ -13,6 +13,14 @@
 //! released only when the rear clears the berth, the route changes, the vehicle is removed, or
 //! the network is invalidated. A bus waiting upstream has not served the stop and never opens
 //! its doors.
+//!
+//! ## Tuning provenance
+//!
+//! The constants below carry their unit in the name and their rationale on each item. The
+//! docking tolerances are the plan section 6 neoOMSI targets; the service lengths
+//! (`DEFAULT_BOARDING_REGION`, `DEFAULT_APPROACH_DISTANCE`) are **provisional** until a content
+//! stop length is imported (`D6`); the timing-point/early/layover rules are **improvement**.
+//! The full table is in `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
 
 use crate::capabilities::VehicleCapabilities;
 use crate::diagnostics::{Reason, ServicePhase, TraceEvent};
@@ -534,6 +542,16 @@ pub struct ServiceCoordinator {
 impl ServiceCoordinator {
     pub fn new() -> ServiceCoordinator {
         ServiceCoordinator::default()
+    }
+
+    /// How many berths are currently assigned (a health/leak check).
+    pub fn berth_count(&self) -> usize {
+        self.berths.len()
+    }
+
+    /// How many vehicles are queued for a berth across every stop (a health/leak check).
+    pub fn queued_count(&self) -> usize {
+        self.arrivals.len()
     }
 
     /// Begin a tick: record arrivals, rebuild the per-stop queue order from stable arrival

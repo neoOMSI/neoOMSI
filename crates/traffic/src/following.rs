@@ -1,3 +1,20 @@
+//! Longitudinal control: speed composition, car following, the comfort envelope, launch
+//! behaviour and realized-motion reconciliation.
+//!
+//! [`BehaviorEnvelope`] owns the shared comfort bounds (comfort acceleration/service braking,
+//! the emergency ceiling, jerk, default headway/gap/reaction) with units, and
+//! [`LongitudinalDemand`] separates the comfortable command from collision prevention.
+//!
+//! ## Tuning provenance
+//!
+//! The constants and envelope defaults here are **provisional/improvement** neoOMSI targets
+//! (plan section 6), not values established by the OMSI reference. The one verified content
+//! value is `[ai_brakeperformance]` element 4 (the stop-holding correction); the braking
+//! strength's remaining values are unresolved and use an explicit provisional class fallback
+//! (`BrakingCapability`, `D3`). Driver traits are seeded per vehicle (persistent, not
+//! per-frame). The full parameter table with units, rationale and provenance is in
+//! `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
+
 use glam::{DVec2, DVec3};
 use crate::capabilities::BrakingCapability;
 use crate::diagnostics::Reason;

@@ -1018,7 +1018,7 @@ impl App {
             self.navigator.as_ref().and_then(|n| n.map_net()),
         ];
         let Some((net, (lane, s, _))) = nets.into_iter().flatten().find_map(|net| {
-            net.nearest_lane(p, ::simulation::traffic::LaneKind::Street)
+            net.nearest_lane(p, ::traffic::LaneKind::Street)
                 .filter(|(_, _, d)| *d <= 300.0)
                 .map(|f| (net, f))
         }) else {
