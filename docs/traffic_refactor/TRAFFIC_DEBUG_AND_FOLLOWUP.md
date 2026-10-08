@@ -75,6 +75,11 @@ makes any remaining authored target or model-origin issue measurable in the user
   including hollow rotated meshes, different heights and headings.
 - The debug executable builds. Native interactive inspection of the new window and its
   clipboard button remains for the user's next run; compilation is not visual QA.
+- Follow-up: opening the overlay with physical boxes originally panicked because its
+  box renderer acquired an already-live background draw list. Boxes now use the caller's
+  draw list. An actual ImGui frame regression reproduced that panic before the correction
+  and exercises routes, boxes, labels and neighboring overlays across repeated frames.
+  The corrected `cargo test -p core --lib` run passes 422 tests (7 ignored).
 - `cargo check --workspace --all-targets` and `cargo check -p core --no-default-features`
   both pass, including the configuration without developer tools.
 - The separate ignored 60-minute dense mixed soak passes (180,000 fixed ticks per

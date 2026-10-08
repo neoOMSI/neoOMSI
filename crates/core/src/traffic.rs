@@ -57,6 +57,8 @@ mod safety;
 mod debug;
 #[cfg(all(feature = "devtools", debug_assertions))]
 pub(crate) use debug::TrafficDebugFrame;
+#[cfg(all(test, feature = "devtools", debug_assertions))]
+pub(crate) use debug::TrafficDebugCar;
 
 
 

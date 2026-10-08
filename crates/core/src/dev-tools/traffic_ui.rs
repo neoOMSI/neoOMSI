@@ -1,5 +1,5 @@
 //! Traffic routes, physical footprints and blockers on the existing GPU debug overlay.
-use super::{overlays::draw_boxes, types::*, util::project};
+use super::{overlays::draw_boxes_on, types::*, util::project};
 use imgui::Condition;
 
 pub(super) struct TrafficTool {
@@ -154,6 +154,16 @@ pub(super) fn window(
     let Some(cam) = extra.cam.as_ref() else {
         return;
     };
+    draw_overlay(ui, cam, size, tool, frame);
+}
+
+fn draw_overlay(
+    ui: &imgui::Ui,
+    cam: &::render::Camera,
+    size: (u32, u32),
+    tool: &TrafficTool,
+    frame: &crate::traffic::TrafficDebugFrame,
+) {
     let vp = cam.view_proj(size.0 as f32 / size.1.max(1) as f32, cam.position);
     let list = ui.get_background_draw_list();
     let project = |p| project(&vp, cam.position, p, size);
@@ -172,7 +182,7 @@ pub(super) fn window(
             }
         }
         if tool.boxes {
-            draw_boxes(ui, cam, size, &car.boxes, Some([0.2, 0.75, 1.0, 0.75]));
+            draw_boxes_on(&list, cam, size, &car.boxes, Some([0.2, 0.75, 1.0, 0.75]));
         }
         let origin = project(car.position + glam::DVec3::Z * 2.5);
         if tool.labels {
@@ -200,6 +210,58 @@ pub(super) fn window(
                     .build();
                 list.add_text(p, [0.0, 1.0, 1.0, 1.0], format!("stop #{id}"));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::overlays::draw_boxes;
+    use crate::traffic::{TrafficDebugCar, TrafficDebugFrame};
+    use glam::DVec3;
+    use ::simulation::collision::Obb;
+
+    #[test]
+    fn traffic_overlay_draws_boxes_and_routes_together_across_frames() {
+        let mut ctx = imgui::Context::create();
+        ctx.set_ini_filename(None);
+        ctx.io_mut().display_size = [800.0, 600.0];
+        ctx.fonts().build_rgba32_texture();
+        let cam = ::render::Camera {
+            position: DVec3::new(0.0, -15.0, 10.0),
+            yaw: 0.0, pitch: -20.0, roll: 0.0,
+            fov_deg: 60.0, near: 0.1, far: 1000.0,
+        };
+        let mut frame = TrafficDebugFrame {
+            time: 1.0, active: 2, dormant: 0, timings: [0.0; 3], cars: Vec::new(),
+        };
+        for id in 1..=2 {
+            let position = DVec3::new(id as f64 * 3.0 - 4.5, 5.0, 0.0);
+            frame.cars.push(TrafficDebugCar {
+                id, model: "test bus".into(), position,
+                boxes: vec![Obb::from_box([1.8, 4.0, 2.0, 0.0, 0.0, 1.0], position, 0.0)],
+                path: vec![position, position + DVec3::Y * 12.0],
+                blocker: Some((3 - id, position + DVec3::X * 3.0)),
+                constraint: Some(position + DVec3::Y * 6.0),
+                stop: Some((7, position + DVec3::Y * 15.0, 15.0)),
+                detail: "boarding".into(), label: format!("#{id}"), speed: 0.0,
+                changing: id == 2,
+            });
+        }
+        let mut tool = TrafficTool::default();
+        // Default settings reproduced the crash. Also exercise toggling and reopening,
+        // alongside the pre-existing boxes overlay which shares the background list.
+        for (paths, boxes, labels) in [(true, true, true), (true, false, true),
+            (false, true, false), (true, true, true)] {
+            tool.paths = paths; tool.boxes = boxes; tool.labels = labels;
+            let ui = ctx.new_frame();
+            draw_boxes(ui, &cam, (800, 600), &frame.cars[0].boxes, None);
+            draw_overlay(ui, &cam, (800, 600), &tool, &frame);
+            draw_boxes(ui, &cam, (800, 600), &frame.cars[1].boxes, None);
+            let data = ctx.render();
+            assert!(data.total_vtx_count > 0);
+            assert!(data.total_idx_count > 0);
         }
     }
 }

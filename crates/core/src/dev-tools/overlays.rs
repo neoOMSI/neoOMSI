@@ -10,8 +10,20 @@ pub(super) fn draw_boxes(
     boxes: &[Obb],
     over: Option<[f32; 4]>,
 ) {
-    let vp = cam.view_proj(size.0 as f32 / size.1.max(1) as f32, cam.position);
     let list = ui.get_background_draw_list();
+    draw_boxes_on(&list, cam, size, boxes, over);
+}
+
+/// Use the caller's draw list when boxes are part of a larger overlay. ImGui allows
+/// only one live background DrawListMut; acquiring it again would panic.
+pub(super) fn draw_boxes_on(
+    list: &imgui::DrawListMut<'_>,
+    cam: &::render::Camera,
+    size: (u32, u32),
+    boxes: &[Obb],
+    over: Option<[f32; 4]>,
+) {
+    let vp = cam.view_proj(size.0 as f32 / size.1.max(1) as f32, cam.position);
     for o in boxes {
         let col = if let Some(c) = over {
             c
