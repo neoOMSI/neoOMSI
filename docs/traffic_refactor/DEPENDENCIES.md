@@ -233,6 +233,61 @@ core ─┘                          (never the reverse)
 - `JunctionScene`'s caller-built `on_lane`/`coming` index views remain; the berth scene reads
   the id-keyed `Occupancy` directly.
 
+## Current state after Stage 7
+
+- `crates/traffic/src/maneuvers.rs` (L4) is the single owner of every lateral maneuver,
+  mirroring `junctions` and `service`:
+  - `ManeuverState` (per-vehicle memory: lane-change cooldown, passing plan, park plan,
+    pull-out hold, discretionary dwell and the last-change side) is written only by
+    `ManeuverCoordinator::plan`; the `Passing` and `ParkPlan` types moved here from core.
+  - `ManeuverActor`/`ManeuverScene` are the frozen per-tick inputs (network, id-keyed
+    `Occupancy`, realized actors); `ManeuverInputs` carries the requests other owners submit
+    (the service berth lateral, the kerb swerve, parking/pull-out and the obstacle ahead).
+  - `ManeuverDecision` is the typed output: lateral target, explicit S-curve ramp, lane-change
+    command (`Change`/`RouteChange`/`Bypass`), indicator, acceleration cap, stop point,
+    `ManeuverPhase` and reasons. `ManeuverCoordinator::service_lateral` approves the service
+    owner's docking/merge-out request as a required maneuver.
+  - `begin_tick` orders simultaneous lane changes by target lane and stable id (the lowest id
+    wins), so the outcome does not depend on container order; `release`/`retain_on_way`/
+    `invalidate_network` mirror the junction/service hooks. `required_target` is the shared
+    helper core uses to submit the route/turn-lane wish as an intent.
+- Priorities: safety/finish-or-abort first, then required maneuvers (route change, docking/
+  departure, a committed park), then discretionary (overtake/keep-right), then optional
+  passing. A discretionary change commits only after `DISCRETIONARY_DWELL` and is held to the
+  `OSCILLATION_WINDOW` against flipping sides; a required change that cannot be taken waits
+  legally before the lane end (`commit_or_wait`).
+- Passing is optional and gated on the whole outbound+return trajectory: the oncoming gap over
+  the whole maneuver (`oncoming_soon`), the return room (`merge_room`/`back_in_ramp`), a swept
+  `Occupancy::swept_clearance` of the ghost path including the return, and pedestrians. An
+  abort returns along the S-curve while `abortable`; otherwise it holds the committed portion
+  and stops short of the obstruction; it never snaps laterally.
+- Core is the adapter: `Traffic::tick` builds the `ManeuverActor` array and intents once, calls
+  `begin_tick` once and `plan` per vehicle, and applies the single decision. `plan_pass`/
+  `guard_pass`/`oncoming_block`/`light_wait`/`plan_lane_change`/`plan_bypass`/
+  `plan_route_change` and the inline passing/parking/kerb lateral writes are gone;
+  `obstacle_ahead`/`obstacle_from` stay for longitudinal following.
+- `VehicleSnapshot` gained `maneuver_phase` and `maneuver_target`; `TRACE_VERSION` is 5.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`.
+- Exit-gate scenarios under `crates/traffic/tests/`: `s7_route_turn_lane.rs`,
+  `s7_simultaneous_lane_change.rs`, `s7_blocked_bay.rs`, `s7_parking_pullout.rs`,
+  `s7_oncoming_abort.rs`, `s7_articulated_clearance.rs`, `s7_no_oscillation.rs`, with the
+  `common::maneuver` fixture and unit tests in `maneuvers`.
+- The replacement reason trail is recorded in `BACKLOG.md` under
+  "Stage 7 replacement reason trail".
+
+### Stage 7 remaining (documented, not claimed done)
+
+- `ev_AI_Horn` (`D4`) stays deferred to Stage 9: the reference proves only that the event
+  exists, not its trigger, and presentation feedback must never resolve a blocked maneuver.
+  `TrafficPriorityWarningNeeded`/`TrafficPriority` remain the script-facing warning path.
+- The passing feasibility port keeps the existing algorithm's structure with an L2
+  `Occupancy` sweep rather than the physical `AiBody::sweep_clearance` that stays in
+  `simulation::ai_motion` for realization; calibrating the two against recorded scenes is
+  Stage 9 work.
+- Multi-lane parking and multi-berth stops still need validated content geometry; the
+  maneuver owner parks in one space per lane.
+- Population/streaming backpressure and dormant lifecycle are Stage 8.
+
 ## Deletion rule
 
 Do not remove the shim or any compatibility re-export until its callers have migrated to

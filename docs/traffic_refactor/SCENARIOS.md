@@ -44,7 +44,7 @@ Trace fields referenced as `snapshot.*` / `event.*` are defined in [TRACE_SCHEMA
 | Field | Value |
 | --- | --- |
 | Purpose | Verify one berth occupant, safe upstream waiting, once-only service, and no doors opening far up the queue |
-| Owning stages | 3, 6 (PR batches F, I, J) |
+| Owning stages | 3, 6–7 (PR batches F, I, J, K) |
 | Fixture | Single lane beside a curb stop with one boarding region; a following car lane so merge-back matters |
 | Initial conditions | Three scheduled buses with distinct duties arrive within a few seconds of each other; the stop has waiting passengers with stop wishes; a random car follows the third bus |
 | Input timeline | Bus 1 arrives and boards for a long dwell; buses 2 and 3 queue; buses depart in order; a passenger in the doorway holds one departure briefly |
@@ -82,6 +82,22 @@ kinematic bus fixture: a `ServiceCoordinator`, one straight lane, and buses that
 | `s6_optional_stops.rs` | Optional/request stops, timing points, early/late service, long boarding held at the door, and a layover waiting out its departure in the bay. |
 | `s6_script_handshake.rs` | Acknowledged departure after the minimum close, unsupported scripts on the fixed fallback, a stuck script timing out with a fault, a script reporting open doors never driven off, and a doorway hold deferring the close request. |
 | `s6_duty_lifecycle.rs` | Terminus handover to `NextTrip`, `OutOfService`, a diagnosed `RoutePending`, a clean next-trip reset, and two different duties departing in parallel. |
+
+## Stage 7 scenarios (headless, at the maneuver coordinator level)
+
+Stage 7 makes the lateral half of S3 (and the lane-change/passing/parking cases) executable
+against the real `traffic::maneuvers` coordinator (no renderer, no OMSI assets). The fixtures
+live under `crates/traffic/tests/` with the `common::maneuver` kinematic fixture.
+
+| File | Required behaviour |
+| --- | --- |
+| `s7_route_turn_lane.rs` | A route-required change is planned early and completed onto the required lane; when the target lane is occupied the car signals and waits before the lane end instead of jumping lanes. |
+| `s7_simultaneous_lane_change.rs` | Two vehicles moving into the same lane this tick: exactly one starts, the lowest id wins, and the result is identical whatever the container order. |
+| `s7_blocked_bay.rs` | A blocked bay / standing obstruction is passed only when the oncoming lane is clear; with oncoming traffic the car waits. |
+| `s7_oncoming_abort.rs` | An oncoming car during a pass makes the maneuver abort and return along its S-curve (`lateral_target = 0`), stopping short of the obstruction; it never snaps back. |
+| `s7_parking_pullout.rs` | Parking arrival moves into the space and finishes; a parked car pulls out through the same owner. |
+| `s7_articulated_clearance.rs` | A car clears the obstacle; a wider (articulated) body does not start the same pass because its swept body would clip it. |
+| `s7_no_oscillation.rs` | Under a steady input consecutive discretionary lane changes keep `OSCILLATION_WINDOW` apart and do not flap. |
 
 ## Provisional measurement targets
 

@@ -1,0 +1,1442 @@
+//! Lateral maneuvers: lane changes, merges, overtaking, passing, parking, pull-out and the
+//! lateral half of bus docking.
+//!
+//! This is the L4 owner of every lateral intent on the road, mirroring `traffic::junctions`
+//! and `traffic::service`. Conflicting behaviors (a route-required change, an overtake, a
+//! kerb swerve round a parked car, a bus docking, a park) no longer overwrite
+//! `AiState::lateral_target` in different functions: they submit requests, and one
+//! [`ManeuverCoordinator`] reads a frozen [`ManeuverScene`] and returns a typed
+//! [`ManeuverDecision`] that becomes the single writer of lateral intent.
+//!
+//! Realization stays in `simulation::ai_motion` (steering, articulation, ground contact).
+//! The domain expresses a maneuver as the same primitives the realization already consumes:
+//! a lateral target with an S-curve ramp, a committed lane change, a blinker and a stop
+//! point. The domain never integrates pose; it reads the realized odometer each tick, so a
+//! maneuver has one integrator (the body) and the ramps are recomputed, not re-integrated.
+//!
+//! Priorities, highest first:
+//! 1. safety/allowed space (never start a maneuver whose whole trajectory, including the
+//!    return, is not clear) and finishing/aborting a committed maneuver;
+//! 2. required maneuvers (a route-required change, docking/departure, a committed park);
+//! 3. discretionary maneuvers (overtaking, keeping to the correct lane);
+//! 4. optional maneuvers (passing a standing obstruction) - waiting is correct when the
+//!    whole outbound+return trajectory cannot be checked clear.
+
+use crate::diagnostics::{ManeuverPhase, Reason};
+use crate::following::{arrival_time, ramp_progress_for, smooth01};
+use crate::ids::{LaneId, VehicleId};
+use crate::network::{LaneKind, Network};
+use crate::perception::{Occupancy, SweepSample};
+use glam::{DVec2, DVec3};
+use hashbrown::HashMap;
+
+// ---- named maneuver geometry and policy (units always in the name) --------------------
+
+/// Clearance a pulling-out body must keep to the obstacle it steers round (m).
+pub const PULL_OUT_CLEARANCE: f64 = 0.25;
+/// A rolling car watches the wheel-turn phase of a pull-out for this long (s).
+pub const PULL_OUT_WAIT: f32 = 0.4;
+/// Acceleration while edging out from a standstill (m/s²).
+pub const PULL_OUT_ACCEL: f32 = 1.0;
+/// Sideways acceleration the return S-curve keeps within (m/s²).
+pub const BACK_IN_LAT_ACCEL: f32 = 2.5;
+/// A car edging out keeps to `PULL_OUT_ACCEL` until its front is this far past the obstacle
+/// rear (m).
+pub const CREEP_PAST: f32 = 2.0;
+/// Room an oncoming vehicle needs beside a passing car (m).
+pub const ONCOMING_ROOM: f32 = 1.15;
+/// Seconds of indicating before a discretionary change begins to move over (s).
+pub const SIGNAL_BEFORE_CHANGE: f32 = 1.2;
+/// A lane change that has just finished may not start another for this long (s).
+pub const CHANGE_COOLDOWN: f32 = 6.0;
+/// A wish for a discretionary change must persist this long before it commits (s), so a
+/// flickering local condition cannot make a car jerk between lanes.
+pub const DISCRETIONARY_DWELL: f32 = 0.6;
+/// A discretionary change opposite to the last one is discouraged for this long (s).
+pub const OSCILLATION_WINDOW: f32 = 8.0;
+/// How far ahead a turn lane is entered (m).
+pub const TURN_LANE_LOOKAHEAD: f32 = 150.0;
+
+// ---- pure ramp geometry (also used by the realization) --------------------------------
+
+/// S-curve lengths (m) a car should try when pulling out round an obstacle `real` metres
+/// ahead: gentlest first, bounded by its own length and room.
+pub fn pull_out_ramps(real: f32, front: f32, rolling: bool) -> Vec<f32> {
+    let (factors, max): (&[f32], f32) = if rolling {
+        (&[1.0, 0.8, 0.6, 0.45], 20.0)
+    } else {
+        (&[1.5, 1.2, 1.0, 0.8, 0.6], 12.0)
+    };
+    let base = real + 0.5 * front;
+    let mut out: Vec<f32> = Vec::new();
+    for &f in factors {
+        let len = (base * f).clamp(4.0, max);
+        if out.last().map(|l| (l - len).abs() > 0.3).unwrap_or(true) {
+            out.push(len);
+        }
+    }
+    out
+}
+
+/// Length (m) of an S-curve moving sideways by `offset` m at `speed` m/s that keeps the peak
+/// sideways acceleration within `lat_accel`: `max(geometric, dynamic)`, capped at 60.
+pub fn back_in_ramp(offset: f32, speed: f32, lat_accel: f32) -> f32 {
+    let off = offset.abs();
+    let geometric = (off * 3.5).clamp(8.0, 14.0);
+    let dynamic = speed * (6.0 * off / lat_accel.max(0.5)).sqrt();
+    geometric.max(dynamic).min(60.0)
+}
+
+/// A straight pull-out path: `side` is +1 to the left / -1 to the right of the way, `ramp`
+/// the S-curve length in metres. Returns the sideways offset at distance `d`.
+pub fn straight_pull_out(side: f32, ramp: f32) -> impl Fn(f32) -> f32 {
+    move |d: f32| -side * smooth01((d / ramp.max(0.1)).clamp(0.0, 1.0))
+}
+
+/// Seconds a car at `speed` needs to drive `dist` metres out onto the other half: the first
+/// `creep` metres edging out, the rest speeding up to `v_cap`.
+pub fn pass_time(
+    dist: f32,
+    creep: f32,
+    speed: f32,
+    reaction: f32,
+    accel: f32,
+    v_cap: f32,
+) -> f32 {
+    let wait = if speed < 0.1 { reaction } else { 0.0 };
+    let accel = accel * 0.85;
+    if creep <= 0.0 || dist <= 0.0 {
+        return wait + arrival_time(dist, speed, accel, v_cap);
+    }
+    let a0 = accel.min(PULL_OUT_ACCEL);
+    let first = creep.min(dist);
+    let v1 = (speed * speed + 2.0 * a0 * first)
+        .sqrt()
+        .min(v_cap.max(speed));
+    wait + arrival_time(first, speed, a0, v_cap) + arrival_time(dist - first, v1, accel, v_cap)
+}
+
+// ---- maneuver lifecycle state ----------------------------------------------------------
+
+/// A car pulling out onto the other half of the road round something standing in its lane.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Passing {
+    /// The oncoming lane it moves over onto.
+    pub lane: usize,
+    /// How far to the left that lane lies (m).
+    pub side: f32,
+    /// Odometer reading past which it moves back.
+    pub until: f32,
+    /// Odometer reading at which its front would reach the obstacle.
+    pub block: f32,
+    /// Length of the S-curve back into the lane (m).
+    pub back: f32,
+    /// Given up because somebody came the other way.
+    pub aborted: bool,
+    pub hold: f32,
+    /// Started from a standstill: it edges out at `PULL_OUT_ACCEL`.
+    pub creep: bool,
+}
+
+impl Passing {
+    /// Odometer reading at which the car is far enough back to be out of the oncoming lane.
+    pub fn clear_at(&self, half_width: f32) -> f32 {
+        self.until
+            + self.back * ramp_progress_for(self.side, half_width + ONCOMING_ROOM)
+    }
+}
+
+/// A free parking space beside a lane a car means to park in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParkPlan {
+    pub key: i64,
+    pub lane: usize,
+    /// The space's middle along the lane and its offset to the right (m).
+    pub s: f32,
+    pub lat: f32,
+    pub ramped: bool,
+    pub done: bool,
+}
+
+/// The per-vehicle maneuvering memory, written only by [`ManeuverCoordinator::plan`].
+#[derive(Debug, Clone, Default)]
+pub struct ManeuverState {
+    /// Seconds before a new lane change may start.
+    pub change_cooldown: f32,
+    /// Not before this delay after a failed pull-out may it try again.
+    pub pass_retry: f32,
+    /// The side (1 left, 2 right) of the last completed discretionary change.
+    pub last_side: i32,
+    /// Time of the last completed lane change (s), for the oscillation guard.
+    pub last_change_time: f32,
+    /// The lane change currently committed (its target and side), for completion detection.
+    pub change_to: Option<usize>,
+    pub change_dir: i32,
+    pub passing: Option<Passing>,
+    pub park: Option<ParkPlan>,
+    /// Seconds a parked car still holds before pulling out.
+    pub pull_out: f32,
+    /// How long the current discretionary wish has been held (s) and which wish it is.
+    pub dwell: f32,
+    pub dwell_code: i16,
+}
+
+// ---- frozen per-tick scene and inputs --------------------------------------------------
+
+/// One planned lane of a car's way: the network lane and the distance from the car origin to
+/// its start (the first is `(current lane, -s)`).
+pub type WayStep = (usize, f32);
+
+/// The realized state of one vehicle a maneuver plan reads.
+#[derive(Debug, Clone)]
+pub struct ManeuverActor {
+    pub id: VehicleId,
+    pub lane: usize,
+    pub s: f32,
+    pub lateral: f32,
+    pub speed: f32,
+    pub accel: f32,
+    pub decel: f32,
+    pub reaction: f32,
+    pub desire: f32,
+    pub max_speed_kmh: f32,
+    pub front: f32,
+    pub rear: f32,
+    pub length: f32,
+    pub half_width: f32,
+    pub odometer: f32,
+    pub min_gap: f32,
+    pub veh_type: i32,
+    pub lane_kind: LaneKind,
+    /// The lane the way goes to next (planned), if any.
+    pub planned_next: Option<usize>,
+    /// The lane the fixed route requires next, if it lies beside this one.
+    pub route_next: Option<usize>,
+    pub turn_wish: i32,
+    /// The lane change in progress, if any.
+    pub change: Option<ChangeInfo>,
+    pub stopped: f32,
+    pub light_hold: bool,
+    pub yielding: bool,
+    pub at_stop: bool,
+    /// Room the vehicle's own steering needs behind an obstacle before it can pull out (m).
+    pub pass_room: f32,
+    pub lat_accel: f32,
+}
+
+impl ManeuverActor {
+    /// A minimal actor for tests and adapters.
+    pub fn new(id: VehicleId, lane: usize, s: f32) -> ManeuverActor {
+        ManeuverActor {
+            id,
+            lane,
+            s,
+            lateral: 0.0,
+            speed: 0.0,
+            accel: 1.5,
+            decel: 2.5,
+            reaction: 0.7,
+            desire: 1.0,
+            max_speed_kmh: 50.0,
+            front: 2.25,
+            rear: 2.25,
+            length: 4.5,
+            half_width: 1.25,
+            odometer: s,
+            min_gap: 2.0,
+            veh_type: 0,
+            lane_kind: LaneKind::Street,
+            planned_next: None,
+            route_next: None,
+            turn_wish: 0,
+            change: None,
+            stopped: 0.0,
+            light_hold: false,
+            yielding: false,
+            at_stop: false,
+            pass_room: 6.0,
+            lat_accel: 2.8,
+        }
+    }
+
+    pub fn index(id: VehicleId) -> usize {
+        id.get() as usize
+    }
+}
+
+/// A lane change in progress, as the realization holds it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChangeInfo {
+    pub to: usize,
+    pub dir: i32,
+    pub t: f32,
+    pub length: f32,
+    pub s_to: f32,
+    pub wait: f32,
+    pub bypass: bool,
+}
+
+/// The kind of lane change to begin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    /// A discretionary change (overtake/keep to the correct lane).
+    Change,
+    /// A change the fixed route requires.
+    RouteChange,
+    /// A short, steep pull-out from behind a standing obstacle.
+    Bypass,
+}
+
+/// A lane change the coordinator decided the vehicle should begin this tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeCommand {
+    pub to: usize,
+    pub dir: i32,
+    pub kind: ChangeKind,
+}
+
+impl ChangeCommand {
+    pub fn new(to: usize, dir: i32, kind: ChangeKind) -> ChangeCommand {
+        ChangeCommand { to, dir, kind }
+    }
+}
+
+/// The frozen world a maneuver plan reads. Built once per tick.
+pub struct ManeuverScene<'a> {
+    pub net: &'a Network,
+    pub occupancy: &'a Occupancy,
+    pub actors: &'a [ManeuverActor],
+    /// Pedestrians near the road (world positions), for the whole-maneuver check.
+    pub people: &'a [DVec2],
+    pub time: f32,
+    pub dt: f32,
+    pub tick: u64,
+}
+
+/// One vehicle's maneuver inputs for this tick: the requests other owners submit.
+#[derive(Debug, Clone, Copy)]
+pub struct ManeuverInputs {
+    /// Index into `ManeuverScene::actors`.
+    pub actor: usize,
+    /// A required lateral target from the service owner (docking/merge-out) and its phase.
+    pub service_lateral: Option<f32>,
+    pub service_phase: ManeuverPhase,
+    /// A safety swerve from the world (a parked car at the kerb), or the service `kerb_swerve`.
+    pub kerb_swerve: Option<f32>,
+    /// The vehicle is a parked car that has just been put on the road to pull out.
+    pub pull_out: bool,
+    /// The gap from the front bumper to a standing/slow obstruction in its own lane (m).
+    pub lead_gap: Option<f32>,
+    /// Whether that obstruction is standing (a pass is possible) or just a slow leader.
+    pub lead_standing: bool,
+    /// The obstruction's length (m).
+    pub obstacle_len: f32,
+    /// The obstruction is a parked car (the driver may pull out while still rolling).
+    pub parked: bool,
+}
+
+impl ManeuverInputs {
+    /// A minimal input for tests and adapters.
+    pub fn new(actor: usize) -> ManeuverInputs {
+        ManeuverInputs {
+            actor,
+            service_lateral: None,
+            service_phase: ManeuverPhase::Idle,
+            kerb_swerve: None,
+            pull_out: false,
+            lead_gap: None,
+            lead_standing: false,
+            obstacle_len: 0.0,
+            parked: false,
+        }
+    }
+}
+
+/// The coordinator's decision for one vehicle in one tick: the only writer of lateral intent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManeuverDecision {
+    pub phase: ManeuverPhase,
+    /// Lateral target across the lane (m, positive = right), if it changes.
+    pub lateral_target: Option<f32>,
+    /// An explicit S-curve `(from, to, odometer_at_start, length)` when the maneuver needs
+    /// one steeper or gentler than the default.
+    pub lateral_ramp: Option<(f32, f32, f32, f32)>,
+    /// A lane change to begin.
+    pub change: Option<ChangeCommand>,
+    /// An indicator the driver holds for itself, `(blinker, seconds)`.
+    pub signal: Option<(i32, f32)>,
+    /// Bounds on the longitudinal command for this maneuver.
+    pub accel_cap: Option<f32>,
+    /// A stop point the maneuver itself requires (distance from the origin, m).
+    pub stop_at: Option<f32>,
+    /// The lane a committed change is moving to (for diagnostics).
+    pub target_lane: Option<LaneId>,
+    pub reasons: Vec<Reason>,
+    pub binding: Option<Reason>,
+}
+
+impl ManeuverDecision {
+    fn new(phase: ManeuverPhase) -> ManeuverDecision {
+        ManeuverDecision {
+            phase,
+            lateral_target: None,
+            lateral_ramp: None,
+            change: None,
+            signal: None,
+            accel_cap: None,
+            stop_at: None,
+            target_lane: None,
+            reasons: Vec::new(),
+            binding: None,
+        }
+    }
+}
+
+/// A vehicle's wish to move to a lane this tick, so the coordinator can order simultaneous
+/// changes by stable id rather than by container position.
+#[derive(Debug, Clone, Copy)]
+pub struct ManeuverIntent {
+    pub vehicle: VehicleId,
+    pub target: Option<LaneId>,
+    pub required: bool,
+}
+
+// ---- the coordinator -------------------------------------------------------------------
+
+/// The single owner of lane-change commitments and the lateral decision.
+#[derive(Debug, Clone, Default)]
+pub struct ManeuverCoordinator {
+    /// This tick's approved lane change per vehicle (`vehicle -> target lane`).
+    approved: HashMap<VehicleId, LaneId>,
+    /// The lowest id that asked for each target lane this tick (the merge order).
+    claimants: HashMap<LaneId, VehicleId>,
+    tick: u64,
+}
+
+impl ManeuverCoordinator {
+    pub fn new() -> ManeuverCoordinator {
+        ManeuverCoordinator::default()
+    }
+
+    /// The lane change approved for `id` this tick, if any.
+    pub fn approved(&self, id: VehicleId) -> Option<LaneId> {
+        self.approved.get(&id).copied()
+    }
+
+    /// Begin a tick: order the submitted lane-change wishes by target lane and stable id, so
+    /// two vehicles moving into the same lane do not both start. The lowest id wins; the
+    /// same inputs decide the same way whatever the storage order.
+    pub fn begin_tick(&mut self, intents: &[ManeuverIntent], tick: u64) {
+        self.tick = tick;
+        self.approved.clear();
+        self.claimants.clear();
+        for it in intents {
+            let Some(t) = it.target else { continue };
+            match self.claimants.get(&t) {
+                Some(&cur) if cur <= it.vehicle => {}
+                _ => {
+                    self.claimants.insert(t, it.vehicle);
+                }
+            }
+        }
+        for (lane, vehicle) in &self.claimants {
+            self.approved.insert(*vehicle, *lane);
+        }
+    }
+
+    /// Release the committed maneuver of a vehicle (removal, route change, reset).
+    pub fn release(&mut self, id: VehicleId) {
+        self.approved.remove(&id);
+    }
+
+    /// Approve the lateral request the service owner submitted (docking or merge-out). The
+    /// service lateral is a required maneuver, so it wins over any discretionary intent while
+    /// the berth is held; the service owner still decides the phase and the berth.
+    pub fn service_lateral(&self, lateral: f32, phase: ManeuverPhase) -> ManeuverDecision {
+        let mut d = ManeuverDecision::new(phase);
+        d.lateral_target = Some(lateral);
+        d
+    }
+
+    /// A route change drops a committed change whose target no longer lies on the way.
+    pub fn retain_on_way(&mut self, id: VehicleId, way: &[usize]) {
+        if let Some(l) = self.approved.get(&id) {
+            if !way.contains(&l.index()) {
+                self.approved.remove(&id);
+            }
+        }
+    }
+
+    /// Network invalidation: every commitment made against the old version is released.
+    pub fn invalidate_network(&mut self) {
+        self.approved.clear();
+        self.claimants.clear();
+    }
+
+    // ---- planning ----------------------------------------------------------------------
+
+    /// Plan one vehicle's lateral maneuver for this tick. `state` is the single per-vehicle
+    /// memory the coordinator writes; `input` carries the requests submitted for it.
+    pub fn plan(
+        &mut self,
+        scene: &ManeuverScene,
+        state: &mut ManeuverState,
+        input: &ManeuverInputs,
+    ) -> ManeuverDecision {
+        let dt = scene.dt;
+        state.change_cooldown = (state.change_cooldown - dt).max(0.0);
+        state.pass_retry = (state.pass_retry - dt).max(0.0);
+        state.dwell = (state.dwell - dt).max(0.0);
+        let Some(actor) = scene.actors.get(input.actor) else {
+            return ManeuverDecision::new(ManeuverPhase::Idle);
+        };
+        let id = actor.id;
+
+        // A committed lane change finished or was cancelled: start its cooldown.
+        if state.change_to.is_some() && actor.change.is_none() {
+            let completed = actor.lane == state.change_to.unwrap_or(usize::MAX);
+            if completed {
+                state.change_cooldown = CHANGE_COOLDOWN;
+                state.last_side = state.change_dir;
+                state.last_change_time = scene.time;
+            }
+            state.change_to = None;
+        }
+
+        // A lane change in progress: let it finish (the realization owns its progress).
+        if let Some(c) = actor.change {
+            let mut d = ManeuverDecision::new(ManeuverPhase::LaneChange);
+            d.target_lane = Some(LaneId(c.to));
+            return d;
+        }
+
+        // Parking arrival is a committed maneuver: finish it before anything else.
+        if let Some(plan) = state.park {
+            return self.plan_parking(scene, actor, state, plan, input);
+        }
+
+        // A parked car pulling out: wait, then merge into the lane.
+        if input.pull_out {
+            state.pull_out = 2.0 + (id.get() % 1000) as f32 / 400.0;
+        }
+        if state.pull_out > 0.0 {
+            state.pull_out = (state.pull_out - dt).max(0.0);
+            let mut d = ManeuverDecision::new(ManeuverPhase::PullOut);
+            d.lateral_target = Some(0.0);
+            d.accel_cap = Some(PULL_OUT_ACCEL);
+            d.stop_at = Some(actor.front + 0.1);
+            d.reasons.push(Reason::PullOut);
+            d.binding = Some(Reason::PullOut);
+            return d;
+        }
+
+        // A pass already underway: finish or abort it (never snap laterally).
+        if let Some(d) = self.plan_passing_active(scene, actor, state) {
+            return d;
+        }
+
+        // Required service lateral (docking or merge-out): the service owner submits it.
+        if input.service_lateral.is_some() {
+            let mut d = ManeuverDecision::new(input.service_phase);
+            d.lateral_target = input.service_lateral;
+            return d;
+        }
+
+        // Required route-required change (and the turn lane the way asks for).
+        if let Some(d) = self.plan_required_change(scene, actor, state) {
+            return d;
+        }
+
+        // A safety swerve round a parked/standing body at the kerb.
+        if let Some(lat) = input.kerb_swerve {
+            if lat.abs() > 0.3 {
+                let mut d = ManeuverDecision::new(ManeuverPhase::Idle);
+                d.lateral_target = Some(lat);
+                d.reasons.push(Reason::Parking);
+                return d;
+            }
+        }
+
+        // Discretionary change (overtake/keep to the correct lane).
+        if let Some(d) = self.plan_discretionary(scene, actor, state) {
+            return d;
+        }
+
+        // Optional: pull out round something standing, with the whole trajectory checked.
+        if let Some(d) = self.plan_passing(scene, actor, state, input) {
+            return d;
+        }
+
+        // Nothing lateral to do: keep to the middle of the lane, or hold the kerb swerve the
+        // world asked for (so a swerve that is no longer needed is given up).
+        let mut d = ManeuverDecision::new(ManeuverPhase::Idle);
+        d.lateral_target = Some(input.kerb_swerve.unwrap_or(0.0));
+        d
+    }
+
+    // ---- route-required / turn-lane changes --------------------------------------------
+
+    fn plan_required_change(
+        &mut self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        state: &mut ManeuverState,
+    ) -> Option<ManeuverDecision> {
+        let net = scene.net;
+        let to = required_target(net, actor)?;
+        let kind = if actor.route_next == Some(to) {
+            ChangeKind::RouteChange
+        } else {
+            ChangeKind::Change
+        };
+        let s_to = net.beside_s(actor.lane, to, actor.s.min(net.lanes[actor.lane].length()));
+        let dir = side_of(net, actor.lane, to);
+        Some(self.commit_or_wait(scene, actor, state, to, dir, kind, s_to, true))
+    }
+
+    /// Start the change the way requires, or wait legally before the end of the lane.
+    #[allow(clippy::too_many_arguments)]
+    fn commit_or_wait(
+        &mut self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        state: &mut ManeuverState,
+        to: usize,
+        dir: i32,
+        kind: ChangeKind,
+        s_to: f32,
+        _required: bool,
+    ) -> ManeuverDecision {
+        let approved = self.approved(actor.id) == Some(LaneId(to));
+        if approved && self.can_merge(scene, actor, to, s_to) {
+            state.change_to = Some(to);
+            state.change_dir = dir;
+            let mut d = ManeuverDecision::new(match kind {
+                ChangeKind::RouteChange => ManeuverPhase::RouteChange,
+                _ => ManeuverPhase::LaneChange,
+            });
+            d.change = Some(ChangeCommand::new(to, dir, kind));
+            d.target_lane = Some(LaneId(to));
+            return d;
+        }
+        // Not now: indicate and wait before the end of the lane (a legal wait outcome, never
+        // cutting through the queue or jumping to another lane).
+        let lane = &scene.net.lanes[actor.lane];
+        let mut d = ManeuverDecision::new(ManeuverPhase::RouteChange);
+        d.signal = Some((dir, 1.0));
+        d.stop_at = Some((lane.length() - actor.s - 1.0).max(0.0));
+        d.reasons.push(Reason::Yield);
+        d.binding = Some(Reason::Yield);
+        d.target_lane = Some(LaneId(to));
+        d
+    }
+
+    // ---- discretionary changes ---------------------------------------------------------
+
+    fn plan_discretionary(
+        &mut self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        state: &mut ManeuverState,
+    ) -> Option<ManeuverDecision> {
+        if actor.lane_kind != LaneKind::Street
+            || state.change_cooldown > 0.0
+            || actor.speed < 4.0
+            || actor.stopped > 0.0
+        {
+            return None;
+        }
+        let net = scene.net;
+        let lane = &net.lanes[actor.lane];
+        if lane.length() - actor.s < (actor.speed * 5.5 + 10.0).max(40.0) {
+            return None;
+        }
+        let frac = actor.s / lane.length().max(1.0);
+        let limit = (lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6;
+        let lht = net.left_hand;
+        let (pass_side, keep_side, pass_dir, keep_dir) = if lht {
+            (lane.right, lane.left, 2, 1)
+        } else {
+            (lane.left, lane.right, 1, 2)
+        };
+        // Overtake a slow leader on the passing side.
+        let mut wish: Option<(usize, i32, i16)> = None;
+        if let Some(left) = pass_side {
+            if self.open_to(net, actor, left) {
+                let s_left = frac * net.lanes[left].length();
+                if let Some((gap, v)) = self.nearest_ahead_on_way(scene, actor, 45.0) {
+                    if v < limit * 0.7
+                        && v < actor.speed + 1.0
+                        && gap > 8.0
+                        && self.lane_clear(scene, actor.id, left, s_left, 20.0, 50.0)
+                        && self.can_merge(scene, actor, left, s_left)
+                    {
+                        wish = Some((left, pass_dir, 1));
+                    }
+                }
+            }
+        }
+        // Keep to the correct side when that lane is free.
+        if wish.is_none() {
+            if let Some(right) = keep_side {
+                if self.open_to(net, actor, right) {
+                    let s_right = frac * net.lanes[right].length();
+                    if net.lanes[right].length() - s_right > 40.0
+                        && self.lane_clear(scene, actor.id, right, s_right, 30.0, 70.0)
+                        && self.can_merge(scene, actor, right, s_right)
+                    {
+                        wish = Some((right, keep_dir, 2));
+                    }
+                }
+            }
+        }
+        let (to, dir, code) = wish?;
+        // Hysteresis: the same wish must persist before it commits.
+        if state.dwell_code != code {
+            state.dwell = DISCRETIONARY_DWELL;
+            state.dwell_code = code;
+            return None;
+        }
+        if state.dwell > 0.0 {
+            return None;
+        }
+        // Oscillation guard: do not flip to the other side soon after a change.
+        if dir != state.last_side
+            && state.last_side != 0
+            && scene.time - state.last_change_time < OSCILLATION_WINDOW
+        {
+            state.dwell = DISCRETIONARY_DWELL;
+            return None;
+        }
+        let s_to = frac * net.lanes[to].length();
+        if self.approved(actor.id) == Some(LaneId(to)) && self.can_merge(scene, actor, to, s_to) {
+            state.change_to = Some(to);
+            state.change_dir = dir;
+            state.dwell_code = 0;
+            let mut d = ManeuverDecision::new(ManeuverPhase::LaneChange);
+            d.change = Some(ChangeCommand::new(to, dir, ChangeKind::Change));
+            d.target_lane = Some(LaneId(to));
+            return Some(d);
+        }
+        None
+    }
+
+    // ---- passing -----------------------------------------------------------------------
+
+    fn plan_passing(
+        &mut self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        state: &mut ManeuverState,
+        input: &ManeuverInputs,
+    ) -> Option<ManeuverDecision> {
+        let net = scene.net;
+        let rolling = input.parked && actor.speed > 0.5;
+        if actor.lane_kind != LaneKind::Street
+            || actor.change.is_some()
+            || (actor.stopped < 3.0 && !rolling)
+            || !input.lead_standing
+            || actor.yielding
+            || actor.at_stop
+            || scene.time < state.pass_retry
+        {
+            return None;
+        }
+        let gap = input.lead_gap?;
+        let lane = &net.lanes[actor.lane];
+        // Only the single-lane-each-way case: a road with lanes to change to uses bypass.
+        if lane.left.is_some() || lane.right.is_some() {
+            return None;
+        }
+        let real = gap + if input.parked { 2.0 } else { 0.0 };
+        let reach = if rolling {
+            (actor.speed * actor.speed / (2.0 * actor.decel) + 12.0).clamp(15.0, 40.0)
+        } else {
+            22.0 + (actor.pass_room - 4.0).max(0.0)
+        };
+        let outward = actor.lateral * net.oncoming_sign();
+        if real > reach || real < 0.3 || outward < -0.5 || outward > 1.6 {
+            return None;
+        }
+        let way = way_of(net, actor, 60.0);
+        let Some((opp, os, side)) = net.opposite(actor.lane, actor.s) else {
+            return None;
+        };
+        if !(2.3..=5.5).contains(&side) {
+            return None;
+        }
+        let obstacle_len = input.obstacle_len;
+        let pass_len = real + obstacle_len + actor.front + actor.rear + 6.0;
+        // The maneuver must fit before a junction and not run off the end of the road.
+        let junction = way
+            .iter()
+            .skip(1)
+            .find(|w| !net.crossings[w.0].is_empty())
+            .map(|w| w.1)
+            .unwrap_or(f32::MAX);
+        let open_road: f32 = way
+            .iter()
+            .take_while(|w| net.crossings[w.0].is_empty())
+            .map(|w| w.1 + net.lanes[w.0].length())
+            .fold(0.0, f32::max);
+        if open_road.min(junction) < pass_len - if input.parked { 6.0 } else { -8.0 } {
+            return None;
+        }
+        if let Some(&(last, d)) = way.last() {
+            if net.lanes[last].next.is_empty()
+                && d + net.lanes[last].length() < pass_len + real + 30.0
+            {
+                return None;
+            }
+        }
+        // Back in 2 m past the obstacle, along an S-curve the speed there asks for.
+        let until_d = real + obstacle_len + actor.front + actor.rear + 2.0;
+        let merge_at = actor.front + real + obstacle_len;
+        let v_cap =
+            ((lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6).clamp(4.0, 14.0);
+        let v_back = (actor.speed * actor.speed + 2.0 * actor.accel * 0.85 * until_d)
+            .sqrt()
+            .min(v_cap);
+        let back_min = back_in_ramp(side, 0.0, BACK_IN_LAT_ACCEL);
+        let need_room =
+            (actor.length + 4.0 + v_back * v_back / (2.0 * actor.decel.max(1.0))).max(back_min + 2.0);
+        let merge_room = self.merge_room(scene, actor, &way, merge_at, need_room);
+        if merge_room < need_room {
+            return None;
+        }
+        let back = back_in_ramp(side, v_back, actor.lat_accel.min(BACK_IN_LAT_ACCEL))
+            .min((merge_room - 2.0).max(back_min));
+        let probe = Passing {
+            lane: opp,
+            side,
+            until: until_d,
+            block: real,
+            back,
+            aborted: false,
+            hold: 0.0,
+            creep: !rolling,
+        };
+        let clear_d = probe.clear_at(actor.half_width);
+        // Nobody coming may reach where the car will be for the whole time it is out there.
+        let t_need = pass_time(
+            clear_d,
+            if rolling { 0.0 } else { real + CREEP_PAST },
+            actor.speed,
+            actor.reaction,
+            actor.accel,
+            v_cap,
+        ) + 1.5;
+        let from = os - actor.front - clear_d - 2.0;
+        let to = os + actor.rear + 8.0;
+        if self.oncoming_soon(scene, actor.id, opp, from, to, t_need) {
+            return None;
+        }
+        // The whole trajectory (out and back) must clear every body and pedestrian.
+        let target = side * net.oncoming_sign();
+        let Some(ramp) = self.choose_ramp(scene, actor, &probe, target, pass_len, rolling) else {
+            state.pass_retry = scene.time + 1.0;
+            return None;
+        };
+        let mut d = ManeuverDecision::new(ManeuverPhase::Passing);
+        d.lateral_target = Some(target);
+        d.lateral_ramp = Some((actor.lateral, target, actor.odometer, ramp));
+        d.stop_at = None;
+        d.target_lane = Some(LaneId(opp));
+        state.passing = Some(Passing {
+            until: actor.odometer + until_d,
+            block: actor.odometer + real,
+            ..probe
+        });
+        Some(d)
+    }
+
+    /// Finish or abort a pass already underway. `None` means none is active.
+    fn plan_passing_active(
+        &mut self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        state: &mut ManeuverState,
+    ) -> Option<ManeuverDecision> {
+        let mut p = state.passing?;
+        let net = scene.net;
+        let odo = actor.odometer;
+        // A car that has stood still before the obstacle edges back in and waits there.
+        if !p.aborted && actor.stopped > 8.0 && odo < p.until && actor.lateral.abs() < p.side * 0.5 {
+            p.until = odo;
+            p.aborted = true;
+            p.hold = odo;
+        }
+        if p.aborted {
+            let mut d = ManeuverDecision::new(ManeuverPhase::PassingAbort);
+            d.stop_at = Some(actor.front + (p.hold - odo).max(0.0) + 0.6);
+            d.reasons.push(Reason::Leader);
+            d.binding = Some(Reason::Leader);
+            if actor.speed < 0.1 && (odo >= p.hold - 0.3 || actor.stopped > 1.0) {
+                state.passing = None;
+            } else {
+                state.passing = Some(p);
+            }
+            return Some(d);
+        }
+        if odo >= p.until {
+            // Past the obstacle: move back into the lane along the return S-curve.
+            let mut d = ManeuverDecision::new(ManeuverPhase::Passing);
+            d.lateral_target = Some(0.0);
+            d.lateral_ramp = Some((actor.lateral, 0.0, odo, p.back));
+            if actor.lateral.abs() < 0.05 {
+                state.passing = None;
+            } else {
+                state.passing = Some(p);
+            }
+            return Some(d);
+        }
+        // Still out there: if somebody is coming who gets where the front is headed before
+        // it is back, abort while it still can.
+        let r = p.clear_at(actor.half_width) - odo;
+        if r > 0.0 {
+            if let Some((opp, os, _)) = net.opposite(actor.lane, actor.s) {
+                let lane = &net.lanes[actor.lane];
+                let v_cap = ((lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6)
+                    .clamp(4.0, 14.0);
+                let creep = if p.creep {
+                    (p.block + CREEP_PAST - odo).max(0.0)
+                } else {
+                    0.0
+                };
+                let t_me = pass_time(r, creep, actor.speed, actor.reaction, actor.accel, v_cap);
+                let from = os - actor.front - r - 1.0;
+                let to = os + actor.rear;
+                if self.oncoming_soon(scene, actor.id, opp, from, to, t_me + 0.5) {
+                    let stop_d = actor.speed * actor.speed / (2.0 * 3.5);
+                    let shallow =
+                        actor.lateral * net.oncoming_sign() < p.side - actor.half_width - 1.45;
+                    let abortable = shallow && odo + stop_d + 0.4 < p.block;
+                    if abortable {
+                        p.aborted = true;
+                        p.until = odo;
+                        p.hold = (p.block - actor.pass_room).max(odo + stop_d);
+                        state.passing = Some(p);
+                        let mut d = ManeuverDecision::new(ManeuverPhase::PassingAbort);
+                        d.lateral_target = Some(0.0);
+                        d.lateral_ramp =
+                            Some((actor.lateral, 0.0, odo, (p.block - odo - 0.5).clamp(2.0, 8.0)));
+                        d.stop_at = Some(actor.front + (p.hold - odo).max(0.0) + 0.6);
+                        d.reasons.push(Reason::Passing);
+                        d.binding = Some(Reason::Passing);
+                        return Some(d);
+                    }
+                }
+            }
+        }
+        // Keep out; the lead checks in the core hold it to the corridor.
+        state.passing = Some(p);
+        let mut d = ManeuverDecision::new(ManeuverPhase::Passing);
+        d.target_lane = Some(LaneId(p.lane));
+        d.reasons.push(Reason::Passing);
+        // From a standstill the driver edges out at `PULL_OUT_ACCEL` until past the obstacle.
+        if p.creep && odo < p.block + CREEP_PAST {
+            d.accel_cap = Some(PULL_OUT_ACCEL);
+        }
+        Some(d)
+    }
+
+    /// Choose an S-curve that clears the obstacle for the whole outbound and return path.
+    fn choose_ramp(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        probe: &Passing,
+        target: f32,
+        pass_len: f32,
+        rolling: bool,
+    ) -> Option<f32> {
+        let need = if actor.stopped > 30.0 {
+            0.0
+        } else {
+            PULL_OUT_CLEARANCE
+        };
+        for ramp in pull_out_ramps(probe.block, actor.front, rolling) {
+            let lat = |d: f32| {
+                actor.lateral
+                    + (target - actor.lateral) * smooth01(((d) / ramp.max(0.1)).clamp(0.0, 1.0))
+            };
+            if self.sweep_clear(scene, actor, &lat, pass_len, need) {
+                return Some(ramp);
+            }
+        }
+        None
+    }
+
+    /// Sweep the whole ghost trajectory (out and back) against the realized bodies and
+    /// pedestrians in the freeze. `lat(d)` gives the sideways offset at distance `d`.
+    fn sweep_clear(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        lat: &impl Fn(f32) -> f32,
+        pass_len: f32,
+        _need: f64,
+    ) -> bool {
+        let net = scene.net;
+        let way = way_of(net, actor, pass_len + 4.0);
+        let mut samples: Vec<SweepSample> = Vec::new();
+        let mut d = 0.0f32;
+        while d <= pass_len {
+            let Some((lane, u)) = way_locate(net, &way, d) else {
+                d += 1.0;
+                continue;
+            };
+            let (p, h) = net.lanes[lane].at(u);
+            let hr = (h as f64).to_radians();
+            let off = lat(d) as f64;
+            let p = p + DVec3::new(hr.cos(), -hr.sin(), 0.0) * off;
+            samples.push(SweepSample {
+                p,
+                d,
+                dir: DVec2::new(hr.sin(), hr.cos()),
+            });
+            d += 1.0;
+        }
+        if let Some(hit) = scene
+            .occupancy
+            .swept_clearance(&samples, actor.half_width as f64, &[actor.id])
+        {
+            // The first body the ghost path meets: if it is the obstacle itself, the ramp did
+            // not clear it. Any hit inside the maneuver means the path is not clear.
+            return hit.d > pass_len;
+        }
+        if scene.occupancy.pedestrian_clearance(&samples, actor.half_width as f64, scene.people, 0.4).is_some() {
+            return false;
+        }
+        true
+    }
+
+    /// Who on the oncoming side reaches the stretch `from..to` of `opp` before `t_need`.
+    fn oncoming_soon(
+        &self,
+        scene: &ManeuverScene,
+        id: VehicleId,
+        opp: usize,
+        from: f32,
+        to: f32,
+        t_need: f32,
+    ) -> bool {
+        let net = scene.net;
+        let limit = net.lanes[opp].speed_limit_kmh / 3.6;
+        let look = (limit.clamp(8.0, 20.0) * (t_need + 1.0) + 20.0).min(300.0);
+        for (lane, off, _) in net.upstream(opp, from, look, 48) {
+            for iv in scene.occupancy.intervals(LaneId(lane)) {
+                if iv.owner == id {
+                    continue;
+                }
+                let c = iv.s + off;
+                if iv.foreign {
+                    // Someone from this side out on the lane moving along: may be followed.
+                    if lane == opp && c > from - 2.0 && c < to && iv.speed <= 2.0 {
+                        return true;
+                    }
+                    continue;
+                }
+                if c - iv.rear > to {
+                    continue;
+                }
+                let front = iv.front;
+                if front > from {
+                    return true;
+                }
+                let dist = from - front;
+                if dist > look {
+                    continue;
+                }
+                let v = iv.speed;
+                let v_max = (net.lanes[lane].speed_limit_kmh / 3.6).max(v);
+                let t = if v < 0.3 {
+                    0.7 + arrival_time(dist, 0.0, 1.5, v_max)
+                } else {
+                    arrival_time(dist, v, 1.5, v_max)
+                };
+                if t < t_need {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    // ---- parking -----------------------------------------------------------------------
+
+    fn plan_parking(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        state: &mut ManeuverState,
+        mut plan: ParkPlan,
+        _input: &ManeuverInputs,
+    ) -> ManeuverDecision {
+        let net = scene.net;
+        let mut d = ManeuverDecision::new(ManeuverPhase::Parking);
+        // The plan lane must still be on the way ahead.
+        let Some((_, dl)) = way_of(net, actor, 200.0)
+            .into_iter()
+            .find(|w| w.0 == plan.lane)
+        else {
+            if actor.lane != plan.lane {
+                state.park = None;
+                return ManeuverDecision::new(ManeuverPhase::Idle);
+            }
+            d.reasons.push(Reason::Parking);
+            return d;
+        };
+        let ahead = if actor.lane == plan.lane {
+            plan.s - actor.s
+        } else {
+            dl + plan.s - actor.s
+        };
+        if ahead < 80.0 {
+            d.stop_at = Some(ahead.max(0.0) + actor.front);
+            d.signal = Some((2, 1.0));
+            d.reasons.push(Reason::Parking);
+            d.binding = Some(Reason::Parking);
+            if ahead < (plan.lat.abs() * 6.0).clamp(10.0, 22.0) + 1.0 && ahead > 2.0 && !plan.ramped {
+                plan.ramped = true;
+                let len = (plan.lat.abs() * 6.0).clamp(10.0, 22.0);
+                d.lateral_target = Some(plan.lat);
+                d.lateral_ramp = Some((actor.lateral, plan.lat, actor.odometer, (ahead - 0.6).max(4.0).min(len)));
+            } else if plan.ramped || ahead.abs() < 1.5 {
+                d.lateral_target = Some(plan.lat);
+            } else {
+                d.lateral_target = Some(0.0);
+            }
+        }
+        if ahead.abs() < 1.5 && actor.speed < 0.2 && (actor.lateral - plan.lat).abs() < 0.3 {
+            plan.done = true;
+        } else if ahead < -4.0 {
+            state.park = None;
+            d.lateral_target = Some(0.0);
+            d.reasons.clear();
+            d.binding = None;
+            return d;
+        }
+        state.park = if plan.done { Some(plan) } else { Some(plan) };
+        d
+    }
+
+    // ---- feasibility helpers -----------------------------------------------------------
+
+    fn open_to(&self, net: &Network, actor: &ManeuverActor, lane: usize) -> bool {
+        let Some(l) = net.lanes.get(lane) else {
+            return false;
+        };
+        !l.no_cars && l.density > 0.0 && l.allows(actor.veh_type)
+    }
+
+    /// May `actor` move over into `to` at `s_to` now? Nothing beside or just ahead, and every
+    /// vehicle behind can still stop behind it.
+    fn can_merge(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        to: usize,
+        s_to: f32,
+    ) -> bool {
+        if to >= scene.net.lanes.len() {
+            return false;
+        }
+        for iv in scene.occupancy.intervals(LaneId(to)) {
+            if iv.owner == actor.id {
+                continue;
+            }
+            if iv.foreign {
+                return false;
+            }
+            if iv.s >= s_to {
+                let gap = iv.rear - (s_to + actor.front);
+                if gap <= 2.0 + (actor.speed - iv.speed).max(0.0) * 1.5 {
+                    return false;
+                }
+            } else {
+                if iv.speed < 0.3 {
+                    // A standing body lets a car in only when it is not abreast of it.
+                    if (s_to - iv.s).abs() < actor.length + iv.front + iv.rear {
+                        return false;
+                    }
+                    continue;
+                }
+                let gap = (s_to - actor.rear) - iv.front;
+                if gap
+                    <= 2.0
+                        + iv.speed * 0.8
+                        + (iv.speed - actor.speed).max(0.0).powi(2)
+                            / (2.0 * actor.decel.max(1.0))
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Is the stretch `s - back .. s + ahead` of `lane` free of other bodies?
+    fn lane_clear(
+        &self,
+        scene: &ManeuverScene,
+        id: VehicleId,
+        lane: usize,
+        s: f32,
+        back: f32,
+        ahead: f32,
+    ) -> bool {
+        !scene
+            .occupancy
+            .intervals(LaneId(lane))
+            .iter()
+            .any(|iv| iv.owner != id && iv.s > s - back && iv.s < s + ahead)
+    }
+
+    /// The nearest body ahead along the actor's way, up to `look` m: `(gap to its rear, its
+    /// speed)`.
+    fn nearest_ahead_on_way(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        look: f32,
+    ) -> Option<(f32, f32)> {
+        let way = way_of(scene.net, actor, look + 30.0);
+        let mut best: Option<(f32, f32)> = None;
+        for &(lane, off) in &way {
+            for iv in scene.occupancy.intervals(LaneId(lane)) {
+                if iv.owner == actor.id || iv.foreign {
+                    continue;
+                }
+                let at = off + iv.s;
+                let gap = at - actor.front - (if off < 0.0 { actor.s } else { 0.0 });
+                let gap = if at < 0.0 { continue } else { gap };
+                if gap < 0.0 || gap > look {
+                    continue;
+                }
+                if best.map(|b| gap < b.0).unwrap_or(true) {
+                    best = Some((gap, iv.speed));
+                }
+            }
+        }
+        best
+    }
+
+    /// Free room (m) from `merge_at` along the way before a body that cannot be returned in
+    /// front of, bounded by `need + 20`.
+    fn merge_room(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        way: &[WayStep],
+        merge_at: f32,
+        need: f32,
+    ) -> f32 {
+        let mut room = f32::MAX;
+        for &(lane, off) in way {
+            for iv in scene.occupancy.intervals(LaneId(lane)) {
+                if iv.owner == actor.id {
+                    continue;
+                }
+                let at = off + iv.rear;
+                let start = off + iv.s;
+                if start < merge_at {
+                    continue;
+                }
+                let gap = at - merge_at;
+                if gap > need + 20.0 {
+                    continue;
+                }
+                if iv.speed < 3.0 {
+                    room = room.min(gap);
+                }
+            }
+        }
+        room
+    }
+}
+
+/// The lane the fixed route or a turn lane ahead requires next, if any. This is the target
+/// the coordinator serializes simultaneous changes for; core submits it as an intent.
+pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
+    if let Some(to) = actor.route_next {
+        if net.parallel(actor.lane, to) {
+            return Some(to);
+        }
+    }
+    let lane = net.lanes.get(actor.lane)?;
+    let to_junction = lane.length() - actor.s;
+    if to_junction >= TURN_LANE_LOOKAHEAD {
+        return None;
+    }
+    let turn = actor
+        .planned_next
+        .map(|n| net.lanes[n].turn)
+        .filter(|t| *t != 0)
+        .or(if actor.turn_wish != 0 {
+            Some(actor.turn_wish)
+        } else {
+            None
+        })?;
+    let want = if turn == 1 { lane.left } else { lane.right }?;
+    if net.lanes[want].next.iter().any(|&n| net.lanes[n].turn == turn) {
+        Some(want)
+    } else {
+        None
+    }
+}
+
+/// The side (1 left, 2 right) of lane `to` from `from`, from the geometry where they are.
+fn side_of(net: &Network, from: usize, to: usize) -> i32 {
+    let (la, lb) = (&net.lanes[from], &net.lanes[to]);
+    let (pa, ha) = la.at(la.length() * 0.5);
+    let pb = lb.at(lb.length() * 0.5).0;
+    let h = (ha as f64).to_radians();
+    let side = (pb - pa).truncate().dot(DVec2::new(h.cos(), -h.sin()));
+    if side > 0.0 || (side.abs() < 0.5 && lb.offset > la.offset) {
+        2
+    } else {
+        1
+    }
+}
+
+/// The way of an actor as `(lane, distance from its origin to the lane start)`: the current
+/// lane, then `planned_next`, then the first `next` until `look` metres are covered.
+pub fn way_of(net: &Network, actor: &ManeuverActor, look: f32) -> Vec<WayStep> {
+    let mut out = vec![(actor.lane, -actor.s)];
+    let mut d = net.lanes[actor.lane].length() - actor.s;
+    let mut cur = actor.planned_next.or_else(|| net.lanes[actor.lane].next.first().copied());
+    let mut guard = 0;
+    while d < look && guard < 12 {
+        let Some(n) = cur else { break };
+        out.push((n, d));
+        d += net.lanes[n].length();
+        cur = net.lanes[n].next.first().copied();
+        guard += 1;
+    }
+    out
+}
+
+/// The network lane and distance along it of `d` metres from the actor origin along `way`.
+pub fn way_locate(net: &Network, way: &[WayStep], d: f32) -> Option<(usize, f32)> {
+    let mut prev_start = way.first()?.1;
+    for (k, &(lane, start)) in way.iter().enumerate() {
+        let len = net.lanes[lane].length();
+        if d <= start + len {
+            if k == 0 {
+                return Some((lane, d - start));
+            }
+            if d >= start {
+                return Some((lane, d - start));
+            }
+            let _ = prev_start;
+            return Some((lane, 0.0));
+        }
+        prev_start = start;
+    }
+    let (lane, start) = *way.last()?;
+    Some((lane, (d - start).max(0.0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::LaneBuilder;
+
+    fn straight_lane() -> Network {
+        let lane = LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 400.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        let mut net = Network {
+            lanes: vec![lane],
+            ..Default::default()
+        };
+        net.link(1.5);
+        net
+    }
+
+    #[test]
+    fn pull_out_ramps_are_gentle_to_steep() {
+        let r = pull_out_ramps(6.0, 2.25, false);
+        assert!(!r.is_empty());
+        assert!(r.windows(2).all(|w| w[0] >= w[1]));
+        assert!(r.iter().all(|&x| (4.0..=12.0).contains(&x)));
+    }
+
+    #[test]
+    fn back_in_ramp_keeps_the_sideways_acceleration() {
+        let len = back_in_ramp(3.0, 5.0, BACK_IN_LAT_ACCEL);
+        let peak = 6.0 * 3.0 * 5.0 * 5.0 / (len * len);
+        assert!(peak <= BACK_IN_LAT_ACCEL + 1e-3, "peak {peak}");
+        assert!(len >= 8.0);
+    }
+
+    #[test]
+    fn a_route_required_change_waits_when_the_lane_is_not_clear() {
+        let net = straight_lane();
+        let occ = Occupancy::default();
+        let actors = vec![ManeuverActor::new(VehicleId(1), 0, 10.0)];
+        let scene = ManeuverScene {
+            net: &net,
+            occupancy: &occ,
+            actors: &actors,
+            people: &[],
+            time: 0.0,
+            dt: 0.02,
+            tick: 0,
+        };
+        let mut coord = ManeuverCoordinator::new();
+        let mut state = ManeuverState::default();
+        let mut input = ManeuverInputs::new(0);
+        input.lead_gap = Some(5.0);
+        // No route_next beside, no turn: nothing to do.
+        let d = coord.plan(&scene, &mut state, &input);
+        assert_eq!(d.phase, ManeuverPhase::Idle);
+    }
+
+    #[test]
+    fn simultaneous_changes_go_to_the_lowest_id() {
+        let mut coord = ManeuverCoordinator::new();
+        let intents = [
+            ManeuverIntent { vehicle: VehicleId(7), target: Some(LaneId(3)), required: false },
+            ManeuverIntent { vehicle: VehicleId(2), target: Some(LaneId(3)), required: false },
+            ManeuverIntent { vehicle: VehicleId(5), target: Some(LaneId(3)), required: false },
+        ];
+        coord.begin_tick(&intents, 0);
+        assert_eq!(coord.approved(VehicleId(2)), Some(LaneId(3)));
+        assert_eq!(coord.approved(VehicleId(7)), None);
+        assert_eq!(coord.approved(VehicleId(5)), None);
+    }
+
+    #[test]
+    fn a_pass_is_only_started_with_an_oncoming_lane_and_room() {
+        let net = straight_lane();
+        // No oncoming lane: no pass.
+        let occ = Occupancy::default();
+        let actors = vec![{
+            let mut a = ManeuverActor::new(VehicleId(1), 0, 100.0);
+            a.speed = 6.0;
+            a.stopped = 5.0;
+            a
+        }];
+        let scene = ManeuverScene {
+            net: &net,
+            occupancy: &occ,
+            actors: &actors,
+            people: &[],
+            time: 0.0,
+            dt: 0.02,
+            tick: 0,
+        };
+        let mut coord = ManeuverCoordinator::new();
+        let mut state = ManeuverState::default();
+        let mut input = ManeuverInputs::new(0);
+        input.lead_gap = Some(6.0);
+        input.lead_standing = true;
+        let d = coord.plan(&scene, &mut state, &input);
+        assert_eq!(d.phase, ManeuverPhase::Idle, "no oncoming lane to pass on");
+        assert!(state.passing.is_none());
+    }
+}

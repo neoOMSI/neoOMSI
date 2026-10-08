@@ -122,6 +122,8 @@ mod tests {
                     service_phase: crate::diagnostics::ServicePhase::EnRoute,
                     berth_owner: None,
                     service_stop: None,
+                    maneuver_phase: crate::diagnostics::ManeuverPhase::Idle,
+                    maneuver_target: None,
                     constraints: vec![Reason::RedSignal],
                     binding: Some(Reason::RedSignal),
                 }],

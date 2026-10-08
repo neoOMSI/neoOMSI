@@ -373,3 +373,47 @@ scenario passes:
   for tiles, and removal/notification is still the timetable's job.
 - `JunctionScene`'s `on_lane`/`coming` index views are still caller-built; the berth scene
   reads the id-keyed `Occupancy` directly, and migrating the junction views is a later cleanup.
+
+## Stage 7 progress
+
+- `traffic::maneuvers` (L4) is the single owner of every lateral maneuver, mirroring
+  `junctions` and `service`: route-required lane changes, discretionary changes, overtaking,
+  curb avoidance/bypass, passing, parking arrival, pull-out and the lateral half of service
+  docking. Conflicting behaviors submit `ManeuverInputs` instead of overwriting
+  `lateral_target`; `ManeuverDecision` is the typed output and core is the adapter.
+- `ManeuverCoordinator::begin_tick` orders simultaneous lane changes by target lane and stable
+  id, so `B4`'s "no lane/go-wait oscillation under unchanged conditions" is decided by the
+  single owner instead of container order; `required_target` is the shared route/turn-lane
+  wish. `DISCRETIONARY_DWELL`, `CHANGE_COOLDOWN` and `OSCILLATION_WINDOW` commit with
+  hysteresis and de-oscillate.
+- Required maneuvers (route change, docking/departure, a committed park) precede discretionary
+  (overtake/keep-right), which precede optional passing. A required change that is impossible
+  waits legally before the lane end (`commit_or_wait`, a `Yield` stop) rather than cutting the
+  queue or jumping lanes.
+- Passing (`B5`) is optional and only starts with the whole outbound+return trajectory checked:
+  the oncoming gap over the whole maneuver, the return room, an `Occupancy::swept_clearance` of
+  the ghost path including the return (which carries the swept body/trailer width), and
+  pedestrians. An abort returns along its S-curve while abortable and otherwise holds the
+  committed portion, never snapping laterally.
+- `D4` (`ev_AI_Horn`) is deferred to Stage 9 and recorded here: the reference proves the event
+  exists but not its trigger, and it is presentation feedback that must not become a
+  deadlock-resolution mechanism.
+- `A9` trace schema: `VehicleSnapshot` gained `maneuver_phase`/`maneuver_target`;
+  `TRACE_VERSION` is 5 (see [TRACE_SCHEMA.md](TRACE_SCHEMA.md)).
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`.
+- Exit-gate scenarios: `tests/s7_route_turn_lane.rs`, `s7_simultaneous_lane_change.rs`,
+  `s7_blocked_bay.rs`, `s7_parking_pullout.rs`, `s7_oncoming_abort.rs`,
+  `s7_articulated_clearance.rs`, `s7_no_oscillation.rs`, the `common::maneuver` fixture and
+  unit tests in `maneuvers`.
+
+### Stage 7 replacement reason trail
+
+| Replaced check | Replacement | Why it is equivalent or better |
+| --- | --- | --- |
+| `Passing`/`ParkPlan` state and the `plan_pass`/`guard_pass`/`oncoming_block`/`light_wait` functions in core | `traffic::maneuvers::{Passing, ParkPlan, ManeuverState, ManeuverCoordinator}` | One writer of the lateral decision and its commitments; core submits requests and applies one typed `ManeuverDecision`. |
+| `plan_lane_change`/`plan_bypass`/`plan_route_change` each calling `start_change`/`start_bypass`/`start_route_change` | `required_target` intents + `ManeuverCoordinator::begin_tick` + `commit_or_wait` | Simultaneous changes are ordered by target lane and stable id, so container order cannot change the outcome. |
+| Inline `lateral_target` writes for passing, parking, kerb swerve and service docking | `ManeuverDecision` applied by core | A single owner; a maneuver cannot overwrite another function's lateral intent. |
+| Passing feasibility by `car.body.sweep_clearance` over the outbound path only | L2 `Occupancy::swept_clearance` over the outbound **and** return ghost path | The whole maneuver (return included, trailer/part bodies and pedestrians) is checked in the same frozen snapshot; the physical `AiBody` sweep stays for realization. |
+| `plan_lane_change`'s immediate overtake/keep-right | `DISCRETIONARY_DWELL` + `OSCILLATION_WINDOW` + `change_cooldown` in the coordinator | A flickering local condition cannot make a car jerk between lanes; `B4` oscillation is bounded by construction. |
+| `const CREEP_PAST` and the `accel_cap` derived in core each tick | `ManeuverDecision::accel_cap` from the passing plan | The edge-out accel cap belongs to the maneuver that needs it, and it is reset when no maneuver wants it. |
+

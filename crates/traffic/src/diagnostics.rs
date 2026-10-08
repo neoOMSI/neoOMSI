@@ -7,7 +7,7 @@
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
 /// Version of the capture schema. Any field addition, removal, or semantic change bumps it.
-pub const TRACE_VERSION: u32 = 4;
+pub const TRACE_VERSION: u32 = 5;
 
 /// Why a vehicle cannot proceed at full freedom. Every active cause is preserved; one of
 /// them is the binding constraint.
@@ -226,6 +226,47 @@ impl ServicePhase {
     }
 }
 
+/// Where a vehicle is in its lateral maneuver. The [`crate::maneuvers::ManeuverCoordinator`] is
+/// the single writer of this state; it explains lateral intent in a trace without changing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ManeuverPhase {
+    /// Driving along its lane with no lateral maneuver.
+    #[default]
+    Idle,
+    /// Moving over for a lane its route requires next.
+    RouteChange,
+    /// A discretionary lane change (overtaking or keeping to the correct lane).
+    LaneChange,
+    /// Pulling out round something standing in its own lane onto the oncoming half.
+    Passing,
+    /// Giving up a pass: back into its lane, stopping short of the obstacle.
+    PassingAbort,
+    /// Moving over into a parking space.
+    Parking,
+    /// A car that was parked at the kerb pulling out into the lane.
+    PullOut,
+    /// A scheduled bus moving into or holding its berth.
+    Docking,
+    /// A bus pulling back out of its berth after service.
+    Departing,
+}
+
+impl ManeuverPhase {
+    pub fn label(self) -> &'static str {
+        match self {
+            ManeuverPhase::Idle => "idle",
+            ManeuverPhase::RouteChange => "route_change",
+            ManeuverPhase::LaneChange => "lane_change",
+            ManeuverPhase::Passing => "passing",
+            ManeuverPhase::PassingAbort => "passing_abort",
+            ManeuverPhase::Parking => "parking",
+            ManeuverPhase::PullOut => "pull_out",
+            ManeuverPhase::Docking => "docking",
+            ManeuverPhase::Departing => "departing",
+        }
+    }
+}
+
 /// How a wait is classified, so legitimate service is not treated as an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitClass {
@@ -317,6 +358,10 @@ pub struct VehicleSnapshot {
     pub berth_owner: Option<VehicleId>,
     /// The stop whose berth the vehicle is at or waiting for, if any.
     pub service_stop: Option<StopId>,
+    /// Where the vehicle is in its lateral maneuver (single writer: `traffic::maneuvers`).
+    pub maneuver_phase: ManeuverPhase,
+    /// The lane a lane change is moving over to this tick, if any.
+    pub maneuver_target: Option<LaneId>,
     /// Every active cause, not just the nearest.
     pub constraints: Vec<Reason>,
     /// The cause that currently binds.
@@ -423,6 +468,10 @@ impl Capture {
             if let Some(s) = v.service_stop {
                 h = fnv(h, &s.get().to_le_bytes());
             }
+            h = fnv(h, v.maneuver_phase.label().as_bytes());
+            if let Some(t) = v.maneuver_target {
+                h = fnv(h, &t.index().to_le_bytes());
+            }
             for c in &v.constraints {
                 h = fnv(h, c.label().as_bytes());
             }
@@ -494,6 +543,8 @@ mod tests {
                 service_phase: ServicePhase::EnRoute,
                 berth_owner: None,
                 service_stop: None,
+                maneuver_phase: ManeuverPhase::Idle,
+                maneuver_target: None,
                 constraints: binding.into_iter().collect(),
                 binding,
             }],

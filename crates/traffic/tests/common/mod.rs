@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+pub mod maneuver;
 pub mod service;
 
 use glam::DVec3;

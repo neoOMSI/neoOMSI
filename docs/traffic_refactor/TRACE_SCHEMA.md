@@ -9,12 +9,12 @@ replayable, unlike those ad-hoc dumps.
 ## Versioning
 
 - `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change bumps
-  it. It is currently **4**: Stage 6 added the per-vehicle `service_phase`
-  (`EnRoute`/`Approach`/`WaitingForBerth`/`Docking`/`Boarding`/`ClosingDoors`/`WaitingToMerge`/
-  `Departing`/`Layover`/`NextTrip`/`OutOfService`/`RoutePending`/`ServiceFault`), `berth_owner`
-  (who owns the berth the vehicle is at or waiting for) and `service_stop` (the stop it is at
-  or waiting for). Stage 5 had added `junction_state`/`junction_blocker`; Stage 4 had added
-  the `motion_feedback` fields.
+  it. It is currently **5**: Stage 7 added the per-vehicle `maneuver_phase`
+  (`Idle`/`RouteChange`/`LaneChange`/`Passing`/`PassingAbort`/`Parking`/`PullOut`/`Docking`/
+  `Departing`) and `maneuver_target` (the lane a lane change is moving over to), the single
+  writer being `traffic::maneuvers`; Stage 6 had added `service_phase`, `berth_owner` and
+  `service_stop`; Stage 5 had added `junction_state`/`junction_blocker`; Stage 4 had added the
+  `motion_feedback` fields.
 - A capture writes a header record containing `trace_version`, `source_revision`, `platform`,
   `seed`, `tick_hz`, `network_version`, and the ordered-input digest.
 - Unknown fields are read as absent; readers reject a mismatched major `trace_version`.
@@ -65,6 +65,8 @@ Per vehicle:
 | `service_phase` | enum | See below |
 | `berth_owner` | id or none | Who owns the berth the vehicle is at or waiting for |
 | `service_stop` | `StopId` or none | The stop whose berth it is at or waiting for |
+| `maneuver_phase` | enum | See below; written only by `traffic::maneuvers` |
+| `maneuver_target` | `LaneId` or none | The lane a lane change is moving over to this tick |
 | `motion_feedback` | | Commanded vs realised accel/speed, applied steering/speed bounds |
 | `why` | reason + gap | Convenience projection of the binding constraint |
 
@@ -92,10 +94,14 @@ JunctionState = Approaching | Waiting | Admitted | Inside | Cleared
 ServicePhase  = EnRoute | Approach | WaitingForBerth | Docking | Boarding
               | ClosingDoors | WaitingToMerge | Departing
               | Layover | NextTrip | OutOfService | RoutePending | ServiceFault(reason)
+ManeuverPhase = Idle | RouteChange | LaneChange | Passing | PassingAbort
+              | Parking | PullOut | Docking | Departing
 ```
 
 Some phases may share code, but their transition conditions must remain explicit. A free
-curb stop may pass through `WaitingForBerth` immediately.
+curb stop may pass through `WaitingForBerth` immediately. `ManeuverPhase` is the lateral half
+of a maneuver and is owned by `traffic::maneuvers`; `Docking`/`Departing` are the service
+owner's berth lateral request as the maneuver owner approves it.
 
 ## Transition events
 
