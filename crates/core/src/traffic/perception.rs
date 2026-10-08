@@ -3,6 +3,18 @@
 
 use super::*;
 
+fn body_part_from_obb(parent: &BodyFootprint, part: u16, box_: &Obb) -> BodyFootprint {
+    // Obb::from_box has already converted the vehicle's degrees to radians.
+    let heading = box_.heading;
+    parent.part_of(
+        part,
+        box_.center,
+        DVec2::new(heading.sin(), heading.cos()),
+        box_.half.y,
+        box_.half.x,
+    )
+}
+
 impl Traffic {
 
     /// Nearest vehicle ahead of position `s` on `lane` (following the lanes `plan` has
@@ -581,15 +593,7 @@ impl Traffic {
             for (k, t) in c.vehicle.trailers.iter().enumerate() {
                 if let Some(bb) = t.ty.def.bounding_box {
                     let obb = ::simulation::collision::Obb::from_box(bb, t.position, t.heading);
-                    let th = obb.heading.to_radians();
-                    let tfwd = DVec2::new(th.sin(), th.cos());
-                    out.push(f.part_of(
-                        (k + 1) as u16,
-                        obb.center,
-                        tfwd,
-                        obb.half.y,
-                        obb.half.x,
-                    ));
+                    out.push(body_part_from_obb(&f, (k + 1) as u16, &obb));
                 }
             }
         }
@@ -816,4 +820,40 @@ impl Traffic {
         out
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn articulated_bus_boxes_follow_the_real_heading_and_leave_the_adjacent_lane_free() {
+        for degrees in [30.0f64, 90.0, 149.6, 270.0] {
+            let heading = degrees.to_radians();
+            let fwd = DVec2::new(heading.sin(), heading.cos());
+            let right = DVec2::new(fwd.y, -fwd.x);
+            let owner = VehicleId(93);
+            let main = BodyFootprint::new(owner, fwd * 50.0, fwd, 5.0, 1.25, 0.0, 3.0, 0.0);
+            let rear_box = Obb::vehicle(fwd * 40.0, degrees, 3.6, 3.6, 1.25);
+            let rear = body_part_from_obb(&main, 1, &rear_box);
+            assert!((rear.fwd - fwd).length() < 1e-6, "rear footprint rotated at {degrees} degrees");
+            assert_eq!(rear.owner, owner);
+            assert_eq!(rear.part, 1);
+            let occupancy = Occupancy::build(NetworkVersion(1), 0, vec![main, rear]);
+            let samples: Vec<_> = (25..70).map(|s| {
+                let p = fwd * s as f64 - right * 3.0;
+                SweepSample { p: DVec3::new(p.x, p.y, 0.0), d: (s - 25) as f32, dir: fwd }
+            }).collect();
+            assert!(occupancy.swept_clearance(&samples, 0.9, &[]).is_none(),
+                "right-lane articulated bus blocked the left lane at {degrees} degrees");
+            // A rear section that really swings across the lane must remain an obstacle.
+            let swung_box = Obb::vehicle(fwd * 40.0, degrees + 40.0, 3.6, 3.6, 1.25);
+            let swung_rear = body_part_from_obb(&main, 1, &swung_box);
+            let swung = Occupancy::build(NetworkVersion(1), 0, vec![main, swung_rear]);
+            let hit = swung.swept_clearance(&samples, 0.9, &[]).expect("real rear overlap must block");
+            assert_eq!(hit.owner, owner);
+            assert_eq!(hit.part, 1);
+            assert!(swung.swept_clearance(&samples, 0.9, &[owner]).is_none());
+        }
+    }
 }

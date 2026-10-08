@@ -6,6 +6,83 @@ use glam::{DVec2, DVec3};
 use traffic::*;
 
 #[test]
+fn angled_bus_corners_do_not_extend_the_clearance_box_past_the_body() {
+    let h = 30.0f64.to_radians();
+    let body = BodyFootprint::new(
+        VehicleId(9),
+        DVec2::ZERO,
+        DVec2::new(h.sin(), h.cos()),
+        6.0,
+        1.25,
+        0.0,
+        3.0,
+        0.0,
+    );
+    let occupancy = Occupancy::build(NetworkVersion(1), 0, vec![body]);
+    // The front cross-section of a passing car is wholly beyond the angled bus's
+    // rear corner. Growing the bus on only its two local axes creates a phantom hit.
+    let sample = SweepSample {
+        p: DVec3::new(-2.0, -6.0, 0.0),
+        d: 2.0,
+        dir: DVec2::Y,
+    };
+    assert!(occupancy.swept_clearance(&[sample], 0.9, &[]).is_none());
+    let touching = SweepSample {
+        p: DVec3::new(-2.0, -4.5, 0.0),
+        ..sample
+    };
+    assert!(occupancy.swept_clearance(&[touching], 0.9, &[]).is_some());
+}
+
+#[test]
+fn corridor_samples_match_physical_cross_sections_at_different_bus_angles() {
+    for degrees in [0.0f64, 7.0, 30.0, 75.0, 140.0, 225.0] {
+        let h = degrees.to_radians();
+        let bus = BodyFootprint::new(
+            VehicleId(9),
+            DVec2::new(0.25, 0.5),
+            DVec2::new(h.sin(), h.cos()),
+            6.0,
+            1.25,
+            0.0,
+            3.0,
+            0.0,
+        );
+        let mut contact_body = bus;
+        contact_body.half_len -= 0.1;
+        contact_body.half_w -= 0.1;
+        let occupancy = Occupancy::build(NetworkVersion(1), 0, vec![bus]);
+        for width in [0.6, 0.9, 1.25] {
+            for x in -16..=16 {
+                for y in -16..=16 {
+                    let p = DVec3::new(x as f64 * 0.5 + 0.137, y as f64 * 0.5 + 0.219, 0.0);
+                    let sample = SweepSample {
+                        p,
+                        d: 0.0,
+                        dir: DVec2::Y,
+                    };
+                    let cross_section = BodyFootprint::new(
+                        VehicleId(1),
+                        p.truncate(),
+                        DVec2::Y,
+                        0.0,
+                        width,
+                        0.0,
+                        2.0,
+                        0.0,
+                    );
+                    assert_eq!(
+                        occupancy.swept_clearance(&[sample], width, &[]).is_some(),
+                        contact_body.overlaps(&cross_section, 0.0),
+                        "bus {degrees} degrees, car half-width {width}, probe {p:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn scheduled_feedback_does_not_switch_the_source_mid_lane_change() {
     let net = two_lanes();
     let mut car = AiState::new(0, 60.0, 1);

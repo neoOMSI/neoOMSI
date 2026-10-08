@@ -8,6 +8,12 @@ These are requested neoOMSI traffic improvements, not claims of verified OMSI pa
 - Lane-change occupancy records the body's realized lateral offset on each claimed lane.
   A target reservation alone does not become a physical leader on the adjacent lane.
   Shared-exit following starts within the stopping approach to the actual merge.
+- Swept body clearance uses the normal of each cross-section as a separating axis in
+  addition to the body's axes. Independently growing an angled bus's box on its two
+  local axes alone creates false contacts beyond its corners.
+- Articulated rear sections retain the heading of the realized collision box, which
+  is already in radians. Converting it a second time rotated a 149.6-degree bus rear
+  to about 2.6 degrees in perception and falsely blocked its neighbouring lane.
 - Scheduled lane changes keep their source lane through motion feedback until the change
   finishes. Both longitudinal coordinates follow the realized source projection.
 - An overshot docking target, or a stopped bus at the target that cannot finish its lateral
@@ -29,4 +35,8 @@ These are requested neoOMSI traffic improvements, not claims of verified OMSI pa
 Regression coverage lives in `crates/traffic/tests/reported_blockers.rs` and
 `crates/simulation/src/ai_motion/traffic_regression_tests.rs`. The latter uses the actual
 bicycle-model body and realization feedback, not the synthetic maneuver fixture alone.
-The original map scenes still require an in-game replay to verify asset-specific geometry.
+The Prenzlauer Allee/Ostseestraße case was also reproduced with the installed Berlin 156
+content in the offscreen game pipeline (1989-07-12, 09:00, 55 traffic vehicles, timetable
+and passengers enabled). At simulation time 28 s the same bus remains boarding in the
+same position: the two left-lane cars that previously stood still now pass at approximately
+51 and 47 km/h. Other asset-specific layouts still need their own replay.
