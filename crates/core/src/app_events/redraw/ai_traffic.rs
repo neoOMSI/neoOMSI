@@ -116,6 +116,8 @@ impl App {
             others.extend(own_outlines(self.player.as_ref(), &self.placed));
             t.set_external_actors(others);
             if !self.paused {
+                t.set_player_emergency(self.player.as_ref().is_some_and(|p|
+                    traffic::emergency_drive(&p.vehicle, p.vehicle.ty.def.ai_veh_type == 2)));
                 t.set_player_priority(
                     self.player
                         .as_ref()

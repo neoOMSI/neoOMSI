@@ -3971,6 +3971,7 @@ dependencies = [
  "rayon",
  "scenery",
  "texture",
+ "traffic",
 ]
 
 [[package]]

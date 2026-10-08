@@ -26,8 +26,8 @@ impl Traffic {
             self.tick_plan(dt, player, &others, player_standing, walkers, debug);
         // 4/5. Realize bodies/scripts, then commit realized feedback.
         let t_par = std::time::Instant::now();
-        self.tick_realize(dt, &mut frame.frames);
-        self.tick_commit_feedback(dt);
+        self.tick_realize(dt, &mut frame.frames, &frame.previous_odometer);
+        self.tick_commit_feedback(dt, &frame.previous_odometer);
         self.tick_split = [
             (t_plan - t_start).as_secs_f64(),
             (t_par - t_plan).as_secs_f64(),
@@ -198,6 +198,7 @@ impl Traffic {
         walkers: HashMap<usize, Vec<f32>>,
         debug: bool,
     ) -> TickFrame {
+        let previous_odometer = self.cars.iter().map(|c| c.state.odometer).collect();
         // One immutable occupancy snapshot for the tick: realized bodies plus their lane
         // placements, built once. Geometry is the truth; `by_lane` is a flat id-keyed view
         // for the checks not yet migrated (leader scans, lane changes, passing).
@@ -207,6 +208,11 @@ impl Traffic {
             self.body_feet(player, others),
         );
         let by_lane = occupancy.lane_view(&self.index_of);
+        let maneuver_people: Vec<_> = self.people.iter().map(|&(p, _, _)| p).collect();
+        let road_collision = self.road_collision.clone();
+        let scenery_clear = |samples: &[::traffic::perception::SweepSample], actor: &ManeuverActor| {
+            safety::scenery_clear(&road_collision, samples, actor)
+        };
         // The external road users' synthetic ids (see `body_feet`): bodies to keep clear of,
         // not AI blockers to sort out by `geo_block`.
         let mut external_ids: Vec<VehicleId> = vec![VehicleId(u64::MAX)];
@@ -235,10 +241,11 @@ impl Traffic {
         self.break_lead_pairs();
         // The junction actors and the signal aspects are frozen once for the tick; all
         // junction decisions read this snapshot, and the coordinator owns the claims.
-        let junction_actors: Vec<JunctionActor> = self
+        let mut junction_actors: Vec<JunctionActor> = self
             .cars
             .iter()
             .map(|c| JunctionActor {
+                emergency: emergency_drive(&c.vehicle, c.is_bus()),
                 id: c.id,
                 lane: c.state.lane,
                 s: c.state.s,
@@ -271,6 +278,22 @@ impl Traffic {
             })
             .collect();
         self.junctions.begin_tick((self.time * 1000.0).max(0.0) as u64);
+        let mut emergency_ways: Vec<_> = self.cars.iter().map(|c| self.way_lanes(&c.state, 160.0)).collect();
+        let mut junction_on_lane = by_lane.clone();
+        let mut junction_coming = coming.clone();
+        if let Some((actor, way)) = player.and_then(|p| safety::external_actor(&self.net, p, self.player_emergency)) {
+            let index = junction_actors.len();
+            junction_on_lane.entry(actor.lane).or_default().push((index, actor.s, 0.0, false));
+            for &(l, d) in way.iter().skip(1) {
+                junction_coming.entry(l).or_default().push((index, d));
+            }
+            junction_actors.push(actor); emergency_ways.push(way);
+        }
+        self.junctions.prepare_emergencies(&self.net, &junction_actors, &emergency_ways, &junction_on_lane);
+        let emergency_drives: Vec<_> = junction_actors.iter().zip(&emergency_ways)
+            .filter(|(a, _)| a.emergency).map(|(a, way)| ::traffic::EmergencyDrive {
+                vehicle: a.id, way: way.clone(), front: a.front, speed: a.speed,
+            }).collect();
         // The service actors are frozen once too; the coordinator owns berth capacity and
         // decides the service phases. Arrival order is recorded when a bus first comes
         // within STOP_REACH of a stop, so a queue is assigned by stable arrival, not by
@@ -338,6 +361,7 @@ impl Traffic {
                     rear: st.rear,
                     length: st.length,
                     half_width: c.half_width,
+                    height: safety::vehicle_height(&c.vehicle),
                     odometer: st.odometer,
                     min_gap: st.min_gap,
                     veh_type: st.veh_type,
@@ -657,12 +681,26 @@ impl Traffic {
                 inputs.lead_standing = standing;
                 inputs.obstacle_len = obstacle_len;
                 inputs.parked = parked_ahead || at_stop;
+                inputs.priority_pass = junction_actors[i].emergency;
+                inputs.queue_for_stop = self.cars[i].next_stop().is_some_and(|(ri, ss)| {
+                    let st = &self.cars[i].state;
+                    ri >= st.route_index && st.route_distance(&self.net, ri, ss)
+                        < inputs.lead_gap.unwrap_or(0.0) + obstacle_len + st.front + 15.0
+                });
+                inputs.lead_standing |= inputs.priority_pass && lead.is_some_and(|l| l.0.speed < 0.5);
+                if !inputs.priority_pass {
+                    let car = &self.cars[i];
+                    inputs.emergency = ::traffic::approaching_emergency(
+                        &self.net, car.id, &car.state, car.state.rear, &emergency_drives,
+                    );
+                }
                 let decision = {
                     let scene = ManeuverScene {
+                        static_clearance: Some(&scenery_clear),
                         net: &self.net,
                         occupancy: &occupancy,
                         actors: &maneuver_actors,
-                        people: &[],
+                        people: &maneuver_people,
                         time: self.time,
                         dt,
                         tick: (self.time * 1000.0).max(0.0) as u64,
@@ -699,6 +737,10 @@ impl Traffic {
                 } else {
                     car.state.accel_cap = None;
                 }
+                if let Some(v) = self.junctions.emergency_speed_cap(car.id) {
+                    let cap = ((v - car.state.speed) / 0.5).clamp(-car.state.decel, car.state.accel);
+                    car.state.accel_cap = Some(car.state.accel_cap.map_or(cap, |a| a.min(cap)));
+                }
             }
             // The coordinator decides the signal hold and the right of way from the frozen
             // view; it is the only writer of junction claims.
@@ -706,8 +748,8 @@ impl Traffic {
                 i,
                 &way,
                 lead.map(|l| l.0),
-                &by_lane,
-                &coming,
+                &junction_on_lane,
+                &junction_coming,
                 &walkers,
                 &junction_actors,
                 &aspects,
@@ -800,7 +842,10 @@ impl Traffic {
                 }
             }
             let people = for_people.map(|x| x.0);
-            let mut stop_at = [light, yield_at, merge_wait, keep_back, people]
+            let ground_hold = (!self.cars[i].body.ground_supported)
+                .then_some(self.cars[i].state.front + 0.1);
+            let motion_hold = self.cars[i].motion_fault.map(|_| self.cars[i].state.front + 0.1);
+            let mut stop_at = [light, yield_at, merge_wait, keep_back, people, ground_hold, motion_hold]
                 .into_iter()
                 .flatten()
                 .reduce(f32::min);
@@ -811,6 +856,8 @@ impl Traffic {
                 (Reason::Yield, merge_wait),
                 (Reason::Leader, keep_back),
                 (Reason::Pedestrian, people),
+                (Reason::GroundUnavailable, ground_hold),
+                (Reason::SceneryBlocked, motion_hold),
                 (
                     maneuver_why.map(|x| x.0).unwrap_or(Reason::NONE),
                     maneuver_why.map(|x| x.1),
@@ -1262,12 +1309,12 @@ impl Traffic {
                 c.vehicle.ai_visuals = (p - v.pos).length() < UNSEEN_NEAR || v.frames(p, r);
             }
         }
-        TickFrame { by_lane, coming, walkers, aspects, junction_actors, frames, remove }
+        TickFrame { by_lane, coming, walkers, aspects, junction_actors, frames, remove, previous_odometer }
     }
 
     /// 4. Realize every body and run its script, in parallel. The domain never owns pose;
     /// this is where `simulation::ai_motion` writes it.
-    fn tick_realize(&mut self, dt: f32, frames: &mut [Option<AiFrame>]) {
+    fn tick_realize(&mut self, dt: f32, frames: &mut [Option<AiFrame>], previous_odometer: &[f32]) {
         // The bodies and the scripts of the AI vehicles run in parallel: each car follows
         // its own way and its OMSI script is its own little machine reading only its own
         // state; with thirty cars and a dozen timetable buses they were the largest single
@@ -1275,20 +1322,25 @@ impl Traffic {
         {
             use rayon::prelude::*;
             let net = &self.net;
+            let road_collision = &self.road_collision;
             type Work<'a> = (
                 &'a AiState,
                 &'a mut AiBody,
                 &'a mut VehicleInstance,
                 &'a mut AiFrame,
                 &'a mut std::collections::VecDeque<(f64, DVec3)>,
+                &'a mut Option<Reason>,
+                f32,
+                &'a VehicleCapabilities,
             );
             let mut work: Vec<Work> = self
                 .cars
                 .iter_mut()
                 .zip(frames.iter_mut())
-                .filter_map(|(c, f)| {
+                .enumerate()
+                .filter_map(|(i, (c, f))| {
                     let f = f.as_mut()?;
-                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail))
+                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, previous_odometer[i], &c.caps))
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
@@ -1296,7 +1348,7 @@ impl Traffic {
             // the main thread more than a car's work)
             work.par_iter_mut()
                 .with_min_len(4)
-                .for_each(|(state, body, vehicle, frame, trail)| {
+                .for_each(|(state, body, vehicle, frame, trail, fault, previous, caps)| {
                     let t0 = std::time::Instant::now();
                     let ground = vehicle.ground.clone();
                     let contact = vehicle.contact.clone();
@@ -1306,6 +1358,7 @@ impl Traffic {
                     }
                     let trail = &**trail;
                     let behind = |d: f64| rail_behind(trail, state, net, d);
+                    let before = (body.kind == MotionKind::Road).then(|| (**body).clone());
                     body.step(
                         dt,
                         state.speed,
@@ -1321,7 +1374,32 @@ impl Traffic {
                             .map(|g| g.as_ref() as &dyn Fn(f64, f64) -> Option<f64>),
                         contact.as_deref(),
                     );
+                    if let Some(before) = before {
+                        let mut actor = ManeuverActor::new(VehicleId(0), state.lane, state.s);
+                        actor.front = state.front; actor.rear = state.rear;
+                        actor.half_width = caps.half_width;
+                        actor.height = safety::vehicle_height(vehicle);
+                        let sample = |b: &AiBody| {
+                            let h = b.heading.to_radians();
+                            ::traffic::perception::SweepSample { p: b.position, d: 0.0, dir: DVec2::new(h.sin(), h.cos()) }
+                        };
+                        if !safety::scenery_clear(road_collision, &[sample(body)], &actor)
+                            && safety::scenery_clear(road_collision, &[sample(&before)], &actor)
+                        {
+                            **body = before;
+                            body.stop_motion();
+                            frame.speed = 0.0;
+                            frame.brake = true;
+                            if fault.is_none() { log::warn!("AI scenery sweep blocked {}", vehicle.ty.def.path.display()); }
+                            **fault = Some(Reason::SceneryBlocked);
+                        } else {
+                            **fault = None;
+                        }
+                    }
                     body.apply(vehicle);
+                    if body.kind == MotionKind::Road {
+                        frame.odometer = *previous + body.realized_speed(dt) * dt;
+                    }
                     if rail && !vehicle.trailers.is_empty() {
                         // the coupled cars (a train's, a tram's sections) on the track it
                         // came along, not dragged round the bends like a road trailer
@@ -1343,12 +1421,12 @@ impl Traffic {
     }
 
     /// 5. Read the realized pose/speed back into each planner (single pose owner, Stage 4).
-    fn tick_commit_feedback(&mut self, dt: f32) {
+    fn tick_commit_feedback(&mut self, dt: f32, previous_odometer: &[f32]) {
         // Motion feedback (Stage 4, A7): the body is the single pose owner. Each road
         // vehicle's realized pose and speed are read back into its planner, so route
         // progress - and every stop distance derived from it - is committed from realized
         // movement, never from a planner coordinate alone.
-        for c in &mut self.cars {
+        for (i, c) in self.cars.iter_mut().enumerate() {
             if self.net.lanes.get(c.state.lane).map(|l| l.kind) != Some(LaneKind::Street) {
                 continue;
             }
@@ -1359,6 +1437,7 @@ impl Traffic {
                 half_width: c.half_width as f64,
             };
             c.state.commit_feedback(&self.net, realized);
+            c.state.odometer = previous_odometer[i] + realized.speed * dt;
         }
     }
 
@@ -1550,6 +1629,7 @@ impl Traffic {
 /// The frozen per-tick data the planning phase hands to realization and finish. Every buffer
 /// is owned (no borrow of `Traffic`), so the phases can be separate methods.
 struct TickFrame {
+    previous_odometer: Vec<f32>,
     by_lane: HashMap<usize, Vec<(usize, f32, f32, bool)>>,
     coming: HashMap<usize, Vec<(usize, f32)>>,
     walkers: HashMap<usize, Vec<f32>>,

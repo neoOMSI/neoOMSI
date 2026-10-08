@@ -169,6 +169,7 @@ impl Traffic {
         self.cars.push(AiCar {
             id,
             caps,
+            motion_fault: None,
             state,
             vehicle,
             render,

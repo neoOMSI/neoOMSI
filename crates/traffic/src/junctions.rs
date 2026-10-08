@@ -31,6 +31,7 @@ use crate::following::{AiState, Lead, MAX_BRAKE};
 use crate::ids::{LaneId, VehicleId};
 use crate::network::{BlockRule, Network};
 use crate::signals::Aspect;
+mod emergency;
 use crate::world::Arbiter;
 use hashbrown::{HashMap, HashSet};
 
@@ -206,6 +207,8 @@ pub fn block_mode_between(net: &Network, a: usize, b: usize) -> Option<BlockMode
 /// The junction inputs for one vehicle, with the fields the admission rules read.
 #[derive(Debug, Clone)]
 pub struct JunctionActor {
+    /// Active emergency drive, distinct from general script/depot priority.
+    pub emergency: bool,
     pub id: VehicleId,
     pub lane: usize,
     pub s: f32,
@@ -236,6 +239,7 @@ impl JunctionActor {
     /// A minimal actor for tests and adapters.
     pub fn new(id: VehicleId, lane: usize, s: f32) -> JunctionActor {
         JunctionActor {
+            emergency: false,
             id,
             lane,
             s,
@@ -359,6 +363,7 @@ pub enum WaitDiagnosis {
 /// The junction coordinator: the single owner of junction commitments and the wait-for graph.
 #[derive(Debug, Clone, Default)]
 pub struct JunctionCoordinator {
+    emergency_reservations: Vec<emergency::EmergencyReservation>,
     claims: Arbiter,
     amber: HashMap<VehicleId, (usize, usize)>,
     commitments: HashMap<VehicleId, Commitment>,
@@ -431,6 +436,7 @@ impl JunctionCoordinator {
 
     /// Release every claim and the exit storage of `id`, with a reason.
     pub fn release(&mut self, id: VehicleId, _reason: Reason) {
+        self.emergency_reservations.retain(|r| r.owner != id);
         if let Some(c) = self.commitments.remove(&id) {
             for l in c.lanes {
                 self.claims.release(LaneId(l), id);
@@ -463,6 +469,7 @@ impl JunctionCoordinator {
 
     /// Network invalidation: every claim made against the old version is released.
     pub fn invalidate_network(&mut self) {
+        self.emergency_reservations.clear();
         self.claims = Arbiter::new();
         self.commitments.clear();
         self.wait_for.clear();
@@ -500,6 +507,13 @@ impl JunctionCoordinator {
                 continue;
             };
             let gap = d - actor.front;
+            if actor.emergency && gap < 15.0 && actor.speed <= 5.0
+                && self.emergency_owns(actor.id, way[k].0)
+            {
+                // Only the reserved movement gets a red-light exception. Admission still
+                // checks actual occupants, pedestrians and full downstream exits.
+                continue;
+            }
             let comfortable = v * v / (2.0 * actor.decel * 1.4) + 1.0;
             let possible = v * v / (2.0 * MAX_BRAKE * 0.8);
             let go = match aspect {
@@ -567,6 +581,18 @@ impl JunctionCoordinator {
             return d;
         };
         // a junction beyond a red light's line is not decided yet
+        if !jn.inside && self.emergency_reservations.iter().any(|r|
+            r.owner != actor.id && jn.lanes.iter().any(|(l, _)| r.lanes.contains(l)))
+            && self.claims_of(actor.id).is_empty()
+        {
+            let mut d = JunctionDecision::none();
+            d.light = light;
+            d.yield_at = Some(jn.lanes[0].1);
+            d.state = JunctionState::Waiting;
+            d.reasons.push(Reason::EmergencyYield);
+            d.binding = Some(Reason::EmergencyYield);
+            return d;
+        }
         if let Some(l) = light {
             if !jn.inside && jn.lanes[0].1 >= l - 0.5 {
                 let mut d = JunctionDecision::none();
@@ -684,6 +710,12 @@ impl JunctionCoordinator {
                     // conflict); `Reserve` refuses a reservation; `Oncoming` keeps the default
                     // commitment rule (a body or a committed reservation is waited for).
                     let mode = block_mode_between(scene.net, l, m);
+                    // Entry paths can be part of the same scenery object as the ring.
+                    // Being on that object is not permission to cross a give-way merge.
+                    let yielding_merge = c.merge && scene.net.must_yield(l, m)
+                        && !scene.net.must_yield(m, l);
+                    let priority_merge = c.merge && scene.net.must_yield(m, l)
+                        && !scene.net.must_yield(l, m);
                     let claims_block = mode != Some(BlockMode::Occupy);
                     let claimed = self.claims.holds(LaneId(m), o.id) && !stalled && claims_block;
                     let theirs = dj - c.other_before - o.front;
@@ -729,8 +761,16 @@ impl JunctionCoordinator {
                         }
                         continue;
                     }
+                    // A lower-priority entrant still upstream of the conflict must stop,
+                    // even if it holds a speculative claim. A body already overlapping,
+                    // a blockpath reservation, or an entrant unable to stop stays protected.
+                    if priority_merge && mode.is_none() && !o.emergency
+                        && theirs > o.speed * o.reaction + o.speed * o.speed / (2.0 * o.decel.max(0.1))
+                    {
+                        continue;
+                    }
                     if claimed || (is_on && o.speed > 0.5 && !waits_short) {
-                        let me_decided = committed || jn.inside;
+                        let me_decided = (committed || jn.inside) && !yielding_merge;
                         let first = if me_decided {
                             t_j < t_mine - 0.3 || ((t_j - t_mine).abs() <= 0.3 && o.id < me_id)
                         } else {
@@ -747,9 +787,9 @@ impl JunctionCoordinator {
                         continue;
                     }
                     let o_prio = o.priority;
-                    if jn.inside
-                        || committed
-                        || (me_prio && !o_prio)
+                    if (jn.inside && !yielding_merge)
+                        || (committed && !yielding_merge)
+                        || (me_prio && !o_prio && !yielding_merge)
                         || (!scene.net.must_yield(l, m) && !(o_prio && !me_prio))
                     {
                         continue;
@@ -761,6 +801,9 @@ impl JunctionCoordinator {
                             ruled = true;
                             reasons.push(Reason::Yield);
                             self.wait_for.insert(me_id, o.id);
+                            if jn.inside {
+                                stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
+                            }
                         }
                     }
                 }
@@ -833,6 +876,9 @@ impl JunctionCoordinator {
         }
         let mut blocked =
             (hard && !cannot_stop) || ((ruled || !soft.is_empty()) && !cannot_stop_gently);
+        if actor.emergency {
+            blocked |= hard || ruled || !soft.is_empty();
+        }
         if !hard && !ruled && !soft.is_empty() && wait > 2.5 + actor.reaction {
             // everybody is waiting for somebody: the longest waiter goes (bounded fairness)
             let wins = soft.iter().all(|&j| {

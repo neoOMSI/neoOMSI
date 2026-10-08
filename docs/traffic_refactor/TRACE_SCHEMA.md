@@ -9,7 +9,9 @@ replayable, unlike those ad-hoc dumps.
 ## Versioning
 
 - `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change bumps
-  it. It is currently **7**: Stage 9 added the `Horn { vehicle, reason }` event (a documented
+  it. It is currently **8**: Stage 10 adds `GroundUnavailable`, `SceneryBlocked` and
+  `EmergencyYield`, and road odometers now count realized motion after a rejected step.
+  Stage 9 added the `Horn { vehicle, reason }` event (a documented
   provisional `ev_AI_Horn` trigger; presentation feedback only) and centralized parameter
   provenance. Stage 8 added the per-vehicle `lifecycle`
   (`Active`/`Dormant`/`Pending`/`Removed`), the spawn-denial reasons `NoPath`, `NoGround`,

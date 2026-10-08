@@ -104,6 +104,7 @@ impl Car {
             rear: self.rear,
             length: self.front + self.rear,
             half_width: self.half_width,
+            height: 1.5,
             odometer: self.odometer,
             min_gap: 2.0,
             veh_type: 0,
@@ -203,6 +204,7 @@ impl ManeuverWorld {
         self.coord.begin_tick(&intents, self.tick);
         let decisions: Vec<ManeuverDecision> = {
             let scene = ManeuverScene {
+                        static_clearance: None,
                 net: &self.net,
                 occupancy: &occ,
                 actors: &actors,

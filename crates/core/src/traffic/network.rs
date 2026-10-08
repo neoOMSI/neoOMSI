@@ -105,6 +105,7 @@ impl Traffic {
     /// the network, whose existing indices stay valid), their parked cars (sorted onto the
     /// lanes once those are in) and the light programs of their crossings.
     pub fn add_tiles(&mut self, world: &World) -> usize {
+        self.road_collision = world.collision.lock().clone();
         let (new, parked_cars, tiles) = take_from_tiles(world);
         let n = new.len();
         let mut added = self.net.lanes.len()..self.net.lanes.len();

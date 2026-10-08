@@ -167,11 +167,16 @@ struct Wheel {
 
 /// How far over its way an AI car's wheel climbs onto what is drawn there (m), and how far
 /// under the way it goes down to it: the road drawn higher than the lane the map laid out
-/// (the car sank into it), not a deck overhead; and below the lane only a little - a lane
-/// running along the edge of a junction plate had its outer wheels drop onto the terrain
-/// beside it and the car leaned over by ten degrees (see `AiBody::settle`).
-const AI_STEP_UP: f64 = 0.6;
-const AI_STEP_DOWN: f64 = 0.1;
+/// (the car sank into it), not a deck overhead. The bounded, provisional search tolerates
+/// imperfect path heights in either direction. Later probes follow previous contacts and
+/// local path grade; missing wheels share the supported axle instead of dipping to terrain.
+const AI_CONTACT_RANGE: f64 = 1.5;
+/// A wider search is needed only when no wheel has found the current road level at all.
+/// It corrects displaced path Z without lowering a single unsupported axle onto terrain.
+const AI_CONTACT_REACQUIRE: f64 = 3.0;
+/// Reject isolated level changes larger than a curb when other tyres still confirm the
+/// previous road plane. This is a continuity filter, not a limit on the road's total grade.
+const AI_CONTACT_DISCONTINUITY: f64 = 0.35;
 
 #[derive(Debug, Clone)]
 pub struct AiBody {
@@ -231,6 +236,10 @@ pub struct AiBody {
     /// frame: the wheels of every AI car twitched up and down in their arches while the
     /// body on its springs rode smoothly.
     contact_z: Vec<f64>,
+    contact_path_z: Vec<f64>,
+    /// At least one axle has valid support. Missing contacts extend that road plane;
+    /// complete loss of support is reported instead of substituting authored path height.
+    pub ground_supported: bool,
 }
 
 impl AiBody {
@@ -364,6 +373,8 @@ impl AiBody {
             bank_deg: 0.0,
             suspension: vec![[0.0; 2]; axle_count],
             contact_z: Vec::new(),
+            contact_path_z: Vec::new(),
+            ground_supported: true,
         }
     }
 
@@ -379,6 +390,7 @@ impl AiBody {
         self.started = false;
         self.ground = None;
         self.contact_z.clear();
+        self.contact_path_z.clear();
         self.last_speed = speed;
         self.step(0.0, speed, way, ground, contact);
     }
@@ -402,7 +414,11 @@ impl AiBody {
         self.last_speed = speed;
         match self.kind {
             MotionKind::Road => {
-                self.drive(dt, speed, way);
+                if self.ground_supported || dt == 0.0 {
+                    self.drive(dt, speed, way);
+                } else {
+                    self.travelled = 0.0;
+                }
                 self.settle(dt, way, ground, contact);
             }
             MotionKind::Rail => self.ride(way),
@@ -418,6 +434,14 @@ impl AiBody {
         } else {
             0.0
         }
+    }
+
+    /// A rejected physical step has no realized motion, regardless of its proposed speed.
+    pub fn stop_motion(&mut self) {
+        self.travelled = 0.0;
+        self.last_speed = 0.0;
+        self.a_long = 0.0;
+        self.a_lat = 0.0;
     }
 
     /// Bicycle model: the rotation point follows the way, the front wheels steer towards a
@@ -440,13 +464,10 @@ impl AiBody {
         }
         let fwd = dir(self.heading);
         let right = DVec2::new(fwd.y, -fwd.x);
-        // the planner's position along the way leads; the body keeps up with it
-        let along = (target - self.rear).dot(fwd) as f32;
-        let v = if speed < 0.02 && along.abs() < 0.05 {
-            0.0
-        } else {
-            (speed + 1.5 * along).clamp(0.0, speed + 3.0)
-        };
+        // Route progress is committed from this body's motion. The old catch-up servo
+        // amplified the already advanced command and fed that extra speed into the next
+        // tick. Steering follows the way; only the longitudinal owner may choose speed.
+        let v = speed.max(0.0);
         let look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
         let g = way(self.rot_long + look).truncate() - self.rear;
         let alpha = (g.dot(right) as f32)
@@ -528,66 +549,104 @@ impl AiBody {
         let fwd = dir(self.heading);
         let right = DVec2::new(fwd.y, -fwd.x);
         let origin = self.position.truncate();
+        let query = |p: DVec2, reference: f64, range: f64| match contact {
+            Some(c) => c.road_height(p.x, p.y, reference, range),
+            None => ground.and_then(|g| g(p.x, p.y))
+                .filter(|z| z.is_finite() && (*z - reference).abs() <= range),
+        };
+        let (grade, crossfall) = self.ground.map(|(_, p, r)| (p.tan() as f64, -r.tan() as f64))
+            .unwrap_or((0.0, 0.0));
         // the way's own height at each axle: the road the map says is there, which also
         // decides when a sampled height belongs to something else (a bridge over the road)
         let mut axle_z = vec![f64::NAN; self.axle_count];
-        // (lateral, longitudinal, axle, way height, what is drawn there)
-        let mut samples: Vec<(f32, f32, usize, f64, Option<f64>)> =
+        if self.contact_path_z.len() != self.wheels.len() {
+            self.contact_path_z = vec![f64::NAN; self.wheels.len()];
+        }
+        // (lateral, longitudinal, axle, way height, contact reference, actual support)
+        let mut samples: Vec<(f32, f32, usize, f64, f64, Option<f64>)> =
             Vec::with_capacity(self.wheels.len());
-        for w in &self.wheels {
+        for (wi, w) in self.wheels.iter().enumerate() {
             if axle_z[w.axle].is_nan() {
                 axle_z[w.axle] = way(w.long).z;
             }
             let path_z = axle_z[w.axle];
             let p = origin + right * w.lat as f64 + fwd * w.long as f64;
-            // What the wheel stands on, as Omsi.exe stands an AI car's wheels (its AI cars
-            // are bodies on the same wheel physics as the player's bus, 0x7d5124 ->
-            // 0x7e2574, asking the ground under each wheel, 0x7aec3c): the drawn road, the
-            // surface objects, the terrain beside them - up to `AI_STEP_UP` over the way and
-            // down to `AI_STEP_DOWN` under it (farther is another level: a bridge over the
-            // road, the road under a bridge). Without it the plain height sampler, which
-            // knows no levels.
-            let drawn = match contact {
-                Some(c) => c
-                    .probe(p.x, p.y, path_z + AI_STEP_UP)
-                    .below
-                    .filter(|g| *g >= path_z - AI_STEP_DOWN),
-                None => ground.and_then(|g| g(p.x, p.y)),
-            };
-            samples.push((w.lat, w.long, w.axle, path_z, drawn));
+            let previous = self.contact_z.get(wi).copied().filter(|z| z.is_finite());
+            let path_delta = path_z - self.contact_path_z[wi];
+            let reference = previous.map_or(path_z, |z| {
+                z + if path_delta.is_finite() { path_delta.clamp(-0.5, 0.5) } else { 0.0 }
+            });
+            // DriveGround exposes both sides of the probe. Pick the nearest support on
+            // this road level, including a drawn road above an imperfect path. Increasing
+            // the query top alone would incorrectly prefer a bridge over the same road.
+            let drawn = query(p, reference, AI_CONTACT_RANGE);
+            samples.push((w.lat, w.long, w.axle, path_z, reference, drawn));
+            self.contact_path_z[wi] = path_z;
         }
-        // How far each axle's road lies over its way (from what is drawn under its wheels):
-        // kept to the way alone, a car whose lane lay under the drawn road - a spline on a
-        // grade, a junction plate tilted on a hill - drove through the asphalt with only its
-        // roof showing. Per axle, not per wheel, and the least of its wheels: a wheel off
-        // the edge of the road or on the kerb would tip the car over, or lift it, when its
-        // neighbour stands on the way.
-        let mut lift = vec![f64::INFINITY; self.axle_count];
-        for &(_, _, a, path_z, drawn) in &samples {
-            let up = if contact.is_some() {
-                drawn.map_or(0.0, |g| g - path_z)
-            } else {
-                0.0
-            };
-            lift[a] = lift[a].min(up);
+        if let Some((z, _, _)) = self.ground {
+            let expected = |lat: f32, long: f32| z + grade * (long as f64 + self.travelled as f64)
+                + crossfall * lat as f64;
+            if samples.iter().any(|&(lat, long, _, _, _, h)|
+                h.is_some_and(|h| (h - expected(lat, long)).abs() <= AI_CONTACT_DISCONTINUITY))
+            {
+                for (lat, long, _, _, _, h) in &mut samples {
+                    if h.is_some_and(|h| (h - expected(*lat, *long)).abs() > AI_CONTACT_DISCONTINUITY) {
+                        *h = None;
+                    }
+                }
+            }
         }
+        // Tiny seams can miss all four exact tyre queries. Confirm the same road plane
+        // on nearby real faces before allowing a lower terrain/other level to take over.
+        if self.ground.is_some() && samples.iter().all(|s| s.5.is_none()) {
+            for (lat, long, _, _, reference, drawn) in &mut samples {
+                let p = origin + right * *lat as f64 + fwd * *long as f64;
+                *drawn = [0.5, -0.5, 1.0, -1.0, 2.0, -2.0].into_iter().find_map(|d|
+                    query(p + fwd * d, *reference + grade * d, AI_CONTACT_RANGE)
+                        .map(|h| h - grade * d));
+            }
+        }
+        // Reacquire a displaced road only when the entire body has no nearby support.
+        // If the rear axle still stands on the street at a road/tile end, its plane carries
+        // the front; the lower terrain beyond the asphalt is not a second road level.
+        if samples.iter().all(|s| s.5.is_none()) {
+            for (lat, long, _, _, reference, drawn) in &mut samples {
+                let p = origin + right * *lat as f64 + fwd * *long as f64;
+                *drawn = query(p, *reference, AI_CONTACT_REACQUIRE);
+            }
+        }
+        let mut axle_support = vec![None::<f64>; self.axle_count];
+        for &(_, _, a, _, _, drawn) in &samples {
+            if let Some(h) = drawn {
+                axle_support[a] = Some(axle_support[a].map_or(h, |old| old.min(h)));
+            }
+        }
+        let supported = (contact.is_none() && ground.is_none())
+            || axle_support.iter().any(Option::is_some);
+        if self.ground_supported && !supported && std::env::var_os("OMSI_DEBUG_AI_GROUND").is_some() {
+            for &(lat, long, _, path_z, _, drawn) in &samples {
+                if drawn.is_none() {
+                    let p = origin + right * lat as f64 + fwd * long as f64;
+                    let probe = contact.map(|g| g.probe(p.x, p.y, path_z));
+                    log::warn!("AI ground lost at ({:.3}, {:.3}), path {path_z:.3}, probe {probe:?}", p.x, p.y);
+                }
+            }
+        }
+        self.ground_supported = supported;
+        let (sum, count) = samples.iter().filter_map(|&(lat, long, _, _, _, h)|
+            h.map(|h| h - grade * long as f64 - crossfall * lat as f64))
+            .fold((0.0, 0usize), |(sum, n), h| (sum + h, n + 1));
+        let supported_plane = (count > 0).then(|| sum / count as f64);
         let contacts: Vec<(f32, f32, f64)> = samples
             .iter()
-            .map(|&(lat, long, a, path_z, drawn)| {
-                let base = path_z + lift[a].clamp(0.0, AI_STEP_UP);
-                // The surface under the wheel itself counts only within a few centimetres of
-                // that: taken up to 0.8 m off, a wheel beside the lane climbed the kerb and
-                // the gutter, and the texel steps of the road raster kept every bus rocking
-                // like a boat (faded out between 3 and 5 cm off, so that a sample near the
-                // limit does not flick between the two).
-                let h = match drawn {
-                    Some(h) => {
-                        let off = (h - base).abs();
-                        let t = ((0.05 - off) / 0.02).clamp(0.0, 1.0);
-                        base + (h - base) * t
-                    }
-                    None => base,
-                };
+            .enumerate()
+            .map(|(wi, &(lat, long, a, path_z, _, drawn))| {
+                // A missing wheel does not veto the other wheel's real axle support.
+                // With no support at all, preserve the last contact through streaming gaps.
+                let h = drawn.or(axle_support[a])
+                    .or_else(|| supported_plane.map(|z| z + grade * long as f64 + crossfall * lat as f64))
+                    .or_else(|| self.contact_z.get(wi).copied().filter(|z| z.is_finite()))
+                    .unwrap_or(path_z);
                 (lat, long, h)
             })
             .collect();
@@ -862,7 +921,7 @@ mod tests {
         assert_eq!(back_in_ramp(3.0, 1.0, BACK_IN_LAT_ACCEL), 10.5);
     }
 
-    fn golf() -> Vehicle {
+    pub(super) fn golf() -> Vehicle {
         let mut v = Vehicle {
             mass: 1.0,
             moment_of_inertia: [1.49, 0.40, 1.56],
@@ -1133,3 +1192,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "ai_motion/ground_tests.rs"]
+mod ground_tests;

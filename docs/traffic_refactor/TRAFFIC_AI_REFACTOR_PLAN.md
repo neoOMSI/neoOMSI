@@ -346,6 +346,24 @@ Some states may be combined in code if they share ownership, but their transitio
 
 **Exit gate:** acceptance suite, workspace checks, and representative real-map stress/soak sessions pass; recorded representative sessions demonstrate the Section 1 natural-behavior criteria and concrete improvements over observed OMSI shortcomings; budgets are met on the named hardware; and only one production road-AI implementation remains. The unavailable screenshot reproduction does not block cutover. If a capture of that failure becomes available, include it in regression coverage; do not claim that exact failure is proven fixed without evidence. Remaining content limitations are documented with reasons and available reproductions.
 
+### Stage 10 — Physical safety and post-cutover validation
+
+Implementation and evidence: [STAGE10_REPORT.md](STAGE10_REPORT.md).
+
+1. **10A — Ground and actual motion:** stable body/planner feedback, signed road-height
+   correction, bridge-level selection, missing-contact handling and actual odometers.
+2. **10B — Passing safety:** scenery/pedestrian clearance along outward and return paths,
+   divided-road protection for issue #126, and no discretionary bypass of one's own berth.
+3. **10C — Emergency traffic:** route-directed cooperative yielding, validated passing,
+   reserved low-speed red entry, occupant drainage and complete-tail release.
+4. **10D — Roundabout priority and verification:** preserve give-way at object-path merges,
+   cover both traffic sides, run the workspace regressions, accelerated soak and installed
+   map sessions, then record remaining content/engine discrepancies for player acceptance.
+
+Automated checks pass. Follow-up ground verification covers driving over continuous grades,
+query seams and isolated wrong contacts, as well as normal removal at an unlinked road end.
+The exact screenshot-roundabout reproduction remains unverified; see the report.
+
 ## 5. Dependencies and practical PR order
 
 ```text
