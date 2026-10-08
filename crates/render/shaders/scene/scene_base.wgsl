@@ -197,6 +197,8 @@ override ALPHA_TO_COVERAGE: bool = false;
 @group(0) @binding(7) var t_shadow_far: texture_depth_2d;
 @group(0) @binding(8) var t_ao: texture_2d<f32>;
 @group(0) @binding(9) var s_ao: sampler;
+@group(0) @binding(20) var t_cookie: texture_2d_array<f32>;
+@group(0) @binding(21) var s_cookie: sampler;
 
 // The ambient occlusion at a pixel of the full picture. It is worked out at half size, and
 // a plain bilinear lookup blended the occlusion of the ground behind an edge with that of
@@ -285,7 +287,8 @@ struct PointLight {
     color: vec4<f32>, // rgb, w intensity
     dir: vec4<f32>,   // spot direction, w cosine of the outer cone (< -1.5: a point light)
     extra: vec4<f32>, // enhanced path: cosine of the inner cone, core radius, beam gain, radius
-    occ: vec4<f32>,   // x: first occluder entry, y: how many (box entries, see lib.rs `Occluder`)
+    occ: vec4<f32>,   // x/y: occluders, z: spot shadow, w: cookie slot
+    cookie_up: vec4<f32>,
 };
 @group(0) @binding(3) var<storage, read> lights: array<PointLight>;
 // per cell CELL_CAP light indices, 0xffffffff = empty
@@ -957,6 +960,32 @@ fn light_shadow(l: PointLight, p: vec3<f32>) -> f32 {
         return m * light_shadow_boxes(l, p);
     }
     return light_shadow_boxes(l, p);
+}
+
+const COOKIE_GAIN: f32 = 14.0;
+const COOKIE_HORIZONTAL_SPAN: f32 = 1.6755160819; // 96 degrees
+const COOKIE_VERTICAL_SPAN: f32 = 0.8377580410; // 48 degrees
+fn cookie_factor(l: PointLight, from_lamp: vec3<f32>) -> f32 {
+    let slot = u32(l.occ.w + 0.5);
+    if (slot == 0u) {
+        return 1.0;
+    }
+    let forward = normalize(l.dir.xyz);
+    let up0 = normalize(l.cookie_up.xyz);
+    let right = normalize(cross(forward, up0));
+    let up = normalize(cross(right, forward));
+    let ray = normalize(from_lamp);
+    let horizontal = atan2(dot(ray, right), dot(ray, forward));
+    let vertical = atan2(dot(ray, up), length(vec2<f32>(dot(ray, forward), dot(ray, right))));
+    let uv = vec2<f32>(
+        0.5 + horizontal / COOKIE_HORIZONTAL_SPAN,
+        0.25 - vertical / COOKIE_VERTICAL_SPAN,
+    );
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+        return 0.0;
+    }
+    let encoded = textureSample(t_cookie, s_cookie, uv, i32(slot - 1u)).r;
+    return pow(encoded, 2.2) * COOKIE_GAIN;
 }
 
 fn light_shadow_boxes(l: PointLight, p: vec3<f32>) -> f32 {

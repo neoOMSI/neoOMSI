@@ -277,7 +277,6 @@ pub struct State {
     stamp: Option<String>,
     poll_t: f32,
     polling: bool,
-    pub second_armed: Option<Instant>,
     /// Multiplayer: the saved servers, what each said last (and when it was asked), and the
     /// one the Drive page is joined to now (its address).
     pub servers: Vec<ServerEntry>,
@@ -349,7 +348,6 @@ impl State {
             stamp: None,
             poll_t: 0.0,
             polling: false,
-            second_armed: None,
             servers: with_official(
                 std::fs::read(servers_path())
                     .ok()
@@ -832,6 +830,10 @@ impl State {
 
     /// Continue the situation chosen of the map's (`laststn.osn`, or a save slot, #341).
     pub fn launch_last_situation(&mut self) {
+        if self.in_game() {
+            self.set_status("A session is already active.", true);
+            return;
+        }
         if !self.save_pending_settings() {
             return;
         }
@@ -854,6 +856,10 @@ impl State {
 
     /// Start one of OMSI's tutorials (1..4).
     pub fn launch_tutorial(&mut self, n: usize) {
+        if self.in_game() {
+            self.set_status("A session is already active.", true);
+            return;
+        }
         if !self.save_pending_settings() {
             return;
         }

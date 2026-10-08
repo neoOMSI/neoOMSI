@@ -135,7 +135,7 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
             app,
             "auto_ibis",
             "Automatic IBIS",
-            "When enabled, the selected tour is automatically entered into IBIS",
+            "When enabled, the selected tour is automatically entered into the IBIS",
         ),
         switch_row(
             app,

@@ -11,6 +11,7 @@ impl Renderer {
             instances: Vec::new(),
             render_origin: DVec3::ZERO,
             lights: Vec::new(),
+            cookie_textures: Vec::new(),
             interior_lights: Vec::new(),
             interior_free: Vec::new(),
             coronas: Vec::new(),

@@ -24,6 +24,7 @@ impl App {
         let screenshot_mode = self.screenshot_mode.is_some();
         let crosshair = !screenshot_mode
             && ::config::get_bool("camera", "crosshair").unwrap_or(true)
+            && !self.quick_menu_open
             && !matches!(self.view.as_str(), "pax" | "outside")
             && self.raycast_active();
         let screenshot_help = self.screenshot_mode.as_mut().and_then(|mode| {
@@ -218,6 +219,7 @@ impl App {
                 let (cx, cy) = self.cursor;
                 let map_open = self.navigator.as_ref().is_some_and(|n| n.map_open());
                 let covered = self.game_menu.is_some()
+                    || self.quick_menu_open
                     || self.vr_nav_edit.is_some()
                     || self.chooser.is_some()
                     || ui.chat.hovered
@@ -251,6 +253,22 @@ impl App {
                         None => (Vec::new(), None),
                     };
                 let menu_disabled: &[&str] = &[];
+                let quick_disabled = [
+                    false,
+                    self.player.is_none(),
+                    self.player.is_none(),
+                    self.player.is_none()
+                        || self.navigator.is_none()
+                        || crate::input_script::on_server(&self.args),
+                    self.player.is_none(),
+                    self.player.is_none(),
+                    self.player.is_none(),
+                    self.player.is_none(),
+                    false,
+                    self.lan.as_ref().is_some_and(|l| l.role == ::network::Role::Client),
+                    false,
+                    false,
+                ];
                 let (menu_kind, menu_head, menu_preview) = game_lists::menu_extras(
                     self.list_kind.as_ref(),
                     self.admin_list.as_deref(),
@@ -294,7 +312,11 @@ impl App {
                     },
                     notes: if screenshot_mode {
                         screenshot_help.as_slice()
-                    } else if ::config::get_bool("ui", "notes").unwrap_or(true) && !map_open && self.game_menu.is_none() {
+                    } else if ::config::get_bool("ui", "notes").unwrap_or(true)
+                        && !map_open
+                        && self.game_menu.is_none()
+                        && !self.quick_menu_open
+                    {
                         &notes
                     } else {
                         &[]
@@ -319,6 +341,19 @@ impl App {
                         .map(|p| p.1),
                     menu_tabs,
                     dropdown,
+                    quick_menu: (!screenshot_mode
+                        && self.quick_menu_open
+                        && self.game_menu.is_none())
+                    .then_some(ui::QuickMenuView {
+                        items: &crate::game_menu::QUICK_MENU,
+                        disabled: &quick_disabled,
+                        arrows_on: self
+                            .navigator
+                            .as_ref()
+                            .map_or(::config::get_bool("navigator", "arrows").unwrap_or(false), |n| n.arrows),
+                        end_duty: self.duty.is_some(),
+                        confirm_end_duty: self.quick_confirm_end_duty,
+                    }),
                     menu_kbd: self.menu_kbd,
                     menu_top: self.menu_top,
                     timetable: (!screenshot_mode && self.timetable && !map_open)

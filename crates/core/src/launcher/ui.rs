@@ -573,6 +573,7 @@ impl Ui {
         let t = self.anim(id, if h { 1.0 } else { 0.0 }, 0.06);
         let rr = if held { r.inset(0.5) } else { r };
         let (fill, text_c, edge) = match kind {
+            ButtonKind::Disabled => (FIELD.alpha(0.45), TEXT_DIM.alpha(0.55), Color::CLEAR),
             ButtonKind::Primary => (
                 ACCENT.lighten(0.08 * t),
                 Color::rgba(18, 14, 8, 1.0),
@@ -621,7 +622,7 @@ impl Ui {
             text_c,
             Align::Left,
         );
-        clicked
+        clicked && kind != ButtonKind::Disabled
     }
 
     /// A round button with only an icon.
@@ -1713,6 +1714,7 @@ impl Ui {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
+    Disabled,
     Primary,
     Normal,
     Danger,

@@ -42,6 +42,13 @@ This guide covers running neoOMSI, essential keybindings, and common configurati
 - **Cockpit switches:** Left-click to toggle, click and drag to turn rotary dials.
 - **Look around:** Hold Right-Mouse-Button and move mouse (or arrow keys / `I`/`J`/`K`/`L`).
 - **In-game menu:** Press `Esc` to access settings, switch buses, or exit.
+- **Quick menu:** Tap `Alt` by itself to open or close the twelve-tile menu. It does not pause the game. Tiles place, swap, or remove a vehicle; choose a start point, line and tour, or destination; repair, wash, or refuel; and open route-arrow, time, weather, and controller actions. Press `Esc` to close it. With an active timetable, the line-and-tour tile asks before ending the duty.
+
+### Launcher during a session
+
+The launcher remains usable while a game is running. The buttons that start a new
+session, continue a saved situation, or start a lesson stay disabled until the active
+session ends.
 
 ## Trip evaluation
 
@@ -55,6 +62,12 @@ times (`HH:MM:SS`), signed differences in seconds, and a status. Positive
 differences mean late; negative differences mean early. Day offsets identify
 trips crossing midnight. Missing observations appear as `—`; the final departure
 has no actual time when the report opens on arrival.
+
+If the duty has another trip, it becomes active when the bus stops at the terminus
+and opens a passenger door. **Automatic IBIS** controls whether selecting a timetable
+types its current route into the bus's IBIS; a duty started with `Shift+U` or
+`--autostart` types the route during startup as well. Once a duty has been typed, the
+next trip is entered automatically when it becomes active.
 
 Use the in-game menu to view the current trip or the last completed trip. Scroll
 with the mouse wheel, arrow keys, or Page Up/Page Down. Select **Save as text…**
@@ -112,6 +125,39 @@ neoomsi --map maps/Grundorf/global.cfg --bus Vehicles/MAN_SD200/MAN_SD80.bus
 ## Modding
 
 Place add-on content into the `Mods/` directory alongside the `neoomsi` executable. neoOMSI mounts add-ons into its virtual filesystem without altering original OMSI 2 files.
+
+### Cookie spotlights
+
+`[spotlight_cookie]` is a neoOMSI-specific vehicle-model extension.
+Vehicles can use `[spotlight_cookie]` in `model.cfg` to project a grayscale beam image
+as a headlight pattern. The image is looked up in the vehicle's `Texture/` folder and
+uses angular coordinates: 1024×512 pixels, 0.09375° per pixel, the centre column points
+straight ahead, and row 128 is level with the lamp. PNG is recommended. Images are
+resampled to that size when uploaded.
+
+```text
+[spotlight_cookie]
+0.95
+5.95
+0.652
+0
+1
+0
+120
+lights_fern
+0
+low_beam.png
+0.3
+pitch_var
+yaw_var
+```
+
+The first seven lines are position, direction, and range; the next line names the
+on/off variable. The optional mirror flag is `0` (default) for a mirrored pair or `1` for one lamp. The remaining
+optional lines are the image, fade time in seconds, vertical offset variable, and
+horizontal offset variable. Up to eight distinct images can be active at once. A
+missing or unreadable image falls back to a plain spotlight. `OMSI_NO_COOKIES=1`
+disables projection and uses plain spotlights.
 
 Set `OMSI_NO_SURF=1` before starting neoOMSI to disable OMSI `.surf` height maps for an A/B comparison of wheel contact.
 

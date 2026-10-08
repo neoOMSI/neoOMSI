@@ -207,6 +207,20 @@ pub struct Spotlight2 {
     pub no_mirror: bool,
 }
 
+/// `[spotlight_cookie]`: a spotlight whose brightness is sampled from a beam image.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SpotlightCookie {
+    pub position: [f32; 3],
+    pub direction: [f32; 3],
+    pub range: f32,
+    pub variable: String,
+    pub mirrored: bool,
+    pub texture: String,
+    pub time_const: f32,
+    pub v_offset: String,
+    pub h_offset: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct InteriorLight {
     pub variable: String,
@@ -456,6 +470,7 @@ pub struct Model {
     pub particle_emitters: Vec<ParticleEmitter>,
     pub spotlights: Vec<Spotlight>,
     pub spotlights_2: Vec<Spotlight2>,
+    pub spotlights_cookie: Vec<SpotlightCookie>,
     pub interior_lights: Vec<InteriorLight>,
     /// `[light]` legacy lights (raw).
     pub lights: Vec<Vec<String>>,
@@ -911,6 +926,48 @@ impl Model {
                     no_mirror,
                 });
             }
+            "spotlight_cookie" => {
+                let position = r.f32s::<3>();
+                let direction = r.f32s::<3>();
+                let range = r.f32();
+                let variable = r.str().trim().to_string();
+                let mut mirrored = true;
+                let mut texture = String::new();
+                let mut time_const = 0.0;
+                let mut v_offset = String::new();
+                let mut h_offset = String::new();
+                let next = r.param_line().trim().to_string();
+                if !next.is_empty() {
+                    if let Ok(flag) = next.parse::<f32>() {
+                        mirrored = flag < 0.5;
+                        texture = r.param_line().trim().to_string();
+                    } else {
+                        texture = next;
+                    }
+                }
+                let next = r.param_line().trim().to_string();
+                if !next.is_empty() {
+                    if let Ok(value) = next.parse::<f32>() {
+                        time_const = value.max(0.0);
+                        v_offset = r.param_line().trim().to_string();
+                        h_offset = r.param_line().trim().to_string();
+                    } else {
+                        v_offset = next;
+                        h_offset = r.param_line().trim().to_string();
+                    }
+                }
+                self.spotlights_cookie.push(SpotlightCookie {
+                    position,
+                    direction,
+                    range,
+                    variable,
+                    mirrored,
+                    texture,
+                    time_const,
+                    v_offset,
+                    h_offset,
+                });
+            }
             "interiorlight" => {
                 let variable = r.str().to_string();
                 let range = r.f32();
@@ -1292,6 +1349,24 @@ pub fn load_texchanges(base: &Path, files: &[String]) -> Vec<TexChangeMaster> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn spotlight_cookie_parses_optional_beam_fields() {
+        let model = super::Model::parse(&::legacy_config::CfgFile::from_str(
+            "cookie.cfg",
+            "[spotlight_cookie]\n0.95\n5.95\n0.652\n0\n1\n0\n120\nlights_fern\n0\nlow_beam.png\n0.3\npitch_var\nyaw_var\n",
+        ));
+        let light = &model.spotlights_cookie[0];
+        assert_eq!(light.position, [0.95, 5.95, 0.652]);
+        assert_eq!(light.direction, [0.0, 1.0, 0.0]);
+        assert_eq!(light.range, 120.0);
+        assert_eq!(light.variable, "lights_fern");
+        assert!(light.mirrored);
+        assert_eq!(light.texture, "low_beam.png");
+        assert_eq!(light.time_const, 0.3);
+        assert_eq!(light.v_offset, "pitch_var");
+        assert_eq!(light.h_offset, "yaw_var");
+    }
 
     #[test]
     fn spotlight_2_and_interiorlight_parse() {

@@ -608,6 +608,7 @@ mod preview {
                 menu_tabs: None,
                 menu_kbd: true,
                 dropdown: None,
+                quick_menu: None,
             };
             ui.draw(&renderer, &mut scene, &frame, 0.016);
             assert_eq!(ui.menu_rects.len(), 2);

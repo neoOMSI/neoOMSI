@@ -33,6 +33,61 @@ impl Renderer {
         }
     }
 
+    fn upload_cookie_textures(&self, scene: &Scene) {
+        let mut generations = self.cookie_generations.borrow_mut();
+        for cookie in &scene.cookie_textures {
+            let Some(layer) = cookie.slot.checked_sub(1).map(usize::from) else {
+                continue;
+            };
+            let Some(generation) = generations.get_mut(layer) else {
+                continue;
+            };
+            if *generation == cookie.generation || cookie.image.width == 0 || cookie.image.height == 0
+            {
+                continue;
+            }
+            let mut gray = vec![0u8; (COOKIE_WIDTH * COOKIE_HEIGHT) as usize];
+            for y in 0..COOKIE_HEIGHT {
+                let sy = (y as u64 * cookie.image.height as u64 / COOKIE_HEIGHT as u64) as u32;
+                for x in 0..COOKIE_WIDTH {
+                    let sx = (x as u64 * cookie.image.width as u64 / COOKIE_WIDTH as u64) as u32;
+                    let at = ((sy * cookie.image.width + sx) * 4) as usize;
+                    if at + 2 >= cookie.image.rgba.len() {
+                        continue;
+                    }
+                    let p = &cookie.image.rgba[at..at + 3];
+                    gray[(y * COOKIE_WIDTH + x) as usize] =
+                        ((p[0] as u32 * 54 + p[1] as u32 * 183 + p[2] as u32 * 19) / 256)
+                            as u8;
+                }
+            }
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.cookie_atlas,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: cookie.slot as u32 - 1,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &gray,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(COOKIE_WIDTH),
+                    rows_per_image: Some(COOKIE_HEIGHT),
+                },
+                wgpu::Extent3d {
+                    width: COOKIE_WIDTH,
+                    height: COOKIE_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+            *generation = cookie.generation;
+        }
+    }
+
     pub(crate) fn prepare_lights(
         &self,
         scene: &mut Scene,
@@ -40,6 +95,7 @@ impl Renderer {
         enhanced: bool,
         plan_spots: bool,
     ) -> [f32; 4] {
+        self.upload_cookie_textures(scene);
         let ro = scene.render_origin;
         let spot_slots =
             self.plan_spot_shadows(scene, ro + cam_rel.as_dvec3(), enhanced, plan_spots);
@@ -74,6 +130,7 @@ impl Renderer {
             let idx = gpu_lights.len() as u32;
             gpu_lights.push(gpu_light(l, p));
             gpu_lights[idx as usize].occ[2] = spot_slots[li] as f32;
+            gpu_lights[idx as usize].occ[3] = l.cookie as f32;
             if l.occ_count > 0
                 && (l.occ_first as usize + l.occ_count as usize) <= scene.occluders.len()
             {
@@ -115,6 +172,7 @@ impl Renderer {
                         dir: [v[2].x, v[2].y, v[2].z, 0.0],
                         extra: [1.0, 0.0, 0.0, 0.0],
                         occ: [0.0; 4],
+                        cookie_up: [0.0; 4],
                     });
                     continue;
                 }
@@ -126,6 +184,7 @@ impl Renderer {
                     dir: [0.0; 4],
                     extra: [0.0; 4],
                     occ: [0.0; 4],
+                    cookie_up: [0.0; 4],
                 });
             }
             for (i, first) in occ_users {
@@ -139,6 +198,7 @@ impl Renderer {
                 dir: [0.0; 4],
                 extra: [0.0; 4],
                 occ: [0.0; 4],
+                cookie_up: [0.0; 4],
             });
         }
         let gpu_lights_bytes: &[u8] = bytemuck::cast_slice(&gpu_lights);

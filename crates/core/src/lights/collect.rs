@@ -53,6 +53,7 @@ pub fn collect(
 ) {
     let t_start = std::time::Instant::now();
     scene.lights.clear();
+    scene.cookie_textures.clear();
     scene.coronas.clear();
     scene.smoke.clear();
     // nothing is lit, glowing or smoking beyond what can be seen (fog included)
@@ -719,4 +720,5 @@ pub fn collect(
             );
         }
     }
+    scene.cookie_textures = cookie_textures();
 }

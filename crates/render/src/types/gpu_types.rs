@@ -121,6 +121,7 @@ pub(crate) struct GpuPointLight {
     pub(crate) dir: [f32; 4],
     pub(crate) extra: [f32; 4],
     pub(crate) occ: [f32; 4],
+    pub(crate) cookie_up: [f32; 4],
 }
 
 #[repr(C)]

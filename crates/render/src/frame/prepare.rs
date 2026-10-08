@@ -321,6 +321,14 @@ impl Renderer {
                     binding: 19,
                     resource: self.lm_uniform.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: wgpu::BindingResource::TextureView(&self.cookie_atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 21,
+                    resource: wgpu::BindingResource::Sampler(&self.cookie_sampler),
+                },
             ],
         });
         scene.camera_bind_group = Some(bg);

@@ -2272,17 +2272,13 @@ fn summary(l: &mut Launcher, side: Rect) {
         }
     }
     let running = l.state.instances.iter().filter(|i| i.running).count();
+    let session_active = l.state.in_game();
     // the start: the whole width of the column, at its foot
     let note_h = if running > 0 { 24.0 } else { 0.0 };
     let btn = Rect::new(side.x, side.bottom() - 48.0 - note_h, pw, 48.0);
     let free = l.state.choice.free || l.state.choice.line.is_none();
-    let label = if running > 0
-        && l.state
-            .second_armed
-            .map(|t| t.elapsed().as_secs() < 6)
-            .unwrap_or(false)
-    {
-        "Start another game"
+    let label = if session_active {
+        "Session active"
     } else if free && l.state.joined_server.is_none() {
         "Drive"
     } else {
@@ -2293,7 +2289,7 @@ fn summary(l: &mut Launcher, side: Rect) {
         btn,
         label,
         Some("play_arrow"),
-        ButtonKind::Primary,
+        if session_active { ButtonKind::Disabled } else { ButtonKind::Primary },
     ) {
         start(l);
     }
@@ -2323,7 +2319,7 @@ fn summary(l: &mut Launcher, side: Rect) {
                 Rect::new(cont.x + sw + 8.0, cont.y, pw - sw - 8.0, cont.h),
                 "Continue",
                 Some("history"),
-                ButtonKind::Normal,
+                if session_active { ButtonKind::Disabled } else { ButtonKind::Normal },
             ) {
                 l.state.launch_last_situation();
             }
@@ -2332,7 +2328,7 @@ fn summary(l: &mut Launcher, side: Rect) {
             cont,
             "Continue where you left off",
             Some("history"),
-            ButtonKind::Normal,
+            if session_active { ButtonKind::Disabled } else { ButtonKind::Normal },
         ) {
             l.state.launch_last_situation();
         }
@@ -2365,6 +2361,10 @@ pub(super) fn start_from_phone(l: &mut Launcher) {
 }
 
 fn start(l: &mut Launcher) {
+    if l.state.in_game() {
+        l.state.set_status("A session is already active.", true);
+        return;
+    }
     if l.state.bus().is_none() || l.state.map().is_none() {
         l.state.set_status("Choose a bus and a map first.", true);
         return;
@@ -2374,20 +2374,6 @@ fn start(l: &mut Launcher) {
         l.state.set_status(format!("LAN: {t}"), true);
         return;
     }
-    let running = l.state.instances.iter().filter(|i| i.running).count();
-    // a second game on one computer is for testing LAN play, not something to do by
-    // accident: with one running, the button asks for a second click
-    if running > 0
-        && l.state
-            .second_armed
-            .map(|t| t.elapsed().as_secs() >= 6)
-            .unwrap_or(true)
-    {
-        l.state.second_armed = Some(std::time::Instant::now());
-        l.state.set_status("A game is running already (its window may be behind this one - see Sessions). Click again to start another one anyway.", true);
-        return;
-    }
-    l.state.second_armed = None;
     l.state.choice.save();
     l.state.launch();
     if l.state.choice.lan_mode != "off" {

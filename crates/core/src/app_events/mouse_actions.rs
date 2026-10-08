@@ -4,6 +4,7 @@ use super::*;
 
 impl App {
     pub(crate) fn wheel(&mut self, amount: f32) {
+        self.quick_alt_armed = false;
         if self.vr_nav_edit.is_some() {
             self.vr_nav_scroll(amount);
             return;
@@ -64,6 +65,9 @@ impl App {
     }
 
     pub(crate) fn left_button(&mut self, event_loop: &ActiveEventLoop, pressed: bool) {
+        if pressed {
+            self.quick_alt_armed = false;
+        }
         if let Some(edit) = self.vr_nav_edit.as_mut() {
             edit.moving = pressed;
             return;
@@ -73,6 +77,10 @@ impl App {
         } else {
             ElementState::Released
         };
+        if self.quick_menu_open && self.game_menu.is_none() {
+            self.quick_menu_click(pressed);
+            return;
+        }
         if self.placing.is_some() && self.game_menu.is_none() {
             if state == ElementState::Pressed {
                 self.placing_click();

@@ -59,6 +59,7 @@ impl App {
         // (throttle in the wasd preset) was then read as Shift+W, OMSI's own wiper
         // key, toggling the wipers on every press instead of driving.
         self.keys.clear();
+        self.quick_alt_armed = false;
         if let Some(p) = self.player.as_mut() {
             p.axes.release_all();
         }
@@ -129,6 +130,9 @@ impl App {
     /// In VR right-click zooms; with mouse steering it first releases the steering.
     /// On the desktop a right-drag zooms, as in OMSI (`on_right`).
     pub(super) fn on_mouse_right(&mut self, state: ElementState) {
+        if state == ElementState::Pressed {
+            self.quick_alt_armed = false;
+        }
         if let Some(edit) = self.vr_nav_edit.as_mut() {
             edit.rotating = state == ElementState::Pressed;
             return;
@@ -159,6 +163,9 @@ impl App {
 
     /// (the middle button - the wheel pressed - turns the view as well: OMSI's pan)
     pub(super) fn on_mouse_middle(&mut self, state: ElementState) {
+        if state == ElementState::Pressed {
+            self.quick_alt_armed = false;
+        }
         if self.vr_nav_edit.is_some() {
             return;
         }

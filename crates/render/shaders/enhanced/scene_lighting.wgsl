@@ -251,7 +251,9 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         let q = dist2 / (range * range);
         let window = (1.0 - q * q) * (1.0 - q * q);
         var e = min(1.0, core * core / max(dist2, 1e-3)) * window;
-        if (l.dir.w > -1.5) {
+        if (l.occ.w > 0.5) {
+            e = e * cookie_factor(l, -ld);
+        } else if (l.dir.w > -1.5) {
             let cd = dot(-ld, l.dir.xyz);
             e = e * smoothstep(l.dir.w, l.extra.x, cd);
             if (l.extra.z < 0.0) {

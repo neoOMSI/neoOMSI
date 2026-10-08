@@ -5024,7 +5024,11 @@ impl PlayerDuty {
     ) -> Option<(f64, f64)> {
         let day_time = self.duty_time(day_time);
         self.heading = bus.heading;
-        let served = self.advance(bus.position, day_time);
+        let served = self.advance_with_doors(
+            bus.position,
+            day_time,
+            crate::humans::any_passenger_door_open(bus),
+        );
         let delay = self.delay(day_time);
         let trip = &self.trips[self.trip_index];
         let host = &mut bus.host;
@@ -5100,7 +5104,17 @@ impl PlayerDuty {
     }
 
     /// The duty's progress with the bus at `pos` (see [`PlayerDuty::update`]).
+    #[cfg(test)]
     fn advance(&mut self, pos: glam::DVec3, day_time: f64) -> Option<(f64, f64)> {
+        self.advance_with_doors(pos, day_time, false)
+    }
+
+    fn advance_with_doors(
+        &mut self,
+        pos: glam::DVec3,
+        day_time: f64,
+        passenger_door_open: bool,
+    ) -> Option<(f64, f64)> {
         if !self.placed {
             // (stops beyond the loaded tiles have no place yet: a few seconds for the
             // navigator's map, unless the bus stands at a stop of its trip)
@@ -5122,10 +5136,11 @@ impl PlayerDuty {
             self.placed = true;
             self.place(pos, day_time);
         }
-        // on to the next trip a minute before it leaves, once this one is over, was never
-        // begun, or was given up half an hour ago
+        // A passenger door opened at the terminus starts the next trip at once. Otherwise,
+        // an ended or unbegun trip hands over one minute before its scheduled departure.
         while self.trip_index + 1 < self.trips.len()
-            && self.trips[self.trip_index + 1].departure - 60.0 <= day_time
+            && (self.trips[self.trip_index + 1].departure - 60.0 <= day_time
+                || (self.done && passenger_door_open))
         {
             let given_up = day_time > self.trip().end + 1800.0;
             let unbegun = self.left_late.is_none() && !self.picked;
@@ -5178,6 +5193,15 @@ impl PlayerDuty {
                     log::debug!("duty: left stop, next stop now {}", self.next_stop);
                 }
             }
+        }
+        if self.done && passenger_door_open && self.trip_index + 1 < self.trips.len() {
+            self.set_trip(self.trip_index + 1);
+            log::info!(
+                "duty: next trip {} {} to {} starts at the terminus",
+                self.trip_index + 1,
+                self.trip().name,
+                self.trip().terminus
+            );
         }
         served
     }
@@ -5529,6 +5553,41 @@ mod tests {
             end: stops.last().unwrap().arr,
             stops,
         }
+    }
+
+    #[test]
+    fn a_passenger_door_at_the_terminus_starts_the_next_trip_immediately() {
+        let trips = vec![
+            planned(0.0, &[(0.0, 0.0, 0.0), (100.0, 100.0, 100.0)]),
+            planned(3600.0, &[(100.0, 3600.0, 3600.0), (200.0, 3700.0, 3700.0)]),
+        ];
+        let mut duty = PlayerDuty {
+            line: "5".into(),
+            tour: "1".into(),
+            trips,
+            trip_index: 0,
+            first_trip: 0,
+            statistics: Default::default(),
+            completed_report: None,
+            next_stop: 1,
+            at_stop: true,
+            arrived_late: Some(0.0),
+            done: true,
+            left_late: Some(0.0),
+            held_back: false,
+            placed: true,
+            trip_changed: false,
+            picked: true,
+            first_update: None,
+            heading: 0.0,
+        };
+        let at_terminus = glam::DVec3::new(100.0, 0.0, 0.0);
+        duty.advance_with_doors(at_terminus, 100.0, false);
+        assert_eq!(duty.trip_index, 0, "closed doors keep the layover");
+        duty.advance_with_doors(at_terminus, 100.0, true);
+        assert_eq!(duty.trip_index, 1, "an open passenger door ends the layover");
+        assert_eq!(duty.next_stop, 0);
+        assert!(duty.take_trip_change());
     }
 
     #[test]

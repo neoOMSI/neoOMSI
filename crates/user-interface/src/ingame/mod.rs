@@ -12,6 +12,7 @@ use ::render::{Renderer, Scene, TextureId};
 mod frame;
 mod loading;
 mod menu;
+mod quick;
 mod run_report;
 mod settings;
 mod shapes;
@@ -63,6 +64,10 @@ pub struct Ui {
     pub chat: ChatWidget,
     /// Where the game menu's lines were drawn this frame (physical pixels), for the mouse.
     pub menu_rects: Vec<[f32; 4]>,
+    /// Tile bounds for the quick menu, in row order.
+    pub quick_rects: Vec<[f32; 4]>,
+    /// Yes and No bounds for the quick menu's end-duty confirmation.
+    pub quick_confirm_rects: [[f32; 4]; 2],
     /// Per line of `menu_rects`, where the arrows round its value are (a list's setting,
     /// `game_lists::ADJUST`): `[from, to, plus]` - a click from `from` to `to` steps it
     /// down, one right of `plus` up.

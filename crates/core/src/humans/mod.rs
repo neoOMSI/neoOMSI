@@ -76,6 +76,11 @@ use pedestrians::*;
 pub use person::Person;
 use person::*;
 
+/// Whether any entry or exit used by passengers is open on the vehicle.
+pub(crate) fn any_passenger_door_open(vehicle: &VehicleInstance) -> bool {
+    Humans::any_door_open(vehicle)
+}
+
 /// The map's traffic keeps left (its stops are on the left): see the doors of `Cabin`.
 pub(crate) static LEFT_HAND: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);

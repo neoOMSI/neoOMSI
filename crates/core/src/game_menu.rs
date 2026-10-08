@@ -51,8 +51,26 @@ pub(crate) const GAME_MENU: [(&str, &str); 11] = [
     ("quit", "End the session"),
 ];
 
+pub(crate) const QUICK_MENU: [(&str, &str); 12] = [
+    ("place", "Place vehicle"),
+    ("swap", "Swap vehicle"),
+    ("remove", "Remove vehicle"),
+    ("tplist", "Start point"),
+    ("duty", "Line and tour"),
+    ("dest", "Destination"),
+    ("repair", "Repair"),
+    ("washfuel", "Wash and refuel"),
+    ("arrows", "Route arrows"),
+    ("time", "Time"),
+    ("weather", "Weather"),
+    ("controllers", "Controllers"),
+];
+
 impl App {
     pub(crate) fn open_game_menu(&mut self) {
+        self.quick_menu_open = false;
+        self.quick_confirm_end_duty = false;
+        self.quick_menu_session = false;
         self.menu_prev_pause = self.paused;
         if self.lan.is_none() {
             self.paused = true;
@@ -64,6 +82,8 @@ impl App {
     }
 
     pub(crate) fn close_game_menu(&mut self) {
+        self.quick_confirm_end_duty = false;
+        self.quick_menu_session = false;
         self.report_view = None;
         if self.menu_edit_icao {
             if let Some(w) = self.window.as_ref() {
@@ -77,6 +97,176 @@ impl App {
         self.key_capture = None;
         self.key_search_stop();
         self.paused = self.menu_prev_pause;
+    }
+
+    /// An Alt press by itself opens or hides the quick menu when Alt is released.
+    pub(crate) fn quick_menu_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) -> bool {
+        let alt = matches!(code, KeyCode::AltLeft | KeyCode::AltRight);
+        if pressed && alt {
+            let other = self
+                .keys
+                .iter()
+                .any(|k| !matches!(k, KeyCode::AltLeft | KeyCode::AltRight));
+            let camera_owns_alt = code == KeyCode::AltLeft
+                && ::config::get_bool("camera", "free_look").unwrap_or(false)
+                && self.raycast_active();
+            self.quick_alt_armed = !repeat && !other && !camera_owns_alt;
+            return false;
+        }
+        if pressed && self.quick_alt_armed {
+            self.quick_alt_armed = false;
+        }
+        if !pressed && alt && self.quick_alt_armed {
+            self.quick_alt_armed = false;
+            let another_alt_is_held = self
+                .keys
+                .iter()
+                .any(|k| matches!(k, KeyCode::AltLeft | KeyCode::AltRight));
+            if !another_alt_is_held && self.game_menu.is_none() && self.chooser.is_none() {
+                self.quick_menu_open = !self.quick_menu_open;
+                self.quick_confirm_end_duty = false;
+            }
+            return true;
+        }
+        if pressed && self.quick_menu_open {
+            if self.quick_confirm_end_duty {
+                match code {
+                    KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::KeyY => {
+                        self.end_quick_menu_duty();
+                        return true;
+                    }
+                    KeyCode::Escape | KeyCode::KeyN => {
+                        self.quick_confirm_end_duty = false;
+                        return true;
+                    }
+                    _ => return true,
+                }
+            }
+            if code == KeyCode::Escape {
+                self.quick_menu_open = false;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn quick_menu_click(&mut self, pressed: bool) {
+        self.quick_alt_armed = false;
+        if !pressed || !self.quick_menu_open || self.game_menu.is_some() {
+            return;
+        }
+        if self.quick_confirm_end_duty {
+            let hit = self.ui.as_ref().and_then(|ui| {
+                ui.quick_confirm_rects.iter().position(|r| {
+                    self.cursor.0 >= r[0]
+                        && self.cursor.0 <= r[2]
+                        && self.cursor.1 >= r[1]
+                        && self.cursor.1 <= r[3]
+                })
+            });
+            match hit {
+                Some(0) => self.end_quick_menu_duty(),
+                Some(1) => self.quick_confirm_end_duty = false,
+                _ => {}
+            }
+            return;
+        }
+        let item = self.ui.as_ref().and_then(|ui| {
+            ui.quick_rects.iter().position(|r| {
+                self.cursor.0 >= r[0]
+                    && self.cursor.0 <= r[2]
+                    && self.cursor.1 >= r[1]
+                    && self.cursor.1 <= r[3]
+            })
+        });
+        if let Some(index) = item {
+            self.quick_menu_choose(index);
+        }
+    }
+
+    fn quick_menu_choose(&mut self, index: usize) {
+        let Some((id, _)) = QUICK_MENU.get(index).copied() else {
+            return;
+        };
+        if self.player.is_none()
+            && matches!(
+                id,
+                "swap" | "remove" | "duty" | "dest" | "repair" | "washfuel"
+            )
+        {
+            return;
+        }
+        match id {
+            "duty" if self.duty.is_some() => {
+                self.quick_confirm_end_duty = true;
+            }
+            "duty" => self.quick_menu_open_list(crate::game_lists::ListKind::Lines),
+            "time" => self.quick_menu_open_list(crate::game_lists::ListKind::World(0)),
+            "weather" => self.quick_menu_open_list(crate::game_lists::ListKind::World(
+                if self.lan.as_ref().is_some_and(|l| l.role == ::network::Role::Client) {
+                    0
+                } else {
+                    1
+                },
+            )),
+            "controllers" => self.quick_menu_open_list(crate::game_lists::ListKind::Options(
+                crate::game_lists::KEYS_TAB,
+            )),
+            "arrows" => {
+                let on = !self
+                    .navigator
+                    .as_ref()
+                    .map_or(
+                        ::config::get_bool("navigator", "arrows").unwrap_or(false),
+                        |n| n.arrows,
+                    );
+                ::config::set_setting("navigator", "arrows", on);
+                let _ = ::config::save();
+                if let Some(n) = self.navigator.as_mut() {
+                    n.arrows = on;
+                }
+                self.quick_menu_open = false;
+            }
+            "washfuel" => {
+                self.quick_menu_open = false;
+                self.run_service("refuel");
+                self.run_service("wash");
+            }
+            other => {
+                self.quick_menu_open = false;
+                self.quick_confirm_end_duty = false;
+                self.quick_menu_session = true;
+                self.menu_prev_pause = self.paused;
+                self.game_menu = Some(0);
+                self.menu_top = None;
+                self.menu_kbd = true;
+                let _ = self.page_action(other);
+                if self.game_menu.is_some()
+                    && self.chooser.is_none()
+                    && self.list_kind.is_none()
+                {
+                    self.close_game_menu();
+                }
+            }
+        }
+    }
+
+    fn quick_menu_open_list(&mut self, kind: crate::game_lists::ListKind) {
+        self.quick_menu_open = false;
+        self.quick_confirm_end_duty = false;
+        self.quick_menu_session = true;
+        self.menu_prev_pause = self.paused;
+        self.game_menu = Some(0);
+        self.menu_top = None;
+        self.menu_kbd = true;
+        self.open_list(kind);
+    }
+
+    fn end_quick_menu_duty(&mut self) {
+        self.duty = None;
+        self.service_msg = Some(("Free drive: no duty".into(), 4.0));
+        self.quick_menu_open = false;
+        self.quick_confirm_end_duty = false;
     }
 
     pub(crate) fn open_list(&mut self, kind: crate::game_lists::ListKind) {
@@ -992,6 +1182,7 @@ impl App {
                         );
                     }
                 }
+                None if self.quick_menu_session => self.close_game_menu(),
                 None if action != "back"
                     && matches!(
                         kind,

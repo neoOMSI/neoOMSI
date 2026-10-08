@@ -1,5 +1,94 @@
 use super::*;
 
+#[derive(Default)]
+struct CookieStore {
+    known: std::collections::HashMap<(std::path::PathBuf, String), Option<u8>>,
+    by_path: std::collections::HashMap<std::path::PathBuf, u8>,
+    images: Vec<::render::CookieTexture>,
+    failed: std::collections::HashSet<std::path::PathBuf>,
+    warned: std::collections::HashSet<String>,
+}
+
+static COOKIE_STORE: std::sync::OnceLock<std::sync::Mutex<CookieStore>> =
+    std::sync::OnceLock::new();
+
+fn cookie_slot(ty: &::simulation::VehicleType, name: &str) -> Option<u8> {
+    if name.trim().is_empty() || ::legacy_config::env::var_os("OMSI_NO_COOKIES").is_some() {
+        return None;
+    }
+    let key = (ty.model_dir.clone(), name.trim().to_string());
+    let mut store = COOKIE_STORE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(slot) = store.known.get(&key) {
+        return *slot;
+    }
+    let texture_dir = ::legacy_config::resolve_path(&ty.model_dir, "Texture");
+    let mut dirs = vec![texture_dir, ty.model_dir.clone(), ty.def.dir().to_path_buf()];
+    dirs.extend(
+        ::legacy_config::content_roots()
+            .into_iter()
+            .map(|root| root.join("Texture")),
+    );
+    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|dir| dir.as_path()).collect();
+    let Some(path) = ::texture::find_texture(name, &dir_refs) else {
+        if store
+            .warned
+            .insert(format!("{}:{name}", ty.model_dir.display()))
+        {
+            log::warn!("beam cookie {name:?} is missing under {}", ty.model_dir.display());
+        }
+        store.known.insert(key, None);
+        return None;
+    };
+    if let Some(slot) = store.by_path.get(&path) {
+        let slot = *slot;
+        store.known.insert(key, Some(slot));
+        return Some(slot);
+    }
+    if store.failed.contains(&path) {
+        store.known.insert(key, None);
+        return None;
+    }
+    let image = match ::texture::decode_file(&path) {
+        Ok(image) => image,
+        Err(error) => {
+            store.failed.insert(path.clone());
+            if store.warned.insert(path.to_string_lossy().to_string()) {
+                log::warn!("beam cookie {} could not be loaded: {error}", path.display());
+            }
+            store.known.insert(key, None);
+            return None;
+        }
+    };
+    if store.images.len() >= ::render::COOKIE_SLOTS {
+        if store.warned.insert("capacity".to_string()) {
+            log::warn!("beam cookies support {} images at a time", ::render::COOKIE_SLOTS);
+        }
+        store.known.insert(key, None);
+        return None;
+    }
+    let slot = store.images.len() as u8 + 1;
+    store.images.push(::render::CookieTexture {
+        slot,
+        generation: 1,
+        image: std::sync::Arc::new(image),
+    });
+    store.by_path.insert(path, slot);
+    store.known.insert(key, Some(slot));
+    Some(slot)
+}
+
+pub(crate) fn cookie_textures() -> Vec<::render::CookieTexture> {
+    COOKIE_STORE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .images
+        .clone()
+}
+
 pub fn vehicle_lights(
     v: &VehicleInstance,
     coronas: &mut Vec<Corona>,
@@ -193,8 +282,24 @@ pub fn vehicle_lights(
         }
     }
     spotlights_2(&ty.model, body, v.position, &value_of, night, lights);
+    cookie_spotlights(
+        ty,
+        body,
+        v.position,
+        &value_of,
+        &v.cookie_fade,
+        lights,
+    );
     for t in &v.trailers {
         spotlights_2(&t.ty.model, t.body_rotation(), t.position, &value_of, night, lights);
+        cookie_spotlights(
+            &t.ty,
+            t.body_rotation(),
+            t.position,
+            &value_of,
+            &t.cookie_fade,
+            lights,
+        );
     }
     if spill && cfg.spill.on && night > 0.05 {
         let mut sections: Vec<(&::model::Model, Option<[f32; 6]>, glam::Mat4, DVec3)> =
@@ -253,5 +358,100 @@ pub fn vehicle_lights(
                 }
             }
         }
+    }
+}
+
+fn cookie_spotlights(
+    ty: &::simulation::VehicleType,
+    rot: glam::Mat4,
+    origin: DVec3,
+    value_of: &impl Fn(&str) -> f32,
+    fades: &[f32],
+    lights: &mut Vec<PointLight>,
+) {
+    let up = rot.transform_vector3(Vec3::Z).normalize_or_zero();
+    let right = rot.transform_vector3(Vec3::X).normalize_or_zero();
+    for (i, sp) in ty.model.spotlights_cookie.iter().enumerate() {
+        let level = fades
+            .get(i)
+            .copied()
+            .unwrap_or_else(|| value_of(&sp.variable).clamp(0.0, 1.0))
+            .clamp(0.0, 1.0);
+        let finite_params = sp
+            .position
+            .iter()
+            .chain(sp.direction.iter())
+            .all(|v| v.is_finite());
+        if !level.is_finite()
+            || level <= 0.001
+            || !sp.range.is_finite()
+            || sp.range <= 0.0
+            || Vec3::from(sp.direction).length_squared() <= 1e-6
+            || !finite_params
+        {
+            continue;
+        }
+        let slot = cookie_slot(ty, &sp.texture).unwrap_or(0);
+        let h = finite_value(value_of(&sp.h_offset)).to_radians();
+        let v = finite_value(value_of(&sp.v_offset)).to_radians();
+        let (sin_h, cos_h) = (-h).sin_cos();
+        let (sin_v, cos_v) = v.sin_cos();
+        let mirrors: &[f32] = if sp.mirrored { &[-1.0, 1.0] } else { &[0.0] };
+        for mirror in mirrors {
+            let local = Vec3::new(
+                if *mirror == 0.0 { sp.position[0] } else { sp.position[0] * *mirror },
+                sp.position[1],
+                sp.position[2],
+            );
+            let local_dir = Vec3::new(
+                if *mirror == 0.0 { sp.direction[0] } else { sp.direction[0] * *mirror },
+                sp.direction[1],
+                sp.direction[2],
+            )
+            .normalize_or_zero();
+            let yawed = Vec3::new(
+                local_dir.x * cos_h - local_dir.y * sin_h,
+                local_dir.x * sin_h + local_dir.y * cos_h,
+                local_dir.z,
+            );
+            let pitch_axis = Vec3::new(right.x, right.y, right.z);
+            let dir0 = rot.transform_vector3(yawed).normalize_or_zero();
+            let axis = pitch_axis;
+            let dir = (dir0 * cos_v
+                + axis.cross(dir0) * sin_v
+                + axis * axis.dot(dir0) * (1.0 - cos_v))
+            .normalize_or_zero();
+            let at = origin + rot.transform_point3(local).as_dvec3();
+            let (color, cone, cookie) = if slot == 0 {
+                (
+                    [1.0, 1.0, 233.0 / 255.0],
+                    [15.0f32.to_radians().cos(), 50.0f32.to_radians().cos()],
+                    0,
+                )
+            } else {
+                ([1.0; 3], [1.0, 0.0], slot)
+            };
+            lights.push(PointLight {
+                position: at,
+                radius: sp.range,
+                color,
+                intensity: level,
+                direction: dir,
+                cone,
+                core: (sp.range * 0.125).max(0.01),
+                mode: LightMode::Enhanced,
+                cookie,
+                cookie_up: up,
+                ..Default::default()
+            });
+        }
+    }
+}
+
+fn finite_value(value: f32) -> f32 {
+    if value.is_finite() {
+        value
+    } else {
+        0.0
     }
 }

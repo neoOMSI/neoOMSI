@@ -352,6 +352,9 @@ impl App {
             } else if !pressed {
                 self.keys.remove(&code);
             }
+            if self.quick_menu_key(code, pressed, repeat) {
+                return;
+            }
             if pressed
                 && !repeat
                 && self

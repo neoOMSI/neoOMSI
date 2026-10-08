@@ -773,6 +773,22 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 21,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let lm_atlas = device.create_texture(&wgpu::TextureDescriptor {
@@ -788,6 +804,36 @@ impl Renderer {
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
+        });
+        let cookie_atlas = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("spotlight cookie atlas"),
+            size: wgpu::Extent3d {
+                width: COOKIE_WIDTH,
+                height: COOKIE_HEIGHT,
+                depth_or_array_layers: COOKIE_SLOTS as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let cookie_atlas_view = cookie_atlas.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("spotlight cookie atlas view"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_array_layer: 0,
+            array_layer_count: Some(COOKIE_SLOTS as u32),
+            ..Default::default()
+        });
+        let cookie_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("spotlight cookie sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
         });
         let lm_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("light map atlas place"),
@@ -2603,6 +2649,10 @@ impl Renderer {
             lm_atlas,
             lm_uniform,
             lm_place: std::cell::Cell::new((0.0, 0.0, 0.0)),
+            cookie_atlas,
+            cookie_atlas_view,
+            cookie_sampler,
+            cookie_generations: std::cell::RefCell::new([0; COOKIE_SLOTS]),
             hdr_targets: HashMap::new(),
             puddles,
             reflection_pass,

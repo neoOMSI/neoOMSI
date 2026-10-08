@@ -5245,7 +5245,7 @@ pub fn tutorials(l: &mut Launcher, area: Rect) {
             Rect::new(r.x + 18.0, r.bottom() - 58.0, 200.0, 40.0),
             "Start the lesson",
             Some("play_arrow"),
-            ButtonKind::Primary,
+            if l.state.in_game() { ButtonKind::Disabled } else { ButtonKind::Primary },
         ) {
             start = Some(*n);
         }

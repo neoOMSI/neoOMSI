@@ -24,6 +24,10 @@ pub struct PointLight {
     pub occ_first: u32,
     pub occ_count: u32,
     pub shadow_first: bool,
+    /// Nonzero for a projected `[spotlight_cookie]` beam texture.
+    pub cookie: u8,
+    /// World up for the projected beam's angular image coordinates.
+    pub cookie_up: Vec3,
 }
 
 /// The cone of a screen's light (cos of the inner and outer half angle).
@@ -55,6 +59,8 @@ impl Default for PointLight {
             occ_first: 0,
             occ_count: 0,
             shadow_first: false,
+            cookie: 0,
+            cookie_up: Vec3::Z,
         }
     }
 }
@@ -77,6 +83,16 @@ pub struct SmokeParticle {
 
 pub const LM_ATLAS_TILES: u32 = 5;
 pub const LM_TILE_PX: u32 = 256;
+pub const COOKIE_WIDTH: u32 = 1024;
+pub const COOKIE_HEIGHT: u32 = 512;
+pub const COOKIE_SLOTS: usize = 8;
+
+#[derive(Clone)]
+pub struct CookieTexture {
+    pub slot: u8,
+    pub generation: u64,
+    pub image: std::sync::Arc<::texture::Image>,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Corona {
@@ -156,5 +172,6 @@ pub(crate) fn gpu_light(l: &PointLight, p: Vec3) -> GpuPointLight {
         dir,
         extra: [l.cone[0], l.core, l.beam, l.radius],
         occ: [0.0; 4],
+        cookie_up: [l.cookie_up.x, l.cookie_up.y, l.cookie_up.z, 0.0],
     }
 }

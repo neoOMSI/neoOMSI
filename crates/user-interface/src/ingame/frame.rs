@@ -19,6 +19,8 @@ impl Ui {
             text: TextCache::new()?,
             chat: ChatWidget::default(),
             menu_rects: Vec::new(),
+            quick_rects: Vec::new(),
+            quick_confirm_rects: [[0.0; 4]; 2],
             menu_arrows: Vec::new(),
             menu_scroll_thumb: None,
             menu_scroll_track: None,
@@ -408,6 +410,7 @@ impl Ui {
         self.anim_dt = dt.clamp(0.0, 0.1);
         self.text.flat = true;
         self.draw_menu(r, scene, f);
+        self.draw_quick_menu(r, scene, f);
         self.text.flat = false;
         self.vr_tooltip_overlay = None;
         if let Some(t) = f.tooltip.as_ref().filter(|t| !t.is_empty()) {

@@ -552,7 +552,7 @@ fn play(l: &mut Launcher, body: Rect) {
             c,
             "Continue",
             Some("history"),
-            ButtonKind::Normal,
+            if l.state.in_game() { ButtonKind::Disabled } else { ButtonKind::Normal },
         ) {
             l.state.launch_last_situation();
         }
@@ -570,7 +570,7 @@ fn play(l: &mut Launcher, body: Rect) {
         start,
         label,
         Some("play_arrow"),
-        ButtonKind::Primary,
+        if l.state.in_game() { ButtonKind::Disabled } else { ButtonKind::Primary },
     ) {
         super::drive::start_from_phone(l);
     }

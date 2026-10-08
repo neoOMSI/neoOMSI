@@ -120,6 +120,15 @@ pub struct DropdownView<'a> {
     pub current: Option<usize>,
 }
 
+/// The twelve shortcuts shown by the non-pausing Alt menu.
+pub struct QuickMenuView<'a> {
+    pub items: &'a [(&'a str, &'a str)],
+    pub disabled: &'a [bool],
+    pub arrows_on: bool,
+    pub end_duty: bool,
+    pub confirm_end_duty: bool,
+}
+
 /// Everything the interface draws in a frame.
 pub struct Frame<'a> {
     /// Physical pixels per logical one.
@@ -185,6 +194,7 @@ pub struct Frame<'a> {
     pub menu_kbd: bool,
     /// The drop-down open over a row of the settings window.
     pub dropdown: Option<DropdownView<'a>>,
+    pub quick_menu: Option<QuickMenuView<'a>>,
 }
 
 /// A chat line with its bad words starred out (rustrict: profanity, slurs and the usual
