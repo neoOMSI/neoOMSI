@@ -41,6 +41,7 @@ use std::sync::Arc;
 
 // ---- Stage 9b decomposition: the adapter is split into owned submodules ----
 mod car;
+pub(crate) use car::emergency_drive;
 mod viewer;
 mod loading;
 mod population;
@@ -51,6 +52,7 @@ mod lan;
 mod lifecycle;
 mod diagnostics;
 mod tick;
+mod safety;
 
 
 
@@ -116,6 +118,7 @@ pub struct AiCar {
     pub(crate) id: VehicleId,
     /// Validated, immutable physical capabilities (extents, class, brake configuration).
     pub(crate) caps: VehicleCapabilities,
+    pub(crate) motion_fault: Option<Reason>,
     /// The random seed it was made with and its paint scheme: a car that goes out of range
     /// and comes back is the same car (`DormantCar`).
     pub(crate) seed: u64,
@@ -384,6 +387,8 @@ pub struct Traffic {
     viewer: Option<Viewer>,
     /// Buildings that hide what is behind them (the player's collision world).
     occluders: Option<Arc<::simulation::collision::CollisionWorld>>,
+    /// Current streamed scenery collision, independent of the player's visibility inputs.
+    road_collision: Arc<::simulation::collision::CollisionWorld>,
     /// Pedestrians on the footpaths: (lane, distance along it), for giving way at crossings
     /// and for the pedestrian lights' request buttons.
     walkers: Vec<(usize, f32)>,
@@ -416,6 +421,7 @@ pub struct Traffic {
     /// OMSI: priority 1000 over the types' own): cars keep out of the way it is about
     /// to take for longer.
     player_priority: bool,
+    player_emergency: bool,
     /// The LAN players' vehicles (their session ids and boxes as for the player), set
     /// before each `tick`: the cars stop behind them and go round them as round the
     /// player's bus.
@@ -850,6 +856,10 @@ impl Traffic {
     /// Whether the player's vehicle has traffic priority (opens depot gates on request).
     pub fn set_player_priority(&mut self, priority: bool) {
         self.player_priority = priority;
+    }
+
+    pub fn set_player_emergency(&mut self, active: bool) {
+        self.player_emergency = active;
     }
 
     /// Where the camera is, for population visibility.

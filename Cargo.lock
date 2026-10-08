@@ -3740,6 +3740,7 @@ dependencies = [
  "parking_lot",
  "scenery",
  "texture",
+ "traffic",
 ]
 
 [[package]]

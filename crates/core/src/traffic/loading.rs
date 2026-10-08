@@ -332,6 +332,7 @@ impl Traffic {
                 .unwrap_or(0),
             viewer: None,
             occluders: None,
+            road_collision: world.collision.lock().clone(),
             walkers: Vec::new(),
             people: Vec::new(),
             initial: true,
@@ -345,6 +346,7 @@ impl Traffic {
             framed_spawns: Vec::new(),
             player: None,
             player_priority: false,
+            player_emergency: false,
             others: Vec::new(),
             drivers: HashMap::new(),
             driver_pool: Vec::new(),
@@ -925,6 +927,7 @@ impl Traffic {
         self.cars.push(AiCar {
             id,
             caps,
+            motion_fault: None,
             state,
             vehicle,
             render,

@@ -24,3 +24,4 @@ ab_glyph = "0.2"
 
 [dev-dependencies]
 audio = { path = "../audio" }
+traffic = { path = "../traffic" }

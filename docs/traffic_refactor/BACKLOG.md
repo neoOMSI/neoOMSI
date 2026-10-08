@@ -511,6 +511,16 @@ scenario passes:
 | Empty `core::traffic_runtime::{vehicles, passengers, presentation, replication}` stubs | Deleted; `content.rs` remains | They were doc-comment-only placeholders; the adapters live in `core::Traffic`. |
 | `Footprint::obb`, `Traffic::light_at_entry`, `BusService::next_stop` | Deleted | Unused dead code surfaced by `cargo check`. |
 
+## Stage 10 progress — physical safety and regression verification
+
+See [STAGE10_REPORT.md](STAGE10_REPORT.md) for the implemented ground/body feedback fixes,
+full passing-path scenery/pedestrian validation, issue #126, emergency reservations and
+cooperative yielding, roundabout entry priority, and the final test/map evidence. Manual
+acceptance remains with the user. Follow-up inspection corrected the initial ground
+diagnosis near `(6984, -2214)`: an unlinked road end exposed terrain under the front tyres.
+Partial support now permits normal path-end removal without a premature stop. Continuous
+road height, query-gap and rotation regressions are covered separately in the report.
+
 ## Stage 9b progress — decompose the engine adapter
 
 Stage 9 removed the second runtime and finished the cutover, but left the L6 engine adapter

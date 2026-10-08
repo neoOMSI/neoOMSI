@@ -1,6 +1,6 @@
 # Traffic AI refactor — preparation and progress
 
-Stage 0 of the [Traffic AI refactor plan](../TRAFFIC_AI_REFACTOR_PLAN.md) was the lightweight
+Stage 0 of the [Traffic AI refactor plan](TRAFFIC_AI_REFACTOR_PLAN.md) was the lightweight
 preparation that produced the starting backlog, an integration/test inventory, the first
 synthetic scenario specifications, and the decision/blocked-reason capture specification
 required at the Stage 1 seam.
@@ -22,6 +22,11 @@ budgets, `ev_AI_Horn` is restored as presentation-only feedback, and the `simula
 shim plus the dead `OMSI_TRAFFIC_RUNTIME` selector were removed so **one** production road-AI
 runtime remains. See [PERFORMANCE.md](PERFORMANCE.md) and
 [MAINTAINER_GUIDE.md](MAINTAINER_GUIDE.md).
+
+Stage 10 adds physical ground/scenery safeguards, complete passing-path validation
+(including issue #126), cooperative emergency traffic and corrected merge priority at
+roundabout entries. See [STAGE10_REPORT.md](STAGE10_REPORT.md) for fixes, evidence and
+remaining map-content limitations.
 
 - Source revision: `35a460a54e51ed28f9fb081b4adf16c8c73993a8` (the plan's `35a460a`).
 - Reference baseline: OMSI 2.2.032 (see [Compatibility](../COMPATIBILITY.md)).

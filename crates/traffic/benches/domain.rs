@@ -345,6 +345,7 @@ fn run_maneuver(net: &Network, feet: &[BodyFootprint], ticks: usize) -> Report {
         coord.begin_tick(&[], t);
         let occ = Occupancy::build(net.version(), t, feet.to_vec());
         let scene = ManeuverScene {
+                        static_clearance: None,
             net,
             occupancy: &occ,
             actors: &actors,

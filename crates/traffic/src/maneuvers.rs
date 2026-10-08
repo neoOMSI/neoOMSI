@@ -213,6 +213,8 @@ pub struct ManeuverActor {
     pub rear: f32,
     pub length: f32,
     pub half_width: f32,
+    /// Ground to roof envelope for authored scenery clearance.
+    pub height: f32,
     pub odometer: f32,
     pub min_gap: f32,
     pub veh_type: i32,
@@ -251,6 +253,7 @@ impl ManeuverActor {
             rear: 2.25,
             length: 4.5,
             half_width: 1.25,
+            height: 3.5,
             odometer: s,
             min_gap: 2.0,
             veh_type: 0,
@@ -312,6 +315,9 @@ impl ChangeCommand {
 
 /// The frozen world a maneuver plan reads. Built once per tick.
 pub struct ManeuverScene<'a> {
+    /// Engine integration checks the full vehicle sweep against authored scenery meshes.
+    /// Pure domain fixtures may omit it; the production adapter supplies it every tick.
+    pub static_clearance: Option<&'a dyn Fn(&[SweepSample], &ManeuverActor) -> bool>,
     pub net: &'a Network,
     pub occupancy: &'a Occupancy,
     pub actors: &'a [ManeuverActor],
@@ -325,6 +331,10 @@ pub struct ManeuverScene<'a> {
 /// One vehicle's maneuver inputs for this tick: the requests other owners submit.
 #[derive(Debug, Clone, Copy)]
 pub struct ManeuverInputs {
+    pub emergency: Option<crate::emergency::EmergencyApproach>,
+    pub priority_pass: bool,
+    /// A scheduled bus queues for its own occupied stop instead of passing that queue.
+    pub queue_for_stop: bool,
     /// Index into `ManeuverScene::actors`.
     pub actor: usize,
     /// A required lateral target from the service owner (docking/merge-out) and its phase.
@@ -348,6 +358,9 @@ impl ManeuverInputs {
     /// A minimal input for tests and adapters.
     pub fn new(actor: usize) -> ManeuverInputs {
         ManeuverInputs {
+            emergency: None,
+            priority_pass: false,
+            queue_for_stop: false,
             actor,
             service_lateral: None,
             service_phase: ManeuverPhase::Idle,
@@ -499,7 +512,7 @@ impl ManeuverCoordinator {
     ) -> ManeuverDecision {
         let dt = scene.dt;
         state.change_cooldown = (state.change_cooldown - dt).max(0.0);
-        state.pass_retry = (state.pass_retry - dt).max(0.0);
+        // pass_retry is an absolute simulation deadline, not a countdown.
         state.dwell = (state.dwell - dt).max(0.0);
         let Some(actor) = scene.actors.get(input.actor) else {
             return ManeuverDecision::new(ManeuverPhase::Idle);
@@ -557,6 +570,9 @@ impl ManeuverCoordinator {
         }
 
         // Required route-required change (and the turn lane the way asks for).
+        if input.emergency.is_some() && !actor.at_stop {
+            return self.yield_to_emergency(scene, actor);
+        }
         if let Some(d) = self.plan_required_change(scene, actor, state) {
             return d;
         }
@@ -571,6 +587,10 @@ impl ManeuverCoordinator {
             }
         }
 
+        // A bus waiting for its own berth keeps its place after required route changes.
+        if input.queue_for_stop {
+            return ManeuverDecision::new(ManeuverPhase::Idle);
+        }
         // Discretionary change (overtake/keep to the correct lane).
         if let Some(d) = self.plan_discretionary(scene, actor, state) {
             return d;
@@ -586,6 +606,28 @@ impl ManeuverCoordinator {
         let mut d = ManeuverDecision::new(ManeuverPhase::Idle);
         d.lateral_target = Some(input.kerb_swerve.unwrap_or(0.0));
         d
+    }
+
+    fn yield_to_emergency(&self, scene: &ManeuverScene, actor: &ManeuverActor) -> ManeuverDecision {
+        let lane = &scene.net.lanes[actor.lane];
+        // On a multilane road the innermost lane goes inward and the remaining lanes
+        // outward. On a single lane move to the curb without leaving the authored road.
+        let side = if scene.net.left_hand {
+            if lane.right.is_none() && lane.left.is_some() { 1.0 } else { -1.0 }
+        } else if lane.left.is_none() && lane.right.is_some() { -1.0 } else { 1.0 };
+        let target = side * (lane.width * 0.5 - actor.half_width - 0.15).max(0.0);
+        let ramp = (actor.speed * 2.0).max(12.0);
+        let lat = |d: f32| actor.lateral + (target - actor.lateral) * smooth01((d / ramp).clamp(0.0, 1.0));
+        let mut decision = ManeuverDecision::new(ManeuverPhase::Idle);
+        if self.sweep_clear(scene, actor, &lat, ramp, PULL_OUT_CLEARANCE) {
+            decision.lateral_target = Some(target);
+            decision.signal = Some((if side > 0.0 { 2 } else { 1 }, 1.5));
+        }
+        // Slow smoothly; neither erase a physical leader nor violate its stop signal.
+        decision.accel_cap = Some((-actor.speed / 1.5).clamp(-actor.decel, 0.0));
+        decision.reasons.push(Reason::EmergencyYield);
+        decision.binding = Some(Reason::EmergencyYield);
+        decision
     }
 
     // ---- route-required / turn-lane changes --------------------------------------------
@@ -745,7 +787,7 @@ impl ManeuverCoordinator {
         input: &ManeuverInputs,
     ) -> Option<ManeuverDecision> {
         let net = scene.net;
-        let rolling = input.parked && actor.speed > 0.5;
+        let rolling = (input.parked || input.priority_pass) && actor.speed > 0.5;
         if actor.lane_kind != LaneKind::Street
             || actor.change.is_some()
             || (actor.stopped < 3.0 && !rolling)
@@ -776,6 +818,11 @@ impl ManeuverCoordinator {
         let Some((opp, os, side)) = net.opposite(actor.lane, actor.s) else {
             return None;
         };
+        // A geometrically parallel oncoming path may be across a central island. Its
+        // existence does not make the gap between the carriageways a passing lane (#126).
+        if side > (lane.width + net.lanes[opp].width) * 0.5 + 0.6 {
+            return None;
+        }
         if !(2.3..=5.5).contains(&side) {
             return None;
         }
@@ -964,17 +1011,17 @@ impl ManeuverCoordinator {
         pass_len: f32,
         rolling: bool,
     ) -> Option<f32> {
-        let need = if actor.stopped > 30.0 {
-            0.0
-        } else {
-            PULL_OUT_CLEARANCE
-        };
+        let need = PULL_OUT_CLEARANCE;
         for ramp in pull_out_ramps(probe.block, actor.front, rolling) {
             let lat = |d: f32| {
-                actor.lateral
-                    + (target - actor.lateral) * smooth01(((d) / ramp.max(0.1)).clamp(0.0, 1.0))
+                if d > probe.until {
+                    target * (1.0 - smooth01(((d - probe.until) / probe.back.max(0.1)).clamp(0.0, 1.0)))
+                } else {
+                    actor.lateral + (target - actor.lateral) * smooth01((d / ramp.max(0.1)).clamp(0.0, 1.0))
+                }
             };
-            if self.sweep_clear(scene, actor, &lat, pass_len, need) {
+            let entire = pass_len.max(probe.until + probe.back + actor.front);
+            if self.sweep_clear(scene, actor, &lat, entire, need) {
                 return Some(ramp);
             }
         }
@@ -989,7 +1036,7 @@ impl ManeuverCoordinator {
         actor: &ManeuverActor,
         lat: &impl Fn(f32) -> f32,
         pass_len: f32,
-        _need: f64,
+        need: f64,
     ) -> bool {
         let net = scene.net;
         let way = way_of(net, actor, pass_len + 4.0);
@@ -997,8 +1044,7 @@ impl ManeuverCoordinator {
         let mut d = 0.0f32;
         while d <= pass_len {
             let Some((lane, u)) = way_locate(net, &way, d) else {
-                d += 1.0;
-                continue;
+                return false;
             };
             let (p, h) = net.lanes[lane].at(u);
             let hr = (h as f64).to_radians();
@@ -1011,13 +1057,22 @@ impl ManeuverCoordinator {
             });
             d += 1.0;
         }
+        for i in 0..samples.len().saturating_sub(1) {
+            let tangent = (samples[i + 1].p - samples[i].p).truncate().normalize_or_zero();
+            if tangent.length_squared() > 0.5 { samples[i].dir = tangent; }
+        }
         if let Some(hit) = scene
             .occupancy
-            .swept_clearance(&samples, actor.half_width as f64, &[actor.id])
+            .swept_clearance(&samples, actor.half_width as f64 + need, &[actor.id])
         {
             // The first body the ghost path meets: if it is the obstacle itself, the ramp did
             // not clear it. Any hit inside the maneuver means the path is not clear.
-            return hit.d > pass_len;
+            if hit.d <= pass_len {
+                return false;
+            }
+        }
+        if scene.static_clearance.is_some_and(|clear| !clear(&samples, actor)) {
+            return false;
         }
         if scene.occupancy.pedestrian_clearance(&samples, actor.half_width as f64, scene.people, 0.4).is_some() {
             return false;
@@ -1186,6 +1241,16 @@ impl ManeuverCoordinator {
                     return false;
                 }
             }
+        }
+        // Include the lateral transition, not only the gaps on its destination lane.
+        let (from_p, h) = scene.net.lanes[actor.lane].at(actor.s);
+        let (to_p, _) = scene.net.lanes[to].at(s_to);
+        let h = h.to_radians() as f64;
+        let target = (to_p - from_p).truncate().dot(DVec2::new(h.cos(), -h.sin())) as f32;
+        let ramp = (actor.speed * 3.0).max(12.0);
+        let lat = |d: f32| actor.lateral + (target - actor.lateral) * smooth01((d / ramp).clamp(0.0, 1.0));
+        if !self.sweep_clear(scene, actor, &lat, ramp, 0.0) {
+            return false;
         }
         true
     }
@@ -1393,6 +1458,7 @@ mod tests {
         let occ = Occupancy::default();
         let actors = vec![ManeuverActor::new(VehicleId(1), 0, 10.0)];
         let scene = ManeuverScene {
+                        static_clearance: None,
             net: &net,
             occupancy: &occ,
             actors: &actors,
@@ -1436,6 +1502,7 @@ mod tests {
             a
         }];
         let scene = ManeuverScene {
+                        static_clearance: None,
             net: &net,
             occupancy: &occ,
             actors: &actors,

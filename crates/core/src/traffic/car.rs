@@ -2,6 +2,13 @@
 
 use super::*;
 
+pub(crate) fn emergency_drive(v: &VehicleInstance, scheduled: bool) -> bool {
+    ::traffic::emergency_active(
+        v.var("TrafficPriority").is_some_and(|x| x > 0.5), scheduled,
+        v.var("AI_Emergency").map(|x| x > 0.5),
+    )
+}
+
 impl AiCar {
     /// A timetable bus (in service or on its way off after its trip).
     pub fn is_bus(&self) -> bool {

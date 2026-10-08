@@ -725,11 +725,14 @@ pub(crate) fn run_offscreen(
             others.extend(own_outlines(player.as_ref(), &[]));
             t.set_external_actors(others);
             t.set_player_priority(
+                // General priority alone is insufficient for a scheduled/player bus.
                 player
                     .as_ref()
                     .and_then(|p| p.vehicle.var("TrafficPriority"))
                     .is_some_and(|v| v > 0.5),
             );
+            t.set_player_emergency(player.as_ref().is_some_and(|p|
+                traffic::emergency_drive(&p.vehicle, p.vehicle.ty.def.ai_veh_type == 2)));
             let steps = ::traffic::advance_fixed_clock(
                 &mut sim_accum,
                 dt,

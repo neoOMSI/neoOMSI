@@ -18,7 +18,9 @@ core ─┘                          (never the reverse)
 - Both `simulation` and `core` may depend on `traffic`.
 - `simulation::traffic` was a shim (`pub use ::traffic::*;`) during migration. Stage 9
   migrated every caller to import `traffic` directly and **deleted the shim**; `core` now
-  depends on `traffic` directly. `simulation` no longer depends on `traffic`.
+  depends on `traffic` directly. `simulation` has no runtime dependency on `traffic`.
+  Stage 10 adds a **dev-dependency** for the closed-loop regression that couples the real
+  bicycle body to planner feedback; it does not restore the runtime shim.
 - Check the invariant with `cargo tree -p traffic`: only `glam`, `hashbrown`, `log` and
   their transitive leaves may appear.
 

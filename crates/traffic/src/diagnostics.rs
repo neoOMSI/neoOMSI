@@ -7,13 +7,16 @@
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
 /// Version of the capture schema. Any field addition, removal, or semantic change bumps it.
-pub const TRACE_VERSION: u32 = 7;
+pub const TRACE_VERSION: u32 = 8;
 
 /// Why a vehicle cannot proceed at full freedom. Every active cause is preserved; one of
 /// them is the binding constraint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Reason {
     RedSignal,
+    GroundUnavailable,
+    SceneryBlocked,
+    EmergencyYield,
     Amber,
     Yield,
     OccupiedExit,
@@ -74,6 +77,9 @@ impl Reason {
     pub fn label(self) -> &'static str {
         match self {
             Reason::RedSignal => "red",
+            Reason::GroundUnavailable => "ground_unavailable",
+            Reason::SceneryBlocked => "scenery_blocked",
+            Reason::EmergencyYield => "emergency_yield",
             Reason::Amber => "amber",
             Reason::Yield => "yield",
             Reason::OccupiedExit => "exit",
@@ -109,6 +115,7 @@ impl Reason {
         matches!(
             self,
             Reason::RedSignal
+                | Reason::EmergencyYield
                 | Reason::Amber
                 | Reason::BerthBusy
                 | Reason::DoorHold

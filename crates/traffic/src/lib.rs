@@ -13,6 +13,7 @@
 
 pub mod capabilities;
 pub mod diagnostics;
+pub mod emergency;
 pub mod following;
 pub mod ids;
 pub mod junctions;
@@ -30,6 +31,7 @@ pub mod world;
 
 pub use capabilities::*;
 pub use diagnostics::*;
+pub use emergency::*;
 pub use following::*;
 pub use ids::*;
 pub use junctions::*;
