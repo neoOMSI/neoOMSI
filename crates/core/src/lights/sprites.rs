@@ -65,18 +65,21 @@ fn smoke_diameter(p: &::simulation::particles::Particle) -> f32 {
 }
 
 /// A plume puff carries the smoke Vanilla's alpha (initial towards final) gives it at the
-/// vehicle's start size; drawn smaller and spreading, its optical depth goes with the inverse
-/// of its area, so it thins without clipping at 1. Faded in quickly (the plume is densest at
-/// the pipe) and out towards the end of its life.
+/// vehicle's start size (or, growing from less, the size it reaches while fading in); drawn
+/// smaller and spreading, its optical depth goes with the inverse of its area, so it thins
+/// without clipping at 1. Faded in quickly (the plume is densest at the pipe) and out
+/// towards the end of its life.
 fn smoke_alpha(p: &::simulation::particles::Particle) -> f32 {
+    const FADE_IN: f32 = 0.06;
     let smooth = |a: f32, b: f32, x: f32| {
         let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
     let t = p.age / p.life.max(1e-3);
     let d = smoke_diameter(p).max(0.05);
-    let depth = -(1.0 - p.alpha().min(0.99)).ln() * p.size0.max(0.0).powi(2) / (d * d);
-    (1.0 - (-depth).exp()) * smooth(0.0, 0.06, p.age) * (1.0 - smooth(0.4, 1.0, t))
+    let size = p.size0.max(p.grow * FADE_IN).max(0.0);
+    let depth = -(1.0 - p.alpha().min(0.99)).ln() * size * size / (d * d);
+    (1.0 - (-depth).exp()) * smooth(0.0, FADE_IN, p.age) * (1.0 - smooth(0.4, 1.0, t))
 }
 
 /// A plume puff slowly turning from its own angle (one turn for all shows the picture's
@@ -316,6 +319,14 @@ mod tests {
         let thin = smoke_alpha(&with_alpha(puff(0.1, 0.5), 0.2, 0.2));
         let thick = smoke_alpha(&with_alpha(puff(0.1, 0.5), 0.4, 0.4));
         assert!(thin < thick && thick < 1.0);
+    }
+
+    /// A puff growing from size 0 still carries smoke: the size it reaches while fading in.
+    #[test]
+    fn smoke_growing_from_nothing_shows() {
+        let mut p = puff(0.3, 0.5);
+        p.size0 = 0.0;
+        assert!(smoke_alpha(&p) > 0.1);
     }
 
     /// Only a vehicle's rising smoke is drawn as a plume, and only outside Vanilla.
