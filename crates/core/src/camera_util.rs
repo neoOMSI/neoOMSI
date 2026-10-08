@@ -232,26 +232,46 @@ pub(crate) fn triple_screen_cameras(
                 top = top.max(relative.dot(base_up) / depth);
             }
         }
-        let near = panel_camera.near;
-        let l = left * near;
-        let r = right_edge * near;
-        let b = bottom * near;
-        let t = top * near;
         panel_camera.fov_deg = (top.abs().max(bottom.abs()) * 2.0).atan().to_degrees();
         cameras[panel] = panel_camera;
-        projections[panel] = glam::camera::rh::proj::directx::frustum(
-            l,
-            r,
-            b,
-            t,
-            panel_camera.far,
+        projections[panel] = reverse_z_frustum(
+            left,
+            right_edge,
+            bottom,
+            top,
             panel_camera.near,
+            panel_camera.far,
         );
     }
     Some(TripleScreenViews {
         cameras,
         projections,
     })
+}
+
+fn reverse_z_frustum(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Mat4 {
+    let projection_near = far;
+    glam::camera::rh::proj::directx::frustum(
+        left * projection_near,
+        right * projection_near,
+        bottom * projection_near,
+        top * projection_near,
+        projection_near,
+        near,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reverse_z_frustum;
+
+    #[test]
+    fn reverse_z_frustum_preserves_panel_view_angles() {
+        let projection = reverse_z_frustum(-0.5, 0.5, -0.25, 0.25, 0.1, 6000.0);
+
+        assert!((projection.x_axis.x - 2.0).abs() < 1e-5);
+        assert!((projection.y_axis.y - 4.0).abs() < 1e-5);
+    }
 }
 
 /// The AI car to follow: an id, "auto" = the first overtaker, "moving" = the oldest car
