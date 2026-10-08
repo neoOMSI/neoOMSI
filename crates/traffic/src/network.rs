@@ -599,6 +599,23 @@ impl Network {
         self.beside(la, lb)
     }
 
+    /// Both lanes continue as the same adjacent pair, without a fork or a sharp joint.
+    /// A spline boundary on such a road is not the end of a lane-change corridor.
+    pub fn parallel_continuation(&self, a: usize, b: usize) -> Option<(usize, usize)> {
+        let (la, lb) = (self.lanes.get(a)?, self.lanes.get(b)?);
+        let ([na], [nb]) = (la.next.as_slice(), lb.next.as_slice()) else { return None };
+        let (next_a, next_b) = (self.lanes.get(*na)?, self.lanes.get(*nb)?);
+        let paired = (la.left == Some(b) && next_a.left == Some(*nb))
+            || (la.right == Some(b) && next_a.right == Some(*nb));
+        if !paired { return None; }
+        for (from, to) in [(la, next_a), (lb, next_b)] {
+            if from.kind != to.kind || (from.end() - to.start()).length() > 1.5
+                || wrap_deg(from.end_heading() - to.start_heading()).abs() > 10.0
+            { return None; }
+        }
+        Some((*na, *nb))
+    }
+
     /// Does lane `b` run beside `a` (a lane's width or so to the side, the same way) along
     /// at least 8 m of it?
     fn beside(&self, la: &Lane, lb: &Lane) -> bool {

@@ -685,7 +685,7 @@ impl AiState {
     pub fn start_bypass(&mut self, net: &Network, to: usize, dir: i32) {
         self.start_change(net, to, dir);
         if let Some(c) = self.change.as_mut() {
-            c.length = 8.0;
+            c.length = crate::maneuvers::BYPASS_RAMP;
             c.bypass = true;
         }
     }
@@ -1082,11 +1082,41 @@ impl AiState {
         self.odometer += ds;
         // lane change: signal, glide over to the neighbour, then continue there
         if let Some(mut c) = self.change {
-            c.s_to += ds;
+            // Neighbouring curved lanes have different arc lengths. Keep their
+            // longitudinal fractions aligned, just as realization feedback does.
+            let from = &net.lanes[self.lane];
+            let target = &net.lanes[c.to];
+            let scale = if (target.start() - from.start()).truncate().length() < 8.0 {
+                target.length() / from.length().max(0.01)
+            } else { 1.0 };
+            c.s_to += ds * scale;
             if c.wait > 0.0 {
                 c.wait = (c.wait - dt).max(0.0);
             } else {
                 c.t += ds / c.length;
+            }
+            // Random traffic can change across an ordinary spline joint. Advance both
+            // longitudinal origins while retaining the blend's progress and indicator.
+            // Route changes keep their explicit route-entry completion semantics.
+            if c.t < 1.0 && self.route.is_empty() {
+                for _ in 0..PLAN_LANES {
+                    let from_len = net.lanes[self.lane].length();
+                    let to_len = net.lanes[c.to].length();
+                    if self.s < from_len && c.s_to < to_len { break; }
+                    let Some((from, to)) = net.parallel_continuation(self.lane, c.to) else { break };
+                    if self.planned_next != Some(from) || self.change_plan.first() != Some(&to) { break; }
+                    // Matched road pieces normally end together. Keep the origins paired
+                    // even if their lengths differ slightly at a curved spline joint.
+                    if self.s < from_len || c.s_to < to_len { break; }
+                    self.s -= from_len;
+                    c.s_to -= to_len;
+                    self.prev_lane = Some(self.lane);
+                    self.lane = from;
+                    c.to = to;
+                    self.planned_next = if self.ahead.is_empty() { None } else { Some(self.ahead.remove(0)) };
+                    self.change_plan.remove(0);
+                    self.plan_next(net);
+                }
             }
             let from_len = net.lanes[self.lane].length();
             let to_len = net.lanes.get(c.to).map(|l| l.length()).unwrap_or(0.0);

@@ -47,6 +47,8 @@ pub const PULL_OUT_CLEARANCE: f64 = 0.25;
 pub const PULL_OUT_WAIT: f32 = 0.4;
 /// Acceleration while edging out from a standstill (m/s²).
 pub const PULL_OUT_ACCEL: f32 = 1.0;
+/// Distance of the short transition onto a parallel passing lane (m).
+pub const BYPASS_RAMP: f32 = 6.0;
 /// Sideways acceleration the return S-curve keeps within (m/s²).
 pub const BACK_IN_LAT_ACCEL: f32 = 2.5;
 /// A car edging out keeps to `PULL_OUT_ACCEL` until its front is this far past the obstacle
@@ -543,8 +545,11 @@ impl ManeuverCoordinator {
 
         // A lane change in progress: let it finish (the realization owns its progress).
         if let Some(c) = actor.change {
+            // The target's lane index advances too when a change crosses a spline joint.
+            state.change_to = Some(c.to);
             let mut d = ManeuverDecision::new(ManeuverPhase::LaneChange);
             d.target_lane = Some(LaneId(c.to));
+            if c.bypass { d.accel_cap = Some(PULL_OUT_ACCEL); }
             return d;
         }
 
@@ -769,7 +774,7 @@ impl ManeuverCoordinator {
         }
         let s_to = scene.net.beside_s(actor.lane, to, actor.s);
         if self.approved(actor.id) != Some(LaneId(to)) { return None; }
-        let ramp = if code == 3 { 8.0 } else { (actor.speed * 3.0).max(12.0) };
+        let ramp = if code == 3 { BYPASS_RAMP } else { (actor.speed * 3.0).max(12.0) };
         if !self.can_merge_ramp(scene, actor, to, s_to, ramp) {
             state.pass_retry = scene.time + 0.5;
             return None;
@@ -780,6 +785,7 @@ impl ManeuverCoordinator {
         let mut d = ManeuverDecision::new(ManeuverPhase::LaneChange);
         d.change = Some(ChangeCommand::new(to, dir, if code == 3 { ChangeKind::Bypass } else { ChangeKind::Change }));
         d.target_lane = Some(LaneId(to));
+        if code == 3 { d.accel_cap = Some(PULL_OUT_ACCEL); }
         Some(d)
     }
 
@@ -794,9 +800,6 @@ impl ManeuverCoordinator {
         }
         let net = scene.net;
         let lane = &net.lanes[actor.lane];
-        if lane.length() - actor.s < (actor.speed * 5.5 + 10.0).max(40.0) {
-            return None;
-        }
         let limit = (lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6;
         let lht = net.left_hand;
         let (pass_side, keep_side, pass_dir, keep_dir) = if lht {
@@ -814,10 +817,15 @@ impl ManeuverCoordinator {
                         .map(|a| a.at_stop || (a.stopped > 25.0 && !a.light_hold && !a.yielding))
                         .unwrap_or(actor.stopped > 10.0);
                     let bypass = standing && (actor.speed > 0.5 || actor.stopped >= 3.0);
+                    let room = if bypass {
+                        BYPASS_RAMP + actor.front + actor.speed * SIGNAL_BEFORE_CHANGE
+                            + 0.5 * actor.accel.max(0.0) * SIGNAL_BEFORE_CHANGE.powi(2) + 1.0
+                    } else { (actor.speed * 5.5 + 10.0).max(40.0) };
                     if v < limit * 0.7
                         && v < actor.speed + 1.0
                         && (bypass || (actor.speed >= 4.0 && actor.stopped <= 0.0))
-                        && gap > if bypass { actor.min_gap } else { 8.0 }
+                        && gap > if bypass { actor.pass_room.max(actor.min_gap) - 0.3 } else { 8.0 }
+                        && self.parallel_room(scene, actor, left, room)
                         && self.lane_clear(scene, actor.id, left, s_left, 20.0, 50.0)
                     {
                         wish = Some((left, pass_dir, if bypass { 3 } else { 1 }));
@@ -830,7 +838,7 @@ impl ManeuverCoordinator {
             if let Some(right) = keep_side {
                 if self.open_to(net, actor, right) {
                     let s_right = net.beside_s(actor.lane, right, actor.s);
-                    if net.lanes[right].length() - s_right > 40.0
+                    if self.parallel_room(scene, actor, right, (actor.speed * 5.5 + 10.0).max(40.0))
                         && self.lane_clear(scene, actor.id, right, s_right, 30.0, 70.0)
                     {
                         wish = Some((right, keep_dir, 2));
@@ -839,6 +847,28 @@ impl ManeuverCoordinator {
             }
         }
         wish
+    }
+
+    fn parallel_room(&self, scene: &ManeuverScene, actor: &ManeuverActor, to: usize, need: f32) -> bool {
+        let net = scene.net;
+        let (mut a, mut b) = (actor.lane, to);
+        let (mut sa, mut sb) = (actor.s, net.beside_s(a, b, actor.s));
+        let mut room = 0.0;
+        for _ in 0..12 {
+            let (la, lb) = (&net.lanes[a], &net.lanes[b]);
+            room += (la.length() - sa).min(lb.length() - sb).max(0.0);
+            if room >= need { return true; }
+            // Do not treat a signal, a turn or a branching junction as an ordinary joint.
+            if la.traffic_light.is_some() || lb.traffic_light.is_some() || la.turn != 0 || lb.turn != 0 {
+                return false;
+            }
+            let Some((na, nb)) = net.parallel_continuation(a, b) else { return false };
+            if !self.open_to(net, actor, nb)
+                || (a == actor.lane && actor.planned_next.is_some_and(|n| n != na))
+            { return false; }
+            (a, b, sa, sb) = (na, nb, 0.0, 0.0);
+        }
+        false
     }
 
     // ---- passing -----------------------------------------------------------------------
@@ -1125,6 +1155,20 @@ impl ManeuverCoordinator {
             let tangent = (samples[i + 1].p - samples[i].p).truncate().normalize_or_zero();
             if tangent.length_squared() > 0.5 { samples[i].dir = tangent; }
         }
+        // Check the whole car, including its swinging front corner. Cross-sections
+        // alone can approve a path whose centre clears a bus but whose bumper clips it.
+        for sample in &samples {
+            let center = sample.p.truncate()
+                + sample.dir * ((actor.front - actor.rear) * 0.5) as f64;
+            let probe = crate::BodyFootprint::new(actor.id, center, sample.dir,
+                ((actor.front + actor.rear) * 0.5) as f64, actor.half_width as f64 + need,
+                sample.p.z, sample.p.z + actor.height as f64, actor.speed);
+            let mut contact = false;
+            scene.occupancy.near(center, probe.half_len + probe.half_w, |body| {
+                contact |= body.owner != actor.id && body.overlaps(&probe, 0.0);
+            });
+            if contact { return false; }
+        }
         if let Some(hit) = scene
             .occupancy
             .swept_clearance(&samples, actor.half_width as f64 + need, &[actor.id])
@@ -1279,27 +1323,30 @@ impl ManeuverCoordinator {
         if to >= scene.net.lanes.len() {
             return false;
         }
-        for iv in scene.occupancy.intervals(LaneId(to)) {
+        for (lane, off) in lane_window(scene.net, to, s_to, 50.0, ramp + 50.0) {
+          for iv in scene.occupancy.intervals(LaneId(lane)) {
             if iv.owner == actor.id {
                 continue;
             }
+            let (origin, front, rear) = (iv.s + off, iv.front + off, iv.rear + off);
+            if rear > s_to + ramp + 50.0 || front < s_to - 50.0 { continue; }
             if iv.foreign {
                 return false;
             }
-            if iv.s >= s_to {
-                let gap = iv.rear - (s_to + actor.front);
+            if origin >= s_to {
+                let gap = rear - (s_to + actor.front);
                 if gap <= 2.0 + (actor.speed - iv.speed).max(0.0) * 1.5 {
                     return false;
                 }
             } else {
                 if iv.speed < 0.3 {
                     // A standing body lets a car in only when it is not abreast of it.
-                    if (s_to - iv.s).abs() < actor.length + iv.front + iv.rear {
+                    if front >= s_to - actor.rear && rear <= s_to + actor.front {
                         return false;
                     }
                     continue;
                 }
-                let gap = (s_to - actor.rear) - iv.front;
+                let gap = (s_to - actor.rear) - front;
                 if gap
                     <= 2.0
                         + iv.speed * 0.8
@@ -1309,6 +1356,7 @@ impl ManeuverCoordinator {
                     return false;
                 }
             }
+          }
         }
         // Include the lateral transition, not only the gaps on its destination lane.
         let (from_p, h) = scene.net.lanes[actor.lane].at(actor.s);
@@ -1332,11 +1380,9 @@ impl ManeuverCoordinator {
         back: f32,
         ahead: f32,
     ) -> bool {
-        !scene
-            .occupancy
-            .intervals(LaneId(lane))
-            .iter()
-            .any(|iv| iv.owner != id && iv.s > s - back && iv.s < s + ahead)
+        !lane_window(scene.net, lane, s, back, ahead).into_iter().any(|(l, off)|
+            scene.occupancy.intervals(LaneId(l)).iter().any(|iv|
+                iv.owner != id && iv.front + off > s - back && iv.rear + off < s + ahead))
     }
 
     /// The nearest body ahead along the actor's way, up to `look` m: `(gap to its rear, its
@@ -1362,6 +1408,24 @@ impl ManeuverCoordinator {
                     best = Some((gap, iv.speed, iv.owner));
                 }
             }
+        }
+        // Rear sections have geometry but no primary lane interval. Include the
+        // realized corridor, otherwise a bus's front section overstates pull-out room.
+        let mut samples = Vec::new();
+        let mut d = actor.front;
+        while d <= actor.front + look {
+            let (lane, s) = way_locate(scene.net, &way, d)?;
+            let (p, h) = scene.net.lanes[lane].at(s);
+            let h = (h as f64).to_radians();
+            samples.push(SweepSample {
+                p: p + DVec3::new(h.cos(), -h.sin(), 0.0) * actor.lateral as f64,
+                d, dir: DVec2::new(h.sin(), h.cos()),
+            });
+            d += 0.5;
+        }
+        if let Some(hit) = scene.occupancy.swept_clearance(&samples, actor.half_width as f64, &[actor.id]) {
+            let gap = (hit.d - actor.front).max(0.0);
+            if best.is_none_or(|b| gap < b.0) { best = Some((gap, hit.speed, hit.owner)); }
         }
         best
     }
@@ -1457,6 +1521,24 @@ pub fn way_of(net: &Network, actor: &ManeuverActor, look: f32) -> Vec<WayStep> {
         d += net.lanes[n].length();
         cur = net.lanes[n].next.first().copied();
         guard += 1;
+    }
+    out
+}
+
+/// A bounded lane window in the starting lane's coordinates, including spline joints.
+fn lane_window(net: &Network, lane: usize, s: f32, back: f32, ahead: f32) -> Vec<WayStep> {
+    let mut out: Vec<_> = net.upstream(lane, s, back, 24).into_iter()
+        .map(|(l, off, _)| (l, off)).collect();
+    let mut pending = vec![(lane, 0.0)];
+    while let Some((l, off)) = pending.pop() {
+        let next_off = off + net.lanes[l].length();
+        if next_off > s + ahead || out.len() >= 48 { continue; }
+        for &next in &net.lanes[l].next {
+            if !out.iter().any(|&(n, _)| n == next) {
+                out.push((next, next_off));
+                pending.push((next, next_off));
+            }
+        }
     }
     out
 }

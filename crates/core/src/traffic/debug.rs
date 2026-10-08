@@ -61,7 +61,7 @@ impl Traffic {
                 boxes, path, blocker, constraint, stop, speed: st.speed, changing: st.change.is_some() || c.maneuver.passing.is_some(),
                 label: format!("#{} {:.0} km/h | lane {}\n{} | {:?}", c.id.get(), st.speed * 3.6, st.lane,
                     if c.why.0.is_none() { "clear" } else { c.why.0.label() }, c.bus.as_ref().map(|b| b.state.phase)),
-wa                detail: format!("lane {} s {:.1}, {} gap {:.1}; maneuver {:?}; service {:?}; ground {}; fault {:?}; leader {:?}; body candidate {:?}; heading {:.1}; lateral {:.2}; extents {:.2}/{:.2}/{:.2}; next {:?}",
+                detail: format!("lane {} s {:.1}, {} gap {:.1}; maneuver {:?}; service {:?}; ground {}; fault {:?}; leader {:?}; body candidate {:?}; heading {:.1}; lateral {:.2}; extents {:.2}/{:.2}/{:.2}; next {:?}",
                     st.lane, st.s, if c.why.0.is_none() { "clear" } else { c.why.0.label() }, c.why.1,
                     if st.change.is_some() { ManeuverPhase::LaneChange } else if c.maneuver.passing.is_some() { ManeuverPhase::Passing }
                     else if c.maneuver.park.is_some() { ManeuverPhase::Parking } else { ManeuverPhase::Idle },
