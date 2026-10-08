@@ -13,6 +13,20 @@ pub(super) fn vehicle_height(vehicle: &VehicleInstance) -> f32 {
         .unwrap_or(3.5)
 }
 
+/// Realization checks the model's physical box; passing's extra margin is not solid body.
+pub(super) fn road_body_box(vehicle: &VehicleInstance, body: &AiBody, caps: &VehicleCapabilities) -> Obb {
+    let position = body.position + DVec3::new(0.0, 0.0, vehicle.ai_rest_offset().0 as f64);
+    if let Some(bb) = vehicle.ty.def.bounding_box {
+        return Obb::from_box(bb, position, body.heading);
+    }
+    let mut bbox = Obb::vehicle(position.truncate(), body.heading, caps.front as f64, caps.rear as f64, caps.half_width as f64);
+    let (bottom, top) = vehicle.ty.model_box().map(|(lo, hi)| (lo.z as f64, hi.z as f64))
+        .unwrap_or((0.15, 3.5));
+    bbox.z0 = position.z + bottom;
+    bbox.z1 = position.z + top;
+    bbox
+}
+
 pub(super) fn external_actor(
     net: &Network,
     p: PlayerBox,

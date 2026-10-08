@@ -107,6 +107,7 @@ pub(crate) struct Extra {
     pub profile: Vec<(&'static str, f64)>,
     pub frames: u32,
     pub traffic: Option<TrafficPerf>,
+    pub traffic_debug: Option<crate::traffic::TrafficDebugFrame>,
     pub weather: WeatherInfo,
 }
 
@@ -142,6 +143,7 @@ pub(crate) enum Action {
     QuickSave,
     LoadQuickSave,
     CopyCode,
+    CopyTrafficReport(String),
     OpenLan(u16),
     Connect(String),
     Vehicle(String),

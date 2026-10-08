@@ -2627,6 +2627,8 @@ impl ::simulation::rigid::Ground for DriveGround {
                     nearest = Some(z64);
                 }
                 top = z - 0.0005;
+                // Once below the reference, every remaining face is farther away.
+                if z64 <= reference { break; }
             }
             if nearest.is_some() { return nearest; }
         }

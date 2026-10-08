@@ -24,7 +24,7 @@ pub(crate) use ::traffic::{
     ManeuverIntent, ManeuverPhase, ManeuverScene, ManeuverState, Network, NetworkVersion,
     Occupancy, ParkPlan, Placement, RealizedMotion, Reason, StopTarget, SweepSample,
     TickSnapshot, TraceHeader, TrafficLightController, VehicleCapabilities, VehicleClass,
-    VehicleId, VehicleSnapshot, TRACE_VERSION, junction_ahead, required_target,
+    VehicleId, VehicleSnapshot, TRACE_VERSION, junction_ahead,
     DormantView, Lifecycle, PopulationCoordinator, PopulationDemand, PopulationScene,
     RemovalCause, SpawnClass, SpawnFacts, SpawnOutcome, SpawnRequest, SpawnRequestId,
     TraceEvent, DORMANT_CAP_FACTOR,
@@ -53,6 +53,10 @@ mod lifecycle;
 mod diagnostics;
 mod tick;
 mod safety;
+#[cfg(all(feature = "devtools", debug_assertions))]
+mod debug;
+#[cfg(all(feature = "devtools", debug_assertions))]
+pub(crate) use debug::TrafficDebugFrame;
 
 
 

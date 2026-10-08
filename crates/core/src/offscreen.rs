@@ -457,6 +457,8 @@ pub(crate) fn run_offscreen(
     // the loop's frame `dt` only feeds an accumulator, so the sequence of decision ticks
     // depends on elapsed time rather than on the frame partition.
     let mut sim_accum = 0.0f32;
+    let profile_traffic = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
+    let mut traffic_timings = Vec::<[f64; 4]>::new();
     for i in 0..total_frames {
         let t_s = i as f32 * dt;
         if server {
@@ -740,10 +742,15 @@ pub(crate) fn run_offscreen(
                 ::traffic::MAX_SIM_STEPS,
             );
             for _ in 0..steps {
+                let started = profile_traffic.then(std::time::Instant::now);
                 t.tick(
                     ::traffic::SIM_DT,
                     player.as_ref().map(|p| player_outline(p)),
                 );
+                if let Some(started) = started {
+                    let [presence, plan, bodies] = t.tick_split();
+                    traffic_timings.push([presence, plan, bodies, started.elapsed().as_secs_f64()]);
+                }
             }
             world.set_switches(&t.switch_requests());
             world.set_signals(&t.signal_aspects(&world.signal_routes, None));
@@ -1498,6 +1505,15 @@ pub(crate) fn run_offscreen(
                     cam.yaw
                 );
             }
+        }
+    }
+    if !traffic_timings.is_empty() {
+        for (column, name) in ["presence", "plan", "bodies/scripts", "total"].into_iter().enumerate() {
+            let mut values: Vec<f64> = traffic_timings.iter().map(|t| t[column] * 1000.0).collect();
+            values.sort_by(f64::total_cmp);
+            let percentile = |p: f64| values[((values.len() - 1) as f64 * p) as usize];
+            log::info!("traffic profile {name}: mean {:.3} ms, p50 {:.3}, p95 {:.3}, p99 {:.3} ({} ticks)",
+                values.iter().sum::<f64>() / values.len() as f64, percentile(0.50), percentile(0.95), percentile(0.99), values.len());
         }
     }
     if let Some(id) = follow_id(args, traffic.as_ref()) {

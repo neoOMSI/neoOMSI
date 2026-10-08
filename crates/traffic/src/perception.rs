@@ -230,6 +230,7 @@ pub struct Occupancy {
     feet: Vec<BodyFootprint>,
     by_lane: HashMap<LaneId, Vec<LaneInterval>>,
     grid: HashMap<(i32, i32), Vec<usize>>,
+    max_body_extent: f64,
 }
 
 fn cell(p: DVec2) -> (i32, i32) {
@@ -263,12 +264,14 @@ impl Occupancy {
         for v in by_lane.values_mut() {
             v.sort_by(|a, b| a.s.total_cmp(&b.s));
         }
+        let max_body_extent = feet.iter().map(|f| f.half_len.max(f.half_w)).fold(0.0, f64::max);
         Occupancy {
             tick,
             version,
             feet,
             by_lane,
             grid,
+            max_body_extent,
         }
     }
 
@@ -308,14 +311,17 @@ impl Occupancy {
             .collect()
     }
 
-    /// Visit every realized body whose centre lies within `radius` of `p`.
+    /// Visit realized bodies near `p`, allowing for each body's maximum half extent.
     pub fn near(&self, p: DVec2, radius: f64, mut visit: impl FnMut(&BodyFootprint)) {
         let r = radius.max(0.0);
-        let (cx, cy) = cell(p);
-        let reach = (r / CELL).ceil() as i32 + 1;
-        for dx in -reach..=reach {
-            for dy in -reach..=reach {
-                let Some(list) = self.grid.get(&(cx + dx, cy + dy)) else {
+        // Centres are indexed once. Expand by the largest body, then visit only cells
+        // intersecting the query bounds instead of a fixed 5x5 neighbourhood per sample.
+        let reach = r + self.max_body_extent;
+        let (x0, y0) = cell(p - DVec2::splat(reach));
+        let (x1, y1) = cell(p + DVec2::splat(reach));
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                let Some(list) = self.grid.get(&(x, y)) else {
                     continue;
                 };
                 for &i in list {

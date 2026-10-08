@@ -28,6 +28,10 @@ Stage 10 adds physical ground/scenery safeguards, complete passing-path validati
 roundabout entries. See [STAGE10_REPORT.md](STAGE10_REPORT.md) for fixes, evidence and
 remaining map-content limitations.
 
+The Berlin 156 follow-up adds a visual Traffic AI developer overlay, copyable diagnostic
+reports and corrections for multilane passing, docking obstruction and expensive spatial
+queries. See [TRAFFIC_DEBUG_AND_FOLLOWUP.md](TRAFFIC_DEBUG_AND_FOLLOWUP.md).
+
 - Source revision: `35a460a54e51ed28f9fb081b4adf16c8c73993a8` (the plan's `35a460a`).
 - Reference baseline: OMSI 2.2.032 (see [Compatibility](../COMPATIBILITY.md)).
 - Reproduction of the original queue screenshot is **not** required for Stage 0. Missing

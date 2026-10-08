@@ -264,6 +264,10 @@ impl crate::App {
                 cars: t.car_count(),
                 dormant: t.dormant_count(),
             }),
+            traffic_debug: self.devtools.as_ref().and_then(|d| d.traffic_request()).and_then(|(radius, selected)| {
+                let at = self.camera.as_ref()?.position;
+                self.traffic.as_ref().map(|t| t.debug_frame(at, radius, selected))
+            }),
             weather: self.dev_weather_info(),
         }
     }
@@ -432,6 +436,20 @@ impl crate::App {
                     }
                 }
                 Action::CopyCode => self.copy_server_code(),
+                Action::CopyTrafficReport(report) => {
+                    log::info!("{report}");
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        std::thread_local! { static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> = const { std::cell::RefCell::new(None) }; }
+                        CLIPBOARD.with(|cell| {
+                            let mut cb = cell.borrow_mut();
+                            if cb.is_none() { *cb = arboard::Clipboard::new().ok(); }
+                            if let Some(cb) = cb.as_mut() {
+                                if let Err(e) = cb.set_text(report) { log::warn!("Traffic report clipboard: {e}"); }
+                            }
+                        });
+                    }
+                }
                 Action::Vehicle(name) => {
                     if let Some(p) = self.player.as_mut() {
                         p.action(&name, true);

@@ -439,13 +439,18 @@ impl MeshShape {
 
     /// Indices of the parts within `r` of the local point `c` (each once).
     fn near(&self, c: DVec2, r: f64) -> Vec<u32> {
+        self.near_height(c, r, f64::MIN, f64::MAX)
+    }
+
+    fn near_height(&self, c: DVec2, r: f64, z0: f64, z1: f64) -> Vec<u32> {
         let mut out: Vec<u32> = Vec::new();
         for y in ((c.y - r) / PART_CELL).floor() as i32..=((c.y + r) / PART_CELL).floor() as i32 {
             for x in ((c.x - r) / PART_CELL).floor() as i32..=((c.x + r) / PART_CELL).floor() as i32
             {
                 for &i in self.grid.get(&(x, y)).map(|v| v.as_slice()).unwrap_or(&[]) {
                     let p = &self.parts[i as usize];
-                    if (p.center - c).length() <= r + p.radius() && !out.contains(&i) {
+                    if p.z1 > z0 && p.z0 < z1
+                        && (p.center - c).length() <= r + p.radius() && !out.contains(&i) {
                         out.push(i);
                     }
                 }
@@ -645,7 +650,7 @@ impl MeshObstacle {
     ) -> impl Iterator<Item = Obb> + 'a {
         let (z0, z1) = (b.z0 - self.pos.z, b.z1 - self.pos.z);
         let list = if self.bounds.overlaps_plan(b) {
-            self.shape.near(self.to_local(b.center), b.radius())
+            self.shape.near_height(self.to_local(b.center), b.radius(), z0, z1)
         } else {
             Vec::new()
         };
@@ -908,7 +913,24 @@ impl CollisionWorld {
 
     /// First box (or collision mesh face) overlapping `b`.
     pub fn hit(&self, b: &Obb) -> Option<Obb> {
-        self.obstacles_near(b).into_iter().find(|o| o.overlaps(b))
+        // A boolean/first-hit query must not collect and clip every nearby mesh face.
+        // Preserve the original box/mesh order, but stop as soon as a real hit is found.
+        for i in self.near(b) {
+            if self.boxes[i].overlaps(b) {
+                return Some(self.boxes[i]);
+            }
+        }
+        let solid = Box3::from_obb(b);
+        for i in self.meshes_near(b) {
+            let mesh = &self.meshes[i];
+            if mesh.bounds.z1 <= b.z0 || mesh.bounds.z0 >= b.z1 {
+                continue;
+            }
+            if let Some(hit) = mesh.parts_near(b, solid.as_ref()).find(|p| p.overlaps(b)) {
+                return Some(hit);
+            }
+        }
+        None
     }
 }
 
@@ -1027,6 +1049,28 @@ mod tests {
 mod ray_tests {
     use super::*;
 
+    #[test]
+    fn lazy_first_hit_preserves_full_mesh_query_results() {
+        use std::sync::Arc;
+        let shape = Arc::new(MeshShape::from_triangles(
+            super::mesh_tests::cube(DVec3::new(-10.0, -10.0, 0.0), DVec3::new(10.0, 10.0, 12.0)).into_iter(), 0.3));
+        let mut world = CollisionWorld::default();
+        world.add_mesh(MeshObstacle::new(shape, DVec3::ZERO, 17.0, 10));
+        world.add(Obb::from_box([0.3, 0.3, 2.0, 0.0, 0.0, 1.0], DVec3::new(4.0, 0.0, 0.0), 0.0));
+        for x in -14..=14 {
+            for y in [-10.0, 0.0, 10.0] {
+                for z in [0.3, 4.0, 14.0] {
+                    for heading in [0.0, 35.0, 90.0] {
+                        let b = Obb::from_box([2.5, 5.0, 2.8, 0.0, 0.0, 1.4], DVec3::new(x as f64, y, z), heading);
+                        let old = world.obstacles_near(&b).into_iter().find(|o| o.overlaps(&b));
+                        let signature = |o: Obb| (o.center, o.half, o.heading, o.z0, o.z1, o.id);
+                        assert_eq!(world.hit(&b).map(signature), old.map(signature), "probe ({x}, {y}, {z}) heading {heading}");
+                    }
+                }
+            }
+        }
+    }
+
     fn square(x: f64, y: f64, heading_deg: f64) -> Obb {
         Obb {
             center: DVec2::new(x, y),
@@ -1080,7 +1124,7 @@ mod mesh_tests {
     use std::sync::Arc;
 
     /// The twelve triangles of a closed box from `lo` to `hi`.
-    fn cube(lo: DVec3, hi: DVec3) -> Vec<[DVec3; 3]> {
+    pub(super) fn cube(lo: DVec3, hi: DVec3) -> Vec<[DVec3; 3]> {
         let c = |i: u32| {
             DVec3::new(
                 if i & 1 == 0 { lo.x } else { hi.x },
