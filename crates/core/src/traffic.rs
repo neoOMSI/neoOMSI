@@ -113,88 +113,84 @@ pub struct BusSetup {
 
 pub struct AiCar {
     /// Stable id for references from other systems (passengers).
-    pub id: VehicleId,
+    pub(crate) id: VehicleId,
     /// Validated, immutable physical capabilities (extents, class, brake configuration).
-    pub caps: VehicleCapabilities,
+    pub(crate) caps: VehicleCapabilities,
     /// The random seed it was made with and its paint scheme: a car that goes out of range
     /// and comes back is the same car (`DormantCar`).
-    pub seed: u64,
-    pub scheme: Option<usize>,
-    pub state: AiState,
-    pub vehicle: VehicleInstance,
-    pub render: VehicleRender,
-    pub trailer_renders: Vec<VehicleRender>,
+    pub(crate) seed: u64,
+    pub(crate) scheme: Option<usize>,
+    pub(crate) state: AiState,
+    pub(crate) vehicle: VehicleInstance,
+    pub(crate) render: VehicleRender,
+    pub(crate) trailer_renders: Vec<VehicleRender>,
     /// The body following the way `state` lays out.
-    pub body: AiBody,
+    pub(crate) body: AiBody,
     /// Seconds this car has been standing still without a stop of its own: a red light or
     /// a queue is seconds, a jam that never clears grows without bound.
-    pub stopped: f32,
+    pub(crate) stopped: f32,
     /// The car it follows now (its id), when one is close ahead.
-    pub lead_car: Option<VehicleId>,
+    pub(crate) lead_car: Option<VehicleId>,
     /// A car it does not take for its lead until the time given: two that had each other
     /// for their lead (see `Traffic::break_lead_pairs`).
-    pub ignore_lead: Option<(VehicleId, f64)>,
+    pub(crate) ignore_lead: Option<(VehicleId, f64)>,
     /// Seconds it has crept along below 1 m/s (a claim of one that crawls in a jam of its
     /// own is no car about to come either).
-    pub crawl: f32,
+    pub(crate) crawl: f32,
     /// A timetable bus: its trip's stops, the doors, the layover, the people aboard (see
     /// `bus_service`). Everything else about it is this car's.
-    pub bus: Option<Box<BusService>>,
+    pub(crate) bus: Option<Box<BusService>>,
     /// `[sound_ai]` set, created when the car comes near the listener.
-    pub sounds: Option<::audio::SoundSet>,
+    pub(crate) sounds: Option<::audio::SoundSet>,
     /// Half the vehicle's width (m).
-    pub half_width: f32,
+    pub(crate) half_width: f32,
     /// Waiting at a junction for someone with the right of way this frame.
-    pub yielding: bool,
+    pub(crate) yielding: bool,
     /// Stopped by a red light this frame.
-    pub light_hold: bool,
+    pub(crate) light_hold: bool,
     /// Where the car is in its junction movement (owned by `traffic::junctions`).
-    pub junction_state: JunctionState,
+    pub(crate) junction_state: JunctionState,
     /// The car's lateral maneuver memory and commitments (owned by `traffic::maneuvers`).
-    pub maneuver: ManeuverState,
+    pub(crate) maneuver: ManeuverState,
     /// Finished (a dead end, the end of a timetable trip, given up): taken off the road as
     /// soon as nobody can see it.
-    pub gone: bool,
+    pub(crate) gone: bool,
     /// Seconds since it was put on the road are fewer than this: its speed was a guess.
-    pub fresh: f32,
+    pub(crate) fresh: f32,
     /// The car it lets go first at the next merge (by id).
-    pub merge_after: Option<VehicleId>,
+    pub(crate) merge_after: Option<VehicleId>,
     /// What holds it (`OMSI_DEBUG_TRAFFIC`, for cars standing for long).
-    pub holding: Option<String>,
+    pub(crate) holding: Option<String>,
     /// What held the car back this frame (for OMSI_TRACE_AI): the typed constraint nearest
     /// ahead and its distance ahead of the front (m). [`Reason::NONE`] means nothing did.
-    pub why: (Reason, f32),
+    pub(crate) why: (Reason, f32),
     /// Something made it wait this frame: a stop point, or a car or an obstacle close ahead.
-    pub held: bool,
+    pub(crate) held: bool,
     /// The vehicle (by id) whose body stands in this car's way off its lanes this frame
     /// (`Traffic::body_in_way`).
-    pub geo_block: Option<VehicleId>,
+    pub(crate) geo_block: Option<VehicleId>,
     /// What it keeps behind (by id) and the gap to it, as of its last step.
-    pub lead_info: Option<(VehicleId, f32)>,
+    pub(crate) lead_info: Option<(VehicleId, f32)>,
     /// What it waited for at its last junction (`OMSI_DEBUG_STUCK` only).
-    pub junction_why: String,
+    pub(crate) junction_why: String,
     /// Giving way: where it waits (distance from its origin to the line).
-    pub wait_at: Option<f32>,
+    pub(crate) wait_at: Option<f32>,
     /// The vehicle (by id) standing half out of the lane that this car is squeezing past.
-    pub squeeze: Option<VehicleId>,
+    pub(crate) squeeze: Option<VehicleId>,
     /// How far behind something standing (a bus at its stop, the player's bus) this car
     /// stops, so that it can steer out round it later (m, front bumper to the other's body;
     /// from its own steering, `pull_out_room`).
-    pub pass_room: f32,
+    pub(crate) pass_room: f32,
     /// Seconds until this car may sound its horn (`ev_AI_Horn`) again (s); see `HORN_HOLD`.
-    pub horn_cooldown: f32,
+    pub(crate) horn_cooldown: f32,
     /// The traffic light it waited for in the last frame: distance from its origin.
-    pub light_at: Option<f32>,
+    pub(crate) light_at: Option<f32>,
     /// A rail vehicle: the track it has come along, (odometer, point), oldest first -
     /// where its rear bogie and its coupled cars and sections run (see `rail_behind`).
-    pub rail_trail: std::collections::VecDeque<(f64, DVec3)>,
-    /// A train set down on a track nothing leads into: the odometer at that track's start.
-    pub track_start: Option<f64>,
+    pub(crate) rail_trail: std::collections::VecDeque<(f64, DVec3)>,
     /// A train turned round as a whole (its last car leads now): what a trip's
     /// `[trainreverse]` is compared with (Omsi.exe's vehicle +0x4e1).
-    pub consist_reversed: bool,
-    /// A `.zug` train (not a tram): asks for a level crossing from afar.
-    pub train: bool,
+    pub(crate) consist_reversed: bool,
 }
 
 /// Where a vehicle's body stands, for the checks that go by geometry rather than by lanes:
@@ -934,8 +930,10 @@ impl Traffic {
         &self.cars
     }
 
-    /// The active AI cars, mutably (population/schedule commands only).
-    pub fn cars_mut(&mut self) -> &mut Vec<AiCar> {
+    /// The active AI cars, mutably. The engine adapter (population/schedule/LAN) owns broad
+    /// mutation of the fleet; prefer [`Traffic::car_mut_by_id`] or a narrower command when one
+    /// vehicle is meant.
+    pub(crate) fn cars_mut(&mut self) -> &mut Vec<AiCar> {
         &mut self.cars
     }
 
@@ -945,8 +943,14 @@ impl Traffic {
     }
 
     /// One active AI car, mutably.
-    pub fn car_mut(&mut self, ci: usize) -> &mut AiCar {
+    pub(crate) fn car_mut(&mut self, ci: usize) -> &mut AiCar {
         &mut self.cars[ci]
+    }
+
+    /// The active AI car with this stable id, mutably. Targeted alternative to scanning
+    /// [`Traffic::cars_mut`] for an event or display update aimed at one vehicle.
+    pub(crate) fn car_mut_by_id(&mut self, id: VehicleId) -> Option<&mut AiCar> {
+        self.cars.iter_mut().find(|c| c.id == id)
     }
 
     /// The current random-traffic population target.

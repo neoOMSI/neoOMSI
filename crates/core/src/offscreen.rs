@@ -1267,7 +1267,7 @@ pub(crate) fn run_offscreen(
                     Some(id) => {
                         if let Some(c) = traffic
                             .as_mut()
-                            .and_then(|t| t.cars_mut().iter_mut().find(|c| c.id == id))
+                            .and_then(|t| t.car_mut_by_id(crate::traffic::VehicleId(id)))
                         {
                             c.vehicle.host.fired_sounds.push(::simulation::host::FiredSound::Trigger {
                                 name: "ev_Stamper".into(),
