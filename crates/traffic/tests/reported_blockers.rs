@@ -6,6 +6,39 @@ use glam::{DVec2, DVec3};
 use traffic::*;
 
 #[test]
+fn unequal_neighbour_arc_lengths_do_not_finish_a_bypass_at_the_joint() {
+    let mut net = Network::default();
+    for x in [0.0, -3.0] {
+        let points = if x == 0.0 {
+            vec![DVec3::ZERO, DVec3::new(x, 30.0, 0.0)]
+        } else {
+            vec![DVec3::new(x, 0.0, 0.0), DVec3::new(x - 1.0, 15.0, 0.0), DVec3::new(x, 30.0, 0.0)]
+        };
+        net.lanes.push(LaneBuilder::polyline(points, LaneKind::Street, 3.0));
+    }
+    for x in [0.0, -3.0] {
+        net.lanes.push(LaneBuilder::polyline(
+            vec![DVec3::new(x, 30.0, 0.0), DVec3::new(x, 100.0, 0.0)], LaneKind::Street, 3.0));
+    }
+    net.link(1.5);
+    for (right, left) in [(0, 1), (2, 3)] {
+        net.lanes[right].left = Some(left);
+        net.lanes[left].right = Some(right);
+    }
+    let mut car = AiState::new(0, 29.99, 167);
+    car.plan_next(&net);
+    car.speed = 1.0;
+    car.accel_cap = Some(0.0);
+    car.start_bypass(&net, 1, 1);
+    car.change.as_mut().unwrap().wait = 0.0;
+    car.drive(&net, 0.01001, None, None);
+    assert_eq!(car.lane, 2);
+    let change = car.change.expect("spline boundary snapped the change complete");
+    assert_eq!(change.to, 3);
+    assert!(change.t < 0.01);
+}
+
+#[test]
 fn angled_bus_corners_do_not_extend_the_clearance_box_past_the_body() {
     let h = 30.0f64.to_radians();
     let body = BodyFootprint::new(

@@ -7,7 +7,7 @@ use traffic::*;
 fn body(a: &ManeuverActor, net: &Network) -> BodyFootprint {
     let mut b = BodyFootprint::new(
         a.id,
-        net.lanes[a.lane].at(a.s).0.truncate(),
+        net.lanes[a.lane].at(a.s).0.truncate() + DVec2::Y * ((a.front - a.rear) * 0.5) as f64,
         DVec2::Y,
         a.length as f64 * 0.5,
         a.half_width as f64,
@@ -91,6 +91,95 @@ fn a_stopped_car_can_bypass_a_serving_bus() {
     assert_eq!(
         scenario(0.0, false, false, false).unwrap().kind,
         ChangeKind::Bypass
+    );
+}
+
+fn segmented_bypass(blocked: bool, fork: bool, gap: f64) -> Option<ChangeCommand> {
+    let mut net = Network::default();
+    for (x, from, to) in [
+        (0.0, 0.0, 30.0),
+        (-3.0, 0.0, 30.0),
+        (0.0, 30.0, 60.0),
+        (-3.0, 30.0, 60.0),
+    ] {
+        net.lanes.push(LaneBuilder::polyline(
+            vec![DVec3::new(x, from, 0.0), DVec3::new(x, to, 0.0)],
+            LaneKind::Street,
+            3.0,
+        ));
+    }
+    net.link(1.5);
+    for (right, left) in [(0, 1), (2, 3)] {
+        net.lanes[right].left = Some(left);
+        net.lanes[left].right = Some(right);
+    }
+    if fork {
+        net.lanes[1].next.clear();
+    }
+    let mut ego = ManeuverActor::new(VehicleId(167), 0, 28.3);
+    ego.stopped = 5.0;
+    ego.planned_next = Some(2);
+    ego.front = 2.13;
+    ego.rear = 2.11;
+    ego.length = 4.24;
+    ego.half_width = 0.83;
+    ego.pass_room = 5.25;
+    let mut bus = ManeuverActor::new(VehicleId(93), 2, (12.23 + gap) as f32);
+    bus.at_stop = true;
+    bus.front = 5.68;
+    bus.rear = 3.88;
+    bus.length = 9.56;
+    bus.half_width = 1.24;
+    let mut actors = vec![ego, bus];
+    if blocked {
+        actors.push(ManeuverActor::new(VehicleId(7), 3, 3.0));
+    }
+    let mut feet: Vec<_> = actors.iter().map(|a| body(a, &net)).collect();
+    // The articulated rear has no lane placement, but still constrains the sweep.
+    feet.push(feet[1].part_of(1, DVec2::new(0.0, 34.03 + gap), DVec2::Y, 3.6, 1.24));
+    let occ = Occupancy::build(net.version(), 0, feet);
+    let mut coordinator = ManeuverCoordinator::new();
+    let mut memory = ManeuverState::default();
+    for tick in 0..150 {
+        let scene = ManeuverScene {
+            net: &net,
+            occupancy: &occ,
+            actors: &actors,
+            people: &[],
+            static_clearance: None,
+            time: tick as f32 * 0.02,
+            dt: 0.02,
+            tick,
+        };
+        let intent = coordinator.intent(&scene, &actors[0], &memory);
+        coordinator.begin_tick(&[intent], tick);
+        if let Some(change) = coordinator
+            .plan(&scene, &mut memory, &ManeuverInputs::new(0))
+            .change
+        {
+            return Some(change);
+        }
+    }
+    None
+}
+
+#[test]
+fn bus_bypass_uses_the_continuing_parallel_road_past_a_short_spline() {
+    assert_eq!(
+        segmented_bypass(false, false, 5.25).unwrap().kind,
+        ChangeKind::Bypass
+    );
+    assert!(
+        segmented_bypass(true, false, 5.25).is_none(),
+        "car on the next target piece"
+    );
+    assert!(
+        segmented_bypass(false, true, 5.25).is_none(),
+        "target lane ends at the joint"
+    );
+    assert!(
+        segmented_bypass(false, false, 2.45).is_none(),
+        "too close to the articulated rear to steer out"
     );
 }
 #[test]
@@ -179,16 +268,42 @@ fn a_boarding_bus_does_not_reserve_a_future_lane_change() {
 
 #[test]
 fn tight_spatial_queries_still_find_long_bodies_and_cell_boundary_contacts() {
-    let mut feet: Vec<_> = (-3..=3).map(|i| BodyFootprint::new(VehicleId((i + 4) as u64),
-        DVec2::new(i as f64 * 50.0, 2.0), DVec2::Y, 4.0, 1.0, 0.0, 3.0, 0.0)).collect();
-    feet.push(BodyFootprint::new(VehicleId(99), DVec2::new(160.0, 0.0), DVec2::X, 130.0, 1.0, 0.0, 3.0, 0.0));
+    let mut feet: Vec<_> = (-3..=3)
+        .map(|i| {
+            BodyFootprint::new(
+                VehicleId((i + 4) as u64),
+                DVec2::new(i as f64 * 50.0, 2.0),
+                DVec2::Y,
+                4.0,
+                1.0,
+                0.0,
+                3.0,
+                0.0,
+            )
+        })
+        .collect();
+    feet.push(BodyFootprint::new(
+        VehicleId(99),
+        DVec2::new(160.0, 0.0),
+        DVec2::X,
+        130.0,
+        1.0,
+        0.0,
+        3.0,
+        0.0,
+    ));
     let occ = Occupancy::build(NetworkVersion(1), 0, feet.clone());
     for x in [-50.01, -49.99, 0.0, 49.99, 50.01, 99.99] {
         let p = DVec2::new(x, 0.0);
         let mut found = Vec::new();
         occ.near(p, 2.0, |f| found.push(f.owner));
-        let mut expected: Vec<_> = feet.iter().filter(|f| (f.center - p).length() <= 2.0 + f.half_len.max(f.half_w)).map(|f| f.owner).collect();
-        found.sort_unstable(); expected.sort_unstable();
+        let mut expected: Vec<_> = feet
+            .iter()
+            .filter(|f| (f.center - p).length() <= 2.0 + f.half_len.max(f.half_w))
+            .map(|f| f.owner)
+            .collect();
+        found.sort_unstable();
+        expected.sort_unstable();
         assert_eq!(found, expected, "query at {x}");
     }
 }

@@ -632,10 +632,14 @@ impl Traffic {
             // round, and no car can steer out of that.
             let may_stand = lead
                 .map(|(l, who)| {
-                    l.speed.abs() < 0.3
-                        && match who {
-                        Some(usize::MAX) => player.map(|p| p.4.abs() < 0.3).unwrap_or(false),
-                        Some(j) if j < self.cars.len() => self.cars[j].at_stop(),
+                    match who {
+                        Some(usize::MAX) => l.speed.abs() < 0.3
+                            && player.map(|p| p.4.abs() < 0.3).unwrap_or(false),
+                        Some(j) if j < self.cars.len() => {
+                            let leader = &self.cars[j];
+                            (l.speed.abs() < 0.3 && leader.at_stop())
+                                || leader.bus.as_ref().is_some_and(|b| b.state.phase == ServicePhase::Docking)
+                        },
                         _ => false,
                     }
                 })
@@ -645,6 +649,7 @@ impl Traffic {
             // off the gap it keeps to such a thing were not enough: the car still crept up to
             // under three metres behind the player's bus and never got round it.
             let mut keep_back: Option<f32> = None;
+            let mut reserve_pull_out = false;
             if standing || may_stand {
                 if let Some((l, who)) = lead.filter(|_| !parked_ahead) {
                     let car = &self.cars[i];
@@ -669,6 +674,7 @@ impl Traffic {
                     } else {
                         car.pass_room.max(st.min_gap)
                     };
+                    reserve_pull_out = !queues;
                     let comfortable = st.speed * st.speed / (2.0 * st.decel.max(1.0));
                     let stop_gap = if real - want >= comfortable {
                         want
@@ -1214,7 +1220,13 @@ impl Traffic {
                     car.why
                 );
             }
-            if !car.state.drive(&self.net, dt, lead_now, stop_at) {
+            // Keep steering room through the approach as well as the final hold. A
+            // per-tick stop target alone let the ordinary following model creep back
+            // to min_gap while the bus was still docking, too close to pull out later.
+            let following_lead = lead_now.map(|l| if reserve_pull_out {
+                pull_out_following_lead(l, car.state.min_gap, car.pass_room)
+            } else { l });
+            if !car.state.drive(&self.net, dt, following_lead, stop_at) {
                 if debug {
                     log::info!(
                         "t={:.1}: car {} ran out of road at {:.1} m/s: taken off",
@@ -1642,4 +1654,42 @@ struct TickFrame {
     junction_actors: Vec<JunctionActor>,
     frames: Vec<Option<AiFrame>>,
     remove: Vec<usize>,
+}
+
+fn pull_out_following_lead(mut lead: Lead, min_gap: f32, room: f32) -> Lead {
+    lead.gap = (lead.gap - (room - min_gap).max(0.0)).max(0.05);
+    lead
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docking_following_retains_room_to_steer_around_the_articulated_rear() {
+        let mut net = Network::default();
+        net.lanes.push(::traffic::LaneBuilder::polyline(
+            vec![DVec3::ZERO, DVec3::new(0.0, 400.0, 0.0)], LaneKind::Street, 3.0));
+        net.link(1.5);
+        let mut car = AiState::new(0, 30.0, 167);
+        car.front = 2.13;
+        car.min_gap = 2.45;
+        car.speed = 8.0;
+        car.plan_next(&net);
+        let (mut rear, mut speed) = (50.0, 6.0f32);
+        let room = 5.25;
+        let mut closest = f32::MAX;
+        for _ in 0..1500 {
+            let gap = rear - car.s - car.front;
+            closest = closest.min(gap);
+            let leader = Lead { gap, speed, acc: if speed > 0.0 { -1.0 } else { 0.0 } };
+            car.drive(&net, 0.02, Some(pull_out_following_lead(leader, car.min_gap, room)), None);
+            let next_speed = (speed - 0.02).max(0.0);
+            rear += (speed + next_speed) * 0.01;
+            speed = next_speed;
+        }
+        assert!(closest >= room - 0.3, "lost steering room: {closest}");
+        assert!(car.speed < 0.1);
+        assert!((rear - car.s - car.front - room).abs() < 0.3);
+    }
 }

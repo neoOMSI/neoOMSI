@@ -31,6 +31,17 @@ These are requested neoOMSI traffic improvements, not claims of verified OMSI pa
   scenery remain constraints; response does not guarantee passage where no room exists.
 - Ordinary traffic retains its driving-side preference and may overtake a slow leader on
   a free passing lane. This is intentional; both driving-side conventions have coverage.
+- A bus bypass uses the continuous parallel carriageway rather than requiring 40 metres
+  on one spline. Berlin's 30-metre pieces previously disabled it completely. Random
+  traffic retains its lane-change blend across an unbranched, aligned pair of spline
+  joints. Destination gaps include preceding and following pieces; forks and signals
+  do not extend the corridor. The short six-metre bypass limits pull-out acceleration
+  and checks the whole vehicle, including its front corner, against realized bodies.
+- Cars following a docking bus reserve their vehicle-specific steering room in the
+  following model as well as the holding target. Waiting until the bus was fully stopped
+  let cars creep to their ordinary minimum gap (2.45 metres in the report), where a safe
+  pull-out was no longer possible. Timetable buses queueing for their own stop retain
+  their existing queue behaviour.
 
 Regression coverage lives in `crates/traffic/tests/reported_blockers.rs` and
 `crates/simulation/src/ai_motion/traffic_regression_tests.rs`. The latter uses the actual
