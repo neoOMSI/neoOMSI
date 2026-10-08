@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { PageHead } from "../components/ui";
+import { PageHead, Tag } from "../components/ui";
 import { PLATFORMS, SERVERS, visitorBuild, type Build } from "../content/data";
 import {
   date,
-  latestRelease,
   megabytes,
+  releases,
   version,
   type Release,
 } from "../lib/github";
@@ -33,27 +33,39 @@ const INSTALL: Record<string, ReactNode> = {
       <code>chmod +x neoomsi</code> first. Vulkan or OpenGL drivers are needed.
     </>
   ),
-  Android: (
-    <>
-      Android packages are currently built locally rather than published by the
-      automated release workflow. See{" "}
-      <a className="link" href={url(docPath("BUILDING"))}>
-        Building
-      </a>
-      . After building, install the <code>.apk</code>, allow access to all
-      files, and copy the whole OMSI&nbsp;2 folder to{" "}
-      <code>neoOMSI/OMSI 2</code> on the device.
-    </>
-  ),
 };
 
 const TABS = Object.keys(INSTALL);
+const DOWNLOAD_PLATFORMS = PLATFORMS.filter(
+  (build) => build.family !== "Android",
+);
 
 const asset = (release: Release | null | undefined, build: Build) => {
   const file =
     release && `neoOMSI-${version(release)}-${build.key}.${build.ext || "zip"}`;
   return release?.assets.find((a) => a.name === file);
 };
+
+const CHANNELS = [
+  { key: "stable", name: "Stable", icon: "check_circle" },
+  { key: "rc", name: "Release candidate", icon: "flag" },
+  { key: "nightly", name: "Nightly", icon: "nights_stay" },
+] as const;
+
+type Channel = (typeof CHANNELS)[number]["key"];
+
+const releaseChannel = (release: Release): Channel | undefined => {
+  if (!release.prerelease) return "stable";
+  if (/-nightly\./i.test(release.tag_name)) return "nightly";
+  if (/-rc\.\d+$/i.test(release.tag_name)) return "rc";
+};
+
+const newestRelease = (list: Release[], channel: Channel) =>
+  list
+    .filter((release) => releaseChannel(release) === channel)
+    .sort(
+      (a, b) => Date.parse(b.published_at) - Date.parse(a.published_at),
+    )[0] ?? null;
 
 const families = (builds: Build[]) =>
   [...new Set(builds.map((b) => b.family))].map((family) =>
@@ -144,11 +156,22 @@ const jump = () =>
   document.getElementById("dl-all")!.scrollIntoView({ behavior: "smooth" });
 
 export function Download() {
-  const mine = visitorBuild();
+  const mine = DOWNLOAD_PLATFORMS.find(
+    (build) => build.key === visitorBuild()?.key,
+  );
   const [tab, setTab] = useState(() =>
     TABS.includes(mine?.family ?? "") ? mine!.family : TABS[0],
   );
-  const { data: release } = useAsync(latestRelease, []);
+  const { data: releaseList, error: releaseError } = useAsync(releases, []);
+  const [channel, setChannel] = useState<Channel | null>(null);
+  const available = CHANNELS.flatMap((entry) => {
+    const release = releaseList && newestRelease(releaseList, entry.key);
+    return release ? [{ ...entry, release }] : [];
+  });
+  const selected =
+    available.find((entry) => entry.key === channel) ?? available[0];
+  const release = selected?.release;
+  const stable = available.find((entry) => entry.key === "stable");
   const file = mine && asset(release, mine);
 
   return (
@@ -156,34 +179,118 @@ export function Download() {
       <PageHead>
         <h1 className="display">Download</h1>
         <p className="mt-6 max-w-[38em] text-[19px] text-muted">
-          {release === undefined
-            ? "Looking up the latest release…"
-            : release
-              ? `Version ${version(release)}, released ${date(release.published_at)}. An early release: expect bugs and changes between versions.`
-              : "No release has been published yet. Builds appear here as soon as the first one is out."}
+          Play your OMSI 2 maps and buses on Windows, macOS or Linux.
         </p>
-        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-          {mine && file ? (
-            <>
-              <a
-                className="btn gap-2"
-                href={file.browser_download_url}
-                download
+        {available.length > 1 && (
+          <div
+            className="mt-8 flex flex-wrap gap-3"
+            role="group"
+            aria-label="Build channel"
+          >
+            {available.map((entry) => (
+              <button
+                key={entry.key}
+                type="button"
+                className={`${selected === entry ? "btn" : "btn-quiet"} gap-2`}
+                aria-pressed={selected === entry}
+                onClick={() => setChannel(entry.key)}
               >
-                <PlatformIcon build={mine.key} size={20} />
-                Download for {mine.name}
-              </a>
-              <button type="button" onClick={jump} className="link text-[16px]">
-                Other systems
+                <Icon name={entry.icon} size={18} />
+                {entry.name}
               </button>
-            </>
-          ) : (
-            <button type="button" onClick={jump} className="btn gap-2">
-              <Icon name="download" size={20} />
-              Choose a build
-            </button>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
+        {release && (
+          <div className="mt-8 max-w-[42em]">
+            <div className="flex flex-wrap items-center gap-3">
+              <Tag color={release.prerelease ? "#d8a020" : "#2da44e"}>
+                <span className="inline-flex items-center gap-1.5">
+                  <Icon name={selected!.icon} size={15} />
+                  {selected!.name}
+                </span>
+              </Tag>
+              <span className="text-muted">
+                {version(release)} · {date(release.published_at)}
+              </span>
+              <a className="link" href={release.html_url}>
+                Release notes
+              </a>
+            </div>
+            {release.prerelease && (
+              <div className="card mt-4 flex gap-3 p-4">
+                <span className="shrink-0 text-accent">
+                  <Icon name="info" size={22} />
+                </span>
+                <div className="min-w-0 text-[16px]">
+                  <p className="font-semibold text-heading">
+                    {selected?.key === "rc"
+                      ? "Release candidate"
+                      : "Development build"}
+                  </p>
+                  <p className="mt-1 text-muted">
+                    {selected?.key === "rc"
+                      ? "Preview of the next stable release. Bugs may still occur."
+                      : "Includes the latest changes and may contain bugs or unfinished features."}
+                  </p>
+                  {!stable && (
+                    <p className="mt-2 text-muted">
+                      No stable release available.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {releaseError ? (
+          <p className="mt-6 text-muted">
+            Could not load downloads.{" "}
+            <a
+              className="link"
+              href="https://github.com/neoOMSI/neoOMSI/releases"
+            >
+              View releases on GitHub
+            </a>
+            .
+          </p>
+        ) : releaseList === undefined ? (
+          <p className="mt-6 text-muted">Loading available builds…</p>
+        ) : !release ? (
+          <p className="mt-6 text-muted">No builds have been published yet.</p>
+        ) : null}
+        {release && (
+          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+            {mine && file ? (
+              <>
+                <a
+                  className="btn gap-2"
+                  href={file.browser_download_url}
+                  download
+                >
+                  <PlatformIcon build={mine.key} size={20} />
+                  Download
+                  {release.prerelease
+                    ? ` ${selected!.name.toLowerCase()}`
+                    : ""}{" "}
+                  for {mine.name}
+                </a>
+                <button
+                  type="button"
+                  onClick={jump}
+                  className="link text-[16px]"
+                >
+                  Other systems
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={jump} className="btn gap-2">
+                <Icon name="download" size={20} />
+                Choose a build
+              </button>
+            )}
+          </div>
+        )}
         <p className="mt-8 flex max-w-[34em] gap-3 text-[16px] text-muted">
           <Icon
             name="info"
@@ -198,18 +305,20 @@ export function Download() {
         </p>
       </PageHead>
 
-      <section className="bleed">
-        <h2 id="dl-all" className="section-title scroll-mt-24">
-          All builds
-        </h2>
-        <p className="mt-2 text-muted">
-          Every build plays the same maps and buses. Pick the one that matches
-          your device.
-        </p>
-        <div className="mt-8 grid gap-3 md:grid-cols-2">
-          <Tiles builds={PLATFORMS} release={release} mine={mine} />
-        </div>
-      </section>
+      {release && (
+        <section className="bleed">
+          <h2 id="dl-all" className="section-title scroll-mt-24">
+            Download for your system
+          </h2>
+          <p className="mt-2 text-muted">
+            Choose your operating system and processor. All downloads below are
+            from the selected {selected!.name.toLowerCase()} build.
+          </p>
+          <div className="mt-8 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <Tiles builds={DOWNLOAD_PLATFORMS} release={release} mine={mine} />
+          </div>
+        </section>
+      )}
 
       <div className="wrap pb-20 sm:pb-24">
         <div className="mt-24 grid grid-cols-[minmax(0,1fr)] gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
@@ -249,22 +358,29 @@ export function Download() {
           </div>
         </div>
 
-        <div className="mt-24 grid grid-cols-[minmax(0,1fr)] gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-          <div>
-            <h2 className="section-title">Dedicated server</h2>
-            <p className="mt-3 max-w-[24em] text-[16px] text-muted">
-              Only for hosting a multiplayer session without playing on that
-              machine. See{" "}
-              <a className="link" href={url(docPath("SERVER"))}>
-                Dedicated server
-              </a>
-              .
-            </p>
+        {release && (
+          <div className="mt-24 grid grid-cols-[minmax(0,1fr)] gap-x-16 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <div>
+              <h2 className="section-title">Dedicated server</h2>
+              <p className="mt-3 max-w-[24em] text-[16px] text-muted">
+                Only for hosting a multiplayer session without playing on that
+                machine. See{" "}
+                <a className="link" href={url(docPath("SERVER"))}>
+                  Dedicated server
+                </a>
+                .
+              </p>
+            </div>
+            <div>
+              <p className="mb-4 text-muted">
+                Same version as the game download: {version(release)}.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Tiles builds={SERVERS} release={release} />
+              </div>
+            </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Tiles builds={SERVERS} release={release} />
-          </div>
-        </div>
+        )}
 
         <p className="mt-24 flex items-center gap-2 text-muted">
           <Icon name="history" size={20} />

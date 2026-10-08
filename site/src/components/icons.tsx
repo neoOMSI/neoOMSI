@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { siAndroid, siApple, siLinux } from "simple-icons";
 
 const svgs = import.meta.glob<string>(
-  "../../../assets/icons/material/{download,description,directions_bus,search,star,check,chevron_right,chevron_left,expand_more,event,wb_sunny,tune,public,autorenew,calendar_month,turn_right,sync_alt,speed,monitor,install_desktop,departure_board,dns,extension,check_circle,info,bolt,error,warning,content_copy,chat,history,menu,arrow_back,open_in_new,link,light_mode,dark_mode,expand_less,construction,alt_route,flag,inventory_2}.svg",
+  "../../../assets/icons/material/{download,description,directions_bus,search,star,check,chevron_right,chevron_left,expand_more,event,wb_sunny,tune,public,autorenew,calendar_month,turn_right,sync_alt,speed,monitor,install_desktop,departure_board,dns,extension,check_circle,info,bolt,error,warning,content_copy,chat,history,menu,arrow_back,open_in_new,link,light_mode,dark_mode,nights_stay,expand_less,construction,alt_route,flag,inventory_2}.svg",
   { query: "?raw", import: "default", eager: true },
 );
 
