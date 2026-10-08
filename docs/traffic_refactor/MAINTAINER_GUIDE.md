@@ -24,6 +24,32 @@ second engine to shadow or roll back to. `traffic` depends only on `glam`, `hash
 | L5 control/motion | `traffic::following` + `simulation::ai_motion` | Longitudinal command + envelope; steering/pose realization |
 | L6 integration | `core::Traffic` + `core::traffic_runtime::content` | `VehicleInstance`, scripts, assets, audio, passengers, LAN |
 
+### Engine adapter layout (`core/src/traffic/`)
+
+`core/src/traffic.rs` holds the `Traffic` struct, the shared types and the free helpers; the
+method groups live in submodules so a reader can find what owns what:
+
+```text
+core/src/traffic.rs            Traffic struct + AiCar/Viewer/Footprint/DormantCar/BusSetup + helpers
+core/src/traffic/car.rs        AiCar/BusSetup queries
+core/src/traffic/viewer.rs     Viewer visibility/occlusion + Footprint
+core/src/traffic/loading.rs    building Traffic, attaching cars/trailers, create_car, precache
+core/src/traffic/population.rs population/spawn/dormant/parking adapter
+core/src/traffic/perception.rs footprints, body/obstacle geometry, route-relative helpers
+core/src/traffic/presentation.rs signal aspects, sync, audio, lights, boxes
+core/src/traffic/network.rs    streamed tiles, reverse twins, connectors
+core/src/traffic/lan.rs        host snapshots and mirror presentation
+core/src/traffic/lifecycle.rs  reroute/release/removal/reset, passenger requests
+core/src/traffic/diagnostics.rs trace events, capture, health reports
+core/src/traffic/tick.rs       the tick pipeline
+```
+
+The tick is a named pipeline: `tick_clock_and_index` → `tick_light_requests` →
+`tick_presence` → `tick_plan` (freeze the snapshot, run every owner) → `tick_realize`
+(parallel body/script) → `tick_commit_feedback` → `tick_finish` (diagnose, trace, remove,
+capture). The frozen per-tick buffers travel in an owned `TickFrame` so the phases are
+separate methods.
+
 A private module state has one writer: only `ServiceCoordinator` changes the service phase,
 only `ManeuverCoordinator` owns lateral intent, only `JunctionCoordinator` creates/releases
 junction commitments. Presentation reads committed state; debugging never grants movement.
@@ -103,8 +129,9 @@ authorizes crossing a conflicting body or a red signal.
   default; `BerthGeometry::berths` is capacity-aware but needs content geometry to exercise.
 - **Dormant kinematics** — the logical dormant lifecycle is in `traffic::population`, but the
   kinematic step stays in `Traffic::advance_dormant` because it needs the AI-list type pools.
-- **`AiCar` encapsulation** — the struct's fields are still public and `cars_mut`/`car_mut`
-  remain; full encapsulation is deferred (Stage 10+).
+- **`AiCar` encapsulation** — fields are `pub(crate)` and `cars_mut`/`car_mut` are
+  `pub(crate)` with a targeted `car_mut_by_id`; broad mutation is still used by the schedule/LAN
+  adapter, so full per-field command methods are deferred (Stage 10+).
 - **`ev_AI_Horn`** — re-added through the script adapter with a cooldown and a `Horn` trace
   event. The reference proves the event exists but not its original trigger, so the trigger
   is a documented provisional neoOMSI improvement; it is presentation feedback only and never

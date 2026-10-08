@@ -353,8 +353,14 @@ core ─┘                          (never the reverse)
 - Performance and soak evidence is in [PERFORMANCE.md](PERFORMANCE.md): the domain benchmark
   (`crates/traffic/benches/domain.rs`) and the accelerated 60-minute soak
   (`crates/traffic/tests/s9_soak.rs`).
-- Full `AiCar` field encapsulation and moving the dormant kinematics into the domain remain
-  documented, deferred work (Stages 10+).
+- Stage 9b decomposed the L6 adapter: `core/src/traffic.rs` keeps the `Traffic` struct, its
+  shared types and helpers (now ~1,180 lines from ~7,750), and the method groups live in
+  `core/src/traffic/{car,viewer,loading,population,perception,presentation,network,lan,
+  lifecycle,diagnostics,tick}.rs`. `Traffic::tick` is a named phase pipeline over an owned
+  `TickFrame`. `AiCar` fields and the fleet accessors are `pub(crate)`, with `car_mut_by_id`
+  for one-vehicle commands; broad mutation stays with the schedule/LAN adapter.
+- Moving the dormant kinematics into the domain and full per-field `AiCar` command methods
+  remain documented, deferred work (Stages 10+).
 
 ### Deletion rule (retired)
 

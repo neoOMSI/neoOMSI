@@ -511,3 +511,29 @@ scenario passes:
 | Empty `core::traffic_runtime::{vehicles, passengers, presentation, replication}` stubs | Deleted; `content.rs` remains | They were doc-comment-only placeholders; the adapters live in `core::Traffic`. |
 | `Footprint::obb`, `Traffic::light_at_entry`, `BusService::next_stop` | Deleted | Unused dead code surfaced by `cargo check`. |
 
+## Stage 9b progress — decompose the engine adapter
+
+Stage 9 removed the second runtime and finished the cutover, but left the L6 engine adapter
+(`core::Traffic`) as a single ~7,750-line file with 156 methods and a 1,467-line `tick`. Stage
+9b decomposes it with no behavior change:
+
+- **Submodules.** `core/src/traffic.rs` (~1,180 lines) keeps the `Traffic` struct, the shared
+  types (`AiCar`, `Viewer`, `Footprint`, `DormantCar`, `BusSetup`), the free helpers and the
+  test modules. The `impl Traffic`/`impl AiCar`/`impl Viewer` method groups move into
+  `core/src/traffic/{car,viewer,loading,population,perception,presentation,network,lan,
+  lifecycle,diagnostics,tick}.rs`. Type definitions stay in the parent so every submodule can
+  read their private fields; moved methods that a sibling calls are `pub(crate)`.
+- **Tick pipeline.** the `tick` function is split into named phases on an owned `TickFrame`:
+  `tick_clock_and_index` → `tick_light_requests` → `tick_presence` → `tick_plan` (frozen
+  snapshot + every owner's decisions) → `tick_realize` (parallel body/script) →
+  `tick_commit_feedback` → `tick_finish` (diagnose, trace, remove, capture). The frozen buffers
+  are owned (no borrow of `Traffic`), so the phases are separate methods; the only deliberate
+  profile-attribution change is that the occupancy build is now counted in the plan phase.
+- **AiCar encapsulation.** `AiCar`'s fields are `pub(crate)` (no public field surface) and
+  `cars_mut`/`car_mut` are `pub(crate)`, with a targeted `car_mut_by_id` replacing the two
+  scan-all-cars sites. Broad mutation remains available to the adapter (schedule/LAN
+  legitimately update several fields at once); full per-field command methods are deferred.
+
+Verification: core remains 418 passed / 7 ignored; `cargo check --workspace --all-targets`
+clean. The domain crate and its tests are untouched.
+
