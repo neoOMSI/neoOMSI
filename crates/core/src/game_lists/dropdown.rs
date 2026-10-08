@@ -243,7 +243,6 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 } else if ::config::DEFAULTS.iter().any(|(c, k, _)| *c == "graphics" && *k == key) {
                     gfx_set(key, value);
                     if key == "window_mode" {
-                        ::config::set_setting("graphics", "fullscreen", value != "windowed");
                         super::options::apply_window_mode(app, value);
                     }
                     let _ = ::config::save();

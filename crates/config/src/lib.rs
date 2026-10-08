@@ -98,7 +98,11 @@ pub fn load() -> Result<(), ConfigError> {
     let path = st.path.clone().ok_or(ConfigError::NoPath)?;
     let mut table = defaults();
     match std::fs::read_to_string(&path) {
-        Ok(text) => merge(&mut table, text.parse::<Table>()?),
+        Ok(text) => {
+            let mut saved = text.parse::<Table>()?;
+            migrate_window_mode(&mut saved);
+            merge(&mut table, saved);
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             log::info!("settings file {} not found, using defaults", path.display());
         }
@@ -106,6 +110,17 @@ pub fn load() -> Result<(), ConfigError> {
     }
     st.table = table;
     Ok(())
+}
+
+/// Move the old fullscreen switch to the explicit window-mode setting.
+fn migrate_window_mode(table: &mut Table) {
+    let Some(graphics) = table.get_mut("graphics").and_then(Value::as_table_mut) else {
+        return;
+    };
+    let fullscreen = graphics.remove("fullscreen").and_then(|v| v.as_bool());
+    if !graphics.contains_key("window_mode") && fullscreen == Some(true) {
+        graphics.insert("window_mode".to_string(), Value::String("borderless".to_string()));
+    }
 }
 
 pub fn save() -> Result<(), ConfigError> {
@@ -231,14 +246,20 @@ mod tests {
     fn defaults_and_set() {
         reset_all();
         assert_eq!(get_string("graphics", "window_mode"), Some("windowed".to_string()));
-        assert_eq!(get_bool("graphics", "fullscreen"), Some(false));
-        set_setting("graphics", "fullscreen", true);
-        assert_eq!(get_bool("graphics", "fullscreen"), Some(true));
         set_setting_sub("controller", "Logitech G29", "Button1", "view_interiorcam_minus");
         assert_eq!(
             get_setting_sub("controller", "Logitech G29", "Button1")
                 .and_then(|v| v.as_str().map(str::to_string)),
             Some("view_interiorcam_minus".to_string())
         );
+    }
+
+    #[test]
+    fn old_fullscreen_setting_becomes_borderless() {
+        let mut table: Table = "[graphics]\nfullscreen = true\n".parse().unwrap();
+        migrate_window_mode(&mut table);
+        let graphics = table["graphics"].as_table().unwrap();
+        assert_eq!(graphics.get("window_mode").and_then(Value::as_str), Some("borderless"));
+        assert!(!graphics.contains_key("fullscreen"));
     }
 }

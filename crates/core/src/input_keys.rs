@@ -831,7 +831,6 @@ impl App {
                     "fullscreen"
                 };
                 ::config::set_setting("graphics", "window_mode", mode);
-                ::config::set_setting("graphics", "fullscreen", mode != "windowed");
                 let _ = ::config::save();
                 crate::game_lists::apply_window_mode(self, mode);
             }

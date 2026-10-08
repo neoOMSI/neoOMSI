@@ -259,11 +259,8 @@ impl App {
         if let Some(at) = at {
             attrs = attrs.with_position(at);
         }
-        let mut window_mode = ::config::get_string("graphics", "window_mode")
+        let window_mode = ::config::get_string("graphics", "window_mode")
             .unwrap_or_else(|| "windowed".into());
-        if window_mode == "windowed" && ::config::get_bool("graphics", "fullscreen").unwrap_or(false) {
-            window_mode = "borderless".into();
-        }
         let start_exclusive = window_mode == "fullscreen";
         match window_mode.as_str() {
             "borderless" => {
@@ -353,12 +350,7 @@ impl App {
             }
         };
         if start_exclusive {
-            let fullscreen = window
-                .current_monitor()
-                .and_then(|monitor| monitor.video_modes().next())
-                .map(winit::window::Fullscreen::Exclusive)
-                .unwrap_or(winit::window::Fullscreen::Borderless(None));
-            window.set_fullscreen(Some(fullscreen));
+            window.set_fullscreen(Some(crate::game_lists::exclusive_fullscreen(&window)));
         }
         let (sw, sh) = renderer.scene_size(size.width, size.height);
         log::info!(

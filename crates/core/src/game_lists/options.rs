@@ -456,7 +456,7 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "detail_textures" => ::config::get_bool("graphics", "detail_textures").unwrap_or(true),
         "reflections" => ::config::get_bool("graphics", "reflections").unwrap_or(true),
         "clouds" => ::config::get_bool("graphics", "clouds").unwrap_or(true),
-        "fullscreen" => ::config::get_bool("graphics", "fullscreen").unwrap_or(false),
+        "fullscreen" => ::config::get_string("graphics", "window_mode").as_deref() != Some("windowed"),
         "vsync" => ::config::get_bool("graphics", "vsync").unwrap_or(true),
         "texture_compression" => ::config::get_bool("graphics", "texture_compression").unwrap_or(true),
         "driver" => ::config::get_bool("gameplay", "driver").unwrap_or(true),
@@ -755,11 +755,10 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
             None
         }
         "fullscreen" => {
-            ::config::set_setting("graphics", "fullscreen", on);
+            let mode = if on { "borderless" } else { "windowed" };
+            ::config::set_setting("graphics", "window_mode", mode);
             let _ = ::config::save();
-            if let Some(w) = app.window.as_ref() {
-                w.set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
-            }
+            apply_window_mode(app, mode);
             None
         }
         "vsync" => {
@@ -877,14 +876,24 @@ pub(crate) fn apply_window_mode(app: &App, mode: &str) {
     };
     let fullscreen = match mode {
         "borderless" => Some(winit::window::Fullscreen::Borderless(None)),
-        "fullscreen" => Some(
-            window
-                .current_monitor()
-                .and_then(|monitor| monitor.video_modes().next())
-                .map(winit::window::Fullscreen::Exclusive)
-                .unwrap_or(winit::window::Fullscreen::Borderless(None)),
-        ),
+        "fullscreen" => Some(exclusive_fullscreen(window)),
         _ => None,
     };
     window.set_fullscreen(fullscreen);
+}
+
+/// Enter exclusive fullscreen only at the monitor's current desktop resolution and refresh rate.
+pub(crate) fn exclusive_fullscreen(window: &winit::window::Window) -> winit::window::Fullscreen {
+    let Some(monitor) = window.current_monitor() else {
+        return winit::window::Fullscreen::Borderless(None);
+    };
+    let size = monitor.size();
+    let refresh = monitor.refresh_rate_millihertz();
+    let fallback = winit::window::Fullscreen::Borderless(Some(monitor.clone()));
+    monitor
+        .video_modes()
+        .filter(|mode| mode.size() == size)
+        .min_by_key(|mode| refresh.map(|rate| mode.refresh_rate_millihertz().abs_diff(rate)))
+        .map(winit::window::Fullscreen::Exclusive)
+        .unwrap_or(fallback)
 }

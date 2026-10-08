@@ -612,9 +612,6 @@ fn cfg_sel(ui: &mut Ui, name: &str, r: Rect, label: &str, key: &str, options: &[
         &labels,
     ) {
         crate::game_lists::gfx_set(key, &values[sel]);
-        if key == "window_mode" {
-            ::config::set_setting("graphics", "fullscreen", values[sel] != "windowed");
-        }
         let _ = ::config::save();
     }
 }
@@ -5494,7 +5491,7 @@ mod settings_tests {
             "set-shadow_blobs",
             "set-reflections",
             "set-clouds",
-            "set-fullscreen",
+            "s-window-mode",
             "set-vsync",
             "s-fps",
             "s-view",
