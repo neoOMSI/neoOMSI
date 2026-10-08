@@ -189,3 +189,53 @@ scenario passes:
 - Motion realization still advances controller progress rather than reconciling it from body
   feedback (`project_on_route_local` is provided and tested but not yet the pose owner);
   single-pose ownership is Stage 4.
+
+## Stage 4 progress
+
+- `A7` single physical-pose owner is done. `traffic::following` adds `RealizedMotion` and
+  `AiState::commit_feedback`, which projects the realized body onto the planned route with
+  `perception::project_on_route_indices` (the allocation-free form of
+  `project_on_route_local`) and adopts the projected lane, distance and realized speed.
+  `core::Traffic::tick` reads every road vehicle's realized pose and speed back after the
+  body step, so `state.s` - and every stop distance derived from it - is committed from
+  realized movement, never a planner coordinate alone. `simulation::ai_motion::AiBody`
+  exposes its realized travel (`realized_speed`).
+- Reusable longitudinal controller and calibrated envelopes (`B1`, `B2`): `BehaviorEnvelope`
+  names the comfort acceleration/service braking/jerk, the emergency ceiling and the default
+  headway/gap/reaction with units; `LongitudinalDemand { comfort, emergency, reason }`
+  separates the comfort command from collision prevention. The comfort channel is
+  jerk-limited and collision prevention is not held back by it. A lower limit ahead is met
+  with a feasibility correction rather than approached asymptotically.
+- `D3` `[ai_brakeperformance]`: `BrakingCapability` consumes the whole array. Element 4 stays
+  the verified stop-holding correction, all five raw values are preserved, and the braking
+  strength is an explicit provisional class fallback (`BrakeSource::ClassFallback`) because
+  the other values' meanings stay unresolved. `core` gives `-1` timetable buses their real
+  physical class so their fallback is right.
+- Launch traits (`B3`): only *entering* a hold sets the launch timer; a re-hold after a
+  flickering constraint keeps the count instead of resetting it, so a stop/go junction can no
+  longer hold a queue from moving off.
+- Diagnostics: `VehicleSnapshot` carries commanded and realized speed, applied acceleration,
+  and the `emergency`/`reconciled` flags; `TRACE_VERSION` is 2.
+- Exit gate covered by headless tests (no renderer, no OMSI assets):
+  `tests/s4_leader_brake.rs`, `s4_launch_waves.rs`, `s4_frame_rate_motion.rs`,
+  `s4_stop_anticipation.rs`, plus unit tests in `following`, `capabilities` and `perception`.
+
+### Stage 4 replacement reason trail
+
+| Replaced check | Replacement | Why it is equivalent or better |
+| --- | --- | --- |
+| Controller advanced `state.s` while the body tracked `state.way_point` (two integrators) | `AiState::commit_feedback` projects the realized body and adopts its lane/distance/speed | One pose owner; progress cannot drift from the body, and a rejected projection (parallel road, wrong heading) leaves the planner untouched rather than teleporting it. |
+| A single `out.clamp(-MAX_BRAKE, a)` braking channel | `LongitudinalDemand` comfort vs emergency | Ordinary driving is bounded by the comfort envelope; hard braking is only the explicit emergency channel. |
+| A lower limit ahead only softened `v0` (asymptotic IDM) | Speed-proportional feasibility term | The car actually meets a new limit at the lane joint instead of entering it several m/s high. |
+| `start_timer = (start_timer + 3*dt).min(reaction)` on every hold | Only entering a hold sets `reaction`; a re-hold keeps the count | A constraint that flickers can no longer reset the launch timer; a queue still launches on its own reaction. |
+| `[ai_brakeperformance]` element 4 only | `BrakingCapability` keeps all five values and names the strength's provenance | The stop correction is unchanged, the raw values survive for calibration, and the provisional class fallback is explicit instead of an invented meaning. |
+
+### Stage 4 remaining
+
+- Junction admission/`GRIDLOCK_WAIT` (Stage 5) and berth/service ownership (Stage 6) are
+  unchanged.
+- `commit_feedback` is best-effort while a lane change puts the body outside the projection
+  envelope, and `ai_motion`'s small `along` catch-up term remains until lateral maneuvers
+  move into the domain (Stage 7).
+- The braking strength stays a provisional class fallback until the remaining
+  `[ai_brakeperformance]` values are established (kept as data; see `D3`).

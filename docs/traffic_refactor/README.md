@@ -5,11 +5,15 @@ preparation that produced the starting backlog, an integration/test inventory, t
 synthetic scenario specifications, and the decision/blocked-reason capture specification
 required at the Stage 1 seam.
 
-Stage 1 (extract boundaries, fixed clock, stable identities, typed reasons) and Stage 2
-(validate the network and content semantics) have since landed; see the progress sections in
+Stages 1 (extract boundaries, fixed clock, stable identities, typed reasons), 2 (validate the
+network and content semantics), 3 (unified occupancy, perception and snapshot decisions) and
+4 (following, stopping and motion correctness) have since landed; see the progress sections in
 [BACKLOG.md](BACKLOG.md) and [DEPENDENCIES.md](DEPENDENCIES.md) for what is done and what
-remains. The route-compiler consolidation into `traffic::routing` and full `StopTarget`
-adoption at the `schedule`/`bus_service` boundary are the main Stage 2 leftovers.
+remains. Stage 4 makes the realized body the single pose owner, adds the reusable
+longitudinal controller with explicit comfort/emergency and braking envelopes, and commits
+route progress from realized motion. The route-compiler consolidation into `traffic::routing`
+and full `StopTarget` adoption at the `schedule`/`bus_service` boundary are the main Stage 2
+leftovers; junction admission and bus-service ownership are Stages 5–6.
 
 - Source revision: `35a460a54e51ed28f9fb081b4adf16c8c73993a8` (the plan's `35a460a`).
 - Reference baseline: OMSI 2.2.032 (see [Compatibility](../COMPATIBILITY.md)).

@@ -1,5 +1,8 @@
 use glam::{DVec2, DVec3};
+use crate::capabilities::BrakingCapability;
+use crate::diagnostics::Reason;
 use crate::network::*;
+use crate::perception::{RouteFix, project_on_route_indices};
 
 /// How far ahead (m) a car decides which way it goes: far enough to signal a turn in good
 /// time and for the steering to look beyond the junction.
@@ -92,6 +95,19 @@ pub struct AiState {
     /// At most this much acceleration for now (m/s²): edging out round something standing
     /// close ahead.
     pub accel_cap: Option<f32>,
+    /// The driver's calibration envelope (comfort accel/decel/jerk, emergency ceiling).
+    pub envelope: BehaviorEnvelope,
+    /// The vehicle's braking envelope: the verified stop correction plus the provisional
+    /// class braking strength (see [`BrakingCapability`]).
+    pub brakes: BrakingCapability,
+    /// The body's realized speed (m/s) as fed back by the motion adapter at the end of the
+    /// last tick; the command starts from this, not from its own integral.
+    pub realized_speed: f32,
+    /// Whether the last realized pose was accepted onto the planned route.
+    pub reconciled: bool,
+    /// Whether the last applied acceleration came from collision prevention rather than the
+    /// comfort envelope.
+    pub emergency: bool,
 }
 
 /// What a car keeps its distance to: the gap from its front bumper to the thing (m), how
@@ -160,6 +176,95 @@ pub fn ramp_progress_for(side: f32, clear: f32) -> f32 {
 pub const MAX_BRAKE: f32 = 8.0;
 /// Gap a car leaves before a stop line or a stop point (m).
 const STOP_LINE_GAP: f32 = 0.6;
+
+/// Comfort envelope for ordinary longitudinal control, with units.
+///
+/// These are neoOMSI targets (plan section 6), not constants established by the reference.
+/// Acceleration, service braking, and the rate of change of comfortable acceleration are
+/// bounded together; collision prevention is a separate channel ([`MAX_BRAKE`]) that is not
+/// restricted by the comfort jerk.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BehaviorEnvelope {
+    /// Comfortable acceleration (m/s²).
+    pub comfort_accel: f32,
+    /// Comfortable service braking (m/s²).
+    pub comfort_decel: f32,
+    /// Largest ordinary (non-emergency) braking (m/s²).
+    pub max_decel: f32,
+    /// Emergency collision-prevention braking ceiling (m/s²).
+    pub emergency_decel: f32,
+    /// Largest change of comfortable acceleration in one second (m/s³).
+    pub max_jerk: f32,
+    /// Default time gap to the vehicle ahead (s).
+    pub headway: f32,
+    /// Default standstill gap (m).
+    pub min_gap: f32,
+    /// Default reaction time before moving off (s).
+    pub reaction: f32,
+}
+
+impl Default for BehaviorEnvelope {
+    fn default() -> Self {
+        BehaviorEnvelope {
+            comfort_accel: 1.5,
+            comfort_decel: 2.2,
+            max_decel: 5.0,
+            emergency_decel: MAX_BRAKE,
+            max_jerk: 8.0,
+            headway: 1.4,
+            min_gap: 2.0,
+            reaction: 0.7,
+        }
+    }
+}
+
+/// The separated longitudinal request: the comfortable command, plus a harder emergency
+/// value when collision prevention needs more than the comfort envelope allows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LongitudinalDemand {
+    /// The command inside the comfort envelope (m/s²).
+    pub comfort: f32,
+    /// Collision-prevention braking (m/s²) when it exceeds the comfort envelope.
+    pub emergency: Option<f32>,
+    /// The reason that most strongly binds the request.
+    pub reason: Reason,
+}
+
+impl LongitudinalDemand {
+    /// The acceleration actually applied: the emergency value when present, else comfort.
+    pub fn effective(self) -> f32 {
+        match self.emergency {
+            Some(e) if e < self.comfort => e,
+            _ => self.comfort,
+        }
+    }
+
+    /// Whether collision prevention is overriding the comfort envelope.
+    pub fn is_emergency(self) -> bool {
+        matches!(self.emergency, Some(e) if e < self.comfort)
+    }
+}
+
+/// The realized pose and speed of the body that carries a vehicle, fed back by the motion
+/// adapter. The domain commits route progress from this; it never advances its own pose past
+/// the realized body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RealizedMotion {
+    pub pose: DVec3,
+    /// Realized heading (deg, clockwise from north).
+    pub heading_deg: f32,
+    /// Realized speed along the body heading (m/s).
+    pub speed: f32,
+    /// The body's half width (m), for the route projection.
+    pub half_width: f64,
+}
+
+/// How far a projected realized body may lie off its route before the projection is
+/// rejected (m), so a neighbouring parallel road cannot capture it.
+const FEEDBACK_MAX_LATERAL: f64 = 1.0;
+/// How far the realized heading may differ from the route before the projection is rejected
+/// (deg).
+const FEEDBACK_MAX_TURN: f32 = 60.0;
 
 /// A lane change: the car moves over from its lane to `to` along `length` metres of road
 /// (by distance, not by time: a car that has to stop halfway stands still, and so does its
@@ -288,6 +393,11 @@ impl AiState {
             start_timer: 0.0,
             acc: 0.0,
             accel_cap: None,
+            envelope: BehaviorEnvelope::default(),
+            brakes: BrakingCapability::fallback(crate::capabilities::VehicleClass::Car),
+            realized_speed: 0.0,
+            reconciled: false,
+            emergency: false,
         }
     }
 
@@ -757,8 +867,18 @@ impl AiState {
     /// `lead` is the vehicle ahead, `stop` the distance from the car's origin to where it
     /// has to stop (a light, a junction it gives way at, a bus stop).
     pub fn desired_accel(&self, net: &Network, lead: Option<Lead>, stop: Option<f32>) -> f32 {
+        self.desired_demand(net, lead, stop).effective()
+    }
+
+    /// The separated longitudinal request: the comfortable command plus a collision-
+    /// prevention value, and the cause that most strongly binds it.
+    pub fn desired_demand(&self, net: &Network, lead: Option<Lead>, stop: Option<f32>) -> LongitudinalDemand {
         let Some(lane) = net.lanes.get(self.lane) else {
-            return 0.0;
+            return LongitudinalDemand {
+                comfort: 0.0,
+                emergency: None,
+                reason: Reason::NONE,
+            };
         };
         let (a, b) = (self.accel.max(0.1), self.decel.max(0.5));
         let v = self.speed;
@@ -790,6 +910,7 @@ impl AiState {
             }
         }
         let mut acc = a * (1.0 - (v / v0).powi(4)).max(-1.5 * b / a);
+        let mut reason = Reason::SpeedLimit;
         // bends: follow the speed profile `curve_speed` lays out (it assumes 2 m/s² of
         // braking), blending in over the last metre per second above it
         let bend = self.curve_speed(net);
@@ -797,6 +918,7 @@ impl AiState {
             let track = -2.0 + (bend - v) / 0.6;
             let k = ((v - (bend - 1.0)) / 1.0).clamp(0.0, 1.0);
             acc = acc.min(acc + (track - acc) * k);
+            reason = Reason::Curvature;
         }
         let interaction = |gap: f32, lead_speed: f32, s0: f32, headway: f32| -> f32 {
             let s_star =
@@ -825,6 +947,9 @@ impl AiState {
             } else {
                 0.01 * idm + 0.99 * (cah + b * ((idm - cah) / b).tanh())
             };
+            if acc_lead < out {
+                reason = Reason::Leader;
+            }
             out = out.min(acc_lead);
         }
         if let Some(d) = stop {
@@ -839,9 +964,40 @@ impl AiState {
             let constant = -need * 1.05;
             let k = ((need - 0.35 * b) / (0.15 * b)).clamp(0.0, 1.0);
             let a_stop = idm + (constant - idm) * k;
+            if a_stop < out {
+                reason = Reason::StopTarget;
+            }
             out = out.min(a_stop);
         }
-        out.clamp(-MAX_BRAKE, a)
+        // Meet a lower limit or speed profile rather than approaching it asymptotically: the
+        // free term alone leaves the car a few m/s over a new limit at the joint. A speed
+        // proportional correction is enough to shed the difference without a hard clamp.
+        if v > v0 {
+            let need = -((v - v0) * 2.0).min(MAX_BRAKE);
+            if need < out {
+                reason = Reason::SpeedLimit;
+            }
+            out = out.min(need);
+        }
+        // Separate the collision-prevention channel from the comfort envelope: the comfort
+        // command never brakes harder than the vehicle's ordinary maximum, and anything
+        // beyond that is an explicit emergency.
+        let ceiling = self.envelope.emergency_decel.max(a);
+        let out = out.clamp(-ceiling, a);
+        let floor = -self.brakes.max_decel.max(0.5);
+        if out < floor - 0.05 {
+            LongitudinalDemand {
+                comfort: floor,
+                emergency: Some(out),
+                reason,
+            }
+        } else {
+            LongitudinalDemand {
+                comfort: out,
+                emergency: None,
+                reason,
+            }
+        }
     }
 
     /// Advance along the network with the car ahead (`lead`) and a stop point (`stop`,
@@ -855,24 +1011,22 @@ impl AiState {
         if net.lanes.get(self.lane).is_none() {
             return false;
         }
-        let mut acc = self.desired_accel(net, lead, stop);
+        let demand = self.desired_demand(net, lead, stop);
+        self.emergency = demand.is_emergency();
+        let mut acc = demand.effective();
         if let Some(cap) = self.accel_cap {
             acc = acc.min(cap);
         }
         // standing: a driver who is held there moves off only after a moment when the way
-        // clears (the wave that runs down a queue at a green light)
+        // clears (the wave that runs down a queue at a green light). Only *entering* the
+        // hold sets the timer: a re-hold after a brief flicker of a constraint keeps the
+        // count, so a junction that is free and not free by turns cannot reset the launch.
         if self.speed < 0.05 {
             if acc <= 0.05 {
-                // (a hold of a frame or two - a junction that is free and not free by turns
-                // as the cars on the ring come and go - winds the reaction back only a
-                // little: set back whole every frame, it never ran out, and the car stood at
-                // an empty roundabout for minutes, "about to go")
-                self.start_timer = if self.held {
-                    (self.start_timer + 3.0 * dt).min(self.reaction)
-                } else {
-                    self.reaction
-                };
-                self.held = true;
+                if !self.held {
+                    self.start_timer = self.reaction;
+                    self.held = true;
+                }
                 acc = acc.min(0.0);
             } else if self.held {
                 self.start_timer -= dt;
@@ -884,6 +1038,12 @@ impl AiState {
             }
         } else if self.speed > 0.5 {
             self.held = false;
+        }
+        // Comfort jerk: bound how fast the comfortable command may change. Emergency
+        // collision prevention is not held back by the comfort envelope.
+        if !self.emergency && dt > 0.0 {
+            let jerk = self.envelope.max_jerk.max(0.1) * dt;
+            acc = acc.clamp(self.acc - jerk, self.acc + jerk);
         }
         let v0 = self.speed;
         let v1 = (v0 + acc * dt).max(0.0);
@@ -984,4 +1144,217 @@ impl AiState {
         }
         true
     }
+
+    /// Commit route progress from the realized body.
+    ///
+    /// The realized body is the single pose owner: this projects its pose onto the planned
+    /// route with [`project_on_route_indices`] and adopts the projected lane, distance and
+    /// realized speed. A projection that is off to the side, faces another way, or lands on
+    /// a lane the planner has already left is rejected, leaving this tick's planner progress
+    /// untouched, so a transient mismatch can never teleport the vehicle. The route is the
+    /// timetable route from the lane just behind the current one, or (for random traffic) the
+    /// current lane plus the planned lanes.
+    pub fn commit_feedback(&mut self, net: &Network, realized: RealizedMotion) -> Option<RouteFix> {
+        if net.lanes.get(self.lane).is_none() {
+            return None;
+        }
+        let mut buf = [0usize; PLAN_LANES + 1];
+        let projected = if !self.route.is_empty() {
+            let start = self.route_index.saturating_sub(1);
+            project_on_route_indices(
+                net,
+                &self.route[start..],
+                realized.pose,
+                realized.heading_deg,
+                realized.half_width,
+                FEEDBACK_MAX_LATERAL,
+                FEEDBACK_MAX_TURN,
+            )
+            .map(|f| (f, start))
+        } else {
+            buf[0] = self.lane;
+            let mut n = 1;
+            for l in self.upcoming() {
+                if n == buf.len() {
+                    break;
+                }
+                buf[n] = l;
+                n += 1;
+            }
+            project_on_route_indices(
+                net,
+                &buf[..n],
+                realized.pose,
+                realized.heading_deg,
+                realized.half_width,
+                FEEDBACK_MAX_LATERAL,
+                FEEDBACK_MAX_TURN,
+            )
+            .map(|f| (f, 0))
+        };
+        let Some((fix, offset)) = projected else {
+            self.reconciled = false;
+            return None;
+        };
+        if self.route.is_empty() && fix.lane.index() != self.lane {
+            // The body is near a joint the planner has not passed yet: let `drive` make the
+            // transition rather than adopting a distance on a lane we are not yet on.
+            self.reconciled = false;
+            return None;
+        }
+        if !self.route.is_empty() {
+            let ri = offset
+                + self
+                    .route
+                    .iter()
+                    .skip(offset)
+                    .position(|&l| l == fix.lane.index())?;
+            if ri + 1 < self.route_index {
+                // the body projects onto a lane the planner has already passed
+                self.reconciled = false;
+                return None;
+            }
+            if ri != self.route_index {
+                self.route_index = ri;
+                self.plan_next(net);
+            }
+        }
+        self.lane = fix.lane.index();
+        self.s = fix.s;
+        if realized.speed.is_finite() && realized.speed >= 0.0 {
+            self.speed = realized.speed;
+            self.realized_speed = realized.speed;
+        }
+        self.reconciled = true;
+        Some(fix)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::{LaneBuilder, LaneKind};
+    use glam::DVec3;
+
+    fn straight() -> Network {
+        let lane = LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 200.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        let mut net = Network {
+            lanes: vec![lane],
+            ..Default::default()
+        };
+        net.link(1.5);
+        net
+    }
+
+    fn car(net: &Network, s: f32, speed: f32) -> AiState {
+        let mut c = AiState::new(0, s, 5);
+        c.front = 2.25;
+        c.rear = 2.25;
+        c.length = 4.5;
+        c.speed = speed;
+        c.plan_next(net);
+        c
+    }
+
+    #[test]
+    fn a_comfortable_demand_stays_inside_the_envelope() {
+        let net = straight();
+        let c = car(&net, 0.0, 10.0);
+        let d = c.desired_demand(&net, None, None);
+        assert!(!d.is_emergency(), "a free road is not an emergency");
+        assert_eq!(d.effective(), d.comfort);
+        assert!(d.comfort <= c.envelope.comfort_accel + 1e-3);
+    }
+
+    #[test]
+    fn a_hard_cut_in_separates_the_emergency_channel() {
+        let net = straight();
+        let c = car(&net, 0.0, 12.0);
+        let lead = Lead {
+            gap: 4.0,
+            speed: 0.0,
+            acc: 0.0,
+        };
+        let d = c.desired_demand(&net, Some(lead), None);
+        assert!(d.is_emergency(), "a cut-in at 4 m must engage collision prevention");
+        assert_eq!(d.effective(), d.emergency.unwrap());
+        assert!(d.comfort >= -c.brakes.max_decel - 1e-3);
+    }
+
+    #[test]
+    fn feedback_commits_the_realized_pose_on_the_route() {
+        let net = straight();
+        let mut c = car(&net, 0.0, 8.0);
+        let fix = c
+            .commit_feedback(
+                &net,
+                RealizedMotion {
+                    pose: DVec3::new(0.0, 50.0, 0.0),
+                    heading_deg: 0.0,
+                    speed: 7.5,
+                    half_width: 1.25,
+                },
+            )
+            .expect("a body on the route must be accepted");
+        assert_eq!(fix.lane.index(), 0);
+        assert!((c.s - 50.0).abs() < 0.5);
+        assert!((c.speed - 7.5).abs() < 1e-3);
+        assert!(c.reconciled);
+    }
+
+    #[test]
+    fn feedback_rejects_a_body_on_a_parallel_road() {
+        let net = straight();
+        let mut c = car(&net, 0.0, 8.0);
+        let before = c.s;
+        let fix = c.commit_feedback(
+            &net,
+            RealizedMotion {
+                pose: DVec3::new(4.0, 50.0, 0.0),
+                heading_deg: 0.0,
+                speed: 8.0,
+                half_width: 1.25,
+            },
+        );
+        assert!(fix.is_none(), "a parallel body must not be snapped onto the route");
+        assert_eq!(c.s, before, "a rejected projection must not move the planner");
+        assert!(!c.reconciled);
+    }
+
+    #[test]
+    fn a_lower_limit_is_met_rather_than_approached_asymptotically() {
+        let lane0 = LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 200.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        let mut lane1 = LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 200.0, 0.0), DVec3::new(0.0, 340.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        lane1.speed_limit_kmh = 30.0;
+        let mut net = Network {
+            lanes: vec![lane0, lane1],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let mut c = car(&net, 0.0, 14.0);
+        for _ in 0..1600 {
+            c.drive(&net, DT_TEST, None, None);
+        }
+        // The car ends on the lower-limit lane at roughly that limit, not far above it.
+        assert_eq!(c.lane, 1);
+        assert!(
+            c.speed <= 30.0 / 3.6 + 1.0,
+            "entered the 30 zone at {:.2} m/s",
+            c.speed
+        );
+    }
+
+    const DT_TEST: f32 = 1.0 / 50.0;
 }

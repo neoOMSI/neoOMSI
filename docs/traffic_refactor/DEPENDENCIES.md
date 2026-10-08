@@ -113,6 +113,39 @@ core ─┘                          (never the reverse)
 - The `Traffic` orchestrator is still large; `junctions.rs`/`maneuvers.rs`/`service.rs`
   extraction remains Stages 5–7.
 
+## Current state after Stage 4
+
+- L5 control/motion is split as the plan intends: `traffic::following` owns the longitudinal
+  command (`BehaviorEnvelope`, `LongitudinalDemand`, the IDM/ACC following, curvature, stop
+  and limit composition) and the realized-motion reconciliation; `simulation::ai_motion`
+  still owns steering, articulation and ground contact and now exposes realized travel
+  (`AiBody::realized_speed`).
+- `A7` single physical-pose owner: `traffic::perception::project_on_route_indices` is the
+  allocation-free form of `project_on_route_local`; `AiState::commit_feedback(&Network,
+  RealizedMotion)` projects the realized body on the planned route and commits lane, distance
+  and realized speed, rejecting off-route projections. `core::Traffic::tick` runs one
+  sequential read-back pass after the Rayon body/script block, so planner progress (and the
+  stop distance derived from it) follows the body.
+- `VehicleCapabilities::braking()` returns a `BrakingCapability`: the verified element-4 stop
+  correction plus a provisional class braking strength with explicit provenance
+  (`BrakeSource`); all five raw values are preserved. `core` sets the physical class of `-1`
+  timetable buses so the fallback matches the vehicle.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`.
+- Exit-gate scenarios: `crates/traffic/tests/s4_leader_brake.rs`, `s4_launch_waves.rs`,
+  `s4_frame_rate_motion.rs`, `s4_stop_anticipation.rs`; `VehicleSnapshot` gained
+  commanded/realized feedback and `TRACE_VERSION` is 2.
+- The Stage 4 replacement reason trail is recorded in `BACKLOG.md`.
+
+### Stage 4 remaining (documented, not claimed done)
+
+- Junction admission (Stage 5) and bus service/berth ownership (Stage 6) are unchanged;
+  because `state.s` is now realized, their existing stop/distance use is realized-based but
+  they have not been re-architected.
+- `commit_feedback` is best-effort during a lane change and `ai_motion` keeps a small `along`
+  catch-up term; narrowing that belongs with the lateral-maneuver owner (Stage 7).
+- Braking strength stays a provisional class fallback until `[ai_brakeperformance]`'s other
+  values are established.
+
 ## Deletion rule
 
 Do not remove the shim or any compatibility re-export until its callers have migrated to

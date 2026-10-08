@@ -9,7 +9,8 @@ replayable, unlike those ad-hoc dumps.
 ## Versioning
 
 - `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change
-  bumps it.
+  bumps it. It is currently **2**: Stage 4 added the `motion_feedback` fields (commanded and
+  realized speed, applied acceleration, `emergency`, `reconciled`) to the per-vehicle record.
 - A capture writes a header record containing `trace_version`, `source_revision`, `platform`,
   `seed`, `tick_hz`, `network_version`, and the ordered-input digest.
 - Unknown fields are read as absent; readers reject a mismatched major `trace_version`.

@@ -76,6 +76,56 @@ pub enum CapabilityDefect {
     NonPositiveHalfWidth,
 }
 
+/// Where the braking strength used by the longitudinal controller came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrakeSource {
+    /// A content value drove the braking envelope under an interpretation that is not yet
+    /// proven.
+    ContentProvisional,
+    /// No usable content braking strength: an explicit class-based fallback.
+    ClassFallback,
+}
+
+/// A vehicle's braking envelope, separated into the verified stop correction and a braking
+/// strength whose `[ai_brakeperformance]` semantics are not established (backlog `D3`).
+///
+/// Element 4 is the holding-point correction the stop logic already used. The meanings of
+/// elements 0..3 remain unresolved, so the strength is an explicit class-based fallback
+/// rather than a guess. All five values are kept exactly so a later stage can calibrate them
+/// once their meaning is established.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BrakingCapability {
+    /// `[ai_brakeperformance]` element 4: the holding-point correction for stop precision (m).
+    pub stop_correction: f32,
+    /// Comfortable service braking (m/s²).
+    pub comfort_decel: f32,
+    /// Hardest ordinary (non-emergency) braking (m/s²).
+    pub max_decel: f32,
+    /// The five raw values, kept exactly for later calibration.
+    pub raw: Option<[f32; 5]>,
+    pub source: BrakeSource,
+}
+
+impl BrakingCapability {
+    /// The explicit provisional class fallback, used while the non-stop semantics of
+    /// `[ai_brakeperformance]` stay unresolved.
+    pub fn fallback(class: VehicleClass) -> BrakingCapability {
+        let (comfort_decel, max_decel) = match class {
+            VehicleClass::Car | VehicleClass::Taxi => (2.4, 6.0),
+            VehicleClass::Bus => (2.1, 5.0),
+            VehicleClass::Truck => (1.8, 5.0),
+            VehicleClass::Other(_) => (2.2, 5.5),
+        };
+        BrakingCapability {
+            stop_correction: 0.0,
+            comfort_decel,
+            max_decel,
+            raw: None,
+            source: BrakeSource::ClassFallback,
+        }
+    }
+}
+
 impl VehicleCapabilities {
     /// Build from measured extents. Values are clamped to safe minimums; any clamp is
     /// reported through [`VehicleCapabilities::defects`] rather than silently hidden.
@@ -131,6 +181,18 @@ impl VehicleCapabilities {
     pub fn is_fallback(&self) -> bool {
         self.source == CapabilitySource::LengthFallback
     }
+
+    /// The braking envelope. Element 4 stays the verified stop correction; the braking
+    /// strength is the explicit class fallback while the other values' meanings are
+    /// unresolved. The raw values are carried through unchanged.
+    pub fn braking(&self) -> BrakingCapability {
+        let mut b = BrakingCapability::fallback(self.class);
+        if let Some(raw) = self.brake_performance {
+            b.stop_correction = raw[4];
+            b.raw = Some(raw);
+        }
+        b
+    }
 }
 
 #[cfg(test)]
@@ -184,5 +246,41 @@ mod tests {
         for v in 0..=4 {
             assert_eq!(VehicleClass::from_ai_veh_type(v).ai_veh_type(), v);
         }
+    }
+
+    #[test]
+    fn braking_keeps_the_raw_values_and_uses_a_class_fallback() {
+        let values = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let caps = VehicleCapabilities::from_extents(
+            1.0,
+            1.0,
+            1.0,
+            CapabilitySource::BoundingBox,
+            2,
+            50.0,
+            Some(values),
+        );
+        let b = caps.braking();
+        assert_eq!(b.raw, Some(values), "the raw brake values must survive");
+        assert_eq!(b.stop_correction, 5.0, "element 4 is the stop correction");
+        assert_eq!(b.source, BrakeSource::ClassFallback);
+        assert!(b.comfort_decel > 0.0 && b.max_decel >= b.comfort_decel);
+    }
+
+    #[test]
+    fn no_brake_configuration_still_yields_a_usable_fallback() {
+        let caps = VehicleCapabilities::from_extents(
+            1.0,
+            1.0,
+            1.0,
+            CapabilitySource::LengthFallback,
+            0,
+            50.0,
+            None,
+        );
+        let b = caps.braking();
+        assert_eq!(b.raw, None);
+        assert_eq!(b.stop_correction, 0.0);
+        assert!(b.max_decel >= b.comfort_decel && b.comfort_decel > 0.0);
     }
 }

@@ -201,6 +201,9 @@ pub struct AiBody {
     pub steer: f32,
     steer_cmd: f32,
     last_speed: f32,
+    /// Distance the body actually moved in the last `step` (m), the realized motion the
+    /// traffic domain reads back each tick.
+    travelled: f32,
     /// Longitudinal and lateral acceleration (m/s², forward / right positive).
     pub a_long: f32,
     pub a_lat: f32,
@@ -344,6 +347,7 @@ impl AiBody {
             steer: 0.0,
             steer_cmd: 0.0,
             last_speed: 0.0,
+            travelled: 0.0,
             a_long: 0.0,
             a_lat: 0.0,
             yaw_rate: 0.0,
@@ -390,6 +394,7 @@ impl AiBody {
         ground: Option<&dyn Fn(f64, f64) -> Option<f64>>,
         contact: Option<&dyn crate::rigid::Ground>,
     ) {
+        self.travelled = 0.0;
         if dt > 0.0 {
             let a = (speed - self.last_speed) / dt;
             self.a_long += (a - self.a_long) * (dt / 0.15).min(1.0);
@@ -402,6 +407,16 @@ impl AiBody {
             }
             MotionKind::Rail => self.ride(way),
             MotionKind::Air => self.fly(dt, speed, way),
+        }
+    }
+
+    /// The speed the body actually realized over `dt` (m/s), from the distance it moved in
+    /// the last [`AiBody::step`]. Fed back to the traffic domain's route progress.
+    pub fn realized_speed(&self, dt: f32) -> f32 {
+        if dt > 0.0 {
+            self.travelled / dt
+        } else {
+            0.0
         }
     }
 
@@ -487,6 +502,7 @@ impl AiBody {
         let dpsi = (v * dt * k) as f64;
         let mid = dir(self.heading + dpsi.to_degrees() * 0.5);
         self.rear += mid * (v * dt) as f64;
+        self.travelled += (v * dt).abs();
         self.heading = (self.heading + dpsi.to_degrees()).rem_euclid(360.0);
         self.yaw_rate = if dt > 0.0 {
             (dpsi / dt as f64) as f32

@@ -7,7 +7,7 @@
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
 /// Version of the capture schema. Any field addition, removal, or semantic change bumps it.
-pub const TRACE_VERSION: u32 = 1;
+pub const TRACE_VERSION: u32 = 2;
 
 /// Why a vehicle cannot proceed at full freedom. Every active cause is preserved; one of
 /// them is the binding constraint.
@@ -250,7 +250,16 @@ pub struct VehicleSnapshot {
     pub id: VehicleId,
     pub lane: LaneId,
     pub s: f32,
+    /// The planner's commanded speed (m/s).
     pub speed: f32,
+    /// The body's realized speed (m/s), fed back by the motion adapter.
+    pub realized_speed: f32,
+    /// The applied longitudinal acceleration (m/s²).
+    pub accel: f32,
+    /// Whether collision prevention, not the comfort envelope, asked for the acceleration.
+    pub emergency: bool,
+    /// Whether the realized pose was accepted onto the planned route this tick.
+    pub reconciled: bool,
     pub front: f32,
     pub rear: f32,
     /// Every active cause, not just the nearest.
@@ -262,6 +271,11 @@ pub struct VehicleSnapshot {
 impl VehicleSnapshot {
     pub fn is_stationary(&self) -> bool {
         self.speed < 0.05
+    }
+
+    /// The difference between the commanded and the realized speed (m/s).
+    pub fn speed_error(&self) -> f32 {
+        self.speed - self.realized_speed
     }
 }
 
@@ -340,6 +354,9 @@ impl Capture {
             h = fnv(h, &v.id.get().to_le_bytes());
             h = fnv(h, &v.s.to_bits().to_le_bytes());
             h = fnv(h, &v.speed.to_bits().to_le_bytes());
+            h = fnv(h, &v.realized_speed.to_bits().to_le_bytes());
+            h = fnv(h, &v.accel.to_bits().to_le_bytes());
+            h = fnv(h, &[v.emergency as u8, v.reconciled as u8]);
             for c in &v.constraints {
                 h = fnv(h, c.label().as_bytes());
             }
@@ -400,6 +417,10 @@ mod tests {
                 lane: LaneId(0),
                 s,
                 speed: 1.0,
+                realized_speed: 1.0,
+                accel: 0.0,
+                emergency: false,
+                reconciled: true,
                 front: 2.0,
                 rear: 2.0,
                 constraints: binding.into_iter().collect(),

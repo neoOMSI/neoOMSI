@@ -495,8 +495,34 @@ pub fn project_on_route_local(
         return None;
     }
     let raw: Vec<usize> = route.iter().map(|l| l.index()).collect();
-    let (ri, s, lateral) = net.project_on_route_lateral(&raw, pose)?;
-    let lane = route[ri];
+    project_on_route_indices(
+        net,
+        &raw,
+        pose,
+        heading_deg,
+        half_width,
+        max_lateral,
+        max_heading_deg,
+    )
+}
+
+/// [`project_on_route_local`] for a route already given as lane indices, so the
+/// realization-feedback path does not allocate per tick.
+#[allow(clippy::too_many_arguments)]
+pub fn project_on_route_indices(
+    net: &Network,
+    route: &[usize],
+    pose: DVec3,
+    heading_deg: f32,
+    half_width: f64,
+    max_lateral: f64,
+    max_heading_deg: f32,
+) -> Option<RouteFix> {
+    if route.is_empty() {
+        return None;
+    }
+    let (ri, s, lateral) = net.project_on_route_lateral(route, pose)?;
+    let lane = LaneId(route[ri]);
     if lateral.abs() as f64 > half_width + max_lateral {
         return None;
     }
@@ -632,6 +658,15 @@ mod tests {
         .unwrap();
         assert_eq!(fix.lane, LaneId(0));
         assert!((fix.s - 50.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn the_index_projection_agrees_with_the_lane_id_projection() {
+        let net = straight();
+        let pose = DVec3::new(0.2, 50.0, 0.0);
+        let by_id = project_on_route_local(&net, &[LaneId(0)], pose, 0.0, 1.25, 1.0, 60.0).unwrap();
+        let by_index = project_on_route_indices(&net, &[0], pose, 0.0, 1.25, 1.0, 60.0).unwrap();
+        assert_eq!(by_id, by_index);
     }
 
     #[test]

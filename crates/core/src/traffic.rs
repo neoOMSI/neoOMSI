@@ -19,9 +19,9 @@ use ::simulation::ai_motion::{
 use ::simulation::collision::Obb;
 pub(crate) use ::simulation::traffic::{
     AiState, Arbiter, Aspect, BodyFootprint, Capture, CaptureTrigger, LaneId, LaneKind, Lead, MAX_BRAKE,
-    Network, NetworkVersion, Occupancy, Placement, Reason, StopTarget, SweepSample, TickSnapshot,
-    TraceHeader, TrafficLightController, VehicleCapabilities, VehicleId, VehicleSnapshot, TRACE_VERSION,
-    arrival_time,
+    Network, NetworkVersion, Occupancy, Placement, RealizedMotion, Reason, StopTarget, SweepSample,
+    TickSnapshot, TraceHeader, TrafficLightController, VehicleCapabilities, VehicleClass, VehicleId,
+    VehicleSnapshot, TRACE_VERSION, arrival_time,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -1388,6 +1388,10 @@ impl Traffic {
                     lane: LaneId(c.state.lane),
                     s: c.state.s,
                     speed: c.state.speed,
+                    realized_speed: c.state.realized_speed,
+                    accel: c.state.acc,
+                    emergency: c.state.emergency,
+                    reconciled: c.state.reconciled,
                     front: c.state.front,
                     rear: c.state.rear,
                     constraints: if slow && no_reason {
@@ -3554,12 +3558,22 @@ impl Traffic {
             state.accel = state.accel.max(1.0);
             state.min_gap = state.min_gap.max(2.2);
         }
-        let caps = crate::traffic_runtime::content::capabilities(
+        let mut caps = crate::traffic_runtime::content::capabilities(
             &ty,
             state.veh_type,
             state.max_speed_kmh,
             if bus.is_some() { 12.0 } else { 4.5 },
         );
+        // `veh_type` is -1 for a timetable bus (so lane permissions read correctly); the
+        // physical class therefore has to be set explicitly for the braking fallback.
+        if bus.is_some() {
+            caps.class = VehicleClass::Bus;
+        }
+        // The vehicle's braking envelope: the verified stop correction plus the explicit
+        // provisional class strength. The driver's comfortable `decel` stays a personality
+        // trait but is bounded by what the vehicle can actually do.
+        state.brakes = caps.braking();
+        state.decel = state.decel.min(state.brakes.max_decel.max(0.5));
         let (front, rear, half_width) = (caps.front, caps.rear, caps.half_width);
         state.front = front;
         state.rear = rear;
@@ -7411,6 +7425,22 @@ impl Traffic {
                         );
                     }
                 });
+        }
+        // Motion feedback (Stage 4, A7): the body is the single pose owner. Each road
+        // vehicle's realized pose and speed are read back into its planner, so route
+        // progress - and every stop distance derived from it - is committed from realized
+        // movement, never from a planner coordinate alone.
+        for c in &mut self.cars {
+            if self.net.lanes.get(c.state.lane).map(|l| l.kind) != Some(LaneKind::Street) {
+                continue;
+            }
+            let realized = RealizedMotion {
+                pose: c.vehicle.position,
+                heading_deg: c.vehicle.heading as f32,
+                speed: c.body.realized_speed(dt),
+                half_width: c.half_width as f64,
+            };
+            c.state.commit_feedback(&self.net, realized);
         }
         self.tick_split = [
             (t_plan - t_start).as_secs_f64(),
