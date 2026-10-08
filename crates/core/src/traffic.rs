@@ -17,6 +17,9 @@ pub(crate) use ::simulation::traffic::{
     Occupancy, ParkPlan, Placement, RealizedMotion, Reason, StopTarget, SweepSample,
     TickSnapshot, TraceHeader, TrafficLightController, VehicleCapabilities, VehicleClass,
     VehicleId, VehicleSnapshot, TRACE_VERSION, junction_ahead, required_target,
+    DormantView, Lifecycle, PopulationCoordinator, PopulationDemand, PopulationScene,
+    RemovalCause, SpawnClass, SpawnFacts, SpawnOutcome, SpawnRequest, SpawnRequestId,
+    TraceEvent, DORMANT_CAP_FACTOR,
 };
 use ::simulation::traffic::{
     BerthIntent, ServiceActor, ServiceCoordinator, ServiceInputs, ServicePhase, ServiceScene,
@@ -617,6 +620,9 @@ pub struct Traffic {
     services: ServiceCoordinator,
     /// The maneuver coordinator: the single owner of every lateral maneuver on the road.
     maneuvers: ManeuverCoordinator,
+    /// The population coordinator: the single owner of demand, admission, the dormant
+    /// lifecycle and topology demand (`traffic::population`).
+    population: PopulationCoordinator,
     /// `pull_out_room` by vehicle file.
     pull_out_rooms: HashMap<std::path::PathBuf, f32>,
     /// Timetable buses taken off the road because the tile under them was unloaded (their
@@ -1102,6 +1108,22 @@ impl Traffic {
         self.dormant.len()
     }
 
+    /// Ask for a loaded tile ahead of a route frontier, so a bus reaches loaded ground where
+    /// feasible instead of stopping at the edge. Bounded and de-duplicated by the owner.
+    pub fn request_topology_tile(&mut self, tile: (i32, i32)) {
+        self.population.request_topology(tile);
+    }
+
+    /// World positions of the wanted route-frontier tiles, for the streamer's centres.
+    pub fn topology_centers(&self) -> Vec<DVec3> {
+        let ts = ::map::tile_size();
+        self.population
+            .topology_demand()
+            .iter()
+            .map(|&(tx, ty)| DVec3::new((tx as f64 + 0.5) * ts, (ty as f64 + 0.5) * ts, 0.0))
+            .collect()
+    }
+
     /// The current random-traffic population target.
     pub fn target(&self) -> usize {
         self.target
@@ -1265,6 +1287,13 @@ impl Traffic {
         self.capture = Some((path, Capture::new(header, capacity)));
     }
 
+    /// Forward one typed lifecycle event to the rolling capture (if enabled).
+    fn emit_trace(&mut self, event: TraceEvent) {
+        if let Some((_, cap)) = self.capture.as_mut() {
+            cap.emit(event);
+        }
+    }
+
     /// Sample one tick into the rolling capture and persist it on the first trigger.
     fn sample_capture(&mut self) {
         let network_version = NetworkVersion(self.lanes_generation);
@@ -1318,6 +1347,7 @@ impl Traffic {
                         ManeuverPhase::Idle
                     },
                     maneuver_target: c.state.change.map(|ch| LaneId(ch.to)),
+                    lifecycle: Lifecycle::Active,
                     constraints: if slow && no_reason {
                         vec![Reason::Unknown(0)]
                     } else {
@@ -1767,6 +1797,7 @@ impl Traffic {
             junctions: JunctionCoordinator::new(),
             services: ServiceCoordinator::new(),
             maneuvers: ManeuverCoordinator::new(),
+            population: PopulationCoordinator::new(),
             pull_out_rooms: HashMap::new(),
             removed_scheduled: Vec::new(),
             twinned: Default::default(),
@@ -2544,6 +2575,14 @@ impl Traffic {
             if remove && sleeps_instead && !at_end {
                 let c = self.cars.swap_remove(i);
                 asleep += 1;
+                self.population.enter_dormant(
+                    c.id,
+                    SpawnClass::Unscheduled,
+                    c.is_bus(),
+                    c.state.lane,
+                    c.state.s,
+                );
+                self.emit_trace(TraceEvent::DormantEntered { vehicle: c.id });
                 self.dormant.push(DormantCar {
                     id: c.id,
                     ty: c.vehicle.ty.clone(),
@@ -2561,6 +2600,14 @@ impl Traffic {
                 }
             } else if remove {
                 let c = self.cars.swap_remove(i);
+                self.population.release(
+                    c.id,
+                    if unloaded || at_edge {
+                        RemovalCause::Unloaded
+                    } else {
+                        RemovalCause::Finished
+                    },
+                );
                 if c.is_bus() && (unloaded || at_edge) {
                     self.removed_scheduled.push(c.id);
                 }
@@ -2638,8 +2685,13 @@ impl Traffic {
             .collect();
         let street_target =
             (self.target as f32 * density * road_scale(&near_density)).round() as usize;
+        // One frozen occupancy snapshot for this population pass: the domain admission owner
+        // checks physical gaps against the same realized bodies the rest of the tick uses.
+        let pass_tick = (self.time * 1000.0).max(0.0) as u64;
+        let occupancy = Occupancy::build(self.net.version(), pass_tick, self.body_feet(None, &[]));
+        self.population.begin_tick(pass_tick, self.time);
         // the cars that come into range again, where they have got to
-        self.wake_dormant(world, renderer, scene, center, street_target);
+        self.wake_dormant(world, renderer, scene, center, street_target, &occupancy);
         // the whole map's population: as dense as around the player, on every street the
         // map has shown so far (sleeping where the player is not)
         self.fill_map(center, street_target);
@@ -2653,9 +2705,9 @@ impl Traffic {
             if kind == LaneKind::Street && !self.lan_centers.is_empty() {
                 self.count_near = Some((center, self.spawn_radius));
             }
-            self.populate_kind(world, renderer, scene, center, kind, target);
+            self.populate_kind(world, renderer, scene, center, kind, target, &occupancy);
         }
-        self.populate_lan_centers(world, renderer, scene, center, street_target);
+        self.populate_lan_centers(world, renderer, scene, center, street_target, &occupancy);
         if !self.initial {
             self.pull_out_parked(world, renderer, scene, center);
             self.park_in(world, center);
@@ -2931,6 +2983,7 @@ impl Traffic {
         center: DVec3,
         kind: LaneKind,
         target: usize,
+        occupancy: &Occupancy,
     ) {
         let radius = if kind == LaneKind::Air {
             self.spawn_radius * 6.0
@@ -2987,7 +3040,6 @@ impl Traffic {
             })
             .collect();
         let total_w = acc.max(1e-3);
-        let mut attempts = 0;
         let counted_near = self.count_near.take();
         let unscheduled = self
             .cars
@@ -3007,7 +3059,12 @@ impl Traffic {
             })
             .count();
         let mut count = unscheduled;
-        while count < target && attempts < target * 12 {
+        // Submit the deficit as demand to the population owner. The cheap, non-type checks
+        // stay here; the admission decision (budget, path, ground, gap, visibility) belongs
+        // to `traffic::population`, which bounds the queue and the per-pass attempts.
+        let deficit = target.saturating_sub(count);
+        let mut attempts = 0usize;
+        while count < target && deficit > 0 && attempts < target.saturating_mul(12).max(1) {
             attempts += 1;
             let x = self.rand_f() as f32 * total_w;
             let lane = candidates[cumulative
@@ -3031,11 +3088,6 @@ impl Traffic {
             {
                 continue;
             }
-            // A lane's source tile may have gone again.
-            if !world.traffic_path_loaded(&self.net.lanes[lane], p) {
-                continue;
-            }
-            let heading = self.net.lanes[lane].at(s).1 as f64;
             // nor just in front of one driving up to that place (it would have to stop hard)
             let in_front_of_someone = self.cars.iter().any(|c| {
                 let rel = p - c.vehicle.position;
@@ -3066,19 +3118,108 @@ impl Traffic {
             {
                 continue; // not into a car parked in the lane
             }
-            // (a lane may carry none of the groups that drive now: try another)
-            let Some(ty) = self.pick_type(kind, Some(lane)) else {
+            if !self.population.has_room() {
+                break;
+            }
+            self.population
+                .request(SpawnClass::Unscheduled, lane, s);
+            count += 1;
+        }
+        // Annotate every outstanding request of this kind with its runtime facts, then let
+        // the owner decide. Requests of another kind are left untouched for their own pass.
+        let reqs: Vec<SpawnRequest> = self.population.requests().copied().collect();
+        let mut facts: HashMap<SpawnRequestId, SpawnFacts> = HashMap::new();
+        for req in &reqs {
+            let Some(l) = self.net.lanes.get(req.lane) else {
                 continue;
             };
-            // (nor onto the rear section of an articulated bus, nor the player's bus)
-            if kind != LaneKind::Air && !self.spawn_clear(&ty, p, heading) {
+            if l.kind != kind {
                 continue;
             }
-            let seed = self.rand();
-            self.create_car(
-                world, renderer, scene, center, kind, lane, s, ty, seed, None, None, None, None,
+            let s = req.s.clamp(0.0, (l.length() - 0.1).max(0.0));
+            let (p, _) = l.at(s);
+            let ground = kind == LaneKind::Air || world.has_ground(p.x, p.y);
+            let path_valid = kind == LaneKind::Air
+                || !l.next.is_empty()
+                || self
+                    .net
+                    .reach
+                    .get(req.lane)
+                    .map(|r| *r >= ::simulation::traffic::DEAD_END)
+                    .unwrap_or(true);
+            let continuation = self
+                .net
+                .reach
+                .get(req.lane)
+                .map(|r| *r >= ::simulation::traffic::DEAD_END)
+                .unwrap_or(true);
+            let visible = kind == LaneKind::Air || self.initial || self.may_appear(world, p);
+            facts.insert(
+                req.id,
+                SpawnFacts {
+                    path_valid,
+                    continuation,
+                    ground,
+                    visible,
+                },
             );
-            count += 1;
+        }
+        let demand = PopulationDemand {
+            street_target: if kind == LaneKind::Street { target } else { 0 },
+            air_target: if kind == LaneKind::Air { target } else { 0 },
+            unscheduled_count: unscheduled,
+            ..Default::default()
+        };
+        let decisions = {
+            let scene = PopulationScene {
+                net: &self.net,
+                occupancy,
+                demand,
+                initial: self.initial,
+                tick: self.population.tick(),
+            };
+            self.population.plan(&scene, &facts)
+        };
+        for d in decisions {
+            match d.outcome {
+                SpawnOutcome::Admit => {
+                    let lane = d.request.lane;
+                    let s = d.request.s;
+                    // A lane may carry none of the groups that drive now: try another.
+                    let Some(ty) = self.pick_type(kind, Some(lane)) else {
+                        self.emit_trace(TraceEvent::SpawnDenied {
+                            reason: Reason::NoPath,
+                        });
+                        continue;
+                    };
+                    let (p, heading) = {
+                        let l = &self.net.lanes[lane];
+                        let (p, h) = l.at(s.clamp(0.0, (l.length() - 0.1).max(0.0)));
+                        (p, h as f64)
+                    };
+                    // Nor onto the rear section of an articulated bus, nor the player's bus.
+                    if kind != LaneKind::Air && !self.spawn_clear(&ty, p, heading) {
+                        self.emit_trace(TraceEvent::SpawnDenied {
+                            reason: Reason::EntranceBusy,
+                        });
+                        continue;
+                    }
+                    let seed = self.rand();
+                    let id = self.create_car(
+                        world, renderer, scene, center, kind, lane, s, ty, seed, None, None, None,
+                        None,
+                    );
+                    self.emit_trace(TraceEvent::SpawnAdmitted { vehicle: id });
+                }
+                SpawnOutcome::Deny(reason) => {
+                    self.emit_trace(TraceEvent::SpawnDenied { reason });
+                }
+                SpawnOutcome::Retry { .. } => {
+                    self.emit_trace(TraceEvent::SpawnRetried {
+                        request: d.request.id.0,
+                    });
+                }
+            }
         }
     }
 
@@ -3169,59 +3310,86 @@ impl Traffic {
         scene: &mut Scene,
         center: DVec3,
         target: usize,
+        occupancy: &Occupancy,
     ) {
         if self.dormant.is_empty() {
             return;
         }
         let active = self.cars.iter().filter(|c| !c.is_bus() && !c.gone).count();
-        let mut budget = (target as f32 * 1.25).ceil() as usize;
-        budget = budget.saturating_sub(active);
         let centers: Vec<DVec3> = std::iter::once(center)
             .chain(self.lan_centers.iter().copied())
             .collect();
-        let mut i = 0;
-        while i < self.dormant.len() && budget > 0 {
-            let (p, h, ty) = {
-                let d = &self.dormant[i];
+        // Only the actors that have come near are candidates; the coordinator validates the
+        // rest (ground, visibility, gap) and never places one that would overlap.
+        let views: Vec<DormantView> = self
+            .dormant
+            .iter()
+            .filter_map(|d| {
+                let l = self.net.lanes.get(d.lane)?;
+                let (p, _) = l.at(d.s.clamp(0.0, (l.length() - 0.1).max(0.0)));
+                let near = centers
+                    .iter()
+                    .any(|c| (p - *c).truncate().length() < self.spawn_radius);
+                if !near {
+                    return None;
+                }
+                Some(DormantView {
+                    id: d.id,
+                    class: SpawnClass::Unscheduled,
+                    duty: false,
+                    lane: d.lane,
+                    s: d.s,
+                    ground: world.has_ground(p.x, p.y),
+                    visible: self.initial || self.may_appear(world, p),
+                })
+            })
+            .collect();
+        if views.is_empty() {
+            return;
+        }
+        let demand = PopulationDemand {
+            street_target: target,
+            unscheduled_count: active,
+            dormant_capacity: (target as f32 * DORMANT_CAP_FACTOR) as usize,
+            ..Default::default()
+        };
+        let decisions = {
+            let scene = PopulationScene {
+                net: &self.net,
+                occupancy,
+                demand,
+                initial: self.initial,
+                tick: self.population.tick(),
+            };
+            self.population.plan_dormant(&scene, &views)
+        };
+        for dec in decisions {
+            if dec.outcome != SpawnOutcome::Admit {
+                continue;
+            }
+            let Some(pos) = self.dormant.iter().position(|d| d.id == dec.id) else {
+                continue;
+            };
+            let d = self.dormant.swap_remove(pos);
+            let (p, h) = {
                 let l = &self.net.lanes[d.lane];
                 let (p, h) = l.at(d.s.clamp(0.0, (l.length() - 0.1).max(0.0)));
-                (p, h as f64, d.ty.clone())
+                (p, h as f64)
             };
-            let near = centers
-                .iter()
-                .any(|c| (p - *c).truncate().length() < self.spawn_radius);
-            // (as a new car: never close by, where the mirrors and a turn of the head see
-            // it - woken out of the picture 30-60 m from the bus, a car came into being in
-            // the mirror or just round the corner)
-            let ok = near
-                && world.traffic_path_loaded(&self.net.lanes[self.dormant[i].lane], p)
-                && self.may_appear(world, p)
-                && !self
-                .cars
-                .iter()
-                .any(|c| (c.vehicle.position - p).length() < 14.0)
-                && self.spawn_clear(&ty, p, h);
-            if ok {
-                let d = self.dormant.swap_remove(i);
-                self.create_car(
-                    world,
-                    renderer,
-                    scene,
-                    center,
-                    d.kind,
-                    d.lane,
-                    d.s,
-                    d.ty,
-                    d.seed,
-                    Some(d.scheme),
-                    Some(d.id),
-                    Some(d.speed),
-                    None,
-                );
-                budget -= 1;
-            } else {
-                i += 1;
+            // The domain checked the generic gap; the asset-specific clearance is still the
+            // adapter's, so a trailer or the player's bus cannot be woken onto.
+            if !self.spawn_clear(&d.ty, p, h) {
+                self.dormant.push(d);
+                continue;
             }
+            let (kind, lane, s, seed, scheme, speed, id) =
+                (d.kind, d.lane, d.s, d.seed, d.scheme, d.speed, d.id);
+            self.create_car(
+                world, renderer, scene, center, kind, lane, s, d.ty, seed, Some(scheme),
+                Some(id), Some(speed), None,
+            );
+            self.population.note_reactivated(id);
+            self.emit_trace(TraceEvent::DormantReactivated { vehicle: id });
         }
     }
 
@@ -3292,7 +3460,11 @@ impl Traffic {
                 acc
             })
             .collect();
+        let dormant_capacity = (street_target as f32 * DORMANT_CAP_FACTOR) as usize;
         for _ in 0..(map_target - present).min(64) {
+            if !self.population.dormant_has_room(dormant_capacity) {
+                break;
+            }
             let x = self.rand_f() as f32 * acc;
             let lane = outside[cumulative
                 .partition_point(|&c| c < x)
@@ -3310,6 +3482,13 @@ impl Traffic {
             };
             let id = VehicleId(self.next_id);
             self.next_id += 1;
+            self.population.enter_dormant(
+                id,
+                SpawnClass::Unscheduled,
+                false,
+                lane,
+                s,
+            );
             self.dormant.push(DormantCar {
                 id,
                 ty,
@@ -3685,19 +3864,24 @@ impl Traffic {
         number: Option<(String, String)>,
         hof: Option<Arc<::legacy_vehicle::Hof>>,
         scheme: Option<Option<usize>>,
-    ) -> Option<usize> {
-        let &lane = route.first()?;
-        let kind = self.net.lanes.get(lane)?.kind;
-        // the options' [AIMaxCountScheduled]: no more timetable vehicles than that at once
-        if self.max_scheduled > 0
-            && self
+    ) -> Result<usize, Reason> {
+        let &lane = route.first().ok_or(Reason::NoPath)?;
+        let kind = self.net.lanes.get(lane).ok_or(Reason::NoPath)?.kind;
+        // the options' [AIMaxCountScheduled]: no more timetable vehicles than that at once.
+        // Scheduled capacity is a distinct budget from the random population.
+        let scheduled_count = self
             .cars
             .iter()
             .filter(|c| c.is_bus() || !c.state.route.is_empty())
-            .count()
-            >= self.max_scheduled as usize
-        {
-            return None;
+            .count();
+        let demand = PopulationDemand {
+            scheduled_cap: self.max_scheduled,
+            scheduled_count,
+            ..Default::default()
+        };
+        if let SpawnOutcome::Deny(reason) = self.population.scheduled_admission(&demand) {
+            self.emit_trace(TraceEvent::SpawnDenied { reason });
+            return Err(reason);
         }
         let seed = self.rand();
         let setup = BusSetup {
@@ -3725,7 +3909,12 @@ impl Traffic {
             None,
             Some(setup),
         );
-        let ci = self.cars.iter().rposition(|c| c.id == id)?;
+        let ci = self
+            .cars
+            .iter()
+            .rposition(|c| c.id == id)
+            .ok_or(Reason::NoPath)?;
+        self.emit_trace(TraceEvent::SpawnAdmitted { vehicle: id });
         if kind == LaneKind::Air {
             let p = self.cars[ci].vehicle.position;
             let ground = world
@@ -3745,7 +3934,7 @@ impl Traffic {
                 self.cars[ci].state.speed * 3.6
             );
         }
-        Some(ci)
+        Ok(ci)
     }
 
     /// Nearest vehicle ahead of position `s` on `lane` (following the lanes `plan` has
@@ -6192,6 +6381,11 @@ impl Traffic {
             self.junctions.release(c.id, Reason::Removed);
             self.services.release(c.id);
             self.maneuvers.release(c.id);
+            self.population.release(c.id, RemovalCause::Finished);
+            self.emit_trace(TraceEvent::Removal {
+                vehicle: c.id,
+                reason: Reason::Removed,
+            });
             self.orphan_sounds.extend(c.sounds);
             // the renders go back to the world at the next sync
             self.released.push(c.render);
@@ -6684,6 +6878,7 @@ impl Traffic {
         // a route change drops any berth the vehicle held against the old stops
         self.services.release(id);
         self.maneuvers.release(id);
+        self.population.retain_on_way(id, &route);
         let net = &self.net;
         let car = &mut self.cars[ci];
         let lane = car.state.lane;
@@ -6742,6 +6937,11 @@ impl Traffic {
         self.junctions.release(id, Reason::Removed);
         self.services.release(id);
         self.maneuvers.release(id);
+        self.population.release(id, RemovalCause::TakenOver);
+        self.emit_trace(TraceEvent::Removal {
+            vehicle: id,
+            reason: Reason::Removed,
+        });
         self.orphan_sounds.extend(c.sounds);
         for r in std::iter::once(c.render).chain(c.trailer_renders) {
             world.release_vehicle(renderer, scene, r);
@@ -6766,6 +6966,7 @@ impl Traffic {
         self.junctions.invalidate_network();
         self.services.invalidate_network();
         self.maneuvers.invalidate_network();
+        self.population.clear();
         self.stop_wishes = None;
         self.framed_spawns.clear();
         self.held_at_red = 0;
@@ -7333,6 +7534,9 @@ impl Traffic {
             // a grown/changed network invalidates every junction claim made against the old one
             self.junctions.invalidate_network();
             self.maneuvers.invalidate_network();
+            // queued demand and entrance backpressure are stale; the dormant registry (identity
+            // and duty) survives because lane indices are stable
+            self.population.invalidate_network();
             self.street_weight += self.net.lanes[added.clone()]
                 .iter()
                 .filter_map(street_lane_weight)
@@ -7609,6 +7813,7 @@ impl Traffic {
         scene: &mut Scene,
         center: DVec3,
         target: usize,
+        occupancy: &Occupancy,
     ) {
         let centers = self.lan_centers.clone();
         let mut done = vec![center];
@@ -7620,7 +7825,7 @@ impl Traffic {
                 continue;
             }
             self.count_near = Some((c, self.spawn_radius));
-            self.populate_kind(world, renderer, scene, c, LaneKind::Street, target);
+            self.populate_kind(world, renderer, scene, c, LaneKind::Street, target, occupancy);
             self.count_near = None;
             done.push(c);
         }

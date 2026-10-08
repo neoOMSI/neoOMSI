@@ -36,7 +36,7 @@ behaviour; the exact semantics of unresolved fields stay `unknown` until their o
 | `D1` | Retain the per-path `[crossingproblem]` flag through network compilation and establish its decision semantics | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), [assembly/007b432c.asm](H:/marcel_omsi/assembly/007b432c.asm) `007b788a`/`007b78c6` | 2, 5 | done (Stage 5: keep-clear entry refusal) |
 | `D2` | Retain both `[blockpath]` values as a typed block rule with mode; determine directional/admission/occupancy meaning | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), `007b78d3`/`007b79cb`/`007b7a4a` | 2, 3, 5 | done (Stage 5: `BlockMode` Occupy/Reserve/Oncoming) |
 | `D3` | Audit and import all five `[ai_brakeperformance]` values; only element 4 is consumed today | [`crates/vehicle/src/vehicle/parse.rs`](../../crates/vehicle/src/vehicle/parse.rs), [`bus_service::stop_shift`](../../crates/core/src/bus_service.rs) | 2, 4, 6 | partial |
-| `D4` | Add the `ev_AI_Horn` behaviour event through the script adapter with cooldown and diagnostics | `007db679`/`007db683`; [Traffic AI guide](H:/marcel_omsi/subsystems/traffic_ai.md) | 7, 9 | gap |
+| `D4` | Add the `ev_AI_Horn` behaviour event through the script adapter with cooldown and diagnostics | `007db679`/`007db683`; [Traffic AI guide](H:/marcel_omsi/subsystems/traffic_ai.md) | 7, 9 | deferred (Stage 7: the reference proves the event, not its trigger; presentation feedback must not resolve a blocked maneuver — Stage 9) |
 | `D5` | Honour script-facing station state (`AI_Scheduled_AtStation`) and separate safe fallback from unsafe doors | [functions/007eab20.md](H:/marcel_omsi/functions/007eab20.md), `007eb4bc` | 6 | done (Stage 6: typed `ScriptFeedback`) |
 | `D6` | Re-establish stop length, boarding region, docking reach (`BAY_REACH`) and lateral placement as separate concepts | `00620004.asm` shows `00620058` is list traversal, not metadata; [`bus_service`](../../crates/core/src/bus_service.rs) | 2, 6 | done (Stage 6: `BerthGeometry`) |
 | `D7` | Remove the unconditional full-exit override after `GRIDLOCK_WAIT`; models admission, occupancy, recovery separately | [`Traffic::junction_stop`](../../crates/core/src/traffic.rs) | 5 | done (Stage 5) |
@@ -416,4 +416,58 @@ scenario passes:
 | Passing feasibility by `car.body.sweep_clearance` over the outbound path only | L2 `Occupancy::swept_clearance` over the outbound **and** return ghost path | The whole maneuver (return included, trailer/part bodies and pedestrians) is checked in the same frozen snapshot; the physical `AiBody` sweep stays for realization. |
 | `plan_lane_change`'s immediate overtake/keep-right | `DISCRETIONARY_DWELL` + `OSCILLATION_WINDOW` + `change_cooldown` in the coordinator | A flickering local condition cannot make a car jerk between lanes; `B4` oscillation is bounded by construction. |
 | `const CREEP_PAST` and the `accel_cap` derived in core each tick | `ManeuverDecision::accel_cap` from the passing plan | The edge-out accel cap belongs to the maneuver that needs it, and it is reset when no maneuver wants it. |
+
+## Stage 8 progress
+
+- `traffic::population` (L3/L4) is the single owner of demand, eligibility/admission, the
+  dormant lifecycle and topology demand, mirroring `junctions`, `service` and `maneuvers`.
+  It keeps four things the legacy pass mixed together distinct: **demand**, **admission**
+  (valid path, feasible continuation, loaded ground, physical gap, presentation visibility),
+  **physical occupancy** (read from the frozen `Occupancy`, never written) and **presentation
+  visibility**. A population target is not an order to fill every free-looking lane.
+- `PopulationCoordinator` owns the bounded request queue, per-entrance backpressure, retry
+  timers, the dormant registry (identity/class/duty/progress) and the bounded topology demand.
+  `SpawnDecision` (`Admit`/`Deny(reason)`/`Retry`) and `DormantDecision` are the typed outputs;
+  `SpawnAdmitted`/`SpawnDenied`/`SpawnRetried`/`DormantEntered`/`DormantReactivated`/
+  `TopologyRequested` are the events. `begin_tick`/`plan`/`plan_dormant`/`release`/
+  `retain_on_way`/`invalidate_network` mirror the other owners' hooks.
+- `A10` is done: admission is a deterministic bounded queue (`QUEUE_MAX`, `ADMIT_PER_PASS`);
+  a busy entrance backs off (`ENTRANCE_BACKOFF`) and retries instead of stacking vehicles, and
+  over-budget demand is denied with `AtCapacity` rather than growing the queue. Two placements
+  admitted in the same pass cannot overlap (same-pass placement set). Scheduled duty capacity
+  and unscheduled demand are distinct budgets (`scheduled_admission` vs the random queue).
+- Dormant lifecycle: identity, class and duty ownership are kept by the coordinator while a
+  vehicle is out of the active area; the kinematic step and assets stay in the adapter.
+  Reactivation validates ground, visibility and gap before any body is rebuilt, so dormant
+  motion cannot create an overlap; `release` is once-only for a known dormant actor.
+- Topology vs active ground: the loaded network is separate from `has_ground`/collision
+  availability. A scheduled bus on an unloaded route tile asks for that tile
+  (`request_topology_tile`); core appends the wanted frontier centres to `Streamer::update`
+  (the streaming owner is unchanged) and validates re-entry before physical placement.
+- Recovery by cause: stale claims (junctions), pending content (schedule `waiting`/`retry_at`),
+  a legally rerouted random car, an explicitly faulted scheduled route (`RoutePending` /
+  `InvalidRoute`), and suspend/remove through one documented transition. Removal releases
+  junction/service/maneuver/population state and renders exactly once; the streaming removal
+  branch that used to skip `junctions`/`services`/`maneuvers` release now releases them.
+- `B7` is updated: congestion is honest — over-capacity demand is diagnosed, not bypassed; a
+  full scheduled budget makes the duty retry (`Placed::Busy`) instead of silently dropping it.
+- LAN: the host remains the single authority; a mirror client never requests or admits
+  (it only presents replicated committed state), and an authority change or time reset keeps
+  duty ownership without duplicating it. No replication schema change.
+- `A9` trace schema: `VehicleSnapshot` gained `lifecycle`; `TRACE_VERSION` is 6.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`.
+- Exit-gate scenarios: `tests/s8_overload_backpressure.rs`, `s8_streaming_identity.rs`,
+  `s8_dormant_reactivation.rs`, `s8_lan_authority.rs`, the `common::population` fixture and
+  unit tests in `population`.
+
+### Stage 8 replacement reason trail
+
+| Replaced check | Replacement | Why it is equivalent or better |
+| --- | --- | --- |
+| `populate_kind`'s inline `create_car` loop with per-attempt `may_appear`/ground/14 m checks | `traffic::population::PopulationCoordinator::plan` over a bounded request queue | One owner of admission and its budget; a blocked entrance retries instead of consuming the attempt budget, and denials are typed. |
+| `wake_dormant`'s inline `has_ground`/`may_appear`/14 m/`spawn_clear` gate | `PopulationCoordinator::plan_dormant` (identity kept) + adapter `spawn_clear` | Identity, duty and once-only removal live in the domain; the generic gap is checked in the same frozen snapshot, the asset-specific clearance stays with the adapter. |
+| `spawn_bus`'s silent `None` on `[AIMaxCountScheduled]` | Typed `Result<usize, Reason>` + `scheduled_admission`; schedule maps `AtCapacity`/`EntranceBusy` to `Placed::Busy` | A full scheduled budget is a diagnosed wait with a retry, not a duty that quietly disappears. |
+| The streaming removal branch skipping `junctions`/`services`/`maneuvers` release | `population.release` plus the existing coordinator releases on every removal path | Resources and duty notifications are released exactly once, including a car removed by tile unload. |
+| `fill_map`'s inline `MAP_POPULATION_FACTOR` cap with unregistered dormant cars | `PopulationCoordinator::dormant_has_room` + `enter_dormant` | The whole-map dormant population is bounded by the owner and its identity/duty are registered for reactivation. |
+| No tile demand ahead of a route frontier | `request_topology_tile` + `topology_centers` fed to the streamer | A bus reaches loaded ground where feasible instead of stopping at the loaded edge. |
 

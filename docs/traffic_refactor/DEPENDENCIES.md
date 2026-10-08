@@ -288,6 +288,54 @@ core ─┘                          (never the reverse)
   maneuver owner parks in one space per lane.
 - Population/streaming backpressure and dormant lifecycle are Stage 8.
 
+## Current state after Stage 8
+
+- `crates/traffic/src/population.rs` (L3/L4) is the single owner of demand, eligibility/
+  admission, the dormant lifecycle and topology demand, mirroring `junctions`, `service` and
+  `maneuvers`:
+  - `PopulationCoordinator` holds the bounded request queue, per-entrance backpressure and
+    retry timers, the dormant registry (identity, class, duty, progress), the topology demand
+    and the capacity/backpressure counters. All fields are private.
+  - `PopulationScene` (network, frozen `Occupancy`, `PopulationDemand`, `initial`, tick) and
+    `DormantView` are the frozen per-pass inputs; `SpawnDecision`
+    (`Admit`/`Deny(Reason)`/`Retry`) and `DormantDecision` are the typed outputs. `SpawnFacts`
+    carries the content/runtime facts the domain cannot know (path, continuation, ground,
+    visibility). `RemovalCause` classifies recovery by cause.
+  - `begin_tick`/`plan`/`plan_dormant`/`release`/`retain_on_way`/`invalidate_network`/`clear`
+    mirror the other owners' hooks. Admission is deterministic FIFO, bounded by `QUEUE_MAX`
+    and `ADMIT_PER_PASS`; a busy entrance backs off (`ENTRANCE_BACKOFF`) and over-budget
+    demand is denied with `AtCapacity`. Same-pass admissions are checked against each other.
+  - The dormant registry owns identity/class/duty; the kinematic step and `Arc<VehicleType>`
+    assets stay in the adapter. Reactivation validates ground, visibility and gap before any
+    body is rebuilt; `release` is once-only for a known dormant actor.
+- Core is the adapter: `Traffic` owns a `PopulationCoordinator`; `populate_seen` builds one
+  frozen `Occupancy` per pass and registers sleeping cars and `fill_map` dormant cars;
+  `populate_kind` submits bounded demand and applies the typed decisions (`pick_type` +
+  `spawn_clear` stay asset-side); `wake_dormant` validates through `plan_dormant`; `spawn_bus`
+  returns a typed `Result<usize, Reason>` and schedule maps capacity/entrance denials to
+  `Placed::Busy`. `add_tiles`/`reset_population`/`remove_car`/the tick removal loop and the
+  streaming removal branch all release through the coordinators exactly once.
+- Topology demand: `Traffic::request_topology_tile`/`topology_centers`; schedule asks for the
+  tile a waiting bus needs next and `app::drive_streaming` appends the wanted centres to
+  `Streamer::update` (the streaming owner is unchanged).
+- LAN stays host-authoritative with no replication-schema change: a mirror client makes no
+  population decisions, and an authority change or time reset preserves duty ownership.
+- `VehicleSnapshot` gained `lifecycle`; `TRACE_VERSION` is 6.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`.
+- Exit-gate scenarios: `crates/traffic/tests/s8_overload_backpressure.rs`,
+  `s8_streaming_identity.rs`, `s8_dormant_reactivation.rs`, `s8_lan_authority.rs`, with the
+  `common::population` fixture and unit tests in `population`.
+- The replacement reason trail is recorded in `BACKLOG.md` under
+  "Stage 8 replacement reason trail".
+
+### Stage 8 remaining (documented, not claimed done)
+
+- The dormant kinematic advance still runs in the adapter (`Traffic::advance_dormant`) because
+  it needs the AI-list type pools; the domain owns the logical lifecycle and validation. Moving
+  the kinematics into the domain would need the type-pool/lane data pushed into a scene.
+- Performance and soak budgets (100/500/1000 vehicles, 60-minute streaming/time-reset runs)
+  have no harness yet and stay provisional for Stage 9.
+
 ## Deletion rule
 
 Do not remove the shim or any compatibility re-export until its callers have migrated to

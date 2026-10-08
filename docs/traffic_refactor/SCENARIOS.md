@@ -99,6 +99,20 @@ live under `crates/traffic/tests/` with the `common::maneuver` kinematic fixture
 | `s7_articulated_clearance.rs` | A car clears the obstacle; a wider (articulated) body does not start the same pass because its swept body would clip it. |
 | `s7_no_oscillation.rs` | Under a steady input consecutive discretionary lane changes keep `OSCILLATION_WINDOW` apart and do not flap. |
 
+## Stage 8 scenarios (headless, at the population coordinator level)
+
+Stage 8 makes the "Missing route, streaming extension, dormant reactivation" and "Excess
+spawn demand and multiple viewers/LAN players" acceptance rows executable against the real
+`traffic::population` coordinator (no renderer, no OMSI assets). The fixtures live under
+`crates/traffic/tests/` with the `common::population` fixture.
+
+| File | Required behaviour |
+| --- | --- |
+| `s8_overload_backpressure.rs` | Excess demand becomes diagnosed capacity-limited demand: the request queue is bounded, a busy entrance retries instead of stacking, over-budget requests are denied with `AtCapacity`, and two placements admitted in one pass never overlap. |
+| `s8_streaming_identity.rs` | Repeated tile load/unload and camera-range changes preserve dormant identities and duty counts; a reactivated actor keeps its identity and duty. |
+| `s8_dormant_reactivation.rs` | A dormant actor whose wake spot is occupied or ungrounded stays dormant; once the gap clears it is placed back, and no reactivation overlaps. |
+| `s8_lan_authority.rs` | A mirror client makes no population decisions; the host is the single authority; an authority change or time reset preserves duty ownership without duplicating it. |
+
 ## Provisional measurement targets
 
 NeoOMSI targets, not constants established by the reference report. Each is calibrated as
@@ -110,6 +124,7 @@ its stage becomes runnable; performance and soak budgets are frozen before Stage
 | Docking | Longitudinal error ≤ 0.5 m, lateral ≤ 0.25 m, speed < 0.1 m/s before boarding permission, measured against boarding geometry | Stage 6 |
 | Progress | Each clearance scenario has a deadline from blocker removal to first movement and to full discharge, derived from route length, acceleration, and reaction limits; no single global timeout | Stages 4–5 |
 | Service | Exactly one physical/logical owner per duty instance; once-only served/skipped stop events; zero false arrivals and duplicate trip spawns; zero departures with known unsafe door/doorway state | Stage 6 |
+| Population | Bounded demand/admission (no unbounded queue), zero overlapping spawns, dormant identity/duty preserved across streaming and time resets, host-only authority | Stage 8 |
 | Natural motion | Record acceleration, jerk, lateral acceleration, steering rate, headway, emergency-brake frequency, unnecessary stop/restart cycles, manoeuvre reversals, and delay after a usable gap; normal driving within the comfort envelope, emergency exceptions carry a reason | Stages 4, 9 |
 | Replay | Seeded repeat runs preserve decision/event hashes on the same platform; reordered storage or worker count has no semantic effect; cross-platform uses documented float tolerances | Stage 1, 9 |
 | Performance | Benchmarks at 100, 500, and 1000 active road vehicles under ordinary and congested junction loads; record p50/p95/p99 tick cost, allocation rate, memory, streaming cost on named hardware | Stage 9 (no harness exists yet) |

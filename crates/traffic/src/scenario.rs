@@ -124,6 +124,7 @@ mod tests {
                     service_stop: None,
                     maneuver_phase: crate::diagnostics::ManeuverPhase::Idle,
                     maneuver_target: None,
+                    lifecycle: crate::diagnostics::Lifecycle::Active,
                     constraints: vec![Reason::RedSignal],
                     binding: Some(Reason::RedSignal),
                 }],

@@ -7,7 +7,7 @@
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
 /// Version of the capture schema. Any field addition, removal, or semantic change bumps it.
-pub const TRACE_VERSION: u32 = 5;
+pub const TRACE_VERSION: u32 = 6;
 
 /// Why a vehicle cannot proceed at full freedom. Every active cause is preserved; one of
 /// them is the binding constraint.
@@ -40,6 +40,14 @@ pub enum Reason {
     StaleClaim,
     /// The vehicle left the network (removed, taken over, unloaded): its claims are released.
     Removed,
+    /// A spawn was refused because the candidate has no valid path from here.
+    NoPath,
+    /// A spawn was refused because the ground under the candidate is not loaded.
+    NoGround,
+    /// A spawn (or a scheduled duty) was refused because the population budget is full.
+    AtCapacity,
+    /// A spawn was refused because the entrance is busy; the request is retried later.
+    EntranceBusy,
     /// A mechanism whose semantics are not yet established, kept as data.
     Unknown(u16),
 }
@@ -88,6 +96,10 @@ impl Reason {
             Reason::Emergency => "emergency",
             Reason::StaleClaim => "stale",
             Reason::Removed => "removed",
+            Reason::NoPath => "no_path",
+            Reason::NoGround => "no_ground",
+            Reason::AtCapacity => "capacity",
+            Reason::EntranceBusy => "entrance",
             Reason::Unknown(_) => "unknown",
         }
     }
@@ -104,6 +116,8 @@ impl Reason {
                 | Reason::StopTarget
                 | Reason::RoutePending
                 | Reason::Parking
+                | Reason::AtCapacity
+                | Reason::EntranceBusy
         )
     }
 }
@@ -328,6 +342,47 @@ pub enum TraceEvent {
     SpawnDenied {
         reason: Reason,
     },
+    /// A spawn request could not be admitted this pass and is queued for a later one.
+    SpawnRetried {
+        request: u64,
+    },
+    /// A vehicle left the active area and lives on as a dormant logical actor.
+    DormantEntered {
+        vehicle: VehicleId,
+    },
+    /// A dormant actor was validated and placed back as a full vehicle.
+    DormantReactivated {
+        vehicle: VehicleId,
+    },
+    /// A loaded tile is wanted ahead of a route frontier before a vehicle reaches it.
+    TopologyRequested {
+        tile: (i32, i32),
+    },
+}
+
+/// Where a vehicle is in its population lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lifecycle {
+    /// A full vehicle on the road.
+    #[default]
+    Active,
+    /// Out of the active area: identity and duty kept, no body (see `traffic::population`).
+    Dormant,
+    /// Due to spawn but not placed yet (waiting for a gap, ground or a retry).
+    Pending,
+    /// Removed; kept only so a removal is diagnosed exactly once.
+    Removed,
+}
+
+impl Lifecycle {
+    pub fn label(self) -> &'static str {
+        match self {
+            Lifecycle::Active => "active",
+            Lifecycle::Dormant => "dormant",
+            Lifecycle::Pending => "pending",
+            Lifecycle::Removed => "removed",
+        }
+    }
 }
 
 /// A per-vehicle record in one frozen tick.
@@ -362,6 +417,8 @@ pub struct VehicleSnapshot {
     pub maneuver_phase: ManeuverPhase,
     /// The lane a lane change is moving over to this tick, if any.
     pub maneuver_target: Option<LaneId>,
+    /// Where the vehicle is in its population lifecycle.
+    pub lifecycle: Lifecycle,
     /// Every active cause, not just the nearest.
     pub constraints: Vec<Reason>,
     /// The cause that currently binds.
@@ -472,6 +529,7 @@ impl Capture {
             if let Some(t) = v.maneuver_target {
                 h = fnv(h, &t.index().to_le_bytes());
             }
+            h = fnv(h, v.lifecycle.label().as_bytes());
             for c in &v.constraints {
                 h = fnv(h, c.label().as_bytes());
             }
@@ -545,6 +603,7 @@ mod tests {
                 service_stop: None,
                 maneuver_phase: ManeuverPhase::Idle,
                 maneuver_target: None,
+                lifecycle: Lifecycle::Active,
                 constraints: binding.into_iter().collect(),
                 binding,
             }],

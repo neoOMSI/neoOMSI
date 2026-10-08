@@ -9,12 +9,13 @@ replayable, unlike those ad-hoc dumps.
 ## Versioning
 
 - `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change bumps
-  it. It is currently **5**: Stage 7 added the per-vehicle `maneuver_phase`
-  (`Idle`/`RouteChange`/`LaneChange`/`Passing`/`PassingAbort`/`Parking`/`PullOut`/`Docking`/
-  `Departing`) and `maneuver_target` (the lane a lane change is moving over to), the single
-  writer being `traffic::maneuvers`; Stage 6 had added `service_phase`, `berth_owner` and
-  `service_stop`; Stage 5 had added `junction_state`/`junction_blocker`; Stage 4 had added the
-  `motion_feedback` fields.
+  it. It is currently **6**: Stage 8 added the per-vehicle `lifecycle`
+  (`Active`/`Dormant`/`Pending`/`Removed`), the spawn-denial reasons `NoPath`, `NoGround`,
+  `AtCapacity` and `EntranceBusy`, and the lifecycle events `SpawnRetried`, `DormantEntered`,
+  `DormantReactivated` and `TopologyRequested`, the single writer of admission being
+  `traffic::population`; Stage 7 had added `maneuver_phase`/`maneuver_target`; Stage 6 had
+  added `service_phase`, `berth_owner` and `service_stop`; Stage 5 had added
+  `junction_state`/`junction_blocker`; Stage 4 had added the `motion_feedback` fields.
 - A capture writes a header record containing `trace_version`, `source_revision`, `platform`,
   `seed`, `tick_hz`, `network_version`, and the ordered-input digest.
 - Unknown fields are read as absent; readers reject a mismatched major `trace_version`.
@@ -67,6 +68,7 @@ Per vehicle:
 | `service_stop` | `StopId` or none | The stop whose berth it is at or waiting for |
 | `maneuver_phase` | enum | See below; written only by `traffic::maneuvers` |
 | `maneuver_target` | `LaneId` or none | The lane a lane change is moving over to this tick |
+| `lifecycle` | enum | See below; written only by `traffic::population` |
 | `motion_feedback` | | Commanded vs realised accel/speed, applied steering/speed bounds |
 | `why` | reason + gap | Convenience projection of the binding constraint |
 
@@ -80,12 +82,16 @@ identify the binding one separately. Initial reason set:
 RedSignal, Amber, Yield, OccupiedExit, JunctionClaim, Leader, Pedestrian,
 BerthBusy, DoorHold, StationRelease, RoutePending, InvalidRoute, SpeedLimit,
 Curvature, StopTarget, MissedStop, ScriptTimeout, Parking, PullOut, Passing,
-Emergency, StaleClaim, Unknown(u16)
+Emergency, StaleClaim, Removed, NoPath, NoGround, AtCapacity, EntranceBusy,
+Unknown(u16)
 ```
 
-`Unknown(..)` exists so unresolved legacy mechanisms (for example the exact
-`[crossingproblem]` / `[blockpath]` semantics) are captured as data with provenance rather
-than discarded or guessed.
+`NoPath`, `NoGround`, `AtCapacity` and `EntranceBusy` are the typed spawn-denial causes
+(`traffic::population`): an invalid/uncontinuable path, unloaded ground, a full population
+budget, and a busy entrance that retries later. `AtCapacity`/`EntranceBusy` are valid waits
+(a diagnosed capacity limit is not a fault). `Unknown(..)` exists so unresolved legacy
+mechanisms (for example the exact `[crossingproblem]` / `[blockpath]` semantics) are captured
+as data with provenance rather than discarded or guessed.
 
 ## Junction and service state enums
 
@@ -96,12 +102,15 @@ ServicePhase  = EnRoute | Approach | WaitingForBerth | Docking | Boarding
               | Layover | NextTrip | OutOfService | RoutePending | ServiceFault(reason)
 ManeuverPhase = Idle | RouteChange | LaneChange | Passing | PassingAbort
               | Parking | PullOut | Docking | Departing
+Lifecycle     = Active | Dormant | Pending | Removed
 ```
 
 Some phases may share code, but their transition conditions must remain explicit. A free
 curb stop may pass through `WaitingForBerth` immediately. `ManeuverPhase` is the lateral half
 of a maneuver and is owned by `traffic::maneuvers`; `Docking`/`Departing` are the service
-owner's berth lateral request as the maneuver owner approves it.
+owner's berth lateral request as the maneuver owner approves it. `Lifecycle` is owned by
+`traffic::population`: a `Dormant` actor keeps its identity and duty but has no body, and
+`Pending` demand has not been admitted onto the road yet.
 
 ## Transition events
 
@@ -110,11 +119,16 @@ Emit exactly once per transition, each with `tick`, `sim_time`, and the stable I
 ```text
 StopArrival, BoardingPermission, CloseRequest, Departure, TripComplete,
 DutyHandover, Fault(reason), Removal(reason), ClaimGranted, ClaimReleased,
-BerthGranted, BerthReleased, SpawnAdmitted, SpawnDenied(reason)
+BerthGranted, BerthReleased, SpawnAdmitted, SpawnDenied(reason),
+SpawnRetried(request), DormantEntered(vehicle), DormantReactivated(vehicle),
+TopologyRequested(tile)
 ```
 
 `schedule`, passengers, scripts, and LAN adapters consume these through typed boundaries.
 Removal must notify schedule and passengers and release resources exactly once.
+`SpawnAdmitted`/`SpawnDenied` are the population owner's decisions; `DormantEntered`/
+`DormantReactivated` are the logical dormant lifecycle, and `TopologyRequested` records a
+loaded tile wanted ahead of a route frontier.
 
 ## Valid waits vs errors
 

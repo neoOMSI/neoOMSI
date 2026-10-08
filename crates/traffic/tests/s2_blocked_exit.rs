@@ -100,6 +100,7 @@ fn s2_waiting_never_grants_passage() {
                 service_stop: None,
                 maneuver_phase: traffic::ManeuverPhase::Idle,
                 maneuver_target: None,
+                lifecycle: traffic::Lifecycle::Active,
                 constraints: if blocked { vec![Reason::OccupiedExit] } else { Vec::new() },
                 binding: if blocked { Some(Reason::OccupiedExit) } else { None },
             }],

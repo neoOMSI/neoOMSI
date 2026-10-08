@@ -115,6 +115,7 @@ impl S1 {
                 service_stop: None,
                 maneuver_phase: traffic::ManeuverPhase::Idle,
                 maneuver_target: None,
+                lifecycle: traffic::Lifecycle::Active,
                 constraints: if red { vec![Reason::RedSignal] } else { Vec::new() },
                 binding: if red { Some(Reason::RedSignal) } else { None },
             })

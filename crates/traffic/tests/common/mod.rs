@@ -7,6 +7,7 @@
 
 pub mod maneuver;
 pub mod service;
+pub mod population;
 
 use glam::DVec3;
 use hashbrown::HashMap;
