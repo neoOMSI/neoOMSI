@@ -287,8 +287,9 @@ struct PointLight {
     color: vec4<f32>, // rgb, w intensity
     dir: vec4<f32>,   // spot direction, w cosine of the outer cone (< -1.5: a point light)
     extra: vec4<f32>, // enhanced path: cosine of the inner cone, core radius, beam gain, radius
-    occ: vec4<f32>,   // x/y: occluders, z: spot shadow, w: cookie slot
+    occ: vec4<f32>,   // x/y: occluders, z: spot shadow
     cookie_up: vec4<f32>,
+    cookie_slot: vec4<u32>,
 };
 @group(0) @binding(3) var<storage, read> lights: array<PointLight>;
 // per cell CELL_CAP light indices, 0xffffffff = empty
@@ -962,17 +963,25 @@ fn light_shadow(l: PointLight, p: vec3<f32>) -> f32 {
     return light_shadow_boxes(l, p);
 }
 
-const COOKIE_GAIN: f32 = 14.0;
 const COOKIE_HORIZONTAL_SPAN: f32 = 1.6755160819; // 96 degrees
 const COOKIE_VERTICAL_SPAN: f32 = 0.8377580410; // 48 degrees
+
+fn cookie_linear(encoded: f32) -> f32 {
+    let c = clamp(encoded, 0.0, 1.0);
+    return select(c / 12.92, pow((c + 0.055) / 1.055, 2.4), c > 0.04045);
+}
+
 fn cookie_factor(l: PointLight, from_lamp: vec3<f32>) -> f32 {
-    let slot = u32(l.occ.w + 0.5);
+    let slot = l.cookie_slot.x;
     if (slot == 0u) {
         return 1.0;
     }
     let forward = normalize(l.dir.xyz);
     let up0 = normalize(l.cookie_up.xyz);
-    let right = normalize(cross(forward, up0));
+    let right0 = cross(forward, up0);
+    let fallback_up = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 0.0), abs(forward.z) > 0.99);
+    let fallback_right = normalize(cross(forward, fallback_up));
+    let right = normalize(select(fallback_right, right0, dot(right0, right0) > 1e-6));
     let up = normalize(cross(right, forward));
     let ray = normalize(from_lamp);
     let horizontal = atan2(dot(ray, right), dot(ray, forward));
@@ -984,8 +993,8 @@ fn cookie_factor(l: PointLight, from_lamp: vec3<f32>) -> f32 {
     if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
         return 0.0;
     }
-    let encoded = textureSample(t_cookie, s_cookie, uv, i32(slot - 1u)).r;
-    return pow(encoded, 2.2) * COOKIE_GAIN;
+    let encoded = textureSampleLevel(t_cookie, s_cookie, uv, i32(slot - 1u), 0.0).r;
+    return cookie_linear(encoded);
 }
 
 fn light_shadow_boxes(l: PointLight, p: vec3<f32>) -> f32 {

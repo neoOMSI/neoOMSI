@@ -508,6 +508,7 @@ pub(crate) fn make_app(
         quick_menu_open: false,
         quick_alt_armed: false,
         quick_confirm_end_duty: false,
+        quick_menu_selected: "place",
         quick_menu_session: false,
         menu_top: None,
         menu_scroll_drag: false,

@@ -308,12 +308,6 @@ impl Renderer {
                     resource: wgpu::BindingResource::TextureView(&self.sky_lut_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 17,
-                    resource: wgpu::BindingResource::TextureView(
-                        &self.probe.as_ref().expect("reflection probe").cube_view,
-                    ),
-                },
-                wgpu::BindGroupEntry {
                     binding: 18,
                     resource: wgpu::BindingResource::TextureView(&self.lm_atlas_view),
                 },

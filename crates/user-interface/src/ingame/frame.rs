@@ -20,7 +20,7 @@ impl Ui {
             chat: ChatWidget::default(),
             menu_rects: Vec::new(),
             quick_rects: Vec::new(),
-            quick_confirm_rects: [[0.0; 4]; 2],
+            quick_confirm_rects: Vec::new(),
             menu_arrows: Vec::new(),
             menu_scroll_thumb: None,
             menu_scroll_track: None,

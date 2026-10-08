@@ -36,6 +36,14 @@ impl App {
             Some(k) if self.chooser.is_some() => game_lists::page_titles(self, k),
             _ => None,
         };
+        let quick_items: Vec<_> = crate::game_menu::QUICK_MENU
+            .iter()
+            .map(|&(id, label)| ui::QuickMenuItem {
+                id,
+                label,
+                disabled: self.quick_action_disabled(id),
+            })
+            .collect();
         if let (true, Some(r), Some(scene)) = (
             self.world.is_some(),
             self.renderer.as_ref(),
@@ -253,22 +261,6 @@ impl App {
                         None => (Vec::new(), None),
                     };
                 let menu_disabled: &[&str] = &[];
-                let quick_disabled = [
-                    false,
-                    self.player.is_none(),
-                    self.player.is_none(),
-                    self.player.is_none()
-                        || self.navigator.is_none()
-                        || crate::input_script::on_server(&self.args),
-                    self.player.is_none(),
-                    self.player.is_none(),
-                    self.player.is_none(),
-                    self.player.is_none(),
-                    false,
-                    self.lan.as_ref().is_some_and(|l| l.role == ::network::Role::Client),
-                    false,
-                    false,
-                ];
                 let (menu_kind, menu_head, menu_preview) = game_lists::menu_extras(
                     self.list_kind.as_ref(),
                     self.admin_list.as_deref(),
@@ -345,8 +337,8 @@ impl App {
                         && self.quick_menu_open
                         && self.game_menu.is_none())
                     .then_some(ui::QuickMenuView {
-                        items: &crate::game_menu::QUICK_MENU,
-                        disabled: &quick_disabled,
+                        items: &quick_items,
+                        selected: Some(self.quick_menu_selected),
                         arrows_on: self
                             .navigator
                             .as_ref()

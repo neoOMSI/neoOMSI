@@ -121,9 +121,16 @@ pub struct DropdownView<'a> {
 }
 
 /// The twelve shortcuts shown by the non-pausing Alt menu.
+#[derive(Clone, Copy)]
+pub struct QuickMenuItem {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub disabled: bool,
+}
+
 pub struct QuickMenuView<'a> {
-    pub items: &'a [(&'a str, &'a str)],
-    pub disabled: &'a [bool],
+    pub items: &'a [QuickMenuItem],
+    pub selected: Option<&'static str>,
     pub arrows_on: bool,
     pub end_duty: bool,
     pub confirm_end_duty: bool,

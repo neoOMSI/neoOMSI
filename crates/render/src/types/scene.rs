@@ -129,7 +129,7 @@ pub struct Scene {
     pub instances: Vec<Instance>,
     pub render_origin: DVec3,
     pub lights: Vec<PointLight>,
-    /// Cookie images referenced by the current light set; the renderer uploads new generations.
+    /// Cookie images referenced by the current light set, in temporary atlas-slot order.
     pub cookie_textures: Vec<CookieTexture>,
     pub occluders: Vec<Occluder>,
     pub interior_lights: Vec<PointLight>,

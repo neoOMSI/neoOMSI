@@ -52,19 +52,41 @@ pub(crate) const GAME_MENU: [(&str, &str); 11] = [
 ];
 
 pub(crate) const QUICK_MENU: [(&str, &str); 12] = [
-    ("place", "Place vehicle"),
-    ("swap", "Swap vehicle"),
-    ("remove", "Remove vehicle"),
-    ("tplist", "Start point"),
-    ("duty", "Line and tour"),
-    ("dest", "Destination"),
-    ("repair", "Repair"),
-    ("washfuel", "Wash and refuel"),
-    ("arrows", "Route arrows"),
-    ("time", "Time"),
-    ("weather", "Weather"),
-    ("controllers", "Controllers"),
+    ("place", "quick_menu.actions.place"),
+    ("swap", "quick_menu.actions.swap"),
+    ("remove", "quick_menu.actions.remove"),
+    ("tplist", "quick_menu.actions.start_point"),
+    ("duty", "quick_menu.actions.duty"),
+    ("dest", "quick_menu.actions.destination"),
+    ("repair", "quick_menu.actions.repair"),
+    ("washfuel", "quick_menu.actions.wash_fuel"),
+    ("arrows", "quick_menu.actions.route_arrows"),
+    ("time", "quick_menu.actions.time"),
+    ("weather", "quick_menu.actions.weather"),
+    ("controllers", "quick_menu.actions.controllers"),
 ];
+
+fn next_quick_menu_action(
+    selected: &str,
+    reverse: bool,
+    mut disabled: impl FnMut(&str) -> bool,
+) -> Option<&'static str> {
+    let count = QUICK_MENU.len();
+    let current = QUICK_MENU
+        .iter()
+        .position(|(id, _)| *id == selected)
+        .unwrap_or(0);
+    (1..=count).find_map(|step| {
+        let offset = step % count;
+        let index = if reverse {
+            (current + count - offset) % count
+        } else {
+            (current + offset) % count
+        };
+        let id = QUICK_MENU[index].0;
+        (!disabled(id)).then_some(id)
+    })
+}
 
 impl App {
     pub(crate) fn open_game_menu(&mut self) {
@@ -99,6 +121,39 @@ impl App {
         self.paused = self.menu_prev_pause;
     }
 
+    pub(crate) fn quick_action_disabled(&self, id: &str) -> bool {
+        match id {
+            "swap" | "remove" | "duty" | "dest" | "repair" | "washfuel" => self.player.is_none(),
+            "tplist" => {
+                self.player.is_none()
+                    || self.navigator.is_none()
+                    || crate::input_script::on_server(&self.args)
+            }
+            "time" => self
+                .lan
+                .as_ref()
+                .is_some_and(|session| session.role == ::network::Role::Client),
+            _ => false,
+        }
+    }
+
+    fn quick_menu_select_first(&mut self) {
+        if let Some((id, _)) = QUICK_MENU
+            .iter()
+            .find(|(id, _)| !self.quick_action_disabled(id))
+        {
+            self.quick_menu_selected = id;
+        }
+    }
+
+    fn quick_menu_select_next(&mut self, reverse: bool) {
+        if let Some(id) = next_quick_menu_action(self.quick_menu_selected, reverse, |id| {
+            self.quick_action_disabled(id)
+        }) {
+            self.quick_menu_selected = id;
+        }
+    }
+
     /// An Alt press by itself opens or hides the quick menu when Alt is released.
     pub(crate) fn quick_menu_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) -> bool {
         let alt = matches!(code, KeyCode::AltLeft | KeyCode::AltRight);
@@ -125,11 +180,17 @@ impl App {
             if !another_alt_is_held && self.game_menu.is_none() && self.chooser.is_none() {
                 self.quick_menu_open = !self.quick_menu_open;
                 self.quick_confirm_end_duty = false;
+                if self.quick_menu_open {
+                    self.quick_menu_select_first();
+                }
             }
             return true;
         }
         if pressed && self.quick_menu_open {
             if self.quick_confirm_end_duty {
+                if repeat {
+                    return true;
+                }
                 match code {
                     KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::KeyY => {
                         self.end_quick_menu_duty();
@@ -142,9 +203,25 @@ impl App {
                     _ => return true,
                 }
             }
-            if code == KeyCode::Escape {
-                self.quick_menu_open = false;
-                return true;
+            if !repeat {
+                match code {
+                    KeyCode::Escape => {
+                        self.quick_menu_open = false;
+                        return true;
+                    }
+                    KeyCode::Tab => {
+                        self.quick_menu_select_next(
+                            self.keys.contains(&KeyCode::ShiftLeft)
+                                || self.keys.contains(&KeyCode::ShiftRight),
+                        );
+                        return true;
+                    }
+                    KeyCode::Enter | KeyCode::NumpadEnter => {
+                        self.quick_menu_choose(self.quick_menu_selected);
+                        return true;
+                    }
+                    _ => {}
+                }
             }
         }
         false
@@ -157,43 +234,38 @@ impl App {
         }
         if self.quick_confirm_end_duty {
             let hit = self.ui.as_ref().and_then(|ui| {
-                ui.quick_confirm_rects.iter().position(|r| {
-                    self.cursor.0 >= r[0]
+                ui.quick_confirm_rects.iter().find_map(|(action, r)| {
+                    (self.cursor.0 >= r[0]
                         && self.cursor.0 <= r[2]
                         && self.cursor.1 >= r[1]
-                        && self.cursor.1 <= r[3]
+                        && self.cursor.1 <= r[3])
+                        .then_some(*action)
                 })
             });
             match hit {
-                Some(0) => self.end_quick_menu_duty(),
-                Some(1) => self.quick_confirm_end_duty = false,
+                Some(ui::QuickConfirmAction::EndDuty) => self.end_quick_menu_duty(),
+                Some(ui::QuickConfirmAction::KeepDriving) => self.quick_confirm_end_duty = false,
                 _ => {}
             }
             return;
         }
         let item = self.ui.as_ref().and_then(|ui| {
-            ui.quick_rects.iter().position(|r| {
-                self.cursor.0 >= r[0]
+            ui.quick_rects.iter().find_map(|(id, r)| {
+                (self.cursor.0 >= r[0]
                     && self.cursor.0 <= r[2]
                     && self.cursor.1 >= r[1]
-                    && self.cursor.1 <= r[3]
+                    && self.cursor.1 <= r[3])
+                    .then_some(*id)
             })
         });
-        if let Some(index) = item {
-            self.quick_menu_choose(index);
+        if let Some(id) = item {
+            self.quick_menu_selected = id;
+            self.quick_menu_choose(id);
         }
     }
 
-    fn quick_menu_choose(&mut self, index: usize) {
-        let Some((id, _)) = QUICK_MENU.get(index).copied() else {
-            return;
-        };
-        if self.player.is_none()
-            && matches!(
-                id,
-                "swap" | "remove" | "duty" | "dest" | "repair" | "washfuel"
-            )
-        {
+    fn quick_menu_choose(&mut self, id: &str) {
+        if self.quick_action_disabled(id) {
             return;
         }
         match id {
@@ -1681,4 +1753,21 @@ impl App {
 pub(crate) enum KeyEdit {
     Set(i64, i64),
     Clear,
+}
+
+#[cfg(test)]
+mod quick_menu_tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_selection_skips_disabled_actions_and_wraps() {
+        assert_eq!(
+            next_quick_menu_action("place", false, |id| id == "swap" || id == "remove"),
+            Some("tplist")
+        );
+        assert_eq!(
+            next_quick_menu_action("place", true, |_| false),
+            Some("controllers")
+        );
+    }
 }

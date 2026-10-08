@@ -1,4 +1,28 @@
 {
+  "launcher": {
+    "session_active": "Es ist bereits eine Sitzung aktiv."
+  },
+  "quick_menu": {
+    "title": "Schnellmenü · Alt zum Schließen",
+    "actions": {
+      "place": "Fahrzeug platzieren",
+      "swap": "Fahrzeug wechseln",
+      "remove": "Fahrzeug entfernen",
+      "start_point": "Startpunkt",
+      "duty": "Linie und Umlauf",
+      "destination": "Ziel",
+      "repair": "Reparieren",
+      "wash_fuel": "Waschen und auftanken",
+      "route_arrows": "Routenpfeile",
+      "time": "Uhrzeit",
+      "weather": "Wetter",
+      "controllers": "Steuergeräte"
+    },
+    "end_timetable": "Umlauf beenden",
+    "confirm_title": "Aktiven Umlauf beenden?",
+    "confirm_body": "Das Spiel wird im freien Fahren fortgesetzt.",
+    "keep_driving": "Weiterfahren"
+  },
   "example": {
     "speed": "Geschwindigkeit: {kmh} km/h"
   }

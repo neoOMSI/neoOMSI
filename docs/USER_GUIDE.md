@@ -42,7 +42,7 @@ This guide covers running neoOMSI, essential keybindings, and common configurati
 - **Cockpit switches:** Left-click to toggle, click and drag to turn rotary dials.
 - **Look around:** Hold Right-Mouse-Button and move mouse (or arrow keys / `I`/`J`/`K`/`L`).
 - **In-game menu:** Press `Esc` to access settings, switch buses, or exit.
-- **Quick menu:** Tap `Alt` by itself to open or close the twelve-tile menu. It does not pause the game. Tiles place, swap, or remove a vehicle; choose a start point, line and tour, or destination; repair, wash, or refuel; and open route-arrow, time, weather, and controller actions. Press `Esc` to close it. With an active timetable, the line-and-tour tile asks before ending the duty.
+- **Quick menu:** Tap `Alt` by itself to open or close the twelve-tile menu. It does not pause the game. Use `Tab` and `Shift+Tab` to move between available actions, `Enter` to choose one, or click a tile. Press `Esc` to close it. With an active timetable, the line-and-tour tile asks before ending the duty.
 
 ### Launcher during a session
 
@@ -133,7 +133,8 @@ Vehicles can use `[spotlight_cookie]` in `model.cfg` to project a grayscale beam
 as a headlight pattern. The image is looked up in the vehicle's `Texture/` folder and
 uses angular coordinates: 1024×512 pixels, 0.09375° per pixel, the centre column points
 straight ahead, and row 128 is level with the lamp. PNG is recommended. Images are
-resampled to that size when uploaded.
+resampled to that size when uploaded; sRGB-decoded gray values multiply the spotlight's
+intensity.
 
 ```text
 [spotlight_cookie]
@@ -156,8 +157,10 @@ The first seven lines are position, direction, and range; the next line names th
 on/off variable. The optional mirror flag is `0` (default) for a mirrored pair or `1` for one lamp. The remaining
 optional lines are the image, fade time in seconds, vertical offset variable, and
 horizontal offset variable. Up to eight distinct images can be active at once. A
-missing or unreadable image falls back to a plain spotlight. `OMSI_NO_COOKIES=1`
-disables projection and uses plain spotlights.
+missing or unreadable image falls back to a plain spotlight. Use **Reload this vehicle**
+after fixing the image; failures are cached until that vehicle is reloaded or the app
+restarts.
+`OMSI_NO_COOKIES=1` disables projection and uses plain spotlights for A/B comparison.
 
 Set `OMSI_NO_SURF=1` before starting neoOMSI to disable OMSI `.surf` height maps for an A/B comparison of wheel contact.
 

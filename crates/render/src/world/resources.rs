@@ -158,6 +158,12 @@ impl Renderer {
                     binding: 8,
                     resource: wgpu::BindingResource::Sampler(&self.cloud_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(
+                        &self.probe.as_ref().expect("reflection probe").cube_view,
+                    ),
+                },
             ],
         });
         scene.sky_bind_group = Some(bg);

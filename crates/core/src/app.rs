@@ -100,6 +100,7 @@ pub(crate) struct App {
     pub(crate) quick_menu_open: bool,
     pub(crate) quick_alt_armed: bool,
     pub(crate) quick_confirm_end_duty: bool,
+    pub(crate) quick_menu_selected: &'static str,
     pub(crate) quick_menu_session: bool,
     pub(crate) menu_top: Option<f32>,
     pub(crate) menu_scroll_drag: bool,

@@ -5136,11 +5136,9 @@ impl PlayerDuty {
             self.placed = true;
             self.place(pos, day_time);
         }
-        // A passenger door opened at the terminus starts the next trip at once. Otherwise,
-        // an ended or unbegun trip hands over one minute before its scheduled departure.
+        // An ended or unbegun trip hands over one minute before its scheduled departure.
         while self.trip_index + 1 < self.trips.len()
-            && (self.trips[self.trip_index + 1].departure - 60.0 <= day_time
-                || (self.done && passenger_door_open))
+            && self.trips[self.trip_index + 1].departure - 60.0 <= day_time
         {
             let given_up = day_time > self.trip().end + 1800.0;
             let unbegun = self.left_late.is_none() && !self.picked;
@@ -5194,7 +5192,17 @@ impl PlayerDuty {
                 }
             }
         }
-        if self.done && passenger_door_open && self.trip_index + 1 < self.trips.len() {
+        let at_terminus = self
+            .trip()
+            .stops
+            .last()
+            .and_then(|stop| stop.position)
+            .is_some_and(|stop| (stop - pos).length() < AT_STOP);
+        if self.done
+            && at_terminus
+            && passenger_door_open
+            && self.trip_index + 1 < self.trips.len()
+        {
             self.set_trip(self.trip_index + 1);
             log::info!(
                 "duty: next trip {} {} to {} starts at the terminus",
@@ -5556,7 +5564,7 @@ mod tests {
     }
 
     #[test]
-    fn a_passenger_door_at_the_terminus_starts_the_next_trip_immediately() {
+    fn a_passenger_door_starts_the_next_trip_only_at_the_terminus() {
         let trips = vec![
             planned(0.0, &[(0.0, 0.0, 0.0), (100.0, 100.0, 100.0)]),
             planned(3600.0, &[(100.0, 3600.0, 3600.0), (200.0, 3700.0, 3700.0)]),
@@ -5582,12 +5590,16 @@ mod tests {
             heading: 0.0,
         };
         let at_terminus = glam::DVec3::new(100.0, 0.0, 0.0);
+        duty.advance_with_doors(glam::DVec3::ZERO, 100.0, true);
+        assert_eq!(duty.trip_index, 0, "open doors away from the terminus do not advance");
         duty.advance_with_doors(at_terminus, 100.0, false);
         assert_eq!(duty.trip_index, 0, "closed doors keep the layover");
         duty.advance_with_doors(at_terminus, 100.0, true);
-        assert_eq!(duty.trip_index, 1, "an open passenger door ends the layover");
+        assert_eq!(duty.trip_index, 1, "open passenger doors at the terminus end the layover");
         assert_eq!(duty.next_stop, 0);
         assert!(duty.take_trip_change());
+        duty.advance_with_doors(at_terminus, 101.0, true);
+        assert_eq!(duty.trip_index, 1, "doors remaining open do not advance twice");
     }
 
     #[test]

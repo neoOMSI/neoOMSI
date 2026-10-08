@@ -111,7 +111,8 @@ pub struct Renderer {
     pub(crate) cookie_atlas: wgpu::Texture,
     pub(crate) cookie_atlas_view: wgpu::TextureView,
     pub(crate) cookie_sampler: wgpu::Sampler,
-    pub(crate) cookie_generations: std::cell::RefCell<[u64; COOKIE_SLOTS]>,
+    pub(crate) cookie_images:
+        std::cell::RefCell<[Option<std::sync::Weak<::texture::Image>>; COOKIE_SLOTS]>,
     pub(crate) mip_pipeline: wgpu::RenderPipeline,
     pub(crate) mip_layout: wgpu::BindGroupLayout,
     pub(crate) mip_sampler: wgpu::Sampler,

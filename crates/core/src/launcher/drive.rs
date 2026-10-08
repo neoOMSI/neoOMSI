@@ -2278,16 +2278,19 @@ fn summary(l: &mut Launcher, side: Rect) {
     let btn = Rect::new(side.x, side.bottom() - 48.0 - note_h, pw, 48.0);
     let free = l.state.choice.free || l.state.choice.line.is_none();
     let label = if session_active {
-        "Session active"
+        std::borrow::Cow::Owned(::user_interface::i18n::translate(
+            "launcher.session_active",
+            &[],
+        ))
     } else if free && l.state.joined_server.is_none() {
-        "Drive"
+        std::borrow::Cow::Borrowed("Drive")
     } else {
-        "Start the duty"
+        std::borrow::Cow::Borrowed("Start the duty")
     };
     if l.ui.button(
         "launch",
         btn,
-        label,
+        label.as_ref(),
         Some("play_arrow"),
         if session_active { ButtonKind::Disabled } else { ButtonKind::Primary },
     ) {
@@ -2362,7 +2365,10 @@ pub(super) fn start_from_phone(l: &mut Launcher) {
 
 fn start(l: &mut Launcher) {
     if l.state.in_game() {
-        l.state.set_status("A session is already active.", true);
+        l.state.set_status(
+            ::user_interface::i18n::translate("launcher.session_active", &[]),
+            true,
+        );
         return;
     }
     if l.state.bus().is_none() || l.state.map().is_none() {

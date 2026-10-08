@@ -1,29 +1,53 @@
 use super::*;
 
-#[derive(Default)]
-struct CookieStore {
-    known: std::collections::HashMap<(std::path::PathBuf, String), Option<u8>>,
-    by_path: std::collections::HashMap<std::path::PathBuf, u8>,
-    images: Vec<::render::CookieTexture>,
-    failed: std::collections::HashSet<std::path::PathBuf>,
-    warned: std::collections::HashSet<String>,
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct CookieKey {
+    model_dir: std::path::PathBuf,
+    name: String,
 }
 
-static COOKIE_STORE: std::sync::OnceLock<std::sync::Mutex<CookieStore>> =
-    std::sync::OnceLock::new();
+#[derive(Clone)]
+enum CachedCookie {
+    Missing,
+    Invalid,
+    Loaded {
+        path: std::path::PathBuf,
+        image: std::sync::Weak<::texture::Image>,
+    },
+}
 
-fn cookie_slot(ty: &::simulation::VehicleType, name: &str) -> Option<u8> {
-    if name.trim().is_empty() || ::legacy_config::env::var_os("OMSI_NO_COOKIES").is_some() {
+type CookieImageCache = std::collections::HashMap<CookieKey, CachedCookie>;
+
+static COOKIE_CACHE: std::sync::OnceLock<std::sync::Mutex<CookieImageCache>> =
+    std::sync::OnceLock::new();
+static COOKIE_CAPACITY_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn cookie_cache() -> &'static std::sync::Mutex<CookieImageCache> {
+    COOKIE_CACHE.get_or_init(Default::default)
+}
+
+pub(crate) fn invalidate_cookie_cache(model_dir: &std::path::Path) {
+    if let Some(cache) = COOKIE_CACHE.get() {
+        cache
+            .lock()
+            .unwrap()
+            .retain(|key, _| key.model_dir.as_path() != model_dir);
+    }
+}
+
+fn cookie_image(
+    ty: &::simulation::VehicleType,
+    name: &str,
+) -> Option<(std::path::PathBuf, std::sync::Arc<::texture::Image>)> {
+    let name = name.trim();
+    if name.is_empty() || ::legacy_config::env::var_os("OMSI_NO_COOKIES").is_some() {
         return None;
     }
-    let key = (ty.model_dir.clone(), name.trim().to_string());
-    let mut store = COOKIE_STORE
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(slot) = store.known.get(&key) {
-        return *slot;
-    }
+    let key = CookieKey {
+        model_dir: ty.model_dir.clone(),
+        name: name.to_string(),
+    };
     let texture_dir = ::legacy_config::resolve_path(&ty.model_dir, "Texture");
     let mut dirs = vec![texture_dir, ty.model_dir.clone(), ty.def.dir().to_path_buf()];
     dirs.extend(
@@ -31,68 +55,142 @@ fn cookie_slot(ty: &::simulation::VehicleType, name: &str) -> Option<u8> {
             .into_iter()
             .map(|root| root.join("Texture")),
     );
-    let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|dir| dir.as_path()).collect();
-    let Some(path) = ::texture::find_texture(name, &dir_refs) else {
-        if store
-            .warned
-            .insert(format!("{}:{name}", ty.model_dir.display()))
-        {
-            log::warn!("beam cookie {name:?} is missing under {}", ty.model_dir.display());
-        }
-        store.known.insert(key, None);
-        return None;
-    };
-    if let Some(slot) = store.by_path.get(&path) {
-        let slot = *slot;
-        store.known.insert(key, Some(slot));
-        return Some(slot);
-    }
-    if store.failed.contains(&path) {
-        store.known.insert(key, None);
-        return None;
-    }
-    let image = match ::texture::decode_file(&path) {
-        Ok(image) => image,
-        Err(error) => {
-            store.failed.insert(path.clone());
-            if store.warned.insert(path.to_string_lossy().to_string()) {
-                log::warn!("beam cookie {} could not be loaded: {error}", path.display());
-            }
-            store.known.insert(key, None);
-            return None;
-        }
-    };
-    if store.images.len() >= ::render::COOKIE_SLOTS {
-        if store.warned.insert("capacity".to_string()) {
-            log::warn!("beam cookies support {} images at a time", ::render::COOKIE_SLOTS);
-        }
-        store.known.insert(key, None);
-        return None;
-    }
-    let slot = store.images.len() as u8 + 1;
-    store.images.push(::render::CookieTexture {
-        slot,
-        generation: 1,
-        image: std::sync::Arc::new(image),
-    });
-    store.by_path.insert(path, slot);
-    store.known.insert(key, Some(slot));
-    Some(slot)
+    cookie_image_at(key, &dirs)
 }
 
-pub(crate) fn cookie_textures() -> Vec<::render::CookieTexture> {
-    COOKIE_STORE
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .images
-        .clone()
+fn cookie_image_at(
+    key: CookieKey,
+    dirs: &[std::path::PathBuf],
+) -> Option<(std::path::PathBuf, std::sync::Arc<::texture::Image>)> {
+    let name = key.name.as_str();
+    let cached = cookie_cache().lock().unwrap().get(&key).cloned();
+    let path = match cached {
+        Some(CachedCookie::Missing | CachedCookie::Invalid) => return None,
+        Some(CachedCookie::Loaded { path, image }) => {
+            if let Some(image) = image.upgrade() {
+                return Some((path, image));
+            }
+            path
+        }
+        None => {
+            let dir_refs: Vec<&std::path::Path> = dirs.iter().map(|dir| dir.as_path()).collect();
+            let Some(path) = ::texture::find_texture(name, &dir_refs) else {
+                let mut cache = cookie_cache().lock().unwrap();
+                let first = !cache.contains_key(&key);
+                cache.entry(key.clone()).or_insert(CachedCookie::Missing);
+                drop(cache);
+                if first {
+                    log::warn!("beam cookie {name:?} is missing under {}", key.model_dir.display());
+                }
+                return None;
+            };
+            path
+        }
+    };
+
+    match ::texture::decode_file(&path) {
+        Ok(image) => {
+            let image = std::sync::Arc::new(image);
+            let mut cache = cookie_cache().lock().unwrap();
+            match cache.get_mut(&key) {
+                Some(CachedCookie::Missing | CachedCookie::Invalid) => None,
+                Some(CachedCookie::Loaded {
+                    path: cached_path,
+                    image: cached_image,
+                }) => {
+                    if let Some(cached_image) = cached_image.upgrade() {
+                        Some((cached_path.clone(), cached_image))
+                    } else {
+                        *cached_path = path.clone();
+                        *cached_image = std::sync::Arc::downgrade(&image);
+                        Some((path, image))
+                    }
+                }
+                None => {
+                    cache.insert(
+                        key,
+                        CachedCookie::Loaded {
+                            path: path.clone(),
+                            image: std::sync::Arc::downgrade(&image),
+                        },
+                    );
+                    Some((path, image))
+                }
+            }
+        }
+        Err(error) => {
+            let mut cache = cookie_cache().lock().unwrap();
+            let mut warn = false;
+            let result = match cache.get(&key).cloned() {
+                Some(CachedCookie::Loaded {
+                    path: cached_path,
+                    image,
+                }) => match image.upgrade() {
+                    Some(image) => Some((cached_path, image)),
+                    None => {
+                        cache.insert(key, CachedCookie::Invalid);
+                        warn = true;
+                        None
+                    }
+                },
+                Some(CachedCookie::Missing | CachedCookie::Invalid) => None,
+                None => {
+                    cache.insert(key, CachedCookie::Invalid);
+                    warn = true;
+                    None
+                }
+            };
+            drop(cache);
+            if warn {
+                log::warn!("beam cookie {} could not be loaded: {error}", path.display());
+            }
+            result
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct CookieSlots {
+    by_path: std::collections::HashMap<std::path::PathBuf, u8>,
+    textures: Vec<::render::CookieTexture>,
+}
+
+impl CookieSlots {
+    pub(crate) fn into_textures(self) -> Vec<::render::CookieTexture> {
+        self.textures
+    }
+
+    fn assign(
+        &mut self,
+        path: std::path::PathBuf,
+        image: std::sync::Arc<::texture::Image>,
+    ) -> Option<u8> {
+        if let Some(slot) = self.by_path.get(&path) {
+            return Some(*slot);
+        }
+        if self.textures.len() == ::render::COOKIE_SLOTS {
+            if !COOKIE_CAPACITY_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                log::warn!("beam cookies support {} simultaneous images", ::render::COOKIE_SLOTS);
+            }
+            return None;
+        }
+        let slot = self.textures.len() as u8 + 1;
+        self.by_path.insert(path, slot);
+        self.textures.push(::render::CookieTexture { slot, image });
+        Some(slot)
+    }
+
+    fn slot(&mut self, ty: &::simulation::VehicleType, name: &str) -> Option<u8> {
+        let (path, image) = cookie_image(ty, name)?;
+        self.assign(path, image)
+    }
 }
 
 pub fn vehicle_lights(
     v: &VehicleInstance,
     coronas: &mut Vec<Corona>,
     lights: &mut Vec<PointLight>,
+    cookies: &mut CookieSlots,
     night: f32,
     spill: bool,
 ) {
@@ -289,6 +387,7 @@ pub fn vehicle_lights(
         &value_of,
         &v.cookie_fade,
         lights,
+        cookies,
     );
     for t in &v.trailers {
         spotlights_2(&t.ty.model, t.body_rotation(), t.position, &value_of, night, lights);
@@ -299,6 +398,7 @@ pub fn vehicle_lights(
             &value_of,
             &t.cookie_fade,
             lights,
+            cookies,
         );
     }
     if spill && cfg.spill.on && night > 0.05 {
@@ -368,6 +468,7 @@ fn cookie_spotlights(
     value_of: &impl Fn(&str) -> f32,
     fades: &[f32],
     lights: &mut Vec<PointLight>,
+    cookies: &mut CookieSlots,
 ) {
     let up = rot.transform_vector3(Vec3::Z).normalize_or_zero();
     let right = rot.transform_vector3(Vec3::X).normalize_or_zero();
@@ -391,7 +492,7 @@ fn cookie_spotlights(
         {
             continue;
         }
-        let slot = cookie_slot(ty, &sp.texture).unwrap_or(0);
+        let slot = cookies.slot(ty, &sp.texture).unwrap_or(0);
         let h = finite_value(value_of(&sp.h_offset)).to_radians();
         let v = finite_value(value_of(&sp.v_offset)).to_radians();
         let (sin_h, cos_h) = (-h).sin_cos();
@@ -414,13 +515,15 @@ fn cookie_spotlights(
                 local_dir.x * sin_h + local_dir.y * cos_h,
                 local_dir.z,
             );
-            let pitch_axis = Vec3::new(right.x, right.y, right.z);
             let dir0 = rot.transform_vector3(yawed).normalize_or_zero();
-            let axis = pitch_axis;
+            let axis = right;
             let dir = (dir0 * cos_v
                 + axis.cross(dir0) * sin_v
                 + axis * axis.dot(dir0) * (1.0 - cos_v))
             .normalize_or_zero();
+            if dir.length_squared() <= 1e-6 {
+                continue;
+            }
             let at = origin + rot.transform_point3(local).as_dvec3();
             let (color, cone, cookie) = if slot == 0 {
                 (
@@ -441,7 +544,7 @@ fn cookie_spotlights(
                 core: (sp.range * 0.125).max(0.01),
                 mode: LightMode::Enhanced,
                 cookie,
-                cookie_up: up,
+                cookie_up: projected_cookie_up(dir, up),
                 ..Default::default()
             });
         }
@@ -453,5 +556,101 @@ fn finite_value(value: f32) -> f32 {
         value
     } else {
         0.0
+    }
+}
+
+fn projected_cookie_up(forward: Vec3, up: Vec3) -> Vec3 {
+    let forward = forward.normalize_or_zero();
+    let project = |axis: Vec3| (axis - forward * axis.dot(forward)).normalize_or_zero();
+    let up = project(up);
+    if up.length_squared() > 1e-6 {
+        return up;
+    }
+    project(if forward.z.abs() > 0.99 {
+        Vec3::Y
+    } else {
+        Vec3::Z
+    })
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    #[test]
+    fn cookie_projection_up_is_stable_for_vertical_beams() {
+        for forward in [Vec3::Z, -Vec3::Z, Vec3::new(1e-7, 0.0, 1.0)] {
+            let up = projected_cookie_up(forward, Vec3::Z);
+            assert!(up.is_finite());
+            assert!((up.length() - 1.0).abs() < 1e-5);
+            assert!(up.dot(forward.normalize()).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn cookie_slots_are_reused_for_each_light_collection() {
+        let image = || std::sync::Arc::new(::texture::Image::solid([255; 4]));
+        let mut current = CookieSlots::default();
+        for i in 0..::render::COOKIE_SLOTS {
+            assert_eq!(
+                current.assign(format!("cookie-{i}").into(), image()),
+                Some(i as u8 + 1)
+            );
+        }
+        assert_eq!(current.assign("cookie-9".into(), image()), None);
+        drop(current);
+
+        let mut next = CookieSlots::default();
+        assert_eq!(next.assign("another-cookie".into(), image()), Some(1));
+    }
+
+    #[test]
+    fn invalid_cookie_images_fall_back_and_are_not_decoded_each_frame() {
+        let root = std::env::temp_dir().join(format!(
+            "neoomsi-cookie-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("broken.png"), b"not an image").unwrap();
+        let key = CookieKey {
+            model_dir: root.clone(),
+            name: "broken.png".into(),
+        };
+        assert!(cookie_image_at(key.clone(), std::slice::from_ref(&root)).is_none());
+        assert!(cookie_image_at(key.clone(), std::slice::from_ref(&root)).is_none());
+        assert!(matches!(
+            cookie_cache().lock().unwrap().get(&key),
+            Some(CachedCookie::Invalid)
+        ));
+        cookie_cache().lock().unwrap().remove(&key);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reloading_a_vehicle_invalidates_its_cookie_failures() {
+        let model_dir = std::path::PathBuf::from("reload-cookie-cache-test");
+        let other_dir = std::path::PathBuf::from("other-cookie-cache-test");
+        let key = |model_dir: std::path::PathBuf| CookieKey {
+            model_dir,
+            name: "missing.png".into(),
+        };
+        cookie_cache().lock().unwrap().insert(
+            key(model_dir.clone()),
+            CachedCookie::Missing,
+        );
+        cookie_cache().lock().unwrap().insert(
+            key(other_dir.clone()),
+            CachedCookie::Missing,
+        );
+
+        invalidate_cookie_cache(&model_dir);
+
+        let cache = cookie_cache().lock().unwrap();
+        assert!(!cache.contains_key(&key(model_dir)));
+        assert!(cache.contains_key(&key(other_dir)));
     }
 }

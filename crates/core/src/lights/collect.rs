@@ -378,6 +378,7 @@ pub fn collect(
     }
     let mut mesh_tests = 8usize;
     let beam_cfg = settings();
+    let mut cookie_slots = CookieSlots::default();
     for (vi, v) in vehicles.iter().enumerate() {
         // (a vehicle out of sight: no lamps, no ray tests, no smoke)
         if (v.position - camera_pos).length() > visible_range {
@@ -388,6 +389,7 @@ pub fn collect(
             v,
             &mut scene.coronas,
             &mut scene.lights,
+            &mut cookie_slots,
             night,
             spill_ok[vi],
         );
@@ -720,5 +722,5 @@ pub fn collect(
             );
         }
     }
-    scene.cookie_textures = cookie_textures();
+    scene.cookie_textures = cookie_slots.into_textures();
 }

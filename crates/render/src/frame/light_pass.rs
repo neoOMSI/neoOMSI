@@ -1,5 +1,14 @@
 use crate::*;
 
+fn cookie_needs_upload(
+    uploaded: Option<&std::sync::Weak<::texture::Image>>,
+    image: &std::sync::Arc<::texture::Image>,
+) -> bool {
+    !uploaded
+        .and_then(std::sync::Weak::upgrade)
+        .is_some_and(|previous| std::sync::Arc::ptr_eq(&previous, image))
+}
+
 impl Renderer {
     pub(crate) fn encode_particles(
         &self,
@@ -34,16 +43,22 @@ impl Renderer {
     }
 
     fn upload_cookie_textures(&self, scene: &Scene) {
-        let mut generations = self.cookie_generations.borrow_mut();
+        let mut images = self.cookie_images.borrow_mut();
         for cookie in &scene.cookie_textures {
             let Some(layer) = cookie.slot.checked_sub(1).map(usize::from) else {
                 continue;
             };
-            let Some(generation) = generations.get_mut(layer) else {
+            let Some(uploaded) = images.get_mut(layer) else {
                 continue;
             };
-            if *generation == cookie.generation || cookie.image.width == 0 || cookie.image.height == 0
+            if !cookie_needs_upload(uploaded.as_ref(), &cookie.image)
+                || cookie.image.width == 0
+                || cookie.image.height == 0
             {
+                continue;
+            }
+            let pixel_bytes = cookie.image.width as usize * cookie.image.height as usize * 4;
+            if cookie.image.rgba.len() != pixel_bytes {
                 continue;
             }
             let mut gray = vec![0u8; (COOKIE_WIDTH * COOKIE_HEIGHT) as usize];
@@ -52,13 +67,9 @@ impl Renderer {
                 for x in 0..COOKIE_WIDTH {
                     let sx = (x as u64 * cookie.image.width as u64 / COOKIE_WIDTH as u64) as u32;
                     let at = ((sy * cookie.image.width + sx) * 4) as usize;
-                    if at + 2 >= cookie.image.rgba.len() {
-                        continue;
-                    }
                     let p = &cookie.image.rgba[at..at + 3];
                     gray[(y * COOKIE_WIDTH + x) as usize] =
-                        ((p[0] as u32 * 54 + p[1] as u32 * 183 + p[2] as u32 * 19) / 256)
-                            as u8;
+                        ((p[0] as u32 * 54 + p[1] as u32 * 183 + p[2] as u32 * 19) / 256) as u8;
                 }
             }
             self.queue.write_texture(
@@ -68,7 +79,7 @@ impl Renderer {
                     origin: wgpu::Origin3d {
                         x: 0,
                         y: 0,
-                        z: cookie.slot as u32 - 1,
+                        z: layer as u32,
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
@@ -84,7 +95,7 @@ impl Renderer {
                     depth_or_array_layers: 1,
                 },
             );
-            *generation = cookie.generation;
+            *uploaded = Some(std::sync::Arc::downgrade(&cookie.image));
         }
     }
 
@@ -130,7 +141,7 @@ impl Renderer {
             let idx = gpu_lights.len() as u32;
             gpu_lights.push(gpu_light(l, p));
             gpu_lights[idx as usize].occ[2] = spot_slots[li] as f32;
-            gpu_lights[idx as usize].occ[3] = l.cookie as f32;
+            gpu_lights[idx as usize].cookie_slot[0] = u32::from(l.cookie);
             if l.occ_count > 0
                 && (l.occ_first as usize + l.occ_count as usize) <= scene.occluders.len()
             {
@@ -173,6 +184,7 @@ impl Renderer {
                         extra: [1.0, 0.0, 0.0, 0.0],
                         occ: [0.0; 4],
                         cookie_up: [0.0; 4],
+                        cookie_slot: [0; 4],
                     });
                     continue;
                 }
@@ -185,6 +197,7 @@ impl Renderer {
                     extra: [0.0; 4],
                     occ: [0.0; 4],
                     cookie_up: [0.0; 4],
+                    cookie_slot: [0; 4],
                 });
             }
             for (i, first) in occ_users {
@@ -199,6 +212,7 @@ impl Renderer {
                 extra: [0.0; 4],
                 occ: [0.0; 4],
                 cookie_up: [0.0; 4],
+                cookie_slot: [0; 4],
             });
         }
         let gpu_lights_bytes: &[u8] = bytemuck::cast_slice(&gpu_lights);
@@ -444,5 +458,32 @@ impl Renderer {
                 scene.corona_buf = Some(b);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    #[test]
+    fn cookie_array_skips_upload_for_the_same_image_in_a_slot() {
+        let first = std::sync::Arc::new(::texture::Image::solid([255; 4]));
+        let same = std::sync::Arc::clone(&first);
+        let replacement = std::sync::Arc::new(::texture::Image::solid([0; 4]));
+        let uploaded = Some(std::sync::Arc::downgrade(&first));
+
+        assert!(!cookie_needs_upload(uploaded.as_ref(), &same));
+        assert!(cookie_needs_upload(uploaded.as_ref(), &replacement));
+        assert!(cookie_needs_upload(None, &replacement));
+    }
+
+    #[test]
+    fn cookie_array_reuploads_when_a_slot_is_reused() {
+        let uploaded = {
+            let previous = std::sync::Arc::new(::texture::Image::solid([255; 4]));
+            std::sync::Arc::downgrade(&previous)
+        };
+        let current = std::sync::Arc::new(::texture::Image::solid([0; 4]));
+        assert!(cookie_needs_upload(Some(&uploaded), &current));
     }
 }

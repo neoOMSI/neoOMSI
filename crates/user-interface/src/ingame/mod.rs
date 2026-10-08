@@ -59,15 +59,21 @@ pub struct TextCache {
     flat: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum QuickConfirmAction {
+    EndDuty,
+    KeepDriving,
+}
+
 pub struct Ui {
     pub text: TextCache,
     pub chat: ChatWidget,
     /// Where the game menu's lines were drawn this frame (physical pixels), for the mouse.
     pub menu_rects: Vec<[f32; 4]>,
-    /// Tile bounds for the quick menu, in row order.
-    pub quick_rects: Vec<[f32; 4]>,
-    /// Yes and No bounds for the quick menu's end-duty confirmation.
-    pub quick_confirm_rects: [[f32; 4]; 2],
+    /// Action ids and bounds for the quick menu.
+    pub quick_rects: Vec<(&'static str, [f32; 4])>,
+    /// Confirmation actions and bounds for the quick menu.
+    pub quick_confirm_rects: Vec<(QuickConfirmAction, [f32; 4])>,
     /// Per line of `menu_rects`, where the arrows round its value are (a list's setting,
     /// `game_lists::ADJUST`): `[from, to, plus]` - a click from `from` to `to` steps it
     /// down, one right of `plus` up.

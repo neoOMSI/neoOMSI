@@ -744,16 +744,6 @@ impl Renderer {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 17,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
                     binding: 18,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
@@ -832,7 +822,7 @@ impl Renderer {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let lm_uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1500,6 +1490,16 @@ impl Renderer {
                     binding: 8,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -2652,7 +2652,7 @@ impl Renderer {
             cookie_atlas,
             cookie_atlas_view,
             cookie_sampler,
-            cookie_generations: std::cell::RefCell::new([0; COOKIE_SLOTS]),
+            cookie_images: std::cell::RefCell::new(std::array::from_fn(|_| None)),
             hdr_targets: HashMap::new(),
             puddles,
             reflection_pass,

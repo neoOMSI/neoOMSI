@@ -1,4 +1,28 @@
 {
+  "launcher": {
+    "session_active": "A session is already active."
+  },
+  "quick_menu": {
+    "title": "Quick menu · Alt to close",
+    "actions": {
+      "place": "Place vehicle",
+      "swap": "Swap vehicle",
+      "remove": "Remove vehicle",
+      "start_point": "Start point",
+      "duty": "Line and tour",
+      "destination": "Destination",
+      "repair": "Repair",
+      "wash_fuel": "Wash and refuel",
+      "route_arrows": "Route arrows",
+      "time": "Time",
+      "weather": "Weather",
+      "controllers": "Controllers"
+    },
+    "end_timetable": "End timetable",
+    "confirm_title": "End the active timetable?",
+    "confirm_body": "The game will continue in free drive.",
+    "keep_driving": "Keep driving"
+  },
   "example": {
     "speed": "Speed: {kmh} km/h"
   }

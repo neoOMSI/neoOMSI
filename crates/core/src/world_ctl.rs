@@ -201,6 +201,7 @@ impl App {
             self.service_msg = Some(("There is no vehicle to reload: you are on foot".into(), 3.0));
             return;
         };
+        let model_dir = p.vehicle.ty.model_dir.clone();
         let file = &p.vehicle.ty.def.path;
         let bus = ::legacy_config::content_roots()
             .iter()
@@ -223,6 +224,7 @@ impl App {
                 .or_else(|| Some(h.name.clone()))
         });
         let before = p.uid;
+        crate::lights::invalidate_cookie_cache(&model_dir);
         self.swap_pending = true;
         self.place_vehicle(&bus, paint, hof);
         if let Some(p) = self.player.as_ref().filter(|p| p.uid != before) {

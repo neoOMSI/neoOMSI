@@ -292,7 +292,7 @@ fn sky_radiance(d: vec3<f32>, pix: f32) -> vec3<f32> {
 
 // The sky as the sky cube holds it (drawn a face a frame by `fs_sky_cube`, divided by the
 // table scale): rgb, and how much cloud covers the direction.
-@group(0) @binding(17) var t_sky_cube: texture_cube<f32>;
+@group(1) @binding(9) var t_sky_cube: texture_cube<f32>;
 
 @fragment
 fn fs_enhanced(in: VsOut) -> @location(0) vec4<f32> {

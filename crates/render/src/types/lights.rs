@@ -90,7 +90,6 @@ pub const COOKIE_SLOTS: usize = 8;
 #[derive(Clone)]
 pub struct CookieTexture {
     pub slot: u8,
-    pub generation: u64,
     pub image: std::sync::Arc<::texture::Image>,
 }
 
@@ -173,5 +172,6 @@ pub(crate) fn gpu_light(l: &PointLight, p: Vec3) -> GpuPointLight {
         extra: [l.cone[0], l.core, l.beam, l.radius],
         occ: [0.0; 4],
         cookie_up: [l.cookie_up.x, l.cookie_up.y, l.cookie_up.z, 0.0],
+        cookie_slot: [0; 4],
     }
 }
