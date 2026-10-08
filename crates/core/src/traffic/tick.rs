@@ -5,6 +5,9 @@ use super::*;
 
 impl Traffic {
 
+    /// The fixed simulation tick: the ordered pipeline of named phases below. Every phase
+    /// reads/writes this `Traffic` and the frozen per-tick data phase 4 hands on; a live
+    /// vehicle is never switched between state models mid-tick.
     pub fn tick(&mut self, dt: f32, player: Option<PlayerBox>) {
         self.lamp_dt += dt;
         if self.mirror {
@@ -12,6 +15,30 @@ impl Traffic {
             return;
         }
         let t_start = std::time::Instant::now();
+        // 1/2. Clock/index, then the light requests and pedestrian pushes.
+        self.tick_clock_and_index(dt, player);
+        let walkers = self.tick_light_requests(dt, player);
+        let (player_standing, others) = self.tick_presence(dt, player);
+        let debug = ::legacy_config::env::var_os("OMSI_DEBUG_TRAFFIC").is_some();
+        // 3. Freeze the per-tick snapshot and run every owner's decisions.
+        let t_plan = std::time::Instant::now();
+        let mut frame =
+            self.tick_plan(dt, player, &others, player_standing, walkers, debug);
+        // 4/5. Realize bodies/scripts, then commit realized feedback.
+        let t_par = std::time::Instant::now();
+        self.tick_realize(dt, &mut frame.frames);
+        self.tick_commit_feedback(dt);
+        self.tick_split = [
+            (t_plan - t_start).as_secs_f64(),
+            (t_par - t_plan).as_secs_f64(),
+            t_par.elapsed().as_secs_f64(),
+        ];
+        // 6. Diagnose, trace, remove and capture.
+        self.tick_finish(player, &frame, &others, debug);
+    }
+
+    /// 1. Advance the clock and rebuild the per-tick indexes (`geo_prev`, `index_of`).
+    fn tick_clock_and_index(&mut self, dt: f32, player: Option<PlayerBox>) {
         self.time += dt;
         self.day_time += dt as f64 * self.time_scale;
         self.last_dt = dt;
@@ -28,39 +55,16 @@ impl Traffic {
             .enumerate()
             .map(|(i, c)| (c.id, i))
             .collect();
-        let debug = ::legacy_config::env::var_os("OMSI_DEBUG_TRAFFIC").is_some();
-        // One immutable occupancy snapshot for the tick: realized bodies plus their lane
-        // placements, built once. Geometry is the truth; `by_lane` is a flat id-keyed view
-        // for the checks not yet migrated (leader scans, lane changes, passing).
-        let occupancy = Occupancy::build(
-            self.net.version(),
-            (self.time * 1000.0).max(0.0) as u64,
-            self.body_feet(player, &self.others),
-        );
-        let by_lane = occupancy.lane_view(&self.index_of);
-        // The external road users' synthetic ids (see `body_feet`): bodies to keep clear of,
-        // not AI blockers to sort out by `geo_block`.
-        let mut external_ids: Vec<VehicleId> = vec![VehicleId(u64::MAX)];
-        external_ids.extend(
-            self.others
-                .iter()
-                .map(|(id, _)| VehicleId(u64::MAX - 1 - *id as u64)),
-        );
-        // cars coming to a junction lane: (car, distance from its origin to the lane start)
-        let mut coming: HashMap<usize, Vec<(usize, f32)>> = HashMap::new();
-        for (i, c) in self.cars.iter().enumerate() {
-            for (l, d) in self
-                .way_lanes(&c.state, LOOK_AHEAD + 30.0)
-                .into_iter()
-                .skip(1)
-            {
-                if !self.net.crossings[l].is_empty() {
-                    coming.entry(l).or_default().push((i, d));
-                }
-            }
-        }
-        // The junction coordinator owns its own claim/store state (see `begin_tick` below);
-        // exit storage is recomputed fresh this tick against the realized occupancy.
+    }
+
+    /// 2. The light programs: reset and collect the requests of every approaching car, the
+    /// player and the other players (depot gates), the pedestrian push buttons, then advance
+    /// the cycle clocks. Returns the pedestrian positions for the junction scene.
+    fn tick_light_requests(
+        &mut self,
+        dt: f32,
+        player: Option<PlayerBox>,
+    ) -> HashMap<usize, Vec<f32>> {
         // the light programs: requests of whoever is coming, then the cycle clocks
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
@@ -157,6 +161,16 @@ impl Traffic {
             c.advance(dt);
         }
         self.log_lights();
+        walkers
+    }
+
+    /// 3a. Player/other-player standing times for the tick. Takes the external actors out of
+    /// `self` for the tick; they are put back by the adapter after the tick.
+    fn tick_presence(
+        &mut self,
+        dt: f32,
+        player: Option<PlayerBox>,
+    ) -> (f32, Vec<(u32, PlayerBox)>) {
         self.player_still = match player {
             Some(p) if p.4.abs() < 0.3 => self.player_still + dt,
             _ => 0.0,
@@ -169,7 +183,53 @@ impl Traffic {
             others_still.insert(*id, if b.4.abs() < 0.3 { before + dt } else { 0.0 });
         }
         self.others_still = others_still;
-        let t_plan = std::time::Instant::now();
+        (player_standing, others)
+    }
+
+    /// 3b. Build the frozen `Occupancy`/lane view/junction, service and maneuver actors once,
+    /// then run the per-vehicle decision loop. Returns the frozen data `tick_realize` and
+    /// `tick_finish` still need.
+    fn tick_plan(
+        &mut self,
+        dt: f32,
+        player: Option<PlayerBox>,
+        others: &[(u32, PlayerBox)],
+        player_standing: f32,
+        walkers: HashMap<usize, Vec<f32>>,
+        debug: bool,
+    ) -> TickFrame {
+        // One immutable occupancy snapshot for the tick: realized bodies plus their lane
+        // placements, built once. Geometry is the truth; `by_lane` is a flat id-keyed view
+        // for the checks not yet migrated (leader scans, lane changes, passing).
+        let occupancy = Occupancy::build(
+            self.net.version(),
+            (self.time * 1000.0).max(0.0) as u64,
+            self.body_feet(player, others),
+        );
+        let by_lane = occupancy.lane_view(&self.index_of);
+        // The external road users' synthetic ids (see `body_feet`): bodies to keep clear of,
+        // not AI blockers to sort out by `geo_block`.
+        let mut external_ids: Vec<VehicleId> = vec![VehicleId(u64::MAX)];
+        external_ids.extend(
+            others
+                .iter()
+                .map(|(id, _)| VehicleId(u64::MAX - 1 - *id as u64)),
+        );
+        // cars coming to a junction lane: (car, distance from its origin to the lane start)
+        let mut coming: HashMap<usize, Vec<(usize, f32)>> = HashMap::new();
+        for (i, c) in self.cars.iter().enumerate() {
+            for (l, d) in self
+                .way_lanes(&c.state, LOOK_AHEAD + 30.0)
+                .into_iter()
+                .skip(1)
+            {
+                if !self.net.crossings[l].is_empty() {
+                    coming.entry(l).or_default().push((i, d));
+                }
+            }
+        }
+        // The junction coordinator owns its own claim/store state (see `begin_tick` below);
+        // exit storage is recomputed fresh this tick against the realized occupancy.
         let mut remove = Vec::new();
         let mut frames: Vec<Option<AiFrame>> = vec![None; self.cars.len()];
         self.break_lead_pairs();
@@ -344,7 +404,7 @@ impl Traffic {
                     }
                 }
             }
-            for (id, o) in &others {
+            for (id, o) in others {
                 if let Some(l) = self.player_in_way(i, o) {
                     if lead.map(|x| l.gap < x.0.gap).unwrap_or(true) {
                         lead = Some((l, Some(usize::MAX)));
@@ -1202,7 +1262,12 @@ impl Traffic {
                 c.vehicle.ai_visuals = (p - v.pos).length() < UNSEEN_NEAR || v.frames(p, r);
             }
         }
-        let t_par = std::time::Instant::now();
+        TickFrame { by_lane, coming, walkers, aspects, junction_actors, frames, remove }
+    }
+
+    /// 4. Realize every body and run its script, in parallel. The domain never owns pose;
+    /// this is where `simulation::ai_motion` writes it.
+    fn tick_realize(&mut self, dt: f32, frames: &mut [Option<AiFrame>]) {
         // The bodies and the scripts of the AI vehicles run in parallel: each car follows
         // its own way and its OMSI script is its own little machine reading only its own
         // state; with thirty cars and a dozen timetable buses they were the largest single
@@ -1275,6 +1340,10 @@ impl Traffic {
                     }
                 });
         }
+    }
+
+    /// 5. Read the realized pose/speed back into each planner (single pose owner, Stage 4).
+    fn tick_commit_feedback(&mut self, dt: f32) {
         // Motion feedback (Stage 4, A7): the body is the single pose owner. Each road
         // vehicle's realized pose and speed are read back into its planner, so route
         // progress - and every stop distance derived from it - is committed from realized
@@ -1291,11 +1360,18 @@ impl Traffic {
             };
             c.state.commit_feedback(&self.net, realized);
         }
-        self.tick_split = [
-            (t_plan - t_start).as_secs_f64(),
-            (t_par - t_plan).as_secs_f64(),
-            t_par.elapsed().as_secs_f64(),
-        ];
+    }
+
+    /// 6. The tick tail: optional debug dumps, the wait-for graph, the `OMSI_TRACE_AI` dump,
+    /// the overlap check, removal (releasing every owner exactly once) and the failure
+    /// capture sample.
+    fn tick_finish(
+        &mut self,
+        player: Option<PlayerBox>,
+        frame: &TickFrame,
+        others: &[(u32, PlayerBox)],
+        debug: bool,
+    ) {
         if ::legacy_config::env::var_os("OMSI_DEBUG_TRAILERS").is_some() {
             // coupled parts off the level of what pulls them (#140: trains' and articulated
             // buses' rear parts under bridges)
@@ -1324,7 +1400,7 @@ impl Traffic {
         }
         if debug {
             // a car pulled round harder than a driver would: what way was it given?
-            for (c, fr) in self.cars.iter().zip(&frames) {
+            for (c, fr) in self.cars.iter().zip(&frame.frames) {
                 if fr.is_none() || c.body.a_lat.abs() < 4.0 || !self.logged_hard.insert(c.id) {
                     continue;
                 }
@@ -1373,13 +1449,13 @@ impl Traffic {
         {
             let wait_scene = JunctionScene {
                 net: &self.net,
-                actors: &junction_actors,
+                actors: &frame.junction_actors,
                 index_of: &self.index_of,
-                on_lane: &by_lane,
-                coming: &coming,
-                walkers: &walkers,
+                on_lane: &frame.by_lane,
+                coming: &frame.coming,
+                walkers: &frame.walkers,
                 geo_prev: &self.geo_prev,
-                aspects: &aspects,
+                aspects: &frame.aspects,
                 time: self.time,
                 tick: (self.time * 1000.0).max(0.0) as u64,
             };
@@ -1397,7 +1473,7 @@ impl Traffic {
             }
             // (`OMSI_TRACE_AI_BUSES=1`: the timetable buses only)
             let buses_only = ::legacy_config::env::var_os("OMSI_TRACE_AI_BUSES").is_some();
-            for (c, fr) in self.cars.iter().zip(&frames) {
+            for (c, fr) in self.cars.iter().zip(&frame.frames) {
                 let Some(fr) = fr else { continue };
                 if buses_only && !c.is_bus() {
                     continue;
@@ -1448,9 +1524,9 @@ impl Traffic {
             }
         }
         if ::legacy_config::env::var_os("OMSI_CHECK_OVERLAP").is_some() {
-            self.check_overlaps(player, &others);
+            self.check_overlaps(player, others);
         }
-        for i in remove.into_iter().rev() {
+        for i in frame.remove.iter().copied().rev() {
             let c = self.cars.swap_remove(i);
             self.junctions.release(c.id, Reason::Removed);
             self.services.release(c.id);
@@ -1469,5 +1545,16 @@ impl Traffic {
             self.sample_capture();
         }
     }
+}
 
+/// The frozen per-tick data the planning phase hands to realization and finish. Every buffer
+/// is owned (no borrow of `Traffic`), so the phases can be separate methods.
+struct TickFrame {
+    by_lane: HashMap<usize, Vec<(usize, f32, f32, bool)>>,
+    coming: HashMap<usize, Vec<(usize, f32)>>,
+    walkers: HashMap<usize, Vec<f32>>,
+    aspects: HashMap<(usize, usize), Aspect>,
+    junction_actors: Vec<JunctionActor>,
+    frames: Vec<Option<AiFrame>>,
+    remove: Vec<usize>,
 }
