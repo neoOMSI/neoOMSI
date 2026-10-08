@@ -1196,3 +1196,7 @@ mod tests {
 #[cfg(test)]
 #[path = "ai_motion/ground_tests.rs"]
 mod ground_tests;
+
+#[cfg(test)]
+#[path = "ai_motion/traffic_regression_tests.rs"]
+mod traffic_regression_tests;

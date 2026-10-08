@@ -197,6 +197,8 @@ pub const DOCK_LONG_TOL: f32 = 0.5;
 pub const DOCK_LAT_TOL: f32 = 0.25;
 /// Speed below which a vehicle may be considered docked (m/s).
 pub const DOCK_SPEED: f32 = 0.1;
+/// Recover an unreachable docking pose after standing there this long (s).
+pub const DOCK_STALL_TIMEOUT: f32 = 8.0;
 /// Distance upstream of the berth a queueing bus waits at (m). A bus waiting here has not
 /// served the stop.
 pub const QUEUE_STANDOFF: f32 = 10.0;
@@ -407,6 +409,8 @@ pub struct ServiceState {
     pub phase: ServicePhase,
     /// Seconds in the current phase.
     pub phase_t: f32,
+    /// Continuous standstill at an unreachable docking pose (s).
+    pub dock_stall_t: f32,
     /// Seconds of boarding left (passengers at the doors hold it open).
     pub boarding_t: f32,
     /// When it may leave the stop (seconds of the day).
@@ -429,6 +433,7 @@ impl Default for ServiceState {
         ServiceState {
             phase: ServicePhase::EnRoute,
             phase_t: 0.0,
+            dock_stall_t: 0.0,
             boarding_t: 0.0,
             leave_at: 0.0,
             delay: 0.0,
@@ -730,14 +735,20 @@ impl ServiceCoordinator {
                 d.stop_at = Some(input.distance + actor.front + STOP_LINE_GAP);
                 let lat_err = (actor.lateral - berth.bay).abs();
                 let long_ok = input.distance.abs() <= DOCK_LONG_TOL;
+                let unreachable = input.distance < -DOCK_LONG_TOL
+                    || (long_ok && lat_err > DOCK_LAT_TOL);
+                state.dock_stall_t = if unreachable && actor.speed < DOCK_SPEED {
+                    state.dock_stall_t + scene.dt
+                } else {
+                    0.0
+                };
                 if long_ok && lat_err <= DOCK_LAT_TOL && actor.speed < DOCK_SPEED {
                     self.enter_boarding(state, &berth, scene.day_time, &actor, &mut d);
-                } else if input.distance < -berth.boarding_region {
+                } else if input.distance < -berth.boarding_region || state.dock_stall_t >= DOCK_STALL_TIMEOUT {
                     // The boarding region was overshot: record a missed stop, never open the
                     // doors somewhere up the queue to make it disappear.
                     self.release_key(&berth);
                     state.berth = None;
-                    state.phase = ServicePhase::ServiceFault(Reason::MissedStop);
                     state.fault = Some(Reason::MissedStop);
                     state.serve_decided = false;
                     state.serve = true;
@@ -747,6 +758,12 @@ impl ServiceCoordinator {
                         vehicle: id,
                         reason: Reason::MissedStop,
                     });
+                    // The bus continues to its next stop; it cannot reverse to recover
+                    // the pose, and a permanent ServiceFault would block this lane.
+                    state.phase = ServicePhase::EnRoute;
+                    state.dock_stall_t = 0.0;
+                    d.stop_at = None;
+                    d.lateral_target = Some(0.0);
                 }
             }
             ServicePhase::Boarding => {
@@ -980,6 +997,11 @@ impl ServiceCoordinator {
     /// Whether pulling out of the berth is blocked by a vehicle in the lane: a faster body
     /// close behind, or a standing body ahead within the pull-out ramp.
     fn merge_blocked(&self, scene: &ServiceScene, actor: &ServiceActor, id: VehicleId) -> bool {
+        // A bus already aligned with the lane simply pulls away. Followers behind it
+        // do not need to grant a lateral merge; following controls the front gap.
+        if actor.lateral.abs() <= DOCK_LAT_TOL {
+            return false;
+        }
         for iv in scene.occupancy.intervals(LaneId(actor.lane)) {
             if iv.owner == id || iv.foreign {
                 continue;

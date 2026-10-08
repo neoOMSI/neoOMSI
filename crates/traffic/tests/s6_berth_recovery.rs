@@ -89,7 +89,9 @@ fn overshoot_records_a_missed_stop_without_opening_the_doors() {
     };
     let dec = coord.plan(&scene, &mut st, &inputs);
     assert!(dec.consume_stop, "the missed stop must be advanced, not silently kept");
-    assert!(matches!(st.phase, ServicePhase::ServiceFault(Reason::MissedStop)));
+    assert_eq!(st.phase, ServicePhase::EnRoute);
+    assert_eq!(st.fault, Some(Reason::MissedStop));
+    assert!(dec.stop_at.is_none(), "the missed stop must not hold traffic forever");
     assert!(dec
         .events
         .iter()

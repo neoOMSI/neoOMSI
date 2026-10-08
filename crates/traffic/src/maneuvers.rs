@@ -188,6 +188,8 @@ pub struct ManeuverState {
     /// How long the current discretionary wish has been held (s) and which wish it is.
     pub dwell: f32,
     pub dwell_code: i16,
+    /// Committed courtesy trajectory; keep its odometer anchor while yielding.
+    pub emergency_ramp: Option<(f32, f32, f32, f32)>,
 }
 
 // ---- frozen per-tick scene and inputs --------------------------------------------------
@@ -524,6 +526,9 @@ impl ManeuverCoordinator {
             return ManeuverDecision::new(ManeuverPhase::Idle);
         };
         let id = actor.id;
+        if input.emergency.is_none() {
+            state.emergency_ramp = None;
+        }
 
         // A committed lane change finished or was cancelled: start its cooldown.
         if state.change_to.is_some() && actor.change.is_none() {
@@ -577,10 +582,15 @@ impl ManeuverCoordinator {
 
         // Required route-required change (and the turn lane the way asks for).
         if input.emergency.is_some() && !actor.at_stop {
-            return self.yield_to_emergency(scene, actor);
+            return self.yield_to_emergency(scene, actor, state, input);
         }
         if let Some(d) = self.plan_required_change(scene, actor, state) {
             return d;
+        }
+        if input.priority_pass {
+            if let Some(decision) = self.emergency_corridor(scene, actor, state) {
+                return decision;
+            }
         }
 
         // A safety swerve round a parked/standing body at the kerb.
@@ -614,7 +624,7 @@ impl ManeuverCoordinator {
         d
     }
 
-    fn yield_to_emergency(&self, scene: &ManeuverScene, actor: &ManeuverActor) -> ManeuverDecision {
+    fn yield_to_emergency(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &mut ManeuverState, input: &ManeuverInputs) -> ManeuverDecision {
         let lane = &scene.net.lanes[actor.lane];
         // On a multilane road the innermost lane goes inward and the remaining lanes
         // outward. On a single lane move to the curb without leaving the authored road.
@@ -622,21 +632,63 @@ impl ManeuverCoordinator {
             if lane.right.is_none() && lane.left.is_some() { 1.0 } else { -1.0 }
         } else if lane.left.is_none() && lane.right.is_some() { -1.0 } else { 1.0 };
         let target = side * (lane.width * 0.5 - actor.half_width - 0.15).max(0.0);
-        let ramp = (actor.speed * 2.0).max(12.0);
-        let lat = |d: f32| actor.lateral + (target - actor.lateral) * smooth01((d / ramp).clamp(0.0, 1.0));
+        // The body steers as it rolls. Braking a stationary queue to zero while asking
+        // for an odometer-based lateral ramp can never open a rescue corridor.
+        let room = input.lead_gap.map(|gap| (gap - actor.min_gap).max(0.0));
+        let ramp = (actor.speed * 2.0).max(2.0).min(room.unwrap_or(f32::MAX).max(1.0));
+        let trajectory = state.emergency_ramp.filter(|r| (r.1 - target).abs() < 0.01)
+            .unwrap_or((actor.lateral, target, actor.odometer, ramp));
+        let remaining = (trajectory.2 + trajectory.3 - actor.odometer).max(0.0);
+        let lat = |d: f32| trajectory.0 + (target - trajectory.0)
+            * smooth01((actor.odometer + d - trajectory.2) / trajectory.3);
         let mut decision = ManeuverDecision::new(ManeuverPhase::Idle);
-        if self.sweep_clear(scene, actor, &lat, ramp, PULL_OUT_CLEARANCE) {
+        if self.sweep_clear(scene, actor, &lat, remaining, PULL_OUT_CLEARANCE) {
             decision.lateral_target = Some(target);
+            state.emergency_ramp = Some(trajectory);
+            decision.lateral_ramp = Some(trajectory);
             decision.signal = Some((if side > 0.0 { 2 } else { 1 }, 1.5));
         }
-        // Slow smoothly; neither erase a physical leader nor violate its stop signal.
-        decision.accel_cap = Some((-actor.speed / 1.5).clamp(-actor.decel, 0.0));
+        // Allow a walking-speed roll while moving aside, retaining every ordinary
+        // leader and signal constraint. Once aside, wait for the emergency to pass.
+        let moving_aside = decision.lateral_target.is_some() && (target - actor.lateral).abs() > 0.1;
+        let creep = if moving_aside { 1.0 } else { 0.0 };
+        decision.accel_cap = Some(((creep - actor.speed) / 1.5).clamp(-actor.decel, 0.6));
         decision.reasons.push(Reason::EmergencyYield);
         decision.binding = Some(Reason::EmergencyYield);
         decision
     }
 
     // ---- route-required / turn-lane changes --------------------------------------------
+
+    /// Use the gap between the innermost lane and its neighbour once their realized
+    /// bodies have made room. Ordinary following still protects every physical gap.
+    fn emergency_corridor(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &ManeuverState) -> Option<ManeuverDecision> {
+        if actor.lane_kind != LaneKind::Street || actor.at_stop || state.passing.is_some() {
+            return None;
+        }
+        let net = scene.net;
+        let lane = &net.lanes[actor.lane];
+        let inner = |l: &crate::network::Lane| if net.left_hand { l.right } else { l.left };
+        let outer = |l: &crate::network::Lane| if net.left_hand { l.left } else { l.right };
+        let beside = match inner(lane) {
+            Some(n) if inner(&net.lanes[n]).is_none() => n,
+            None => outer(lane)?,
+            _ => return None, // first take a normal safe change toward the inner lanes
+        };
+        let s = net.beside_s(actor.lane, beside, actor.s);
+        let (p, heading) = lane.at(actor.s);
+        let q = net.lanes[beside].at(s).0;
+        let h = (heading as f64).to_radians();
+        let target = ((q - p).truncate().dot(DVec2::new(h.cos(), -h.sin())) * 0.5) as f32;
+        let ramp = (actor.speed * 3.0).max(12.0);
+        let lat = |d: f32| actor.lateral + (target - actor.lateral) * smooth01(d / ramp);
+        if !self.sweep_clear(scene, actor, &lat, ramp + actor.front, PULL_OUT_CLEARANCE) {
+            return None;
+        }
+        let mut decision = ManeuverDecision::new(ManeuverPhase::Idle);
+        decision.lateral_target = Some(target);
+        Some(decision)
+    }
 
     fn plan_required_change(
         &mut self,

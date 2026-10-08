@@ -106,7 +106,7 @@ pub(super) fn window(
             ui.same_line();
             ui.checkbox("Labels", &mut tool.labels);
             ui.text_disabled(
-                "Green route, yellow lane change, red blocker/hold, cyan stop origin.",
+                "Green route, yellow lane change, red blocker/hold, cyan stop front.",
             );
             if ui.button("Copy diagnostic report") {
                 let mut report = summary.clone();
@@ -147,7 +147,7 @@ pub(super) fn window(
                 }
                 ui.text_wrapped(&car.detail);
                 if let Some((stop, _, distance)) = car.stop {
-                    ui.text(format!("Stop #{stop}: target origin {distance:.1} m ahead"));
+                    ui.text(format!("Stop #{stop}: front target {distance:.1} m ahead"));
                 }
             }
         });
