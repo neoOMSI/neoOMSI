@@ -152,25 +152,51 @@ fn doors_known_open(vehicle: &::simulation::VehicleInstance) -> bool {
     false
 }
 
-/// How far before a station's point a vehicle stops with its origin, as Omsi.exe measures
-/// the way to the station (0x7da4e3): from the origin of the vehicle that leads, less half
-/// its length for a train (its front comes to rest at the station, not its middle - the
-/// S-Bahn stopped with half a car past the end of the platform), plus the holding point
-/// offset of its `[ai_brakeperformance]` ("to correct unprecise braking").
+/// Origin rest position before the pole: the road vehicle's actual front bumper,
+/// retaining the content's holding correction. Rail vehicles retain their platform
+/// alignment convention (half the leading car length).
 pub fn stop_shift(ty: &::simulation::VehicleType, rail: bool) -> f32 {
     let hold = ty.def.ai_brake_performance.map(|b| b[4]).unwrap_or(0.0);
-    let half = if rail {
+    let front = if rail {
         ty.half_length().unwrap_or(0.0)
     } else {
-        0.0
+        crate::traffic::extents(ty, 12.0).0
     };
-    half - hold
+    front - hold
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ::traffic::{PlatformSide, StopId};
+
+    #[test]
+    fn road_stop_alignment_uses_the_front_extent_with_an_offset_origin() {
+        let mut ty = ::simulation::VehicleType {
+            def: ::legacy_vehicle::Vehicle {
+                bounding_box: Some([2.5, 12.0, 3.0, 0.0, 2.0, 1.5]),
+                ai_brake_performance: Some([0.0, 0.0, 0.0, 0.0, 0.4]),
+                ..Default::default()
+            },
+            model: Default::default(),
+            model_dir: Default::default(),
+            program: Default::default(),
+            meshes: Vec::new(),
+            keep_winding: false,
+            paint_schemes: Vec::new(),
+            texchanges: Vec::new(),
+            wheel_meshes: Vec::new(),
+            suspension_axles: Vec::new(),
+            missing_packs: Vec::new(),
+            mesh_bounds: Vec::new(),
+            mesh_boxes: Vec::new(),
+        };
+        assert!((stop_shift(&ty, false) - 7.6).abs() < 1e-5);
+        assert!((stop_shift(&ty, true) - 5.6).abs() < 1e-5);
+        ty.def.bounding_box = None;
+        ty.mesh_boxes.push((glam::Vec3::new(-1.0, -3.0, 0.0), glam::Vec3::new(1.0, 7.0, 3.0)));
+        assert!((stop_shift(&ty, false) - 6.6).abs() < 1e-5);
+    }
 
     fn stop(id: i64, depart: f64) -> StopTarget {
         StopTarget::from_tuple((0, 0.0, 0.0, depart, id, 0.0))

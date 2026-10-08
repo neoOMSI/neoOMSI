@@ -96,6 +96,8 @@ pub struct AiState {
     /// long they take to move off when the way clears (s). `accel` is how hard they pull
     /// away and `decel` how hard they like to brake.
     pub desire: f32,
+    /// Active emergency response; independent of collision-prevention braking.
+    pub emergency_drive: bool,
     pub headway: f32,
     pub min_gap: f32,
     pub accept_gap: f32,
@@ -402,6 +404,7 @@ impl AiState {
             signal_time: 0.0,
             lat_accel: 2.8,
             desire: 1.0,
+            emergency_drive: false,
             headway: 1.4,
             min_gap: 2.0,
             accept_gap: 4.0,
@@ -902,7 +905,11 @@ impl AiState {
         let (a, b) = (self.accel.max(0.1), self.decel.max(0.5));
         let v = self.speed;
         let limit = |l: &Lane| {
-            (l.speed_limit_kmh * self.desire)
+            (if self.emergency_drive {
+                (l.speed_limit_kmh * 1.3).min(l.speed_limit_kmh + 20.0)
+            } else {
+                l.speed_limit_kmh * self.desire
+            })
                 .min(self.max_speed_kmh)
                 .max(3.0)
                 / 3.6
@@ -1177,6 +1184,38 @@ impl AiState {
         if net.lanes.get(self.lane).is_none() {
             return None;
         }
+        // A scheduled route includes the adjacent target lane. Selecting the nearest
+        // route lane halfway through a change switches the source underneath the blend,
+        // making its remaining trajectory jump sideways. Keep the source until drive
+        // completes the change, and reconcile both longitudinal coordinates together.
+        if let Some(mut change) = self.change {
+            let target = net.lanes.get(change.to)?;
+            let (s, _) = net.lanes[self.lane].nearest_point(realized.pose)?;
+            let (p, heading) = net.lanes[self.lane].at(s);
+            let h = (heading as f64).to_radians();
+            let right = glam::DVec2::new(h.cos(), -h.sin());
+            let lateral = (realized.pose - p).truncate().dot(right) as f32;
+            let target_s = net.beside_s(self.lane, change.to, s);
+            let width = (target.at(target_s).0 - p).truncate().dot(right).abs();
+            let turn = wrap_deg(heading - realized.heading_deg).abs();
+            if !realized.pose.is_finite()
+                || lateral.abs() as f64 > width + realized.half_width + FEEDBACK_MAX_LATERAL
+                || turn > FEEDBACK_MAX_TURN
+                || (realized.pose.z - p.z).abs() > 2.0
+            {
+                self.reconciled = false;
+                return None;
+            }
+            self.s = s;
+            change.s_to = target_s;
+            self.change = Some(change);
+            if realized.speed.is_finite() && realized.speed >= 0.0 {
+                self.speed = realized.speed;
+                self.realized_speed = realized.speed;
+            }
+            self.reconciled = true;
+            return Some(RouteFix { lane: crate::LaneId(self.lane), s, lateral });
+        }
         let mut buf = [0usize; PLAN_LANES + 1];
         let projected = if !self.route.is_empty() {
             let start = self.route_index.saturating_sub(1);
@@ -1228,7 +1267,9 @@ impl AiState {
                     .iter()
                     .skip(offset)
                     .position(|&l| l == fix.lane.index())?;
-            if ri + 1 < self.route_index {
+            if ri + 1 < self.route_index
+                || (ri < self.route_index && net.parallel(fix.lane.index(), self.lane))
+            {
                 // the body projects onto a lane the planner has already passed
                 self.reconciled = false;
                 return None;
@@ -1240,6 +1281,7 @@ impl AiState {
         }
         self.lane = fix.lane.index();
         self.s = fix.s;
+        self.lateral = fix.lateral;
         if realized.speed.is_finite() && realized.speed >= 0.0 {
             self.speed = realized.speed;
             self.realized_speed = realized.speed;

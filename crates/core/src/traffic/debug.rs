@@ -51,7 +51,7 @@ impl Traffic {
             let constraint = (!c.why.0.is_none()).then(|| st.way_point(&self.net, st.front + c.why.1) + DVec3::Z * 0.3);
             let stop = c.bus.as_ref().and_then(|b| b.stops.front()).and_then(|t| {
                 let lane = *st.route.get(t.route_index)?;
-                let (p, h) = self.net.lanes.get(lane)?.at(t.s);
+                let (p, h) = self.net.lanes.get(lane)?.at_ext(t.s + st.front);
                 let h = (h as f64).to_radians();
                 Some((t.stop.get(), p + DVec3::new(h.cos(), -h.sin(), 0.0) * t.bay as f64 + DVec3::Z * 0.4,
                     st.route_distance(&self.net, t.route_index, t.s)))

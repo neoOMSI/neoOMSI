@@ -405,6 +405,7 @@ impl Traffic {
         self.maneuvers
             .begin_tick(&maneuver_intents, (self.time * 1000.0).max(0.0) as u64);
         for i in 0..self.cars.len() {
+            self.cars[i].state.emergency_drive = junction_actors[i].emergency;
             let ahead = self.obstacle_ahead(i, look_ahead(self.cars[i].state.speed), &by_lane);
             // remember whom it lets in at a merge (a car on another lane)
             let merging = ahead

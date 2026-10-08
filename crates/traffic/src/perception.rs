@@ -72,6 +72,20 @@ pub struct BodyFootprint {
 }
 
 impl BodyFootprint {
+    /// Project the realized origin laterally at a controller's longitudinal coordinate.
+    /// Reserving a lane-change target does not put the body at its centre yet.
+    pub fn placement_at(&self, net: &Network, lane: LaneId, s: f32) -> Placement {
+        let origin = self.center - self.fwd * ((self.front - self.rear) * 0.5) as f64;
+        let (p, heading) = net.lanes[lane.index()].at_ext(s);
+        let h = (heading as f64).to_radians();
+        Placement {
+            lane,
+            s,
+            lateral: (origin - p.truncate()).dot(DVec2::new(h.cos(), -h.sin())) as f32,
+            foreign: false,
+        }
+    }
+
     /// A primary body at `center` facing `fwd`, with a height range.
     #[allow(clippy::too_many_arguments)]
     pub fn new(

@@ -52,7 +52,7 @@ impl Traffic {
                     // (the lateral place this car will have when it gets there: pulling out
                     // round a standing bus, it is clear of it before it arrives)
                     let mine = me.state.lateral_ahead(offset + (os - s_from));
-                    if !foreign && (lat - mine).abs() > me.half_width + o.half_width + 0.3 {
+                    if !foreign && (lat - mine).abs() > me.half_width + o.half_width + 0.1 {
                         continue;
                     }
                     let (d, v) = if foreign {
@@ -128,6 +128,16 @@ impl Traffic {
             for next in me.upcoming().take(2) {
                 if before > look {
                     break;
+                }
+                // Separate approaches share storage only at the actual joint. Treating
+                // their longitudinal difference as a bumper gap all the way upstream
+                // makes a bus on the right slow the free lane beside it.
+                let merge_reach = me.speed * me.speed / (2.0 * me.decel.max(0.5))
+                    + me.speed * me.reaction + me.min_gap + 5.0;
+                if before - me.front > merge_reach {
+                    before += self.net.lanes[next].length();
+                    from = next;
+                    continue;
                 }
                 for &f in self.net.prev.get(next).map(|v| v.as_slice()).unwrap_or(&[]) {
                     // (two paths of one junction meeting: `junction_stop` sorts that out)
@@ -516,29 +526,14 @@ impl Traffic {
             .with_acc(st.acc);
             f.front = st.front;
             f.rear = st.rear;
-            f.current = Some(Placement {
-                lane: LaneId(st.lane),
-                s: st.s,
-                lateral: st.lateral,
-                foreign: false,
-            });
+            f.current = Some(f.placement_at(&self.net, LaneId(st.lane), st.s));
             if let Some(p) = st.prev_lane {
                 if st.s < st.rear + 1.0 && st.change.is_none() {
-                    f.prev = Some(Placement {
-                        lane: LaneId(p),
-                        s: self.net.lanes[p].length() + st.s,
-                        lateral: st.lateral,
-                        foreign: false,
-                    });
+                    f.prev = Some(f.placement_at(&self.net, LaneId(p), self.net.lanes[p].length() + st.s));
                 }
             }
             if let Some(ch) = st.change {
-                f.crossing = Some(Placement {
-                    lane: LaneId(ch.to),
-                    s: ch.s_to,
-                    lateral: 0.0,
-                    foreign: false,
-                });
+                f.crossing = Some(f.placement_at(&self.net, LaneId(ch.to), ch.s_to));
             }
             if let Some(p) = c.maneuver.passing {
                 let deep = st.lateral * self.net.oncoming_sign();

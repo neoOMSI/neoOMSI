@@ -33,10 +33,27 @@ pub fn approaching_emergency(
     let mut nearest: Option<EmergencyApproach> = None;
     for drive in drives.iter().filter(|d| d.vehicle != ego) {
         for &(lane, offset) in &drive.way {
-            if lane != state.lane {
+            // A rescue corridor needs both sides of the same carriageway to respond.
+            // Authored neighbours count; a merely nearby parallel road does not.
+            let mut shared = lane == state.lane;
+            for left in [true, false] {
+                let mut current = lane;
+                for _ in 0..net.lanes.len().min(8) {
+                    let Some(l) = net.lanes.get(current) else { break };
+                    let next = if left { l.left } else { l.right };
+                    let Some(next) = next else { break };
+                    if !net.parallel(lane, next) { break; }
+                    if next == state.lane { shared = true; break; }
+                    current = next;
+                }
+            }
+            if !shared {
                 continue;
             }
-            let gap = offset + state.s - rear - drive.front;
+            let s = if lane == state.lane { state.s } else {
+                net.beside_s(state.lane, lane, state.s)
+            };
+            let gap = offset + s - rear - drive.front;
             // Once its front is well abreast, keep the lane stable while it completes
             // the pass; drop the request after its body has moved beyond this vehicle.
             let horizon = (drive.speed * 6.0 + 20.0).clamp(30.0, 100.0);
