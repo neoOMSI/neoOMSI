@@ -1624,7 +1624,7 @@ pub(crate) fn run_offscreen(
                 c.bus.as_ref().map(|b| b.stops.len()).unwrap_or(0),
                 c.at_station(),
                 c.standing_for(t.day_time()),
-                c.bus.as_ref().map(|b| b.delay).unwrap_or(0.0)
+                c.bus.as_ref().map(|b| b.state.delay).unwrap_or(0.0)
             );
             if ::legacy_config::env::var_os("OMSI_DEBUG_PROPS").is_some() {
                 for v in [

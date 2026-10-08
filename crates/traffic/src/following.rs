@@ -175,7 +175,9 @@ pub fn ramp_progress_for(side: f32, clear: f32) -> f32 {
 /// Hardest braking of an AI driver (m/s²): an emergency stop.
 pub const MAX_BRAKE: f32 = 8.0;
 /// Gap a car leaves before a stop line or a stop point (m).
-const STOP_LINE_GAP: f32 = 0.6;
+/// The distance the follower stops its front bumper short of a stop point, as the service
+/// owner must account for when it hands a bus-stop target to the controller.
+pub const STOP_LINE_GAP: f32 = 0.6;
 
 /// Comfort envelope for ordinary longitudinal control, with units.
 ///

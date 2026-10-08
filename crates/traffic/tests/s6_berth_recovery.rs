@@ -1,0 +1,98 @@
+//! Stage 6 exit gate — berth recovery, occupied stops and overshoot.
+//!
+//! A stop occupied by somebody else (the player, a parked body) is waited for, not docked
+//! through; a bus that overshoots the boarding region records a missed/faulted stop instead
+//! of opening its doors somewhere up the queue.
+
+mod common;
+
+use common::service::{berth, occupier, Bus, ServiceWorld};
+use traffic::perception::Occupancy;
+use traffic::*;
+
+const STOP: i64 = 7001;
+const BERTH_S: f32 = 120.0;
+
+#[test]
+fn an_occupied_stop_is_waited_for_not_docked_through() {
+    let mut w = ServiceWorld::new();
+    w.add(Bus::new(1, 90.0, vec![berth(STOP, BERTH_S, 36000.0)]));
+    // The player stands on the berth.
+    w.extras.push(occupier(9999, BERTH_S));
+
+    for _ in 0..600 {
+        w.step();
+        assert_ne!(w.bus(1).phase(), ServicePhase::Boarding, "boarded an occupied stop");
+        assert!(w.bus(1).served.is_empty(), "an occupied stop was served");
+    }
+
+    // The obstruction leaves: the same bus now docks and boards.
+    w.extras.clear();
+    let mut boarded = false;
+    for _ in 0..1200 {
+        w.step();
+        if w.bus(1).phase() == ServicePhase::Boarding {
+            boarded = true;
+        }
+    }
+    assert!(boarded, "the bus never docked after the stop cleared");
+    assert_eq!(w.bus(1).served, vec![StopId(STOP)]);
+}
+
+#[test]
+fn overshoot_records_a_missed_stop_without_opening_the_doors() {
+    let net = {
+        let mut n = Network::default();
+        n.lanes.push(LaneBuilder::polyline(
+            vec![glam::DVec3::new(0.0, 0.0, 0.0), glam::DVec3::new(0.0, 400.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        ));
+        n.link(1.5);
+        n
+    };
+    let occ = Occupancy::default();
+    let actors = vec![ServiceActor::new(VehicleId(1), 0, 140.0)];
+    let scene = ServiceScene {
+        net: &net,
+        occupancy: &occ,
+        actors: &actors,
+        day_time: 36000.0,
+        dt: 0.02,
+        tick: 0,
+    };
+    let b = berth(STOP, BERTH_S, 36000.0);
+    let mut coord = ServiceCoordinator::new();
+    coord.begin_tick(
+        &[BerthIntent {
+            vehicle: VehicleId(1),
+            stop: StopId(STOP),
+            occurrence: 0,
+            holds: true,
+        }],
+        0,
+    );
+    let mut st = ServiceState::new();
+    st.phase = ServicePhase::Docking;
+    st.berth = Some(b);
+    let inputs = ServiceInputs {
+        actor: 0,
+        berth: Some(b),
+        // 20 m past the berth: well beyond the boarding region.
+        distance: -20.0,
+        policy: StopPolicy::default(),
+        demand: StopDemand::default(),
+        feedback: ScriptFeedback::Idle,
+        passing: false,
+        kerb_swerve: None,
+        junction_first: false,
+    };
+    let dec = coord.plan(&scene, &mut st, &inputs);
+    assert!(dec.consume_stop, "the missed stop must be advanced, not silently kept");
+    assert!(matches!(st.phase, ServicePhase::ServiceFault(Reason::MissedStop)));
+    assert!(dec
+        .events
+        .iter()
+        .any(|e| matches!(e, TraceEvent::Fault { reason: Reason::MissedStop, .. })));
+    assert!(!dec.boarding, "doors opened on an overshot stop");
+}

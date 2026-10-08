@@ -37,10 +37,10 @@ behaviour; the exact semantics of unresolved fields stay `unknown` until their o
 | `D2` | Retain both `[blockpath]` values as a typed block rule with mode; determine directional/admission/occupancy meaning | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), `007b78d3`/`007b79cb`/`007b7a4a` | 2, 3, 5 | done (Stage 5: `BlockMode` Occupy/Reserve/Oncoming) |
 | `D3` | Audit and import all five `[ai_brakeperformance]` values; only element 4 is consumed today | [`crates/vehicle/src/vehicle/parse.rs`](../../crates/vehicle/src/vehicle/parse.rs), [`bus_service::stop_shift`](../../crates/core/src/bus_service.rs) | 2, 4, 6 | partial |
 | `D4` | Add the `ev_AI_Horn` behaviour event through the script adapter with cooldown and diagnostics | `007db679`/`007db683`; [Traffic AI guide](H:/marcel_omsi/subsystems/traffic_ai.md) | 7, 9 | gap |
-| `D5` | Honour script-facing station state (`AI_Scheduled_AtStation`) and separate safe fallback from unsafe doors | [functions/007eab20.md](H:/marcel_omsi/functions/007eab20.md), `007eb4bc` | 6 | present, unsafe fallback |
-| `D6` | Re-establish stop length, boarding region, docking reach (`BAY_REACH`) and lateral placement as separate concepts | `00620004.asm` shows `00620058` is list traversal, not metadata; [`bus_service`](../../crates/core/src/bus_service.rs) | 2, 6 | uncertain |
+| `D5` | Honour script-facing station state (`AI_Scheduled_AtStation`) and separate safe fallback from unsafe doors | [functions/007eab20.md](H:/marcel_omsi/functions/007eab20.md), `007eb4bc` | 6 | done (Stage 6: typed `ScriptFeedback`) |
+| `D6` | Re-establish stop length, boarding region, docking reach (`BAY_REACH`) and lateral placement as separate concepts | `00620004.asm` shows `00620058` is list traversal, not metadata; [`bus_service`](../../crates/core/src/bus_service.rs) | 2, 6 | done (Stage 6: `BerthGeometry`) |
 | `D7` | Remove the unconditional full-exit override after `GRIDLOCK_WAIT`; models admission, occupancy, recovery separately | [`Traffic::junction_stop`](../../crates/core/src/traffic.rs) | 5 | done (Stage 5) |
-| `D8` | Replace the queued/crept-past arrival shortcut and fixed early-wait caps with explicit berth/door geometry and service policy | [`BusService::approach/arrive/step`](../../crates/core/src/bus_service.rs) | 6 | present |
+| `D8` | Replace the queued/crept-past arrival shortcut and fixed early-wait caps with explicit berth/door geometry and service policy | [`BusService::approach/arrive/step`](../../crates/core/src/bus_service.rs) | 6 | done (Stage 6: `ServiceCoordinator`) |
 
 ## C. Target architecture and contracts
 
@@ -303,3 +303,73 @@ scenario passes:
   only releases junction claims.
 - `plan` still reads caller-supplied `on_lane`/`coming` index views; moving them fully onto
   the perception `Occupancy` (id-keyed) is a later cleanup.
+
+## Stage 6 progress
+
+- `traffic::service` (L3/L4) is the single owner of the scheduled service state machine and
+  berth capacity, mirroring `traffic::junctions`.
+  - `BerthGeometry` keeps the stop's own length, the boarding region, the approach distance
+    and the vehicle stop correction separately named (`D6`); the stop length is provisional
+    until a content length is imported, and one berth per stop is the validated default.
+  - `ServiceState` (the writer is `ServiceCoordinator::plan`) holds the explicit `ServicePhase`
+    and its timers. `ServiceScene`/`ServiceActor` are the frozen per-tick inputs, built from
+    the realized `Occupancy` (id-keyed), so the berth scene uses the same substrate without
+    migrating `JunctionScene`'s index views.
+  - Berths are granted in stable arrival order (the tick a bus first comes within `STOP_REACH`,
+    then stable id), held through `Docking`/`Boarding`/`ClosingDoors`/`WaitingToMerge`, and
+    released only when the rear clears the berth point, the route changes, the vehicle is
+    removed, or the network is invalidated.
+- The transition table is explicit: `EnRoute -> Approach -> WaitingForBerth -> Docking ->
+  Boarding -> ClosingDoors -> WaitingToMerge -> Departing -> EnRoute`; trip completion ->
+  `NextTrip`/`OutOfService`; any applicable state -> `RoutePending` or `ServiceFault(reason)`.
+  A free curb stop passes through `WaitingForBerth` immediately. Boarding is permitted only
+  with low speed, longitudinal error <= 0.5 m, lateral error <= 0.25 m, a valid berth and the
+  permitted door side; `AiCar::boarding_permission()` is shared with passenger registration so
+  the bus and the people cannot disagree.
+- `D8` is done: `BusService::approach/arrive/step` and `Ctx` are gone; the queued/crept-past
+  arrival shortcut and the `CLOSE_MAX` self-departure are replaced by the berth/boarding
+  geometry and the typed handshake. An overshoot records a missed/faulted stop
+  (`Reason::MissedStop`) instead of opening the doors up the queue.
+- `D5` is done: `ScriptFeedback` separates acknowledged, unsupported (validated fixed-close
+  fallback), stuck-with-unknown-doors (timeout -> `Fault(StationRelease)`) and
+  stuck-with-open-doors (never departed). `AI_Scheduled_AtStation`/`_Side` keep the existing
+  script contract; the `at_station` projection now also sends -1 while closing.
+- `ROUTE_WAIT_MAX` and its escape are removed: an open route that reaches the loaded frontier
+  becomes `RoutePending` and keeps its remaining stops (a diagnosed content/service
+  limitation), rather than being cleared into random traffic.
+- Core is an adapter: `Traffic::tick` builds the `ServiceActor` array and berth intents once,
+  calls `ServiceCoordinator::begin_tick` once and `plan` per bus, and applies the
+  `ServiceDecision` (stop distance, lateral target, blinker, door side, stop cursor). Berth
+  release runs on removal (`remove_car`, the tick removal loop), route change (`reroute`,
+  `extend_scheduled_route`), population reset and network invalidation (`invalidate_network`).
+- Diagnostics: `VehicleSnapshot` gained `service_phase`, `berth_owner` and `service_stop`;
+  `TRACE_VERSION` is 4 and all three feed the rolling decision/event hash.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`
+  (`cargo tree -p traffic`).
+- Exit gate covered by headless tests (no renderer, no OMSI assets) under
+  `crates/traffic/tests/`: `s6_shared_stop.rs`, `s6_berth_recovery.rs`, `s6_optional_stops.rs`,
+  `s6_script_handshake.rs`, `s6_duty_lifecycle.rs`, plus the `common::service` kinematic
+  fixture and unit tests in `service`.
+
+### Stage 6 replacement reason trail
+
+| Replaced check | Replacement | Why it is equivalent or better |
+| --- | --- | --- |
+| `BusService::Phase` (5 variants) and `step`/`arrive`/`approach` | `traffic::service::ServiceCoordinator` + `ServiceState` + `ServiceDecision` | One writer of the service transitions; the explicit phase table replaces the ad-hoc `Running/Boarding/Waiting/Closing/TripDone` shortcuts. |
+| `queued` serve after 6 s stopped within 45 m, and `crept_past` serve when 12 m past the stop | Berth occupancy + boarding-region check; a real overshoot becomes `ServiceFault(MissedStop)` | A queue can no longer make a stop "arrive"; doors open only at a valid berth, and a missed stop is recorded. |
+| Constant `BAY_REACH = 30` used as both pull-in and docking reach | `BerthGeometry` with named `stop_length` (provisional), `boarding_region`, `approach_distance`, `stop_correction` | Each length is measured on its own; the misleading `0x620058`/`BAY_REACH` pairing is dropped. |
+| `CLOSE_MAX` self-departure in `Phase::Closing` | Typed `ScriptFeedback`: unsupported -> fixed close; stuck -> timeout `Fault`; open doors -> never depart | A timer can no longer drive a bus off with its doors provably open; a timeout is reported. |
+| `Phase::TripDone` set inline, and the `ROUTE_WAIT_MAX` random-traffic escape | `NextTrip`/`OutOfService` lifecycle plus `RoutePending` | A scheduled bus is never silently emptied into random traffic; missing tiles/capacity are diagnosed. |
+| Stop distance `d + front - 0.3` with the origin rest position already carrying the stop correction | `d + front + STOP_LINE_GAP` so the origin rests at the berth point, and boarding requires a 0.5 m longitudinal error | The documented 0.5 m docking target is meaningful rather than absorbed by a standoff. |
+
+### Stage 6 remaining (documented, not claimed done)
+
+- Lateral maneuvers (docking S-curve, lane changes, passing, parking) are Stage 7; the service
+  owner sets a lateral target but does not own the trajectory. `approach_distance`/
+  `junction_first` approximate the old bay pull-in.
+- Multi-berth stops need validated content geometry; `BerthGeometry` carries a `berths` count
+  but only one is exercised.
+- Population/streaming backpressure and dormant lifecycle are Stage 8; `RoutePending` waits
+  for tiles, and removal/notification is still the timetable's job.
+- `JunctionScene`'s `on_lane`/`coming` index views are still caller-built; the berth scene
+  reads the id-keyed `Occupancy` directly, and migrating the junction views is a later cleanup.

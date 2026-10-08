@@ -68,6 +68,21 @@ Stage 5 makes the junction half of S1/S2 executable against the real
 | `s5_crossing_blocks.rs` | `[crossingproblem]` refuses entry; `[blockpath]` `Reserve` refuses a reservation that `Occupy` ignores; `Oncoming` waits for the other side to commit. |
 | `s5_crossings.rs` | A pedestrian on a crossing and a train on a level crossing hold the street until they clear. |
 
+## Stage 6 scenarios (headless, at the service coordinator level)
+
+Stage 6 makes S3 executable against the real `traffic::service` coordinator (no renderer, no
+OMSI assets). The fixtures live under `crates/traffic/tests/` with the `common::service`
+kinematic bus fixture: a `ServiceCoordinator`, one straight lane, and buses that obey the
+`stop_at` the coordinator hands back while the coordinator reads their realized occupancy.
+
+| File | Required behaviour |
+| --- | --- |
+| `s6_shared_stop.rs` | Three buses share one berth: safe upstream queueing, exactly one berth owner and boarder at a time, each serves the stop once, and a follower does not dock through a departing bus. |
+| `s6_berth_recovery.rs` | A stop occupied by the player (or another body) is waited for and served only once it clears; an overshoot records a missed/faulted stop and never opens the doors up the queue. |
+| `s6_optional_stops.rs` | Optional/request stops, timing points, early/late service, long boarding held at the door, and a layover waiting out its departure in the bay. |
+| `s6_script_handshake.rs` | Acknowledged departure after the minimum close, unsupported scripts on the fixed fallback, a stuck script timing out with a fault, a script reporting open doors never driven off, and a doorway hold deferring the close request. |
+| `s6_duty_lifecycle.rs` | Terminus handover to `NextTrip`, `OutOfService`, a diagnosed `RoutePending`, a clean next-trip reset, and two different duties departing in parallel. |
+
 ## Provisional measurement targets
 
 NeoOMSI targets, not constants established by the reference report. Each is calibrated as

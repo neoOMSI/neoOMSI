@@ -8,11 +8,13 @@ replayable, unlike those ad-hoc dumps.
 
 ## Versioning
 
-- `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change
-  bumps it. It is currently **3**: Stage 5 added the per-vehicle `junction_state`
-  (`Approaching`/`Waiting`/`Admitted`/`Inside`/`Cleared`) and `junction_blocker` (the
-  vehicle it waits for at a junction, or none); Stage 4 had added the `motion_feedback`
-  fields (commanded and realized speed, applied acceleration, `emergency`, `reconciled`).
+- `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change bumps
+  it. It is currently **4**: Stage 6 added the per-vehicle `service_phase`
+  (`EnRoute`/`Approach`/`WaitingForBerth`/`Docking`/`Boarding`/`ClosingDoors`/`WaitingToMerge`/
+  `Departing`/`Layover`/`NextTrip`/`OutOfService`/`RoutePending`/`ServiceFault`), `berth_owner`
+  (who owns the berth the vehicle is at or waiting for) and `service_stop` (the stop it is at
+  or waiting for). Stage 5 had added `junction_state`/`junction_blocker`; Stage 4 had added
+  the `motion_feedback` fields.
 - A capture writes a header record containing `trace_version`, `source_revision`, `platform`,
   `seed`, `tick_hz`, `network_version`, and the ordered-input digest.
 - Unknown fields are read as absent; readers reject a mismatched major `trace_version`.
@@ -60,7 +62,9 @@ Per vehicle:
 | `service_phase` | enum | See below |
 | `junction_state` | enum | See below |
 | `junction_blocker` | id or none | The vehicle it currently waits for at a junction |
-| `berth_owner`, `claim_holder` | ids or none | Who owns the berth/claim |
+| `service_phase` | enum | See below |
+| `berth_owner` | id or none | Who owns the berth the vehicle is at or waiting for |
+| `service_stop` | `StopId` or none | The stop whose berth it is at or waiting for |
 | `motion_feedback` | | Commanded vs realised accel/speed, applied steering/speed bounds |
 | `why` | reason + gap | Convenience projection of the binding constraint |
 
@@ -73,7 +77,8 @@ identify the binding one separately. Initial reason set:
 ```text
 RedSignal, Amber, Yield, OccupiedExit, JunctionClaim, Leader, Pedestrian,
 BerthBusy, DoorHold, StationRelease, RoutePending, InvalidRoute, SpeedLimit,
-Curvature, StopTarget, Parking, PullOut, Passing, Emergency, StaleClaim, Unknown(u16)
+Curvature, StopTarget, MissedStop, ScriptTimeout, Parking, PullOut, Passing,
+Emergency, StaleClaim, Unknown(u16)
 ```
 
 `Unknown(..)` exists so unresolved legacy mechanisms (for example the exact

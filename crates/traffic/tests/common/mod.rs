@@ -5,6 +5,8 @@
 
 #![allow(dead_code)]
 
+pub mod service;
+
 use glam::DVec3;
 use hashbrown::HashMap;
 use traffic::{

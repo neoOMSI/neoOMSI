@@ -7,7 +7,7 @@
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
 /// Version of the capture schema. Any field addition, removal, or semantic change bumps it.
-pub const TRACE_VERSION: u32 = 3;
+pub const TRACE_VERSION: u32 = 4;
 
 /// Why a vehicle cannot proceed at full freedom. Every active cause is preserved; one of
 /// them is the binding constraint.
@@ -28,6 +28,11 @@ pub enum Reason {
     SpeedLimit,
     Curvature,
     StopTarget,
+    /// The stop was passed without docking (the boarding region was overshot); recorded, not
+    /// hidden by opening the doors somewhere up the queue.
+    MissedStop,
+    /// A supported door handshake did not answer within the close timeout.
+    ScriptTimeout,
     Parking,
     PullOut,
     Passing,
@@ -75,6 +80,8 @@ impl Reason {
             Reason::SpeedLimit => "speed",
             Reason::Curvature => "curve",
             Reason::StopTarget => "stop",
+            Reason::MissedStop => "missed",
+            Reason::ScriptTimeout => "door_timeout",
             Reason::Parking => "park",
             Reason::PullOut => "pullout",
             Reason::Passing => "pass",
@@ -95,6 +102,7 @@ impl Reason {
                 | Reason::DoorHold
                 | Reason::StationRelease
                 | Reason::StopTarget
+                | Reason::RoutePending
                 | Reason::Parking
         )
     }
@@ -145,7 +153,7 @@ pub enum JunctionState {
 }
 
 /// Where a scheduled vehicle is in its stop service.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServicePhase {
     EnRoute,
     Approach,
@@ -155,11 +163,21 @@ pub enum ServicePhase {
     ClosingDoors,
     WaitingToMerge,
     Departing,
+    /// Standing at a stop out of the moving lane, waiting for a layover departure.
     Layover,
+    /// The trip is over and the timetable has not handed over a next trip yet.
     NextTrip,
+    /// The duty is over: the vehicle leaves service (removed or taken off the road).
     OutOfService,
+    /// The route the vehicle has ends before the loaded tiles do; it waits for them.
     RoutePending,
     ServiceFault(Reason),
+}
+
+impl Default for ServicePhase {
+    fn default() -> ServicePhase {
+        ServicePhase::EnRoute
+    }
 }
 
 impl ServicePhase {
@@ -168,7 +186,8 @@ impl ServicePhase {
         matches!(self, ServicePhase::Boarding)
     }
 
-    /// Whether the bus still occupies a berth (docking through merge-out).
+    /// Whether the bus still occupies a berth (docking through merge-out; standing at a
+    /// terminus layover counts as holding the berth too).
     pub fn holds_berth(&self) -> bool {
         matches!(
             self,
@@ -176,11 +195,34 @@ impl ServicePhase {
                 | ServicePhase::Boarding
                 | ServicePhase::ClosingDoors
                 | ServicePhase::WaitingToMerge
+                | ServicePhase::Layover
         )
+    }
+
+    /// Standing at one of its stops (doors or door handshake, or a layover). The stopped/
+    /// crawl timers do not count a moving bus that merely passed a stop.
+    pub fn at_stop(&self) -> bool {
+        matches!(
+            self,
+            ServicePhase::Boarding
+                | ServicePhase::ClosingDoors
+                | ServicePhase::WaitingToMerge
+                | ServicePhase::Layover
+        )
+    }
+
+    /// The end of a trip: the timetable may hand over the tour's next trip or remove the bus.
+    pub fn trip_done(&self) -> bool {
+        matches!(self, ServicePhase::NextTrip | ServicePhase::OutOfService)
     }
 
     pub fn is_fault(&self) -> bool {
         matches!(self, ServicePhase::ServiceFault(_))
+    }
+
+    /// Whether the phase is between two stops (driving to a stop, or leaving one).
+    pub fn is_moving_service(&self) -> bool {
+        matches!(self, ServicePhase::EnRoute | ServicePhase::Approach | ServicePhase::Departing)
     }
 }
 
@@ -269,6 +311,12 @@ pub struct VehicleSnapshot {
     pub junction_state: JunctionState,
     /// The vehicle it currently waits for at a junction, if any.
     pub junction_blocker: Option<VehicleId>,
+    /// Where a scheduled vehicle is in its stop service.
+    pub service_phase: ServicePhase,
+    /// Who currently owns the berth the vehicle is at or waiting for, if any.
+    pub berth_owner: Option<VehicleId>,
+    /// The stop whose berth the vehicle is at or waiting for, if any.
+    pub service_stop: Option<StopId>,
     /// Every active cause, not just the nearest.
     pub constraints: Vec<Reason>,
     /// The cause that currently binds.
@@ -368,6 +416,13 @@ impl Capture {
             if let Some(b) = v.junction_blocker {
                 h = fnv(h, &b.get().to_le_bytes());
             }
+            h = fnv(h, format!("{:?}", v.service_phase).as_bytes());
+            if let Some(b) = v.berth_owner {
+                h = fnv(h, &b.get().to_le_bytes());
+            }
+            if let Some(s) = v.service_stop {
+                h = fnv(h, &s.get().to_le_bytes());
+            }
             for c in &v.constraints {
                 h = fnv(h, c.label().as_bytes());
             }
@@ -436,6 +491,9 @@ mod tests {
                 rear: 2.0,
                 junction_state: JunctionState::Cleared,
                 junction_blocker: None,
+                service_phase: ServicePhase::EnRoute,
+                berth_owner: None,
+                service_stop: None,
                 constraints: binding.into_iter().collect(),
                 binding,
             }],

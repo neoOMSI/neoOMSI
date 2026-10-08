@@ -110,6 +110,9 @@ impl S1 {
                 rear: c.rear,
                 junction_state: traffic::JunctionState::Cleared,
                 junction_blocker: None,
+                service_phase: traffic::ServicePhase::EnRoute,
+                berth_owner: None,
+                service_stop: None,
                 constraints: if red { vec![Reason::RedSignal] } else { Vec::new() },
                 binding: if red { Some(Reason::RedSignal) } else { None },
             })

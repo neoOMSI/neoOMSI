@@ -185,6 +185,54 @@ core ─┘                          (never the reverse)
 - `JunctionScene` still carries caller-built `on_lane`/`coming` index views; migrating them
   onto the id-keyed `Occupancy` is a later cleanup.
 
+## Current state after Stage 6
+
+- `crates/traffic/src/service.rs` (L3/L4) is the single owner of the scheduled bus service
+  state machine and berth capacity, mirroring `junctions`:
+  - `BerthGeometry` (stop, occurrence, lane, side, docking `s`/`bay`, `stop_length`,
+    `boarding_region`, `approach_distance`, `berths`) keeps the four lengths separate (`D6`);
+    `from_target` builds it from a `StopTarget` and the network lane.
+  - `ServiceState` (phase, timers, layover, held berth, fault) is written only by
+    `ServiceCoordinator::plan`; `ServiceActor`/`ServiceScene` are the frozen per-tick inputs
+    (`net`, realized `Occupancy`, actors, clock). `ServiceDecision` carries the stop distance,
+    lateral target, blinker, door side, boarding permission, stop advance, berth release and
+    the emitted `TraceEvent`s.
+  - `ServiceCoordinator::begin_tick` records stable arrival order and releases berths whose
+    owner is gone; `plan` advances the explicit phase table, grants/holds/releases the one
+    berth per stop, and classifies script feedback; `release`/`retain_on_way`/
+    `invalidate_network` mirror the junction hooks.
+  - `ScriptFeedback` types the `AI_Scheduled_AtStation` handshake: acknowledged, unsupported
+    (fixed-close fallback), stuck-unknown (timeout -> `Fault(StationRelease)`) and
+    stuck-open (never departed) (`D5`).
+- `crates/core/src/bus_service.rs` is an adapter: it keeps the compiled `StopTarget`s, the
+  terminus/displays and the always/early policy, maps script feedback, and projects the phase
+  to `at_station`/`at_station_side`. `stop_shift` stays (it needs `simulation::VehicleType`)
+  and feeds `stop_correction`.
+- `core::Traffic` owns a `ServiceCoordinator`; `Traffic::tick` builds the `ServiceActor` array
+  and berth intents once, calls `begin_tick` once and `plan` per bus, and applies the
+  decision. Removal, route change, population reset and network invalidation release berths.
+  `AiCar::boarding_permission()` is shared with the passenger simulation.
+- `ROUTE_WAIT_MAX` and its random-traffic escape are gone; a bus at the loaded frontier waits
+  in `RoutePending` and keeps its stops.
+- `VehicleSnapshot` gained `service_phase`, `berth_owner` and `service_stop`; `TRACE_VERSION`
+  is 4.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`.
+- Exit-gate scenarios: `crates/traffic/tests/s6_shared_stop.rs`, `s6_berth_recovery.rs`,
+  `s6_optional_stops.rs`, `s6_script_handshake.rs`, `s6_duty_lifecycle.rs` (with the
+  `common::service` fixture); unit tests in `service`.
+- The replacement reason trail is recorded in `BACKLOG.md` under
+  "Stage 6 replacement reason trail".
+
+### Stage 6 remaining (documented, not claimed done)
+
+- Lane changes, passing and parking (the docking S-curve among them) are Stage 7; the service
+  owner sets a lateral target but does not own the lateral trajectory.
+- Multi-berth stops need validated content geometry; the type is capacity-aware but one berth
+  is exercised.
+- Population/streaming backpressure, dormant lifecycle and removal notification are Stage 8.
+- `JunctionScene`'s caller-built `on_lane`/`coming` index views remain; the berth scene reads
+  the id-keyed `Occupancy` directly.
+
 ## Deletion rule
 
 Do not remove the shim or any compatibility re-export until its callers have migrated to

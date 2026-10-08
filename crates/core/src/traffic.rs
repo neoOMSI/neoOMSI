@@ -1,7 +1,7 @@
 //! AI road traffic: vehicles from `ailists.cfg` moving on the map's path network, the
 //! traffic light programs of the junctions, and the population of cars around the player.
 
-use crate::bus_service::{BusService, Phase};
+use crate::bus_service::BusService;
 use crate::scene::{VehicleRender, World};
 use anyhow::Result;
 use glam::{DVec2, DVec3};
@@ -18,6 +18,10 @@ pub(crate) use ::simulation::traffic::{
     Occupancy, Placement, RealizedMotion, Reason, StopTarget, SweepSample, TickSnapshot, TraceHeader,
     TrafficLightController, VehicleCapabilities, VehicleClass, VehicleId, VehicleSnapshot,
     TRACE_VERSION, arrival_time, junction_ahead,
+};
+use ::simulation::traffic::{
+    BerthIntent, ServiceActor, ServiceCoordinator, ServiceInputs, ServicePhase, ServiceScene,
+    StopDemand, STOP_REACH,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -85,10 +89,6 @@ impl Passing {
             * ::simulation::traffic::ramp_progress_for(self.side, half_width + ONCOMING_ROOM)
     }
 }
-
-/// Seconds a timetable bus waits where the route it has ends for the rest of its route
-/// (tiles bring it as they load) before it gives the trip up (see `Traffic::tick`).
-const ROUTE_WAIT_MAX: f32 = 40.0;
 
 /// A car edging out round something standing keeps to `PULL_OUT_ACCEL` until its front is
 /// this far past the obstacle's rear (m).
@@ -250,6 +250,16 @@ impl AiCar {
     /// Boarding at a stop: the script is told to open the doors (`AI_Scheduled_AtStation`).
     pub fn at_station(&self) -> bool {
         self.bus.as_ref().map(|b| b.at_station()).unwrap_or(false)
+    }
+
+    /// Boarding permission shared with the passenger simulation: true only when the service
+    /// owner has docked at a valid berth (`ServicePhase::Boarding`), so passengers and the
+    /// bus cannot disagree about whether the stop is being served.
+    pub fn boarding_permission(&self) -> bool {
+        self.bus
+            .as_ref()
+            .map(|b| b.state.phase == ServicePhase::Boarding)
+            .unwrap_or(false)
     }
 
     /// The side's doors to open at the stop it is boarding at (`AI_Scheduled_AtStation_Side`).
@@ -681,6 +691,8 @@ pub struct Traffic {
     index_of: HashMap<VehicleId, usize>,
     /// The junction coordinator: the single owner of admission, claims and the wait-for graph.
     junctions: JunctionCoordinator,
+    /// The service coordinator: the single owner of berth capacity and service transitions.
+    services: ServiceCoordinator,
     /// `pull_out_room` by vehicle file.
     pull_out_rooms: HashMap<std::path::PathBuf, f32>,
     /// Timetable buses taken off the road because the tile under them was unloaded (their
@@ -1252,10 +1264,10 @@ impl Traffic {
         car.state.blinker = blinker;
         car.state.braking = brake;
         if let Some(b) = car.bus.as_mut() {
-            b.phase = if at_station {
-                crate::bus_service::Phase::Boarding
+            b.state.phase = if at_station {
+                ServicePhase::Boarding
             } else {
-                crate::bus_service::Phase::Running
+                ServicePhase::EnRoute
             };
         }
         car.body.steer = steer;
@@ -1348,6 +1360,18 @@ impl Traffic {
                     rear: c.state.rear,
                     junction_state: c.junction_state,
                     junction_blocker: self.junctions.blocked_by(c.id),
+                    service_phase: c
+                        .bus
+                        .as_ref()
+                        .map(|b| b.state.phase)
+                        .unwrap_or(ServicePhase::EnRoute),
+                    berth_owner: c
+                        .bus
+                        .as_ref()
+                        .and_then(|b| b.state.berth)
+                        .and_then(|h| self.services.berth_owner(h.stop, h.occurrence))
+                        .filter(|owner| *owner != c.id),
+                    service_stop: c.bus.as_ref().and_then(|b| b.stops.front()).map(|s| s.stop),
                     constraints: if slow && no_reason {
                         vec![Reason::Unknown(0)]
                     } else {
@@ -1795,6 +1819,7 @@ impl Traffic {
             geo_prev: HashMap::new(),
             index_of: HashMap::new(),
             junctions: JunctionCoordinator::new(),
+            services: ServiceCoordinator::new(),
             pull_out_rooms: HashMap::new(),
             removed_scheduled: Vec::new(),
             twinned: Default::default(),
@@ -5891,6 +5916,51 @@ impl Traffic {
             })
             .collect();
         self.junctions.begin_tick((self.time * 1000.0).max(0.0) as u64);
+        // The service actors are frozen once too; the coordinator owns berth capacity and
+        // decides the service phases. Arrival order is recorded when a bus first comes
+        // within STOP_REACH of a stop, so a queue is assigned by stable arrival, not by
+        // container position.
+        let service_actors: Vec<ServiceActor> = self
+            .cars
+            .iter()
+            .map(|c| ServiceActor {
+                id: c.id,
+                lane: c.state.lane,
+                s: c.state.s,
+                front: c.state.front,
+                rear: c.state.rear,
+                length: c.state.length,
+                speed: c.state.speed,
+                lateral: c.state.lateral,
+                min_gap: c.state.min_gap,
+            })
+            .collect();
+        let service_intents: Vec<BerthIntent> = self
+            .cars
+            .iter()
+            .filter_map(|c| {
+                let b = c.bus.as_ref()?;
+                if let Some(held) = b.state.berth {
+                    return Some(BerthIntent {
+                        vehicle: c.id,
+                        stop: held.stop,
+                        occurrence: held.occurrence,
+                        holds: true,
+                    });
+                }
+                let t = b.stops.front()?;
+                c.state.route.get(t.route_index)?;
+                let d = c.state.route_distance(&self.net, t.route_index, t.s);
+                (d <= STOP_REACH).then_some(BerthIntent {
+                    vehicle: c.id,
+                    stop: t.stop,
+                    occurrence: t.occurrence,
+                    holds: false,
+                })
+            })
+            .collect();
+        self.services
+            .begin_tick(&service_intents, (self.time * 1000.0).max(0.0) as u64);
         for i in 0..self.cars.len() {
             self.plan_lane_change(i, &by_lane);
             let ahead = self.obstacle_ahead(i, look_ahead(self.cars[i].state.speed), &by_lane);
@@ -6356,29 +6426,91 @@ impl Traffic {
             {
                 let car = &mut self.cars[i];
                 if let Some(service) = car.bus.as_mut() {
+                    // a stop already behind the vehicle (the route was cut short) is dropped
+                    while service
+                        .stops
+                        .front()
+                        .is_some_and(|t| t.route_index < car.state.route_index)
+                    {
+                        service.stops.pop_front();
+                        crate::traffic::ibis_to_next_stop(&mut car.vehicle, service.stops.len());
+                    }
+                    let berth = service.front_berth(&car.state.route);
+                    let distance = berth
+                        .map(|b| {
+                            car.state
+                                .route_distance(&self.net, b.route_index, b.s)
+                        })
+                        .unwrap_or(f32::MAX);
                     let wanted = self.stop_wishes.as_ref().map(|(alighting, waiting)| {
                         alighting.contains(&car.id)
                             || service
-                            .stops
-                            .front()
-                            .is_some_and(|s| waiting.contains(&s.stop.get()))
+                                .stops
+                                .front()
+                                .is_some_and(|s| waiting.contains(&s.stop.get()))
                     });
-                    let ctx = crate::bus_service::Ctx {
-                        wanted,
-                        net: &self.net,
-                        way: &way,
-                        day_time: self.day_time,
-                        dt,
-                        id: car.id.get(),
-                        stopped: car.stopped,
+                    let rail = self
+                        .net
+                        .lanes
+                        .get(car.state.lane)
+                        .is_some_and(|l| l.kind == LaneKind::Rail);
+                    let feedback = crate::bus_service::script_feedback(&car.vehicle, service.state.phase);
+                    let junction_first = berth
+                        .map(|b| {
+                            let ramp = ((b.bay - car.state.lateral).abs() * 8.0).clamp(8.0, 30.0);
+                            let junction_end = way
+                                .iter()
+                                .filter(|&&(l, dl)| dl < distance && !self.net.crossings[l].is_empty())
+                                .map(|&(l, dl)| dl + self.net.lanes[l].length())
+                                .reduce(f32::max);
+                            junction_end.is_some_and(|e| distance - e >= ramp)
+                        })
+                        .unwrap_or(false);
+                    let inputs = ServiceInputs {
+                        actor: i,
+                        berth,
+                        distance,
+                        policy: service.policy(),
+                        demand: StopDemand { wanted, rail },
+                        feedback,
                         passing: car.passing.is_some(),
                         kerb_swerve,
-                        debug: debug || ::legacy_config::env::var_os("OMSI_DEBUG_PAX").is_some(),
+                        junction_first,
                     };
-                    if let Some(at) = service.step(&mut car.state, &mut car.vehicle, &ctx) {
+                    let scene = ServiceScene {
+                        net: &self.net,
+                        occupancy: &occupancy,
+                        actors: &service_actors,
+                        day_time: self.day_time,
+                        dt,
+                        tick: (self.time * 1000.0).max(0.0) as u64,
+                    };
+                    let decision = self.services.plan(&scene, &mut service.state, &inputs);
+                    if let Some(at) = decision.stop_at {
                         stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
+                    }
+                    if let Some(binding) = decision.binding {
+                        let at = decision.stop_at.unwrap_or(0.0);
                         if at < why.1 {
-                            why = (Reason::StopTarget, at);
+                            why = (binding, at);
+                        }
+                    }
+                    if let Some(t) = decision.lateral_target {
+                        car.state.lateral_target = t;
+                    }
+                    if let Some((blinker, dur)) = decision.signal {
+                        car.state.signal = blinker;
+                        car.state.signal_time = car.state.signal_time.max(dur);
+                    }
+                    if decision.consume_stop {
+                        service.stops.pop_front();
+                        crate::traffic::ibis_to_next_stop(&mut car.vehicle, service.stops.len());
+                    }
+                    if !decision.events.is_empty() {
+                        if let Some((_, cap)) = self.capture.as_mut() {
+                            for ev in &decision.events {
+                                cap.emit(ev.clone());
+                            }
                         }
                     }
                 } else if car.passing.is_none() && car.park.is_none() {
@@ -6475,44 +6607,32 @@ impl Traffic {
                         .as_ref()
                         .map(|b| !b.stops.is_empty() || b.at_stop())
                         .unwrap_or(false);
-                    let waited_out = car.stopped > ROUTE_WAIT_MAX
-                        && service.as_ref().map(|b| b.route_open).unwrap_or(false);
-                    if waited_out && !air {
-                        // it has waited long for more route where the tiles are loaded: the
-                        // rest of its trip does not join what it has (a track the map does
-                        // not have any more). It stood in the carriageway for good, the
-                        // traffic queued behind it; now it drives on as ordinary traffic
-                        // and leaves once out of sight.
-                        if let Some(b) = service {
-                            b.route_open = false;
-                            b.stops.clear();
-                        }
-                        st.route.clear();
-                        st.route_index = 0;
-                        st.planned_next = None;
-                        st.ahead.clear();
-                        st.plan_next(&self.net);
-                        car.gone = true;
-                        log::info!(
-                            "timetable bus {} waited {:.0} s for the rest of its route at ({:.0}, {:.0}): it does not join; the bus drives on and leaves",
-                            car.id,
-                            car.stopped,
-                            car.vehicle.position.x,
-                            car.vehicle.position.y
-                        );
-                    } else if !st.route.is_empty() && in_service && !air && !car.gone {
+                    if !st.route.is_empty() && in_service && !air && !car.gone {
                         // the end of the route it has: where the loaded tiles end, it waits
                         // for more route (or to be taken off out of sight); at the end of its
-                        // trip, it stops there and waits for the timetable
+                        // trip, it stops there and waits for the timetable. An open route is
+                        // not turned into random traffic after a timeout: missing capacity is
+                        // a diagnosed content/service limitation (`RoutePending`), and its
+                        // remaining stops are kept.
                         let at = end - 0.5;
                         stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
+                        let reason = if service.as_ref().map(|b| b.route_open).unwrap_or(false) {
+                            Reason::RoutePending
+                        } else {
+                            Reason::InvalidRoute
+                        };
                         if at < why.1 {
-                            why = (Reason::InvalidRoute, at);
+                            why = (reason, at);
                         }
                         let b = service.unwrap();
-                        if !b.route_open && st.speed < 0.3 && !b.trip_done() {
-                            b.phase = Phase::TripDone;
-                            b.phase_t = 0.0;
+                        if b.route_open {
+                            if b.state.phase != ServicePhase::RoutePending {
+                                b.state.phase = ServicePhase::RoutePending;
+                                b.state.phase_t = 0.0;
+                            }
+                        } else if st.speed < 0.3 && !b.trip_done() {
+                            b.state.phase = ServicePhase::NextTrip;
+                            b.state.phase_t = 0.0;
                             if debug {
                                 log::info!(
                                     "t={:.1}: timetable bus {} at the end of its trip",
@@ -6625,7 +6745,7 @@ impl Traffic {
                     light,
                     yield_at,
                     merge_wait,
-                    car.bus.as_ref().map(|b| (b.phase, b.phase_t as i32)),
+                    car.bus.as_ref().map(|b| (b.state.phase, b.state.phase_t as i32)),
                     car.state.lane,
                     car.state.s,
                     self.net.lanes[car.state.lane].length(),
@@ -6732,8 +6852,8 @@ impl Traffic {
             }
             car.state.update_blinker(&self.net);
             if matches!(
-                car.bus.as_ref().map(|b| b.phase),
-                Some(Phase::Boarding | Phase::Waiting)
+                car.bus.as_ref().map(|b| b.state.phase),
+                Some(ServicePhase::Boarding | ServicePhase::Layover)
             ) {
                 // waiting at a stop: dark until it is about to pull away
                 car.state.blinker = 0;
@@ -6751,7 +6871,7 @@ impl Traffic {
                         self.time,
                         car.id,
                         v.ty.def.type_name,
-                        car.bus.as_ref().map(|b| b.phase),
+                        car.bus.as_ref().map(|b| b.state.phase),
                         car.state.speed,
                         g("door_0"),
                         g("door_1"),
@@ -7067,7 +7187,7 @@ impl Traffic {
                     c.is_bus() as i32,
                     c.why.0.trace_label(),
                     c.why.1.min(999.0),
-                    c.bus.as_ref().map(|b| b.phase),
+                    c.bus.as_ref().map(|b| b.state.phase),
                     self.net.lanes[c.state.lane].at(c.state.s).0.z
                 );
             }
@@ -7078,6 +7198,7 @@ impl Traffic {
         for i in remove.into_iter().rev() {
             let c = self.cars.swap_remove(i);
             self.junctions.release(c.id, Reason::Removed);
+            self.services.release(c.id);
             self.orphan_sounds.extend(c.sounds);
             // the renders go back to the world at the next sync
             self.released.push(c.render);
@@ -7115,7 +7236,7 @@ impl Traffic {
                     st.upcoming().take(3).collect::<Vec<_>>(),
                     light.unwrap_or_default(),
                     c.lead_info,
-                    c.bus.as_ref().map(|b| b.phase),
+                    c.bus.as_ref().map(|b| b.state.phase),
                     c.vehicle.position.x,
                     c.vehicle.position.y,
                     c.junction_why,
@@ -7566,6 +7687,9 @@ impl Traffic {
         stops: Vec<(usize, f32, f32, f64, i64, f32)>,
         layover: bool,
     ) {
+        let id = self.cars[ci].id;
+        // a route change drops any berth the vehicle held against the old stops
+        self.services.release(id);
         let net = &self.net;
         let car = &mut self.cars[ci];
         let lane = car.state.lane;
@@ -7586,7 +7710,7 @@ impl Traffic {
             Some(b) => b.restart(stops, layover),
             None => {
                 let mut b = BusService::new(stops);
-                b.layover = layover;
+                b.state.layover = layover;
                 car.bus = Some(Box::new(b));
             }
         }
@@ -7622,6 +7746,7 @@ impl Traffic {
         };
         let c = self.cars.swap_remove(i);
         self.junctions.release(id, Reason::Removed);
+        self.services.release(id);
         self.orphan_sounds.extend(c.sounds);
         for r in std::iter::once(c.render).chain(c.trailer_renders) {
             world.release_vehicle(renderer, scene, r);
@@ -7644,6 +7769,7 @@ impl Traffic {
         self.dormant.clear();
         self.removed_scheduled.clear();
         self.junctions.invalidate_network();
+        self.services.invalidate_network();
         self.stop_wishes = None;
         self.framed_spawns.clear();
         self.held_at_red = 0;

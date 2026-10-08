@@ -1234,7 +1234,7 @@ impl Humans {
                     continue;
                 };
                 let speed = c.state.speed as f64;
-                let stop = if c.at_station() && speed.abs() < 0.3 {
+                let stop = if c.boarding_permission() && speed.abs() < 0.3 {
                     serving(c.vehicle.position, c.vehicle.heading, 18.0)
                 } else {
                     None
