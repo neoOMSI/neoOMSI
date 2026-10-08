@@ -407,6 +407,17 @@ impl Traffic {
         for i in 0..self.cars.len() {
             self.cars[i].state.emergency_drive = junction_actors[i].emergency;
             let ahead = self.obstacle_ahead(i, look_ahead(self.cars[i].state.speed), &by_lane);
+            let body_ahead = self.body_in_way(i, &occupancy, &external_ids);
+            if debug && self.cars[i].stopped >= 0.5 && self.cars[i].stopped < 0.5 + dt {
+                let id = self.cars[i].id;
+                let indexed = ahead.map(|(l, j)| (self.cars[j].id, l.gap));
+                let physical = body_ahead.map(|(l, j)| (self.cars[j].id, l.gap));
+                let feet: Vec<_> = occupancy.feet().iter()
+                    .filter(|f| Some(f.owner) == indexed.map(|x| x.0) || Some(f.owner) == physical.map(|x| x.0))
+                    .map(|f| (f.owner, f.part, f.center, f.fwd, f.half_len, f.half_w)).collect();
+                log::info!("AI perception t={:.2} car {id}: indexed {indexed:?}, body {physical:?}, lane {} upcoming {:?}, feet {feet:?}",
+                    self.time, self.cars[i].state.lane, self.cars[i].state.upcoming().take(3).collect::<Vec<_>>());
+            }
             // remember whom it lets in at a merge (a car on another lane)
             let merging = ahead
                 .filter(|(_, j)| {
@@ -439,7 +450,7 @@ impl Traffic {
                 }
             }
             // other vehicles' bodies in the way off the lanes
-            if let Some((l, j)) = self.body_in_way(i, &occupancy, &external_ids) {
+            if let Some((l, j)) = body_ahead {
                 self.cars[i].geo_block = Some(self.cars[j].id);
                 if lead.map(|x| l.gap < x.0.gap - 0.5).unwrap_or(true) {
                     if debug

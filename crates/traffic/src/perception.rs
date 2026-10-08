@@ -399,7 +399,14 @@ impl Occupancy {
                 let rel = p2 - f.center;
                 let gx = f.half_w + half_width * across.dot(f.right).abs() - 0.1;
                 let gy = f.half_len + half_width * across.dot(f.fwd).abs() - 0.1;
-                if rel.dot(f.right).abs() <= gx && rel.dot(f.fwd).abs() <= gy {
+                // A cross-section is a segment, not the rectangle obtained by growing
+                // both body axes independently. Its normal is the third separating
+                // axis; without it an angled bus grows phantom corners into a clear lane.
+                let along = (f.half_w - 0.1).max(0.0) * s.dir.dot(f.right).abs()
+                    + (f.half_len - 0.1).max(0.0) * s.dir.dot(f.fwd).abs();
+                if rel.dot(f.right).abs() <= gx && rel.dot(f.fwd).abs() <= gy
+                    && rel.dot(s.dir).abs() <= along
+                {
                     let cand = Sweep {
                         owner: f.owner,
                         part: f.part,
