@@ -1,11 +1,6 @@
 //! AI road traffic: vehicles from `ailists.cfg` moving on the map's path network, the
 //! traffic light programs of the junctions, and the population of cars around the player.
 
-/// Seconds a car held only by a full exit waits before it squeezes in (see `junction`).
-/// Seconds a car waits at a junction's line before it keeps a claim on its way through
-/// while waiting (see `Traffic::junction`).
-const LONG_WAIT_CLAIM: f32 = 45.0;
-const GRIDLOCK_WAIT: f32 = 45.0;
 use crate::bus_service::{BusService, Phase};
 use crate::scene::{VehicleRender, World};
 use anyhow::Result;
@@ -18,10 +13,11 @@ use ::simulation::ai_motion::{
 };
 use ::simulation::collision::Obb;
 pub(crate) use ::simulation::traffic::{
-    AiState, Arbiter, Aspect, BodyFootprint, Capture, CaptureTrigger, LaneId, LaneKind, Lead, MAX_BRAKE,
-    Network, NetworkVersion, Occupancy, Placement, RealizedMotion, Reason, StopTarget, SweepSample,
-    TickSnapshot, TraceHeader, TrafficLightController, VehicleCapabilities, VehicleClass, VehicleId,
-    VehicleSnapshot, TRACE_VERSION, arrival_time,
+    AiState, Aspect, BodyFootprint, Capture, CaptureTrigger, JunctionActor, JunctionCoordinator,
+    JunctionDecision, JunctionScene, JunctionState, LaneId, LaneKind, Lead, Network, NetworkVersion,
+    Occupancy, Placement, RealizedMotion, Reason, StopTarget, SweepSample, TickSnapshot, TraceHeader,
+    TrafficLightController, VehicleCapabilities, VehicleClass, VehicleId, VehicleSnapshot,
+    TRACE_VERSION, arrival_time, junction_ahead,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -171,10 +167,8 @@ pub struct AiCar {
     pub yielding: bool,
     /// Stopped by a red light this frame.
     pub light_hold: bool,
-    /// Junction lanes this car has claimed to drive through (`TPathInfo::reservePaths`).
-    pub reserved: Vec<usize>,
-    /// The light (controller, lamp) the driver decided to pass on yellow.
-    pub amber: Option<(usize, usize)>,
+    /// Where the car is in its junction movement (owned by `traffic::junctions`).
+    pub junction_state: JunctionState,
     pub passing: Option<Passing>,
     /// Finished (a dead end, the end of a timetable trip, given up): taken off the road as
     /// soon as nobody can see it.
@@ -685,6 +679,8 @@ pub struct Traffic {
     geo_prev: HashMap<VehicleId, Option<VehicleId>>,
     /// Car index by id (as of the start of the tick).
     index_of: HashMap<VehicleId, usize>,
+    /// The junction coordinator: the single owner of admission, claims and the wait-for graph.
+    junctions: JunctionCoordinator,
     /// `pull_out_room` by vehicle file.
     pull_out_rooms: HashMap<std::path::PathBuf, f32>,
     /// Timetable buses taken off the road because the tile under them was unloaded (their
@@ -1098,17 +1094,6 @@ const RAIL_CONSIST_REACH: f32 = 250.0;
 
 /// Where a vehicle meets a crossing lane on its way: its lane in the sequence, the distance
 /// from its origin to that lane's start.
-#[derive(Debug, Clone)]
-struct Junction {
-    /// (lane, distance from the car's origin to its start) of the junction's lanes on the
-    /// car's way; the first is where it has to wait.
-    lanes: Vec<(usize, f32)>,
-    /// The lane after the junction and the distance to its start.
-    exit: Option<(usize, f32)>,
-    /// The car is already on one of the junction's lanes.
-    inside: bool,
-}
-
 /// Seconds until a vehicle `dist` metres from a point gets its front there, from speed `v`
 /// with acceleration `a`.
 fn time_to(dist: f32, v: f32, a: f32) -> f32 {
@@ -1118,39 +1103,6 @@ fn time_to(dist: f32, v: f32, a: f32) -> f32 {
     let a = a.max(0.3);
     // v t + a t² / 2 = dist
     (-v + (v * v + 2.0 * a * dist).sqrt()) / a
-}
-
-fn crossing_arrival(
-    st: &AiState,
-    distance: f32,
-    claimed: bool,
-    waits_short: bool,
-    stalled: bool,
-) -> f32 {
-    if distance <= 0.3 {
-        return 0.0;
-    }
-    if claimed {
-        return time_to(distance, st.speed, st.accel)
-            + if st.speed < 0.1 { st.reaction } else { 0.0 };
-    }
-    if waits_short {
-        return f32::MAX;
-    }
-    // A queue cannot accelerate freely. Keep its actual movement in the prediction:
-    // ignoring a crawling car altogether would let another drive into its path.
-    if stalled {
-        return if st.speed > 0.0 {
-            distance / st.speed
-        } else {
-            f32::MAX
-        };
-    }
-    if st.speed > 0.5 {
-        distance / st.speed
-    } else {
-        time_to(distance, 0.0, st.accel) + st.reaction
-    }
 }
 
 impl Traffic {
@@ -1394,6 +1346,8 @@ impl Traffic {
                     reconciled: c.state.reconciled,
                     front: c.state.front,
                     rear: c.state.rear,
+                    junction_state: c.junction_state,
+                    junction_blocker: self.junctions.blocked_by(c.id),
                     constraints: if slow && no_reason {
                         vec![Reason::Unknown(0)]
                     } else {
@@ -1840,6 +1794,7 @@ impl Traffic {
             others_still: HashMap::new(),
             geo_prev: HashMap::new(),
             index_of: HashMap::new(),
+            junctions: JunctionCoordinator::new(),
             pull_out_rooms: HashMap::new(),
             removed_scheduled: Vec::new(),
             twinned: Default::default(),
@@ -3672,8 +3627,7 @@ impl Traffic {
             half_width,
             yielding: false,
             light_hold: false,
-            reserved: Vec::new(),
-            amber: None,
+            junction_state: JunctionState::Approaching,
             passing: None,
             gone: false,
             fresh: 1.5,
@@ -5131,24 +5085,7 @@ impl Traffic {
     /// went on green and then stopped as it came round the corner, at the light of the
     /// cross traffic on the path its turn joins - a stop line in mid-junction nobody sees.
     fn light_at_entry(&self, way: &[(usize, f32)], k: usize) -> Option<(usize, usize)> {
-        let l = way[k].0;
-        let light = self.net.lanes[l].traffic_light?;
-        let object = |x: usize| {
-            let lane = &self.net.lanes[x];
-            lane.key
-                .filter(|_| lane.source == 2)
-                .map(|key| (key.tile, key.id))
-        };
-        let here = object(l)?;
-        for &(p, _) in way[..k].iter().rev() {
-            if object(p) != Some(here) {
-                break;
-            }
-            if self.net.lanes[p].traffic_light.is_some() {
-                return None;
-            }
-        }
-        Some(light)
+        ::simulation::traffic::light_at_entry(&self.net, way, k)
     }
 
     fn way_lanes_into(&self, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
@@ -5184,521 +5121,39 @@ impl Traffic {
         out
     }
 
-    /// Prefix of a precomputed route lookahead that falls within `within` metres.
-    fn way_prefix(way: &[(usize, f32)], within: f32) -> &[(usize, f32)] {
-        if way.is_empty() {
-            return way;
-        }
-        let count = 1 + way[1..].iter().take_while(|&&(_, d)| d <= within).count();
-        &way[..count]
-    }
-
-    /// The junction on car `i`'s way within `within` metres: its lanes that cross or meet
-    /// others (or a footpath), and the lane after it.
-    fn junction_ahead(&self, way: &[(usize, f32)]) -> Option<Junction> {
-        let has = |l: usize| !self.net.crossings[l].is_empty() || !self.net.walks[l].is_empty();
-        let object = |l: usize| {
-            self.net.lanes[l]
-                .key
-                .filter(|_| self.net.lanes[l].source == 2)
-                .map(|k| (k.tile, k.id))
-        };
-        let mut j: Option<Junction> = None;
-        for (k, &(l, d)) in way.iter().enumerate() {
-            match j.as_mut() {
-                None => {
-                    if has(l) {
-                        j = Some(Junction {
-                            lanes: vec![(l, d)],
-                            exit: None,
-                            inside: k == 0,
-                        });
-                    }
-                }
-                Some(jn) => {
-                    if object(l).is_some() && object(l) == object(jn.lanes[0].0) {
-                        jn.lanes.push((l, d));
-                    } else {
-                        jn.exit = Some((l, d));
-                        break;
-                    }
-                }
-            }
-        }
-        j
-    }
-
-    /// The light program's verdict for car `i`: where it has to stop (distance from its
-    /// origin), or None. A car that can stop comfortably stops at yellow; one too close
-    /// drives on and remembers that it did, so the red that follows does not stop it in the
-    /// middle of the junction.
-    fn light_stop(&mut self, i: usize, way: &[(usize, f32)]) -> Option<f32> {
-        let car = &self.cars[i];
-        let st = &car.state;
-        let v = st.speed;
-        let mut stop = None;
-        let mut amber = car.amber;
-        for (k, &(_, d)) in way.iter().enumerate().skip(1) {
-            if d > 150.0 {
-                break;
-            }
-            let Some((c, li)) = self.light_at_entry(way, k) else {
-                continue;
-            };
-            let Some(ctl) = self.lights.get(c) else {
-                continue;
-            };
-            let gap = d - st.front;
-            let comfortable = v * v / (2.0 * st.decel * 1.4) + 1.0;
-            let possible = v * v / (2.0 * MAX_BRAKE * 0.8);
-            let go = match TrafficLightController::aspect(ctl.state(li)) {
-                Aspect::Green | Aspect::Dark => {
-                    // at the line when it showed green: that car goes, whatever comes next
-                    // (a light that is green for a second a cycle - Westcountry's lights on
-                    // its invisible lanes - let nobody through: the first car was still
-                    // taking in the green when it went red again, for ever)
-                    if gap < 3.0 {
-                        amber = Some((c, li));
-                    }
-                    true
-                }
-                Aspect::Yellow | Aspect::GreenYellow => {
-                    if amber == Some((c, li)) || gap < comfortable {
-                        amber = Some((c, li));
-                        true
-                    } else {
-                        false
-                    }
-                }
-                // decided to go on yellow and too close to stop now, or past stopping at all
-                Aspect::Red | Aspect::RedYellow => {
-                    (amber == Some((c, li)) && gap < comfortable) || gap < possible - 0.5
-                }
-            };
-            if !go {
-                stop = Some(d);
-                break;
-            }
-        }
-        // the light the car went through on yellow is behind it
-        if let Some(a) = amber {
-            if !way
-                .iter()
-                .skip(1)
-                .any(|&(l, _)| self.net.lanes[l].traffic_light == Some(a))
-            {
-                amber = None;
-            }
-        }
-        self.cars[i].amber = amber;
-        stop
-    }
-
-    /// Right of way at the junction ahead of car `i`: where it has to wait (distance from
-    /// its origin), or None when it may go - in which case it claims the junction's lanes.
-    /// It gives way to anyone already in the junction on a crossing path, to anyone who
-    /// has claimed a crossing path and arrives before it could be through, to traffic with
-    /// the right of way that is close enough in time (its `accept_gap`), to pedestrians on
-    /// a crossing, and it does not drive into a junction it could not leave (a queue on
-    /// the exit). Cars waiting on each other all round are resolved in favour of the one
-    /// that has waited longest. A driver who has decided to go keeps to it (the claim
-    /// stands) unless someone is actually in the way: weighing the gap again every frame
-    /// made two cars take turns at stopping and going, a hard brake every other frame.
-    /// `way` is the car's own way: where its own path crosses itself nothing is to be
-    /// given way to.
+    /// Build the frozen junction view for car `i` and let the coordinator decide. The scene
+    /// borrows only immutable fields (network, index, previous blockers) and the caller's
+    /// view maps, so the coordinator is the sole writer of junction claims.
     #[allow(clippy::too_many_arguments)]
-    fn junction_stop(
+    fn junction_plan(
         &mut self,
         i: usize,
-        jn: &Junction,
         way: &[(usize, f32)],
         lead: Option<Lead>,
-        on_lane: &HashMap<usize, Vec<(usize, f32, f32, bool)>>,
+        by_lane: &HashMap<usize, Vec<(usize, f32, f32, bool)>>,
         coming: &HashMap<usize, Vec<(usize, f32)>>,
-        arbiter: &mut Arbiter,
         walkers: &HashMap<usize, Vec<f32>>,
-    ) -> Option<f32> {
-        let car = &self.cars[i];
-        let st = &car.state;
-        let v = st.speed;
-        let entry = jn.lanes[0].1;
-        let decide = (v * v / (2.0 * st.decel) + 12.0).clamp(20.0, 70.0);
-        let me_id = car.id;
-        let release = |arb: &mut Arbiter, lanes: &[usize]| {
-            for &l in lanes {
-                arb.release(LaneId(l), me_id);
-            }
+        actors: &[JunctionActor],
+        aspects: &HashMap<(usize, usize), Aspect>,
+    ) -> JunctionDecision {
+        let movement = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
+            None
+        } else {
+            junction_ahead(&self.net, way)
         };
-        if !jn.inside && entry - st.front > decide {
-            // too far to decide; a claim made just inside that distance stands (slowing
-            // down moves the line, and letting go and claiming again in turns made the
-            // cross traffic stop and go with it)
-            if entry - st.front > decide + 20.0 {
-                let old = std::mem::take(&mut self.cars[i].reserved);
-                release(arbiter, &old);
-            }
-            return None;
-        }
-        // queued behind someone who is not through the junction yet: no claim
-        let queued = !jn.inside
-            && lead
-            .map(|l| l.speed < 1.0 && l.gap < entry - st.front + 3.0)
-            .unwrap_or(false);
-        let a_me = st.accel;
-        // decided already (a claim from the frames before), or past the point where it could
-        // still stop without an emergency brake
-        let committed = car.reserved.contains(&jn.lanes[0].0);
-        // (a stop line is kept 0.6 m off)
-        let room = entry - st.front - 0.6;
-        // (a car creeping up to its line can always stop: at the line the room is nothing,
-        // and the car standing there used to count as one that could not stop any more)
-        let cannot_stop = !jn.inside && v > 1.0 && room < v * v / (2.0 * MAX_BRAKE * 0.7);
-        let cannot_stop_gently = !jn.inside && v > 1.0 && room < v * v / (2.0 * st.decel * 1.5);
-        let mut hard = false;
-        // what is only a matter of the rules (right of way, a full exit) against someone
-        // physically in the way
-        let mut ruled = false;
-        let mut soft: Vec<usize> = Vec::new();
-        let explain = ::legacy_config::env::var_os("OMSI_DEBUG_JUNCTION").is_some()
-            || ::legacy_config::env::var_os("OMSI_DEBUG_STUCK").is_some();
-        let mut why: Vec<String> = Vec::new();
-        let mut stop_at = if jn.inside { None } else { Some(entry) };
-        // (Omsi.exe: a vehicle whose script sets `TrafficPriority` claims a crossing with
-        // priority 1000, above any vehicle type's, FUN_007d9128 - the AI ambulance as much
-        // as the player; ours honoured it for the player's bus only)
-        let prio = |c: &AiCar| c.vehicle.var("TrafficPriority").is_some_and(|v| v > 0.5);
-        let me_prio = prio(car);
-        // A driver who has waited long accepts a shorter gap (the critical gap shrinks with
-        // the wait, by up to a third after forty seconds): a bus that needed twelve seconds
-        // of a busy main road stood at the mouth of its side road for minutes.
-        let wait = self.cars[i].state.yield_time;
-        let patience = 1.0 - (wait / 40.0).min(1.0) / 3.0;
-        for &(l, dl) in &jn.lanes {
-            for c in &self.net.crossings[l] {
-                let point = dl + c.at;
-                let m = c.other;
-                if way.iter().any(|w| w.0 == m) {
-                    continue; // its own way
-                }
-                // Where the bodies meet (`Crossing::before`/`after`): two paths that cross at a
-                // shallow angle, or two turns bending towards each other, bring the cars
-                // together metres before their centre lines cross (two turning cars used to
-                // touch while the one that gave way still rolled towards "its" point). Paths
-                // that run into one another (a merge) are ordered at the joint itself.
-                if point + c.after < -st.rear - 0.3 {
-                    continue; // passed already
-                }
-                // vehicles on the other lane, or coming to it
-                let on = on_lane
-                    .get(&m)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[])
-                    .iter()
-                    .filter(|e| !e.3)
-                    .map(|&(j, sj, _, _)| (j, c.other_at - sj, true));
-                let near = coming
-                    .get(&m)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(|&(j, dj)| (j, dj + c.other_at, false));
-                for (j, dj, is_on) in on.chain(near) {
-                    if j == i {
-                        continue;
-                    }
-                    let o = &self.cars[j];
-                    // it waits behind this car's body: it will not come before this one moves
-                    if self.geo_prev.get(&o.id).copied().flatten() == Some(me_id) {
-                        continue;
-                    }
-                    if dj + c.other_after < -o.state.rear - 0.3 {
-                        continue; // it is through
-                    }
-                    let t_clear = time_to(point + c.after + st.rear + 0.3, v, a_me)
-                        + if v < 0.5 { st.reaction } else { 0.0 };
-                    // when this car's front gets to the meeting place
-                    let t_mine = time_to(point - c.before - st.front, v, a_me)
-                        + if v < 0.1 { st.reaction } else { 0.0 };
-                    // A meeting place far into the junction's way (the far side of a
-                    // roundabout its path runs round to) is not weighed at the line: the car
-                    // goes in behind the traffic already on its way and gives way there if
-                    // it has to (inside the junction every meeting place counts). Weighed
-                    // at the line, an entry waited for a gap of nine seconds on a ring that
-                    // never had one, and the queue behind it stood for minutes.
-                    if !jn.inside && point - c.before - st.front > 25.0 {
-                        continue;
-                    }
-                    // A stalled car neither claims an imminent arrival nor accelerates
-                    // freely in the arrival prediction, even without a reservation.
-                    let stalled = (o.stopped > 4.0 && o.state.speed < 0.1)
-                        || o.crawl >= 8.0
-                        || (o.state.speed < 1.5
-                        && o.lead_info.is_some_and(|(lid, gap)| {
-                        gap < 8.0
-                            && self
-                            .cars
-                            .iter()
-                            .find(|x| x.id == lid)
-                            .is_some_and(|x| x.state.speed < 1.0)
-                    }));
-                    let claimed = arbiter.holds(LaneId(m), o.id) && !stalled;
-                    let theirs = dj - c.other_before - o.state.front;
-                    // it waits for someone else before this meeting place (a car that gives
-                    // way further on still rolls through here on its way to its line)
-                    let waits_short = o.light_hold
-                        || (o.yielding
-                        && !claimed
-                        && o.wait_at
-                        .map(|w| w - 0.6 <= dj - c.other_before)
-                        .unwrap_or(false));
-                    // (it arrives in `t_j` seconds)
-                    let t_j = crossing_arrival(&o.state, theirs, claimed, waits_short, stalled);
-                    if is_on && theirs <= 0.3 {
-                        // in the meeting place right now: unless this car is further in
-                        // already (then it is the other one that has to wait)
-                        let mine_in = st.front - (point - c.before);
-                        let theirs_in = -theirs;
-                        let ahead = mine_in > 0.0
-                            && (mine_in > theirs_in + 0.3
-                            || ((mine_in - theirs_in).abs() <= 0.3 && me_id > o.id));
-                        if !ahead {
-                            hard = true;
-                            if explain {
-                                why.push(format!("car {} in the crossing of lanes {l}/{m}", o.id));
-                            }
-                            if jn.inside {
-                                stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
-                            }
-                        }
-                        continue;
-                    }
-                    if claimed || (is_on && o.state.speed > 0.5 && !waits_short) {
-                        // Both have decided (or this one is in the junction already): the one
-                        // that gets there first goes first, a tie goes to the lower number.
-                        // Otherwise two cars standing at their lines, each with a claim,
-                        // waited for each other for good.
-                        let me_decided = committed || jn.inside;
-                        let first = if me_decided {
-                            t_j < t_mine - 0.3 || ((t_j - t_mine).abs() <= 0.3 && o.id < me_id)
-                        } else {
-                            true
-                        };
-                        if first && t_j < t_clear * if me_decided { 1.0 } else { patience } + 1.0 {
-                            hard = true;
-                            if explain {
-                                why.push(format!("car {} ({}) arrives at {l}/{m} in {t_j:.1} s, this one in {t_mine:.1} s, clear in {t_clear:.1} s [its v {:.2} stood {:.1} crawl {:.1} yielding {} lead {:?} lane {} theirs {:.1}]", o.id, if claimed { "claimed" } else { "on it" }, o.state.speed, o.stopped, o.crawl, o.yielding, o.lead_info, o.state.lane, theirs));
-                            }
-                            if jn.inside {
-                                stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
-                            }
-                        }
-                        continue;
-                    }
-                    // a vehicle with priority goes before one without, whatever the lanes say;
-                    // one without gives way to it
-                    let o_prio = prio(o);
-                    if jn.inside
-                        || committed
-                        || (me_prio && !o_prio)
-                        || (!self.net.must_yield(l, m) && !(o_prio && !me_prio))
-                    {
-                        continue;
-                    }
-                    // the gap a driver takes in the main road's traffic: the critical gap of
-                    // 5 to 7.5 s (by driver), and time enough to be through
-                    if t_j < (st.accept_gap + 2.0).max(t_clear + 1.0) * patience {
-                        if t_j == f32::MAX || o.state.speed < 0.3 {
-                            soft.push(j);
-                        } else {
-                            ruled = true;
-                            if explain {
-                                why.push(format!("car {} has the right of way at {l}/{m}, arrives in {t_j:.1} s, clear in {t_clear:.1} s", o.id));
-                            }
-                        }
-                    }
-                }
-            }
-            // people on a zebra or a signalled crossing
-            for &(w, at, w_at) in &self.net.walks[l] {
-                let point = dl + at;
-                if point < st.front - 1.0 {
-                    continue;
-                }
-                if walkers
-                    .get(&w)
-                    .map(|ps| ps.iter().any(|&p| (p - w_at).abs() < 3.0))
-                    .unwrap_or(false)
-                    && point - st.front < 30.0
-                {
-                    hard = true;
-                    if explain {
-                        why.push(format!(
-                            "someone on the crossing of lane {l} and footpath {w}"
-                        ));
-                    }
-                    let before = point - 2.5;
-                    stop_at = Some(stop_at.unwrap_or(before).min(before));
-                }
-            }
-        }
-        // keep the junction clear: the exit must take the whole car
-        let ruled_before_exit = ruled;
-        let mut exit_full = false;
-        if !jn.inside {
-            if let Some((e, de)) = jn.exit {
-                let room = on_lane
-                    .get(&e)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[])
-                    .iter()
-                    .filter(|x| !x.3 && x.0 != i)
-                    .map(|&(j, sj, _, _)| (sj - self.cars[j].state.rear, self.cars[j].state.speed))
-                    .fold(None::<(f32, f32)>, |acc, x| {
-                        if acc.map(|a| x.0 < a.0).unwrap_or(true) {
-                            Some(x)
-                        } else {
-                            acc
-                        }
-                    });
-                if let Some((space, speed)) = room {
-                    if speed < 1.5 && de < 40.0 {
-                        // The exit's free storage is reserved for all admitted vehicles:
-                        // each takes its length and gap out of the same distance, so two
-                        // vehicles cannot each be promised the same empty space.
-                        arbiter.set_storage_capacity(LaneId(e), space);
-                        let need = st.length + st.min_gap;
-                        if space < need || !arbiter.reserve_storage(LaneId(e), me_id, need) {
-                            ruled = true;
-                            exit_full = true;
-                            if explain {
-                                why.push(format!("exit {e} full ({space:.1} m)"));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let mut blocked =
-            (hard && !cannot_stop) || ((ruled || !soft.is_empty()) && !cannot_stop_gently);
-        // held only by a full exit for long: a ring of queues each waiting for the next
-        // junction's exit (round a block) never clears by itself - squeeze in, as drivers do
-        if blocked
-            && exit_full
-            && !hard
-            && !ruled_before_exit
-            && soft.is_empty()
-            && wait > GRIDLOCK_WAIT
-        {
-            blocked = false;
-            if ::legacy_config::env::var_os("OMSI_DEBUG_TRAFFIC").is_some() {
-                log::info!(
-                    "t={:.1}: car {} squeezes into a full exit after {wait:.0} s (gridlock)",
-                    self.time,
-                    self.cars[i].id
-                );
-            }
-        }
-        if !hard && !ruled && !soft.is_empty() && wait > 2.5 + st.reaction {
-            // everybody is waiting for somebody: the longest waiter goes
-            let wins = soft.iter().all(|&j| {
-                let o = &self.cars[j];
-                (o.yielding || o.state.speed < 0.3)
-                    && (wait > o.state.yield_time + 0.05
-                    || ((wait - o.state.yield_time).abs() <= 0.05 && self.cars[i].id < o.id))
-            });
-            if wins {
-                blocked = false;
-                if ::legacy_config::env::var_os("OMSI_DEBUG_TRAFFIC").is_some() {
-                    log::info!(
-                        "t={:.1}: car {} ends a wait of {wait:.1} s at a junction ({} waiting on it)",
-                        self.time,
-                        self.cars[i].id,
-                        soft.len()
-                    );
-                }
-            }
-        }
-        let lanes: Vec<usize> = jn.lanes.iter().map(|x| x.0).collect();
-        // (and every ten seconds of a long wait)
-        let long_wait =
-            wait > 15.0 && (wait / 10.0).floor() != ((wait - self.last_dt) / 10.0).floor();
-        if explain && (blocked != self.cars[i].yielding || (blocked && long_wait)) {
-            log::info!(
-                "t={:.2}: car {} at {:.1} m/s {} the junction {:?} (entry {:.1} m, inside {}): hard {hard}, waiting for {:?}, claims {:?} {:?}",
-                self.time,
-                self.cars[i].id,
-                v,
-                if blocked { "waits at" } else { "goes into" },
-                lanes,
-                entry - st.front,
-                jn.inside,
-                soft.iter().map(|&j| self.cars[j].id).collect::<Vec<_>>(),
-                lanes
-                    .iter()
-                    .map(|l| {
-                        let h = arbiter.holders(LaneId(*l));
-                        if h.is_empty() {
-                            None
-                        } else {
-                            Some(h.to_vec())
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-                why
-            );
-        }
-        if explain {
-            self.cars[i].junction_why = if blocked {
-                format!(
-                    "{why:?} soft {:?}",
-                    soft.iter().map(|&j| self.cars[j].id).collect::<Vec<_>>()
-                )
-            } else {
-                String::new()
-            };
-        }
-        // A driver who has waited long at the line makes himself seen: he keeps a claim on
-        // his way through while still waiting, so the cars not yet committed to the
-        // junction hold back for him and he goes once those already on their way are
-        // through. Without it a side road's car at a busy main road waited four and a half
-        // minutes while every newcomer claimed the junction first. (Two such on crossing
-        // ways are sorted out by the claims' order: the first there, a tie the lower number.)
-        if blocked && !jn.inside && wait > LONG_WAIT_CLAIM && !queued {
-            for &l in &lanes {
-                arbiter.grant(LaneId(l), me_id);
-            }
-            let car = &mut self.cars[i];
-            for &l in &lanes {
-                if !car.reserved.contains(&l) {
-                    car.reserved.push(l);
-                }
-            }
-            return stop_at;
-        }
-        if blocked && !jn.inside {
-            let old = std::mem::take(&mut self.cars[i].reserved);
-            release(arbiter, &old);
-            return stop_at;
-        }
-        if blocked {
-            return stop_at;
-        }
-        if queued && !jn.inside {
-            let old = std::mem::take(&mut self.cars[i].reserved);
-            release(arbiter, &old);
-            return None;
-        }
-        // claim the way through
-        for &l in &lanes {
-            arbiter.grant(LaneId(l), me_id);
-        }
-        let car = &mut self.cars[i];
-        for l in lanes {
-            if !car.reserved.contains(&l) {
-                car.reserved.push(l);
-            }
-        }
-        None
+        let scene = JunctionScene {
+            net: &self.net,
+            actors,
+            index_of: &self.index_of,
+            on_lane: by_lane,
+            coming,
+            walkers,
+            geo_prev: &self.geo_prev,
+            aspects,
+            time: self.time,
+            tick: (self.time * 1000.0).max(0.0) as u64,
+        };
+        self.junctions.plan(&scene, i, way, lead, movement)
     }
 
     /// Two cars that have each other for their lead - a car that ended up in a bus's body,
@@ -6310,14 +5765,8 @@ impl Traffic {
                 }
             }
         }
-        // The arbiter starts from each vehicle's own committed claims; exit storage is
-        // reserved fresh this tick against the realized occupancy.
-        let mut arbiter = Arbiter::new();
-        for c in &self.cars {
-            for &l in &c.reserved {
-                arbiter.grant(LaneId(l), c.id);
-            }
-        }
+        // The junction coordinator owns its own claim/store state (see `begin_tick` below);
+        // exit storage is recomputed fresh this tick against the realized occupancy.
         // the light programs: requests of whoever is coming, then the cycle clocks
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
@@ -6404,6 +5853,44 @@ impl Traffic {
         let mut frames: Vec<Option<AiFrame>> = vec![None; self.cars.len()];
         let feet = self.footprints();
         self.break_lead_pairs();
+        // The junction actors and the signal aspects are frozen once for the tick; all
+        // junction decisions read this snapshot, and the coordinator owns the claims.
+        let junction_actors: Vec<JunctionActor> = self
+            .cars
+            .iter()
+            .map(|c| JunctionActor {
+                id: c.id,
+                lane: c.state.lane,
+                s: c.state.s,
+                front: c.state.front,
+                rear: c.state.rear,
+                length: c.state.length,
+                min_gap: c.state.min_gap,
+                speed: c.state.speed,
+                accel: c.state.accel,
+                decel: c.state.decel,
+                reaction: c.state.reaction,
+                accept_gap: c.state.accept_gap,
+                yield_time: c.state.yield_time,
+                stopped: c.stopped,
+                crawl: c.crawl,
+                lead_info: c.lead_info,
+                light_hold: c.light_hold,
+                yielding: c.yielding,
+                wait_at: c.wait_at,
+                priority: c.vehicle.var("TrafficPriority").is_some_and(|v| v > 0.5),
+            })
+            .collect();
+        let aspects: HashMap<(usize, usize), Aspect> = self
+            .lights
+            .iter()
+            .enumerate()
+            .flat_map(|(ci, ctl)| {
+                (0..ctl.lights.len())
+                    .map(move |li| ((ci, li), TrafficLightController::aspect(ctl.state(li))))
+            })
+            .collect();
+        self.junctions.begin_tick((self.time * 1000.0).max(0.0) as u64);
         for i in 0..self.cars.len() {
             self.plan_lane_change(i, &by_lane);
             let ahead = self.obstacle_ahead(i, look_ahead(self.cars[i].state.speed), &by_lane);
@@ -6741,18 +6228,24 @@ impl Traffic {
                 }
             }
             let merge_wait = self.plan_route_change(i, &by_lane);
-            if self.cars[i].state.change != change_cached {
-                self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
-            }
-            let way = &way_scratch[..];
-            // traffic lights
-            let light = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
-                None
-            } else {
-                self.light_stop(i, way)
-            };
+            let way = self.way_lanes(&self.cars[i].state, 200.0);
+            // The coordinator decides the signal hold and the right of way from the frozen
+            // view; it is the only writer of junction claims.
+            let decision = self.junction_plan(
+                i,
+                &way,
+                lead.map(|l| l.0),
+                &by_lane,
+                &coming,
+                &walkers,
+                &junction_actors,
+                &aspects,
+            );
+            let light = decision.light;
+            let yield_at = decision.yield_at;
             self.cars[i].light_hold = light.is_some();
             self.cars[i].light_at = light;
+            self.cars[i].junction_state = decision.state;
             if light.is_some() && self.cars[i].state.speed < 0.5 {
                 self.held_at_red += 1;
                 if self.first_red.is_none()
@@ -6768,36 +6261,17 @@ impl Traffic {
             let junction = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                self.junction_ahead(way).filter(|jn| {
+                junction_ahead(&self.net, &way).filter(|jn| {
                     light
                         .map(|l| jn.inside || jn.lanes[0].1 < l - 0.5)
                         .unwrap_or(true)
                 })
             };
-            let yield_at = match &junction {
-                Some(jn) => self.junction_stop(
-                    i,
-                    jn,
-                    way,
-                    lead.map(|l| l.0),
-                    &by_lane,
-                    &coming,
-                    &mut arbiter,
-                    &walkers,
-                ),
-                None => {
-                    let me_id = self.cars[i].id;
-                    let old = std::mem::take(&mut self.cars[i].reserved);
-                    for l in old {
-                        arbiter.release(LaneId(l), me_id);
-                    }
-                    None
-                }
-            };
             // what it has claimed and is through no longer counts
             {
+                let on_way: Vec<usize> = way.iter().map(|w| w.0).collect();
+                self.junctions.retain_on_way(self.cars[i].id, &on_way);
                 let car = &mut self.cars[i];
-                car.reserved.retain(|l| way.iter().any(|w| w.0 == *l));
                 car.yielding = yield_at.is_some();
                 car.wait_at = yield_at;
                 let st = &mut car.state;
@@ -7517,6 +6991,25 @@ impl Traffic {
                 );
             }
         }
+        // Persistent unexplained holds: classify a cyclic stale-claim deadlock separately
+        // from legal congestion or a physically full road; the coordinator cancels stale
+        // speculative claims so a valid safe manoeuvre can be retried. It never forces a
+        // vehicle across a conflicting body or a red signal.
+        {
+            let wait_scene = JunctionScene {
+                net: &self.net,
+                actors: &junction_actors,
+                index_of: &self.index_of,
+                on_lane: &by_lane,
+                coming: &coming,
+                walkers: &walkers,
+                geo_prev: &self.geo_prev,
+                aspects: &aspects,
+                time: self.time,
+                tick: (self.time * 1000.0).max(0.0) as u64,
+            };
+            let _ = self.junctions.classify_waits(&wait_scene);
+        }
         if let Some(f) = self.trace.as_mut() {
             use std::io::Write;
             // the player's vehicle as id 0 (its box centre, half length both ways)
@@ -7584,6 +7077,7 @@ impl Traffic {
         }
         for i in remove.into_iter().rev() {
             let c = self.cars.swap_remove(i);
+            self.junctions.release(c.id, Reason::Removed);
             self.orphan_sounds.extend(c.sounds);
             // the renders go back to the world at the next sync
             self.released.push(c.render);
@@ -8127,6 +7621,7 @@ impl Traffic {
             return false;
         };
         let c = self.cars.swap_remove(i);
+        self.junctions.release(id, Reason::Removed);
         self.orphan_sounds.extend(c.sounds);
         for r in std::iter::once(c.render).chain(c.trailer_renders) {
             world.release_vehicle(renderer, scene, r);
@@ -8148,6 +7643,7 @@ impl Traffic {
         }
         self.dormant.clear();
         self.removed_scheduled.clear();
+        self.junctions.invalidate_network();
         self.stop_wishes = None;
         self.framed_spawns.clear();
         self.held_at_red = 0;
@@ -8712,6 +8208,8 @@ impl Traffic {
         if n > 0 {
             added = self.net.extend(new, 1.5);
             report_network_defects(&self.net);
+            // a grown/changed network invalidates every junction claim made against the old one
+            self.junctions.invalidate_network();
             self.street_weight += self.net.lanes[added.clone()]
                 .iter()
                 .filter_map(street_lane_weight)
@@ -9105,8 +8603,7 @@ impl Traffic {
             half_width,
             yielding: false,
             light_hold: false,
-            reserved: Vec::new(),
-            amber: None,
+            junction_state: JunctionState::Approaching,
             passing: None,
             gone: false,
             fresh: 0.0,
@@ -9360,8 +8857,7 @@ mod road_scale_tests {
 
 #[cfg(test)]
 mod junction_arrival_tests {
-    use super::crossing_arrival;
-    use ::simulation::traffic::AiState;
+    use ::simulation::traffic::{crossing_arrival, AiState};
 
     #[test]
     fn stopped_queue_does_not_predict_a_restart() {

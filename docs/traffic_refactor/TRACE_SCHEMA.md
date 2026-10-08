@@ -9,8 +9,10 @@ replayable, unlike those ad-hoc dumps.
 ## Versioning
 
 - `TRACE_VERSION` is a single integer. Any field addition, removal, or semantic change
-  bumps it. It is currently **2**: Stage 4 added the `motion_feedback` fields (commanded and
-  realized speed, applied acceleration, `emergency`, `reconciled`) to the per-vehicle record.
+  bumps it. It is currently **3**: Stage 5 added the per-vehicle `junction_state`
+  (`Approaching`/`Waiting`/`Admitted`/`Inside`/`Cleared`) and `junction_blocker` (the
+  vehicle it waits for at a junction, or none); Stage 4 had added the `motion_feedback`
+  fields (commanded and realized speed, applied acceleration, `emergency`, `reconciled`).
 - A capture writes a header record containing `trace_version`, `source_revision`, `platform`,
   `seed`, `tick_hz`, `network_version`, and the ordered-input digest.
 - Unknown fields are read as absent; readers reject a mismatched major `trace_version`.
@@ -57,6 +59,7 @@ Per vehicle:
 | `binding_constraint` | ref/id or none | The constraint that currently binds |
 | `service_phase` | enum | See below |
 | `junction_state` | enum | See below |
+| `junction_blocker` | id or none | The vehicle it currently waits for at a junction |
 | `berth_owner`, `claim_holder` | ids or none | Who owns the berth/claim |
 | `motion_feedback` | | Commanded vs realised accel/speed, applied steering/speed bounds |
 | `why` | reason + gap | Convenience projection of the binding constraint |

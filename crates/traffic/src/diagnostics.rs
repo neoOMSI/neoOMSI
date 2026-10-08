@@ -7,7 +7,7 @@
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
 /// Version of the capture schema. Any field addition, removal, or semantic change bumps it.
-pub const TRACE_VERSION: u32 = 2;
+pub const TRACE_VERSION: u32 = 3;
 
 /// Why a vehicle cannot proceed at full freedom. Every active cause is preserved; one of
 /// them is the binding constraint.
@@ -33,6 +33,8 @@ pub enum Reason {
     Passing,
     Emergency,
     StaleClaim,
+    /// The vehicle left the network (removed, taken over, unloaded): its claims are released.
+    Removed,
     /// A mechanism whose semantics are not yet established, kept as data.
     Unknown(u16),
 }
@@ -78,6 +80,7 @@ impl Reason {
             Reason::Passing => "pass",
             Reason::Emergency => "emergency",
             Reason::StaleClaim => "stale",
+            Reason::Removed => "removed",
             Reason::Unknown(_) => "unknown",
         }
     }
@@ -262,6 +265,10 @@ pub struct VehicleSnapshot {
     pub reconciled: bool,
     pub front: f32,
     pub rear: f32,
+    /// Where the vehicle is in its junction movement.
+    pub junction_state: JunctionState,
+    /// The vehicle it currently waits for at a junction, if any.
+    pub junction_blocker: Option<VehicleId>,
     /// Every active cause, not just the nearest.
     pub constraints: Vec<Reason>,
     /// The cause that currently binds.
@@ -357,6 +364,10 @@ impl Capture {
             h = fnv(h, &v.realized_speed.to_bits().to_le_bytes());
             h = fnv(h, &v.accel.to_bits().to_le_bytes());
             h = fnv(h, &[v.emergency as u8, v.reconciled as u8]);
+            h = fnv(h, format!("{:?}", v.junction_state).as_bytes());
+            if let Some(b) = v.junction_blocker {
+                h = fnv(h, &b.get().to_le_bytes());
+            }
             for c in &v.constraints {
                 h = fnv(h, c.label().as_bytes());
             }
@@ -423,6 +434,8 @@ mod tests {
                 reconciled: true,
                 front: 2.0,
                 rear: 2.0,
+                junction_state: JunctionState::Cleared,
+                junction_blocker: None,
                 constraints: binding.into_iter().collect(),
                 binding,
             }],

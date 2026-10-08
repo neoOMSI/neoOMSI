@@ -146,6 +146,45 @@ core ─┘                          (never the reverse)
 - Braking strength stays a provisional class fallback until `[ai_brakeperformance]`'s other
   values are established.
 
+## Current state after Stage 5
+
+- `crates/traffic/src/junctions.rs` (L4): the single owner of junction admission,
+  commitments, fairness, release and the wait-for graph.
+  - `Movement` + `junction_ahead` (the explicit conflict areas of a crossing object),
+    `light_at_entry`, `time_to`, `crossing_arrival`.
+  - `JunctionActor` / `JunctionScene`: the frozen per-tick inputs; the coordinator never
+    touches another vehicle.
+  - `JunctionCoordinator`: `begin_tick`, `plan -> JunctionDecision { light, yield_at, state,
+    reasons, binding }`, `restore_claim`/`release`/`retain_on_way`/`invalidate_network`,
+    `blocked_by`/`wait_for_graph`, and `classify_waits -> (WaitDiagnosis, Vec<Recovery>)`.
+  - `BlockMode { Occupy, Reserve, Oncoming }` and `block_mode_between`: the typed
+    `[blockpath]` semantics, honored before the geometric convention; `Lane::crossing_problem`
+    is a keep-clear path.
+- `core::Traffic::tick` is the adapter: it builds the actor array and signal-aspect map once
+  per tick, calls `begin_tick` once, and calls `plan` per vehicle with the frozen scene. It
+  applies `light`/`yield_at`/`JunctionState`/`blocked_by`; junction claims and exit storage
+  live in the coordinator, so `AiCar::reserved`/`amber` were removed.
+- `LONG_WAIT_CLAIM`/`GRIDLOCK_WAIT` and their escape branches are gone (`D7`). Release runs
+  on removal (`remove_car`, the tick removal loop), route change (`retain_on_way`),
+  population reset and network growth (`invalidate_network`).
+- `VehicleSnapshot` gained `junction_state` and `junction_blocker`; `TRACE_VERSION` is 3 and
+  both feed the rolling decision/event hash.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`.
+- Exit-gate scenarios: `crates/traffic/tests/s5_four_way.rs`, `s5_priority_turns.rs`,
+  `s5_blocked_exit_recovery.rs`, `s5_wait_for_graph.rs`, `s5_crossing_blocks.rs`,
+  `s5_crossings.rs`; unit tests in `junctions`.
+- The replacement reason trail is recorded in `BACKLOG.md` under
+  "Stage 5 replacement reason trail".
+
+### Stage 5 remaining (documented, not claimed done)
+
+- Bus service and berth ownership (`ServicePhase`) are Stage 6; exit storage is reserved, but
+  no berth is assigned.
+- Lane changes, passing and parking are Stage 7; the coordinator does not own lateral intent.
+- Population/streaming backpressure and dormant lifecycle are Stage 8.
+- `JunctionScene` still carries caller-built `on_lane`/`coming` index views; migrating them
+  onto the id-keyed `Occupancy` is a later cleanup.
+
 ## Deletion rule
 
 Do not remove the shim or any compatibility re-export until its callers have migrated to

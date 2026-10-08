@@ -108,6 +108,8 @@ impl S1 {
                 reconciled: true,
                 front: c.front,
                 rear: c.rear,
+                junction_state: traffic::JunctionState::Cleared,
+                junction_blocker: None,
                 constraints: if red { vec![Reason::RedSignal] } else { Vec::new() },
                 binding: if red { Some(Reason::RedSignal) } else { None },
             })

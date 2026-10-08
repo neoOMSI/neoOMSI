@@ -53,6 +53,21 @@ Trace fields referenced as `snapshot.*` / `event.*` are defined in [TRACE_SCHEMA
 | Failure modes captured | False arrival from time-in-queue; doors opening in the queue; two berth owners; duplicate duty spawn; departure with a held/unsafe door; merge conflict with the follower |
 | Required trace fields | `snapshot.service_phase`, `snapshot.berth_owner`, `snapshot.constraints` (`BerthBusy`, `DoorHold`, `Leader`), `snapshot.route_progress`/stop occurrence, `event.arrival`, `event.boarding_permission`, `event.close_request`, `event.departure`, `event.fault` |
 
+## Stage 5 scenarios (headless, at the coordinator level)
+
+Stage 5 makes the junction half of S1/S2 executable against the real
+`traffic::junctions` coordinator (no renderer, no OMSI assets). The fixtures live under
+`crates/traffic/tests/`:
+
+| File | Required behaviour |
+| --- | --- |
+| `s5_four_way.rs` | Conflicting claims admit exactly one movement; the outcome is id-keyed, not container-order dependent. |
+| `s5_priority_turns.rs` | A `[rule] priority` road goes before an unmarked side road; a left turn waits for the oncoming traffic. |
+| `s5_blocked_exit_recovery.rs` | A full downstream exit holds the vehicle out for a full minute (no `GRIDLOCK_WAIT`); removing the blocker resumes flow and the claim is taken. |
+| `s5_wait_for_graph.rs` | A real hold is recorded in the wait-for graph and is not mislabelled a deadlock; the classification itself is unit-tested in `junctions` (stale claim vs legal congestion vs full capacity). |
+| `s5_crossing_blocks.rs` | `[crossingproblem]` refuses entry; `[blockpath]` `Reserve` refuses a reservation that `Occupy` ignores; `Oncoming` waits for the other side to commit. |
+| `s5_crossings.rs` | A pedestrian on a crossing and a train on a level crossing hold the street until they clear. |
+
 ## Provisional measurement targets
 
 NeoOMSI targets, not constants established by the reference report. Each is calibrated as

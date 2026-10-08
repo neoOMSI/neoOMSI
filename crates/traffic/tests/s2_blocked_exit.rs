@@ -93,6 +93,8 @@ fn s2_waiting_never_grants_passage() {
                 reconciled: true,
                 front: car.front,
                 rear: car.rear,
+                junction_state: traffic::JunctionState::Cleared,
+                junction_blocker: None,
                 constraints: if blocked { vec![Reason::OccupiedExit] } else { Vec::new() },
                 binding: if blocked { Some(Reason::OccupiedExit) } else { None },
             }],

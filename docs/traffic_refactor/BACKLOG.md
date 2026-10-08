@@ -33,13 +33,13 @@ behaviour; the exact semantics of unresolved fields stay `unknown` until their o
 
 | ID | Item | Evidence | Owning stage | Status |
 | --- | --- | --- | --- | --- |
-| `D1` | Retain the per-path `[crossingproblem]` flag through network compilation and establish its decision semantics | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), [assembly/007b432c.asm](H:/marcel_omsi/assembly/007b432c.asm) `007b788a`/`007b78c6` | 2, 5 | gap |
-| `D2` | Retain both `[blockpath]` values as a typed block rule with mode; determine directional/admission/occupancy meaning | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), `007b78d3`/`007b79cb`/`007b7a4a` | 2, 3, 5 | gap |
+| `D1` | Retain the per-path `[crossingproblem]` flag through network compilation and establish its decision semantics | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), [assembly/007b432c.asm](H:/marcel_omsi/assembly/007b432c.asm) `007b788a`/`007b78c6` | 2, 5 | done (Stage 5: keep-clear entry refusal) |
+| `D2` | Retain both `[blockpath]` values as a typed block rule with mode; determine directional/admission/occupancy meaning | [functions/007b432c.md](H:/marcel_omsi/functions/007b432c.md), `007b78d3`/`007b79cb`/`007b7a4a` | 2, 3, 5 | done (Stage 5: `BlockMode` Occupy/Reserve/Oncoming) |
 | `D3` | Audit and import all five `[ai_brakeperformance]` values; only element 4 is consumed today | [`crates/vehicle/src/vehicle/parse.rs`](../../crates/vehicle/src/vehicle/parse.rs), [`bus_service::stop_shift`](../../crates/core/src/bus_service.rs) | 2, 4, 6 | partial |
 | `D4` | Add the `ev_AI_Horn` behaviour event through the script adapter with cooldown and diagnostics | `007db679`/`007db683`; [Traffic AI guide](H:/marcel_omsi/subsystems/traffic_ai.md) | 7, 9 | gap |
 | `D5` | Honour script-facing station state (`AI_Scheduled_AtStation`) and separate safe fallback from unsafe doors | [functions/007eab20.md](H:/marcel_omsi/functions/007eab20.md), `007eb4bc` | 6 | present, unsafe fallback |
 | `D6` | Re-establish stop length, boarding region, docking reach (`BAY_REACH`) and lateral placement as separate concepts | `00620004.asm` shows `00620058` is list traversal, not metadata; [`bus_service`](../../crates/core/src/bus_service.rs) | 2, 6 | uncertain |
-| `D7` | Remove the unconditional full-exit override after `GRIDLOCK_WAIT`; models admission, occupancy, recovery separately | [`Traffic::junction_stop`](../../crates/core/src/traffic.rs) | 5 | present |
+| `D7` | Remove the unconditional full-exit override after `GRIDLOCK_WAIT`; models admission, occupancy, recovery separately | [`Traffic::junction_stop`](../../crates/core/src/traffic.rs) | 5 | done (Stage 5) |
 | `D8` | Replace the queued/crept-past arrival shortcut and fixed early-wait caps with explicit berth/door geometry and service policy | [`BusService::approach/arrive/step`](../../crates/core/src/bus_service.rs) | 6 | present |
 
 ## C. Target architecture and contracts
@@ -239,3 +239,67 @@ scenario passes:
   move into the domain (Stage 7).
 - The braking strength stays a provisional class fallback until the remaining
   `[ai_brakeperformance]` values are established (kept as data; see `D3`).
+
+## Stage 5 progress
+
+- `traffic::junctions` (L4) is the single owner of junction admission, commitments,
+  fairness, release and the wait-for graph. `JunctionCoordinator` plans from one frozen
+  `JunctionScene` and returns a `JunctionDecision` (signal hold, right-of-way hold,
+  `JunctionState`, reasons). `Movement`/`junction_ahead` are the explicit conflict areas
+  (grouped by crossing object); `BlockMode`/`block_mode_between` type the content rules.
+- Core is an adapter: `Traffic::tick` builds the actor view and signal aspects once, calls
+  `JunctionCoordinator::begin_tick`/`plan` per vehicle, and applies the decision. Junction
+  claims/storage are owned by the coordinator; `AiCar::reserved`/`amber` are gone.
+- `D7` is done: `LONG_WAIT_CLAIM` and `GRIDLOCK_WAIT` and both timer escapes are removed.
+  Waiting duration never grants entry; a clock timeout cannot erase a body.
+- `D1`/`D2` established: `[crossingproblem]` is a keep-clear path (entry refusal), and
+  `[blockpath]` is a typed `BlockMode { Occupy, Reserve, Oncoming }` (reservation refusal and
+  oncoming commitment). Provenance: the reference parser proves only that the boolean flag
+  and the two values are stored; the decision meanings are the documented Stage 5 neoOMSI
+  interpretation, tested with reservation-vs-entry-vs-oncoming scenarios.
+- Admission waits for a legal movement, clear conflicting bodies/commitments, and full
+  downstream storage; storage is reserved across simultaneous admissions through `Arbiter`.
+  Once `Inside`, the entry light is ignored and the vehicle clears safely.
+- Release conditions are explicit: tail clearance, route change (`retain_on_way`), removal
+  (`release`), and network invalidation (`invalidate_network`, called from `add_tiles`,
+  `reset_population`, `remove_car`).
+- Signal entry stays feasibility-based: red/red-yellow stop, amber stops when it can and is
+  remembered when it cannot, green/green-yellow/dark/inactive and request phases covered;
+  scripted lamp feedback stays in `TrafficLightController::lamps`.
+- The wait-for graph classifies persistent holds: a cyclic set of speculative claims is a
+  stale-claim deadlock (`CancelStaleClaim` + `RetrySafeManeuver`), a cycle held by a red
+  signal is legal congestion (`WaitLegal`), and a cycle with no claims behind it is
+  `FullCapacity`. Recovery never crosses a conflicting body or a red signal.
+- Deterministic priority (emergency `TrafficPriority` → path `priority` → arrival/wait →
+  lower id) and bounded fairness (the longest legal waiter proceeds when no body/priority
+  forbids it); emergency priority cannot authorize a collision or an impossible exit.
+- Diagnostics: `VehicleSnapshot` gained `junction_state` and `junction_blocker`;
+  `TRACE_VERSION` is 3 and both are in the rolling decision/event hash.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves) and `log`
+  (`cargo tree -p traffic`).
+- Exit gate covered by headless tests (no renderer, no OMSI assets) under
+  `crates/traffic/tests/`: `s5_four_way.rs`, `s5_priority_turns.rs`,
+  `s5_blocked_exit_recovery.rs`, `s5_wait_for_graph.rs`, `s5_crossing_blocks.rs`,
+  `s5_crossings.rs`, plus unit tests in `junctions` (block modes, stale/legal/capacity
+  cycles, invalidation and on-way release).
+
+### Stage 5 replacement reason trail
+
+| Replaced check | Replacement | Why it is equivalent or better |
+| --- | --- | --- |
+| `LONG_WAIT_CLAIM` kept a claim while blocked after 45 s | Removed; claims are released on block and the wait-for graph detects a real stale cycle | Waiting longer cannot create road space; a legal hold is diagnosed, not forced. |
+| `GRIDLOCK_WAIT` squeezed into a full exit after 45 s | Removed; the full exit keeps the vehicle out until storage is free | A timer can no longer authorize entry the capacity does not allow. |
+| `Traffic::junction_stop` inline decision + `AiCar::reserved`/`amber` | `JunctionCoordinator::plan` with commitments owned by the coordinator | One writer for junction state; previous-frame claims are keyed by stable id. |
+| `[blockpath]` flattened to a symmetric whole-path conflict | `BlockMode` from the stored mode, honored before geometry | Reservation refusal (`Reserve`) and oncoming commitment (`Oncoming`) are distinct from body occupancy (`Occupy`). |
+| Silent gridlock escape with a debug log | `classify_waits` categories and typed `Recovery` | A cyclic stale claim is cancelled and retried; legal congestion and full capacity wait. |
+
+### Stage 5 remaining (documented, not claimed done)
+
+- The service/berth ownership and the full `ServicePhase` machine are Stage 6; the
+  coordinator already reserves exit storage but does not assign berths.
+- Lateral maneuvers (lane changes, passing, parking) are Stage 7; the coordinator does not
+  own lateral intent.
+- Population/streaming backpressure and dormant lifecycle are Stage 8; `invalidate_network`
+  only releases junction claims.
+- `plan` still reads caller-supplied `on_lane`/`coming` index views; moving them fully onto
+  the perception `Occupancy` (id-keyed) is a later cleanup.

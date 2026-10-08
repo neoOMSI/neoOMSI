@@ -82,7 +82,7 @@ pub fn advance_fixed_clock(accum: &mut f32, frame_dt: f32, dt: f32, max_steps: u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostics::{Reason, TickSnapshot, VehicleSnapshot};
+    use crate::diagnostics::{JunctionState, Reason, TickSnapshot, VehicleSnapshot};
     use crate::ids::{LaneId, NetworkVersion, VehicleId};
 
     fn header() -> TraceHeader {
@@ -117,6 +117,8 @@ mod tests {
                     reconciled: true,
                     front: 2.0,
                     rear: 2.0,
+                    junction_state: JunctionState::Cleared,
+                    junction_blocker: None,
                     constraints: vec![Reason::RedSignal],
                     binding: Some(Reason::RedSignal),
                 }],
