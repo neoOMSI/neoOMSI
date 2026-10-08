@@ -135,3 +135,57 @@ specified. No item above requires a live queue reproduction to begin Stage 1.
 - The `Traffic` orchestrator in `core/src/traffic.rs` is still large: its behaviour layers
   (world/perception/junctions/maneuvers/service/population/presentation) are the Stages 3–7
   extraction, not Stage 2.
+
+## Stage 3 progress
+
+- `A4`/`A6` shared perception and snapshot substrate: `traffic::perception` adds
+  `BodyFootprint` (owner id, part index, realized centre/axes/half extents, height range
+  `z0..z1`, speed/acceleration, and lane placements for now/previous/crossing/passing),
+  `LaneInterval`, and `Occupancy`. Both the lane-interval index and a spatial grid are built
+  once per tick; intervals are sorted by position so decisions do not depend on container
+  order. Trailers and articulated rear sections share the towing `VehicleId` and differ by
+  `part`.
+- Route-relative observations use one convention (metres from the observer origin to the
+  blocker's rear along the planned way): `nearest_ahead`, `crossing_approach`,
+  `berth_occupancy`, `swept_clearance`, `pedestrian_clearance`, and `project_on_route_local`
+  (a projection off to the side or facing another way is rejected rather than snapped onto a
+  nearby parallel road).
+- `traffic::world` adds the immutable per-tick `Snapshot` (occupancy + previous `Commit`),
+  `Commit` (blocker/claims keyed by `VehicleId`), and `Arbiter` (deterministic claims,
+  simultaneous-merge winner by stable id, and exit storage reserved for all admitted
+  vehicles out of one shared free distance).
+- `core::Traffic` builds the occupancy and `by_lane` view from it; `body_in_way` sweeps
+  through `Occupancy::swept_clearance`; junction reservations and exit storage go through
+  `Arbiter`; `geo_prev`, the merge tie-break, and `break_lead_pairs` are id-keyed. LAN
+  remotes' trailers are fed to perception with their owner id.
+- Exit gate covered by headless tests (no renderer, no OMSI assets):
+  `tests/s3_reorder_invariance.rs` (container order and scheduling partitions),
+  `tests/s3_bus_rear_junction.rs` (an articulated bus rear blocks the junction until clear),
+  `tests/s3_external_trailers.rs` (player/LAN trailers and bridge height separation), and
+  `tests/s3_arbitration.rs` (exit storage and simultaneous merges). The perception and world
+  modules also carry their own unit tests.
+
+### Stage 3 replacement reason trail
+
+Each previous-frame/ad-hoc check removed here was replaced only because an equivalent
+scenario passes:
+
+| Replaced check | Replacement | Why it is equivalent or better |
+| --- | --- | --- |
+| `by_lane: HashMap<lane, Vec<(index, s, lat, foreign)>>` built in `tick` | `Occupancy` lane intervals + `Occupancy::lane_view` | Same data, but intervals are position-sorted and keyed from stable ids; reordering the cars cannot change a query. |
+| `geo_prev: Vec<Option<VehicleId>>` | `Commit::blocker_of` / `HashMap<VehicleId, Option<VehicleId>>` | Previous-frame mutual-wait memory is now addressed by id, so a container reorder keeps the same pairing. |
+| `reservations: HashMap<lane, Vec<index>>` | `Arbiter` claims keyed by `VehicleId` | Same claim semantics, deterministic by id; claims sort by id. |
+| Exit-full test per vehicle against the empty exit | `Arbiter::reserve_storage` | Free exit storage is shared, so two admitted vehicles cannot each be promised the same space. |
+| `body_in_way` core geometry over `Footprint` | `Occupancy::swept_clearance` | Same corridor sweep, now height-aware and covering external/trailer parts; ids not indices. |
+| Merge tie-break `j < i` in `obstacle_ahead` | `other.id < self.cars[i].id` | The tie now follows stable ids instead of storage order. |
+| `break_lead_pairs` pair de-dup by index (`b <= a`) | Pair chosen by id (`c.id < bid`) | Same "further along/lower id goes" outcome without container-order dependence. |
+
+### Stage 3 remaining
+
+- Junction admission, priority and `GRIDLOCK_WAIT` recovery are still the Stage 5 target;
+  this commit only routes reservations and exit storage through the arbiter.
+- The service state machine and full berth arbitration are Stage 6; `berth_occupancy` is
+  available but not yet the owner of stop phase.
+- Motion realization still advances controller progress rather than reconciling it from body
+  feedback (`project_on_route_local` is provided and tested but not yet the pose owner);
+  single-pose ownership is Stage 4.

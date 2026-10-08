@@ -16,24 +16,28 @@ pub mod diagnostics;
 pub mod following;
 pub mod ids;
 pub mod network;
+pub mod perception;
 pub mod routing;
 pub mod rules;
 pub mod scenario;
 pub mod service;
 pub mod signals;
 pub mod validation;
+pub mod world;
 
 pub use capabilities::*;
 pub use diagnostics::*;
 pub use following::*;
 pub use ids::*;
 pub use network::*;
+pub use perception::*;
 pub use routing::*;
 pub use rules::*;
 pub use scenario::*;
 pub use service::*;
 pub use signals::*;
 pub use validation::*;
+pub use world::*;
 
 #[cfg(test)]
 mod tests;

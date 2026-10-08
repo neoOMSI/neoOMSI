@@ -80,6 +80,39 @@ core ─┘                          (never the reverse)
 - `following.rs` still bundles routing/maneuver state; finer `routing.rs`/`maneuvers.rs`/
   `junctions.rs` extraction belongs to Stages 3/5/7, not this move.
 
+## Current state after Stage 3
+
+- `crates/traffic/src/perception.rs` (L2): `BodyFootprint` (owner id, part, realized
+  geometry, height range, lane placements), `LaneInterval`, `Occupancy` (lane-interval and
+  spatial indexes built once per tick), route-relative observations (`nearest_ahead`,
+  `crossing_approach`, `berth_occupancy`, `swept_clearance`, `pedestrian_clearance`), and
+  `project_on_route_local` (local route reconciliation that refuses a nearby parallel road).
+- `crates/traffic/src/world.rs` (L2/L4 substrate): immutable per-tick `Snapshot`,
+  `Commit` (previous blocker/claims keyed by `VehicleId`), and `Arbiter` (deterministic
+  claims, simultaneous-merge winner by id, exit storage reserved for all admitted vehicles).
+- `core::Traffic::tick` builds the `Occupancy` from `body_feet` (AI bodies, trailers/rear
+  sections sharing the owner id, player/LAN outlines) and derives the id-keyed `by_lane`
+  view from it. `body_in_way` sweeps through `Occupancy::swept_clearance`; junction claims
+  and exit storage go through `Arbiter`; `geo_prev`, the merge tie-break, and
+  `break_lead_pairs` are id-keyed. `lan_outlines` now carries remote trailers.
+- `traffic` still depends only on `glam`, `hashbrown` (+leaves), and `log` (`cargo tree -p
+  traffic`). The `simulation::traffic` shim is unchanged and still used by `core`.
+- Exit-gate scenarios: `crates/traffic/tests/s3_reorder_invariance.rs`,
+  `s3_bus_rear_junction.rs`, `s3_external_trailers.rs`, `s3_arbitration.rs`.
+- The replacement reason trail for every removed previous-frame/ad-hoc check is recorded in
+  `BACKLOG.md` under "Stage 3 replacement reason trail".
+
+### Stage 3 remaining (documented, not claimed done)
+
+- Junction admission (priority, `GRIDLOCK_WAIT`, per-path semantics) is Stage 5; the
+  arbiter only owns reservation bookkeeping and exit storage here.
+- The service state machine and berth ownership are Stage 6; `berth_occupancy` exists but is
+  not yet the stop-phase owner.
+- Motion realization is not yet reconciled from body feedback; `project_on_route_local` is
+  tested but single-pose ownership is Stage 4.
+- The `Traffic` orchestrator is still large; `junctions.rs`/`maneuvers.rs`/`service.rs`
+  extraction remains Stages 5–7.
+
 ## Deletion rule
 
 Do not remove the shim or any compatibility re-export until its callers have migrated to
