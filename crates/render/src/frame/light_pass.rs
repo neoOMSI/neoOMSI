@@ -196,7 +196,8 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_, p)| p.alpha > 0.002 && p.size > 0.0)
-            .map(|(i, p)| (-(p.position - eye).length_squared(), i))
+            // (far to near where each is drawn: pulled towards the viewer)
+            .map(|(i, p)| (-((p.position - eye).length() - p.pull as f64), i))
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let data: Vec<GpuCorona> = order

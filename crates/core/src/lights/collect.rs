@@ -320,7 +320,7 @@ pub fn collect(
     for list in world.particle_objects.lock().values() {
         for po in list {
             if (po.pos - camera_pos).length() < visible_range {
-                particle_sprites(&po.set, &mut scene.smoke, &mut scene.coronas);
+                particle_sprites(&po.set, false, &mut scene.smoke, &mut scene.coronas);
             }
         }
     }
@@ -446,9 +446,9 @@ pub fn collect(
             true
         });
         scene.coronas.extend(mine);
-        particle_sprites(&v.particles, &mut scene.smoke, &mut scene.coronas);
+        particle_sprites(&v.particles, true, &mut scene.smoke, &mut scene.coronas);
         for t in &v.trailers {
-            particle_sprites(&t.particles, &mut scene.smoke, &mut scene.coronas);
+            particle_sprites(&t.particles, true, &mut scene.smoke, &mut scene.coronas);
         }
     }
     let t_vehicles = std::time::Instant::now();
