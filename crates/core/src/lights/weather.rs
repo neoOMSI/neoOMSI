@@ -28,16 +28,6 @@ pub(super) fn short_range_gain(range: f32) -> f32 {
     }
 }
 
-/// Full beams (reach past the stock low beam's 100) throw towards the horizon; negative = full beam.
-pub(super) fn full_beam_gain(range: f32) -> f32 {
-    let k = spot_reach(range, 60.0) / 60.0;
-    if k > 1.0 {
-        -(k * k)
-    } else {
-        0.0
-    }
-}
-
 pub(super) fn ai_spotlight(lamps: &[[f32; 3]]) -> Option<[f32; 12]> {
     let nose = lamps.iter().map(|l| l[1]).reduce(f32::max)?;
     let front: Vec<&[f32; 3]> = lamps.iter().filter(|l| nose - l[1] < 0.4).collect();

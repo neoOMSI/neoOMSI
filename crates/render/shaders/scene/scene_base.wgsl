@@ -1074,7 +1074,7 @@ fn point_lights(p: vec3<f32>, n: vec3<f32>, map_k: f32) -> vec3<f32> {
                     let y = dot(rel, up) / max(a, 0.01);
                     let to = sqrt(max(1.0 - l.dir.w * l.dir.w, 0.0)) / max(l.dir.w, 0.05);
                     let ti = sqrt(max(1.0 - l.extra.x * l.extra.x, 0.0)) / max(l.extra.x, 0.05);
-                    let ey = select(y / to, y / (to * 0.12), y > 0.0);
+                    let ey = select(y / to, y / (to * 0.4), y > 0.0);
                     let r = sqrt((x / to) * (x / to) + ey * ey);
                     let soft = clamp(ti / max(to, 1e-3), 0.0, 0.95);
                     k = select(0.0, 1.0 - smoothstep(soft, 1.0, r), a > 0.0);

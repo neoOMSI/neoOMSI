@@ -78,7 +78,7 @@ pub(super) const SPOT_REACH: f64 = 40.0;
 pub(super) const SPOT_MAX: usize = 32;
 pub(super) const SPOT_MIN_AREA: f64 = 0.01;
 pub(super) const SPOT_MARGIN: f64 = 2.0;
-pub(super) const GATHERS_PER_FRAME: usize = 4;
+pub(super) const GATHERS_PER_FRAME: usize = 2;
 
 pub(super) type OccKey = (i64, i64, i64, u32, i32);
 
@@ -256,6 +256,7 @@ pub(super) fn assign_occluders(
     let mut shadowed = 0usize;
     let mut shadowed_spots = 0usize;
     let mut gathers = 0usize;
+    let mut prev_spot: Option<(DVec3, Vec3, bool)> = None;
     for l in lights.iter_mut() {
         l.occ_first = 0;
         l.occ_count = 0;
@@ -269,10 +270,16 @@ pub(super) fn assign_occluders(
             if (l.position - camera_pos).length() > SPOT_SHADOW_RANGE {
                 continue;
             }
-            if shadowed_spots >= SHADOW_SPOTS {
-                capped = true;
-            } else {
-                shadowed_spots += 1;
+            match prev_spot {
+                Some((p, d, c)) if p == l.position && d == l.direction => capped = c,
+                _ => {
+                    if shadowed_spots >= SHADOW_SPOTS {
+                        capped = true;
+                    } else {
+                        shadowed_spots += 1;
+                    }
+                    prev_spot = Some((l.position, l.direction, capped));
+                }
             }
         } else {
             if (l.position - camera_pos).length() > SHADOW_RANGE {
@@ -289,7 +296,7 @@ pub(super) fn assign_occluders(
         let (grid, extra) = if spill {
             (0.5, 2.0)
         } else if spot {
-            (1.0, 0.0)
+            (0.5, 0.0)
         } else {
             (2.0, 0.0)
         };
@@ -487,9 +494,9 @@ pub(super) fn blocked_by_meshes(
     for k in 0..=steps {
         let q = eye + dir * (k as f64 * 7.0).min(len);
         let probe = ::simulation::collision::Obb::point(q, 4.0);
-        let mut parts = seen.obstacles_near(&probe);
-        parts.extend(coll.obstacles_near(&probe));
-        for o in parts {
+        let parts = seen.obstacles_near(&probe);
+        let parts2 = coll.obstacles_near(&probe);
+        for o in parts.into_iter().chain(parts2) {
             if o.mass != 0.0
                 || o.pole.is_some()
                 || o.half.x.max(o.half.y) < 0.1

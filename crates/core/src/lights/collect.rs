@@ -126,7 +126,7 @@ pub fn collect(
         }
         if let Some(mut b) = near.build.take() {
             let t_build = std::time::Instant::now();
-            while b.li < b.src_lights.len() && t_build.elapsed().as_micros() < 4000 {
+            while b.li < b.src_lights.len() && t_build.elapsed().as_micros() < 1500 {
                 let mut l = b.src_lights[b.li];
                 b.li += 1;
                 if let Some(ext) = enclosure(&coll, l.position) {
@@ -140,7 +140,7 @@ pub fn collect(
             }
             while b.li >= b.src_lights.len()
                 && b.ci < b.src_coronas.len()
-                && t_build.elapsed().as_micros() < 4000
+                && t_build.elapsed().as_micros() < 1500
             {
                 let c = b.src_coronas[b.ci];
                 b.ci += 1;
@@ -191,12 +191,13 @@ pub fn collect(
             near.vis_cursor += 1;
             budget -= 1;
         }
+        let light_range2 = MAP_LIGHT_RANGE.min(visible_range).powi(2);
         scene.lights.extend(
             near.lights
                 .iter()
                 .zip(&near.light_vis)
                 .filter(|(l, vis)| {
-                    **vis && (l.position - camera_pos).length() < MAP_LIGHT_RANGE.min(visible_range)
+                    **vis && (l.position - camera_pos).length_squared() < light_range2
                 })
                 .map(|(l, _)| apply_map_spot(*l, &map_spot)),
         );
@@ -243,7 +244,9 @@ pub fn collect(
             near.coronas
                 .iter()
                 .zip(&near.corona_vis)
-                .filter(|(c, vis)| **vis && (c.position - camera_pos).length() <= visible_range)
+                .filter(|(c, vis)| {
+                    **vis && (c.position - camera_pos).length_squared() <= visible_range * visible_range
+                })
                 .map(|(c, _)| *c),
         );
     }
@@ -375,8 +378,11 @@ pub fn collect(
     if veh_occ.len() > 128 {
         veh_occ.clear();
     }
-    let mut mesh_tests = 8usize;
+    let mut mesh_tests = 3usize;
+    let mut veh_tests = 2usize;
     let beam_cfg = settings();
+    let seen_world = world.light_occluders.lock().clone();
+    let dark_v = 0.3 + 0.7 * night.clamp(0.0, 1.0);
     for (vi, v) in vehicles.iter().enumerate() {
         // (a vehicle out of sight: no lamps, no ray tests, no smoke)
         if (v.position - camera_pos).length() > visible_range {
@@ -390,7 +396,6 @@ pub fn collect(
             night,
             spill_ok[vi],
         );
-        let seen_world = world.light_occluders.lock().clone();
         let sections = body_sections(v);
         let vkey = *v as *const VehicleInstance as usize;
         let entry = veh_occ
@@ -400,7 +405,8 @@ pub fn collect(
             entry.1.clear();
         }
         let inv = sections[0].1;
-        if (frame + vi) % 8 == 0 {
+        if (frame + vi) % 8 == 0 && veh_tests > 0 {
+            veh_tests -= 1;
             entry.0 = blocked_by_meshes(&coll, &seen_world, camera_pos, v.position);
         }
         // (the mesh walk costs a probe every few metres: near vehicles test each lamp, far
@@ -411,7 +417,7 @@ pub fn collect(
         let mut mine = scene.coronas.split_off(first_corona);
         corona_lights(
             &mine,
-            0.3 + 0.7 * night.clamp(0.0, 1.0),
+            dark_v,
             SRC_MAX_VEHICLE,
             &mut scene.lights,
         );
@@ -425,7 +431,11 @@ pub fn collect(
                 (q.y * 10.0).round() as i32,
                 (q.z * 10.0).round() as i32,
             ];
-            let blocked = near_v && !body_hides(&sections, camera_pos, c.position) && {
+            let hidden = body_hides(&sections, camera_pos, c.position);
+            if hidden || (far_hidden && !near_v) {
+                return false;
+            }
+            let blocked = near_v && {
                 if (i + frame) % 8 == 0 && mesh_tests > 0 {
                     mesh_tests -= 1;
                     let b = blocked_by_meshes(&coll, &seen_world, camera_pos, c.position);
@@ -433,7 +443,7 @@ pub fn collect(
                 }
                 entry.1.get(&key).copied().unwrap_or(false)
             };
-            if body_hides(&sections, camera_pos, c.position) || far_hidden || blocked {
+            if far_hidden || blocked {
                 return false;
             }
             if !c.beam && !c.halo {
@@ -453,6 +463,7 @@ pub fn collect(
     }
     let t_vehicles = std::time::Instant::now();
     let (vis, night) = cone_weather();
+    let corona_gain = settings().corona;
     scene.coronas.retain_mut(|c| {
         if !c.beam && !c.halo {
             return true;
@@ -460,7 +471,7 @@ pub fn collect(
         if vis >= 2000.0 {
             return false;
         }
-        let glow = (night * night + 0.8) * 0.6 * c.brightness * settings().corona;
+        let glow = (night * night + 0.8) * 0.6 * c.brightness * corona_gain;
         let reach = 3.0 * (100.0 / vis.max(1.0)).sqrt() * glow * c.size;
         c.size = if c.beam { 2.0 * reach } else { reach };
         c.brightness = if c.beam { 0.3 } else { 0.2 };
@@ -494,7 +505,12 @@ pub fn collect(
         let mut panels: Vec<(f64, DVec3, f32, bool, [f32; 3], Vec3)> = scene
             .instances
             .iter()
-            .filter(|i| i.visible && !no_screen_light)
+            .filter(|i| {
+                i.visible
+                    && !no_screen_light
+                    && (i.world_centre() - camera_pos).length_squared()
+                    < (LED_RANGE + 60.0) * (LED_RANGE + 60.0)
+            })
             .filter_map(|i| {
                 // (gate, colour, slot) of the brightest matching screen slot of the instance
                 let gate = |led: bool| {
@@ -683,19 +699,17 @@ pub fn collect(
                 .collect::<Vec<_>>()
         );
     }
-    scene.lights.sort_by(|a, b| {
-        (a.position - camera_pos)
-            .length_squared()
-            .total_cmp(&(b.position - camera_pos).length_squared())
+    scene.lights.sort_by_cached_key(|l| {
+        ((l.position - camera_pos).length_squared() * 16.0) as u64
     });
     let generation = world
         .tiles_generation
         .load(std::sync::atomic::Ordering::Relaxed);
-    let seen = world.light_occluders.lock().clone();
+    let seen = seen_world;
     let t_occ = std::time::Instant::now();
     assign_occluders(&coll, &seen, generation, scene, camera_pos, vehicles);
     let total = t_start.elapsed();
-    if total.as_millis() > 40 {
+    if total.as_millis() > 10 {
         static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
         if last

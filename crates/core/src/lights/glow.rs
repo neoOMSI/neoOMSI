@@ -44,8 +44,8 @@ pub fn reset_screen_fx() {
 }
 
 pub(super) const SIGNAL_RADIUS: f32 = 3.5;
-pub(super) const SIGNAL_GAIN: f32 = 0.35;
-pub(super) const SIGNAL_CORE: f32 = 0.4;
+pub(super) const SIGNAL_GAIN: f32 = 0.45;
+pub(super) const SIGNAL_CORE: f32 = 0.3;
 
 fn is_signal(color: [f32; 3]) -> bool {
     let [r, g, b] = color;
@@ -69,7 +69,7 @@ fn signal_light(c: &Corona, dark: f32) -> PointLight {
         position: c.position + out.as_dvec3(),
         radius: SIGNAL_RADIUS * (0.7 + 0.3 * c.size.clamp(0.0, 1.0)),
         color: c.color,
-        intensity: c.brightness.min(1.5) * SIGNAL_GAIN * (0.5 + 0.5 * dark),
+        intensity: c.brightness.min(1.0) * SIGNAL_GAIN * (0.5 + 0.5 * dark),
         core: SIGNAL_CORE,
         direction,
         cone,

@@ -208,23 +208,60 @@ struct Surface {
     rough: f32,
 };
 
-// A dipped beam's cookie, drawn from the `[spotlight]`'s own numbers (its cones): how bright the
-// lamp shines in each direction, in the lamp's frame (forward its axis, right across that and
-// up). The sides and the bottom fade out at the outer cone from the inner one; the road close
-// by gets a tenth of the hot spot just under the cut-off, which sits at the horizon, so that the
-// light is thrown far down the road; above the horizon there is next to none. `COOKIE_GAIN` is
-// what the picture's white is worth against a plain spot's centre; beyond ten metres the light
-// falls off with the `COOKIE_FALLOFF` power of the distance (2 is the physics, which lets the far
-// road go dark).
-const COOKIE_GAIN: f32 = 14.0;
-const COOKIE_FALLOFF: f32 = 1.2;
-// how much wider than the cones' angles the beam shines to the sides (1: exactly their angles)
+
+const COOKIE_GAIN: f32 = 22.0;
+const COOKIE_FALLOFF: f32 = 2.0;
+
 const COOKIE_WIDTH: f32 = 1.0;
-// the share of that width the beam keeps far down the road (at the horizon), growing to the
-// whole of it by `COOKIE_WIDE_DROP` degrees under it: a dipped beam fans out near the car
-// and is narrow far ahead
+
 const COOKIE_FAR_WIDTH: f32 = 0.3;
 const COOKIE_WIDE_DROP: f32 = 14.0;
+
+const COOKIE_TRAFFIC: f32 = 1.0;
+const COOKIE_KERB_RISE: f32 = 1.5;
+const COOKIE_KERB_SPAN: f32 = 8.0;
+
+const HEAD_I: f32 = 22.0;
+const HEAD_TRAFFIC: f32 = 1.0;
+const HEAD_MAIN_PEAK: f32 = 4.0;
+
+fn headlamp_rel(to_surface: vec3<f32>, f: vec3<f32>, cos_outer: f32, cos_inner: f32, main: bool) -> f32 {
+    var r = cross(f, vec3<f32>(0.0, 0.0, 1.0));
+    if (dot(r, r) < 1e-6) {
+        return 1.0;
+    }
+    r = normalize(r);
+    let u = cross(r, f);
+    let x = dot(to_surface, f);
+    if (x <= 0.001) {
+        return 0.0;
+    }
+    let y = dot(to_surface, r);
+    let z = dot(to_surface, u);
+    let h = degrees(atan2(y, x)) * HEAD_TRAFFIC;
+    let v = degrees(atan2(z, sqrt(x * x + y * y)));
+    let ho = max(degrees(acos(clamp(cos_outer, -1.0, 1.0))), 5.0);
+    let hi = min(degrees(acos(clamp(cos_inner, -1.0, 1.0))), ho - 0.5);
+    let ang = degrees(acos(clamp(x / max(length(to_surface), 1e-4), -1.0, 1.0)));
+    let edge = 1.0 - smoothstep(0.3 * ho, 1.25 * ho, ang);
+    if (main) {
+        let core = exp(-0.5 * (h * h / 49.0 + v * v / 17.6));
+        let halo = exp(-0.5 * (h * h / 484.0 + v * v / 81.0));
+        return (HEAD_MAIN_PEAK * core + 0.5 * halo + 0.04) * edge;
+    }
+    
+    let cut = smoothstep(-1.5, 8.0, h);
+    let drop = cut - v;
+    
+    let soft = 1.4 + 0.18 * abs(h);
+    let below = smoothstep(-soft, soft, drop - 0.04 * abs(h));
+    let sig = clamp(10.0 + 3.0 * max(drop, 0.0), 10.0, 45.0);
+    let hh = (h - 2.0) / sig;
+    let hot = exp(-0.5 * hh * hh) * (0.06 + 0.94 * exp(-max(drop - 0.8, 0.0) / 6.0));
+    let fore = 0.3 * (1.0 - smoothstep(14.0, 32.0, max(drop, 0.0)));
+    let lit = max(hot, fore * exp(-0.5 * h * h / 900.0));
+    return mix(0.03, lit, below) * edge;
+}
 
 fn spot_cookie(to_surface: vec3<f32>, f: vec3<f32>, cos_outer: f32, cos_inner: f32) -> f32 {
     var r = cross(f, vec3<f32>(0.0, 0.0, 1.0));
@@ -246,11 +283,14 @@ fn spot_cookie(to_surface: vec3<f32>, f: vec3<f32>, cos_outer: f32, cos_inner: f
     let bottom = 1.0 - smoothstep(hi, ho, max(-v, 0.0));
     // the horizon seen from the axis: the axis points `tilt` degrees down
     let tilt = degrees(asin(clamp(-f.z, -1.0, 1.0)));
-    let drop = tilt - v;
+    
+    let kerb = smoothstep(0.0, COOKIE_KERB_SPAN, h * COOKIE_TRAFFIC);
+    let cut_v = tilt + COOKIE_KERB_RISE * kerb;
+    let drop = cut_v - v;
     let wide = COOKIE_WIDTH * mix(COOKIE_FAR_WIDTH, 1.0, smoothstep(0.0, COOKIE_WIDE_DROP, drop));
     let side = 1.0 - smoothstep(hi * wide, ho * wide, abs(h));
     let hot = 0.1 + 0.9 * exp(-max(drop, 0.0) / 6.0);
-    let cut = 1.0 - 0.97 * smoothstep(0.0, 1.5, -drop);
+    let cut = 1.0 - 0.97 * smoothstep(0.0, 1.0, -drop);
     return side * bottom * hot * cut;
 }
 
@@ -298,7 +338,11 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         let window = (1.0 - q * q) * (1.0 - q * q);
         // inverse-square beyond the core with a soft knee at it, not flat within it
         var e = core * core / sqrt(dist2 * dist2 + core * core * core * core) * window;
-        if (l.dir.w > -1.5 && l.extra.z >= 99.0) {
+        if (l.dir.w > -1.5 && l.extra.z >= 199.0) {
+            // a vehicle's headlamp: its own intensity distribution, inverse square all the way
+            let rel = headlamp_rel(-ld, l.dir.xyz, l.dir.w, l.extra.x, l.extra.z >= 299.0);
+            e = HEAD_I * rel / max(dist2, 4.0) * window * smoothstep(1.0, 5.0, dist);
+        } else if (l.dir.w > -1.5 && l.extra.z >= 99.0) {
             // a vehicle's dipped beam: its cookie takes the cone's place, with its own distance
             // law beyond ten metres
             if (dist > 10.0) {

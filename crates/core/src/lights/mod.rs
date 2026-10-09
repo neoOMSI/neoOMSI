@@ -3,10 +3,13 @@ use glam::{DVec3, Vec3};
 use ::render::{Corona, LightMode, Lighting, PointLight, SCREEN_CONE, Scene};
 use ::simulation::{Daylight, VehicleInstance};
 
+mod beam;
 mod collect;
 mod consts;
 mod glow;
+mod interior;
 mod occlusion;
+mod rig;
 mod settings;
 mod spot2;
 mod sprites;
@@ -14,9 +17,12 @@ mod vehicle;
 mod weather;
 
 pub use collect::*;
+use beam::headlamps;
 use consts::*;
 pub use glow::*;
+use interior::*;
 use occlusion::*;
+use rig::*;
 pub(crate) use settings::*;
 pub use spot2::*;
 pub use sprites::*;
