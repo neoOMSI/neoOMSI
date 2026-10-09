@@ -199,12 +199,16 @@ pub(super) fn headlamps(
         })
         .collect();
 
-    let partner = (0..spots.len())
-        .filter(|&i| {
-            kinds[i] == BeamKind::Dipped
-                && !matches!(uk_profile, Some(UkStudioPolygonProfile::Enviro400Mmc) if i == 3)
-        })
-        .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]));
+    let partner = if uk_profile.is_some() && spots.len() > 1 {
+        Some(1)
+    } else {
+        (0..spots.len())
+            .filter(|&i| {
+                kinds[i] == BeamKind::Dipped
+                    && !matches!(uk_profile, Some(UkStudioPolygonProfile::Enviro400Mmc) if i == 3)
+            })
+            .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]))
+    };
     let main_lit = lit.is_some_and(|i| i < spots.len() && kinds[i] == BeamKind::Main);
     let visual_only = uk_studio_polygon_visual_only(uk_profile, lit);
     let key = key_of(v);

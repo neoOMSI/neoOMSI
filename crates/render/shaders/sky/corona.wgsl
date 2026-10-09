@@ -149,7 +149,8 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
         let cone = clamp((outer - ang) / max(outer - inner, 0.0001), 0.0, 1.0);
 
         let front = clamp((2.2 - ang) / 0.63, 0.0, 1.0);
-        brightness = brightness * max(cone, 0.45 * front);
+        let head = (u32(in.extra.z + 0.5) & 16u) != 0u;
+        brightness = brightness * select(cone, max(cone, 0.45 * front), head);
     }
     // a star grows with the light's strength; every sprite's strength stops at 1
     let star_sprite = (u32(in.extra.z + 0.5) & 8u) != 0u && !streak;

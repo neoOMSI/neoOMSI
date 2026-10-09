@@ -284,7 +284,15 @@ pub fn model_lights_owned(
                 },
                 up,
                 z_offset: l.z_offset.max(0.0),
-                flags: flags & !1,
+                flags: (flags & !1)
+                    | if matches!(
+                        l.variable.to_ascii_lowercase().as_str(),
+                        "lights_lowbeam" | "lights_mainbeam" | "lights_highbeam"
+                    ) {
+                    16
+                } else {
+                    0
+                },
                 texture: l
                     .bitmap
                     .as_deref()

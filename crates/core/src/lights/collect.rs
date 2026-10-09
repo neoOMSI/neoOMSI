@@ -370,7 +370,7 @@ pub fn collect(
     // (each vehicle keeps the last answers of its mesh walks and asks again for an eighth of
     // them a frame, the whole-vehicle answer every eighth frame)
     static VEH_OCC: std::sync::LazyLock<
-        std::sync::Mutex<std::collections::HashMap<usize, (bool, std::collections::HashMap<[i32; 3], bool>)>>,
+        std::sync::Mutex<std::collections::HashMap<usize, (bool, std::collections::HashMap<[i32; 3], bool>, bool)>>,
     > = std::sync::LazyLock::new(Default::default);
     static OCC_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let frame = OCC_FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -400,14 +400,18 @@ pub fn collect(
         let vkey = *v as *const VehicleInstance as usize;
         let entry = veh_occ
             .entry(vkey)
-            .or_insert_with(|| (false, Default::default()));
+            .or_insert_with(|| (false, Default::default(), false));
         if entry.1.len() > 256 {
             entry.1.clear();
         }
         let inv = sections[0].1;
-        if (frame + vi) % 8 == 0 && veh_tests > 0 {
+        let due = (frame + vi) % 8 == 0 || entry.2;
+        if due && veh_tests > 0 {
             veh_tests -= 1;
+            entry.2 = false;
             entry.0 = blocked_by_meshes(&coll, &seen_world, camera_pos, v.position);
+        } else if due {
+            entry.2 = true;
         }
         // (the mesh walk costs a probe every few metres: near vehicles test each lamp, far
         // ones once for the whole vehicle)
