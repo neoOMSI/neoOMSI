@@ -2,7 +2,7 @@
   "pause": {
     "entry": {
       "admin": "Verwaltung",
-      "continue": "Weiter",
+      "continue": "Fortfahren",
       "quit_server": "Server verlassen",
       "report_current": "Aktuelle Fahrtauswertung",
       "report_last": "Letzte Fahrtauswertung",
@@ -634,7 +634,7 @@
             "title": "Anzeige"
           },
           "service": {
-            "title": "Service"
+            "title": "Wartung"
           },
           "driver": {
             "title": "Fahrer"
@@ -1088,7 +1088,7 @@
       "scendes_set_x": "Szeneriedesigner: Auf X-Achse sperren",
       "scendes_set_y": "Szeneriedesigner: Auf Y-Achse sperren",
       "scendes_set_z": "Szeneriedesigner: Auf Z-Achse sperren",
-      "screenshot": "Screenshot",
+      "screenshot": "Bildschirmfoto",
       "sim_pause": "Simulation pausieren",
       "steering_left": "Links lenken",
       "steering_neutral": "Lenkung zentrieren",

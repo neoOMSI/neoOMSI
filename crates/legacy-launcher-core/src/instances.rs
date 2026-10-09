@@ -58,6 +58,8 @@ pub struct Instance {
     /// The last line of its log.
     #[serde(default)]
     pub last_line: String,
+    #[serde(default)]
+    pub link: Option<launcher_protocol::link::GameState>,
 }
 
 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -275,6 +277,7 @@ pub fn list() -> Vec<Instance> {
         inst.last_line = last_lines(Path::new(&inst.log), 1, 4096)
             .pop()
             .unwrap_or_default();
+        inst.link = if alive { launcher_protocol::link::state(&inst.id) } else { None };
         out.push(inst);
     }
     // LAN status files of games that are gone (the file names the game's process)
@@ -342,11 +345,16 @@ pub fn start(game: &Path, args: &[String], d: &crate::Duty, profile: &str) -> Re
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let mut command = std::process::Command::new(game);
-    command.args(args).env("OMSI_INSTANCE", &id);
+    command
+        .args(args)
+        .env("OMSI_INSTANCE", &id)
+        .envs(launcher_protocol::link::env());
     if let Some(started) = d.discord_session_start {
         command.env("OMSI_DISCORD_SESSION_START", started.to_string());
     }
+    // the engine's stdin is the launcher's protocol pipe
     let child = command
+        .stdin(std::process::Stdio::null())
         .stdout(file)
         .stderr(err)
         .spawn()
@@ -463,9 +471,9 @@ fn end_process(inst: &Instance, grace: std::time::Duration) -> Result<bool> {
             // it has ended already (collected by the next look at the list)
             return Ok(true);
         }
-        request_quit(inst.pid)
+        ask_to_quit(inst)
     } else {
-        request_quit(inst.pid)
+        ask_to_quit(inst)
     };
     if let Err(e) = asked {
         // (it may have ended just now)
@@ -494,6 +502,13 @@ fn end_process(inst: &Instance, grace: std::time::Duration) -> Result<bool> {
         force_kill(inst.pid)?;
     }
     Ok(false)
+}
+
+fn ask_to_quit(inst: &Instance) -> Result<()> {
+    if launcher_protocol::link::request_quit(&inst.id) {
+        return Ok(());
+    }
+    request_quit(inst.pid)
 }
 
 #[cfg(unix)]

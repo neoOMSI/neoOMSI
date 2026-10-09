@@ -23,6 +23,7 @@ members = [
     "crates/legacy-plugin/demo",
     "crates/i18n",
     "crates/user-interface",
+    "crates/launcher-protocol",
     "crates/legacy-launcher-core",
     "crates/core",
     "tools/omsi-check",
@@ -42,7 +43,7 @@ log = "0.4"
 env_logger = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 encoding_rs = "0.8"
-glam = "0.33"
+glam = "0.34"
 rayon = "1.10"
 walkdir = "2"
 clap = { version = "4", features = ["derive"] }

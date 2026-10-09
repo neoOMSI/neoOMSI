@@ -45,6 +45,17 @@ scripts\dev-windows.cmd --map maps/Grundorf/global.cfg
 | **Android**          | `scripts/build-android.sh`         | `dist/android/neoOMSI-<version>.apk`               |
 | **Dedicated server** | `scripts/build-server.sh [folder]` | `dist/server/` with `start.sh`                     |
 
+Release archives also carry the launcher ([neoOMSI/launcher](https://github.com/neoOMSI/launcher),
+Electron), built by CI at the commit in `scripts/launcher-ref` into `dist/<platform>/launcher`
+(on macOS into `neoOMSI.app/Contents/Resources/launcher`). To add it to a local build (Node 24):
+
+```sh
+bash scripts/ci/build-launcher.sh windows x64                          # the pinned commit
+LAUNCHER_SRC=../launcher bash scripts/ci/build-launcher.sh windows x64 # a local checkout
+```
+
+Without it, neoOMSI opens its built-in launcher.
+
 Direct Cargo compilation is also supported:
 
 ```sh
@@ -53,8 +64,8 @@ cargo build --release -p core
 
 ## Binaries
 
-- `neoomsi` (`../crates/core`) – The main simulator executable. Without arguments, it launches into the main launcher window.
-- `neoomsi-launcher` (`../crates/legacy-launcher-core`) – Command-line interface for headless management, mod installation, and asset operations.
+- `neoomsi` (`../crates/core`) – The main simulator executable. Without arguments, it opens the launcher shipped beside it, else the built-in one (`--launcher`; `OMSI_BUILTIN_LAUNCHER=1` keeps it). `--control-protocol` serves the launcher ([LAUNCHER_PROTOCOL.md](LAUNCHER_PROTOCOL.md)).
+- `neoomsi-launcher` (`../crates/legacy-launcher-core`) – Opens the launcher like `neoomsi` without arguments; with `--cli` a command-line interface for headless management, mod installation, and asset operations.
 - `omsi-check` (`tools/omsi-check`) – Validation utility that verifies content integrity against an OMSI 2 installation.
 
 ## Running tests

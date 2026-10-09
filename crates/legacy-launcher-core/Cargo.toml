@@ -32,6 +32,7 @@ timetable = { path = "../timetable" }
 content = { path = "../content" }
 model = { path = "../model" }
 network = { path = "../network" }
+launcher-protocol = { path = "../launcher-protocol" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

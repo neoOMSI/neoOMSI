@@ -101,6 +101,7 @@ pub fn load() -> Result<(), ConfigError> {
         Ok(text) => {
             let mut saved = text.parse::<Table>()?;
             migrate_window_mode(&mut saved);
+            migrate_stick_sens(&mut saved);
             merge(&mut table, saved);
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -110,6 +111,18 @@ pub fn load() -> Result<(), ConfigError> {
     }
     st.table = table;
     Ok(())
+}
+
+fn migrate_stick_sens(table: &mut Table) {
+    let Some(controls) = table.get_mut("controls").and_then(Value::as_table_mut) else {
+        return;
+    };
+    if controls.contains_key("stick_sens_v2") {
+        return;
+    }
+    if controls.get("stick_sens").and_then(Value::as_float) == Some(0.25) {
+        controls.insert("stick_sens".to_string(), Value::Float(1.0));
+    }
 }
 
 /// Move the old fullscreen switch to the explicit window-mode setting.
@@ -261,5 +274,22 @@ mod tests {
         let graphics = table["graphics"].as_table().unwrap();
         assert_eq!(graphics.get("window_mode").and_then(Value::as_str), Some("borderless"));
         assert!(!graphics.contains_key("fullscreen"));
+    }
+
+    #[test]
+    fn old_default_stick_sensitivity_is_reset_once() {
+        let mut old: Table = "[controls]\nstick_sens = 0.25\n".parse().unwrap();
+        migrate_stick_sens(&mut old);
+        assert_eq!(old["controls"]["stick_sens"].as_float(), Some(1.0));
+
+        let mut chosen: Table = "[controls]\nstick_sens = 0.25\nstick_sens_v2 = true\n"
+            .parse()
+            .unwrap();
+        migrate_stick_sens(&mut chosen);
+        assert_eq!(chosen["controls"]["stick_sens"].as_float(), Some(0.25));
+
+        let mut own: Table = "[controls]\nstick_sens = 0.6\n".parse().unwrap();
+        migrate_stick_sens(&mut own);
+        assert_eq!(own["controls"]["stick_sens"].as_float(), Some(0.6));
     }
 }

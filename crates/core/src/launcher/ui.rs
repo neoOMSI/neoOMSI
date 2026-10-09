@@ -137,6 +137,8 @@ pub struct Ui {
     selection: HashMap<Id, (usize, usize)>,
     /// Text fields: pending mouse position for placing the caret.
     text_click: HashMap<Id, f32>,
+    /// Time fields: the digits typed into the focused hours or minutes so far.
+    time_typed: String,
     pub cursor: winit::window::CursorIcon,
     pub clipboard_out: Option<String>,
     pub clipboard_in: Option<String>,
@@ -171,6 +173,7 @@ impl Ui {
             caret: HashMap::new(),
             selection: HashMap::new(),
             text_click: HashMap::new(),
+            time_typed: String::new(),
             cursor: winit::window::CursorIcon::Default,
             clipboard_out: None,
             clipboard_in: None,
@@ -1130,39 +1133,110 @@ impl Ui {
         *value != before
     }
 
-    /// Hours and minutes with arrows (and the wheel over either).
+    /// Hours and minutes, each typed in (as in OMSI: `1643`, `7:05`) or stepped with the
+    /// arrows and the wheel.
     pub fn time_field(&mut self, name: &str, r: Rect, minutes: &mut i32) -> bool {
         let before = *minutes;
         self.p().rounded(r, 6.0, FIELD);
         self.p().rounded_border(r, 6.0, 1.0, EDGE);
         let half = (r.w - 16.0) * 0.5;
+        let ids = [id_of(&format!("{name}.0")), id_of(&format!("{name}.1"))];
+        let cells = [0, 1].map(|k| Rect::new(r.x + k as f32 * (half + 16.0), r.y, half, r.h));
+        let texts = cells.map(|c| Rect::new(c.x, c.y, c.w - 28.0, c.h));
+        let mut cell = ids.iter().position(|id| self.focus == Some(*id));
+        if self.input.pressed {
+            let hit = texts.iter().position(|t| self.hover(*t));
+            if hit.is_some() || cell.is_some() {
+                if let Some(k) = cell {
+                    commit_time(minutes, k, &self.time_typed);
+                }
+                self.time_typed.clear();
+                cell = hit;
+                self.focus = hit.map(|k| ids[k]);
+            }
+        }
+        if let Some(mut k) = cell {
+            for key in self.input.keys.clone() {
+                match key {
+                    Key::Backspace => {
+                        self.time_typed.pop();
+                    }
+                    Key::Up | Key::Down => {
+                        let sign = if key == Key::Up { 1 } else { -1 };
+                        *minutes += sign * if k == 0 { 60 } else { 1 };
+                        self.time_typed.clear();
+                    }
+                    Key::Tab => {
+                        commit_time(minutes, k, &self.time_typed);
+                        self.time_typed.clear();
+                        k = 1 - k;
+                    }
+                    Key::Enter => {
+                        commit_time(minutes, k, &self.time_typed);
+                        self.time_typed.clear();
+                        cell = None;
+                    }
+                    Key::Escape => {
+                        self.time_typed.clear();
+                        cell = None;
+                    }
+                    _ => {}
+                }
+                if cell.is_none() {
+                    break;
+                }
+            }
+            if cell.is_some() {
+                let typed: Vec<char> = self.input.text.chars().collect();
+                self.input.text.clear();
+                let mut at = Some(k);
+                for c in typed {
+                    let Some(now) = at else { break };
+                    at = type_time(minutes, now, &mut self.time_typed, c);
+                }
+                cell = at;
+            }
+            self.focus = cell.map(|k| ids[k]);
+        }
         for (k, (unit, step)) in [(60, 60), (1, 5)].iter().enumerate() {
-            let cell = Rect::new(r.x + k as f32 * (half + 16.0), r.y, half, r.h);
-            let id = id_of(&format!("{name}.{k}"));
-            let (h, _, _) = self.interact(id, cell);
-            if h && self.input.wheel.y.abs() > 0.0 && !self.wheel_taken && !self.input.touch {
-                *minutes += self.input.wheel.y.signum() as i32 * if *unit == 60 { 60 } else { 5 };
+            let cell_r = cells[k];
+            let id = ids[k];
+            let focused = self.focus == Some(id);
+            let (h, _, _) = self.interact(id, cell_r);
+            if h && !focused && self.input.wheel.y.abs() > 0.0 && !self.wheel_taken && !self.input.touch {
+                *minutes += self.input.wheel.y.signum() as i32 * step;
                 self.wheel_taken = true;
+            }
+            if h {
+                self.cursor = winit::window::CursorIcon::Text;
+            }
+            if focused {
+                self.p().rounded_border(cell_r, 6.0, 1.5, ACCENT);
             }
             let v = if *unit == 60 {
                 minutes.rem_euclid(1440) / 60
             } else {
                 minutes.rem_euclid(60)
             };
+            let shown = if focused && !self.time_typed.is_empty() {
+                format!("{}_", self.time_typed)
+            } else {
+                format!("{v:02}")
+            };
             self.text_in(
-                &format!("{v:02}"),
-                Rect::new(cell.x + 8.0, cell.y, cell.w - 30.0, cell.h),
+                &shown,
+                Rect::new(cell_r.x + 8.0, cell_r.y, cell_r.w - 30.0, cell_r.h),
                 17.0,
                 Weight::Medium,
-                TEXT,
+                if focused { ACCENT } else { TEXT },
                 Align::Center,
             );
-            let up = Rect::new(cell.right() - 24.0, cell.y + 3.0, 20.0, cell.h * 0.5 - 3.0);
+            let up = Rect::new(cell_r.right() - 24.0, cell_r.y + 3.0, 20.0, cell_r.h * 0.5 - 3.0);
             let down = Rect::new(
-                cell.right() - 24.0,
-                cell.center().y,
+                cell_r.right() - 24.0,
+                cell_r.center().y,
                 20.0,
-                cell.h * 0.5 - 3.0,
+                cell_r.h * 0.5 - 3.0,
             );
             let (hu, _, cu) = self.interact(id ^ 1, up);
             let (hd, _, cd) = self.interact(id ^ 2, down);
@@ -1803,9 +1877,57 @@ pub fn weekday(y: i32, m: u32, d: u32) -> i32 {
     (w + 6) % 7
 }
 
+fn commit_time(minutes: &mut i32, cell: usize, typed: &str) {
+    let Ok(v) = typed.parse::<i32>() else { return };
+    let (h, m) = (minutes.rem_euclid(1440) / 60, minutes.rem_euclid(60));
+    *minutes = if cell == 0 { v.min(23) * 60 + m } else { h * 60 + v.min(59) };
+}
+
+fn type_time(minutes: &mut i32, cell: usize, typed: &mut String, c: char) -> Option<usize> {
+    if (c == ':' || c == '.') && cell == 0 {
+        commit_time(minutes, 0, typed);
+        typed.clear();
+        return Some(1);
+    }
+    let Some(d) = c.to_digit(10) else {
+        return Some(cell);
+    };
+    typed.push(c);
+    // a first digit no two-digit value can start with is the whole value: `7` is 07 o'clock
+    let complete = typed.len() == 2 || (typed.len() == 1 && d > if cell == 0 { 2 } else { 5 });
+    if !complete {
+        return Some(cell);
+    }
+    commit_time(minutes, cell, typed);
+    typed.clear();
+    (cell == 0).then_some(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn typed(start: i32, text: &str) -> (i32, Option<usize>) {
+        let (mut minutes, mut cell, mut buf) = (start, Some(0), String::new());
+        for c in text.chars() {
+            cell = type_time(&mut minutes, cell.unwrap(), &mut buf, c);
+        }
+        (minutes, cell)
+    }
+
+    #[test]
+    fn a_start_time_is_typed_to_the_minute() {
+        assert_eq!(typed(9 * 60, "1643"), (16 * 60 + 43, None));
+        assert_eq!(typed(9 * 60, "7:05"), (7 * 60 + 5, None), "one-digit hour, then minutes");
+        assert_eq!(typed(9 * 60, "79"), (7 * 60 + 9, None), "9 can only be a whole minute");
+        assert_eq!(typed(9 * 60 + 30, "2"), (9 * 60 + 30, Some(0)), "still typing the hours");
+        assert_eq!(typed(9 * 60 + 30, "21"), (21 * 60 + 30, Some(1)), "minutes come next");
+        let mut m = 9 * 60;
+        commit_time(&mut m, 1, "99");
+        assert_eq!(m, 9 * 60 + 59, "clamped");
+        commit_time(&mut m, 0, "");
+        assert_eq!(m, 9 * 60 + 59, "nothing typed changes nothing");
+    }
 
     #[test]
     fn list_visibility_respects_nested_clips_and_partial_rows() {

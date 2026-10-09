@@ -1905,13 +1905,13 @@ fn visible_road_lanes(net: &Network) -> Vec<(usize, &::traffic::Lane)> {
         .collect()
 }
 
-struct MapRoad {
-    points: Vec<DVec3>,
-    width: f32,
-    main: bool,
+pub(crate) struct MapRoad {
+    pub(crate) points: Vec<DVec3>,
+    pub(crate) width: f32,
+    pub(crate) main: bool,
 }
 
-fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, f32)]) {
+pub(crate) fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, f32)]) {
     let mut segments = Vec::new();
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (pts, width) in surfaces {
@@ -2016,7 +2016,7 @@ fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, f32)]) {
     }
 }
 
-fn road_geometry(net: &Network) -> Vec<MapRoad> {
+pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
     let mut roads = Vec::new();
     let mut splines =
         std::collections::BTreeMap::<((i32, i32), i64), Vec<&::traffic::Lane>>::new();
@@ -2180,7 +2180,7 @@ fn build_roads(p: &mut Painter, net: &Network, anchor: DVec2) {
     }
 }
 
-fn simplify(pts: &[Vec3], tol: f32) -> Vec<Vec3> {
+pub(crate) fn simplify(pts: &[Vec3], tol: f32) -> Vec<Vec3> {
     if pts.len() < 3 {
         return pts.to_vec();
     }

@@ -220,6 +220,9 @@ pub(crate) struct Args {
     /// Open the launcher (the default when the program is started without arguments).
     #[arg(long)]
     pub(crate) launcher: bool,
+    /// Serve the external launcher over stdin/stdout (docs/LAUNCHER_PROTOCOL.md).
+    #[arg(long)]
+    pub(crate) control_protocol: bool,
     /// Skip the launcher and show the in-game start menu instead.
     #[arg(long)]
     pub(crate) menu: bool,

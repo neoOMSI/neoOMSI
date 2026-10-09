@@ -36,24 +36,46 @@ pub(crate) struct Wheel {
     sent: Instant,
 }
 
-impl Wheel {
-    pub fn open(name: &str) -> Option<Wheel> {
-        let dir = std::fs::read_dir("/sys/class/input").ok()?;
-        let mut nodes: Vec<String> = dir
-            .filter_map(|e| e.ok()?.file_name().into_string().ok())
-            .filter(|n| n.starts_with("event"))
-            .collect();
-        nodes.sort();
-        for node in nodes {
+fn nodes(name: &str) -> Vec<(String, String)> {
+    let Ok(dir) = std::fs::read_dir("/sys/class/input") else {
+        return Vec::new();
+    };
+    let mut nodes: Vec<String> = dir
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("event"))
+        .collect();
+    nodes.sort();
+    nodes
+        .into_iter()
+        .filter_map(|node| {
             let sys = format!("/sys/class/input/{node}/device");
-            let Ok(dev_name) = std::fs::read_to_string(format!("{sys}/name")) else {
-                continue;
-            };
+            let dev_name = std::fs::read_to_string(format!("{sys}/name")).ok()?;
             if !crate::controllers::names_match(dev_name.trim(), name) {
-                continue;
+                return None;
             }
             let caps =
                 std::fs::read_to_string(format!("{sys}/capabilities/ff")).unwrap_or_default();
+            Some((node, caps))
+        })
+        .collect()
+}
+
+pub(crate) fn constant_force(name: &str) -> bool {
+    static SEEN: std::sync::Mutex<Vec<(String, bool)>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, f)) = seen.iter().find(|(n, _)| n == name) {
+        return *f;
+    }
+    let f = nodes(name)
+        .iter()
+        .any(|(_, caps)| has_bit(caps, FF_CONSTANT));
+    seen.push((name.to_string(), f));
+    f
+}
+
+impl Wheel {
+    pub fn open(name: &str) -> Option<Wheel> {
+        for (node, caps) in nodes(name) {
             if !has_bit(&caps, FF_CONSTANT) {
                 continue;
             }

@@ -44,7 +44,7 @@ pub(crate) const GAME_MENU: [(&str, &str); 11] = [
     ("duty", "pause.entry.duty"),
     ("end-duty", "pause.entry.end-duty"),
     ("save", "pause.entry.save"),
-    ("save-slot", "pause.entry.save-slot"),
+    ("save-slot", "pause.entry.saveslot"),
     ("load", "pause.entry.load"),
     ("quit", "pause.entry.quit"),
 ];

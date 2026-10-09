@@ -35,6 +35,7 @@ pub(crate) fn is_omsi_root(p: &Path) -> bool {
 /// terminal to print to (a double click, the launcher), and the log as always.
 pub(crate) fn fatal_dialog(title: &str, text: &str) {
     log::error!("{title}: {text}");
+    crate::game_link::failed(&format!("{title}: {text}"));
     // started from a terminal (the message is right there) or by a test harness
     if std::io::IsTerminal::is_terminal(&std::io::stderr())
         || ::legacy_config::env::var_os("OMSI_BACKGROUND").is_some()
@@ -341,6 +342,7 @@ pub(crate) fn window_renderer(
 /// box on Windows; the log and the terminal elsewhere).
 pub(crate) fn fatal_message(text: &str) {
     log::error!("{text}");
+    crate::game_link::failed(text);
     eprintln!("neoOMSI: {text}");
     #[cfg(windows)]
     {

@@ -67,11 +67,12 @@ if ! grep -q '[^[:space:]]' changes.md; then
 fi
 
 download_base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
+LAUNCHER_SHA="$(tr -d '[:space:]' < scripts/launcher-ref)"
 
 cat > notes.md <<NOTES
 > **Early development build.** Expect bugs. An original OMSI 2 installation is required; neoOMSI does not include game content.
 
-**Source:** [\`${GITHUB_SHA:0:8}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) · **Build:** [#${GITHUB_RUN_NUMBER}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
+**Source:** [\`${GITHUB_SHA:0:8}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) · **Launcher:** [\`${LAUNCHER_SHA:0:8}\`](https://github.com/neoOMSI/launcher/commit/$LAUNCHER_SHA) · **Build:** [#${GITHUB_RUN_NUMBER}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
 
 ## What's changed
 

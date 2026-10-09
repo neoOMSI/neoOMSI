@@ -215,9 +215,8 @@ unsafe extern "system" fn notify_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
-/// A message-only window of the calling thread that Windows tells when a HID device is
-/// plugged in or out (the way SDL finds new controllers).
-fn notification_window() -> Option<HWND> {
+/// A message-only window of the calling thread.
+fn message_window() -> Option<HWND> {
     unsafe {
         let hinst: HINSTANCE = GetModuleHandleW(None).ok()?.into();
         let class = w!("neoOMSI game controllers");
@@ -229,7 +228,7 @@ fn notification_window() -> Option<HWND> {
         };
         // (0 when the class is there already - a second window of the launcher's)
         let _ = RegisterClassW(&wc);
-        let hwnd = CreateWindowExW(
+        CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class,
             w!(""),
@@ -243,7 +242,20 @@ fn notification_window() -> Option<HWND> {
             Some(hinst),
             None,
         )
-            .ok()?;
+            .ok()
+    }
+}
+
+/// For reading the devices where there is no game window: DirectInput needs one to own them.
+pub(crate) fn helper_window() -> Option<isize> {
+    message_window().map(|h| h.0 as isize)
+}
+
+/// A message-only window of the calling thread that Windows tells when a HID device is
+/// plugged in or out (the way SDL finds new controllers).
+fn notification_window() -> Option<HWND> {
+    unsafe {
+        let hwnd = message_window()?;
         let filter = DEV_BROADCAST_DEVICEINTERFACE_W {
             dbcc_size: std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32,
             dbcc_devicetype: DBT_DEVTYP_DEVICEINTERFACE.0,

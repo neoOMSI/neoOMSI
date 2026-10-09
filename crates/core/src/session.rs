@@ -7,6 +7,9 @@ pub(crate) const SAVES: &str = "Saves";
 impl App {
     pub(crate) fn finish_session(&mut self) {
         crate::game_lists::flush_settings(true);
+        if !self.exiting {
+            crate::game_link::report("stopping", None, "");
+        }
         self.exiting = true;
         if let Some(w) = self.world.clone() {
             let mut none = None;
@@ -49,6 +52,7 @@ impl App {
             return false;
         };
         let mut cmd = std::process::Command::new(exe);
+        crate::game_link::unlinked(&mut cmd);
         cmd.arg("--root")
             .arg(&self.args.root)
             .arg("--no-menu")
@@ -118,6 +122,7 @@ impl App {
             return false;
         };
         let mut cmd = std::process::Command::new(exe);
+        crate::game_link::unlinked(&mut cmd);
         cmd.arg("--root")
             .arg(&self.args.root)
             .arg("--no-menu")

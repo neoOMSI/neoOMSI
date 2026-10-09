@@ -4,12 +4,21 @@
 //! LAN peers only noticed the player was gone when he timed out. Here the signal only
 //! marks the request; a watcher thread wakes the event loop, which then ends the session
 //! the way Escape and closing the window do (summary, personnel file, LAN goodbye). A
-//! second signal ends the process at once, for a game that does not react.
+//! second signal ends the process at once, for a game that does not react. The launcher's
+//! quit over the game link (`request`) takes the same way, on every platform.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// The signal that asked the game to end (0 = none yet).
 static REQUESTED: AtomicI32 = AtomicI32::new(0);
+
+type Wake = Box<dyn FnOnce(i32) + Send>;
+
+static WAKE: Mutex<Option<Wake>> = Mutex::new(None);
+
+/// Not a signal: the engine asked over the game link.
+pub const LAUNCHER: i32 = -1;
 
 /// Why the game was asked to end, for the log.
 pub fn signal_name(sig: i32) -> &'static str {
@@ -17,6 +26,7 @@ pub fn signal_name(sig: i32) -> &'static str {
         SIGTERM => "SIGTERM",
         SIGINT => "SIGINT",
         SIGHUP => "SIGHUP",
+        LAUNCHER => "the launcher's quit request",
         _ => "a signal",
     }
 }
@@ -50,10 +60,21 @@ extern "C" fn on_signal(sig: i32) {
     }
 }
 
+fn fire(sig: i32) {
+    let wake = WAKE.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(wake) = wake {
+        wake(sig);
+    }
+}
+
 /// Take SIGTERM, SIGINT and SIGHUP over for the window's event loop: `wake` is called once,
 /// from a watcher thread, when one of them arrived (a signal the parent set to be ignored,
-/// as `nohup` does, stays ignored).
+/// as `nohup` does, stays ignored), or by `request`.
 pub fn install(wake: impl FnOnce(i32) + Send + 'static) {
+    *WAKE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(wake));
+    if let Some(sig) = requested() {
+        fire(sig);
+    }
     #[cfg(unix)]
     {
         for sig in [SIGTERM, SIGINT, SIGHUP] {
@@ -76,7 +97,7 @@ pub fn install(wake: impl FnOnce(i32) + Send + 'static) {
                 loop {
                     let sig = REQUESTED.load(Ordering::SeqCst);
                     if sig != 0 {
-                        wake(sig);
+                        fire(sig);
                         return;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -95,17 +116,43 @@ pub fn install(wake: impl FnOnce(i32) + Send + 'static) {
             }
         }
     }
-    #[cfg(not(unix))]
+}
+
+pub fn request() {
+    if REQUESTED
+        .compare_exchange(0, LAUNCHER, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
     {
-        // Windows: the launcher asks with WM_CLOSE (taskkill without /F), which arrives as
-        // a close request of the window
-        let _ = wake;
+        fire(LAUNCHER);
     }
 }
 
 /// The signal that asked the game to end, if one did.
 pub fn requested() -> Option<i32> {
     Some(REQUESTED.load(Ordering::SeqCst)).filter(|s| *s != 0)
+}
+
+#[cfg(all(test, not(unix)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_before_install_is_not_lost() {
+        request();
+        assert_eq!(requested(), Some(LAUNCHER));
+        let (tx, rx) = std::sync::mpsc::channel();
+        install(move |sig| tx.send(sig).unwrap());
+        assert_eq!(
+            rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+            LAUNCHER
+        );
+        request();
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(200)).is_err(),
+            "woken once"
+        );
+        REQUESTED.store(0, Ordering::SeqCst);
+    }
 }
 
 #[cfg(all(test, unix))]

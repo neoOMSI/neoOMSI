@@ -10,6 +10,7 @@
 pub mod index;
 pub mod install;
 pub mod instances;
+pub mod servers;
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -1498,15 +1499,16 @@ fn dsc_candidates(file: &Path, lang: &str) -> Vec<PathBuf> {
     }
     langs
         .into_iter()
-        .map(|l| {
-            let l = match l {
-                "en" => "ENG",
-                "de" => "DEU",
-                other => other,
-            };
-            file.with_file_name(format!("{stem}_{l}.dsc"))
-        })
+        .map(|l| file.with_file_name(format!("{stem}_{}.dsc", omsi_suffix(l))))
         .collect()
+}
+
+fn omsi_suffix(lang: &str) -> &str {
+    match lang {
+        "en" => "ENG",
+        "de" => "DEU",
+        other => other,
+    }
 }
 
 /// A `.dsc` file: the `[name]` / `[friendlyname]` lines and the `[description]` text.
@@ -2368,6 +2370,7 @@ const SETTINGS: &[(&str, &str, &str, Kind)] = &[
     ("nightmap_glow", "graphics", "nightmap_glow", Int(0, 15)),
     ("led_mips", "graphics", "led_mips", Float(0.0, 4.0)),
     ("atmosphere_brightness", "graphics", "atmosphere_brightness", Float(0.0, 2.0)),
+    ("map_detail", "graphics", "map_detail", Int(-1, 255)),
     ("navigator", "ui", "navigator", Bool),
     ("ui_opacity", "ui", "opacity", Float(0.0, 1.0)),
     ("navigator_corner", "ui", "navigator_corner", Text),
@@ -2396,6 +2399,8 @@ const SETTINGS: &[(&str, &str, &str, Kind)] = &[
     ("metar_station", "gameplay", "metar_station", Station),
     ("auto_clutch", "gameplay", "auto_clutch", Bool),
     ("auto_ibis", "gameplay", "auto_ibis", Bool),
+    ("momentary_gears", "gameplay", "momentary_gears", Bool),
+    ("auto_shift", "gameplay", "auto_shift", Bool),
     ("steering_linear", "controls", "steering_linear", Bool),
     ("old_steering", "controls", "old_steering", Bool),
     ("red_steer_spd", "controls", "red_steer_spd", Bool),
@@ -2623,12 +2628,15 @@ fn mirror_refresh(x: &str) -> &'static str {
 /// it teaches, in the settings' language.
 pub fn tutorials() -> Vec<(usize, String, String)> {
     let Ok(r) = root() else { return Vec::new() };
-    let lang = content_language();
+    tutorials_in(&r, content_language())
+}
+
+fn tutorials_in(r: &Path, lang: &str) -> Vec<(usize, String, String)> {
     let mut out = Vec::new();
     for n in 1..=4usize {
         let p = [lang, "en", "de"]
             .iter()
-            .map(|l| r.join("Tutorials").join(format!("menu_{n}_{l}.html")))
+            .map(|l| r.join("Tutorials").join(format!("menu_{n}_{}.html", omsi_suffix(l))))
             .find(|p| p.is_file());
         let Some(p) = p else { continue };
         let Ok(bytes) = std::fs::read(&p) else {
@@ -2867,7 +2875,8 @@ pub fn bus_preview(bus: &str, paint: &str) -> Result<String> {
         .unwrap_or(false);
     if !fresh {
         let mut cmd = std::process::Command::new(&game);
-        cmd.arg("--root")
+        cmd.stdin(std::process::Stdio::null())
+            .arg("--root")
             .arg(&root)
             .arg("--bus")
             .arg(bus)
@@ -3395,6 +3404,86 @@ pub fn pick_file(title: &str) -> Option<PathBuf> {
     }
 }
 
+pub fn external_launcher(game: &Path) -> Option<PathBuf> {
+    if std::env::var_os("OMSI_BUILTIN_LAUNCHER").is_some() {
+        return None;
+    }
+    let app = match std::env::var_os("OMSI_LAUNCHER") {
+        Some(p) => PathBuf::from(p),
+        None => shipped_launcher(game)?,
+    };
+    let current = std::env::current_exe().ok();
+    (app.is_file() && !same_file(&app, game) && !current.is_some_and(|c| same_file(&app, &c)))
+        .then_some(app)
+}
+
+/// An old `OMSI_LAUNCHER` may point back at this program or the game: they would start
+/// each other without end.
+fn same_file(a: &Path, b: &Path) -> bool {
+    std::fs::canonicalize(a).ok().is_some_and(|a| std::fs::canonicalize(b).ok() == Some(a))
+}
+
+fn shipped_launcher(game: &Path) -> Option<PathBuf> {
+    let dir = game.parent()?;
+    Some(if cfg!(target_os = "macos") {
+        dir.parent()?
+            .join("Resources/launcher/neoOMSI Launcher.app/Contents/MacOS/neoOMSI Launcher")
+    } else if cfg!(windows) {
+        dir.join("launcher").join("neoOMSI Launcher.exe")
+    } else {
+        dir.join("launcher").join("neoomsi-launcher-app")
+    })
+}
+
+/// False when there is none: the built-in launcher is the one then.
+pub fn start_external_launcher(game: &Path) -> Result<bool> {
+    let Some(app) = external_launcher(game) else {
+        return Ok(false);
+    };
+    #[cfg(target_os = "linux")]
+    if !linux_sandbox_works(&app) {
+        let helper = app.with_file_name("chrome-sandbox");
+        return Err(anyhow!(
+            "{} needs Chromium's sandbox, which this system blocks (user namespaces are restricted); set its helper up once with `sudo chown root:root {h} && sudo chmod 4755 {h}`",
+            app.display(),
+            h = helper.display(),
+        ));
+    }
+    std::process::Command::new(&app)
+        .env("NEOOMSI_ENGINE_PATH", game)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("starting {}", app.display()))?;
+    Ok(true)
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn chromium_sandbox_available(
+    helper: Option<(u32, u32)>,
+    sysctl: impl Fn(&str) -> Option<String>,
+) -> bool {
+    if helper.is_some_and(|(uid, mode)| uid == 0 && mode & 0o4000 != 0) {
+        return true;
+    }
+    let is = |key: &str, off: &str| sysctl(key).is_some_and(|v| v.trim() == off);
+    !(is("kernel/unprivileged_userns_clone", "0")
+        || is("kernel/apparmor_restrict_unprivileged_userns", "1")
+        || is("user/max_user_namespaces", "0"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_sandbox_works(app: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let helper = std::fs::metadata(app.with_file_name("chrome-sandbox"))
+        .ok()
+        .map(|m| (m.uid(), m.mode()));
+    chromium_sandbox_available(helper, |key| {
+        std::fs::read_to_string(Path::new("/proc/sys").join(key)).ok()
+    })
+}
+
 /// A phone runs one program: the launcher hands the game's command line over here and the
 /// same process plays it in the same window (see the app's `android.rs`) instead of starting
 /// another process.
@@ -3541,6 +3630,86 @@ mod tests {
         ::legacy_config::remove_content_root(&root);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(packs, vec!["Other".to_string()]);
+    }
+
+    #[test]
+    fn the_launcher_keeps_its_sandbox_whenever_chromium_can_have_one() {
+        let sysctl = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| format!("{v}
+"))
+            }
+        };
+        let none: &[(&str, &str)] = &[];
+        let ubuntu: &[(&str, &str)] = &[("kernel/apparmor_restrict_unprivileged_userns", "1")];
+        let debian_off: &[(&str, &str)] = &[("kernel/unprivileged_userns_clone", "0")];
+        let open: &[(&str, &str)] = &[
+            ("kernel/unprivileged_userns_clone", "1"),
+            ("kernel/apparmor_restrict_unprivileged_userns", "0"),
+        ];
+        assert!(chromium_sandbox_available(None, sysctl(none)), "namespaces allowed");
+        assert!(chromium_sandbox_available(None, sysctl(open)));
+        assert!(!chromium_sandbox_available(None, sysctl(ubuntu)), "Ubuntu 24.04 restricts them");
+        assert!(!chromium_sandbox_available(None, sysctl(debian_off)));
+        let setuid_root = Some((0, 0o104755));
+        assert!(chromium_sandbox_available(setuid_root, sysctl(ubuntu)), "the helper is enough");
+        assert!(!chromium_sandbox_available(Some((1000, 0o104755)), sysctl(ubuntu)), "not root's");
+        assert!(!chromium_sandbox_available(Some((0, 0o100755)), sysctl(ubuntu)), "not setuid");
+    }
+
+    #[test]
+    fn the_shipped_launcher_is_found_beside_the_game() {
+        let root = std::env::temp_dir().join(format!("neoomsi-ui-{}", std::process::id()));
+        let (game, app) = if cfg!(target_os = "macos") {
+            let c = root.join("neoOMSI.app/Contents");
+            (
+                c.join("MacOS/neoomsi"),
+                c.join("Resources/launcher/neoOMSI Launcher.app/Contents/MacOS/neoOMSI Launcher"),
+            )
+        } else if cfg!(windows) {
+            (root.join("neoomsi.exe"), root.join("launcher/neoOMSI Launcher.exe"))
+        } else {
+            (root.join("neoomsi"), root.join("launcher/neoomsi-launcher-app"))
+        };
+        assert_eq!(super::shipped_launcher(&game).as_deref(), Some(app.as_path()));
+        let overridden = ["OMSI_LAUNCHER", "OMSI_BUILTIN_LAUNCHER"]
+            .iter()
+            .any(|k| std::env::var_os(k).is_some());
+        if !overridden {
+            assert_eq!(super::external_launcher(&game), None, "none shipped");
+            std::fs::create_dir_all(app.parent().unwrap()).unwrap();
+            std::fs::write(&app, b"").unwrap();
+            assert_eq!(super::external_launcher(&game), Some(app.clone()));
+        }
+        std::fs::create_dir_all(game.parent().unwrap()).unwrap();
+        std::fs::write(&game, b"").unwrap();
+        let dir = game.parent().unwrap();
+        assert!(super::same_file(&game, &dir.join(".").join(game.file_name().unwrap())));
+        assert!(!super::same_file(&game, &app));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tutorials_are_found_by_omsis_language_suffix() {
+        let root = std::env::temp_dir().join(format!("omsi-tutorials-{}", std::process::id()));
+        let dir = root.join("Tutorials");
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = |title: &str| format!("<style></style><h2>{title}</h2><p>Text</p>");
+        std::fs::write(dir.join("menu_1_ENG.html"), page("Driving")).unwrap();
+        std::fs::write(dir.join("menu_1_DEU.html"), page("Fahren")).unwrap();
+        std::fs::write(dir.join("menu_2_DEU.html"), page("Tickets")).unwrap();
+        let titles = |lang| {
+            super::tutorials_in(&root, lang)
+                .into_iter()
+                .map(|(n, title, _)| (n, title))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(titles("en"), [(1, "Driving".into()), (2, "Tickets".into())]);
+        assert_eq!(titles("de"), [(1, "Fahren".to_string()), (2, "Tickets".into())]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -69,15 +69,7 @@ pub enum Msg {
     Crashed(String),
 }
 
-/// A server in the Multiplayer page's list (`~/.neoomsi/servers.json`), as the player
-/// added it: its address (`https://….trycloudflare.com`, `http://host:port`) and a name of
-/// their own (empty: the server's).
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-#[serde(default)]
-pub struct ServerEntry {
-    pub name: String,
-    pub address: String,
-}
+pub use core::servers::ServerEntry;
 
 /// A code host's status page (its gateway is the session's port + 10).
 fn host_status(code: &str) -> Result<network::ws::ServerInfo, String> {
@@ -94,27 +86,6 @@ fn host_status(code: &str) -> Result<network::ws::ServerInfo, String> {
         Some(url) => network::ws::query(&url, false),
         None => Err("the host did not answer".into()),
     }
-}
-
-/// The list as saved, with the official server first when it is not in it.
-fn with_official(mut list: Vec<ServerEntry>) -> Vec<ServerEntry> {
-    if !list
-        .iter()
-        .any(|s| network::official::is_alias(&s.address))
-    {
-        list.insert(
-            0,
-            ServerEntry {
-                name: network::official::NAME.into(),
-                address: network::official::ALIAS.into(),
-            },
-        );
-    }
-    list
-}
-
-fn servers_path() -> std::path::PathBuf {
-    core::data_dir().join("servers.json")
 }
 
 /// The duty as it is remembered between launches (`~/.neoomsi/launcher-duty.json`).
@@ -343,12 +314,7 @@ impl State {
             poll_t: 0.0,
             polling: false,
             second_armed: None,
-            servers: with_official(
-                std::fs::read(servers_path())
-                    .ok()
-                    .and_then(|b| serde_json::from_slice(&b).ok())
-                    .unwrap_or_default(),
-            ),
+            servers: core::servers::load(),
             server_info: Default::default(),
             server_asked: Default::default(),
             joined_server: None,
@@ -564,11 +530,7 @@ impl State {
 
     /// Keep the server list on disk.
     pub fn save_servers(&self) {
-        let _ = std::fs::create_dir_all(core::data_dir());
-        let _ = std::fs::write(
-            servers_path(),
-            serde_json::to_vec_pretty(&self.servers).unwrap_or_default(),
-        );
+        let _ = core::servers::store(&self.servers);
     }
 
     /// Ask a server about itself (its status and icon), at most every `every` seconds.
