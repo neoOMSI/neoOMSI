@@ -163,7 +163,7 @@ pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
         "pedal_t" => ::config::get_float("controls", "pedal_throttle").unwrap_or(1.0) as f32,
         "pedal_b" => ::config::get_float("controls", "pedal_brake").unwrap_or(1.0) as f32,
         "mouse_sens" => ::config::get_float("controls", "mouse_sens").unwrap_or(1.0) as f32,
-        "stick_sens" => ::config::get_float("controls", "stick_sens").unwrap_or(0.25) as f32,
+        "stick_sens" => ::config::get_float("controls", "stick_sens").unwrap_or(1.0) as f32,
         "look_sens" => ::config::get_float("camera", "look_sens").unwrap_or(1.0) as f32,
         "ui_scale" => ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
         "ui_opacity" => ::config::get_float("ui", "opacity").unwrap_or(0.85).clamp(0.2, 1.0) as f32,

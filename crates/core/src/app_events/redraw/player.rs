@@ -164,7 +164,7 @@ impl App {
         }
         if analog.stick {
             if let (Some(x), Some(p)) = (analog.steering, self.player.as_ref()) {
-                let sens = ::config::get_float("controls", "stick_sens").unwrap_or(0.25) as f32;
+                let sens = ::config::get_float("controls", "stick_sens").unwrap_or(1.0) as f32;
                 let target = controllers::gamepad_steering(
                     x,
                     p.vehicle.physics.velocity_kmh(),
