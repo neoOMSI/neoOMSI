@@ -1,4 +1,4 @@
-use crate::controllers::{self, DeviceCfg, Func};
+use crate::controllers::{self, AxisCal, DeviceCfg, Func};
 use crate::pax_pack::{PaxPack, Status as PaxStatus};
 use anyhow::{Result, anyhow};
 use omsi_launcher_lib as lib;
@@ -383,6 +383,12 @@ fn controller(d: &DeviceCfg, live: Option<&controllers::Connected>) -> Controlle
                 function: function.into(),
                 reversed: d.axes[k].is_some_and(|(_, r)| r),
                 shape: shape.into(),
+                calibration: d.calibration[k].map(|c| api::AxisCalibration {
+                    min: c.min,
+                    max: c.max,
+                    centre: c.centre,
+                    deadzone: c.deadzone,
+                }),
             }
         })
         .collect();
@@ -401,6 +407,9 @@ fn controller(d: &DeviceCfg, live: Option<&controllers::Connected>) -> Controlle
                 number: number.clone(),
             })
             .collect(),
+        ff_invert: d.ff_invert,
+        ff_capable: live.is_some_and(|c| c.ff_capable),
+        gamepad: live.is_some_and(|c| c.gamepad),
     }
 }
 
@@ -428,18 +437,17 @@ fn controllers_now() -> api::ControllerList {
     api::ControllerList { controllers: out }
 }
 
-/// Keeps what the page does not show: calibration, other axis flags, vibration strength.
+/// Keeps what the page does not show: other axis flags, vibration strength.
 fn apply(d: &mut DeviceCfg, c: &Controller) {
     d.enabled = c.enabled;
-    let deadzone = c.deadzone.clamp(0.0, 0.3);
-    // a calibrated axis's own dead zone would outrank the new one
-    if (deadzone - d.deadzone.unwrap_or_else(controllers::global_deadzone)).abs() > 1e-4 {
-        d.deadzone = Some(deadzone);
-        for cal in d.calibration.iter_mut().flatten() {
-            cal.deadzone = None;
-        }
-    }
+    d.ff_invert = c.ff_invert;
     for (k, axis) in c.axes.iter().take(8).enumerate() {
+        d.calibration[k] = axis.calibration.as_ref().map(|c| AxisCal {
+            min: c.min,
+            max: c.max,
+            centre: c.centre,
+            deadzone: c.deadzone,
+        });
         d.axes[k] = FUNCTIONS
             .iter()
             .find(|(_, function)| *function == axis.function())
@@ -449,6 +457,14 @@ fn apply(d: &mut DeviceCfg, c: &Controller) {
             .find(|(shape, _)| *shape == axis.shape())
             .map_or(0, |(_, bits)| *bits);
         d.axis_flags[k] = (d.axis_flags[k] & !SHAPE_BITS) | bits;
+    }
+    let deadzone = c.deadzone.clamp(0.0, 0.3);
+    // a calibrated axis's own dead zone would outrank the new one
+    if (deadzone - d.deadzone.unwrap_or_else(controllers::global_deadzone)).abs() > 1e-4 {
+        d.deadzone = Some(deadzone);
+        for cal in d.calibration.iter_mut().flatten() {
+            cal.deadzone = None;
+        }
     }
     d.buttons = c
         .buttons
@@ -511,6 +527,35 @@ mod tests {
         changed.force_feedback = true;
         apply(&mut back, &changed);
         assert_eq!(back.ff_scale, Some((1.0, 0.4)));
+    }
+
+    #[test]
+    fn the_wizard_sets_the_calibration_and_the_force_direction() {
+        let mut d = DeviceCfg {
+            name: "G29".into(),
+            ..Default::default()
+        };
+        d.calibration[1] = Some(controllers::AxisCal {
+            min: -0.8,
+            centre: None,
+            max: 0.9,
+            deadzone: None,
+        });
+        let mut changed = controller(&d, None);
+        assert_eq!(changed.axes[1].calibration.map(|c| (c.min, c.max)), Some((-0.8, 0.9)));
+        assert_eq!(changed.ff_invert, None);
+        changed.axes[0].calibration = Some(api::AxisCalibration {
+            min: -0.95,
+            max: 0.97,
+            centre: Some(0.01),
+            deadzone: None,
+        });
+        changed.axes[1].calibration = None;
+        changed.ff_invert = Some(true);
+        apply(&mut d, &changed);
+        assert_eq!(d.calibration[0].map(|c| c.centre), Some(Some(0.01)));
+        assert!(d.calibration[1].is_none(), "cleared on the page");
+        assert_eq!(d.ff_invert, Some(true));
     }
 
     #[test]

@@ -893,12 +893,21 @@ enum AxisShape {
   AXIS_SHAPE_BI_DEGRESSIVE = 4;
 }
 
+// The raw values the axis really reaches; the centre only where it has a middle.
+message AxisCalibration {
+  float min = 1;
+  float max = 2;
+  optional float centre = 3;
+  optional float deadzone = 4;
+}
+
 message ControllerAxis {
   string name = 1;
   float value = 2;
   AxisFunction function = 3;
   bool reversed = 4;
   AxisShape shape = 5;
+  AxisCalibration calibration = 6;
 }
 
 // A button's key action (empty: none) and the number the controller file keeps after it.
@@ -915,6 +924,10 @@ message Controller {
   bool force_feedback = 5;
   repeated ControllerAxis axes = 6;
   repeated ButtonBinding buttons = 7;
+  // unset: the setting for every controller
+  optional bool ff_invert = 8;
+  bool ff_capable = 9;
+  bool gamepad = 10;
 }
 
 message ControllerList {

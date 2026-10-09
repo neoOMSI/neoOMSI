@@ -44,14 +44,12 @@ pub struct SettingsView {
     reset_armed: Option<Instant>,
     profile_name: String,
     pax_was: Option<crate::pax_pack::Status>,
-    pub(super) wizard: Option<super::pad_wizard::Wizard>,
 }
 
 impl SettingsView {
     /// The page is left: the controllers are given back.
     pub fn leave(&mut self) {
         self.pads = None;
-        self.wizard = None;
         self.capture = None;
     }
 
@@ -134,7 +132,6 @@ pub fn page(l: &mut Launcher, area: Rect) {
     }
     if v.group != before {
         v.tab = 0;
-        v.wizard = None;
         v.capture = None;
     }
     let Some(g) = v.groups.get(v.group) else {
@@ -154,19 +151,15 @@ pub fn page(l: &mut Launcher, area: Rect) {
         let before = v.tab;
         l.ui.segmented("set-tabs", r, &mut v.tab, &tab_titles);
         if v.tab != before {
-            v.wizard = None;
             crate::lab_pads::set_tab(v.tab);
         }
         inner = Rect::new(inner.x, inner.y + 44.0, inner.w, inner.h - 44.0);
     }
-    let rows = match v.wizard.as_mut() {
-        Some(w) => w.rows(v.pads.as_mut()),
-        None => g
-            .tabs
-            .get(v.tab)
-            .map(|t| t.rows.clone())
-            .unwrap_or_default(),
-    };
+    let rows = g
+        .tabs
+        .get(v.tab)
+        .map(|t| t.rows.clone())
+        .unwrap_or_default();
     let scroll = format!("set-rows-{}-{}", v.group, v.tab);
     let root = PathBuf::from(&l.state.config.root);
     if let Some(a) = draw_rows(&mut l.ui, v, &root, inner, &rows, &scroll) {
@@ -178,7 +171,6 @@ pub fn page(l: &mut Launcher, area: Rect) {
 fn keep_pads(l: &mut Launcher) {
     if l.settings.group_key() != CONTROLS {
         l.settings.pads = None;
-        l.settings.wizard = None;
         return;
     }
     if l.settings.pads.is_none() {
@@ -314,11 +306,6 @@ fn build(l: &Launcher) -> Vec<Group> {
             GAMEPLAY => {
                 if let Some(at) = main.iter().position(|r| r.1 == "pax_pack_get") {
                     main.splice(at + 1..at + 1, restart_rows(l));
-                }
-            }
-            CONTROLS => {
-                for t in g.tabs.iter_mut().skip(2) {
-                    t.rows.splice(0..0, super::pad_wizard::entry_rows());
                 }
             }
             _ => {}
@@ -777,14 +764,7 @@ fn act(l: &mut Launcher, a: Act) {
     match a {
         Act::Toggle(id) => {
             let (verb, arg) = split(&id);
-            if verb.starts_with("wiz_") {
-                super::pad_wizard::press(
-                    &mut l.settings.wizard,
-                    l.settings.pads.as_mut(),
-                    verb,
-                    arg,
-                );
-            } else if verb.starts_with("pad_") {
+            if verb.starts_with("pad_") {
                 tab = crate::lab_pads::click(l.settings.pads.as_mut(), verb, arg);
             } else {
                 gl::option_apply(None, verb, arg, Move::Next);
@@ -843,14 +823,6 @@ fn act(l: &mut Launcher, a: Act) {
                 }
                 "update_now" => l.update.check(),
                 "update_github" => crate::updater::open_url(crate::updater::REPO_URL),
-                v if v.starts_with("wiz_") => {
-                    super::pad_wizard::press(
-                        &mut l.settings.wizard,
-                        l.settings.pads.as_mut(),
-                        v,
-                        arg,
-                    );
-                }
                 v if v.starts_with("pad_") => {
                     tab = crate::lab_pads::click(l.settings.pads.as_mut(), v, arg)
                 }

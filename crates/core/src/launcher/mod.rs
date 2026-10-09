@@ -11,7 +11,6 @@
 pub(crate) mod drive;
 pub mod mobile;
 mod multiplayer;
-mod pad_wizard;
 mod pages;
 pub mod phone;
 pub(crate) mod showroom;

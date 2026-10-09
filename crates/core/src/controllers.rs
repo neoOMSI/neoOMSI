@@ -525,8 +525,6 @@ pub(crate) const HAT_BUTTONS: usize = 128;
 /// never show up in the system's newer interface that gilrs uses there.
 pub(crate) struct Devices {
     gilrs: Option<Gilrs>,
-    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-    calibration_wheel: Option<crate::evdev_ff::Wheel>,
     #[cfg(windows)]
     di: Option<crate::dinput::DirectInput>,
     /// macOS: every axis element of every wheel and joystick, as last read (see `mac_hid`)
@@ -556,8 +554,6 @@ impl Devices {
         let _ = (hwnd, ff);
         Devices {
             gilrs,
-            #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-            calibration_wheel: None,
             #[cfg(windows)]
             di,
             #[cfg(target_os = "macos")]
@@ -598,40 +594,12 @@ impl Devices {
 
     /// Release foreground wheel effects when the game loses focus.
     pub(crate) fn set_focus(&mut self, focused: bool) {
-        #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-        if !focused {
-            self.calibration_wheel = None;
-        }
         #[cfg(windows)]
         if let Some(d) = self.di.as_mut() {
             d.set_focus(focused);
         }
         #[cfg(not(windows))]
         let _ = focused;
-    }
-
-    pub(crate) fn calibration_pulse(&mut self, name: &str, axis: usize, force: f32) -> bool {
-        #[cfg(windows)]
-        return self
-            .di
-            .as_mut()
-            .is_some_and(|di| di.force_axis(name) == Some(axis) && di.pulse_force(name, force));
-        #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-        {
-            let _ = axis;
-            if self.calibration_wheel.is_none() {
-                self.calibration_wheel = crate::evdev_ff::Wheel::open(name);
-            }
-            return self
-                .calibration_wheel
-                .as_mut()
-                .is_some_and(|wheel| wheel.pulse_force(force));
-        }
-        #[cfg(not(any(windows, all(target_os = "linux", target_pointer_width = "64"))))]
-        {
-            let _ = (name, axis, force);
-            false
-        }
     }
 
     /// Read the devices; the buttons pressed (true) and let go since the last call:
@@ -961,10 +929,6 @@ impl Controllers {
 
     pub(crate) fn refresh_devices(&self) {
         self.devices.refresh();
-    }
-
-    pub(crate) fn calibration_pulse(&mut self, name: &str, axis: usize, force: f32) -> bool {
-        self.devices.calibration_pulse(name, axis, force)
     }
 
     pub(crate) fn set_focus(&mut self, focused: bool) {
