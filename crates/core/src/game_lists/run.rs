@@ -53,8 +53,17 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                     let m = if let Move::To(_) = mv { Move::Next } else { mv };
                     option_do(app, "free_look", "", m);
                 }
-                v if v.starts_with("pad_") => crate::lab_pads::click(app, v, arg),
+                v if v.starts_with("pad_") => {
+                    let tab = crate::lab_pads::click(app.controllers.as_mut(), v, arg);
+                    if let (Some(t), Some(u)) = (tab, app.ui.as_mut()) {
+                        u.world_sub = t;
+                        u.world_scroll = 0;
+                    }
+                }
                 "keysearch" => {}
+                "pax_pack_get" if step => {
+                    crate::pax_pack::shared(crate::startup::content_dir, crate::pax_pack::PaxPack::start);
+                }
                 "keybind" if matches!(mv, Move::Dec | Move::Inc) => {
                     let mut it = arg.splitn(3, ' ');
                     if let (Some(sec), Some(idx), Some(name)) = (
@@ -349,7 +358,12 @@ pub(super) fn option_do(app: &mut App, verb: &str, arg: &str, mv: Move) -> bool 
         ));
         return true;
     }
-    if let Some(cur) = toggle_now(app, verb) {
+    option_apply(Some(app), verb, arg, mv)
+}
+
+/// A switch flipped or a slider moved; false when `verb` is neither.
+pub(crate) fn option_apply(mut app: Option<&mut App>, verb: &str, arg: &str, mv: Move) -> bool {
+    if let Some(cur) = toggle_now(app.as_deref(), verb) {
         let on = match mv {
             Move::Next => !cur,
             Move::Inc => true,
@@ -357,23 +371,23 @@ pub(super) fn option_do(app: &mut App, verb: &str, arg: &str, mv: Move) -> bool 
             Move::To(f) => f >= 0.5,
         };
         if on != cur {
-            if let Some((k, v)) = toggle_set(app, verb, on) {
+            if let Some((k, v)) = toggle_set(app.as_deref_mut(), verb, on) {
                 remember_setting(k, &v);
             }
-            sync_live(app);
+            sync_live(app.as_deref_mut());
             LIST_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         return true;
     }
     if let Some(steps) = steps_of(verb) {
-        if let Some(now) = option_now(app, verb, arg) {
+        if let Some(now) = option_now(app.as_deref(), verb, arg) {
             let to = step_move(&steps, now, mv);
             // (a slider dragged sends the same value many times over)
             if (to - now).abs() > 1e-6 {
-                if let Some((k, v)) = option_set(app, verb, arg, to) {
+                if let Some((k, v)) = option_set(app.as_deref_mut(), verb, arg, to) {
                     remember_setting(k, &v);
                 }
-                sync_live(app);
+                sync_live(app.as_deref_mut());
                 LIST_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }

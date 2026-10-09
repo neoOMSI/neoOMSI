@@ -154,6 +154,47 @@ impl PaxPack {
     }
 }
 
+static SHARED: Mutex<Option<PaxPack>> = Mutex::new(None);
+
+pub fn shared<T>(
+    content: impl FnOnce() -> Option<PathBuf>,
+    f: impl FnOnce(&mut PaxPack) -> T,
+) -> T {
+    let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    let p = match shared.take() {
+        Some(p)
+            if matches!(
+                p.status(),
+                Status::Downloading { .. } | Status::Installing | Status::Failed(_)
+            ) =>
+        {
+            p
+        }
+        _ => PaxPack::new(content()),
+    };
+    f(shared.insert(p))
+}
+
+/// The folder is looked at only the first time: the pages ask every frame.
+pub fn status(content: impl FnOnce() -> Option<PathBuf>) -> Status {
+    SHARED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(|| PaxPack::new(content()))
+        .status()
+}
+
+pub fn fetch_if_needed(content: impl FnOnce() -> Option<PathBuf>) {
+    shared(content, |p| {
+        if matches!(
+            p.status(),
+            Status::Missing | Status::Outdated | Status::Failed(_)
+        ) {
+            p.start();
+        }
+    });
+}
+
 fn install(content: &Path, status: &Mutex<Status>) -> anyhow::Result<()> {
     refresh();
     let version = latest().map_or(VERSION, |r| r.version).max(VERSION);

@@ -800,6 +800,59 @@ impl DirectInput {
         }
     }
 
+    /// A hardware-timed calibration pulse; never leaves an infinite force running.
+    pub(crate) fn pulse_force(&mut self, name: &str, force: f32) -> bool {
+        if !self.focused
+            || self
+                .devices
+                .iter()
+                .filter(|d| d.name == name && d.ff.is_some())
+                .count()
+                != 1
+        {
+            return false;
+        }
+        let Some(device) = self
+            .devices
+            .iter_mut()
+            .find(|d| d.name == name && d.ff.is_some())
+        else {
+            return false;
+        };
+        let limit = crate::ffb_calibration::MAX_PULSE_FORCE;
+        let mut constant = DICONSTANTFORCE {
+            lMagnitude: (force.clamp(-limit, limit) * DI_FFNOMINALMAX as f32) as i32,
+        };
+        let mut axes = [device.ff_axis];
+        let mut direction = [0i32];
+        let mut effect = DIEFFECT {
+            dwSize: std::mem::size_of::<DIEFFECT>() as u32,
+            dwFlags: DIEFF_CARTESIAN | DIEFF_OBJECTOFFSETS,
+            dwDuration: crate::ffb_calibration::PULSE_MS * 1000,
+            cAxes: 1,
+            rgdwAxes: axes.as_mut_ptr(),
+            rglDirection: direction.as_mut_ptr(),
+            cbTypeSpecificParams: std::mem::size_of::<DICONSTANTFORCE>() as u32,
+            lpvTypeSpecificParams: &mut constant as *mut _ as *mut core::ffi::c_void,
+            ..Default::default()
+        };
+        unsafe {
+            let force_effect = device.ff.as_ref().unwrap();
+            // Some drivers only allow a duration change while the effect is stopped.
+            let result = force_effect.Stop().and_then(|_| {
+                force_effect.SetParameters(
+                    &mut effect,
+                    DIEP_DURATION | DIEP_TYPESPECIFICPARAMS | DIEP_START,
+                )
+            });
+            if let Err(error) = result {
+                log::warn!("{name}: force feedback calibration pulse failed ({error})");
+                return false;
+            }
+            true
+        }
+    }
+
     /// The force on the wheel of device `name`: -1 (full to the left) .. 1. Set at most 100
     /// times a second (each is a message to the device).
     /// Returns whether a force-feedback effect with this exact device name exists.

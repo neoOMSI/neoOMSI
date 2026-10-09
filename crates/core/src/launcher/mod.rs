@@ -11,9 +11,11 @@
 pub(crate) mod drive;
 pub mod mobile;
 mod multiplayer;
+mod pad_wizard;
 mod pages;
 pub mod phone;
 pub(crate) mod showroom;
+mod settings;
 mod state;
 #[cfg_attr(not(target_os = "android"), allow(unused_imports))]
 pub(crate) use state::crash_of;
@@ -103,6 +105,7 @@ pub struct Launcher {
     /// The launcher made for a phone (see `phone`).
     pub phone: phone::PhoneView,
     pub pages: pages::PagesView,
+    pub settings: settings::SettingsView,
     pub mp: multiplayer::MultiplayerView,
     /// Server icons in the interface pipeline (by server address), and those decoded but
     /// not yet uploaded.
@@ -177,6 +180,7 @@ impl Launcher {
             drive: drive::DriveView::default(),
             phone: phone::PhoneView::default(),
             pages: pages::PagesView::default(),
+            settings: settings::SettingsView::default(),
             mp: multiplayer::MultiplayerView::default(),
             icons: Default::default(),
             icons_pending: Vec::new(),
@@ -1246,11 +1250,14 @@ impl Launcher {
             );
             let e = 1.0 - (1.0 - self.page_anim).powi(3);
             let content = Rect::new(content.x + 8.0 * (1.0 - e), content.y, content.w, content.h);
+            if self.page != Page::Settings {
+                self.settings.leave();
+            }
             match self.page {
                 Page::Drive => drive::draw(self, content),
                 Page::Multiplayer => multiplayer::draw(self, content),
                 Page::Profile => pages::profile(self, content),
-                Page::Settings => pages::settings(self, content),
+                Page::Settings => settings::page(self, content),
                 Page::Sessions => pages::sessions(self, content),
                 Page::Mods => pages::mods(self, content),
                 Page::Tutorials => pages::tutorials(self, content),

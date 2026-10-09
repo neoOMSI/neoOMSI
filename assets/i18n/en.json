@@ -324,6 +324,18 @@
         "pax_prefer_seats": {
           "desc": "Passengers take a free seat when boarding and use standing places only when all seats are taken",
           "name": "Passengers prefer available seats"
+        },
+        "pax_pack": {
+          "download": "Download",
+          "downloading": "Downloading. They are used from the next start of the game",
+          "installed": "Installed",
+          "installing": "Installing. They are used from the next start of the game",
+          "missing": "Not downloaded yet; \"Realistic\" passenger models need them",
+          "name": "Realistic passenger models",
+          "next_start": "Up to date. A game started before the download still has the old passengers",
+          "outdated": "A newer version is available",
+          "retry": "Try again",
+          "update": "Update"
         }
       },
       "graphics": {

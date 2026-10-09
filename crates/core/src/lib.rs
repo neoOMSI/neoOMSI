@@ -68,6 +68,7 @@ mod editor_ctl;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod evdev_ff;
 mod game_link;
+mod ffb_calibration;
 mod game_menu;
 mod lab_menu;
 mod lab_options;
@@ -302,7 +303,7 @@ pub(crate) fn prepare(
     }
     if config::get_string("passengers", "models").unwrap_or_else(|| "omsi".into()) == "realistic" {
         if let Some(content) = content_dir() {
-            let pack = content.join("Packs/RealisticPax");
+            let pack = pax_pack::folder(&content);
             if pack.join("Humans").is_dir() {
                 legacy_config::add_content_root(pack.clone());
                 log::info!("realistic passengers: {}", pack.display());
@@ -311,6 +312,9 @@ pub(crate) fn prepare(
                     "RealisticPax is missing at {}; using installed passengers",
                     pack.display()
                 );
+            }
+            if server_cfg.is_none() && args.offscreen.is_none() {
+                pax_pack::fetch_if_needed(|| Some(content));
             }
         }
     }

@@ -120,6 +120,15 @@ impl Wheel {
         self.upload(level) || std::io::Error::last_os_error().raw_os_error() != Some(libc::ENODEV)
     }
 
+    pub(crate) fn pulse_force(&mut self, force: f32) -> bool {
+        let limit = crate::ffb_calibration::MAX_PULSE_FORCE;
+        let level = (-force.clamp(-limit, limit) * i16::MAX as f32) as i16;
+        if !self.upload_for(level, crate::ffb_calibration::PULSE_MS as u16) {
+            return false;
+        }
+        self.send(self.id as u16, 1)
+    }
+
     fn upload(&mut self, level: i16) -> bool {
         self.upload_for(level, 0)
     }

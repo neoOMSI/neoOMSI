@@ -110,7 +110,7 @@ impl App {
 
     fn lab_world_raw(&self) -> Vec<LabGroup> {
         match self.lab_group_page() {
-            Some(OPTIONS_PAGE) => crate::lab_options::options_groups(self),
+            Some(OPTIONS_PAGE) => crate::lab_options::options_groups(&crate::lab_options::Host::game(self)),
             Some(ADMIN_PAGE) => self.lab_admin_groups(),
             _ => crate::game_lists::world_groups(self),
         }

@@ -169,17 +169,13 @@ pub(super) fn call(command: Command) -> Result<Answer> {
                 forget_content();
             }
             if changes.pax_models() == PaxModels::Realistic {
-                with_pax(|p| {
-                    if matches!(p.status(), PaxStatus::Missing | PaxStatus::Outdated) {
-                        p.start();
-                    }
-                });
+                crate::pax_pack::fetch_if_needed(content);
             }
             Answer::SaveSettings(api::settings(&saved))
         }
         Command::PaxPack(_) => Answer::PaxPack(pax_status()),
         Command::InstallPaxPack(_) => {
-            with_pax(PaxPack::start);
+            crate::pax_pack::shared(content, PaxPack::start);
             Answer::InstallPaxPack(pax_status())
         }
         Command::UpdateCheck(_) => Answer::UpdateCheck(api::UpdateCheck {
@@ -262,7 +258,6 @@ pub(super) fn call(command: Command) -> Result<Answer> {
     })
 }
 
-static PAX: Mutex<Option<PaxPack>> = Mutex::new(None);
 /// The game's content folder, as `launch` starts it: looking it up writes a probe file.
 static CONTENT: Mutex<Option<Option<PathBuf>>> = Mutex::new(None);
 
@@ -274,24 +269,8 @@ fn content() -> Option<PathBuf> {
         .clone()
 }
 
-fn with_pax<T>(f: impl FnOnce(&mut PaxPack) -> T) -> T {
-    let mut pax = PAX.lock().unwrap_or_else(|e| e.into_inner());
-    let p = match pax.take() {
-        Some(p)
-            if matches!(
-                p.status(),
-                PaxStatus::Downloading { .. } | PaxStatus::Installing | PaxStatus::Failed(_)
-            ) =>
-        {
-            p
-        }
-        _ => PaxPack::new(content()),
-    };
-    f(pax.insert(p))
-}
-
 pub(super) fn pax_status() -> api::PaxPack {
-    let (state, done, total, message) = match with_pax(|p| p.status()) {
+    let (state, done, total, message) = match crate::pax_pack::shared(content, |p| p.status()) {
         PaxStatus::Missing => (PaxState::Missing, 0, 0, String::new()),
         PaxStatus::Outdated => (PaxState::Outdated, 0, 0, String::new()),
         PaxStatus::Downloading { done, total } => (PaxState::Downloading, done, total, String::new()),

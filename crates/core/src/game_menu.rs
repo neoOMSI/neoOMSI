@@ -504,34 +504,9 @@ impl App {
             (sec, idx)
         };
         let target = idx;
-        {
-            let Some(arr) = v.get_mut(section).and_then(|a| a.as_array_mut()) else {
-                return;
-            };
-            if arr
-                .get(idx)
-                .and_then(|b| b.get("action"))
-                .and_then(|a| a.as_str())
-                != Some(name)
-            {
-                self.reopen_keys(sec, idx);
-                return;
-            }
-            let hold = arr[idx]
-                .get("modifier")
-                .and_then(|x| x.as_i64())
-                .unwrap_or(0)
-                & ::content::input::KEY_HOLD as i64;
-            match edit {
-                KeyEdit::Set(scan, m) => {
-                    arr[idx]["scan_code"] = serde_json::json!(scan);
-                    arr[idx]["modifier"] = serde_json::json!(m | hold);
-                }
-                KeyEdit::Clear => {
-                    arr[idx]["scan_code"] = serde_json::json!(0);
-                    arr[idx]["modifier"] = serde_json::json!(0);
-                }
-            }
+        if !edit_binding(&mut v, section, idx, name, edit) {
+            self.reopen_keys(sec, idx);
+            return;
         }
         if let Err(e) = omsi_launcher_lib::save_keybindings(&v) {
             self.service_msg = Some((format!("{e:#}"), 4.0));
@@ -1531,4 +1506,30 @@ impl App {
 pub(crate) enum KeyEdit {
     Set(i64, i64),
     Clear,
+}
+
+pub(crate) fn edit_binding(
+    v: &mut serde_json::Value,
+    section: &str,
+    idx: usize,
+    name: &str,
+    edit: KeyEdit,
+) -> bool {
+    let Some(b) = v
+        .get_mut(section)
+        .and_then(|a| a.as_array_mut())
+        .and_then(|a| a.get_mut(idx))
+        .filter(|b| b.get("action").and_then(|a| a.as_str()) == Some(name))
+    else {
+        return false;
+    };
+    let hold = b.get("modifier").and_then(|x| x.as_i64()).unwrap_or(0)
+        & ::content::input::KEY_HOLD as i64;
+    let (scan, m) = match edit {
+        KeyEdit::Set(scan, m) => (scan, m | hold),
+        KeyEdit::Clear => (0, 0),
+    };
+    b["scan_code"] = serde_json::json!(scan);
+    b["modifier"] = serde_json::json!(m);
+    true
 }
