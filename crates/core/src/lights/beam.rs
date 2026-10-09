@@ -17,11 +17,59 @@ pub(super) fn classify(ranges: &[f32], selected: usize) -> BeamKind {
     if ranges.len() < 2 {
         return BeamKind::Dipped;
     }
-    let shortest = ranges.iter().copied().fold(f32::MAX, f32::min);
+    // Do not let a short DRL entry become the reference range for the actual headlight
+    // entries.  That made both dipped and full beam look like `Main` on vehicles such as the
+    // SP400, whose fourth spotlight is a 75 m DRL.
+    let shortest = ranges
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !is_daytime_running_light(ranges, *i))
+        .map(|(_, range)| *range)
+        .fold(f32::MAX, f32::min);
     if range >= MAIN_MIN_RANGE && range > shortest * MAIN_RANGE_RATIO {
         BeamKind::Main
     } else {
         BeamKind::Dipped
+    }
+}
+
+/// The fourth classic `[spotlight]` is commonly a short-range daytime-running light.  It is
+/// visible as a corona but is not a road-lighting beam.  Keep this deliberately conservative:
+/// only ignore a short fourth entry when the same vehicle also declares normal headlight ranges.
+fn is_daytime_running_light(ranges: &[f32], selected: usize) -> bool {
+    let Some(&range) = ranges.get(selected) else {
+        return false;
+    };
+    selected >= 3
+        && range <= 75.0
+        && ranges
+            .iter()
+            .take(selected)
+            .any(|other| *other >= MAIN_MIN_RANGE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_fourth_spotlight_is_a_daytime_running_light() {
+        assert!(is_daytime_running_light(&[650.0, 300.0, 800.0, 75.0], 3));
+    }
+
+    #[test]
+    fn normal_headlight_slots_are_not_daytime_running_lights() {
+        let ranges = [650.0, 300.0, 800.0, 75.0];
+        assert!(!is_daytime_running_light(&ranges, 0));
+        assert!(!is_daytime_running_light(&ranges, 1));
+        assert!(!is_daytime_running_light(&ranges, 2));
+    }
+
+    #[test]
+    fn daytime_running_light_does_not_make_dipped_beam_a_main_beam() {
+        let ranges = [650.0, 300.0, 800.0, 75.0];
+        assert_eq!(classify(&ranges, 0), BeamKind::Main);
+        assert_eq!(classify(&ranges, 1), BeamKind::Dipped);
     }
 }
 
@@ -115,12 +163,15 @@ pub(super) fn headlamps(
     let kinds: Vec<BeamKind> = (0..spots.len()).map(|i| classify(&ranges, i)).collect();
 
     let partner = (0..spots.len())
-        .filter(|&i| kinds[i] == BeamKind::Dipped)
+        .filter(|&i| kinds[i] == BeamKind::Dipped && !is_daytime_running_light(&ranges, i))
         .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]));
-    let main_lit = lit.is_some_and(|i| i < spots.len() && kinds[i] == BeamKind::Main);
+    let main_lit = lit.is_some_and(|i| {
+        i < spots.len() && kinds[i] == BeamKind::Main && !is_daytime_running_light(&ranges, i)
+    });
     let key = key_of(v);
     for (i, vals) in spots.iter().enumerate() {
-        let on = lit == Some(i) || (main_lit && partner == Some(i));
+        let on = !is_daytime_running_light(&ranges, i)
+            && (lit == Some(i) || (main_lit && partner == Some(i)));
         let level = lamp_level(key, i as u32, if on { 1.0 } else { 0.0 }, LAMP_RISE, LAMP_FALL);
         if level < 0.01 {
             continue;

@@ -221,9 +221,9 @@ const COOKIE_TRAFFIC: f32 = 1.0;
 const COOKIE_KERB_RISE: f32 = 1.5;
 const COOKIE_KERB_SPAN: f32 = 8.0;
 
-const HEAD_I: f32 = 22.0;
+const HEAD_I: f32 = 20.5;
 const HEAD_TRAFFIC: f32 = 1.0;
-const HEAD_MAIN_PEAK: f32 = 4.0;
+const HEAD_MAIN_PEAK: f32 = 3.5;
 
 fn headlamp_rel(to_surface: vec3<f32>, f: vec3<f32>, cos_outer: f32, cos_inner: f32, main: bool) -> f32 {
     var r = cross(f, vec3<f32>(0.0, 0.0, 1.0));
