@@ -410,11 +410,13 @@ fn controller(d: &DeviceCfg, live: Option<&controllers::Connected>) -> Controlle
         ff_invert: d.ff_invert,
         ff_capable: live.is_some_and(|c| c.ff_capable),
         gamepad: live.is_some_and(|c| c.gamepad),
+        pressed: Vec::new(),
     }
 }
 
 fn controllers_now() -> api::ControllerList {
-    let connected = super::pads::connected();
+    let pads = super::pads::now();
+    let connected = &pads.connected;
     let configured = controllers::read_cfg();
     let live = |name: &str| {
         connected
@@ -425,13 +427,18 @@ fn controllers_now() -> api::ControllerList {
         .iter()
         .map(|d| controller(d, live(&d.name)))
         .collect();
-    for c in &connected {
+    for c in connected {
         if !configured.iter().any(|d| controllers::names_match(&c.name, &d.name)) {
             let d = DeviceCfg {
                 name: c.name.clone(),
                 ..Default::default()
             };
             out.push(controller(&d, Some(c)));
+        }
+    }
+    for c in &mut out {
+        if let Some(l) = live(&c.name) {
+            c.pressed = pads.pressed(&l.name);
         }
     }
     api::ControllerList { controllers: out }

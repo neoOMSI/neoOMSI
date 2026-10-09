@@ -6,8 +6,24 @@ use std::time::{Duration, Instant};
 const SETTLE: Duration = Duration::from_millis(500);
 const IDLE: Duration = Duration::from_secs(30);
 
+#[derive(Clone, Default)]
+pub(super) struct Pads {
+    pub connected: Vec<Connected>,
+    pub pressed: Vec<(String, usize)>,
+}
+
+impl Pads {
+    pub fn pressed(&self, name: &str) -> Vec<u32> {
+        self.pressed
+            .iter()
+            .filter(|(d, _)| crate::controllers::names_match(d, name))
+            .map(|(_, n)| *n as u32)
+            .collect()
+    }
+}
+
 struct Reader {
-    connected: Option<Vec<Connected>>,
+    pads: Option<Pads>,
     asked: Instant,
 }
 
@@ -20,13 +36,13 @@ fn lock() -> MutexGuard<'static, Option<Reader>> {
     READER.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub(super) fn connected() -> Vec<Connected> {
+pub(super) fn now() -> Pads {
     let mut r = lock();
     match r.as_mut() {
         Some(r) => r.asked = Instant::now(),
         None => {
             *r = Some(Reader {
-                connected: None,
+                pads: None,
                 asked: Instant::now(),
             });
             if let Err(e) = std::thread::Builder::new()
@@ -35,18 +51,36 @@ pub(super) fn connected() -> Vec<Connected> {
             {
                 *r = None;
                 log::warn!("controller list: {e}");
-                return Vec::new();
+                return Pads::default();
             }
         }
     }
     let (r, _) = READY
-        .wait_timeout_while(r, SETTLE * 4, |r| r.as_ref().is_some_and(|r| r.connected.is_none()))
+        .wait_timeout_while(r, SETTLE * 4, |r| r.as_ref().is_some_and(|r| r.pads.is_none()))
         .unwrap_or_else(|e| e.into_inner());
-    r.as_ref().and_then(|r| r.connected.clone()).unwrap_or_default()
+    r.as_ref().and_then(|r| r.pads.clone()).unwrap_or_default()
 }
 
 #[cfg(windows)]
-fn xinput_axes(connected: &mut [Connected]) {
+const XINPUT_BUTTONS: [(u16, usize); 14] = [
+    (0x4000, 0),
+    (0x1000, 1),
+    (0x2000, 2),
+    (0x8000, 3),
+    (0x0100, 4),
+    (0x0200, 5),
+    (0x0020, 8),
+    (0x0010, 9),
+    (0x0040, 10),
+    (0x0080, 11),
+    (0x0001, crate::controllers::HAT_BUTTONS),
+    (0x0008, crate::controllers::HAT_BUTTONS + 1),
+    (0x0002, crate::controllers::HAT_BUTTONS + 2),
+    (0x0004, crate::controllers::HAT_BUTTONS + 3),
+];
+
+#[cfg(windows)]
+fn xinput(connected: &mut [Connected], pressed: &mut Vec<(String, usize)>) {
     use windows::Win32::UI::Input::XboxController::{XINPUT_STATE, XInputGetState};
     let mut pads = connected
         .iter_mut()
@@ -68,6 +102,13 @@ fn xinput_axes(connected: &mut [Connected]) {
             (4, stick(g.sThumbRY)),
             (5, trigger(g.bRightTrigger)),
         ];
+        pressed.retain(|(d, _)| *d != pad.name);
+        pressed.extend(
+            XINPUT_BUTTONS
+                .iter()
+                .filter(|(bit, _)| g.wButtons.0 & bit != 0)
+                .map(|(_, n)| (pad.name.clone(), *n)),
+        );
     }
 }
 
@@ -88,20 +129,30 @@ fn read() {
     let window = None;
     let mut devices = Devices::new(window, false);
     let started = Instant::now();
+    let mut pressed: Vec<(String, usize)> = Vec::new();
     loop {
-        devices.poll();
+        for (name, n, down) in devices.poll() {
+            pressed.retain(|(d, b)| !(*b == n && *d == name));
+            if down {
+                pressed.push((name, n));
+            }
+        }
         #[allow(unused_mut)]
         let mut now = devices.connected();
         #[cfg(windows)]
-        xinput_axes(&mut now);
+        xinput(&mut now, &mut pressed);
+        pressed.retain(|(d, _)| now.iter().any(|c| c.name == *d));
         {
             let mut r = lock();
             let Some(r) = r.as_mut() else { return };
             if r.asked.elapsed() > IDLE {
                 return;
             }
-            if r.connected.is_some() || started.elapsed() >= SETTLE {
-                r.connected = Some(now);
+            if r.pads.is_some() || started.elapsed() >= SETTLE {
+                r.pads = Some(Pads {
+                    connected: now,
+                    pressed: pressed.clone(),
+                });
                 READY.notify_all();
             }
         }

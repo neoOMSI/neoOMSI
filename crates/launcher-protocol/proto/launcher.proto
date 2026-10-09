@@ -928,6 +928,8 @@ message Controller {
   optional bool ff_invert = 8;
   bool ff_capable = 9;
   bool gamepad = 10;
+  // the buttons held right now, by their place in `buttons`
+  repeated uint32 pressed = 11;
 }
 
 message ControllerList {
