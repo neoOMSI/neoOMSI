@@ -45,6 +45,32 @@ pub(super) fn connected() -> Vec<Connected> {
     r.as_ref().and_then(|r| r.connected.clone()).unwrap_or_default()
 }
 
+#[cfg(windows)]
+fn xinput_axes(connected: &mut [Connected]) {
+    use windows::Win32::UI::Input::XboxController::{XINPUT_STATE, XInputGetState};
+    let mut pads = connected
+        .iter_mut()
+        .filter(|c| c.gamepad && crate::controllers::xinput_name(&c.name));
+    for user in 0..4 {
+        let mut s = XINPUT_STATE::default();
+        if unsafe { XInputGetState(user, &mut s) } != 0 {
+            continue;
+        }
+        let Some(pad) = pads.next() else { return };
+        let g = s.Gamepad;
+        let stick = |v: i16| if v < 0 { v as f32 / 32768.0 } else { v as f32 / 32767.0 };
+        let trigger = |v: u8| v as f32 / 255.0 * 2.0 - 1.0;
+        pad.axes = vec![
+            (0, stick(g.sThumbLX)),
+            (1, stick(g.sThumbLY)),
+            (2, trigger(g.bLeftTrigger)),
+            (3, stick(g.sThumbRX)),
+            (4, stick(g.sThumbRY)),
+            (5, trigger(g.bRightTrigger)),
+        ];
+    }
+}
+
 struct Stopped;
 
 impl Drop for Stopped {
@@ -64,7 +90,10 @@ fn read() {
     let started = Instant::now();
     loop {
         devices.poll();
-        let now = devices.connected();
+        #[allow(unused_mut)]
+        let mut now = devices.connected();
+        #[cfg(windows)]
+        xinput_axes(&mut now);
         {
             let mut r = lock();
             let Some(r) = r.as_mut() else { return };

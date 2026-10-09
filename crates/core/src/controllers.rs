@@ -864,7 +864,7 @@ pub(crate) fn is_system_gamepad(name: &str, is_di_device: bool) -> bool {
 
 /// A DirectInput name of an Xbox-type pad (which gilrs lists with the system's layout).
 #[cfg_attr(not(windows), allow(dead_code))]
-fn xinput_name(name: &str) -> bool {
+pub(crate) fn xinput_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     n.contains("xbox") || n.contains("xinput") || n.starts_with("controller (")
 }
