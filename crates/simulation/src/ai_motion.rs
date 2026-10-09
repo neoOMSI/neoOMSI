@@ -169,7 +169,7 @@ const SNAP_DISTANCE: f64 = 8.0;
 /// How long (s) a way that far off is waited out before the body is put back on it.
 const SNAP_PATIENCE: f32 = 0.6;
 /// The furthest (m) the rotation point aims inside a bend to centre the body's sweep.
-const SWEEP_SHIFT_MAX: f64 = 1.5;
+const SWEEP_SHIFT_MAX: f64 = 2.0;
 /// A wider search is needed only when no wheel has found the current road level at all.
 /// It corrects displaced path Z without lowering a single unsupported axle onto terrain.
 const AI_CONTACT_REACQUIRE: f64 = 3.0;
@@ -1476,9 +1476,16 @@ mod sweep_measure {
     /// Drive the body along `path` at `speed` and return the furthest the body's outline
     /// gets to the right (+) and the left (-) of the way (m, beyond the body's half width).
     pub(super) fn sweep(def: &Vehicle, path: &dyn Fn(f64) -> DVec3, length: f64, speed: f32) -> (f64, f64) {
+        sweep_with(def, path, length, speed, true)
+    }
+
+    pub(super) fn sweep_with(def: &Vehicle, path: &dyn Fn(f64) -> DVec3, length: f64, speed: f32, centred: bool) -> (f64, f64) {
         let bb = def.bounding_box.unwrap();
         let (front, rear, half) = ((bb[1] * 0.5 + bb[4]) as f64, (bb[1] * 0.5 - bb[4]) as f64, (bb[0] * 0.5) as f64);
         let mut body = AiBody::new(def, MotionKind::Road);
+        if !centred {
+            body.sweep_reach = 0.0;
+        }
         let dt = 1.0 / 60.0;
         let mut s = 20.0f64;
         body.place(&|d| path(s + d as f64), None, None, speed);
@@ -1524,5 +1531,43 @@ mod sweep_measure {
         let mut def = c2();
         def.coupling_back = Some(Default::default());
         assert_eq!(AiBody::new(&def, MotionKind::Road).sweep_reach, 0.0);
+    }
+
+    /// `OMSI_VEHICLES=<OMSI 2>/vehicles cargo test -p simulation --lib every_bus -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn every_bus_in_a_vehicles_folder() {
+        let Ok(root) = std::env::var("OMSI_VEHICLES") else { return };
+        let mut files = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(root)];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() { stack.push(p) } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("bus")) { files.push(p) }
+            }
+        }
+        files.sort();
+        let mut seen = std::collections::HashSet::new();
+        let ring = |s: f64| left_turn(14.0, 200.0, s);
+        let turn = |s: f64| left_turn(10.0, 90.0, s);
+        let (lr, lt) = (40.0 + 14.0 * 200f64.to_radians() + 20.0, 40.0 + 10.0 * 90f64.to_radians() + 20.0);
+        for f in files {
+            let Ok(def) = Vehicle::load(&f) else { println!("LOADFAIL {}", f.display()); continue };
+            let kind = if def.coupling_front.is_some() { "trailer" } else if def.coupling_back.is_some() { "artic" } else { "rigid" };
+            if kind == "trailer" { continue; }
+            let Some(bb) = def.bounding_box else { println!("NOBBOX {}", f.display()); continue };
+            let axles: Vec<i32> = def.axles.iter().map(|a| (a.long * 100.0) as i32).collect();
+            let key = (axles.clone(), (def.rot_pnt_long * 100.0) as i32, (bb[1] * 100.0) as i32, (bb[4] * 100.0) as i32, kind);
+            if !seen.insert(key) { continue; }
+            let body = AiBody::new(&def, MotionKind::Road);
+            let mut row = format!("{kind:6} len {:5.2} wb {:4.2} reach {:4.2} |", bb[1], body.wheelbase, body.sweep_reach);
+            for centred in [false, true] {
+                let (ro, ri) = sweep_with(&def, &ring, lr, 4.0, centred);
+                let (to, ti) = sweep_with(&def, &turn, lt, 4.0, centred);
+                row += &format!(" ring {ro:5.2}/{ri:5.2} turn {to:5.2}/{ti:5.2} |");
+            }
+            let name = f.strip_prefix(std::env::var("OMSI_VEHICLES").unwrap()).unwrap_or(&f).display().to_string();
+            println!("ROW {row} {name}");
+        }
     }
 }
