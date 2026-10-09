@@ -17,6 +17,7 @@ pub(crate) struct Node {
     /// `width` / `height` attributes of an `<img>` (`"64"`, `"50%"`), empty when absent.
     pub(crate) attr_w: String,
     pub(crate) attr_h: String,
+    pub(crate) attrs: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -46,8 +47,48 @@ pub(crate) struct Dom {
 }
 
 pub(crate) const VOID: &[&str] = &[
-    "br", "img", "hr", "meta", "link", "input", "area", "base", "col", "source", "wbr",
+    "br", "img", "hr", "meta", "link", "input", "area", "base", "col", "source", "wbr", "param",
+    "track", "embed",
 ];
+
+const P_CLOSERS: &[&str] = &[
+    "address", "article", "aside", "blockquote", "details", "div", "dl", "fieldset", "figcaption",
+    "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "menu",
+    "nav", "ol", "p", "pre", "section", "table", "ul",
+];
+
+fn close_to(nodes: &[Node], stack: &mut Vec<usize>, targets: &[&str], stops: &[&str]) {
+    for pos in (1..stack.len()).rev() {
+        let t = nodes[stack[pos]].tag.as_str();
+        if targets.contains(&t) {
+            stack.truncate(pos);
+            return;
+        }
+        if stops.contains(&t) {
+            return;
+        }
+    }
+}
+
+fn auto_close(nodes: &[Node], stack: &mut Vec<usize>, name: &str) {
+    match name {
+        "li" => close_to(nodes, stack, &["li"], &["ul", "ol", "menu"]),
+        "dt" | "dd" => close_to(nodes, stack, &["dt", "dd"], &["dl"]),
+        "tr" => close_to(nodes, stack, &["tr"], &["table"]),
+        "td" | "th" => close_to(nodes, stack, &["td", "th"], &["tr", "table"]),
+        "thead" | "tbody" | "tfoot" => {
+            close_to(nodes, stack, &["thead", "tbody", "tfoot"], &["table"])
+        }
+        "option" => close_to(nodes, stack, &["option"], &["select", "datalist"]),
+        "optgroup" => close_to(nodes, stack, &["optgroup"], &["select"]),
+        _ => {}
+    }
+    if P_CLOSERS.contains(&name) {
+        while stack.len() > 1 && nodes[*stack.last().unwrap()].tag == "p" {
+            stack.pop();
+        }
+    }
+}
 
 pub(crate) fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
@@ -58,7 +99,7 @@ pub(crate) fn decode_entities(s: &str) -> String {
     while let Some(p) = rest.find('&') {
         out.push_str(&rest[..p]);
         rest = &rest[p..];
-        if let Some(e) = rest.find(';').filter(|e| *e <= 8) {
+        if let Some(e) = rest.find(';').filter(|e| *e <= 10) {
             let name = &rest[1..e];
             let rep = match name {
                 "amp" => Some('&'),
@@ -67,6 +108,49 @@ pub(crate) fn decode_entities(s: &str) -> String {
                 "quot" => Some('"'),
                 "apos" => Some('\''),
                 "nbsp" => Some('\u{a0}'),
+                "copy" => Some('\u{a9}'),
+                "reg" => Some('\u{ae}'),
+                "trade" => Some('\u{2122}'),
+                "hellip" => Some('\u{2026}'),
+                "mdash" => Some('\u{2014}'),
+                "ndash" => Some('\u{2013}'),
+                "lsquo" => Some('\u{2018}'),
+                "rsquo" => Some('\u{2019}'),
+                "ldquo" => Some('\u{201c}'),
+                "rdquo" => Some('\u{201d}'),
+                "laquo" => Some('\u{ab}'),
+                "raquo" => Some('\u{bb}'),
+                "bull" => Some('\u{2022}'),
+                "middot" => Some('\u{b7}'),
+                "euro" => Some('\u{20ac}'),
+                "pound" => Some('\u{a3}'),
+                "yen" => Some('\u{a5}'),
+                "cent" => Some('\u{a2}'),
+                "sect" => Some('\u{a7}'),
+                "para" => Some('\u{b6}'),
+                "deg" => Some('\u{b0}'),
+                "plusmn" => Some('\u{b1}'),
+                "micro" => Some('\u{b5}'),
+                "times" => Some('\u{d7}'),
+                "divide" => Some('\u{f7}'),
+                "frac12" => Some('\u{bd}'),
+                "frac14" => Some('\u{bc}'),
+                "frac34" => Some('\u{be}'),
+                "larr" => Some('\u{2190}'),
+                "uarr" => Some('\u{2191}'),
+                "rarr" => Some('\u{2192}'),
+                "darr" => Some('\u{2193}'),
+                "thinsp" => Some('\u{2009}'),
+                "ensp" => Some('\u{2002}'),
+                "emsp" => Some('\u{2003}'),
+                "shy" => Some('\u{ad}'),
+                "auml" => Some('\u{e4}'),
+                "ouml" => Some('\u{f6}'),
+                "uuml" => Some('\u{fc}'),
+                "Auml" => Some('\u{c4}'),
+                "Ouml" => Some('\u{d6}'),
+                "Uuml" => Some('\u{dc}'),
+                "szlig" => Some('\u{df}'),
                 _ => {
                     if let Some(h) = name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
                         u32::from_str_radix(h, 16).ok().and_then(char::from_u32)
@@ -177,12 +261,13 @@ impl Dom {
                 let name = name.to_ascii_lowercase();
                 if name.is_empty()
                     || !name
-                        .chars()
-                        .next()
-                        .map_or(false, |c| c.is_ascii_alphabetic())
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_ascii_alphabetic())
                 {
                     continue;
                 }
+                auto_close(&dom.nodes, &mut stack, &name);
                 let mut node = Node {
                     tag: name.clone(),
                     parent: stack.last().copied(),
@@ -201,7 +286,7 @@ impl Dom {
                         e if e.len() > 2 && e.starts_with("on") => {
                             node.on.push((e[2..].to_string(), v))
                         }
-                        _ => {}
+                        _ => node.attrs.push((k.clone(), v)),
                     }
                 }
                 let idx = dom.nodes.len();
@@ -230,11 +315,26 @@ impl Dom {
                 let end = html[i..].find('<').map(|e| i + e).unwrap_or(html.len());
                 let raw = decode_entities(&html[i..end]);
                 i = end;
-                let text = collapse_ws(&raw);
-                if text.trim().is_empty() {
-                    continue;
-                }
                 let parent = *stack.last().unwrap();
+                let pre = stack
+                    .iter()
+                    .any(|&n| matches!(dom.nodes[n].tag.as_str(), "pre" | "textarea"));
+                let text = if pre {
+                    let mut t = raw.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ");
+                    if dom.nodes[parent].kids.is_empty() && t.starts_with('\n') {
+                        t.remove(0);
+                    }
+                    if t.is_empty() {
+                        continue;
+                    }
+                    t
+                } else {
+                    let t = collapse_ws(&raw);
+                    if t.trim().is_empty() {
+                        continue;
+                    }
+                    t
+                };
                 let idx = dom.nodes.len();
                 dom.nodes.push(Node {
                     tag: "#text".into(),
@@ -343,6 +443,24 @@ impl Dom {
             self.copy_from(&frag, k, parent);
         }
         self.generation += 1;
+    }
+
+    pub(crate) fn attr(&self, idx: usize, name: &str) -> Option<&str> {
+        self.nodes[idx]
+            .attrs
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    pub(crate) fn closest(&self, mut idx: usize, tag: &str) -> Option<usize> {
+        while let Some(p) = self.nodes[idx].parent {
+            if self.nodes[p].tag == tag {
+                return Some(p);
+            }
+            idx = p;
+        }
+        None
     }
 
     pub(crate) fn by_id(&self, id: &str) -> Option<usize> {

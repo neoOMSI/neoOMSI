@@ -384,6 +384,171 @@ fn paint_img(cv: &mut Canvas, lay: &Layouter, b: &LBox) {
     );
 }
 
+pub(crate) fn stroke_box(cv: &mut Canvas, r: [f32; 4], radius: f32, w: [f32; 4], c: [u8; 4]) {
+    if c[3] == 0 || !r.iter().all(|v| v.is_finite()) || !radius.is_finite() {
+        return;
+    }
+    let [t, rr, b, l] = w;
+    if radius <= 0.5 {
+        let ih = (r[3] - t - b).max(0.0);
+        if t > 0.0 {
+            cv.fill([r[0], r[1], r[2], t], c, 0.0);
+        }
+        if b > 0.0 {
+            cv.fill([r[0], r[1] + r[3] - b, r[2], b], c, 0.0);
+        }
+        if l > 0.0 {
+            cv.fill([r[0], r[1] + t, l, ih], c, 0.0);
+        }
+        if rr > 0.0 {
+            cv.fill([r[0] + r[2] - rr, r[1] + t, rr, ih], c, 0.0);
+        }
+        return;
+    }
+    let rad = radius.min(r[2] / 2.0).min(r[3] / 2.0).max(0.0);
+    let inner = [r[0] + l, r[1] + t, r[2] - l - rr, r[3] - t - b];
+    let irad = (rad - t.max(rr).max(b).max(l)).max(0.0);
+    let has_inner = inner[2] > 0.0 && inner[3] > 0.0;
+    let (x0, x1) = ((r[0].floor() as i32).max(0), ((r[0] + r[2]).ceil() as i32).min(cv.w as i32));
+    let (y0, y1) = ((r[1].floor() as i32).max(0), ((r[1] + r[3]).ceil() as i32).min(cv.h as i32));
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let co = corner_cov(r, rad, x, y);
+            let ci = if has_inner {
+                corner_cov(inner, irad.min(inner[2] / 2.0).min(inner[3] / 2.0), x, y)
+            } else {
+                0.0
+            };
+            let cov = (co - ci).clamp(0.0, 1.0);
+            if cov > 0.0 {
+                cv.blend(x, y, c, cov);
+            }
+        }
+    }
+}
+
+fn first_line(b: &LBox) -> Option<&LLine> {
+    for it in &b.items {
+        match it {
+            Item::Line(l) => return Some(l),
+            Item::Block(c) => {
+                if let Some(l) = first_line(c) {
+                    return Some(l);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn paint_marker(cv: &mut Canvas, lay: &Layouter, b: &LBox) {
+    let Some(m) = &b.marker else { return };
+    let (px, ly, lh) = match first_line(b) {
+        Some(l) => (l.items.first().map_or(b.st.font_px, |i| i.px), l.y, l.h),
+        None => (
+            b.st.font_px,
+            b.rect[1] + b.st.padding[0],
+            b.st.font_px * b.st.line_h,
+        ),
+    };
+    let right = b.rect[0] + b.st.padding[3] - px * 0.4;
+    let mid = ly + lh / 2.0;
+    let col = b.st.color;
+    match b.st.list {
+        1 => {
+            let d = (px * 0.33).max(3.0);
+            cv.fill([right - d, mid - d / 2.0, d, d], col, d / 2.0);
+        }
+        2 => {
+            let d = (px * 0.33).max(4.0);
+            stroke_box(cv, [right - d, mid - d / 2.0, d, d], d / 2.0, [1.0; 4], col);
+        }
+        3 => {
+            let d = (px * 0.3).max(3.0);
+            cv.fill([right - d, mid - d / 2.0, d, d], col, 0.0);
+        }
+        _ => {
+            let font = if b.st.bold { lay.bold } else { lay.reg };
+            let wdt = lay.tw(m, px, b.st.bold);
+            let sf = font.as_scaled(PxScale::from(px));
+            let base = ly + (lh - (sf.ascent() - sf.descent())) / 2.0 + sf.ascent();
+            draw_text(cv, font, b.st.bold, px, right - wdt, base, col, m);
+        }
+    }
+}
+
+fn paint_widget(cv: &mut Canvas, lay: &Layouter, b: &LBox) {
+    let n = &lay.dom.nodes[b.node];
+    let [pt, pr, pb, pl] = b.st.padding;
+    let area = [
+        b.rect[0] + pl,
+        b.rect[1] + pt,
+        b.rect[2] - pl - pr,
+        b.rect[3] - pt - pb,
+    ];
+    if !area.iter().all(|v| v.is_finite()) {
+        return;
+    }
+    let num = |k: &str| {
+        lay.dom
+            .attr(b.node, k)
+            .and_then(|v| v.trim().parse::<f32>().ok())
+    };
+    let accent = [0x00, 0x75, 0xff, 255];
+    match n.tag.as_str() {
+        "input" => {
+            if lay.dom.attr(b.node, "checked").is_none() || area[2] < 1.0 || area[3] < 1.0 {
+                return;
+            }
+            let ty = lay
+                .dom
+                .attr(b.node, "type")
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if ty == "radio" {
+                let d = area[2].min(area[3]);
+                cv.fill(
+                    [area[0] + d * 0.25, area[1] + d * 0.25, d * 0.5, d * 0.5],
+                    accent,
+                    d * 0.25,
+                );
+            } else if ty == "checkbox" {
+                cv.fill(b.rect, accent, b.st.radius);
+                let pts = [(0.2, 0.5), (0.42, 0.72), (0.8, 0.28)];
+                for seg in 0..2 {
+                    let ((ax, ay), (bx, by)) = (pts[seg], pts[seg + 1]);
+                    for k in 0..=10 {
+                        let t = k as f32 / 10.0;
+                        let x = area[0] + area[2] * (ax + (bx - ax) * t);
+                        let y = area[1] + area[3] * (ay + (by - ay) * t);
+                        cv.fill([x.round(), y.round(), 2.0, 2.0], [255, 255, 255, 255], 0.0);
+                    }
+                }
+            }
+        }
+        "progress" | "meter" => {
+            let meter = n.tag == "meter";
+            let (min, max) = (if meter { num("min").unwrap_or(0.0) } else { 0.0 }, num("max").unwrap_or(1.0));
+            let Some(v) = num("value") else { return };
+            if max <= min {
+                return;
+            }
+            let frac = ((v - min) / (max - min)).clamp(0.0, 1.0);
+            let col = if meter { [0x1d, 0xa1, 0x2e, 255] } else { accent };
+            cv.fill([b.rect[0], b.rect[1], b.rect[2] * frac, b.rect[3]], col, b.st.radius);
+        }
+        "select" => {
+            let x = b.rect[0] + b.rect[2] - 16.0;
+            let y = b.rect[1] + b.rect[3] / 2.0 - 2.0;
+            for i in 0..5 {
+                let f = i as f32;
+                cv.fill([x + f, y + f, 10.0 - 2.0 * f, 1.0], b.st.color, 0.0);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn paint(cv: &mut Canvas, lay: &Layouter, b: &LBox) {
     if !b.st.hidden {
         if b.st.bg[3] > 0 {
@@ -392,7 +557,18 @@ pub(crate) fn paint(cv: &mut Canvas, lay: &Layouter, b: &LBox) {
         if b.st.bg_img.is_some() {
             paint_bg(cv, lay.imgs, b.rect, b.st.radius, &b.st);
         }
+        if b.st.border.iter().any(|w| *w > 0.0) {
+            stroke_box(
+                cv,
+                b.rect,
+                b.st.radius,
+                b.st.border,
+                b.st.border_color.unwrap_or(b.st.color),
+            );
+        }
         paint_img(cv, lay, b);
+        paint_widget(cv, lay, b);
+        paint_marker(cv, lay, b);
     }
     for it in &b.items {
         match it {
@@ -404,7 +580,19 @@ pub(crate) fn paint(cv: &mut Canvas, lay: &Layouter, b: &LBox) {
                 for li in &l.items {
                     let font = if li.bold { lay.bold } else { lay.reg };
                     let sf = font.as_scaled(PxScale::from(li.px));
-                    let base = l.y + (l.h - (sf.ascent() - sf.descent())) / 2.0 + sf.ascent();
+                    let base = l.y + (l.h - (sf.ascent() - sf.descent())) / 2.0 + sf.ascent()
+                        - li.rise * li.px * 1.3;
+                    let x = l.x + li.dx;
+                    if li.bg[3] > 0 {
+                        cv.fill([x, l.y, li.w, l.h], li.bg, 0.0);
+                    }
+                    let bar = (li.px / 14.0).round().max(1.0);
+                    if li.underline {
+                        cv.fill([x, (base + li.px * 0.12).round(), li.w, bar], li.color, 0.0);
+                    }
+                    if li.strike {
+                        cv.fill([x, (base - li.px * 0.28).round(), li.w, bar], li.color, 0.0);
+                    }
                     draw_text(
                         cv,
                         font,
