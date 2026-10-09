@@ -105,6 +105,15 @@ const HORN_COOLDOWN: f32 = 8.0;
 /// Above this speed (m/s) a car is moving, not held, and does not sound the horn.
 const HORN_SPEED: f32 = 1.0;
 
+/// How far (m) short of scenery its body would touch a vehicle stops: it sees the contact
+/// coming (`AiCar::scenery_ahead`) and brakes for it like for any standing thing, instead of
+/// driving up to it and having the move refused.
+const SCENERY_STOP_MARGIN: f32 = 0.35;
+/// Seconds a vehicle stays pinned against scenery (it cannot move without touching it) before
+/// it gives up like a car that has stood for a minute: it is taken off once out of sight, bus
+/// or not - a timetable bus stuck against a wall held the whole line for good.
+const SCENERY_PINNED_GONE: f32 = 25.0;
+
 /// Room an oncoming vehicle needs beside a car (m from the car's side to the middle of the
 /// oncoming lane): its half width and a margin.
 const PLAYER_BOX_MARGIN: f32 = 0.5;
@@ -126,6 +135,9 @@ pub struct AiCar {
     pub(crate) caps: VehicleCapabilities,
     pub(crate) motion_fault: Option<Reason>,
     pub(crate) scenery_streak: f32,
+    /// Metres its body can still travel along its way before touching scenery, from the
+    /// realization of the last tick; the planner stops short of it and looks for a way round.
+    pub(crate) scenery_ahead: Option<f32>,
     /// The random seed it was made with and its paint scheme: a car that goes out of range
     /// and comes back is the same car (`DormantCar`).
     pub(crate) seed: u64,

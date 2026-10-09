@@ -286,6 +286,15 @@ const FEEDBACK_MAX_LATERAL: f64 = 1.0;
 /// How far the realized heading may differ from the route before the projection is rejected
 /// (deg).
 const FEEDBACK_MAX_TURN: f32 = 60.0;
+/// On a timetable route the realized body is matched against the lanes around the planner's
+/// own, not the whole rest of the route: at least this many lanes beyond the current one and
+/// at least this many metres of them. A route that doubles back (a terminal loop, a street
+/// driven out and back) runs beside its own earlier lanes, and the nearest lane of the *whole*
+/// remaining route could be one a lap further on - the planner then skipped the loop.
+const FEEDBACK_ROUTE_LANES: usize = 3;
+/// How far (m) the planner may be ahead of a body it could not match onto the route.
+const FEEDBACK_MAX_LEAD: f32 = 2.0;
+const FEEDBACK_ROUTE_REACH: f32 = 80.0;
 
 /// A lane change: the car moves over from its lane to `to` along `length` metres of road
 /// (by distance, not by time: a car that has to stop halfway stands still, and so does its
@@ -1201,6 +1210,74 @@ impl AiState {
         true
     }
 
+    /// One past the last route entry the realized body is matched against (see
+    /// [`FEEDBACK_ROUTE_LANES`]).
+    fn feedback_window_end(&self, net: &Network) -> usize {
+        let mut end = (self.route_index + 1).min(self.route.len());
+        let (mut reach, mut lanes) = (0.0f32, 0usize);
+        while end < self.route.len() && (reach < FEEDBACK_ROUTE_REACH || lanes < FEEDBACK_ROUTE_LANES) {
+            reach += net.lanes.get(self.route[end]).map_or(0.0, |l| l.length());
+            lanes += 1;
+            end += 1;
+        }
+        end
+    }
+
+    /// Feedback moves `lane` and `s` to where the body is, but `prev_lane` - the lane the
+    /// way behind the car is read through - is only set as `drive` crosses a joint. Left
+    /// alone it names a lane that no longer leads into the current one, and the way behind
+    /// skips the lane in between: on a short junction lane the rear axle's target (the body
+    /// steers the rear axle along `way_point` of a negative distance) jumped back by that
+    /// whole lane, and the body, finding its target metres away, was put back there (the
+    /// bus that "teleports back" at a corner). The lane that leads here is the route's
+    /// previous entry, else the lane the car just left, else the only lane that leads in.
+    fn repair_prev_lane(&mut self, net: &Network, old_lane: usize) {
+        let lane = self.lane;
+        let leads_here =
+            |p: usize| p != lane && net.lanes.get(p).is_some_and(|l| l.next.contains(&lane));
+        if lane == old_lane && self.prev_lane.is_none_or(leads_here) {
+            return;
+        }
+        let on_route = self
+            .route_index
+            .checked_sub(1)
+            .and_then(|k| self.route.get(k))
+            .copied()
+            .filter(|&p| leads_here(p));
+        let just_left = Some(old_lane).filter(|&p| leads_here(p));
+        let only_incoming = || {
+            let mut incoming = net
+                .prev
+                .get(lane)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|&p| leads_here(p));
+            match (incoming.next(), incoming.next()) {
+                (Some(p), None) => Some(p),
+                _ => None,
+            }
+        };
+        self.prev_lane = on_route.or(just_left).or_else(only_incoming);
+    }
+
+    /// The planner's progress when the realized body cannot be matched onto the route: take
+    /// the body's speed, and never stand more than [`FEEDBACK_MAX_LEAD`] metres of the lane
+    /// ahead of where the body is on it.
+    fn hold_to_rejected_body(&mut self, net: &Network, realized: RealizedMotion) {
+        if realized.speed.is_finite() && realized.speed >= 0.0 {
+            self.speed = realized.speed;
+            self.realized_speed = realized.speed;
+        }
+        let Some(lane) = net.lanes.get(self.lane) else { return };
+        if !realized.pose.is_finite() {
+            return;
+        }
+        if let Some((body_s, _)) = lane.nearest_point(realized.pose) {
+            self.s = self.s.min(body_s + FEEDBACK_MAX_LEAD);
+        }
+    }
+
     /// Commit route progress from the realized body.
     ///
     /// The realized body is the single pose owner: this projects its pose onto the planned
@@ -1249,16 +1326,21 @@ impl AiState {
         let mut buf = [0usize; PLAN_LANES + 1];
         let projected = if !self.route.is_empty() {
             let start = self.route_index.saturating_sub(1);
-            project_on_route_indices(
-                net,
-                &self.route[start..],
-                realized.pose,
-                realized.heading_deg,
-                realized.half_width,
-                FEEDBACK_MAX_LATERAL,
-                FEEDBACK_MAX_TURN,
-            )
-            .map(|f| (f, start))
+            let end = self.feedback_window_end(net);
+            self.route
+                .get(start..end)
+                .and_then(|window| {
+                    project_on_route_indices(
+                        net,
+                        window,
+                        realized.pose,
+                        realized.heading_deg,
+                        realized.half_width,
+                        FEEDBACK_MAX_LATERAL,
+                        FEEDBACK_MAX_TURN,
+                    )
+                })
+                .map(|f| (f, start))
         } else {
             buf[0] = self.lane;
             let mut n = 1;
@@ -1281,6 +1363,11 @@ impl AiState {
             .map(|f| (f, 0))
         };
         let Some((fix, offset)) = projected else {
+            // The body is off its way (swung wide, turned across it): it cannot be placed
+            // on the route, but the planner must not run on without it either. Left alone
+            // it advanced at its own speed while the body crept back, and a few seconds
+            // later the body was a lane behind its way.
+            self.hold_to_rejected_body(net, realized);
             self.reconciled = false;
             return None;
         };
@@ -1290,6 +1377,8 @@ impl AiState {
             self.reconciled = false;
             return None;
         }
+        let old_lane = self.lane;
+        let mut new_route_index = None;
         if !self.route.is_empty() {
             let ri = offset
                 + self
@@ -1305,12 +1394,17 @@ impl AiState {
                 return None;
             }
             if ri != self.route_index {
-                self.route_index = ri;
-                self.plan_next(net);
+                new_route_index = Some(ri);
             }
         }
         self.lane = fix.lane.index();
         self.s = fix.s;
+        if let Some(ri) = new_route_index {
+            // (the way on is planned from the lane the car is on *now*)
+            self.route_index = ri;
+            self.plan_next(net);
+        }
+        self.repair_prev_lane(net, old_lane);
         self.lateral = fix.lateral;
         if realized.speed.is_finite() && realized.speed >= 0.0 {
             self.speed = realized.speed;
@@ -1445,6 +1539,128 @@ mod tests {
             "entered the 30 zone at {:.2} m/s",
             c.speed
         );
+    }
+
+    /// North, a short right-hand turn east, then east again: a bus route round a corner.
+    fn corner() -> Network {
+        let street = |pts: Vec<DVec3>| LaneBuilder::polyline(pts, LaneKind::Street, 3.0);
+        let mut net = Network {
+            lanes: vec![
+                street(vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 40.0, 0.0)]),
+                street(vec![
+                    DVec3::new(0.0, 40.0, 0.0),
+                    DVec3::new(1.0, 46.0, 0.0),
+                    DVec3::new(4.0, 50.0, 0.0),
+                    DVec3::new(10.0, 52.0, 0.0),
+                ]),
+                street(vec![DVec3::new(10.0, 52.0, 0.0), DVec3::new(50.0, 52.0, 0.0)]),
+                street(vec![DVec3::new(50.0, 52.0, 0.0), DVec3::new(90.0, 52.0, 0.0)]),
+            ],
+            ..Default::default()
+        };
+        net.link(1.5);
+        net
+    }
+
+    fn feedback(net: &Network, lane: usize, s: f32) -> RealizedMotion {
+        let (pose, heading_deg) = net.lanes[lane].at(s);
+        RealizedMotion { pose, heading_deg, speed: 6.0, half_width: 1.25 }
+    }
+
+    #[test]
+    fn feedback_onto_the_next_lane_keeps_the_way_behind_the_car_on_the_lanes_it_drove() {
+        let net = corner();
+        let mut c = car(&net, 0.0, 8.0);
+        c.set_route(&net, vec![0, 1, 2, 3], 0.0);
+        c.speed = 8.0;
+        for _ in 0..2000 {
+            if c.lane == 1 {
+                break;
+            }
+            c.drive(&net, DT_TEST, None, None);
+        }
+        assert_eq!(c.lane, 1, "the planner is on the turn");
+        assert_eq!(c.prev_lane, Some(0));
+        // the body (its nose, the origin) is already over the joint into lane 2
+        c.commit_feedback(&net, feedback(&net, 2, 1.0)).expect("on the route");
+        assert_eq!((c.lane, c.route_index), (2, 2));
+        assert_eq!(c.prev_lane, Some(1), "the lane that leads into the current one");
+        // the rear axle (3 m behind the origin) is on the end of the turn, not a lane back
+        let behind = c.way_point(&net, -3.0);
+        let expect = net.lanes[1].at(net.lanes[1].length() - 2.0).0;
+        assert!(
+            (behind - expect).truncate().length() < 0.7,
+            "the way behind the car jumped to {behind:?}, expected near {expect:?}"
+        );
+    }
+
+    #[test]
+    fn feedback_back_onto_the_previous_lane_keeps_the_way_behind_the_car_too() {
+        let net = corner();
+        let mut c = car(&net, 0.0, 8.0);
+        c.set_route(&net, vec![0, 1, 2, 3], 0.0);
+        c.speed = 8.0;
+        for _ in 0..4000 {
+            if c.lane == 2 {
+                break;
+            }
+            c.drive(&net, DT_TEST, None, None);
+        }
+        assert_eq!((c.lane, c.prev_lane), (2, Some(1)));
+        // the body lags: its nose is still on the turn
+        let len = net.lanes[1].length();
+        c.commit_feedback(&net, feedback(&net, 1, len - 1.0)).expect("on the route");
+        assert_eq!((c.lane, c.route_index), (1, 1));
+        assert_eq!(c.prev_lane, Some(0));
+    }
+
+    #[test]
+    fn feedback_does_not_skip_a_loop_that_runs_beside_the_lane_it_is_on() {
+        // north, east, south, west and north again, half a metre beside the first lane: the
+        // nearest lane of the whole route can be the last one, a lap further on
+        let street = |pts: Vec<DVec3>| LaneBuilder::polyline(pts, LaneKind::Street, 3.0);
+        let mut net = Network {
+            lanes: vec![
+                street(vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 50.0, 0.0)]),
+                street(vec![DVec3::new(0.0, 50.0, 0.0), DVec3::new(40.0, 50.0, 0.0)]),
+                street(vec![DVec3::new(40.0, 50.0, 0.0), DVec3::new(40.0, -10.0, 0.0)]),
+                street(vec![DVec3::new(40.0, -10.0, 0.0), DVec3::new(0.5, -10.0, 0.0)]),
+                street(vec![DVec3::new(0.5, -10.0, 0.0), DVec3::new(0.5, 60.0, 0.0)]),
+            ],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let mut c = car(&net, 20.0, 8.0);
+        c.set_route(&net, vec![0, 1, 2, 3, 4], 20.0);
+        let realized = RealizedMotion {
+            pose: DVec3::new(0.4, 21.0, 0.0),
+            heading_deg: 0.0,
+            speed: 8.0,
+            half_width: 1.25,
+        };
+        c.commit_feedback(&net, realized).expect("on the route");
+        assert_eq!((c.lane, c.route_index), (0, 0), "the loop was skipped");
+        assert!((c.s - 21.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn a_body_off_its_way_holds_the_planner_back_instead_of_being_left_behind() {
+        let net = straight();
+        let mut c = car(&net, 50.0, 12.0);
+        // the body is four metres beside the lane, twenty metres back: no match
+        let fix = c.commit_feedback(
+            &net,
+            RealizedMotion {
+                pose: DVec3::new(4.0, 20.0, 0.0),
+                heading_deg: 0.0,
+                speed: 1.5,
+                half_width: 1.25,
+            },
+        );
+        assert!(fix.is_none());
+        assert!(c.s <= 22.0 + 1e-3, "the planner ran on to {} m", c.s);
+        assert!((c.speed - 1.5).abs() < 1e-3, "and believed in {} m/s", c.speed);
+        assert!(!c.reconciled);
     }
 
     const DT_TEST: f32 = 1.0 / 50.0;

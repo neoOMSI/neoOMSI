@@ -932,6 +932,7 @@ impl Traffic {
             caps,
             motion_fault: None,
             scenery_streak: 0.0,
+            scenery_ahead: None,
             state,
             vehicle,
             render,
