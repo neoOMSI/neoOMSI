@@ -10,6 +10,22 @@ const MAIN_MIN_RANGE: f32 = 80.0;
 const MAIN_RANGE_RATIO: f32 = 1.25;
 pub(super) const FOG_DROP: f32 = 0.025;
 
+/// The Studio Polygon 400MMC's fourth classic spotlight is its DRL.  OMSI selects it for the
+/// visible daytime-running lamps, but it must not become an environmental road light.
+///
+/// This is deliberately a content-specific compatibility profile.  Spotlight indices and
+/// ranges are arbitrary in OMSI content, so applying this rule to every vehicle suppresses
+/// legitimate dipped beams on other buses.
+fn is_studio_polygon_400mmc_drl(v: &VehicleInstance, selected: Option<usize>) -> bool {
+    selected == Some(3)
+        && v.ty
+            .def
+            .path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .contains("studio polygon 400mmc")
+}
+
 pub(super) fn classify(ranges: &[f32], selected: usize) -> BeamKind {
     let Some(&range) = ranges.get(selected) else {
         return BeamKind::Dipped;
@@ -120,7 +136,7 @@ pub(super) fn headlamps(
     // Renown's dipped beam is 70 m while other vehicles use several-hundred-metre values.
     // Use OMSI's actual high-beam state for the selected spotlight, so a normal dipped beam
     // always receives the dipped cookie regardless of its range.
-    let full_beam = ["lights_highbeam", "lights_fern", "lights_sw_fern"]
+    let full_beam = ["lights_highbeam", "lights_fern"]
         .iter()
         .any(|name| v.var(name).is_some_and(|value| value >= 0.5));
 
@@ -129,9 +145,10 @@ pub(super) fn headlamps(
         .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]));
     let main_lit = full_beam
         && lit.is_some_and(|i| i < spots.len());
+    let sp400_drl = is_studio_polygon_400mmc_drl(v, lit);
     let key = key_of(v);
     for (i, vals) in spots.iter().enumerate() {
-        let on = lit == Some(i) || (main_lit && partner == Some(i));
+        let on = !sp400_drl && (lit == Some(i) || (main_lit && partner == Some(i)));
         let level = lamp_level(key, i as u32, if on { 1.0 } else { 0.0 }, LAMP_RISE, LAMP_FALL);
         if level < 0.01 {
             continue;
