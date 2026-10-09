@@ -111,6 +111,21 @@ impl Humans {
             );
         }
         self.buses.pax_req = ai_req;
+        self.door_occupancy.clear();
+        self.alighting_occupancy.clear();
+        for person in &self.people {
+            if let crate::humans::person::State::Pax(pax) = &person.state {
+                if pax.task == Task::WalkingToBus && pax.inside.is_none() {
+                    if let (Some(bus), Some(door)) = (pax.bus, pax.door) {
+                        *self.door_occupancy.entry((bus, door)).or_default() += 1;
+                    }
+                } else if pax.task == Task::InBusToExit {
+                    if let (Some(bus), Some(door)) = (pax.inside, pax.door) {
+                        *self.alighting_occupancy.entry((bus, door)).or_default() += 1;
+                    }
+                }
+            }
+        }
         for i in 0..self.people.len() {
             if self.pax(i).is_none() || remove.contains(&i) {
                 continue;

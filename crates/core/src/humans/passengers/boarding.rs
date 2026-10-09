@@ -61,6 +61,29 @@ impl Humans {
             );
         }
         let seatheight = self.people[i].ty.def.seat_height;
+        let old_task = self.pax(i).unwrap().task;
+        let (pax_inside, pax_bus, pax_door) = {
+            let pax = self.pax(i).unwrap();
+            (pax.inside, pax.bus, pax.door)
+        };
+        if old_task == Task::WalkingToBus && pax_inside.is_none() {
+            if let (Some(bus), Some(door)) = (pax_bus, pax_door) {
+                if let Some(cnt) = self.door_occupancy.get_mut(&(bus, door)) {
+                    *cnt = cnt.saturating_sub(1);
+                }
+            }
+        } else if old_task == Task::InBusToExit {
+            if let (Some(bus), Some(door)) = (pax_inside, pax_door) {
+                if let Some(cnt) = self.alighting_occupancy.get_mut(&(bus, door)) {
+                    *cnt = cnt.saturating_sub(1);
+                }
+            }
+        }
+        if t == Task::WalkingToBus && pax_inside.is_none() {
+            if let (Some(bus), Some(door)) = (pax_bus, pax_door) {
+                *self.door_occupancy.entry((bus, door)).or_default() += 1;
+            }
+        }
         if t != Task::InBusToPlace {
             self.cancel_fare(self.people[i].id);
         }
@@ -289,6 +312,9 @@ impl Humans {
                         if let Some(r) = x.get_mut(d) {
                             *r = true;
                         }
+                    }
+                    if self.pax(i).and_then(|p| p.inside) == Some(bn.id) {
+                        *self.alighting_occupancy.entry((bn.id, d)).or_default() += 1;
                     }
                 }
                 if let Some(k) = freed_seat {
@@ -558,28 +584,62 @@ impl Humans {
             bn.cabin
                 .omsi_nearest(here, &list, buyer, false, Some(&flags), Some(&open))
         });
+        let old_door = self.pax(i).unwrap().door;
         let p = self.pax_mut(i).unwrap();
         if let Some(q) = pt.and_then(|k| bn.cabin.graph.points.get(k)) {
             p.target = q.as_dvec3();
             p.target_bus = true;
         }
-        p.door = pt.and_then(|t| list.iter().position(|e| *e == Some(t)));
+        let new_door = pt.and_then(|t| list.iter().position(|e| *e == Some(t)));
+        p.door = new_door;
+        if old_door != new_door {
+            let p = self.pax(i).unwrap();
+            if p.bus == Some(bn.id) && p.task == Task::WalkingToBus && p.inside.is_none() {
+                if let Some(d) = old_door {
+                    if let Some(cnt) = self.door_occupancy.get_mut(&(bn.id, d)) {
+                        *cnt = cnt.saturating_sub(1);
+                    }
+                }
+                if let Some(d) = new_door {
+                    *self.door_occupancy.entry((bn.id, d)).or_default() += 1;
+                }
+            }
+        }
     }
 
     /// Queue cost for each entry, with a stable per-person bias and hysteresis.
     pub(in crate::humans) fn door_queues(&self, i: usize, bus: BusId, n: usize) -> Vec<f32> {
         let mut queue = vec![0.0; n];
-        for (j, person) in self.people.iter().enumerate() {
-            let State::Pax(pax) = &person.state else {
-                continue;
-            };
-            if j != i
-                && pax.bus == Some(bus)
-                && pax.task == Task::WalkingToBus
-                && pax.inside.is_none()
-                && let Some(door) = pax.door.filter(|door| *door < n)
-            {
-                queue[door] += 2.0;
+        if !self.door_occupancy.is_empty() {
+            let my_door = self.pax(i).and_then(|pax| {
+                if pax.bus == Some(bus) && pax.task == Task::WalkingToBus && pax.inside.is_none() {
+                    pax.door
+                } else {
+                    None
+                }
+            });
+            for (door, cost) in queue.iter_mut().enumerate() {
+                let total = self.door_occupancy.get(&(bus, door)).copied().unwrap_or(0);
+                let others = if my_door == Some(door) {
+                    total.saturating_sub(1)
+                } else {
+                    total
+                };
+                *cost += others as f32 * 2.0;
+            }
+        } else {
+            for (j, person) in self.people.iter().enumerate() {
+                let State::Pax(pax) = &person.state else {
+                    continue;
+                };
+                if j != i
+                    && pax.bus == Some(bus)
+                    && pax.task == Task::WalkingToBus
+                    && pax.inside.is_none()
+                    && let Some(door) = pax.door.filter(|door| *door < n)
+                {
+                    queue[door] += 2.0;
+                }
             }
         }
         let id = self.people[i].id;
@@ -597,15 +657,19 @@ impl Humans {
     }
 
     pub(in crate::humans) fn alighting_through(&self, bus: BusId, exit: usize) -> usize {
-        self.people
-            .iter()
-            .filter(|person| {
-                matches!(&person.state, State::Pax(pax)
-                    if pax.inside == Some(bus)
-                        && pax.task == Task::InBusToExit
-                        && pax.door == Some(exit))
-            })
-            .count()
+        if !self.alighting_occupancy.is_empty() {
+            self.alighting_occupancy.get(&(bus, exit)).copied().unwrap_or(0)
+        } else {
+            self.people
+                .iter()
+                .filter(|person| {
+                    matches!(&person.state, State::Pax(pax)
+                        if pax.inside == Some(bus)
+                            && pax.task == Task::InBusToExit
+                            && pax.door == Some(exit))
+                })
+                .count()
+        }
     }
 
     /// sub_62a628: along the paths to the place reserved.
@@ -896,13 +960,22 @@ impl Humans {
                 }
                 if replan {
                     let exit = from.and_then(|from| bn.cabin.nearest_exit(from, &bn.exit_open));
-                    let pp = self.pax_mut(i).unwrap();
                     if let Some((door, target)) = exit {
+                        let old_door = self.pax(i).unwrap().door;
+                        let pp = self.pax_mut(i).unwrap();
                         if pp.door != Some(door) || pp.pt_target != Some(target) {
                             pp.pt = from;
                             pp.pt_target = Some(target);
                             pp.door = Some(door);
                             pp.movement = Movement::AlongPath;
+                        }
+                        if old_door != Some(door) {
+                            if let Some(old) = old_door {
+                                if let Some(cnt) = self.alighting_occupancy.get_mut(&(b, old)) {
+                                    *cnt = cnt.saturating_sub(1);
+                                }
+                            }
+                            *self.alighting_occupancy.entry((b, door)).or_default() += 1;
                         }
                     } else {
                         self.people[i].why = "no reachable exit";
@@ -988,6 +1061,11 @@ impl Humans {
                 stop,
                 p.door
             );
+        }
+        if let Some(door) = p.door {
+            if let Some(cnt) = self.alighting_occupancy.get_mut(&(bn.id, door)) {
+                *cnt = cnt.saturating_sub(1);
+            }
         }
         self.walk_street(i, w, h, stop, net);
     }
