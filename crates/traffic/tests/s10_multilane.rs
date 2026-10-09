@@ -220,11 +220,13 @@ fn a_required_route_change_precedes_an_optional_pass() {
                 vehicle: VehicleId(1),
                 target: Some(LaneId(1)),
                 required: false,
+                s: 0.0,
             },
             ManeuverIntent {
                 vehicle: VehicleId(99),
                 target: Some(LaneId(1)),
                 required: true,
+                s: 0.0,
             },
         ];
         if reverse {

@@ -353,6 +353,16 @@ impl Traffic {
             .iter()
             .map(|c| {
                 let st = &c.state;
+                let h = c.vehicle.heading.to_radians();
+                let fwd = glam::DVec2::new(h.sin(), h.cos());
+                let mut rear = st.rear;
+                for tr in &c.vehicle.trailers {
+                    if let Some(bb) = tr.ty.def.bounding_box {
+                        let o = ::simulation::collision::Obb::from_box(bb, tr.position, tr.heading);
+                        let behind = -(o.center - c.vehicle.position.truncate()).dot(fwd) + o.half.y;
+                        rear = rear.max(behind as f32);
+                    }
+                }
                 ManeuverActor {
                     id: c.id,
                     lane: st.lane,
@@ -365,7 +375,7 @@ impl Traffic {
                     desire: st.desire,
                     max_speed_kmh: st.max_speed_kmh,
                     front: st.front,
-                    rear: st.rear,
+                    rear,
                     length: st.length,
                     half_width: c.half_width,
                     height: safety::vehicle_height(&c.vehicle),
@@ -1354,6 +1364,7 @@ impl Traffic {
                 &'a mut AiFrame,
                 &'a mut std::collections::VecDeque<(f64, DVec3)>,
                 &'a mut Option<Reason>,
+                &'a mut f32,
                 f32,
                 &'a VehicleCapabilities,
             );
@@ -1364,7 +1375,7 @@ impl Traffic {
                 .enumerate()
                 .filter_map(|(i, (c, f))| {
                     let f = f.as_mut()?;
-                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, previous_odometer[i], &c.caps))
+                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps))
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
@@ -1372,7 +1383,7 @@ impl Traffic {
             // the main thread more than a car's work)
             work.par_iter_mut()
                 .with_min_len(4)
-                .for_each(|(state, body, vehicle, frame, trail, fault, previous, caps)| {
+                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps)| {
                     let t0 = std::time::Instant::now();
                     let ground = vehicle.ground.clone();
                     let contact = vehicle.contact.clone();
@@ -1400,9 +1411,15 @@ impl Traffic {
                     );
                     if let Some(before) = before {
                         let moved = body.position != before.position || body.heading != before.heading;
-                        if moved && road_collision.hit(&safety::road_body_box(vehicle, body, caps)).is_some()
-                            && road_collision.hit(&safety::road_body_box(vehicle, &before, caps)).is_none()
-                        {
+                        let blocked = moved && road_collision.hit(&safety::road_body_box(vehicle, body, caps)).is_some()
+                            && road_collision.hit(&safety::road_body_box(vehicle, &before, caps)).is_none();
+                        if blocked && **streak < 2.0 {
+                            **streak += dt;
+                        }
+                        if moved && !blocked {
+                            **streak = 0.0;
+                        }
+                        if blocked && **streak < 2.0 {
                             **body = before;
                             body.stop_motion();
                             frame.speed = 0.0;
