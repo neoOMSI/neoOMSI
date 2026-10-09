@@ -2470,6 +2470,10 @@ const SETTINGS: &[(&str, &str, &str, Kind)] = &[
     ("update_auto", "launcher", "update_auto", Bool),
 ];
 
+pub fn setting_keys() -> impl Iterator<Item = &'static str> {
+    SETTINGS.iter().map(|s| s.0)
+}
+
 fn toml_num(v: &Toml) -> Option<f64> {
     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
 }

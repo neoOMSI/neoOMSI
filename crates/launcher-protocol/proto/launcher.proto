@@ -628,21 +628,197 @@ message JoinCheck {
   repeated LanStatus local = 3;
 }
 
-message SettingValue {
-  oneof value {
-    bool flag = 1;
-    double number = 2;
-    string text = 3;
-  }
+enum WindowMode {
+  WINDOW_MODE_UNSPECIFIED = 0;
+  WINDOW_MODE_WINDOWED = 1;
+  WINDOW_MODE_BORDERLESS = 2;
+  WINDOW_MODE_FULLSCREEN = 3;
 }
 
+enum MirrorRefresh {
+  MIRROR_REFRESH_UNSPECIFIED = 0;
+  MIRROR_REFRESH_FULL = 1;
+  MIRROR_REFRESH_ECO = 2;
+  MIRROR_REFRESH_OFF = 3;
+}
+
+enum ShadowCasters {
+  SHADOW_CASTERS_UNSPECIFIED = 0;
+  SHADOW_CASTERS_ALL = 1;
+  SHADOW_CASTERS_OMSI = 2;
+}
+
+enum GraphicsApi {
+  GRAPHICS_API_UNSPECIFIED = 0;
+  GRAPHICS_API_AUTO = 1;
+  GRAPHICS_API_VULKAN = 2;
+  GRAPHICS_API_DX12 = 3;
+}
+
+enum GraphicsMode {
+  GRAPHICS_MODE_UNSPECIFIED = 0;
+  GRAPHICS_MODE_VANILLA = 1;
+  GRAPHICS_MODE_VANILLA_PLUS = 2;
+  GRAPHICS_MODE_ENHANCED = 3;
+}
+
+enum Units {
+  UNITS_UNSPECIFIED = 0;
+  UNITS_METRIC = 1;
+  UNITS_UK = 2;
+  UNITS_IMPERIAL = 3;
+}
+
+enum PaxVoices {
+  PAX_VOICES_UNSPECIFIED = 0;
+  PAX_VOICES_ALL = 1;
+  PAX_VOICES_TICKETS = 2;
+  PAX_VOICES_OFF = 3;
+}
+
+enum PaxModels {
+  PAX_MODELS_UNSPECIFIED = 0;
+  PAX_MODELS_OMSI = 1;
+  PAX_MODELS_REALISTIC = 2;
+}
+
+enum PaxMotion {
+  PAX_MOTION_UNSPECIFIED = 0;
+  PAX_MOTION_NATURAL = 1;
+  PAX_MOTION_OMSI = 2;
+}
+
+message AutoNumber {
+  bool automatic = 1;
+  double value = 2;
+}
+
+// Saving changes only the fields that are set.
 message Settings {
-  map<string, SettingValue> values = 1;
+  optional int32 msaa = 1;
+  optional int32 anisotropy = 2;
+  optional bool ssao = 3;
+  optional bool shadows = 4;
+  optional int32 shadow_size = 5;
+  optional bool detail_textures = 6;
+  optional WindowMode window_mode = 7;
+  optional bool vsync = 8;
+  optional int32 texture_memory = 9;
+  optional bool texture_compression = 10;
+  optional bool clouds = 11;
+  optional int32 mirror_size = 12;
+  optional MirrorRefresh mirror_refresh = 13;
+  optional int32 max_fps = 14;
+  optional double min_obj_size = 15;
+  AutoNumber max_obj_dist = 16;
+  AutoNumber view_distance = 17;
+  AutoNumber render_scale = 18;
+  optional ShadowCasters shadow_casters = 19;
+  optional bool shadow_blobs = 20;
+  optional bool reflections = 21;
+  optional GraphicsApi graphics_api = 22;
+  optional GraphicsMode graphics = 23;
+  optional int32 led_glow = 24;
+  optional int32 nightmap_glow = 25;
+  optional double led_mips = 26;
+  optional double atmosphere_brightness = 27;
+  optional int32 map_detail = 28;
+  optional bool navigator = 29;
+  optional double ui_opacity = 30;
+  optional string navigator_corner = 31;
+  optional double ui_scale = 32;
+  optional bool ui_scale_window = 33;
+  optional bool notes = 34;
+  optional bool show_fps = 35;
+  optional bool chat = 36;
+  optional bool tooltips = 37;
+  optional bool name_tags = 38;
+  optional string language = 39;
+  optional Units units = 40;
+  optional string boarding = 41;
+  optional bool pax_prefer_seats = 42;
+  optional bool pax_rear_entry = 43;
+  optional bool exact_fare = 44;
+  optional bool driver = 45;
+  optional int32 maintenance = 46;
+  optional bool collision_vehicles = 47;
+  optional bool collision_objects = 48;
+  optional bool collision_pedestrians = 49;
+  optional bool hands_in_cab = 50;
+  optional double time_speed = 51;
+  optional bool time_sync = 52;
+  optional bool metar_sync = 53;
+  optional string metar_station = 54;
+  optional bool auto_clutch = 55;
+  optional bool auto_ibis = 56;
+  optional bool momentary_gears = 57;
+  optional bool auto_shift = 58;
+  optional bool steering_linear = 59;
+  optional bool old_steering = 60;
+  optional bool red_steer_spd = 61;
+  optional double mouse_sens = 62;
+  optional double stick_sens = 63;
+  optional bool steer_center = 64;
+  optional bool brake_hold = 65;
+  optional bool mouse_steering = 66;
+  optional bool mouse_right_off = 67;
+  optional bool blinker_cancel = 68;
+  optional double wheel_range = 69;
+  optional double wheel_lock = 70;
+  optional double pedal_throttle = 71;
+  optional double pedal_brake = 72;
+  optional int32 ai_unsched_factor = 73;
+  optional int32 ai_max_scheduled = 74;
+  optional int32 ai_max_parked = 75;
+  optional bool nav_arrows = 76;
+  optional bool nav_ai = 77;
+  optional bool nav_topbar = 78;
+  optional bool nav_turn = 79;
+  optional bool nav_stoplist = 80;
+  optional bool nav_stops_ext = 81;
+  optional PaxVoices pax_voices = 82;
+  optional PaxModels pax_models = 83;
+  optional PaxMotion pax_motion = 84;
+  optional bool pax_ik = 85;
+  optional double pax_density = 86;
+  optional bool discord_status = 87;
+  optional string discord_app_id = 88;
+  optional double volume = 89;
+  optional double vol_ai = 90;
+  optional double vol_scenery = 91;
+  optional bool doppler = 92;
+  optional bool ff_enabled = 93;
+  optional bool ff_invert = 94;
+  optional string ctrl_assign = 95;
+  optional double fov = 96;
+  optional bool camera_collision = 97;
+  optional bool driverview_smooth = 98;
+  optional bool head_movement = 99;
+  optional bool steer_look = 100;
+  optional double steer_look_angle = 101;
+  optional double steer_look_response = 102;
+  optional double seat_x = 103;
+  optional double seat_y = 104;
+  optional double seat_z = 105;
+  optional double look_sens = 106;
+  optional bool alt_view = 107;
+  optional bool free_look = 108;
+  optional bool crosshair = 109;
+  optional bool head_tracking = 110;
+  optional bool vr = 111;
+  optional double vr_scale = 112;
+  optional double vr_head_smoothing_ms = 113;
+  optional double vr_mirror_rate = 114;
+  optional bool vr_desktop_mirror = 115;
+  optional bool update_check = 116;
+  optional bool update_auto = 117;
+  // read only: the texture memory "automatic" stands for on this machine, in MB
+  optional uint32 texture_memory_auto = 118;
 }
 
 message OptionPreset {
   string name = 1;
-  map<string, SettingValue> values = 2;
+  Settings values = 2;
 }
 
 message OptionPresetList {

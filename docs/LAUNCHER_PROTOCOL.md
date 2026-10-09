@@ -75,7 +75,7 @@ launcher shows that the engine went away.
 | `cancel_install`, `clear_installs` | |
 | `instances`, `launch`, `stop`, `log` | `stop` asks over the game link first, then by signal |
 | `join` | what a join field means, and the LAN sessions hosted here |
-| `settings`, `save_settings`, `option_presets` | settings are flags, numbers and texts by key; saving `pax_models: "realistic"` downloads the pack when it is missing |
+| `settings`, `save_settings`, `option_presets` | `Settings` has a field for every setting the engine keeps; saving changes only the fields that are set, and saving `pax_models` realistic downloads the pack when it is missing |
 | `pax_pack`, `install_pax_pack` | the realistic passengers' pack; `latest` is the newest `realistic-pax-v<n>` release, looked for every 6 hours, and makes an older pack `outdated` |
 | `update_check` | the newest neoOMSI release for this build's channel and platform, if there is one |
 | `keybindings`, `save_keybindings`, `controllers`, `save_controllers` | the whole list; `controllers` reads the devices as they are now (the first call waits half a second for them to be found) |

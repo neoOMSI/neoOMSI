@@ -3,12 +3,11 @@ use crate::pax_pack::{PaxPack, Status as PaxStatus};
 use anyhow::{Result, anyhow};
 use omsi_launcher_lib as lib;
 use launcher_protocol::api::{
-    self, AxisFunction, AxisShape, Controller, ControllerAxis, Empty, PaxState, request::Command, response::Answer,
-    setting_value,
+    self, AxisFunction, AxisShape, Controller, ControllerAxis, Empty, PaxModels, PaxState, request::Command,
+    response::Answer,
 };
 use omsi_launcher_lib::servers;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -67,12 +66,6 @@ pub(super) fn forget_content() {
 
 fn list<T, U: From<T>>(items: Vec<T>) -> Vec<U> {
     items.into_iter().map(Into::into).collect()
-}
-
-fn settings(v: &Value) -> api::Settings {
-    api::Settings {
-        values: api::setting_values(v),
-    }
 }
 
 pub(super) fn call(command: Command) -> Result<Answer> {
@@ -160,11 +153,11 @@ pub(super) fn call(command: Command) -> Result<Answer> {
         Command::Settings(_) => {
             let _file = settings_file();
             lib::init_settings();
-            Answer::Settings(settings(&lib::get_settings()?))
+            Answer::Settings(api::settings(&lib::get_settings()?))
         }
         Command::SaveSettings(changes) => {
             let saved = save_settings_with(
-                &api::settings_json(&changes.values),
+                &api::settings_json(&changes),
                 || {
                     lib::init_settings();
                     lib::get_settings()
@@ -172,17 +165,17 @@ pub(super) fn call(command: Command) -> Result<Answer> {
                 lib::save_settings,
             )?;
             // content names come in the settings' language
-            if changes.values.contains_key("language") {
+            if changes.language.is_some() {
                 forget_content();
             }
-            if text_of(&changes.values, "pax_models") == Some("realistic") {
+            if changes.pax_models() == PaxModels::Realistic {
                 with_pax(|p| {
                     if matches!(p.status(), PaxStatus::Missing | PaxStatus::Outdated) {
                         p.start();
                     }
                 });
             }
-            Answer::SaveSettings(settings(&saved))
+            Answer::SaveSettings(api::settings(&saved))
         }
         Command::PaxPack(_) => Answer::PaxPack(pax_status()),
         Command::InstallPaxPack(_) => {
@@ -203,7 +196,7 @@ pub(super) fn call(command: Command) -> Result<Answer> {
                 .into_iter()
                 .map(|(name, values)| api::OptionPreset {
                     name,
-                    values: api::setting_values(&values),
+                    values: Some(api::settings(&values)),
                 })
                 .collect(),
         }),
@@ -267,13 +260,6 @@ pub(super) fn call(command: Command) -> Result<Answer> {
             protocol: api::VERSION.parse().unwrap_or(0),
         }),
     })
-}
-
-fn text_of<'a>(values: &'a HashMap<String, api::SettingValue>, key: &str) -> Option<&'a str> {
-    match values.get(key)?.value.as_ref()? {
-        setting_value::Value::Text(s) => Some(s),
-        _ => None,
-    }
 }
 
 static PAX: Mutex<Option<PaxPack>> = Mutex::new(None);
