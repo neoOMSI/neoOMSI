@@ -783,7 +783,9 @@ impl App {
                 self.service_msg = Some((msg.into(), 4.0));
             }
             "toggle_fullscreen" => {
-                let mode = if self.window.as_ref().is_some_and(|win| win.fullscreen().is_some()) {
+                let mode = if ::config::get_bool("graphics", "triple_screen").unwrap_or(false) {
+                    "windowed"
+                } else if self.window.as_ref().is_some_and(|win| win.fullscreen().is_some()) {
                     "windowed"
                 } else {
                     "fullscreen"

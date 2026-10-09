@@ -201,11 +201,11 @@
           "desc": "Physische Breite der sichtbaren Monitorfläche"
         },
         "triple_screen_distance_mm": {
-          "name": "Augenabstand zum mittleren Bildschirm",
+          "name": "Betrachtungsabstand",
           "desc": "Abstand deiner Augen zum mittleren Monitor"
         },
         "triple_screen_bezel_mm": {
-          "name": "Rahmenlücke oder Überlappung an den Übergängen",
+          "name": "Rahmenabstand oder Überlappung",
           "desc": "Positive Werte lassen Platz für Rahmen; negative Werte überlappen die Ansichten"
         },
         "triple_screen_left_angle": {
@@ -217,8 +217,8 @@
           "desc": "Winkel des rechten Monitors in deine Richtung"
         },
         "triple_screen_eye_height_mm": {
-          "name": "Augenhöhe über dem mittleren Bildschirm",
-          "desc": "Vertikale Position deiner Augen relativ zum mittleren Monitor"
+          "name": "Augenhöhe relativ zur Bildschirmmitte",
+          "desc": "Vertikale Position deiner Augen relativ zur Mitte des mittleren Bildschirms"
         }
       },
       "driving": {

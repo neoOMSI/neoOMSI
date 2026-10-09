@@ -201,11 +201,11 @@
           "desc": "Physical width of each monitor's visible area"
         },
         "triple_screen_distance_mm": {
-          "name": "Eye to centre screen",
+          "name": "Viewing distance",
           "desc": "Distance from your eyes to the middle monitor"
         },
         "triple_screen_bezel_mm": {
-          "name": "Frame gap or overlap at each join",
+          "name": "Bezel gap or overlap",
           "desc": "Positive values leave room for monitor frames; negative values overlap adjacent views"
         },
         "triple_screen_left_angle": {
@@ -217,8 +217,8 @@
           "desc": "Angle of the right monitor toward you"
         },
         "triple_screen_eye_height_mm": {
-          "name": "Eye above centre screen",
-          "desc": "Vertical position of your eyes relative to the middle monitor"
+          "name": "Eye height relative to screen centre",
+          "desc": "Vertical position of your eyes relative to the centre of the middle screen"
         }
       },
       "driving": {

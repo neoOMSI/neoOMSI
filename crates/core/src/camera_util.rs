@@ -118,9 +118,53 @@ pub(crate) fn pixel_angle(cam: &Camera, height: f32) -> f32 {
     2.0 * (cam.fov_deg.to_radians() * 0.5).tan() / height.max(1.0)
 }
 
+fn triple_screen_projection_for_view(
+    enabled: bool,
+    view: &str,
+    zoom: f32,
+    screenshot_mode: bool,
+) -> bool {
+    enabled
+        && matches!(view, "driver" | "outside" | "foot")
+        && !screenshot_mode
+        && (zoom - 1.0).abs() < 0.001
+}
+
+impl App {
+    pub(crate) fn triple_screen_projection_active(&self) -> bool {
+        !self.vr_active()
+            && triple_screen_projection_for_view(
+                ::config::get_bool("graphics", "triple_screen").unwrap_or(false),
+                &self.view,
+                self.view_zoom.get(&self.view).copied().unwrap_or(1.0),
+                self.screenshot_mode.is_some(),
+            )
+    }
+}
+
 /// World-space ray through a window pixel: (camera position, unit direction).
 pub(crate) fn cursor_ray(cam: &Camera, x: f32, y: f32, w: f32, h: f32) -> (DVec3, Vec3) {
-    if let Some(views) = triple_screen_cameras(cam, w.max(0.0) as u32, h.max(0.0) as u32) {
+    cursor_ray_with_projection(
+        cam,
+        x,
+        y,
+        w,
+        h,
+        ::config::get_bool("graphics", "triple_screen").unwrap_or(false),
+    )
+}
+
+pub(crate) fn cursor_ray_with_projection(
+    cam: &Camera,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    triple_screen: bool,
+) -> (DVec3, Vec3) {
+    if triple_screen
+        && let Some(views) = triple_screen_cameras(cam, w.max(0.0) as u32, h.max(0.0) as u32)
+    {
         let panel_width = w / 3.0;
         let panel = ((x / panel_width).floor() as usize).min(2);
         let local_x = x - panel as f32 * panel_width;
@@ -231,12 +275,11 @@ pub(crate) fn triple_screen_cameras(
         for x in [-half_width, half_width] {
             for z in [-half_height, half_height] {
                 let corner = centre + tangent * x + base_up * z;
-                let relative = corner;
-                let depth = relative.dot(panel_forward).max(1.0);
-                left = left.min(relative.dot(panel_right) / depth);
-                right_edge = right_edge.max(relative.dot(panel_right) / depth);
-                bottom = bottom.min(relative.dot(base_up) / depth);
-                top = top.max(relative.dot(base_up) / depth);
+                let depth = corner.dot(panel_forward).max(1.0);
+                left = left.min(corner.dot(panel_right) / depth);
+                right_edge = right_edge.max(corner.dot(panel_right) / depth);
+                bottom = bottom.min(corner.dot(base_up) / depth);
+                top = top.max(corner.dot(base_up) / depth);
             }
         }
         panel_camera.fov_deg = (top.abs().max(bottom.abs()) * 2.0).atan().to_degrees();
@@ -270,7 +313,20 @@ fn reverse_z_frustum(left: f32, right: f32, bottom: f32, top: f32, near: f32, fa
 
 #[cfg(test)]
 mod tests {
-    use super::reverse_z_frustum;
+    use super::{reverse_z_frustum, triple_screen_projection_for_view};
+
+    #[test]
+    fn triple_screen_projection_follows_the_active_camera_mode() {
+        assert!(triple_screen_projection_for_view(true, "driver", 1.0, false));
+        assert!(triple_screen_projection_for_view(true, "outside", 1.0, false));
+        assert!(triple_screen_projection_for_view(true, "foot", 1.0, false));
+        assert!(!triple_screen_projection_for_view(true, "driver", 0.92, false));
+        assert!(!triple_screen_projection_for_view(true, "free", 1.0, false));
+        assert!(!triple_screen_projection_for_view(true, "pax", 1.0, false));
+        assert!(!triple_screen_projection_for_view(true, "foot", 0.92, false));
+        assert!(!triple_screen_projection_for_view(true, "driver", 1.0, true));
+        assert!(!triple_screen_projection_for_view(false, "driver", 1.0, false));
+    }
 
     #[test]
     fn reverse_z_frustum_preserves_panel_view_angles() {

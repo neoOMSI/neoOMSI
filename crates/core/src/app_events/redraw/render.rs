@@ -22,6 +22,7 @@ impl App {
         let vr_nav_display = self.vr_nav_display();
         let vr_active = self.vr_active();
         let screenshot_mode = self.screenshot_mode.is_some();
+        let triple_projection = self.triple_screen_projection_active();
         let triple_hud = !vr_active
             && ::config::get_bool("graphics", "triple_screen").unwrap_or(false)
             && ::config::get_bool("graphics", "triple_screen_hud").unwrap_or(true)
@@ -255,9 +256,13 @@ impl App {
                     error: self.remotes.chat.error(),
                 });
                 ui.chat.hidden = self.remotes.chat.hidden;
-                let triple_views = if triple_hud {
+                let triple_views = if triple_projection {
                     self.camera.as_ref().and_then(|camera| {
-                        camera_util::triple_screen_cameras(camera, s.config.width, s.config.height)
+                        camera_util::triple_screen_cameras(
+                            camera,
+                            s.config.width,
+                            s.config.height,
+                        )
                     })
                 } else {
                     None
@@ -265,16 +270,46 @@ impl App {
                 let tags =
                     if !screenshot_mode && ::config::get_bool("ui", "name_tags").unwrap_or(true) {
                         self.camera.as_ref().map_or_else(Vec::new, |camera| {
-                            if let Some(views) = triple_views.as_ref() {
-                                lan::name_tags_with_projection(
+                            match triple_views.as_ref() {
+                                Some(views) if triple_hud => lan::name_tags_with_projection(
                                     &self.remotes,
                                     &views.cameras[1],
                                     w,
                                     h,
                                     Some(views.projections[1]),
-                                )
-                            } else {
-                                lan::name_tags(&self.remotes, camera, w, h)
+                                ),
+                                Some(views) => {
+                                    let panel_width = surface_width / 3.0;
+                                    let mut tags = Vec::new();
+                                    for panel in 0..3 {
+                                        tags.extend(
+                                            lan::name_tags_with_projection(
+                                                &self.remotes,
+                                                &views.cameras[panel],
+                                                panel_width,
+                                                h,
+                                                Some(views.projections[panel]),
+                                            )
+                                            .into_iter()
+                                            .filter(|((x, y), _, _, _)| {
+                                                *x >= 0.0
+                                                    && *x < panel_width
+                                                    && *y >= 0.0
+                                                    && *y <= h
+                                            })
+                                            .map(|((x, y), name, sub, alpha)| {
+                                                (
+                                                    (x + panel_width * panel as f32, y),
+                                                    name,
+                                                    sub,
+                                                    alpha,
+                                                )
+                                            }),
+                                        );
+                                    }
+                                    tags
+                                }
+                                None => lan::name_tags(&self.remotes, camera, w, h),
                             }
                         })
                     } else {
@@ -366,7 +401,6 @@ impl App {
                         .game_menu
                         .filter(|_| self.lab_menu.is_none() && report_view.is_some())
                         .map(|k| (k, &menu_lines[..])),
-                    menu_disabled,
                     menu_kind,
                     report: report_view.as_ref(),
                     touch: !screenshot_mode && platform::touch_controls(),
@@ -812,8 +846,13 @@ impl App {
                     #[cfg(not(windows))]
                     let xr_active = false;
                     if !xr_active
+                        && triple_projection
                         && let Some(views) =
-                            camera_util::triple_screen_cameras(cam, s.config.width, s.config.height)
+                            camera_util::triple_screen_cameras(
+                                cam,
+                                s.config.width,
+                                s.config.height,
+                            )
                     {
                         r.render_triple(
                             scene,

@@ -32,6 +32,9 @@ pub(super) fn invalidate_settings() {
 
 /// A `[graphics]` value as text, as the lists compare it (a switch as 1 or 0).
 pub(crate) fn gfx_text(key: &str) -> String {
+    if key == "window_mode" && ::config::get_bool("graphics", "triple_screen").unwrap_or(false) {
+        return "windowed".into();
+    }
     use ::config::Value as T;
     match ::config::get_setting("graphics", key) {
         Some(T::Boolean(b)) => (b as u8).to_string(),
@@ -45,6 +48,13 @@ pub(crate) fn gfx_text(key: &str) -> String {
 /// Write a `[graphics]` value from its text, as the type the key has in the config.
 pub(crate) fn gfx_set(key: &str, text: &str) {
     use ::config::Value as T;
+    let text = if key == "window_mode"
+        && ::config::get_bool("graphics", "triple_screen").unwrap_or(false)
+    {
+        "windowed"
+    } else {
+        text
+    };
     let value = match ::config::get_setting("graphics", key) {
         Some(T::Boolean(_)) => T::Boolean(text == "1" || text == "true"),
         Some(T::Integer(_)) => match text.parse::<i64>() {

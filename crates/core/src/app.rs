@@ -272,7 +272,8 @@ impl App {
                 )
             })
             .unwrap_or((1600, 900));
-        let span = ::config::get_bool("graphics", "triple_screen").unwrap_or(false)
+        let triple_screen = ::config::get_bool("graphics", "triple_screen").unwrap_or(false);
+        let span = triple_screen
             && ::config::get_bool("graphics", "triple_screen_span").unwrap_or(true)
             && !::config::get_bool("vr", "enabled").unwrap_or(false)
             && ::legacy_config::env::var_os("OMSI_OPENXR").is_none();

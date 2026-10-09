@@ -846,12 +846,13 @@ impl App {
         {
             return (ray.0, ray.1, ray.2 * 6.0);
         }
-        let (o, d) = cursor_ray(
+        let (o, d) = cursor_ray_with_projection(
             cam,
             self.cursor.0,
             self.cursor.1,
             size.0 as f32,
             size.1 as f32,
+            self.triple_screen_projection_active(),
         );
         (o, d, pixel_angle(cam, size.1 as f32) * 6.0)
     }
@@ -998,10 +999,7 @@ impl App {
             || u.menu_pane_go.as_ref().is_some_and(|r| inside(r))
             || u.menu_time.iter().any(|r| inside(r))
             || u.menu_ctl.iter().flatten().any(|r| inside(r))
-            || u.menu_rects
-                .iter()
-                .enumerate()
-                .any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
+            || u.menu_rects.iter().any(|r| inside(r));
         if clickable { 1 } else { 0 }
     }
 }
