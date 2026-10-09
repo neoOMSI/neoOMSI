@@ -157,6 +157,8 @@ pub(super) struct Cabin {
     pub(super) money_point: Option<Vec3>,
     pub(super) money_var: Option<(Vec3, [f32; 2])>,
     pub(super) change_point: Option<Vec3>,
+    pub(super) money_parent: Option<usize>,
+    pub(super) change_parent: Option<usize>,
 }
 
 /// The people on each seat by the scripts' numbers (`Seat::omsi_seat`, the `[drivpos]`
@@ -531,6 +533,8 @@ impl Cabin {
             money_point,
             money_var,
             change_point,
+            money_parent: None,
+            change_parent: None,
         })
     }
 
@@ -829,6 +833,17 @@ impl Humans {
             return c.clone();
         }
         let cabin = Cabin::load_train(&parts).map(|mut c| {
+            let parent = |p: Option<&::legacy_vehicle::cabin::VarPoint>| {
+                p.and_then(|p| p.parent.as_deref())
+                    .and_then(|n| crate::money::parent_mesh(&v.ty, n))
+            };
+            c.money_parent = parent(c.data.money_points.last());
+            c.change_parent = parent(
+                c.data
+                    .change_points
+                    .first()
+                    .or(c.data.money_points.first()),
+            );
             let entries = c.entries.len();
             for (k, exit) in c.exits.iter_mut().enumerate() {
                 exit.button =

@@ -1,7 +1,7 @@
 //! Reading and writing the values of the sliders and switches of the options windows.
 
-use crate::{controllers, player, weather_setup};
 use super::*;
+use crate::{controllers, player, weather_setup};
 
 pub(super) const SPEEDS: [f64; 5] = [1.0, 2.0, 4.0, 8.0, 15.0];
 pub(crate) const TRAFFIC: [usize; 7] = [0, 10, 20, 30, 50, 80, 120];
@@ -38,6 +38,17 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "fov" => std::iter::once(0.0)
             .chain((20..=120).map(|v| v as f32))
             .collect(),
+        "triple_screen_width_mm" => (300..=1200).map(|v| v as f32).collect(),
+        "triple_screen_distance_mm" => (200..=1500).map(|v| v as f32).collect(),
+        "triple_screen_bezel_mm" => (crate::camera_util::TRIPLE_SCREEN_BEZEL_MIN_MM
+            ..=crate::camera_util::TRIPLE_SCREEN_BEZEL_MAX_MM)
+            .map(|v| v as f32)
+            .collect(),
+        "triple_screen_left_angle" | "triple_screen_right_angle" => (0
+            ..=crate::camera_util::TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG)
+            .map(|v| v as f32)
+            .collect(),
+        "triple_screen_eye_height_mm" => (-400..=400).step_by(5).map(|v| v as f32).collect(),
         "steer_look_angle" => (0..=60).map(|v| v as f32).collect(),
         "steer_look_response" => (1..=20).map(|v| v as f32 * 0.05).collect(),
         "pedal_t" | "pedal_b" => PEDAL.to_vec(),
@@ -159,22 +170,50 @@ pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
         "led_glow" => ::config::get_int("graphics", "led_glow").unwrap_or(6) as u8 as f32,
         "nightmap_glow" => ::config::get_int("graphics", "nightmap_glow").unwrap_or(6) as u8 as f32,
         "led_mips" => ::config::get_float("graphics", "led_mips").unwrap_or(1.3) as f32,
-        "atmosphere_brightness" => ::config::get_float("graphics", "atmosphere_brightness").unwrap_or(1.0) as f32,
+        "atmosphere_brightness" => {
+            ::config::get_float("graphics", "atmosphere_brightness").unwrap_or(1.0) as f32
+        }
         "pedal_t" => ::config::get_float("controls", "pedal_throttle").unwrap_or(1.0) as f32,
         "pedal_b" => ::config::get_float("controls", "pedal_brake").unwrap_or(1.0) as f32,
         "mouse_sens" => ::config::get_float("controls", "mouse_sens").unwrap_or(1.0) as f32,
         "stick_sens" => ::config::get_float("controls", "stick_sens").unwrap_or(1.0) as f32,
         "look_sens" => ::config::get_float("camera", "look_sens").unwrap_or(1.0) as f32,
         "ui_scale" => ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
-        "ui_opacity" => ::config::get_float("ui", "opacity").unwrap_or(0.85).clamp(0.2, 1.0) as f32,
+        "ui_opacity" => ::config::get_float("ui", "opacity")
+            .unwrap_or(0.85)
+            .clamp(0.2, 1.0) as f32,
         "vol_ai" => ::config::get_float("audio", "ai-volume").unwrap_or(1.0) as f32,
         "vol_scenery" => ::config::get_float("audio", "scenery-volume").unwrap_or(1.0) as f32,
         "wheel_range" => ::config::get_float("controls", "wheel_range").unwrap_or(900.0) as f32,
         "wheel_lock" => ::config::get_float("controls", "wheel_lock").unwrap_or(0.0) as f32,
         "fov" => ::config::get_float("camera", "fov").unwrap_or(0.0) as f32,
-        "steer_look_angle" => ::config::get_float("camera", "steer_look_angle").unwrap_or(30.0) as f32,
-        "steer_look_response" => ::config::get_float("camera", "steer_look_response").unwrap_or(0.25) as f32,
-        "seat" => ["seat_x", "seat_y", "seat_z"].map(|k| ::config::get_float("camera", k).unwrap_or(0.0) as f32)[arg.trim().parse::<usize>().unwrap_or(0).min(2)],
+        "triple_screen_width_mm" => {
+            ::config::get_float("graphics", "triple_screen_width_mm").unwrap_or(690.0) as f32
+        }
+        "triple_screen_distance_mm" => {
+            ::config::get_float("graphics", "triple_screen_distance_mm").unwrap_or(400.0) as f32
+        }
+        "triple_screen_bezel_mm" => {
+            ::config::get_float("graphics", "triple_screen_bezel_mm").unwrap_or(14.0) as f32
+        }
+        "triple_screen_left_angle" => {
+            ::config::get_float("graphics", "triple_screen_left_angle").unwrap_or(30.0) as f32
+        }
+        "triple_screen_right_angle" => {
+            ::config::get_float("graphics", "triple_screen_right_angle").unwrap_or(30.0) as f32
+        }
+        "triple_screen_eye_height_mm" => {
+            ::config::get_float("graphics", "triple_screen_eye_height_mm").unwrap_or(0.0) as f32
+        }
+        "steer_look_angle" => {
+            ::config::get_float("camera", "steer_look_angle").unwrap_or(30.0) as f32
+        }
+        "steer_look_response" => {
+            ::config::get_float("camera", "steer_look_response").unwrap_or(0.25) as f32
+        }
+        "seat" => ["seat_x", "seat_y", "seat_z"]
+            .map(|k| ::config::get_float("camera", k).unwrap_or(0.0) as f32)
+            [arg.trim().parse::<usize>().unwrap_or(0).min(2)],
         "hour" => ((app.clock.time / 3600.0) as i64).rem_euclid(24) as f32,
         "minute" => (((app.clock.time / 60.0) as i64) % 60) as f32,
         "visibility" => app.weather.as_ref()?.fog.0,
@@ -240,7 +279,11 @@ pub(super) fn option_set(
             None
         }
         "atmosphere_brightness" => {
-            ::config::set_setting("graphics", "atmosphere_brightness", v.clamp(0.0, 2.0) as f64);
+            ::config::set_setting(
+                "graphics",
+                "atmosphere_brightness",
+                v.clamp(0.0, 2.0) as f64,
+            );
             let _ = ::config::save();
             None
         }
@@ -265,12 +308,20 @@ pub(super) fn option_set(
             None
         }
         "mouse_sens" => {
-            ::config::set_setting("controls", "mouse_sens", ((v * 100.0).round() / 100.0) as f64);
+            ::config::set_setting(
+                "controls",
+                "mouse_sens",
+                ((v * 100.0).round() / 100.0) as f64,
+            );
             let _ = ::config::save();
             None
         }
         "stick_sens" => {
-            ::config::set_setting("controls", "stick_sens", ((v * 100.0).round() / 100.0) as f64);
+            ::config::set_setting(
+                "controls",
+                "stick_sens",
+                ((v * 100.0).round() / 100.0) as f64,
+            );
             let _ = ::config::save();
             None
         }
@@ -304,12 +355,30 @@ pub(super) fn option_set(
             None
         }
         "wheel_lock" => {
-            ::config::set_setting("controls", "wheel_lock", (if v < 45.0 { 0.0 } else { v.round() }) as f64);
+            ::config::set_setting(
+                "controls",
+                "wheel_lock",
+                (if v < 45.0 { 0.0 } else { v.round() }) as f64,
+            );
             let _ = ::config::save();
             None
         }
         "fov" => {
-            ::config::set_setting("camera", "fov", (if v < 20.0 { 0.0 } else { v.round() }) as f64);
+            ::config::set_setting(
+                "camera",
+                "fov",
+                (if v < 20.0 { 0.0 } else { v.round() }) as f64,
+            );
+            let _ = ::config::save();
+            None
+        }
+        "triple_screen_width_mm"
+        | "triple_screen_distance_mm"
+        | "triple_screen_bezel_mm"
+        | "triple_screen_left_angle"
+        | "triple_screen_right_angle"
+        | "triple_screen_eye_height_mm" => {
+            ::config::set_setting("graphics", verb, v.round() as f64);
             let _ = ::config::save();
             None
         }
@@ -319,13 +388,21 @@ pub(super) fn option_set(
             None
         }
         "steer_look_response" => {
-            ::config::set_setting("camera", "steer_look_response", ((v * 100.0).round() / 100.0) as f64);
+            ::config::set_setting(
+                "camera",
+                "steer_look_response",
+                ((v * 100.0).round() / 100.0) as f64,
+            );
             let _ = ::config::save();
             None
         }
         "seat" => {
             let k: usize = arg.trim().parse().unwrap_or(0).min(2);
-            ::config::set_setting("camera", ["seat_x", "seat_y", "seat_z"][k], ((v * 100.0).round() / 100.0) as f64);
+            ::config::set_setting(
+                "camera",
+                ["seat_x", "seat_y", "seat_z"][k],
+                ((v * 100.0).round() / 100.0) as f64,
+            );
             let _ = ::config::save();
             None
         }
@@ -409,20 +486,28 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
                 app.navigator.as_ref().is_some_and(|n| n.enabled)
             }
         }
-        "nav_ai" => app.navigator.as_ref().map_or(::config::get_bool("navigator", "ai").unwrap_or(true), |n| n.show_ai),
-        "nav_topbar" => app
+        "nav_ai" => app
             .navigator
             .as_ref()
-            .map_or(::config::get_bool("navigator", "topbar").unwrap_or(true), |n| n.show_topbar),
-        "nav_turn" => app.navigator.as_ref().map_or(::config::get_bool("navigator", "turn").unwrap_or(true), |n| n.show_turn),
-        "nav_stoplist" => app
-            .navigator
-            .as_ref()
-            .map_or(::config::get_bool("navigator", "stoplist").unwrap_or(true), |n| n.show_stoplist),
-        "nav_stops_ext" => app
-            .navigator
-            .as_ref()
-            .map_or(::config::get_bool("navigator", "stops_ext").unwrap_or(false), |n| n.schedule),
+            .map_or(::config::get_bool("navigator", "ai").unwrap_or(true), |n| {
+                n.show_ai
+            }),
+        "nav_topbar" => app.navigator.as_ref().map_or(
+            ::config::get_bool("navigator", "topbar").unwrap_or(true),
+            |n| n.show_topbar,
+        ),
+        "nav_turn" => app.navigator.as_ref().map_or(
+            ::config::get_bool("navigator", "turn").unwrap_or(true),
+            |n| n.show_turn,
+        ),
+        "nav_stoplist" => app.navigator.as_ref().map_or(
+            ::config::get_bool("navigator", "stoplist").unwrap_or(true),
+            |n| n.show_stoplist,
+        ),
+        "nav_stops_ext" => app.navigator.as_ref().map_or(
+            ::config::get_bool("navigator", "stops_ext").unwrap_or(false),
+            |n| n.schedule,
+        ),
         "shadows" => ::config::get_bool("graphics", "shadows").unwrap_or(true),
         "head" => ::config::get_bool("camera", "head_movement").unwrap_or(true),
         "cam_smooth" => ::config::get_bool("camera", "smooth").unwrap_or(true),
@@ -447,7 +532,10 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "headtrack" => ::config::get_bool("camera", "head_tracking").unwrap_or(false),
         "timetable_win" => app.timetable,
         "info_bar" => app.info_bar,
-        "nav_arrows" => app.navigator.as_ref().map_or(::config::get_bool("navigator", "arrows").unwrap_or(false), |n| n.arrows),
+        "nav_arrows" => app.navigator.as_ref().map_or(
+            ::config::get_bool("navigator", "arrows").unwrap_or(false),
+            |n| n.arrows,
+        ),
         "exact_fare" => ::config::get_bool("gameplay", "exact_fare").unwrap_or(true),
         "pax_prefer_seats" => ::config::get_bool("gameplay", "pax_prefer_seats").unwrap_or(false),
         "pax_rear_entry" => ::config::get_bool("gameplay", "pax_rear_entry").unwrap_or(true),
@@ -457,7 +545,15 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "detail_textures" => ::config::get_bool("graphics", "detail_textures").unwrap_or(true),
         "reflections" => ::config::get_bool("graphics", "reflections").unwrap_or(true),
         "clouds" => ::config::get_bool("graphics", "clouds").unwrap_or(true),
-        "fullscreen" => ::config::get_string("graphics", "window_mode").as_deref() != Some("windowed"),
+        "fullscreen" => {
+            !::config::get_bool("graphics", "triple_screen").unwrap_or(false)
+                && ::config::get_string("graphics", "window_mode").as_deref() != Some("windowed")
+        }
+        "triple_screen" => ::config::get_bool("graphics", "triple_screen").unwrap_or(false),
+        "triple_screen_span" => {
+            ::config::get_bool("graphics", "triple_screen_span").unwrap_or(true)
+        }
+        "triple_screen_hud" => ::config::get_bool("graphics", "triple_screen_hud").unwrap_or(true),
         "vsync" => ::config::get_bool("graphics", "vsync").unwrap_or(true),
         "texture_compression" => ::config::get_bool("graphics", "texture_compression").unwrap_or(true),
         "shadow_blobs" => ::config::get_bool("graphics", "shadow_blobs").unwrap_or(true),
@@ -634,7 +730,9 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
                 l.clock_speed = if on {
                     1.0
                 } else {
-                    ::config::get_float("gameplay", "time_speed").unwrap_or(1.0).clamp(1.0, 30.0)
+                    ::config::get_float("gameplay", "time_speed")
+                        .unwrap_or(1.0)
+                        .clamp(1.0, 30.0)
                 };
             }
             app.sync_real_time();
@@ -764,10 +862,28 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
             None
         }
         "fullscreen" => {
-            let mode = if on { "borderless" } else { "windowed" };
+            let mode = if on && !::config::get_bool("graphics", "triple_screen").unwrap_or(false) {
+                "borderless"
+            } else {
+                "windowed"
+            };
             ::config::set_setting("graphics", "window_mode", mode);
             let _ = ::config::save();
             apply_window_mode(app, mode);
+            None
+        }
+        "triple_screen" => {
+            ::config::set_setting("graphics", id, on);
+            if on {
+                ::config::set_setting("graphics", "window_mode", "windowed");
+                apply_window_mode(app, "windowed");
+            }
+            let _ = ::config::save();
+            None
+        }
+        "triple_screen_span" | "triple_screen_hud" => {
+            ::config::set_setting("graphics", id, on);
+            let _ = ::config::save();
             None
         }
         "vsync" => {

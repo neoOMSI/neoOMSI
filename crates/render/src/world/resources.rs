@@ -61,17 +61,17 @@ impl Renderer {
             Some(id),
             None,
             false,
+            None,
+            false,
+            None,
+            false,
+            None,
         );
         self.texture_aspect = None;
     }
 
     /// Refraction reads a half-resolution current scene before films are drawn, avoiding feedback.
-    pub(crate) fn prepare_glass_behind(
-        &mut self,
-        scene: &mut Scene,
-        width: u32,
-        height: u32,
-    ) {
+    pub(crate) fn prepare_glass_behind(&mut self, scene: &mut Scene, width: u32, height: u32) {
         let Some(id) = scene.glass_slot else { return };
         // TODO 960×540 max
         let (width, height) = (width.div_ceil(2).max(1), height.div_ceil(2).max(1));
@@ -83,7 +83,11 @@ impl Renderer {
         }) {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("current picture behind glass"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -96,9 +100,8 @@ impl Renderer {
         }
         let view = self.glass_picture.as_ref().unwrap();
         if scene.textures[id].view != *view {
-            scene.textures[id] = GpuTexture::showing(
-                view.texture().clone(), view.clone(), (width, height),
-            );
+            scene.textures[id] =
+                GpuTexture::showing(view.texture().clone(), view.clone(), (width, height));
             self.rebind_textures(scene, &[id]);
         }
     }

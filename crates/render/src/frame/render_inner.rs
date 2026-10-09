@@ -1,5 +1,12 @@
 use crate::*;
 
+fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u32, u32, u32)>) {
+    if let Some((x, y, width, height)) = viewport {
+        pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
+        pass.set_scissor_rect(x, y, width, height);
+    }
+}
+
 impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_inner(
@@ -14,6 +21,11 @@ impl Renderer {
         exclude_texture: Option<TextureId>,
         projection: Option<Mat4>,
         second_eye: bool,
+        output_viewport: Option<(u32, u32, u32, u32)>,
+        preserve_output: bool,
+        custom_projection: Option<Mat4>,
+        lead_frame: bool,
+        frame_dt: Option<f32>,
     ) {
         if ::legacy_config::env::var("OMSI_FAKE_GPU_ERROR").as_deref() == Ok("lost")
             && with_overlays
@@ -94,12 +106,26 @@ impl Renderer {
             && scene.glass_slot.is_some()
             && (lighting.rain > 0.001 || lighting.wetness > 0.02)
             && ::legacy_config::env::var_os("OMSI_NO_GLASS_PICTURE").is_none();
-        let scaled =
-            (width, height) != (full_w, full_h) || vanilla_fxaa || (glass_on && !enhanced_view);
+        let scaled = (width, height) != (full_w, full_h)
+            || vanilla_fxaa
+            || (glass_on && !enhanced_view)
+            || output_viewport.is_some();
         let scene_target: Option<(wgpu::TextureView, wgpu::BindGroup)> = if scaled {
             Some(self.scale_target(width, height))
         } else {
             None
+        };
+        let direct_output = scene_target.is_none();
+        let scene_viewport = direct_output.then_some(output_viewport).flatten();
+        let output_load = if preserve_output {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+        };
+        let scene_load = if direct_output && preserve_output {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
         };
         let scene_view: &wgpu::TextureView = scene_target.as_ref().map(|t| &t.0).unwrap_or(target);
         let aspect = self
@@ -107,7 +133,7 @@ impl Renderer {
             .unwrap_or(width as f32 / height.max(1) as f32);
         let cam_rel = (camera.position - ro).as_vec3();
         let xr_view = projection.is_some();
-        let lead_view = with_overlays || (xr_view && !second_eye);
+        let lead_view = (with_overlays && lead_frame) || (xr_view && !second_eye);
         let enhanced_frame = lighting.enhanced
             && self.hdr_pass.is_some()
             && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none()
@@ -149,7 +175,9 @@ impl Renderer {
         if glass_on {
             self.prepare_glass_behind(scene, width, height);
         }
-        let dt = {
+        let dt = if let Some(dt) = frame_dt {
+            dt
+        } else {
             let now = std::time::Instant::now();
             let dt = self
                 .last_frame
@@ -319,7 +347,8 @@ impl Renderer {
                 light_view_proj_close,
             )));
         }
-        let vp_mat = projection
+        let render_projection = custom_projection.or(projection);
+        let vp_mat = render_projection
             .map(|p| {
                 p * glam::camera::rh::view::look_to_mat4(
                     (camera.position - ro).as_vec3(),
@@ -711,7 +740,7 @@ impl Renderer {
         }
         stage(self, "shadow items", "mirror.shadow items");
         let view = glam::camera::rh::view::look_to_mat4(cam_rel, camera.forward(), camera.up());
-        let (tan_x, tan_y) = if let Some(p) = projection {
+        let (tan_x, tan_y) = if let Some(p) = render_projection {
             (
                 ((p.z_axis.x - 1.0) / p.x_axis.x)
                     .abs()
@@ -747,10 +776,13 @@ impl Renderer {
         } else {
             camera.far
         };
-        if let Some(p) = ::legacy_config::env::var("OMSI_DEBUG_CULL").ok().and_then(|v| {
-            let f: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            (f.len() == 3).then(|| (DVec3::new(f[0], f[1], 0.0), f[2]))
-        }) {
+        if let Some(p) = ::legacy_config::env::var("OMSI_DEBUG_CULL")
+            .ok()
+            .and_then(|v| {
+                let f: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                (f.len() == 3).then(|| (DVec3::new(f[0], f[1], 0.0), f[2]))
+            })
+        {
             for (i, inst) in scene.instances.iter().enumerate() {
                 if (inst.origin.truncate() - p.0.truncate()).length() > p.1 || !with_overlays {
                     continue;
@@ -1284,9 +1316,9 @@ impl Renderer {
         stage(self, "items", "mirror.items");
         let mut rain_batches = Vec::new();
         if glass_on {
-            let (rain, main): (Vec<_>, Vec<_>) = main_batches.into_iter().partition(|b| {
-                scene.materials[b.material as usize].uniform.emissive[3] > 1.5
-            });
+            let (rain, main): (Vec<_>, Vec<_>) = main_batches
+                .into_iter()
+                .partition(|b| scene.materials[b.material as usize].uniform.emissive[3] > 1.5);
             rain_batches = rain;
             main_batches = main;
         }
@@ -1629,11 +1661,8 @@ impl Renderer {
             }
         }
         let single = self.options.msaa <= 1;
-        let share_depth = prepass_on
-            && single
-            && self.ao.is_some()
-            && !has_presurface
-            && !puddles_wanted;
+        let share_depth =
+            prepass_on && single && self.ao.is_some() && !has_presurface && !puddles_wanted;
         let targets = if share_depth {
             None
         } else {
@@ -1758,6 +1787,11 @@ impl Renderer {
                 b: sky.z as f64,
                 a: 1.0,
             });
+            let sky_load = if direct_output && preserve_output {
+                wgpu::LoadOp::Load
+            } else {
+                sky_clear
+            };
             let depth_first = if share_depth || msaa_prepass {
                 wgpu::LoadOp::Load
             } else {
@@ -1778,7 +1812,7 @@ impl Renderer {
                             depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: if first { sky_clear } else { wgpu::LoadOp::Load },
+                                load: if first { sky_load } else { wgpu::LoadOp::Load },
                                 store: wgpu::StoreOp::Store,
                             },
                         }),
@@ -1819,6 +1853,7 @@ impl Renderer {
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
+                    set_output_viewport(&mut pass, scene_viewport);
                     pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
                     if first {
                         if let Some(sky) = &scene.sky_bind_group {
@@ -1848,7 +1883,7 @@ impl Renderer {
                     load: if parts > 1 {
                         wgpu::LoadOp::Load
                     } else {
-                        sky_clear
+                        sky_load
                     },
                     store: if resolve_view.is_none() {
                         wgpu::StoreOp::Store
@@ -1890,6 +1925,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            set_output_viewport(&mut pass, scene_viewport);
             pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             if let Some(sky) = scene.sky_bind_group.as_ref().filter(|_| parts == 1) {
                 pass.set_pipeline(&pp.sky_pipeline);
@@ -1923,7 +1959,13 @@ impl Renderer {
                 .iter()
                 .any(|b| scene.materials[b.material as usize].uniform.params2[2] > 0.0)
             && self.prepare_puddle_reflections(
-                width, height, camera, aspect, projection, &cu, lighting,
+                width,
+                height,
+                camera,
+                aspect,
+                render_projection,
+                &cu,
+                lighting,
             );
         if puddles_on {
             self.encode_puddle_reflections(
@@ -1942,9 +1984,16 @@ impl Renderer {
         if glass_on {
             let hdr = masked_frame.then(|| &self.hdr_targets[&(width, height)]);
             let view = hdr.map_or(scene_view, |h| {
-                h.puddles.as_ref().filter(|_| puddles_on).map_or(&h.view, |p| &p.view)
+                h.puddles
+                    .as_ref()
+                    .filter(|_| puddles_on)
+                    .map_or(&h.view, |p| &p.view)
             });
-            if self.glass_snapshot_source.as_ref().is_none_or(|(source, _)| source != view) {
+            if self
+                .glass_snapshot_source
+                .as_ref()
+                .is_none_or(|(source, _)| source != view)
+            {
                 self.glass_snapshot_source = Some((view.clone(), self.picture_group(view)));
             }
             let (_, bg) = self.glass_snapshot_source.as_ref().unwrap();
@@ -1953,7 +2002,9 @@ impl Renderer {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("half resolution scene behind glass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: behind, depth_slice: None, resolve_target: None,
+                        view: behind,
+                        depth_slice: None,
+                        resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                             store: wgpu::StoreOp::Store,
@@ -1970,12 +2021,22 @@ impl Renderer {
             }
             let colours = [
                 Some(wgpu::RenderPassColorAttachment {
-                    view, depth_slice: None, resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 }),
                 hdr.map(|h| wgpu::RenderPassColorAttachment {
-                    view: &h.mask, depth_slice: None, resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    view: &h.mask,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 }),
             ];
             let pipes = &self.main_pass(enhanced, reflection_frame).rain_pipelines;
@@ -1984,7 +2045,10 @@ impl Renderer {
                 color_attachments: &colours[..if hdr.is_some() { 2 } else { 1 }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.ao.as_ref().unwrap().depth_view,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -1992,7 +2056,9 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
-            encode_batches(&mut pass, scene, &rain_batches, |pipe| &pipes[pipe as usize]);
+            encode_batches(&mut pass, scene, &rain_batches, |pipe| {
+                &pipes[pipe as usize]
+            });
         }
         if reflection_frame {
             let h = &self.hdr_targets[&(width, height)];
@@ -2008,7 +2074,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: scene_load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -2017,6 +2083,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            set_output_viewport(&mut pass, scene_viewport);
             pass.set_pipeline(&self.copy_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
@@ -2101,7 +2168,7 @@ impl Renderer {
                 if let Some(log) = self
                     .exposure_log
                     .as_mut()
-                    .filter(|_| with_overlays && !lost)
+                    .filter(|_| with_overlays && lead_frame && !lost)
                 {
                     let pre = self.exposure.unwrap_or(0.0) / std::f32::consts::LN_2;
                     log.sample(&mut encoder, &self.adapt_views[self.adapt_front], pre, m);
@@ -2124,7 +2191,11 @@ impl Renderer {
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            load: if !fxaa && direct_output {
+                                output_load
+                            } else {
+                                wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                            },
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -2133,6 +2204,9 @@ impl Renderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
+                if !fxaa {
+                    set_output_viewport(&mut pass, scene_viewport);
+                }
                 pass.set_pipeline(if fxaa {
                     &self.post.tonemap_encoded
                 } else {
@@ -2149,7 +2223,7 @@ impl Renderer {
                             depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                load: scene_load,
                                 store: wgpu::StoreOp::Store,
                             },
                         })],
@@ -2158,6 +2232,7 @@ impl Renderer {
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
+                    set_output_viewport(&mut pass, scene_viewport);
                     pass.set_pipeline(&self.post.fxaa);
                     pass.set_bind_group(0, &h.fxaa_bg, &[]);
                     pass.draw(0..3, 0..1);
@@ -2187,7 +2262,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: output_load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -2196,6 +2271,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            set_output_viewport(&mut pass, output_viewport);
             pass.set_pipeline(&self.upscale_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);

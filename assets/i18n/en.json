@@ -183,6 +183,42 @@
         "window_mode": {
           "name": "Window mode",
           "desc": "How the game fills your screen"
+        },
+        "triple_screen": {
+          "name": "Triple-screen projection",
+          "desc": "Calibrates the view for three monitors around your driving position"
+        },
+        "triple_screen_span": {
+          "name": "Span three monitors at startup",
+          "desc": "Opens a borderless window across three aligned monitors when available"
+        },
+        "triple_screen_hud": {
+          "name": "HUD on centre screen",
+          "desc": "Keeps the game interface on the middle monitor"
+        },
+        "triple_screen_width_mm": {
+          "name": "Visible width of one screen",
+          "desc": "Physical width of each monitor's visible area"
+        },
+        "triple_screen_distance_mm": {
+          "name": "Viewing distance",
+          "desc": "Distance from your eyes to the middle monitor"
+        },
+        "triple_screen_bezel_mm": {
+          "name": "Bezel gap or overlap",
+          "desc": "Positive values leave room for monitor frames; negative values overlap adjacent views"
+        },
+        "triple_screen_left_angle": {
+          "name": "Left screen inward angle",
+          "desc": "Angle of the left monitor toward you"
+        },
+        "triple_screen_right_angle": {
+          "name": "Right screen inward angle",
+          "desc": "Angle of the right monitor toward you"
+        },
+        "triple_screen_eye_height_mm": {
+          "name": "Eye height relative to screen centre",
+          "desc": "Vertical position of your eyes relative to the centre of the middle screen"
         }
       },
       "driving": {

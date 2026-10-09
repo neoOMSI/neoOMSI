@@ -44,8 +44,69 @@ impl Renderer {
         lighting: &Lighting,
     ) {
         self.render_inner(
-            scene, target, width, height, camera, lighting, true, None, None, false,
+            scene, target, width, height, camera, lighting, true, None, None, false, None, false,
+            None, true, None,
         );
+    }
+
+    pub fn render_triple(
+        &mut self,
+        scene: &mut Scene,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        cameras: [Camera; 3],
+        projections: [Mat4; 3],
+        lighting: &Lighting,
+        centre_hud: bool,
+    ) {
+        let panel_width = width / 3;
+        if panel_width == 0 {
+            self.render(scene, target, width, height, &cameras[1], lighting);
+            return;
+        }
+        let original_overlays = scene.overlays.clone();
+        let now = std::time::Instant::now();
+        let frame_dt = self
+            .last_frame
+            .map(|last| (now - last).as_secs_f32())
+            .unwrap_or(0.0);
+        self.last_frame = Some(now);
+        for (pass, panel) in [1usize, 0, 2].into_iter().enumerate() {
+            let x = panel as u32 * panel_width;
+            let panel_width = if panel == 2 { width - x } else { panel_width };
+            scene.overlays = if centre_hud && panel != 1 {
+                Vec::new()
+            } else {
+                original_overlays
+                    .iter()
+                    .map(|(texture, rect)| {
+                        (
+                            *texture,
+                            [rect[0] - x as f32, rect[1], rect[2] - x as f32, rect[3]],
+                        )
+                    })
+                    .collect()
+            };
+            self.render_inner(
+                scene,
+                target,
+                panel_width,
+                height,
+                &cameras[panel],
+                lighting,
+                true,
+                None,
+                None,
+                false,
+                Some((x, 0, panel_width, height)),
+                pass != 0,
+                Some(projections[panel]),
+                panel == 1,
+                Some(frame_dt),
+            );
+        }
+        scene.overlays = original_overlays;
     }
 
     pub fn render_xr_eye(
@@ -70,6 +131,11 @@ impl Renderer {
             None,
             Some(projection),
             second_eye,
+            None,
+            false,
+            None,
+            false,
+            None,
         );
     }
 

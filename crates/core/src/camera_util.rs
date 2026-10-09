@@ -1,6 +1,16 @@
 //! Camera helpers: the default and follow cameras, picking rays, the orbit distance, and the mirrors.
 
 use super::*;
+use glam::Mat4;
+
+pub(crate) const TRIPLE_SCREEN_BEZEL_MIN_MM: i32 = -50;
+pub(crate) const TRIPLE_SCREEN_BEZEL_MAX_MM: i32 = 50;
+pub(crate) const TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG: i32 = 90;
+
+pub(crate) struct TripleScreenViews {
+    pub cameras: [Camera; 3],
+    pub projections: [Mat4; 3],
+}
 
 /// Default camera from `[mapcam]`: tile x, tile y, x, z, y, yaw, pitch, distance.
 pub(crate) fn default_camera(world: &World) -> Camera {
@@ -108,8 +118,76 @@ pub(crate) fn pixel_angle(cam: &Camera, height: f32) -> f32 {
     2.0 * (cam.fov_deg.to_radians() * 0.5).tan() / height.max(1.0)
 }
 
+fn triple_screen_projection_for_view(
+    enabled: bool,
+    view: &str,
+    zoom: f32,
+    screenshot_mode: bool,
+) -> bool {
+    enabled
+        && matches!(view, "driver" | "outside" | "foot")
+        && !screenshot_mode
+        && (zoom - 1.0).abs() < 0.001
+}
+
+impl App {
+    pub(crate) fn triple_screen_projection_active(&self) -> bool {
+        !self.vr_active()
+            && triple_screen_projection_for_view(
+                ::config::get_bool("graphics", "triple_screen").unwrap_or(false),
+                &self.view,
+                self.view_zoom.get(&self.view).copied().unwrap_or(1.0),
+                self.screenshot_mode.is_some(),
+            )
+    }
+}
+
 /// World-space ray through a window pixel: (camera position, unit direction).
 pub(crate) fn cursor_ray(cam: &Camera, x: f32, y: f32, w: f32, h: f32) -> (DVec3, Vec3) {
+    cursor_ray_with_projection(
+        cam,
+        x,
+        y,
+        w,
+        h,
+        ::config::get_bool("graphics", "triple_screen").unwrap_or(false),
+    )
+}
+
+pub(crate) fn cursor_ray_with_projection(
+    cam: &Camera,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    triple_screen: bool,
+) -> (DVec3, Vec3) {
+    if triple_screen
+        && let Some(views) = triple_screen_cameras(cam, w.max(0.0) as u32, h.max(0.0) as u32)
+    {
+        let panel_width = w / 3.0;
+        let panel = ((x / panel_width).floor() as usize).min(2);
+        let local_x = x - panel as f32 * panel_width;
+        let local_width = if panel == 2 {
+            w - panel_width * 2.0
+        } else {
+            panel_width
+        };
+        let view = glam::camera::rh::view::look_to_mat4(
+            Vec3::ZERO,
+            views.cameras[panel].forward(),
+            views.cameras[panel].up(),
+        );
+        let ray_point = (views.projections[panel] * view)
+            .inverse()
+            .project_point3(Vec3::new(
+                local_x / local_width * 2.0 - 1.0,
+                1.0 - y / h * 2.0,
+                0.0,
+            ));
+        let direction = ray_point.normalize_or_zero();
+        return (cam.position, direction);
+    }
     let (_, d) = cam.ray(
         x / w * 2.0 - 1.0,
         1.0 - y / h * 2.0,
@@ -117,6 +195,146 @@ pub(crate) fn cursor_ray(cam: &Camera, x: f32, y: f32, w: f32, h: f32) -> (DVec3
         cam.position,
     );
     (cam.position, d)
+}
+
+pub(crate) fn triple_screen_cameras(
+    camera: &Camera,
+    width: u32,
+    height: u32,
+) -> Option<TripleScreenViews> {
+    if width == 0
+        || height == 0
+        || !::config::get_bool("graphics", "triple_screen").unwrap_or(false)
+        || width < height.saturating_mul(2)
+    {
+        return None;
+    }
+    let distance = ::config::get_float("graphics", "triple_screen_distance_mm")
+        .unwrap_or(400.0)
+        .clamp(200.0, 1500.0) as f32;
+    let panel_width = ::config::get_float("graphics", "triple_screen_width_mm")
+        .unwrap_or(690.0)
+        .clamp(300.0, 1200.0) as f32;
+    let bezel = ::config::get_float("graphics", "triple_screen_bezel_mm")
+        .unwrap_or(14.0)
+        .clamp(
+            TRIPLE_SCREEN_BEZEL_MIN_MM as f64,
+            TRIPLE_SCREEN_BEZEL_MAX_MM as f64,
+        ) as f32;
+    let half_width = panel_width * 0.5;
+    let half_height = panel_width * height as f32 / (width as f32 / 3.0) * 0.5;
+    let eye_height = ::config::get_float("graphics", "triple_screen_eye_height_mm")
+        .unwrap_or(0.0)
+        .clamp(-400.0, 400.0) as f32;
+    let left_angle = ::config::get_float("graphics", "triple_screen_left_angle")
+        .unwrap_or(30.0)
+        .clamp(0.0, TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG as f64) as f32;
+    let right_angle = ::config::get_float("graphics", "triple_screen_right_angle")
+        .unwrap_or(30.0)
+        .clamp(0.0, TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG as f64) as f32;
+    let base_forward = camera.forward().normalize_or_zero();
+    let base_right = base_forward.cross(camera.up()).normalize_or_zero();
+    let base_up = base_right.cross(base_forward).normalize_or_zero();
+    let screen_eye_offset = -base_up * eye_height;
+    let angles = [-left_angle, 0.0, right_angle];
+    let mut cameras = [*camera; 3];
+    let mut projections = [Mat4::IDENTITY; 3];
+    for panel in 0..3 {
+        let angle = angles[panel].to_radians();
+        let (sin, cos) = angle.sin_cos();
+        let tangent = base_right * cos - base_forward * sin;
+        let panel_forward = base_forward * cos + base_right * sin;
+        let panel_right = base_right * cos - base_forward * sin;
+        let centre = match panel {
+            0 => {
+                base_right * (-half_width - bezel - half_width * cos)
+                    + base_forward * (distance + half_width * sin)
+            }
+            1 => base_forward * distance,
+            _ => {
+                base_right * (half_width + bezel + half_width * cos)
+                    + base_forward * (distance - half_width * sin)
+            }
+        } + screen_eye_offset;
+        let mut panel_camera = *camera;
+        panel_camera.yaw = panel_forward.x.atan2(panel_forward.y).to_degrees();
+        panel_camera.pitch = panel_forward.z.clamp(-1.0, 1.0).asin().to_degrees();
+        let level_right = Vec3::new(panel_forward.y, -panel_forward.x, 0.0).normalize_or_zero();
+        let level_up = level_right.cross(panel_forward).normalize_or_zero();
+        panel_camera.roll = base_up
+            .dot(level_right)
+            .atan2(base_up.dot(level_up))
+            .to_degrees();
+        if panel_camera.roll.abs() < 1e-4 && (base_up - Vec3::Z).length() > 1e-4 {
+            panel_camera.roll = 1e-4;
+        }
+        let mut left = f32::INFINITY;
+        let mut right_edge = f32::NEG_INFINITY;
+        let mut bottom = f32::INFINITY;
+        let mut top = f32::NEG_INFINITY;
+        for x in [-half_width, half_width] {
+            for z in [-half_height, half_height] {
+                let corner = centre + tangent * x + base_up * z;
+                let depth = corner.dot(panel_forward).max(1.0);
+                left = left.min(corner.dot(panel_right) / depth);
+                right_edge = right_edge.max(corner.dot(panel_right) / depth);
+                bottom = bottom.min(corner.dot(base_up) / depth);
+                top = top.max(corner.dot(base_up) / depth);
+            }
+        }
+        panel_camera.fov_deg = (top.abs().max(bottom.abs()) * 2.0).atan().to_degrees();
+        cameras[panel] = panel_camera;
+        projections[panel] = reverse_z_frustum(
+            left,
+            right_edge,
+            bottom,
+            top,
+            panel_camera.near,
+            panel_camera.far,
+        );
+    }
+    Some(TripleScreenViews {
+        cameras,
+        projections,
+    })
+}
+
+fn reverse_z_frustum(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Mat4 {
+    let projection_near = far;
+    glam::camera::rh::proj::directx::frustum(
+        left * projection_near,
+        right * projection_near,
+        bottom * projection_near,
+        top * projection_near,
+        projection_near,
+        near,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reverse_z_frustum, triple_screen_projection_for_view};
+
+    #[test]
+    fn triple_screen_projection_follows_the_active_camera_mode() {
+        assert!(triple_screen_projection_for_view(true, "driver", 1.0, false));
+        assert!(triple_screen_projection_for_view(true, "outside", 1.0, false));
+        assert!(triple_screen_projection_for_view(true, "foot", 1.0, false));
+        assert!(!triple_screen_projection_for_view(true, "driver", 0.92, false));
+        assert!(!triple_screen_projection_for_view(true, "free", 1.0, false));
+        assert!(!triple_screen_projection_for_view(true, "pax", 1.0, false));
+        assert!(!triple_screen_projection_for_view(true, "foot", 0.92, false));
+        assert!(!triple_screen_projection_for_view(true, "driver", 1.0, true));
+        assert!(!triple_screen_projection_for_view(false, "driver", 1.0, false));
+    }
+
+    #[test]
+    fn reverse_z_frustum_preserves_panel_view_angles() {
+        let projection = reverse_z_frustum(-0.5, 0.5, -0.25, 0.25, 0.1, 6000.0);
+
+        assert!((projection.x_axis.x - 2.0).abs() < 1e-5);
+        assert!((projection.y_axis.y - 4.0).abs() < 1e-5);
+    }
 }
 
 /// The AI car to follow: an id, "auto" = the first overtaker, "moving" = the oldest car
@@ -316,8 +534,8 @@ pub(crate) fn mirror_view(
     };
     let at = base
         + rot
-        .transform_point3(Vec3::new(c.pos[0], c.pos[1], c.pos[2]))
-        .as_dvec3();
+            .transform_point3(Vec3::new(c.pos[0], c.pos[1], c.pos[2]))
+            .as_dvec3();
     let d = match part.and_then(|t| eye_in_part_frame(v, t, eye)) {
         Some(e) => Vec3::new(c.pos[0], c.pos[1], c.pos[2]) - e,
         None => rot.inverse().transform_vector3((at - eye).as_vec3()),
@@ -421,7 +639,11 @@ pub(crate) fn aim_camera(
     let mut c = c.clone();
     c.yaw += cfg.yaw;
     c.pitch += cfg.pitch;
-    c.pos = [c.pos[0] + cfg.pos[0], c.pos[1] + cfg.pos[1], c.pos[2] + cfg.pos[2]];
+    c.pos = [
+        c.pos[0] + cfg.pos[0],
+        c.pos[1] + cfg.pos[1],
+        c.pos[2] + cfg.pos[2],
+    ];
     if cfg.fov > 0.0 {
         c.fov = cfg.fov;
     }
@@ -464,7 +686,12 @@ pub(crate) fn mirror_cams(
     Option<&simulation::vehicle::TrailerPart>,
     &legacy_vehicle::Camera,
 )> {
-    let mut out: Vec<_> = v.ty.def.cameras_reflexion.iter().map(|c| (None, c)).collect();
+    let mut out: Vec<_> =
+        v.ty.def
+            .cameras_reflexion
+            .iter()
+            .map(|c| (None, c))
+            .collect();
     for t in &v.trailers {
         out.extend(t.ty.def.cameras_reflexion.iter().map(|c| (Some(t), c)));
     }
@@ -496,9 +723,9 @@ pub(crate) fn driver_eye(p: &Player) -> DVec3 {
         Some(c) => {
             p.vehicle.camera_world(c).0
                 + p.vehicle
-                .body_rotation()
-                .transform_vector3(p.head + p.seat)
-                .as_dvec3()
+                    .body_rotation()
+                    .transform_vector3(p.head + p.seat)
+                    .as_dvec3()
         }
         None => p.vehicle.position + DVec3::Z * 2.0,
     }

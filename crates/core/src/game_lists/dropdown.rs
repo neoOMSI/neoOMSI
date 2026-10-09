@@ -272,7 +272,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 } else if ::config::DEFAULTS.iter().any(|(c, k, _)| *c == "graphics" && *k == key) {
                     gfx_set(key, value);
                     if key == "window_mode" {
-                        super::options::apply_window_mode(app, value);
+                        super::options::apply_window_mode(app, &gfx_text(key));
                     }
                     let _ = ::config::save();
                 } else {

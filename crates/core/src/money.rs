@@ -7,17 +7,62 @@ use hashbrown::HashMap;
 use ::content::Currency;
 use ::geometry::mesh_from_o3d;
 use ::render::{AlphaMode, MaterialId, MeshId, Renderer, Scene};
-use ::simulation::VehicleInstance;
+use ::simulation::{VehicleInstance, VehicleType};
 use std::path::{Path, PathBuf};
+
+struct Coin {
+    inst: usize,
+    local: Vec3,
+    coin: usize,
+    change: bool,
+    parent: Option<usize>,
+    radius: f32,
+    xf: Mat4,
+    world: Option<DVec3>,
+}
 
 pub struct Money {
     pub currency: Option<Currency>,
     dir: PathBuf,
-    meshes: HashMap<usize, (MeshId, Vec<MaterialId>)>,
-    /// (instance, position in the bus frame, coin index, is change)
-    placed: Vec<(usize, Vec3, usize, bool)>,
+    meshes: HashMap<usize, (MeshId, Vec<MaterialId>, f32)>,
+    placed: Vec<Coin>,
     hidden: Vec<usize>,
     rng: u64,
+}
+
+/// The mesh whose `[mesh_ident]` is `name`, the first that carries it.
+pub(crate) fn parent_mesh(ty: &VehicleType, name: &str) -> Option<usize> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    ty.meshes.iter().position(|m| {
+        ty.model.meshes[m.def_index]
+            .mesh_ident
+            .as_deref()
+            .is_some_and(|i| i.trim().eq_ignore_ascii_case(name))
+    })
+}
+
+fn coin_transform(bus: &VehicleInstance, rot: Mat4, parent: Option<usize>, local: Vec3) -> Mat4 {
+    let base = match parent {
+        Some(i) if i < bus.mesh_transforms.len() => bus.mesh_local_transform(i),
+        _ => rot,
+    };
+    base * Mat4::from_translation(local)
+}
+
+const TRAY_SLACK: f32 = 0.05;
+
+fn ray_sphere(origin: DVec3, dir: Vec3, spread: f32, center: DVec3, radius: f32) -> Option<f32> {
+    let dir = dir.normalize_or_zero();
+    let to = (center - origin).as_vec3();
+    let t = to.dot(dir);
+    if t < 0.0 {
+        return None;
+    }
+    let miss = (to - dir * t).length();
+    (miss <= radius + spread * t).then_some(t)
 }
 
 impl Money {
@@ -159,7 +204,7 @@ impl Money {
 
     /// How many coins lie on the change tray.
     pub fn change_count(&self) -> usize {
-        self.placed.iter().filter(|p| p.3).count()
+        self.placed.iter().filter(|p| p.change).count()
     }
 
     pub fn value_of(&self, coins: &[usize]) -> f32 {
@@ -184,7 +229,7 @@ impl Money {
         renderer: &Renderer,
         scene: &mut Scene,
         coin: usize,
-    ) -> Option<(MeshId, Vec<MaterialId>)> {
+    ) -> Option<(MeshId, Vec<MaterialId>, f32)> {
         if let Some(m) = self.meshes.get(&coin) {
             return Some(m.clone());
         }
@@ -213,12 +258,19 @@ impl Money {
                 renderer.add_material(scene, tex, AlphaMode::Opaque, [1.0; 4], false)
             })
             .collect();
+        let radius = m
+            .vertices
+            .iter()
+            .map(|v| v.position.length())
+            .fold(0.0, f32::max);
         let id = renderer.add_mesh(scene, &mesh_from_o3d(&m));
-        self.meshes.insert(coin, (id, mats.clone()));
-        Some((id, mats))
+        self.meshes.insert(coin, (id, mats.clone(), radius));
+        Some((id, mats, radius))
     }
 
-    /// Put coins on a point of the cabin (position + variation), stacked.
+    /// Put coins on a point of the cabin (position + variation), stacked, moving with the
+    /// `parent` mesh when there is one.
+    #[allow(clippy::too_many_arguments)]
     pub fn place(
         &mut self,
         world: &World,
@@ -227,11 +279,12 @@ impl Money {
         coins: &[usize],
         point: Vec3,
         var: [f32; 2],
+        parent: Option<usize>,
         change: bool,
     ) {
-        let count = self.placed.iter().filter(|p| p.3 == change).count();
+        let count = self.placed.iter().filter(|p| p.change == change).count();
         for (k, coin) in coins.iter().enumerate() {
-            let Some((id, mats)) = self.mesh(world, renderer, scene, *coin) else {
+            let Some((id, mats, radius)) = self.mesh(world, renderer, scene, *coin) else {
                 continue;
             };
             let local = point
@@ -241,34 +294,313 @@ impl Money {
                     0.003 * (count + k) as f32,
                 );
             let inst = renderer.add_instance(scene, id, DVec3::ZERO, Mat4::IDENTITY, mats);
-            self.placed.push((inst, local, *coin, change));
+            self.placed.push(Coin {
+                inst,
+                local,
+                coin: *coin,
+                change,
+                parent,
+                radius,
+                xf: Mat4::IDENTITY,
+                world: None,
+            });
         }
     }
 
     /// Remove the payment (driver takes it) or the change (passenger takes it).
     pub fn clear(&mut self, change: bool) {
-        let (gone, keep): (Vec<_>, Vec<_>) = self.placed.drain(..).partition(|p| p.3 == change);
-        self.hidden.extend(gone.into_iter().map(|p| p.0));
+        let (gone, keep): (Vec<_>, Vec<_>) =
+            self.placed.drain(..).partition(|p| p.change == change);
+        self.hidden.extend(gone.into_iter().map(|p| p.inst));
         self.placed = keep;
     }
 
+    pub fn change_under(
+        &self,
+        origin: DVec3,
+        dir: Vec3,
+        spread: f32,
+        wall: impl FnOnce() -> Option<f32>,
+    ) -> Option<usize> {
+        let (k, front) = self
+            .placed
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.change)
+            .filter_map(|(k, c)| {
+                Some((k, ray_sphere(origin, dir, spread, c.world?, c.radius)? - c.radius))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))?;
+        (!wall().is_some_and(|w| w < front - TRAY_SLACK)).then_some(k)
+    }
+
+    pub fn pick(
+        &mut self,
+        origin: DVec3,
+        dir: Vec3,
+        spread: f32,
+        wall: impl FnOnce() -> Option<f32>,
+    ) -> bool {
+        let Some(k) = self.change_under(origin, dir, spread, wall) else {
+            return false;
+        };
+        let gone = self.placed.remove(k);
+        self.hidden.push(gone.inst);
+        true
+    }
+
     pub fn change_value(&self) -> f32 {
-        let coins: Vec<usize> = self.placed.iter().filter(|p| p.3).map(|p| p.2).collect();
+        let coins: Vec<usize> = self
+            .placed
+            .iter()
+            .filter(|p| p.change)
+            .map(|p| p.coin)
+            .collect();
         self.value_of(&coins)
+    }
+
+    fn locate(&mut self, bus: &VehicleInstance) {
+        let rot = bus.body_rotation();
+        for c in &mut self.placed {
+            c.xf = coin_transform(bus, rot, c.parent, c.local);
+            c.world = Some(bus.position + c.xf.w_axis.truncate().as_dvec3());
+        }
     }
 
     pub fn sync(&mut self, renderer: &Renderer, scene: &mut Scene, bus: &VehicleInstance) {
         for inst in self.hidden.drain(..) {
             renderer.set_params(scene, inst, &[], false, &[]);
         }
+        self.locate(bus);
+        for c in &self.placed {
+            renderer.set_transform(scene, c.inst, bus.position, c.xf);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Quat;
+    use std::f32::consts::FRAC_PI_2;
+    use std::sync::Arc;
+
+    fn money() -> Money {
+        Money {
+            currency: Some(Currency {
+                path: PathBuf::new(),
+                name: "test".into(),
+                decimals: 2,
+                coins: vec![("small.o3d".into(), 0.5), ("big.o3d".into(), 2.0)],
+                bills: Vec::new(),
+            }),
+            dir: PathBuf::new(),
+            meshes: HashMap::new(),
+            placed: Vec::new(),
+            hidden: Vec::new(),
+            rng: 1,
+        }
+    }
+
+    fn put(
+        m: &mut Money,
+        inst: usize,
+        coin: usize,
+        change: bool,
+        local: Vec3,
+        parent: Option<usize>,
+    ) {
+        m.placed.push(Coin {
+            inst,
+            local,
+            coin,
+            change,
+            parent,
+            radius: 0.012,
+            xf: Mat4::IDENTITY,
+            world: None,
+        });
+    }
+
+    fn put_at(m: &mut Money, inst: usize, coin: usize, change: bool, world: DVec3) {
+        put(m, inst, coin, change, Vec3::ZERO, None);
+        m.placed.last_mut().unwrap().world = Some(world);
+    }
+
+    fn o3d_triangle() -> Vec<u8> {
+        let mut bytes = vec![0x84, 0x19, 1, 0x17, 3, 0];
+        for x in [0.0f32, 0.1, 0.2] {
+            for value in [x, 0.0, 0.1, 0.0, 1.0, 0.0, 0.0, 0.0] {
+                bytes.extend(value.to_le_bytes());
+            }
+        }
+        bytes.extend([0x49, 1, 0, 0, 0, 1, 0, 2, 0, 0, 0]);
+        bytes
+    }
+
+    #[test]
+    fn coins_on_a_parented_point_move_with_its_mesh() {
+        let dir = std::env::temp_dir().join(format!("omsi-money-parent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("test.bus"), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(
+            dir.join("model.cfg"),
+            "[mesh]\nbody.o3d\n\n[mesh]\ndesk.o3d\n[mesh_ident]\nzahltisch\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("body.o3d"), o3d_triangle()).unwrap();
+        std::fs::write(dir.join("desk.o3d"), o3d_triangle()).unwrap();
+        let ty = Arc::new(VehicleType::load(&dir, &dir.join("test.bus")).unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(parent_mesh(&ty, " Zahltisch "), Some(1));
+        assert_eq!(parent_mesh(&ty, "kasse"), None);
+
+        let mut bus = VehicleInstance::new(ty, ::simulation::VehicleHost::new(Default::default()));
+        bus.position = DVec3::new(100.0, 200.0, 5.0);
+        let pivot = Vec3::new(-0.5, 4.8, 1.0);
+        bus.mesh_transforms[1] = Mat4::from_translation(pivot)
+            * Mat4::from_rotation_z(FRAC_PI_2)
+            * Mat4::from_translation(-pivot);
+        let local = Vec3::new(-0.1, 4.8, 1.2);
+        let mut m = money();
+        put(&mut m, 0, 0, true, local, Some(1));
+        put(&mut m, 1, 0, true, local, None);
+        put(&mut m, 2, 0, false, local, Some(99));
+        m.locate(&bus);
+
         let rot = bus.body_rotation();
-        for (inst, local, _, _) in &self.placed {
-            renderer.set_transform(
-                scene,
-                *inst,
-                bus.position,
-                rot * Mat4::from_translation(*local),
-            );
+        let at = |p: Vec3| bus.position + rot.transform_point3(p).as_dvec3();
+        let swung = pivot + Quat::from_rotation_z(FRAC_PI_2) * (local - pivot);
+        let near = |a: DVec3, b: DVec3| (a - b).length() < 1e-4;
+        assert!(
+            near(m.placed[0].world.unwrap(), at(swung)),
+            "{:?}",
+            m.placed[0].world
+        );
+        assert!(near(m.placed[1].world.unwrap(), at(local)));
+        assert!(near(m.placed[2].world.unwrap(), at(local)));
+    }
+
+    #[test]
+    fn pick_takes_the_nearest_change_coin_the_ray_hits() {
+        let mut m = money();
+        put_at(&mut m, 10, 0, false, DVec3::new(0.0, 0.5, 0.0));
+        put_at(&mut m, 11, 0, true, DVec3::new(0.0, 2.0, 0.0));
+        put_at(&mut m, 12, 1, true, DVec3::new(0.005, 1.0, 0.0));
+        put(&mut m, 13, 0, true, Vec3::ZERO, None);
+
+        assert!(!m.pick(DVec3::ZERO, Vec3::X, 0.0, || None));
+        assert!(!m.pick(DVec3::ZERO, -Vec3::Y, 0.0, || None));
+        assert!(!m.pick(DVec3::new(0.0, 0.0, 0.1), Vec3::Y, 0.0, || None));
+        assert_eq!(m.change_count(), 3);
+
+        assert!(m.pick(DVec3::ZERO, Vec3::Y, 0.0, || None));
+        assert_eq!(m.hidden, vec![12]);
+        assert!(m.pick(DVec3::ZERO, Vec3::Y, 0.0, || None));
+        assert_eq!(m.hidden, vec![12, 11]);
+        assert!(
+            !m.pick(DVec3::ZERO, Vec3::Y, 0.0, || None),
+            "the payment and unplaced coins stay"
+        );
+        assert_eq!(
+            m.placed.iter().map(|c| c.inst).collect::<Vec<_>>(),
+            vec![10, 13]
+        );
+
+        let mut wide = money();
+        put_at(&mut wide, 0, 0, true, DVec3::new(0.05, 1.0, 0.0));
+        assert!(!wide.pick(DVec3::ZERO, Vec3::Y, 0.0, || None));
+        assert!(wide.pick(DVec3::ZERO, Vec3::Y, 0.05, || None));
+    }
+
+    #[test]
+    fn a_coin_behind_the_bus_cannot_be_picked() {
+        let mut m = money();
+        put_at(&mut m, 0, 0, true, DVec3::new(0.0, 1.0, 0.0));
+        assert!(!m.pick(DVec3::ZERO, Vec3::Y, 0.0, || Some(0.5)));
+        assert_eq!(m.change_under(DVec3::ZERO, Vec3::Y, 0.0, || Some(0.5)), None);
+        assert_eq!(m.change_count(), 1);
+        assert!(
+            m.pick(DVec3::ZERO, Vec3::Y, 0.0, || Some(0.97)),
+            "the tray right under the coin does not hide it"
+        );
+
+        let mut far = money();
+        put_at(&mut far, 0, 0, true, DVec3::new(0.0, 1.0, 0.0));
+        let mut asked = false;
+        assert!(far
+            .change_under(DVec3::ZERO, Vec3::X, 0.0, || {
+                asked = true;
+                Some(0.1)
+            })
+            .is_none());
+        assert!(!asked, "no coin under the ray: the bus is not tested");
+    }
+
+    #[test]
+    fn picking_every_change_coin_leaves_what_change_take_leaves() {
+        let tray = || {
+            let mut m = money();
+            put_at(&mut m, 0, 1, false, DVec3::new(0.0, 0.5, 0.0));
+            put_at(&mut m, 1, 0, true, DVec3::new(0.0, 1.0, 0.0));
+            put_at(&mut m, 2, 1, true, DVec3::new(0.0, 2.0, 0.0));
+            m
+        };
+        let mut picked = tray();
+        assert!((picked.change_value() - 2.5).abs() < 1e-6);
+        assert!(picked.pick(DVec3::ZERO, Vec3::Y, 0.0, || None));
+        assert!((picked.change_value() - 2.0).abs() < 1e-6);
+        assert_eq!(picked.change_count(), 1);
+        assert!(picked.pick(DVec3::ZERO, Vec3::Y, 0.0, || None));
+
+        let mut taken = tray();
+        taken.clear(true);
+        assert_eq!(picked.change_value(), taken.change_value());
+        assert_eq!(picked.change_count(), taken.change_count());
+        let mut a = picked.hidden.clone();
+        a.sort();
+        assert_eq!(a, taken.hidden);
+        assert_eq!(
+            picked
+                .placed
+                .iter()
+                .map(|c| (c.inst, c.coin, c.change))
+                .collect::<Vec<_>>(),
+            taken
+                .placed
+                .iter()
+                .map(|c| (c.inst, c.coin, c.change))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn stock_cash_desk_points_resolve_their_parent_mesh() {
+        let Some(root) = ::legacy_config::env::var_os("OMSI_ROOT").map(PathBuf::from) else {
+            eprintln!("skipped: OMSI_ROOT not set");
+            return;
+        };
+        let bus = root.join("Vehicles/MAN_NL_NG/MAN_EN92_main.bus");
+        if !bus.exists() {
+            eprintln!("skipped: no {}", bus.display());
+            return;
+        }
+        let ty = VehicleType::load(&root, &bus).expect("EN92");
+        let rel = ty.def.passenger_cabin.as_ref().expect("passenger cabin");
+        let cabin = ::legacy_vehicle::PassengerCabin::load(&::legacy_config::resolve_path(
+            ty.def.dir(),
+            rel,
+        ))
+        .expect("cabin");
+        let parents: Vec<&str> = cabin
+            .money_points
+            .iter()
+            .chain(&cabin.change_points)
+            .filter_map(|p| p.parent.as_deref())
+            .collect();
+        assert!(!parents.is_empty());
+        for p in parents {
+            assert!(parent_mesh(&ty, p).is_some(), "no mesh {p}");
         }
     }
 }
