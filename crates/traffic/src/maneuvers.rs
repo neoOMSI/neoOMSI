@@ -358,6 +358,9 @@ pub struct ManeuverInputs {
     pub lead_gap: Option<f32>,
     /// Whether that obstruction is standing (a pass is possible) or just a slow leader.
     pub lead_standing: bool,
+    /// How fast the leader still moves (m/s): an emergency vehicle passes a car that is
+    /// slowing down to make way, not only one that has stopped.
+    pub lead_speed: f32,
     /// The obstruction's length (m).
     pub obstacle_len: f32,
     /// The obstruction is a parked car (the driver may pull out while still rolling).
@@ -378,6 +381,7 @@ impl ManeuverInputs {
             pull_out: false,
             lead_gap: None,
             lead_standing: false,
+            lead_speed: 0.0,
             obstacle_len: 0.0,
             parked: false,
         }
@@ -669,7 +673,8 @@ impl ManeuverCoordinator {
         let side = if scene.net.left_hand {
             if lane.right.is_none() && lane.left.is_some() { 1.0 } else { -1.0 }
         } else if lane.left.is_none() && lane.right.is_some() { -1.0 } else { 1.0 };
-        let target = side * (lane.width * 0.5 - actor.half_width - 0.15).max(0.0);
+        // (paths are often authored narrower than the lane: BRT Berlin's are 2 m)
+        let target = side * (lane.width.max(MIN_LANE_WIDTH) * 0.5 - actor.half_width - 0.15).max(0.0);
         // The body steers as it rolls. Braking a stationary queue to zero while asking
         // for an odometer-based lateral ramp can never open a rescue corridor.
         let room = input.lead_gap.map(|gap| (gap - actor.min_gap).max(0.0));
@@ -940,9 +945,11 @@ impl ManeuverCoordinator {
     ) -> Option<ManeuverDecision> {
         let net = scene.net;
         let rolling = (input.parked || input.priority_pass) && actor.speed > 0.5;
+        // (an emergency vehicle does not wait long to see whether the car ahead moves on)
+        let settle = if input.priority_pass { 1.0 } else { 3.0 };
         if actor.lane_kind != LaneKind::Street
             || actor.change.is_some()
-            || (actor.stopped < 3.0 && !rolling)
+            || (actor.stopped < settle && !rolling)
             || !input.lead_standing
             || actor.yielding
             || actor.at_stop
@@ -983,7 +990,13 @@ impl ManeuverCoordinator {
         if !(2.3..=5.5).contains(&side) {
             return None;
         }
-        let obstacle_len = input.obstacle_len;
+        // a leader still rolling (only an emergency vehicle passes one) moves on while it is
+        // passed: the pass is longer by the distance it covers in that time
+        let v_lead = if input.priority_pass { input.lead_speed.max(0.0) } else { 0.0 };
+        let v_pass = ((lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6).clamp(4.0, 14.0);
+        let base_len = real + input.obstacle_len + actor.front + actor.rear + 6.0;
+        let stretch = if v_lead > 0.3 { v_lead * base_len / (v_pass - v_lead).max(1.0) } else { 0.0 };
+        let obstacle_len = input.obstacle_len + stretch;
         let pass_len = real + obstacle_len + actor.front + actor.rear + 6.0;
         // The maneuver must fit before a junction and not run off the end of the road.
         let junction = way

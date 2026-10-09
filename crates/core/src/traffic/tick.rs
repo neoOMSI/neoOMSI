@@ -260,7 +260,10 @@ impl Traffic {
             .cars
             .iter()
             .map(|c| JunctionActor {
-                emergency: emergency_drive(&c.vehicle, c.is_bus()),
+                // (an emergency vehicle that has stood for a while gives up its rights until
+                // it moves again: its reservation and everybody making way for it otherwise
+                // held the whole junction, and nothing could resolve what held it)
+                emergency: emergency_drive(&c.vehicle, c.is_bus()) && c.stopped < EMERGENCY_STUCK_AFTER,
                 id: c.id,
                 lane: c.state.lane,
                 s: c.state.s,
@@ -733,7 +736,12 @@ impl Traffic {
             // under three metres behind the player's bus and never got round it.
             let mut keep_back: Option<f32> = None;
             let mut reserve_pull_out = false;
-            if standing || may_stand {
+            // (an emergency vehicle keeps the room to pull out behind whatever slows in front
+            // of it: closed up to two metres behind a car making way, an ambulance could not
+            // get round it and stood there, blocking the road)
+            let emergency_behind_slow = junction_actors[i].emergency
+                && lead.is_some_and(|l| l.0.speed < 3.0);
+            if standing || may_stand || emergency_behind_slow {
                 if let Some((l, who)) = lead.filter(|_| !parked_ahead) {
                     let car = &self.cars[i];
                     let st = &car.state;
@@ -788,7 +796,11 @@ impl Traffic {
                     ri >= st.route_index && st.route_distance(&self.net, ri, ss)
                         < inputs.lead_gap.unwrap_or(0.0) + obstacle_len + st.front + 15.0
                 });
-                inputs.lead_standing |= inputs.priority_pass && lead.is_some_and(|l| l.0.speed < 0.5);
+                // (an emergency vehicle also passes a car still slowing down to make way, out
+                // on a free oncoming lane, as a real one does)
+                inputs.lead_speed = lead.map(|l| l.0.speed).unwrap_or(0.0);
+                inputs.lead_standing |= inputs.priority_pass
+                    && lead.is_some_and(|l| l.0.speed < EMERGENCY_PASS_LEAD_SPEED);
                 if !inputs.priority_pass {
                     let car = &self.cars[i];
                     inputs.emergency = ::traffic::approaching_emergency(

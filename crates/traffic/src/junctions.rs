@@ -49,6 +49,9 @@ const AT_LINE: f32 = 3.0;
 const AMBER_COMMIT_SPEED: f32 = 3.0;
 /// Traffic ahead slower than this (m/s) is a queue a vehicle does not follow into a junction.
 const QUEUE_SPEED: f32 = 1.5;
+/// A car entering a roundabout gives way to a ring car standing closer than this (m, its
+/// front from the place they meet) as to a moving one.
+const RING_QUEUE_KEEP: f32 = 10.0;
 /// Half the width of a footpath crossing a lane (m), for where a vehicle is past it.
 const WALK_HALF_WIDTH: f32 = 2.0;
 
@@ -864,6 +867,23 @@ impl JunctionCoordinator {
                     if ring_first && mode.is_none() && !o.emergency && theirs > firm_stop(o) {
                         continue;
                     }
+                    // Entering a roundabout, a car gives way to ring traffic standing just
+                    // before its entry too: it does not cut in while the ring queues (a
+                    // standing ring car counted as never arriving, the entries filled the
+                    // ring and the cars on it then had to wait for them).
+                    let entering_ring = scene.net.is_ring(m) && !scene.net.is_ring(l)
+                        && scene.net.must_yield(l, m);
+                    if entering_ring && !actor.emergency && o.speed < 1.0
+                        && theirs > 0.3 && theirs < RING_QUEUE_KEEP
+                    {
+                        ruled = true;
+                        reasons.push(Reason::Yield);
+                        self.wait_for.insert(me_id, o.id);
+                        if jn.inside {
+                            stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
+                        }
+                        continue;
+                    }
                     if (priority_merge || they_give_way) && mode.is_none() && !o.emergency
                         && theirs > stopping_distance(o)
                     {
@@ -998,8 +1018,11 @@ impl JunctionCoordinator {
         }
         let mut blocked =
             (hard && !cannot_stop) || ((ruled || !soft.is_empty()) && !cannot_stop_gently);
+        // An emergency vehicle waits for whoever moves or has the right of way, but not for
+        // vehicles that only stand there - they stand for it, held by its reservation, and
+        // waiting for them as well, it stood at the line for good.
         if actor.emergency {
-            blocked |= hard || ruled || !soft.is_empty();
+            blocked |= hard || ruled;
         }
         if !hard && !ruled && !soft.is_empty() && wait > 2.5 + actor.reaction {
             // everybody is waiting for somebody: the longest waiter goes (bounded fairness)

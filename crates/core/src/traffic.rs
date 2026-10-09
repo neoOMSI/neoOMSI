@@ -125,6 +125,11 @@ const SCENERY_GHOST_MARGIN: f32 = 10.0;
 /// Room an oncoming vehicle needs beside a car (m from the car's side to the middle of the
 /// oncoming lane): its half width and a margin.
 const PLAYER_BOX_MARGIN: f32 = 0.5;
+/// An emergency vehicle passes a leader slower than this (m/s) on a free oncoming lane.
+const EMERGENCY_PASS_LEAD_SPEED: f32 = 4.2;
+/// An emergency vehicle standing longer than this (s) drives by the ordinary rules until it
+/// moves again, so a deadlock round it resolves.
+const EMERGENCY_STUCK_AFTER: f32 = 8.0;
 
 /// What makes a new car a timetable bus (`Traffic::create_car`).
 pub struct BusSetup {
