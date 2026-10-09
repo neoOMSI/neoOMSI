@@ -597,6 +597,41 @@ impl App {
         }
     }
 
+    pub(crate) fn lab_bar_press(&mut self) -> bool {
+        if self.lab_list.is_none() {
+            return false;
+        }
+        let (x, y) = self.cursor;
+        let inside = |r: [f32; 4]| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
+        let kind = match self.ui.as_ref() {
+            Some(u) if u.dialog_bar.is_some_and(inside) => 1,
+            Some(u) if u.dialog_pane_bar.is_some_and(inside) => 2,
+            _ => 0,
+        };
+        self.lab_bar_drag = kind;
+        if kind == 0 {
+            return false;
+        }
+        self.lab_bar_set();
+        true
+    }
+
+    pub(crate) fn lab_bar_set(&mut self) {
+        let y = self.cursor.1;
+        let kind = self.lab_bar_drag;
+        let vis = self.ui.as_ref().map_or(1, |u| u.dialog_vis);
+        let Some(u) = self.ui.as_mut() else { return };
+        let bar = if kind == 1 { u.dialog_bar } else { u.dialog_pane_bar };
+        let Some(bar) = bar else { return };
+        let frac = ((y - bar[1]) / (bar[3] - bar[1]).max(1.0)).clamp(0.0, 1.0);
+        if kind == 2 {
+            u.dialog_pane_top = Some((frac * u.dialog_pane_max as f32).round() as usize);
+        } else if let Some(Dialog::Select { scroll, options, .. }) = u.dialog.as_mut() {
+            let max = options.len().saturating_sub(vis) as f32;
+            *scroll = (frac * max).round() as usize;
+        }
+    }
+
     pub(crate) fn lab_dialog_wheel(&mut self, amount: f32) -> bool {
         if self.lab_list.is_none() {
             return false;

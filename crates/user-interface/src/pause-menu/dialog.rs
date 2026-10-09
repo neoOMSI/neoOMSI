@@ -33,6 +33,8 @@ impl Ui {
         self.dialog_back_rc = [0.0; 4];
         self.dialog_pane_rc = [0.0; 4];
         self.dialog_pane_max = 0;
+        self.dialog_bar = None;
+        self.dialog_pane_bar = None;
         self.menu_pane.clear();
         self.menu_pane_go = None;
         self.menu_time.clear();
@@ -137,33 +139,54 @@ impl Ui {
                     }
                 }
                 let vis = self.dialog_vis;
-                let first = (*scroll).min(options.len().saturating_sub(vis));
+                let step = row_h + 4.0 * u;
+                let max_first = options.len().saturating_sub(vis);
+                let target = (*scroll).min(max_first);
+                let mut pos = self.dialog_list_pos.clamp(0.0, max_first as f32);
+                if self.dialog_t < 0.2 || (target as f32 - pos).abs() < 0.01 {
+                    pos = target as f32;
+                } else {
+                    pos += (target as f32 - pos) * (1.0 - (-18.0 * self.anim_dt).exp());
+                }
+                self.dialog_list_pos = pos;
+                let first = (pos.floor() as usize).min(max_first);
+                let (list_top, view_end) = (cy, cy + vis as f32 * step - 4.0 * u);
+                let a0 = self.text.alpha;
                 if options.len() > vis {
-                    let th = vis as f32 * (row_h + 4.0 * u);
+                    let th = vis as f32 * step;
                     let (tx, n) = (bx + inner + 10.0 * u, options.len() as f32);
                     self.text.rounded(r, scene, [tx, cy, tx + 4.0 * u, cy + th], 0.0, [34, 36, 42, 255]);
-                    let ty = cy + th * first as f32 / n;
+                    self.dialog_bar = Some([tx - 8.0 * u, cy, tx + 12.0 * u, cy + th]);
+                    let ty = cy + th * pos / n;
                     self.text.rounded(r, scene, [tx, ty, tx + 4.0 * u, ty + th * vis as f32 / n], 0.0, ACCENT);
                 }
                 for (i, o) in options.iter().enumerate() {
-                    if i < first || i >= first + vis {
+                    if i < first || i > first + vis {
                         self.dialog_rects.push([0.0; 4]);
                         continue;
                     }
-                    let rc = [bx, cy, bx + inner, cy + row_h];
+                    let ry = list_top + step * (i as f32 - pos);
+                    
+                    let edge = ((ry + step - list_top) / step).min((view_end - ry) / step).clamp(0.0, 1.0);
+                    if edge <= 0.03 {
+                        self.dialog_rects.push([0.0; 4]);
+                        continue;
+                    }
+                    let rc = [bx, ry.max(list_top), bx + inner, (ry + row_h).min(view_end)];
                     let hot = inside(rc, f.cursor);
                     let hv = self.ease((205, "opt", i), if hot { 1.0 } else { 0.0 }, 8.0);
                     let on = i == *sel;
                     let bg = mix(if on { [46, 49, 57, 255] } else { [28, 30, 35, 255] }, [46, 49, 57, 255], hv);
-                    self.text.rounded(r, scene, rc, 0.0, bg);
+                    self.text.rounded(r, scene, rc, 0.0, fade(bg, edge));
                     if on {
-                        self.text.rounded(r, scene, [rc[0], rc[1], rc[0] + 4.0 * u, rc[3]], 0.0, ACCENT);
+                        self.text.rounded(r, scene, [rc[0], rc[1], rc[0] + 4.0 * u, rc[3]], 0.0, fade(ACCENT, edge));
                     }
+                    self.text.alpha = a0 * edge;
                     let name = clip_to(&self.text, o, bpx, inner - 40.0 * u);
                     let l = self.text.label(r, scene, &name, bpx as u32, if on || hot { WHITE } else { SOFT });
-                    l.place(scene, rc[0] + 18.0 * u, rc[1] + (row_h - l.h as f32) * 0.5);
+                    l.place(scene, rc[0] + 18.0 * u, ry + (row_h - l.h as f32) * 0.5);
+                    self.text.alpha = a0;
                     self.dialog_rects.push(rc);
-                    cy += row_h + 4.0 * u;
                 }
             }
             Dialog::Editor { value, ok, cancel, .. } => {
@@ -251,6 +274,7 @@ impl Ui {
                     let tx = x + bw - 10.0 * u;
                     let th = view_end - list_top;
                     self.text.rounded(r, scene, [tx, list_top, tx + 4.0 * u, view_end], 0.0, [34, 36, 42, 255]);
+                    self.dialog_pane_bar = Some([tx - 8.0 * u, list_top, tx + 12.0 * u, view_end]);
                     let by = list_top + th * pos / total as f32;
                     self.text.rounded(r, scene, [tx, by, tx + 4.0 * u, by + th * fit as f32 / total as f32], 0.0, ACCENT);
                 }

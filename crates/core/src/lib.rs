@@ -534,6 +534,7 @@ pub(crate) fn make_app(
         vehicle_scan,
         menu_top: None,
         menu_scroll_drag: false,
+        lab_bar_drag: 0,
         pane_scroll: None,
         plugin_keys: Vec::new(),
         clock_hold: 0.0,
