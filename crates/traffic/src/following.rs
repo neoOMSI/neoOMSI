@@ -448,15 +448,13 @@ impl AiState {
             .chain(self.ahead.iter().copied())
     }
 
-    /// A random way on from the end of `lane`. Lanes the map closes to this vehicle ([rule]
-    /// no_cars, bus, trucks: `Lane::allows`) and lanes whose traffic density is zero are not driven
-    /// into - filtering them only at spawn still let cars turn into a pedestrian street or a
-    /// depot yard from next door. A car that has taken a turn lane takes the turn.
+    /// A random way on from the end of `lane`.
     fn choose_after(&mut self, net: &Network, lane: usize) -> Option<usize> {
         let l = &net.lanes[lane];
         // (a car of a traffic pool - the trucks of a map that keeps them to its port roads -
         // takes the ways its pool may go, as it was put on one; where none of them does, the
-        // ways open to cars, then any: it does not stand at the junction for ever)
+        // ways with traffic, then the ways it may drive at all: it does not stand at the
+        // junction for ever)
         let open_to = |pooled: bool| -> Vec<usize> {
             l.next
                 .iter()
@@ -479,7 +477,11 @@ impl AiState {
         let weighted = pooled.is_some();
         let open = pooled.unwrap_or_else(|| open_to(false));
         let mut choices = if open.is_empty() {
-            l.next.clone()
+            l.next
+                .iter()
+                .copied()
+                .filter(|&n| net.lanes[n].allows(self.veh_type))
+                .collect()
         } else {
             open
         };
@@ -1166,7 +1168,14 @@ impl AiState {
                     .next
                     .iter()
                     .copied()
-                    .filter(|&n| net.lanes.get(n).map(|x| x.kind == l.kind).unwrap_or(false))
+                    // (never onto a lane the map closes to it: a car that found no gap into
+                    // the lane beside leaves here, as at the map's edge)
+                    .filter(|&n| {
+                        net.lanes
+                            .get(n)
+                            .map(|x| x.kind == l.kind && x.allows(self.veh_type))
+                            .unwrap_or(false)
+                    })
                     .collect();
                 if nexts.is_empty() {
                     None
@@ -1223,14 +1232,6 @@ impl AiState {
         end
     }
 
-    /// Feedback moves `lane` and `s` to where the body is, but `prev_lane` - the lane the
-    /// way behind the car is read through - is only set as `drive` crosses a joint. Left
-    /// alone it names a lane that no longer leads into the current one, and the way behind
-    /// skips the lane in between: on a short junction lane the rear axle's target (the body
-    /// steers the rear axle along `way_point` of a negative distance) jumped back by that
-    /// whole lane, and the body, finding its target metres away, was put back there (the
-    /// bus that "teleports back" at a corner). The lane that leads here is the route's
-    /// previous entry, else the lane the car just left, else the only lane that leads in.
     fn repair_prev_lane(&mut self, net: &Network, old_lane: usize) {
         let lane = self.lane;
         let leads_here =
@@ -1278,15 +1279,7 @@ impl AiState {
         }
     }
 
-    /// Commit route progress from the realized body.
-    ///
-    /// The realized body is the single pose owner: this projects its pose onto the planned
-    /// route with [`project_on_route_indices`] and adopts the projected lane, distance and
-    /// realized speed. A projection that is off to the side, faces another way, or lands on
-    /// a lane the planner has already left is rejected, leaving this tick's planner progress
-    /// untouched, so a transient mismatch can never teleport the vehicle. The route is the
-    /// timetable route from the lane just behind the current one, or (for random traffic) the
-    /// current lane plus the planned lanes.
+ 
     pub fn commit_feedback(&mut self, net: &Network, realized: RealizedMotion) -> Option<RouteFix> {
         if net.lanes.get(self.lane).is_none() {
             return None;
