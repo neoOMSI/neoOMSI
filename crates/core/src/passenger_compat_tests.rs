@@ -1436,6 +1436,8 @@ pub(super) fn cabin() -> Arc<Cabin> {
         money_point: None,
         money_var: None,
         change_point: None,
+        money_parent: None,
+        change_parent: None,
     })
 }
 

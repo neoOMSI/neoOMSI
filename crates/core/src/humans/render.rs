@@ -444,18 +444,10 @@ impl Humans {
                 .change_points
                 .first()
                 .or(c.data.money_points.first())
-                .cloned()
+                .map(|p| (Vec3::from(p.pos), p.var, c.change_parent))
         });
-        if let (Some(m), Some(pt)) = (self.money.as_mut(), point) {
-            m.place(
-                world,
-                renderer,
-                scene,
-                coins,
-                Vec3::from(pt.pos),
-                pt.var,
-                true,
-            );
+        if let (Some(m), Some((pos, var, parent))) = (self.money.as_mut(), point) {
+            m.place(world, renderer, scene, coins, pos, var, parent, true);
         }
     }
 }

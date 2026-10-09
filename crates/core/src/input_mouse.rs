@@ -649,6 +649,16 @@ impl App {
                     self.dragging = false;
                     return;
                 }
+                if self
+                    .humans
+                    .as_mut()
+                    .and_then(|h| h.money.as_mut())
+                    .is_some_and(|m| m.pick(o, d, spread, || p.body_hit(o, d)))
+                {
+                    p.release();
+                    self.dragging = false;
+                    return;
+                }
                 self.dragging = p.click(o, d, spread).is_some();
             } else {
                 if let Some((page, u, v)) = self.html_pressed.take() {
@@ -891,7 +901,15 @@ impl App {
                 {
                     let (o, d, spread) =
                         self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
-                    p.hovered_part(o, d, spread)
+                    let (part, hand) = p.hovered_part(o, d, spread);
+                    let coin = !hand
+                        && self
+                            .humans
+                            .as_ref()
+                            .and_then(|h| h.money.as_ref())
+                            .and_then(|m| m.change_under(o, d, spread, || p.body_hit(o, d)))
+                            .is_some();
+                    (part, hand || coin)
                 }
             _ => (None, false),
         };
