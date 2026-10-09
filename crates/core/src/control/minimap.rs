@@ -71,7 +71,7 @@ fn build(map: &str, date: &str) -> Result<Value> {
     world.index();
 
     let nav = world.navigation_map();
-    let mut net = ::simulation::traffic::Network {
+    let mut net = ::traffic::Network {
         lanes: nav.lanes,
         ..Default::default()
     };
