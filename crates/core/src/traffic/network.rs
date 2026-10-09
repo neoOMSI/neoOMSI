@@ -4,6 +4,15 @@ use super::*;
 
 impl Traffic {
 
+    pub(super) fn refresh_parked_geometry(&mut self, world: &World) {
+        self.road_collision = world.collision.lock().clone();
+        let shapes = world.parked_boxes.lock().clone();
+        if Arc::ptr_eq(&shapes, &self.parked_shapes) { return; }
+        self.parked_collision = Default::default();
+        for &body in shapes.iter() { self.parked_collision.add(body); }
+        self.parked_shapes = shapes;
+    }
+
     /// Whether a tile's lanes have been loaded into the network.
     pub fn has_lane_tile(&self, tile: (i32, i32)) -> bool {
         self.lane_tiles.contains(&tile)
@@ -105,7 +114,7 @@ impl Traffic {
     /// the network, whose existing indices stay valid), their parked cars (sorted onto the
     /// lanes once those are in) and the light programs of their crossings.
     pub fn add_tiles(&mut self, world: &World) -> usize {
-        self.road_collision = world.collision.lock().clone();
+        self.refresh_parked_geometry(world);
         let (new, parked_cars, tiles) = take_from_tiles(world);
         let n = new.len();
         let mut added = self.net.lanes.len()..self.net.lanes.len();

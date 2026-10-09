@@ -6,6 +6,64 @@ use glam::{DVec2, DVec3};
 use traffic::*;
 
 #[test]
+fn a_route_change_near_a_shared_continuation_sweeps_the_actual_lane_blend() {
+    let mut net = Network::default();
+    for (x, from, to) in [(0.0, 0.0, 40.0), (-3.5, 0.0, 40.0), (-3.5, 40.0, 100.0)] {
+        net.lanes.push(LaneBuilder::polyline(vec![DVec3::new(x, from, 0.0),
+            DVec3::new(x, to, 0.0)], LaneKind::Street, 3.5));
+    }
+    net.link(4.0);
+    net.lanes[0].left = Some(1);
+    net.lanes[1].right = Some(0);
+    net.lanes[0].next = vec![2];
+    net.lanes[1].next = vec![2];
+    let mut actor = ManeuverActor::new(VehicleId(93), 0, 32.8);
+    actor.route_next = Some(1);
+    actor.planned_next = Some(2);
+    let actors = [actor];
+    let occupancy = Occupancy::default();
+    // A wall beyond the left edge of the target road. The old constant-offset
+    // sweep shifted the already-shared continuation by another whole lane.
+    let clearance = |samples: &[SweepSample], _: &ManeuverActor|
+        samples.iter().all(|sample| sample.p.x >= -4.0);
+    let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+        people: &[], static_clearance: Some(&clearance), time: 0.0, dt: 0.02, tick: 1 };
+    let mut coord = ManeuverCoordinator::new();
+    let mut memory = ManeuverState::default();
+    coord.begin_tick(&[coord.intent(&scene, &actors[0], &memory)], 1);
+    let decision = coord.plan(&scene, &mut memory, &ManeuverInputs::new(0));
+    assert_eq!(decision.change.expect("phantom scenery blocked the route change").to, 1);
+}
+
+#[test]
+fn a_stopped_bus_corner_swerve_keeps_its_committed_anchor() {
+    let net = two_lanes();
+    let mut actor = ManeuverActor::new(VehicleId(93), 0, 60.0);
+    actor.lateral = 0.57;
+    actor.stopped = 5.0;
+    actor.odometer = 60.0;
+    let occupancy = Occupancy::default();
+    let mut coordinator = ManeuverCoordinator::new();
+    let mut memory = ManeuverState::default();
+    let mut input = ManeuverInputs::new(0);
+    input.kerb_swerve = Some(-0.39);
+    let mut committed = None;
+    for tick in 0..20 {
+        let actors = [actor.clone()];
+        let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+            people: &[], static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+        let decision = coordinator.plan(&scene, &mut memory, &input);
+        let ramp = decision.lateral_ramp.expect("stopped bus needs a corner-recovery ramp");
+        if let Some(initial) = committed { assert_eq!(ramp, initial); }
+        else { committed = Some(ramp); }
+        actor.odometer += 0.01;
+        actor.lateral -= 0.01;
+        input.kerb_swerve = Some(-0.38);
+    }
+    assert_eq!(committed.unwrap(), (0.57, -0.39, 60.0, 2.0));
+}
+
+#[test]
 fn unequal_neighbour_arc_lengths_do_not_finish_a_bypass_at_the_joint() {
     let mut net = Network::default();
     for x in [0.0, -3.0] {

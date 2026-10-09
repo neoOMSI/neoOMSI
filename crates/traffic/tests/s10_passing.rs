@@ -76,3 +76,35 @@ fn another_bus_waiting_for_its_own_berth_does_not_pass_the_queue() {
         ManeuverPhase::Passing
     );
 }
+
+#[test]
+fn a_standing_car_can_pass_a_real_bus_and_return_to_its_lane() {
+    let net = two_way();
+    let mut car = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    car.front = 2.1;
+    car.rear = 2.1;
+    car.length = 4.2;
+    car.half_width = 0.85;
+    car.stopped = 5.0;
+    car.pass_room = 5.25;
+    let mut bus = ManeuverActor::new(VehicleId(2), 0, 71.35);
+    bus.front = 6.0;
+    bus.rear = 4.0;
+    bus.length = 10.0;
+    bus.at_stop = true;
+    let mut foot = BodyFootprint::new(bus.id, DVec2::new(0.0, 72.35), DVec2::Y,
+        5.0, 1.25, 0.0, 3.5, 0.0);
+    foot.front = bus.front;
+    foot.rear = bus.rear;
+    foot.current = Some(Placement { lane: LaneId(0), s: bus.s, lateral: 0.0, foreign: false });
+    let occupancy = Occupancy::build(net.version(), 0, vec![foot]);
+    let actors = [car, bus];
+    let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+        people: &[], static_clearance: None, time: 5.0, dt: 0.02, tick: 1 };
+    let mut input = ManeuverInputs::new(0);
+    input.lead_gap = Some(5.25);
+    input.lead_standing = true;
+    input.obstacle_len = 10.0;
+    let decision = ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &input);
+    assert_eq!(decision.phase, ManeuverPhase::Passing);
+}

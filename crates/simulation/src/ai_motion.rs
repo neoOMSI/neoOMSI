@@ -183,6 +183,10 @@ pub struct AiBody {
     pub kind: MotionKind,
     rot_long: f32,
     wheelbase: f32,
+    /// Metres of close path tracking after a rejected corner step.
+    steering_recovery: f32,
+    recovery_preview_scale: f32,
+    recovery_steer: Option<(f32, f32)>,
     front_long: f32,
     rear_long: f32,
     /// Largest front wheel angle (deg) and how fast the driver turns towards it (deg/s).
@@ -335,6 +339,9 @@ impl AiBody {
             kind,
             rot_long,
             wheelbase,
+            steering_recovery: 0.0,
+            recovery_preview_scale: 1.0,
+            recovery_steer: None,
             front_long,
             rear_long,
             max_steer,
@@ -444,6 +451,81 @@ impl AiBody {
         self.a_lat = 0.0;
     }
 
+    /// Reject translation/yaw at an obstacle while allowing the driver to keep
+    /// turning the wheels. Restoring the steering too repeats the same clipped
+    /// front-corner step forever, particularly with a bus's long wheelbase.
+    pub fn reject_motion(&mut self, previous: &Self) {
+        let (steer, command) = (self.steer, self.steer_cmd);
+        self.clone_from(previous);
+        self.steer = steer;
+        self.steer_cmd = command;
+        self.steering_recovery = self.steering_recovery.max(2.0 * self.wheelbase);
+        self.stop_motion();
+    }
+
+    /// Forecast the actual steering model without scripts or suspension. Distances
+    /// are measured from this pose; callers supply ground height and body obstacles.
+    pub fn predict_poses(
+        &self,
+        way: &dyn Fn(f32) -> DVec3,
+        speed: f32,
+        accel: f32,
+        cap: f32,
+        distance: f32,
+    ) -> Vec<(f32, DVec3, f64)> {
+        let mut body = self.clone();
+        let dt = 0.05;
+        let mut v = speed.max(0.0);
+        let mut d = 0.0;
+        if v < 0.1 {
+            for _ in 0..8 { body.drive(dt, 0.0, way); }
+        }
+        let mut poses = vec![(0.0, body.position, body.heading)];
+        for _ in 0..1200 {
+            if d >= distance { break; }
+            v = (v + accel.max(0.3) * dt).min(cap.max(0.5));
+            d += v * dt;
+            body.drive(dt, v, &|offset| way(d + offset));
+            let mut position = body.position;
+            position.z = way(d).z;
+            poses.push((d, position, body.heading));
+        }
+        poses
+    }
+
+    /// Choose the pursuit horizon whose realized front corner best clears the
+    /// obstacle. Keep steering rate/lock and pose integration identical to driving.
+    pub fn recover_corner(&mut self, way: &dyn Fn(f32) -> DVec3, extent: (f32, f32, f32), obstacle: &crate::collision::Obb) {
+        let mut best = (f64::MIN, self.recovery_preview_scale, None);
+        for scale in [0.5, 0.75, 1.0, 1.25, 1.5] {
+            let mut probe = self.clone();
+            probe.steering_recovery = 2.0 * self.wheelbase;
+            probe.recovery_preview_scale = scale;
+            probe.recovery_steer = None;
+            for _ in 0..10 { probe.drive(0.1, 0.0, way); }
+            probe.drive(0.1, 0.5, way);
+            let body = crate::collision::Obb::vehicle(probe.position.truncate(), probe.heading,
+                extent.0 as f64, extent.1 as f64, extent.2 as f64);
+            let gap = body.separation(obstacle);
+            if gap > best.0 { best = (gap, scale, None); }
+        }
+        // A side contact can require counter-steering briefly (e.g. the middle
+        // of a long bus beside a post). A horizon change alone cannot express it.
+        for angle in [-self.max_steer, 0.0, self.max_steer] {
+            let mut probe = self.clone();
+            probe.recovery_steer = Some((angle, 0.75));
+            for _ in 0..10 { probe.drive(0.1, 0.0, way); }
+            probe.drive(0.1, 0.5, way);
+            let body = crate::collision::Obb::vehicle(probe.position.truncate(), probe.heading,
+                extent.0 as f64, extent.1 as f64, extent.2 as f64);
+            let gap = body.separation(obstacle);
+            if gap > best.0 + 1e-4 { best = (gap, 1.0, Some((angle, 0.75))); }
+        }
+        self.steering_recovery = 2.0 * self.wheelbase;
+        self.recovery_preview_scale = best.1;
+        self.recovery_steer = best.2;
+    }
+
     /// Bicycle model: the rotation point follows the way, the front wheels steer towards a
     /// point further along it (pure pursuit, looking further ahead the faster the car goes).
     fn drive(&mut self, dt: f32, speed: f32, way: &dyn Fn(f32) -> DVec3) {
@@ -468,7 +550,10 @@ impl AiBody {
         // amplified the already advanced command and fed that extra speed into the next
         // tick. Steering follows the way; only the longitudinal owner may choose speed.
         let v = speed.max(0.0);
-        let look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
+        let normal_look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
+        let look = if self.steering_recovery > 0.0 {
+            (normal_look * self.recovery_preview_scale).max(3.5)
+        } else { normal_look };
         let g = way(self.rot_long + look).truncate() - self.rear;
         let alpha = (g.dot(right) as f32)
             .atan2(g.dot(fwd) as f32)
@@ -510,10 +595,11 @@ impl AiBody {
                 }
             }
         }
-        let want = (2.0 * self.wheelbase * alpha.sin() / reach)
+        let pursuit = (2.0 * self.wheelbase * alpha.sin() / reach)
             .atan()
             .to_degrees()
             .clamp(-limit, limit);
+        let want = self.recovery_steer.map(|r| r.0).unwrap_or(pursuit);
         if dt > 0.0 {
             let rate = self.steer_rate * dt * if limit > self.max_steer { 1.5 } else { 1.0 };
             self.steer_cmd += (want - self.steer_cmd).clamp(-rate, rate);
@@ -524,6 +610,11 @@ impl AiBody {
         let mid = dir(self.heading + dpsi.to_degrees() * 0.5);
         self.rear += mid * (v * dt) as f64;
         self.travelled += (v * dt).abs();
+        self.steering_recovery = (self.steering_recovery - (v * dt).abs()).max(0.0);
+        if let Some((angle, remaining)) = self.recovery_steer {
+            self.recovery_steer = (remaining > (v * dt).abs())
+                .then_some((angle, remaining - (v * dt).abs()));
+        }
         self.heading = (self.heading + dpsi.to_degrees()).rem_euclid(360.0);
         self.yaw_rate = if dt > 0.0 {
             (dpsi / dt as f64) as f32
@@ -1038,7 +1129,7 @@ mod tests {
     }
 
     /// A two-axle lorry: 4.5 m between the axles, a turning circle of 11 m radius.
-    fn lorry() -> Vehicle {
+    pub(super) fn lorry() -> Vehicle {
         let mut v = Vehicle {
             mass: 12.0,
             moment_of_inertia: [40.0, 10.0, 45.0],

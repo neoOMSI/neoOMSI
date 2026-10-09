@@ -287,6 +287,8 @@ impl Traffic {
             net,
             street_weight,
             parked,
+            parked_shapes: Arc::new(Vec::new()),
+            parked_collision: Default::default(),
             parked_waiting: Vec::new(),
             lane_tiles: lane_tiles.into_iter().collect(),
             lanes_generation: 0,
@@ -369,6 +371,7 @@ impl Traffic {
             capture_written: false,
         };
         t.sort_parked(parked_cars, lanes);
+        t.refresh_parked_geometry(world);
         Ok(t)
     }
 

@@ -304,6 +304,10 @@ pub struct Traffic {
     /// lateral offset of the car's centre, + = right). A car in the lane's middle is an
     /// obstacle to stop behind; one over the kerb side is passed with a swerve to the left.
     parked: HashMap<usize, Vec<(f32, f32)>>,
+    /// Exact parked bodies, independent of their nearest-lane assignment. A bus
+    /// leaving a bend can meet a car assigned to the neighbouring road segment.
+    parked_shapes: Arc<Vec<Obb>>,
+    parked_collision: ::simulation::collision::CollisionWorld,
     /// Parked cars no lane has been found beside yet: the lane may come with a tile that is
     /// not loaded yet (a road spline often starts in the next tile). Most stand in car parks
     /// and stay here.

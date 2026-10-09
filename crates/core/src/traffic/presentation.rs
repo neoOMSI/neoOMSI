@@ -479,6 +479,7 @@ impl Traffic {
                 Some(p) if p.done => {
                     let c = self.cars.swap_remove(i);
                     if world.return_parked(renderer, scene, p.key) {
+                        self.refresh_parked_geometry(world);
                         if let Some(list) = self.parked.get_mut(&p.lane) {
                             list.push((p.s, p.lat));
                         } else {

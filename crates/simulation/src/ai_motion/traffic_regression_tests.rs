@@ -1,5 +1,5 @@
 //! Exercise controller decisions through the actual bicycle-model realization.
-use super::{AiBody, MotionKind, tests::golf};
+use super::{AiBody, MotionKind, tests::golf, tests::lorry};
 use glam::{DVec2, DVec3};
 use traffic::*;
 
@@ -14,6 +14,122 @@ fn road() -> Network {
     };
     net.link(1.5);
     net
+}
+
+#[test]
+fn a_blocked_long_vehicle_can_turn_its_wheels_without_moving_through_the_obstacle() {
+    let mut body = AiBody::new(&lorry(), MotionKind::Road);
+    let way = super::straight_pull_out(3.0, 12.0);
+    body.place(&way, None, None, 0.0);
+    let before = body.clone();
+    for _ in 0..100 {
+        body.step(0.02, 1.0, &way, None, None);
+        body.reject_motion(&before);
+        assert_eq!(body.position, before.position);
+        assert_eq!(body.heading, before.heading);
+        assert_eq!(body.realized_speed(0.02), 0.0);
+    }
+    assert!(body.steer < -10.0, "rollback also erased the wheel turn: {}", body.steer);
+    body.step(0.02, 1.0, &way, None, None);
+    assert!(body.heading > 359.0, "turned wheels should steer immediately when room becomes available");
+    assert!(body.realized_speed(0.02) > 0.9);
+}
+
+#[test]
+fn a_long_bus_recovers_at_a_parked_cars_corner_by_finishing_its_wheel_turn() {
+    use crate::collision::Obb;
+    let mut def = lorry();
+    def.rot_pnt_long = -3.0;
+    def.axles[0].long = 2.9;
+    def.axles[1].long = -3.0;
+    let extent = (5.68, 3.88, 1.24);
+    let parked = Obb::from_box([1.7, 4.4, 1.5, 0.0, 0.0, 0.75],
+        DVec3::new(2.8, 7.39, 0.0), 60.0);
+    let curve = super::straight_pull_out(4.0, 6.0);
+    let mut body = AiBody::new(&def, MotionKind::Road);
+    body.place(&curve, None, None, 0.0);
+    let footprint = |b: &AiBody| Obb::vehicle(b.position.truncate(), b.heading,
+        extent.0, extent.1, extent.2);
+    assert!(!footprint(&body).overlaps_plan(&parked));
+    let mut distance = 0.0;
+    let mut rejected = 0;
+    for _ in 0..1000 {
+        let before = body.clone();
+        body.step(0.02, 1.0, &|d| curve(distance + d), None, None);
+        if footprint(&body).overlaps_plan(&parked) {
+            body.reject_motion(&before);
+            body.recover_corner(&|d| curve(distance + d),
+                (extent.0 as f32, extent.1 as f32, extent.2 as f32), &parked);
+            rejected += 1;
+        }
+        assert!(!footprint(&body).overlaps_plan(&parked), "bus drove through the parked car");
+        distance += body.realized_speed(0.02) * 0.02;
+    }
+    assert!(rejected > 0, "fixture must exercise a blocked corner");
+    assert!(distance > 15.0, "bus remained stuck after turning its wheels: {distance}, heading {}, steer {}", body.heading, body.steer);
+}
+
+#[test]
+fn a_real_car_passes_a_stopped_bus_on_the_oncoming_lane_and_returns_without_contact() {
+    let mut net = road();
+    net.lanes.push(LaneBuilder::polyline(
+        vec![DVec3::new(-3.5, 400.0, 0.0), DVec3::new(-3.5, 0.0, 0.0)],
+        LaneKind::Street, 3.5));
+    net.link(1.5);
+    let mut state = AiState::new(0, 60.0, 1);
+    state.front = 2.1;
+    state.rear = 2.1;
+    state.length = 4.2;
+    state.plan_next(&net);
+    let mut body = AiBody::new(&golf(), MotionKind::Road);
+    body.place(&|d| state.way_point(&net, d), None, None, 0.0);
+    let bus = BodyFootprint::new(VehicleId(2), DVec2::new(0.0, 72.35), DVec2::Y,
+        5.0, 1.25, 0.0, 3.5, 0.0);
+    let occupancy = Occupancy::build(net.version(), 0, vec![bus]);
+    let mut coordinator = ManeuverCoordinator::new();
+    let mut memory = ManeuverState::default();
+    let mut started = false;
+    let mut returned = false;
+    for tick in 0..1600 {
+        let mut actor = ManeuverActor::new(VehicleId(1), 0, state.s);
+        actor.front = state.front;
+        actor.rear = state.rear;
+        actor.length = state.length;
+        actor.half_width = 0.85;
+        actor.speed = state.speed;
+        actor.odometer = state.odometer;
+        actor.lateral = state.lateral;
+        actor.stopped = if !started { 5.0 } else { 0.0 };
+        let actors = [actor];
+        let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+            people: &[], static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+        let mut input = ManeuverInputs::new(0);
+        input.lead_gap = Some(67.35 - state.s - state.front);
+        input.lead_standing = true;
+        input.obstacle_len = 10.0;
+        let decision = coordinator.plan(&scene, &mut memory, &input);
+        started |= memory.passing.is_some();
+        if let Some(target) = decision.lateral_target { state.lateral_target = target; }
+        if let Some(ramp) = decision.lateral_ramp { state.lateral_ramp = ramp; }
+        state.accel_cap = decision.accel_cap;
+        let previous = state.odometer;
+        state.drive(&net, 0.02, None, decision.stop_at);
+        body.step(0.02, state.speed, &|d| state.way_point(&net, d), None, None);
+        let h = body.heading.to_radians();
+        let foot = BodyFootprint::new(VehicleId(1), body.position.truncate(),
+            DVec2::new(h.sin(), h.cos()), 2.1, 0.85, 0.0, 1.5, state.speed);
+        assert!(!foot.overlaps(&bus, 0.0), "car clipped the bus at {:?}", body.position);
+        let speed = body.realized_speed(0.02);
+        state.commit_feedback(&net, RealizedMotion { pose: body.position,
+            heading_deg: body.heading as f32, speed, half_width: 0.85 });
+        state.odometer = previous + speed * 0.02;
+        if started && memory.passing.is_none() && body.position.y > 90.0 && body.position.x.abs() < 0.2 {
+            returned = true;
+            break;
+        }
+    }
+    assert!(started, "passing did not start");
+    assert!(returned, "car did not return from the oncoming lane: {:?}", body.position);
 }
 
 #[test]

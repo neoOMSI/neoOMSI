@@ -210,8 +210,23 @@ impl Traffic {
         let by_lane = occupancy.lane_view(&self.index_of);
         let maneuver_people: Vec<_> = self.people.iter().map(|&(p, _, _)| p).collect();
         let road_collision = self.road_collision.clone();
+        let maneuver_geometry: HashMap<_, _> = self.cars.iter().map(|c| {
+            let parts: Vec<_> = c.vehicle.trailers.iter().filter_map(|t| {
+                let (back, front) = t.couplings();
+                Some(safety::SweepTrailer { position: t.position, heading: t.heading,
+                    back: back.truncate().as_dvec2(), front: front.truncate().as_dvec2(),
+                    length: t.pivot_length() as f64, bbox: t.ty.def.bounding_box?,
+                    lift: t.position.z - c.vehicle.contact.as_deref()
+                        .and_then(|g| g.road_height(t.position.x, t.position.y, t.position.z, 1.5))
+                        .unwrap_or(c.body.position.z),
+                    max_angle: t.ty.def.coupling_front_character
+                        .filter(|c| c[3] != 0.0 && c[0] > 0.0).map(|c| c[0] as f64) })
+            }).collect();
+            (c.id, (c.vehicle.contact.clone(), c.caps.rear, parts, c.body.clone()))
+        }).collect();
         let scenery_clear = |samples: &[::traffic::perception::SweepSample], actor: &ManeuverActor| {
-            safety::scenery_clear(&road_collision, samples, actor)
+            let Some((contact, rear, parts, body)) = maneuver_geometry.get(&actor.id) else { return false; };
+            safety::articulated_clear(&road_collision, &occupancy, samples, actor, contact.as_deref(), *rear, parts, body)
         };
         // The external road users' synthetic ids (see `body_feet`): bodies to keep clear of,
         // not AI blockers to sort out by `geo_block`.
@@ -502,32 +517,37 @@ impl Traffic {
                 let passing = car.maneuver.passing.map(|p| !p.aborted).unwrap_or(false);
                 let mut swerve: Option<f32> = None;
                 let mut stand: Option<(f32, usize, f32, f32)> = None;
-                let mut check = |along: f32, lat: f32, lane: usize, at: f32| {
+                let mut check = |along: f32, lat: f32, lane: usize, at: f32, width: f32, length: f32| {
                     if !(-6.0..=100.0).contains(&along) {
                         return;
                     }
                     let a = lat.abs();
+                    let side_extent = if along < st.front + 3.3 {
+                        let lane_heading = self.net.lanes[st.lane].at(st.s).1;
+                        safety::side_extent(st.front, st.rear, car.half_width,
+                            car.vehicle.heading as f32 - lane_heading, lat.signum())
+                    } else { car.half_width };
                     // in the way at the side the car is on now (a car pulled out onto the
                     // other half passes it)
                     let blocks = if passing {
-                        (lat - st.lateral_ahead(along)).abs() < car.half_width + 0.9 + 0.2
+                        (lat - st.lateral_ahead(along)).abs() < car.half_width + width + 0.2
                     } else {
                         a < 0.9
                     };
                     if blocks {
                         if along > 0.0 {
-                            let gap = along - 2.3 - st.front;
+                            let gap = along - length - st.front;
                             if stand.map(|o| gap < o.0).unwrap_or(true) {
                                 stand = Some((gap, lane, at, lat));
                             }
                         }
-                    } else if !passing && a < car.half_width + 0.9 + 0.15 && along < 30.0 {
+                    } else if !passing && a < side_extent + width + 0.15 && along < 30.0 {
                         // (only as far as the two bodies would touch: OMSI's cars keep to
                         // their paths, and moved out by a margin of our own round every car
                         // at the kerb - 2.7 m from the lane's middle - the traffic of a
                         // narrow British street lined with parked cars wove to and fro
                         // across the road instead of keeping to its lane)
-                        let need = (car.half_width + 0.9 + 0.15 - a) * -lat.signum();
+                        let need = (side_extent + width + 0.15 - a) * -lat.signum();
                         swerve = Some(
                             swerve
                                 .map(|w| if w.abs() > need.abs() { w } else { need })
@@ -550,7 +570,30 @@ impl Traffic {
                         continue;
                     }
                     for &(s, lat) in self.parked.get(&l).map(|v| v.as_slice()).unwrap_or(&[]) {
-                        check(d + s, lat, l, s);
+                        check(d + s, lat, l, s, 0.9, 2.3);
+                    }
+                }
+                if !passing && leaving.is_none() {
+                    // Lane assignment is a population hint, not physical clearance.
+                    // Project nearby actual parked boxes onto this route as well, so
+                    // a car on the next/adjacent segment cannot hide a corner from a bus.
+                    let probe = Obb::vehicle(car.vehicle.position.truncate(), car.vehicle.heading,
+                        35.0, st.rear as f64 + 3.0, 6.0);
+                    let route: Vec<_> = near_way.iter().map(|w| w.0).collect();
+                    for j in self.parked_collision.near(&probe) {
+                        let parked = &self.parked_collision.boxes[j];
+                        let p = parked.center.extend(parked.z0);
+                        let Some((ri, at, lat)) = self.net.project_on_route_lateral(&route, p) else { continue };
+                        let (lane, d) = near_way[ri];
+                        let (q, heading) = self.net.lanes[lane].at(at);
+                        if (p.z - q.z).abs() > 2.0 || (p - q).truncate().length() > 6.0 { continue; }
+                        let h = (heading as f64).to_radians();
+                        let right = DVec2::new(h.cos(), -h.sin());
+                        let forward = DVec2::new(h.sin(), h.cos());
+                        let [r, f] = parked.axes();
+                        let width = (parked.half.x * r.dot(right).abs() + parked.half.y * f.dot(right).abs()) as f32;
+                        let length = (parked.half.x * r.dot(forward).abs() + parked.half.y * f.dot(forward).abs()) as f32;
+                        check(d + at, lat, lane, at, width, length);
                     }
                 }
                 // a bus standing half in its bay: squeeze past on
@@ -611,6 +654,15 @@ impl Traffic {
                         lead = Some((l, None));
                         parked_ahead = true;
                     }
+                }
+                if swerve.is_none() {
+                    if let Some(ramp) = car.maneuver.kerb_ramp.filter(|r|
+                        st.odometer < r.2 + r.3 + st.rear + 3.0)
+                    { swerve = Some(ramp.1); }
+                }
+                if swerve.is_none() && (car.motion_fault.is_some() || car.scenery_streak > 0.0) {
+                    swerve = safety::corner_swerve(&self.road_collision, &occupancy, car.id, &self.net, st,
+                        &car.body, &car.vehicle, &car.caps);
                 }
                 kerb_swerve = swerve;
             }
@@ -984,7 +1036,7 @@ impl Traffic {
                         demand: StopDemand { wanted, rail },
                         feedback,
                         passing: car.maneuver.passing.is_some(),
-                        kerb_swerve,
+                        kerb_swerve: car.maneuver.kerb_ramp.map(|r| r.1).or(kerb_swerve),
                         junction_first,
                     };
                     let scene = ServiceScene {
@@ -1410,23 +1462,28 @@ impl Traffic {
                         contact.as_deref(),
                     );
                     if let Some(before) = before {
-                        let moved = body.position != before.position || body.heading != before.heading;
-                        let blocked = moved && road_collision.hit(&safety::road_body_box(vehicle, body, caps)).is_some()
+                        let moved = body.position.truncate() != before.position.truncate() || body.heading != before.heading;
+                        let obstruction = moved.then(|| road_collision.hit(&safety::road_body_box(vehicle, body, caps))).flatten();
+                        let blocked = obstruction.is_some()
                             && road_collision.hit(&safety::road_body_box(vehicle, &before, caps)).is_none();
-                        if blocked && **streak < 2.0 {
+                        if blocked {
+                            let first = **streak == 0.0;
                             **streak += dt;
-                        }
-                        if moved && !blocked {
-                            **streak = 0.0;
-                        }
-                        if blocked && **streak < 2.0 {
-                            **body = before;
-                            body.stop_motion();
+                            body.reject_motion(&before);
+                            if first || (**streak / 0.5).floor() != ((**streak - dt) / 0.5).floor() {
+                                body.recover_corner(&|d| state.way_point(net, d),
+                                    (caps.front, caps.rear, caps.half_width), &obstruction.unwrap());
+                            }
                             frame.speed = 0.0;
                             frame.brake = true;
-                            if fault.is_none() { log::warn!("AI scenery sweep blocked {}", vehicle.ty.def.path.display()); }
+                            if first {
+                                log::warn!("AI scenery sweep blocked {} at {:?}, lane {}, heading {:.1}, steer {:.1}, lateral {:.2}, target {:.2}; obstacle {:?}",
+                                    vehicle.ty.def.path.display(), before.position, state.lane,
+                                    before.heading, body.steer, state.lateral, state.lateral_target, obstruction);
+                            }
                             **fault = Some(Reason::SceneryBlocked);
                         } else {
+                            if moved { **streak = 0.0; }
                             **fault = None;
                         }
                     }

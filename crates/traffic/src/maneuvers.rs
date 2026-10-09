@@ -67,6 +67,9 @@ pub const DISCRETIONARY_DWELL: f32 = 0.6;
 pub const OSCILLATION_WINDOW: f32 = 8.0;
 /// How far ahead a turn lane is entered (m).
 pub const TURN_LANE_LOOKAHEAD: f32 = 150.0;
+/// A stopped corner-clearance ramp (m). Provisional improvement: lets the wheels
+/// turn toward nearby clearance while realization still rejects every collision.
+pub const CORNER_RECOVERY_RAMP: f32 = 2.0;
 
 // ---- pure ramp geometry (also used by the realization) --------------------------------
 
@@ -192,6 +195,9 @@ pub struct ManeuverState {
     pub dwell_code: i16,
     /// Committed courtesy trajectory; keep its odometer anchor while yielding.
     pub emergency_ramp: Option<(f32, f32, f32, f32)>,
+    /// A stopped vehicle's corner-clearance trajectory, anchored until it clears
+    /// the parked row. Re-anchoring it every tick prevents steering recovery.
+    pub kerb_ramp: Option<(f32, f32, f32, f32)>,
 }
 
 // ---- frozen per-tick scene and inputs --------------------------------------------------
@@ -537,6 +543,7 @@ impl ManeuverCoordinator {
         if input.emergency.is_none() {
             state.emergency_ramp = None;
         }
+        if input.kerb_swerve.is_none() { state.kerb_ramp = None; }
 
         // A committed lane change finished or was cancelled: start its cooldown.
         if state.change_to.is_some() && actor.change.is_none() {
@@ -606,9 +613,25 @@ impl ManeuverCoordinator {
 
         // A safety swerve round a parked/standing body at the kerb.
         if let Some(lat) = input.kerb_swerve {
-            if lat.abs() > 0.3 {
+            if lat.abs() > 0.3 || state.kerb_ramp.is_some()
+                || (actor.speed < 0.1 && actor.stopped > 1.0 && (lat - actor.lateral).abs() > 0.1)
+            {
                 let mut d = ManeuverDecision::new(ManeuverPhase::Idle);
-                d.lateral_target = Some(lat);
+                if state.kerb_ramp.is_some_and(|r| r.1.signum() != lat.signum()) {
+                    state.kerb_ramp = None;
+                }
+                if let Some(ramp) = state.kerb_ramp.as_mut() {
+                    if lat.abs() > ramp.1.abs() + 0.1 { ramp.1 = lat; }
+                }
+                if let Some(ramp) = state.kerb_ramp.filter(|r| r.1.signum() == lat.signum()) {
+                    d.lateral_target = Some(ramp.1);
+                    d.lateral_ramp = Some(ramp);
+                } else if actor.speed < 0.1 && actor.stopped > 1.0 {
+                    let ramp = (actor.lateral, lat, actor.odometer, CORNER_RECOVERY_RAMP);
+                    state.kerb_ramp = Some(ramp);
+                    d.lateral_target = Some(lat);
+                    d.lateral_ramp = Some(ramp);
+                } else { d.lateral_target = Some(lat); }
                 d.reasons.push(Reason::Parking);
                 return d;
             }
@@ -819,9 +842,7 @@ impl ManeuverCoordinator {
             if self.open_to(net, actor, left) {
                 let s_left = net.beside_s(actor.lane, left, actor.s);
                 if let Some((gap, v, owner)) = self.nearest_ahead_on_way(scene, actor, 45.0) {
-                    let standing = v < 0.3 && scene.actors.iter().find(|a| a.id == owner)
-                        .map(|a| a.at_stop || (a.stopped > 25.0 && !a.light_hold && !a.yielding))
-                        .unwrap_or(actor.stopped > 10.0);
+                    let standing = v < 0.3 && self.standing_queue(scene, actor, owner);
                     let bypass = standing && (actor.speed > 0.5 || actor.stopped >= 3.0);
                     let room = if bypass {
                         BYPASS_RAMP + actor.front + actor.speed * SIGNAL_BEFORE_CHANGE
@@ -832,7 +853,8 @@ impl ManeuverCoordinator {
                         && (bypass || (actor.speed >= 4.0 && actor.stopped <= 0.0))
                         && gap > if bypass { actor.pass_room.max(actor.min_gap) - 0.3 } else { 8.0 }
                         && self.parallel_room(scene, actor, left, room)
-                        && self.lane_clear(scene, actor.id, left, s_left, 20.0, 50.0)
+                        && self.merge_gaps_clear(scene, actor, left, s_left,
+                            if bypass { BYPASS_RAMP } else { (actor.speed * 3.0).max(12.0) })
                     {
                         wish = Some((left, pass_dir, if bypass { 3 } else { 1 }));
                     }
@@ -873,6 +895,28 @@ impl ManeuverCoordinator {
                 || (a == actor.lane && actor.planned_next.is_some_and(|n| n != na))
             { return false; }
             (a, b, sa, sb) = (na, nb, 0.0, 0.0);
+        }
+        false
+    }
+
+    /// Follow the frozen leader chain, including across spline joints. A car behind a
+    /// boarding bus has the same passing opportunity as the first car behind it; a
+    /// signal or junction queue does not. Do not depend on last tick's container order.
+    fn standing_queue(&self, scene: &ManeuverScene, actor: &ManeuverActor, owner: VehicleId) -> bool {
+        let mut owner = owner;
+        let mut seen = vec![actor.id];
+        for _ in 0..16 {
+            if seen.contains(&owner) { return false; }
+            seen.push(owner);
+            let Some(leader) = scene.actors.iter().find(|a| a.id == owner) else {
+                return actor.stopped > 10.0;
+            };
+            if leader.speed >= 0.3 || leader.light_hold || leader.yielding { return false; }
+            if leader.at_stop { return true; }
+            let next = self.nearest_ahead_on_way(scene, leader, leader.pass_room.max(8.0) + 2.0);
+            let Some((_, speed, next)) = next else { return leader.stopped > 25.0; };
+            if leader.stopped < 3.0 || speed >= 0.3 { return false; }
+            owner = next;
         }
         false
     }
@@ -1140,34 +1184,45 @@ impl ManeuverCoordinator {
     ) -> bool {
         let net = scene.net;
         let way = way_of(net, actor, pass_len + 4.0);
-        let mut samples: Vec<SweepSample> = Vec::new();
-        let mut d = 0.0f32;
-        while d <= pass_len {
-            let Some((lane, u)) = way_locate(net, &way, d) else {
-                return false;
-            };
+        self.sweep_path_clear(scene, actor, &|d| {
+            let (lane, u) = way_locate(net, &way, d)?;
             let (p, h) = net.lanes[lane].at(u);
             let hr = (h as f64).to_radians();
-            let off = lat(d) as f64;
-            let p = p + DVec3::new(hr.cos(), -hr.sin(), 0.0) * off;
+            Some(p + DVec3::new(hr.cos(), -hr.sin(), 0.0) * lat(d) as f64)
+        }, pass_len, need)
+    }
+
+    fn sweep_path_clear(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        point: &impl Fn(f32) -> Option<DVec3>,
+        distance: f32,
+        need: f64,
+    ) -> bool {
+        let mut samples: Vec<SweepSample> = Vec::new();
+        let mut d = 0.0f32;
+        while d <= distance {
+            let Some(p) = point(d) else { return false; };
+            let Some(q) = point(d + 0.5) else { return false; };
             samples.push(SweepSample {
                 p,
                 d,
-                dir: DVec2::new(hr.sin(), hr.cos()),
+                dir: (q - p).truncate().normalize_or_zero(),
             });
             d += 1.0;
         }
-        for i in 0..samples.len().saturating_sub(1) {
-            let tangent = (samples[i + 1].p - samples[i].p).truncate().normalize_or_zero();
-            if tangent.length_squared() > 0.5 { samples[i].dir = tangent; }
-        }
         // Check the whole car, including its swinging front corner. Cross-sections
         // alone can approve a path whose centre clears a bus but whose bumper clips it.
+        // Articulated rear sections have their own geometry; total rear extent is
+        // used for return room, not a rigid box rotated with the tractor.
+        let rear = scene.occupancy.feet().iter().find(|b| b.owner == actor.id && b.part == 0)
+            .map(|b| b.rear).unwrap_or(actor.rear);
         for sample in &samples {
             let center = sample.p.truncate()
-                + sample.dir * ((actor.front - actor.rear) * 0.5) as f64;
+                + sample.dir * ((actor.front - rear) * 0.5) as f64;
             let probe = crate::BodyFootprint::new(actor.id, center, sample.dir,
-                ((actor.front + actor.rear) * 0.5) as f64, actor.half_width as f64 + need,
+                ((actor.front + rear) * 0.5) as f64, actor.half_width as f64 + need,
                 sample.p.z, sample.p.z + actor.height as f64, actor.speed);
             let mut contact = false;
             scene.occupancy.near(center, probe.half_len + probe.half_w, |body| {
@@ -1181,7 +1236,7 @@ impl ManeuverCoordinator {
         {
             // The first body the ghost path meets: if it is the obstacle itself, the ramp did
             // not clear it. Any hit inside the maneuver means the path is not clear.
-            if hit.d <= pass_len {
+            if hit.d <= distance {
                 return false;
             }
         }
@@ -1326,6 +1381,11 @@ impl ManeuverCoordinator {
     }
 
     fn can_merge_ramp(&self, scene: &ManeuverScene, actor: &ManeuverActor, to: usize, s_to: f32, ramp: f32) -> bool {
+        if !self.merge_gaps_clear(scene, actor, to, s_to, ramp) { return false; }
+        self.merge_trajectory_clear(scene, actor, to, s_to, ramp)
+    }
+
+    fn merge_gaps_clear(&self, scene: &ManeuverScene, actor: &ManeuverActor, to: usize, s_to: f32, ramp: f32) -> bool {
         if to >= scene.net.lanes.len() {
             return false;
         }
@@ -1364,13 +1424,37 @@ impl ManeuverCoordinator {
             }
           }
         }
+        true
+    }
+
+    fn merge_trajectory_clear(&self, scene: &ManeuverScene, actor: &ManeuverActor, to: usize, s_to: f32, ramp: f32) -> bool {
         // Include the lateral transition, not only the gaps on its destination lane.
-        let (from_p, h) = scene.net.lanes[actor.lane].at(actor.s);
-        let (to_p, _) = scene.net.lanes[to].at(s_to);
-        let h = h.to_radians() as f64;
-        let target = (to_p - from_p).truncate().dot(DVec2::new(h.cos(), -h.sin())) as f32;
-        let lat = |d: f32| actor.lateral + (target - actor.lateral) * smooth01((d / ramp).clamp(0.0, 1.0));
-        if !self.sweep_clear(scene, actor, &lat, ramp, 0.0) {
+        // Realization blends the source and destination ways. A constant lateral
+        // offset is wrong when they curve differently or join one continuation:
+        // after that joint it invents another lane's width of sideways travel.
+        let net = scene.net;
+        let source = way_of(net, actor, ramp + 4.0);
+        let mut target_actor = actor.clone();
+        target_actor.lane = to;
+        target_actor.s = s_to;
+        target_actor.planned_next = if actor.route_next == Some(to) {
+            actor.planned_next
+        } else {
+            net.parallel_continuation(actor.lane, to).map(|(_, next)| next)
+                .or_else(|| net.lanes[to].next.first().copied())
+        };
+        let destination = way_of(net, &target_actor, ramp + 4.0);
+        let point = |d: f32| {
+            let (a, sa) = way_locate(net, &source, d)?;
+            let (b, sb) = way_locate(net, &destination, d)?;
+            let (p, heading) = net.lanes[a].at(sa);
+            let q = net.lanes[b].at(sb).0;
+            let k = smooth01((d / ramp).clamp(0.0, 1.0));
+            let h = (heading as f64).to_radians();
+            Some(p.lerp(q, k as f64) + DVec3::new(h.cos(), -h.sin(), 0.0)
+                * (actor.lateral * (1.0 - k)) as f64)
+        };
+        if !self.sweep_path_clear(scene, actor, &point, ramp, 0.0) {
             return false;
         }
         true
