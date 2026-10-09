@@ -366,3 +366,214 @@ fn bus_bypass_keeps_its_curve_and_real_body_across_a_spline_joint() {
         "did not settle on the left lane"
     );
 }
+
+/// A timetable bus round a junction made of short lanes, closed loop: the planner drives,
+/// the body follows its way, and the body's pose is fed back every tick, as in the game. The
+/// body must move continuously: it was once put back a whole lane when the feedback moved the
+/// planner over a joint without repairing the lane behind it.
+#[test]
+fn a_bus_round_short_junction_lanes_never_jumps() {
+    let street = |pts: Vec<DVec3>| LaneBuilder::polyline(pts, LaneKind::Street, 3.0);
+    let mut net = Network {
+        lanes: vec![
+            street(vec![DVec3::new(0.0, -60.0, 0.0), DVec3::new(0.0, 40.0, 0.0)]),
+            street(vec![
+                DVec3::new(0.0, 40.0, 0.0),
+                DVec3::new(0.3, 44.0, 0.0),
+                DVec3::new(1.5, 47.0, 0.0),
+                DVec3::new(4.0, 49.5, 0.0),
+                DVec3::new(8.0, 51.0, 0.0),
+                DVec3::new(12.0, 51.5, 0.0),
+            ]),
+            street(vec![DVec3::new(12.0, 51.5, 0.0), DVec3::new(18.0, 51.5, 0.0)]),
+            street(vec![DVec3::new(18.0, 51.5, 0.0), DVec3::new(120.0, 51.5, 0.0)]),
+        ],
+        ..Default::default()
+    };
+    net.link(1.5);
+    for def in [lorry(), golf()] {
+        let mut state = AiState::new(0, 20.0, 3);
+        state.front = 5.0;
+        state.rear = 5.0;
+        state.length = 10.0;
+        state.desire = 1.0;
+        state.set_route(&net, vec![0, 1, 2, 3], 20.0);
+        let mut body = AiBody::new(&def, MotionKind::Road);
+        body.place(&|d| state.way_point(&net, d), None, None, 0.0);
+        let dt = 0.02;
+        let mut last = body.position;
+        let mut worst = 0.0f64;
+        for tick in 0..4000 {
+            state.drive(&net, dt, None, None);
+            body.step(dt, state.speed, &|d| state.way_point(&net, d), None, None);
+            state.commit_feedback(
+                &net,
+                RealizedMotion {
+                    pose: body.position,
+                    heading_deg: body.heading as f32,
+                    speed: body.realized_speed(dt),
+                    half_width: 1.25,
+                },
+            );
+            let moved = (body.position - last).truncate().length();
+            worst = worst.max(moved);
+            assert!(moved < 1.0, "tick {tick}: the body jumped {moved:.2} m (lane {})", state.lane);
+            last = body.position;
+            if state.lane == 3 && state.s > 40.0 {
+                break;
+            }
+        }
+        assert_eq!(state.lane, 3, "the bus drove round the corner");
+        assert!(worst < 0.8);
+    }
+}
+
+/// A quarter-circle turn between two straights, then a short lane and a long one: the
+/// planner drives a timetable route, the body follows, the body's pose is fed back.
+fn corner_net(radius: f64, short: f64) -> Network {
+    let street = |pts: Vec<DVec3>| LaneBuilder::polyline(pts, LaneKind::Street, 3.0);
+    let arc: Vec<DVec3> = (0..=8)
+        .map(|k| {
+            let a = k as f64 / 8.0 * std::f64::consts::FRAC_PI_2;
+            DVec3::new(radius - radius * a.cos(), 40.0 + radius * a.sin(), 0.0)
+        })
+        .collect();
+    let end = *arc.last().unwrap();
+    let mut net = Network {
+        lanes: vec![
+            street(vec![DVec3::new(0.0, -40.0, 0.0), DVec3::new(0.0, 40.0, 0.0)]),
+            street(arc),
+            street(vec![end, end + DVec3::new(short, 0.0, 0.0)]),
+            street(vec![end + DVec3::new(short, 0.0, 0.0), end + DVec3::new(short + 100.0, 0.0, 0.0)]),
+        ],
+        ..Default::default()
+    };
+    net.link(1.5);
+    net
+}
+
+/// The body is the single pose owner and moves continuously: whatever the frame time, the
+/// sideways offset of a bay or a swerve, the size of the vehicle or the radius of the turn,
+/// it is never put somewhere else. (With the lane behind the bus left stale by the
+/// realization feedback, a bus with a 0.8 m offset round a 9 m turn at 20 frames a second
+/// jumped eleven metres - a lane length - back or on.)
+#[test]
+fn no_vehicle_is_put_somewhere_else_round_a_corner() {
+    let mut cases = 0;
+    for radius in [5.0, 9.0, 14.0] {
+        for short in [3.0, 8.0] {
+            let net = corner_net(radius, short);
+            for dt in [0.02f32, 0.05] {
+                for lateral in [0.0f32, 0.8, -0.8] {
+                    for stop_at in [0.0f32, 20.0, 45.0] {
+                        for def in [lorry(), golf()] {
+                            let mut state = AiState::new(0, 10.0, 3);
+                            state.front = 5.0;
+                            state.rear = 5.0;
+                            state.length = 10.0;
+                            state.desire = 1.0;
+                            state.set_route(&net, vec![0, 1, 2, 3], 10.0);
+                            state.lateral_target = lateral;
+                            let mut body = AiBody::new(&def, MotionKind::Road);
+                            body.place(&|d| state.way_point(&net, d), None, None, 0.0);
+                            let mut last = body.position;
+                            for tick in 0..8000 {
+                                // a red light or a leader for a moment, once past `stop_at`
+                                let stop = (stop_at > 0.0
+                                    && state.odometer >= stop_at
+                                    && state.odometer < stop_at + 1.0
+                                    && (tick as f32 * dt) as i32 % 2 == 0)
+                                    .then_some(state.front + 0.5);
+                                state.drive(&net, dt, None, stop);
+                                body.step(dt, state.speed, &|d| state.way_point(&net, d), None, None);
+                                state.commit_feedback(
+                                    &net,
+                                    RealizedMotion {
+                                        pose: body.position,
+                                        heading_deg: body.heading as f32,
+                                        speed: body.realized_speed(dt),
+                                        half_width: 1.25,
+                                    },
+                                );
+                                let moved = (body.position - last).truncate().length();
+                                assert!(
+                                    moved < 0.6,
+                                    "r {radius} short {short} dt {dt} lateral {lateral} stop {stop_at}: \
+                                     jumped {moved:.2} m at tick {tick} on lane {}",
+                                    state.lane
+                                );
+                                last = body.position;
+                                if state.lane == 3 && state.s > 30.0 {
+                                    break;
+                                }
+                            }
+                            cases += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 216);
+}
+
+/// What the realization does in the game, in one place: the body looks along its own way for
+/// scenery it would touch, the planner stops short of that, and a move into scenery is refused.
+#[test]
+fn a_bus_stops_short_of_a_post_its_swept_body_would_meet_instead_of_touching_it() {
+    use crate::collision::Obb;
+    let mut net = Network {
+        lanes: vec![LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 300.0, 0.0)],
+            LaneKind::Street,
+            3.5,
+        )],
+        ..Default::default()
+    };
+    net.link(1.5);
+    let (front, rear, half) = (5.5f32, 3.5f32, 1.25f32);
+    // a post at the kerb that the bus's flank just overlaps
+    let post = Obb::vehicle(DVec2::new(1.5, 80.0), 0.0, 0.3, 0.3, 0.3);
+    let touches = move |b: &AiBody| {
+        Obb::vehicle(b.position.truncate(), b.heading, front as f64, rear as f64, half as f64)
+            .overlaps_plan(&post)
+    };
+    let mut state = AiState::new(0, 10.0, 3);
+    state.front = front;
+    state.rear = rear;
+    state.length = front + rear;
+    state.desire = 1.0;
+    let mut body = AiBody::new(&lorry(), MotionKind::Road);
+    body.place(&|d| state.way_point(&net, d), None, None, 0.0);
+    let (dt, margin) = (0.02f32, 0.35f32);
+    let mut ahead: Option<f32> = None;
+    let mut refused = 0;
+    for _ in 0..3000 {
+        // (realization of the last tick)
+        if state.speed > 0.05 || ahead.is_some() {
+            let reach = (state.speed * state.speed / 6.0 + 4.0).clamp(4.0, 16.0);
+            ahead = body.distance_to_contact(&|d| state.way_point(&net, d), state.speed, reach, &touches);
+        }
+        let hold = ahead.map(|d| state.front + (d - margin).max(0.0));
+        state.drive(&net, dt, None, hold);
+        let before = body.clone();
+        body.step(dt, state.speed, &|d| state.way_point(&net, d), None, None);
+        if touches(&body) && !touches(&before) {
+            refused += 1;
+            body.reject_motion(&before);
+        }
+        state.commit_feedback(
+            &net,
+            RealizedMotion {
+                pose: body.position,
+                heading_deg: body.heading as f32,
+                speed: body.realized_speed(dt),
+                half_width: half as f64,
+            },
+        );
+    }
+    assert_eq!(refused, 0, "the body was refused a move into the post {refused} times");
+    assert!(state.speed < 0.1, "still moving at {} m/s", state.speed);
+    let gap = (80.0 - 0.3) - (body.position.y + front as f64);
+    assert!(gap > 0.0 && gap < 1.0, "stopped {gap:.2} m short of the post");
+}

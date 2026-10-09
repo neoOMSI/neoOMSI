@@ -114,13 +114,38 @@ pub(super) fn corner_swerve(
     body: &AiBody,
     vehicle: &VehicleInstance,
     caps: &VehicleCapabilities,
+    ahead: Option<f32>,
 ) -> Option<f32> {
     let mut probe = body.clone();
     probe.step(0.1, 0.5, &|d| state.way_point(net, d),
         vehicle.ground.as_ref().map(|g| g.as_ref() as &dyn Fn(f64, f64) -> Option<f64>),
         vehicle.contact.as_deref());
     let bbox = road_body_box(vehicle, &probe, caps);
-    let obstacle = collision.hit(&bbox)?;
+    let (bbox, obstacle) = match collision.hit(&bbox) {
+        Some(obstacle) => (bbox, obstacle),
+        None => {
+            // Not touching yet: the vehicle stopped short of what its realization saw
+            // coming (`scenery_ahead` metres on). Find that contact along the way, so the
+            // swerve is asked for before the bumper is against it.
+            let way = |d: f32| state.way_point(net, d);
+            let mut found = None;
+            let mut last = -1.0f32;
+            for (d, p, heading) in body.predict_poses(&way, 1.0, 0.3, 1.0, ahead? + 0.6) {
+                if d - last < 0.3 { continue; }
+                last = d;
+                probe.position = p;
+                probe.position.z = vehicle.contact.as_deref()
+                    .and_then(|g| g.road_height(p.x, p.y, p.z, 1.5)).unwrap_or(p.z);
+                probe.heading = heading;
+                let at = road_body_box(vehicle, &probe, caps);
+                if let Some(obstacle) = collision.hit(&at) {
+                    found = Some((at, obstacle));
+                    break;
+                }
+            }
+            found?
+        }
+    };
     let touch = bbox.contact(&obstacle)?;
     let lane = net.lanes.get(state.lane)?;
     let (s, _) = lane.nearest_point(body.position)?;

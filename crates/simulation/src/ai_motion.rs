@@ -171,6 +171,11 @@ struct Wheel {
 /// imperfect path heights in either direction. Later probes follow previous contacts and
 /// local path grade; missing wheels share the supported axle instead of dipping to terrain.
 const AI_CONTACT_RANGE: f64 = 1.5;
+/// A rear-axle target this far (m) from the body is not tracking error but a relocation, or a
+/// way that has not caught up with the body.
+const SNAP_DISTANCE: f64 = 8.0;
+/// How long (s) a way that far off is waited out before the body is put back on it.
+const SNAP_PATIENCE: f32 = 0.6;
 /// A wider search is needed only when no wheel has found the current road level at all.
 /// It corrects displaced path Z without lowering a single unsupported axle onto terrain.
 const AI_CONTACT_REACQUIRE: f64 = 3.0;
@@ -187,6 +192,9 @@ pub struct AiBody {
     steering_recovery: f32,
     recovery_preview_scale: f32,
     recovery_steer: Option<(f32, f32)>,
+    /// Seconds the way's rear-axle target has stood further than `SNAP_DISTANCE` from the
+    /// body (see `drive`).
+    lost: f32,
     front_long: f32,
     rear_long: f32,
     /// Largest front wheel angle (deg) and how fast the driver turns towards it (deg/s).
@@ -342,6 +350,7 @@ impl AiBody {
             steering_recovery: 0.0,
             recovery_preview_scale: 1.0,
             recovery_steer: None,
+            lost: 0.0,
             front_long,
             rear_long,
             max_steer,
@@ -493,6 +502,43 @@ impl AiBody {
         poses
     }
 
+    /// How far (m) this body would travel along `way` before `touches` reports contact, going
+    /// at `speed` (at least 1 m/s, so that a standing body still looks along its way). The real
+    /// steering is run - lock, rate and pure pursuit - so a bus's front corner and its swing
+    /// through a bend are where the real body will be, not where the lane centre line is.
+    /// `None`: it stays clear for `reach` metres, or already touches (a contact that exists is
+    /// not one it is about to make). The body is sampled every 0.5 m: a vehicle's box is far
+    /// longer than that, so nothing it would pass over is missed.
+    pub fn distance_to_contact(
+        &self,
+        way: &dyn Fn(f32) -> DVec3,
+        speed: f32,
+        reach: f32,
+        touches: &dyn Fn(&AiBody) -> bool,
+    ) -> Option<f32> {
+        if touches(self) {
+            return None;
+        }
+        let mut probe = self.clone();
+        let v = speed.max(1.0);
+        let dt = 0.05;
+        let (z0, z_body) = (way(0.0).z, self.position.z);
+        let (mut x, mut checked) = (0.0f32, 0.0f32);
+        while x < reach {
+            let at = x;
+            probe.drive(dt, v, &|d| way(at + d));
+            x += v * dt;
+            if x - checked >= 0.5 {
+                checked = x;
+                probe.position.z = z_body + (way(x).z - z0);
+                if touches(&probe) {
+                    return Some(x);
+                }
+            }
+        }
+        None
+    }
+
     /// Choose the pursuit horizon whose realized front corner best clears the
     /// obstacle. Keep steering rate/lock and pose integration identical to driving.
     pub fn recover_corner(&mut self, way: &dyn Fn(f32) -> DVec3, extent: (f32, f32, f32), obstacle: &crate::collision::Obb) {
@@ -530,7 +576,29 @@ impl AiBody {
     /// point further along it (pure pursuit, looking further ahead the faster the car goes).
     fn drive(&mut self, dt: f32, speed: f32, way: &dyn Fn(f32) -> DVec3) {
         let target = way(self.rot_long).truncate();
-        if !self.started || (target - self.rear).length() > 8.0 {
+        let off_way = (target - self.rear).length();
+        if self.started && off_way > SNAP_DISTANCE && self.lost < SNAP_PATIENCE {
+            // The way says the rear axle is a body length away. The body is the single
+            // pose owner and moves continuously, so the way is what is wrong: a joint the
+            // planner has not yet reconciled with where the body is. Putting the body on it
+            // at once was the bus that jumped back (or on) at a corner and left its rear
+            // section jack-knifed. Stand still for a moment: the planner re-reads the body
+            // every tick and the way follows it. Only a mismatch that lasts is a real
+            // relocation.
+            self.lost += dt;
+            self.travelled = 0.0;
+            self.yaw_rate = 0.0;
+            self.a_lat = 0.0;
+            return;
+        }
+        if !self.started || off_way > SNAP_DISTANCE {
+            if self.started {
+                log::warn!(
+                    "AI body put back on its way: {off_way:.1} m from ({:.1}, {:.1}) to ({:.1}, {:.1}), heading {:.0}",
+                    self.rear.x, self.rear.y, target.x, target.y, self.heading
+                );
+            }
+            self.lost = 0.0;
             // spawned, or put somewhere else: stand on the way, straight
             let ahead = way(self.rot_long + 2.0).truncate();
             let d = ahead - target;
@@ -544,6 +612,7 @@ impl AiBody {
             self.steer_cmd = 0.0;
             self.started = true;
         }
+        self.lost = 0.0;
         let fwd = dir(self.heading);
         let right = DVec2::new(fwd.y, -fwd.x);
         // Route progress is committed from this body's motion. The old catch-up servo
@@ -1050,6 +1119,32 @@ mod tests {
             let a = (s - 50.0) / r;
             DVec3::new(r - r * a.cos(), 50.0 + r * a.sin(), 10.0)
         }
+    }
+
+    #[test]
+    fn a_body_finds_the_post_its_front_corner_would_meet_before_it_does() {
+        use crate::collision::Obb;
+        let def = lorry();
+        let (front, rear, half) = (5.5f32, 3.5f32, 1.25f32);
+        let way = |d: f32| DVec3::new(0.0, d as f64, 0.0);
+        let mut body = AiBody::new(&def, MotionKind::Road);
+        body.place(&way, None, None, 0.0);
+        let touches = |post: Obb| {
+            move |b: &AiBody| {
+                Obb::vehicle(b.position.truncate(), b.heading, front as f64, rear as f64, half as f64)
+                    .overlaps_plan(&post)
+            }
+        };
+        // a post 20 m ahead, in the lane: the nose reaches it after 20 - 0.3 - 5.5 m
+        let post = Obb::vehicle(DVec2::new(0.0, 20.0), 0.0, 0.3, 0.3, 0.3);
+        let d = body.distance_to_contact(&way, 5.0, 40.0, &touches(post)).expect("in the way");
+        assert!((d - 14.2).abs() < 0.6, "contact after {d} m");
+        // the same post two metres to the side of the bus's flank is not in the way
+        let beside = Obb::vehicle(DVec2::new(2.4, 20.0), 0.0, 0.3, 0.3, 0.3);
+        assert_eq!(body.distance_to_contact(&way, 5.0, 40.0, &touches(beside)), None);
+        // a body that is touching already is not about to touch
+        let inside = Obb::vehicle(DVec2::new(0.0, 0.0), 0.0, 0.5, 0.5, 0.5);
+        assert_eq!(body.distance_to_contact(&way, 5.0, 40.0, &touches(inside)), None);
     }
 
     #[test]

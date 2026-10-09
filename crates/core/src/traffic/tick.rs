@@ -660,9 +660,11 @@ impl Traffic {
                         st.odometer < r.2 + r.3 + st.rear + 3.0)
                     { swerve = Some(ramp.1); }
                 }
-                if swerve.is_none() && (car.motion_fault.is_some() || car.scenery_streak > 0.0) {
+                if swerve.is_none()
+                    && (car.motion_fault.is_some() || car.scenery_streak > 0.0 || car.scenery_ahead.is_some())
+                {
                     swerve = safety::corner_swerve(&self.road_collision, &occupancy, car.id, &self.net, st,
-                        &car.body, &car.vehicle, &car.caps);
+                        &car.body, &car.vehicle, &car.caps, car.scenery_ahead);
                 }
                 kerb_swerve = swerve;
             }
@@ -925,7 +927,12 @@ impl Traffic {
             let ground_hold = (!self.cars[i].body.ground_supported)
                 .then_some(self.cars[i].state.front + 0.1);
             let motion_hold = self.cars[i].motion_fault.map(|_| self.cars[i].state.front + 0.1);
-            let mut stop_at = [light, yield_at, merge_wait, keep_back, people, ground_hold, motion_hold]
+            // scenery the body would touch ahead on its own way: stop short of it, as for
+            // anything standing there
+            let scenery_hold = self.cars[i]
+                .scenery_ahead
+                .map(|d| self.cars[i].state.front + (d - SCENERY_STOP_MARGIN).max(0.0));
+            let mut stop_at = [light, yield_at, merge_wait, keep_back, people, ground_hold, motion_hold, scenery_hold]
                 .into_iter()
                 .flatten()
                 .reduce(f32::min);
@@ -938,6 +945,7 @@ impl Traffic {
                 (Reason::Pedestrian, people),
                 (Reason::GroundUnavailable, ground_hold),
                 (Reason::SceneryBlocked, motion_hold),
+                (Reason::SceneryBlocked, scenery_hold),
                 (
                     maneuver_why.map(|x| x.0).unwrap_or(Reason::NONE),
                     maneuver_why.map(|x| x.1),
@@ -1185,11 +1193,13 @@ impl Traffic {
             // a random car that has stood for a minute without a light or a junction
             // holding it has given up: it leaves as soon as nobody sees it
             // (one yielding for minutes is in a gridlock nobody else will end)
-            if (car.stopped > 60.0 && !car.yielding || car.stopped > 150.0)
+            let stood = (car.stopped > 60.0 && !car.yielding || car.stopped > 150.0)
                 && !car.is_bus()
-                && !car.light_hold
-                && !car.gone
-            {
+                && !car.light_hold;
+            // (a vehicle - a bus too - that cannot move without touching scenery gives up
+            // sooner: nothing will change for it)
+            let pinned = car.scenery_streak > SCENERY_PINNED_GONE;
+            if (stood || pinned) && !car.gone {
                 car.gone = true;
                 if debug {
                     log::info!(
@@ -1419,6 +1429,7 @@ impl Traffic {
                 &'a mut f32,
                 f32,
                 &'a VehicleCapabilities,
+                &'a mut Option<f32>,
             );
             let mut work: Vec<Work> = self
                 .cars
@@ -1427,7 +1438,7 @@ impl Traffic {
                 .enumerate()
                 .filter_map(|(i, (c, f))| {
                     let f = f.as_mut()?;
-                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps))
+                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps, &mut c.scenery_ahead))
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
@@ -1435,7 +1446,7 @@ impl Traffic {
             // the main thread more than a car's work)
             work.par_iter_mut()
                 .with_min_len(4)
-                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps)| {
+                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead)| {
                     let t0 = std::time::Instant::now();
                     let ground = vehicle.ground.clone();
                     let contact = vehicle.contact.clone();
@@ -1446,6 +1457,20 @@ impl Traffic {
                     let trail = &**trail;
                     let behind = |d: f64| rail_behind(trail, state, net, d);
                     let before = (body.kind == MotionKind::Road).then(|| (**body).clone());
+                    // Where would this body touch scenery if it kept to its way? The planner
+                    // brakes for it next tick (and looks for a way round); a refused move is
+                    // only the last resort, with the bumper already against the thing.
+                    if before.is_some() && body.ground_supported {
+                        if state.speed > 0.05 || ahead.is_some() || **streak > 0.0 || fault.is_some() {
+                            let reach = (state.speed * state.speed / 6.0 + 4.0).clamp(4.0, 16.0);
+                            let veh: &VehicleInstance = vehicle;
+                            let cp: &VehicleCapabilities = caps;
+                            let touches = |b: &AiBody| road_collision.hit(&safety::road_body_box(veh, b, cp)).is_some();
+                            **ahead = body.distance_to_contact(&|d| state.way_point(net, d), state.speed, reach, &touches);
+                        } else {
+                            **ahead = None;
+                        }
+                    }
                     body.step(
                         dt,
                         state.speed,
@@ -1470,10 +1495,12 @@ impl Traffic {
                             let first = **streak == 0.0;
                             **streak += dt;
                             body.reject_motion(&before);
-                            if first || (**streak / 0.5).floor() != ((**streak - dt) / 0.5).floor() {
-                                body.recover_corner(&|d| state.way_point(net, d),
-                                    (caps.front, caps.rear, caps.half_width), &obstruction.unwrap());
-                            }
+                            // (every refused move: with the planner holding the vehicle
+                            // between attempts these come about once a second, and choosing
+                            // the way out only every half second *of them* left a bus
+                            // pinned for a quarter of a minute with its wheels as they were)
+                            body.recover_corner(&|d| state.way_point(net, d),
+                                (caps.front, caps.rear, caps.half_width), &obstruction.unwrap());
                             frame.speed = 0.0;
                             frame.brake = true;
                             if first {
@@ -1483,7 +1510,13 @@ impl Traffic {
                             }
                             **fault = Some(Reason::SceneryBlocked);
                         } else {
-                            if moved { **streak = 0.0; }
+                            // (still pinned while it has not moved: the hold between two
+                            // refused attempts is part of being stuck)
+                            if moved {
+                                **streak = 0.0;
+                            } else if **streak > 0.0 {
+                                **streak += dt;
+                            }
                             **fault = None;
                         }
                     }
