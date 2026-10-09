@@ -168,6 +168,8 @@ const AI_CONTACT_RANGE: f64 = 1.5;
 const SNAP_DISTANCE: f64 = 8.0;
 /// How long (s) a way that far off is waited out before the body is put back on it.
 const SNAP_PATIENCE: f32 = 0.6;
+/// The furthest (m) the rotation point aims inside a bend to centre the body's sweep.
+const SWEEP_SHIFT_MAX: f64 = 1.5;
 /// A wider search is needed only when no wheel has found the current road level at all.
 /// It corrects displaced path Z without lowering a single unsupported axle onto terrain.
 const AI_CONTACT_REACQUIRE: f64 = 3.0;
@@ -187,6 +189,9 @@ pub struct AiBody {
     /// Seconds the way's rear-axle target has stood further than `SNAP_DISTANCE` from the
     /// body (see `drive`).
     lost: f32,
+    /// Rotation point to the nose (m) for centring the sweep in bends; 0 for a vehicle
+    /// that pulls a trailer (see `sweep_shift`).
+    sweep_reach: f32,
     front_long: f32,
     rear_long: f32,
     /// Largest front wheel angle (deg) and how fast the driver turns towards it (deg/s).
@@ -343,6 +348,15 @@ impl AiBody {
             recovery_preview_scale: 1.0,
             recovery_steer: None,
             lost: 0.0,
+            sweep_reach: if def.coupling_back.is_some() {
+                0.0
+            } else {
+                let nose = def
+                    .bounding_box
+                    .map(|b| b[1] * 0.5 + b[4])
+                    .unwrap_or(front_long + 0.8);
+                (nose - rot_long).max(0.0)
+            },
             front_long,
             rear_long,
             max_steer,
@@ -564,6 +578,37 @@ impl AiBody {
         self.recovery_steer = best.2;
     }
 
+    /// Where the rotation point aims beside the way in a bend: towards its inside, so that
+    /// the area the body sweeps lies across the way instead of outside it. With the rear axle
+    /// on a circle of radius R the nose, `sweep_reach` ahead of it, runs about reach²/2R
+    /// outside while the flank inside barely leaves the lane: a 12 m bus put its front over
+    /// the kerb of a roundabout and into the mast on the island of a left turn. Aiming
+    /// reach²/5R inside centres the sweep (measured on the C2, see `sweep_measure`; an
+    /// articulated bus has its trailer cutting inside and keeps its front section on the
+    /// way: `sweep_reach` 0).
+    fn sweep_shift(&self, way: &dyn Fn(f32) -> DVec3, look: f32) -> DVec2 {
+        let reach = self.sweep_reach;
+        if reach <= 0.0 {
+            return DVec2::ZERO;
+        }
+        let at = self.rot_long + look;
+        let (a, b, c) = (
+            way(at - 0.5 * reach).truncate(),
+            way(at).truncate(),
+            way(at + 0.5 * reach).truncate(),
+        );
+        let (u, w) = (b - a, c - b);
+        if u.length() < 0.1 || w.length() < 0.1 {
+            return DVec2::ZERO;
+        }
+        // signed: + bends left (x east, y north)
+        let turn = (u.x * w.y - u.y * w.x).atan2(u.dot(w));
+        let k = turn / (0.5 * reach as f64);
+        let shift = (reach as f64 * reach as f64 * k * 0.2).clamp(-SWEEP_SHIFT_MAX, SWEEP_SHIFT_MAX);
+        let t = (c - a).normalize_or_zero();
+        DVec2::new(-t.y, t.x) * shift
+    }
+
     /// Bicycle model: the rotation point follows the way, the front wheels steer towards a
     /// point further along it (pure pursuit, looking further ahead the faster the car goes).
     fn drive(&mut self, dt: f32, speed: f32, way: &dyn Fn(f32) -> DVec3) {
@@ -615,7 +660,7 @@ impl AiBody {
         let look = if self.steering_recovery > 0.0 {
             (normal_look * self.recovery_preview_scale).max(3.5)
         } else { normal_look };
-        let g = way(self.rot_long + look).truncate() - self.rear;
+        let g = way(self.rot_long + look).truncate() + self.sweep_shift(way, look) - self.rear;
         let alpha = (g.dot(right) as f32)
             .atan2(g.dot(fwd) as f32)
             .clamp(-FRAC_PI_2, FRAC_PI_2);
@@ -1169,10 +1214,13 @@ mod tests {
                 worst_jump = worst_jump.max((body.yaw_rate - y).abs().to_degrees());
             }
             last_yaw = Some(body.yaw_rate);
-            // the rear axle stays on the way (a circle has no steady error; entering it costs a little)
+            // the rear axle stays by the way (a circle has no steady error; entering it costs
+            // a little, and it aims a little inside to centre the sweep, see `sweep_shift`)
             let rear = body.rear;
-            let q = bend(12.0, at + def.rot_pnt_long as f64).truncate();
-            worst_off = worst_off.max((rear - q).length());
+            let off = (0..400)
+                .map(|k| (rear - bend(12.0, at - 20.0 + k as f64 * 0.1).truncate()).length())
+                .fold(f64::MAX, f64::min);
+            worst_off = worst_off.max(off);
         }
         // a quarter turn done at 6 m/s: the heading has turned right, the yaw rate never
         // jumps by more than a few degrees per second between frames, the car keeps to its lane
@@ -1389,3 +1437,92 @@ mod ground_tests;
 #[cfg(test)]
 #[path = "ai_motion/traffic_regression_tests.rs"]
 mod traffic_regression_tests;
+
+#[cfg(test)]
+mod sweep_measure {
+    use super::*;
+    use ::legacy_vehicle::Axle;
+
+    /// BRT Berlin's AI Citaro C2 (`C2_2T_AI.bus`): 12 m, axles at +2.94 / -2.95.
+    pub(super) fn c2() -> Vehicle {
+        let mut v = Vehicle { mass: 11.0, moment_of_inertia: [300.0, 30.0, 300.0], cog_height: 1.2,
+            rot_pnt_long: -2.95, inv_min_turn_radius: 0.13, ..Default::default() };
+        v.axles = vec![
+            Axle { long: 2.938, max_width: 2.1, spring: 300.0, damper: 20.0, wheel_diameter: 1.0, ..Default::default() },
+            Axle { long: -2.945, max_width: 2.1, spring: 300.0, damper: 20.0, wheel_diameter: 1.0, ..Default::default() },
+        ];
+        v.bounding_box = Some([2.52, 12.0, 2.5, 0.0, 0.04, 1.7]);
+        v
+    }
+
+    /// A way: straight north for 40 m, then a left arc of radius `r` through `deg` degrees,
+    /// then straight on.
+    pub(super) fn left_turn(r: f64, deg: f64, s: f64) -> DVec3 {
+        let arc = r * deg.to_radians();
+        if s < 40.0 {
+            DVec3::new(0.0, s, 0.0)
+        } else if s < 40.0 + arc {
+            let a = (s - 40.0) / r;
+            DVec3::new(-(r - r * a.cos()), 40.0 + r * a.sin(), 0.0)
+        } else {
+            let a = deg.to_radians();
+            let end = DVec2::new(-(r - r * a.cos()), 40.0 + r * a.sin());
+            let t = DVec2::new(-a.sin(), a.cos());
+            let p = end + t * (s - 40.0 - arc);
+            DVec3::new(p.x, p.y, 0.0)
+        }
+    }
+
+    /// Drive the body along `path` at `speed` and return the furthest the body's outline
+    /// gets to the right (+) and the left (-) of the way (m, beyond the body's half width).
+    pub(super) fn sweep(def: &Vehicle, path: &dyn Fn(f64) -> DVec3, length: f64, speed: f32) -> (f64, f64) {
+        let bb = def.bounding_box.unwrap();
+        let (front, rear, half) = ((bb[1] * 0.5 + bb[4]) as f64, (bb[1] * 0.5 - bb[4]) as f64, (bb[0] * 0.5) as f64);
+        let mut body = AiBody::new(def, MotionKind::Road);
+        let dt = 1.0 / 60.0;
+        let mut s = 20.0f64;
+        body.place(&|d| path(s + d as f64), None, None, speed);
+        let samples: Vec<DVec2> = (0..((length + 60.0) / 0.05) as usize).map(|k| path(k as f64 * 0.05).truncate()).collect();
+        let (mut right, mut left) = (0.0f64, 0.0f64);
+        while s < length {
+            s += (speed * dt) as f64;
+            let at = s;
+            body.step(dt, speed, &|d| path(at + d as f64), None, None);
+            let f = dir(body.heading);
+            let r = DVec2::new(f.y, -f.x);
+            let o = body.position.truncate();
+            for (lo, la) in [(front, half), (front, -half), (-rear, half), (-rear, -half), (0.0, half), (0.0, -half),
+                (body.rot_long as f64, half), (body.rot_long as f64, -half)] {
+                let c = o + f * lo + r * la;
+                let k = samples.iter().enumerate().min_by(|a, b| (*a.1 - c).length().total_cmp(&(*b.1 - c).length())).unwrap().0;
+                let k = k.clamp(1, samples.len() - 2);
+                let t = (samples[k + 1] - samples[k - 1]).normalize();
+                let side = (c - samples[k]).dot(DVec2::new(t.y, -t.x));
+                right = right.max(side - half);
+                left = left.min(side + half);
+            }
+        }
+        (right, left)
+    }
+
+    #[test]
+    fn a_long_rigid_bus_sweeps_a_bend_evenly_about_its_way() {
+        let def = c2();
+        for v in [3.0f32, 5.0] {
+            // a roundabout: the nose kept off the outer kerb, the flank off the island
+            let (outside, inside) = sweep(&def, &|s| left_turn(14.0, 200.0, s), 40.0 + 14.0 * 200f64.to_radians() + 20.0, v);
+            assert!(outside < 1.9 && inside > -1.9 && (outside + inside).abs() < 0.4,
+                "ring at {v} m/s: {outside:.2} m outside, {inside:.2} m inside");
+            // a left turn at a junction: the nose no longer runs 3 m wide of the way
+            let (outside, _) = sweep(&def, &|s| left_turn(10.0, 90.0, s), 40.0 + 10.0 * 90f64.to_radians() + 20.0, v);
+            assert!(outside < 2.7, "left turn at {v} m/s: {outside:.2} m outside");
+        }
+    }
+
+    #[test]
+    fn an_articulated_front_section_keeps_its_axle_on_the_way() {
+        let mut def = c2();
+        def.coupling_back = Some(Default::default());
+        assert_eq!(AiBody::new(&def, MotionKind::Road).sweep_reach, 0.0);
+    }
+}
