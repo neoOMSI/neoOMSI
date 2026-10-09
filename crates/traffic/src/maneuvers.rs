@@ -740,7 +740,12 @@ impl ManeuverCoordinator {
         };
         let s_to = net.beside_s(actor.lane, to, actor.s.min(net.lanes[actor.lane].length()));
         let dir = side_of(net, actor.lane, to);
-        Some(self.commit_or_wait(scene, actor, state, to, dir, kind, s_to, true))
+        // (waiting for a gap, the car stops before the lane the map closes to it, which may
+        // lie a spline joint or two ahead, else before the end of its lane)
+        let wait_at = closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next)
+            .filter(|_| actor.lane_kind == LaneKind::Street)
+            .unwrap_or(net.lanes[actor.lane].length() - actor.s);
+        Some(self.commit_or_wait(scene, actor, state, to, dir, kind, s_to, wait_at))
     }
 
     /// Start the change the way requires, or wait legally before the end of the lane.
@@ -754,7 +759,7 @@ impl ManeuverCoordinator {
         dir: i32,
         kind: ChangeKind,
         s_to: f32,
-        _required: bool,
+        wait_at: f32,
     ) -> ManeuverDecision {
         let approved = self.approved(actor.id) == Some(LaneId(to));
         if approved && self.can_merge(scene, actor, to, s_to) {
@@ -770,10 +775,9 @@ impl ManeuverCoordinator {
         }
         // Not now: indicate and wait before the end of the lane (a legal wait outcome, never
         // cutting through the queue or jumping to another lane).
-        let lane = &scene.net.lanes[actor.lane];
         let mut d = ManeuverDecision::new(ManeuverPhase::RouteChange);
         d.signal = Some((dir, 1.0));
-        d.stop_at = Some((lane.length() - actor.s - 1.0).max(0.0));
+        d.stop_at = Some((wait_at - 1.0).max(0.0));
         d.reasons.push(Reason::Yield);
         d.binding = Some(Reason::Yield);
         d.target_lane = Some(LaneId(to));
@@ -839,8 +843,8 @@ impl ManeuverCoordinator {
         // Overtake a slow leader on the passing side.
         let mut wish: Option<(usize, i32, i16)> = None;
         if let Some(left) = pass_side {
-            if self.open_to(net, actor, left) {
-                let s_left = net.beside_s(actor.lane, left, actor.s);
+            let s_left = net.beside_s(actor.lane, left, actor.s);
+            if self.open_to(net, actor, left) && self.stays_open(net, actor, left, s_left) {
                 if let Some((gap, v, owner)) = self.nearest_ahead_on_way(scene, actor, 45.0) {
                     let standing = v < 0.3 && self.standing_queue(scene, actor, owner);
                     let bypass = standing && (actor.speed > 0.5 || actor.stopped >= 3.0);
@@ -864,8 +868,8 @@ impl ManeuverCoordinator {
         // Keep to the correct side when that lane is free.
         if wish.is_none() && actor.speed >= 4.0 && actor.stopped <= 0.0 {
             if let Some(right) = keep_side {
-                if self.open_to(net, actor, right) {
-                    let s_right = net.beside_s(actor.lane, right, actor.s);
+                let s_right = net.beside_s(actor.lane, right, actor.s);
+                if self.open_to(net, actor, right) && self.stays_open(net, actor, right, s_right) {
                     if self.parallel_room(scene, actor, right, (actor.speed * 5.5 + 10.0).max(40.0))
                         && self.lane_clear(scene, actor.id, right, s_right, 30.0, 70.0)
                     {
@@ -1368,6 +1372,12 @@ impl ManeuverCoordinator {
         !l.no_cars && l.density > 0.0 && l.allows(actor.veh_type)
     }
 
+    /// Does lane `lane` (from `s` on) stay open to `actor` beyond the lookahead? A car does
+    /// not keep right into a lane that goes on as a bus lane, only to move back again.
+    fn stays_open(&self, net: &Network, actor: &ManeuverActor, lane: usize, s: f32) -> bool {
+        closed_ahead(net, lane, s, actor.veh_type, None).is_none()
+    }
+
     /// May `actor` move over into `to` at `s_to` now? Nothing beside or just ahead, and every
     /// vehicle behind can still stop behind it.
     fn can_merge(
@@ -1563,6 +1573,19 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
         }
     }
     let lane = net.lanes.get(actor.lane)?;
+    // The way on closes to this vehicle (a lane that goes on as a bus lane): move over to
+    // the lane beside that stays open, whatever the turn lanes ask.
+    if actor.lane_kind == LaneKind::Street
+        && closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next).is_some()
+    {
+        return [lane.left, lane.right].into_iter().flatten().find(|&b| {
+            let l = &net.lanes[b];
+            l.allows(actor.veh_type)
+                && l.density > 0.0
+                && closed_ahead(net, b, net.beside_s(actor.lane, b, actor.s), actor.veh_type, None)
+                    .is_none()
+        });
+    }
     let to_junction = lane.length() - actor.s;
     if to_junction >= TURN_LANE_LOOKAHEAD {
         return None;
@@ -1577,11 +1600,57 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
             None
         })?;
     let want = if turn == 1 { lane.left } else { lane.right }?;
-    if net.lanes[want].next.iter().any(|&n| net.lanes[n].turn == turn) {
+    if net.lanes[want].allows(actor.veh_type)
+        && net.lanes[want]
+            .next
+            .iter()
+            .any(|&n| net.lanes[n].turn == turn && net.lanes[n].allows(actor.veh_type))
+    {
         Some(want)
     } else {
         None
     }
+}
+
+/// How far ahead (from distance `s` along `lane`, within `TURN_LANE_LOOKAHEAD`) the way
+/// runs into a joint where every way on is closed to `[ai_veh_type]` `veh_type` (see
+/// `Lane::allows`): a lane that goes on as a bus lane, a junction path only the timetable
+/// may drive. The way is `first` (the planned next lane) where it is open, then the one
+/// open way on at each joint; where there is a choice of open ways, it does not close.
+/// The end of the network (no way on at all) is not a closure.
+pub fn closed_ahead(
+    net: &Network,
+    lane: usize,
+    s: f32,
+    veh_type: i32,
+    first: Option<usize>,
+) -> Option<f32> {
+    let mut cur = lane;
+    let mut d = net.lanes.get(lane)?.length() - s;
+    let mut first = first;
+    for _ in 0..12 {
+        if d >= TURN_LANE_LOOKAHEAD {
+            return None;
+        }
+        let l = &net.lanes[cur];
+        if l.next.is_empty() {
+            return None;
+        }
+        let next = match first.take().filter(|n| l.next.contains(n) && net.lanes[*n].allows(veh_type)) {
+            Some(n) => n,
+            None => {
+                let mut open = l.next.iter().copied().filter(|&n| net.lanes[n].allows(veh_type));
+                match (open.next(), open.next()) {
+                    (None, _) => return Some(d.max(0.0)),
+                    (Some(n), None) => n,
+                    (Some(_), Some(_)) => return None,
+                }
+            }
+        };
+        cur = next;
+        d += net.lanes[cur].length();
+    }
+    None
 }
 
 /// The side (1 left, 2 right) of lane `to` from `from`, from the geometry where they are.
