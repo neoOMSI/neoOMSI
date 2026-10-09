@@ -2,6 +2,7 @@
 //! default changes, and the device's format as shared state.
 
 pub mod output;
+pub(crate) mod mix_output;
 pub mod state;
 pub mod watcher;
 

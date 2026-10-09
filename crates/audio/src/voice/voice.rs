@@ -208,10 +208,10 @@ impl Voice {
         let nframes = self.clip.frames();
         let mut stalled = false;
         for f in 0..frames {
-            self.cur_reverb += (reverb_target - self.cur_reverb) * reverb_k;
-            self.cur_gain += (target_gain - self.cur_gain) * gain_k;
-            self.cur_pan[0] += (placed.left - self.cur_pan[0]) * pan_k;
-            self.cur_pan[1] += (placed.right - self.cur_pan[1]) * pan_k;
+            envelope::smooth(&mut self.cur_reverb, reverb_target, reverb_k);
+            envelope::smooth(&mut self.cur_gain, target_gain, gain_k);
+            envelope::smooth(&mut self.cur_pan[0], placed.left, pan_k);
+            envelope::smooth(&mut self.cur_pan[1], placed.right, pan_k);
             self.cur_step += (target_step - self.cur_step) * pitch_k;
             let fade = self.envelope.next(rate);
             if self.envelope.ended() { self.finished = true; break; }

@@ -24,14 +24,16 @@ fn each_bus_can_be_muted_independently_and_raw_updates_keep_routing() {
 #[test]
 fn stereo_mono_and_surround_front_channels_share_the_renderer() {
     let params = VoiceParams { looping: true, ..Default::default() };
-    let mono = AudioEngine::new_offline(48000, 1); mono.play(clip(), params);
-    let stereo = AudioEngine::new_offline(48000, 2); stereo.play(clip(), params);
-    let surround = AudioEngine::new_offline(48000, 6); surround.play(clip(), params);
-    let m = steady(&mono, 1); let s = steady(&stereo, 2); let six = steady(&surround, 6);
-    for i in 0..4800 {
-        assert_eq!(m[i], (s[i*2] + s[i*2+1]) * 0.5);
-        assert_eq!(&six[i*6..i*6+2], &s[i*2..i*2+2]);
-        assert!(six[i*6+2..i*6+6].iter().all(|s| *s == 0.0));
+    for rate in [8000, 44100, 48000, 96000, 192000] {
+        let mono = AudioEngine::new_offline(rate, 1); mono.play(clip(), params);
+        let stereo = AudioEngine::new_offline(rate, 2); stereo.play(clip(), params);
+        let surround = AudioEngine::new_offline(rate, 8); surround.play(clip(), params);
+        let m = steady(&mono, 1); let s = steady(&stereo, 2); let eight = steady(&surround, 8);
+        for i in 0..4800 {
+            assert_eq!(m[i], (s[i*2] + s[i*2+1]) * 0.5);
+            assert_eq!(&eight[i*8..i*8+2], &s[i*2..i*2+2]);
+            assert!(eight[i*8+2..i*8+8].iter().all(|s| *s == 0.0));
+        }
     }
 }
 #[test]
@@ -51,6 +53,21 @@ fn offline_output_is_reproducible_and_empty_blocks_are_valid() {
         engine.render_offline(&mut []); steady(&engine, 2)
     };
     assert_eq!(render(), render());
+}
+
+#[test]
+fn device_equivalent_offline_pipeline_preserves_output_across_callback_sizes() {
+    for rate in [44100, 48000, 192000, 384000] {
+        let render = |frames: usize| {
+            let engine = AudioEngine::new_offline_output(rate, 2);
+            engine.play(clip(), VoiceParams { gain: 0.1, pitch: 1.37, looping: true, ..Default::default() });
+            let mut out = vec![0.0; 8192];
+            for callback in out.chunks_mut(frames * 2) { engine.render_offline(callback); }
+            assert!(engine.stats().clean());
+            out
+        };
+        assert_eq!(render(4096), render(37), "output rate {rate}");
+    }
 }
 
 #[test]

@@ -17,6 +17,7 @@ use crate::assets::clip::{Clip, ClipCache};
 use crate::assets::stream::StreamBuf;
 use crate::clock::Clock;
 use crate::device::{watch_default_device, DeviceOutput, OutputFormat};
+use crate::device::mix_output::MixOutput;
 use crate::engine::commands::{Command, CommandQueue};
 use crate::engine::feedback::{ActiveVoice, Counters, Reaper, VoiceAsset};
 use crate::engine::mixer::AudioCore;
@@ -32,7 +33,7 @@ use std::time::Instant;
 /// offline (and without a device) so `render_offline` can drive the same code synchronously.
 enum Mode {
     /// No callback: `render_offline` mixes on the caller's thread.
-    Offline(RefCell<AudioCore>),
+    Offline { core: RefCell<AudioCore>, output: Option<RefCell<MixOutput>> },
     /// A callback is (or was) playing; the core lives inside the stream's closure. A device
     /// change builds a fresh core and replays the still-active voices (see `replay`).
     Device(DeviceOutput),
@@ -105,7 +106,7 @@ impl AudioEngine {
             mixer::muted(),
         );
         AudioEngine {
-            mode: Mode::Offline(RefCell::new(core)),
+            mode: Mode::Offline { core: RefCell::new(core), output: None },
             commands,
             counters,
             reaper,
@@ -119,6 +120,16 @@ impl AudioEngine {
         }
     }
 
+    /// Live 48 kHz mixer and device-rate conversion on a manual clock, without hardware.
+    pub fn new_offline_output(sample_rate: u32, channels: usize) -> AudioEngine {
+        assert!(sample_rate >= 8000 && (1..=8).contains(&channels));
+        let mut engine = Self::new_offline(mixer::MIX_SAMPLE_RATE, 2);
+        if let Mode::Offline { output, .. } = &mut engine.mode {
+            *output = Some(RefCell::new(MixOutput::new(mixer::MIX_SAMPLE_RATE, sample_rate, channels)));
+        }
+        engine
+    }
+
     /// The clock this engine runs on (see [`AudioEngine::new_offline`]).
     pub fn clock(&self) -> Clock {
         self.clock.clone()
@@ -128,15 +139,18 @@ impl AudioEngine {
     /// the offline counterpart of the output callback, for tests and [`AudioEngine::new_offline`].
     pub fn render_offline(&self, out: &mut [f32]) {
         self.pump();
-        if let Mode::Offline(core) = &self.mode {
-            core.borrow_mut().render(out);
+        if let Mode::Offline { core, output } = &self.mode {
+            let mut core = core.borrow_mut();
+            if let Some(output) = output {
+                output.borrow_mut().render(out, &mut |source| core.render_mix(source));
+            } else { core.render(out); }
         }
     }
 
     fn device(&self) -> Option<&DeviceOutput> {
         match &self.mode {
             Mode::Device(d) => Some(d),
-            Mode::Offline(_) => None,
+            Mode::Offline { .. } => None,
         }
     }
 
