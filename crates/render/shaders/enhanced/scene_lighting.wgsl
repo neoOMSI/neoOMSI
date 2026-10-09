@@ -243,7 +243,9 @@ fn headlamp_rel(to_surface: vec3<f32>, f: vec3<f32>, cos_outer: f32, cos_inner: 
     let ho = max(degrees(acos(clamp(cos_outer, -1.0, 1.0))), 5.0);
     let hi = min(degrees(acos(clamp(cos_inner, -1.0, 1.0))), ho - 0.5);
     let ang = degrees(acos(clamp(x / max(length(to_surface), 1e-4), -1.0, 1.0)));
-    let edge = 1.0 - smoothstep(0.3 * ho, 1.25 * ho, ang);
+    // Keep the same centre of the beam, but feather its outer edge further.  A narrower
+    // transition made vehicle headlights end in a visibly hard circle on roads and walls.
+    let edge = 1.0 - smoothstep(0.15 * ho, 1.45 * ho, ang);
     if (main) {
         let core = exp(-0.5 * (h * h / 49.0 + v * v / 17.6));
         let halo = exp(-0.5 * (h * h / 484.0 + v * v / 81.0));

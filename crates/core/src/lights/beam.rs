@@ -127,7 +127,9 @@ pub(super) fn headlamps(
     }
     let ty = &v.ty;
     let ai_on = v.ai_lights;
-    let selected = v.var("Spot_Select").filter(|s| *s >= 0.0 || !ai_on);
+    // `-1` is OMSI's explicit "no road beam" value.  Do not turn it into
+    // spotlight zero for player vehicles.
+    let selected = v.var("Spot_Select").filter(|s| *s >= 0.0);
     let sel = selected.or(ai_on.then_some(0.0));
     let lamps: Vec<[f32; 3]> = ty
         .model
@@ -162,12 +164,19 @@ pub(super) fn headlamps(
     let ranges: Vec<f32> = spots.iter().map(|s| s[9]).collect();
     let kinds: Vec<BeamKind> = (0..spots.len()).map(|i| classify(&ranges, i)).collect();
 
+    // Spotlight ranges are content-defined rather than a beam type.  In particular, the
+    // Renown's dipped beam is 70 m while other vehicles use several-hundred-metre values.
+    // Use OMSI's actual high-beam state for the selected spotlight, so a normal dipped beam
+    // always receives the dipped cookie regardless of its range.
+    let full_beam = ["lights_highbeam", "lights_fern", "lights_sw_fern"]
+        .iter()
+        .any(|name| v.var(name).is_some_and(|value| value >= 0.5));
+
     let partner = (0..spots.len())
         .filter(|&i| kinds[i] == BeamKind::Dipped && !is_daytime_running_light(&ranges, i))
         .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]));
-    let main_lit = lit.is_some_and(|i| {
-        i < spots.len() && kinds[i] == BeamKind::Main && !is_daytime_running_light(&ranges, i)
-    });
+    let main_lit = full_beam
+        && lit.is_some_and(|i| i < spots.len() && !is_daytime_running_light(&ranges, i));
     let key = key_of(v);
     for (i, vals) in spots.iter().enumerate() {
         let on = !is_daytime_running_light(&ranges, i)
@@ -176,7 +185,15 @@ pub(super) fn headlamps(
         if level < 0.01 {
             continue;
         }
-        let kind = kinds[i];
+        let kind = if lit == Some(i) {
+            if full_beam {
+                BeamKind::Main
+            } else {
+                BeamKind::Dipped
+            }
+        } else {
+            kinds[i]
+        };
         let bc = match kind {
             BeamKind::Dipped => cfg.low,
             BeamKind::Main => cfg.high,
