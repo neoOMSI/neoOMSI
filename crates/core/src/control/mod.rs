@@ -491,7 +491,7 @@ mod tests {
         let (server, _woken) = Server::new(Box::new(out.clone()));
         server.serve(std::io::Cursor::new(frames(&[
             request("a", version()),
-            request("b", handshake("3.0")),
+            request("b", handshake("1.0")),
             request("c", Some(Command::Shutdown(Empty {}))),
             request("d", version()),
         ])));
@@ -552,7 +552,7 @@ mod tests {
         let Answer::Version(v) = answer_of(by("2")) else {
             panic!("not the version")
         };
-        assert_eq!(v.protocol, 3);
+        assert_eq!(v.protocol, 1);
     }
 
     fn game(id: &str, running: bool) -> Instance {

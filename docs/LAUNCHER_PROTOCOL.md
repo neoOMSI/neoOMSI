@@ -8,7 +8,7 @@ neoomsi --control-protocol
 ```
 
 and talks to it over the child's stdin and stdout. Games the engine starts report back to it over
-a loopback link. Version: **3**.
+a loopback link. Version: **1**.
 
 ```text
 launcher ──stdin/stdout──▶ neoomsi --control-protocol ──127.0.0.1──▶ neoomsi (game)  ×n
@@ -45,7 +45,7 @@ anything printed goes to stderr with the log. The launcher shows stderr as diagn
 
 ## Session
 
-1. The launcher sends `handshake` first, with `protocol_version` `"3"`, its own version and its
+1. The launcher sends `handshake` first, with `protocol_version` `"1"`, its own version and its
    platform. Any other request before it, except `shutdown`, is answered with an error.
 2. The engine answers with `status`, its `protocol_version`, `engine_version`,
    `supported_capabilities` (`events.instances`, `events.installs`, `events.content`,
@@ -58,7 +58,7 @@ anything printed goes to stderr with the log. The launcher shows stderr as diagn
    (10 s at most). Games it started keep running, and the next engine finds them through
    `~/.neoomsi/instances`.
 
-A launcher of protocol 1 sends JSON, which is no `Frame`: the engine ends the connection, and the
+A launcher of the earlier JSON protocol sends JSON, which is no `Frame`: the engine ends the connection, and the
 launcher shows that the engine went away.
 
 ## Commands
