@@ -202,3 +202,26 @@ fn a_car_on_the_ring_keeps_going_past_an_entry_claim_the_entrant_can_still_give_
     assert!(r.yield_at.is_none(), "the ring gave way to an entering car: {r:?}");
     assert!(w.plan(&mut c, entrant, None).yield_at.is_some(), "entrant ignored the ring");
 }
+
+#[test]
+fn an_entering_car_does_not_cut_in_ahead_of_ring_traffic_queueing_at_its_entry() {
+    let at = |k: usize| {
+        let a = (k % 16) as f64 * std::f64::consts::FRAC_PI_8;
+        DVec3::new(15.0 * a.cos(), 15.0 * a.sin(), 0.0)
+    };
+    let mut lanes: Vec<Lane> = (0..16).map(|k| object_lane(at(k), at(k + 1), k as u16)).collect();
+    lanes.push(object_lane(DVec3::new(25.0, -20.0, 0.0), at(0), 16));
+    let mut net = Network { lanes, ..Default::default() };
+    net.link(1.0);
+    let mut w = Harness::new(net);
+    // a ring car stands a lane before the merge, the queue on the ring not moving
+    let ring = add(&mut w, 10, 14, 3.0, 0.0);
+    w.actors[ring].stopped = 6.0;
+    let to_15 = w.net.lanes[14].length() - 3.0;
+    w.approach(ring, 15, to_15);
+    let entry_len = w.net.lanes[16].length();
+    let entrant = add(&mut w, 20, 16, entry_len - 10.0, 2.0);
+    w.actors[entrant].yield_time = 10.0;
+    let d = w.plan(&mut JunctionCoordinator::new(), entrant, None);
+    assert!(d.yield_at.is_some(), "cut into the standing ring queue: {d:?}");
+}

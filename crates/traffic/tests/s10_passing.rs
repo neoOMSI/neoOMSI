@@ -162,3 +162,80 @@ fn a_standing_car_can_pass_a_real_bus_and_return_to_its_lane() {
     let decision = ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &input);
     assert_eq!(decision.phase, ManeuverPhase::Passing);
 }
+
+#[test]
+fn an_ambulance_kept_back_behind_a_car_making_way_passes_it_soon() {
+    // a car has pulled over and stopped for the ambulance on a road with one lane each way
+    let net = two_way();
+    let mut amb = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    amb.front = 3.5;
+    amb.rear = 3.5;
+    amb.length = 7.0;
+    amb.half_width = 1.25;
+    amb.stopped = 1.5;
+    amb.pass_room = 6.0;
+    let mut car = ManeuverActor::new(VehicleId(2), 0, 72.0);
+    car.front = 2.1;
+    car.rear = 2.1;
+    car.length = 4.2;
+    let mut foot = BodyFootprint::new(car.id, DVec2::new(0.35, 72.0), DVec2::Y,
+        2.1, 0.9, 0.0, 1.5, 0.0);
+    foot.front = car.front;
+    foot.rear = car.rear;
+    foot.current = Some(Placement { lane: LaneId(0), s: car.s, lateral: 0.35, foreign: false });
+    let occupancy = Occupancy::build(net.version(), 0, vec![foot]);
+    let actors = [amb, car];
+    let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+        people: &[], static_clearance: None, time: 5.0, dt: 0.02, tick: 1 };
+    let mut input = ManeuverInputs::new(0);
+    input.lead_gap = Some(72.0 - 2.1 - 60.0 - 3.5);
+    input.lead_standing = true;
+    input.priority_pass = true;
+    input.obstacle_len = 4.2;
+    let d = ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &input);
+    assert_eq!(d.phase, ManeuverPhase::Passing, "{d:?}");
+}
+
+#[test]
+fn an_ambulance_passes_a_car_still_slowing_down_but_waits_for_oncoming_traffic() {
+    let mut net = two_way();
+    net.lanes[0].speed_limit_kmh = 50.0;
+    let plan_with = |oncoming: bool| {
+        let mut amb = ManeuverActor::new(VehicleId(1), 0, 60.0);
+        amb.front = 3.5;
+        amb.rear = 3.5;
+        amb.length = 7.0;
+        amb.half_width = 1.25;
+        amb.speed = 5.0;
+        amb.pass_room = 6.0;
+        let mut feet = Vec::new();
+        let mut car_foot = BodyFootprint::new(VehicleId(2), DVec2::new(0.35, 76.0), DVec2::Y,
+            2.1, 0.9, 0.0, 1.5, 3.0);
+        car_foot.front = 2.1;
+        car_foot.rear = 2.1;
+        car_foot.current = Some(Placement { lane: LaneId(0), s: 76.0, lateral: 0.35, foreign: false });
+        feet.push(car_foot);
+        if oncoming {
+            // a car coming the other way, 60 m off on the oncoming lane
+            let mut f = BodyFootprint::new(VehicleId(3), DVec2::new(-3.5, 140.0), -DVec2::Y,
+                2.1, 0.9, 0.0, 1.5, 13.0);
+            f.front = 2.1;
+            f.rear = 2.1;
+            f.current = Some(Placement { lane: LaneId(1), s: 400.0 - 140.0, lateral: 0.0, foreign: false });
+            feet.push(f);
+        }
+        let occupancy = Occupancy::build(net.version(), 0, feet);
+        let actors = [amb];
+        let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+            people: &[], static_clearance: None, time: 5.0, dt: 0.02, tick: 1 };
+        let mut input = ManeuverInputs::new(0);
+        input.lead_gap = Some(76.0 - 2.1 - 60.0 - 3.5);
+        input.lead_speed = 3.0;
+        input.lead_standing = true;
+        input.priority_pass = true;
+        input.obstacle_len = 4.2;
+        ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &input).phase
+    };
+    assert_eq!(plan_with(false), ManeuverPhase::Passing, "did not pass on a free oncoming lane");
+    assert_ne!(plan_with(true), ManeuverPhase::Passing, "pulled out in front of oncoming traffic");
+}
