@@ -571,7 +571,7 @@ mod tests {
         let Answer::Version(v) = call(Command::Version(Empty {})).unwrap() else {
             panic!("not a version");
         };
-        assert_eq!((v.version.as_str(), v.protocol), (crate::startup::VERSION, 2));
+        assert_eq!((v.version.as_str(), v.protocol), (crate::startup::VERSION, 3));
         assert!(call(Command::Shutdown(Empty {})).is_err());
     }
 }

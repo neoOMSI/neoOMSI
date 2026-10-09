@@ -4,7 +4,7 @@ use serde_json::Value;
 include!(concat!(env!("OUT_DIR"), "/neoomsi.launcher.rs"));
 include!(concat!(env!("OUT_DIR"), "/commands.rs"));
 
-pub const VERSION: &str = "2";
+pub const VERSION: &str = "3";
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
