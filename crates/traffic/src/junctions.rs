@@ -716,6 +716,17 @@ impl JunctionCoordinator {
                         && !scene.net.must_yield(m, l);
                     let priority_merge = c.merge && scene.net.must_yield(m, l)
                         && !scene.net.must_yield(l, m);
+                    // A `[rule] priority` difference between the two paths is signage: an
+                    // early claim from the lower road does not take the right of way while
+                    // that vehicle can still stop before the meeting place. Both sides judge
+                    // it with the same stopping distance so they agree on who goes.
+                    let signed = (scene.net.lanes[l].priority - scene.net.lanes[m].priority)
+                        .abs() > 0.5;
+                    let mine_ahead = point - c.before - actor.front;
+                    let i_give_way = signed && !jn.inside && scene.net.must_yield(l, m)
+                        && mine_ahead > stopping_distance(actor);
+                    let they_give_way = signed && scene.net.must_yield(m, l)
+                        && !same_object(scene.net, o.lane, m);
                     let claims_block = mode != Some(BlockMode::Occupy);
                     let claimed = self.claims.holds(LaneId(m), o.id) && !stalled && claims_block;
                     let theirs = dj - c.other_before - o.front;
@@ -764,13 +775,13 @@ impl JunctionCoordinator {
                     // A lower-priority entrant still upstream of the conflict must stop,
                     // even if it holds a speculative claim. A body already overlapping,
                     // a blockpath reservation, or an entrant unable to stop stays protected.
-                    if priority_merge && mode.is_none() && !o.emergency
-                        && theirs > o.speed * o.reaction + o.speed * o.speed / (2.0 * o.decel.max(0.1))
+                    if (priority_merge || they_give_way) && mode.is_none() && !o.emergency
+                        && theirs > stopping_distance(o)
                     {
                         continue;
                     }
                     if claimed || (is_on && o.speed > 0.5 && !waits_short) {
-                        let me_decided = (committed || jn.inside) && !yielding_merge;
+                        let me_decided = (committed || jn.inside) && !yielding_merge && !i_give_way;
                         let first = if me_decided {
                             t_j < t_mine - 0.3 || ((t_j - t_mine).abs() <= 0.3 && o.id < me_id)
                         } else {
@@ -788,14 +799,17 @@ impl JunctionCoordinator {
                     }
                     let o_prio = o.priority;
                     if (jn.inside && !yielding_merge)
-                        || (committed && !yielding_merge)
+                        || (committed && !yielding_merge && !i_give_way)
                         || (me_prio && !o_prio && !yielding_merge)
                         || (!scene.net.must_yield(l, m) && !(o_prio && !me_prio))
                     {
                         continue;
                     }
                     if t_j < (actor.accept_gap + 2.0).max(t_clear + 1.0) * patience {
-                        if t_j == f32::MAX || o.speed < 0.3 {
+                        // (a priority-road vehicle standing only for a moment is about to
+                        // come on: the entry's long wait does not outrank it; a stalled
+                        // queue is left to the fairness rule below)
+                        if t_j == f32::MAX || (o.speed < 0.3 && (stalled || !signed)) {
                             soft.push(j);
                         } else {
                             ruled = true;
@@ -1075,6 +1089,21 @@ impl JunctionCoordinator {
             cycle: cycle.to_vec(),
         }
     }
+}
+
+/// How far an actor travels before it stands, reacting and braking at its own deceleration.
+fn stopping_distance(a: &JunctionActor) -> f32 {
+    a.speed * a.reaction + a.speed * a.speed / (2.0 * a.decel.max(0.1))
+}
+
+/// Whether two lanes belong to the same crossing object (a vehicle on `a` is already past
+/// the line of the junction `b` belongs to).
+fn same_object(net: &Network, a: usize, b: usize) -> bool {
+    let object = |l: usize| {
+        let lane = &net.lanes[l];
+        lane.key.filter(|_| lane.source == 2).map(|k| (k.tile, k.id))
+    };
+    object(a).is_some() && object(a) == object(b)
 }
 
 /// The controller `AiState` of an actor, for the crossing-arrival prediction. Junction actors
