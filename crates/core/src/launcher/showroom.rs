@@ -73,6 +73,7 @@ pub struct Showroom {
     /// The picture: its texture and size, and whether it must be drawn again.
     target: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
     dirty: bool,
+    snap_size: (u32, u32),
     /// Bumped whenever `target` was made anew (the interface binds it again).
     pub generation: u64,
 }
@@ -127,6 +128,7 @@ impl Showroom {
             busy: false,
             target: None,
             dirty: true,
+            snap_size: (0, 0),
             generation: 0,
         }
     }
@@ -425,9 +427,9 @@ impl Showroom {
         self.target.as_ref().map(|t| t.1.clone())
     }
 
-    fn render(&mut self, renderer: &mut Renderer, target: &wgpu::TextureView, w: u32, h: u32) {
+    fn camera(&self, w: u32, h: u32) -> Option<Camera> {
         let (yaw, pitch, zoom, focus) = (self.yaw, self.pitch, self.zoom, self.focus_now);
-        let Some(s) = self.shown.as_mut() else { return };
+        let s = self.shown.as_ref()?;
         let fov = 30.0f32;
         let aspect = w as f32 / h.max(1) as f32;
         // far enough that the whole bus fits the free part of the window
@@ -452,7 +454,7 @@ impl Showroom {
         // side by as much
         let side = (focus - 0.5) * 2.0 * half_v * aspect;
         let look_yaw = yaw - side.atan().to_degrees();
-        let cam = Camera {
+        Some(Camera {
             position: pos,
             yaw: look_yaw,
             pitch: -pitch,
@@ -460,10 +462,38 @@ impl Showroom {
             fov_deg: fov,
             near: 0.2,
             far: 6000.0,
-        };
+        })
+    }
+
+    fn render(&mut self, renderer: &mut Renderer, target: &wgpu::TextureView, w: u32, h: u32) {
+        let Some(cam) = self.camera(w, h) else { return };
+        let Some(s) = self.shown.as_mut() else { return };
         s.scene.overlays.clear();
         let _ = &s.weather;
         renderer.render(&mut s.scene, target, w, h, &cam, &s.lighting);
+    }
+
+    pub fn snapshot(&mut self, renderer: &mut Renderer, w: u32, h: u32) -> Option<(u32, u32, Vec<u8>)> {
+        self.shown.as_ref()?;
+        let (w, h) = (w.max(16), h.max(16));
+        if self.snap_size != (w, h) {
+            self.snap_size = (w, h);
+            self.dirty = true;
+        }
+        if !self.dirty {
+            return None;
+        }
+        self.dirty = false;
+        let cam = self.camera(w, h)?;
+        let s = self.shown.as_mut()?;
+        s.scene.overlays.clear();
+        let rgba = renderer.render_to_image(&mut s.scene, w, h, &cam, &s.lighting).ok()?;
+        Some((w, h, rgba))
+    }
+
+    /// A bus is loaded and placed in the scene.
+    pub fn has_scene(&self) -> bool {
+        self.shown.as_ref().map(|s| s.vehicle.is_some()).unwrap_or(false)
     }
 
     /// A bus is there to show.

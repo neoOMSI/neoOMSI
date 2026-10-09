@@ -91,8 +91,29 @@ impl ControlNames {
     /// What a `[mouseevent]` does, for the HUD.
     pub fn control(&self, event: &str) -> String {
         let event = event.trim();
-        if let Some(t) = self.official(event) {
+        if let Some(t) = self.control_official(event) {
             return t;
+        }
+        if self.lang == "de" {
+            return humanize(event);
+        }
+        translate(event)
+    }
+
+    pub fn key_label(&self, action: &str) -> String {
+        let action = action.trim();
+        let key = format!("pause.keyname.{}", action.to_ascii_lowercase().replace('-', "_"));
+        let shown = ::i18n::translate(&key, &[]);
+        if shown != key {
+            return shown;
+        }
+        self.control_official(action).unwrap_or_else(|| action.to_string())
+    }
+
+    /// The text OMSI has for a trigger, also for the variants of a key (no guessing).
+    fn control_official(&self, event: &str) -> Option<String> {
+        if let Some(t) = self.official(event) {
+            return Some(t);
         }
         // variants of a trigger the key dialog knows: the mouse version of a key, a second
         // button for the same job, the outside button of a door
@@ -105,14 +126,11 @@ impl ControlNames {
         ] {
             if let Some(base) = strip_suffix_ci(event, suffix) {
                 if let Some(t) = self.official(base) {
-                    return format!("{t}{}", if self.lang == "en" { extra } else { "" });
+                    return Some(format!("{t}{}", if self.lang == "en" { extra } else { "" }));
                 }
             }
         }
-        if self.lang == "de" {
-            return humanize(event);
-        }
-        translate(event)
+        None
     }
 
     /// The official text of a trigger, also under the names OMSI uses for the same job in
@@ -747,9 +765,9 @@ pub fn translate(name: &str) -> String {
                 && i > 0
                 && toks[i - 1].chars().all(|c| c.is_ascii_digit())
                 && words
-                    .last()
-                    .map(|w| w.chars().all(|c| c.is_ascii_digit()))
-                    .unwrap_or(false)
+                .last()
+                .map(|w| w.chars().all(|c| c.is_ascii_digit()))
+                .unwrap_or(false)
             {
                 let int = words.pop().unwrap_or_default();
                 words.push(format!("{int}.{f}"));

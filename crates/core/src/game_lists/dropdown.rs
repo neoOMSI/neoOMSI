@@ -33,12 +33,29 @@ pub(crate) struct Dropdown {
     pub sel: usize,
     pub top: usize,
     pub current: Option<usize>,
+    /// Type-to-filter
+    pub search: Vec<String>,
+    pub all: Vec<(String, String)>,
+    pub filter: String,
+}
+
+pub(crate) fn value_label(setting: &str, value: &str, label: &str) -> String {
+    let key = format!("pause.options.value.{setting}.{value}");
+    let text = ::i18n::translate(&key, &[]);
+    if text == key {
+        ::user_interface::tr(label).into_owned()
+    } else {
+        text
+    }
 }
 
 pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> {
     let tr = |t: &str| ::user_interface::tr(t).into_owned();
     if app.metar_locked() && matches!(id, "weather" | "cloudkind" | "precipkind") {
         return None;
+    }
+    if id.starts_with("pad_") {
+        return crate::lab_pads::dropdown(app, row, id);
     }
     let mut current: Option<usize> = None;
     let items: Vec<(String, String)> = match id {
@@ -103,7 +120,7 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
             PRESETS
                 .iter()
                 .enumerate()
-                .map(|(i, p)| (tr(p.0), format!("preset {i}")))
+                .map(|(i, p)| (value_label("preset", &p.0.to_lowercase(), p.0), format!("preset {i}")))
                 .collect()
         }
         "gfxprofile" => ::config::get_subs("graphics_profiles")
@@ -120,7 +137,7 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
             current = at;
             options
                 .iter()
-                .map(|o| (tr(o.1), format!("pick {key} {}", o.0)))
+                .map(|o| (value_label(key, o.0, o.1), format!("pick {key} {}", o.0)))
                 .collect()
         }
         _ => return None,
@@ -135,11 +152,18 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
         sel,
         top: 0,
         current,
+        search: Vec::new(),
+        all: Vec::new(),
+        filter: String::new(),
     })
 }
 
 pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
     let (verb, arg) = action.split_once(' ').unwrap_or((action, ""));
+    if verb.starts_with("pad_") {
+        crate::lab_pads::apply(app, verb, arg);
+        return;
+    }
     if app.metar_locked() && matches!(verb, "wx" | "cloud" | "precip") {
         app.service_msg = Some((
             "The weather cannot be changed while the METAR sync is on".into(),
@@ -154,7 +178,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 .as_ref()
                 .is_some_and(|l| l.role == ::network::Role::Client)
             {
-                app.service_msg = Some(("In a LAN session the host sets the weather".into(), 3.0));
+                app.service_msg = Some((::i18n::translate("pause.msg.lan_weather", &[]), 3.0));
             } else {
                 app.change_weather(Some(arg.to_string()), true, 1.0);
             }
@@ -202,10 +226,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
         }
         "pick" => {
             if let Some((key, value)) = arg.split_once(' ') {
-                if key == "drive_keys" {
-                    ::config::set_setting("gameplay", "drive-keys", value);
-                    let _ = ::config::save();
-                } else if key == "boarding" {
+                if key == "boarding" {
                     ::config::set_setting("gameplay", "boarding", value);
                     let _ = ::config::save();
                 } else if key == "ai_unsched_factor" {
@@ -235,6 +256,14 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                         ::config::set_setting("gameplay", "maintenance", v);
                         let _ = ::config::save();
                     }
+                } else if key == "head_tracking_invert" {
+                    ::config::set_setting("camera", "head_tracking_invert", if value == "none" { "" } else { value });
+                    let _ = ::config::save();
+                } else if key == "head_tracking_port" {
+                    if let Ok(v) = value.parse::<i64>() {
+                        ::config::set_setting("camera", "head_tracking_port", v);
+                        let _ = ::config::save();
+                    }
                 } else if matches!(key, "vr_scale" | "vr_head_smoothing_ms" | "vr_mirror_rate") {
                     if let Some(v) = value.parse::<f64>().ok().filter(|v| v.is_finite()) {
                         ::config::set_setting("vr", &key[3..].replace('_', "-"), v);
@@ -243,7 +272,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 } else if ::config::DEFAULTS.iter().any(|(c, k, _)| *c == "graphics" && *k == key) {
                     gfx_set(key, value);
                     if key == "window_mode" {
-                        super::options::apply_window_mode(app, value);
+                        super::options::apply_window_mode(app, &gfx_text(key));
                     }
                     let _ = ::config::save();
                 } else {
@@ -267,7 +296,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
             let name = arg.trim();
             let profile = ::config::get_table_sub("graphics_profiles", name);
             if profile.is_empty() {
-                app.service_msg = Some((format!("Graphics profile \"{name}\" not found"), 4.0))
+                app.service_msg = Some((::i18n::translate("pause.msg.graphics_missing", &[("name", &name)]), 4.0))
             } else {
                 for (k, v) in profile {
                     if ::config::DEFAULTS.iter().any(|(c, key, _)| *c == "graphics" && *key == k) {
@@ -448,12 +477,20 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("4000", "4 GB"),
             ("6000", "6 GB"),
         ],
-        "drive_keys" => vec![
-            ("omsi", "Custom controls (Controls page)"),
-            ("simple", "W A S D + arrows"),
-            ("wasd", "W A S D only"),
-            ("arrows", "Arrow keys only"),
+        "post_aa" => vec![("fxaa", "FXAA"), ("off", "Off")],
+        "mirror_refresh" => vec![("eco", "Economy"), ("full", "Full")],
+        "graphics_api" => vec![("auto", "Automatic"), ("vulkan", "Vulkan"), ("dx12", "DirectX 12")],
+        "head_tracking_invert" => vec![
+            ("none", "None"),
+            ("yaw", "Yaw"),
+            ("pitch", "Pitch"),
+            ("roll", "Roll"),
+            ("yaw pitch", "Yaw and pitch"),
+            ("yaw roll", "Yaw and roll"),
+            ("pitch roll", "Pitch and roll"),
+            ("yaw pitch roll", "Yaw, pitch and roll"),
         ],
+        "head_tracking_port" => vec![("4242", "4242"), ("4243", "4243"), ("5005", "5005"), ("5555", "5555")],
         "units" => vec![
             ("metric", "Metric (km/h, km, °C)"),
             ("uk", "UK (mph, miles, °C)"),
@@ -546,9 +583,7 @@ pub(super) fn select_state(
     key: &str,
 ) -> (Vec<(&'static str, &'static str)>, Option<usize>, String) {
     let options = select_options(key);
-    let cur = if key == "drive_keys" {
-        ::config::get_string("gameplay", "drive-keys").unwrap_or_default()
-    } else if key == "boarding" {
+    let cur = if key == "boarding" {
         ::config::get_string("gameplay", "boarding").unwrap_or_default()
     } else if key == "ai_unsched_factor" {
         ::config::get_float("ai", "unsched_factor")
@@ -570,6 +605,11 @@ pub(super) fn select_state(
         ::config::get_int("gameplay", "maintenance")
             .map(|v| v.to_string())
             .unwrap_or_default()
+    } else if key == "head_tracking_invert" {
+        let v = ::config::get_string("camera", "head_tracking_invert").unwrap_or_default();
+        if v.trim().is_empty() { "none".to_string() } else { v }
+    } else if key == "head_tracking_port" {
+        ::config::get_int("camera", "head_tracking_port").map(|v| v.to_string()).unwrap_or_default()
     } else if matches!(key, "vr_scale" | "vr_head_smoothing_ms" | "vr_mirror_rate") {
         ::config::get_float("vr", &key[3..].replace('_', "-"))
             .map(|v| v.to_string())
@@ -583,7 +623,7 @@ pub(super) fn select_state(
     (options, at, cur)
 }
 
-pub(super) fn select_row(
+pub(crate) fn select_row(
     file: &serde_json::Value,
     key: &str,
     name: &str,
@@ -594,16 +634,18 @@ pub(super) fn select_row(
         return None;
     }
     let label = at
-        .map(|i| ::user_interface::tr(options[i].1).into_owned())
+        .map(|i| value_label(key, options[i].0, options[i].1))
         .unwrap_or(cur);
     Some((row(name, 'o', &label, desc, None), format!("sel {key}")))
 }
 
-pub(super) fn preset_row(
+pub(crate) fn preset_row(
     name: &str,
     desc: &str,
 ) -> Option<(String, String)> {
-    let label =
-        ::user_interface::tr(preset_now().map(|i| PRESETS[i].0).unwrap_or("Custom")).into_owned();
+    let label = match preset_now() {
+        Some(i) => value_label("preset", &PRESETS[i].0.to_lowercase(), PRESETS[i].0),
+        None => value_label("preset", "custom", "Custom"),
+    };
     Some((row(name, 'o', &label, desc, None), "preset".to_string()))
 }

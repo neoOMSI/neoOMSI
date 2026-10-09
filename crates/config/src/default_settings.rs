@@ -22,7 +22,6 @@ impl Def {
 /// (category, key, default)
 pub const DEFAULTS: &[(&str, &str, Def)] = &[
     // [gameplay]
-    ("gameplay", "drive-keys", Def::Str("simple")),
     ("gameplay", "boarding", Def::Str("auto")),
     ("gameplay", "pax_prefer_seats", Def::Bool(false)),
     ("gameplay", "pax_rear_entry", Def::Bool(true)),
@@ -46,7 +45,8 @@ pub const DEFAULTS: &[(&str, &str, Def)] = &[
     ("controls", "old_steering", Def::Bool(false)),
     ("controls", "red_steer_spd", Def::Bool(false)),
     ("controls", "mouse_sens", Def::Float(1.0)),
-    ("controls", "stick_sens", Def::Float(0.25)),
+    ("controls", "stick_sens", Def::Float(1.0)),
+    ("controls", "stick_sens_v2", Def::Bool(true)),
     ("controls", "steer_center", Def::Bool(true)),
     ("controls", "brake_hold", Def::Bool(true)),
     ("controls", "mouse_steering", Def::Bool(false)),
@@ -93,6 +93,15 @@ pub const DEFAULTS: &[(&str, &str, Def)] = &[
     ("graphics", "graphics", Def::Str("vanilla_plus")),
     ("graphics", "graphics_api", Def::Str("auto")),
     ("graphics", "window_mode", Def::Str("windowed")),
+    ("graphics", "triple_screen", Def::Bool(false)),
+    ("graphics", "triple_screen_span", Def::Bool(true)),
+    ("graphics", "triple_screen_hud", Def::Bool(true)),
+    ("graphics", "triple_screen_width_mm", Def::Float(690.0)),
+    ("graphics", "triple_screen_distance_mm", Def::Float(400.0)),
+    ("graphics", "triple_screen_bezel_mm", Def::Float(14.0)),
+    ("graphics", "triple_screen_left_angle", Def::Float(30.0)),
+    ("graphics", "triple_screen_right_angle", Def::Float(30.0)),
+    ("graphics", "triple_screen_eye_height_mm", Def::Float(0.0)),
     ("graphics", "vsync", Def::Bool(true)),
     ("graphics", "max_fps", Def::Int(0)),
     ("graphics", "msaa", Def::Int(4)),

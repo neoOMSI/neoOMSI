@@ -185,6 +185,9 @@ impl App {
         }
         if duty_done {
             self.duty = None;
+            if let Some(p) = self.player.as_mut() {
+                schedule_paper::clear_vehicle(&mut p.vehicle);
+            }
             self.service_msg = Some(("Duty complete: free drive".into(), 5.0));
         } else if let Some(msg) = next_trip_notice {
             self.service_msg = Some((msg, 5.0));

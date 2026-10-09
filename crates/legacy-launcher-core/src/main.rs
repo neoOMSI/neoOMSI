@@ -1,6 +1,6 @@
 //! `neoomsi-launcher`: the launcher's commands for a terminal (`--cli <command> [json]`), and
-//! otherwise the launcher window - which is the game binary beside this one, started with
-//! `--launcher` (the window draws the bus with the game's own renderer).
+//! otherwise the launcher: the one a release ships beside the game, else the game's
+//! built-in window (`neoomsi --launcher`).
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -33,6 +33,11 @@ fn main() {
     } else {
         std::path::PathBuf::from(game)
     };
+    match omsi_launcher_lib::start_external_launcher(&game) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => eprintln!("{e:#}: the built-in launcher opens instead"),
+    }
     match std::process::Command::new(&game)
         .arg("--launcher")
         .args(&args[1..])

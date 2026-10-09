@@ -144,11 +144,10 @@ impl crate::App {
                     }
                 }
                 if ls.spill.marker {
-                    let r = crate::lights::spill_radius(&ls.spill);
                     for l in scene
                         .lights
                         .iter()
-                        .filter(|l| l.radius == r && l.direction.length_squared() > 0.1)
+                        .filter(|l| l.shadow_first && l.direction.length_squared() > 0.1)
                     {
                         beams.push(BeamMark {
                             pos: [l.position.x, l.position.y, l.position.z],

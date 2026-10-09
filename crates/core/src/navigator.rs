@@ -507,9 +507,9 @@ impl Navigator {
                 .filter(|&i| {
                     net.lanes[i].kind == LaneKind::Street
                         && net.lanes[i]
-                            .nearest_point(stop.position)
-                            .map(|p| p.1 < 20.0)
-                            .unwrap_or(false)
+                        .nearest_point(stop.position)
+                        .map(|p| p.1 < 20.0)
+                        .unwrap_or(false)
                 })
                 .collect();
             if let Some((mut path, k)) = way_back(net, f.bus, f.heading, &targets, 30_000.0) {
@@ -748,11 +748,11 @@ impl Navigator {
         self.jam_cost = cost;
         let changed = route_jam.len() != self.route_jam.len()
             || route_jam.iter().any(|(l, c)| {
-                self.route_jam
-                    .get(l)
-                    .map(|o| level(*o) != level(*c))
-                    .unwrap_or(true)
-            });
+            self.route_jam
+                .get(l)
+                .map(|o| level(*o) != level(*c))
+                .unwrap_or(true)
+        });
         self.route_jam = route_jam;
         if changed {
             self.jam_version += 1;
@@ -956,7 +956,7 @@ impl Navigator {
                     .filter(|l| l.2 < 10.0)
                     .and_then(|l| self.street_of(l.0))
             }
-            .map(str::to_string);
+                .map(str::to_string);
         }
         self.first = false;
         if !self.enabled && self.shown < 0.01 {
@@ -1905,13 +1905,13 @@ fn visible_road_lanes(net: &Network) -> Vec<(usize, &::simulation::traffic::Lane
         .collect()
 }
 
-struct MapRoad {
-    points: Vec<DVec3>,
-    width: f32,
-    main: bool,
+pub(crate) struct MapRoad {
+    pub(crate) points: Vec<DVec3>,
+    pub(crate) width: f32,
+    pub(crate) main: bool,
 }
 
-fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, f32)]) {
+pub(crate) fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, f32)]) {
     let mut segments = Vec::new();
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (pts, width) in surfaces {
@@ -2016,7 +2016,7 @@ fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, f32)]) {
     }
 }
 
-fn road_geometry(net: &Network) -> Vec<MapRoad> {
+pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
     let mut roads = Vec::new();
     let mut splines =
         std::collections::BTreeMap::<((i32, i32), i64), Vec<&::simulation::traffic::Lane>>::new();
@@ -2051,13 +2051,13 @@ fn road_geometry(net: &Network) -> Vec<MapRoad> {
                 } else {
                     mid
                 }]
-                .z;
+                    .z;
                 let zb = b.points[if b.reversed {
                     b.points.len() - 1 - mid
                 } else {
                     mid
                 }]
-                .z;
+                    .z;
                 if (za - zb).abs() > 1.5 {
                     break;
                 }
@@ -2180,7 +2180,7 @@ fn build_roads(p: &mut Painter, net: &Network, anchor: DVec2) {
     }
 }
 
-fn simplify(pts: &[Vec3], tol: f32) -> Vec<Vec3> {
+pub(crate) fn simplify(pts: &[Vec3], tol: f32) -> Vec<Vec3> {
     if pts.len() < 3 {
         return pts.to_vec();
     }
@@ -2253,8 +2253,8 @@ fn probe_lanes(net: &Network) {
         if (s.truncate() - c).length() > r
             && (e.truncate() - c).length() > r
             && l.nearest_point(DVec3::new(c.x, c.y, s.z))
-                .map(|p| p.1 > r)
-                .unwrap_or(true)
+            .map(|p| p.1 > r)
+            .unwrap_or(true)
         {
             continue;
         }
@@ -2741,6 +2741,8 @@ fn heading_vec(h: f64) -> DVec2 {
 pub struct CityMap {
     pub open: bool,
     pub rect: [f32; 4],
+    pub embed: Option<[f32; 4]>,
+    pub picture: Option<TextureId>,
     center: DVec2,
     mpp: f64,
     follow: bool,
@@ -2845,6 +2847,25 @@ impl Navigator {
         self.city.open
     }
 
+    pub fn embed_map(&mut self, rect: Option<[f32; 4]>) {
+        match rect {
+            Some(r) => {
+                if self.city.embed.is_none() {
+                    self.city.open = false;
+                    self.toggle_map();
+                }
+                self.city.embed = Some(r);
+            }
+            None => {
+                if self.city.embed.take().is_some() {
+                    self.city.open = false;
+                    self.city.picture = None;
+                    self.city.drag = None;
+                }
+            }
+        }
+    }
+
     pub fn over_panel(&self, x: f32, y: f32) -> bool {
         let r = self.panel_rect;
         self.enabled && x >= r[0] && y >= r[1] && x < r[2] && y < r[3]
@@ -2856,8 +2877,11 @@ impl Navigator {
     }
 
     pub fn map_press(&mut self, x: f32, y: f32) {
+        let embedded = self.city.embed.is_some();
         if !self.map_hit(x, y) {
-            self.city.open = false;
+            if !embedded {
+                self.city.open = false;
+            }
             return;
         }
         let local = Vec2::new(x - self.city.rect[0], y - self.city.rect[1]);
@@ -2871,8 +2895,23 @@ impl Navigator {
             Some(0) => self.city.follow = true,
             Some(1) => self.city.mpp = (self.city.mpp / 1.6).max(0.25),
             Some(2) => self.city.mpp = (self.city.mpp * 1.6).min(self.max_mpp()),
+            Some(3) if embedded => {}
+            Some(4) => {}
             Some(3) => self.city.open = false,
             _ => self.city.drag = Some((x, y)),
+        }
+    }
+
+    pub fn duty_button(&self) -> [f32; 4] {
+        if self.city.embed.is_none() {
+            return [0.0; 4];
+        }
+        match self.city.buttons.iter().find(|(_, id)| *id == 4) {
+            Some((r, _)) => {
+                let (x, y) = (self.city.rect[0] + r.x, self.city.rect[1] + r.y);
+                [x, y, x + r.w, y + r.h]
+            }
+            None => [0.0; 4],
         }
     }
 
@@ -2928,6 +2967,10 @@ impl Navigator {
         let (sw, sh) = f.screen;
         let (w, h) = ((sw * 0.8).round(), (sh * 0.82).round());
         let (x0, y0) = (((sw - w) * 0.5).round(), ((sh - h) * 0.5).round());
+        let (x0, y0, w, h) = match self.city.embed {
+            Some(r) => (r[0].round(), r[1].round(), (r[2] - r[0]).round().max(32.0), (r[3] - r[1]).round().max(32.0)),
+            None => (x0, y0, w, h),
+        };
         self.city.rect = [x0, y0, x0 + w, y0 + h];
         let (tw, th) = (w as u32, h as u32);
         if self.gpu.is_none() {
@@ -3076,15 +3119,20 @@ impl Navigator {
             )
         };
         let win = Rect::new(0.0, 0.0, w, h);
+        let emb = self.city.embed.is_some();
         let mut bg = Painter::new();
         bg.rounded(
             win,
-            8.0 * s,
+            if emb { 0.0 } else { 8.0 * s },
             Color::rgba(
                 10,
                 10,
                 10,
-                (crate::ui::backdrop(self.opacity) * 1.3).min(1.0),
+                if emb {
+                    0.55
+                } else {
+                    (crate::ui::backdrop(self.opacity) * 1.3).min(1.0)
+                },
             ),
         );
         let n_bg = bg.len();
@@ -3257,61 +3305,68 @@ impl Navigator {
             ui.tri(tip, l, m, TEXT, TEXT, TEXT);
             ui.tri(tip, m, r, TEXT, TEXT, TEXT);
         }
-        let head = Rect::new(0.0, 0.0, w, 44.0 * s);
-        ui.rect(head, Color::rgba(12, 12, 12, 0.97));
-        ui.rect(
-            Rect::new(0.0, head.bottom() - 1.0_f32.max(s), w, 1.0_f32.max(s)),
-            HAIR,
-        );
+        let head = Rect::new(0.0, 0.0, w, if emb { 0.0 } else { 44.0 * s });
         let pad = 16.0 * s;
-        let wd = words(f.language);
-        let title = match (&f.line, &f.terminus) {
-            (Some(l), Some(t)) => format!("{}  ›  {}", l.trim(), t.trim()),
-            _ => wd.map.to_string(),
-        };
-        let title_w = ui.text_in(
-            &mut self.atlas,
-            &self.fonts,
-            &title,
-            15.0 * s,
-            Weight::Bold,
-            Rect::new(pad, head.y, w * 0.4, head.h),
-            Align::Left,
-            TEXT,
-        );
-        if let Some(st) = f.stops.first() {
-            let d = self
-                .next_dist
-                .map(|d| distance(d, uses_miles(f.units)))
-                .unwrap_or_default();
-            let t = format!(
-                "{}  ·  {}  ·  {:02}:{:02}",
-                st.name.trim(),
-                d,
-                (st.arrival / 3600.0) as i32 % 24,
-                ((st.arrival % 3600.0) / 60.0) as i32
+        if !emb {
+            ui.rect(head, Color::rgba(12, 12, 12, 0.97));
+            ui.rect(
+                Rect::new(0.0, head.bottom() - 1.0_f32.max(s), w, 1.0_f32.max(s)),
+                HAIR,
             );
-            ui.text_in(
+            let wd = words(f.language);
+            let title = match (&f.line, &f.terminus) {
+                (Some(l), Some(t)) => format!("{}  ›  {}", l.trim(), t.trim()),
+                _ => wd.map.to_string(),
+            };
+            let title_w = ui.text_in(
                 &mut self.atlas,
                 &self.fonts,
-                &t,
-                13.5 * s,
-                Weight::Medium,
-                Rect::new(pad + title_w + 24.0 * s, head.y, w * 0.45, head.h),
+                &title,
+                15.0 * s,
+                Weight::Bold,
+                Rect::new(pad, head.y, w * 0.4, head.h),
                 Align::Left,
-                TEXT_DIM,
+                TEXT,
             );
+            if let Some(st) = f.stops.first() {
+                let d = self
+                    .next_dist
+                    .map(|d| distance(d, uses_miles(f.units)))
+                    .unwrap_or_default();
+                let t = format!(
+                    "{}  ·  {}  ·  {:02}:{:02}",
+                    st.name.trim(),
+                    d,
+                    (st.arrival / 3600.0) as i32 % 24,
+                    ((st.arrival % 3600.0) / 60.0) as i32
+                );
+                ui.text_in(
+                    &mut self.atlas,
+                    &self.fonts,
+                    &t,
+                    13.5 * s,
+                    Weight::Medium,
+                    Rect::new(pad + title_w + 24.0 * s, head.y, w * 0.45, head.h),
+                    Align::Left,
+                    TEXT_DIM,
+                );
+            }
         }
         self.city.buttons.clear();
         let bs = 30.0 * s;
         let mut bx = w - pad - bs;
+        let by_btn = if emb { h - pad - bs } else { head.y + (head.h - bs) * 0.5 };
         for (icon, id) in [
             ("close", 3u8),
             ("zoom_out", 2),
             ("zoom_in", 1),
             ("my_location", 0),
+            ("directions_bus", 4),
         ] {
-            let r = Rect::new(bx, head.y + (head.h - bs) * 0.5, bs, bs);
+            if (emb && id == 3) || (!emb && id == 4) {
+                continue;
+            }
+            let r = Rect::new(bx, by_btn, bs, bs);
             let on = id == 0 && self.city.follow;
             ui.rounded(r, 6.0 * s, if on { ACCENT.alpha(0.16) } else { CARD });
             ui.rounded_border(
@@ -3351,7 +3406,9 @@ impl Navigator {
             Align::Left,
             TEXT_DIM,
         );
-        ui.rounded_border(win, 8.0 * s, 1.0_f32.max(s), HAIR);
+        if !emb {
+            ui.rounded_border(win, 8.0 * s, 1.0_f32.max(s), HAIR);
+        }
 
         let (tex, _, _) = self.city.target.unwrap();
         let Some(view) = renderer.texture_view(scene, tex) else {
@@ -3423,7 +3480,11 @@ impl Navigator {
         );
         queue.submit([enc.finish()]);
         let _ = n_dots;
-        scene.overlays.push((tex, [x0, y0, x0 + w, y0 + h]));
+        if self.city.embed.is_some() {
+            self.city.picture = Some(tex);
+        } else {
+            scene.overlays.push((tex, [x0, y0, x0 + w, y0 + h]));
+        }
     }
 }
 
@@ -3474,7 +3535,7 @@ mod tests {
             &route[1..],
             6000.0,
         )
-        .expect("a way");
+            .expect("a way");
         assert_eq!(path.first(), Some(&3));
         assert!(path.contains(&6), "{path:?}");
         assert_eq!(route[1..][join], 2, "{path:?} join {join}");
@@ -3493,7 +3554,7 @@ mod tests {
             [0.0, 0.0, 400.0, 300.0],
             Vec3::new(0.0, 30.0, 0.0),
         )
-        .unwrap();
+            .unwrap();
         assert!(ahead.y < 150.0, "ahead is up the picture: {ahead}");
     }
 

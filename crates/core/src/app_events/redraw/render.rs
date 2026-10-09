@@ -14,7 +14,7 @@ impl App {
         self.dev_actions(event_loop);
         #[cfg(all(feature = "devtools", debug_assertions))]
         let dev_extra = self.dev_gather();
-        let menu_lines = if self.game_menu.is_some() {
+        let menu_lines = if self.game_menu.is_some() && self.report_view.is_some() {
             self.game_menu_items()
         } else {
             Vec::new()
@@ -22,6 +22,14 @@ impl App {
         let vr_nav_display = self.vr_nav_display();
         let vr_active = self.vr_active();
         let screenshot_mode = self.screenshot_mode.is_some();
+        let triple_projection = self.triple_screen_projection_active();
+        let triple_hud = !vr_active
+            && ::config::get_bool("graphics", "triple_screen").unwrap_or(false)
+            && ::config::get_bool("graphics", "triple_screen_hud").unwrap_or(true)
+            && self
+                .surface
+                .as_ref()
+                .is_some_and(|s| s.config.width >= s.config.height.saturating_mul(2));
         let crosshair = !screenshot_mode
             && ::config::get_bool("camera", "crosshair").unwrap_or(true)
             && !matches!(self.view.as_str(), "pax" | "outside")
@@ -31,6 +39,23 @@ impl App {
             (mode.help_left > 0.0)
                 .then(|| "Screenshot mode: HUD hidden. Press Esc to return.".to_string())
         });
+        self.lab_poll();
+        self.lab_place_preview(dt);
+        self.lab_map_sync();
+        self.lab_entries_sync();
+        let vehicle_menu: Vec<crate::ui::VehicleGroup> = match self.lab_menu {
+            Some(st) if st.page == Some(crate::ui::VEHICLE_PAGE) => game_lists::vehicle_menu(self)
+                .into_iter()
+                .map(|(id, acts)| crate::ui::VehicleGroup {
+                    id,
+                    actions: acts
+                        .into_iter()
+                        .map(|(id, opens)| crate::ui::VehicleAction { id, opens })
+                        .collect(),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         let menu_tabs = match self.list_kind.as_ref() {
             Some(k) if self.chooser.is_some() => game_lists::page_titles(self, k),
             _ => None,
@@ -41,7 +66,10 @@ impl App {
             self.scene.as_mut(),
         ) {
             let mut lines: Vec<String> = Vec::new();
-            let names = describe::names(&self.args.root, &::config::get_string("ui", "language").unwrap_or_else(|| "en".into()));
+            let names = describe::names(
+                &self.args.root,
+                &::config::get_string("ui", "language").unwrap_or_else(|| "en".into()),
+            );
             let tooltip = self.hover.as_ref().map(|h| names.control(h));
             if self.editor.is_some() {
                 lines.push("Object editor: click picks · drag moves · wheel turns (Shift lifts) · Del · C copy · V variant · Backspace undo · Ctrl+S save · Esc".into());
@@ -136,8 +164,16 @@ impl App {
                         Some(f) => (f.pos, f.heading),
                         None => (p.vehicle.position, p.vehicle.heading),
                     };
-                    let ui_lang = ::config::get_string("ui", "language").unwrap_or_else(|| "en".into());
-                    let ui_units = ::config::get_string("ui", "units").unwrap_or_else(|| "metric".into());
+                    let ui_lang =
+                        ::config::get_string("ui", "language").unwrap_or_else(|| "en".into());
+                    let ui_units =
+                        ::config::get_string("ui", "units").unwrap_or_else(|| "metric".into());
+                    let hud_width = if triple_hud {
+                        s.config.width as f32 / 3.0
+                    } else {
+                        s.config.width as f32
+                    };
+                    let hud_offset = s.config.width as f32 / 3.0;
                     let frame = navigator::NavFrame {
                         traffic: self.traffic.as_ref(),
                         bus: at,
@@ -158,7 +194,7 @@ impl App {
                         screen: if vr_active {
                             (1440.0, 1440.0)
                         } else {
-                            (s.config.width as f32, s.config.height as f32)
+                            (hud_width, s.config.height as f32)
                         },
                         ui_scale: if vr_active {
                             1.0
@@ -173,7 +209,14 @@ impl App {
                         dt,
                     };
                     let __tn = Instant::now();
+                    let overlay_start = scene.overlays.len();
                     nav.frame(r, scene, &frame);
+                    if triple_hud {
+                        for (_, rect) in &mut scene.overlays[overlay_start..] {
+                            rect[0] += hud_offset;
+                            rect[2] += hud_offset;
+                        }
+                    }
                     nav.enabled = old_enabled;
                     nav.opacity = old_opacity;
                     *self.profile.entry("hud.navigator").or_default() +=
@@ -196,26 +239,84 @@ impl App {
                     .as_ref()
                     .map(|w| w.scale_factor() as f32)
                     .unwrap_or(1.0);
-                let (w, h) = (s.config.width as f32, s.config.height as f32);
-                self.remotes.chat.disabled = !::config::get_bool("ui", "chat").unwrap_or(true);
-                let chat =
-                    (!screenshot_mode && self.lan.is_some() && ::config::get_bool("ui", "chat").unwrap_or(true)).then(|| {
-                        ui::ChatView {
-                            lines: &self.remotes.chat.lines,
-                            typing: self.remotes.chat.typing.as_deref(),
-                            error: self.remotes.chat.error(),
-                        }
-                    });
-                ui.chat.hidden = self.remotes.chat.hidden;
-                let tags = if !screenshot_mode && ::config::get_bool("ui", "name_tags").unwrap_or(true) {
-                    self.camera
-                        .as_ref()
-                        .map(|c| lan::name_tags(&self.remotes, c, w, h))
-                        .unwrap_or_default()
+                let (surface_width, h) = (s.config.width as f32, s.config.height as f32);
+                let w = if triple_hud {
+                    surface_width / 3.0
                 } else {
-                    Vec::new()
+                    surface_width
                 };
+                let hud_offset = surface_width / 3.0;
+                self.remotes.chat.disabled = !::config::get_bool("ui", "chat").unwrap_or(true);
+                let chat = (!screenshot_mode
+                    && self.lan.is_some()
+                    && ::config::get_bool("ui", "chat").unwrap_or(true))
+                .then(|| ui::ChatView {
+                    lines: &self.remotes.chat.lines,
+                    typing: self.remotes.chat.typing.as_deref(),
+                    error: self.remotes.chat.error(),
+                });
+                ui.chat.hidden = self.remotes.chat.hidden;
+                let triple_views = if triple_projection {
+                    self.camera.as_ref().and_then(|camera| {
+                        camera_util::triple_screen_cameras(
+                            camera,
+                            s.config.width,
+                            s.config.height,
+                        )
+                    })
+                } else {
+                    None
+                };
+                let tags =
+                    if !screenshot_mode && ::config::get_bool("ui", "name_tags").unwrap_or(true) {
+                        self.camera.as_ref().map_or_else(Vec::new, |camera| {
+                            match triple_views.as_ref() {
+                                Some(views) if triple_hud => lan::name_tags_with_projection(
+                                    &self.remotes,
+                                    &views.cameras[1],
+                                    w,
+                                    h,
+                                    Some(views.projections[1]),
+                                ),
+                                Some(views) => {
+                                    let panel_width = surface_width / 3.0;
+                                    let mut tags = Vec::new();
+                                    for panel in 0..3 {
+                                        tags.extend(
+                                            lan::name_tags_with_projection(
+                                                &self.remotes,
+                                                &views.cameras[panel],
+                                                panel_width,
+                                                h,
+                                                Some(views.projections[panel]),
+                                            )
+                                            .into_iter()
+                                            .filter(|((x, y), _, _, _)| {
+                                                *x >= 0.0
+                                                    && *x < panel_width
+                                                    && *y >= 0.0
+                                                    && *y <= h
+                                            })
+                                            .map(|((x, y), name, sub, alpha)| {
+                                                (
+                                                    (x + panel_width * panel as f32, y),
+                                                    name,
+                                                    sub,
+                                                    alpha,
+                                                )
+                                            }),
+                                        );
+                                    }
+                                    tags
+                                }
+                                None => lan::name_tags(&self.remotes, camera, w, h),
+                            }
+                        })
+                    } else {
+                        Vec::new()
+                    };
                 let (cx, cy) = self.cursor;
+                let ui_cursor = (cx - if triple_hud { hud_offset } else { 0.0 }, cy);
                 let map_open = self.navigator.as_ref().is_some_and(|n| n.map_open());
                 let covered = self.game_menu.is_some()
                     || self.vr_nav_edit.is_some()
@@ -223,10 +324,10 @@ impl App {
                     || ui.chat.hovered
                     || map_open
                     || (!vr_active
-                    && self
-                    .navigator
-                    .as_ref()
-                    .is_some_and(|n| n.over_panel(cx, cy)));
+                        && self
+                            .navigator
+                            .as_ref()
+                            .is_some_and(|n| n.over_panel(ui_cursor.0, ui_cursor.1)));
                 let dropdown = self
                     .dropdown
                     .as_ref()
@@ -238,19 +339,7 @@ impl App {
                         top: d.top,
                         current: d.current,
                     });
-                let chooser_list = self.admin_list.as_ref().unwrap_or(&self.vehicle_list);
-                let (chooser_items, chooser_sel): (Vec<(&str, &str)>, Option<usize>) =
-                    match self.chooser {
-                        Some(sel) => {
-                            let items = chooser_list
-                                .iter()
-                                .map(|(name, path)| (path.as_str(), name.as_str()))
-                                .collect();
-                            (items, Some(sel))
-                        }
-                        None => (Vec::new(), None),
-                    };
-                let menu_disabled: &[&str] = &[];
+                let chooser_sel = self.chooser;
                 let (menu_kind, menu_head, menu_preview) = game_lists::menu_extras(
                     self.list_kind.as_ref(),
                     self.admin_list.as_deref(),
@@ -267,10 +356,14 @@ impl App {
                         ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
                         ::config::get_bool("ui", "scale_window").unwrap_or(true),
                     ),
-                    opacity: ui::backdrop(::config::get_float("ui", "opacity").unwrap_or(0.85).clamp(0.2, 1.0) as f32),
+                    opacity: ui::backdrop(
+                        ::config::get_float("ui", "opacity")
+                            .unwrap_or(0.85)
+                            .clamp(0.2, 1.0) as f32,
+                    ),
                     width: w,
                     height: h,
-                    cursor: self.cursor,
+                    cursor: ui_cursor,
                     vr: {
                         #[cfg(windows)]
                         {
@@ -294,18 +387,20 @@ impl App {
                     },
                     notes: if screenshot_mode {
                         screenshot_help.as_slice()
-                    } else if ::config::get_bool("ui", "notes").unwrap_or(true) && !map_open && self.game_menu.is_none() {
+                    } else if ::config::get_bool("ui", "notes").unwrap_or(true)
+                        && !map_open
+                        && self.game_menu.is_none()
+                    {
                         &notes
                     } else {
                         &[]
                     },
                     fps: (!screenshot_mode && ::config::get_bool("ui", "show_fps").unwrap_or(false)).then_some(self.fps),
-                    paused: self.paused && !screenshot_mode,
-                    menu: match chooser_sel {
-                        Some(k) => Some((k, &chooser_items[..])),
-                        None => self.game_menu.map(|k| (k, &menu_lines[..])),
-                    },
-                    menu_disabled,
+                    paused: self.paused && !screenshot_mode && self.lab_menu.is_none(),
+                    menu: self
+                        .game_menu
+                        .filter(|_| self.lab_menu.is_none() && report_view.is_some())
+                        .map(|k| (k, &menu_lines[..])),
                     menu_kind,
                     report: report_view.as_ref(),
                     touch: !screenshot_mode && platform::touch_controls(),
@@ -320,6 +415,8 @@ impl App {
                     menu_tabs,
                     dropdown,
                     menu_kbd: self.menu_kbd,
+                    lab: self.lab_menu,
+                    vehicle_menu: &vehicle_menu,
                     menu_top: self.menu_top,
                     timetable: (!screenshot_mode && self.timetable && !map_open)
                         .then(|| {
@@ -355,7 +452,14 @@ impl App {
                     chat,
                     tags,
                 };
+                let overlay_start = scene.overlays.len();
                 ui.draw(r, scene, &frame, dt);
+                if triple_hud {
+                    for (_, rect) in &mut scene.overlays[overlay_start..] {
+                        rect[0] += hud_offset;
+                        rect[2] += hud_offset;
+                    }
+                }
             }
             *self.profile.entry("hud").or_default() += __t.elapsed().as_secs_f64();
         }
@@ -420,16 +524,19 @@ impl App {
             .map(|p| lights::vehicle_velocity(&p.vehicle))
             .unwrap_or_default()
             - self
-            .weather
-            .as_ref()
-            .map(rain::weather_wind)
-            .unwrap_or_default();
+                .weather
+                .as_ref()
+                .map(rain::weather_wind)
+                .unwrap_or_default();
         lighting.animation_time = Some(self.clock.run_time as f32);
-        lighting.led_glow = ::config::get_int("graphics", "led_glow").unwrap_or(6) as u8 as f32 * 0.25;
+        lighting.led_glow =
+            ::config::get_int("graphics", "led_glow").unwrap_or(6) as u8 as f32 * 0.25;
         lights::set_led_glow(lighting.led_glow);
-        lighting.nightmap_glow = ::config::get_int("graphics", "nightmap_glow").unwrap_or(6) as u8 as f32 * 0.25;
+        lighting.nightmap_glow =
+            ::config::get_int("graphics", "nightmap_glow").unwrap_or(6) as u8 as f32 * 0.25;
         lighting.led_mips = ::config::get_float("graphics", "led_mips").unwrap_or(1.3) as f32;
-        lighting.atmosphere_brightness = ::config::get_float("graphics", "atmosphere_brightness").unwrap_or(1.0) as f32;
+        lighting.atmosphere_brightness =
+            ::config::get_float("graphics", "atmosphere_brightness").unwrap_or(1.0) as f32;
         lighting.html_glow = lights::screen_fx(0);
         lighting.html_light = lights::screen_fx(1);
         lighting.script_glow = lights::screen_fx(2);
@@ -475,57 +582,59 @@ impl App {
                 }
             }
             let __t = Instant::now();
-            let hide_test = ::legacy_config::env::var("OMSI_HIDE_WINDOW").ok().and_then(|v| {
-                let mut it = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok());
-                Some((it.next()?, it.next()?))
-            });
+            let hide_test = ::legacy_config::env::var("OMSI_HIDE_WINDOW")
+                .ok()
+                .and_then(|v| {
+                    let mut it = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok());
+                    Some((it.next()?, it.next()?))
+                });
             let hidden_now = hide_test
                 .map(|(a, b)| (a..b).contains(&self.started.elapsed().as_secs_f32()))
                 .unwrap_or(false);
             let acquired = match s.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(_)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(_)
-                if hidden_now =>
-                    {
-                        wgpu::CurrentSurfaceTexture::Occluded
-                    }
+                    if hidden_now =>
+                {
+                    wgpu::CurrentSurfaceTexture::Occluded
+                }
                 other => other,
             };
             let (frame, stand_in) = match acquired {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (Some(frame), None),
                 wgpu::CurrentSurfaceTexture::Occluded
-                if ::legacy_config::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
+                    if ::legacy_config::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
+                {
+                    let (w, h) = (s.config.width, s.config.height);
+                    if self
+                        .stand_in
+                        .as_ref()
+                        .map(|t| (t.width(), t.height()) != (w, h))
+                        .unwrap_or(true)
                     {
-                        let (w, h) = (s.config.width, s.config.height);
-                        if self
-                            .stand_in
-                            .as_ref()
-                            .map(|t| (t.width(), t.height()) != (w, h))
-                            .unwrap_or(true)
-                        {
-                            self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
-                                label: Some("hidden window"),
-                                size: wgpu::Extent3d {
-                                    width: w,
-                                    height: h,
-                                    depth_or_array_layers: 1,
-                                },
-                                mip_level_count: 1,
-                                sample_count: 1,
-                                dimension: wgpu::TextureDimension::D2,
-                                format: r.format(),
-                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                                view_formats: &[],
-                            }));
-                        }
-                        (
-                            None,
-                            self.stand_in
-                                .as_ref()
-                                .map(|t| t.create_view(&Default::default())),
-                        )
+                        self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("hidden window"),
+                            size: wgpu::Extent3d {
+                                width: w,
+                                height: h,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: r.format(),
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            view_formats: &[],
+                        }));
                     }
+                    (
+                        None,
+                        self.stand_in
+                            .as_ref()
+                            .map(|t| t.create_view(&Default::default())),
+                    )
+                }
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     reconfigure = true;
                     (None, None)
@@ -555,7 +664,10 @@ impl App {
                 if ::config::get_int("graphics", "mirror_size").unwrap_or(256) as u32 == 0 {
                     self.mirror_budget = 0.0;
                     self.mirrors_seen = 0;
-                } else if ::config::get_string("graphics", "mirror_refresh").unwrap_or_else(|| "full".into()) == "off" {
+                } else if ::config::get_string("graphics", "mirror_refresh")
+                    .unwrap_or_else(|| "full".into())
+                    == "off"
+                {
                     self.mirror_budget = 0.0;
                     if let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) {
                         let since = match &self.frozen_mirrors {
@@ -594,10 +706,14 @@ impl App {
                                 .unwrap_or(
                                     ::config::get_float("vr", "mirror-rate")
                                         .unwrap_or(16.0)
-                                        .clamp(-1.0, 360.0) as f32,
+                                        .clamp(-1.0, 360.0)
+                                        as f32,
                                 )
                         } else {
-                            let max_hz = if ::config::get_string("graphics", "mirror_refresh").unwrap_or_else(|| "full".into()) == "full" {
+                            let max_hz = if ::config::get_string("graphics", "mirror_refresh")
+                                .unwrap_or_else(|| "full".into())
+                                == "full"
+                            {
                                 MIRROR_MAX_HZ_FULL
                             } else {
                                 MIRROR_MAX_HZ_ECO
@@ -639,11 +755,11 @@ impl App {
                     }
                     while (self.in_cab || near)
                         && drawn
-                        < (if vr_active {
-                        draw_limit
-                    } else {
-                        self.mirrors_seen.clamp(1, 2)
-                    })
+                            < (if vr_active {
+                                draw_limit
+                            } else {
+                                self.mirrors_seen.clamp(1, 2)
+                            })
                         && (vr_active || self.mirror_budget >= 1.0)
                     {
                         let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) else {
@@ -725,14 +841,39 @@ impl App {
                     }
                 }
                 if !mirrored {
-                    r.render(
-                        scene,
-                        &view,
-                        s.config.width,
-                        s.config.height,
-                        cam,
-                        &lighting,
-                    );
+                    #[cfg(windows)]
+                    let xr_active = self.vr.is_some();
+                    #[cfg(not(windows))]
+                    let xr_active = false;
+                    if !xr_active
+                        && triple_projection
+                        && let Some(views) =
+                            camera_util::triple_screen_cameras(
+                                cam,
+                                s.config.width,
+                                s.config.height,
+                            )
+                    {
+                        r.render_triple(
+                            scene,
+                            &view,
+                            s.config.width,
+                            s.config.height,
+                            views.cameras,
+                            views.projections,
+                            &lighting,
+                            ::config::get_bool("graphics", "triple_screen_hud").unwrap_or(true),
+                        );
+                    } else {
+                        r.render(
+                            scene,
+                            &view,
+                            s.config.width,
+                            s.config.height,
+                            cam,
+                            &lighting,
+                        );
+                    }
                 }
                 self.touch.render(r, &view, s.config.width, s.config.height);
                 #[cfg(all(feature = "devtools", debug_assertions))]
@@ -762,9 +903,11 @@ impl App {
                         .window
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
-                    self.devtools
-                        .get_or_insert_with(devtools::DevTools::new)
-                        .render(r, &view, scale, &snap, &dev_extra);
+                    if self.lab_menu.is_none() {
+                        self.devtools
+                            .get_or_insert_with(devtools::DevTools::new)
+                            .render(r, &view, scale, &snap, &dev_extra);
+                    }
                 }
                 *self.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
                 if ::legacy_config::env::var_os("OMSI_PROFILE_GPU").is_some() {

@@ -268,9 +268,7 @@ impl App {
             KeyCode::F2 | KeyCode::F3 => true,
             KeyCode::KeyM if shift && !ctrl => {
                 if pressed && !repeat {
-                    if let Some(n) = self.navigator.as_mut() {
-                        n.toggle_map();
-                    }
+                    self.toggle_map_page();
                 }
                 true
             }
@@ -279,9 +277,9 @@ impl App {
                 .as_ref()
                 .map(|f| f.cam == FootCam::Free)
                 .unwrap_or(false) =>
-            {
-                false
-            }
+                {
+                    false
+                }
             KeyCode::KeyG => {
                 if pressed && !repeat {
                     self.use_seat();

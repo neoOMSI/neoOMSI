@@ -186,7 +186,7 @@ fn create() -> Option<IDirectInput8W> {
             &mut p,
             None,
         )
-        .ok()?;
+            .ok()?;
         (!p.is_null()).then(|| IDirectInput8W::from_raw(p))
     }
 }
@@ -215,9 +215,8 @@ unsafe extern "system" fn notify_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
-/// A message-only window of the calling thread that Windows tells when a HID device is
-/// plugged in or out (the way SDL finds new controllers).
-fn notification_window() -> Option<HWND> {
+/// A message-only window of the calling thread.
+fn message_window() -> Option<HWND> {
     unsafe {
         let hinst: HINSTANCE = GetModuleHandleW(None).ok()?.into();
         let class = w!("neoOMSI game controllers");
@@ -229,7 +228,7 @@ fn notification_window() -> Option<HWND> {
         };
         // (0 when the class is there already - a second window of the launcher's)
         let _ = RegisterClassW(&wc);
-        let hwnd = CreateWindowExW(
+        CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class,
             w!(""),
@@ -243,7 +242,20 @@ fn notification_window() -> Option<HWND> {
             Some(hinst),
             None,
         )
-        .ok()?;
+            .ok()
+    }
+}
+
+/// For reading the devices where there is no game window: DirectInput needs one to own them.
+pub(crate) fn helper_window() -> Option<isize> {
+    message_window().map(|h| h.0 as isize)
+}
+
+/// A message-only window of the calling thread that Windows tells when a HID device is
+/// plugged in or out (the way SDL finds new controllers).
+fn notification_window() -> Option<HWND> {
+    unsafe {
+        let hwnd = message_window()?;
         let filter = DEV_BROADCAST_DEVICEINTERFACE_W {
             dbcc_size: std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32,
             dbcc_devicetype: DBT_DEVTYP_DEVICEINTERFACE.0,
@@ -255,7 +267,7 @@ fn notification_window() -> Option<HWND> {
             &filter as *const _ as *const core::ffi::c_void,
             DEVICE_NOTIFY_WINDOW_HANDLE,
         )
-        .is_err()
+            .is_err()
         {
             let _ = DestroyWindow(hwnd);
             return None;
@@ -370,7 +382,7 @@ fn data_format(
             &mut objects as *mut _ as *mut core::ffi::c_void,
             DIDFT_ALL,
         )
-        .ok()?;
+            .ok()?;
     }
     let (objs, has_axis, ff_axis) = format_objects(&objects);
     if objs.is_empty() {
@@ -399,9 +411,6 @@ fn prop(n: usize) -> *const GUID {
 }
 
 impl DirectInput {
-    pub fn is_focused(&self) -> bool {
-        self.focused
-    }
 
     pub fn force_axis(&self, name: &str) -> Option<usize> {
         self.devices
@@ -791,59 +800,6 @@ impl DirectInput {
         }
     }
 
-    /// A hardware-timed calibration pulse; never leaves an infinite force running.
-    pub(crate) fn pulse_force(&mut self, name: &str, force: f32) -> bool {
-        if !self.focused
-            || self
-                .devices
-                .iter()
-                .filter(|d| d.name == name && d.ff.is_some())
-                .count()
-                != 1
-        {
-            return false;
-        }
-        let Some(device) = self
-            .devices
-            .iter_mut()
-            .find(|d| d.name == name && d.ff.is_some())
-        else {
-            return false;
-        };
-        let limit = crate::ffb_calibration::MAX_PULSE_FORCE;
-        let mut constant = DICONSTANTFORCE {
-            lMagnitude: (force.clamp(-limit, limit) * DI_FFNOMINALMAX as f32) as i32,
-        };
-        let mut axes = [device.ff_axis];
-        let mut direction = [0i32];
-        let mut effect = DIEFFECT {
-            dwSize: std::mem::size_of::<DIEFFECT>() as u32,
-            dwFlags: DIEFF_CARTESIAN | DIEFF_OBJECTOFFSETS,
-            dwDuration: crate::ffb_calibration::PULSE_MS * 1000,
-            cAxes: 1,
-            rgdwAxes: axes.as_mut_ptr(),
-            rglDirection: direction.as_mut_ptr(),
-            cbTypeSpecificParams: std::mem::size_of::<DICONSTANTFORCE>() as u32,
-            lpvTypeSpecificParams: &mut constant as *mut _ as *mut core::ffi::c_void,
-            ..Default::default()
-        };
-        unsafe {
-            let force_effect = device.ff.as_ref().unwrap();
-            // Some drivers only allow a duration change while the effect is stopped.
-            let result = force_effect.Stop().and_then(|_| {
-                force_effect.SetParameters(
-                    &mut effect,
-                    DIEP_DURATION | DIEP_TYPESPECIFICPARAMS | DIEP_START,
-                )
-            });
-            if let Err(error) = result {
-                log::warn!("{name}: force feedback calibration pulse failed ({error})");
-                return false;
-            }
-            true
-        }
-    }
-
     /// The force on the wheel of device `name`: -1 (full to the left) .. 1. Set at most 100
     /// times a second (each is a message to the device).
     /// Returns whether a force-feedback effect with this exact device name exists.
@@ -924,8 +880,8 @@ impl DirectInput {
             let switching = (d.vib_last.0 == 0) != (magnitude == 0);
             if d.vib_last == (magnitude, period_us)
                 || (!switching
-                    && d.vib_at
-                        .is_some_and(|t| t.elapsed() < Duration::from_millis(10)))
+                && d.vib_at
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(10)))
             {
                 continue;
             }
@@ -1010,8 +966,8 @@ mod tests {
         let w = std::thread::spawn(|| {
             notification_window().map(|w| unsafe { DestroyWindow(w).is_ok() })
         })
-        .join()
-        .unwrap();
+            .join()
+            .unwrap();
         assert_eq!(w, Some(true));
     }
 

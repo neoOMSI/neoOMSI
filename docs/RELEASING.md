@@ -21,6 +21,14 @@ Release CI stamps `neoomsi_BUILD_CHANNEL` as `stable`, `rc`, or `nightly` alongs
 `neoomsi_VERSION`. Builds without an explicit channel are `developer`, including
 local optimized builds.
 
+## Launcher version
+
+Every build packs the launcher at the full commit SHA in `scripts/launcher-ref`, a commit of
+[neoOMSI/launcher](https://github.com/neoOMSI/launcher)'s `main`; the release notes link it.
+Moving to a newer launcher is a PR of its own that changes that line, so a release can be
+rebuilt as it was. Launcher and engine agree on the protocol version at their handshake
+(`docs/LAUNCHER_PROTOCOL.md`).
+
 ## Tags
 
 Milestone git tags are created strictly for official releases:

@@ -325,7 +325,8 @@ impl App {
                 log::info!("{bus} takes the driven vehicle's place at ({x:.1}, {y:.1})");
                 self.replace_driven_vehicle(q);
             }
-            Ok(Some(q)) => {
+            Ok(Some(mut q)) => {
+                open_front_door(&mut q);
                 log::info!("placed {bus} at ({x:.1}, {y:.1})");
                 let uid = q.uid;
                 self.placed.push(q);

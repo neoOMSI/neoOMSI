@@ -208,6 +208,52 @@ struct Surface {
     rough: f32,
 };
 
+// A dipped beam's cookie, drawn from the `[spotlight]`'s own numbers (its cones): how bright the
+// lamp shines in each direction, in the lamp's frame (forward its axis, right across that and
+// up). The sides and the bottom fade out at the outer cone from the inner one; the road close
+// by gets a tenth of the hot spot just under the cut-off, which sits at the horizon, so that the
+// light is thrown far down the road; above the horizon there is next to none. `COOKIE_GAIN` is
+// what the picture's white is worth against a plain spot's centre; beyond ten metres the light
+// falls off with the `COOKIE_FALLOFF` power of the distance (2 is the physics, which lets the far
+// road go dark).
+const COOKIE_GAIN: f32 = 14.0;
+const COOKIE_FALLOFF: f32 = 1.2;
+// how much wider than the cones' angles the beam shines to the sides (1: exactly their angles)
+const COOKIE_WIDTH: f32 = 1.0;
+// the share of that width the beam keeps far down the road (at the horizon), growing to the
+// whole of it by `COOKIE_WIDE_DROP` degrees under it: a dipped beam fans out near the car
+// and is narrow far ahead
+const COOKIE_FAR_WIDTH: f32 = 0.3;
+const COOKIE_WIDE_DROP: f32 = 14.0;
+
+fn spot_cookie(to_surface: vec3<f32>, f: vec3<f32>, cos_outer: f32, cos_inner: f32) -> f32 {
+    var r = cross(f, vec3<f32>(0.0, 0.0, 1.0));
+    if (dot(r, r) < 1e-6) {
+        return 1.0;
+    }
+    r = normalize(r);
+    let u = cross(r, f);
+    let x = dot(to_surface, f);
+    if (x <= 0.001) {
+        return 0.0;
+    }
+    let y = dot(to_surface, r);
+    let z = dot(to_surface, u);
+    let h = degrees(atan2(y, x));
+    let v = degrees(atan2(z, sqrt(x * x + y * y)));
+    let ho = max(degrees(acos(clamp(cos_outer, -1.0, 1.0))), 1.0);
+    let hi = min(degrees(acos(clamp(cos_inner, -1.0, 1.0))), ho - 0.5);
+    let bottom = 1.0 - smoothstep(hi, ho, max(-v, 0.0));
+    // the horizon seen from the axis: the axis points `tilt` degrees down
+    let tilt = degrees(asin(clamp(-f.z, -1.0, 1.0)));
+    let drop = tilt - v;
+    let wide = COOKIE_WIDTH * mix(COOKIE_FAR_WIDTH, 1.0, smoothstep(0.0, COOKIE_WIDE_DROP, drop));
+    let side = 1.0 - smoothstep(hi * wide, ho * wide, abs(h));
+    let hot = 0.1 + 0.9 * exp(-max(drop, 0.0) / 6.0);
+    let cut = 1.0 - 0.97 * smoothstep(0.0, 1.5, -drop);
+    return side * bottom * hot * cut;
+}
+
 // The point and spot lights of the pixel's grid cell: diffuse and specular.
 // `thin`: foliage, lit from whichever side the lamp is on (see the sun below).
 fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool) -> vec3<f32> {
@@ -250,14 +296,27 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         }
         let q = dist2 / (range * range);
         let window = (1.0 - q * q) * (1.0 - q * q);
-        var e = min(1.0, core * core / max(dist2, 1e-3)) * window;
-        if (l.dir.w > -1.5) {
+        // inverse-square beyond the core with a soft knee at it, not flat within it
+        var e = core * core / sqrt(dist2 * dist2 + core * core * core * core) * window;
+        if (l.dir.w > -1.5 && l.extra.z >= 99.0) {
+            // a vehicle's dipped beam: its cookie takes the cone's place, with its own distance
+            // law beyond ten metres
+            if (dist > 10.0) {
+                e = pow(10.0 / dist, COOKIE_FALLOFF) * core * core * 0.01 * window;
+            }
+            e = e * COOKIE_GAIN * spot_cookie(-ld, l.dir.xyz, l.dir.w, l.extra.x);
+            // (right at the lamp the light is next to nothing: a dipped beam's foreground is a tenth of
+            // its hot spot, and the bumper and number plate under it are not floodlit)
+            e = e * smoothstep(1.0, 5.0, dist);
+        } else if (l.dir.w > -1.5) {
             let cd = dot(-ld, l.dir.xyz);
             e = e * smoothstep(l.dir.w, l.extra.x, cd);
             if (l.extra.z < 0.0) {
-                let s = smoothstep(l.dir.w, l.extra.x, cd);
-                let hot = smoothstep(l.extra.x, 1.0, cd);
-                e = e * mix(0.3, 1.0, s * s) * (1.0 + 0.25 * hot);
+                // a full beam (the gain as a negative number): as much stronger towards the
+                // horizon, where it reaches far down the road, above it as well as below
+                let drop = abs(ld.z);
+                let axis = max(-l.dir.z, 0.05);
+                e = e * clamp(axis * axis / max(drop * drop, 1e-6), 1.0, -l.extra.z);
             }
             if (l.extra.z > 0.0) {
                 // a low beam: brightest just under its cut-off, where it reaches far down
@@ -278,12 +337,15 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
                 e = e * mix(0.02, 1.0, 1.0 - smoothstep(allowed, allowed + 0.025, fwd.z));
             }
         }
+        // a lamp's own surroundings (a number plate, a bumper, a light's housing) are not lit
+        // by a point source sitting on them: it would glow on the vehicle it belongs to
+        if (l.dir.w <= -1.5) {
+            e = e * smoothstep(0.4, 1.5, dist);
+        }
         if (e < 0.003 || (!thin && dot(n, ld) <= 0.0)) {
             continue;
         }
-        if (n.z > 0.7) {
-            e = e * light_shadow(l, p + n * 0.08);
-        }
+        e = e * light_shadow(l, p + n * 0.08);
         if (e <= 0.0) {
             continue;
         }
@@ -862,7 +924,14 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // --- the lamps, the cabin light and what glows by itself
     // ([nomaplighting] objects are not lit by the map's lamps; light-mapped roads are, with
     // the tile light map on top)
-    let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 + 0.9 * wet_road);
+    // (a mesh lit by the saloon's own lamps, see `interior_lamps`, takes no light from the
+    // vehicle's headlamps and other outside lights: they shine out, not in)
+    // (only where the saloon's lamps really light the surface: a bus's outer skin that shares a
+    // mesh with the saloon names the lamps as well and went black at night when every outside
+    // lamp was cut from it)
+    let cabin_light = interior_lamps(in.world, n, in.params2.z);
+    let saloon_lit = select(0.0, clamp(max(cabin_light.r, max(cabin_light.g, cabin_light.b)) * 4.0, 0.0, 1.0), in.params2.z >= 1.0);
+    let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
     // [interiorlight]: OMSI adds its lamps' light to the lit meshes whatever the daylight,
     // so a switched-on saloon is brighter by day as well and only stands out more at night.
     // Taken as a lamp against the daylight exposure it vanished by day altogether.
@@ -870,7 +939,6 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // grew with the night and whitened the saloon)
     // (the lamps' light does not reach into the gaps under the seats and round the
     // handrails either: without the ambient occlusion on it they glowed through there)
-    let cabin_light = interior_lamps(in.world, n, in.params2.z);
     let cabin = sf.albedo * cabin_light * mix(1.0, ao, 0.85);
     var rgb = (direct + ambient + lamps) * pre + cabin;
     var emit = tex.rgb * material.emissive.rgb * max(enh.exposure.z * 2.0, 0.8);

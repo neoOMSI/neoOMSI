@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const HEADLIGHT_INTENSITY: f32 = 22.0;
+pub(super) const HEADLIGHT_INTENSITY: f32 = 45.0;
 pub(super) const VANILLA_HEADLIGHT_INTENSITY: f32 = 0.2;
 pub(super) const HIGH_BEAM_GAIN: f32 = 0.5;
 
@@ -188,7 +188,7 @@ impl SourceCfg {
         gain: 0.077,
         spread: 0.1,
         core: 0.530,
-        directional: false,
+        directional: true,
         inner: 60.0,
         outer: 140.0,
     };
@@ -387,8 +387,4 @@ pub(super) fn lamp_aim(d: Vec3, cfg: &LightSettings, bc: &BeamCfg) -> Vec3 {
     let right = yawed.cross(Vec3::Z).normalize_or_zero();
     (glam::Quat::from_axis_angle(right, (cfg.lamp_pitch + bc.pitch).to_radians()) * yawed)
         .normalize_or_zero()
-}
-
-pub(crate) fn lamp_shift(dir: Vec3, cfg: &LightSettings) -> DVec3 {
-    shift(dir, cfg.lamp_offset, cfg.lamp_side, cfg.lamp_height)
 }

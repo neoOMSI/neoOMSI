@@ -127,20 +127,10 @@ jobs:
         shell: cmd
         run: scripts\build-windows.cmd ${{ inputs.target }}
 
-      - name: Package
-        if: inputs.platform == 'windows'
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File scripts/ci/package-windows.ps1 -Arch ${{ inputs.arch }} -Version $env:neoomsi_VERSION
-
       - name: Build
         if: inputs.platform == 'macos'
         shell: bash
         run: scripts/build-macos.sh
-
-      - name: Package
-        if: inputs.platform == 'macos'
-        shell: bash
-        run: bash scripts/ci/package-posix.sh macos ${{ inputs.arch }} "$neoomsi_VERSION"
 
       - name: System libraries
         if: inputs.platform == 'linux'
@@ -173,6 +163,24 @@ jobs:
         env:
           RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
         run: cargo nextest run --locked --release -p render -E 'test(shaders_validate_and_match_the_uniforms)'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Launcher
+        shell: bash
+        run: bash scripts/ci/build-launcher.sh ${{ inputs.platform }} ${{ inputs.arch }}
+
+      - name: Package
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/ci/package-windows.ps1 -Arch ${{ inputs.arch }} -Version $env:neoomsi_VERSION
+
+      - name: Package
+        if: inputs.platform == 'macos'
+        shell: bash
+        run: bash scripts/ci/package-posix.sh macos ${{ inputs.arch }} "$neoomsi_VERSION"
 
       - name: Package
         if: inputs.platform == 'linux'

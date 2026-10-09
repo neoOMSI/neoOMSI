@@ -69,15 +69,7 @@ pub enum Msg {
     Crashed(String),
 }
 
-/// A server in the Multiplayer page's list (`~/.neoomsi/servers.json`), as the player
-/// added it: its address (`https://….trycloudflare.com`, `http://host:port`) and a name of
-/// their own (empty: the server's).
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-#[serde(default)]
-pub struct ServerEntry {
-    pub name: String,
-    pub address: String,
-}
+pub use core::servers::ServerEntry;
 
 /// A code host's status page (its gateway is the session's port + 10).
 fn host_status(code: &str) -> Result<network::ws::ServerInfo, String> {
@@ -94,27 +86,6 @@ fn host_status(code: &str) -> Result<network::ws::ServerInfo, String> {
         Some(url) => network::ws::query(&url, false),
         None => Err("the host did not answer".into()),
     }
-}
-
-/// The list as saved, with the official server first when it is not in it.
-fn with_official(mut list: Vec<ServerEntry>) -> Vec<ServerEntry> {
-    if !list
-        .iter()
-        .any(|s| network::official::is_alias(&s.address))
-    {
-        list.insert(
-            0,
-            ServerEntry {
-                name: network::official::NAME.into(),
-                address: network::official::ALIAS.into(),
-            },
-        );
-    }
-    list
-}
-
-fn servers_path() -> std::path::PathBuf {
-    core::data_dir().join("servers.json")
 }
 
 /// The duty as it is remembered between launches (`~/.neoomsi/launcher-duty.json`).
@@ -245,11 +216,8 @@ pub struct State {
     /// in the pause menu), and the launcher's copy from before must not be written back
     /// over that.
     settings_file: Option<String>,
-    pub keybindings: serde_json::Value,
-    pub keybindings_error: String,
     pub instances: Vec<core::Instance>,
     pub queued_launch: Option<core::Duty>,
-    pub pax_changed: Option<u64>,
     pub restarting: Vec<core::Instance>,
     /// Start was pressed: the graphics device stays given up until the list of games has the
     /// game started (its process, once it is known), 15 s at most.
@@ -300,7 +268,6 @@ impl State {
                 .and_then(|x| x.as_str())
                 .unwrap_or("en"),
         );
-        let keybindings = core::get_keybindings().unwrap_or(serde_json::Value::Null);
         let choice = Choice::load();
         let mut s = State {
             config,
@@ -322,11 +289,8 @@ impl State {
             settings,
             settings_dirty: 0.0,
             settings_file: read_settings_file(),
-            keybindings,
-            keybindings_error: String::new(),
             instances: Vec::new(),
             queued_launch: None,
-            pax_changed: None,
             restarting: Vec::new(),
             launch_hold: None,
             launched_pid: None,
@@ -350,12 +314,7 @@ impl State {
             poll_t: 0.0,
             polling: false,
             second_armed: None,
-            servers: with_official(
-                std::fs::read(servers_path())
-                    .ok()
-                    .and_then(|b| serde_json::from_slice(&b).ok())
-                    .unwrap_or_default(),
-            ),
+            servers: core::servers::load(),
             server_info: Default::default(),
             server_asked: Default::default(),
             joined_server: None,
@@ -571,11 +530,7 @@ impl State {
 
     /// Keep the server list on disk.
     pub fn save_servers(&self) {
-        let _ = std::fs::create_dir_all(core::data_dir());
-        let _ = std::fs::write(
-            servers_path(),
-            serde_json::to_vec_pretty(&self.servers).unwrap_or_default(),
-        );
+        let _ = core::servers::store(&self.servers);
     }
 
     /// Ask a server about itself (its status and icon), at most every `every` seconds.
@@ -666,24 +621,11 @@ impl State {
         });
     }
 
-    pub fn games_with_old_passengers(&self) -> bool {
-        old_passengers(self.pax_changed, &self.instances)
-    }
-
-    pub fn restart_games(&mut self) {
-        for i in to_restart(self.pax_changed, &self.instances, &self.restarting) {
-            if !self.stopping.contains(&i.pid) {
-                self.stop(i.pid);
-            }
-            self.restarting.push(i);
-        }
-    }
-
     fn restart_next(&mut self) {
         if self.queued_launch.is_some()
             || self
-                .launch_hold
-                .is_some_and(|t| t.elapsed().as_secs_f32() < 15.0)
+            .launch_hold
+            .is_some_and(|t| t.elapsed().as_secs_f32() < 15.0)
             || !all_ended(&self.restarting, &self.stopping, &self.instances)
         {
             return;
@@ -729,7 +671,7 @@ impl State {
             .is_empty()
         {
             self.set_status(
-                "A session needs the original OMSI 2: choose its folder under Setup first.",
+                "A session needs the original OMSI 2: choose its folder in the launcher's config first.",
                 true,
             );
             return;
@@ -1073,7 +1015,7 @@ impl State {
                 if legacy_config::missing_original_essentials(std::path::Path::new(&self.config.root))
                     .is_empty()
                 {
-                    self.set_status(format!("{e}\nSet the OMSI 2 folder under Setup."), true);
+                    self.set_status(format!("{e}\nThe OMSI 2 folder is not set."), true);
                 } else {
                     self.set_status(root_problem(&self.config.root), true);
                 }
@@ -1499,23 +1441,23 @@ pub fn root_problem(root: &str) -> String {
     let p = std::path::Path::new(root);
     let missing = legacy_config::missing_original_essentials(p);
     if root.is_empty() {
-        "The original OMSI 2 was not found automatically: choose its folder (the one with Omsi.exe, maps and Vehicles in it) under Setup and press Save.".to_string()
+        "The original OMSI 2 was not found automatically: choose its folder (the one with Omsi.exe, maps and Vehicles in it) .".to_string()
     } else if !p.exists() {
         format!(
-            "{root} does not exist: choose the folder of the original OMSI 2 (with Omsi.exe, maps and Vehicles in it) under Setup."
+            "{root} does not exist: choose the folder of the original OMSI 2 (with Omsi.exe, maps and Vehicles in it)."
         )
     } else if missing.iter().any(|m| m.contains("content folder"))
         || p.join("neoomsi.exe").exists()
         || p.join("neoomsi").is_file()
     {
         format!(
-            "{root} is neoOMSI's own folder, not OMSI 2's: choose the folder of the original game (with Omsi.exe in it) under Setup."
+            "{root} is neoOMSI's own folder, not OMSI 2's: choose the folder of the original game (with Omsi.exe in it)."
         )
     } else if missing.is_empty() {
         String::new()
     } else {
         format!(
-            "{root} is not a complete OMSI 2 - it lacks {}. neoOMSI plays on the original's stock content: choose the folder of a complete installation under Setup.",
+            "{root} is not a complete OMSI 2 - it lacks {}. neoOMSI plays on the original's stock content: choose the folder of a complete installation.",
             missing
                 .iter()
                 .take(3)
@@ -1631,7 +1573,7 @@ mod launch_tests {
     }
 
     #[test]
-    fn a_restart_takes_only_the_games_with_the_old_passengers_and_waits_for_all_of_them() {
+    fn a_restart_waits_for_all_of_the_games_to_end() {
         let at = |id: &str, pid, running, started| Instance {
             id: id.into(),
             started,
@@ -1644,10 +1586,8 @@ mod launch_tests {
             at("ended", 4, false, 100),
         ];
         let ids = |v: &[Instance]| v.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
-        let old = super::to_restart(Some(200), &games, &[]);
+        let old = vec![games[0].clone(), games[1].clone()];
         assert_eq!(ids(&old), ["a", "b"]);
-        assert!(super::to_restart(Some(200), &games, &old).is_empty());
-        assert!(super::to_restart(None, &games, &[]).is_empty());
 
         let mut stopping: std::collections::HashSet<u32> = [1].into();
         assert!(!super::all_ended(&old, &stopping, &games));
@@ -1667,19 +1607,6 @@ mod launch_tests {
         assert!(super::all_ended(&old, &stopping, &after), "the newer game keeps running");
     }
 
-    #[test]
-    fn only_a_game_started_before_the_passengers_changed_has_the_old_ones() {
-        let at = |pid, running, started| Instance {
-            started,
-            ..game(pid, running)
-        };
-        assert!(!super::old_passengers(None, &[at(1, true, 100)]));
-        assert!(super::old_passengers(Some(200), &[at(1, true, 100)]));
-        assert!(!super::old_passengers(
-            Some(200),
-            &[at(1, true, 250), at(2, false, 100)]
-        ));
-    }
 }
 
 #[cfg(test)]
@@ -1706,27 +1633,6 @@ mod crash_tests {
         assert!(super::crash_of(&p).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-fn has_old_passengers(changed: Option<u64>, game: &core::Instance) -> bool {
-    changed.is_some_and(|t| game.running && game.started < t)
-}
-
-fn old_passengers(changed: Option<u64>, games: &[core::Instance]) -> bool {
-    games.iter().any(|i| has_old_passengers(changed, i))
-}
-
-fn to_restart(
-    changed: Option<u64>,
-    games: &[core::Instance],
-    restarting: &[core::Instance],
-) -> Vec<core::Instance> {
-    games
-        .iter()
-        .filter(|i| has_old_passengers(changed, i))
-        .filter(|i| !restarting.iter().any(|r| r.id == i.id))
-        .cloned()
-        .collect()
 }
 
 fn all_ended(

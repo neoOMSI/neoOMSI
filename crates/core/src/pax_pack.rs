@@ -1,10 +1,74 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-const TAG: &str = "realistic-pax-v2";
-const FILE: &str = "RealisticPax-v2.zip";
+/// The oldest pack this game reads.
 const VERSION: u64 = 2;
+/// How far `refresh` counts up past the newest pack it knows.
+const LOOK_AHEAD: u64 = 20;
+
+fn tag(version: u64) -> String {
+    format!("realistic-pax-v{version}")
+}
+
+fn file(version: u64) -> String {
+    format!("RealisticPax-v{version}.zip")
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaxRelease {
+    pub version: u64,
+    pub notes: String,
+    pub page: String,
+    pub published: String,
+}
+
+static LATEST: Mutex<Option<PaxRelease>> = Mutex::new(None);
+
+pub fn latest() -> Option<PaxRelease> {
+    LATEST.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+fn release(version: u64) -> Option<PaxRelease> {
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/tags/{}",
+        crate::updater::REPO,
+        tag(version)
+    );
+    let v: serde_json::Value = serde_json::from_str(&crate::updater::fetch_text(&url).ok()?).ok()?;
+    let has_file = v["assets"]
+        .as_array()?
+        .iter()
+        .any(|a| a["name"].as_str() == Some(file(version).as_str()));
+    if v["draft"].as_bool() == Some(true) || !has_file {
+        return None;
+    }
+    let text = |k: &str| v[k].as_str().unwrap_or("").to_string();
+    Some(PaxRelease {
+        version,
+        notes: text("body"),
+        page: text("html_url"),
+        published: text("published_at"),
+    })
+}
+
+pub fn refresh() {
+    let from = latest().map_or(VERSION, |r| r.version);
+    let mut found = None;
+    for n in from..from + LOOK_AHEAD {
+        match release(n) {
+            Some(r) => found = Some(r),
+            None => break,
+        }
+    }
+    if let Some(r) = found {
+        *LATEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+    }
+}
+
+/// None for a pack without `pack.json` (put together by hand: never offered an update).
+pub fn installed_version(content: &Path) -> Option<u64> {
+    manifest(&folder(content)).map(|m| m["version"].as_u64().unwrap_or(0))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
@@ -25,9 +89,8 @@ fn status_of(content: &Path) -> Status {
     if !dir.join("Humans").is_dir() {
         return Status::Missing;
     }
-    let version = manifest(&dir).map(|v| v["version"].as_u64().unwrap_or(0));
-    match version {
-        Some(v) if v < VERSION => Status::Outdated,
+    match installed_version(content) {
+        Some(v) if v < VERSION || latest().is_some_and(|l| l.version > v) => Status::Outdated,
         _ => Status::Installed,
     }
 }
@@ -41,7 +104,6 @@ fn manifest(dir: &Path) -> Option<serde_json::Value> {
 pub struct PaxPack {
     content: Option<PathBuf>,
     status: Arc<Mutex<Status>>,
-    finished: Arc<AtomicBool>,
 }
 
 fn lock(s: &Mutex<Status>) -> std::sync::MutexGuard<'_, Status> {
@@ -54,7 +116,6 @@ impl PaxPack {
         PaxPack {
             content,
             status: Arc::new(Mutex::new(status)),
-            finished: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -75,7 +136,7 @@ impl PaxPack {
             return;
         };
         *lock(&self.status) = Status::Downloading { done: 0, total: 0 };
-        let (status, finished) = (self.status.clone(), self.finished.clone());
+        let status = self.status.clone();
         std::thread::spawn(move || match install(&content, &status) {
             Ok(()) => {
                 log::info!(
@@ -83,7 +144,6 @@ impl PaxPack {
                     folder(&content).display()
                 );
                 *lock(&status) = Status::Installed;
-                finished.store(true, Ordering::Relaxed);
             }
             Err(e) => {
                 log::warn!("realistic passengers: {e:#}");
@@ -92,21 +152,44 @@ impl PaxPack {
             }
         });
     }
-
-    pub fn take_finished(&self) -> bool {
-        self.finished.swap(false, Ordering::Relaxed)
-    }
 }
 
 fn install(content: &Path, status: &Mutex<Status>) -> anyhow::Result<()> {
+    refresh();
+    let version = latest().map_or(VERSION, |r| r.version).max(VERSION);
     // OMSI_PAX_PACK_URL: another archive (`file://` too), unchecked
     let (url, size, sha256) = match legacy_config::env::var("OMSI_PAX_PACK_URL") {
         Ok(url) => (url, 0, None),
-        Err(_) => crate::updater::release_file(TAG, FILE)
+        Err(_) => release_file(version)
             .map_err(|e| anyhow::anyhow!("they are not available for download yet ({e})"))?,
     };
-    let zip = crate::updater::download_dir().join(FILE);
-    fetch_and_place(content, &url, size, sha256.as_deref(), &zip, status)
+    let zip = crate::updater::download_dir().join(file(version));
+    fetch_and_place(content, &url, size, sha256.as_deref(), &zip, version, status)
+}
+
+/// Its address, size and SHA-256 as GitHub lists them.
+fn release_file(version: u64) -> anyhow::Result<(String, u64, Option<String>)> {
+    let (tag, name) = (tag(version), file(version));
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/tags/{tag}",
+        crate::updater::REPO
+    );
+    let v: serde_json::Value = serde_json::from_str(&crate::updater::fetch_text(&url)?)?;
+    let a = v["assets"]
+        .as_array()
+        .and_then(|a| a.iter().find(|a| a["name"].as_str() == Some(name.as_str())))
+        .ok_or_else(|| anyhow::anyhow!("the release {tag} has no {name}"))?;
+    Ok((
+        a["browser_download_url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("{name} has no address"))?
+            .to_string(),
+        a["size"].as_u64().unwrap_or(0),
+        a["digest"]
+            .as_str()
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .map(|h| h.to_ascii_lowercase()),
+    ))
 }
 
 fn fetch_and_place(
@@ -115,6 +198,7 @@ fn fetch_and_place(
     size: u64,
     sha256: Option<&str>,
     zip: &Path,
+    version: u64,
     status: &Mutex<Status>,
 ) -> anyhow::Result<()> {
     crate::updater::fetch_file(url, size, sha256, zip, &mut |done, total| {
@@ -129,6 +213,7 @@ fn fetch_and_place(
         &staging,
         &folder(content),
         &packs.join(".RealisticPax-old"),
+        version,
     );
     let _ = std::fs::remove_dir_all(&staging);
     let _ = std::fs::remove_file(zip);
@@ -136,7 +221,7 @@ fn fetch_and_place(
 }
 
 /// Unpacked beside the pack first: a failed download leaves the old pack as it was.
-fn place(zip: &Path, staging: &Path, dest: &Path, old: &Path) -> anyhow::Result<()> {
+fn place(zip: &Path, staging: &Path, dest: &Path, old: &Path, version: u64) -> anyhow::Result<()> {
     crate::updater::unpack(zip, staging)?;
     let root = if staging.join("RealisticPax").is_dir() {
         staging.join("RealisticPax")
@@ -149,8 +234,8 @@ fn place(zip: &Path, staging: &Path, dest: &Path, old: &Path) -> anyhow::Result<
     let Some(m) = manifest(&root) else {
         anyhow::bail!("the archive has no readable pack.json");
     };
-    if m["name"] != "RealisticPax" || m["version"].as_u64() != Some(VERSION) {
-        anyhow::bail!("the archive is not version {VERSION} of the pack (its pack.json: {m})");
+    if m["name"] != "RealisticPax" || m["version"].as_u64() != Some(version) {
+        anyhow::bail!("the archive is not version {version} of the pack (its pack.json: {m})");
     }
     let _ = std::fs::remove_dir_all(old);
     if dest.exists() {
@@ -169,6 +254,9 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    /// `LATEST` is the whole process's.
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
     fn archive(path: &Path, files: &[(&str, &str)]) {
         let mut z = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
         for (name, text) in files {
@@ -181,6 +269,7 @@ mod tests {
 
     #[test]
     fn a_pack_replaces_the_old_one_and_a_bad_archive_keeps_it() {
+        let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("omsi-pax-pack-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let content = dir.join("content");
@@ -196,7 +285,7 @@ mod tests {
         let (staging, old) = (dir.join("staging"), dir.join("old"));
         let bad = dir.join("bad.zip");
         archive(&bad, &[("readme.txt", "")]);
-        assert!(place(&bad, &staging, &dest, &old).is_err());
+        assert!(place(&bad, &staging, &dest, &old, VERSION).is_err());
         assert!(dest.join("old.txt").exists());
         for manifest in [
             None,
@@ -209,7 +298,7 @@ mod tests {
 ")];
             files.extend(manifest.map(|m| ("RealisticPax/pack.json", m)));
             archive(&bad, &files);
-            assert!(place(&bad, &staging, &dest, &old).is_err(), "{manifest:?}");
+            assert!(place(&bad, &staging, &dest, &old, VERSION).is_err(), "{manifest:?}");
             let _ = std::fs::remove_dir_all(&staging);
             assert!(dest.join("old.txt").exists());
         }
@@ -223,21 +312,31 @@ mod tests {
                 ("RealisticPax/Humans/Other/man01.hum", "[model]\n"),
             ],
         );
-        place(&good, &staging, &dest, &old).unwrap();
+        place(&good, &staging, &dest, &old, VERSION).unwrap();
         assert!(dest.join("Humans/Other/man01.hum").exists() && !dest.join("old.txt").exists());
         assert!(!old.exists());
         assert_eq!(status_of(&content), Status::Installed);
+        assert_eq!(installed_version(&content), Some(VERSION));
+        *LATEST.lock().unwrap() = Some(PaxRelease {
+            version: VERSION + 1,
+            notes: String::new(),
+            page: String::new(),
+            published: String::new(),
+        });
+        assert_eq!(status_of(&content), Status::Outdated, "a newer pack is out");
+        *LATEST.lock().unwrap() = None;
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn a_download_is_checked_before_it_replaces_anything() {
         use sha2::Digest;
+        let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("omsi-pax-fetch-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let content = dir.join("content");
-        let source = dir.join(FILE);
+        let source = dir.join(file(VERSION));
         let manifest = format!(r#"{{"name": "RealisticPax", "version": {VERSION}}}"#);
         archive(
             &source,
@@ -255,7 +354,7 @@ mod tests {
         let status = Mutex::new(Status::Missing);
         let zip = dir.join("download.zip");
         let wrong = "0".repeat(64);
-        assert!(fetch_and_place(&content, &url, 0, Some(&wrong), &zip, &status).is_err());
+        assert!(fetch_and_place(&content, &url, 0, Some(&wrong), &zip, VERSION, &status).is_err());
         assert_eq!(status_of(&content), Status::Missing);
         fetch_and_place(
             &content,
@@ -263,6 +362,7 @@ mod tests {
             bytes.len() as u64,
             Some(&sha),
             &zip,
+            VERSION,
             &status,
         )
         .unwrap();

@@ -1,0 +1,11 @@
+[package]
+name = "launcher-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Frames between the engine and an external launcher, and the link a started game reports back on"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.4"

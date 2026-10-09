@@ -19,7 +19,7 @@ impl App {
             .as_ref()
             .is_some_and(|rows| rows.iter().any(|(_, action)| action.starts_with("vr_nav_")))
         {
-            self.open_list(game_lists::ListKind::Options(0));
+            self.close_list();
         }
         #[cfg(windows)]
         self.poll_vr_cursor_position();

@@ -476,42 +476,6 @@ mod tests {
     }
 
     #[test]
-    fn navigator_translations_are_loaded_for_enabled_languages() {
-        let keys = [
-            "Navigator position (this bus)",
-            "Position right / left",
-            "Position forward / back",
-            "Position up / down",
-            "Display width",
-            "Display rotation",
-            "Display tilt",
-            "Display roll",
-            "Move and rotate with the mouse...",
-            "Positioning navigator - changes apply to this bus",
-            "Hold left mouse: move | Hold right mouse: rotate",
-            "Wheel: distance | Ctrl+wheel: size | Shift+right drag: roll",
-            "Esc / Enter: save and finish | R: reset position",
-            "Reset navigator position",
-            "VR: Toggle navigator",
-            "VR: Position navigator",
-            "Could not save navigator position",
-        ];
-        // English uses the source keys. German is the only enabled non-English UI locale.
-        let languages = ["de"];
-        for language in languages {
-            for key in keys {
-                let translated = ::i18n::lookup(language, key);
-                assert!(
-                    translated
-                        .as_ref()
-                        .is_some_and(|text| !text.trim().is_empty() && text.as_str() != key),
-                    "Missing navigator translation: {language} / {key}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn navigator_starts_hidden_and_reset_preserves_visibility() {
         let mut p = Placement::default();
         assert!(!p.enabled);

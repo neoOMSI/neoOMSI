@@ -325,3 +325,23 @@ pub(crate) fn key_name(scan: i64, modifier: i64) -> String {
         format!("{}+{k}", mods.join("+"))
     }
 }
+
+static BINDINGS: std::sync::Mutex<Option<(std::time::Instant, std::sync::Arc<serde_json::Value>)>> = std::sync::Mutex::new(None);
+
+pub(crate) fn keybindings() -> Option<std::sync::Arc<serde_json::Value>> {
+    let mut g = BINDINGS.lock().ok()?;
+    if let Some((t, v)) = g.as_ref() {
+        if t.elapsed() < std::time::Duration::from_secs(2) {
+            return Some(v.clone());
+        }
+    }
+    let v = std::sync::Arc::new(omsi_launcher_lib::get_keybindings().ok()?);
+    *g = Some((std::time::Instant::now(), v.clone()));
+    Some(v)
+}
+
+pub(crate) fn keybindings_changed() {
+    if let Ok(mut g) = BINDINGS.lock() {
+        *g = None;
+    }
+}

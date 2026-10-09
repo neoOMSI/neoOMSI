@@ -66,7 +66,7 @@ pub(crate) enum Move {
     To(f32),
 }
 
-pub(super) type Page = (&'static str, Vec<(String, String)>);
+pub(super) type Page = (String, Vec<(String, String)>);
 
 pub(super) type ScanCache = std::sync::Mutex<Option<(std::time::Instant, Vec<String>)>>;
 

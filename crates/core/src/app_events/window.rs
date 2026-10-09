@@ -74,6 +74,21 @@ impl App {
                 self.key_search_text(text);
             }
         }
+        if event.state == ElementState::Pressed && self.dropdown.is_some() {
+            if let Some(text) = event.text.as_deref() {
+                self.dropdown_text(text);
+            }
+        }
+        if event.state == ElementState::Pressed && self.ui.as_ref().is_some_and(|u| u.world_drop.is_some()) {
+            if let Some(text) = event.text.as_deref() {
+                self.lab_world_drop_text(text);
+            }
+        }
+        if event.state == ElementState::Pressed && self.lab_list.is_some() {
+            if let Some(text) = event.text.as_deref() {
+                self.lab_dialog_text(text);
+            }
+        }
         if event.state == ElementState::Pressed && self.menu_edit_icao {
             if let Some(text) = event.text.as_deref() {
                 self.icao_edit_text(text);
@@ -88,8 +103,8 @@ impl App {
             && event.text.as_deref() == Some("/")
             && event.physical_key != PhysicalKey::Code(KeyCode::NumpadDivide)
             && self.game_keys.iter().any(|b| {
-                b.action.eq_ignore_ascii_case("chat_open") && b.scan_code == 53 && b.chord() == 0
-            })
+            b.action.eq_ignore_ascii_case("chat_open") && b.scan_code == 53 && b.chord() == 0
+        })
             && self.lan.is_some()
             && !lan::chat_open(&self.remotes)
         {

@@ -2,7 +2,7 @@
 //! a tab bar at the foot (Play, Online, Mods, More), a Play screen with the bus large and
 //! the duty as four big cards over one Start button, and every choice made on a sheet of
 //! its own that fills the screen - a list of big rows, a search field, a way back.
-//! The pages a phone needs less often (Settings, Controls, Profile, …) open from More,
+//! The pages a phone needs less often (Settings, Profile, …) open from More,
 //! full width, under a bar with a way back.
 
 use super::theme::*;
@@ -55,7 +55,7 @@ pub enum Sheet {
 }
 
 /// The pages More opens.
-const MORE: [(Page, &str, &str, &str); 7] = [
+const MORE: [(Page, &str, &str, &str); 5] = [
     (
         Page::Profile,
         "Profile",
@@ -66,13 +66,7 @@ const MORE: [(Page, &str, &str, &str); 7] = [
         Page::Settings,
         "Settings",
         "tune",
-        "Graphics, sound, gameplay",
-    ),
-    (
-        Page::Controls,
-        "Controls",
-        "sports_esports",
-        "Touch, wheels and gamepads",
+        "Updates",
     ),
     (
         Page::Sessions,
@@ -91,12 +85,6 @@ const MORE: [(Page, &str, &str, &str); 7] = [
         "Timetable",
         "schedule",
         "The map's lines and trips",
-    ),
-    (
-        Page::Setup,
-        "Setup",
-        "folder_open",
-        "The OMSI 2 folder and content",
     ),
 ];
 
@@ -1049,11 +1037,11 @@ fn start_sheet(l: &mut Launcher, r: Rect) -> bool {
         l.ui.label(Rect::new(inner.x, y, 112.0, ROW), "Start at");
         if labels.len() > 1
             && l.ui.select(
-                "ps-start-at",
-                Rect::new(inner.x + 112.0, y, inner.w - 112.0, ROW),
-                &mut es,
-                &labels,
-            )
+            "ps-start-at",
+            Rect::new(inner.x + 112.0, y, inner.w - 112.0, ROW),
+            &mut es,
+            &labels,
+        )
         {
             l.state.choice.entry = es as i32 - 1;
             l.state.touched();
@@ -1974,28 +1962,28 @@ fn time_sheet(l: &mut Launcher, r: Rect) -> bool {
             "Changes every 25-60 minutes, as the month allows".to_string(),
         ),
     ]
-    .into_iter()
-    .chain(l.state.weathers.iter().map(|w| {
-        (
-            w.file.clone(),
-            w.name.clone(),
-            format!(
-                "{:.0} °C · {} · {}",
-                w.temp,
-                if w.clouds.is_empty() {
-                    "clear"
-                } else {
-                    w.clouds.as_str()
-                },
-                if w.precip.is_empty() {
-                    "dry"
-                } else {
-                    w.precip.as_str()
-                }
-            ),
-        )
-    }))
-    .collect();
+        .into_iter()
+        .chain(l.state.weathers.iter().map(|w| {
+            (
+                w.file.clone(),
+                w.name.clone(),
+                format!(
+                    "{:.0} °C · {} · {}",
+                    w.temp,
+                    if w.clouds.is_empty() {
+                        "clear"
+                    } else {
+                        w.clouds.as_str()
+                    },
+                    if w.precip.is_empty() {
+                        "dry"
+                    } else {
+                        w.precip.as_str()
+                    }
+                ),
+            )
+        }))
+        .collect();
 
     let chosen = l.state.choice.weather.clone();
     let mut pick = None;
@@ -2326,12 +2314,10 @@ fn embedded(l: &mut Launcher, page: Page, body: Rect, back: bool) {
         Page::Multiplayer => super::multiplayer::draw(l, content),
         Page::Profile => super::pages::profile(l, content),
         Page::Settings => super::pages::settings(l, content),
-        Page::Controls => super::pages::controls(l, content),
         Page::Sessions => super::pages::sessions(l, content),
         Page::Mods => super::pages::mods(l, content),
         Page::Tutorials => super::pages::tutorials(l, content),
         Page::Timetable => super::timetable::draw(l, content),
-        Page::Setup => super::pages::setup(l, content),
     }
     l.ui.pop_clip();
     if back {

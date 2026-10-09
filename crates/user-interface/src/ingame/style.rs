@@ -2,7 +2,6 @@
 
 /// How long a fade of the menu takes (a line lit, a switch turned over): a short moment.
 pub(super) const FADE_SECS: f32 = 0.15;
-pub(super) const BAR_SECS: f32 = 0.19;
 
 pub(super) const PANEL: [u8; 4] = [22, 22, 22, 255];
 pub(super) const PANEL_ALT: [u8; 4] = [31, 31, 31, 255];
@@ -12,8 +11,6 @@ pub(super) const ACCENT_SOFT: [u8; 4] = [232, 160, 48, 34];
 pub(super) const DANGER: [u8; 4] = [222, 78, 68, 255];
 /// A line under the mouse, and the line chosen.
 pub(super) const LIT: [u8; 4] = [255, 255, 255, 16];
-pub(super) const SELECTED: [u8; 4] = [255, 255, 255, 24];
-pub(super) const LIT_DANGER: [u8; 4] = [222, 78, 68, 44];
 pub(super) const CHIP: [u8; 4] = [255, 255, 255, 20];
 /// The accent's fill under the mouse, and the ink on it (the launcher's primary button).
 pub(super) const ACCENT_HOT: [u8; 4] = [246, 182, 84, 255];
@@ -23,10 +20,6 @@ pub(super) const WHITE: [u8; 4] = [236, 236, 236, 0];
 pub(super) const SOFT: [u8; 4] = [200, 200, 200, 0];
 pub(super) const MUTED: [u8; 4] = [142, 142, 142, 0];
 pub(super) const AMBER: [u8; 4] = [255, 200, 110, 0];
-
-/// The ink of a greyed-out line and its small hint.
-pub(super) const OFF_INK: [u8; 4] = [96, 96, 96, 0];
-pub(super) const OFF_HINT: [u8; 4] = [96, 96, 96, 0];
 
 /// The card's radius, a line's, and the inset of lines from the card's edge and of their
 /// text from the line's edge (all times the scale).
@@ -69,15 +62,4 @@ pub(super) fn rr_dist(px: f32, py: f32, x0: f32, y0: f32, w: f32, h: f32, rad: f
     let qx = (px - cx).abs() - (w * 0.5 - rad);
     let qy = (py - cy).abs() - (h * 0.5 - rad);
     (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt() + qx.max(qy).min(0.0) - rad
-}
-
-/// A line that opens another list ends in dots: the text without them, and whether it did.
-pub(super) fn strip_more(label: &str) -> (&str, bool) {
-    match label
-        .strip_suffix("...")
-        .or_else(|| label.strip_suffix('…'))
-    {
-        Some(t) => (t.trim_end(), true),
-        None => (label, false),
-    }
 }

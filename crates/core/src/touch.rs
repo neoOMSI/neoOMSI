@@ -1089,10 +1089,7 @@ impl App {
                 self.orbit = ORBIT_DEFAULT;
             }
             Btn::Map => {
-                if let Some(n) = self.navigator.as_mut() {
-                    n.enabled = true;
-                    n.toggle_map();
-                }
+                self.toggle_map_page();
             }
             Btn::Timetable => self.timetable = !self.timetable,
             Btn::Panel => self.touch.panel = !self.touch.panel,
