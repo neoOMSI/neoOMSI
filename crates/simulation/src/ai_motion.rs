@@ -41,20 +41,12 @@ pub fn rotation_point(def: &Vehicle) -> (f32, f32) {
     (rot, (front - rot).max(0.8))
 }
 
-/// Clearance a vehicle pulling out keeps from the corner of what it goes round (m).
 pub const PULL_OUT_CLEARANCE: f64 = 0.25;
-/// Seconds a driver standing behind something turns the wheels before moving off round it
-/// (the shortest reaction time of the AI drivers).
+
 pub const PULL_OUT_WAIT: f32 = 0.4;
-/// Acceleration (m/s²) of a driver edging out round something standing close ahead, until
-/// the front is past its corner: pulling away briskly, a car covered too much ground while
-/// the wheels were still turning and came within 0.2 m of the corner.
+
 pub const PULL_OUT_ACCEL: f32 = 1.0;
 
-/// Lengths (m) of the S-curve that takes a vehicle out round something standing `real`
-/// metres ahead of its front bumper, gentlest first (`front`: origin to front bumper).
-/// From a standstill a driver turns out steeply; rolling up to a parked car they move over
-/// well before it.
 pub fn pull_out_ramps(real: f32, front: f32, rolling: bool) -> Vec<f32> {
     let base = real + 0.5 * front;
     let (factors, max): (&[f32], f32) = if rolling {

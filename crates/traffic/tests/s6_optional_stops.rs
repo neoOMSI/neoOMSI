@@ -2,7 +2,8 @@
 //!
 //! Dwell and skip policy follow explicit service semantics: an unwanted mid-route stop is
 //! skipped, a wanted or marked stop is served, a bus early for its departure waits with the
-//! doors open, a late bus goes at once, and a layover waits its departure out of the lane.
+//! doors open at a timing point only (elsewhere it leaves once the exchange is over), a late
+//! bus goes at once, and a layover waits its departure out of the lane.
 
 mod common;
 
@@ -58,9 +59,10 @@ fn a_timing_point_is_served_even_without_demand() {
 }
 
 #[test]
-fn an_early_bus_waits_for_its_departure() {
+fn an_early_bus_waits_for_its_departure_at_a_timing_point() {
     // Departing 100 s from now: the bus is early and must wait with the doors open.
     let mut w = single(36000.0 + 100.0);
+    w.bus_mut(1).policy.always = vec![STOP];
     assert!(reached_boarding(&mut w, 3000));
     let leave = w.bus(1).state.leave_at;
     assert!(leave > 36000.0 + 30.0, "the early bus did not wait for its departure");
@@ -71,6 +73,22 @@ fn an_early_bus_waits_for_its_departure() {
             assert_eq!(w.bus(1).phase(), ServicePhase::Boarding, "the early bus left early");
         }
     }
+}
+
+#[test]
+fn an_early_bus_does_not_hold_its_doors_at_an_ordinary_stop() {
+    let mut w = single(36000.0 + 100.0);
+    assert!(reached_boarding(&mut w, 3000));
+    assert!(w.bus(1).state.leave_at <= w.day_time, "an ordinary stop held for the timetable");
+    let mut left = false;
+    for _ in 0..1000 {
+        w.step();
+        if !w.bus(1).served.is_empty() {
+            left = true;
+            break;
+        }
+    }
+    assert!(left, "the early bus stood with its doors open after the exchange");
 }
 
 #[test]

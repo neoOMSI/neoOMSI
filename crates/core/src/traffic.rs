@@ -113,6 +113,14 @@ const SCENERY_STOP_MARGIN: f32 = 0.35;
 /// it gives up like a car that has stood for a minute: it is taken off once out of sight, bus
 /// or not - a timetable bus stuck against a wall held the whole line for good.
 const SCENERY_PINNED_GONE: f32 = 25.0;
+/// Seconds a vehicle stands held by scenery before it stops looking for it: Omsi.exe's AI
+/// never collides with scenery at all, and a body that clips a kerb post or a shelter roof on
+/// its authored path (a long bus on a tight corner, a bay narrower than the model) has no way
+/// round. Driving through it along the path beats holding the line, and the stop for it
+/// before contact keeps the clipping to the cases that cannot be avoided.
+const SCENERY_GHOST_AFTER: f32 = 3.0;
+/// How far beyond its own length (m) a vehicle that gave up on scenery ignores it.
+const SCENERY_GHOST_MARGIN: f32 = 10.0;
 
 /// Room an oncoming vehicle needs beside a car (m from the car's side to the middle of the
 /// oncoming lane): its half width and a margin.
@@ -138,6 +146,11 @@ pub struct AiCar {
     /// Metres its body can still travel along its way before touching scenery, from the
     /// realization of the last tick; the planner stops short of it and looks for a way round.
     pub(crate) scenery_ahead: Option<f32>,
+    /// Seconds it has stood held by scenery (the look-ahead hold or a refused move).
+    pub(crate) scenery_wait: f32,
+    /// Odometer (m) up to which it ignores scenery after being held too long
+    /// (`SCENERY_GHOST_AFTER`).
+    pub(crate) scenery_ghost: f32,
     /// The random seed it was made with and its paint scheme: a car that goes out of range
     /// and comes back is the same car (`DormantCar`).
     pub(crate) seed: u64,

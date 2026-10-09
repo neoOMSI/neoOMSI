@@ -933,6 +933,8 @@ impl Traffic {
             motion_fault: None,
             scenery_streak: 0.0,
             scenery_ahead: None,
+            scenery_wait: 0.0,
+            scenery_ghost: 0.0,
             state,
             vehicle,
             render,
