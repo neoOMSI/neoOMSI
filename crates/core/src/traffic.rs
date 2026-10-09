@@ -125,6 +125,7 @@ pub struct AiCar {
     /// Validated, immutable physical capabilities (extents, class, brake configuration).
     pub(crate) caps: VehicleCapabilities,
     pub(crate) motion_fault: Option<Reason>,
+    pub(crate) scenery_streak: f32,
     /// The random seed it was made with and its paint scheme: a car that goes out of range
     /// and comes back is the same car (`DormantCar`).
     pub(crate) seed: u64,

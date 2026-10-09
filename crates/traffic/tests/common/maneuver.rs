@@ -199,6 +199,7 @@ impl ManeuverWorld {
                     .map(|c| LaneId(c.to))
                     .or_else(|| required_target(&self.net, a).map(LaneId)),
                 required: true,
+                s: a.s,
             })
             .collect();
         self.coord.begin_tick(&intents, self.tick);

@@ -425,7 +425,10 @@ pub struct ManeuverIntent {
     pub vehicle: VehicleId,
     pub target: Option<LaneId>,
     pub required: bool,
+    pub s: f32,
 }
+
+const CLAIM_SPAN: f32 = 40.0;
 
 // ---- the coordinator -------------------------------------------------------------------
 
@@ -435,7 +438,7 @@ pub struct ManeuverCoordinator {
     /// This tick's approved lane change per vehicle (`vehicle -> target lane`).
     approved: HashMap<VehicleId, LaneId>,
     /// The lowest id that asked for each target lane this tick (the merge order).
-    claimants: HashMap<LaneId, VehicleId>,
+    claimants: HashMap<LaneId, Vec<(VehicleId, f32)>>,
     tick: u64,
 }
 
@@ -455,7 +458,8 @@ impl ManeuverCoordinator {
         let required = actor.change.map(|c| c.to).or_else(||
             if actor.at_stop { None } else { required_target(scene.net, actor) });
         let target = required.or_else(|| self.discretionary_wish(scene, actor, state).map(|w| w.0));
-        ManeuverIntent { vehicle: actor.id, target: target.map(LaneId), required: required.is_some() }
+        let s = target.map(|t| scene.net.beside_s(actor.lane, t, actor.s)).unwrap_or(actor.s);
+        ManeuverIntent { vehicle: actor.id, target: target.map(LaneId), required: required.is_some(), s }
     }
 
     /// How many vehicles hold an approved lane change this tick (a health/leak check).
@@ -474,10 +478,12 @@ impl ManeuverCoordinator {
         ordered.sort_by_key(|it| (!it.required, it.vehicle));
         for it in ordered {
             let Some(t) = it.target else { continue };
-            self.claimants.entry(t).or_insert(it.vehicle);
-        }
-        for (lane, vehicle) in &self.claimants {
-            self.approved.insert(*vehicle, *lane);
+            let list = self.claimants.entry(t).or_default();
+            if list.iter().any(|&(_, s)| (s - it.s).abs() < CLAIM_SPAN) {
+                continue;
+            }
+            list.push((it.vehicle, it.s));
+            self.approved.insert(it.vehicle, t);
         }
     }
 
@@ -1605,7 +1611,7 @@ mod tests {
         let occ = Occupancy::default();
         let actors = vec![ManeuverActor::new(VehicleId(1), 0, 10.0)];
         let scene = ManeuverScene {
-                        static_clearance: None,
+            static_clearance: None,
             net: &net,
             occupancy: &occ,
             actors: &actors,
@@ -1627,9 +1633,9 @@ mod tests {
     fn simultaneous_changes_go_to_the_lowest_id() {
         let mut coord = ManeuverCoordinator::new();
         let intents = [
-            ManeuverIntent { vehicle: VehicleId(7), target: Some(LaneId(3)), required: false },
-            ManeuverIntent { vehicle: VehicleId(2), target: Some(LaneId(3)), required: false },
-            ManeuverIntent { vehicle: VehicleId(5), target: Some(LaneId(3)), required: false },
+            ManeuverIntent { vehicle: VehicleId(7), target: Some(LaneId(3)), required: false, s: 0.0 },
+            ManeuverIntent { vehicle: VehicleId(2), target: Some(LaneId(3)), required: false, s: 0.0 },
+            ManeuverIntent { vehicle: VehicleId(5), target: Some(LaneId(3)), required: false, s: 0.0 },
         ];
         coord.begin_tick(&intents, 0);
         assert_eq!(coord.approved(VehicleId(2)), Some(LaneId(3)));
@@ -1649,7 +1655,7 @@ mod tests {
             a
         }];
         let scene = ManeuverScene {
-                        static_clearance: None,
+            static_clearance: None,
             net: &net,
             occupancy: &occ,
             actors: &actors,
