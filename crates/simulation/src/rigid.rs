@@ -1334,7 +1334,15 @@ impl RigidBody {
             // what each brake can bear. One wheel at a time, each cancelling only its quarter
             // of the bus, a parked bus crept down an 8 % slope at 2 mm/s.
             let mut outer = force + contacts.iter().map(|c| c.base).sum::<Vec3>();
-            let mut rolling_long = vec![0.0f32; contacts.len()];
+            let mut rolling_long_buf = [0.0f32; 32];
+            let mut rolling_long_overflow = Vec::new();
+            let n_c = contacts.len();
+            let rolling_long = if n_c <= 32 {
+                &mut rolling_long_buf[..n_c]
+            } else {
+                rolling_long_overflow.resize(n_c, 0.0f32);
+                rolling_long_overflow.as_mut_slice()
+            };
             for (k, c) in contacts.iter().enumerate() {
                 // a slipping wheel passes on the sliding friction, whichever way the tyre
                 // slides over the road (the wheel's own speed against the ground's)
@@ -1352,34 +1360,28 @@ impl RigidBody {
                     outer += c.fwd * c.drive;
                 }
             }
-            let standing: Vec<usize> = (0..contacts.len())
-                .filter(|&k| {
-                    contacts[k].v_long.abs() <= STANDING
-                        && !contacts[k].wheel.is_some_and(|i| self.wheels[i].slipping)
-                })
-                .collect();
-            let hold = |axis: Vec3, mass: f32, cap: &dyn Fn(&Contact) -> f32| -> Vec<f32> {
-                let need = -outer.dot(axis) - self.velocity.dot(axis) * mass / h;
-                let total: f32 = standing.iter().map(|&k| cap(&contacts[k])).sum();
-                standing
-                    .iter()
-                    .map(|&k| {
-                        if total > 1e-3 {
-                            (need * cap(&contacts[k]) / total)
-                                .clamp(-cap(&contacts[k]), cap(&contacts[k]))
-                        } else {
-                            0.0
-                        }
-                    })
-                    .collect()
-            };
-            let hold_long = hold(body_fwd, self.mass + towed, &|c| c.brake);
+            let need_long =
+                -outer.dot(body_fwd) - self.velocity.dot(body_fwd) * (self.mass + towed) / h;
+            let mut standing_brake_total = 0.0f32;
+            for c in contacts.iter() {
+                if c.v_long.abs() <= STANDING && !c.wheel.is_some_and(|i| self.wheels[i].slipping) {
+                    standing_brake_total += c.brake;
+                }
+            }
             // (the tyres' pull along the body, for the pitch lever below)
             let mut long_sum = 0.0f32;
             for (k, c) in contacts.iter().enumerate() {
-                let mut f_long = match standing.iter().position(|&j| j == k) {
-                    Some(si) => c.drive + hold_long[si],
-                    None => rolling_long[k],
+                let stands =
+                    c.v_long.abs() <= STANDING && !c.wheel.is_some_and(|i| self.wheels[i].slipping);
+                let mut f_long = if stands {
+                    let hold_long = if standing_brake_total > 1e-3 {
+                        (need_long * c.brake / standing_brake_total).clamp(-c.brake, c.brake)
+                    } else {
+                        0.0
+                    };
+                    c.drive + hold_long
+                } else {
+                    rolling_long[k]
                 };
                 let max_f = self.friction * c.grip;
                 f_long = f_long.clamp(-max_f, max_f);
@@ -1430,9 +1432,27 @@ impl RigidBody {
                 // Reference angular updates are moment / inertia (0x7e517d..0x7e5217,
                 // 0x7e53f0..0x7e5415), without an additional gyroscopic moment.
                 let mut w = self.omega + torque / self.inertia * h;
-                let lat: Vec<usize> = (0..contacts.len())
-                    .filter(|&k| contacts[k].lateral && contacts[k].grip > 0.0)
-                    .collect();
+                let mut lat_buf = [0usize; 32];
+                let mut lat_overflow = Vec::new();
+                let mut lat_count = 0;
+                for (k, c) in contacts.iter().enumerate() {
+                    if c.lateral && c.grip > 0.0 {
+                        if lat_count < 32 {
+                            lat_buf[lat_count] = k;
+                        } else {
+                            if lat_overflow.is_empty() {
+                                lat_overflow.extend_from_slice(&lat_buf[..32]);
+                            }
+                            lat_overflow.push(k);
+                        }
+                        lat_count += 1;
+                    }
+                }
+                let lat: &[usize] = if lat_count <= 32 {
+                    &lat_buf[..lat_count]
+                } else {
+                    &lat_overflow
+                };
                 // Holding requires the turn demand to fit the total grip
                 // (0x7e50da..0x7e5127) and rolling tires (0x7e3f30..0x7e3f84).
                 let grip_all: f32 = if omsi_suspension() {
@@ -1481,27 +1501,40 @@ impl RigidBody {
                         held_yaw = Some(yaw);
                     }
                 } else {
-                    let arms: Vec<(Vec3, f32)> = lat
-                        .iter()
-                        .map(|&k| {
-                            let c = &contacts[k];
-                            let mut rn = rot
-                                .inverse()
-                                .mul_vec3(c.r)
-                                .cross(rot.inverse().mul_vec3(c.right));
-                            // OMSI's tire-side force adds yaw, not a second roll moment.
-                            // The explicit centripetal roll moment is added below; applying
-                            // both fed steering/sliding transitions back into body sway.
-                            if omsi_suspension() || self.holding {
-                                rn.y = 0.0;
-                            }
-                            let inv = c.right.dot(lin(c.right)) + (rn / self.inertia).dot(rn);
-                            (rn, inv.max(1e-9))
-                        })
-                        .collect();
+                    let mut arms_buf = [(Vec3::ZERO, 0.0f32); 32];
+                    let mut arms_overflow = Vec::new();
+                    let n_lat = lat.len();
+                    let arms: &mut [(Vec3, f32)] = if n_lat <= 32 {
+                        &mut arms_buf[..n_lat]
+                    } else {
+                        arms_overflow.resize(n_lat, (Vec3::ZERO, 0.0f32));
+                        arms_overflow.as_mut_slice()
+                    };
+                    for (q, &k) in lat.iter().enumerate() {
+                        let c = &contacts[k];
+                        let mut rn = rot
+                            .inverse()
+                            .mul_vec3(c.r)
+                            .cross(rot.inverse().mul_vec3(c.right));
+                        // OMSI's tire-side force adds yaw, not a second roll moment.
+                        // The explicit centripetal roll moment is added below; applying
+                        // both fed steering/sliding transitions back into body sway.
+                        if omsi_suspension() || self.holding {
+                            rn.y = 0.0;
+                        }
+                        let inv = c.right.dot(lin(c.right)) + (rn / self.inertia).dot(rn);
+                        arms[q] = (rn, inv.max(1e-9));
+                    }
                     // Sliding and coupled parts retain the per-contact approximation.
                     let reach = if self.holding { 8.0 } else { 1.0 };
-                    let mut j = vec![0.0f32; lat.len()];
+                    let mut j_buf = [0.0f32; 32];
+                    let mut j_overflow = Vec::new();
+                    let j: &mut [f32] = if n_lat <= 32 {
+                        &mut j_buf[..n_lat]
+                    } else {
+                        j_overflow.resize(n_lat, 0.0f32);
+                        j_overflow.as_mut_slice()
+                    };
                     for _ in 0..8 {
                         for (q, &k) in lat.iter().enumerate() {
                             let c = &contacts[k];

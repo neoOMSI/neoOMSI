@@ -382,8 +382,8 @@ pub struct PageOutput {
 /// their new pictures. Shared by vehicles and scenery objects.
 pub(crate) fn drive_pages(
     pages: &mut [HtmlTexture],
-    num: &[(String, f32)],
-    strs: &[(String, String)],
+    num: &[(&str, f32)],
+    strs: &[(&str, &str)],
     api: Option<&crate::vehicle_api::ApiValue>,
     env: &crate::vehicle_api::ApiValue,
     depot: Option<&crate::vehicle_api::ApiValue>,
@@ -396,13 +396,13 @@ pub(crate) fn drive_pages(
         let departures_changed = departures.is_some_and(|d| t.last_departures.as_ref() != Some(d));
         let dn: Vec<(String, f32)> = num
             .iter()
-            .filter(|(n, v)| t.last_num.get(n) != Some(v))
-            .cloned()
+            .filter(|(n, v)| t.last_num.get(*n) != Some(v))
+            .map(|(n, v)| ((*n).to_string(), *v))
             .collect();
         let ds: Vec<(String, String)> = strs
             .iter()
-            .filter(|(n, v)| t.last_str.get(n) != Some(v))
-            .cloned()
+            .filter(|(n, v)| t.last_str.get(*n).map(|s| s.as_str()) != Some(*v))
+            .map(|(n, v)| ((*n).to_string(), (*v).to_string()))
             .collect();
         if !t.started
             || !dn.is_empty()
@@ -586,14 +586,22 @@ impl VehicleInstance {
             None
         };
         let mut requests: Vec<HtmlRequest> = Vec::new();
-        let mut num = Vec::new();
-        for (i, name) in self.ty.program.var_names.iter().enumerate() {
-            num.push((name.clone(), self.state.vars[i]));
-        }
-        let mut strs = Vec::new();
-        for (i, name) in self.ty.program.str_var_names.iter().enumerate() {
-            strs.push((name.clone(), self.state.str_vars[i].clone()));
-        }
+        let num: Vec<(&str, f32)> = self
+            .ty
+            .program
+            .var_names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.as_str(), self.state.vars[i]))
+            .collect();
+        let strs: Vec<(&str, &str)> = self
+            .ty
+            .program
+            .str_var_names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.as_str(), self.state.str_vars[i].as_str()))
+            .collect();
         // one snapshot of the vehicle for all pages
         let api = self.html_api_snapshot();
         let env = self.html_env_snapshot();
