@@ -20,7 +20,12 @@ impl App {
         #[cfg(all(feature = "devtools", debug_assertions))]
         self.dev_actions(event_loop);
         #[cfg(all(feature = "devtools", debug_assertions))]
-        let dev_extra = self.dev_gather();
+        let dev_extra = {
+            let __t = Instant::now();
+            let extra = self.dev_gather();
+            *self.profile.entry("devtools").or_default() += __t.elapsed().as_secs_f64();
+            extra
+        };
         let menu_lines = if self.game_menu.is_some() && self.report_view.is_some() {
             self.game_menu_items()
         } else {
@@ -982,6 +987,7 @@ impl App {
                         .window
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
+                    let __t = Instant::now();
                     if self.lab_menu.is_none() {
                         // (drawn over the picture: its commands are queued after the
                         // picture's, see `DevTools::submit`)
@@ -989,6 +995,8 @@ impl App {
                             .get_or_insert_with(devtools::DevTools::new)
                             .render(r, &view, scale, &snap, &dev_extra);
                     }
+                    *self.profile.entry("render.devtools").or_default() +=
+                        __t.elapsed().as_secs_f64();
                 }
                 *self.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
                 if ::legacy_config::env::var_os("OMSI_PROFILE_GPU").is_some() {
@@ -1052,30 +1060,20 @@ impl App {
             }
             self.frames += 1;
             let profiling = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
-            // (half of an automated run, or 15 s after the bus is there: not the menu or loading)
-            let mark_due = match self.args.exit_after {
-                Some(l) => self.started.elapsed().as_secs_f32() > (l * 0.5).max(15.0),
-                None => {
-                    self.player.is_some()
-                        && self
-                            .play_since
-                            .get_or_insert_with(Instant::now)
-                            .elapsed()
-                            .as_secs_f32()
-                            > 15.0
-                }
-            };
-            if profiling && self.cpu_mark.is_none() && self.profile_mark.is_none() && mark_due {
-                self.cpu_mark =
-                    process_cpu_seconds().map(|c| (c, Instant::now(), self.total_frames));
-                self.thread_cpu_mark = thread_cpu_seconds();
-                self.profile_mark = Some(ProfileMark {
-                    frames: self.total_frames,
-                    stages: self.profile.clone(),
-                    render: r.stats.borrow().clone(),
-                    counts: r.counts.borrow().clone(),
-                    gpu: r.gpu_pass_times(),
-                });
+            // (the averages are of the running game: what loading the map and its first
+            // seconds cost - one frame of a minute and more - is left out)
+            if profiling && self.cpu_mark.is_none() && self.total_frames >= 150 {
+                // (where the CPU time is not known, the dump leaves that line out)
+                self.cpu_mark = Some((
+                    process_cpu_seconds().unwrap_or(0.0),
+                    Instant::now(),
+                    self.total_frames,
+                ));
+                self.profile.clear();
+                self.profile_prev.clear();
+                self.governor_wait_prev = 0.0;
+                r.stats.borrow_mut().clear();
+                r.counts.borrow_mut().clear();
             }
             if let (Some(limit), false) = (self.args.exit_after, self.exiting) {
                 if self.started.elapsed().as_secs_f32() > limit {
@@ -1112,7 +1110,47 @@ impl App {
                         );
                         st.stats.log_ground();
                     }
-                    summarize = true;
+                    if ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
+                        let n = self
+                            .total_frames
+                            .saturating_sub(self.cpu_mark.map(|m| m.2).unwrap_or(0))
+                            .max(1) as f64;
+                        for (k, v) in &self.profile {
+                            log::info!("profile {k:10}: {:.1} ms/frame", v / n * 1000.0);
+                        }
+                        if let Some(h) = self.humans.as_ref() {
+                            log::info!("profile people: {} ({})", h.people.len(), h.summary());
+                        }
+                        for (k, v) in r.stats.borrow().iter() {
+                            log::info!("profile render.{k:10}: {:.2} ms/frame", v / n * 1000.0);
+                        }
+                        for (k, v) in r.counts.borrow().iter() {
+                            log::info!("profile count {k}: {:.0} a frame", v / n);
+                        }
+                        for (pass, ms, frames) in r.gpu_pass_times() {
+                            log::info!(
+                                "profile gpu pass {pass:12}: {ms:.2} ms ({frames} frames measured)"
+                            );
+                        }
+                        if let (Some((c0, t0, f0)), Some(c1)) =
+                            (self.cpu_mark, process_cpu_seconds())
+                        {
+                            let frames = self.total_frames.saturating_sub(f0).max(1) as f64;
+                            log::info!(
+                                "profile: since the 150th frame {:.1} ms wall and {:.1} ms CPU (all threads) per frame, {:.1} cores busy",
+                                t0.elapsed().as_secs_f64() / frames * 1000.0,
+                                (c1 - c0) / frames * 1000.0,
+                                (c1 - c0) / t0.elapsed().as_secs_f64().max(1e-3)
+                            );
+                        }
+                        let (sw, sh) = r.scene_size(s.config.width, s.config.height);
+                        log::info!(
+                            "profile: window {}x{}, scene drawn at {sw}x{sh}, {}x MSAA",
+                            s.config.width,
+                            s.config.height,
+                            r.options.msaa
+                        );
+                    }
                     finish = true;
                     platform::exit(event_loop);
                 }

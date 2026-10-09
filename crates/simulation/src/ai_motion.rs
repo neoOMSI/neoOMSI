@@ -642,13 +642,13 @@ impl AiBody {
         let turn = (u.x * w.y - u.y * w.x).atan2(u.dot(w)).abs() as f32;
         let bend_k = if look > 0.1 { 2.0 * turn / look } else { 0.0 };
         let need = (bend_k * self.wheelbase).atan().to_degrees() * 1.15;
-        let limit = if std::env::var_os("OMSI_AI_MODEL_LOCK").is_some() {
+        let limit = if env_switch(&MODEL_LOCK, "OMSI_AI_MODEL_LOCK") {
             self.max_steer
         } else {
             self.max_steer.max(need.min(60.0))
         };
         // OMSI_DEBUG_AI_WIDE: every tenth of a second a car stands over 1.5 m beside its way
-        if std::env::var_os("OMSI_DEBUG_AI_WIDE").is_some() {
+        if env_switch(&DEBUG_WIDE, "OMSI_DEBUG_AI_WIDE") {
             let off = ((target - self.rear).dot(right)).abs();
             if off > 1.5 {
                 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1053,6 +1053,17 @@ impl AiBody {
             axle[1].suspension = s[1] + delta;
         }
     }
+}
+
+static MODEL_LOCK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static DEBUG_WIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// A debug switch of the environment, read once. `drive` runs a few dozen times per car and
+/// tick (the scenery look-ahead drives a probe body along the way), on every worker thread:
+/// asking the environment each time - a process-wide lock on Windows - was most of the AI
+/// bodies' time, the threads queueing for each other.
+fn env_switch(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
+    *cell.get_or_init(|| std::env::var_os(name).is_some())
 }
 
 #[cfg(test)]
