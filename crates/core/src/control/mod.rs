@@ -2,10 +2,12 @@ mod commands;
 mod minimap;
 mod pads;
 
-use launcher_protocol::{self as protocol, Message};
+use launcher_protocol::api::{
+    self, Empty, Frame, GameLinkState, HandshakeResponse, PaxState, SessionState, Status, StatusCode, event::Event, frame::Body,
+    request::Command, response::Answer,
+};
 use launcher_protocol::link;
 use omsi_launcher_lib::Instance;
-use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -122,63 +124,66 @@ impl Server {
         let _ = self.0.wake.lock().unwrap_or_else(|e| e.into_inner()).send(());
     }
 
-    fn send(&self, m: &Message) {
-        let frame = match protocol::encode(m) {
-            Ok(f) => f,
+    fn send(&self, f: &Frame) {
+        let bytes = match launcher_protocol::encode(f) {
+            Ok(b) => b,
             Err(e) => {
-                log::warn!("launcher protocol: {} not sent: {e}", m.kind);
-                if m.request_id.is_some() && m.error.is_none() {
-                    self.send(&Message {
-                        kind: m.kind.clone(),
-                        request_id: m.request_id.clone(),
-                        payload: Value::Null,
-                        error: Some(format!("the answer could not be sent: {e}")),
-                    });
+                log::warn!("launcher protocol: a frame not sent: {e}");
+                if !f.request_id.is_empty() && f.error.is_empty() {
+                    self.send(&failed(&f.request_id, format!("the answer could not be sent: {e}")));
                 }
                 return;
             }
         };
         let mut out = self.0.out.lock().unwrap_or_else(|e| e.into_inner());
-        if let Err(e) = out.write_all(&frame).and_then(|()| out.flush()) {
-            log::warn!("launcher protocol: {} not sent: {e}", m.kind);
+        if let Err(e) = out.write_all(&bytes).and_then(|()| out.flush()) {
+            log::warn!("launcher protocol: a frame not sent: {e}");
             self.0.stop.store(true, Ordering::SeqCst);
         }
     }
 
     pub(crate) fn serve(&self, mut input: impl Read) {
         loop {
-            let m = match protocol::read_frame(&mut input) {
-                Ok(Some(m)) => m,
+            let frame = match launcher_protocol::read_frame::<Frame>(&mut input) {
+                Ok(Some(f)) => f,
                 Ok(None) => break,
                 Err(e) => {
                     log::error!("launcher protocol: {e}");
                     break;
                 }
             };
-            match m.kind.as_str() {
-                "handshake" => {
-                    let r = self.handshake(&m.payload);
-                    self.send(&m.reply(r));
+            let id = frame.request_id;
+            let command = match frame.body {
+                Some(Body::Request(r)) => r.command,
+                _ => None,
+            };
+            match command {
+                Some(Command::Handshake(h)) => {
+                    let r = self.handshake(&h);
+                    self.send(&answer(&id, Answer::Handshake(r)));
                     self.wake();
                 }
-                "shutdown" => {
-                    self.send(&m.reply(Ok(json!({}))));
+                Some(Command::Shutdown(_)) => {
+                    self.send(&answer(&id, Answer::Shutdown(Empty {})));
                     break;
                 }
                 _ if !self.0.ready.load(Ordering::SeqCst) => {
-                    self.send(&m.reply(Err("the handshake has to come first".into())));
+                    self.send(&failed(&id, "the handshake has to come first".into()));
                 }
-                kind if !commands::COMMANDS.contains(&kind) => {
-                    self.send(&m.reply(Err(format!("this engine has no command {kind:?}"))));
+                None => {
+                    self.send(&failed(&id, "this engine does not know the request".into()));
                 }
-                _ => {
+                Some(command) => {
                     let this = self.clone();
                     self.0.busy.fetch_add(1, Ordering::SeqCst);
                     let spawned = std::thread::Builder::new()
                         .name("launcher request".into())
                         .spawn(move || {
-                            let r = commands::call(&m.kind, &m.payload).map_err(|e| format!("{e:#}"));
-                            this.send(&m.reply(r));
+                            let reply = match commands::call(command) {
+                                Ok(a) => answer(&id, a),
+                                Err(e) => failed(&id, format!("{e:#}")),
+                            };
+                            this.send(&reply);
                             this.0.busy.fetch_sub(1, Ordering::SeqCst);
                             this.wake();
                         });
@@ -200,26 +205,28 @@ impl Server {
         self.wake();
     }
 
-    fn handshake(&self, p: &Value) -> Result<Value, String> {
-        let theirs = p.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("");
-        let engine = crate::startup::VERSION;
-        if theirs.split('.').next() != Some(protocol::VERSION) {
+    fn handshake(&self, h: &api::Handshake) -> HandshakeResponse {
+        let theirs = &h.protocol_version;
+        let response = |code: StatusCode, message: String, caps: &[&str], commands: &[&str]| HandshakeResponse {
+            status: Some(Status {
+                code: code.into(),
+                message,
+            }),
+            protocol_version: api::VERSION.into(),
+            engine_version: crate::startup::VERSION.into(),
+            supported_capabilities: caps.iter().map(|c| c.to_string()).collect(),
+            commands: commands.iter().map(|c| c.to_string()).collect(),
+        };
+        if theirs.split('.').next() != Some(api::VERSION) {
             self.0.ready.store(false, Ordering::SeqCst);
-            return Ok(json!({
-                "status": {
-                    "code": 2,
-                    "message": format!("this engine speaks protocol {}, the launcher {theirs:?}", protocol::VERSION),
-                },
-                "protocolVersion": protocol::VERSION,
-                "engineVersion": engine,
-                "supportedCapabilities": [],
-                "commands": [],
-            }));
+            let message = format!("this engine speaks protocol {}, the launcher {theirs:?}", api::VERSION);
+            return response(StatusCode::UnsupportedVersion, message, &[], &[]);
         }
+        let known = |s: &str| if s.is_empty() { "?" } else { s }.to_string();
         log::info!(
             "launcher {} on {} connected",
-            p.get("launcherVersion").and_then(|v| v.as_str()).unwrap_or("?"),
-            p.get("clientPlatform").and_then(|v| v.as_str()).unwrap_or("?"),
+            known(&h.launcher_version),
+            known(&h.client_platform),
         );
         self.0.ready.store(true, Ordering::SeqCst);
         let mut caps = vec![
@@ -231,13 +238,7 @@ impl Server {
         if self.0.game_link.load(Ordering::SeqCst) {
             caps.push("game.link");
         }
-        Ok(json!({
-            "status": { "code": 0, "message": "OK" },
-            "protocolVersion": protocol::VERSION,
-            "engineVersion": engine,
-            "supportedCapabilities": caps,
-            "commands": commands::COMMANDS,
-        }))
+        response(StatusCode::Ok, "OK".into(), &caps, api::COMMANDS)
     }
 
     pub(crate) fn watch(&self, woken: Receiver<()>) {
@@ -253,11 +254,11 @@ impl Server {
                     if this.0.ready.load(Ordering::SeqCst) {
                         match omsi_launcher_lib::poll() {
                             Ok(p) => {
-                                for m in seen.update(&p.stamp, &p.jobs, &p.instances) {
-                                    this.send(&m);
+                                for e in seen.update(&p.stamp, &p.jobs, &p.instances) {
+                                    this.send(&event(e));
                                 }
-                                if let Some(m) = seen.pax(commands::pax_status()) {
-                                    this.send(&m);
+                                if let Some(e) = seen.pax(commands::pax_status()) {
+                                    this.send(&event(e));
                                 }
                             }
                             Err(e) => log::debug!("poll: {e:#}"),
@@ -277,14 +278,27 @@ impl Server {
     }
 }
 
-/// The launcher's SessionState numbers.
-mod session {
-    pub const STARTING: u8 = 1;
-    pub const LOADING: u8 = 2;
-    pub const RUNNING: u8 = 3;
-    pub const STOPPING: u8 = 4;
-    pub const EXITED: u8 = 5;
-    pub const FAILED: u8 = 6;
+fn answer(id: &str, a: Answer) -> Frame {
+    Frame {
+        request_id: id.into(),
+        error: String::new(),
+        body: Some(Body::Response(api::Response { answer: Some(a) })),
+    }
+}
+
+fn failed(id: &str, error: String) -> Frame {
+    Frame {
+        request_id: id.into(),
+        error,
+        body: None,
+    }
+}
+
+fn event(e: Event) -> Frame {
+    Frame {
+        body: Some(Body::Event(api::Event { event: Some(e) })),
+        ..Default::default()
+    }
 }
 
 /// An older game never reports: running once it has been up this long.
@@ -292,7 +306,7 @@ const UNLINKED_START_SECS: u64 = 30;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Phase {
-    state: u8,
+    state: SessionState,
     message: String,
     progress: Option<f32>,
     exit_code: Option<i32>,
@@ -302,21 +316,21 @@ struct Phase {
 struct Seen {
     started: bool,
     stamp: String,
-    jobs: Value,
-    instances: Value,
+    jobs: Option<Vec<api::InstallProgress>>,
+    instances: Option<Vec<api::Instance>>,
     phases: HashMap<String, Phase>,
     installing: bool,
-    pax: Value,
+    pax: Option<api::PaxPack>,
 }
 
 impl Seen {
-    fn pax(&mut self, status: Value) -> Option<Message> {
-        self.installing |= matches!(status["state"].as_str(), Some("downloading" | "installing"));
-        if status == self.pax {
+    fn pax(&mut self, status: api::PaxPack) -> Option<Event> {
+        self.installing |= matches!(status.state(), PaxState::Downloading | PaxState::Installing);
+        if self.pax.as_ref() == Some(&status) {
             return None;
         }
-        self.pax = status.clone();
-        Some(Message::new("pax_pack_changed", status))
+        self.pax = Some(status.clone());
+        Some(Event::PaxPackChanged(status))
     }
 
     fn update(
@@ -324,25 +338,25 @@ impl Seen {
         stamp: &str,
         jobs: &[omsi_launcher_lib::install::Progress],
         instances: &[Instance],
-    ) -> Vec<Message> {
+    ) -> Vec<Event> {
         let mut out = Vec::new();
         let first = !self.started;
         self.started = true;
         if !first && stamp != self.stamp {
             commands::forget_content();
-            out.push(Message::new("content_changed", json!({ "stamp": stamp })));
+            out.push(Event::ContentChanged(api::ContentChanged { stamp: stamp.into() }));
         }
         self.stamp = stamp.to_string();
         self.installing = jobs.iter().any(|j| j.finished.is_none());
-        let jobs = serde_json::to_value(jobs).unwrap_or_default();
-        if jobs != self.jobs {
-            self.jobs = jobs.clone();
-            out.push(Message::new("installs_changed", jobs));
+        let jobs: Vec<api::InstallProgress> = jobs.iter().cloned().map(Into::into).collect();
+        if self.jobs.as_ref() != Some(&jobs) {
+            self.jobs = Some(jobs.clone());
+            out.push(Event::InstallsChanged(api::InstallList { jobs }));
         }
-        let list = serde_json::to_value(instances).unwrap_or_default();
-        if list != self.instances {
-            self.instances = list.clone();
-            out.push(Message::new("instances_changed", list));
+        let list: Vec<api::Instance> = instances.iter().cloned().map(Into::into).collect();
+        if self.instances.as_ref() != Some(&list) {
+            self.instances = Some(list.clone());
+            out.push(Event::InstancesChanged(api::InstanceList { instances: list }));
         }
         let now = omsi_launcher_lib::install::now_secs();
         for i in instances {
@@ -351,20 +365,15 @@ impl Seen {
             if before == Some(&phase) {
                 continue;
             }
-            if !(first && phase.state >= session::EXITED) {
-                let mut e = json!({
-                    "sessionId": i.id,
-                    "pid": i.pid,
-                    "state": phase.state,
-                    "message": phase.message,
-                });
-                if let Some(p) = phase.progress {
-                    e["progress"] = json!(p);
-                }
-                if let Some(c) = phase.exit_code {
-                    e["exitCode"] = json!(c);
-                }
-                out.push(Message::new("session_event", e));
+            if !(first && phase.state >= SessionState::Exited) {
+                out.push(Event::SessionEvent(api::SessionEvent {
+                    session_id: i.id.clone(),
+                    pid: i.pid,
+                    state: phase.state.into(),
+                    message: phase.message.clone(),
+                    progress: phase.progress,
+                    exit_code: phase.exit_code,
+                }));
             }
             self.phases.insert(i.id.clone(), phase);
         }
@@ -381,7 +390,7 @@ fn phase_of(i: &Instance, before: Option<&Phase>, now: u64) -> Phase {
         exit_code: None,
     };
     if !i.running {
-        if let Some(b) = before.filter(|b| b.state == session::FAILED) {
+        if let Some(b) = before.filter(|b| b.state == SessionState::Failed) {
             return Phase {
                 exit_code: i.exit_code,
                 ..b.clone()
@@ -391,40 +400,40 @@ fn phase_of(i: &Instance, before: Option<&Phase>, now: u64) -> Phase {
         return Phase {
             exit_code: i.exit_code,
             ..phase(
-                if failed { session::FAILED } else { session::EXITED },
+                if failed { SessionState::Failed } else { SessionState::Exited },
                 &i.last_line,
                 None,
             )
         };
     }
     if i.stopping.is_some() {
-        return phase(session::STOPPING, "", None);
+        return phase(SessionState::Stopping, "", None);
     }
     match &i.link {
         Some(l) => {
-            let state = match l.state.as_str() {
-                "loading" => session::LOADING,
-                "running" => session::RUNNING,
-                "stopping" => session::STOPPING,
-                "failed" => session::FAILED,
-                _ => session::STARTING,
+            let state = match l.state() {
+                GameLinkState::Loading => SessionState::Loading,
+                GameLinkState::Running => SessionState::Running,
+                GameLinkState::Stopping => SessionState::Stopping,
+                GameLinkState::Failed => SessionState::Failed,
+                GameLinkState::Starting | GameLinkState::Unspecified => SessionState::Starting,
             };
             phase(state, &l.message, l.progress)
         }
         None if now.saturating_sub(i.started) < UNLINKED_START_SECS => {
-            phase(session::STARTING, "", None)
+            phase(SessionState::Starting, "", None)
         }
         None => before
-            .filter(|b| b.state != session::STARTING)
+            .filter(|b| b.state != SessionState::Starting)
             .cloned()
-            .unwrap_or_else(|| phase(session::RUNNING, "", None)),
+            .unwrap_or_else(|| phase(SessionState::Running, "", None)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use launcher_protocol::link::GameState;
+    use launcher_protocol::api::GameLink;
 
     #[derive(Clone, Default)]
     struct Shared(Arc<Mutex<Vec<u8>>>);
@@ -439,23 +448,41 @@ mod tests {
         }
     }
 
-    fn frames(m: &[Message]) -> Vec<u8> {
-        m.iter().flat_map(|m| protocol::encode(m).unwrap()).collect()
+    fn frames(f: &[Frame]) -> Vec<u8> {
+        f.iter().flat_map(|f| launcher_protocol::encode(f).unwrap()).collect()
     }
 
-    fn request(kind: &str, id: &str, payload: Value) -> Message {
-        Message {
-            kind: kind.into(),
-            request_id: Some(id.into()),
-            payload,
-            error: None,
+    fn request(id: &str, command: Option<Command>) -> Frame {
+        Frame {
+            request_id: id.into(),
+            body: Some(Body::Request(api::Request { command })),
+            ..Default::default()
         }
     }
 
-    fn answers(out: &Shared) -> Vec<Message> {
+    fn handshake(version: &str) -> Option<Command> {
+        Some(Command::Handshake(api::Handshake {
+            protocol_version: version.into(),
+            launcher_version: "0.3.0".into(),
+            client_platform: "win32".into(),
+        }))
+    }
+
+    fn version() -> Option<Command> {
+        Some(Command::Version(Empty {}))
+    }
+
+    fn answers(out: &Shared) -> Vec<Frame> {
         let bytes = out.0.lock().unwrap().clone();
         let mut r = std::io::Cursor::new(bytes);
-        std::iter::from_fn(|| protocol::read_frame(&mut r).unwrap()).collect()
+        std::iter::from_fn(|| launcher_protocol::read_frame(&mut r).unwrap()).collect()
+    }
+
+    fn answer_of(f: &Frame) -> &Answer {
+        match &f.body {
+            Some(Body::Response(api::Response { answer: Some(a) })) => a,
+            _ => panic!("not an answer: {f:?}"),
+        }
     }
 
     #[test]
@@ -463,25 +490,22 @@ mod tests {
         let out = Shared::default();
         let (server, _woken) = Server::new(Box::new(out.clone()));
         server.serve(std::io::Cursor::new(frames(&[
-            request("version", "a", json!({})),
-            request("handshake", "b", json!({ "protocolVersion": "1.0", "launcherVersion": "0.3.0" })),
-            request("shutdown", "c", json!({})),
-            request("version", "d", json!({})),
+            request("a", version()),
+            request("b", handshake("2.0")),
+            request("c", Some(Command::Shutdown(Empty {}))),
+            request("d", version()),
         ])));
         let got = answers(&out);
         assert_eq!(got.len(), 3, "nothing after shutdown: {got:?}");
-        assert_eq!(got[0].request_id.as_deref(), Some("a"));
-        assert!(got[0].error.as_deref().unwrap().contains("handshake"));
-        assert_eq!(got[1].payload["status"]["code"], 0);
-        assert_eq!(got[1].payload["protocolVersion"], protocol::VERSION);
-        assert!(
-            got[1].payload["commands"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|c| c == "launch")
-        );
-        assert_eq!(got[2].kind, "shutdown");
+        assert_eq!(got[0].request_id, "a");
+        assert!(got[0].error.contains("handshake"));
+        let Answer::Handshake(h) = answer_of(&got[1]) else {
+            panic!("not the handshake")
+        };
+        assert_eq!(h.status.as_ref().unwrap().code(), StatusCode::Ok);
+        assert_eq!(h.protocol_version, api::VERSION);
+        assert!(h.commands.iter().any(|c| c == "launch"));
+        assert_eq!(answer_of(&got[2]), &Answer::Shutdown(Empty {}));
     }
 
     #[test]
@@ -489,23 +513,33 @@ mod tests {
         let out = Shared::default();
         let (server, _woken) = Server::new(Box::new(out.clone()));
         server.serve(std::io::Cursor::new(frames(&[
-            request("handshake", "a", json!({ "protocolVersion": "2.0" })),
-            request("config", "b", json!({})),
+            request("a", handshake("1.0")),
+            request("b", Some(Command::Config(Empty {}))),
         ])));
         let got = answers(&out);
-        assert_eq!(got[0].payload["status"]["code"], 2);
-        assert!(got[1].error.is_some(), "still not ready");
+        let Answer::Handshake(h) = answer_of(&got[0]) else {
+            panic!("not the handshake")
+        };
+        assert_eq!(h.status.as_ref().unwrap().code(), StatusCode::UnsupportedVersion);
+        assert!(h.commands.is_empty());
+        assert!(!got[1].error.is_empty(), "still not ready");
     }
 
     #[test]
-    fn requests_run_side_by_side() {
+    fn a_launcher_of_the_first_protocol_ends_the_connection() {
+        let out = Shared::default();
+        let (server, _woken) = Server::new(Box::new(out.clone()));
+        let json = launcher_protocol::frame(br#"{"type":"handshake","requestId":"a","payload":{}}"#);
+        server.serve(std::io::Cursor::new(json.unwrap()));
+        assert!(answers(&out).is_empty());
+    }
+
+    #[test]
+    fn requests_run_side_by_side_and_an_unknown_one_is_answered() {
         let out = Shared::default();
         let (server, _woken) = Server::new(Box::new(out.clone()));
         server.0.ready.store(true, Ordering::SeqCst);
-        server.serve(std::io::Cursor::new(frames(&[
-            request("version", "1", json!({})),
-            request("teleport", "2", json!({})),
-        ])));
+        server.serve(std::io::Cursor::new(frames(&[request("1", None), request("2", version())])));
         let got = (0..100)
             .map(|_| {
                 std::thread::sleep(Duration::from_millis(20));
@@ -513,23 +547,12 @@ mod tests {
             })
             .find(|a| a.len() == 2)
             .expect("both answered");
-        let by = |id: &str| got.iter().find(|m| m.request_id.as_deref() == Some(id)).unwrap();
-        assert_eq!(by("1").payload["protocol"], 1);
-        assert!(by("2").error.as_deref().unwrap().contains("teleport"));
-    }
-
-    #[test]
-    fn a_bad_request_type_is_answered_and_the_engine_goes_on() {
-        let out = Shared::default();
-        let (server, _woken) = Server::new(Box::new(out.clone()));
-        server.0.ready.store(true, Ordering::SeqCst);
-        server.serve(std::io::Cursor::new(frames(&[
-            request("a\u{0}b", "1", json!({})),
-            request("version", "2", json!({})),
-        ])));
-        let got = answers(&out);
-        assert!(got[0].error.as_deref().unwrap().contains("no command"));
-        assert_eq!(got[1].payload["protocol"], 1, "answered before the engine ended");
+        let by = |id: &str| got.iter().find(|f| f.request_id == id).unwrap();
+        assert!(by("1").error.contains("does not know"));
+        let Answer::Version(v) = answer_of(by("2")) else {
+            panic!("not the version")
+        };
+        assert_eq!(v.protocol, 2);
     }
 
     fn game(id: &str, running: bool) -> Instance {
@@ -542,9 +565,13 @@ mod tests {
         }
     }
 
-    fn kinds(m: &[Message]) -> Vec<(String, Value)> {
-        m.iter()
-            .map(|m| (m.kind.clone(), m.payload["state"].clone()))
+    fn session_events(events: &[Event]) -> Vec<&api::SessionEvent> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::SessionEvent(s) => Some(s),
+                _ => None,
+            })
             .collect()
     }
 
@@ -553,28 +580,25 @@ mod tests {
         let mut seen = Seen::default();
         let mut g = game("g", true);
         let first = seen.update("s1", &[], std::slice::from_ref(&g));
-        assert_eq!(
-            kinds(&first),
-            [
-                ("installs_changed".into(), Value::Null),
-                ("instances_changed".into(), Value::Null),
-                ("session_event".into(), json!(session::STARTING)),
-            ]
-        );
+        assert!(matches!(
+            first.as_slice(),
+            [Event::InstallsChanged(_), Event::InstancesChanged(_), Event::SessionEvent(e)]
+                if e.state() == SessionState::Starting
+        ));
         assert!(seen.update("s1", &[], std::slice::from_ref(&g)).is_empty());
 
-        g.link = Some(GameState {
-            state: "loading".into(),
+        g.link = Some(GameLink {
+            state: GameLinkState::Loading.into(),
             progress: Some(0.25),
             message: "Spandau".into(),
             window: true,
         });
         let m = seen.update("s1", &[], std::slice::from_ref(&g));
-        let e = &m.iter().find(|m| m.kind == "session_event").unwrap().payload;
-        assert_eq!((e["state"].clone(), e["progress"].clone()), (json!(session::LOADING), json!(0.25)));
+        let e = session_events(&m)[0];
+        assert_eq!((e.state(), e.progress), (SessionState::Loading, Some(0.25)));
 
-        g.link = Some(GameState {
-            state: "failed".into(),
+        g.link = Some(GameLink {
+            state: GameLinkState::Failed.into(),
             progress: None,
             message: "the map did not load".into(),
             window: true,
@@ -584,11 +608,11 @@ mod tests {
         g.link = None;
         g.exit_code = Some(0);
         let m = seen.update("s2", &[], std::slice::from_ref(&g));
-        assert_eq!(m[0].kind, "content_changed");
-        let e = &m.iter().find(|m| m.kind == "session_event").unwrap().payload;
-        assert_eq!(e["state"], session::FAILED, "the game's own report outlives it");
-        assert_eq!(e["message"], "the map did not load");
-        assert_eq!(e["exitCode"], 0);
+        assert!(matches!(&m[0], Event::ContentChanged(c) if c.stamp == "s2"));
+        let e = session_events(&m)[0];
+        assert_eq!(e.state(), SessionState::Failed, "the game's own report outlives it");
+        assert_eq!(e.message, "the map did not load");
+        assert_eq!(e.exit_code, Some(0));
     }
 
     #[test]
@@ -597,7 +621,7 @@ mod tests {
         let mut old = game("old", false);
         old.exit_code = Some(1);
         let m = seen.update("s", &[], &[old.clone()]);
-        assert!(!m.iter().any(|m| m.kind == "session_event"));
+        assert!(session_events(&m).is_empty());
 
         let mut crashed = game("crashed", true);
         let mut stopped = game("stopped", true);
@@ -609,12 +633,27 @@ mod tests {
         stopped.exit_code = Some(1);
         let m = seen.update("s", &[], &[old, crashed, stopped]);
         let state = |id: &str| {
-            m.iter()
-                .find(|m| m.kind == "session_event" && m.payload["sessionId"] == id)
-                .map(|m| m.payload["state"].clone())
+            session_events(&m)
+                .into_iter()
+                .find(|e| e.session_id == id)
+                .map(|e| e.state())
         };
-        assert_eq!(state("crashed"), Some(json!(session::FAILED)));
-        assert_eq!(state("stopped"), Some(json!(session::EXITED)), "Stop had to kill it");
+        assert_eq!(state("crashed"), Some(SessionState::Failed));
+        assert_eq!(state("stopped"), Some(SessionState::Exited), "Stop had to kill it");
         assert_eq!(state("old"), None);
+    }
+
+    #[test]
+    fn the_pack_is_announced_when_it_changes() {
+        let mut seen = Seen::default();
+        let pack = api::PaxPack {
+            state: PaxState::Downloading.into(),
+            done: 1,
+            total: 4,
+            ..Default::default()
+        };
+        assert!(matches!(seen.pax(pack.clone()), Some(Event::PaxPackChanged(_))));
+        assert!(seen.installing);
+        assert_eq!(seen.pax(pack), None);
     }
 }

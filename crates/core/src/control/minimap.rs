@@ -3,7 +3,7 @@ use crate::scene::World;
 use anyhow::{Context, Result};
 use glam::{DVec3, Vec3};
 use omsi_launcher_lib as lib;
-use serde_json::{Value, json};
+use launcher_protocol::api::{Minimap, MinimapEntry, MinimapRoad, MinimapStop, Point};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -15,7 +15,7 @@ const TOLERANCE: f32 = 0.75;
 const BEFORE_STOP: f64 = 12.0;
 const KEPT: usize = 4;
 
-static BUILT: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
+static BUILT: Mutex<Vec<(String, Minimap)>> = Mutex::new(Vec::new());
 /// One at a time: opening a map sets the tile size for the whole process.
 static BUILDING: Mutex<()> = Mutex::new(());
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -25,12 +25,12 @@ pub(super) fn forget() {
     BUILT.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
-fn kept(key: &str) -> Option<Value> {
+fn kept(key: &str) -> Option<Minimap> {
     let built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
     built.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
 }
 
-pub(super) fn minimap(map: &str, date: &str) -> Result<Value> {
+pub(super) fn minimap(map: &str, date: &str) -> Result<Minimap> {
     let date = if date.trim().is_empty() { DEFAULT_DATE } else { date.trim() };
     let key = format!("{map}|{date}");
     if let Some(v) = kept(&key) {
@@ -60,7 +60,7 @@ fn spawn(p: DVec3, heading: f64) -> String {
     format!("{},{},{}", round(p.x), round(p.y), round(heading.rem_euclid(360.0)))
 }
 
-fn build(map: &str, date: &str) -> Result<Value> {
+fn build(map: &str, date: &str) -> Result<Minimap> {
     let t0 = std::time::Instant::now();
     let root = PathBuf::from(lib::load_config().root);
     // registers the content folder's roots with the OMSI readers
@@ -77,17 +77,24 @@ fn build(map: &str, date: &str) -> Result<Value> {
     };
     net.link(1.5);
     confirm_road_surfaces(&mut net, &nav.road_surfaces);
-    let roads: Vec<Value> = road_geometry(&net)
+    let roads: Vec<MinimapRoad> = road_geometry(&net)
         .into_iter()
         .map(|r| {
             // some maps' coordinates run into millions, where an f32 is off by half a metre
             let origin = r.points.first().copied().unwrap_or_default();
             let points: Vec<Vec3> = r.points.iter().map(|p| (*p - origin).as_vec3()).collect();
-            let points: Vec<[f64; 2]> = simplify(&points, TOLERANCE)
+            let points = simplify(&points, TOLERANCE)
                 .iter()
-                .map(|p| [round(origin.x + p.x as f64), round(origin.y + p.y as f64)])
+                .map(|p| Point {
+                    x: round(origin.x + p.x as f64),
+                    y: round(origin.y + p.y as f64),
+                })
                 .collect();
-            json!({ "main": r.main, "width": round(r.width as f64), "points": points })
+            MinimapRoad {
+                main: r.main,
+                width: round(r.width as f64),
+                points,
+            }
         })
         .collect();
 
@@ -96,7 +103,7 @@ fn build(map: &str, date: &str) -> Result<Value> {
     let off = ::map::chrono_deactivated_lines(&chrono);
     let tt = ::timetable::TimetableData::load_with_chrono(&world.map_dir, &chrono, &off);
     let mut seen = HashSet::new();
-    let stops: Vec<Value> = tt
+    let stops: Vec<MinimapStop> = tt
         .bus_stops
         .iter()
         .filter(|b| seen.insert(b.object_id))
@@ -104,13 +111,13 @@ fn build(map: &str, date: &str) -> Result<Value> {
             let (p, rot) = positions.get(&b.object_id)?;
             let h = rot[0].to_radians();
             let back = *p - DVec3::new(h.sin(), h.cos(), 0.0) * BEFORE_STOP;
-            Some(json!({
-                "id": b.object_id,
-                "name": b.name.trim(),
-                "x": round(p.x),
-                "y": round(p.y),
-                "spawn": spawn(back, rot[0]),
-            }))
+            Some(MinimapStop {
+                id: b.object_id,
+                name: b.name.trim().to_string(),
+                x: round(p.x),
+                y: round(p.y),
+                spawn: spawn(back, rot[0]),
+            })
         })
         .collect();
 
@@ -121,7 +128,7 @@ fn build(map: &str, date: &str) -> Result<Value> {
         *total.entry(e.name.trim()).or_default() += 1;
     }
     let mut counted: HashMap<&str, usize> = HashMap::new();
-    let entries: Vec<Value> = eps
+    let entries: Vec<MinimapEntry> = eps
         .iter()
         .enumerate()
         .filter_map(|(k, e)| {
@@ -130,13 +137,13 @@ fn build(map: &str, date: &str) -> Result<Value> {
             *n += 1;
             let name = if total[name] > 1 { format!("{name} ({n})") } else { name.to_string() };
             let (p, rot) = world.entry_point_place(e)?;
-            Some(json!({
-                "index": k,
-                "name": name,
-                "x": round(p.x),
-                "y": round(p.y),
-                "spawn": spawn(p, rot[0]),
-            }))
+            Some(MinimapEntry {
+                index: k as u32,
+                name,
+                x: round(p.x),
+                y: round(p.y),
+                spawn: spawn(p, rot[0]),
+            })
         })
         .collect();
 
@@ -147,5 +154,10 @@ fn build(map: &str, date: &str) -> Result<Value> {
         entries.len(),
         t0.elapsed().as_secs_f64()
     );
-    Ok(json!({ "map": map, "roads": roads, "stops": stops, "entries": entries }))
+    Ok(Minimap {
+        map: map.to_string(),
+        roads,
+        stops,
+        entries,
+    })
 }

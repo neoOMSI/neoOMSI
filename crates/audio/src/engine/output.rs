@@ -3,7 +3,8 @@
 //! default name did not change. Loops restart at zero; streams retain their bounded ring.
 //! One-shots during an outage are discarded, preventing stale horns/steps on reconnect.
 use super::{AudioEngine, mixer::{self, AudioCore}, feedback::VoiceAsset, commands::Command};
-use crate::device::DeviceState;
+use crate::device::{DeviceState, OutputFormat};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 impl AudioEngine {
@@ -23,10 +24,10 @@ impl AudioEngine {
             self.active.borrow_mut().retain(|_, a| a.params.looping || matches!(a.asset, VoiceAsset::Stream(_)));
         }
         self.commands.clear();
-        let opened = device.open_prepared(|| {
-            let mut core = AudioCore::new(device.format(),
+        let opened = device.open_prepared(Some(mixer::MIX_SAMPLE_RATE), || {
+            let mut core = AudioCore::new(Arc::new(OutputFormat::new(mixer::MIX_SAMPLE_RATE, 2)),
                 self.commands.clone(), self.reaper.clone(), self.counters.clone(), mixer::muted());
-            move |data: &mut [f32]| core.render(data)
+            move |data: &mut [f32]| core.render_mix(data)
         });
         if opened { self.replay(); }
         else {

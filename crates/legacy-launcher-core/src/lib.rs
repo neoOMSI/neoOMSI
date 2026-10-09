@@ -11,6 +11,7 @@ pub mod index;
 pub mod install;
 pub mod instances;
 pub mod servers;
+pub mod wire;
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -2258,18 +2259,19 @@ fn binding_from_json(v: &Value) -> Option<::content::input::KeyBinding> {
 }
 
 pub fn get_keybindings() -> Result<Value> {
-    let path = keyboard_cfg_read_path()?;
-    let k = ::content::input::KeyboardCfg::load(&path)?
-        .with_game_defaults()
-        .with_vr_defaults();
+    let k = keyboard_cfg()?;
     Ok(
         json!({ "game": k.game.iter().map(binding_to_json).collect::<Vec<_>>(), "vehicles": k.vehicles.iter().map(binding_to_json).collect::<Vec<_>>() }),
     )
 }
 
-/// Replace the bindings with the page's list. Written to a temp file and read back through
-/// the same loader the game uses before it replaces the real file, so a page bug never
-/// leaves the player with a `keyboard.cfg` the game itself cannot parse.
+pub fn keyboard_cfg() -> Result<::content::input::KeyboardCfg> {
+    let path = keyboard_cfg_read_path()?;
+    Ok(::content::input::KeyboardCfg::load(&path)?
+        .with_game_defaults()
+        .with_vr_defaults())
+}
+
 pub fn save_keybindings(v: &Value) -> Result<()> {
     let list = |k: &str| -> Vec<::content::input::KeyBinding> {
         v.get(k)
@@ -2277,10 +2279,16 @@ pub fn save_keybindings(v: &Value) -> Result<()> {
             .map(|a| a.iter().filter_map(binding_from_json).collect())
             .unwrap_or_default()
     };
-    let k = ::content::input::KeyboardCfg {
+    save_keyboard_cfg(&::content::input::KeyboardCfg {
         game: list("game"),
         vehicles: list("vehicles"),
-    };
+    })
+}
+
+/// Replace the bindings with the page's list. Written to a temp file and read back through
+/// the same loader the game uses before it replaces the real file, so a page bug never
+/// leaves the player with a `keyboard.cfg` the game itself cannot parse.
+pub fn save_keyboard_cfg(k: &::content::input::KeyboardCfg) -> Result<()> {
     let path = keyboard_cfg_write_path()?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;

@@ -348,7 +348,8 @@ impl World {
             let mesh_shape = ot
                 .collision
                 .as_ref()
-                .filter(|_| solid && !ot.sco.no_collision && !is_surface && !ot.meshes.is_empty());
+                .filter(|_| solid && !ot.sco.no_collision && !is_surface && !ot.meshes.is_empty())
+                .filter(|_| !(o.parked && ot.sco.bounding_box.is_some()));
             if let Some(c) = mesh_shape {
                 let tris = |m: &dyn Fn(glam::Vec3) -> glam::DVec3| -> Vec<[glam::DVec3; 3]> {
                     c.indices

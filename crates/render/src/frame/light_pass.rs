@@ -196,23 +196,17 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_, p)| p.alpha > 0.002 && p.size > 0.0)
-            .map(|(i, p)| (-(p.position - eye).length_squared(), i))
+            // (far to near where each is drawn: pulled towards the viewer, at most 0.9 of the
+            // way, as `vs_smoke` does)
+            .map(|(i, p)| {
+                let dist = (p.position - eye).length();
+                (-(dist - (p.pull.max(0.0) as f64).min(dist * 0.9)), i)
+            })
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let data: Vec<GpuCorona> = order
             .iter()
-            .map(|&(_, i)| {
-                let p = &scene.smoke[i];
-                GpuCorona {
-                    pos: (p.position - ro).as_vec3().to_array(),
-                    size: p.size,
-                    color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
-                    dir: [0.0, 0.0, 0.0, -1.0],
-                    up: [0.0, 0.0, 1.0, 2.0],
-                    // Smoke uses an ordinary billboard; extra.w = 1 selects a fog cone.
-                    extra: [-2.0, 0.0, 0.0, 0.0],
-                }
-            })
+            .map(|&(_, i)| smoke_sprite(&scene.smoke[i], ro))
             .collect();
         scene.smoke_count = data.len() as u32;
         if data.is_empty() {
@@ -384,5 +378,43 @@ impl Renderer {
                 scene.corona_buf = Some(b);
             }
         }
+    }
+}
+
+/// A smoke particle as corona.wgsl's `vs_smoke` draws it: a sprite turned to the viewer.
+fn smoke_sprite(p: &SmokeParticle, ro: DVec3) -> GpuCorona {
+    GpuCorona {
+        pos: (p.position - ro).as_vec3().to_array(),
+        size: p.size,
+        color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
+        dir: [0.0, 0.0, 0.0, -1.0],
+        up: [0.0, 0.0, 1.0, 2.0],
+        // (x its turn, y its pull towards the viewer; w 0, as `vs_main` would draw a plain
+        // sprite)
+        extra: [p.angle, p.pull, 0.0, 0.0],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoke is drawn as a plain sprite, not as a fog cone or halo: those branches of
+    /// corona.wgsl normalise the zero direction smoke has and drop every particle.
+    #[test]
+    fn smoke_is_a_plain_sprite() {
+        let p = SmokeParticle {
+            position: DVec3::new(10.0, 20.0, 1.0),
+            size: 0.5,
+            color: [0.66, 0.66, 0.8],
+            alpha: 0.2,
+            angle: 1.5,
+            pull: 0.25,
+        };
+        let g = smoke_sprite(&p, DVec3::new(10.0, 0.0, 0.0));
+        assert!(g.extra[3] < 0.5);
+        assert_eq!(g.pos, [0.0, 20.0, 1.0]);
+        assert_eq!(g.color, [0.66, 0.66, 0.8, 0.2]);
+        assert_eq!([g.extra[0], g.extra[1]], [1.5, 0.25]);
     }
 }

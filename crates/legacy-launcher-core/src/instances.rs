@@ -58,8 +58,8 @@ pub struct Instance {
     /// The last line of its log.
     #[serde(default)]
     pub last_line: String,
-    #[serde(default)]
-    pub link: Option<launcher_protocol::link::GameState>,
+    #[serde(skip)]
+    pub link: Option<launcher_protocol::api::GameLink>,
 }
 
 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

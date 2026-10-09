@@ -8,7 +8,7 @@ description = "Audio: cpal mixer with pitch/gain/3D voices, WAV loading, and the
 [dependencies]
 legacy-vehicle = { path = "../vehicle" }
 legacy-config = { path = "../legacy-config" }
-cpal = "0.18"
+cpal = { version = "0.18", features = ["realtime"] }
 parking_lot.workspace = true
 hashbrown.workspace = true
 glam.workspace = true

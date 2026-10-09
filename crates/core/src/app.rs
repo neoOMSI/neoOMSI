@@ -649,7 +649,7 @@ impl App {
     }
 
     pub(crate) fn load_world_now(&mut self, event_loop: &ActiveEventLoop) {
-        crate::game_link::report("loading", Some(0.0), &self.args.map);
+        crate::game_link::report(crate::game_link::GameLinkState::Loading, Some(0.0), &self.args.map);
         #[cfg(not(target_os = "android"))]
         {
             self.discord_next_update = Instant::now();
@@ -999,7 +999,7 @@ impl App {
             }
         }
         self.apply_pending_triple_screen_span();
-        crate::game_link::report("running", None, "");
+        crate::game_link::report(crate::game_link::GameLinkState::Running, None, "");
         self.last = Instant::now();
     }
 
@@ -1049,7 +1049,7 @@ impl App {
             })
             .unwrap_or_default();
         crate::game_link::report(
-            "loading",
+            crate::game_link::GameLinkState::Loading,
             Some(done as f32 / total.max(1) as f32),
             &format!("{} ({done} / {total} tiles)", name.trim()),
         );

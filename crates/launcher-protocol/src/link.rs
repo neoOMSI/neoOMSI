@@ -1,6 +1,4 @@
-use crate::{self as protocol, Message};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use crate::api::{FromGame, GameHello, GameLink, GameLinkState, ToGame, from_game, to_game};
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -17,23 +15,12 @@ const HELLO_WITHIN: Duration = Duration::from_secs(5);
 const UNANSWERED_MAX: usize = 16;
 static UNANSWERED: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-pub struct GameState {
-    pub state: String,
-    #[serde(default)]
-    pub progress: Option<f32>,
-    #[serde(default)]
-    pub message: String,
-    #[serde(default)]
-    pub window: bool,
-}
-
 type Sink = Box<dyn Fn(&str) + Send + Sync>;
 
 struct Game {
     conn: u64,
     stream: TcpStream,
-    state: GameState,
+    state: GameLink,
 }
 
 struct Link {
@@ -118,30 +105,31 @@ fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0, |d, (x, y)| d | (x ^ y)) == 0
 }
 
+fn to_game(body: to_game::Body) -> ToGame {
+    ToGame { body: Some(body) }
+}
+
 fn serve(stream: TcpStream, conn: u64) {
-    let hello = protocol::read_frame_max(&mut Within(&stream, Instant::now() + HELLO_WITHIN), HELLO_MAX);
+    let hello = crate::read_frame_max::<FromGame>(
+        &mut Within(&stream, Instant::now() + HELLO_WITHIN),
+        HELLO_MAX,
+    );
     UNANSWERED.fetch_sub(1, Ordering::SeqCst);
-    let Ok(Some(hello)) = hello else { return };
-    if hello.kind == "hello" {
+    if let Ok(Some(FromGame {
+        body: Some(from_game::Body::Hello(hello)),
+    })) = hello
+    {
         welcome(stream, conn, hello);
     }
 }
 
-fn welcome(mut stream: TcpStream, conn: u64, hello: Message) {
+fn welcome(mut stream: TcpStream, conn: u64, hello: GameHello) {
     let Some(link) = LINK.get() else { return };
     let _ = stream.set_nodelay(true);
-    let token = hello.payload.get("token").and_then(|v| v.as_str());
-    let id = hello
-        .payload
-        .get("instance")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    if !token.is_some_and(|t| same(t, &link.token)) || !valid_instance(&id) {
-        let _ = protocol::write_frame(
-            &mut stream,
-            &Message::new("refused", json!({ "reason": "unknown game" })),
-        );
+    let id = hello.instance;
+    if !same(&hello.token, &link.token) || !valid_instance(&id) {
+        let refused = to_game(to_game::Body::Refused("unknown game".into()));
+        let _ = crate::write_frame(&mut stream, &refused);
         return;
     }
     let Ok(writer) = stream.try_clone() else { return };
@@ -152,19 +140,16 @@ fn welcome(mut stream: TcpStream, conn: u64, hello: Message) {
         Game {
             conn,
             stream: writer,
-            state: GameState {
-                state: "starting".into(),
+            state: GameLink {
+                state: GameLinkState::Starting.into(),
                 ..Default::default()
             },
         },
     );
-    let _ = protocol::write_frame(&mut stream, &Message::new("welcome", json!({})));
+    let _ = crate::write_frame(&mut stream, &to_game(to_game::Body::Welcome(Default::default())));
     (link.changed)(&id);
-    while let Ok(Some(m)) = protocol::read_frame(&mut stream) {
-        if m.kind != "state" {
-            continue;
-        }
-        let Ok(state) = serde_json::from_value::<GameState>(m.payload) else {
+    while let Ok(Some(m)) = crate::read_frame::<FromGame>(&mut stream) {
+        let Some(from_game::Body::State(state)) = m.body else {
             continue;
         };
         if let Some(g) = link
@@ -192,7 +177,7 @@ pub fn env() -> Vec<(&'static str, String)> {
         .unwrap_or_default()
 }
 
-pub fn state(instance: &str) -> Option<GameState> {
+pub fn state(instance: &str) -> Option<GameLink> {
     LINK.get()?
         .games
         .lock()
@@ -208,7 +193,7 @@ pub fn request_quit(instance: &str) -> bool {
     let Some(g) = games.get_mut(instance) else {
         return false;
     };
-    protocol::write_frame(&mut g.stream, &Message::new("quit", json!({}))).is_ok()
+    crate::write_frame(&mut g.stream, &to_game(to_game::Body::Quit(Default::default()))).is_ok()
 }
 
 #[cfg(test)]
@@ -218,20 +203,25 @@ mod tests {
 
     static CHANGES: AtomicUsize = AtomicUsize::new(0);
 
-    fn connect(token: &str, instance: &str) -> (TcpStream, Option<Message>) {
+    fn connect(token: &str, instance: &str) -> (TcpStream, Option<to_game::Body>) {
         let addr = listen(|_| {
             CHANGES.fetch_add(1, Ordering::SeqCst);
         })
         .unwrap();
         let mut s = TcpStream::connect(addr).unwrap();
         s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        protocol::write_frame(
-            &mut s,
-            &Message::new("hello", json!({ "token": token, "instance": instance, "pid": 1 })),
-        )
-        .unwrap();
-        let answer = protocol::read_frame(&mut s).ok().flatten();
-        (s, answer)
+        let hello = GameHello {
+            token: token.into(),
+            instance: instance.into(),
+            pid: 1,
+            ..Default::default()
+        };
+        let hello = FromGame {
+            body: Some(from_game::Body::Hello(hello)),
+        };
+        crate::write_frame(&mut s, &hello).unwrap();
+        let answer = crate::read_frame::<ToGame>(&mut s).ok().flatten();
+        (s, answer.and_then(|m| m.body))
     }
 
     fn wait_for(f: impl Fn() -> bool) -> bool {
@@ -252,25 +242,31 @@ mod tests {
     #[test]
     fn a_game_reports_its_state_and_is_asked_to_quit() {
         let (_, answer) = connect("wrong", "game-a");
-        assert_eq!(answer.map(|m| m.kind).as_deref(), Some("refused"));
+        assert!(matches!(answer, Some(to_game::Body::Refused(_))));
         assert_eq!(state("game-a"), None);
         let token = env().into_iter().find(|(k, _)| *k == ENV_TOKEN).unwrap().1;
         let (_, answer) = connect(&token, "../escape");
-        assert_eq!(answer.map(|m| m.kind).as_deref(), Some("refused"));
+        assert!(matches!(answer, Some(to_game::Body::Refused(_))));
 
         let (mut game, answer) = connect(&token, "game-b");
-        assert_eq!(answer.map(|m| m.kind).as_deref(), Some("welcome"));
-        assert_eq!(state("game-b").unwrap().state, "starting");
-        protocol::write_frame(
-            &mut game,
-            &Message::new("state", json!({ "state": "loading", "progress": 0.5, "message": "tiles" })),
-        )
-        .unwrap();
+        assert!(matches!(answer, Some(to_game::Body::Welcome(_))));
+        assert_eq!(state("game-b").unwrap().state(), GameLinkState::Starting);
+        let loading = GameLink {
+            state: GameLinkState::Loading.into(),
+            progress: Some(0.5),
+            message: "tiles".into(),
+            window: false,
+        };
+        let loading = FromGame {
+            body: Some(from_game::Body::State(loading)),
+        };
+        crate::write_frame(&mut game, &loading).unwrap();
         assert!(wait_for(|| state("game-b").and_then(|s| s.progress) == Some(0.5)));
         assert!(CHANGES.load(Ordering::SeqCst) >= 2);
 
         assert!(request_quit("game-b"));
-        assert_eq!(protocol::read_frame(&mut game).unwrap().unwrap().kind, "quit");
+        let quit = crate::read_frame::<ToGame>(&mut game).unwrap().unwrap();
+        assert!(matches!(quit.body, Some(to_game::Body::Quit(_))));
         assert!(!request_quit("not-connected"));
 
         drop(game);

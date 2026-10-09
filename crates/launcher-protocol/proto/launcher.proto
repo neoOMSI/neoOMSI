@@ -1,0 +1,831 @@
+syntax = "proto3";
+
+package neoomsi.launcher;
+
+message Frame {
+  string request_id = 1;
+  string error = 2;
+  oneof body {
+    Request request = 3;
+    Response response = 4;
+    Event event = 5;
+  }
+}
+
+message Request {
+  oneof command {
+    Handshake handshake = 1;
+    Empty shutdown = 2;
+    Empty config = 3;
+    ConfigChanges save_config = 4;
+    Empty maps = 5;
+    Empty vehicles = 6;
+    Empty weather = 7;
+    LinesArgs lines = 8;
+    MinimapArgs minimap = 9;
+    IbisArgs ibis = 10;
+    Empty profiles = 11;
+    ProfileArgs profile = 12;
+    CreateProfileArgs create_profile = 13;
+    ProfileArgs delete_profile = 14;
+    Empty mods = 15;
+    ModinfoArgs modinfo = 16;
+    InstallArgs start_install = 17;
+    CancelInstallArgs cancel_install = 18;
+    Empty clear_installs = 19;
+    Empty instances = 20;
+    Duty launch = 21;
+    StopArgs stop = 22;
+    LogArgs log = 23;
+    JoinArgs join = 24;
+    Empty settings = 25;
+    Settings save_settings = 26;
+    Empty pax_pack = 27;
+    Empty install_pax_pack = 28;
+    Empty update_check = 29;
+    Empty option_presets = 30;
+    Empty keybindings = 31;
+    KeyBindings save_keybindings = 32;
+    Empty controllers = 33;
+    ControllerList save_controllers = 34;
+    PreviewArgs preview = 35;
+    SituationsArgs situations = 36;
+    Empty tutorials = 37;
+    Empty servers = 38;
+    SaveServersArgs save_servers = 39;
+    Empty version = 40;
+  }
+}
+
+message Response {
+  oneof answer {
+    HandshakeResponse handshake = 1;
+    Empty shutdown = 2;
+    Config config = 3;
+    Config save_config = 4;
+    MapList maps = 5;
+    VehicleList vehicles = 6;
+    WeatherList weather = 7;
+    LineList lines = 8;
+    Minimap minimap = 9;
+    IbisInfo ibis = 10;
+    ProfileNames profiles = 11;
+    Profile profile = 12;
+    Profile create_profile = 13;
+    Empty delete_profile = 14;
+    ModsStatus mods = 15;
+    SourceInfo modinfo = 16;
+    InstallProgress start_install = 17;
+    Cancelled cancel_install = 18;
+    Empty clear_installs = 19;
+    InstanceList instances = 20;
+    Launched launch = 21;
+    Stopped stop = 22;
+    LogLines log = 23;
+    JoinCheck join = 24;
+    Settings settings = 25;
+    Settings save_settings = 26;
+    PaxPack pax_pack = 27;
+    PaxPack install_pax_pack = 28;
+    UpdateCheck update_check = 29;
+    OptionPresetList option_presets = 30;
+    KeyBindings keybindings = 31;
+    KeyBindings save_keybindings = 32;
+    ControllerList controllers = 33;
+    ControllerList save_controllers = 34;
+    string preview = 35;
+    SituationList situations = 36;
+    TutorialList tutorials = 37;
+    ServerList servers = 38;
+    Empty save_servers = 39;
+    EngineVersion version = 40;
+  }
+}
+
+message Event {
+  oneof event {
+    InstanceList instances_changed = 1;
+    InstallList installs_changed = 2;
+    ContentChanged content_changed = 3;
+    SessionEvent session_event = 4;
+    PaxPack pax_pack_changed = 5;
+  }
+}
+
+message Empty {}
+
+message Handshake {
+  string protocol_version = 1;
+  string launcher_version = 2;
+  string client_platform = 3;
+}
+
+enum StatusCode {
+  STATUS_CODE_UNSPECIFIED = 0;
+  STATUS_CODE_OK = 1;
+  STATUS_CODE_UNSUPPORTED_VERSION = 2;
+}
+
+message Status {
+  StatusCode code = 1;
+  string message = 2;
+}
+
+message HandshakeResponse {
+  Status status = 1;
+  string protocol_version = 2;
+  string engine_version = 3;
+  repeated string supported_capabilities = 4;
+  repeated string commands = 5;
+}
+
+message Config {
+  string root = 1;
+  string game = 2;
+  string profile = 3;
+}
+
+message ConfigChanges {
+  optional string root = 1;
+  optional string game = 2;
+  optional string profile = 3;
+}
+
+message EntryInfo {
+  int32 index = 1;
+  string name = 2;
+}
+
+message MapInfo {
+  string name = 1;
+  string friendly = 2;
+  string file = 3;
+  string description = 4;
+  repeated EntryInfo entry_points = 5;
+  string hof = 6;
+  bool installed = 7;
+}
+
+message MapList {
+  repeated MapInfo maps = 1;
+}
+
+message FleetNumber {
+  string number = 1;
+  string plate = 2;
+}
+
+message VehicleInfo {
+  string name = 1;
+  string manufacturer = 2;
+  string type_name = 3;
+  string file = 4;
+  string folder = 5;
+  string description = 6;
+  string default_paint = 7;
+  repeated string paints = 8;
+  repeated string hofs = 9;
+  bool installed = 10;
+  repeated string missing_packs = 11;
+  repeated FleetNumber numbers = 12;
+}
+
+message VehicleList {
+  repeated VehicleInfo vehicles = 1;
+}
+
+message WeatherInfo {
+  string name = 1;
+  string file = 2;
+  string description = 3;
+  float fog_m = 4;
+  float temp = 5;
+  string clouds = 6;
+  string precip = 7;
+  bool snow = 8;
+  bool installed = 9;
+}
+
+message WeatherList {
+  repeated WeatherInfo weather = 1;
+}
+
+message LinesArgs {
+  string map = 1;
+  string date = 2;
+}
+
+message StopInfo {
+  string name = 1;
+  double arr = 2;
+  double dep = 3;
+}
+
+message TripInfo {
+  string name = 1;
+  uint32 index = 2;
+  string line = 3;
+  string from = 4;
+  string terminus = 5;
+  double departure = 6;
+  double arrival = 7;
+  repeated StopInfo stops = 8;
+  double km = 9;
+}
+
+message TourInfo {
+  string number = 1;
+  string ai_group = 2;
+  double first = 3;
+  double last = 4;
+  string days = 5;
+  bool runs = 6;
+  optional string next_run = 7;
+  repeated TripInfo trips = 8;
+}
+
+message LineInfo {
+  string name = 1;
+  bool user_allowed = 2;
+  repeated string termini = 3;
+  repeated TourInfo tours = 4;
+}
+
+message LineList {
+  repeated LineInfo lines = 1;
+}
+
+message MinimapArgs {
+  string map = 1;
+  optional string date = 2;
+}
+
+message Point {
+  double x = 1;
+  double y = 2;
+}
+
+message MinimapRoad {
+  // a speed limit of 55 km/h or more
+  bool main = 1;
+  double width = 2;
+  repeated Point points = 3;
+}
+
+message MinimapStop {
+  int64 id = 1;
+  string name = 2;
+  double x = 3;
+  double y = 4;
+  string spawn = 5;
+}
+
+message MinimapEntry {
+  uint32 index = 1;
+  string name = 2;
+  double x = 3;
+  double y = 4;
+  string spawn = 5;
+}
+
+// In world metres.
+message Minimap {
+  string map = 1;
+  repeated MinimapRoad roads = 2;
+  repeated MinimapStop stops = 3;
+  repeated MinimapEntry entries = 4;
+}
+
+message IbisArgs {
+  string bus = 1;
+  string hof = 2;
+  string line = 3;
+}
+
+message IbisRoute {
+  string code = 1;
+  string route = 2;
+  string name = 3;
+  int32 terminus_code = 4;
+  string terminus = 5;
+}
+
+message IbisInfo {
+  string hof = 1;
+  string line_code = 2;
+  repeated IbisRoute routes = 3;
+}
+
+message ProfileNames {
+  repeated string names = 1;
+}
+
+message ProfileArgs {
+  string name = 1;
+}
+
+message CreateProfileArgs {
+  string name = 1;
+  optional string sex = 2;
+}
+
+message Session {
+  uint64 time = 1;
+  string driver = 2;
+  string map = 3;
+  string bus = 4;
+  optional string line = 5;
+  optional string tour = 6;
+  double seconds = 7;
+  double metres = 8;
+  int32 stops = 9;
+  int32 early = 10;
+  int32 late = 11;
+  int32 tickets = 12;
+  double cash = 13;
+  int32 crashes = 14;
+  int32 hurt = 15;
+  int32 jolts = 16;
+  double driving = 17;
+  double comfort = 18;
+  double ticketing = 19;
+}
+
+message Profile {
+  string name = 1;
+  string file = 2;
+  double hours = 3;
+  double km = 4;
+  int64 xp = 5;
+  int64 level = 6;
+  int64 next_level_xp = 7;
+  int32 stops = 8;
+  int32 early = 9;
+  int32 late = 10;
+  double tickets = 11;
+  double cash = 12;
+  int32 crashes = 13;
+  int32 hurt = 14;
+  double rating_driving = 15;
+  double rating_comfort = 16;
+  double rating_tickets = 17;
+  repeated Session sessions = 18;
+  bool exists = 19;
+}
+
+enum InstallMode {
+  INSTALL_MODE_UNSPECIFIED = 0;
+  INSTALL_MODE_EXTRACT = 1;
+  INSTALL_MODE_IN_PLACE = 2;
+  INSTALL_MODE_AUTO = 3;
+}
+
+enum InstallState {
+  INSTALL_STATE_UNSPECIFIED = 0;
+  INSTALL_STATE_QUEUED = 1;
+  INSTALL_STATE_PLANNING = 2;
+  INSTALL_STATE_CHECKING = 3;
+  INSTALL_STATE_UNPACKING = 4;
+  INSTALL_STATE_COPYING = 5;
+  INSTALL_STATE_MOVING = 6;
+  INSTALL_STATE_DONE = 7;
+  INSTALL_STATE_FAILED = 8;
+  INSTALL_STATE_CANCELLED = 9;
+}
+
+message InstallProgress {
+  uint64 id = 1;
+  string source = 2;
+  string name = 3;
+  InstallState state = 4;
+  InstallMode mode = 5;
+  uint64 files_done = 6;
+  uint64 files_total = 7;
+  uint64 bytes_done = 8;
+  uint64 bytes_total = 9;
+  uint64 free_bytes = 10;
+  uint64 needed_bytes = 11;
+  string message = 12;
+  repeated string report = 13;
+  repeated string warnings = 14;
+  repeated string installed = 15;
+  repeated string kept_aside = 16;
+  bool from_inbox = 17;
+  uint64 started = 18;
+  optional uint64 finished = 19;
+}
+
+message InstallList {
+  repeated InstallProgress jobs = 1;
+}
+
+message FolderCount {
+  string folder = 1;
+  uint64 entries = 2;
+}
+
+message ArchiveSize {
+  string name = 1;
+  uint64 bytes = 2;
+}
+
+message ModsStatus {
+  string content_dir = 1;
+  repeated FolderCount folders = 2;
+  string inbox = 3;
+  repeated string inbox_items = 4;
+  repeated string waiting = 5;
+  repeated ArchiveSize archives = 6;
+  uint64 free_bytes = 7;
+  repeated string cleaned = 8;
+  repeated InstallProgress jobs = 9;
+}
+
+message ModinfoArgs {
+  string path = 1;
+}
+
+message SourceInfo {
+  bool is_archive = 1;
+  bool is_zip = 2;
+  uint64 files = 3;
+  uint64 unpacked_bytes = 4;
+  uint64 archive_bytes = 5;
+  uint64 needed_bytes = 6;
+  uint64 free_bytes = 7;
+  bool fits = 8;
+  // why it cannot be used in place, empty when it can
+  string in_place = 9;
+  bool in_place_ok = 10;
+  InstallMode suggested = 11;
+}
+
+message InstallArgs {
+  string path = 1;
+  // unspecified: auto
+  InstallMode mode = 2;
+}
+
+message CancelInstallArgs {
+  uint64 id = 1;
+}
+
+message Cancelled {
+  bool cancelled = 1;
+}
+
+enum GameLinkState {
+  GAME_LINK_STATE_UNSPECIFIED = 0;
+  GAME_LINK_STATE_STARTING = 1;
+  GAME_LINK_STATE_LOADING = 2;
+  GAME_LINK_STATE_RUNNING = 3;
+  GAME_LINK_STATE_STOPPING = 4;
+  GAME_LINK_STATE_FAILED = 5;
+}
+
+message GameLink {
+  GameLinkState state = 1;
+  optional float progress = 2;
+  string message = 3;
+  bool window = 4;
+}
+
+enum LanRole {
+  LAN_ROLE_UNSPECIFIED = 0;
+  LAN_ROLE_HOST = 1;
+  LAN_ROLE_CLIENT = 2;
+}
+
+message LanAddress {
+  string label = 1;
+  string address = 2;
+  string kind = 3;
+}
+
+message LanPlayer {
+  uint32 id = 1;
+  string name = 2;
+  string bus = 3;
+  string line = 4;
+  string destination = 5;
+  uint32 passengers = 6;
+  // as seen from the player's bus, e.g. "1.2 km ahead"
+  optional string location = 7;
+  bool drawn = 8;
+}
+
+message LanStatus {
+  LanRole role = 1;
+  string name = 2;
+  optional string code = 3;
+  optional string address = 4;
+  repeated LanAddress addresses = 5;
+  repeated string trying = 6;
+  optional uint32 port = 7;
+  string session = 8;
+  optional string tunnel = 9;
+  bool connected = 10;
+  optional string rejected = 11;
+  repeated string warnings = 12;
+  optional string host_name = 13;
+  string map = 14;
+  repeated LanPlayer players = 15;
+  repeated string chat = 16;
+}
+
+message Instance {
+  string id = 1;
+  uint32 pid = 2;
+  optional uint64 process_started = 3;
+  uint32 slot = 4;
+  string log = 5;
+  uint64 started = 6;
+  string map = 7;
+  string bus = 8;
+  optional int32 entry = 9;
+  optional string line = 10;
+  optional string tour = 11;
+  string profile = 12;
+  // off, host or join:<target>
+  string lan = 13;
+  repeated string args = 14;
+  bool running = 15;
+  optional uint64 ended = 16;
+  optional int32 exit_code = 17;
+  optional uint64 stopping = 18;
+  bool killed = 19;
+  LanStatus lan_status = 20;
+  string last_line = 21;
+  GameLink link = 22;
+}
+
+message InstanceList {
+  repeated Instance instances = 1;
+}
+
+message Duty {
+  string map = 1;
+  string bus = 2;
+  optional string paint = 3;
+  optional string plate = 4;
+  optional string number = 5;
+  optional string hof = 6;
+  optional int32 entry = 7;
+  optional string line = 8;
+  optional string tour = 9;
+  // its departure (HH:MM) or its place in the tour
+  optional string trip = 10;
+  bool whole_tour = 11;
+  // HH:MM
+  string time = 12;
+  // YYYY-MM-DD
+  optional string date = 13;
+  optional string weather = 14;
+  optional uint32 traffic = 15;
+  optional bool passengers = 16;
+  optional bool schedule = 17;
+  optional bool autostart = 18;
+  optional bool on_foot = 19;
+  optional string profile = 20;
+  optional string lan = 21;
+  optional string lan_name = 22;
+  optional string season = 23;
+  optional uint32 tutorial = 24;
+  optional string situation = 25;
+}
+
+message Launched {
+  uint32 pid = 1;
+  string log = 2;
+  string command = 3;
+  uint32 others = 4;
+}
+
+message StopArgs {
+  uint32 pid = 1;
+}
+
+message Stopped {
+  bool ended_by_itself = 1;
+}
+
+message LogArgs {
+  uint32 pid = 1;
+  optional uint32 lines = 2;
+}
+
+message LogLines {
+  repeated string lines = 1;
+}
+
+message JoinArgs {
+  string text = 1;
+}
+
+message JoinCheck {
+  bool ok = 1;
+  string text = 2;
+  repeated LanStatus local = 3;
+}
+
+message SettingValue {
+  oneof value {
+    bool flag = 1;
+    double number = 2;
+    string text = 3;
+  }
+}
+
+message Settings {
+  map<string, SettingValue> values = 1;
+}
+
+message OptionPreset {
+  string name = 1;
+  map<string, SettingValue> values = 2;
+}
+
+message OptionPresetList {
+  repeated OptionPreset presets = 1;
+}
+
+enum PaxState {
+  PAX_STATE_UNSPECIFIED = 0;
+  PAX_STATE_MISSING = 1;
+  PAX_STATE_OUTDATED = 2;
+  PAX_STATE_DOWNLOADING = 3;
+  PAX_STATE_INSTALLING = 4;
+  PAX_STATE_INSTALLED = 5;
+  PAX_STATE_FAILED = 6;
+}
+
+message PaxRelease {
+  uint64 version = 1;
+  string notes = 2;
+  string page = 3;
+  string published = 4;
+}
+
+message PaxPack {
+  PaxState state = 1;
+  uint64 done = 2;
+  uint64 total = 3;
+  string message = 4;
+  optional uint64 installed = 5;
+  PaxRelease latest = 6;
+}
+
+message GameRelease {
+  string version = 1;
+  string page = 2;
+  string notes = 3;
+  bool prerelease = 4;
+  uint64 size = 5;
+}
+
+message UpdateCheck {
+  GameRelease release = 1;
+}
+
+message KeyBinding {
+  string action = 1;
+  int32 scan_code = 2;
+  int32 modifier = 3;
+}
+
+message KeyBindings {
+  repeated KeyBinding game = 1;
+  repeated KeyBinding vehicles = 2;
+}
+
+enum AxisFunction {
+  AXIS_FUNCTION_NONE = 0;
+  AXIS_FUNCTION_STEERING = 1;
+  AXIS_FUNCTION_THROTTLE = 2;
+  AXIS_FUNCTION_BRAKE = 3;
+  AXIS_FUNCTION_CLUTCH = 4;
+  AXIS_FUNCTION_THROTTLE_BRAKE = 5;
+  AXIS_FUNCTION_LOOK_X = 6;
+  AXIS_FUNCTION_LOOK_Y = 7;
+}
+
+enum AxisShape {
+  AXIS_SHAPE_LINEAR = 0;
+  AXIS_SHAPE_PROGRESSIVE = 1;
+  AXIS_SHAPE_DEGRESSIVE = 2;
+  AXIS_SHAPE_BI_PROGRESSIVE = 3;
+  AXIS_SHAPE_BI_DEGRESSIVE = 4;
+}
+
+message ControllerAxis {
+  string name = 1;
+  float value = 2;
+  AxisFunction function = 3;
+  bool reversed = 4;
+  AxisShape shape = 5;
+}
+
+// A button's key action (empty: none) and the number the controller file keeps after it.
+message ButtonBinding {
+  string action = 1;
+  string number = 2;
+}
+
+message Controller {
+  string name = 1;
+  bool connected = 2;
+  bool enabled = 3;
+  float deadzone = 4;
+  bool force_feedback = 5;
+  repeated ControllerAxis axes = 6;
+  repeated ButtonBinding buttons = 7;
+}
+
+message ControllerList {
+  repeated Controller controllers = 1;
+}
+
+message PreviewArgs {
+  string bus = 1;
+  string paint = 2;
+}
+
+message SituationsArgs {
+  string map = 1;
+}
+
+message SavedSituation {
+  string name = 1;
+  string file = 2;
+  uint64 time = 3;
+}
+
+message SituationList {
+  repeated SavedSituation situations = 1;
+}
+
+message Tutorial {
+  uint32 number = 1;
+  string title = 2;
+  string text = 3;
+}
+
+message TutorialList {
+  repeated Tutorial tutorials = 1;
+}
+
+message ServerInfo {
+  string address = 1;
+  string name = 2;
+  bool official = 3;
+  string motd = 4;
+  string map = 5;
+  string time = 6;
+  string weather = 7;
+  uint32 players = 8;
+  uint32 max_players = 9;
+  optional string error = 10;
+}
+
+message ServerList {
+  repeated ServerInfo servers = 1;
+}
+
+message ServerEntry {
+  string name = 1;
+  string address = 2;
+}
+
+message SaveServersArgs {
+  repeated ServerEntry servers = 1;
+}
+
+message EngineVersion {
+  string version = 1;
+  uint32 protocol = 2;
+}
+
+message ContentChanged {
+  string stamp = 1;
+}
+
+enum SessionState {
+  SESSION_STATE_UNSPECIFIED = 0;
+  SESSION_STATE_STARTING = 1;
+  SESSION_STATE_LOADING = 2;
+  SESSION_STATE_RUNNING = 3;
+  SESSION_STATE_STOPPING = 4;
+  SESSION_STATE_EXITED = 5;
+  // it reported a failure, or exited with a non-zero code without being stopped
+  SESSION_STATE_FAILED = 6;
+}
+
+message SessionEvent {
+  // the instance id
+  string session_id = 1;
+  uint32 pid = 2;
+  SessionState state = 3;
+  string message = 4;
+  optional float progress = 5;
+  optional int32 exit_code = 6;
+}
