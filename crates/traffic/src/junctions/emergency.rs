@@ -7,6 +7,9 @@ pub(super) struct EmergencyReservation {
     pub owner: VehicleId,
     pub lanes: Vec<usize>,
     exit: Option<usize>,
+    /// The reserved movement shows the owner a stop aspect: it crosses against it, slowly.
+    /// Sticky for the reservation's life, so the owner does not speed up once past the line.
+    pub against_signal: bool,
 }
 
 impl JunctionCoordinator {
@@ -67,6 +70,7 @@ impl JunctionCoordinator {
                 owner: actor.id,
                 lanes,
                 exit: movement.exit.map(|x| x.0),
+                against_signal: false,
             });
         }
     }
@@ -77,13 +81,26 @@ impl JunctionCoordinator {
             .any(|r| r.owner == id && r.lanes.contains(&lane))
     }
 
+    /// The crawl speed for an emergency crossing its reserved junction against the signal.
+    /// A green or unsignalled reserved movement is driven at the normal speed.
     pub fn emergency_speed_cap(&self, id: VehicleId) -> Option<f32> {
         self.emergency_reservations
             .iter()
-            .any(|r| r.owner == id)
-            .then_some(5.0)
+            .any(|r| r.owner == id && r.against_signal)
+            .then_some(EMERGENCY_CROSSING_SPEED)
+    }
+
+    pub(super) fn mark_against_signal(&mut self, id: VehicleId, lane: usize) {
+        for r in &mut self.emergency_reservations {
+            if r.owner == id && r.lanes.contains(&lane) {
+                r.against_signal = true;
+            }
+        }
     }
 }
+
+/// How fast (m/s) an emergency crosses its reserved junction against a red light.
+pub const EMERGENCY_CROSSING_SPEED: f32 = 5.0;
 
 fn junction_group(net: &Network, first: usize) -> Vec<usize> {
     let mut group = vec![first];

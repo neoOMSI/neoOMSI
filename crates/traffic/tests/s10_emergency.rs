@@ -180,3 +180,30 @@ fn repeated_warning_route_and_network_changes_do_not_leak_reservations() {
         assert!(c.emergency_speed_cap(w.actors[i].id).is_none());
     }
 }
+
+#[test]
+fn emergency_crawls_only_when_crossing_against_the_signal() {
+    for (aspect, crawl) in [(Aspect::Green, false), (Aspect::Dark, false), (Aspect::Red, true)] {
+        let mut net = four_way();
+        net.lanes[1].traffic_light = Some((0, 0));
+        let mut w = Harness::new(net);
+        w.aspects.insert((0, 0), aspect);
+        let i = w.add(emergency(1, 0));
+        let mut c = JunctionCoordinator::new();
+        prepare(&w, &mut c);
+        assert!(c.emergency_owns(VehicleId(1), 1));
+        w.plan(&mut c, i, None);
+        assert_eq!(c.emergency_speed_cap(VehicleId(1)).is_some(), crawl, "{aspect:?}");
+    }
+}
+
+#[test]
+fn an_unsignalled_reserved_junction_is_crossed_at_normal_speed() {
+    let mut w = Harness::new(four_way());
+    let i = w.add(emergency(1, 0));
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 1));
+    w.plan(&mut c, i, None);
+    assert!(c.emergency_speed_cap(VehicleId(1)).is_none());
+}

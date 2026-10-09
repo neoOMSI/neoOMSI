@@ -293,14 +293,28 @@ impl Traffic {
             })
             .collect();
         self.junctions.begin_tick((self.time * 1000.0).max(0.0) as u64);
-        let prepare_emergency = self.player_emergency || self.junctions.has_emergency_reservations()
+        // LAN players on an emergency drive (their main body; trailers share the id)
+        let mut remote_emergencies: Vec<(u32, PlayerBox)> = Vec::new();
+        for &(id, b) in others {
+            if self.external_emergencies.contains(&id) && !remote_emergencies.iter().any(|r| r.0 == id) {
+                remote_emergencies.push((id, b));
+            }
+        }
+        let prepare_emergency = self.player_emergency || !remote_emergencies.is_empty()
+            || self.junctions.has_emergency_reservations()
             || junction_actors.iter().any(|a| a.emergency);
         let mut emergency_ways: Vec<_> = if prepare_emergency {
             self.cars.iter().map(|c| self.way_lanes(&c.state, 160.0)).collect()
         } else { Vec::new() };
         let mut junction_on_lane = by_lane.clone();
         let mut junction_coming = coming.clone();
-        if let Some((actor, way)) = player.and_then(|p| safety::external_actor(&self.net, p, self.player_emergency)) {
+        let external = player
+            .and_then(|p| safety::external_actor(&self.net, VehicleId(u64::MAX), p, self.player_emergency))
+            .into_iter()
+            .chain(remote_emergencies.iter().filter_map(|&(id, b)| {
+                safety::external_actor(&self.net, VehicleId(u64::MAX - 1 - id as u64), b, true)
+            }));
+        for (actor, way) in external {
             let index = junction_actors.len();
             junction_on_lane.entry(actor.lane).or_default().push((index, actor.s, 0.0, false));
             for &(l, d) in way.iter().skip(1) {

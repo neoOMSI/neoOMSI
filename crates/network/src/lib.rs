@@ -94,7 +94,7 @@ use std::time::{Duration, Instant};
 
 pub use voice::{VoiceConfig, VoiceFrame};
 pub use wire::{
-    FLAG_BRAKE, FLAG_ELECTRICS, FLAG_ENGINE, FLAG_FOG, FLAG_HORN, FLAG_KNEELING, FLAG_REVERSE,
+    FLAG_BRAKE, FLAG_ELECTRICS, FLAG_EMERGENCY, FLAG_ENGINE, FLAG_FOG, FLAG_HORN, FLAG_KNEELING, FLAG_REVERSE,
     FLAG_STOP_BRAKE, FLAG_VEHICLE, FLAG_WIPERS,
 };
 
@@ -107,8 +107,6 @@ pub use wire::{
 /// passed on to the other players.
 /// 6: up to 63 sound and moving-part values in a state (a 6-bit count: the AA-FR Agora's
 /// sound variables alone filled the 31 there was room for).
-/// 7: session-scoped content transfer and the current wire format.
-/// 8: a welcome echoes the join attempt's nonce.
 pub const PROTOCOL: u32 = 8;
 pub const DEFAULT_PORT: u16 = 27015;
 /// Ports a host tries after the default one when that is taken (a second session on the
