@@ -608,6 +608,8 @@ pub struct Traffic {
     /// at a stop (set every frame) - the cars stop for anybody in their way, not only on
     /// a crossing.
     pub people: Vec<(DVec2, DVec2, bool)>,
+    /// Spatial broadphase grid for people on foot, rebuilt each tick for O(1) corridor queries.
+    pub people_grid: HashMap<(i32, i32), Vec<usize>>,
     /// No car has been placed yet: the first population may fill the view.
     initial: bool,
     /// Seconds of the last tick (the lamp scripts run in `sync`).
@@ -1304,6 +1306,7 @@ impl Traffic {
             occluders: None,
             walkers: Vec::new(),
             people: Vec::new(),
+            people_grid: HashMap::new(),
             initial: true,
             last_dt: 0.0,
             lamp_dt: 0.0,
@@ -4472,14 +4475,47 @@ impl Traffic {
         // as far as the car needs to stop without a jolt, and never less than a car length
         let reach = (v * v / 5.0 + v + 6.0).clamp(8.0, 45.0);
         let origin = car.vehicle.position.truncate();
-        let near: Vec<&(DVec2, DVec2, bool)> = self
-            .people
-            .iter()
-            .filter(|(p, _, _)| (*p - origin).length() < (st.front + reach) as f64 + 6.0)
-            .collect();
-        if near.is_empty() {
+        let max_dist = (st.front + reach) as f64 + 6.0;
+        let max_dist_sq = max_dist * max_dist;
+        const PEOPLE_GRID_CELL: f64 = 32.0;
+        let min_gx = ((origin.x - max_dist) / PEOPLE_GRID_CELL).floor() as i32;
+        let max_gx = ((origin.x + max_dist) / PEOPLE_GRID_CELL).floor() as i32;
+        let min_gy = ((origin.y - max_dist) / PEOPLE_GRID_CELL).floor() as i32;
+        let max_gy = ((origin.y + max_dist) / PEOPLE_GRID_CELL).floor() as i32;
+
+        let mut near_buf = [0usize; 32];
+        let mut near_overflow = Vec::new();
+        let mut near_len = 0;
+        for gy in min_gy..=max_gy {
+            for gx in min_gx..=max_gx {
+                if let Some(list) = self.people_grid.get(&(gx, gy)) {
+                    for &idx in list {
+                        let p = self.people[idx].0;
+                        if (p - origin).length_squared() < max_dist_sq {
+                            if near_len < 32 {
+                                near_buf[near_len] = idx;
+                            } else {
+                                if near_overflow.is_empty() {
+                                    near_overflow.extend_from_slice(&near_buf[..32]);
+                                }
+                                near_overflow.push(idx);
+                            }
+                            near_len += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if near_len == 0 {
             return None;
         }
+        let near: &[usize] = if near_len <= 32 {
+            near_buf[..near_len].sort_unstable();
+            &near_buf[..near_len]
+        } else {
+            near_overflow.sort_unstable();
+            &near_overflow
+        };
         let from = st.front - 1.0;
         let mut first = true;
         for &(l, dl) in way {
@@ -4500,7 +4536,8 @@ impl Traffic {
                 let c = q.truncate() + right * lat;
                 // when the car's front gets here, at most two seconds on
                 let t = (((d - st.front).max(0.0)) / v.max(1.0)).min(2.0) as f64;
-                for (p, pv, waiting) in &near {
+                for &idx in near {
+                    let (p, pv, waiting) = &self.people[idx];
                     let half = if *waiting && car.is_bus() {
                         car.half_width as f64 - 0.3
                     } else {
@@ -4546,37 +4583,46 @@ impl Traffic {
         Some(light)
     }
 
-    fn way_lanes(&self, st: &AiState, within: f32) -> Vec<(usize, f32)> {
-        let mut out = vec![(st.lane, -st.s)];
-        let mut d = self.net.lanes[st.lane].length() - st.s;
-        let plan: Vec<usize> = match st.change {
-            Some(c) => std::iter::once(c.to)
-                .chain(st.change_plan.iter().copied())
-                .collect(),
-            None => st.upcoming().collect(),
-        };
+    fn way_lanes_into(&self, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
+        out.clear();
         if let Some(c) = st.change {
             // over on the new lane: its distances count from the same place
-            out.clear();
             out.push((c.to, -c.s_to));
-            d = self.net.lanes[c.to].length() - c.s_to;
-            for &l in plan.iter().skip(1) {
+            let mut d = self.net.lanes[c.to].length() - c.s_to;
+            for &l in &st.change_plan {
                 if d > within {
                     break;
                 }
                 out.push((l, d));
                 d += self.net.lanes[l].length();
             }
-            return out;
+            return;
         }
-        for l in plan {
+
+        out.push((st.lane, -st.s));
+        let mut d = self.net.lanes[st.lane].length() - st.s;
+        for l in st.upcoming() {
             if d > within {
                 break;
             }
             out.push((l, d));
             d += self.net.lanes[l].length();
         }
+    }
+
+    fn way_lanes(&self, st: &AiState, within: f32) -> Vec<(usize, f32)> {
+        let mut out = Vec::new();
+        self.way_lanes_into(st, within, &mut out);
         out
+    }
+
+    /// Prefix of a precomputed route lookahead that falls within `within` metres.
+    fn way_prefix(way: &[(usize, f32)], within: f32) -> &[(usize, f32)] {
+        if way.is_empty() {
+            return way;
+        }
+        let count = 1 + way[1..].iter().take_while(|&&(_, d)| d <= within).count();
+        &way[..count]
     }
 
     /// The junction on car `i`'s way within `within` metres: its lanes that cross or meet
@@ -5520,6 +5566,15 @@ impl Traffic {
             .enumerate()
             .map(|(i, c)| (c.id, i))
             .collect();
+        self.people_grid.clear();
+        const PEOPLE_GRID_CELL: f64 = 32.0;
+        for (idx, (p, _, _)) in self.people.iter().enumerate() {
+            let cell = (
+                (p.x / PEOPLE_GRID_CELL).floor() as i32,
+                (p.y / PEOPLE_GRID_CELL).floor() as i32,
+            );
+            self.people_grid.entry(cell).or_default().push(idx);
+        }
         let debug = ::legacy_config::env::var_os("OMSI_DEBUG_TRAFFIC").is_some();
         // where every car is: its lane with its lateral place (and the lane a passing car
         // is over on, where it counts for the oncoming traffic)
@@ -5527,6 +5582,7 @@ impl Traffic {
         // cars coming to a junction lane: (car, distance from its origin to the lane start)
         let mut coming: HashMap<usize, Vec<(usize, f32)>> = HashMap::new();
         let mut reservations: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut way_scratch: Vec<(usize, f32)> = Vec::new();
         for (i, c) in self.cars.iter().enumerate() {
             by_lane
                 .entry(c.state.lane)
@@ -5590,11 +5646,8 @@ impl Traffic {
                     }
                 }
             }
-            for (l, d) in self
-                .way_lanes(&c.state, LOOK_AHEAD + 30.0)
-                .into_iter()
-                .skip(1)
-            {
+            self.way_lanes_into(&c.state, LOOK_AHEAD + 30.0, &mut way_scratch);
+            for &(l, d) in way_scratch.iter().skip(1) {
                 if !self.net.crossings[l].is_empty() {
                     coming.entry(l).or_default().push((i, d));
                 }
@@ -5608,7 +5661,8 @@ impl Traffic {
             c.request.iter_mut().for_each(|r| *r = false);
         }
         for c in &self.cars {
-            for (l, d) in self.way_lanes(&c.state, 160.0) {
+            self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
+            for &(l, d) in &way_scratch {
                 if let Some((ci, li)) = self.net.lanes[l].traffic_light {
                     if let Some(ctl) = self.lights.get_mut(ci) {
                         let gap = d - c.state.front;
@@ -5635,7 +5689,7 @@ impl Traffic {
             // beside every lane there, the bus never opened the barrier in front of it)
             let h = heading.to_radians();
             let fwd = glam::DVec2::new(h.sin(), h.cos());
-            for l in 0..self.net.lanes.len() {
+            for l in self.net.lanes_starting_near(pos, 35.0) {
                 let lane = &self.net.lanes[l];
                 let Some((ci, li)) = lane.traffic_light else {
                     continue;
@@ -5787,10 +5841,12 @@ impl Traffic {
             let mut parked_box: Option<Obb> = None;
             let kerb_swerve: Option<f32>;
             let mut squeeze: Option<u64> = None;
+            self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
+            let mut change_cached = self.cars[i].state.change;
             {
                 let car = &self.cars[i];
                 let st = &car.state;
-                let near_way = self.way_lanes(st, 100.0);
+                let near_way = Self::way_prefix(&way_scratch, 100.0);
                 let passing = car.passing.map(|p| !p.aborted).unwrap_or(false);
                 let mut swerve: Option<f32> = None;
                 let mut stand: Option<(f32, usize, f32, f32)> = None;
@@ -5837,7 +5893,7 @@ impl Traffic {
                     .change
                     .filter(|c| c.t > 0.4 || (c.bypass && c.wait <= 0.0))
                     .map(|_| st.lane);
-                for &(l, d) in &near_way {
+                for &(l, d) in near_way {
                     if Some(l) == leaving {
                         continue;
                     }
@@ -5851,7 +5907,7 @@ impl Traffic {
                 // steered the car into the bus)
                 if !passing {
                     let swerving = st.lateral_target.abs() > 0.1;
-                    for &(l, d) in &near_way {
+                    for &(l, d) in near_way {
                         for &(j, os, lat, foreign) in
                             by_lane.get(&l).map(|v| v.as_slice()).unwrap_or(&[])
                         {
@@ -5994,7 +6050,11 @@ impl Traffic {
                 keep_back = Some(keep_back.map(|k| k.min(at)).unwrap_or(at));
             }
             self.plan_bypass(i, lead.map(|l| l.0.gap), standing, &by_lane);
-            let way_now = self.way_lanes(&self.cars[i].state, 120.0);
+            if self.cars[i].state.change != change_cached {
+                self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
+                change_cached = self.cars[i].state.change;
+            }
+            let way_now = Self::way_prefix(&way_scratch, 120.0);
             self.guard_pass(i, &by_lane);
             self.plan_pass(
                 i,
@@ -6002,7 +6062,7 @@ impl Traffic {
                 obstacle_len,
                 standing,
                 parked_ahead || at_stop,
-                &way_now,
+                way_now,
                 &by_lane,
                 player,
                 parked_box,
@@ -6049,12 +6109,15 @@ impl Traffic {
                 }
             }
             let merge_wait = self.plan_route_change(i, &by_lane);
-            let way = self.way_lanes(&self.cars[i].state, 200.0);
+            if self.cars[i].state.change != change_cached {
+                self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
+            }
+            let way = &way_scratch[..];
             // traffic lights
             let light = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                self.light_stop(i, &way)
+                self.light_stop(i, way)
             };
             self.cars[i].light_hold = light.is_some();
             self.cars[i].light_at = light;
@@ -6073,7 +6136,7 @@ impl Traffic {
             let junction = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                self.junction_ahead(&way).filter(|jn| {
+                self.junction_ahead(way).filter(|jn| {
                     light
                         .map(|l| jn.inside || jn.lanes[0].1 < l - 0.5)
                         .unwrap_or(true)
@@ -6083,7 +6146,7 @@ impl Traffic {
                 Some(jn) => self.junction_stop(
                     i,
                     jn,
-                    &way,
+                    way,
                     lead.map(|l| l.0),
                     &by_lane,
                     &coming,
@@ -6103,8 +6166,7 @@ impl Traffic {
             // what it has claimed and is through no longer counts
             {
                 let car = &mut self.cars[i];
-                let on_way: Vec<usize> = way.iter().map(|w| w.0).collect();
-                car.reserved.retain(|l| on_way.contains(l));
+                car.reserved.retain(|l| way.iter().any(|w| w.0 == *l));
                 car.yielding = yield_at.is_some();
                 car.wait_at = yield_at;
                 let st = &mut car.state;
