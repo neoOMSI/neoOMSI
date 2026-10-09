@@ -507,7 +507,11 @@ impl JunctionCoordinator {
                 continue;
             };
             let gap = d - actor.front;
-            if actor.emergency && gap < 15.0 && actor.speed <= 5.0
+            let stop_aspect = !matches!(aspect, Aspect::Green | Aspect::Dark);
+            if actor.emergency && stop_aspect && self.emergency_owns(actor.id, way[k].0) {
+                self.mark_against_signal(actor.id, way[k].0);
+            }
+            if actor.emergency && gap < 15.0 && actor.speed <= emergency::EMERGENCY_CROSSING_SPEED
                 && self.emergency_owns(actor.id, way[k].0)
             {
                 // Only the reserved movement gets a red-light exception. Admission still

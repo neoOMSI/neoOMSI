@@ -20,7 +20,7 @@ world position.
 Fare ownership follows stable person IDs. The driver's `GivenTicket` is captured as a
 frame input. Fare UI state and physical tray money have separate lifetimes.
 
-LAN transfers use protocol 7 and stable identities. The host retains a passenger until
+LAN transfers use protocol 8 and stable identities. The host retains a passenger until
 acceptance; rejection restores its waiting task. A transfer completes only on its session
 receipt.
 

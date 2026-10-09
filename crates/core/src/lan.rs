@@ -1699,6 +1699,10 @@ pub fn my_pose(
             on("wiperrunning") || on("wiper_running"),
         ),
         (::network::FLAG_STOP_BRAKE, on("bremse_halte")),
+        (
+            ::network::FLAG_EMERGENCY,
+            crate::traffic::emergency_drive(v, v.ty.def.ai_veh_type == 2),
+        ),
     ] {
         if set {
             flags |= bit;

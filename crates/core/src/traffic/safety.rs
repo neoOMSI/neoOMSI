@@ -219,11 +219,12 @@ pub(super) fn road_body_box(vehicle: &VehicleInstance, body: &AiBody, caps: &Veh
 
 pub(super) fn external_actor(
     net: &Network,
+    id: VehicleId,
     p: PlayerBox,
     active: bool,
 ) -> Option<(JunctionActor, Vec<(usize, f32)>)> {
     let (lane, s, _) = net.lane_along(p.0, p.1, LaneKind::Street, 4.0, 45.0)?;
-    let mut actor = JunctionActor::new(VehicleId(u64::MAX), lane, s);
+    let mut actor = JunctionActor::new(id, lane, s);
     actor.front = p.2;
     actor.rear = p.2;
     actor.length = p.2 * 2.0;

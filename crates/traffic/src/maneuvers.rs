@@ -952,6 +952,11 @@ impl ManeuverCoordinator {
         if lane.left.is_some() || lane.right.is_some() {
             return None;
         }
+        // Never pull out inside a junction: its paths cross, and beyond it the carriageways
+        // may split round an island.
+        if !net.crossings[actor.lane].is_empty() {
+            return None;
+        }
         let real = gap + if input.parked { 2.0 } else { 0.0 };
         let reach = if rolling {
             (actor.speed * actor.speed / (2.0 * actor.decel) + 12.0).clamp(15.0, 40.0)
@@ -1026,6 +1031,11 @@ impl ManeuverCoordinator {
             creep: !rolling,
         };
         let clear_d = probe.clear_at(actor.half_width);
+        // The oncoming lane has to lie right beside this one for as long as the car is out
+        // there: an island or hatched area that starts after the pull-out is no road either.
+        if !passing_corridor(net, &way, clear_d + actor.front) {
+            return None;
+        }
         // Nobody coming may reach where the car will be for the whole time it is out there.
         let t_need = pass_time(
             clear_d,
@@ -1700,6 +1710,28 @@ fn lane_window(net: &Network, lane: usize, s: f32, back: f32, ahead: f32) -> Vec
         }
     }
     out
+}
+
+/// Is the road a single lane each way with the oncoming lane directly beside it, from the
+/// actor origin to `distance` metres along `way`? Separate carriageways (an island, a median,
+/// a hatched area between the lanes) are no passing room (#126).
+fn passing_corridor(net: &Network, way: &[WayStep], distance: f32) -> bool {
+    let mut d = 0.0f32;
+    loop {
+        let Some((lane, u)) = way_locate(net, way, d.min(distance)) else { return false };
+        let l = &net.lanes[lane];
+        if l.left.is_some() || l.right.is_some() {
+            return false;
+        }
+        let Some((opp, _, side)) = net.opposite(lane, u.min(l.length())) else { return false };
+        if !(2.3..=5.5).contains(&side) || side > (l.width + net.lanes[opp].width) * 0.5 + 0.6 {
+            return false;
+        }
+        if d >= distance {
+            return true;
+        }
+        d += 2.0;
+    }
 }
 
 /// The network lane and distance along it of `d` metres from the actor origin along `way`.

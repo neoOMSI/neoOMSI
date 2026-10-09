@@ -93,6 +93,18 @@ pub(crate) fn lan_outlines(game: &lan::LanGame) -> Vec<(u32, traffic::PlayerBox)
     out
 }
 
+/// The LAN players whose state says they are on an emergency drive (`FLAG_EMERGENCY`).
+pub(crate) fn lan_emergencies(game: &lan::LanGame) -> Vec<u32> {
+    let mut out: Vec<u32> = game
+        .remotes
+        .iter()
+        .filter(|(_, r)| r.last.flags & ::network::FLAG_EMERGENCY != 0)
+        .map(|(id, _)| *id)
+        .collect();
+    out.sort_unstable();
+    out
+}
+
 /// What the traffic needs to know every frame besides the time: where the player looks
 /// from, the day of the week, who walks the footpaths, what hides what.
 pub(crate) fn traffic_inputs(

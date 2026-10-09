@@ -115,6 +115,7 @@ impl App {
             let mut others = lan_outlines(&self.remotes);
             others.extend(own_outlines(self.player.as_ref(), &self.placed));
             t.set_external_actors(others);
+            t.set_external_emergencies(lan_emergencies(&self.remotes));
             if !self.paused {
                 t.set_player_emergency(self.player.as_ref().is_some_and(|p|
                     traffic::emergency_drive(&p.vehicle, p.vehicle.ty.def.ai_veh_type == 2)));

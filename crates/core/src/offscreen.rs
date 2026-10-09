@@ -727,6 +727,7 @@ pub(crate) fn run_offscreen(
             let mut others = lan_outlines(&remotes_off);
             others.extend(own_outlines(player.as_ref(), &[]));
             t.set_external_actors(others);
+            t.set_external_emergencies(lan_emergencies(&remotes_off));
             t.set_player_priority(
                 // General priority alone is insufficient for a scheduled/player bus.
                 player
@@ -2450,6 +2451,22 @@ pub(crate) fn run_offscreen(
                                 l.headings[k],
                                 l.length(),
                                 l.width
+                            );
+                            for c in &t.net().crossings[i] {
+                                log::info!(
+                                    "    crosses lane {} at {:.1} (-{:.1}/+{:.1}){}",
+                                    c.other,
+                                    c.at,
+                                    c.before,
+                                    c.after,
+                                    if c.merge { " merge" } else { "" }
+                                );
+                            }
+                            log::info!(
+                                "    left {:?} right {:?} next {:?}",
+                                l.left,
+                                l.right,
+                                l.next
                             );
                         }
                     }

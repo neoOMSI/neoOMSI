@@ -458,6 +458,7 @@ pub struct Traffic {
     /// to take for longer.
     player_priority: bool,
     player_emergency: bool,
+    external_emergencies: Vec<u32>,
     /// The LAN players' vehicles (their session ids and boxes as for the player), set
     /// before each `tick`: the cars stop behind them and go round them as round the
     /// player's bus.
@@ -896,6 +897,12 @@ impl Traffic {
 
     pub fn set_player_emergency(&mut self, active: bool) {
         self.player_emergency = active;
+    }
+
+    /// The LAN players (ids as in `set_external_actors`) driving an emergency vehicle on an
+    /// emergency drive: traffic makes way for them as for the local player's.
+    pub fn set_external_emergencies(&mut self, ids: Vec<u32>) {
+        self.external_emergencies = ids;
     }
 
     /// Where the camera is, for population visibility.

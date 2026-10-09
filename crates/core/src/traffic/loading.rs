@@ -349,6 +349,7 @@ impl Traffic {
             player: None,
             player_priority: false,
             player_emergency: false,
+            external_emergencies: Vec::new(),
             others: Vec::new(),
             drivers: HashMap::new(),
             driver_pool: Vec::new(),
