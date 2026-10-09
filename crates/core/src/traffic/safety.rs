@@ -159,28 +159,37 @@ pub(super) fn corner_swerve(
     // Long bodies need swing room on junction aprons, where car centre paths
     // alone understate the available turning space. Verify that space physically.
     if lane.turn != 0 || !net.crossings[state.lane].is_empty() { room = room.max(1.0); }
-    let target = (state.lateral_target + side.signum() as f32 * 0.35).clamp(-room, room);
-    if (target - lateral).abs() <= 0.1 { return None; }
-    let mut path = state.clone();
-    path.lateral_target = target;
-    path.lateral_ramp = (lateral, target, state.odometer, 2.0);
-    let poses = body.predict_poses(&|d| path.way_point(net, d), state.speed, 0.8, 3.0, caps.rear + 5.0);
-    for (_, p, heading) in poses {
-        probe.position = p;
-        probe.position.z = vehicle.contact.as_deref()
-            .and_then(|g| g.road_height(p.x, p.y, p.z, 1.5)).unwrap_or(p.z);
-        probe.heading = heading;
-        let bbox = road_body_box(vehicle, &probe, caps);
-        if collision.hit(&bbox).is_some() { return None; }
-        let footprint = BodyFootprint::new(owner, bbox.center, rotated(DVec2::Y, heading),
-            bbox.half.y, bbox.half.x, bbox.z0, bbox.z1, state.speed);
-        let mut blocked = false;
-        occupancy.near(bbox.center, bbox.radius(), |other| {
-            blocked |= other.owner != owner && other.overlaps(&footprint, 0.0);
-        });
-        if blocked { return None; }
+    // A wide vehicle (a bus in a narrow lane) has almost no room left inside its lane, so a
+    // swerve was never found and it stood against the parked car for good. Being against
+    // something already is reason enough to lean over the lane edge; every candidate path is
+    // checked against the real collision boxes and other vehicles below.
+    room = room.max(0.6);
+    let sign = side.signum() as f32;
+    'candidates: for step in [0.35f32, 0.6, 0.2] {
+        let target = (state.lateral_target + sign * step).clamp(-room, room);
+        if (target - lateral).abs() <= 0.05 { continue; }
+        let mut path = state.clone();
+        path.lateral_target = target;
+        path.lateral_ramp = (lateral, target, state.odometer, 2.0);
+        let poses = body.predict_poses(&|d| path.way_point(net, d), state.speed, 0.8, 3.0, caps.rear + 5.0);
+        for (_, p, heading) in poses {
+            probe.position = p;
+            probe.position.z = vehicle.contact.as_deref()
+                .and_then(|g| g.road_height(p.x, p.y, p.z, 1.5)).unwrap_or(p.z);
+            probe.heading = heading;
+            let bbox = road_body_box(vehicle, &probe, caps);
+            if collision.hit(&bbox).is_some() { continue 'candidates; }
+            let footprint = BodyFootprint::new(owner, bbox.center, rotated(DVec2::Y, heading),
+                bbox.half.y, bbox.half.x, bbox.z0, bbox.z1, state.speed);
+            let mut blocked = false;
+            occupancy.near(bbox.center, bbox.radius(), |other| {
+                blocked |= other.owner != owner && other.overlaps(&footprint, 0.0);
+            });
+            if blocked { continue 'candidates; }
+        }
+        return Some(target);
     }
-    Some(target)
+    None
 }
 
 pub(super) fn vehicle_height(vehicle: &VehicleInstance) -> f32 {
