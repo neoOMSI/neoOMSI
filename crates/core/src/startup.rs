@@ -142,7 +142,9 @@ pub(crate) fn content_dir() -> Option<PathBuf> {
         dir
     };
     let cand = ::legacy_config::content_folder_of(&dir);
-    if (cand.exists() || std::fs::create_dir_all(&cand).is_ok()) && ::legacy_config::is_writable(&cand) {
+    if (cand.exists() || std::fs::create_dir_all(&cand).is_ok())
+        && ::legacy_config::is_writable(&cand)
+    {
         Some(cand)
     } else {
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
@@ -225,12 +227,18 @@ pub(crate) fn backend_order() -> Vec<wgpu::Backends> {
     }
     let wanted = if cfg!(windows)
         && (::config::get_bool("vr", "enabled").unwrap_or(false)
-        || ::legacy_config::env::var_os("OMSI_OPENXR").is_some()) {
+            || ::legacy_config::env::var_os("OMSI_OPENXR").is_some())
+    {
         "dx12".to_owned()
     } else {
         ::legacy_config::env::var("OMSI_BACKEND")
             .ok()
-            .unwrap_or_else(|| ::config::get_string("graphics", "graphics_api").unwrap_or_else(|| "auto".into()).trim().to_ascii_lowercase())
+            .unwrap_or_else(|| {
+                ::config::get_string("graphics", "graphics_api")
+                    .unwrap_or_else(|| "auto".into())
+                    .trim()
+                    .to_ascii_lowercase()
+            })
     };
     let all: Vec<wgpu::Backends> = if cfg!(windows) {
         vec![wgpu::Backends::DX12, wgpu::Backends::VULKAN]
@@ -383,6 +391,40 @@ pub(crate) fn fit_window(
     let ((lw, lh), (x, y)) = fit_rect((w, h), (screen.width as f64, screen.height as f64), scale);
     let at = winit::dpi::PhysicalPosition::new(m.position().x + x, m.position().y + y);
     (winit::dpi::LogicalSize::new(lw, lh), Some(at))
+}
+
+pub(crate) fn triple_monitor_rect(
+    event_loop: &winit::event_loop::ActiveEventLoop,
+) -> Option<(
+    winit::dpi::PhysicalPosition<i32>,
+    winit::dpi::PhysicalSize<u32>,
+)> {
+    let primary = event_loop.primary_monitor()?;
+    let mut monitors: Vec<_> = event_loop.available_monitors().collect();
+    monitors.sort_by_key(|monitor| monitor.position().x);
+    let middle = monitors
+        .iter()
+        .position(|monitor| monitor.position() == primary.position())?;
+    let left = monitors.get(middle.checked_sub(1)?)?;
+    let centre = monitors.get(middle)?;
+    let right = monitors.get(middle + 1)?;
+    let (lp, cp, rp) = (left.position(), centre.position(), right.position());
+    let (ls, cs, rs) = (left.size(), centre.size(), right.size());
+    if lp.y != cp.y
+        || cp.y != rp.y
+        || lp.x + ls.width as i32 != cp.x
+        || cp.x + cs.width as i32 != rp.x
+        || ls.width != cs.width
+        || cs.width != rs.width
+        || ls.height != cs.height
+        || cs.height != rs.height
+    {
+        return None;
+    }
+    Some((
+        lp,
+        winit::dpi::PhysicalSize::new(ls.width + cs.width + rs.width, cs.height),
+    ))
 }
 
 /// `want` points fitted into a screen of `screen` pixels at `scale` (the size kept to 90 %

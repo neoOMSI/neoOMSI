@@ -3,6 +3,21 @@
 use super::*;
 
 impl App {
+    pub(crate) fn ui_cursor(&self) -> (f32, f32) {
+        let offset = self
+            .surface
+            .as_ref()
+            .filter(|s| {
+                !self.vr_active()
+                    && ::config::get_bool("graphics", "triple_screen").unwrap_or(false)
+                    && ::config::get_bool("graphics", "triple_screen_hud").unwrap_or(true)
+                    && s.config.width >= s.config.height.saturating_mul(2)
+            })
+            .map(|s| s.config.width as f32 / 3.0)
+            .unwrap_or(0.0);
+        (self.cursor.0 - offset, self.cursor.1)
+    }
+
     pub(crate) fn wheel(&mut self, amount: f32) {
         if self.lab_dialog_wheel(amount) {
             return;
@@ -35,8 +50,9 @@ impl App {
             self.menu_wheel(amount);
             return;
         }
+        let (x, y) = self.ui_cursor();
         if let Some(n) = self.navigator.as_mut().filter(|n| n.map_open()) {
-            n.map_wheel(amount, self.cursor.0, self.cursor.1);
+            n.map_wheel(amount, x, y);
             return;
         }
         if let Some(ui) = self.ui.as_mut() {
@@ -89,6 +105,7 @@ impl App {
         } else {
             ElementState::Released
         };
+        let cursor = self.ui_cursor();
         if self.placing.is_some() && self.game_menu.is_none() {
             if state == ElementState::Pressed {
                 self.placing_click();
@@ -125,10 +142,7 @@ impl App {
 
             if self.dropdown.is_some() {
                 let inside = |r: &[f32; 4]| {
-                    self.cursor.0 >= r[0]
-                        && self.cursor.0 <= r[2]
-                        && self.cursor.1 >= r[1]
-                        && self.cursor.1 <= r[3]
+                    cursor.0 >= r[0] && cursor.0 <= r[2] && cursor.1 >= r[1] && cursor.1 <= r[3]
                 };
                 let hit = self.ui.as_ref().and_then(|u| {
                     u.dd_rects
@@ -145,10 +159,10 @@ impl App {
 
             if state == ElementState::Pressed {
                 if let Some(thumb) = self.ui.as_ref().and_then(|u| u.menu_scroll_thumb) {
-                    if self.cursor.0 >= thumb[0]
-                        && self.cursor.0 <= thumb[2]
-                        && self.cursor.1 >= thumb[1]
-                        && self.cursor.1 <= thumb[3]
+                    if cursor.0 >= thumb[0]
+                        && cursor.0 <= thumb[2]
+                        && cursor.1 >= thumb[1]
+                        && cursor.1 <= thumb[3]
                     {
                         self.menu_scroll_drag = true;
                         return;
@@ -158,10 +172,10 @@ impl App {
                 if self.chooser.is_some() {
                     let side = self.ui.as_ref().and_then(|u| {
                         u.menu_side.iter().position(|r| {
-                            self.cursor.0 >= r[0]
-                                && self.cursor.0 <= r[2]
-                                && self.cursor.1 >= r[1]
-                                && self.cursor.1 <= r[3]
+                            cursor.0 >= r[0]
+                                && cursor.0 <= r[2]
+                                && cursor.1 >= r[1]
+                                && cursor.1 <= r[3]
                         })
                     });
                     if let Some(i) = side {
@@ -173,10 +187,10 @@ impl App {
                 if self.chooser.is_some() {
                     let pane = self.ui.as_ref().and_then(|u| {
                         let inside = |r: &[f32; 4]| {
-                            self.cursor.0 >= r[0]
-                                && self.cursor.0 <= r[2]
-                                && self.cursor.1 >= r[1]
-                                && self.cursor.1 <= r[3]
+                            cursor.0 >= r[0]
+                                && cursor.0 <= r[2]
+                                && cursor.1 >= r[1]
+                                && cursor.1 <= r[3]
                         };
                         if u.menu_pane_go.as_ref().is_some_and(inside) {
                             return Some(usize::MAX);
@@ -201,10 +215,10 @@ impl App {
                         .as_ref()
                         .and_then(|u| u.menu_search)
                         .is_some_and(|r| {
-                            self.cursor.0 >= r[0]
-                                && self.cursor.0 <= r[2]
-                                && self.cursor.1 >= r[1]
-                                && self.cursor.1 <= r[3]
+                            cursor.0 >= r[0]
+                                && cursor.0 <= r[2]
+                                && cursor.1 >= r[1]
+                                && cursor.1 <= r[3]
                         });
                     if on_field {
                         self.key_search_start();
@@ -217,10 +231,7 @@ impl App {
 
                 let hit = self.ui.as_ref().and_then(|u| {
                     u.menu_rects.iter().position(|r| {
-                        self.cursor.0 >= r[0]
-                            && self.cursor.0 <= r[2]
-                            && self.cursor.1 >= r[1]
-                            && self.cursor.1 <= r[3]
+                        cursor.0 >= r[0] && cursor.0 <= r[2] && cursor.1 >= r[1] && cursor.1 <= r[3]
                     })
                 });
 
@@ -232,10 +243,8 @@ impl App {
                         .and_then(|u| u.menu_ctl.get(row).copied().flatten());
 
                     if let Some(c) = ctl {
-                        if self.chooser.is_some() && self.cursor.0 >= c[0] && self.cursor.0 <= c[2]
-                        {
-                            let fx =
-                                ((self.cursor.0 - c[0]) / (c[2] - c[0]).max(1.0)).clamp(0.0, 1.0);
+                        if self.chooser.is_some() && cursor.0 >= c[0] && cursor.0 <= c[2] {
+                            let fx = ((cursor.0 - c[0]) / (c[2] - c[0]).max(1.0)).clamp(0.0, 1.0);
                             self.chooser = Some(k);
                             if self.list_click(k, fx) {
                                 self.menu_drag = Some(k);
@@ -259,10 +268,10 @@ impl App {
                         .as_ref()
                         .and_then(|u| u.menu_arrows.get(row).copied().flatten());
                     match arrows {
-                        Some([from, to, _]) if self.cursor.0 >= from && self.cursor.0 < to => {
+                        Some([from, to, _]) if cursor.0 >= from && cursor.0 < to => {
                             self.chooser_adjust(k, "-")
                         }
-                        Some([_, _, plus]) if self.cursor.0 >= plus => self.chooser_adjust(k, "+"),
+                        Some([_, _, plus]) if cursor.0 >= plus => self.chooser_adjust(k, "+"),
                         _ if self.chooser.is_some() || self.report_view.is_some() => {
                             self.menu_choose(event_loop, k)
                         }
