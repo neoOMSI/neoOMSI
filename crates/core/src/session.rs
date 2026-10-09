@@ -8,7 +8,7 @@ impl App {
     pub(crate) fn finish_session(&mut self) {
         crate::game_lists::flush_settings(true);
         if !self.exiting {
-            crate::game_link::report("stopping", None, "");
+            crate::game_link::report(crate::game_link::GameLinkState::Stopping, None, "");
         }
         self.exiting = true;
         if let Some(w) = self.world.clone() {

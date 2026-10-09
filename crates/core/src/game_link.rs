@@ -1,13 +1,13 @@
+use launcher_protocol::api::{FromGame, GameHello, GameLink, ToGame, from_game, to_game};
+pub(crate) use launcher_protocol::api::GameLinkState;
 use launcher_protocol::link::{ENV_ADDR, ENV_TOKEN};
-use launcher_protocol::{self as protocol, Message};
-use serde_json::json;
 use std::net::TcpStream;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 struct Conn {
     stream: TcpStream,
-    last: (String, Instant),
+    last: (GameLinkState, Instant),
     window: bool,
 }
 
@@ -34,16 +34,20 @@ fn open(addr: &str, token: &str, instance: &str) -> anyhow::Result<()> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))?;
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    protocol::write_frame(
-        &mut stream,
-        &Message::new(
-            "hello",
-            json!({ "instance": instance, "token": token, "pid": std::process::id(), "version": crate::startup::VERSION }),
-        ),
-    )?;
-    match protocol::read_frame(&mut stream)? {
-        Some(m) if m.kind == "welcome" => {}
-        Some(m) => anyhow::bail!("the engine answered {}", m.kind),
+    let hello = GameHello {
+        instance: instance.into(),
+        token: token.into(),
+        pid: std::process::id(),
+        version: crate::startup::VERSION.into(),
+    };
+    let hello = FromGame {
+        body: Some(from_game::Body::Hello(hello)),
+    };
+    launcher_protocol::write_frame(&mut stream, &hello)?;
+    match launcher_protocol::read_frame::<ToGame>(&mut stream)?.and_then(|m| m.body) {
+        Some(to_game::Body::Welcome(_)) => {}
+        Some(to_game::Body::Refused(reason)) => anyhow::bail!("the engine refused it: {reason}"),
+        Some(_) => anyhow::bail!("the engine did not answer the hello"),
         None => anyhow::bail!("the engine hung up"),
     }
     stream.set_read_timeout(None)?;
@@ -52,8 +56,8 @@ fn open(addr: &str, token: &str, instance: &str) -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("launcher link".into())
         .spawn(move || {
-            while let Ok(Some(m)) = protocol::read_frame(&mut reader) {
-                if m.kind == "quit" {
+            while let Ok(Some(m)) = launcher_protocol::read_frame::<ToGame>(&mut reader) {
+                if let Some(to_game::Body::Quit(_)) = m.body {
                     crate::quit::request();
                 }
             }
@@ -61,29 +65,33 @@ fn open(addr: &str, token: &str, instance: &str) -> anyhow::Result<()> {
         })?;
     *CONN.lock().unwrap_or_else(|e| e.into_inner()) = Some(Conn {
         stream,
-        last: (String::new(), Instant::now()),
+        last: (GameLinkState::Unspecified, Instant::now()),
         window: false,
     });
     Ok(())
 }
 
-pub(crate) fn report(state: &str, progress: Option<f32>, message: &str) {
+pub(crate) fn report(state: GameLinkState, progress: Option<f32>, message: &str) {
     let mut conn = CONN.lock().unwrap_or_else(|e| e.into_inner());
     let Some(c) = conn.as_mut() else { return };
     if progress.is_some() && c.last.0 == state && c.last.1.elapsed() < PROGRESS_EVERY {
         return;
     }
-    let m = Message::new(
-        "state",
-        json!({ "state": state, "progress": progress, "message": message, "window": c.window }),
-    );
-    if protocol::write_frame(&mut c.stream, &m).is_err() {
+    let m = FromGame {
+        body: Some(from_game::Body::State(GameLink {
+            state: state.into(),
+            progress,
+            message: message.into(),
+            window: c.window,
+        })),
+    };
+    if launcher_protocol::write_frame(&mut c.stream, &m).is_err() {
         // half a frame may be out: the engine must see the link end, not wait for the rest
         let _ = c.stream.shutdown(std::net::Shutdown::Both);
         *conn = None;
         return;
     }
-    c.last = (state.to_string(), Instant::now());
+    c.last = (state, Instant::now());
 }
 
 /// The launcher that started the game is still in front: take the focus from it.
@@ -92,10 +100,13 @@ pub(crate) fn window_shown(window: &winit::window::Window) {
         let mut conn = CONN.lock().unwrap_or_else(|e| e.into_inner());
         let Some(c) = conn.as_mut() else { return };
         c.window = true;
-        if c.last.0.is_empty() { "starting".to_string() } else { c.last.0.clone() }
+        match c.last.0 {
+            GameLinkState::Unspecified => GameLinkState::Starting,
+            s => s,
+        }
     };
     window.focus_window();
-    report(&state, None, "");
+    report(state, None, "");
 }
 
 /// A game this one starts in its place would report as this one.
@@ -105,5 +116,5 @@ pub(crate) fn unlinked(cmd: &mut std::process::Command) -> &mut std::process::Co
 
 pub(crate) fn failed(message: &str) {
     let text: String = message.chars().take(2000).collect();
-    report("failed", None, &text);
+    report(GameLinkState::Failed, None, &text);
 }

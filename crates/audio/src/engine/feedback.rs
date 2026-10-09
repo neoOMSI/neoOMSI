@@ -52,6 +52,8 @@ impl Counters {
             reaper_overflow: self.reaper_overflow.load(Ordering::Relaxed),
             reaper_lock_misses: self.reaper_lock_misses.load(Ordering::Relaxed),
             replays: self.replays.load(Ordering::Relaxed),
+            output_xruns: 0,
+            realtime_denials: 0,
         }
     }
 }
@@ -67,15 +69,19 @@ pub struct AudioStats {
     pub reaper_overflow: u64,
     pub reaper_lock_misses: u64,
     pub replays: u64,
+    pub output_xruns: u64,
+    pub realtime_denials: u64,
 }
 
 impl AudioStats {
-    /// Whether the real-time path had to drop or defer anything since the engine started.
+    /// No command loss, underruns or retirement overflow.
+    /// Scheduling refusal alone isn't a playback fault.
     pub fn clean(&self) -> bool {
         self.dropped_commands == 0
             && self.coalesced_evicted == 0
             && self.stream_underruns == 0
             && self.reaper_overflow == 0
+            && self.output_xruns == 0
     }
 }
 
@@ -194,13 +200,24 @@ impl super::AudioEngine {
 
     /// The real-time counters since the engine started (see [`AudioStats`]).
     pub fn stats(&self) -> AudioStats {
-        self.counters.snapshot()
+        let mut stats = self.counters.snapshot();
+        if let Some(device) = self.device() {
+            (stats.output_xruns, stats.realtime_denials) = device.error_counts();
+        }
+        stats
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduling_refusal_alone_does_not_make_playback_unclean() {
+        let stats = AudioStats { realtime_denials: 1, ..Default::default() };
+        assert!(stats.clean());
+        assert!(!AudioStats { output_xruns: 1, ..stats }.clean());
+    }
 
     #[test]
     fn the_reaper_defers_when_the_buffer_is_full() {
