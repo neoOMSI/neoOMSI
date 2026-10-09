@@ -96,3 +96,37 @@ fn a_speculative_entry_claim_does_not_take_priority_from_the_ring() {
         assert!(w.plan(&mut c, ring, None).yield_at.is_none());
     }
 }
+
+#[test]
+fn a_long_wait_at_the_entry_does_not_outrank_a_briefly_stopped_ring() {
+    for left in [false, true] {
+        let mut w = world(left);
+        // the ring car stands for a moment (its own leader held it), not stalled
+        let ring = add(&mut w, 10, 0, 4.0, 0.0);
+        w.actors[ring].stopped = 1.0;
+        w.actors[ring].yield_time = 0.0;
+        // the entry has waited long at its give-way line
+        let at = w.net.lanes[1].length() - 9.0;
+        let entry = add(&mut w, 20, 1, at, 0.0);
+        w.actors[entry].yielding = true;
+        w.actors[entry].yield_time = 12.0;
+        let e = w.plan(&mut JunctionCoordinator::new(), entry, None);
+        assert!(e.yield_at.is_some(), "entry jumped ahead of the ring on fairness: {e:?}");
+    }
+}
+
+#[test]
+fn an_entry_may_go_past_a_stalled_ring_queue() {
+    for left in [false, true] {
+        let mut w = world(left);
+        // the ring car has stood for a long time: a queue, not traffic about to arrive
+        let ring = add(&mut w, 10, 0, 4.0, 0.0);
+        w.actors[ring].stopped = 10.0;
+        let at = w.net.lanes[1].length() - 9.0;
+        let entry = add(&mut w, 20, 1, at, 0.0);
+        w.actors[entry].yielding = true;
+        w.actors[entry].yield_time = 12.0;
+        let e = w.plan(&mut JunctionCoordinator::new(), entry, None);
+        assert!(e.yield_at.is_none(), "entry is held by a stalled ring queue: {e:?}");
+    }
+}
