@@ -196,8 +196,12 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_, p)| p.alpha > 0.002 && p.size > 0.0)
-            // (far to near where each is drawn: pulled towards the viewer)
-            .map(|(i, p)| (-((p.position - eye).length() - p.pull as f64), i))
+            // (far to near where each is drawn: pulled towards the viewer, at most 0.9 of the
+            // way, as `vs_smoke` does)
+            .map(|(i, p)| {
+                let dist = (p.position - eye).length();
+                (-(dist - (p.pull.max(0.0) as f64).min(dist * 0.9)), i)
+            })
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let data: Vec<GpuCorona> = order
