@@ -10,6 +10,9 @@ pub(super) struct EmergencyReservation {
     /// The reserved movement shows the owner a stop aspect: it crosses against it, slowly.
     /// Sticky for the reservation's life, so the owner does not speed up once past the line.
     pub against_signal: bool,
+    /// The vehicles on the owner's way between it and the junction: they lead it through
+    /// and are not held back by its reservation.
+    pub ahead: Vec<VehicleId>,
 }
 
 impl JunctionCoordinator {
@@ -71,7 +74,29 @@ impl JunctionCoordinator {
                 lanes,
                 exit: movement.exit.map(|x| x.0),
                 against_signal: false,
+                ahead: Vec::new(),
             });
+        }
+        // who drives in front of each owner on its way, up to and through the junction
+        for r in &mut self.emergency_reservations {
+            let Some((owner, way)) = actors.iter().zip(ways).find(|(a, _)| a.id == r.owner) else {
+                r.ahead.clear();
+                continue;
+            };
+            let until = junction_ahead(net, way).map(|m| {
+                m.lanes.iter().map(|&(l, d)| d + net.lanes[l].length()).fold(0.0, f32::max)
+            });
+            r.ahead = way
+                .iter()
+                .filter(|&&(_, d)| until.is_some_and(|u| d <= u))
+                .flat_map(|&(lane, d)| {
+                    on_lane.get(&lane).into_iter().flatten().filter_map(move |&(j, s, _, foreign)| {
+                        let along = d + s;
+                        (!foreign && along > owner.front && j < actors.len()).then(|| actors[j].id)
+                    })
+                })
+                .filter(|&id| id != owner.id)
+                .collect();
         }
     }
 

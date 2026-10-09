@@ -130,3 +130,75 @@ fn an_entry_may_go_past_a_stalled_ring_queue() {
         assert!(e.yield_at.is_none(), "entry is held by a stalled ring queue: {e:?}");
     }
 }
+
+/// A circle of sixteen 5.9 m chords (radius 15 m) driven anticlockwise (clockwise when
+/// `left_hand`), with an entry from outside joining it where lane 0 starts. No priorities
+/// are authored. Lanes 0..16 are the ring, 16 is the entry.
+fn unruled_ring(left_hand: bool) -> Network {
+    let sign = if left_hand { -1.0 } else { 1.0 };
+    let at = |k: usize| {
+        let a = (k % 16) as f64 * std::f64::consts::FRAC_PI_8 * sign;
+        DVec3::new(15.0 * a.cos(), 15.0 * a.sin(), 0.0)
+    };
+    let mut lanes: Vec<Lane> = (0..16)
+        .map(|k| LaneBuilder::polyline(vec![at(k), at(k + 1)], LaneKind::Street, 3.0))
+        .collect();
+    lanes.push(LaneBuilder::polyline(
+        vec![DVec3::new(45.0, -10.0 * sign, 0.0), at(0)],
+        LaneKind::Street,
+        3.0,
+    ));
+    let mut net = Network { lanes, left_hand, ..Default::default() };
+    net.link(1.0);
+    net
+}
+
+#[test]
+fn an_unruled_roundabout_gives_the_ring_priority_over_the_entry() {
+    for left in [false, true] {
+        let net = unruled_ring(left);
+        assert!((0..16).all(|k| net.is_ring(k)), "ring not found (left {left})");
+        assert!(!net.is_ring(16));
+        // the entry comes from the right of the circulating car: not "rechts vor links" here
+        assert!(net.must_yield(16, 15), "entry must give way (left {left})");
+        assert!(!net.must_yield(15, 16), "ring must not give way (left {left})");
+    }
+}
+
+#[test]
+fn a_loop_driven_the_wrong_way_round_is_no_roundabout() {
+    // the same circle on a map driving on the other side
+    let mut net = unruled_ring(false);
+    net.left_hand = true;
+    net.compute_rings();
+    assert!(!(0..16).any(|k| net.is_ring(k)));
+}
+
+#[test]
+fn a_car_on_the_ring_keeps_going_past_an_entry_claim_the_entrant_can_still_give_up() {
+    // the ring and its entry are paths of one roundabout object, no priorities authored
+    let at = |k: usize| {
+        let a = (k % 16) as f64 * std::f64::consts::FRAC_PI_8;
+        DVec3::new(15.0 * a.cos(), 15.0 * a.sin(), 0.0)
+    };
+    let mut lanes: Vec<Lane> = (0..16).map(|k| object_lane(at(k), at(k + 1), k as u16)).collect();
+    lanes.push(object_lane(DVec3::new(25.0, -20.0, 0.0), at(0), 16));
+    let mut net = Network { lanes, ..Default::default() };
+    net.link(1.0);
+    assert!(net.is_ring(15) && !net.is_ring(16));
+    assert!(net.crossings[15].iter().any(|c| c.other == 16 && c.merge));
+    let mut w = Harness::new(net);
+    // the entrant saw nobody on the ring and claimed its entry
+    let entry_len = w.net.lanes[16].length();
+    let entrant = add(&mut w, 20, 16, entry_len - 16.0, 3.0);
+    let mut c = JunctionCoordinator::new();
+    assert!(w.plan(&mut c, entrant, None).yield_at.is_none());
+    // a car comes round the ring towards the merge
+    let ring = add(&mut w, 10, 13, 1.0, 5.0);
+    let to_14 = w.net.lanes[13].length() - 1.0;
+    w.approach(ring, 14, to_14);
+    w.approach(ring, 15, to_14 + w.net.lanes[14].length());
+    let r = w.plan(&mut c, ring, None);
+    assert!(r.yield_at.is_none(), "the ring gave way to an entering car: {r:?}");
+    assert!(w.plan(&mut c, entrant, None).yield_at.is_some(), "entrant ignored the ring");
+}

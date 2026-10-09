@@ -323,6 +323,34 @@ impl TrafficLightController {
         }
     }
 
+    /// What light `i` tells a vehicle now. A light that shows green in its cycle and is dark
+    /// while the program runs is not switched off but not this movement's turn: a turn
+    /// arrow (`KOR` of BRT Berlin's crossings is dark for 34 s of its cycle while the cross
+    /// traffic has green) holds its traffic like red. A light that never shows green (a
+    /// level crossing's, dark until a train comes) and a program that is switched off or
+    /// only flashes yellow stay dark, and the right of way applies.
+    pub fn vehicle_aspect(&self, i: usize) -> Aspect {
+        match Self::aspect(self.state(i)) {
+            Aspect::Dark if self.has_green(i) && self.running() => Aspect::Red,
+            a => a,
+        }
+    }
+
+    /// Does light `i` show green anywhere in its cycle?
+    fn has_green(&self, i: usize) -> bool {
+        self.lights.get(i).is_some_and(|p| {
+            p.iter().any(|&(s, d)| d > 0.0 && matches!(Self::aspect(s), Aspect::Green | Aspect::GreenYellow))
+        })
+    }
+
+    /// Does the program run its signals now: some light shows red or green (not every light
+    /// dark or flashing yellow, as a program switched off for the night)?
+    pub fn running(&self) -> bool {
+        (0..self.lights.len()).any(|k| {
+            !matches!(Self::aspect(self.state(k)), Aspect::Dark | Aspect::Yellow)
+        })
+    }
+
     /// May a vehicle drive over the stop line now (not counting yellow, which is the
     /// driver's decision)?
     pub fn allows_go(state: i32) -> bool {

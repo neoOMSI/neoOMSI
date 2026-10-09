@@ -289,7 +289,7 @@ impl Traffic {
             .enumerate()
             .flat_map(|(ci, ctl)| {
                 (0..ctl.lights.len())
-                    .map(move |li| ((ci, li), TrafficLightController::aspect(ctl.state(li))))
+                    .map(move |li| ((ci, li), ctl.vehicle_aspect(li)))
             })
             .collect();
         self.junctions.begin_tick((self.time * 1000.0).max(0.0) as u64);
