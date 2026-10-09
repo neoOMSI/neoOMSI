@@ -755,6 +755,7 @@ pub(crate) fn run_offscreen(
             };
             if duty_done {
                 duty = None;
+                schedule_paper::clear_vehicle(&mut player.vehicle);
                 player.vehicle.host.schedule_active = 0.0;
                 player.vehicle.set_var("schedule_active", 0.0);
             }

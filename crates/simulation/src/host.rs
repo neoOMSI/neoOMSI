@@ -227,6 +227,16 @@ impl VehicleHost {
         self.html_departure_wants.push(key);
     }
 
+    /// No duty: the `GetTT*` callbacks answer ""/0/-1 again, as in Omsi.exe.
+    pub fn clear_timetable(&mut self) {
+        self.tt_line.clear();
+        self.tt_stops.clear();
+        self.tt_stop_ids.clear();
+        self.tt_busstop_index = -1;
+        self.tt_terminus_index = -1;
+        self.tt_delay = 0.0;
+    }
+
     pub fn new(clock: SimClock) -> Self {
         // the weather is there before {init} runs: made at 0 °C (the value before the first
         // weather update) every engine was cold, and the PAZ's carburettor engine, which
@@ -1159,6 +1169,70 @@ mod tests {
         host.tt_stops.clear();
         assert!(vm.run_trigger(&p, "check", &mut state, &mut host));
         assert_eq!(host.script_textures[0].rgba, vec![255; 4]);
+    }
+
+    #[test]
+    fn tt_callbacks_answer_nothing_once_the_timetable_is_cleared() {
+        let dir =
+            std::env::temp_dir().join(format!("omsi_host_tt_clear_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("tt.osc");
+        std::fs::write(
+            &script,
+            concat!(
+                "{trigger:read}\n",
+                "(M.V.GetTTLineString) (S.$.line)\n",
+                "0 (M.V.GetTTBusstopName) (S.$.stop)\n",
+                "(M.V.GetTTBusstopCount) (S.L.count)\n",
+                "(M.V.GetTTDelay) (S.L.delay)\n",
+                "(M.V.GetTTBusstopIndex) (S.L.index)\n",
+                "(M.V.GetTTTerminusIndex) (S.L.terminus)\n",
+                "0 (M.V.GetTTBusstopDep) (S.L.dep)\n",
+                "{end}\n",
+            ),
+        )
+        .unwrap();
+        let vars = dir.join("vars.txt");
+        std::fs::write(&vars, "count\ndelay\nindex\nterminus\ndep\n").unwrap();
+        let strings = dir.join("strings.txt");
+        std::fs::write(&strings, "line\nstop\n").unwrap();
+        let p = compile(&CompileInput {
+            varlists: vec![vars],
+            stringvarlists: vec![strings],
+            scripts: vec![script],
+            ..Default::default()
+        });
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut host = VehicleHost::new(SimClock::default());
+        host.tt_line = "100".into();
+        host.tt_stops = vec![("A".into(), 10.0, 20.0), ("B".into(), 30.0, 40.0)];
+        host.tt_stop_ids = vec![1, 2];
+        host.tt_busstop_index = 1;
+        host.tt_terminus_index = 2;
+        host.tt_delay = 42.0;
+        let mut st = State::new(&p);
+        let mut vm = Vm::new();
+        let read = |vm: &mut Vm, st: &mut State, host: &mut VehicleHost| {
+            assert!(vm.run_trigger(&p, "read", st, host));
+            let s = |n| st.str_vars[p.str_var(n).unwrap() as usize].clone();
+            let v = |n| st.get(p.var(n).unwrap());
+            (
+                s("line"),
+                s("stop"),
+                [v("count"), v("delay"), v("index"), v("terminus"), v("dep")],
+            )
+        };
+        assert_eq!(
+            read(&mut vm, &mut st, &mut host),
+            ("100".into(), "A".into(), [2.0, 42.0, 1.0, 2.0, 20.0])
+        );
+        host.clear_timetable();
+        assert!(host.tt_stop_ids.is_empty());
+        assert_eq!(
+            read(&mut vm, &mut st, &mut host),
+            (String::new(), String::new(), [0.0, 0.0, -1.0, -1.0, 0.0])
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// The engine part of the stock SD200/SD202/NL202 collision block: a rear hit low down

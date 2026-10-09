@@ -71,6 +71,13 @@ pub(crate) fn update_vehicle(
     Ok(())
 }
 
+/// No duty: an empty `file_schedule` gives the slot back the model's own blank paper, and
+/// the `GetTT*` callbacks answer nothing again.
+pub(crate) fn clear_vehicle(vehicle: &mut VehicleInstance) {
+    set_filename(vehicle, "");
+    vehicle.host.clear_timetable();
+}
+
 fn cache_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -421,6 +428,34 @@ mod tests {
             pixels.clone(),
             pixels,
         )
+    }
+
+    #[test]
+    fn clearing_the_duty_takes_the_paper_out_of_the_cab() {
+        let dir =
+            std::env::temp_dir().join(format!("omsi-paper-clear-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("test.bus"),
+            "[model]\nmodel.cfg\n[script]\n1\nmain.osc\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        std::fs::write(dir.join("main.osc"), "{init}\n{end}\n").unwrap();
+        let ty = std::sync::Arc::new(
+            ::simulation::VehicleType::load(&dir, &dir.join("test.bus")).unwrap(),
+        );
+        let mut v = VehicleInstance::new(ty, ::simulation::VehicleHost::new(Default::default()));
+        set_filename(&mut v, "schedule-v7-0123456789abcdef.png");
+        v.host.tt_line = "100".into();
+        v.host.tt_stops = vec![("A".into(), 10.0, 20.0)];
+
+        clear_vehicle(&mut v);
+
+        assert_eq!(v.str_var("file_schedule"), "");
+        assert!(v.host.tt_line.is_empty());
+        assert!(v.host.tt_stops.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

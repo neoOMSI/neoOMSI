@@ -1,10 +1,10 @@
 use crate::scene::{self, World};
 use crate::{Args, Player};
-use glam::DVec3;
+use ::legacy_script::VarId;
 use ::network::{Footprint, LanEvent, LanSession, PartPose, Pose, Role};
 use ::render::{Renderer, Scene};
-use ::legacy_script::VarId;
 use ::simulation::traffic::{Lane, LaneKind, Network};
+use glam::{DVec3, Mat4, Vec3};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -107,7 +107,10 @@ fn fnv1a(data: &[u8]) -> u32 {
 impl SyncTable {
     /// `parts`: rear sections, whose lamps, displays, moving parts and sounds run on the
     /// leading vehicle's variables.
-    pub fn new(ty: &::simulation::VehicleType, parts: &[Arc<::simulation::VehicleType>]) -> SyncTable {
+    pub fn new(
+        ty: &::simulation::VehicleType,
+        parts: &[Arc<::simulation::VehicleType>],
+    ) -> SyncTable {
         let program = &ty.program;
         let types: Vec<&::simulation::VehicleType> = std::iter::once(ty)
             .chain(parts.iter().map(|p| p.as_ref()))
@@ -930,9 +933,10 @@ pub fn start(args: &Args) -> Option<LanSession> {
                 .map(|t| ::network::ws::ws_url(t).is_none())
                 .unwrap_or(false)
         {
-            if let Some(url) = ::network::SessionCode::decode(args.lan_join.as_deref().unwrap_or(""))
-                .ok()
-                .and_then(|c| ::network::bridge::lookup_tunnel(c.session))
+            if let Some(url) =
+                ::network::SessionCode::decode(args.lan_join.as_deref().unwrap_or(""))
+                    .ok()
+                    .and_then(|c| ::network::bridge::lookup_tunnel(c.session))
             {
                 log::info!(
                     "LAN: no answer at the code's addresses; through the host's tunnel {url}"
@@ -1015,7 +1019,8 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
                 && std::net::TcpStream::connect_timeout(&host, Duration::from_secs(3)).is_ok();
             if !direct {
                 let base = joined_url.or_else(|| {
-                    ::network::bridge::lookup_tunnel(session).and_then(|u| ::network::ws::ws_url(&u))
+                    ::network::bridge::lookup_tunnel(session)
+                        .and_then(|u| ::network::ws::ws_url(&u))
                 });
                 match base.map(|b| format!("{}/tcp", b.strip_suffix("/ws").unwrap_or(&b))) {
                     Some(tcp_url) => match ::network::ws::tcp_forward(&tcp_url) {
@@ -1488,7 +1493,22 @@ pub fn name_tags(
     width: f32,
     height: f32,
 ) -> Vec<((f32, f32), String, String, f32)> {
-    let vp = cam.view_proj(width / height.max(1.0), cam.position);
+    name_tags_with_projection(game, cam, width, height, None)
+}
+
+pub(crate) fn name_tags_with_projection(
+    game: &LanGame,
+    cam: &::render::Camera,
+    width: f32,
+    height: f32,
+    projection: Option<Mat4>,
+) -> Vec<((f32, f32), String, String, f32)> {
+    let vp = projection.map_or_else(
+        || cam.view_proj(width / height.max(1.0), cam.position),
+        |projection| {
+            projection * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, cam.forward(), cam.up())
+        },
+    );
     let mut tags = Vec::new();
     for r in game.remotes.values() {
         let v = &r.vehicle;
