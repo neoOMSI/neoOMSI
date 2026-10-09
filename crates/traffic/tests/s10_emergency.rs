@@ -207,3 +207,27 @@ fn an_unsignalled_reserved_junction_is_crossed_at_normal_speed() {
     w.plan(&mut c, i, None);
     assert!(c.emergency_speed_cap(VehicleId(1)).is_none());
 }
+
+#[test]
+fn a_car_in_front_of_the_emergency_on_its_way_leads_it_through_the_junction() {
+    let mut w = Harness::new(four_way());
+    let mut amb = emergency(1, 0);
+    amb.s = 70.0;
+    let a = w.add(amb);
+    w.place(a, 0, 70.0);
+    let ahead = w.add(JunctionActor::new(VehicleId(2), 0, 90.0));
+    w.place(ahead, 0, 90.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 1));
+    assert_ne!(
+        w.plan(&mut c, ahead, None).binding,
+        Some(Reason::EmergencyYield),
+        "the car in front waited for the ambulance behind it"
+    );
+    // crossing traffic still waits
+    let cross = w.add(JunctionActor::new(VehicleId(3), 4, 94.0));
+    w.place(cross, 4, 94.0);
+    prepare(&w, &mut c);
+    assert_eq!(w.plan(&mut c, cross, None).binding, Some(Reason::EmergencyYield));
+}

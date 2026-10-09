@@ -2425,9 +2425,11 @@ pub(crate) fn run_offscreen(
                 hits.len()
             );
             // `OMSI_LANES_NEAR=x,y,r`: the driving lanes passing there (where to put a test bus)
-            if let Ok(v) = ::legacy_config::env::var("OMSI_LANES_NEAR") {
+            // (several places: `x,y,r;x,y,r`)
+            for v in ::legacy_config::env::var("OMSI_LANES_NEAR").unwrap_or_default().split(';') {
                 let v: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
                 if v.len() == 3 {
+                    log::info!("lanes near ({}, {}):", v[0], v[1]);
                     let c = glam::DVec2::new(v[0], v[1]);
                     for (i, l) in t
                         .net()
@@ -2463,10 +2465,15 @@ pub(crate) fn run_offscreen(
                                 );
                             }
                             log::info!(
-                                "    left {:?} right {:?} next {:?}",
+                                "    left {:?} right {:?} next {:?} light {:?} source {} key {:?} ring {} priority {}",
                                 l.left,
                                 l.right,
-                                l.next
+                                l.next,
+                                l.traffic_light,
+                                l.source,
+                                l.key,
+                                t.net().is_ring(i),
+                                l.priority
                             );
                         }
                     }

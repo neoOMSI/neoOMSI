@@ -23,6 +23,14 @@ fn courtesy_moves_within_lane_bounds_and_mirrors_on_left_hand_maps() {
     for left_hand in [false, true] {
         let mut net = two_way();
         net.left_hand = left_hand;
+        if left_hand {
+            // the oncoming lane lies on the right where traffic keeps left
+            for p in &mut net.lanes[1].points {
+                p.x = -p.x;
+            }
+            net.lanes[1].refresh();
+            net.link(1.5);
+        }
         let mut actor = ManeuverActor::new(VehicleId(1), 0, 60.0);
         actor.half_width = 0.9;
         actor.speed = 10.0;
@@ -81,4 +89,37 @@ fn scenery_can_veto_courtesy_without_erasing_ordinary_stop_constraints() {
     let decision = ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &inputs);
     assert!(decision.lateral_target.is_none());
     assert!(decision.change.is_none());
+}
+
+#[test]
+fn a_car_in_a_roundabout_drives_on_instead_of_stopping_for_the_ambulance_behind() {
+    // a ring of chords with no oncoming lane: stopping aside there only blocks the way
+    let sign = 1.0;
+    let at = |k: usize| {
+        let a = (k % 16) as f64 * std::f64::consts::FRAC_PI_8 * sign;
+        glam::DVec3::new(15.0 * a.cos(), 15.0 * a.sin(), 0.0)
+    };
+    let lanes: Vec<Lane> = (0..16)
+        .map(|k| LaneBuilder::polyline(vec![at(k), at(k + 1)], LaneKind::Street, 3.0))
+        .collect();
+    let mut net = Network { lanes, ..Default::default() };
+    net.link(1.0);
+    assert!(net.is_ring(3));
+    let mut actor = ManeuverActor::new(VehicleId(1), 3, 2.0);
+    actor.speed = 4.0;
+    let occupancy = Occupancy::build(net.version(), 1, vec![]);
+    let scene = ManeuverScene {
+        static_clearance: None,
+        net: &net,
+        occupancy: &occupancy,
+        actors: &[actor],
+        people: &[],
+        time: 1.0,
+        dt: 0.02,
+        tick: 1,
+    };
+    let mut inputs = ManeuverInputs::new(0);
+    inputs.emergency = Some(EmergencyApproach { vehicle: VehicleId(9), gap: 15.0 });
+    let d = ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &inputs);
+    assert_ne!(d.binding, Some(Reason::EmergencyYield), "stopped in the ring: {d:?}");
 }

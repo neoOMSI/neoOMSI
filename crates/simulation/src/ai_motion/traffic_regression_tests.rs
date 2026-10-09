@@ -132,9 +132,22 @@ fn a_real_car_passes_a_stopped_bus_on_the_oncoming_lane_and_returns_without_cont
     assert!(returned, "car did not return from the oncoming lane: {:?}", body.position);
 }
 
+/// `road` with its oncoming lane beside it: an emergency vehicle can get past a car that
+/// has pulled over (on a one-way single lane it drives on instead).
+fn two_way_road() -> Network {
+    let mut net = road();
+    net.lanes.push(LaneBuilder::polyline(
+        vec![DVec3::new(-3.5, 400.0, 0.0), DVec3::new(-3.5, 0.0, 0.0)],
+        LaneKind::Street,
+        3.5,
+    ));
+    net.link(1.5);
+    net
+}
+
 #[test]
 fn emergency_courtesy_moves_a_standing_real_body_without_teleporting() {
-    let net = road();
+    let net = two_way_road();
     let mut state = AiState::new(0, 60.0, 1);
     state.front = 2.1;
     state.rear = 2.2;

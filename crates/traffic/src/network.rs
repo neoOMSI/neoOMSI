@@ -437,6 +437,8 @@ pub struct Network {
     /// Per lane: how far a vehicle can drive from its start before the network ends (m, at
     /// most `REACH_MAX`; lanes closed to cars do not count as a way on).
     pub reach: Vec<f32>,
+    /// Per lane: it runs round a roundabout (see `compute_rings`).
+    pub ring: Vec<bool>,
     /// The map drives on the left (`global.cfg` `[lht]`): priority to the left, the
     /// oncoming lane on the right, turning right across the oncoming traffic.
     pub left_hand: bool,
@@ -465,6 +467,10 @@ impl Network {
 pub const REACH_MAX: f32 = 600.0;
 /// A way on that ends within this distance is a dead end to a driver who has a choice (m).
 pub const DEAD_END: f32 = 500.0;
+/// The longest roundabout (m round) and the longest lane of one that `compute_rings` finds:
+/// a 60 m wide circle is 190 m round; a block of streets is longer.
+pub const RING_MAX: f32 = 200.0;
+pub const RING_LANE_MAX: f32 = 60.0;
 
 /// Where two lanes of a junction meet.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -932,6 +938,10 @@ impl Network {
         if (la.priority - lb.priority).abs() > 0.5 {
             return la.priority < lb.priority;
         }
+        // a roundabout: who enters gives way to who is on the ring (signs 205 + 215)
+        if self.is_ring(a) != self.is_ring(b) {
+            return self.is_ring(b);
+        }
         let rel = wrap_deg(lb.start_heading() - la.start_heading());
         // (the turn across the oncoming traffic: left, or right when driving on the left)
         let across = if self.left_hand { 2 } else { 1 };
@@ -1190,6 +1200,71 @@ impl Network {
         }
         self.compute_conflicts();
         self.compute_reach();
+        self.compute_rings();
+    }
+
+    /// Mark the lanes of roundabouts: short street lanes that lead back to themselves within
+    /// `RING_MAX` metres, turning once round the way traffic circulates (anticlockwise, or
+    /// clockwise on a left-hand-traffic map). Where the map sets no priorities, traffic on
+    /// the ring goes before traffic entering it (`must_yield`), not "from the right".
+    pub fn compute_rings(&mut self) {
+        let n = self.lanes.len();
+        let mut ring = vec![false; n];
+        let short = |l: &Lane| l.kind == LaneKind::Street && l.length() <= RING_LANE_MAX;
+        // circulating anticlockwise, the compass heading falls by a full turn
+        let turn = if self.left_hand { 360.0 } else { -360.0 };
+        for start in 0..n {
+            if ring[start] || !short(&self.lanes[start]) {
+                continue;
+            }
+            // depth-first along `next`: (lane, path so far, length so far, heading change)
+            let first = &self.lanes[start];
+            let mut stack = vec![(start, vec![start], first.length(),
+                wrap_deg(first.end_heading() - first.start_heading()))];
+            let mut found: Option<Vec<usize>> = None;
+            // (bounded: a big junction object has hundreds of short paths)
+            let mut budget = 4000;
+            while let Some((lane, path, len, change)) = stack.pop() {
+                budget -= 1;
+                if budget == 0 {
+                    break;
+                }
+                for &next in &self.lanes[lane].next {
+                    let l = &self.lanes[next];
+                    let joint = wrap_deg(l.start_heading() - self.lanes[lane].end_heading());
+                    if next == start {
+                        if (change + joint - turn).abs() < 60.0 {
+                            found = Some(path.clone());
+                        }
+                        continue;
+                    }
+                    let total = len + l.length();
+                    if !short(l) || total > RING_MAX || path.len() >= 16 || path.contains(&next) {
+                        continue;
+                    }
+                    let mut p = path.clone();
+                    p.push(next);
+                    stack.push((next, p, total,
+                        change + joint + wrap_deg(l.end_heading() - l.start_heading())));
+                }
+                if found.is_some() {
+                    break;
+                }
+            }
+            for i in found.unwrap_or_default() {
+                ring[i] = true;
+            }
+        }
+        let count = ring.iter().filter(|&&r| r).count();
+        if count > 0 {
+            log::info!("path network: {count} lanes run round roundabouts");
+        }
+        self.ring = ring;
+    }
+
+    /// Does `lane` run round a roundabout?
+    pub fn is_ring(&self, lane: usize) -> bool {
+        self.ring.get(lane).copied().unwrap_or(false)
     }
 
     /// `reach` of every lane: its length plus the best reach of the lanes after it. The lanes

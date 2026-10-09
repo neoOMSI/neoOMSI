@@ -44,6 +44,13 @@ const DECIDE_RELEASE: f32 = 20.0;
 const INSIDE_MEETING: f32 = 25.0;
 /// A vehicle whose front is within this of the line counts as being at it.
 const AT_LINE: f32 = 3.0;
+/// A vehicle that reached the line on green or yellow still counts as committed to the
+/// junction at red only while it moves at least this fast (m/s) or its front is over the line.
+const AMBER_COMMIT_SPEED: f32 = 3.0;
+/// Traffic ahead slower than this (m/s) is a queue a vehicle does not follow into a junction.
+const QUEUE_SPEED: f32 = 1.5;
+/// Half the width of a footpath crossing a lane (m), for where a vehicle is past it.
+const WALK_HALF_WIDTH: f32 = 2.0;
 
 /// Where a vehicle meets a crossing lane on its way: its lane in the sequence and the distance
 /// from the vehicle origin to that lane's start.
@@ -97,8 +104,38 @@ pub fn junction_ahead(net: &Network, way: &[(usize, f32)]) -> Option<Movement> {
     j
 }
 
+/// How far (m) a vehicle needs to stop braking firmly, as a driver who has to give way
+/// at a roundabout entry does when the ring is not clear after all.
+fn firm_stop(a: &JunctionActor) -> f32 {
+    a.speed * a.speed / (2.0 * MAX_BRAKE * 0.6) + a.speed * 0.3 + 1.0
+}
+
+/// The crossing object a lane belongs to (`None` for a spline lane).
+fn light_object(net: &Network, lane: usize) -> Option<((i32, i32), i64)> {
+    let l = &net.lanes[lane];
+    l.key.filter(|_| l.source == 2).map(|k| (k.tile, k.id))
+}
+
+/// How far along the way (from the vehicle origin) the last place lies where `jn`'s lanes
+/// meet other traffic or a footpath: beyond it the vehicle is out of everybody's way, however
+/// long the junction object's paths run on.
+fn movement_clear_at(net: &Network, jn: &Movement) -> f32 {
+    jn.lanes
+        .iter()
+        .flat_map(|&(l, dl)| {
+            net.crossings[l]
+                .iter()
+                .map(move |c| dl + c.at + c.after)
+                .chain(net.walks[l].iter().map(move |w| dl + w.1 + WALK_HALF_WIDTH))
+        })
+        .fold(jn.lanes[0].1, f32::max)
+}
+
 /// The light that holds a vehicle at the start of `way[k]`: that lane's light, unless the
-/// vehicle has already gone through a light of the same crossing object on the way there.
+/// vehicle has already gone through that same light on its way in the crossing object (the
+/// paths after a stop line often carry its light on). Another light of the object - a
+/// second stop line for the turn, the signal after a pedestrian crossing's - holds it as
+/// well: skipping every light after the first, the cars of BRT Berlin ran its junctions' red.
 pub fn light_at_entry(net: &Network, way: &[(usize, f32)], k: usize) -> Option<(usize, usize)> {
     let l = way[k].0;
     let light = net.lanes[l].traffic_light?;
@@ -113,7 +150,7 @@ pub fn light_at_entry(net: &Network, way: &[(usize, f32)], k: usize) -> Option<(
         if object(p) != Some(here) {
             break;
         }
-        if net.lanes[p].traffic_light.is_some() {
+        if net.lanes[p].traffic_light == Some(light) {
             return None;
         }
     }
@@ -366,6 +403,10 @@ pub struct JunctionCoordinator {
     emergency_reservations: Vec<emergency::EmergencyReservation>,
     claims: Arbiter,
     amber: HashMap<VehicleId, (usize, usize)>,
+    /// The crossing object a vehicle is inside and the lights of it it has driven through:
+    /// a path further on that carries one of them again does not hold it, also once the
+    /// lane with that light is behind it.
+    through_light: HashMap<VehicleId, (((i32, i32), i64), Vec<(usize, usize)>)>,
     commitments: HashMap<VehicleId, Commitment>,
     wait_for: HashMap<VehicleId, VehicleId>,
     /// Tick a vehicle last entered `Waiting`, for stable fairness ordering.
@@ -446,6 +487,7 @@ impl JunctionCoordinator {
             }
         }
         self.amber.remove(&id);
+        self.through_light.remove(&id);
         self.wait_for.remove(&id);
         self.waiting_since.remove(&id);
     }
@@ -474,6 +516,7 @@ impl JunctionCoordinator {
         self.commitments.clear();
         self.wait_for.clear();
         self.waiting_since.clear();
+        self.through_light.clear();
     }
 
     /// The current wait-for edges (ego -> blocker).
@@ -496,6 +539,25 @@ impl JunctionCoordinator {
         let v = actor.speed;
         let mut stop = None;
         let mut amber = self.amber.get(&actor.id).copied();
+        match light_object(scene.net, way[0].0) {
+            Some(here) => {
+                let entry = self.through_light.entry(actor.id).or_insert((here, Vec::new()));
+                if entry.0 != here {
+                    *entry = (here, Vec::new());
+                }
+                if let Some(l) = scene.net.lanes[way[0].0].traffic_light {
+                    if !entry.1.contains(&l) {
+                        entry.1.push(l);
+                    }
+                }
+            }
+            None => {
+                self.through_light.remove(&actor.id);
+            }
+        }
+        let passed: &[(usize, usize)] =
+            self.through_light.get(&actor.id).map(|t| t.1.as_slice()).unwrap_or(&[]);
+        let passed = passed.to_vec();
         for (k, &(_, d)) in way.iter().enumerate().skip(1) {
             if d > 150.0 {
                 break;
@@ -503,6 +565,9 @@ impl JunctionCoordinator {
             let Some((c, li)) = light_at_entry(scene.net, way, k) else {
                 continue;
             };
+            if passed.contains(&(c, li)) {
+                continue;
+            }
             let Some(&aspect) = scene.aspects.get(&(c, li)) else {
                 continue;
             };
@@ -520,6 +585,13 @@ impl JunctionCoordinator {
             }
             let comfortable = v * v / (2.0 * actor.decel * 1.4) + 1.0;
             let possible = v * v / (2.0 * MAX_BRAKE * 0.8);
+            // Reaching the line on green or yellow commits a vehicle only while it still
+            // moves on, or once its front is over the line and it is rolling: one that crept
+            // up to the line in a queue can stop there when the light changes (it used to roll
+            // on into the junction at walking pace long after red), and one standing with its
+            // nose just over the line does not set off at red.
+            let committed = amber == Some((c, li))
+                && (v >= AMBER_COMMIT_SPEED || (gap < 0.0 && v > 1.0));
             let go = match aspect {
                 Aspect::Green | Aspect::Dark => {
                     if gap < AT_LINE {
@@ -528,7 +600,7 @@ impl JunctionCoordinator {
                     true
                 }
                 Aspect::Yellow | Aspect::GreenYellow => {
-                    if amber == Some((c, li)) || gap < comfortable {
+                    if committed || gap < comfortable {
                         amber = Some((c, li));
                         true
                     } else {
@@ -536,7 +608,7 @@ impl JunctionCoordinator {
                     }
                 }
                 Aspect::Red | Aspect::RedYellow => {
-                    (amber == Some((c, li)) && gap < comfortable) || gap < possible - 0.5
+                    (committed && gap < comfortable) || gap < possible - 0.5
                 }
             };
             if !go {
@@ -585,8 +657,11 @@ impl JunctionCoordinator {
             return d;
         };
         // a junction beyond a red light's line is not decided yet
-        if !jn.inside && self.emergency_reservations.iter().any(|r|
-            r.owner != actor.id && jn.lanes.iter().any(|(l, _)| r.lanes.contains(l)))
+        // (on the ring of a roundabout a car drives on and out of the way; in front of the
+        // emergency vehicle on its way, it leads it through)
+        if !jn.inside && !scene.net.is_ring(actor.lane) && self.emergency_reservations.iter().any(|r|
+            r.owner != actor.id && !r.ahead.contains(&actor.id)
+                && jn.lanes.iter().any(|(l, _)| r.lanes.contains(l)))
             && self.claims_of(actor.id).is_empty()
         {
             let mut d = JunctionDecision::none();
@@ -779,6 +854,16 @@ impl JunctionCoordinator {
                     // A lower-priority entrant still upstream of the conflict must stop,
                     // even if it holds a speculative claim. A body already overlapping,
                     // a blockpath reservation, or an entrant unable to stop stays protected.
+                    // On a roundabout the ring has the right of way over an entry path of the
+                    // same object, whatever claim the entering car made before it saw the
+                    // ring traffic, while the entering car can still stop braking firmly (a
+                    // car coming at 48 km/h 40 m out counted as unable to stop at a gentle
+                    // rate, and the ring gave way to it).
+                    let ring_first = scene.net.is_ring(l) && !scene.net.is_ring(m)
+                        && scene.net.must_yield(m, l);
+                    if ring_first && mode.is_none() && !o.emergency && theirs > firm_stop(o) {
+                        continue;
+                    }
                     if (priority_merge || they_give_way) && mode.is_none() && !o.emergency
                         && theirs > stopping_distance(o)
                     {
@@ -875,6 +960,25 @@ impl JunctionCoordinator {
                             c.storage = Some(e);
                         }
                     }
+                }
+            }
+        }
+        // Don't block the box (StVO §11 (1)): with the traffic ahead standing or crawling past
+        // the junction, a vehicle waits at the line unless there is room for all of it beyond
+        // the movement's last conflict - a queue reaching back into the junction otherwise
+        // filled it and held the crossing traffic through its own green.
+        if !jn.inside && !exit_full {
+            if let Some(l) = lead {
+                let lead_rear = actor.front + l.gap;
+                let clear_at = movement_clear_at(scene.net, jn);
+                if lead_rear > entry
+                    && l.speed < QUEUE_SPEED
+                    && l.acc < 0.5
+                    && lead_rear - clear_at < actor.length + actor.min_gap
+                {
+                    ruled = true;
+                    exit_full = true;
+                    reasons.push(Reason::OccupiedExit);
                 }
             }
         }

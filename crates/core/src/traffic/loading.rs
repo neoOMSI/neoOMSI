@@ -909,6 +909,14 @@ impl Traffic {
         if let Some(v) = speed {
             state.speed = v.min(state.speed.max(v * 0.5));
         }
+        // a car put on the road just before a light that is not green comes at a speed it can
+        // still stop from (one put out at 35 km/h six metres before a red light ran it)
+        if kind == LaneKind::Street {
+            if let Some(d) = self.light_stop_ahead(lane, s, SPAWN_LIGHT_LOOK) {
+                let room = (d - state.front - 1.0).max(0.0);
+                state.speed = state.speed.min((2.0 * state.decel * room).sqrt());
+            }
+        }
         if self.debug_population && kind == LaneKind::Street {
             let v = self.viewer;
             let pos = vehicle.position;
@@ -1030,4 +1038,38 @@ impl Traffic {
             .cloned()
     }
 
+}
+
+/// How far ahead (m) a car put on the road looks for a light it has to be able to stop at.
+const SPAWN_LIGHT_LOOK: f32 = 120.0;
+
+impl Traffic {
+    /// The distance from `s` on `lane` to the nearest line of a light that is not green, on
+    /// any way on within `look` metres (the car's own way is not planned yet).
+    fn light_stop_ahead(&self, lane: usize, s: f32, look: f32) -> Option<f32> {
+        let mut best: Option<f32> = None;
+        let mut open = vec![(lane, -s)];
+        let mut seen = vec![lane];
+        while let Some((l, d)) = open.pop() {
+            let end = d + self.net.lanes[l].length();
+            if end > look {
+                continue;
+            }
+            for &n in &self.net.lanes[l].next {
+                if let Some((ci, li)) = self.net.lanes[n].traffic_light {
+                    let go = self.lights.get(ci).is_some_and(|c| {
+                        matches!(c.vehicle_aspect(li), Aspect::Green | Aspect::Dark)
+                    });
+                    if !go && best.is_none_or(|b| end < b) {
+                        best = Some(end);
+                    }
+                }
+                if !seen.contains(&n) && seen.len() < 64 {
+                    seen.push(n);
+                    open.push((n, end));
+                }
+            }
+        }
+        best
+    }
 }

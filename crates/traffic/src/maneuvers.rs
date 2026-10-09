@@ -599,7 +599,11 @@ impl ManeuverCoordinator {
         }
 
         // Required route-required change (and the turn lane the way asks for).
-        if input.emergency.is_some() && !actor.at_stop {
+        // Pulled over and stopped, a car makes room only where the emergency vehicle can get
+        // round it. Elsewhere - a junction, a roundabout, an approach between islands - it
+        // drives on and clears the way (standing there, every car in front of the ambulance
+        // in a roundabout held it up for good).
+        if input.emergency.is_some() && !actor.at_stop && emergency_can_pass_here(scene.net, actor) {
             return self.yield_to_emergency(scene, actor, state, input);
         }
         if let Some(d) = self.plan_required_change(scene, actor, state) {
@@ -1034,6 +1038,8 @@ impl ManeuverCoordinator {
         // The oncoming lane has to lie right beside this one for as long as the car is out
         // there: an island or hatched area that starts after the pull-out is no road either.
         if !passing_corridor(net, &way, clear_d + actor.front) {
+            // (the road does not change: a car stuck in a queue need not look again at once)
+            state.pass_retry = scene.time + 1.0;
             return None;
         }
         // Nobody coming may reach where the car will be for the whole time it is out there.
@@ -1710,6 +1716,22 @@ fn lane_window(net: &Network, lane: usize, s: f32, back: f32, ahead: f32) -> Vec
         }
     }
     out
+}
+
+/// Can an emergency vehicle get past `actor` where it is: beside it on a neighbouring lane
+/// of the same direction, or out on an oncoming lane right beside its own, away from any
+/// junction or roundabout?
+fn emergency_can_pass_here(net: &Network, actor: &ManeuverActor) -> bool {
+    let lane = &net.lanes[actor.lane];
+    if lane.left.is_some() || lane.right.is_some() {
+        return true;
+    }
+    if net.is_ring(actor.lane) || !net.crossings[actor.lane].is_empty() {
+        return false;
+    }
+    net.opposite(actor.lane, actor.s.min(lane.length())).is_some_and(|(opp, _, side)| {
+        (2.3..=5.5).contains(&side) && !split_carriageway(side, lane.width, net.lanes[opp].width)
+    })
 }
 
 /// Is there a strip (an island, a median) between two opposing lanes whose centres lie

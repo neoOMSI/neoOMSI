@@ -823,3 +823,38 @@ use crate::following::smooth01;
         assert_eq!(ramp_progress_for(2.0, 2.5), 1.0);
         assert!(ramp_progress_for(3.3, 1.5) < t);
     }
+
+#[test]
+fn a_dark_turn_arrow_in_a_running_program_holds_its_traffic() {
+    // BRT Berlin's `KOR`: green, yellow, red, then dark for 34 s while the main light runs
+    let c = TrafficLightController::new(
+        vec![
+            vec![(0, 10.0), (6, 30.0), (9, 3.0), (0, 17.0)],
+            vec![(6, 1.0), (9, 3.0), (0, 3.0), (12, 34.0), (0, 19.0)],
+        ],
+        60.0,
+    );
+    let mut c = c;
+    c.time = 20.0; // arrow dark, main light green
+    assert_eq!(TrafficLightController::aspect(c.state(1)), Aspect::Dark);
+    assert_eq!(c.vehicle_aspect(1), Aspect::Red);
+    assert_eq!(c.vehicle_aspect(0), Aspect::Green);
+}
+
+#[test]
+fn a_level_crossing_light_and_a_switched_off_program_stay_dark() {
+    // the road light of a level crossing never shows green: dark is "no train"
+    let mut rail = TrafficLightController::new(
+        vec![vec![(12, 50.0), (0, 10.0)], vec![(6, 50.0), (0, 10.0)]],
+        60.0,
+    );
+    rail.time = 5.0;
+    assert_eq!(rail.vehicle_aspect(0), Aspect::Dark);
+    // a program switched off for the night: everything dark or flashing yellow
+    let mut night = TrafficLightController::new(
+        vec![vec![(10, 60.0)], vec![(12, 30.0), (6, 30.0)]],
+        60.0,
+    );
+    night.time = 5.0;
+    assert_eq!(night.vehicle_aspect(1), Aspect::Dark);
+}
