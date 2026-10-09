@@ -1269,7 +1269,9 @@ impl Humans {
     /// Who wants a timetable bus to stop, as Omsi.exe asks before it lets one pull in
     /// (0x7da91f): the AI buses with somebody aboard on the way to a door to get off
     /// (task 5), and the stops where somebody is waiting for a bus or walking to one
-    /// (tasks 1 to 3).
+    /// (tasks 1 to 3). Somebody still walking to their waiting place (just placed there, or
+    /// back from a bus they did not get) is waiting at the stop too: a bus that passed them
+    /// by left people standing at the pole.
     pub fn stop_wishes(&self) -> (HashSet<u64>, HashSet<i64>) {
         let (mut alighting, mut waiting) = (HashSet::new(), HashSet::new());
         for p in &self.people {
@@ -1280,7 +1282,10 @@ impl Humans {
                         alighting.insert(id);
                     }
                 }
-                Task::WaitingForBus | Task::ToBus | Task::WalkingToBus => {
+                Task::WaitingForBus
+                | Task::ToBus
+                | Task::WalkingToBus
+                | Task::WalkingToBusstop => {
                     if let Some(s) = x.stop {
                         waiting.insert(s);
                     }

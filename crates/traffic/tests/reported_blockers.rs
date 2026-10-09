@@ -259,8 +259,9 @@ fn a_reserved_target_retains_the_bodys_actual_lateral_position() {
 }
 
 #[test]
-fn small_docking_overshoots_release_the_berth_and_allow_the_bus_to_continue() {
-    for (s, lateral) in [(121.0, 1.6), (120.0, 0.0)] {
+fn unreachable_docking_poses_release_the_berth_and_allow_the_bus_to_continue() {
+    // Past the boarding tolerance in the bay, and at the berth point but out of the bay.
+    for (s, lateral) in [(123.0, 1.6), (120.0, 0.0)] {
         let world = ServiceWorld::new();
         let stop = berth(7001, 120.0, 36000.0);
         let mut actor = ServiceActor::new(VehicleId(1), 0, s);
@@ -481,5 +482,51 @@ fn ordinary_traffic_keeps_to_the_driving_side_when_that_lane_is_free() {
             }
         }
         assert_eq!(chosen, Some(1 - lane));
+    }
+}
+
+#[test]
+fn a_bus_resting_close_to_its_berth_serves_the_stop_instead_of_missing_it() {
+    // Released from the queue a few metres short, it could not swing fully into the bay
+    // (Berlin 156: lateral 1.19 against a 1.6 bay). People still reach its doors.
+    for (s, lateral) in [(121.0, 1.6), (118.5, 1.6), (120.0, 1.0)] {
+        let world = ServiceWorld::new();
+        let stop = berth(7001, 120.0, 36000.0);
+        let mut actor = ServiceActor::new(VehicleId(1), 0, s);
+        actor.lateral = lateral;
+        let actors = [actor];
+        let occupancy = Occupancy::default();
+        let scene = ServiceScene {
+            net: &world.net,
+            occupancy: &occupancy,
+            actors: &actors,
+            day_time: 36000.0,
+            dt: 0.02,
+            tick: 0,
+        };
+        let input = ServiceInputs {
+            actor: 0,
+            berth: Some(stop),
+            distance: 120.0 - s,
+            policy: StopPolicy::default(),
+            demand: StopDemand::default(),
+            feedback: ScriptFeedback::Idle,
+            passing: false,
+            kerb_swerve: None,
+            junction_first: false,
+        };
+        let mut state = ServiceState::new();
+        state.phase = ServicePhase::Docking;
+        state.berth = Some(stop);
+        let mut coordinator = ServiceCoordinator::new();
+        for _ in 0..500 {
+            let decision = coordinator.plan(&scene, &mut state, &input);
+            assert!(!decision.consume_stop, "a serviceable pose was recorded as a missed stop");
+            if state.at_station() {
+                break;
+            }
+        }
+        assert!(state.at_station(), "no boarding at s={s}, lateral={lateral}");
+        assert_eq!(state.fault, None);
     }
 }

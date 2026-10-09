@@ -199,6 +199,14 @@ pub const DOCK_LAT_TOL: f32 = 0.25;
 pub const DOCK_SPEED: f32 = 0.1;
 /// Recover an unreachable docking pose after standing there this long (s).
 pub const DOCK_STALL_TIMEOUT: f32 = 8.0;
+/// A bus that came to rest this close to the berth point (m, either way) ...
+pub const DOCK_SERVE_LONG: f32 = 2.5;
+/// ... and this close to the bay laterally (m) serves the stop from where it stands: people
+/// still reach the doors, and a bus released from the queue a few metres short of the berth
+/// cannot swing fully into the bay. Skipping waiting passengers is the worse outcome.
+pub const DOCK_SERVE_LAT: f32 = 0.8;
+/// Seconds at rest in such a serviceable pose before the doors open.
+pub const DOCK_SETTLE: f32 = 1.5;
 /// Distance upstream of the berth a queueing bus waits at (m). A bus waiting here has not
 /// served the stop.
 pub const QUEUE_STANDOFF: f32 = 10.0;
@@ -208,7 +216,9 @@ pub const MIN_SERVICE: f32 = 5.0;
 pub const CLOSE_MIN: f32 = 1.5;
 /// ... at most this long waiting for a supported script to answer.
 pub const CLOSE_MAX: f32 = 12.0;
-/// An early bus waits for its departure, but not for more than this (s).
+/// An early bus waits for its departure at a timing point (a stop the timetable marks
+/// `always`), but not for more than this (s). At any other stop it leaves once the passenger
+/// exchange is over: doors held open with nobody boarding read as a stuck bus.
 pub const EARLY_WAIT: f64 = 40.0;
 /// A layover waits for its departure however long (s).
 pub const LAYOVER_WAIT: f64 = 1800.0;
@@ -735,15 +745,21 @@ impl ServiceCoordinator {
                 d.stop_at = Some(input.distance + actor.front + STOP_LINE_GAP);
                 let lat_err = (actor.lateral - berth.bay).abs();
                 let long_ok = input.distance.abs() <= DOCK_LONG_TOL;
+                let docked = long_ok && lat_err <= DOCK_LAT_TOL;
                 let unreachable = input.distance < -DOCK_LONG_TOL
                     || (long_ok && lat_err > DOCK_LAT_TOL);
-                state.dock_stall_t = if unreachable && actor.speed < DOCK_SPEED {
+                let serviceable =
+                    input.distance.abs() <= DOCK_SERVE_LONG && lat_err <= DOCK_SERVE_LAT;
+                state.dock_stall_t = if (unreachable || serviceable) && actor.speed < DOCK_SPEED {
                     state.dock_stall_t + scene.dt
                 } else {
                     0.0
                 };
-                if long_ok && lat_err <= DOCK_LAT_TOL && actor.speed < DOCK_SPEED {
-                    self.enter_boarding(state, &berth, scene.day_time, &actor, &mut d);
+                if docked && actor.speed < DOCK_SPEED
+                    || serviceable && state.dock_stall_t >= DOCK_SETTLE
+                {
+                    state.dock_stall_t = 0.0;
+                    self.enter_boarding(state, &berth, scene.day_time, &actor, &input.policy, &mut d);
                 } else if input.distance < -berth.boarding_region || state.dock_stall_t >= DOCK_STALL_TIMEOUT {
                     // The boarding region was overshot: record a missed stop, never open the
                     // doors somewhere up the queue to make it disappear.
@@ -915,11 +931,18 @@ impl ServiceCoordinator {
         berth: &BerthGeometry,
         day_time: f64,
         actor: &ServiceActor,
+        policy: &StopPolicy,
         d: &mut ServiceDecision,
     ) {
         let layover = state.layover;
         state.layover = false;
-        let limit = if layover { LAYOVER_WAIT } else { EARLY_WAIT };
+        let limit = if layover {
+            LAYOVER_WAIT
+        } else if policy.always.contains(&berth.stop.get()) {
+            EARLY_WAIT
+        } else {
+            0.0
+        };
         let wait = (berth.depart - day_time).clamp(0.0, limit);
         state.leave_at = day_time + wait;
         state.boarding_t = boarding_time(actor.id.get());

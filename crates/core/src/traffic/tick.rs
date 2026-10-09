@@ -962,6 +962,32 @@ impl Traffic {
                     }
                 }
             }
+            // held standing by scenery with no way round: give up on it for a while
+            {
+                let car = &mut self.cars[i];
+                let held = why.0 == Reason::SceneryBlocked && car.state.speed.abs() < 0.3;
+                car.scenery_wait = if held { car.scenery_wait + dt } else { 0.0 };
+                if car.scenery_wait >= SCENERY_GHOST_AFTER {
+                    car.scenery_wait = 0.0;
+                    car.scenery_ghost = car.state.odometer + car.state.length + SCENERY_GHOST_MARGIN;
+                    car.scenery_ahead = None;
+                    car.motion_fault = None;
+                    car.scenery_streak = 0.0;
+                    log::info!(
+                        "t={:.1}: car {} held by scenery at lane {} s {:.1}: ignoring scenery for {:.0} m",
+                        self.time,
+                        car.id,
+                        car.state.lane,
+                        car.state.s,
+                        car.state.length + SCENERY_GHOST_MARGIN
+                    );
+                    // (this tick's hold is lifted too, the next one would not have it)
+                    stop_at = [light, yield_at, merge_wait, keep_back, people, ground_hold]
+                        .into_iter()
+                        .flatten()
+                        .reduce(f32::min);
+                }
+            }
             // An AI driver sounds its horn (`ev_AI_Horn`) when held standing at low speed
             // behind a non-moving obstruction. This is a documented provisional neoOMSI
             // trigger (the reference proves only that the event exists), it is presentation
@@ -1083,6 +1109,27 @@ impl Traffic {
                         car.state.signal_time = car.state.signal_time.max(dur);
                     }
                     if decision.consume_stop {
+                        if debug && decision.phase == ServicePhase::EnRoute && !decision.release_berth {
+                            log::info!(
+                                "t={:.1}: bus {} passes stop {:?}: nobody to board or alight (wanted {:?})",
+                                self.time,
+                                car.id,
+                                berth.map(|b| b.stop),
+                                wanted
+                            );
+                        } else if debug
+                            && decision.events.iter().any(|e| {
+                                matches!(e, TraceEvent::Fault { reason: Reason::MissedStop, .. })
+                            })
+                        {
+                            log::info!(
+                                "t={:.1}: bus {} missed stop {:?} at lateral {:.2}",
+                                self.time,
+                                car.id,
+                                berth.map(|b| b.stop),
+                                car.state.lateral
+                            );
+                        }
                         service.stops.pop_front();
                         crate::traffic::ibis_to_next_stop(&mut car.vehicle, service.stops.len());
                     }
@@ -1431,6 +1478,7 @@ impl Traffic {
                 f32,
                 &'a VehicleCapabilities,
                 &'a mut Option<f32>,
+                bool,
             );
             let mut work: Vec<Work> = self
                 .cars
@@ -1439,7 +1487,7 @@ impl Traffic {
                 .enumerate()
                 .filter_map(|(i, (c, f))| {
                     let f = f.as_mut()?;
-                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps, &mut c.scenery_ahead))
+                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps, &mut c.scenery_ahead, c.state.odometer < c.scenery_ghost))
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
@@ -1447,7 +1495,7 @@ impl Traffic {
             // the main thread more than a car's work)
             work.par_iter_mut()
                 .with_min_len(4)
-                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead)| {
+                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead, ghost)| {
                     let t0 = std::time::Instant::now();
                     let ground = vehicle.ground.clone();
                     let contact = vehicle.contact.clone();
@@ -1457,7 +1505,13 @@ impl Traffic {
                     }
                     let trail = &**trail;
                     let behind = |d: f64| rail_behind(trail, state, net, d);
-                    let before = (body.kind == MotionKind::Road).then(|| (**body).clone());
+                    // (given up on scenery: it follows its way through it, see SCENERY_GHOST_AFTER)
+                    if *ghost {
+                        **ahead = None;
+                        **fault = None;
+                        **streak = 0.0;
+                    }
+                    let before = (body.kind == MotionKind::Road && !*ghost).then(|| (**body).clone());
                     // Where would this body touch scenery if it kept to its way? The planner
                     // brakes for it next tick (and looks for a way round); a refused move is
                     // only the last resort, with the bumper already against the thing.
