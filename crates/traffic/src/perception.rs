@@ -388,13 +388,45 @@ impl Occupancy {
         half_width: f64,
         ignore: &[VehicleId],
     ) -> Option<Sweep> {
+        let first = samples.first()?;
+        let r = (8.0 + half_width).max(0.0);
+        let reach = r + self.max_body_extent;
+        let (mut lo, mut hi) = (first.p.truncate(), first.p.truncate());
+        for s in samples {
+            lo = lo.min(s.p.truncate());
+            hi = hi.max(s.p.truncate());
+        }
+        let (x0, y0) = cell(lo - DVec2::splat(reach));
+        let (x1, y1) = cell(hi + DVec2::splat(reach));
+        let mut near: Vec<((i32, i32), &BodyFootprint)> = Vec::new();
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                if let Some(list) = self.grid.get(&(x, y)) {
+                    near.extend(
+                        list.iter()
+                            .map(|&i| ((x, y), &self.feet[i]))
+                            .filter(|(_, f)| !ignore.contains(&f.owner)),
+                    );
+                }
+            }
+        }
+        if near.is_empty() {
+            return None;
+        }
         for s in samples {
             let p2 = s.p.truncate();
             let across = DVec2::new(s.dir.y, -s.dir.x);
             let mut hit: Option<Sweep> = None;
-            self.near(p2, 8.0 + half_width, |f| {
-                if ignore.contains(&f.owner) || !f.reaches_z(s.p.z, 2.0) {
-                    return;
+            let (sx0, sy0) = cell(p2 - DVec2::splat(reach));
+            let (sx1, sy1) = cell(p2 + DVec2::splat(reach));
+            for &((cx, cy), f) in &near {
+                if cx < sx0 || cx > sx1 || cy < sy0 || cy > sy1
+                    || (f.center - p2).length() > r + f.half_len.max(f.half_w)
+                {
+                    continue;
+                }
+                if !f.reaches_z(s.p.z, 2.0) {
+                    continue;
                 }
                 let rel = p2 - f.center;
                 let gx = f.half_w + half_width * across.dot(f.right).abs() - 0.1;
@@ -417,7 +449,7 @@ impl Occupancy {
                         hit = Some(cand);
                     }
                 }
-            });
+            }
             if hit.is_some() {
                 return hit;
             }

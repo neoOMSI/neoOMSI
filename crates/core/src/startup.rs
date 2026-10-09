@@ -185,6 +185,7 @@ pub(crate) fn find_root() -> Option<PathBuf> {
 /// Use the native supported API for both windowed and offscreen rendering.
 pub(crate) fn graphics_instance() -> wgpu::Instance {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.flags = instance_flags();
     if crate::server::SERVER_MODE.load(std::sync::atomic::Ordering::Relaxed) {
         // the dedicated server draws nothing: wgpu's no-op device takes every call
         descriptor.backends = wgpu::Backends::NOOP;
@@ -251,7 +252,17 @@ pub(crate) fn backend_order() -> Vec<wgpu::Backends> {
 fn backend_instance(b: wgpu::Backends) -> wgpu::Instance {
     let mut d = wgpu::InstanceDescriptor::new_without_display_handle();
     d.backends = b;
+    d.flags = instance_flags();
     wgpu::Instance::new(d)
+}
+
+/// The graphics interface's checks: those of a release build, whatever this build is.
+/// wgpu's default follows `debug_assertions`, and the dev-release build (which keeps them)
+/// ran with the DirectX 12 debug layer and full validation on - a large part of every
+/// frame's CPU time went into checking each draw. `WGPU_VALIDATION=1`, `WGPU_DEBUG=1` or
+/// `WGPU_GPU_BASED_VALIDATION=1` switch them on for a graphics bug hunt.
+pub(crate) fn instance_flags() -> wgpu::InstanceFlags {
+    wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL.with_env()
 }
 
 /// The renderer for a window: on `instance` if it can, else on the next graphics interface

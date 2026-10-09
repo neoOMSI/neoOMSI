@@ -429,6 +429,11 @@ impl Traffic {
             .map(|(a, c)| self.maneuvers.intent(&intent_scene, a, &c.maneuver)).collect();
         self.maneuvers
             .begin_tick(&maneuver_intents, (self.time * 1000.0).max(0.0) as u64);
+        // (the debug switches are asked once a tick, not once a car)
+        let debug_car = ::legacy_config::env::var("OMSI_DEBUG_CAR")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+        let debug_doors = ::legacy_config::env::var_os("OMSI_DEBUG_DOORS").is_some();
         for i in 0..self.cars.len() {
             self.cars[i].state.emergency_drive = junction_actors[i].emergency;
             let ahead = self.obstacle_ahead(i, look_ahead(self.cars[i].state.speed), &by_lane);
@@ -1270,11 +1275,7 @@ impl Traffic {
                     );
                 }
             }
-            if ::legacy_config::env::var("OMSI_DEBUG_CAR")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                == Some(car.id.get())
-            {
+            if debug_car == Some(car.id.get()) {
                 let up: Vec<usize> = car.state.upcoming().take(4).collect();
                 log::info!(
                     "t={:.2} car {}: v {:.2} lane {} s {:.1}/{:.1} upcoming {:?} bend {:.2} desired {:.2} lead {:?} stop {:?} why {:?}",
@@ -1347,7 +1348,7 @@ impl Traffic {
                 // waiting at a stop: dark until it is about to pull away
                 car.state.blinker = 0;
             }
-            if ::legacy_config::env::var_os("OMSI_DEBUG_DOORS").is_some()
+            if debug_doors
                 && car.is_bus()
                 && (self.time * 2.0).floor() != ((self.time - dt) * 2.0).floor()
             {

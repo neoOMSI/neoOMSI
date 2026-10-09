@@ -60,9 +60,12 @@ pub fn vehicle_lights(
         ));
     }
     let body = v.body_rotation();
-    let forced = ::legacy_config::env::var("OMSI_SPOT_SELECT")
-        .ok()
-        .and_then(|s| s.trim().parse::<f32>().ok());
+    static FORCED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    let forced = *FORCED.get_or_init(|| {
+        ::legacy_config::env::var("OMSI_SPOT_SELECT")
+            .ok()
+            .and_then(|s| s.trim().parse::<f32>().ok())
+    });
     let ai_on = v.ai_lights;
     let cfg = settings();
     let bad = weather_darkness();

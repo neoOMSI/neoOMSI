@@ -13,7 +13,12 @@ impl App {
         #[cfg(all(feature = "devtools", debug_assertions))]
         self.dev_actions(event_loop);
         #[cfg(all(feature = "devtools", debug_assertions))]
-        let dev_extra = self.dev_gather();
+        let dev_extra = {
+            let __t = Instant::now();
+            let extra = self.dev_gather();
+            *self.profile.entry("devtools").or_default() += __t.elapsed().as_secs_f64();
+            extra
+        };
         let menu_lines = if self.game_menu.is_some() && self.report_view.is_some() {
             self.game_menu_items()
         } else {
@@ -773,11 +778,14 @@ impl App {
                         .window
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
+                    let __t = Instant::now();
                     if self.lab_menu.is_none() {
                         self.devtools
                             .get_or_insert_with(devtools::DevTools::new)
                             .render(r, &view, scale, &snap, &dev_extra);
                     }
+                    *self.profile.entry("render.devtools").or_default() +=
+                        __t.elapsed().as_secs_f64();
                 }
                 *self.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
                 if ::legacy_config::env::var_os("OMSI_PROFILE_GPU").is_some() {
@@ -840,9 +848,20 @@ impl App {
             }
             self.frames += 1;
             let profiling = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
-            if profiling && self.cpu_mark.is_none() && self.started.elapsed().as_secs_f32() > 15.0 {
-                self.cpu_mark =
-                    process_cpu_seconds().map(|c| (c, Instant::now(), self.total_frames));
+            // (the averages are of the running game: what loading the map and its first
+            // seconds cost - one frame of a minute and more - is left out)
+            if profiling && self.cpu_mark.is_none() && self.total_frames >= 150 {
+                // (where the CPU time is not known, the dump leaves that line out)
+                self.cpu_mark = Some((
+                    process_cpu_seconds().unwrap_or(0.0),
+                    Instant::now(),
+                    self.total_frames,
+                ));
+                self.profile.clear();
+                self.profile_prev.clear();
+                self.governor_wait_prev = 0.0;
+                r.stats.borrow_mut().clear();
+                r.counts.borrow_mut().clear();
             }
             if let (Some(limit), false) = (self.args.exit_after, self.exiting) {
                 if self.started.elapsed().as_secs_f32() > limit {
@@ -880,7 +899,10 @@ impl App {
                         st.stats.log_ground();
                     }
                     if ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
-                        let n = self.total_frames.max(1) as f64;
+                        let n = self
+                            .total_frames
+                            .saturating_sub(self.cpu_mark.map(|m| m.2).unwrap_or(0))
+                            .max(1) as f64;
                         for (k, v) in &self.profile {
                             log::info!("profile {k:10}: {:.1} ms/frame", v / n * 1000.0);
                         }
@@ -903,7 +925,7 @@ impl App {
                         {
                             let frames = self.total_frames.saturating_sub(f0).max(1) as f64;
                             log::info!(
-                                "profile: since 15 s {:.1} ms wall and {:.1} ms CPU (all threads) per frame, {:.1} cores busy",
+                                "profile: since the 150th frame {:.1} ms wall and {:.1} ms CPU (all threads) per frame, {:.1} cores busy",
                                 t0.elapsed().as_secs_f64() / frames * 1000.0,
                                 (c1 - c0) / frames * 1000.0,
                                 (c1 - c0) / t0.elapsed().as_secs_f64().max(1e-3)
