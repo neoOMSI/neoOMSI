@@ -1138,11 +1138,21 @@ impl Renderer {
                 }
                 main_draws[0] += items.len();
                 batch_items(scene, &mut items, true, &mut list, &mut main_batches);
-                let mut holders: Vec<DVec3> = Vec::new();
+                let mut holders = [[0u64; 3]; 8];
+                let mut holder_count = 0;
+                let mut holders_overflow = Vec::new();
                 for &(i, _, inside) in visible {
                     let inst = &scene.instances[i];
-                    if inside && !inst.surface && !holders.contains(&inst.origin) {
-                        holders.push(inst.origin);
+                    if inside && !inst.surface {
+                        let key = origin_key(inst.origin);
+                        if holder_count < 8 {
+                            if !holders[..holder_count].contains(&key) {
+                                holders[holder_count] = key;
+                                holder_count += 1;
+                            }
+                        } else if !holders.contains(&key) && !holders_overflow.contains(&key) {
+                            holders_overflow.push(key);
+                        }
                     }
                 }
                 let player = lighting
@@ -1165,11 +1175,14 @@ impl Renderer {
                     .iter()
                     .map(|&i| {
                         let inst = &scene.instances[i];
+                        let key = origin_key(inst.origin);
                         let rank = if self.blend_by_origin || inst.surface {
                             0
                         } else if player == Some(inst.origin) {
                             2
-                        } else if holders.contains(&inst.origin) {
+                        } else if holders[..holder_count].contains(&key)
+                            || (!holders_overflow.is_empty() && holders_overflow.contains(&key))
+                        {
                             1
                         } else {
                             0

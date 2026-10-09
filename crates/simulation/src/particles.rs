@@ -112,19 +112,6 @@ impl ParticleSet {
             .flat_map(|e| e.particles.iter().map(move |p| (p, &e.def)))
     }
 
-    /// -1..1
-    fn rand(&mut self) -> f32 {
-        self.rng ^= self.rng << 13;
-        self.rng ^= self.rng >> 7;
-        self.rng ^= self.rng << 17;
-        ((self.rng >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
-    }
-
-    fn draw(&mut self, r: &PsRange, value: &dyn Fn(&str) -> f32) -> f32 {
-        let (base, spread) = (eval(&r.0, value), eval(&r.1, value));
-        base + spread * self.rand()
-    }
-
     /// One frame: age and move the particles and send new ones off. `origin` and `rot` place
     /// the owner (a vehicle's frame: x right, y forward, z up), `value` reads its variables.
     pub fn update(&mut self, dt: f32, origin: DVec3, rot: Mat4, value: &dyn Fn(&str) -> f32) {
@@ -133,10 +120,10 @@ impl ParticleSet {
         }
         let eye = eye();
         for i in 0..self.emitters.len() {
-            // move what is there
-            let mut ended = Vec::new();
             {
                 let e = &mut self.emitters[i];
+                e.ended.clear();
+                let ended = &mut e.ended;
                 e.particles.retain_mut(|p| {
                     p.age += dt;
                     if p.age >= p.life {
@@ -148,47 +135,49 @@ impl ParticleSet {
                     p.pos += p.vel.as_dvec3() * dt as f64;
                     true
                 });
-                e.ended = ended;
             }
-            let def = self.emitters[i].def.clone();
-            let own = origin + rot.transform_vector3(Vec3::from(def.pos)).as_dvec3();
+            let own = origin + rot.transform_vector3(Vec3::from(self.emitters[i].def.pos)).as_dvec3();
             if let Some(eye) = eye {
-                if (own - eye).length() > def.calc_dist.max(50.0) as f64 {
+                if (own - eye).length() > self.emitters[i].def.calc_dist.max(50.0) as f64 {
                     continue;
                 }
             }
             let dir = rot
-                .transform_vector3(Vec3::from(def.dir))
+                .transform_vector3(Vec3::from(self.emitters[i].def.dir))
                 .normalize_or_zero();
             // where new particles start: the emitter itself, or the particles of the one it
             // is attached to
             let mut sources: Vec<(DVec3, Vec3)> = Vec::new();
             let mut burst_sources: Vec<(DVec3, Vec3)> = Vec::new();
-            match def.attach {
+            let mut do_burst = false;
+            match self.emitters[i].def.attach {
                 Some((parent, mode)) if parent < i => {
                     let pe = &self.emitters[parent];
                     match mode {
-                        1 => burst_sources = pe.ended.clone(),
+                        1 => burst_sources.extend_from_slice(&pe.ended),
                         _ => {
-                            sources = pe
-                                .particles
-                                .iter()
-                                .map(|p| (p.pos, if mode == 2 { -p.vel } else { dir }))
-                                .collect()
+                            sources.extend(
+                                pe.particles
+                                    .iter()
+                                    .map(|p| (p.pos, if mode == 2 { -p.vel } else { dir })),
+                            );
                         }
                     }
                 }
                 Some(_) => {}
                 None => {
                     sources.push((own, dir));
-                    if !self.emitters[i].burst_done && def.burst.is_some() {
+                    if !self.emitters[i].burst_done && self.emitters[i].def.burst.is_some() {
                         burst_sources.push((own, dir));
-                        self.emitters[i].burst_done = true;
+                        do_burst = true;
                     }
                 }
             }
+            if do_burst {
+                self.emitters[i].burst_done = true;
+            }
             // continuous emission
-            let freq = eval(&def.freq.0, value).max(0.0);
+            let freq = eval(&self.emitters[i].def.freq.0, value).max(0.0);
             let mut n = 0usize;
             if freq > 0.0 && !sources.is_empty() {
                 let e = &mut self.emitters[i];
@@ -196,62 +185,85 @@ impl ParticleSet {
                 n = e.carry.floor() as usize;
                 e.carry -= n as f32;
             }
-            let mut spawn: Vec<(DVec3, Vec3)> = Vec::new();
-            for _ in 0..n {
-                spawn.extend(sources.iter().copied());
-            }
-            if let Some(b) = &def.burst {
+            let mut burst_counts = Vec::new();
+            if let Some(b) = &self.emitters[i].def.burst {
                 for s in &burst_sources {
-                    let count = self.draw(b, value).round().max(0.0) as usize;
-                    spawn.extend(std::iter::repeat(*s).take(count));
+                    let count = draw_range(&mut self.rng, b, value).round().max(0.0) as usize;
+                    burst_counts.push((*s, count));
                 }
             }
-            for (at, d) in spawn {
-                if self.emitters[i].particles.len() >= MAX_PER_EMITTER {
-                    break;
+            let e = &mut self.emitters[i];
+            let def = &e.def;
+            let rng = &mut self.rng;
+            'continuous: for _ in 0..n {
+                for &(at, d) in &sources {
+                    if e.particles.len() >= MAX_PER_EMITTER {
+                        break 'continuous;
+                    }
+                    let p = create_particle(rng, def, at, d.normalize_or_zero(), value);
+                    e.particles.push(p);
                 }
-                let p = self.new_particle(&def, at, d.normalize_or_zero(), value);
-                self.emitters[i].particles.push(p);
+            }
+            'burst: for (s, count) in burst_counts {
+                for _ in 0..count {
+                    if e.particles.len() >= MAX_PER_EMITTER {
+                        break 'burst;
+                    }
+                    let p = create_particle(rng, def, s.0, s.1.normalize_or_zero(), value);
+                    e.particles.push(p);
+                }
             }
         }
     }
+}
 
-    fn new_particle(
-        &mut self,
-        def: &ParticleSystemDef,
-        at: DVec3,
-        dir: Vec3,
-        value: &dyn Fn(&str) -> f32,
-    ) -> Particle {
-        let speed = eval(&def.velocity.0, value);
-        let spread = eval(&def.velocity.1, value);
-        let vel = if def.velocity_all_round {
-            let v = Vec3::new(self.rand(), self.rand(), self.rand()).normalize_or(Vec3::Z);
-            v * (speed + spread * self.rand())
-        } else {
-            dir * speed + Vec3::new(self.rand(), self.rand(), self.rand()) * spread
-        };
-        let color = [
-            self.draw(&def.rgb[0], value).clamp(0.0, 1.0),
-            self.draw(&def.rgb[1], value).clamp(0.0, 1.0),
-            self.draw(&def.rgb[2], value).clamp(0.0, 1.0),
-        ];
-        Particle {
-            pos: at,
-            vel,
-            age: 0.0,
-            life: self.draw(&def.life, value).max(0.05),
-            size0: self.draw(&def.size_start, value),
-            grow: self.draw(&def.size_grow, value),
-            alpha0: self.draw(&def.alpha_initial, value),
-            alpha1: self.draw(&def.alpha_final, value),
-            color,
-            brake: self.draw(&def.brake, value),
-            gravity: self.draw(&def.gravity, value),
-            // (read off the generator without advancing it: the particles' motion keeps
-            // the same random sequence)
-            seed: (self.rng >> 40) as f32 / (1u64 << 24) as f32,
-        }
+fn next_rand(rng: &mut u64) -> f32 {
+    *rng ^= *rng << 13;
+    *rng ^= *rng >> 7;
+    *rng ^= *rng << 17;
+    ((*rng >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+}
+
+fn draw_range(rng: &mut u64, r: &PsRange, value: &dyn Fn(&str) -> f32) -> f32 {
+    let (base, spread) = (eval(&r.0, value), eval(&r.1, value));
+    base + spread * next_rand(rng)
+}
+
+fn create_particle(
+    rng: &mut u64,
+    def: &ParticleSystemDef,
+    at: DVec3,
+    dir: Vec3,
+    value: &dyn Fn(&str) -> f32,
+) -> Particle {
+    let speed = eval(&def.velocity.0, value);
+    let spread = eval(&def.velocity.1, value);
+    let vel = if def.velocity_all_round {
+        let v = Vec3::new(next_rand(rng), next_rand(rng), next_rand(rng)).normalize_or(Vec3::Z);
+        v * (speed + spread * next_rand(rng))
+    } else {
+        dir * speed + Vec3::new(next_rand(rng), next_rand(rng), next_rand(rng)) * spread
+    };
+    let color = [
+        draw_range(rng, &def.rgb[0], value).clamp(0.0, 1.0),
+        draw_range(rng, &def.rgb[1], value).clamp(0.0, 1.0),
+        draw_range(rng, &def.rgb[2], value).clamp(0.0, 1.0),
+    ];
+    Particle {
+        pos: at,
+        vel,
+        age: 0.0,
+        life: draw_range(rng, &def.life, value).max(0.05),
+        size0: draw_range(rng, &def.size_start, value),
+        grow: draw_range(rng, &def.size_grow, value),
+        alpha0: draw_range(rng, &def.alpha_initial, value),
+        alpha1: draw_range(rng, &def.alpha_final, value),
+        color,
+        brake: draw_range(rng, &def.brake, value),
+        gravity: draw_range(rng, &def.gravity, value),
+        // (read off the generator without advancing it: the particles' motion keeps
+        // the same random sequence)
+        seed: (*rng >> 40) as f32 / (1u64 << 24) as f32,
     }
 }
 

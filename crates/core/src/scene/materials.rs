@@ -15,6 +15,36 @@ pub(super) fn scenery_texture_key(name: &str) -> String {
     name.trim().replace('\\', "/").to_ascii_lowercase()
 }
 
+pub(super) fn scenery_texture_selection_matches(
+    ot: &ObjectType,
+    inst: &::simulation::scenery::SceneryInstance,
+    prev: Option<&[usize]>,
+) -> bool {
+    let Some(prev) = prev else {
+        return false;
+    };
+    if prev.len() != ot.dynamic_textures.len() {
+        return false;
+    }
+    for (group, &expected) in ot.dynamic_textures.iter().zip(prev) {
+        let actual = match inst.var(&group.variable) {
+            Some(v) if v.is_finite() && v >= 0.0 => {
+                let idx = v.trunc() as usize;
+                if idx < group.choices.len() {
+                    idx
+                } else {
+                    usize::MAX
+                }
+            }
+            _ => usize::MAX,
+        };
+        if actual != expected {
+            return false;
+        }
+    }
+    true
+}
+
 pub(super) fn scenery_texture_selection(
     ot: &ObjectType,
     inst: &::simulation::scenery::SceneryInstance,

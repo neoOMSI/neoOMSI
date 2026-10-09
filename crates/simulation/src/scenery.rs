@@ -302,19 +302,19 @@ impl SceneryInstance {
         if self.html_textures.is_empty() {
             return Vec::new();
         }
-        let num: Vec<(String, f32)> = self
+        let num: Vec<(&str, f32)> = self
             .program
             .var_names
             .iter()
             .enumerate()
-            .map(|(i, n)| (n.clone(), self.state.vars[i]))
+            .map(|(i, n)| (n.as_str(), self.state.vars[i]))
             .collect();
-        let strs: Vec<(String, String)> = self
+        let strs: Vec<(&str, &str)> = self
             .program
             .str_var_names
             .iter()
             .enumerate()
-            .map(|(i, n)| (n.clone(), self.state.str_vars[i].clone()))
+            .map(|(i, n)| (n.as_str(), self.state.str_vars[i].as_str()))
             .collect();
         // (the basic API only: no vehicle, no depot)
         let env = crate::vehicle_api::environment(&self.host.clock, &crate::vehicle_api::locale());

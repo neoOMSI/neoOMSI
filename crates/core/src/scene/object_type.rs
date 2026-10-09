@@ -229,6 +229,10 @@ pub struct ScriptedObject {
     /// `[htmltexture]` pages shown on the object: (script texture index, texture). The
     /// pages themselves are `inst.html_textures`.
     pub htmls: Vec<(usize, TextureId)>,
+    /// Previous dynamic texture selection, to skip unchanged work.
+    pub last_tex_selection: Option<Vec<usize>>,
+    /// Dynamic material overrides by (instance, slot) from dynamic_texture_variant.
+    pub dynamic_materials: HashMap<(usize, usize), Vec<MaterialId>>,
 }
 
 /// Where a ray lands on a page (`[htmltexture]`) of a scenery object: see

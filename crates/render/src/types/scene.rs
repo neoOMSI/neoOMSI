@@ -137,6 +137,8 @@ pub struct Scene {
     pub(crate) smoke_buf: Option<wgpu::Buffer>,
     pub(crate) smoke_count: u32,
     pub(crate) corona_runs: Vec<(u16, u32, u32)>,
+    pub(crate) corona_order: Vec<usize>,
+    pub(crate) corona_data: Vec<GpuCorona>,
     pub(crate) model_buf: Option<wgpu::Buffer>,
     pub(crate) params_buf: Option<wgpu::Buffer>,
     pub(crate) light_buf: Option<wgpu::Buffer>,

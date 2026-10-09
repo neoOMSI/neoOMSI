@@ -174,33 +174,76 @@ pub fn apply_parents(animators: &[MeshAnimator], transforms: &mut [Mat4]) {
         return;
     }
     let n = transforms.len().min(animators.len());
-    let local: Vec<Mat4> = transforms[..n].to_vec();
-    let mut done = vec![false; n];
-    let mut chain: Vec<usize> = Vec::new();
-    for start in 0..n {
-        // walk up to the first mesh that is finished (or has no parent) ...
-        chain.clear();
-        let mut k = start;
-        while !done[k] {
-            if chain.contains(&k) {
-                break;
+    if n == 0 {
+        return;
+    }
+
+    const STACK_LIMIT: usize = 64;
+    if n <= STACK_LIMIT {
+        let mut local = [Mat4::IDENTITY; STACK_LIMIT];
+        local[..n].copy_from_slice(&transforms[..n]);
+        let mut done = [false; STACK_LIMIT];
+        let mut in_chain = [false; STACK_LIMIT];
+        let mut chain = [0usize; STACK_LIMIT];
+
+        for start in 0..n {
+            let mut chain_len = 0;
+            let mut k = start;
+            while !done[k] {
+                if in_chain[k] {
+                    break;
+                }
+                in_chain[k] = true;
+                chain[chain_len] = k;
+                chain_len += 1;
+                match animators[k].parent.filter(|p| *p < n) {
+                    Some(p) => k = p,
+                    None => break,
+                }
             }
-            chain.push(k);
-            match animators[k].parent.filter(|p| *p < n) {
-                Some(p) => k = p,
-                None => break,
+            for i in (0..chain_len).rev() {
+                let c = chain[i];
+                in_chain[c] = false;
+                if done[c] {
+                    continue;
+                }
+                transforms[c] = match animators[c].parent.filter(|p| *p < n && done[*p]) {
+                    Some(p) => transforms[p] * local[c],
+                    None => local[c],
+                };
+                done[c] = true;
             }
         }
-        // ... and come back down, each mesh taking its parent's final transform
-        for &c in chain.iter().rev() {
-            if done[c] {
-                continue;
+    } else {
+        let local: Vec<Mat4> = transforms[..n].to_vec();
+        let mut done = vec![false; n];
+        let mut in_chain = vec![false; n];
+        let mut chain: Vec<usize> = Vec::new();
+        for start in 0..n {
+            chain.clear();
+            let mut k = start;
+            while !done[k] {
+                if in_chain[k] {
+                    break;
+                }
+                in_chain[k] = true;
+                chain.push(k);
+                match animators[k].parent.filter(|p| *p < n) {
+                    Some(p) => k = p,
+                    None => break,
+                }
             }
-            transforms[c] = match animators[c].parent.filter(|p| *p < n && done[*p]) {
-                Some(p) => transforms[p] * local[c],
-                None => local[c],
-            };
-            done[c] = true;
+            for &c in chain.iter().rev() {
+                in_chain[c] = false;
+                if done[c] {
+                    continue;
+                }
+                transforms[c] = match animators[c].parent.filter(|p| *p < n && done[*p]) {
+                    Some(p) => transforms[p] * local[c],
+                    None => local[c],
+                };
+                done[c] = true;
+            }
         }
     }
 }

@@ -372,7 +372,12 @@ impl World {
     /// path has no `[switchdir]`).
     pub fn switch_set_to(&self, id: i64, path: u16) -> Option<bool> {
         let scripted = self.scripted.lock();
-        let o = scripted.iter().find(|o| o.map_id == id)?;
+        let by_id = self.scripted_of_object.lock();
+        let o = by_id
+            .get(&id)
+            .and_then(|&i| scripted.get(i))
+            .filter(|o| o.map_id == id)
+            .or_else(|| scripted.iter().find(|o| o.map_id == id))?;
         let d = (*o.ty.sco.path_switch_dir.get(path as usize)?)?;
         Some(
             o.inst
@@ -437,8 +442,14 @@ impl World {
             return;
         }
         let mut scripted = self.scripted.lock();
+        let by_id = self.scripted_of_object.lock();
         for &(id, path) in requests {
-            let Some(o) = scripted.iter_mut().find(|o| o.map_id == id) else {
+            let o = if let Some(&i) = by_id.get(&id).filter(|&&i| scripted.get(i).is_some_and(|o| o.map_id == id)) {
+                scripted.get_mut(i)
+            } else {
+                scripted.iter_mut().find(|o| o.map_id == id)
+            };
+            let Some(o) = o else {
                 continue;
             };
             if let Some(Some(d)) = o.ty.sco.path_switch_dir.get(path as usize) {

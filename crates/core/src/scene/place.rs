@@ -259,7 +259,7 @@ impl World {
                         self.script_clock(),
                         &o.extra,
                     );
-                    self.scripted.lock().push(ScriptedObject {
+                    self.push_scripted(ScriptedObject {
                         ty: ot.clone(),
                         pos,
                         xf,
@@ -275,6 +275,8 @@ impl World {
                         texts: Vec::new(),
                         arrivals: false,
                         htmls: Vec::new(),
+                        last_tex_selection: None,
+                        dynamic_materials: HashMap::new(),
                     });
                 }
                 // An editor-only object still lays its paths out: OMSI's invisible

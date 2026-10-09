@@ -163,6 +163,7 @@ impl World {
             controller_of_object: Mutex::new(HashMap::new()),
             light_objects: Mutex::new(Vec::new()),
             scripted: Mutex::new(Vec::new()),
+            scripted_of_object: Mutex::new(HashMap::new()),
             collision: Mutex::new(Default::default()),
             light_occluders: Mutex::new(Default::default()),
             poles: Mutex::new(HashMap::new()),

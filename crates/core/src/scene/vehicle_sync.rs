@@ -169,11 +169,14 @@ pub(super) fn sync_materials(
     for v in &mut render.variants {
         let item_has_freetex = v.free.iter().any(|f| f.item_only);
         for f in &mut v.free {
-            let name = vehicle.str_var(&f.var);
-            let name = name.trim().to_string();
+            let raw = vehicle.str_var_str(&f.var);
+            let trimmed = raw.trim();
+            if f.current.as_deref().is_some_and(|cur| cur.eq_ignore_ascii_case(trimmed)) {
+                continue;
+            }
+            let name = trimmed.to_string();
             let key = name.to_ascii_lowercase();
-            if f.current.as_deref() != Some(key.as_str()) {
-                f.current = Some(key.clone());
+            f.current = Some(key.clone());
                 let pair = match f.cache.get(&key) {
                     Some(p) => *p,
                     None => {
@@ -220,12 +223,11 @@ pub(super) fn sync_materials(
                         p
                     }
                 };
-                if !f.item_only {
-                    v.base = pair.0;
-                }
-                if f.item_only || !item_has_freetex {
-                    v.item = pair.1;
-                }
+            if !f.item_only {
+                v.base = pair.0;
+            }
+            if f.item_only || !item_has_freetex {
+                v.item = pair.1;
             }
         }
         if let Some(l) = &mut v.lights {

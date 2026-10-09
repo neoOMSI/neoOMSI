@@ -303,17 +303,21 @@ impl Renderer {
 
     pub(crate) fn prepare_coronas(&self, scene: &mut Scene, night: f32) {
         let ro = scene.render_origin;
-        let mut order: Vec<&Corona> = scene
-            .coronas
-            .iter()
-            .filter(|c| c.brightness > 0.001)
-            .collect();
-        order.sort_by_key(|c| c.texture);
-        let mut runs: Vec<(u16, u32, u32)> = Vec::new();
-        for (k, c) in order.iter().enumerate() {
+        let mut order = std::mem::take(&mut scene.corona_order);
+        order.clear();
+        for (i, c) in scene.coronas.iter().enumerate() {
+            if c.brightness > 0.001 {
+                order.push(i);
+            }
+        }
+        order.sort_by_key(|&i| scene.coronas[i].texture);
+        let mut runs = std::mem::take(&mut scene.corona_runs);
+        runs.clear();
+        for (k, &i) in order.iter().enumerate() {
+            let tex = scene.coronas[i].texture;
             match runs.last_mut() {
-                Some(r) if r.0 == c.texture => r.2 += 1,
-                _ => runs.push((c.texture, k as u32, 1)),
+                Some(r) if r.0 == tex => r.2 += 1,
+                _ => runs.push((tex, k as u32, 1)),
             }
         }
         if ::legacy_config::env::var_os("OMSI_DEBUG_CONES").is_some() {
@@ -322,46 +326,49 @@ impl Renderer {
                 order.len(),
                 runs.len(),
                 runs,
-                order.iter().filter(|c| c.beam).count()
+                order.iter().filter(|&&i| scene.coronas[i].beam).count()
             );
         }
         scene.corona_runs = runs;
-        let data: Vec<GpuCorona> = order
-            .into_iter()
-            .map(|c| {
-                let p = (c.position - ro).as_vec3();
-                let b = if c.cone_cos < -1.5 || c.beam || c.halo {
-                    c.brightness
-                } else {
-                    c.brightness * (night * night + 0.8) * 0.6
-                };
-                GpuCorona {
-                    pos: p.to_array(),
-                    size: c.size,
-                    color: [c.color[0], c.color[1], c.color[2], b],
-                    dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
-                    up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],
-                    extra: [
-                        c.inner_cos,
-                        if c.beam || c.halo {
-                            c.beam_width
-                        } else {
-                            c.z_offset
-                        },
-                        c.flags as f32,
-                        if c.beam {
-                            1.0
-                        } else if c.halo {
-                            2.0
-                        } else {
-                            0.0
-                        },
-                    ],
-                }
-            })
-            .collect();
+        let mut data = std::mem::take(&mut scene.corona_data);
+        data.clear();
+        data.reserve(order.len());
+        for &i in order.iter() {
+            let c = &scene.coronas[i];
+            let p = (c.position - ro).as_vec3();
+            let b = if c.cone_cos < -1.5 || c.beam || c.halo {
+                c.brightness
+            } else {
+                c.brightness * (night * night + 0.8) * 0.6
+            };
+            data.push(GpuCorona {
+                pos: p.to_array(),
+                size: c.size,
+                color: [c.color[0], c.color[1], c.color[2], b],
+                dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
+                up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],
+                extra: [
+                    c.inner_cos,
+                    if c.beam || c.halo {
+                        c.beam_width
+                    } else {
+                        c.z_offset
+                    },
+                    c.flags as f32,
+                    if c.beam {
+                        1.0
+                    } else if c.halo {
+                        2.0
+                    } else {
+                        0.0
+                    },
+                ],
+            });
+        }
+        scene.corona_order = order;
         scene.corona_count = data.len() as u32;
         if data.is_empty() {
+            scene.corona_data = data;
             return;
         }
         let bytes: &[u8] = bytemuck::cast_slice(&data);
@@ -378,6 +385,7 @@ impl Renderer {
                 scene.corona_buf = Some(b);
             }
         }
+        scene.corona_data = data;
     }
 }
 
