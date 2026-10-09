@@ -255,28 +255,34 @@ pub(super) fn assign_occluders(
     let mut lights = std::mem::take(&mut scene.lights);
     let mut shadowed = 0usize;
     let mut shadowed_spots = 0usize;
-    let spill_r = spill_radius(&settings().spill);
     let mut gathers = 0usize;
     for l in lights.iter_mut() {
         l.occ_first = 0;
         l.occ_count = 0;
-        let spill = l.radius == spill_r;
+        let spill = l.shadow_first;
         let spot = !spill && l.direction.length_squared() > 0.5;
         if l.radius <= 0.0 || l.is_screen() {
             continue;
         }
+        let mut capped = false;
         if spot {
-            if shadowed_spots >= SHADOW_SPOTS
-                || (l.position - camera_pos).length() > SPOT_SHADOW_RANGE
-            {
+            if (l.position - camera_pos).length() > SPOT_SHADOW_RANGE {
                 continue;
             }
-            shadowed_spots += 1;
+            if shadowed_spots >= SHADOW_SPOTS {
+                capped = true;
+            } else {
+                shadowed_spots += 1;
+            }
         } else {
-            if shadowed >= SHADOW_LIGHTS || (l.position - camera_pos).length() > SHADOW_RANGE {
+            if (l.position - camera_pos).length() > SHADOW_RANGE {
                 continue;
             }
-            shadowed += 1;
+            if shadowed >= SHADOW_LIGHTS {
+                capped = true;
+            } else {
+                shadowed += 1;
+            }
         }
         // (a moving vehicle's window light would make a new key every frame at half a metre:
         // it takes 2 m cells and a reach that much longer)
@@ -303,21 +309,25 @@ pub(super) fn assign_occluders(
             l.radius.to_bits(),
             dir_key,
         );
-        if !cache.map.contains_key(&key) {
+        if !capped && !cache.map.contains_key(&key) {
             if gathers >= GATHERS_PER_FRAME {
-                continue;
-            }
-            gathers += 1;
-            let made = if aimed {
-                gather_spot_occluders(seen, l.position, l.direction, l.radius, l.cone[1])
+                capped = true;
             } else {
-                gather_occluders(coll, seen, l.position, l.radius + extra)
-            };
-            cache.map.insert(key, made);
+                gathers += 1;
+                let made = if aimed {
+                    gather_spot_occluders(seen, l.position, l.direction, l.radius, l.cone[1])
+                } else {
+                    gather_occluders(coll, seen, l.position, l.radius + extra)
+                };
+                cache.map.insert(key, made);
+            }
         }
-        let occ = &cache.map[&key];
         let first = scene.occluders.len() as u32;
-        scene.occluders.extend_from_slice(occ);
+        if !capped {
+            if let Some(occ) = cache.map.get(&key) {
+                scene.occluders.extend_from_slice(occ);
+            }
+        }
         for (o, oc) in &bodies {
             if spill {
                 break;
@@ -338,8 +348,37 @@ pub(super) fn assign_occluders(
                 if seg_hit(at.0, at.1, o).is_none() {
                     scene.occluders.push(*oc);
                 } else if seg_hit(at.0, at.1, &core).is_none() {
-                    // a lamp in the skin of the body (a head or tail light): the body
-                    // neither shades nor holds it
+                    // a lamp in the skin of the body (a head, tail or side light): the body
+                    // neither shades nor holds it, but its light must not shine into the body
+                    // itself: the part of the box on the inner side of the lamp stops it
+                    let [r, f] = o.axes();
+                    let rel = l.position.truncate() - o.center;
+                    let (lr, lf) = (rel.dot(r), rel.dot(f));
+                    let aim = glam::DVec2::new(l.direction.x as f64, l.direction.y as f64);
+                    let (hx, hy) = (o.half.x - 0.1, o.half.y - 0.1);
+                    let (dx, dy) = (hx - lr.abs(), hy - lf.abs());
+                    let by_aim = spot && aim.dot(f).abs() > 0.3 && aim.dot(f).abs() >= aim.dot(r).abs();
+                    let side = dx < 0.6 || dx <= dy;
+                    let fore = dy < 0.6 || dy < dx || by_aim;
+                    let fwd_face = if by_aim { aim.dot(f) > 0.0 } else { lf > 0.0 };
+                    if side {
+                        let (a, b) = if lr > 0.0 { (-hx, lr - 0.05) } else { (lr + 0.05, hx) };
+                        if b - a > 0.1 {
+                            let mut part = *oc;
+                            part.center = o.center + r * ((a + b) * 0.5);
+                            part.half.x = ((b - a) * 0.5) as f32;
+                            scene.occluders.push(part);
+                        }
+                    }
+                    if fore {
+                        let (a, b) = if fwd_face { (-hy, lf - 0.05) } else { (lf + 0.05, hy) };
+                        if b - a > 0.1 {
+                            let mut part = *oc;
+                            part.center = o.center + f * ((a + b) * 0.5);
+                            part.half.y = ((b - a) * 0.5) as f32;
+                            scene.occluders.push(part);
+                        }
+                    }
                 } else if spill {
                     // a light inside the body lights only the inside (and a little through
                     // the windows): negative half width marks the box as a container

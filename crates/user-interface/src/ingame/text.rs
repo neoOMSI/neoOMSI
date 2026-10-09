@@ -12,6 +12,7 @@ impl TextCache {
             frame: 0,
             backdrop: 1.0,
             flat: false,
+            alpha: 1.0,
         })
     }
 
@@ -25,6 +26,13 @@ impl TextCache {
         px: u32,
         color: [u8; 4],
     ) -> Label {
+        let color = if self.alpha < 1.0 {
+            let k = (self.alpha * 6.0).round() / 6.0;
+            let l = |from: u8, to: u8| (from as f32 + (to as f32 - from as f32) * k).round() as u8;
+            [l(14, color[0]), l(16, color[1]), l(20, color[2]), color[3]]
+        } else {
+            color
+        };
         let color = [
             color[0],
             color[1],

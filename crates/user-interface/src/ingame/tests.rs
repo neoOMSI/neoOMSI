@@ -1,25 +1,6 @@
 //! Tests of the in-game interface.
 
-use super::settings::vr_settings_sidebar_step;
 use super::*;
-
-#[test]
-fn vr_settings_sidebar_keeps_back_clear() {
-    for scale in [0.5, 1.0, 2.0] {
-        for height in [220.0, 440.0] {
-            let pages_top = (72.0 + 6.0) * scale;
-            let back_top = (height - PAD - 6.0 - 38.0) * scale;
-            for pages in [7, 8, 10] {
-                let step =
-                    vr_settings_sidebar_step(back_top - 6.0 * scale - pages_top, pages, scale);
-                let last_bottom =
-                    pages_top + (pages - 1) as f32 * step + (step - 4.0 * scale).max(1.0);
-                assert!(last_bottom < back_top);
-            }
-        }
-    }
-    assert_eq!(vr_settings_sidebar_step(1000.0, 8, 1.0), 42.0);
-}
 
 #[test]
 fn text_renders_with_an_outline() {

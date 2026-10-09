@@ -1,5 +1,3 @@
-//! The game menu (Esc), its lists, drop-downs and edit fields, and the pages behind it.
-
 use super::*;
 
 pub(crate) fn route_char(code: KeyCode) -> Option<char> {
@@ -14,12 +12,12 @@ pub(crate) fn route_char(code: KeyCode) -> Option<char> {
 }
 
 pub(crate) const SERVER_GAME_MENU: [(&str, &str); 6] = [
-    ("resume", "Resume"),
-    ("options", "Options..."),
-    ("vehicle", "Vehicle options..."),
-    ("world", "World options..."),
-    ("map", "City map"),
-    ("quit", "Leave the server"),
+    ("resume", "pause.entry.resume"),
+    ("options", "pause.entry.options"),
+    ("vehicle", "pause.entry.vehicle"),
+    ("world", "pause.entry.world"),
+    ("map", "pause.entry.map"),
+    ("quit", "pause.entry.quit_server"),
 ];
 
 pub(crate) fn on_server(args: &crate::Args) -> bool {
@@ -38,17 +36,17 @@ pub(crate) fn game_menu_for(args: &crate::Args) -> &'static [(&'static str, &'st
 }
 
 pub(crate) const GAME_MENU: [(&str, &str); 11] = [
-    ("resume", "Resume"),
-    ("options", "Options..."),
-    ("vehicle", "Vehicle options..."),
-    ("world", "World options..."),
-    ("map", "City map"),
-    ("duty", "Line and tour..."),
-    ("endduty", "End the tour"),
-    ("save", "Save the situation"),
-    ("saveslot", "Save to a new slot"),
-    ("load", "Load the quicksave"),
-    ("quit", "End the session"),
+    ("resume", "pause.entry.resume"),
+    ("options", "pause.entry.options"),
+    ("vehicle", "pause.entry.vehicle"),
+    ("world", "pause.entry.world"),
+    ("map", "pause.entry.map"),
+    ("duty", "pause.entry.duty"),
+    ("end-duty", "pause.entry.end-duty"),
+    ("save", "pause.entry.save"),
+    ("save-slot", "pause.entry.save-slot"),
+    ("load", "pause.entry.load"),
+    ("quit", "pause.entry.quit"),
 ];
 
 impl App {
@@ -58,6 +56,9 @@ impl App {
             self.paused = true;
         }
         self.game_menu = Some(0);
+        self.lab_menu = Some(crate::ui::PauseState::default());
+        self.lab_map_direct = false;
+        self.lab_list = None;
         self.menu_top = None;
         self.menu_kbd = true;
         self.menu_drag = None;
@@ -73,6 +74,7 @@ impl App {
             self.menu_edit = None;
         }
         self.game_menu = None;
+        self.lab_menu = None;
         self.menu_top = None;
         self.key_capture = None;
         self.key_search_stop();
@@ -194,9 +196,9 @@ impl App {
             self.metar_rx = None;
             self.metar_once = false;
             self.metar_next = 0.0;
-            self.service_msg = Some((format!("METAR source: {code}"), 3.0));
+            self.service_msg = Some((::i18n::translate("pause.msg.metar_source", &[("code", &code)]), 3.0));
         } else if !code.is_empty() {
-            self.service_msg = Some(("ICAO must be exactly 4 letters".into(), 3.0));
+            self.service_msg = Some((::i18n::translate("pause.msg.icao_invalid", &[]), 3.0));
         }
         self.refresh_list();
     }
@@ -286,17 +288,17 @@ impl App {
                 .as_ref()
                 .is_some_and(|l| l.role == ::network::Role::Client)
             {
-                self.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
+                self.service_msg = Some((::i18n::translate("pause.msg.lan_clock", &[]), 3.0));
             } else if self.real_time_locked() {
                 self.service_msg = Some((
-                    "The time cannot be changed while the real-time sync is on".into(),
+                    ::i18n::translate("pause.msg.clock_locked", &[]),
                     3.0,
                 ));
             } else {
                 let t = self.clock.time;
                 let day_start = t - t.rem_euclid(86400.0);
                 self.shift_clock(day_start + (h * 3600 + m * 60 + sec) as f64 - t);
-                self.service_msg = Some((format!("Clock: {:02}:{:02}:{:02}", h, m, sec), 3.0));
+                self.service_msg = Some((::i18n::translate("pause.msg.clock_set", &[("time", &format!("{:02}:{:02}:{:02}", h, m, sec))]), 3.0));
             }
         }
         self.refresh_list();
@@ -426,11 +428,39 @@ impl App {
 
     /// The action name of the list row that is entry `idx` of section `sec`.
     fn keybind_name(&self, sec: usize, idx: usize) -> Option<String> {
-        let list = self.admin_list.as_ref()?;
-        (0..list.len())
-            .filter_map(|k| self.keybind_row(k))
-            .find(|r| r.0 == sec && r.1 == idx)
-            .map(|r| r.2)
+        if sec == 2 {
+            return self.scripted_names().get(idx).cloned();
+        }
+        let v = omsi_launcher_lib::get_keybindings().ok()?;
+        v.get(["vehicles", "game"][sec.min(1)])?
+            .as_array()?
+            .get(idx)?
+            .get("action")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    pub(crate) fn scripted_names(&self) -> Vec<String> {
+        let Some(p) = self.player.as_ref() else {
+            return Vec::new();
+        };
+        let bound: Vec<String> = crate::keys::keybindings()
+            .and_then(|v| {
+                v.get("vehicles")?.as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|b| b.get("action")?.as_str())
+                        .map(|s| s.to_ascii_lowercase())
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        p.vehicle
+            .ty
+            .program
+            .trigger_names()
+            .into_iter()
+            .filter(|n| !bound.contains(&n.to_ascii_lowercase()))
+            .collect()
     }
 
     /// Opens the Keys page again with the row of entry `idx` of section `sec` selected.
@@ -449,13 +479,29 @@ impl App {
     }
 
     pub(crate) fn keybind_edit(&mut self, sec: usize, idx: usize, name: &str, edit: KeyEdit) {
-        let section = ["vehicles", "game"][sec.min(1)];
+        let section = ["vehicles", "game", "vehicles"][sec.min(2)];
         let mut v = match omsi_launcher_lib::get_keybindings() {
             Ok(v) => v,
             Err(e) => {
                 self.service_msg = Some((format!("{e:#}"), 4.0));
                 return;
             }
+        };
+        let (sec, idx) = if sec == 2 {
+            if self.scripted_names().get(idx).map(String::as_str) != Some(name) {
+                self.reopen_keys(sec, idx);
+                return;
+            }
+            let Some(arr) = v.get_mut("vehicles").and_then(|a| a.as_array_mut()) else {
+                return;
+            };
+            if matches!(edit, KeyEdit::Clear) {
+                return;
+            }
+            arr.push(serde_json::json!({ "action": name, "scan_code": 0, "modifier": 0 }));
+            (0, arr.len() - 1)
+        } else {
+            (sec, idx)
         };
         let target = idx;
         {
@@ -493,17 +539,12 @@ impl App {
             return;
         }
         self.reload_keys();
-        // (a key changed is a key the player wants: the ready-made layouts would ignore it)
-        if sec == 0 && self.args.drive_keys != "omsi" {
-            self.args.drive_keys = "omsi".into();
-            ::config::set_setting("gameplay", "drive-keys", "omsi");
-            let _ = ::config::save();
-        }
         self.reopen_keys(sec, target);
     }
 
     /// Reads `keyboard.cfg` anew into what the running game uses.
     fn reload_keys(&mut self) {
+        crate::keys::keybindings_changed();
         let path = crate::startup::keyboard_cfg(&self.args.root);
         self.game_keys = ::content::KeyboardCfg::load(&path)
             .unwrap_or_default()
@@ -822,24 +863,68 @@ impl App {
             return;
         };
         let n = d.items.len().max(1);
+        let ss = !d.search.is_empty();
         match code {
             KeyCode::Escape => {
                 self.dropdown = None;
                 return;
             }
-            KeyCode::ArrowUp | KeyCode::KeyW => d.sel = (d.sel + n - 1) % n,
-            KeyCode::ArrowDown | KeyCode::KeyS => d.sel = (d.sel + 1) % n,
+            KeyCode::Backspace if ss => {
+                d.filter.pop();
+                self.dropdown_refilter();
+                return;
+            }
+            KeyCode::ArrowUp => d.sel = (d.sel + n - 1) % n,
+            KeyCode::KeyW if !ss => d.sel = (d.sel + n - 1) % n,
+            KeyCode::ArrowDown => d.sel = (d.sel + 1) % n,
+            KeyCode::KeyS if !ss => d.sel = (d.sel + 1) % n,
             KeyCode::PageUp => d.sel = d.sel.saturating_sub(5),
             KeyCode::PageDown => d.sel = (d.sel + 5).min(n - 1),
             KeyCode::Home => d.sel = 0,
             KeyCode::End => d.sel = n - 1,
-            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                let i = d.sel;
+                self.dropdown_pick(i);
+                return;
+            }
+            KeyCode::Space if !ss => {
                 let i = d.sel;
                 self.dropdown_pick(i);
                 return;
             }
             _ => return,
         }
+        self.dd_reveal();
+    }
+
+    pub(crate) fn dropdown_text(&mut self, text: &str) {
+        let Some(d) = self.dropdown.as_mut() else {
+            return;
+        };
+        if d.search.is_empty() {
+            return;
+        }
+        d.filter.extend(text.chars().filter(|c| !c.is_control()));
+        self.dropdown_refilter();
+    }
+
+    fn dropdown_refilter(&mut self) {
+        let Some(d) = self.dropdown.as_mut() else {
+            return;
+        };
+        let q = d.filter.trim().to_lowercase();
+        let cur = d.current.and_then(|c| d.items.get(c)).map(|x| x.1.clone());
+        d.items = d
+            .all
+            .iter()
+            .zip(d.search.iter())
+            .enumerate()
+            .filter(|(i, (_, h))| *i == 0 || q.is_empty() || h.contains(&q))
+            .map(|(_, (it, _))| it.clone())
+            .collect();
+        d.current = cur.and_then(|c| d.items.iter().position(|x| x.1 == c));
+        d.sel = if q.is_empty() { d.current.unwrap_or(0) } else { 1.min(d.items.len() - 1) };
+        d.top = 0;
         self.dd_reveal();
     }
 
@@ -1042,8 +1127,6 @@ impl App {
             self.chooser_key(code);
             return;
         }
-        let n = self.game_menu_items().len();
-        let sel = self.game_menu.unwrap_or(0);
         let modified = self.keys.iter().any(|key| {
             matches!(
                 *key,
@@ -1059,15 +1142,6 @@ impl App {
         match code {
             KeyCode::KeyP if !modified => self.toggle_pause(),
             KeyCode::Escape => self.close_game_menu(),
-            KeyCode::ArrowUp | KeyCode::KeyW => {
-                self.game_menu = Some(self.menu_step(sel, n, false))
-            }
-            KeyCode::ArrowDown | KeyCode::KeyS => {
-                self.game_menu = Some(self.menu_step(sel, n, true))
-            }
-            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
-                self.menu_choose(event_loop, sel)
-            }
             _ => {}
         }
     }
@@ -1119,7 +1193,7 @@ impl App {
         }
         match self.chooser {
             Some(_) => self.admin_list.as_ref().unwrap_or(&self.vehicle_list).len(),
-            None => self.game_menu_items().len(),
+            None => 0,
         }
     }
 
@@ -1141,9 +1215,6 @@ impl App {
             self.chooser_pick(k);
             return;
         }
-        if self.menu_item_off(k) {
-            return;
-        }
         let Some(id) = self.game_menu_items().get(k).map(|m| m.0) else {
             return;
         };
@@ -1161,25 +1232,18 @@ impl App {
             }
             "admin" => self.open_list(crate::game_lists::ListKind::Admin),
             "duty" => self.open_list(crate::game_lists::ListKind::Lines),
-            "map" => {
-                self.close_game_menu();
-                if let Some(n) = self.navigator.as_mut() {
-                    if !n.map_open() {
-                        n.toggle_map();
-                    }
-                }
-            }
+            "map" => self.open_map_page(),
             "save" => {
                 self.quick_save();
                 self.close_game_menu();
             }
-            "saveslot" => {
+            "save-slot" => {
                 self.save_slot();
                 self.close_game_menu();
             }
-            "endduty" => {
+            "end-duty" => {
                 self.duty = None;
-                self.service_msg = Some(("Free drive: no duty".into(), 4.0));
+                self.service_msg = Some((::i18n::translate("pause.msg.free_drive", &[]), 4.0));
                 self.close_game_menu();
             }
             "tobus" => {
@@ -1220,7 +1284,7 @@ impl App {
                     self.vehicle_list.sort_by_key(|v| v.0.to_lowercase());
                 }
                 if self.vehicle_list.is_empty() {
-                    self.service_msg = Some(("No vehicles found".into(), 3.0));
+                    self.service_msg = Some((::i18n::translate("pause.msg.no_vehicles", &[]), 3.0));
                 } else {
                     self.open_list(crate::game_lists::ListKind::PlaceMaker);
                 }
@@ -1258,20 +1322,17 @@ impl App {
                 if let Some(p) = self.player.as_ref() {
                     let (at, heading) = (p.vehicle.position, p.vehicle.heading);
                     crate::admin::teleport(self, at, heading);
-                    self.service_msg = Some(("The vehicle stands on its wheels again".into(), 3.0));
+                    self.service_msg = Some((::i18n::translate("pause.msg.vehicle_upright", &[]), 3.0));
                 }
             }
             "teleport" => {
-                self.close_game_menu();
-                if let Some(n) = self.navigator.as_mut() {
-                    if !n.map_open() {
-                        n.toggle_map();
-                    }
+                if self.navigator.is_some() {
                     self.teleport_pick = true;
                     self.service_msg = Some((
                         "Click a street on the map: the bus is put there".into(),
                         6.0,
                     ));
+                    self.open_map_page();
                 }
             }
             "driver" => self.open_list(crate::game_lists::ListKind::Drivers),
@@ -1315,7 +1376,7 @@ impl App {
                     .unwrap_or(false)
                 {
                     self.service_msg =
-                        Some(("In a LAN session the host sets the clock".into(), 3.0));
+                        Some((::i18n::translate("pause.msg.lan_clock", &[]), 3.0));
                 } else {
                     self.shift_clock(match id {
                         "later" => 3600.0,
@@ -1332,28 +1393,28 @@ impl App {
 
     pub(crate) fn game_menu_items(&self) -> Vec<(&'static str, &'static str)> {
         if self.report_view.is_some() {
-            return vec![("report_save", "Save as text…"), ("resume", "Continue")];
+            return vec![("report_save", "pause.entry.report_save"), ("resume", "pause.entry.continue")];
         }
         let mut v: Vec<(&'static str, &'static str)> = game_menu_for(&self.args).to_vec();
         if self.duty.is_some() {
-            v.insert(1, ("report_current", "Current trip evaluation…"));
+            v.insert(1, ("report_current", "pause.entry.report_current"));
         }
         if self.last_report.is_some() {
-            v.insert(1, ("report_last", "Last trip evaluation…"));
+            v.insert(1, ("report_last", "pause.entry.report_last"));
         }
         if self.lan.is_none() {
-            v.insert(1, ("screenshot", "Screenshot mode"));
+            v.insert(1, ("screenshot", "pause.entry.screenshot"));
         }
         let mut at = 1;
         if self.on_foot.is_some() && self.player.is_some() {
-            v.insert(at, ("tobus", "Back to my bus"));
+            v.insert(at, ("tobus", "pause.entry.tobus"));
             at += 1;
         }
         if self.player.is_none() {
             v.retain(|x| x.0 != "duty");
         }
         if self.duty.is_none() {
-            v.retain(|x| x.0 != "endduty");
+            v.retain(|x| x.0 != "end-duty");
         }
         if self.navigator.is_none() {
             v.retain(|x| x.0 != "map");
@@ -1365,7 +1426,7 @@ impl App {
             .unwrap_or(false);
         if self.lan.is_some() || on_server(&self.args) {
             if let Some(w) = v.iter().position(|x| x.0 == "world") {
-                v.insert(w + 1, ("copycode", "Copy server code"));
+                v.insert(w + 1, ("copycode", "pause.entry.copycode"));
                 at = at.max(w + 2);
             }
         }
@@ -1375,7 +1436,7 @@ impl App {
                 .position(|x| x.0 == "quit")
                 .unwrap_or(v.len())
                 .max(at);
-            v.insert(before_quit, ("admin", "Administration..."));
+            v.insert(before_quit, ("admin", "pause.entry.admin"));
         }
         v
     }
@@ -1459,29 +1520,6 @@ impl App {
         {
             self.service_msg = Some((format!("{}: {code}", ::user_interface::tr("Server code")), 8.0));
         }
-    }
-
-    pub(crate) fn menu_disabled_ids(&self) -> &'static [&'static str] {
-        &[]
-    }
-
-    pub(crate) fn menu_item_off(&self, k: usize) -> bool {
-        self.chooser.is_none()
-            && self
-            .game_menu_items()
-            .get(k)
-            .is_some_and(|m| self.menu_disabled_ids().contains(&m.0))
-    }
-
-    pub(crate) fn menu_step(&self, from: usize, n: usize, down: bool) -> usize {
-        let mut k = from;
-        for _ in 0..n {
-            k = if down { (k + 1) % n } else { (k + n - 1) % n };
-            if !self.menu_item_off(k) {
-                return k;
-            }
-        }
-        from
     }
 }
 

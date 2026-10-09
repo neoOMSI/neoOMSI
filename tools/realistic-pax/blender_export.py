@@ -9,10 +9,12 @@ import sys
 import bmesh
 import bpy
 from mathutils import Matrix, Vector
+from mathutils.bvhtree import BVHTree
 
 # triangles of each level at most, besides the small parts kept whole: the first keeps a
 # Rocketbox figure as it is
-LODS = [("", 10000), ("_mid", 2700), ("_low", 700)]
+LODS = [("", 12000), ("_mid", 2700), ("_low", 700)]
+HAIR = re.compile("hair", re.I)
 OMSI_BONES = ["OS_L", "OS_R", "US_L", "US_R", "OA_L", "OA_R", "UA_L", "UA_R",
               "Hip", "Main", "Head", "Hand_L", "Hand_R"]
 FINGERS = ("thumb_", "index_", "middle_", "ring_", "pinky_")
@@ -179,6 +181,42 @@ def decimated(ob, ratio):
     return out
 
 
+def is_hair(ob):
+    return any(HAIR.search(texture_of(m) or "") for m in ob.data.materials)
+
+
+def tuck_scalp(verts, tris, mats, textures, weights, neck):
+    """Decimated apart, the scalp poked through the hair: it is pulled in under it."""
+    hair_m = {k for k, name in enumerate(mats) if HAIR.search(textures.get(name) or "")}
+    if not hair_m:
+        return
+    head = {k: w for k, w in weights["Head"]}
+    hair_t = [t[:3] for t in tris if t[3] in hair_m]
+    hair_v = {i for t in hair_t for i in t}
+    pos = [Vector(v[:3]) for v in verts]
+    top = max(p.y for p in pos)
+    scalp = [i for i, p in enumerate(pos)
+             if i not in hair_v and head.get(i, 0.0) > 0.5 and p.y > neck + 0.45 * (top - neck)]
+    if not scalp:
+        return
+    centre = sum((pos[i] for i in scalp), Vector()) / len(scalp)
+    centre.y = neck + 0.5 * (top - neck)
+    bvh = BVHTree.FromPolygons(pos, hair_t, all_triangles=True)
+    for i in scalp:
+        d = pos[i] - centre
+        r = d.length
+        if r < 1e-4:
+            continue
+        d.normalize()
+        hit = bvh.ray_cast(centre + d * (0.4 * r), d, 0.6 * r + 0.03)[0]
+        if hit is None:
+            continue
+        under = (hit - centre).length - 0.006
+        if under < r:
+            p = centre + d * max(under, 0.6 * r)
+            verts[i] = (p.x, p.y, p.z, *verts[i][3:])
+
+
 def bake(arm, meshes, mats, textures):
     dg = bpy.context.evaluated_depsgraph_get()
     verts, tris = [], []
@@ -267,6 +305,8 @@ def write_o3d(path, verts, tris, mats, textures, weights):
 
 def make_person(spec):
     from bl_ext.user_default.mpfb.services import HumanService
+    spec = dict(spec)
+    stature = spec.pop("neo_height", None)
     info = HumanService._create_default_human_info_dict()
     info.update(spec)
     settings = HumanService.get_default_deserialization_settings()
@@ -278,6 +318,19 @@ def make_person(spec):
         for o in bpy.data.objects:
             if kinds[o.name] == "Basemesh":
                 bpy.data.objects.remove(o)
+    # (MakeHuman's height macro made a 7-year-old 0.98 m)
+    if stature:
+        bpy.context.view_layer.update()
+        dg = bpy.context.evaluated_depsgraph_get()
+        body = [o for o in bpy.data.objects if kinds.get(o.name) in ("Proxymeshes", "Basemesh")]
+        # (the feet are masked off under the shoes)
+        s = stature / max((o.matrix_world @ v.co).z for o in body
+                          for v in o.evaluated_get(dg).data.vertices)
+        for o in bpy.data.objects:
+            if o.parent is None:
+                o.location *= s
+                o.scale *= s
+        bpy.context.view_layer.update()
 
 
 def main():
@@ -307,7 +360,8 @@ def main():
     levels, hand_r = [], []
     for suffix, most in LODS:
         ratio = min(1.0, most / max(full, 1))
-        v, t, w, hands = bake(arm, [d for o in meshes for d in decimated(o, ratio)], mats, textures)
+        parts = [d for o in meshes for d in decimated(o, ratio ** 0.5 if is_hair(o) else ratio)]
+        v, t, w, hands = bake(arm, parts, mats, textures)
         hand_r = hand_r or hands
         levels.append((f"{prefix}{suffix}.o3d", v, t, w))
 
@@ -315,6 +369,9 @@ def main():
 
     def joint(role):
         return to_omsi(a @ arm.pose.bones[bone(role)].head)
+
+    for _, v, t, w in levels:
+        tuck_scalp(v, t, mats, textures, w, joint("head").z)
 
     hip, knee, waist = joint("thigh"), joint("calf"), joint("waist")
     shoulder, elbow, neck, hand = joint("upperarm"), joint("forearm"), joint("head"), joint("hand")

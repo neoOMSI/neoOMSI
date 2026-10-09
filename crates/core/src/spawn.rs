@@ -609,7 +609,6 @@ pub(crate) fn spawn_player(
         }
     }
     if args.situation_vars.is_empty() {
-        open_front_door(&mut p);
         headlights_off(&mut p);
     }
     if ::legacy_config::env::var_os("OMSI_DEBUG_MESHES").is_some() {
@@ -754,7 +753,7 @@ pub(crate) fn spawn_player(
     Ok(Some(p))
 }
 
-fn open_front_door(p: &mut Player) {
+pub(crate) fn open_front_door(p: &mut Player) {
     let groups = door_keys(&p.vehicle.ty);
     let mut ids: Vec<usize> = Vec::new();
     match groups.first() {
@@ -792,18 +791,12 @@ fn open_front_door(p: &mut Player) {
             }
         }
     }
-    if ids.is_empty() {
-        return;
-    }
     ids.sort_unstable();
     ids.dedup();
-    for _ in 0..60 {
-        for &i in &ids {
-            if let Some(x) = p.vehicle.state.vars.get_mut(i) {
-                *x = 1.0;
-            }
+    for &i in &ids {
+        if let Some(x) = p.vehicle.state.vars.get_mut(i) {
+            *x = 1.0;
         }
-        p.vehicle.update(1.0 / 30.0);
     }
 }
 

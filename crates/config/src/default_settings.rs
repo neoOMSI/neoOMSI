@@ -22,9 +22,9 @@ impl Def {
 /// (category, key, default)
 pub const DEFAULTS: &[(&str, &str, Def)] = &[
     // [gameplay]
-    ("gameplay", "drive-keys", Def::Str("simple")),
     ("gameplay", "boarding", Def::Str("auto")),
     ("gameplay", "pax_prefer_seats", Def::Bool(false)),
+    ("gameplay", "pax_rear_entry", Def::Bool(true)),
     ("gameplay", "exact_fare", Def::Bool(true)),
     ("gameplay", "driver", Def::Bool(true)),
     ("gameplay", "maintenance", Def::Int(0)),

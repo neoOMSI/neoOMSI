@@ -289,6 +289,7 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
         faces.push(f);
     }
     let mut normals: Vec<Vec3> = vec![Vec3::Z; nv];
+    let mut has_normal: Vec<bool> = vec![false; nv];
     let mut uvs: Vec<Vec2> = vec![Vec2::ZERO; nv];
     let mut face_mats: Vec<u16> = vec![0; nf];
     let mut mats: Vec<Material> = Vec::new();
@@ -325,6 +326,7 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
                             let vi = faces[fi][k] as usize;
                             if vi < normals.len() && ni < nrm.len() {
                                 normals[vi] = nrm[ni];
+                                has_normal[vi] = true;
                             }
                         }
                     }
@@ -403,6 +405,30 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
     }
     if mats.is_empty() {
         mats.push(Material::default());
+    }
+
+    if has_normal.iter().any(|h| !*h) {
+        let mut acc = vec![Vec3::ZERO; nv];
+        for f in &faces {
+            for k in 1..f.len().saturating_sub(1) {
+                let i = [f[0] as usize, f[k] as usize, f[k + 1] as usize];
+                if i.iter().any(|&v| v >= nv) {
+                    continue;
+                }
+                let p = i.map(|v| positions[v]);
+                let n = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or_zero();
+                for c in 0..3 {
+                    let e1 = (p[(c + 1) % 3] - p[c]).normalize_or_zero();
+                    let e2 = (p[(c + 2) % 3] - p[c]).normalize_or_zero();
+                    acc[i[c]] += n * e1.dot(e2).clamp(-1.0, 1.0).acos();
+                }
+            }
+        }
+        for v in 0..nv {
+            if !has_normal[v] && acc[v].length_squared() > 0.0 {
+                normals[v] = acc[v].normalize();
+            }
+        }
     }
     for i in 0..nv {
         ctx.mesh.vertices.push(Vertex {

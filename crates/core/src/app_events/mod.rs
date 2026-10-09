@@ -30,9 +30,11 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         #[cfg(all(feature = "devtools", debug_assertions))]
-        if let Some(d) = self.devtools.as_mut() {
-            if d.event(&event) {
-                return;
+        if self.lab_menu.is_none() {
+            if let Some(d) = self.devtools.as_mut() {
+                if d.event(&event) {
+                    return;
+                }
             }
         }
         match event {

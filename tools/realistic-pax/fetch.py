@@ -44,7 +44,8 @@ def git_blob_hash(path):
 
 
 def rocketbox(pax):
-    avatars = sorted(set(pax["slots"].values()) | {a for v in pax["alternates"].values() for a in v})
+    avatars = sorted((set(pax["slots"].values()) | {a for v in pax["alternates"].values() for a in v})
+                     - {f"generated/{p['name']}" for p in pax.get("generated", [])})
     with urllib.request.urlopen(
         f"https://api.github.com/repos/{REPO}/git/trees/{REVISION}?recursive=1"
     ) as r:
@@ -80,12 +81,13 @@ def mpfb():
                          ("BLENDER_USER_SCRIPTS", "scripts"), ("BLENDER_USER_DATAFILES", "datafiles"),
                          ("BLENDER_USER_EXTENSIONS", "extensions")):
         env[var] = str(MPFB_PROFILE / sub_dir)
-    if not (MPFB_PROFILE / "extensions" / "user_default" / "mpfb").exists():
+    # (a cleaned cache leaves the folders behind, empty)
+    if not (MPFB_PROFILE / "extensions" / "user_default" / "mpfb" / "__init__.py").exists():
         subprocess.run([find_blender(None), "-b", "--factory-startup", "--command", "extension",
                         "install-file", "-r", "user_default", "-e", str(zip_path)],
                        env=env, check=True, capture_output=True)
     data = MPFB_PROFILE / "extensions" / ".user" / "user_default" / "mpfb" / "data"
-    if not (data / "skins").exists():
+    if not any((data / "skins").glob("*/*.mhmat")):
         assets = CACHE / "mpfb" / "makehuman_system_assets_cc0.zip"
         if not assets.exists():
             print("MakeHuman system assets (281 MB)", flush=True)

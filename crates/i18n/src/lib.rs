@@ -1,5 +1,3 @@
-mod legacy;
-
 use hashbrown::HashMap;
 use std::borrow::Cow;
 use std::sync::{OnceLock, RwLock};
@@ -50,15 +48,11 @@ fn tables() -> &'static HashMap<String, Table> {
     })
 }
 
-fn find_modern(lang: &str, key: &str) -> Option<&'static str> {
+fn find(lang: &str, key: &str) -> Option<&'static str> {
     tables()
         .get(&lang.to_ascii_lowercase())
         .and_then(|t| t.get(key))
         .map(String::as_str)
-}
-
-fn find(lang: &str, key: &str) -> Option<&'static str> {
-    find_modern(lang, key).or_else(|| legacy::lookup(lang, key))
 }
 
 pub fn set_fallback(f: Option<Lookup>) {
@@ -89,7 +83,6 @@ pub fn keys() -> Vec<String> {
     let mut all: Vec<String> = tables()
         .values()
         .flat_map(|t| t.keys().cloned())
-        .chain(legacy::keys().cloned())
         .collect();
     all.sort();
     all.dedup();
@@ -106,7 +99,7 @@ pub fn tr(key: &str) -> Cow<'_, str> {
     }
     let lang = language();
     if !lang.is_empty() {
-        if let Some(t) = legacy::lookup(&lang, key) {
+        if let Some(t) = find(&lang, key) {
             return Cow::Borrowed(t);
         }
         if let Some(t) = FALLBACK
@@ -118,21 +111,20 @@ pub fn tr(key: &str) -> Cow<'_, str> {
             return Cow::Owned(t);
         }
     }
-    match legacy::lookup(DEFAULT, key) {
+    match find(DEFAULT, key) {
         Some(t) => Cow::Borrowed(t),
         None => Cow::Borrowed(key),
     }
 }
 
-/// We will only translate text when we use this, the legacy way is shit.
 pub fn translate(key: &str, params: &[(&str, &dyn std::fmt::Display)]) -> String {
     let lang = language();
     let mut text = if lang.is_empty() {
         None
     } else {
-        find_modern(&lang, key)
+        find(&lang, key)
     }
-        .or_else(|| find_modern(DEFAULT, key))
+        .or_else(|| find(DEFAULT, key))
         .unwrap_or(key)
         .to_string();
     for (name, value) in params {

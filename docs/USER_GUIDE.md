@@ -77,6 +77,10 @@ The option can also be changed through the in-game **Options → Gameplay** menu
 apply to subsequent place reservations in player and timetable buses. In `settings.cfg`,
 the option is stored as `pax_prefer_seats=1` (enabled) or `pax_prefer_seats=0` (disabled).
 
+**Boarding at the rear doors** (on by default) lets passengers who buy no ticket from the
+driver get on at the exit doors too. Turned off, everybody boards at the bus's entries, as
+in OMSI 2. It is stored as `pax_rear_entry`.
+
 ## Wet-road reflections
 
 Vanilla, Vanilla+ and Enhanced show reflections of buses, buildings and scenery in

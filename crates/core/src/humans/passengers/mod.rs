@@ -27,6 +27,8 @@ pub(super) struct BusAtStops {
     pub all_exit: bool,
 }
 
+const DOOR_GIVE_UP: f32 = 20.0;
+
 fn wrap(a: f64) -> f64 {
     let mut a = a;
     let pi = std::f64::consts::PI;
@@ -138,29 +140,37 @@ impl Humans {
                 self.buses.ai_requests.push((*id, e.clone(), x.clone()));
             }
         }
-        // timetable buses wait while people still get on or off - for somebody on the way
-        // to the gather point only while the bus stands in the stop's box: outside it
-        // nobody walks up to the doors (`Task::ToBus`), and the bus held for them waited
-        // for good
+        // timetable buses wait while people still get on or off. Not for anybody without a
+        // place of their own (at the gather point of a full bus, `Task::ToBus`), outside the
+        // stop's box, or given up at a door still shut: the bus held for them waited for good.
+        // (`door_wait` is not reset when the door opens: it keeps a natural-mode boarder at
+        // the open door, see `choose_entry`)
         for bn in buses {
             let BusId::Ai(id) = bn.id else { continue };
             if bn.speed.abs() > 0.5 {
                 continue;
             }
-            let busy = self.people.iter().any(|p| match &p.state {
-                State::Pax(x) => {
-                    let coming = match x.task {
-                        Task::WalkingToBus => true,
-                        Task::ToBus => x.stop.is_some_and(|s| self.in_stop_box(s, bn.id)),
-                        _ => false,
-                    };
-                    x.bus == Some(bn.id)
-                        && (coming || (x.task == Task::InBusToExit && x.inside == Some(bn.id)))
+            let mut hold = None;
+            for p in &self.people {
+                let State::Pax(x) = &p.state else { continue };
+                if x.bus != Some(bn.id) {
+                    continue;
                 }
-                _ => false,
-            });
-            if busy {
-                self.buses.holds.push((id, 2.5));
+                let boarding = x.task == Task::WalkingToBus
+                    && x.seat.is_some()
+                    && (x.door_wait < DOOR_GIVE_UP || x.door.is_some_and(|d| bn.boarding_open(d)))
+                    && x.stop.is_some_and(|s| self.in_stop_box(s, bn.id));
+                let alighting = x.task == Task::InBusToExit && x.inside == Some(bn.id);
+                if alighting && x.doorway.is_some() {
+                    hold = Some(true);
+                    break;
+                }
+                if boarding || alighting {
+                    hold = Some(false);
+                }
+            }
+            if let Some(in_doorway) = hold {
+                self.buses.holds.push((id, 2.5, in_doorway));
             }
         }
     }
@@ -191,6 +201,9 @@ impl Humans {
         // sub_62a258: the bus is gone - nothing more to do with it
         if let Some(bus) = self.pax(i).unwrap().bus.filter(|b| !bus_ix.contains_key(b)) {
             if let Some(seat) = self.pax_mut(i).unwrap().seat.take() {
+                self.free_seat(bus, seat);
+            }
+            if let Some(seat) = self.pax_mut(i).unwrap().vacating.take() {
                 self.free_seat(bus, seat);
             }
             self.pax_mut(i).unwrap().bus = None;

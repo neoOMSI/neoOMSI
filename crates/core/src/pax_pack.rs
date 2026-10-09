@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-const TAG: &str = "realistic-pax-v1";
-const FILE: &str = "RealisticPax-v1.zip";
-const VERSION: u64 = 1;
+const TAG: &str = "realistic-pax-v2";
+const FILE: &str = "RealisticPax-v2.zip";
+const VERSION: u64 = 2;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
@@ -202,7 +202,7 @@ mod tests {
             None,
             Some("not json"),
             Some(r#"{"name": "RealisticPax"}"#),
-            Some(r#"{"name": "RealisticPax", "version": 2}"#),
+            Some(r#"{"name": "RealisticPax", "version": 99}"#),
             Some(r#"{"name": "Other", "version": 1}"#),
         ] {
             let mut files = vec![("RealisticPax/Humans/Other/man01.hum", "[model]
@@ -215,10 +215,11 @@ mod tests {
         }
 
         let good = dir.join("good.zip");
+        let manifest = format!(r#"{{"name": "RealisticPax", "version": {VERSION}}}"#);
         archive(
             &good,
             &[
-                ("RealisticPax/pack.json", r#"{"name": "RealisticPax", "version": 1}"#),
+                ("RealisticPax/pack.json", &manifest),
                 ("RealisticPax/Humans/Other/man01.hum", "[model]\n"),
             ],
         );
@@ -236,11 +237,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let content = dir.join("content");
-        let source = dir.join("RealisticPax-v1.zip");
+        let source = dir.join(FILE);
+        let manifest = format!(r#"{{"name": "RealisticPax", "version": {VERSION}}}"#);
         archive(
             &source,
             &[
-                ("RealisticPax/pack.json", r#"{"name": "RealisticPax", "version": 1}"#),
+                ("RealisticPax/pack.json", &manifest),
                 ("RealisticPax/Humans/Other/man01.hum", "[model]\n"),
             ],
         );

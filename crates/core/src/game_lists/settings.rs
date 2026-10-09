@@ -4,7 +4,7 @@ use super::*;
 
 /// The launcher's settings file as the lists show it: read once (until something is
 /// written), with the keys still waiting to be written on top.
-pub(super) fn settings_file() -> std::sync::Arc<serde_json::Value> {
+pub(crate) fn settings_file() -> std::sync::Arc<serde_json::Value> {
     // lock order: MERGED_SETTINGS, then SETTINGS_CACHE and PENDING_SETTINGS
     let mut merged = MERGED_SETTINGS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(v) = merged.as_ref() {
@@ -123,6 +123,7 @@ pub(super) fn sync_live(app: &mut App) {
         h.exact_fare = ::config::get_bool("gameplay", "exact_fare").unwrap_or(true);
         h.boarding = ::config::get_string("gameplay", "boarding").unwrap_or_else(|| "auto".into());
         h.prefer_seats = ::config::get_bool("gameplay", "pax_prefer_seats").unwrap_or(false);
+        h.rear_entry = ::config::get_bool("gameplay", "pax_rear_entry").unwrap_or(true);
         h.set_ik(app.args.pax_ik.unwrap_or(::config::get_bool("passengers", "ik").unwrap_or(true)));
         h.set_natural(::config::get_string("passengers", "motion").as_deref().unwrap_or("natural") == "natural");
         h.voices = match ::config::get_string("passengers", "voices").as_deref() {

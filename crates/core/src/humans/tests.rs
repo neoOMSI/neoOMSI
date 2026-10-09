@@ -192,7 +192,7 @@ fn reset_population_keeps_player_riders_and_avatars_and_releases_other_reservati
         .insert(BusId::Ai(7), (3.0, 4.0, DVec2::ZERO));
     h.buses.served_stop = Some(5);
     h.buses.ai_visits.insert(7, (5, 8.0));
-    h.buses.holds.push((7, 2.5));
+    h.buses.holds.push((7, 2.5, false));
     h.buses.ai_requests.push((7, vec![true], vec![false]));
     h.desk.desk_busy = Some(3);
     h.desk.pardons = 2;
@@ -937,8 +937,8 @@ fn seat_preference_respects_reservations_capacity_and_released_seats() {
         .enumerate()
         .map(|(omsi_seat, seated)| Seat {
             point: Some(0),
-            pos: Vec3::ZERO,
-            floor: Vec3::ZERO,
+            pos: Vec3::X * omsi_seat as f32,
+            floor: Vec3::X * omsi_seat as f32,
             rot: 0.0,
             seated,
             height: if seated { 0.45 } else { 0.0 },
@@ -962,4 +962,97 @@ fn seat_preference_respects_reservations_capacity_and_released_seats() {
     }
     Arc::get_mut(&mut cabin).unwrap().seats.clear();
     assert_eq!(h.reserve_place(BusId::Player, &cabin, None, false), None);
+}
+
+fn place(pos: Vec3, rot: f32, seated: bool) -> Seat {
+    let r = rot.to_radians();
+    Seat {
+        point: Some(0),
+        pos,
+        floor: if seated {
+            Vec3::new(pos.x + r.sin() * 0.34, pos.y + r.cos() * 0.34, pos.z - 0.45)
+        } else {
+            pos
+        },
+        rot,
+        seated,
+        height: if seated { 0.45 } else { 0.0 },
+        omsi_seat: 0,
+    }
+}
+
+#[test]
+fn a_seat_listed_twice_takes_one_passenger() {
+    let mut cabin = passenger_compat_tests::cabin();
+    let seats = vec![
+        place(Vec3::new(0.9, 1.0, 0.9), 0.0, true),
+        place(Vec3::new(0.48, 1.0, 0.9), 0.0, true),
+        place(Vec3::new(0.9, 1.0, 0.9), 0.0, true),
+        place(Vec3::new(0.9, 1.34, 0.45), 0.0, false),
+    ];
+    Arc::get_mut(&mut cabin).unwrap().seats = seats.clone();
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    let mut got = Vec::new();
+    while let Some(k) = h.reserve_place(BusId::Player, &cabin, None, false) {
+        got.push(k);
+    }
+    got.sort();
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(got.contains(&1));
+    h.free_seat(BusId::Player, got[0]);
+    assert_eq!(
+        h.reserve_place(BusId::Player, &cabin, None, false),
+        Some(got[0])
+    );
+}
+
+#[test]
+fn the_legroom_reaches_to_the_seat_in_front_or_half_way_to_one_facing() {
+    let seats = vec![
+        place(Vec3::new(0.9, 0.0, 0.9), 0.0, true),
+        place(Vec3::new(0.9, 0.75, 0.9), 0.0, true),
+        place(Vec3::new(0.9, 1.95, 0.9), 180.0, true),
+        place(Vec3::new(-0.9, 0.75, 0.9), 0.0, true),
+    ];
+    let (room, aisle) = legroom(&seats, 0).unwrap();
+    assert!((room - (0.75 - 0.2)).abs() < 1e-4, "{room}");
+    assert_eq!(aisle, -1.0);
+    let (room, aisle) = legroom(&seats, 1).unwrap();
+    assert!((room - 0.6).abs() < 1e-4, "{room}");
+    assert_eq!(aisle, -1.0);
+    let (room, aisle) = legroom(&seats, 2).unwrap();
+    assert!((room - 0.6).abs() < 1e-4, "{room}");
+    assert_eq!(aisle, 1.0);
+    assert!(legroom(&seats, 3).is_none());
+}
+
+#[test]
+fn a_ticket_sale_point_on_the_floor_is_the_money_tray() {
+    let root = ::legacy_config::env::var_os("OMSI_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
+    let bus = root.join("Vehicles/MB_C2_EN_BVG/MB_C2_E6_Solo.bus");
+    if !bus.exists() {
+        eprintln!("skipped: no {}", bus.display());
+        return;
+    }
+    let def = ::legacy_vehicle::Vehicle::load(&bus).expect("C2");
+    let cabin = Cabin::load_train(&[(&def, Vec3::ZERO, f32::INFINITY)]).expect("cabin");
+    let (_, sale) = cabin.sale.unwrap();
+    assert_eq!(Some(sale), cabin.money_point);
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    let cabin = Arc::new(cabin);
+    let mut got = Vec::new();
+    while let Some(k) = h.reserve_place(BusId::Player, &cabin, None, false) {
+        got.push(k);
+    }
+    for (n, &a) in got.iter().enumerate() {
+        for &b in &got[n + 1..] {
+            let (p, q) = (cabin.seats[a].pos, cabin.seats[b].pos);
+            assert!(
+                (p - q).length() > 0.05 || cabin.seats[a].seated != cabin.seats[b].seated,
+                "places {a} and {b} on one spot"
+            );
+        }
+    }
 }

@@ -79,6 +79,8 @@ pub(in crate::humans) struct Pax {
     pub journey: Journey,
     /// The place reserved in the bus (+0x610).
     pub seat: Option<usize>,
+    /// Kept from boarders until its occupant has stood up from it.
+    pub vacating: Option<usize>,
     /// +0x61c, the ticket (1-based, +0x61d) and its price (+0x620), what was paid (+0x624),
     /// the change was wrong (+0x628), the cash desk was free (+0x629), the ticket sale
     /// step (+0x6c6).
@@ -170,6 +172,7 @@ impl Pax {
                 km_start: 0.0,
             },
             seat: None,
+            vacating: None,
             ticket: TicketAction::None,
             ticket_id: 0,
             price: 0.0,

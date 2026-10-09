@@ -1,4 +1,6 @@
-use super::{BusId, BusNow, Humans, Person, Place, PuppetMode, State, Task, model_point, pax};
+use super::{
+    BusId, BusNow, Humans, Person, Place, PuppetMode, State, Task, legroom, model_point, pax,
+};
 use crate::{ambience, scene::World};
 use glam::{DVec2, DVec3, Vec3};
 use hashbrown::HashMap;
@@ -92,6 +94,7 @@ impl Humans {
             let velocity = pose_velocity(p, frame, origin, dt);
             let mut ik_activity = p.activity;
             let mut ik_seat: Option<Vec3> = None;
+            let mut ik_legroom = None;
             let mut ik_look: Option<Vec3> = None;
             let mut ik_reach: Option<Vec3> = None;
             let mut ik_hold = 0.0;
@@ -156,6 +159,10 @@ impl Humans {
                                 } else {
                                     ik_activity = Activity::Sit;
                                     ik_seat = Some(to_model(s.pos.as_dvec3()));
+                                    ik_legroom = x
+                                        .seat
+                                        .zip(bn)
+                                        .and_then(|(k, b)| legroom(&b.cabin.seats, k));
                                 }
                                 facing = Some(s.rot as f64);
                             } else {
@@ -275,6 +282,11 @@ impl Humans {
                         .filter(|sp| sp.height != 0.0);
                     if let Some(seat) = seat.filter(|seat| seat.seated) {
                         ik_seat = Some(to_model(seat.pos.as_dvec3()));
+                        ik_legroom = p
+                            .render
+                            .mirror_seat
+                            .zip(bn)
+                            .and_then(|(k, b)| legroom(&b.cabin.seats, k));
                         facing = Some(seat.rot as f64);
                     }
                     if let Some(sp) = waiting_seat {
@@ -337,6 +349,7 @@ impl Humans {
                 frame,
                 velocity,
                 seat: ik_seat,
+                legroom: ik_legroom,
                 look: ik_look,
                 reach: ik_reach,
                 gesture: ik_gesture,

@@ -69,7 +69,7 @@ pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
             "route number set by hand: {line} (IBIS_LinieKurs {:?})",
             p.vehicle.var("IBIS_LinieKurs")
         );
-        app.service_msg = Some((format!("Route {line}"), 3.0));
+        app.service_msg = Some((::i18n::translate("pause.list.route_set", &[("line", &line)]), 3.0));
     }
 }
 
@@ -135,6 +135,19 @@ pub(super) fn place_vehicles(app: &App, unknown: &str) -> Vec<(String, String, S
         .collect()
 }
 
+pub(crate) fn place_makers(app: &App) -> Vec<(String, String, usize)> {
+    let all = place_vehicles(app, &::i18n::translate("pause.list.unknown_maker", &[]));
+    let mut groups: Vec<(String, String, usize)> = Vec::new();
+    for v in &all {
+        match groups.iter_mut().find(|g| g.0 == v.0) {
+            Some(g) => g.2 += 1,
+            None => groups.push((v.0.clone(), v.1.clone(), 1)),
+        }
+    }
+    groups.sort_by(|a, b| bus_cmp(&a.1, &b.1).then_with(|| a.0.cmp(&b.0)));
+    groups
+}
+
 pub(super) fn liveries(def: &::legacy_vehicle::Vehicle) -> Vec<String> {
     let Some(m) = def.model.as_ref() else {
         return Vec::new();
@@ -166,18 +179,17 @@ pub(super) fn hof_label(p: &std::path::Path) -> String {
         .filter(|n| !n.trim().is_empty())
     {
         Some(n)
-            if !file
-                .to_ascii_lowercase()
-                .starts_with(&n.trim().to_ascii_lowercase()) =>
-        {
-            format!("{}  ({file})", n.trim())
-        }
+        if !file
+            .to_ascii_lowercase()
+            .starts_with(&n.trim().to_ascii_lowercase()) =>
+            {
+                format!("{}  ({file})", n.trim())
+            }
         _ => file,
     }
 }
 
 pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
-    let tr = |t: &str| ::user_interface::tr(t).into_owned();
     let mut out: Vec<(String, String)> = Vec::new();
     match kind {
         ListKind::Admin => return crate::admin::items(app),
@@ -196,7 +208,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
             };
             if pages.is_empty() {
                 return vec![(
-                    row("Nothing to set here", 'i', "", "", None),
+                    row(&::i18n::translate("pause.list.nothing_to_set", &[]), 'i', "", "", None),
                     "noop".to_string(),
                 )];
             }
@@ -211,29 +223,26 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                     .filter(|l| {
                         l.user_allowed
                             && l.tours
-                                .iter()
-                                .any(|t| tour_listed(sch, &l.name, t, app.clock.time))
+                            .iter()
+                            .any(|t| tour_listed(sch, &l.name, t, app.clock.time))
                     })
                     .collect();
                 lines.sort_by(|a, b| natural(&a.name, &b.name));
                 for l in lines {
+                    let count = l
+                        .tours
+                        .iter()
+                        .filter(|t| tour_listed(sch, &l.name, t, app.clock.time))
+                        .count();
+                    let key = if count == 1 { "pause.list.line_one" } else { "pause.list.line_many" };
                     out.push((
-                        format!(
-                            "{} {}  ({} {})",
-                            tr("Line"),
-                            l.name,
-                            l.tours
-                                .iter()
-                                .filter(|t| tour_listed(sch, &l.name, t, app.clock.time))
-                                .count(),
-                            tr("tours")
-                        ),
+                        ::i18n::translate(key, &[("name", &l.name), ("count", &count)]),
                         format!("line {}", l.name),
                     ));
                 }
             }
             if out.is_empty() {
-                out.push((tr("No timetable on this map"), "back".into()));
+                out.push((::i18n::translate("pause.list.no_timetable", &[]), "back".into()));
             }
         }
         ListKind::Tours(line, _) => {
@@ -248,7 +257,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                         .is_some_and(|s| tour_listed(s, line, t, app.clock.time))
                 }) {
                     out.push((
-                        format!("{} {}", tr("Tour"), t.number.trim()),
+                        ::i18n::translate("pause.list.tour", &[("number", &t.number.trim())]),
                         format!("tour {}\u{1}{}", line, t.number),
                     ));
                 }
@@ -263,7 +272,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                     .and_then(|p| p.file_stem())
                     .is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&name))
                 {
-                    format!("  {}", tr("(now)"))
+                    format!("  {}", ::i18n::translate("pause.list.now", &[]))
                 } else {
                     String::new()
                 };
@@ -278,7 +287,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                     .filter(|l| *l > 0.0)
                     .map(|l| format!("{}", l as i64))
                     .unwrap_or_else(|| "-".into());
-                out.push((format!("{}: {now}...", tr("Route number")), "routes".into()));
+                out.push((::i18n::translate("pause.list.route_now", &[("value", &now)]), "routes".into()));
             }
             if let Some(hof) = app.player.as_ref().and_then(|p| p.vehicle.host.hof.clone()) {
                 let mut termini: Vec<(String, String)> = hof
@@ -305,7 +314,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
             }
             if out.is_empty() {
                 out.push((
-                    tr("This bus has no depot file (.hof) with destinations"),
+                    ::i18n::translate("pause.list.no_destinations", &[]),
                     "back".into(),
                 ));
             }
@@ -315,24 +324,17 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
             // it (a bus that switches its functions by route number) take what is typed
             match app.menu_edit.as_ref() {
                 Some(t) => out.push((
-                    format!(
-                        "{}: {t}_  ({})",
-                        tr("Route number"),
-                        tr("Enter sets it, Esc cancels")
-                    ),
+                    ::i18n::translate("pause.list.route_typing", &[("text", t)]),
                     "route_type".into(),
                 )),
-                None => out.push((
-                    format!("{}...", tr("Type a route number")),
-                    "route_type".into(),
-                )),
+                None => out.push((::i18n::translate("pause.list.route_type", &[]), "route_type".into())),
             }
             for l in route_numbers(app) {
-                out.push((format!("{} {l}", tr("Route")), format!("route {l}")));
+                out.push((::i18n::translate("pause.list.route", &[("line", &l)]), format!("route {l}")));
             }
             if out.len() == 1 {
                 out.push((
-                    tr("No route numbers in the depot file or the timetable"),
+                    ::i18n::translate("pause.list.no_routes", &[]),
                     "back".into(),
                 ));
             }
@@ -348,7 +350,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 files.sort_by_key(|(label, _)| label.to_lowercase());
                 for (label, f) in files {
                     let mark = if now.as_ref() == Some(&f) {
-                        format!("  {}", tr("(now)"))
+                        format!("  {}", ::i18n::translate("pause.list.now", &[]))
                     } else {
                         String::new()
                     };
@@ -359,14 +361,14 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 }
             }
             if out.is_empty() {
-                out.push((tr("This bus has no depot files (.hof)"), "back".into()));
+                out.push((::i18n::translate("pause.list.no_hofs", &[]), "back".into()));
             }
         }
         ListKind::Spots => {
             if let Some(w) = app.world.as_ref() {
                 for (i, e) in w.global.entry_points.iter().enumerate() {
                     let label = if e.name.trim().is_empty() {
-                        format!("{} {}", tr("entry"), e.index + 1)
+                        ::i18n::translate("pause.list.entry", &[("number", &(e.index + 1))])
                     } else {
                         e.name.trim().to_string()
                     };
@@ -374,11 +376,11 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 }
             }
             if out.is_empty() {
-                out.push((tr("This map has no entry points"), "back".into()));
+                out.push((::i18n::translate("pause.list.no_entries", &[]), "back".into()));
             }
         }
         ListKind::PlaceMaker => {
-            let all = place_vehicles(app, &tr("Unknown manufacturer"));
+            let all = place_vehicles(app, &::i18n::translate("pause.list.unknown_maker", &[]));
             let mut groups: Vec<(String, String, Vec<&(String, String, String, String)>)> =
                 Vec::new();
             for v in &all {
@@ -396,14 +398,14 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                     ));
                 } else {
                     out.push((
-                        format!("{name}  ({} {})", vs.len(), tr("models")),
+                        ::i18n::translate("pause.list.maker_models", &[("name", &name), ("count", &vs.len())]),
                         format!("maker {key}"),
                     ));
                 }
             }
         }
         ListKind::PlaceType(key) => {
-            let all = place_vehicles(app, &tr("Unknown manufacturer"));
+            let all = place_vehicles(app, &::i18n::translate("pause.list.unknown_maker", &[]));
             let mut types: Vec<(String, String)> = all
                 .iter()
                 .filter(|v| v.0 == *key)
@@ -435,7 +437,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
             }
         }
         ListKind::PlaceLivery(bus) => {
-            out.push((tr("Random livery"), "livery ".into()));
+            out.push((::i18n::translate("pause.dialog.place.random_livery", &[]), "livery ".into()));
             let mut names = bus_def(app, bus).map(|d| liveries(&d)).unwrap_or_default();
             names.sort_by_key(|n| n.to_lowercase());
             names.dedup();
@@ -444,7 +446,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
             }
         }
         ListKind::PlaceHof(bus, _) => {
-            out.push((tr("The map's depot file"), "placehof ".into()));
+            out.push((::i18n::translate("pause.dialog.place.depot_file", &[]), "placehof ".into()));
             if let Some(d) = bus_def(app, bus) {
                 let mut files: Vec<(String, String)> = ::legacy_vehicle::hof::depot_files(d.dir())
                     .into_iter()
@@ -479,11 +481,11 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 }
             }
             if out.is_empty() {
-                out.push((tr("This bus has no list of fleet numbers"), "back".into()));
+                out.push((::i18n::translate("pause.list.no_numbers", &[]), "back".into()));
             }
         }
     }
-    out.push((tr("Back"), "back".into()));
+    out.push((::i18n::translate("pause.dialog.back", &[]), "back".into()));
     out
 }
 
@@ -502,15 +504,7 @@ pub(crate) fn menu_extras(
     let Some(sel) = sel else {
         return (MenuKind::Game, None, None);
     };
-    let tr = |t: &str| ::user_interface::tr(t).into_owned();
-    let title = |t: &str| {
-        tr(t)
-            .trim_end_matches("...")
-            .trim_end_matches('…')
-            .trim_end()
-            .to_string()
-    };
-    let head = |t: &str| Some((title(t), String::new()));
+    let head = |key: &str| Some((::i18n::translate(key, &[]), String::new()));
     let hm = |m: f32| format!("{:02}:{:02}", (m / 60.0) as i32 % 24, (m % 60.0) as i32);
     let trip_of = |name: &str| -> (String, String) {
         schedule
@@ -528,15 +522,15 @@ pub(crate) fn menu_extras(
         .map(|x| x.1.as_str())
         .unwrap_or("");
     let Some(kind) = kind else {
-        return (MenuKind::List, head("Place a vehicle..."), None);
+        return (MenuKind::List, head("pause.dialog.title.place"), None);
     };
     match kind {
         ListKind::Options(t) if *t == KEYS_TAB => {
-            (MenuKind::Options, head("Key bindings..."), None)
+            (MenuKind::Options, head("pause.dialog.title.keys"), None)
         }
-        ListKind::Options(_) => (MenuKind::Options, head("Options..."), None),
-        ListKind::Vehicle(_) => (MenuKind::Options, head("Vehicle options..."), None),
-        ListKind::World(_) => (MenuKind::Options, head("World options..."), None),
+        ListKind::Options(_) => (MenuKind::Options, head("pause.dialog.title.options"), None),
+        ListKind::Vehicle(_) => (MenuKind::Options, head("pause.dialog.title.vehicle"), None),
+        ListKind::World(_) => (MenuKind::Options, head("pause.dialog.title.world"), None),
         ListKind::Lines => {
             let preview = action.strip_prefix("line ").and_then(|name| {
                 let line = schedule?.data.lines.iter().find(|l| l.name == name)?;
@@ -560,9 +554,9 @@ pub(crate) fn menu_extras(
                                 .unwrap_or_default(),
                         };
                         let what = if end.is_empty() {
-                            format!("{} {}", tr("Tour"), t.number.trim())
+                            ::i18n::translate("pause.list.tour", &[("number", &t.number.trim())])
                         } else {
-                            format!("{} {}  ›  {}", tr("Tour"), t.number.trim(), end)
+                            ::i18n::translate("pause.list.tour_to", &[("number", &t.number.trim()), ("end", &end)])
                         };
                         let when = match next {
                             Some(n) => hm((n.3 / 60.0) as f32),
@@ -576,23 +570,23 @@ pub(crate) fn menu_extras(
                     })
                     .collect();
                 Some(Preview {
-                    title: format!("{} {}", tr("Line"), line.name),
-                    meta: format!(
-                        "{} {}",
-                        line.tours
+                    title: ::i18n::translate("pause.list.line_title", &[("name", &line.name)]),
+                    meta: {
+                        let count = line
+                            .tours
                             .iter()
-                            .filter(|t| schedule
-                                .is_some_and(|s| tour_listed(s, &line.name, t, now)))
-                            .count(),
-                        tr("tours")
-                    ),
+                            .filter(|t| schedule.is_some_and(|s| tour_listed(s, &line.name, t, now)))
+                            .count();
+                        let key = if count == 1 { "pause.list.tours_one" } else { "pause.list.tours_many" };
+                        ::i18n::translate(key, &[("count", &count)])
+                    },
                     rows,
                     chosen: None,
                     button: None,
                     time: None,
                 })
             });
-            (MenuKind::Lines, head("Line and tour..."), preview)
+            (MenuKind::Lines, head("pause.dialog.title.line_tour"), preview)
         }
         ListKind::Tours(line_name, pick) => {
             // (the line number of the trip of a tour shown: a tour may run trips of several lines)
@@ -645,19 +639,14 @@ pub(crate) fn menu_extras(
                         .collect();
                     let trip_line = tour_line(ln, num).unwrap_or_else(|| line_sign(schedule, line));
                     Some(Preview {
-                        title: format!("{} {}", tr("Tour"), num.trim()),
-                        meta: format!(
-                            "{} {}  ·  {} {}/{}  ·  {}",
-                            tr("Line"),
-                            trip_line,
-                            tr("Trip"),
-                            trip + 1,
-                            n_trips.max(1),
-                            tr("Choose the stop to start from")
+                        title: ::i18n::translate("pause.list.tour", &[("number", &num.trim())]),
+                        meta: ::i18n::translate(
+                            "pause.list.preview_meta",
+                            &[("line", &trip_line), ("trip", &(trip + 1)), ("trips", &n_trips.max(1))],
                         ),
                         rows,
                         chosen: Some(chosen),
-                        button: Some(tr("Start trip")),
+                        button: Some(::i18n::translate("pause.list.start_trip", &[])),
                         time: Some(hm((at / 60.0) as f32)),
                     })
                 });
@@ -675,29 +664,29 @@ pub(crate) fn menu_extras(
             (
                 MenuKind::Tours,
                 Some((
-                    title("Line and tour..."),
-                    format!("{} {}", tr("Line"), sign),
+                    ::i18n::translate("pause.dialog.title.line_tour", &[]),
+                    ::i18n::translate("pause.list.line_title", &[("name", &sign)]),
                 )),
                 preview,
             )
         }
-        ListKind::Drivers => (MenuKind::List, head("Driver..."), None),
-        ListKind::Numbers => (MenuKind::List, head("Fleet number..."), None),
-        ListKind::Destinations => (MenuKind::List, head("Destination display..."), None),
+        ListKind::Drivers => (MenuKind::List, head("pause.dialog.title.driver"), None),
+        ListKind::Numbers => (MenuKind::List, head("pause.dialog.title.fleet_number"), None),
+        ListKind::Destinations => (MenuKind::List, head("pause.dialog.title.destination"), None),
         ListKind::RouteNumbers => (
             MenuKind::List,
-            Some((tr("Route number"), String::new())),
+            Some((::i18n::translate("pause.list.route_number", &[]), String::new())),
             None,
         ),
-        ListKind::Hofs => (MenuKind::List, head("Depot file (HOF)..."), None),
-        ListKind::Spots => (MenuKind::List, head("Teleport to a start point..."), None),
+        ListKind::Hofs => (MenuKind::List, head("pause.dialog.title.hof"), None),
+        ListKind::Spots => (MenuKind::List, head("pause.dialog.title.spot"), None),
         ListKind::PlaceMaker
         | ListKind::PlaceType(_)
         | ListKind::PlaceLivery(_)
-        | ListKind::PlaceHof(..) => (MenuKind::List, head("Place a vehicle..."), None),
+        | ListKind::PlaceHof(..) => (MenuKind::List, head("pause.dialog.title.place"), None),
         ListKind::Admin => (
             MenuKind::List,
-            Some((tr("Administration"), String::new())),
+            head("pause.dialog.title.admin"),
             None,
         ),
     }
@@ -728,7 +717,7 @@ pub(super) fn switch_driver(app: &mut App, name: &str) {
     next.seconds = app.career.seconds;
     app.career = next;
     app.args.driver = Some(rel);
-    app.service_msg = Some((format!("Driver: {name}"), 3.0));
+    app.service_msg = Some((::i18n::translate("pause.list.driver_set", &[("name", &name)]), 3.0));
 }
 
 pub(super) fn fleet_numbers(v: &::simulation::VehicleInstance) -> Vec<(String, String)> {

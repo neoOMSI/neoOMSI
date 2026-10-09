@@ -33,7 +33,6 @@ mod platform;
 mod radio;
 mod rail_drive;
 mod touch;
-mod pax_pack;
 mod updater;
 mod vr_navigator;
 
@@ -68,8 +67,10 @@ mod duty_start;
 mod editor_ctl;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod evdev_ff;
-mod ffb_calibration;
 mod game_menu;
+mod lab_menu;
+mod lab_options;
+mod lab_pads;
 mod input_keys;
 mod input_mouse;
 mod input_script;
@@ -338,12 +339,6 @@ pub(crate) fn make_app(
         place_on_duty(&mut args);
     }
     applog::log_system();
-    if args.drive_keys.eq_ignore_ascii_case("simple")
-        && let Some(k) = config::get_string("gameplay", "drive-keys")
-        && !k.eq_ignore_ascii_case("simple")
-    {
-        args.drive_keys = k;
-    }
     ENHANCED.store(
         (config::get_string("graphics", "graphics").as_deref() == Some("enhanced")) || args.enhanced || legacy_config::env::var_os("OMSI_ENHANCED").is_some(),
         std::sync::atomic::Ordering::Relaxed,
@@ -426,6 +421,7 @@ pub(crate) fn make_app(
     let view = args.view.clone();
     let args_root_for_keys = args.root.clone();
     let clock_note = args.clock_moved.clone();
+    let vehicle_scan = Some(lab_menu::scan_vehicles(args.root.clone(), args.map.clone()));
     let mut app = App {
         args,
         instance: graphics_instance(),
@@ -507,6 +503,14 @@ pub(crate) fn make_app(
         paused: false,
         sim_accum: 0.0,
         game_menu: None,
+        lab_menu: None,
+        lab_map_direct: false,
+        lab_list: None,
+        lab_load: None,
+        lab_place: None,
+        lab_room: None,
+        lab_pic: None,
+        vehicle_scan,
         menu_top: None,
         menu_scroll_drag: false,
         pane_scroll: None,
@@ -519,7 +523,7 @@ pub(crate) fn make_app(
         headtrack: None,
         headtrack_failed: None,
         controllers: None,
-        mouse_drive: false,
+        mouse_drive: ::config::get_bool("controls", "mouse_steering").unwrap_or(false),
         mouse_steer: (0.0, 0.0),
         mouse_edge: 0.0,
         steer_cursor: None,
@@ -613,11 +617,6 @@ pub(crate) fn make_app(
     };
     app.lan = lan;
     app.remotes = lan_game;
-    if config::get_bool("controls", "mouse_steering").unwrap_or(false) {
-        app.mouse_drive = true;
-        app.mouse_steer = (0.0, 1.0);
-        app.center_cursor = true;
-    }
     std::mem::forget(_lan_status);
     Ok(Some(app))
 }

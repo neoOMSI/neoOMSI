@@ -15,8 +15,8 @@
     "Humans/aXYZ/woman02.hum": "Adults/Female_Adult_05",
     "Humans/aXYZ/woman03.hum": "Adults/Female_Adult_06",
     "Humans/aXYZ/MeCaT07W28.hum": "Adults/Female_Adult_07",
-    "Humans/aXYZ/MeCaT04B01.hum": "Children/Male_Child_01",
-    "Humans/aXYZ/MeCaT04G02.hum": "Children/Female_Child_01"
+    "Humans/aXYZ/MeCaT04B01.hum": "generated/MH_Boy_01",
+    "Humans/aXYZ/MeCaT04G02.hum": "generated/MH_Girl_01"
   },
   "alternates": {
     "Humans/Other/man01.hum": [
@@ -96,12 +96,6 @@
     ],
     "Humans/aXYZ/MeCaT07W28.hum": [
       "Adults/Female_Adult_14"
-    ],
-    "Humans/aXYZ/MeCaT04B01.hum": [
-      "Children/Male_Child_02"
-    ],
-    "Humans/aXYZ/MeCaT04G02.hum": [
-      "Children/Female_Child_02"
     ]
   },
   "weights": {

@@ -29,6 +29,23 @@ VARIANTS = [(140, (0.35, 0.45, 0.8), 0.45, 1.0), (215, (0.75, 0.35, 0.3), 0.4, 1
             (0, (0.5, 0.5, 0.5), 0.0, 0.45)]
 BONES = ["OS_L", "OS_R", "US_L", "US_R", "OA_L", "OA_R", "UA_L", "UA_R",
          "Hip", "Main", "Head", "Hand_L", "Hand_R"]
+# median height (m) of boys and girls by age (WHO), and of men and women
+GROWTH = {6: (1.17, 1.16), 7: (1.24, 1.23), 8: (1.30, 1.29), 9: (1.35, 1.34), 10: (1.40, 1.39),
+          11: (1.45, 1.45), 12: (1.51, 1.52), 13: (1.58, 1.57), 14: (1.65, 1.61),
+          15: (1.71, 1.63), 16: (1.75, 1.64), 17: (1.77, 1.65)}
+ADULT = (1.79, 1.66)
+
+
+def stature(person):
+    """The median of the age and sex, a few per cent either way by the height macro."""
+    p = person["spec"]["phenotype"]
+    female = int(p["gender"] < 0.5)
+    age = person["age"]
+    if age < 18:
+        base = GROWTH[min(max(age, 6), 17)][female]
+    else:
+        base = ADULT[female] - 0.0015 * max(0, age - 50)
+    return round(base * (1.0 + 0.12 * (p.get("height", 0.5) - 0.5)), 3)
 
 
 def find_blender(given):
@@ -274,7 +291,7 @@ def build_figure(args, blender, stock, hum_out, source, weight, person=None):
         model_dir = hum_out.parent / "generated" / name
         model_dir.mkdir(parents=True, exist_ok=True)
         spec = model_dir / f"{name}.person.json"
-        spec.write_text(json.dumps(person["spec"]))
+        spec.write_text(json.dumps({**person["spec"], "neo_height": stature(person)}))
         given = str(spec)
         env = dict(os.environ)
         for var, sub_dir in (("BLENDER_USER_RESOURCES", ""), ("BLENDER_USER_CONFIG", "config"),
@@ -368,7 +385,7 @@ The neoOMSI launcher downloads the pack (Settings -> Gameplay); pack.json is its
 """
 
 # what the launcher offers again when it is newer than the installed pack's (pax_pack.rs)
-PACK_VERSION = 1
+PACK_VERSION = 2
 
 
 def write_pack_notes(out, generated):
@@ -414,6 +431,7 @@ def main():
     pax = json.loads((HERE / "pax.json").read_text())
 
     work = []
+    people = {f"generated/{p['name']}": p for p in pax.get("generated", [])}
     for hum, avatar in pax["slots"].items():
         if args.only and hum != args.only:
             continue
@@ -421,7 +439,11 @@ def main():
         if not stock.exists():
             print(f"skip {hum}: not in {args.omsi}")
             continue
-        work.append((stock, args.out / hum, avatar, weight_of(avatar, pax["weights"])))
+        if avatar in people:
+            person = people[avatar]
+            work.append((stock, args.out / hum, avatar, person.get("weight", 1.0), person))
+        else:
+            work.append((stock, args.out / hum, avatar, weight_of(avatar, pax["weights"])))
         for alt in pax["alternates"].get(hum, []):
             out = args.out / hum
             out = out.with_name(f"{out.stem}~{alt.rsplit('/', 1)[1]}.hum")
@@ -429,6 +451,8 @@ def main():
     for person in pax.get("generated", []):
         hum = person["slot"]
         if (args.only and hum != args.only) or not (args.omsi / hum).exists():
+            continue
+        if pax["slots"].get(hum) == f"generated/{person['name']}":
             continue
         out = args.out / hum
         out = out.with_name(f"{out.stem}~{person['name']}.hum")

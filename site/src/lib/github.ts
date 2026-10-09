@@ -60,28 +60,24 @@ export async function gh<T>(path: string): Promise<T> {
   return data;
 }
 
+// Content packs share the repository; only engine releases use version tags.
+const isEngineRelease = (release: Release) =>
+  /^v?\d+\.\d+\.\d+(?:-|$)/.test(release.tag_name);
+
 export async function releases() {
   const all: Release[] = [];
   for (let page = 1; ; page++) {
     const batch = await gh<Release[]>(`releases?per_page=100&page=${page}`);
-    all.push(...batch);
+    all.push(...batch.filter(isEngineRelease));
     if (batch.length < 100) return all;
   }
 }
 
-let latest: { at: number; release: Release | null } | null = null;
 export async function latestRelease(): Promise<Release | null> {
-  // A release comes with every push, so a fetch from a few minutes ago may already be stale.
-  if (latest && Date.now() - latest.at < 120_000) return latest.release;
-  let release: Release | null = null;
-  try {
-    const r = await fetch(
-      `https://api.github.com/repos/${REPO}/releases/latest`,
-    );
-    release = r.ok ? await r.json() : null;
-  } catch {}
-  latest = { at: Date.now(), release };
-  return release;
+  const stable = (await releases())
+    .filter((release) => !release.prerelease)
+    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
+  return stable[0] ?? null;
 }
 
 export const version = (release: Release) => release.tag_name.replace(/^v/, "");

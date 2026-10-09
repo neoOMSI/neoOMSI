@@ -248,7 +248,7 @@ impl FontAtlas {
         if text.contains('@') {
             let lh = self.font.height.max(1) as u32;
             let mut out = vec![0u8; (w * h * 4) as usize];
-            let lines: Vec<&str> = text.split('@').collect();
+            let lines: Vec<&str> = text.strip_prefix('@').unwrap_or(text).split('@').collect();
             // the block of lines is centred vertically, like a single line is
             let block = lh * lines.len() as u32;
             let top = h.saturating_sub(block) / 2;

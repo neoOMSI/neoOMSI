@@ -486,27 +486,6 @@ pub(crate) fn fetch_file(
     Ok(())
 }
 
-/// A file of the release tagged `tag`: its address, size and SHA-256 as GitHub lists them.
-pub(crate) fn release_file(tag: &str, name: &str) -> anyhow::Result<(String, u64, Option<String>)> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/tags/{tag}");
-    let v: serde_json::Value = serde_json::from_str(&fetch_text(&url)?)?;
-    let a = v["assets"]
-        .as_array()
-        .and_then(|a| a.iter().find(|a| a["name"].as_str() == Some(name)))
-        .ok_or_else(|| anyhow::anyhow!("the release {tag} has no {name}"))?;
-    Ok((
-        a["browser_download_url"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("{name} has no address"))?
-            .to_string(),
-        a["size"].as_u64().unwrap_or(0),
-        a["digest"]
-            .as_str()
-            .and_then(|d| d.strip_prefix("sha256:"))
-            .map(|h| h.to_ascii_lowercase()),
-    ))
-}
-
 fn download_and_install(r: &Release, status: &Mutex<Status>) -> anyhow::Result<()> {
     // (on a computer: where it goes must be writable before 15 MB are fetched for nothing)
     #[cfg(not(target_os = "android"))]

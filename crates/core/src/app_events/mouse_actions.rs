@@ -4,6 +4,22 @@ use super::*;
 
 impl App {
     pub(crate) fn wheel(&mut self, amount: f32) {
+        if self.lab_dialog_wheel(amount) {
+            return;
+        }
+        if self.lab_menu.is_some_and(|s| s.page == Some(0)) {
+            let (x, y) = self.cursor;
+            if let Some(n) = self.navigator.as_mut().filter(|n| n.city.embed.is_some()) {
+                let r = n.city.rect;
+                if x >= r[0] && x < r[2] && y >= r[1] && y < r[3] {
+                    n.map_wheel(amount, x, y);
+                }
+            }
+            return;
+        }
+        if self.lab_world_wheel(amount) {
+            return;
+        }
         if self.vr_nav_edit.is_some() {
             self.vr_nav_scroll(amount);
             return;
@@ -76,6 +92,21 @@ impl App {
         if self.placing.is_some() && self.game_menu.is_none() {
             if state == ElementState::Pressed {
                 self.placing_click();
+            }
+            return;
+        }
+        if self.lab_menu.is_some() {
+            if !pressed {
+                if let Some(u) = self.ui.as_mut() {
+                    u.world_drag = None;
+                    u.world_bar_grab = None;
+                }
+            }
+            if self.lab_map_mouse(Some(pressed)) {
+                return;
+            }
+            if pressed {
+                self.lab_click(event_loop);
             }
             return;
         }
@@ -200,10 +231,6 @@ impl App {
                         .as_ref()
                         .and_then(|u| u.menu_ctl.get(row).copied().flatten());
 
-                    if self.menu_item_off(k) {
-                        return;
-                    }
-
                     if let Some(c) = ctl {
                         if self.chooser.is_some() && self.cursor.0 >= c[0] && self.cursor.0 <= c[2]
                         {
@@ -215,10 +242,6 @@ impl App {
                             }
                             return;
                         }
-                    }
-
-                    if self.chooser.is_none() {
-                        self.game_menu = Some(k);
                     }
 
                     if matches!(self.list_kind, Some(game_lists::ListKind::Tours(..)))
@@ -240,7 +263,10 @@ impl App {
                             self.chooser_adjust(k, "-")
                         }
                         Some([_, _, plus]) if self.cursor.0 >= plus => self.chooser_adjust(k, "+"),
-                        _ => self.menu_choose(event_loop, k),
+                        _ if self.chooser.is_some() || self.report_view.is_some() => {
+                            self.menu_choose(event_loop, k)
+                        }
+                        _ => {}
                     }
                 }
             }

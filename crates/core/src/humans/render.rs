@@ -321,17 +321,27 @@ impl Humans {
                     let a = |k: usize| at + (xf.transform_vector3(p.render.ankles[k])).as_dvec3();
                     let (l, r) = (a(0), a(1));
                     let details = match &p.state {
-                        State::Pax(x) => format!(
-                            "{},{},{},{},{},{},{}",
-                            x.task.name(),
-                            x.movement,
-                            x.stop.map(|s| s.to_string()).unwrap_or_default(),
-                            x.door.map(|s| s.to_string()).unwrap_or_default(),
-                            x.pt.map(|s| s.to_string()).unwrap_or_default(),
-                            x.pt_target.map(|s| s.to_string()).unwrap_or_default(),
-                            p.why
-                        ),
-                        _ => format!(",,,,,,{}", p.why),
+                        State::Pax(x) => {
+                            let local = x
+                                .bus
+                                .or(x.inside)
+                                .and_then(|b| self.buses.last_buses.iter().find(|n| n.id == b))
+                                .map(|n| n.to_local(at))
+                                .map(|l| format!("{:.3},{:.3}", l.x, l.y))
+                                .unwrap_or_else(|| ",".into());
+                            format!(
+                                "{},{},{},{},{},{},{},{}",
+                                x.task.name(),
+                                x.movement,
+                                x.stop.map(|s| s.to_string()).unwrap_or_default(),
+                                x.door.map(|s| s.to_string()).unwrap_or_default(),
+                                x.pt.map(|s| s.to_string()).unwrap_or_default(),
+                                x.pt_target.map(|s| s.to_string()).unwrap_or_default(),
+                                p.why,
+                                local
+                            )
+                        }
+                        _ => format!(",,,,,,{},,", p.why),
                     };
                     let _ = writeln!(
                         t,

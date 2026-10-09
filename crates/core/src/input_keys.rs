@@ -102,13 +102,6 @@ impl App {
         self.door_key_triggers.insert(code, fire);
     }
 
-    pub(crate) fn saloon_lights(&mut self) {
-        if let Some(p) = self.player.as_mut() {
-            let msg = p.toggle_saloon_lights();
-            self.service_msg = Some((msg, 3.0));
-        }
-    }
-
     pub(crate) fn bus_startup(&mut self) {
         if let Some(p) = self.player.as_mut() {
             let msg = p.start_up();
@@ -257,7 +250,7 @@ impl App {
             .iter()
             .any(|a| a == "navigator_close")
         {
-            if let Some(n) = self.navigator.as_mut().filter(|n| n.map_open()) {
+            if let Some(n) = self.navigator.as_mut().filter(|n| n.map_open() && n.city.embed.is_none()) {
                 n.toggle_map();
                 return;
             }
@@ -411,6 +404,12 @@ impl App {
                 self.leave_screenshot_mode();
                 return;
             }
+            if self.lab_menu.is_some() {
+                if pressed && !repeat {
+                    self.lab_key(event_loop, code);
+                }
+                return;
+            }
             if self.game_menu.is_none() && self.placing_key(code, pressed) {
                 return;
             }
@@ -463,10 +462,6 @@ impl App {
             if pressed && !repeat {
                 let m = ::content::input::chord(shift_now, ctrl, alt);
                 let own = keys::dik_code(code).is_some_and(|s| self.own_keys.contains(&s));
-                let ours = self.args.drive_keys != "omsi"
-                    && m == 0
-                    && !own
-                    && fallback_action(code, &self.args.drive_keys).is_some();
                 // (the keys that fly the camera are the camera's, unmodified: S, OMSI's
                 // view_toggle_viewpoint, threw the free camera back to the driver's view,
                 // and with no bus of one's own every view flies - #868; a chord such as
@@ -474,7 +469,7 @@ impl App {
                 let flying = m == 0
                     && flies_free_camera(code)
                     && (self.view == "free" || (self.player.is_none() && self.on_foot.is_none()));
-                if let Some(scan) = keys::dik_code(code).filter(|_| !ours && !flying) {
+                if let Some(scan) = keys::dik_code(code).filter(|_| !flying) {
                     let actions: Vec<String> = self
                         .game_keys
                         .iter()
@@ -519,59 +514,21 @@ impl App {
                     }
                 }
             }
-            let own = keys::dik_code(code).is_some_and(|s| self.own_keys.contains(&s));
-            let wheel = self
-                .controllers
-                .as_ref()
-                .is_some_and(|c| c.wheel_steering());
-            let wasd = if own {
-                "omsi"
-            } else if wheel {
-                match self.args.drive_keys.as_str() {
-                    "arrows" | "omsi" => "omsi",
-                    _ => "wasd",
-                }
-            } else {
-                self.args.drive_keys.as_str()
-            };
-            let shift_held =
-                self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
-            if let Some(p) = self.player.as_mut() {
-                let ctrl_alt_held = (self.keys.contains(&KeyCode::ControlLeft)
-                    || self.keys.contains(&KeyCode::ControlRight))
-                    && (self.keys.contains(&KeyCode::AltLeft)
-                    || self.keys.contains(&KeyCode::AltRight));
-                if self.view != "free" && !repeat && !shift_held && !(ctrl_alt_held && pressed) {
-                    if let Some(a) = fallback_action(code, wasd) {
-                        p.axes.set(a, pressed);
-                    }
-                }
-            }
             let shift =
                 self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
-            let covers_vehicle_key = fallback_action(code, wasd).is_some() && self.view != "free";
-            let driving_key = covers_vehicle_key && !shift;
             let fly_key = self.view == "free" && flies_free_camera(code);
             if let (Some(p), Some(scan)) = (
                 self.player.as_mut(),
-                keys::dik_code(code).filter(|_| !driving_key && !fly_key),
+                keys::dik_code(code).filter(|_| !fly_key),
             ) {
                 if !repeat {
-                    let ctrl_or_alt = self.keys.contains(&KeyCode::ControlLeft)
-                        || self.keys.contains(&KeyCode::ControlRight)
-                        || self.keys.contains(&KeyCode::AltLeft)
-                        || self.keys.contains(&KeyCode::AltRight);
-                    let m = if covers_vehicle_key && !ctrl_or_alt {
-                        0
-                    } else {
-                        ::content::input::chord(
-                            shift,
-                            self.keys.contains(&KeyCode::ControlLeft)
-                                || self.keys.contains(&KeyCode::ControlRight),
-                            self.keys.contains(&KeyCode::AltLeft)
-                                || self.keys.contains(&KeyCode::AltRight),
-                        )
-                    };
+                    let m = ::content::input::chord(
+                        shift,
+                        self.keys.contains(&KeyCode::ControlLeft)
+                            || self.keys.contains(&KeyCode::ControlRight),
+                        self.keys.contains(&KeyCode::AltLeft)
+                            || self.keys.contains(&KeyCode::AltRight),
+                    );
                     p.key(scan, m, pressed);
                 }
             }
@@ -817,6 +774,7 @@ impl App {
             }
             "toggel_mouse_ctrl" => {
                 self.set_mouse_drive(!self.mouse_drive);
+                Self::save_mouse_drive(self.mouse_drive);
                 let msg = if self.mouse_drive {
                     "Mouse steering on: across steers, up is the throttle, down the brake (O turns it off)"
                 } else {
@@ -843,28 +801,15 @@ impl App {
                 self.shift_gear(name == "gear_up");
             }
             "indicator_left" | "indicator_right" | "indicator_hazard" | "saloon_lights" => {
-                if self.args.drive_keys == "omsi" {
-                    return false;
-                }
-                if self.view != "free" {
-                    match name {
-                        "indicator_left" => self.blinker(1),
-                        "indicator_right" => self.blinker(2),
-                        "indicator_hazard" => self.blinker(3),
-                        _ => self.saloon_lights(),
-                    }
-                }
+                // the vehicle's own key bindings handle these
+                return false;
             }
             "bus_startup" => self.bus_startup(),
             "radio_next" => {
                 let msg = self.radio.next_station();
                 self.service_msg = Some((msg, 4.0));
             }
-            "toggle_city_map" => {
-                if let Some(n) = self.navigator.as_mut() {
-                    n.toggle_map();
-                }
-            }
+            "toggle_city_map" => self.toggle_map_page(),
             "show_position" => self.show_position(),
             "save_personnel" => self.save_personnel(),
             "toggel_ctrler" => {
@@ -974,6 +919,9 @@ impl App {
                 )
             })
             .unwrap_or((0.0, 0.0));
+    }
+
+    pub(crate) fn save_mouse_drive(on: bool) {
         if ::config::get_bool("controls", "mouse_steering").unwrap_or(false) != on {
             ::config::set_setting("controls", "mouse_steering", on);
             let _ = ::config::save();

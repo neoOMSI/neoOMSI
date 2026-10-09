@@ -13,6 +13,31 @@ pub(super) fn headlight_core(range: f32) -> f32 {
     headlight_radius(range) / 30.0
 }
 
+/// How far a `[spotlight]` reaches for a picture whose low beam is cut at `low` metres.
+pub(super) fn spot_reach(range: f32, low: f32) -> f32 {
+    range.clamp(0.5, low).max(range * low / 100.0).min(low * 5.0)
+}
+
+/// A short-range `[spotlight]` is a faint lamp (square of range / 10 m below 10 m).
+pub(super) fn short_range_gain(range: f32) -> f32 {
+    if range >= 10.0 {
+        1.0
+    } else {
+        let r = range.max(0.5) / 10.0;
+        r * r
+    }
+}
+
+/// Full beams (reach past the stock low beam's 100) throw towards the horizon; negative = full beam.
+pub(super) fn full_beam_gain(range: f32) -> f32 {
+    let k = spot_reach(range, 60.0) / 60.0;
+    if k > 1.0 {
+        -(k * k)
+    } else {
+        0.0
+    }
+}
+
 pub(super) fn ai_spotlight(lamps: &[[f32; 3]]) -> Option<[f32; 12]> {
     let nose = lamps.iter().map(|l| l[1]).reduce(f32::max)?;
     let front: Vec<&[f32; 3]> = lamps.iter().filter(|l| nose - l[1] < 0.4).collect();
@@ -23,6 +48,7 @@ pub(super) fn ai_spotlight(lamps: &[[f32; 3]]) -> Option<[f32; 12]> {
     ])
 }
 
+#[allow(dead_code)]
 pub(super) fn spot_face(
     lamp: Option<f32>,
     edge: Option<f32>,

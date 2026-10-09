@@ -31,9 +31,9 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "ui_scale" => (10..=40).map(|v| v as f32 * 0.05).collect(),
         "ui_opacity" => (4..=20).map(|v| v as f32 * 0.05).collect(),
         "vol_ai" | "vol_scenery" => (0..=20).map(|v| v as f32 * 0.05).collect(),
-        "wheel_range" => (6..=60).map(|v| v as f32 * 30.0).collect(),
+        "wheel_range" => (6..=96).map(|v| v as f32 * 30.0).collect(),
         "wheel_lock" => std::iter::once(0.0)
-            .chain((2..=60).map(|v| v as f32 * 30.0))
+            .chain((2..=96).map(|v| v as f32 * 30.0))
             .collect(),
         "fov" => std::iter::once(0.0)
             .chain((20..=120).map(|v| v as f32))
@@ -335,7 +335,7 @@ pub(super) fn option_set(
                 .as_ref()
                 .is_some_and(|l| l.role == ::network::Role::Client)
             {
-                app.service_msg = Some(("In a LAN session the host sets the clock".into(), 3.0));
+                app.service_msg = Some((::i18n::translate("pause.msg.lan_clock", &[]), 3.0));
                 return None;
             }
             let t = app.clock.time;
@@ -450,6 +450,7 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "nav_arrows" => app.navigator.as_ref().map_or(::config::get_bool("navigator", "arrows").unwrap_or(false), |n| n.arrows),
         "exact_fare" => ::config::get_bool("gameplay", "exact_fare").unwrap_or(true),
         "pax_prefer_seats" => ::config::get_bool("gameplay", "pax_prefer_seats").unwrap_or(false),
+        "pax_rear_entry" => ::config::get_bool("gameplay", "pax_rear_entry").unwrap_or(true),
         "pax_ik" => app.args.pax_ik.unwrap_or(::config::get_bool("passengers", "ik").unwrap_or(true)),
         "collision_pedestrians" => ::config::get_bool("gameplay", "collision_pedestrians").unwrap_or(true),
         "ssao" => ::config::get_bool("graphics", "ssao").unwrap_or(true),
@@ -459,6 +460,8 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "fullscreen" => ::config::get_string("graphics", "window_mode").as_deref() != Some("windowed"),
         "vsync" => ::config::get_bool("graphics", "vsync").unwrap_or(true),
         "texture_compression" => ::config::get_bool("graphics", "texture_compression").unwrap_or(true),
+        "shadow_blobs" => ::config::get_bool("graphics", "shadow_blobs").unwrap_or(true),
+        "discord_status" => ::config::get_bool("discord", "status").unwrap_or(true),
         "driver" => ::config::get_bool("gameplay", "driver").unwrap_or(true),
         "alt_view" => ::config::get_bool("camera", "alt_view").unwrap_or(true),
         "free_look" => ::config::get_bool("camera", "free_look").unwrap_or(false),
@@ -569,6 +572,7 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         }
         "mouse" => {
             app.mouse_drive = on;
+            App::save_mouse_drive(on);
             if !app.mouse_drive {
                 player::keep_wheel(app.player.as_mut());
             }
@@ -724,6 +728,11 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
             let _ = ::config::save();
             None
         }
+        "pax_rear_entry" => {
+            ::config::set_setting("gameplay", "pax_rear_entry", on);
+            let _ = ::config::save();
+            None
+        }
         "pax_ik" => {
             ::config::set_setting("passengers", "ik", on);
             let _ = ::config::save();
@@ -763,6 +772,16 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         }
         "vsync" => {
             ::config::set_setting("graphics", "vsync", on);
+            let _ = ::config::save();
+            None
+        }
+        "shadow_blobs" => {
+            ::config::set_setting("graphics", "shadow_blobs", on);
+            let _ = ::config::save();
+            None
+        }
+        "discord_status" => {
+            ::config::set_setting("discord", "status", on);
             let _ = ::config::save();
             None
         }
@@ -869,7 +888,6 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         _ => None,
     }
 }
-
 pub(crate) fn apply_window_mode(app: &App, mode: &str) {
     let Some(window) = app.window.as_ref() else {
         return;

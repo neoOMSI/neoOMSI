@@ -14,7 +14,7 @@ impl App {
         self.dev_actions(event_loop);
         #[cfg(all(feature = "devtools", debug_assertions))]
         let dev_extra = self.dev_gather();
-        let menu_lines = if self.game_menu.is_some() {
+        let menu_lines = if self.game_menu.is_some() && self.report_view.is_some() {
             self.game_menu_items()
         } else {
             Vec::new()
@@ -31,6 +31,23 @@ impl App {
             (mode.help_left > 0.0)
                 .then(|| "Screenshot mode: HUD hidden. Press Esc to return.".to_string())
         });
+        self.lab_poll();
+        self.lab_place_preview(dt);
+        self.lab_map_sync();
+        self.lab_entries_sync();
+        let vehicle_menu: Vec<crate::ui::VehicleGroup> = match self.lab_menu {
+            Some(st) if st.page == Some(crate::ui::VEHICLE_PAGE) => game_lists::vehicle_menu(self)
+                .into_iter()
+                .map(|(id, acts)| crate::ui::VehicleGroup {
+                    id,
+                    actions: acts
+                        .into_iter()
+                        .map(|(id, opens)| crate::ui::VehicleAction { id, opens })
+                        .collect(),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         let menu_tabs = match self.list_kind.as_ref() {
             Some(k) if self.chooser.is_some() => game_lists::page_titles(self, k),
             _ => None,
@@ -243,19 +260,7 @@ impl App {
                         top: d.top,
                         current: d.current,
                     });
-                let chooser_list = self.admin_list.as_ref().unwrap_or(&self.vehicle_list);
-                let (chooser_items, chooser_sel): (Vec<(&str, &str)>, Option<usize>) =
-                    match self.chooser {
-                        Some(sel) => {
-                            let items = chooser_list
-                                .iter()
-                                .map(|(name, path)| (path.as_str(), name.as_str()))
-                                .collect();
-                            (items, Some(sel))
-                        }
-                        None => (Vec::new(), None),
-                    };
-                let menu_disabled: &[&str] = &[];
+                let chooser_sel = self.chooser;
                 let (menu_kind, menu_head, menu_preview) = game_lists::menu_extras(
                     self.list_kind.as_ref(),
                     self.admin_list.as_deref(),
@@ -305,12 +310,11 @@ impl App {
                         &[]
                     },
                     fps: (!screenshot_mode && ::config::get_bool("ui", "show_fps").unwrap_or(false)).then_some(self.fps),
-                    paused: self.paused && !screenshot_mode,
-                    menu: match chooser_sel {
-                        Some(k) => Some((k, &chooser_items[..])),
-                        None => self.game_menu.map(|k| (k, &menu_lines[..])),
-                    },
-                    menu_disabled,
+                    paused: self.paused && !screenshot_mode && self.lab_menu.is_none(),
+                    menu: self
+                        .game_menu
+                        .filter(|_| self.lab_menu.is_none() && report_view.is_some())
+                        .map(|k| (k, &menu_lines[..])),
                     menu_kind,
                     report: report_view.as_ref(),
                     touch: !screenshot_mode && platform::touch_controls(),
@@ -325,6 +329,8 @@ impl App {
                     menu_tabs,
                     dropdown,
                     menu_kbd: self.menu_kbd,
+                    lab: self.lab_menu,
+                    vehicle_menu: &vehicle_menu,
                     menu_top: self.menu_top,
                     timetable: (!screenshot_mode && self.timetable && !map_open)
                         .then(|| {
@@ -767,9 +773,11 @@ impl App {
                         .window
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
-                    self.devtools
-                        .get_or_insert_with(devtools::DevTools::new)
-                        .render(r, &view, scale, &snap, &dev_extra);
+                    if self.lab_menu.is_none() {
+                        self.devtools
+                            .get_or_insert_with(devtools::DevTools::new)
+                            .render(r, &view, scale, &snap, &dev_extra);
+                    }
                 }
                 *self.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
                 if ::legacy_config::env::var_os("OMSI_PROFILE_GPU").is_some() {

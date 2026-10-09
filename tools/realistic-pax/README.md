@@ -1,10 +1,11 @@
 # RealisticPax
 
-Builds a content pack of realistic passengers: every adult and child of the
+Builds a content pack of realistic passengers: every adult of the
 [Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox) avatars (MIT) and the
 professions whose work clothes a bus passenger might wear, plus children, teenagers and old
 people made with MakeHuman's [MPFB](https://static.makehumancommunity.org/mpfb/) from its CC0
-system assets (Rocketbox has four children and nobody old).
+system assets (Rocketbox has nobody old, and its children are its adults made smaller). The
+generated people are made as tall as people of their age and sex are.
 
 The pack is plain OMSI content (`.hum`, `.cfg`, `.o3d`, DDS textures) on the stock 13-bone
 rig, with three LOD levels and three recoloured outfits (`[CTC]` clothing variants) per
@@ -23,7 +24,7 @@ python tools/realistic-pax/build.py --omsi "C:/Steam/steamapps/common/OMSI 2"
 `build.py --hums-only` updates the `.hum` files without Blender.
 
 Players do not run any of this: the launcher downloads the pack (**Settings → Gameplay →
-Download the realistic passengers**) from the release tagged `realistic-pax-v1`, checks it
+Download the realistic passengers**) from the release tagged `realistic-pax-v2`, checks it
 against the SHA-256 GitHub lists and installs it into `<content folder>/Packs/RealisticPax`.
 To publish a new pack:
 

@@ -37,7 +37,7 @@ pub(crate) fn items(app: &App) -> Vec<(String, String)> {
             (
                 p.pose.id,
                 if p.pose.name.is_empty() {
-                    format!("Player {}", p.pose.id)
+                    ::i18n::translate("pause.admin.player", &[("id", &p.pose.id)])
                 } else {
                     p.pose.name.clone()
                 },
@@ -49,91 +49,64 @@ pub(crate) fn items(app: &App) -> Vec<(String, String)> {
         if *id == lan.my_id {
             continue;
         }
-        // (the labels in the interface's language around the player's name)
-        let tr = |t: &str| ::user_interface::tr(t).into_owned();
-        out.push((format!("{name}: {}", tr("go to")), format!("goto {id}")));
-        out.push((
-            format!("{name}: {}", tr("bring here")),
-            format!("bring {id}"),
-        ));
-        out.push((
-            format!("{name}: {}", tr("repair and refuel their bus")),
-            format!("service repair {id}"),
-        ));
-        out.push((
-            format!("{name}: {}", tr("put their bus back on its wheels")),
-            format!("unstick {id}"),
-        ));
-        out.push((format!("{name}: {}", tr("send away")), format!("kick {id}")));
-        out.push((
-            format!("{name}: {}", tr("send away for the session")),
-            format!("ban {id}"),
-        ));
+        out.push((::i18n::translate("pause.admin.go_to", &[("name", &name)]), format!("goto {id}")));
+        out.push((::i18n::translate("pause.admin.bring", &[("name", &name)]), format!("bring {id}")));
+        out.push((::i18n::translate("pause.admin.repair", &[("name", &name)]), format!("service repair {id}")));
+        out.push((::i18n::translate("pause.admin.unstick", &[("name", &name)]), format!("unstick {id}")));
+        out.push((::i18n::translate("pause.admin.kick", &[("name", &name)]), format!("kick {id}")));
+        out.push((::i18n::translate("pause.admin.ban", &[("name", &name)]), format!("ban {id}")));
     }
     if peers.len() > 1 {
         out.push((
-            ::user_interface::tr("Bring everybody here").into_owned(),
+            ::i18n::translate("pause.admin.bring_all", &[]),
             "bringall".into(),
         ));
         out.push((
-            ::user_interface::tr("Everybody: repair").into_owned(),
+            ::i18n::translate("pause.admin.repair_all", &[]),
             "service repair all".into(),
         ));
         out.push((
-            ::user_interface::tr("Everybody: refuel").into_owned(),
+            ::i18n::translate("pause.admin.refuel_all", &[]),
             "service refuel all".into(),
         ));
         out.push((
-            ::user_interface::tr("Everybody: wash").into_owned(),
+            ::i18n::translate("pause.admin.wash_all", &[]),
             "service wash all".into(),
         ));
     }
     for (label, secs) in [
-        ("Clock: 06:00 (morning)", 6 * 3600),
-        ("Clock: 12:00 (noon)", 12 * 3600),
-        ("Clock: 18:00 (evening)", 18 * 3600),
-        ("Clock: 23:00 (night)", 23 * 3600),
+        ("pause.admin.clock_morning", 6 * 3600),
+        ("pause.admin.clock_noon", 12 * 3600),
+        ("pause.admin.clock_evening", 18 * 3600),
+        ("pause.admin.clock_night", 23 * 3600),
     ] {
-        out.push((::user_interface::tr(label).into_owned(), format!("clock {secs}")));
+        out.push((::i18n::translate(label, &[]), format!("clock {secs}")));
     }
     if let Some(t) = app.traffic.as_ref() {
         out.push((
-            format!(
-                "{}: {} ({})",
-                ::user_interface::tr(                "Traffic"),
-                t.target(),
-                ::user_interface::tr("more / less")
-            ),
+            ::i18n::translate("pause.admin.traffic", &[("value", &t.target())]),
             "traffic next".into(),
         ));
     }
-    out.push(("Clock +1 hour".into(), "time 3600".into()));
-    out.push(("Clock -1 hour".into(), "time -3600".into()));
+    out.push((::i18n::translate("pause.admin.hour_plus", &[]), "time 3600".into()));
+    out.push((::i18n::translate("pause.admin.hour_minus", &[]), "time -3600".into()));
     let speed = lan.clock_speed;
     for s in SPEEDS {
         let mark = if (s - speed).abs() < 1e-6 {
-            format!("  {}", ::user_interface::tr("(now)"))
+            format!("  {}", ::i18n::translate("pause.admin.now", &[]))
         } else {
             String::new()
         };
         out.push((
-            format!("{} x{s}{mark}", ::user_interface::tr("Time speed")),
+            ::i18n::translate("pause.admin.speed", &[("speed", &s),("mark", &mark)]),
             format!("speed {s}"),
         ));
     }
-    out.push(("Next weather".into(), "weather next".into()));
+    out.push((::i18n::translate("pause.admin.next_weather", &[]), "weather next".into()));
     // the weather cycle, and each installed weather by name
     let cycling = app.weather_cycle.is_some();
     out.push((
-        format!(
-            "{}: {}",
-            ::user_interface::tr("Weather cycle"),
-            if cycling {
-                ::user_interface::tr("on")
-            } else {
-                ::user_interface::tr("off")
-            }
-        ),
+        ::i18n::translate("pause.admin.weather_cycle", &[("state", &::i18n::translate(if cycling { "pause.admin.on" } else { "pause.admin.off" }, &[]))]),
         "weather cycle".into(),
     ));
     for (file, w) in crate::weather_cycle::installed() {
@@ -143,22 +116,22 @@ pub(crate) fn items(app: &App) -> Vec<(String, String)> {
             .as_deref()
             .is_some_and(|c| c.replace('\\', "/").eq_ignore_ascii_case(&file));
         let mark = if now {
-            format!("  {}", ::user_interface::tr("(now)"))
+            format!("  {}", ::i18n::translate("pause.admin.now", &[]))
         } else {
             String::new()
         };
         out.push((
-            format!("{}: {}{mark}", ::user_interface::tr("Weather"), w.name),
+            ::i18n::translate("pause.admin.weather", &[("name", &w.name),("mark", &mark)]),
             format!("weather set {file}"),
         ));
     }
     if app.traffic.is_some() {
         out.push((
-            ::user_interface::tr("Clear the AI traffic (a jam)").into_owned(),
+            ::i18n::translate("pause.admin.clear_traffic", &[]),
             "traffic clear".into(),
         ));
     }
-    out.push(("Back".into(), "back".into()));
+    out.push((::i18n::translate("pause.dialog.back", &[]), "back".into()));
     out
 }
 
@@ -171,7 +144,7 @@ pub(crate) fn run(app: &mut App, action: &str) {
     if lan.role == Role::Client {
         // (a server's admin: the server does it)
         lan.command(1, &format!("admin {action}"));
-        app.service_msg = Some((format!("Sent to the server: {action}"), 3.0));
+        app.service_msg = Some((::i18n::translate("pause.admin.sent", &[("action", &action)]), 3.0));
         return;
     }
     host_action(app, action, None);
@@ -204,7 +177,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                 .map(|r| (r.vehicle().position, r.vehicle().heading));
             match (at, by) {
                 (Some((pos, heading)), None) => teleport_beside(app, pos, heading),
-                _ => app.service_msg = Some(("That player has no bus to go to".into(), 3.0)),
+                _ => app.service_msg = Some((::i18n::translate("pause.admin.no_bus", &[]), 3.0)),
             }
         }
         "bring" => {
@@ -233,7 +206,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
         "speed" => {
             if app.real_time_locked() {
                 app.service_msg = Some((
-                    "The time speed is fixed while the real-time sync is on".into(),
+                    ::i18n::translate("pause.admin.speed_fixed", &[]),
                     3.0,
                 ));
             } else if let Some(s) = finite(arg) {
@@ -241,7 +214,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                 if let Some(l) = app.lan.as_mut() {
                     l.clock_speed = s;
                 }
-                app.service_msg = Some((format!("Time speed x{s}"), 3.0));
+                app.service_msg = Some((::i18n::translate("pause.admin.speed_msg", &[("speed", &s)]), 3.0));
             }
         }
         "weather" => match arg
@@ -263,18 +236,18 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                 }
                 let on = app.weather_cycle.is_some();
                 app.service_msg = Some((
-                    format!("Weather cycle {}", if on { "on" } else { "off" }),
+                    ::i18n::translate("pause.admin.weather_cycle_msg", &[("state", &::i18n::translate(if on { "pause.admin.on" } else { "pause.admin.off" }, &[]))]),
                     3.0,
                 ));
             }
             // (only an installed weather file: the name comes from the admin's game)
             ("set", file)
-                if !file.contains("..")
-                    && file.to_ascii_lowercase().starts_with("weather/")
-                    && file.to_ascii_lowercase().ends_with(".owt") =>
-            {
-                app.change_weather(Some(file.to_string()), true, 1.0);
-            }
+            if !file.contains("..")
+                && file.to_ascii_lowercase().starts_with("weather/")
+                && file.to_ascii_lowercase().ends_with(".owt") =>
+                {
+                    app.change_weather(Some(file.to_string()), true, 1.0);
+                }
             _ => app.next_weather(),
         },
         "say" => {
@@ -305,7 +278,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                     let (x, y) = beside(pos, h, 5.0 * (k as f64 + 1.0));
                     l.command(*id, &format!("teleport {x:.2} {y:.2} {:.2} {h:.1}", pos.z));
                 }
-                app.service_msg = Some((format!("{} player(s) brought here", ids.len()), 3.0));
+                app.service_msg = Some((::i18n::translate("pause.admin.brought", &[("count", &ids.len())]), 3.0));
             }
         }
         // a service for one player's bus (or everybody's, the host's own too)
@@ -370,7 +343,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                 let next = crate::game_lists::next_step(&crate::game_lists::TRAFFIC, t.target());
                 t.set_target(next);
                 app.args.traffic = t.target();
-                app.service_msg = Some((format!("Traffic: {}", t.target()), 3.0));
+                app.service_msg = Some((::i18n::translate("pause.admin.traffic_msg", &[("value", &t.target())]), 3.0));
             }
         }
         _ => log::info!("admin: unknown action '{action}'"),
@@ -412,9 +385,9 @@ fn response(challenge: &str, password: &str) -> String {
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len()
         && a.bytes()
-            .zip(b.bytes())
-            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-            == 0
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// A point `side` metres to the right of a vehicle at `pos` facing `heading`.
@@ -485,7 +458,7 @@ pub(crate) fn command(app: &mut App, from: u32, text: &str) {
                 .collect();
             if v.len() == 4 {
                 teleport(app, glam::DVec3::new(v[0], v[1], v[2]), v[3]);
-                app.service_msg = Some(("The host brought you to them".into(), 4.0));
+                app.service_msg = Some((::i18n::translate("pause.admin.host_brought", &[]), 4.0));
             }
         }
         // (host → us) the host's object editor: a map object moved, turned or deleted…
@@ -560,14 +533,14 @@ pub(crate) fn command(app: &mut App, from: u32, text: &str) {
             let kind = arg.trim();
             if matches!(kind, "repair" | "refuel" | "wash") {
                 app.run_service(kind);
-                app.service_msg = Some((format!("The host: {kind}"), 3.0));
+                app.service_msg = Some((::i18n::translate("pause.admin.host_service", &[("kind", &kind)]), 3.0));
             }
         }
         "unstick" if from == 1 => {
             if let Some(p) = app.player.as_ref() {
                 let (at, heading) = (p.vehicle.position, p.vehicle.heading);
                 teleport(app, at, heading);
-                app.service_msg = Some(("The host put your bus back on its wheels".into(), 4.0));
+                app.service_msg = Some((::i18n::translate("pause.admin.host_upright", &[]), 4.0));
             }
         }
         // (server → us) the password was right: the menu is ours
@@ -594,7 +567,7 @@ pub(crate) fn command(app: &mut App, from: u32, text: &str) {
                 6.0,
             ));
         }
-        "admin-no" if from == 1 => app.service_msg = Some(("Wrong admin password".into(), 4.0)),
+        "admin-no" if from == 1 => app.service_msg = Some((::i18n::translate("pause.admin.wrong_password", &[]), 4.0)),
         // (host by code: only the host administers its own game)
         _ => log::info!("LAN: command '{text}' from player {from} not taken"),
     }

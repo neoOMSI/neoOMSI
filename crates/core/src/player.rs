@@ -179,41 +179,6 @@ pub(crate) struct Player {
 // is selected at the end: the bus spawns in N anyway, and a D pressed while the auto-start
 // was still running was thrown back to N by it.
 
-/// OMSI's own layout drives the bus with Shift and the numpad (throttle Shift+Num 8, brake
-/// Shift+Num 2, steering Shift+Num 4/6). A laptop or a Mac keyboard has no numpad at all, so
-/// the arrow keys drive as well; all they do in OMSI is step through the interior cameras.
-///
-/// W, A, S and D drive as well, because that is what everybody reaches for - but
-/// `Inputs/keyboard.cfg` gives W the wipers, S the viewpoint and **D the D of the automatic
-/// gearbox**, so those three are reached by holding shift (Shift+D selects D), and the bus
-/// can still be put into gear. `--drive-keys arrows` leaves W/A/S/D to OMSI entirely.
-/// The driving keys of a control preset (`drive_keys` in the settings):
-/// `omsi` - only the original layout of Inputs/keyboard.cfg (Shift + numpad), nothing extra;
-/// `simple` - W/S/A/D and Up/Down drive (plain Left/Right keep OMSI's interior camera
-/// switch, view_interiorcam_minus/plus, Omsi.exe 0x706278; A/D steer); `wasd` - W/S/A/D only;
-/// `arrows` - the arrow keys only (W/S/D keep their OMSI meaning: wipers, viewpoint, gear).
-pub(crate) fn fallback_action(code: KeyCode, preset: &str) -> Option<::simulation::EngineAction> {
-    use ::simulation::EngineAction as A;
-    let preset = preset.to_ascii_lowercase();
-    let (wasd, arrows) = match preset.as_str() {
-        "omsi" | "original" => (false, false),
-        "wasd" => (true, false),
-        "arrows" => (false, true),
-        _ => (true, true), // "simple" and anything unknown
-    };
-    Some(match code {
-        KeyCode::ArrowUp if arrows => A::Throttle,
-        KeyCode::ArrowDown if arrows => A::Brake,
-        KeyCode::ArrowLeft if arrows && preset == "arrows" => A::SteeringLeft,
-        KeyCode::ArrowRight if arrows && preset == "arrows" => A::SteeringRight,
-        KeyCode::KeyW if wasd => A::Throttle,
-        KeyCode::KeyS if wasd => A::Brake,
-        KeyCode::KeyA if wasd => A::SteeringLeft,
-        KeyCode::KeyD if wasd => A::SteeringRight,
-        _ => return None,
-    })
-}
-
 /// Keyboard actions of `Inputs/keyboard.cfg` that no vehicle script handles under that
 /// name: the original translates them into the triggers the scripts do define (the
 /// indicators are `kw_blinker_*` in every stock bus, while the key file says
@@ -3222,35 +3187,6 @@ fn route_line(t: &::legacy_vehicle::hof::InfoTrip) -> String {
         raw.to_string()
     }
 }
-#[cfg(test)]
-mod preset_tests {
-    use super::fallback_action;
-    use ::simulation::EngineAction as A;
-    use winit::keyboard::KeyCode;
-
-    #[test]
-    fn plain_left_right_steer_only_with_the_arrows_preset() {
-        assert_eq!(fallback_action(KeyCode::ArrowLeft, "simple"), None);
-        assert_eq!(fallback_action(KeyCode::ArrowRight, "simple"), None);
-        assert_eq!(
-            fallback_action(KeyCode::ArrowUp, "simple"),
-            Some(A::Throttle)
-        );
-        assert_eq!(
-            fallback_action(KeyCode::KeyA, "simple"),
-            Some(A::SteeringLeft)
-        );
-        assert_eq!(
-            fallback_action(KeyCode::ArrowLeft, "arrows"),
-            Some(A::SteeringLeft)
-        );
-        assert_eq!(
-            fallback_action(KeyCode::ArrowRight, "arrows"),
-            Some(A::SteeringRight)
-        );
-    }
-}
-
 #[cfg(test)]
 mod indicator_tests {
     use super::indicator_toggle_action;

@@ -1,5 +1,7 @@
 //! What the game hands the interface each frame (`Frame`, the menu and chat views) and the sizing helpers.
 
+use super::PauseState;
+
 /// One stop of the trip evaluation: its eight cells and its status (an untranslated key).
 pub struct RunReportRow {
     pub cells: [String; 8],
@@ -80,7 +82,6 @@ pub fn backdrop(opacity: f32) -> f32 {
 /// Which menu is open: its layout follows from it.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum MenuKind {
-    /// The game menu itself.
     #[default]
     Game,
     /// A settings window (options, vehicle, world): a sidebar of pages and rows with switches,
@@ -97,6 +98,7 @@ pub enum MenuKind {
 
 /// The timetable beside a list of lines or tours: a title, a line of facts and rows of
 /// (what, time).
+#[derive(Clone)]
 pub struct Preview {
     pub title: String,
     pub meta: String,
@@ -148,13 +150,9 @@ pub struct Frame<'a> {
     pub fps: Option<f32>,
     /// The game stands paused.
     pub paused: bool,
-    /// The game menu is open, with this line chosen (labels from `GAME_MENU`).
     pub menu: Option<(usize, &'a [(&'a str, &'a str)])>,
     /// The first line shown when a finger scrolled the menu (`App::menu_top`).
     pub menu_top: Option<f32>,
-    /// Ids of the game menu's lines that are greyed out and cannot be chosen (the timetable
-    /// without an active route).
-    pub menu_disabled: &'a [&'a str],
     /// The timetable window: its title and per stop (name, time, 0 served / 1 next / 2 ahead).
     pub timetable: Option<(String, Vec<(String, String, u8)>)>,
     /// The information bar along the top.
@@ -185,6 +183,21 @@ pub struct Frame<'a> {
     pub menu_kbd: bool,
     /// The drop-down open over a row of the settings window.
     pub dropdown: Option<DropdownView<'a>>,
+    pub lab: Option<PauseState>,
+    pub vehicle_menu: &'a [VehicleGroup],
+}
+
+/// One action of the vehicle page: only its id and kind, the texts come from the i18n keys
+/// `pause.page.vehicle.action.<id>.*`.
+pub struct VehicleAction {
+    pub id: &'static str,
+    pub opens: bool,
+}
+
+/// A group of the vehicle page (`pause.page.vehicle.group.<id>.title`).
+pub struct VehicleGroup {
+    pub id: &'static str,
+    pub actions: Vec<VehicleAction>,
 }
 
 /// A chat line with its bad words starred out (rustrict: profanity, slurs and the usual

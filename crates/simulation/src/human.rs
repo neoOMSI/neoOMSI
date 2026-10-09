@@ -929,6 +929,8 @@ pub struct PoseInput<'a> {
     pub velocity: DVec2,
     /// While sitting: the seat point (`[passpos]`, the hip) in the model frame.
     pub seat: Option<Vec3>,
+    /// Seated: the room at the knees (m), and the side the legs angle to (+1 right).
+    pub legroom: Option<(f32, f32)>,
     /// Something to look at.
     pub look: Option<Vec3>,
     /// Where the right hand reaches (the cash desk).
@@ -966,6 +968,7 @@ impl Default for PoseInput<'_> {
             frame: 0,
             velocity: DVec2::ZERO,
             seat: None,
+            legroom: None,
             look: None,
             reach: None,
             gesture: Gesture::Touch,
@@ -1074,6 +1077,7 @@ pub struct Pose {
     sit: f32,
     getting_up: bool,
     seat: Vec3,
+    legroom: Option<(f32, f32)>,
     reach: f32,
     reach_at: Vec3,
     gesture: Gesture,
@@ -1321,6 +1325,7 @@ impl Pose {
             sit: 0.0,
             getting_up: false,
             seat: Vec3::ZERO,
+            legroom: None,
             reach: 0.0,
             reach_at: Vec3::new(0.3, 0.5, 1.1),
             gesture: Gesture::Touch,
@@ -1695,6 +1700,7 @@ impl Pose {
         let wants_sit = input.activity == Activity::Sit && input.seat.is_some();
         if let Some(s) = input.seat {
             self.seat = s;
+            self.legroom = input.legroom;
         }
         let sit_before = self.sit;
         if wants_sit {
@@ -2394,15 +2400,17 @@ impl Pose {
             - d(2.2) * (self.shift / (0.03 * rig.scale)) * still * (1.0 - s_ease);
         // the hip of the leg in front leads (about z, counter-clockwise positive)
         let pelvis_yaw = -d(5.0) * intensity * ph.cos();
-        // reaching for something far: bend at the hips and bring the right shoulder round
+        // reaching for something far: bend at the hips first, then bring the right shoulder
+        // round with the arm (bent further, the head went through the open door by the desk)
         let (reach_lean, reach_twist) = if self.reach > 0.0 {
             let v = self.reach_at - rig.shoulder[1];
             let arm = rig.upper_arm + rig.forearm + grip_offset(rig, self.gesture).length();
             let excess = (v.length() - 0.9 * arm).max(0.0);
-            let r = smoothstep(0.0, 1.0, self.reach);
+            let bend = smoothstep(0.0, 0.5, self.reach);
+            let r = smoothstep(REACH_ARM, 1.0, self.reach);
             let yaw = v.x.atan2(v.y.max(0.05)).to_degrees();
             (
-                d(32.0) * (excess / 0.35).min(1.0) * r * if v.y > 0.0 { 1.0 } else { 0.3 },
+                d(20.0) * (excess / 0.3).min(1.0) * bend * if v.y > 0.0 { 1.0 } else { 0.3 },
                 d((-yaw * 0.5).clamp(-30.0, 12.0)) * r,
             )
         } else {
@@ -2542,7 +2550,7 @@ impl Pose {
         for side in 0..2 {
             let hip_at = pelvis_m.transform_point3(rig.hip[side]);
             let fwd = (foot_fwd[side] + pelvis_fwd).normalize_or(Vec3::Y);
-            let pole = fwd + Vec3::Z * 0.25;
+            let mut pole = fwd + Vec3::Z * 0.25;
             // Seated, the feet go where a sitting body puts them: the thigh along the seat,
             // the shin hanging down. A floor further down than that (a seat on a podium or
             // over a wheel arch) is not reached by stretching the leg straight at it - the
@@ -2566,6 +2574,21 @@ impl Pose {
                     let floor_z = ankle_t[side].z.max(hang.z);
                     let target = Vec3::new(hang.x, hang.y, floor_z);
                     ankle_t[side] = ankle_t[side] + (target - ankle_t[side]) * blend;
+                }
+                if let Some((room, to)) = self.legroom {
+                    let (knee, _, _) = two_bone(hip_at, rig.thigh, rig.shin, ankle_t[side], pole);
+                    let reach = knee.y - hip_at.y;
+                    let free = room - (hip_at.y - self.seat.y) - rig.thigh_radius;
+                    if reach > free.max(0.0) {
+                        let turn = (free / reach).clamp(0.0, 1.0).acos().to_degrees().min(40.0)
+                            * to
+                            * ((sit - 0.5) * 2.0).clamp(0.0, 1.0);
+                        let q = yaw_quat(turn);
+                        ankle_t[side] = hip_at + q * (ankle_t[side] - hip_at);
+                        pole = q * pole;
+                        foot_yaw[side] += turn;
+                        foot_rot[side] = Mat3A::from_quat(q) * foot_rot[side];
+                    }
                 }
             }
             let (knee_at, ankle_at, hinge) =
@@ -2743,7 +2766,7 @@ impl Pose {
                     let (q, off) = self.reach_frame(rig, sh_at, None);
                     let contact = self.reach_at + a * (0.05 * min_jerk(self.press));
                     let pre = contact - a * 0.1;
-                    let r = self.reach;
+                    let r = ((self.reach - REACH_ARM) / (1.0 - REACH_ARM)).max(0.0);
                     let e1 = min_jerk(r / 0.8);
                     let e2 = min_jerk((r - 0.55) / 0.45);
                     let pre_w = pre - q * off;
@@ -2922,7 +2945,9 @@ impl Pose {
 }
 
 /// Seconds the hand takes to reach out, and to come back.
-const REACH_TIME: f32 = 0.8;
+const REACH_TIME: f32 = 1.1;
+/// The part of [`REACH_TIME`] the body bends before the arm goes out.
+const REACH_ARM: f32 = 0.27;
 
 /// Minimum-jerk easing: how a hand moves from rest to rest.
 fn min_jerk(x: f32) -> f32 {
@@ -4081,6 +4106,59 @@ mod tests {
                 previous = current;
             }
         }
+    }
+
+    #[test]
+    fn reaching_far_the_body_bends_before_the_arm_goes_out() {
+        let r = rig();
+        let mut p = Pose::new(9);
+        let desk = Vec3::new(-0.1, 0.62, 0.95);
+        let input = PoseInput {
+            activity: Activity::Pay,
+            reach: Some(desk),
+            ..Default::default()
+        };
+        p.advance(&r, &PoseInput::default(), 1.0 / 60.0);
+        let rest = p.bones(&r);
+        for _ in 0..20 {
+            p.advance(&r, &input, 1.0 / 60.0);
+        }
+        let early = p.bones(&r);
+        assert!(early.neck.y - rest.neck.y > 0.05, "bent {}", early.neck.y);
+        assert!((early.wrist[1] - rest.wrist[1]).length() < 0.03, "the hand still down");
+        for _ in 0..70 {
+            p.advance(&r, &input, 1.0 / 60.0);
+        }
+        let posed = p.bones(&r);
+        assert!((posed.wrist[1] - rest.wrist[1]).length() > 0.4, "the hand out");
+        assert!(posed.neck.y - rest.neck.y < 0.16, "bent {}", posed.neck.y);
+    }
+
+    #[test]
+    fn with_little_legroom_the_knees_turn_aside() {
+        let r = rig();
+        let seat = Vec3::new(0.0, -r.seat_front(), 0.45);
+        let knees = |legroom| {
+            let mut p = Pose::new(5);
+            p.advance(&r, &PoseInput::default(), 1.0 / 60.0);
+            for _ in 0..200 {
+                let input = PoseInput {
+                    activity: Activity::Sit,
+                    seat: Some(seat),
+                    legroom,
+                    ..Default::default()
+                };
+                p.advance(&r, &input, 1.0 / 60.0);
+            }
+            p.bones(&r).knee
+        };
+        let free = knees(None);
+        assert!(free[0].y + r.thigh_radius - seat.y > 0.45);
+        let tight = knees(Some((0.42, -1.0)));
+        for k in tight {
+            assert!(k.y + r.thigh_radius - seat.y < 0.42 + 0.02, "knee {k:?}");
+        }
+        assert!(tight[0].x < free[0].x - 0.1 && tight[1].x < free[1].x - 0.1);
     }
 
     #[test]

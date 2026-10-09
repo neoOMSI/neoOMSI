@@ -1061,13 +1061,29 @@ fn point_lights(p: vec3<f32>, n: vec3<f32>, map_k: f32) -> vec3<f32> {
                 // the inner cone, fading to nothing at the outer one; nothing behind it
                 let c = dot(-d / max(dist, 0.01), l.dir.xyz);
                 k = smoothstep(l.dir.w, max(l.extra.x, l.dir.w + 1e-3), c);
+                if (abs(l.dir.z) < 0.9) {
+                    // cookie: the beam pattern of the [spotlight] projected from the lamp onto
+                    // what it hits (x/y = tangent of the angle to the axis, right/up of the
+                    // lamp); the outline is the outer cone, soft from the inner one, with a
+                    // flat top (dipped-beam cut-off) and nothing behind the lamp
+                    let rel = -d / max(dist, 0.01);
+                    let a = dot(rel, l.dir.xyz);
+                    let rt = normalize(cross(l.dir.xyz, vec3<f32>(0.0, 0.0, 1.0)));
+                    let up = cross(rt, l.dir.xyz);
+                    let x = dot(rel, rt) / max(a, 0.01);
+                    let y = dot(rel, up) / max(a, 0.01);
+                    let to = sqrt(max(1.0 - l.dir.w * l.dir.w, 0.0)) / max(l.dir.w, 0.05);
+                    let ti = sqrt(max(1.0 - l.extra.x * l.extra.x, 0.0)) / max(l.extra.x, 0.05);
+                    let ey = select(y / to, y / (to * 0.12), y > 0.0);
+                    let r = sqrt((x / to) * (x / to) + ey * ey);
+                    let soft = clamp(ti / max(to, 1e-3), 0.0, 0.95);
+                    k = select(0.0, 1.0 - smoothstep(soft, 1.0, r), a > 0.0);
+                }
             }
             if (ndl <= 0.0 || k <= 0.0 || att < 0.003) {
                 continue;
             }
-            if (n.z > 0.7) {
-                k = k * light_shadow(l, p + n * 0.08);
-            }
+            k = k * light_shadow(l, p + n * 0.08);
             sum = sum + l.color.rgb * l.color.w * att * ndl * k;
         }
     }
@@ -1793,7 +1809,10 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
     // a street lamp, where the lamp's 40 m core lit the crown up yellow-green)
     let tree_unlamped = camera.sky_color.w > 0.5 && material.params.y > 0.1 && material.params.y < 0.2;
     let map_lamps = select(1.0, 0.0, (material.params.y > 0.2 && material.params.y < 0.3) || lm_only || tree_unlamped);
-    let lamp_light = point_lights(in.world, n, map_lamps);
+    // (a mesh lit by the saloon's own lamps takes no light from the outside lights)
+    let saloon_max = interior_lamps(in.world, n, in.params2.z);
+    let saloon_lit = select(0.0, clamp(max(saloon_max.r, max(saloon_max.g, saloon_max.b)) * 4.0, 0.0, 1.0), in.params2.z >= 1.0);
+    let lamp_light = point_lights(in.world, n, map_lamps) * (1.0 - saloon_lit);
     var light = diffuse + lamp_light;
     // D3D lights the material's diffuse colour with the sun, the light from above and the
     // lamps, and its ambient colour with the ambient light (C). Omsi.exe makes every o3d

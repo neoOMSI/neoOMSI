@@ -414,6 +414,29 @@ impl App {
     pub(crate) fn move_cursor(&mut self, x: f32, y: f32) -> bool {
         let last = self.cursor;
         self.cursor = (x, y);
+        if self.lab_menu.is_some() {
+            if (x, y) != last {
+                if let Some(st) = self.lab_menu.filter(|s| s.page.is_none()) {
+                    let hit = self.ui.as_ref().and_then(|u| {
+                        u.pause_items
+                            .iter()
+                            .position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3])
+                    });
+                    if let Some(k) = hit {
+                        self.lab_menu = Some(crate::ui::PauseState { sel: k, ..st });
+                    }
+                }
+            }
+            if let Some(n) = self.navigator.as_mut().filter(|n| n.city.embed.is_some()) {
+                n.map_move(x, y);
+            }
+            if self.ui.as_ref().is_some_and(|u| u.world_drag.is_some()) {
+                self.lab_world_set(x);
+            }
+            if self.ui.as_ref().is_some_and(|u| u.world_bar_grab.is_some()) {
+                self.lab_world_bar_set(y);
+            }
+        }
         if self.game_menu.is_some() && (x, y) != last {
             self.menu_kbd = false;
         }
@@ -538,7 +561,7 @@ impl App {
                 return;
             }
             if pressed && !vr_active && n.over_panel(x, y) {
-                n.toggle_map();
+                self.open_map_page();
                 return;
             }
         }
@@ -943,6 +966,9 @@ impl App {
             return 4;
         }
         let Some(u) = self.ui.as_ref() else { return 0 };
+        if self.lab_menu.is_some() {
+            return u8::from(u.hand);
+        }
         let (x, y) = self.cursor;
         let inside = |r: &[f32; 4]| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
         let clickable = u.menu_scroll_thumb.is_some_and(|r| inside(&r))
@@ -951,10 +977,7 @@ impl App {
             || u.menu_pane_go.as_ref().is_some_and(|r| inside(r))
             || u.menu_time.iter().any(|r| inside(r))
             || u.menu_ctl.iter().flatten().any(|r| inside(r))
-            || u.menu_rects
-            .iter()
-            .enumerate()
-            .any(|(i, r)| inside(r) && !self.menu_item_off(i + u.menu_start));
+            || u.menu_rects.iter().any(|r| inside(r));
         if clickable { 1 } else { 0 }
     }
 }

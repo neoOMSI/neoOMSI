@@ -155,7 +155,7 @@ impl Cabin {
             .iter()
             .enumerate()
             .filter_map(|(k, seat)| {
-                if taken.get(k).copied().unwrap_or(false) || (seats_only && !seat.seated) {
+                if place_taken(&self.seats, taken, k) || (seats_only && !seat.seated) {
                     return None;
                 }
                 let point = seat.point?;
@@ -312,6 +312,14 @@ impl Humans {
                         target.x = target.x.min(p0.clamp_x);
                     } else {
                         target.x = target.x.max(p0.clamp_x);
+                    }
+                } else if self.natural {
+                    // straight at a path point deep in the aisle, the way cut the side wall
+                    let side = if p0.clamp_left { -1.0 } else { 1.0 };
+                    let wall = bn.centre.x as f64 + side * bn.half.x as f64;
+                    let l = bn.to_local(p0.pos);
+                    if (l.x as f64 - wall) * side > 0.1 && (l.y as f64 - target.y).abs() > 0.15 {
+                        target.x = wall + side * 0.35;
                     }
                 }
             }

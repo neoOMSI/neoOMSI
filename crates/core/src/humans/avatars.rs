@@ -491,12 +491,17 @@ impl Humans {
     /// The free seat of bus `bus` nearest the world point `at` (for a walker inside it).
     pub fn seat_nearest(&self, bus: BusId, at: DVec3, reach: f64) -> Option<usize> {
         let bn = self.buses.last_buses.iter().find(|b| b.id == bus)?;
-        let taken = self.buses.seats.get(&bn.id);
+        let taken = self
+            .buses
+            .seats
+            .get(&bn.id)
+            .map(|t| t.as_slice())
+            .unwrap_or(&[]);
         bn.cabin
             .seats
             .iter()
             .enumerate()
-            .filter(|(k, s)| s.seated && !taken.and_then(|t| t.get(*k)).copied().unwrap_or(false))
+            .filter(|(k, s)| s.seated && !place_taken(&bn.cabin.seats, taken, *k))
             .map(|(k, s)| (k, (bn.world(s.floor) - at).truncate().length()))
             .filter(|(_, d)| *d < reach)
             .min_by(|a, b| a.1.total_cmp(&b.1))

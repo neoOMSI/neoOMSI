@@ -21,6 +21,69 @@ impl Ui {
             menu_rects: Vec::new(),
             menu_arrows: Vec::new(),
             menu_scroll_thumb: None,
+            lab_tabs: Vec::new(),
+            admin_visible: false,
+            pause_items: Vec::new(),
+            lab_groups: Vec::new(),
+            lab_actions: Vec::new(),
+            dialog: None,
+            dialog_rects: Vec::new(),
+            dialog_box: [0.0; 4],
+            dialog_back: false,
+            dialog_back_rc: [0.0; 4],
+            dialog_vis: 1,
+            dialog_pane_rc: [0.0; 4],
+            dialog_pane_top: None,
+            dialog_pane_max: 0,
+            dialog_pane_key: String::new(),
+            dialog_pane_pos: 0.0,
+            dialog_under: None,
+            place_rects: Vec::new(),
+            place_preview_size: (0, 0),
+            place_picture: None,
+            map_rect: [0.0; 4],
+            map_picture: None,
+            map_btn: [0.0; 4],
+            map_btn_label: String::new(),
+            map_btn_on: false,
+            dialog_preview: None,
+            dialog_tall: false,
+            pause_entries: Vec::new(),
+            world_view: Default::default(),
+            world_view_page: usize::MAX,
+            world_last_page: usize::MAX,
+            world_groups_rc: Vec::new(),
+            world_rows_rc: Vec::new(),
+            world_tracks: Vec::new(),
+            world_clear: Vec::new(),
+            world_group: 0,
+            world_sub: 0,
+            world_sub_rc: Vec::new(),
+            world_scroll: 0,
+            world_pos: 0.0,
+            world_bar: None,
+            world_bar_grab: None,
+            world_first: 0,
+            world_max: 0,
+            world_drag: None,
+            world_drop: None,
+            world_drop_rc: Vec::new(),
+            world_drop_first: 0,
+            world_drop_vis: 1,
+            place_status: String::new(),
+            hand: false,
+            place_box: [0.0; 4],
+            dialog_t: 0.0,
+            dialog_ghost: None,
+            pause_prev: None,
+            pause_closing: false,
+            lab_group: 0,
+            pause_open: 0.0,
+            page_t: 0.0,
+            pause_last: usize::MAX - 1,
+            page_fade: false,
+            cat_key: usize::MAX,
+            cat_t: 1.0,
             menu_scroll_track: None,
             menu_ctl: Vec::new(),
             dd_rects: Vec::new(),
@@ -407,7 +470,28 @@ impl Ui {
         }
         self.anim_dt = dt.clamp(0.0, 0.1);
         self.text.flat = true;
-        self.draw_menu(r, scene, f);
+        self.draw_report_screen(r, scene, f);
+        match f.lab {
+            Some(st) => self.draw_pause(r, scene, f, st),
+            None if self.pause_prev.is_some() && self.pause_open > 0.0 => {
+                let st = self.pause_prev.unwrap_or_default();
+                self.pause_closing = true;
+                self.draw_pause(r, scene, f, st);
+                self.pause_closing = false;
+            }
+            None => {
+                self.lab_tabs.clear();
+                self.pause_items.clear();
+                self.lab_groups.clear();
+                self.lab_actions.clear();
+                self.dialog = None;
+                self.dialog_ghost = None;
+                self.dialog_t = 0.0;
+                self.dialog_rects.clear();
+                self.pause_prev = None;
+                self.pause_reset();
+            }
+        }
         self.text.flat = false;
         self.vr_tooltip_overlay = None;
         if let Some(t) = f.tooltip.as_ref().filter(|t| !t.is_empty()) {

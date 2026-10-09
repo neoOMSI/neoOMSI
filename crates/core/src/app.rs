@@ -2,6 +2,8 @@ use super::*;
 
 const SLOW_UPLOAD_MB_S: f64 = 300.0;
 
+pub(crate) type VehicleScan = (Vec<(String, String)>, std::collections::HashMap<String, (String, String)>);
+
 /// The view and pause state to restore when screenshot mode ends.
 pub(crate) struct ScreenshotMode {
     pub(crate) view: String,
@@ -99,6 +101,21 @@ pub(crate) struct App {
     /// Simulation-time debt for the fixed traffic tick (seconds), carried between frames.
     pub(crate) sim_accum: f32,
     pub(crate) game_menu: Option<usize>,
+    pub(crate) lab_menu: Option<ui::PauseState>,
+    pub(crate) lab_map_direct: bool,
+    /// The list a vehicle page row opened, shown as a select dialog: the list, its kind and
+    /// the list index of each option.
+    /// The action of the vehicle page that waits for the vehicle list.
+    pub(crate) lab_load: Option<&'static str>,
+    /// The place-a-vehicle dialog's choices, while it is open.
+    pub(crate) lab_place: Option<crate::lab_menu::PlaceSel>,
+    /// The showroom that draws the vehicle the place dialog shows, and the interface texture
+    /// its picture is in (texture, width, height).
+    pub(crate) lab_room: Option<crate::launcher::showroom::Showroom>,
+    pub(crate) lab_pic: Option<(usize, u32, u32)>,
+    /// The vehicle list being read on a thread since start-up.
+    pub(crate) vehicle_scan: Option<std::sync::mpsc::Receiver<VehicleScan>>,
+    pub(crate) lab_list: Option<(Vec<(String, String)>, game_lists::ListKind, Vec<usize>)>,
     pub(crate) menu_top: Option<f32>,
     pub(crate) menu_scroll_drag: bool,
     pub(crate) pane_scroll: Option<(usize, usize)>,

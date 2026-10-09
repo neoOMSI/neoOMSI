@@ -13,7 +13,7 @@ pub mod mobile;
 mod multiplayer;
 mod pages;
 pub mod phone;
-mod showroom;
+pub(crate) mod showroom;
 mod state;
 #[cfg_attr(not(target_os = "android"), allow(unused_imports))]
 pub(crate) use state::crash_of;
@@ -32,7 +32,7 @@ use std::time::Instant;
 use theme::*;
 use ui::{Key, Ui};
 use winit::application::ApplicationHandler;
-use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -43,25 +43,21 @@ pub enum Page {
     Multiplayer,
     Profile,
     Settings,
-    Controls,
     Sessions,
     Mods,
     Tutorials,
     Timetable,
-    Setup,
 }
 
-const PAGES: [(Page, &str, &str); 10] = [
+const PAGES: [(Page, &str, &str); 8] = [
     (Page::Drive, "Drive", "directions_bus"),
     (Page::Multiplayer, "Multiplayer", "groups"),
     (Page::Profile, "Profile", "badge"),
     (Page::Settings, "Settings", "tune"),
-    (Page::Controls, "Controls", "keyboard"),
     (Page::Sessions, "Sessions", "sports_esports"),
     (Page::Mods, "Mods", "extension"),
     (Page::Tutorials, "Tutorials", "help"),
     (Page::Timetable, "Timetable", "schedule"),
-    (Page::Setup, "Setup", "folder_open"),
 ];
 
 #[cfg(not(target_os = "android"))]
@@ -149,7 +145,6 @@ pub struct Launcher {
     ime: bool,
     /// Updates from the GitHub releases (see `crate::updater`, `update.rs`).
     pub update: crate::updater::Updater,
-    pub pax_pack: crate::pax_pack::PaxPack,
     #[cfg(not(target_os = "android"))]
     discord: Option<crate::discord::Discord>,
     #[cfg(not(target_os = "android"))]
@@ -224,7 +219,6 @@ impl Launcher {
             page_max: 0.0,
             ime: false,
             update: Default::default(),
-            pax_pack: crate::pax_pack::PaxPack::new(crate::startup::content_dir()),
             #[cfg(not(target_os = "android"))]
             discord: None,
             #[cfg(not(target_os = "android"))]
@@ -237,12 +231,11 @@ impl Launcher {
             log::info!("update: this start follows the update to {v}");
             app.update.updated = Some((v, Instant::now()));
         }
-        // no original installation found anywhere: the launcher still opens, on Setup, and says
-        // what it needs (only starting a session needs the game)
+        // no original installation found anywhere: the launcher still opens and says what it
+        // needs (only starting a session needs the game)
         if ::legacy_config::missing_original_essentials(std::path::Path::new(&app.state.config.root)).len()
             > 0
         {
-            app.page = Page::Setup;
             let why = state::root_problem(&app.state.config.root);
             app.state.set_status(why, true);
         }
@@ -275,10 +268,6 @@ impl Launcher {
             }
             if let Some(step) = p.split(':').nth(1).and_then(|s| s.parse().ok()) {
                 app.drive.step = step;
-                // (the Controls and Settings pages' second part is their tab: controls:1 the game
-                // controllers, settings:3 Sound)
-                app.pages.controls_tab = step;
-                app.pages.settings_tab = step.min(pages::SETTINGS_TABS.len() - 1);
             }
         }
         app
@@ -288,7 +277,6 @@ impl Launcher {
     /// launcher's window).
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub fn release_window(&mut self) -> Option<Arc<Window>> {
-        self.pages.pads.cancel_feedback_test();
         self.surface = None;
         self.gpu = None;
         self.preview_tex = None;
@@ -356,19 +344,6 @@ impl Launcher {
 }
 
 impl ApplicationHandler for Launcher {
-    fn device_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        _id: winit::event::DeviceId,
-        event: DeviceEvent,
-    ) {
-        if matches!(event, DeviceEvent::Added | DeviceEvent::Removed) {
-            if let Some(io) = self.pages.pads.io.as_ref() {
-                io.refresh();
-            }
-        }
-    }
-
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         // (a phone: the app went to the background and its window's surface goes with it)
         self.surface = None;
@@ -473,16 +448,12 @@ impl ApplicationHandler for Launcher {
         }
         match event {
             WindowEvent::CloseRequested => {
-                self.pages.pads.cancel_feedback_test();
                 event_loop.exit();
             }
             WindowEvent::Touch(t) => self.touch(t, scale),
             WindowEvent::Focused(f) => self.set_focus(f),
             WindowEvent::Occluded(o) => {
                 self.occluded = o;
-                if o {
-                    self.pages.pads.cancel_feedback_test();
-                }
             }
             WindowEvent::Resized(s) => {
                 if let (Some(sf), Some(r)) = (self.surface.as_mut(), self.renderer.as_ref()) {
@@ -791,9 +762,6 @@ impl Launcher {
     /// launcher script).
     fn set_focus(&mut self, f: bool) {
         self.focused = f;
-        if !f {
-            self.pages.pads.cancel_feedback_test();
-        }
         // (only once the game is on its way: the launcher has the focus while Start is
         // pressed, and gives the device up then as before)
         self.awake_in_game = f
@@ -886,7 +854,6 @@ impl Launcher {
             // Finish the Discord handoff in the background before starting the child.
             #[cfg(not(target_os = "android"))]
             drop(self.discord.take());
-            self.pages.pads.cancel_feedback_test();
             self.state.spawn_launch(d);
         }
     }
@@ -1235,20 +1202,13 @@ impl Launcher {
     }
 
     fn draw_ui(&mut self) {
-        if self.page != Page::Controls || self.pages.controls_tab != 1 {
-            self.pages.pads.cancel_feedback_test();
-        }
         let size = self.ui.size;
         let mobile = mobile::mobile();
         // the storage browser (or the update dialog) lies over the page: the page sees no
         // finger meanwhile
         let dialog = self.update_dialog_open();
         let crash = !dialog && self.state.crash.is_some();
-        let reset = !dialog && !crash && self.pages.confirm_reset;
-        if self.browser.is_some() || dialog || crash || reset {
-            self.pages.pads.cancel_feedback_test();
-        }
-        let saved = (self.browser.is_some() || dialog || crash || reset).then(|| {
+        let saved = (self.browser.is_some() || dialog || crash).then(|| {
             let i = self.ui.input.clone();
             self.ui.input.mouse = Vec2::new(-1e4, -1e4);
             self.ui.input.pressed = false;
@@ -1260,16 +1220,6 @@ impl Launcher {
         });
         // a phone: the launcher made for it, not the desktop's pages
         if mobile {
-            if self.page == Page::Setup
-                && !::legacy_config::missing_original_essentials(std::path::Path::new(
-                &self.state.config.root,
-            ))
-                .is_empty()
-                && self.phone.page.is_none()
-            {
-                self.phone.tab = phone::Tab::More;
-                self.phone.page = Some(Page::Setup);
-            }
             phone::draw(self);
         } else {
             let rail_w = RAIL_W;
@@ -1301,12 +1251,10 @@ impl Launcher {
                 Page::Multiplayer => multiplayer::draw(self, content),
                 Page::Profile => pages::profile(self, content),
                 Page::Settings => pages::settings(self, content),
-                Page::Controls => pages::controls(self, content),
                 Page::Sessions => pages::sessions(self, content),
                 Page::Mods => pages::mods(self, content),
                 Page::Tutorials => pages::tutorials(self, content),
                 Page::Timetable => timetable::draw(self, content),
-                Page::Setup => pages::setup(self, content),
             }
             // the rail over the page (a scrolled page passes under it)
             self.rail();
@@ -1319,8 +1267,6 @@ impl Launcher {
                 self.draw_update_dialog();
             } else if crash {
                 self.draw_crash_dialog();
-            } else if reset {
-                pages::reset_dialog(self);
             } else {
                 self.draw_browser();
             }

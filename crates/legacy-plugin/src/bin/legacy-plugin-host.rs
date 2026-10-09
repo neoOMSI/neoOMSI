@@ -57,9 +57,19 @@ fn main() {
     }
 }
 
-/// Homebrew's i686 MinGW links no unwinder the prebuilt standard library can use; built
-/// with `panic=abort` nothing unwinds, and this stands in for the one symbol it names.
-#[cfg(all(target_os = "windows", target_arch = "x86", target_env = "gnu"))]
+
+/// Fallback for older i686 MinGW toolchains that cannot
+/// supply _Unwind_Resume.
+///
+/// Enabled only when the build script detects that the
+/// symbol is missing. Modern MinGW builds use the
+/// toolchain's own implementation.
+#[cfg(all(
+    target_os = "windows",
+    target_arch = "x86",
+    target_env = "gnu",
+    legacy_unwind_fallback
+))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _Unwind_Resume() -> ! {
     std::process::abort()

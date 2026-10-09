@@ -61,6 +61,64 @@ pub(super) struct Seat {
     pub(super) omsi_seat: usize,
 }
 
+/// Cabins list some `[passpos]` twice on one spot (the Citaro C2's).
+fn same_spot(a: &Seat, b: &Seat) -> bool {
+    let (p, q) = match (a.seated, b.seated) {
+        (true, true) => (a.pos, b.pos),
+        (false, false) => (a.pos, b.pos),
+        (true, false) => (a.floor, b.pos),
+        (false, true) => (a.pos, b.floor),
+    };
+    (p - q).truncate().length() < 0.3 && (p.z - q.z).abs() < 0.3
+}
+
+pub(super) fn place_taken(seats: &[Seat], taken: &[bool], k: usize) -> bool {
+    let busy = |j: usize| taken.get(j).copied().unwrap_or(false);
+    busy(k)
+        || seats
+            .iter()
+            .enumerate()
+            .any(|(j, s)| j != k && busy(j) && same_spot(&seats[k], s))
+}
+
+/// The room at the knees (m), and the side (+1 right) the aisle is on.
+pub(super) fn legroom(seats: &[Seat], k: usize) -> Option<(f32, f32)> {
+    let s = seats.get(k).filter(|s| s.seated)?;
+    let r = s.rot.to_radians();
+    let (fwd, right) = (
+        glam::Vec2::new(r.sin(), r.cos()),
+        glam::Vec2::new(r.cos(), -r.sin()),
+    );
+    let room = seats
+        .iter()
+        .enumerate()
+        .filter(|(j, o)| *j != k && o.seated && (o.pos.z - s.pos.z).abs() < 0.4)
+        .filter_map(|(_, o)| {
+            let d = (o.pos - s.pos).truncate();
+            if d.dot(fwd) < 0.2 || d.dot(right).abs() > 0.3 {
+                return None;
+            }
+            let turn = (o.rot - s.rot).rem_euclid(360.0);
+            let turn = turn.min(360.0 - turn);
+            if turn < 45.0 {
+                Some(d.dot(fwd) - BACKREST)
+            } else if turn > 135.0 {
+                Some(d.dot(fwd) * 0.5)
+            } else {
+                None
+            }
+        })
+        .fold(f32::INFINITY, f32::min);
+    let aisle = if (s.pos.x * r.cos()).abs() < 0.05 {
+        1.0
+    } else {
+        -(s.pos.x * r.cos()).signum()
+    };
+    room.is_finite().then_some((room, aisle))
+}
+
+const BACKREST: f32 = 0.2;
+
 pub(super) fn prefer_seated_places(free: &mut Vec<usize>, seats: &[Seat], prefer_seats: bool) {
     if prefer_seats && free.iter().any(|&k| seats[k].seated) {
         free.retain(|&k| seats[k].seated);
@@ -444,11 +502,15 @@ impl Cabin {
             .stampers
             .last()
             .map(|st| (point_of(st.path_point), Vec3::from(st.pos)));
-        let sale = data
-            .ticket_sales
-            .last()
-            .map(|st| (point_of(st.path_point), Vec3::from(st.pos)));
         let money_point = data.money_points.last().map(|m| Vec3::from(m.pos));
+        // (the Citaro's lies on the floor: passengers bent down to their feet for it)
+        let sale = data.ticket_sales.last().map(|st| {
+            let pt = point_of(st.path_point);
+            let floor = pt.and_then(|k| points.get(k)).map(|q| q.z);
+            let pos = Vec3::from(st.pos);
+            let low = floor.is_some_and(|z| pos.z - z < 0.6);
+            (pt, money_point.filter(|_| low).unwrap_or(pos))
+        });
         let money_var = data.money_points.last().map(|m| (Vec3::from(m.pos), m.var));
         let change_point = data.change_points.last().map(|m| Vec3::from(m.pos));
         Some(Cabin {
@@ -744,8 +806,9 @@ pub(in crate::humans) struct PassengerBuses {
     pub(in crate::humans) ai_visits: HashMap<u64, (i64, f64)>,
     /// When each bus last had a door open (the passengers' clock).
     pub(in crate::humans) last_door_open: HashMap<BusId, f64>,
-    /// Timetable buses to keep at their stop for a few seconds more (for the traffic).
-    pub(in crate::humans) holds: Vec<(u64, f32)>,
+    /// Timetable buses to keep at their stop for a few seconds more (for the traffic), and
+    /// whether somebody is crossing one of its doorways.
+    pub(in crate::humans) holds: Vec<(u64, f32, bool)>,
     /// Door requests for the timetable buses' scripts: (bus, entries, exits).
     pub(in crate::humans) ai_requests: Vec<(u64, Vec<bool>, Vec<bool>)>,
     /// The buses of the last tick (for the avatars' seats and doors).

@@ -114,6 +114,24 @@ impl Humans {
         let Some(bn) = p.inside.and_then(|b| bus_ix.get(&b).map(|k| &buses[*k])) else {
             return;
         };
+        // the validator's path point can lie past it (the Citaro's)
+        if p.movement == Movement::AlongPath
+            && p.ticket == TicketAction::Stamp
+            && p.fare_phase == FarePhase::None
+            && bn.id == BusId::Player
+        {
+            if let (Some((_, dev)), Some(q)) = (
+                bn.cabin.stamper,
+                p.pt.and_then(|k| bn.cabin.graph.points.get(k)),
+            ) {
+                let dev = dev.as_dvec3().truncate();
+                let here = (dev - p.pos.truncate()).length();
+                if here < 1.5 && (dev - q.as_dvec3().truncate()).length() > here + 0.05 {
+                    self.pax_mut(i).unwrap().movement = Movement::AtPathEnd;
+                }
+            }
+        }
+        let p = self.pax(i).unwrap().clone();
         if p.movement == Movement::AtPathEnd {
             if p.ticket < TicketAction::Stamp {
                 self.set_task(i, Task::SittingInBus, buses, bus_ix, world);
@@ -465,4 +483,4 @@ mod tests {
 
 const STAMP_TIME: f32 = 2.0;
 const STAMP_RELEASE: f32 = 0.6;
-const HAND_TIME: f32 = 1.1;
+const HAND_TIME: f32 = 1.4;

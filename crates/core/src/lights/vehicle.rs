@@ -91,103 +91,80 @@ pub fn vehicle_lights(
                 .map(|sp| sp.values)
                 .or_else(|| ai_on.then(|| ai_spotlight(&lamps)).flatten());
             if let Some(vals) = spot {
-                let d = body
-                    .transform_vector3(Vec3::new(vals[3], vals[4], vals[5]))
-                    .normalize_or_zero();
-                let high_beam =
-                    cfg.force_high_beam || v.var("lights_fern").is_some_and(|x| x > 0.5);
-                let bc = if high_beam { cfg.high } else { cfg.low };
-                let color = [
-                    vals[6] / 255.0 * cfg.lamp_color[0] * bc.color[0],
-                    vals[7] / 255.0 * cfg.lamp_color[1] * bc.color[1],
-                    vals[8] / 255.0 * cfg.lamp_color[2] * bc.color[2],
-                ];
-                let mut apex = Vec3::new(vals[0], vals[1], vals[2]);
-                let dl = Vec3::new(vals[3], vals[4], vals[5]).normalize_or_zero();
-                let nose = lamps.iter().map(|l| l[1]).reduce(f32::max);
-                let tail = lamps.iter().map(|l| l[1]).reduce(f32::min);
-                let bb = ty
-                    .def
-                    .bounding_box
-                    .map(|bb| (bb[4] + bb[1] * 0.5, bb[4] - bb[1] * 0.5));
-                let dir = if dl.y > 0.3 {
-                    1.0
-                } else if dl.y < -0.3 {
-                    -1.0
-                } else {
-                    0.0
-                };
-                if dir != 0.0 {
-                    let (lamp, edge) = if dir > 0.0 {
-                        (nose, bb.map(|b| b.0))
+                if cfg.low.on {
+                    let d = body
+                        .transform_vector3(Vec3::new(vals[3], vals[4], vals[5]))
+                        .normalize_or_zero();
+                    let color = [vals[6] / 255.0, vals[7] / 255.0, vals[8] / 255.0];
+                    let mut apex = Vec3::new(vals[0], vals[1], vals[2]);
+                    let dl = Vec3::new(vals[3], vals[4], vals[5]).normalize_or_zero();
+                    let dir_y = if dl.y > 0.3 {
+                        1.0
+                    } else if dl.y < -0.3 {
+                        -1.0
                     } else {
-                        (tail, bb.map(|b| b.1))
+                        0.0
                     };
-                    if let Some(face) = spot_face(lamp, edge, apex.y, dir) {
-                        apex.y = face + dir * 0.05;
+                    if dir_y != 0.0 {
+                        let nose = lamps.iter().map(|l| l[1] * dir_y).reduce(f32::max).map(|m| m * dir_y);
+                        let edge = ty.def.bounding_box.map(|bb| bb[4] + dir_y * bb[1] * 0.5);
+                        if let Some(face) = spot_face(nose, edge, apex.y, dir_y) {
+                            apex.y = face + dir_y * 0.05;
+                        }
                     }
-                }
-                let half_width = ty
-                    .def
-                    .bounding_box
-                    .map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
-                let on_face: Vec<f32> = lamps
-                    .iter()
-                    .filter(|l| (dl.y > 0.3 || dl.y < -0.3) && (l[1] - apex.y).abs() < 0.35)
-                    .map(|l| (l[0] - apex.x).abs())
-                    .collect();
-                let spread =
-                    (on_face.iter().sum::<f32>() / on_face.len().max(1) as f32).min(half_width);
-                let right = body.transform_vector3(Vec3::X).normalize_or_zero();
-                let apex = body.transform_point3(apex);
-                let (inner, outer) = (
-                    vals.get(10).copied().unwrap_or(30.0) + cfg.lamp_inner_add + bc.inner_add,
-                    vals.get(11).copied().unwrap_or(70.0) + cfg.lamp_outer_add + bc.outer_add,
-                );
-                let half = |deg: f32| (deg.clamp(1.0, 179.0) * 0.5).to_radians().cos();
-                let cone = [half(inner.min(outer)), half(outer)];
-                let sides: &[f32] = if spread > 0.1 { &[-1.0, 1.0] } else { &[0.0] };
-                for side in sides {
-                    if !bc.on {
-                        continue;
+                    let half_width = ty
+                        .def
+                        .bounding_box
+                        .map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
+                    let on_face: Vec<f32> = lamps
+                        .iter()
+                        .filter(|l| dir_y != 0.0 && (l[1] - apex.y).abs() < 0.35)
+                        .map(|l| (l[0] - vals[0]).abs())
+                        .collect();
+                    let spread =
+                        (on_face.iter().sum::<f32>() / on_face.len().max(1) as f32).min(half_width);
+                    let sides: &[f32] = if spread > 0.1 { &[-1.0, 1.0] } else { &[0.0] };
+                    let right = body.transform_vector3(Vec3::X).normalize_or_zero();
+                    let base = body.transform_point3(apex);
+                    let half = |deg: f32| (deg.clamp(1.0, 179.0) * 0.5).to_radians().cos();
+                    let (inner, outer) = (vals[10], vals[11]);
+                    let cone = [half(inner.min(outer)), half(outer.max(inner))];
+                    let reach_v = spot_reach(vals[9], 45.0);
+                    let radius = spot_reach(vals[9], 60.0);
+                    let short = short_range_gain(vals[9]);
+                    for side in sides {
+                        let at = v.position + (base + right * spread * side).as_dvec3();
+                        let lamp = PointLight {
+                            position: at,
+                            color,
+                            direction: d,
+                            cone,
+                            ..Default::default()
+                        };
+                        lights.push(PointLight {
+                            radius: reach_v,
+                            intensity: cfg.vanilla / sides.len() as f32
+                                * (0.3 + 0.7 * night)
+                                * short,
+                            mode: LightMode::Vanilla,
+                            ..lamp
+                        });
+                        lights.push(PointLight {
+                            radius,
+                            intensity: cfg.headlight / sides.len() as f32
+                                * (1.0 + bad * cfg.weather_boost)
+                                * short,
+                            core: (radius * 0.25).clamp(0.1, 1.0),
+                            // (100: a dipped beam, which shines by its cookie; below 0: a full beam)
+                            beam: if full_beam_gain(vals[9]) < 0.0 {
+                                full_beam_gain(vals[9])
+                            } else {
+                                100.0
+                            },
+                            mode: LightMode::Enhanced,
+                            ..lamp
+                        });
                     }
-                    let at = v.position
-                        + (apex + right * spread * cfg.lamp_spread * side).as_dvec3()
-                        + lamp_shift(d, &cfg)
-                        + shift(d, bc.forward, bc.side, bc.height);
-                    let radius = headlight_radius(vals[9])
-                        * cfg.lamp_range.max(0.05)
-                        * bc.range.max(0.05)
-                        * if high_beam { cfg.high_beam_range } else { 1.0 };
-                    let cone = if high_beam {
-                        let k = cfg.high_beam_spread.max(0.1);
-                        [1.0 - (1.0 - cone[0]) * k, 1.0 - (1.0 - cone[1]) * k]
-                    } else {
-                        cone
-                    };
-                    let lamp = PointLight {
-                        position: at,
-                        radius,
-                        color,
-                        direction: lamp_aim(d, &cfg, &bc),
-                        cone,
-                        ..Default::default()
-                    };
-                    lights.push(PointLight {
-                        intensity: cfg.vanilla / sides.len() as f32 * (0.3 + 0.7 * night),
-                        mode: LightMode::Vanilla,
-                        ..lamp
-                    });
-                    lights.push(PointLight {
-                        intensity: cfg.headlight / sides.len() as f32
-                            * (1.0 + bad * cfg.weather_boost)
-                            * if high_beam { cfg.high_beam } else { 1.0 }
-                            * bc.gain,
-                        core: headlight_core(radius) * cfg.lamp_core.max(0.01) * bc.core.max(0.01),
-                        beam: if high_beam { -1.0 } else { cfg.low_beam_gain },
-                        mode: LightMode::Enhanced,
-                        ..lamp
-                    });
                 }
             }
         }
@@ -215,7 +192,7 @@ pub fn vehicle_lights(
                 .cos(),
         ];
         let spill_r = spill_radius(&sp);
-        for (model, _bb, xf, origin) in sections {
+        for (model, bb, xf, origin) in sections {
             let lit: Vec<usize> = (0..model.interior_lights.len())
                 .filter(|&li| {
                     let il = &model.interior_lights[li];
@@ -234,6 +211,15 @@ pub fn vehicle_lights(
                 let color = (col * (1.0 - INTERIOR_SPILL_WHITE)
                     + Vec3::splat(col.max_element()) * INTERIOR_SPILL_WHITE)
                     .to_array();
+                // only a lamp inside the saloon is a window light: one in or outside the body's
+                // walls (a door step light, an outside lamp) is no saloon source at all
+                if let Some(b) = bb {
+                    if (at.x - b[3]).abs() >= b[0] * 0.5 - 0.3
+                        || (at.y - b[4]).abs() >= b[1] * 0.5 - 0.1
+                    {
+                        continue;
+                    }
+                }
                 let sides = [Vec3::X, -Vec3::X];
                 let gain = INTERIOR_SPILL_LAMP * ic.gain * strength / sides.len() as f32;
                 for out in sides {

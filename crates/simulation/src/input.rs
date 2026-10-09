@@ -161,6 +161,8 @@ impl KeyboardAxes {
             1.0
         };
         let (rate, back) = (rate * red, if self.linear { back * red } else { back });
+        // Num 5 held with a direction key is the rapid counter-steering modifier.
+        let key_rate = rate * if self.neutral_key { 2.0 } else { 1.0 };
         if self.neutral_key {
             self.centering = true;
         }
@@ -172,10 +174,10 @@ impl KeyboardAxes {
             // Releasing either key immediately hands control to the direction still held.
             self.steer_vel = 0.0;
         } else if self.left_key {
-            self.steering = (self.steering - rate * dt).max(-1.0);
+            self.steering = (self.steering - key_rate * dt).max(-1.0);
             self.steer_vel = 0.0;
         } else if self.right_key {
-            self.steering = (self.steering + rate * dt).min(1.0);
+            self.steering = (self.steering + key_rate * dt).min(1.0);
             self.steer_vel = 0.0;
         } else if self.centering {
             // steering_neutral as in Omsi.exe (sub_7d5124 at 0x7d55d6): the wheel goes back

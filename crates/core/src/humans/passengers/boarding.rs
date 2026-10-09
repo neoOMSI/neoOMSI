@@ -66,6 +66,12 @@ impl Humans {
             self.cancel_fare(self.people[i].id);
         }
         self.pax_mut(i).unwrap().task = t;
+        if t != Task::InBusToExit {
+            let p = self.pax_mut(i).unwrap();
+            if let (Some(k), Some(b)) = (p.vacating.take(), p.inside.or(p.bus)) {
+                self.free_seat(b, k);
+            }
+        }
         if t != Task::SittingInBus {
             self.pax_mut(i).unwrap().seat_approach = None;
         }
@@ -287,7 +293,11 @@ impl Humans {
                     }
                 }
                 if let Some(k) = freed_seat {
-                    self.free_seat(bn.id, k);
+                    if ik && was_seated {
+                        self.pax_mut(i).unwrap().vacating = Some(k);
+                    } else {
+                        self.free_seat(bn.id, k);
+                    }
                 }
                 self.people[i].activity = Activity::Stand;
             }
@@ -501,7 +511,7 @@ impl Humans {
                 .stamper
                 .and_then(|s| s.0)
                 .filter(|_| p.ticket == TicketAction::Stamp);
-            if !buyer {
+            if !buyer && self.rear_entry {
                 for (k, exit) in bn.cabin.exits.iter().enumerate() {
                     list.push(exit.point.filter(|&from| {
                         bn.cabin.entries.iter().all(|e| e.point != Some(from))
@@ -701,16 +711,17 @@ impl Humans {
             self.set_task(i, Task::WalkingToBusstop, buses, bus_ix, world);
             return;
         };
-        let door_x = p
+        // (by the path point's side, one in the aisle sent people round the road side)
+        let door_side = p
             .door
             .and_then(|d| bn.cabin.boarding_door(d))
-            .map(|e| e.inside.x)
-            .unwrap_or(0.0);
+            .map(|e| e.side)
+            .unwrap_or(1.0);
         let open = p.door.is_some_and(|d| bn.boarding_open(d));
         {
             let pp = self.pax_mut(i).unwrap();
             pp.clamp = true;
-            pp.clamp_left = door_x < 0.0;
+            pp.clamp_left = door_side < 0.0;
             pp.clamp_x = if pp.clamp_left {
                 bn.centre.x - bn.half.x - 0.5
             } else {
@@ -745,7 +756,7 @@ impl Humans {
                 return;
             }
             if p.movement != Movement::AtTarget {
-                if self.natural && p.movement == Movement::ShortOfTarget && !open {
+                if p.movement == Movement::ShortOfTarget && !open {
                     self.pax_mut(i).unwrap().door_wait += dt;
                 }
                 self.choose_entry(i, buses, bus_ix);
@@ -801,6 +812,18 @@ impl Humans {
             return;
         };
         let reg = at_stops.get(&b).cloned().unwrap_or_default();
+        if let Some(k) = p.vacating {
+            let up = p.doorway.is_some()
+                || bn
+                    .cabin
+                    .seats
+                    .get(k)
+                    .is_none_or(|s| (p.pos.as_vec3() - s.floor).truncate().length() > 0.6);
+            if up {
+                self.pax_mut(i).unwrap().vacating = None;
+                self.free_seat(b, k);
+            }
+        }
         if bn.speed.abs() >= 1.0 {
             self.pax_mut(i).unwrap().timer = 1.0;
         }

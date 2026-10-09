@@ -142,7 +142,7 @@ pub(crate) fn start_duty_at(app: &mut App, line: &str, tour: &str, trip: usize, 
     let mut d = match sch.player_duty(&w, line, tour, at, None, false) {
         Ok(d) => d,
         Err(e) => {
-            app.service_msg = Some((format!("No duty: {e}"), 8.0));
+            app.service_msg = Some((::i18n::translate("pause.msg.no_duty", &[("error", &e)]), 8.0));
             return;
         }
     };
@@ -164,7 +164,7 @@ pub(crate) fn start_duty_at(app: &mut App, line: &str, tour: &str, trip: usize, 
     app.args.line = Some(line.to_string());
     app.args.tour = Some(tour.to_string());
     app.duty = Some(d);
-    app.service_msg = Some((format!("Line {line}, tour {}", tour.trim()), 4.0));
+    app.service_msg = Some((::i18n::translate("pause.msg.duty_started", &[("line", &line),("tour", &tour.trim())]), 4.0));
 }
 
 pub(super) fn start_duty(app: &mut App, line: &str, tour: &str) {
@@ -190,8 +190,8 @@ pub(super) fn start_duty(app: &mut App, line: &str, tour: &str) {
             app.args.line = Some(line.to_string());
             app.args.tour = Some(tour.to_string());
             app.duty = Some(d);
-            app.service_msg = Some((format!("Line {line}, tour {}", tour.trim()), 4.0));
+            app.service_msg = Some((::i18n::translate("pause.msg.duty_started", &[("line", &line),("tour", &tour.trim())]), 4.0));
         }
-        Err(e) => app.service_msg = Some((format!("No duty: {e}"), 8.0)),
+        Err(e) => app.service_msg = Some((::i18n::translate("pause.msg.no_duty", &[("error", &e)]), 8.0)),
     }
 }
