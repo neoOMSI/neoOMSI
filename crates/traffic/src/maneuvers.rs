@@ -973,7 +973,7 @@ impl ManeuverCoordinator {
         };
         // A geometrically parallel oncoming path may be across a central island. Its
         // existence does not make the gap between the carriageways a passing lane (#126).
-        if side > (lane.width + net.lanes[opp].width) * 0.5 + 0.6 {
+        if split_carriageway(side, lane.width, net.lanes[opp].width) {
             return None;
         }
         if !(2.3..=5.5).contains(&side) {
@@ -1712,6 +1712,17 @@ fn lane_window(net: &Network, lane: usize, s: f32, back: f32, ahead: f32) -> Vec
     out
 }
 
+/// Is there a strip (an island, a median) between two opposing lanes whose centres lie
+/// `side` metres apart? Paths are often authored narrower than the lane painted on the road
+/// (2 m paths 3.2 m apart on an ordinary two-lane street), so a lane counts at least
+/// `MIN_LANE_WIDTH` wide; the 0.6 m tolerance is provisional.
+fn split_carriageway(side: f32, width: f32, other: f32) -> bool {
+    side > (width.max(MIN_LANE_WIDTH) + other.max(MIN_LANE_WIDTH)) * 0.5 + 0.6
+}
+
+/// The narrowest lane (m) a passing check assumes, whatever width the path was given.
+const MIN_LANE_WIDTH: f32 = 3.0;
+
 /// Is the road a single lane each way with the oncoming lane directly beside it, from the
 /// actor origin to `distance` metres along `way`? Separate carriageways (an island, a median,
 /// a hatched area between the lanes) are no passing room (#126).
@@ -1724,7 +1735,7 @@ fn passing_corridor(net: &Network, way: &[WayStep], distance: f32) -> bool {
             return false;
         }
         let Some((opp, _, side)) = net.opposite(lane, u.min(l.length())) else { return false };
-        if !(2.3..=5.5).contains(&side) || side > (l.width + net.lanes[opp].width) * 0.5 + 0.6 {
+        if !(2.3..=5.5).contains(&side) || split_carriageway(side, l.width, net.lanes[opp].width) {
             return false;
         }
         if d >= distance {

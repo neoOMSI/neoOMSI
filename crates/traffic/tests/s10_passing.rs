@@ -95,6 +95,27 @@ fn an_island_that_starts_after_the_pull_out_vetoes_the_pass() {
 }
 
 #[test]
+fn narrow_authored_paths_on_an_ordinary_street_still_allow_a_pass() {
+    // BRT Berlin, Teltowkanal: 2 m paths whose centres lie 3.2 m apart, no median
+    let mut net = two_way();
+    net.lanes[1] = traffic::network::LaneBuilder::polyline(
+        vec![DVec3::new(-3.2, 400.0, 0.0), DVec3::new(-3.2, 0.0, 0.0)],
+        LaneKind::Street,
+        2.0,
+    );
+    net.lanes[0] = traffic::network::LaneBuilder::polyline(
+        vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 400.0, 0.0)],
+        LaneKind::Street,
+        2.0,
+    );
+    net.link(1.5);
+    assert_eq!(
+        plan(&net, &[], &|_, _| true, false).phase,
+        ManeuverPhase::Passing
+    );
+}
+
+#[test]
 fn passengers_crossing_the_passing_path_are_protected() {
     let people = [DVec2::new(-3.5, 80.0)];
     assert_ne!(
