@@ -12,6 +12,7 @@
 //!   server's, the bus and the duty are the player's, and "Leave Server" goes back.
 
 use super::Launcher;
+use crate::lan_mods;
 use super::state::ServerEntry;
 use super::theme::*;
 use super::ui::{ButtonKind, id_of};
@@ -57,7 +58,7 @@ pub fn draw(l: &mut Launcher, area: Rect) {
 fn by_code(l: &mut Launcher, r: Rect) {
     let col = (r.w - 24.0) / 2.0;
     // host
-    let host = Rect::new(r.x, r.y, col, 300.0);
+    let host = Rect::new(r.x, r.y, col, 380.0);
     l.ui.panel(host);
     let mut y = host.y + 18.0;
     l.ui.heading(
@@ -165,7 +166,7 @@ fn by_code(l: &mut Launcher, r: Rect) {
         l.go(super::Page::Drive);
     }
     // join
-    let join = Rect::new(r.x + col + 24.0, r.y, col, 300.0);
+    let join = Rect::new(r.x + col + 24.0, r.y, col, 380.0);
     l.ui.panel(join);
     let mut y = join.y + 18.0;
     l.ui.heading(
@@ -216,6 +217,29 @@ fn by_code(l: &mut Launcher, r: Rect) {
             if ok { TEXT_DIM } else { DANGER },
         );
     }
+    let mut keep_map_downloads = ::config::get_bool("multiplayer", "keep_map_downloads")
+        .unwrap_or(false);
+    if l.ui.toggle(
+        "mp-keep-map-downloads",
+        Rect::new(join.x + 18.0, join.bottom() - 118.0, join.w - 36.0, 28.0),
+        &mut keep_map_downloads,
+        "Keep downloaded map resources",
+    ) {
+        ::config::set_setting(
+            "multiplayer",
+            "keep_map_downloads",
+            keep_map_downloads,
+        );
+        let _ = ::config::save();
+    }
+    l.ui.text_in(
+        "Saved encrypted for this launcher only. Off means they are removed when you leave.",
+        Rect::new(join.x + 18.0, join.bottom() - 88.0, join.w - 36.0, 18.0),
+        11.0,
+        Weight::Regular,
+        TEXT_FAINT,
+        Align::Left,
+    );
     let can = l.state.choice.lan_mode == "join"
         && l.state.joined_server.is_none()
         && l.state.join.0
@@ -235,6 +259,18 @@ fn by_code(l: &mut Launcher, r: Rect) {
             l.go(super::Page::Drive);
         } else {
             l.state.set_status("Paste a session code first", true);
+        }
+    }
+    if l.ui.button(
+        "mp-clear-map-cache",
+        Rect::new(join.right() - 178.0, join.bottom() - 18.0 - ROW, 160.0, ROW),
+        "Clear local cache",
+        Some("delete"),
+        ButtonKind::Normal,
+    ) {
+        match lan_mods::clear_local_cache() {
+            Ok(()) => l.state.set_status("Local multiplayer cache cleared", false),
+            Err(e) => l.state.set_status(&e, true),
         }
     }
 }

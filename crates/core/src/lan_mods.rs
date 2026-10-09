@@ -1,15 +1,18 @@
-//! The host's mods for the players who join: whatever of the host's session is not stock
-//! OMSI 2 content - its map, the bus it drives, the objects, splines, AI vehicles and people
-//! the map uses, and the mod fonts - goes to every player who joins, for the session only.
+//! The host's map resources for the players who join.  The selected map and the scenery,
+//! splines, textures, sounds and configuration it references are made available for the
+//! session only.  Vehicles are deliberately not transferred: a player uses their own bus,
+//! and a missing remote bus is drawn as the normal generic stand-in.
 //!
 //! The host serves the list of those files and the files themselves over TCP, on the same
 //! port number as its LAN session (UDP). It serves nothing but the files of that list, by
 //! their number in it: no path a client names is ever opened. A joining game asks for the
 //! list before its world is loaded, fetches what it does not have in the same version
 //! (compared by SHA-256), checks every file against the list's size and hash, and keeps
-//! them in a folder of its own for this session (`~/.neoomsi/lan-mods/<pid>`), which
-//! becomes the first content root. The folder goes when the session ends (and one left by a
-//! game that did not end cleanly goes at the next start).
+//! them in a unique folder of its own for this session, which becomes the first content
+//! root. The folder goes when the session ends (and one left by a game that did not end
+//! cleanly goes at the next start). A player can opt into an encrypted local cache for
+//! faster later joins; it is encrypted with a key unique to that launcher installation,
+//! itself protected by Windows.
 //!
 //! What may come: files under the content folders a map or a vehicle lives in (maps,
 //! Vehicles, Sceneryobjects, Splines, Humans, Fonts, TicketPacks, Money, Weather, Texture,
@@ -21,6 +24,8 @@
 //! (`::legacy_config::mark_sandbox`).
 
 use crate::Args;
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -38,6 +43,9 @@ const MAX_TOTAL: u64 = 40 << 30;
 const KEEP_FREE: u64 = 3 << 30;
 /// The most files a list may name.
 const MAX_FILES: usize = 400_000;
+const CACHE_MAGIC: &[u8] = b"NEOOMSI-MAP-CACHE/1\0";
+const CACHE_NONCE_LEN: usize = 12;
+const LAUNCHER_KEY_LEN: usize = 32;
 
 /// The top-level content folders a session may bring files into.
 const FOLDERS: &[&str] = &[
@@ -149,7 +157,6 @@ pub struct Entry {
 pub struct Manifest {
     /// The host's map (`maps/<name>/global.cfg`).
     pub map: String,
-    pub bus: String,
     pub entries: Vec<Entry>,
 }
 
@@ -220,22 +227,29 @@ fn sha256_of(data: &[u8]) -> String {
     hex(&Sha256::digest(data))
 }
 
+/// The content-root-relative spelling of an existing file.  This is how an asset parser's
+/// resolved path becomes a manifest path again.
+fn content_relative(path: &Path) -> Option<String> {
+    ::legacy_config::content_roots()
+        .into_iter()
+        .find_map(|root| {
+            path.strip_prefix(root).ok().map(|suffix| {
+                suffix
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+        })
+}
+
 // -------------------------------------------------------------------------------------
 // the host
 
-/// Is content root `r` the OMSI 2 installation itself (its files are taken to be there on
-/// every machine)? A content root inside it is not: neoOMSI unpacked
-/// into the OMSI 2 folder keeps what it installs in `<OMSI 2>/neoOMSI`, and those mods
-/// were never passed on.
-fn is_original(r: &Path, original: &Path) -> bool {
-    r == original
-}
-
-/// The files the host's session uses that are not stock content, with where each is read
-/// from (a folder or a mounted archive).
+/// The selected map's files and the non-vehicle resource files it references, with where
+/// each is read from (a folder or a mounted archive).
 fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     let t0 = Instant::now();
-    let original = args.root.clone();
     // (lower-case relative path) -> (spelling, source)
     let mut files: HashMap<String, (String, PathBuf)> = HashMap::new();
     let mut folders_done: HashSet<String> = HashSet::new();
@@ -253,11 +267,11 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         }
         parts.join("/")
     };
-    // a folder (relative) and everything in it, from the content roots that are not the
-    // original installation (a mod's copy of a stock folder brings only what it adds)
+    // A map folder and everything directly in it.  Its tiles and configuration are the
+    // starting point of the dependency walk; later references add individual files rather
+    // than whole scenery/spline folders.
     fn add_folder(
         rel: &str,
-        original: &Path,
         files: &mut HashMap<String, (String, PathBuf)>,
         text_todo: &mut Vec<(String, PathBuf)>,
         depth: usize,
@@ -269,9 +283,6 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         let comps = ::legacy_config::windows_components(rel);
         let mut seen: HashSet<String> = HashSet::new();
         for r in roots {
-            if is_original(&r, original) {
-                continue;
-            }
             let dir = comps.iter().fold(r.clone(), |p, c| p.join(c));
             let Some(list) = ::legacy_config::vfs::list_dir(&dir).or_else(|| {
                 // (case-insensitively, as Windows would find it)
@@ -288,22 +299,17 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                 }
                 let child = format!("{rel}/{name}");
                 if is_dir {
-                    add_folder(&child, original, files, text_todo, depth + 1);
+                    add_folder(&child, files, text_todo, depth + 1);
                 } else {
                     let key = child.to_lowercase();
                     if files.contains_key(&key) {
                         continue;
                     }
-                    if let Some((root, path)) = ::legacy_config::find_in_roots(&child) {
-                        if is_original(&root, original) {
-                            continue;
-                        }
+                    if let Some((_, path)) = ::legacy_config::find_in_roots(&child) {
                         let lower = name.to_lowercase();
-                        if [
-                            ".cfg", ".sco", ".sli", ".bus", ".ovh", ".zug", ".hum", ".txt", ".hof",
-                        ]
-                        .iter()
-                        .any(|e| lower.ends_with(e))
+                        if [".cfg", ".sco", ".sli", ".hum", ".txt", ".hof"]
+                            .iter()
+                            .any(|e| lower.ends_with(e))
                         {
                             text_todo.push((child.clone(), path.clone()));
                         }
@@ -313,27 +319,6 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             }
         }
     }
-    // the folder an object, spline, vehicle or person file lives in
-    let owner_folder = |rel: &str| -> Option<String> {
-        let comps: Vec<&str> = rel.split('/').collect();
-        if comps.len() < 3 {
-            return None;
-        }
-        let top = comps[0].to_ascii_lowercase();
-        // a vehicle is its whole folder (Vehicles/<name>); an object, spline or person the
-        // folder it is in
-        if top == "vehicles" || top == "trains" {
-            return Some(comps[..2].join("/"));
-        }
-        Some(comps[..comps.len() - 1].join("/"))
-    };
-    let mut want_folder = |rel: String,
-                           files: &mut HashMap<String, (String, PathBuf)>,
-                           text_todo: &mut Vec<(String, PathBuf)>| {
-        if folders_done.insert(rel.to_lowercase()) {
-            add_folder(&rel, &original, files, text_todo, 0);
-        }
-    };
     let map_dir = norm(
         Path::new(&args.map)
             .parent()
@@ -342,19 +327,8 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             .as_str(),
     );
     if !map_dir.is_empty() {
-        want_folder(map_dir.clone(), &mut files, &mut text_todo);
-    }
-    if let Some(b) = args.bus.as_deref() {
-        if let Some(f) = owner_folder(&norm(b)) {
-            want_folder(f, &mut files, &mut text_todo);
-        }
-    }
-    if let Some(w) = args.weather.as_deref() {
-        let w = norm(w);
-        if let Some((root, path)) = ::legacy_config::find_in_roots(&w) {
-            if root != original {
-                files.insert(w.to_lowercase(), (w, path));
-            }
+        if folders_done.insert(map_dir.to_lowercase()) {
+            add_folder(&map_dir, &mut files, &mut text_todo, 0);
         }
     }
 
@@ -406,9 +380,13 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     continue;
                 }
                 let lower = t.to_ascii_lowercase();
-                let is_ref = [".sco", ".sli", ".bus", ".ovh", ".zug", ".hum", ".owt"]
-                    .iter()
-                    .any(|e| lower.ends_with(e));
+                let is_ref = [
+                    ".sco", ".sli", ".cfg", ".bus", ".ovh", ".zug", ".hum", ".owt", ".o3d", ".x",
+                    ".bmp", ".dds", ".tga", ".png", ".jpg", ".jpeg", ".wav", ".ogg", ".osc",
+                    ".txt", ".hof", ".otp",
+                ]
+                .iter()
+                .any(|e| lower.ends_with(e));
                 let relative = t.contains("..");
                 if !is_ref && !relative {
                     continue;
@@ -423,21 +401,61 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     if !FOLDERS.contains(&top.as_str()) {
                         continue;
                     }
-                    let Some((root, _)) = ::legacy_config::find_in_roots(&c) else {
+                    let Some((_, source)) = ::legacy_config::find_in_roots(&c) else {
                         continue;
                     };
-                    if is_original(&root, &original) {
+                    if matches!(top.as_str(), "vehicles" | "trains") {
                         break;
                     }
-                    let folder = if is_ref {
-                        owner_folder(&c)
-                    } else {
-                        c.rsplit_once('/').map(|(d, _)| d.to_string())
-                    };
-                    if let Some(f) = folder.filter(|f| f.split('/').count() >= 2) {
-                        let before = files.len();
-                        want_folder(f, &mut files, &mut next);
-                        let _ = before;
+                    let key = c.to_lowercase();
+                    if !files.contains_key(&key) {
+                        let lower = c.to_ascii_lowercase();
+                        if [".cfg", ".sco", ".sli", ".hum", ".txt", ".hof", ".osc"]
+                            .iter()
+                            .any(|e| lower.ends_with(e))
+                        {
+                            next.push((c.clone(), source.clone()));
+                        }
+                        let mesh_source = source.clone();
+                        files.insert(key, (c, source));
+                        // `.o3d` and `.x` material names are binary data rather than lines
+                        // in the model configuration.  Resolve those textures by the same
+                        // search order the renderer uses for a scenery model.
+                        if lower.ends_with(".o3d") || lower.ends_with(".x") {
+                            if let Ok(mesh) = ::legacy_o3d::load_mesh(&mesh_source) {
+                                let dir = mesh_source.parent().unwrap_or_else(|| Path::new(""));
+                                let dirs = crate::scene::texture_dirs(&args.root, dir);
+                                let dir_refs: Vec<&Path> =
+                                    dirs.iter().map(PathBuf::as_path).collect();
+                                for material in mesh.materials {
+                                    if material.texture.trim().is_empty() {
+                                        continue;
+                                    }
+                                    let Some(texture) =
+                                        ::texture::find_texture(&material.texture, &dir_refs)
+                                    else {
+                                        continue;
+                                    };
+                                    let Some(rel) = content_relative(&texture) else {
+                                        continue;
+                                    };
+                                    let top =
+                                        rel.split('/').next().unwrap_or("").to_ascii_lowercase();
+                                    if matches!(top.as_str(), "vehicles" | "trains")
+                                        || refuse_path(&rel).is_some()
+                                    {
+                                        continue;
+                                    }
+                                    if let Some((_, texture_source)) =
+                                        ::legacy_config::find_in_roots(&rel)
+                                    {
+                                        files
+                                            .entry(rel.to_ascii_lowercase())
+                                            .or_insert((rel, texture_source));
+                                    }
+                                }
+                            }
+                        }
                     }
                     break;
                 }
@@ -445,12 +463,9 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         }
         queue = next;
     }
-    // the mod fonts those text textures use (OMSI reads the `.oft` files of `Fonts` itself,
+    // The fonts those text textures use (OMSI reads the `.oft` files of `Fonts` itself,
     // not its sub-folders): each `.oft` with a `[newfont]` of a name in use, and its bitmaps
     for r in ::legacy_config::content_roots() {
-        if is_original(&r, &original) {
-            continue;
-        }
         let Some(dir) = ::legacy_config::find_in_roots("Fonts")
             .filter(|(root, _)| *root == r)
             .map(|(_, p)| p)
@@ -487,9 +502,8 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             for f in std::iter::once(n.clone()).chain(bitmaps) {
                 let rel = format!("Fonts/{f}");
                 if let Some((root, path)) = ::legacy_config::find_in_roots(&rel) {
-                    if !is_original(&root, &original) {
-                        files.insert(rel.to_lowercase(), (rel, path));
-                    }
+                    let _ = root;
+                    files.insert(rel.to_lowercase(), (rel, path));
                 }
             }
         }
@@ -518,7 +532,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         sources.push(path);
     }
     log::info!(
-        "LAN mods: {} files ({:.1} MB) of this session are not stock content and go to joining players (listed in {:.1} s)",
+        "LAN map resources: {} files ({:.1} MB) go to joining players when their local copies differ (listed in {:.1} s)",
         entries.len(),
         total as f64 / 1e6,
         t0.elapsed().as_secs_f64()
@@ -526,7 +540,6 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     (
         Manifest {
             map: args.map.replace('\\', "/"),
-            bus: args.bus.clone().unwrap_or_default().replace('\\', "/"),
             entries,
         },
         sources,
@@ -696,13 +709,27 @@ fn handle(
 // -------------------------------------------------------------------------------------
 // the joining player
 
-/// The session folder of this game (`~/.neoomsi/lan-mods/<pid>`).
+/// The session folders of this game (`~/.neoomsi/lan-mods/<session>-<pid>-<nonce>`).
 fn sandbox_base() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".neoomsi").join("lan-mods"))
 }
 
 static SANDBOX: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn session_dir_name(session: u64, pid: u32, nonce: &[u8; 16]) -> String {
+    let nonce = nonce
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{}-{pid}-{nonce}", ::network::session_hex(session))
+}
+
+/// The PID in a session directory name. Accept the old PID-only format so a previous
+/// version's abandoned temporary folder is still cleaned up.
+fn session_pid(name: &str) -> Option<u32> {
+    name.parse().ok().or_else(|| name.split('-').nth(1)?.parse().ok())
+}
 
 /// Remove the session folders of games that are no longer running (one that ended without
 /// cleaning up).
@@ -713,8 +740,10 @@ pub fn remove_stale() {
     };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        let alive = name.parse::<u32>().map(process_alive).unwrap_or(false);
-        if !alive {
+        let Some(pid) = session_pid(&name) else {
+            continue;
+        };
+        if !process_alive(pid) {
             let _ = std::fs::remove_dir_all(e.path());
             log::info!("LAN mods: removed the content of an old session ({name})");
         }
@@ -745,7 +774,7 @@ pub fn clean_up() {
     if let Some(dir) = taken {
         ::legacy_config::remove_content_root(&dir);
         match std::fs::remove_dir_all(&dir) {
-            Ok(()) => log::info!("LAN mods: the host's mods of this session were removed"),
+            Ok(()) => log::info!("LAN mods: the host's map resources of this session were removed"),
             Err(e) => log::warn!(
                 "LAN mods: could not remove {}: {e} (it goes at the next start)",
                 dir.display()
@@ -843,19 +872,183 @@ fn open(host: SocketAddr, session: u64) -> Result<(TcpStream, BufReader<TcpStrea
     Ok((out, input))
 }
 
-/// The downloads kept between sessions, by their SHA-256 (`~/.neoomsi/lan-store`): a
-/// map fetched once is not fetched again at the next join.
-fn store_dir() -> Option<PathBuf> {
-    sandbox_base().map(|b| b.with_file_name("lan-store"))
-}
-
-/// Put a stored file at `target` (a hard link, a copy where links are not possible).
-fn place(stored: &Path, target: &Path) -> std::io::Result<()> {
+/// Save a complete file without leaving a partly-written resource behind.
+fn write_file_atomically(target: &Path, data: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let tmp = target.with_extension("part");
+    std::fs::write(&tmp, data)?;
     let _ = std::fs::remove_file(target);
-    std::fs::hard_link(stored, target).or_else(|_| std::fs::copy(stored, target).map(|_| ()))
+    std::fs::rename(tmp, target)
+}
+
+fn keep_map_cache() -> bool {
+    ::config::get_bool("multiplayer", "keep_map_downloads").unwrap_or(false)
+}
+
+/// The optional encrypted downloads kept between sessions. Its contents are never mounted
+/// and are only decrypted into a fresh session folder after a successful join handshake.
+fn store_dir() -> Option<PathBuf> {
+    sandbox_base().map(|b| b.with_file_name("lan-map-cache"))
+}
+
+fn launcher_key_path() -> Option<PathBuf> {
+    store_dir().map(|p| p.join("launcher-key.dpapi"))
+}
+
+/// Removes only the optional encrypted map cache. The current session remains available
+/// until it ends normally.
+pub fn clear_local_cache() -> Result<(), String> {
+    let Some(dir) = store_dir() else {
+        return Ok(());
+    };
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("could not clear {}: {e}", dir.display())),
+    }
+}
+
+#[cfg(windows)]
+fn protect_for_windows_user(data: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
+    };
+
+    let size = u32::try_from(data.len()).map_err(|_| "data is too large to encrypt")?;
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: size,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB::default();
+    unsafe {
+        CryptProtectData(
+            &input,
+            windows::core::w!("neoOMSI launcher map cache"),
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+        .map_err(|e| e.to_string())?;
+        let protected = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(output.pbData.cast())));
+        Ok(protected)
+    }
+}
+
+#[cfg(windows)]
+fn unprotect_for_windows_user(data: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptUnprotectData,
+    };
+
+    let size = u32::try_from(data.len()).map_err(|_| "data is too large to decrypt")?;
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: size,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB::default();
+    unsafe {
+        CryptUnprotectData(
+            &input,
+            None,
+            None,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+        .map_err(|e| e.to_string())?;
+        let plain = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(output.pbData.cast())));
+        Ok(plain)
+    }
+}
+
+#[cfg(not(windows))]
+fn protect_for_windows_user(_data: &[u8]) -> Result<Vec<u8>, String> {
+    Err("the encrypted map cache is only available on Windows".into())
+}
+
+#[cfg(not(windows))]
+fn unprotect_for_windows_user(_data: &[u8]) -> Result<Vec<u8>, String> {
+    Err("the encrypted map cache is only available on Windows".into())
+}
+
+fn launcher_key() -> Result<[u8; LAUNCHER_KEY_LEN], String> {
+    let path = launcher_key_path().ok_or("no home folder")?;
+    if let Ok(protected) = std::fs::read(&path) {
+        let plain = unprotect_for_windows_user(&protected)?;
+        return plain
+            .try_into()
+            .map_err(|_| "the launcher cache key is invalid".into());
+    }
+    let mut key = [0u8; LAUNCHER_KEY_LEN];
+    getrandom::fill(&mut key).map_err(|e| e.to_string())?;
+    let protected = protect_for_windows_user(&key)?;
+    write_file_atomically(&path, &protected).map_err(|e| e.to_string())?;
+    Ok(key)
+}
+
+fn encrypt_for_launcher(data: &[u8]) -> Result<Vec<u8>, String> {
+    let key = launcher_key()?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+    let mut nonce = [0u8; CACHE_NONCE_LEN];
+    getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
+    let encrypted = cipher
+        .encrypt(Nonce::from_slice(&nonce), data)
+        .map_err(|_| "could not encrypt the map cache")?;
+    let mut result = Vec::with_capacity(CACHE_MAGIC.len() + nonce.len() + encrypted.len());
+    result.extend_from_slice(CACHE_MAGIC);
+    result.extend_from_slice(&nonce);
+    result.extend_from_slice(&encrypted);
+    Ok(result)
+}
+
+fn decrypt_for_launcher(data: &[u8]) -> Result<Vec<u8>, String> {
+    let minimum = CACHE_MAGIC.len() + CACHE_NONCE_LEN;
+    if data.len() < minimum || !data.starts_with(CACHE_MAGIC) {
+        return Err("the encrypted map cache file is invalid".into());
+    }
+    let key = launcher_key()?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+    cipher
+        .decrypt(
+            Nonce::from_slice(&data[CACHE_MAGIC.len()..minimum]),
+            &data[minimum..],
+        )
+        .map_err(|_| "the encrypted map cache could not be opened".into())
+}
+
+fn cached_file(store: &Path, sha256: &str) -> PathBuf {
+    store.join(format!("{sha256}.cache"))
+}
+
+fn read_cached_file(store: &Path, entry: &Entry) -> Option<Vec<u8>> {
+    let path = cached_file(store, &entry.sha256);
+    let encrypted = std::fs::read(&path).ok()?;
+    match decrypt_for_launcher(&encrypted) {
+        Ok(data) if data.len() as u64 == entry.size && sha256_of(&data) == entry.sha256 => Some(data),
+        Ok(_) | Err(_) => {
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    }
+}
+
+fn save_cached_file(store: &Path, entry: &Entry, data: &[u8]) {
+    let path = cached_file(store, &entry.sha256);
+    match encrypt_for_launcher(data).and_then(|encrypted| {
+        write_file_atomically(&path, &encrypted).map_err(|e| e.to_string())
+    }) {
+        Ok(()) => {}
+        Err(e) => log::warn!("LAN mods: could not save the encrypted map cache: {e}"),
+    }
 }
 
 pub fn fetch(
@@ -946,10 +1139,14 @@ pub fn fetch(
     };
     let mut cache = cache;
     let base = sandbox_base().ok_or("no home folder")?;
-    let dir = base.join(std::process::id().to_string());
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
+    let dir = base.join(session_dir_name(session, std::process::id(), &nonce));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let store = store_dir().ok_or("no home folder")?;
-    std::fs::create_dir_all(&store).map_err(|e| e.to_string())?;
+    let store = keep_map_cache()
+        .then(store_dir)
+        .flatten()
+        .filter(|store| std::fs::create_dir_all(store).is_ok());
     let target_of = |e: &Entry| e.path.split('/').fold(dir.clone(), |p, c| p.join(c));
     todo.clear();
     for (k, same, fresh) in checks {
@@ -961,15 +1158,12 @@ pub fn fetch(
             report.had += 1;
             continue;
         }
-        // fetched at an earlier join
-        let stored = store.join(&e.sha256);
-        if std::fs::metadata(&stored)
-            .map(|m| m.len() == e.size)
-            .unwrap_or(false)
-            && place(&stored, &target_of(e)).is_ok()
-        {
-            report.had += 1;
-            continue;
+        // A retained file is encrypted until it is needed in this fresh session folder.
+        if let Some(data) = store.as_deref().and_then(|store| read_cached_file(store, e)) {
+            if write_file_atomically(&target_of(e), &data).is_ok() {
+                report.had += 1;
+                continue;
+            }
         }
         todo.push(k);
         total += e.size;
@@ -1010,7 +1204,7 @@ pub fn fetch(
     }
     // every request at once (one after the other took a round trip per file: through a
     // tunnel a few hundred kB/s), the answers read as they come; a broken connection is
-    // opened again and goes on with what is left (what came is in the store)
+    // opened again and goes on with what is left (what came is in the session folder)
     let mut done = 0u64;
     let mut left: Vec<usize> = todo.clone();
     let mut attempt = 0;
@@ -1075,12 +1269,10 @@ pub fn fetch(
                 report.refused.push(format!("{}: outside", e.path));
                 continue;
             }
-            let stored = store.join(&e.sha256);
-            let tmp = store.join(format!("{}.part", e.sha256));
-            std::fs::write(&tmp, &data)
-                .and_then(|_| std::fs::rename(&tmp, &stored))
-                .map_err(|x| format!("{}: {x}", e.path))?;
-            place(&stored, &target).map_err(|x| format!("{}: {x}", e.path))?;
+            write_file_atomically(&target, &data).map_err(|x| format!("{}: {x}", e.path))?;
+            if let Some(store) = store.as_deref() {
+                save_cached_file(store, e, &data);
+            }
             done += len;
             report.fetched += 1;
             report.bytes += len;
@@ -1101,8 +1293,8 @@ pub fn fetch(
     ::legacy_config::mark_sandbox(dir.clone());
     ::legacy_config::add_content_root_first(dir.clone());
     // the host's map (now that we have it)
-    let map_ok =
-        refuse_path(&manifest.map).is_none() && ::legacy_config::find_in_roots(&manifest.map).is_some();
+    let map_ok = refuse_path(&manifest.map).is_none()
+        && ::legacy_config::find_in_roots(&manifest.map).is_some();
     if map_ok
         && !manifest.map.is_empty()
         && !manifest
@@ -1140,6 +1332,7 @@ pub fn fetch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn paths_that_are_refused() {
@@ -1169,6 +1362,24 @@ mod tests {
     }
 
     #[test]
+    fn session_folder_has_a_session_pid_and_random_part() {
+        let name = session_dir_name(0x1234_5678_9abc, 4321, &[7; 16]);
+        assert_eq!(session_pid(&name), Some(4321));
+        assert!(name.ends_with("07070707070707070707070707070707"));
+        assert_eq!(session_pid("9876"), Some(9876));
+        assert_eq!(session_pid("not-a-session"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_key_protection_round_trips() {
+        let data = b"map resource cache test";
+        let encrypted = protect_for_windows_user(data).expect("encrypt");
+        assert_ne!(encrypted, data);
+        assert_eq!(unprotect_for_windows_user(&encrypted).expect("decrypt"), data);
+    }
+
+    #[test]
     fn programs_are_seen_by_their_content() {
         assert!(looks_executable(b"MZ\x90\x00"));
         assert!(looks_executable(b"\x7fELF\x02"));
@@ -1176,5 +1387,51 @@ mod tests {
         assert!(looks_executable(&[0xcf, 0xfa, 0xed, 0xfe]));
         assert!(!looks_executable(b"DDS "));
         assert!(!looks_executable(b"[mesh]"));
+    }
+
+    #[test]
+    fn map_manifest_keeps_vehicle_references_local() {
+        let root = std::env::temp_dir().join(format!(
+            "neoomsi-lan-map-manifest-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("maps/Test")).unwrap();
+        std::fs::create_dir_all(root.join("Sceneryobjects/Test")).unwrap();
+        std::fs::create_dir_all(root.join("Vehicles/NotShared")).unwrap();
+        std::fs::write(root.join("maps/Test/global.cfg"), "[name]\nTest\n").unwrap();
+        std::fs::write(
+            root.join("maps/Test/tile_0_0.map"),
+            "[object]\n0\nSceneryobjects\\Test\\object.sco\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("maps/Test/ailists.cfg"),
+            "[aitype]\nVehicles\\NotShared\\ai.bus\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("Sceneryobjects/Test/object.sco"), "[model]\nmodel.cfg\n")
+            .unwrap();
+        std::fs::write(root.join("Sceneryobjects/Test/model.cfg"), "[mesh]\nmissing.o3d\n")
+            .unwrap();
+        std::fs::write(root.join("Vehicles/NotShared/ai.bus"), "not a map resource\n").unwrap();
+
+        ::legacy_config::add_content_root(root.clone());
+        let mut args = Args::try_parse_from(["test"]).unwrap();
+        args.root = root.clone();
+        args.map = "maps/Test/global.cfg".into();
+        let (manifest, _) = collect(&args);
+        ::legacy_config::remove_content_root(&root);
+        let _ = std::fs::remove_dir_all(&root);
+
+        let paths: HashSet<String> = manifest.entries.into_iter().map(|entry| entry.path).collect();
+        assert!(paths.contains("maps/Test/global.cfg"));
+        assert!(paths.contains("maps/Test/tile_0_0.map"));
+        assert!(paths.contains("Sceneryobjects/Test/object.sco"));
+        assert!(paths.contains("Sceneryobjects/Test/model.cfg"));
+        assert!(!paths.iter().any(|path| path.starts_with("Vehicles/")));
     }
 }

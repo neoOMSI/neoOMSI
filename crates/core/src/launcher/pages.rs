@@ -787,6 +787,10 @@ pub fn sessions(l: &mut Launcher, area: Rect) {
             yy += 24.0;
         }
         if !players.is_empty() {
+            let generic_vehicles = lan
+                .get("generic_vehicles")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
             l.ui.text_in(
                 "PLAYERS",
                 Rect::new(r.x + 42.0, yy, 200.0, 18.0),
@@ -795,10 +799,30 @@ pub fn sessions(l: &mut Launcher, area: Rect) {
                 TEXT_FAINT,
                 Align::Left,
             );
+            if generic_vehicles > 0 {
+                l.ui.icon("warning", Vec2::new(r.x + 130.0, yy + 9.0), 14.0, WARN);
+                l.ui.text_in(
+                    &format!("{generic_vehicles} generic vehicle{}", if generic_vehicles == 1 { "" } else { "s" }),
+                    Rect::new(r.x + 142.0, yy, r.w - 202.0, 18.0),
+                    10.5,
+                    Weight::Black,
+                    WARN,
+                    Align::Left,
+                );
+            }
             yy += 22.0;
             for p in &players {
                 let s = |k: &str| p.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
                 let pax = p.get("passengers").and_then(|x| x.as_i64()).unwrap_or(0);
+                let bus = if p
+                    .get("generic_bus")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false)
+                {
+                    format!("{} (generic bus)", short_bus(&s("bus")))
+                } else {
+                    short_bus(&s("bus"))
+                };
                 let dest = if s("destination").is_empty() {
                     String::new()
                 } else {
@@ -808,7 +832,7 @@ pub fn sessions(l: &mut Launcher, area: Rect) {
                     &format!(
                         "{} · {}{dest}{} · {}",
                         s("name"),
-                        short_bus(&s("bus")),
+                        bus,
                         if pax > 0 {
                             format!(" · {pax} passengers")
                         } else {

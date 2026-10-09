@@ -995,15 +995,15 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
         }
         Role::Client => {
             let Some(mut host) = lan.host.filter(|_| lan.welcome.is_some()) else {
-                log::info!("LAN mods: no host to ask yet (its mods are not fetched)");
+                log::info!("LAN map resources: no host to ask yet");
                 return;
             };
             let note = |lan: &mut LanSession, text: String| {
-                lan.warnings.retain(|w| !w.starts_with("Host's mods"));
+                lan.warnings.retain(|w| !w.starts_with("Host's map"));
                 lan.warnings.push(text);
                 write_status(lan, &Default::default(), None);
             };
-            note(lan, "Host's mods: looking what is needed…".into());
+            note(lan, "Host's map: checking resources…".into());
             let session = lan.session;
             // the host's TCP port may be unreachable (UDP-only forward, or joined over a
             // WebSocket): the files go through its tunnel then
@@ -1021,14 +1021,14 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
                     Some(tcp_url) => match ::network::ws::tcp_forward(&tcp_url) {
                         Ok(local) => {
                             log::info!(
-                                "LAN mods: the host's TCP port is out of reach; through {tcp_url}"
+                                "LAN map resources: the host's TCP port is out of reach; through {tcp_url}"
                             );
                             host = local;
                         }
-                        Err(e) => log::warn!("LAN mods: {e}"),
+                        Err(e) => log::warn!("LAN map resources: {e}"),
                     },
                     None => {
-                        note(lan, "Host's mods could not be downloaded; playing with what is installed here".into());
+                        note(lan, "Host's map resources could not be downloaded; playing with what is installed here".into());
                         return;
                     }
                 }
@@ -1045,7 +1045,7 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
                             last = Instant::now();
                             let pct = if total > 0 { done * 100 / total } else { 100 };
                             let _ = tx.send(format!(
-                                "Host's mods: {pct}% ({:.0} of {:.0} MB) {file}",
+                                "Host's map: {pct}% ({:.0} of {:.0} MB) {file}",
                                 done as f64 / 1e6,
                                 total as f64 / 1e6
                             ));
@@ -1060,7 +1060,7 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
             while !worker.is_finished() {
                 lan.keepalive(0.05, &planned);
                 if let Some(line) = rx.try_iter().last() {
-                    log::info!("LAN mods: {line}");
+                    log::info!("LAN map resources: {line}");
                     note(lan, line);
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -1073,20 +1073,20 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
                 Ok(r) => {
                     let text = if r.fetched > 0 {
                         format!(
-                            "Host's mods: {} files ({:.0} MB) fetched (kept for the next join)",
+                            "Host's map: {} files ({:.0} MB) fetched (kept for the next join)",
                             r.fetched,
                             r.bytes as f64 / 1e6
                         )
                     } else {
-                        "Host's mods: everything the host uses is installed here".to_string()
+                        "Host's map: everything needed is installed here".to_string()
                     };
                     note(lan, text);
                     let mine = world_info(args);
                     lan.set_world(mine);
                 }
                 Err(e) => {
-                    log::warn!("LAN mods: {e}");
-                    note(lan, format!("Host's mods could not be fetched: {e}"));
+                    log::warn!("LAN map resources: {e}");
+                    note(lan, format!("Host's map resources could not be fetched: {e}"));
                 }
             }
         }
@@ -1408,7 +1408,7 @@ fn write_status(lan: &LanSession, game: &LanGame, player: Option<&Player>) {
         .peers()
         .map(|peer| {
             let d = player.filter(|_| peer.pose.has_vehicle()).map(|pl| relative_position(&pl.vehicle, &peer.pose));
-            serde_json::json!({ "id": peer.pose.id, "name": peer.pose.name, "bus": peer.pose.bus, "line": peer.pose.line, "destination": peer.pose.destination, "passengers": peer.pose.passengers, "where": d, "drawn": game.remotes.contains_key(&peer.pose.id) })
+            serde_json::json!({ "id": peer.pose.id, "name": peer.pose.name, "bus": peer.pose.bus, "line": peer.pose.line, "destination": peer.pose.destination, "passengers": peer.pose.passengers, "where": d, "drawn": game.remotes.contains_key(&peer.pose.id), "generic_bus": game.remotes.get(&peer.pose.id).map(|v| v.stand_in).unwrap_or(false) })
         })
         .collect();
     let code = lan.code();
@@ -1429,6 +1429,7 @@ fn write_status(lan: &LanSession, game: &LanGame, player: Option<&Player>) {
         "host_name": lan.welcome.as_ref().map(|w| w.host_name.clone()),
         "map": lan.world.map,
         "players": players,
+        "generic_vehicles": game.remotes.values().filter(|vehicle| vehicle.stand_in).count(),
         "chat": game.chat.lines.iter().rev().take(CHAT_LINES).rev().cloned().collect::<Vec<_>>(),
         "updated": now_secs(),
     });
