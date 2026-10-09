@@ -304,7 +304,12 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
             if (dist > 10.0) {
                 e = pow(10.0 / dist, COOKIE_FALLOFF) * core * core * 0.01 * window;
             }
-            e = e * COOKIE_GAIN * spot_cookie(-ld, l.dir.xyz, l.dir.w, l.extra.x);
+            // The cookie shapes the beam, but must not replace the authored `[spotlight]`
+            // cone.  Without this guard, an otherwise valid legacy headlight can become a
+            // detached, near-circular pool of light.
+            let cd = dot(-ld, l.dir.xyz);
+            let cone = smoothstep(l.dir.w, l.extra.x, cd);
+            e = e * cone * COOKIE_GAIN * spot_cookie(-ld, l.dir.xyz, l.dir.w, l.extra.x);
             // (right at the lamp the light is next to nothing: a dipped beam's foreground is a tenth of
             // its hot spot, and the bumper and number plate under it are not floodlit)
             e = e * smoothstep(1.0, 5.0, dist);

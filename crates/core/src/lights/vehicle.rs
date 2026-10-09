@@ -71,7 +71,10 @@ pub fn vehicle_lights(
         .or_else(|| v.var("Spot_Select"))
         .filter(|s| *s >= 0.0 || !ai_on);
     if let Some(sel) = selected.or(ai_on.then_some(0.0)) {
-        if sel >= 0.0 {
+        // OMSI reserves the first two classic `[spotlight]` entries for dipped and full beam.
+        // In particular, the 400MMC uses entry 3 for its DRLs.  A daytime-running light is a
+        // visible lamp, not a headlight that should illuminate the road.
+        if (0.0..2.0).contains(&sel) {
             let lamps: Vec<[f32; 3]> = ty
                 .model
                 .meshes
@@ -112,28 +115,41 @@ pub fn vehicle_lights(
                             apex.y = face + dir_y * 0.05;
                         }
                     }
-                    let half_width = ty
-                        .def
-                        .bounding_box
-                        .map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
-                    let on_face: Vec<f32> = lamps
-                        .iter()
-                        .filter(|l| dir_y != 0.0 && (l[1] - apex.y).abs() < 0.35)
-                        .map(|l| (l[0] - vals[0]).abs())
-                        .collect();
-                    let spread =
-                        (on_face.iter().sum::<f32>() / on_face.len().max(1) as f32).min(half_width);
-                    let sides: &[f32] = if spread > 0.1 { &[-1.0, 1.0] } else { &[0.0] };
-                    let right = body.transform_vector3(Vec3::X).normalize_or_zero();
-                    let base = body.transform_point3(apex);
+                    // A classic `[spotlight]` often names only one centre point.  Prefer the
+                    // actual left/right lamp positions from `[light_enh_2]` when the model
+                    // exposes them, so each cookie begins at its physical dipped/full beam.
+                    // Older buses keep the former, inferred placement as a fallback.
+                    let sources = classic_beam_sources(&ty.model, sel as usize);
+                    let sources = if sources.is_empty() {
+                        let half_width = ty
+                            .def
+                            .bounding_box
+                            .map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
+                        let on_face: Vec<f32> = lamps
+                            .iter()
+                            .filter(|l| dir_y != 0.0 && (l[1] - apex.y).abs() < 0.35)
+                            .map(|l| (l[0] - vals[0]).abs())
+                            .collect();
+                        let spread = (on_face.iter().sum::<f32>()
+                            / on_face.len().max(1) as f32)
+                            .min(half_width);
+                        let sides: &[f32] = if spread > 0.1 { &[-1.0, 1.0] } else { &[0.0] };
+                        sides
+                            .iter()
+                            .map(|side| apex + Vec3::X * spread * *side)
+                            .collect()
+                    } else {
+                        sources
+                    };
                     let half = |deg: f32| (deg.clamp(1.0, 179.0) * 0.5).to_radians().cos();
                     let (inner, outer) = (vals[10], vals[11]);
                     let cone = [half(inner.min(outer)), half(outer.max(inner))];
                     let reach_v = spot_reach(vals[9], 45.0);
                     let radius = spot_reach(vals[9], 60.0);
                     let short = short_range_gain(vals[9]);
-                    for side in sides {
-                        let at = v.position + (base + right * spread * side).as_dvec3();
+                    let source_count = sources.len() as f32;
+                    for source in sources {
+                        let at = v.position + body.transform_point3(source).as_dvec3();
                         let lamp = PointLight {
                             position: at,
                             color,
@@ -143,7 +159,7 @@ pub fn vehicle_lights(
                         };
                         lights.push(PointLight {
                             radius: reach_v,
-                            intensity: cfg.vanilla / sides.len() as f32
+                            intensity: cfg.vanilla / source_count
                                 * (0.3 + 0.7 * night)
                                 * short,
                             mode: LightMode::Vanilla,
@@ -151,11 +167,11 @@ pub fn vehicle_lights(
                         });
                         lights.push(PointLight {
                             radius,
-                            intensity: cfg.headlight / sides.len() as f32
+                            intensity: cfg.headlight / source_count
                                 * (1.0 + bad * cfg.weather_boost)
                                 * short,
                             core: (radius * 0.25).clamp(0.1, 1.0),
-                            // (100: a dipped beam, which shines by its cookie; below 0: a full beam)
+                            // 100 selects the dipped-beam cookie; below 0 is a full beam.
                             beam: if full_beam_gain(vals[9]) < 0.0 {
                                 full_beam_gain(vals[9])
                             } else {
@@ -240,4 +256,28 @@ pub fn vehicle_lights(
             }
         }
     }
+}
+
+/// Physical left/right lenses for classic OMSI dipped/full beams.  Their `[spotlight]` section
+/// is commonly centred between the lamps, while `[light_enh_2]` records the actual lenses.
+fn classic_beam_sources(model: &::model::Model, selected: usize) -> Vec<Vec3> {
+    let needle = match selected {
+        0 => "mainbeam",
+        1 => "highbeam",
+        _ => return Vec::new(),
+    };
+    let mut sources = Vec::new();
+    for light in model.meshes.iter().flat_map(|mesh| mesh.light_enh_2.iter()) {
+        if !light.variable.trim().to_ascii_lowercase().contains(needle) {
+            continue;
+        }
+        let pos = Vec3::from(light.pos);
+        if !sources
+            .iter()
+            .any(|known: &Vec3| known.distance_squared(pos) < 0.0001)
+        {
+            sources.push(pos);
+        }
+    }
+    sources
 }
