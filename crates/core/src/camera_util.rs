@@ -3,6 +3,10 @@
 use super::*;
 use glam::Mat4;
 
+pub(crate) const TRIPLE_SCREEN_BEZEL_MIN_MM: i32 = -50;
+pub(crate) const TRIPLE_SCREEN_BEZEL_MAX_MM: i32 = 50;
+pub(crate) const TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG: i32 = 90;
+
 pub(crate) struct TripleScreenViews {
     pub cameras: [Camera; 3],
     pub projections: [Mat4; 3],
@@ -169,7 +173,10 @@ pub(crate) fn triple_screen_cameras(
         .clamp(300.0, 1200.0) as f32;
     let bezel = ::config::get_float("graphics", "triple_screen_bezel_mm")
         .unwrap_or(14.0)
-        .clamp(0.0, 50.0) as f32;
+        .clamp(
+            TRIPLE_SCREEN_BEZEL_MIN_MM as f64,
+            TRIPLE_SCREEN_BEZEL_MAX_MM as f64,
+        ) as f32;
     let half_width = panel_width * 0.5;
     let half_height = panel_width * height as f32 / (width as f32 / 3.0) * 0.5;
     let eye_height = ::config::get_float("graphics", "triple_screen_eye_height_mm")
@@ -177,10 +184,10 @@ pub(crate) fn triple_screen_cameras(
         .clamp(-400.0, 400.0) as f32;
     let left_angle = ::config::get_float("graphics", "triple_screen_left_angle")
         .unwrap_or(30.0)
-        .clamp(0.0, 60.0) as f32;
+        .clamp(0.0, TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG as f64) as f32;
     let right_angle = ::config::get_float("graphics", "triple_screen_right_angle")
         .unwrap_or(30.0)
-        .clamp(0.0, 60.0) as f32;
+        .clamp(0.0, TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG as f64) as f32;
     let base_forward = camera.forward().normalize_or_zero();
     let base_right = base_forward.cross(camera.up()).normalize_or_zero();
     let base_up = base_right.cross(base_forward).normalize_or_zero();

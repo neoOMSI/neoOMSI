@@ -40,10 +40,14 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
             .collect(),
         "triple_screen_width_mm" => (300..=1200).map(|v| v as f32).collect(),
         "triple_screen_distance_mm" => (200..=1500).map(|v| v as f32).collect(),
-        "triple_screen_bezel_mm" => (0..=50).map(|v| v as f32).collect(),
-        "triple_screen_left_angle" | "triple_screen_right_angle" => {
-            (0..=60).map(|v| v as f32).collect()
-        }
+        "triple_screen_bezel_mm" => (crate::camera_util::TRIPLE_SCREEN_BEZEL_MIN_MM
+            ..=crate::camera_util::TRIPLE_SCREEN_BEZEL_MAX_MM)
+            .map(|v| v as f32)
+            .collect(),
+        "triple_screen_left_angle" | "triple_screen_right_angle" => (0
+            ..=crate::camera_util::TRIPLE_SCREEN_MAX_INWARD_ANGLE_DEG)
+            .map(|v| v as f32)
+            .collect(),
         "triple_screen_eye_height_mm" => (-400..=400).step_by(5).map(|v| v as f32).collect(),
         "steer_look_angle" => (0..=60).map(|v| v as f32).collect(),
         "steer_look_response" => (1..=20).map(|v| v as f32 * 0.05).collect(),
