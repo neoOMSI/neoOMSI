@@ -20,6 +20,10 @@ pub(crate) struct App {
     pub(crate) renderer: Option<Renderer>,
     /// Pending size during a resize drag.
     pub(crate) resize_pending: Option<(Instant, winit::dpi::PhysicalSize<u32>)>,
+    pub(crate) pending_triple_screen_span: Option<(
+        winit::dpi::PhysicalPosition<i32>,
+        winit::dpi::PhysicalSize<u32>,
+    )>,
     #[cfg(windows)]
     pub(crate) vr: Option<openxr::Vr>,
     pub(crate) scene: Option<Scene>,
@@ -233,7 +237,8 @@ impl App {
             if self.surface.is_none() {
                 if let Some(r) = self.renderer.as_ref() {
                     let size = window.inner_size();
-                    let vsync = ::config::get_bool("graphics", "vsync").unwrap_or(true) && !self.vr_active();
+                    let vsync = ::config::get_bool("graphics", "vsync").unwrap_or(true)
+                        && !self.vr_active();
                     self.surface = SurfaceState::new_with(
                         &self.instance,
                         window.clone(),
@@ -242,7 +247,7 @@ impl App {
                         size.height.max(1),
                         vsync,
                     )
-                        .ok();
+                    .ok();
                     self.last = Instant::now();
                 }
             }
@@ -267,6 +272,29 @@ impl App {
                 )
             })
             .unwrap_or((1600, 900));
+        let triple_screen = ::config::get_bool("graphics", "triple_screen").unwrap_or(false);
+        let span = triple_screen
+            && ::config::get_bool("graphics", "triple_screen_span").unwrap_or(true)
+            && !::config::get_bool("vr", "enabled").unwrap_or(false)
+            && ::legacy_config::env::var_os("OMSI_OPENXR").is_none();
+        let span_rect = span
+            .then(|| startup::triple_monitor_rect(event_loop))
+            .flatten();
+        if span && span_rect.is_none() {
+            log::info!(
+                "triple screen: three aligned monitors were not found; using the normal window layout"
+            );
+        }
+        let mut window_mode = ::config::get_string("graphics", "window_mode")
+            .unwrap_or_else(|| "windowed".into());
+        if ::config::get_bool("graphics", "triple_screen").unwrap_or(false)
+            && window_mode != "windowed"
+        {
+            window_mode = "windowed".into();
+            ::config::set_setting("graphics", "window_mode", window_mode.clone());
+            let _ = ::config::save();
+        }
+        let start_exclusive = window_mode == "fullscreen";
         let (fit, at) = fit_window(event_loop, lw as f64, lh as f64);
         let mut attrs = Window::default_attributes()
             .with_title("neoOMSI")
@@ -276,14 +304,8 @@ impl App {
         if let Some(at) = at {
             attrs = attrs.with_position(at);
         }
-        let window_mode = ::config::get_string("graphics", "window_mode")
-            .unwrap_or_else(|| "windowed".into());
-        let start_exclusive = window_mode == "fullscreen";
-        match window_mode.as_str() {
-            "borderless" => {
-                attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
-            }
-            _ => {}
+        if span_rect.is_none() && window_mode == "borderless" {
+            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         }
         if ::legacy_config::env::var_os("OMSI_BACKGROUND").is_some() {
             attrs = attrs.with_active(false);
@@ -292,43 +314,54 @@ impl App {
             Some(w) => w,
             None => Arc::new(event_loop.create_window(attrs).expect("window")),
         };
-        let mut renderer =
-            match window_renderer(
-                &mut self.instance,
-                &window,
-                ::render::RenderOptions {
-                    msaa: ::config::get_int("graphics", "msaa").unwrap_or(4) as u32,
-                    anisotropy: ::config::get_int("graphics", "anisotropy").unwrap_or(8) as u16,
-                    shadow_size: ::config::get_int("graphics", "shadow_size").unwrap_or(2048) as u32,
-                    ssao: ::config::get_bool("graphics", "ssao").unwrap_or(true),
-                    render_scale: ::config::get_float("graphics", "render_scale").unwrap_or(0.0) as f32,
-                    compress_textures: ::config::get_bool("graphics", "texture_compression").unwrap_or(true),
-                    fxaa: ::config::get_string("graphics", "post_aa").as_deref() != Some("off"),
-                    min_obj_size: ::config::get_float("graphics", "min_obj_size").unwrap_or(0.013) as f32,
-                    max_obj_dist: match ::config::get_float("graphics", "max_obj_dist").unwrap_or(-1.0) as f32 {
-                        d if d >= 0.0 => d,
-                        _ => ::config::get_float("graphics", "view_distance").filter(|v| *v > 0.0).map(|v| v as f32).unwrap_or(900.0),
-                    },
-                    omsi_shadow_casters: ::config::get_string("graphics", "shadow_casters").as_deref() == Some("omsi"),
-                    shadow_blobs: ::config::get_bool("graphics", "shadow_blobs").unwrap_or(true),
-                    reflections: ::config::get_bool("graphics", "reflections").unwrap_or(true),
-                    no_enhanced: ::config::get_string("graphics", "graphics").as_deref() != Some("enhanced"),
+        let mut renderer = match window_renderer(
+            &mut self.instance,
+            &window,
+            ::render::RenderOptions {
+                msaa: ::config::get_int("graphics", "msaa").unwrap_or(4) as u32,
+                anisotropy: ::config::get_int("graphics", "anisotropy").unwrap_or(8) as u16,
+                shadow_size: ::config::get_int("graphics", "shadow_size").unwrap_or(2048) as u32,
+                ssao: ::config::get_bool("graphics", "ssao").unwrap_or(true),
+                render_scale: ::config::get_float("graphics", "render_scale").unwrap_or(0.0) as f32,
+                compress_textures: ::config::get_bool("graphics", "texture_compression")
+                    .unwrap_or(true),
+                fxaa: ::config::get_string("graphics", "post_aa").as_deref() != Some("off"),
+                min_obj_size: ::config::get_float("graphics", "min_obj_size").unwrap_or(0.013)
+                    as f32,
+                max_obj_dist: match ::config::get_float("graphics", "max_obj_dist").unwrap_or(-1.0)
+                    as f32
+                {
+                    d if d >= 0.0 => d,
+                    _ => ::config::get_float("graphics", "view_distance")
+                        .filter(|v| *v > 0.0)
+                        .map(|v| v as f32)
+                        .unwrap_or(900.0),
                 },
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    fatal_message(&format!("The game cannot draw on this computer: {e:#}"));
-                    platform::exit(event_loop);
-                    return;
-                }
-            };
+                omsi_shadow_casters: ::config::get_string("graphics", "shadow_casters").as_deref()
+                    == Some("omsi"),
+                shadow_blobs: ::config::get_bool("graphics", "shadow_blobs").unwrap_or(true),
+                reflections: ::config::get_bool("graphics", "reflections").unwrap_or(true),
+                no_enhanced: ::config::get_string("graphics", "graphics").as_deref()
+                    != Some("enhanced"),
+            },
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                fatal_message(&format!("The game cannot draw on this computer: {e:#}"));
+                platform::exit(event_loop);
+                return;
+            }
+        };
         #[cfg(windows)]
         if cfg!(windows)
             && (::config::get_bool("vr", "enabled").unwrap_or(false)
-            || ::legacy_config::env::var_os("OMSI_OPENXR").is_some()) {
+                || ::legacy_config::env::var_os("OMSI_OPENXR").is_some())
+        {
             match openxr::Vr::new(
                 &renderer,
-                ::config::get_float("vr", "scale").unwrap_or(0.65).clamp(0.5, 1.0) as f32,
+                ::config::get_float("vr", "scale")
+                    .unwrap_or(0.65)
+                    .clamp(0.5, 1.0) as f32,
                 ::config::get_bool("vr", "desktop-mirror").unwrap_or(true),
             ) {
                 Ok(vr) => self.vr = Some(vr),
@@ -378,6 +411,7 @@ impl App {
             surface.config.present_mode
         );
         let scene = renderer.new_scene();
+        self.pending_triple_screen_span = span_rect;
         self.window = Some(window);
         self.surface = Some(surface);
         self.renderer = Some(renderer);
@@ -393,6 +427,19 @@ impl App {
             self.hud = Some(hud::Hud::new(&mut fonts));
             self.menu = Some(menu::Menu::new(&self.args.root, &self.args.map));
         }
+    }
+
+    fn apply_pending_triple_screen_span(&mut self) {
+        let Some((position, size)) = self.pending_triple_screen_span.take() else {
+            return;
+        };
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        window.set_fullscreen(None);
+        window.set_decorations(false);
+        window.set_outer_position(position);
+        let _ = window.request_inner_size(size);
     }
 
     pub(crate) fn present_splash(&mut self, caption: &str) {
@@ -415,11 +462,11 @@ impl App {
             let dpi = win.scale_factor() as f32;
             let scale = dpi
                 * ui::size_factor(
-                s.config.height as f32,
-                dpi,
-                ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
-                ::config::get_bool("ui", "scale_window").unwrap_or(true),
-            );
+                    s.config.height as f32,
+                    dpi,
+                    ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
+                    ::config::get_bool("ui", "scale_window").unwrap_or(true),
+                );
             ui.loading_bg = Some(None);
             ui.loading(
                 r,
@@ -495,11 +542,11 @@ impl App {
             let dpi = win.scale_factor() as f32;
             let scale = dpi
                 * ui::size_factor(
-                s.config.height as f32,
-                dpi,
-                ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
-                ::config::get_bool("ui", "scale_window").unwrap_or(true),
-            );
+                    s.config.height as f32,
+                    dpi,
+                    ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
+                    ::config::get_bool("ui", "scale_window").unwrap_or(true),
+                );
             ui.loading(
                 r,
                 scene,
@@ -570,7 +617,9 @@ impl App {
         }
         self.discord_next_update = now + std::time::Duration::from_secs(5);
         if self.discord.is_none() {
-            self.discord = discord::Discord::start(&::config::get_string("discord", "app_id").unwrap_or_default());
+            self.discord = discord::Discord::start(
+                &::config::get_string("discord", "app_id").unwrap_or_default(),
+            );
         }
         if let Some(discord) = self.discord.as_ref() {
             let bus = self.player.as_ref().map(|p| {
@@ -649,15 +698,14 @@ impl App {
                     let distance = self
                         .args
                         .view_distance
-                        .or_else(|| ::config::get_float("graphics", "view_distance").filter(|v| *v > 0.0))
+                        .or_else(|| {
+                            ::config::get_float("graphics", "view_distance").filter(|v| *v > 0.0)
+                        })
                         .unwrap_or(900.0)
                         .max(::map::tile_size());
                     w.set_fast_texture_loads(true);
                     w.set_texture_budget(texture_budget());
-                    log::info!(
-                        "texture budget: {:.0} MB",
-                        texture_budget() as f64 / 1e6
-                    );
+                    log::info!("texture budget: {:.0} MB", texture_budget() as f64 / 1e6);
                     self.streamer = Some(tiles::Streamer::new(
                         w.clone(),
                         &start_centers(&self.args, &cam, Some(&w)),
@@ -724,12 +772,22 @@ impl App {
                         // Queue the user's master before any vehicle can start a voice;
                         // the first redraw must not briefly play at the default full level.
                         audio.set_listener(::audio::Listener {
-                            master: if self.paused { 0.0 } else { (::config::get_float("audio", "master-volume").unwrap_or(1.0) as f32).clamp(0.0, 1.0) },
+                            master: if self.paused {
+                                0.0
+                            } else {
+                                (::config::get_float("audio", "master-volume").unwrap_or(1.0)
+                                    as f32)
+                                    .clamp(0.0, 1.0)
+                            },
                             ..Default::default()
                         });
                         if let Some(p) = p.as_mut() {
                             p.vehicle.host.auto_clutch =
-                                if ::config::get_bool("gameplay", "auto_clutch").unwrap_or(true) { 1.0 } else { 0.0 };
+                                if ::config::get_bool("gameplay", "auto_clutch").unwrap_or(true) {
+                                    1.0
+                                } else {
+                                    0.0
+                                };
                             p.load_sounds(&audio);
                             p.ibis_background = true;
                             if self.args.autostart {
@@ -794,8 +852,11 @@ impl App {
                 }
                 self.navigator = Some(navigator::Navigator::new(
                     ::config::get_bool("ui", "navigator").unwrap_or(true),
-                    ::config::get_float("ui", "opacity").unwrap_or(0.85).clamp(0.2, 1.0) as f32,
-                    &::config::get_string("ui", "navigator_corner").unwrap_or_else(|| "bottom-left".into()),
+                    ::config::get_float("ui", "opacity")
+                        .unwrap_or(0.85)
+                        .clamp(0.2, 1.0) as f32,
+                    &::config::get_string("ui", "navigator_corner")
+                        .unwrap_or_else(|| "bottom-left".into()),
                 ));
                 if let Some(n) = self.navigator.as_mut() {
                     n.arrows = ::config::get_bool("navigator", "arrows").unwrap_or(false);
@@ -821,9 +882,16 @@ impl App {
                         "tickets" => 1,
                         _ => 0,
                     };
-                    let ik = self.args.pax_ik.unwrap_or(::config::get_bool("passengers", "ik").unwrap_or(true));
+                    let ik = self
+                        .args
+                        .pax_ik
+                        .unwrap_or(::config::get_bool("passengers", "ik").unwrap_or(true));
                     h.set_ik(ik);
-                    h.set_natural(::config::get_string("passengers", "motion").unwrap_or_else(|| "natural".into()) == "natural");
+                    h.set_natural(
+                        ::config::get_string("passengers", "motion")
+                            .unwrap_or_else(|| "natural".into())
+                            == "natural",
+                    );
                     if let Some(p) = self.player.as_mut() {
                         h.set_cabin(&mut p.vehicle);
                         h.ticket_key = ticket_key_name(&self.args.root, &p.bindings);
@@ -930,6 +998,7 @@ impl App {
                 self.world = Some(w);
             }
         }
+        self.apply_pending_triple_screen_span();
         crate::game_link::report("running", None, "");
         self.last = Instant::now();
     }
@@ -995,11 +1064,11 @@ impl App {
             let dpi = win.scale_factor() as f32;
             let scale = dpi
                 * ui::size_factor(
-                s.config.height as f32,
-                dpi,
-                ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
-                ::config::get_bool("ui", "scale_window").unwrap_or(true),
-            );
+                    s.config.height as f32,
+                    dpi,
+                    ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
+                    ::config::get_bool("ui", "scale_window").unwrap_or(true),
+                );
             ui.loading(
                 &renderer,
                 &mut scene,
@@ -1101,12 +1170,12 @@ impl App {
         w.update_texture_budget(r, scene, &centers, false);
         if centers.is_empty()
             || !streamer.update(
-            r,
-            scene,
-            &centers,
-            std::time::Duration::from_millis(6),
-            self.audio.as_ref(),
-        )
+                r,
+                scene,
+                &centers,
+                std::time::Duration::from_millis(6),
+                self.audio.as_ref(),
+            )
         {
             return;
         }

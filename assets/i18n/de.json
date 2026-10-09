@@ -183,6 +183,42 @@
         "window_mode": {
           "name": "Fenstermodus",
           "desc": "Wie das Spiel deinen Bildschirm ausfüllt"
+        },
+        "triple_screen": {
+          "name": "Projektion für drei Bildschirme",
+          "desc": "Richtet die Ansicht für drei Monitore um deine Fahrerposition aus"
+        },
+        "triple_screen_span": {
+          "name": "Beim Start über drei Monitore spannen",
+          "desc": "Öffnet nach Möglichkeit ein randloses Fenster über drei ausgerichtete Monitore"
+        },
+        "triple_screen_hud": {
+          "name": "HUD auf mittlerem Bildschirm",
+          "desc": "Hält die Spieloberfläche auf dem mittleren Monitor"
+        },
+        "triple_screen_width_mm": {
+          "name": "Sichtbare Breite eines Bildschirms",
+          "desc": "Physische Breite der sichtbaren Monitorfläche"
+        },
+        "triple_screen_distance_mm": {
+          "name": "Betrachtungsabstand",
+          "desc": "Abstand deiner Augen zum mittleren Monitor"
+        },
+        "triple_screen_bezel_mm": {
+          "name": "Rahmenabstand oder Überlappung",
+          "desc": "Positive Werte lassen Platz für Rahmen; negative Werte überlappen die Ansichten"
+        },
+        "triple_screen_left_angle": {
+          "name": "Einwärtswinkel des linken Bildschirms",
+          "desc": "Winkel des linken Monitors in deine Richtung"
+        },
+        "triple_screen_right_angle": {
+          "name": "Einwärtswinkel des rechten Bildschirms",
+          "desc": "Winkel des rechten Monitors in deine Richtung"
+        },
+        "triple_screen_eye_height_mm": {
+          "name": "Augenhöhe relativ zur Bildschirmmitte",
+          "desc": "Vertikale Position deiner Augen relativ zur Mitte des mittleren Bildschirms"
         }
       },
       "driving": {

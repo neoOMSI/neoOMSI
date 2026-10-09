@@ -167,15 +167,8 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             "line" => Some(ListKind::Tours(arg.to_string(), None)),
             "free" => {
                 app.duty = None;
-                // unscheduled: the GetTT* callbacks answer ""/0/-1 again, as in Omsi.exe
                 if let Some(p) = app.player.as_mut() {
-                    let h = &mut p.vehicle.host;
-                    h.tt_line.clear();
-                    h.tt_stops.clear();
-                    h.tt_stop_ids.clear();
-                    h.tt_busstop_index = -1;
-                    h.tt_terminus_index = -1;
-                    h.tt_delay = 0.0;
+                    crate::schedule_paper::clear_vehicle(&mut p.vehicle);
                 }
                 app.service_msg = Some((::i18n::translate("pause.msg.free_drive", &[]), 4.0));
                 None
