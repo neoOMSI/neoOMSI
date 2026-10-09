@@ -388,7 +388,13 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         if (l.dir.w <= -1.5) {
             e = e * smoothstep(0.4, 1.5, dist);
         }
-        if (e < 0.003 || (!thin && dot(n, ld) <= 0.0)) {
+        // The cone profile has a deliberately soft outer edge.  A fixed discard threshold
+        // reintroduced a visible hard ring there, particularly on full beams against walls.
+        // Fade only generated headlamps into the numerical cut-off instead.
+        if (l.extra.z >= 199.0) {
+            e = e * smoothstep(0.00015, 0.004, e);
+        }
+        if (e < 0.00005 || (!thin && dot(n, ld) <= 0.0)) {
             continue;
         }
         e = e * light_shadow(l, p + n * 0.08);

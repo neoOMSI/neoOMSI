@@ -10,33 +10,76 @@ const MAIN_MIN_RANGE: f32 = 80.0;
 const MAIN_RANGE_RATIO: f32 = 1.25;
 pub(super) const FOG_DROP: f32 = 0.025;
 
-/// The Studio Polygon 400MMC's fourth classic spotlight is its DRL.  OMSI selects it for the
-/// visible daytime-running lamps, but it must not become an environmental road light.
+/// Compatibility profiles for UK Studio Polygon buses.
 ///
-/// This is deliberately a content-specific compatibility profile.  Spotlight indices and
-/// ranges are arbitrary in OMSI content, so applying this rule to every vehicle suppresses
-/// legitimate dipped beams on other buses.
-fn is_studio_polygon_400mmc(v: &VehicleInstance) -> bool {
-    v.ty.def
-        .path
-        .to_string_lossy()
-        .to_ascii_lowercase()
-        .contains("studio polygon 400mmc")
+/// OMSI does not link a classic `[spotlight]` entry to physical lamp entities, and does not
+/// standardise their order or ranges. These models deliberately use non-generic layouts, so
+/// range-based inference would select the wrong beam or create a road light for their DRLs.
+/// Keep this content-specific: applying it to every OMSI vehicle would be equally incorrect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UkStudioPolygonProfile {
+    Enviro400Mmc,
+    Renown,
 }
 
-fn is_studio_polygon_400mmc_drl(v: &VehicleInstance, selected: Option<usize>) -> bool {
-    is_studio_polygon_400mmc(v) && selected == Some(3)
+fn uk_studio_polygon_profile_path(path: &str) -> Option<UkStudioPolygonProfile> {
+    let path = path.to_ascii_lowercase();
+    if path.contains("studio polygon 400mmc") {
+        Some(UkStudioPolygonProfile::Enviro400Mmc)
+    } else if path.contains("studio polygon renown") {
+        Some(UkStudioPolygonProfile::Renown)
+    } else {
+        None
+    }
 }
 
-/// The Renown's three road-spot entries are low, dipped and full in that order.  In
-/// particular, its 80 m dipped entry must not be promoted to full beam merely because it is
-/// longer than the 40 m low-light entry.
-fn is_studio_polygon_renown(v: &VehicleInstance) -> bool {
-    v.ty.def
-        .path
-        .to_string_lossy()
-        .to_ascii_lowercase()
-        .contains("studio polygon renown")
+fn uk_studio_polygon_profile(v: &VehicleInstance) -> Option<UkStudioPolygonProfile> {
+    uk_studio_polygon_profile_path(&v.ty.def.path.to_string_lossy())
+}
+
+fn uk_studio_polygon_kind(profile: UkStudioPolygonProfile, selected: usize) -> BeamKind {
+    match profile {
+        // SP400: full, dipped, fog, DRL. Its fourth entry is visual-only.
+        UkStudioPolygonProfile::Enviro400Mmc => {
+            if selected == 0 {
+                BeamKind::Main
+            } else {
+                BeamKind::Dipped
+            }
+        }
+        // Renown: low, dipped, full. Its 80 m dipped entry must not be inferred as full.
+        UkStudioPolygonProfile::Renown => {
+            if selected == 2 {
+                BeamKind::Main
+            } else {
+                BeamKind::Dipped
+            }
+        }
+    }
+}
+
+fn uk_studio_polygon_visual_only(
+    profile: Option<UkStudioPolygonProfile>,
+    selected: Option<usize>,
+) -> bool {
+    matches!(
+        (profile, selected),
+        (Some(UkStudioPolygonProfile::Enviro400Mmc), Some(3))
+    )
+}
+
+fn uk_studio_polygon_lamp_variable(
+    profile: UkStudioPolygonProfile,
+    selected: usize,
+) -> Option<&'static str> {
+    match (profile, selected) {
+        (UkStudioPolygonProfile::Enviro400Mmc, 0) => Some("lights_highbeam"),
+        (UkStudioPolygonProfile::Enviro400Mmc, 1) => Some("lights_mainbeam"),
+        (UkStudioPolygonProfile::Renown, 0) => Some("lights_lowbeam"),
+        (UkStudioPolygonProfile::Renown, 1) => Some("lights_mainbeam"),
+        (UkStudioPolygonProfile::Renown, 2) => Some("lights_highbeam"),
+        _ => None,
+    }
 }
 
 pub(super) fn classify(ranges: &[f32], selected: usize) -> BeamKind {
@@ -146,41 +189,29 @@ pub(super) fn headlamps(
         }
     });
     let ranges: Vec<f32> = spots.iter().map(|s| s[9]).collect();
-    let sp400 = is_studio_polygon_400mmc(v);
-    let renown = is_studio_polygon_renown(v);
+    let uk_profile = uk_studio_polygon_profile(v);
     let kinds: Vec<BeamKind> = (0..spots.len())
         .map(|i| {
-            // SP400: 0 is full beam, 1 is dipped, 2 is fog and 3 is DRL.  Its ranges are
-            // not ordered like the generic OMSI convention, so keep that mapping local.
-            if sp400 {
-                if i == 0 {
-                    BeamKind::Main
-                } else {
-                    BeamKind::Dipped
-                }
-            } else if renown {
-                if i == 2 {
-                    BeamKind::Main
-                } else {
-                    BeamKind::Dipped
-                }
-            } else {
-                classify(&ranges, i)
-            }
+            uk_profile.map_or_else(
+                || classify(&ranges, i),
+                |profile| uk_studio_polygon_kind(profile, i),
+            )
         })
         .collect();
 
     let partner = (0..spots.len())
-        .filter(|&i| kinds[i] == BeamKind::Dipped && (!sp400 || i != 3))
+        .filter(|&i| {
+            kinds[i] == BeamKind::Dipped
+                && !matches!(uk_profile, Some(UkStudioPolygonProfile::Enviro400Mmc) if i == 3)
+        })
         .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]));
     let main_lit = lit.is_some_and(|i| i < spots.len() && kinds[i] == BeamKind::Main);
-    let sp400_drl = is_studio_polygon_400mmc_drl(v, lit);
+    let visual_only = uk_studio_polygon_visual_only(uk_profile, lit);
     let key = key_of(v);
     for (i, vals) in spots.iter().enumerate() {
-        // The SP400 exposes an extra road-light selection while its visual DRLs are on.
-        // Its middle DRL entities are rendered by `vehicle_lights`; they must not create
-        // the generated environmental beam below.
-        let on = !sp400_drl && (lit == Some(i) || (main_lit && partner == Some(i)));
+        // The SP400's visual DRL entities are rendered by `vehicle_lights`; their selected
+        // road-spot entry must not create an environmental beam.
+        let on = !visual_only && (lit == Some(i) || (main_lit && partner == Some(i)));
         let level = lamp_level(
             key,
             i as u32,
@@ -203,25 +234,9 @@ pub(super) fn headlamps(
         // the real lamp effects.  Bind the generated road beam to those real positions.
         // This also avoids using the generic symmetric fallback for the Renown's compact
         // inner/outer lamp cluster.
-        let source_variable = if sp400 {
-            match i {
-                0 => "lights_highbeam",
-                1 => "lights_mainbeam",
-                _ => "",
-            }
-        } else if renown {
-            match i {
-                0 => "lights_lowbeam",
-                1 => "lights_mainbeam",
-                2 => "lights_highbeam",
-                _ => "",
-            }
-        } else {
-            ""
-        };
-        let sources: Vec<[f32; 3]> = if source_variable.is_empty() {
-            Vec::new()
-        } else {
+        let source_variable =
+            uk_profile.and_then(|profile| uk_studio_polygon_lamp_variable(profile, i));
+        let sources: Vec<[f32; 3]> = if let Some(source_variable) = source_variable {
             ty.model
                 .meshes
                 .iter()
@@ -233,6 +248,8 @@ pub(super) fn headlamps(
                 })
                 .filter_map(|(pos, variable)| (variable == source_variable).then_some(pos))
                 .collect()
+        } else {
+            Vec::new()
         };
         headlamp_lights(
             &Headlamp {
@@ -413,5 +430,65 @@ pub(super) fn headlamp_lights(
             mode: LightMode::Enhanced,
             ..lamp
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn studio_polygon_400mmc_keeps_drls_visual_only() {
+        let profile = uk_studio_polygon_profile_path(
+            r"Vehicles\[SP] Studio Polygon 400MMC\Model\E400MMC.bus",
+        );
+        assert_eq!(profile, Some(UkStudioPolygonProfile::Enviro400Mmc));
+        let profile = profile.unwrap();
+
+        assert_eq!(uk_studio_polygon_kind(profile, 0), BeamKind::Main);
+        assert_eq!(uk_studio_polygon_kind(profile, 1), BeamKind::Dipped);
+        assert!(uk_studio_polygon_visual_only(Some(profile), Some(3)));
+        assert_eq!(
+            uk_studio_polygon_lamp_variable(profile, 0),
+            Some("lights_highbeam")
+        );
+        assert_eq!(
+            uk_studio_polygon_lamp_variable(profile, 1),
+            Some("lights_mainbeam")
+        );
+        assert_eq!(uk_studio_polygon_lamp_variable(profile, 3), None);
+    }
+
+    #[test]
+    fn studio_polygon_renown_keeps_only_its_third_entry_as_full_beam() {
+        let profile =
+            uk_studio_polygon_profile_path(r"Vehicles\[SP] Studio Polygon Renown\Model\Renown.bus");
+        assert_eq!(profile, Some(UkStudioPolygonProfile::Renown));
+        let profile = profile.unwrap();
+
+        assert_eq!(uk_studio_polygon_kind(profile, 0), BeamKind::Dipped);
+        assert_eq!(uk_studio_polygon_kind(profile, 1), BeamKind::Dipped);
+        assert_eq!(uk_studio_polygon_kind(profile, 2), BeamKind::Main);
+        assert_eq!(
+            uk_studio_polygon_lamp_variable(profile, 0),
+            Some("lights_lowbeam")
+        );
+        assert_eq!(
+            uk_studio_polygon_lamp_variable(profile, 1),
+            Some("lights_mainbeam")
+        );
+        assert_eq!(
+            uk_studio_polygon_lamp_variable(profile, 2),
+            Some("lights_highbeam")
+        );
+    }
+
+    #[test]
+    fn unrelated_content_uses_the_generic_classifier() {
+        assert_eq!(
+            uk_studio_polygon_profile_path(r"Vehicles\MAN_NL202\NL202.bus"),
+            None
+        );
+        assert_eq!(classify(&[40.0, 80.0], 1), BeamKind::Main);
     }
 }
