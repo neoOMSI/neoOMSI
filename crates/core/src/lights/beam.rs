@@ -16,14 +16,17 @@ pub(super) const FOG_DROP: f32 = 0.025;
 /// This is deliberately a content-specific compatibility profile.  Spotlight indices and
 /// ranges are arbitrary in OMSI content, so applying this rule to every vehicle suppresses
 /// legitimate dipped beams on other buses.
+fn is_studio_polygon_400mmc(v: &VehicleInstance) -> bool {
+    v.ty
+        .def
+        .path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .contains("studio polygon 400mmc")
+}
+
 fn is_studio_polygon_400mmc_drl(v: &VehicleInstance, selected: Option<usize>) -> bool {
-    selected == Some(3)
-        && v.ty
-            .def
-            .path
-            .to_string_lossy()
-            .to_ascii_lowercase()
-            .contains("studio polygon 400mmc")
+    is_studio_polygon_400mmc(v) && selected == Some(3)
 }
 
 pub(super) fn classify(ranges: &[f32], selected: usize) -> BeamKind {
@@ -130,21 +133,27 @@ pub(super) fn headlamps(
         }
     });
     let ranges: Vec<f32> = spots.iter().map(|s| s[9]).collect();
-    let kinds: Vec<BeamKind> = (0..spots.len()).map(|i| classify(&ranges, i)).collect();
-
-    // Spotlight ranges are content-defined rather than a beam type.  In particular, the
-    // Renown's dipped beam is 70 m while other vehicles use several-hundred-metre values.
-    // Use OMSI's actual high-beam state for the selected spotlight, so a normal dipped beam
-    // always receives the dipped cookie regardless of its range.
-    let full_beam = ["lights_highbeam", "lights_fern"]
-        .iter()
-        .any(|name| v.var(name).is_some_and(|value| value >= 0.5));
+    let sp400 = is_studio_polygon_400mmc(v);
+    let kinds: Vec<BeamKind> = (0..spots.len())
+        .map(|i| {
+            // SP400: 0 is full beam, 1 is dipped, 2 is fog and 3 is DRL.  Its ranges are
+            // not ordered like the generic OMSI convention, so keep that mapping local.
+            if sp400 {
+                if i == 0 {
+                    BeamKind::Main
+                } else {
+                    BeamKind::Dipped
+                }
+            } else {
+                classify(&ranges, i)
+            }
+        })
+        .collect();
 
     let partner = (0..spots.len())
-        .filter(|&i| kinds[i] == BeamKind::Dipped)
+        .filter(|&i| kinds[i] == BeamKind::Dipped && (!sp400 || i != 3))
         .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]));
-    let main_lit = full_beam
-        && lit.is_some_and(|i| i < spots.len());
+    let main_lit = lit.is_some_and(|i| i < spots.len() && kinds[i] == BeamKind::Main);
     let sp400_drl = is_studio_polygon_400mmc_drl(v, lit);
     let key = key_of(v);
     for (i, vals) in spots.iter().enumerate() {
@@ -153,15 +162,7 @@ pub(super) fn headlamps(
         if level < 0.01 {
             continue;
         }
-        let kind = if lit == Some(i) {
-            if full_beam {
-                BeamKind::Main
-            } else {
-                BeamKind::Dipped
-            }
-        } else {
-            kinds[i]
-        };
+        let kind = kinds[i];
         let bc = match kind {
             BeamKind::Dipped => cfg.low,
             BeamKind::Main => cfg.high,
