@@ -729,6 +729,7 @@ impl Traffic {
             if world.depart_parked(renderer, scene, key).is_none() {
                 continue;
             }
+            self.refresh_parked_geometry(world);
             if let Some(list) = self.parked.get_mut(&l) {
                 if let Some(j) = (0..list.len())
                     .min_by(|&a, &b| (list[a].0 - s).abs().total_cmp(&(list[b].0 - s).abs()))

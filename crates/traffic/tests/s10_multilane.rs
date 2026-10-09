@@ -94,6 +94,69 @@ fn a_stopped_car_can_bypass_a_serving_bus() {
     );
 }
 
+#[test]
+fn a_following_car_does_not_need_fifty_empty_metres_after_the_first_passer() {
+    let net = two_lanes();
+    let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    ego.front = 2.1; ego.rear = 2.1; ego.length = 4.2; ego.half_width = 0.85;
+    ego.stopped = 5.0;
+    let mut bus = ManeuverActor::new(VehicleId(2), 0, 80.0);
+    bus.front = 6.0; bus.rear = 4.0; bus.length = 10.0; bus.at_stop = true;
+    let mut passer = ego.clone();
+    passer.id = VehicleId(3); passer.lane = 1; passer.s = 74.0; passer.speed = 6.0; passer.stopped = 0.0;
+    let actors = [ego, bus, passer];
+    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+    let mut coord = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    let mut chosen = None;
+    for tick in 0..150 {
+        let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+            static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+        coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+        chosen = coord.plan(&scene, &mut state, &ManeuverInputs::new(0)).change;
+        if chosen.is_some() { break; }
+    }
+    assert_eq!(chosen.expect("safe moving passer prevented every following bypass").kind, ChangeKind::Bypass);
+}
+
+#[test]
+fn cars_queued_behind_a_serving_bus_also_request_a_bypass() {
+    for red in [false, true] {
+        let net = two_lanes();
+        let mut car = ManeuverActor::new(VehicleId(1), 0, 60.0);
+        car.front = 2.1;
+        car.rear = 2.1;
+        car.length = 4.2;
+        car.half_width = 0.85;
+        car.stopped = 5.0;
+        let mut first = car.clone();
+        first.id = VehicleId(2);
+        first.s = 70.5;
+        let mut bus = ManeuverActor::new(VehicleId(3), 0, 82.6);
+        bus.at_stop = !red;
+        bus.light_hold = red;
+        bus.front = 6.0;
+        bus.rear = 4.0;
+        bus.length = 10.0;
+        let actors = [car, first, bus];
+        let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+        let mut coord = ManeuverCoordinator::new();
+        let mut state = ManeuverState::default();
+        let mut chosen = None;
+        for tick in 0..150 {
+            let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors,
+                people: &[], static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+            coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+            if let Some(change) = coord.plan(&scene, &mut state, &ManeuverInputs::new(0)).change {
+                chosen = Some(change);
+                break;
+            }
+        }
+        if red { assert!(chosen.is_none(), "a red queue must wait"); }
+        else { assert_eq!(chosen.expect("follower remained stuck behind the stop queue").kind, ChangeKind::Bypass); }
+    }
+}
+
 fn segmented_bypass(blocked: bool, fork: bool, gap: f64) -> Option<ChangeCommand> {
     let mut net = Network::default();
     for (x, from, to) in [
