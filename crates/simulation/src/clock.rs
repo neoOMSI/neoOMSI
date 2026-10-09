@@ -29,6 +29,15 @@ impl Default for SimClock {
 }
 
 impl SimClock {
+    /// Copy the calendar and time of day from the session clock without disturbing the
+    /// vehicle's real-time counters. Vehicle scripts use `run_time` for things such as
+    /// gearbox and wiper timing, while displays and timetables need the shared game time.
+    pub fn sync_game_time_from(&mut self, source: &Self) {
+        self.year = source.year;
+        self.day_of_year = source.day_of_year;
+        self.time = source.time;
+    }
+
     pub fn advance(&mut self, dt: f32) {
         self.timegap = dt;
         if !self.paused {
@@ -150,5 +159,35 @@ mod date_tests {
         assert_eq!(c.day_of_year, 59, "the day kept within its month");
         c.set_date(i32::MAX, i32::MAX, i32::MAX);
         assert!(c.day_of_year <= 366 && c.year <= 9999);
+    }
+
+    #[test]
+    fn syncing_game_time_keeps_vehicle_runtime() {
+        let source = SimClock {
+            year: 2026,
+            day_of_year: 283,
+            time: 22.0 * 3600.0 + 15.0 * 60.0,
+            timegap: 4.0,
+            paused: true,
+            run_time: 99.0,
+        };
+        let mut vehicle = SimClock {
+            year: 1989,
+            day_of_year: 150,
+            time: 9.0 * 3600.0,
+            timegap: 1.0 / 60.0,
+            paused: false,
+            run_time: 1234.5,
+        };
+
+        vehicle.sync_game_time_from(&source);
+
+        assert_eq!(
+            (vehicle.year, vehicle.day_of_year, vehicle.time),
+            (2026, 283, 80_100.0)
+        );
+        assert_eq!(vehicle.run_time, 1234.5);
+        assert_eq!(vehicle.timegap, 1.0 / 60.0);
+        assert!(!vehicle.paused);
     }
 }

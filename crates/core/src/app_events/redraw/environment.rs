@@ -16,6 +16,7 @@ impl App {
                 t.time_scale = speed;
             }
             self.tick_weather(dt * speed as f32);
+            self.sync_vehicle_game_times();
         } else if self.weather_blend.is_some() {
             self.tick_weather(dt);
         }

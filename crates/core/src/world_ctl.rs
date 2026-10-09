@@ -3,6 +3,24 @@
 use super::*;
 
 impl App {
+    /// Give every local vehicle the session's calendar and time of day. A vehicle keeps
+    /// its own real-time script counters, but clocks, displays and timetable scripts must
+    /// agree with the game's clock regardless of when the vehicle was spawned.
+    pub(crate) fn sync_vehicle_game_times(&mut self) {
+        let clock = self.clock.clone();
+        if let Some(p) = self.player.as_mut() {
+            p.vehicle.host.clock.sync_game_time_from(&clock);
+        }
+        for q in &mut self.placed {
+            q.vehicle.host.clock.sync_game_time_from(&clock);
+        }
+        if let Some(t) = self.traffic.as_mut() {
+            for car in &mut t.cars {
+                car.vehicle.host.clock.sync_game_time_from(&clock);
+            }
+        }
+    }
+
     pub(crate) fn tick_lan(&mut self, dt: f32) {
         let audio_inside = self.audio_in_cab();
         let walker = self.walker_pose();
@@ -109,9 +127,7 @@ impl App {
                 }
             }
         }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
     }
 
     pub(crate) fn edit_weather(&mut self, f: impl FnOnce(&mut ::content::weather::Weather)) {
@@ -820,9 +836,7 @@ impl App {
         if let Some(tr) = self.traffic.as_mut() {
             tr.day_time += gap;
         }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
     }
 
     pub(crate) fn shift_clock(&mut self, secs: f64) {
@@ -872,9 +886,7 @@ impl App {
             self.humans_populate_t = 0.0;
             self.first_populate = true;
         }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
         let h = (t / 3600.0) as u32;
         self.service_msg = Some((
             format!("Clock: {h:02}:{:02}", ((t / 60.0) as u32) % 60),
