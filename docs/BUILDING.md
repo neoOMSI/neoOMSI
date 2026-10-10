@@ -1,6 +1,8 @@
 # Building from source
 
-Prebuilt binaries for every commit on `main` are available on the [Releases](https://github.com/neoOMSI/neoOMSI/releases) page. Building from source is primarily needed when developing or testing changes locally.
+Prebuilt development builds for supported desktop platforms are available on the [Releases](https://github.com/neoOMSI/neoOMSI/releases) page. Building from source is primarily needed when developing or testing changes locally.
+
+**Only Windows, macOS and Linux desktop builds are supported. There is no Android or other mobile release.**
 
 All build scripts are located in `scripts/`. Output binaries are placed into `dist/<platform>/`.
 
@@ -17,9 +19,6 @@ All build scripts are located in `scripts/`. Output binaries are placed into `di
 - **Linux (Debian/Ubuntu):**
   - `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev`
   - Vulkan drivers (Mesa, NVIDIA, etc.).
-- **Android:**
-  - `aarch64-linux-android` Rust target.
-  - JDK 17, Android SDK (API 34+), NDK, and `build-tools`.
 
 ## Development builds
 
@@ -42,7 +41,6 @@ scripts\dev-windows.cmd --map maps/Grundorf/global.cfg
 | **Windows**          | `scripts\build-windows.cmd`        | `dist\windows\neoomsi.exe`, `neoomsi-launcher.exe` |
 | **macOS**            | `scripts/build-macos.sh`           | `dist/macos/neoOMSI.app`                           |
 | **Linux**            | `scripts/build-linux.sh`           | `dist/linux/neoomsi`, `neoomsi-launcher`           |
-| **Android**          | `scripts/build-android.sh`         | `dist/android/neoOMSI-<version>.apk`               |
 | **Dedicated server** | `scripts/build-server.sh [folder]` | `dist/server/` with `start.sh`                     |
 
 Release archives also carry the launcher ([neoOMSI/launcher](https://github.com/neoOMSI/launcher),

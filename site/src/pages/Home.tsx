@@ -16,48 +16,48 @@ import { Answers } from "./Faq";
 const FEATURES = [
   [
     "sync_alt",
-    "Behavioral parity",
-    "Targets OMSI 2.2.032 behavior so existing maps, buses, splines and scripts can run without manual conversion.",
+    "Built for OMSI 2 content",
+    "Our goal is to run existing maps, buses and scripts without conversion. Some content is not compatible yet.",
   ],
   [
     "speed",
-    "64-bit engine",
-    "Multithreaded tile streaming, background texture decompression and no arbitrary memory ceilings.",
+    "Modern 64-bit engine",
+    "Designed for large maps and detailed buses without OMSI 2's 32-bit process memory limit.",
   ],
   [
     "monitor",
     "Modern graphics",
-    "Native hardware acceleration through wgpu: DirectX 12 on Windows, Metal on macOS, Vulkan on Linux.",
+    "Hardware-accelerated graphics using DirectX 12, Metal and Vulkan.",
   ],
   [
     "install_desktop",
     "Cross-platform",
-    "Native support for Windows, macOS, Linux and Android from the same Rust codebase.",
+    "Try development builds on Windows, macOS and Linux.",
   ],
   [
     "departure_board",
     "Integrated launcher",
-    "Scenario setup, duty and timetable selection, vehicle previews and controller configuration.",
+    "Choose a map, bus and timetable, with vehicle previews and controller settings.",
   ],
   [
     "dns",
     "Dedicated server",
-    "Host multiplayer sessions headless. Maps and timetables are simulated without a GPU.",
+    "A headless server for hosting multiplayer sessions on Windows and Linux.",
   ],
   [
     "extension",
-    "Non-destructive modding",
-    "Add-ons live in a separate overlay, so trying and removing them never touches your OMSI 2 files.",
+    "Separate mod folder",
+    "Install add-ons separately without changing your original OMSI 2 files.",
   ],
   [
     "public",
-    "Clean-room and open source",
-    "No proprietary OMSI binaries or game assets are included. GPL-3.0-or-later, developed in the open.",
+    "Free and open source",
+    "The engine is available under GPL-3.0-or-later. Original OMSI 2 game content is not included.",
   ],
   [
     "check_circle",
-    "Regression tested",
-    "Focused regression tests protect verified compatibility behavior from regressions.",
+    "Reviewed and tested",
+    "Changes are reviewed before they are merged, and compatibility tests are added as systems are verified.",
   ],
 ];
 
@@ -89,7 +89,7 @@ const STEPS: [string, ReactNode][] = [
 const STOPS = [
   [
     "Download",
-    "Windows, macOS, Linux; Android builds locally",
+    "Windows, macOS and Linux",
     url("/download/"),
   ],
   ["User guide", "Setup, controls and options", url(docPath("USER_GUIDE"))],
@@ -200,12 +200,12 @@ export function Home() {
         <h1 className="w-[clamp(16rem,40vw,32rem)]">
           <img className="logo-dark w-full" src={wordmark} alt="" />
           <img className="logo-light w-full" src={wordmarkLight} alt="" />
-          <span className="sr-only">neoOMSI: OMSI 2 recreated in Rust</span>
+          <span className="sr-only">neoOMSI: OMSI 2 rebuilt for modern systems</span>
         </h1>
         <p className="mt-7 max-w-[32em] text-[20px] leading-relaxed text-muted">
-          <span className="text-heading">OMSI 2, reimplemented in Rust.</span>{" "}
-          Built for existing OMSI 2 maps, buses and mods, with compatibility
-          verified against OMSI 2.2.032 on a modern 64-bit engine.
+          <span className="text-heading">OMSI 2, rebuilt for modern systems.</span>{" "}
+          neoOMSI is a free, open-source project aiming to run your existing
+          maps, buses and scripts on a new 64-bit engine.
         </p>
         <div className="mt-7 flex flex-wrap gap-3">
           <a className="btn gap-2" href={url("/download/")}>
@@ -218,19 +218,20 @@ export function Home() {
           </a>
         </div>
         <p className="mt-5 text-[15px] text-muted">
-          {release &&
-            `Version ${version(release)}, released ${date(release.published_at)}. `}
-          Early release, expect bugs.
+          {release && `Build ${version(release)} · ${date(release.published_at)}. `}
+          {release && !release.prerelease
+            ? "Compatibility is still being improved."
+            : "Early development. Expect bugs and missing features."}
         </p>
       </RoadHero>
 
       <section className="relative -mt-[18svh] sm:-mt-[34svh]">
         <div className="bleed grid gap-x-16 gap-y-10 py-16 sm:py-20 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
           <div>
-            <h2 className="text-[2rem] leading-tight">What's different</h2>
+            <h2 className="text-[2rem] leading-tight">What we're building</h2>
             <p className="mt-3 max-w-[22em] text-muted">
-              An open-source reimplementation that targets the observable
-              behavior of OMSI&nbsp;2.2.032.
+              A work-in-progress replacement for OMSI 2, with compatibility improved
+              step by step against the original game.
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(3,minmax(0,15vw))]">

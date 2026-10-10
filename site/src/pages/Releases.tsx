@@ -113,7 +113,7 @@ function Entry({
           <div className="pt-4">
             <Untrusted
               className="doc doc-plain max-w-none"
-              text={r.body}
+              text={r.body?.split(/^##?\s+Downloads\b/im)[0]?.trimEnd() ?? ""}
               empty="No notes."
             />
             {r.assets.length > 0 && <Files assets={r.assets} />}
@@ -134,19 +134,32 @@ export function Releases() {
       ),
     [],
   );
-  const latest = list?.find((r) => !r.prerelease);
+  const latest = list?.[0];
+  const stable = list?.find((r) => !r.prerelease);
 
   return (
     <>
       <PageHead>
         <h1 className="display">Releases</h1>
         <p className="mt-6 max-w-[34em] text-[19px] text-muted">
-          Every version and what changed, newest first. The latest stable one is
-          also on the{" "}
-          <a className="link" href={url("/download/")}>
-            download page
-          </a>
-          .
+          All published engine releases and changelogs, ordered newest first.{" "}
+          {stable ? (
+            <>
+              The latest stable release is available on the{" "}
+              <a className="link" href={url("/download/")}>
+                download page
+              </a>
+              .
+            </>
+          ) : (
+            <>
+              Development snapshots can be downloaded from the{" "}
+              <a className="link" href={url("/download/")}>
+                download page
+              </a>
+              .
+            </>
+          )}
         </p>
       </PageHead>
       <div className="wrap pb-20 sm:pb-24">
