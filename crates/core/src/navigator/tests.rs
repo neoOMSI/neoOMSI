@@ -1,8 +1,8 @@
 use super::*;
-use ::simulation::traffic::Lane;
+use ::traffic::Lane;
 
 fn straight(a: (f64, f64), b: (f64, f64)) -> Lane {
-    ::simulation::traffic::LaneBuilder::polyline(
+    ::traffic::LaneBuilder::polyline(
         vec![DVec3::new(a.0, a.1, 0.0), DVec3::new(b.0, b.1, 0.0)],
         LaneKind::Street,
         3.0,

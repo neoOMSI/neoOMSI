@@ -518,8 +518,8 @@ fn tickets_by_age_and_time() {
     assert_eq!(h.pick_ticket(3.0), None);
 }
 
-fn lane(points: Vec<DVec3>, kind: LaneKind) -> ::simulation::traffic::Lane {
-    ::simulation::traffic::LaneBuilder::polyline(points, kind, 2.5)
+fn lane(points: Vec<DVec3>, kind: LaneKind) -> ::traffic::Lane {
+    ::traffic::LaneBuilder::polyline(points, kind, 2.5)
 }
 
 #[test]

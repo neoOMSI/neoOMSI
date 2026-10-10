@@ -36,6 +36,7 @@ texture = { path = "../texture" }
 geometry = { path = "../geometry" }
 render = { path = "../render" }
 simulation = { path = "../simulation" }
+traffic = { path = "../traffic" }
 legacy-plugin = { path = "../legacy-plugin" }
 legacy-vehicle = { path = "../vehicle" }
 content = { path = "../content" }

@@ -808,7 +808,7 @@ impl Humans {
         let t_cross = next.len() as f64 / pace.max(0.5) + 1.0;
         if let (Some((c, li)), Some(t)) = (lane.traffic_light, traffic) {
             if let Some((state, left)) = t.light_state(c, li) {
-                if !::simulation::traffic::TrafficLightController::allows_go(state) {
+                if !::traffic::TrafficLightController::allows_go(state) {
                     return Err("red light");
                 }
                 if held > 150.0 {

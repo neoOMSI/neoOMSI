@@ -104,7 +104,7 @@ impl Navigator {
         self.global.as_deref()
     }
 
-    pub fn add_lanes(&mut self, lanes: Vec<::simulation::traffic::Lane>) {
+    pub fn add_lanes(&mut self, lanes: Vec<::traffic::Lane>) {
         if lanes.is_empty() {
             return;
         }

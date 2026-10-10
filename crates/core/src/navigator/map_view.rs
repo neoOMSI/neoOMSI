@@ -28,9 +28,9 @@ impl Navigator {
                 break;
             }
             let (h0, h1) = (lane.start_heading(), lane.end_heading());
-            let mut d = ::simulation::traffic::wrap_deg(h1 - h0);
+            let mut d = ::traffic::wrap_deg(h1 - h0);
             if let Some(pe) = prev_end {
-                d += ::simulation::traffic::wrap_deg(h0 - pe);
+                d += ::traffic::wrap_deg(h0 - pe);
             }
             let junction =
                 net.crossings.get(l).map(|c| !c.is_empty()).unwrap_or(false) || lane.turn != 0;

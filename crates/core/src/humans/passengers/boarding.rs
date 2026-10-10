@@ -6,7 +6,8 @@ use crate::humans::{BusId, BusNow, Cabin, Humans, State, debug_pax, prefer_seate
 use crate::scene::World;
 use glam::{DVec3, Vec3};
 use hashbrown::HashMap;
-use ::simulation::{human::Activity, traffic::Network};
+use ::simulation::human::Activity;
+use ::traffic::Network;
 
 fn least_busy_entry(
     points: &[Vec3],

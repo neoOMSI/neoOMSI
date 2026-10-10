@@ -102,6 +102,8 @@ pub(crate) struct App {
     pub(crate) shot: Option<PathBuf>,
     pub(crate) screenshot_mode: Option<ScreenshotMode>,
     pub(crate) paused: bool,
+    /// Simulation-time debt for the fixed traffic tick (seconds), carried between frames.
+    pub(crate) sim_accum: f32,
     pub(crate) game_menu: Option<usize>,
     pub(crate) lab_menu: Option<ui::PauseState>,
     pub(crate) lab_map_direct: bool,
@@ -920,14 +922,17 @@ impl App {
                 {
                     match traffic::Traffic::new(&self.args.root, &w, self.args.traffic) {
                         Ok(mut t) => {
-                            t.lights_only = !populated;
+                            t.set_lights_only(!populated);
                             if let Some(lan) = self.lan.as_ref() {
                                 t.set_lan_seed(lan::population_seed(lan));
                             }
                             if self.args.traffic > 0 {
                                 t.precache_random(&w, &renderer, &mut scene);
                             }
-                            t.day_time = parse_time(&self.args.time);
+                            t.set_day_time(parse_time(&self.args.time));
+                            if let Ok(path) = legacy_config::env::var("OMSI_CAPTURE") {
+                                t.enable_capture(path.into(), 8192);
+                            }
                             self.traffic = Some(t);
                         }
                         Err(e) => log::error!("traffic: {e:#}"),
@@ -994,7 +999,7 @@ impl App {
                         p,
                         &self.args,
                         &w,
-                        self.traffic.as_ref().map(|t| &t.net),
+                        self.traffic.as_ref().map(|t| t.net()),
                         std::time::Duration::from_millis(1500),
                     );
                 }
@@ -1156,6 +1161,10 @@ impl App {
             .unwrap_or(false)
         {
             centers.extend(self.remotes.remotes.values().map(|r| r.vehicle().position));
+        }
+        // Route frontiers: keep the tiles a scheduled bus needs next loaded where feasible.
+        if let Some(t) = self.traffic.as_ref() {
+            centers.extend(t.topology_centers());
         }
         let (Some(streamer), Some(w), Some(r), Some(scene)) = (
             self.streamer.as_mut(),

@@ -66,7 +66,7 @@ impl Schedule {
             for id in gone {
                 self.car_departure.remove(&id);
                 self.running.retain(|r| r.car != id);
-                if traffic.remove_car(world, renderer, scene, id) {
+                if traffic.remove_car(world, renderer, scene, id.into()) {
                     log::info!("timetable: bus {id} of the player's tour taken off the road");
                 }
             }
@@ -172,19 +172,20 @@ impl Schedule {
             }
         }
         // buses whose ground was unloaded under them wait for it to come back
-        for id in std::mem::take(&mut traffic.removed_scheduled) {
-            if let Some(i) = self.car_departure.remove(&id) {
+        for id in traffic.take_removed_scheduled() {
+            if let Some(i) = self.car_departure.remove(&id.get()) {
                 log::debug!("departure {i}: its bus left the loaded tiles, waiting for them");
                 self.waiting.push(i);
             }
         }
-        if self.car_departure.len() > 64 + traffic.cars.len() * 2 {
-            let alive: std::collections::HashSet<u64> = traffic.cars.iter().map(|c| c.id).collect();
+        if self.car_departure.len() > 64 + traffic.cars().len() * 2 {
+            let alive: std::collections::HashSet<u64> =
+                traffic.cars().iter().map(|c| c.id.get()).collect();
             self.car_departure.retain(|id, _| alive.contains(id));
         }
         // tiles brought lanes, or half a minute went by: the waiting departures may be on
         // loaded ground now, and the routes that stopped short may go on
-        let grew = traffic.lanes_generation != self.seen_generation;
+        let grew = traffic.lanes_generation() != self.seen_generation;
         if grew || day_time - self.last_retry >= 30.0 || day_time < self.last_retry {
             self.last_retry = day_time;
             for i in std::mem::take(&mut self.waiting) {
@@ -218,7 +219,7 @@ impl Schedule {
             }
         }
         if grew {
-            self.seen_generation = traffic.lanes_generation;
+            self.seen_generation = traffic.lanes_generation();
             self.carry_on(world, traffic);
         }
         self.fleet(world, traffic, renderer, scene, day_time);
@@ -250,10 +251,10 @@ impl Schedule {
     pub(super) fn carry_on(&mut self, world: &World, traffic: &mut Traffic) {
         let mut keep = Vec::new();
         for mut run in std::mem::take(&mut self.running) {
-            let Some(ci) = traffic.cars.iter().position(|c| c.id == run.car) else {
+            let Some(ci) = traffic.cars().iter().position(|c| c.id == run.car) else {
                 continue;
             };
-            let last = traffic.cars[ci].state.route.last().copied();
+            let last = traffic.car(ci).state.route.last().copied();
             Self::add_twins(traffic, &run.steps[run.next.saturating_sub(1)..]);
             let slots = self.slots(world, traffic, &run.steps[run.next..], last);
             let n = slots
@@ -276,15 +277,15 @@ impl Schedule {
                     let with: Vec<usize> =
                         std::iter::once(l).chain(lanes.iter().copied()).collect();
                     Self::add_connectors(traffic, &with);
-                    bridge_gaps(&traffic.net, &with).0[1..].to_vec()
+                    bridge_gaps(traffic.net(), &with).0[1..].to_vec()
                 }
                 _ => {
                     Self::add_connectors(traffic, &lanes);
-                    bridge_gaps(&traffic.net, &lanes).0
+                    bridge_gaps(traffic.net(), &lanes).0
                 }
             };
             if !lanes.is_empty() {
-                let base = traffic.cars[ci].state.route.len();
+                let base = traffic.car(ci).state.route.len();
                 let mut stops = Vec::new();
                 let mut from = 0;
                 for (si, (sid, t_dep)) in run.stations.iter().enumerate() {
@@ -295,7 +296,7 @@ impl Schedule {
                         continue;
                     };
                     if let Some((ri, ss, lat)) =
-                        project_stop(&traffic.net, &lanes, pos, Some(STOP_REACH), from)
+                        project_stop(traffic.net(), &lanes, pos, Some(STOP_REACH), from)
                     {
                         from = ri;
                         stops.push((
@@ -310,10 +311,10 @@ impl Schedule {
                     }
                 }
                 let (ty, rail) = (
-                    traffic.cars[ci].vehicle.ty.clone(),
-                    traffic.cars[ci].is_rail(),
+                    traffic.car(ci).vehicle.ty.clone(),
+                    traffic.car(ci).is_rail(),
                 );
-                place_stops(&traffic.net, &lanes, base, &mut stops, &ty, rail);
+                place_stops(traffic.net(), &lanes, base, &mut stops, &ty, rail);
                 stops.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
                 log::debug!(
                     "scheduled bus {}: route carried on by {} lanes, {} more stops",
@@ -321,21 +322,13 @@ impl Schedule {
                     lanes.len(),
                     stops.len()
                 );
-                let car = &mut traffic.cars[ci];
-                car.state.route.extend(lanes);
-                if let Some(b) = car.bus.as_mut() {
-                    b.stops
-                        .extend(stops.into_iter().map(crate::bus_service::Stop::from_tuple));
-                }
-                // (it may have stood waiting at the end of what it had)
-                car.state.planned_next = None;
-                car.state.plan_next(&traffic.net);
+                traffic.extend_scheduled_route(ci, lanes, stops);
             }
             run.next += n;
             if run.next < run.steps.len() {
                 keep.push(run);
             } else {
-                if let Some(b) = traffic.cars[ci].bus.as_mut() {
+                if let Some(b) = traffic.car_mut(ci).bus.as_mut() {
                     b.route_open = false;
                 }
             }

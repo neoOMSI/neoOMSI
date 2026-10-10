@@ -341,12 +341,12 @@ mod tests {
 /// driving when first asked, "turn" = the first car entering a turning lane, "steer" = the
 /// car steering hardest, "bus" = the first timetable bus, "type:<name>" = the first vehicle
 /// whose file name contains it.
-pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Option<u64> {
+pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Option<traffic::VehicleId> {
     match args.follow.as_deref()? {
-        "auto" => traffic?.last_overtaker.map(|o| o.0),
+        "auto" => traffic?.last_overtaker().map(|o| o.0),
         // the oldest car that is driving when first asked, kept while it exists
         "moving" => {
-            thread_local!(static CHOSEN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) });
+            thread_local!(static CHOSEN: std::cell::Cell<Option<traffic::VehicleId>> = const { std::cell::Cell::new(None) });
             let t = traffic?;
             if let Some(id) = CHOSEN
                 .with(|c| c.get())
@@ -355,7 +355,7 @@ pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Opti
                 return Some(id);
             }
             let id = t
-                .cars
+                .cars()
                 .iter()
                 .filter(|c| c.state.speed > 3.0)
                 .map(|c| c.id)
@@ -365,13 +365,13 @@ pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Opti
         }
         // the oldest timetable bus that is under way when first asked, kept while it exists
         "bus" => {
-            thread_local!(static BUS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) });
+            thread_local!(static BUS: std::cell::Cell<Option<traffic::VehicleId>> = const { std::cell::Cell::new(None) });
             let t = traffic?;
             if let Some(id) = BUS.with(|c| c.get()).filter(|id| t.car_pose(*id).is_some()) {
                 return Some(id);
             }
             let id = t
-                .cars
+                .cars()
                 .iter()
                 .filter(|c| c.is_bus() && c.state.speed > 2.0)
                 .map(|c| c.id)
@@ -379,15 +379,15 @@ pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Opti
             BUS.with(|c| c.set(Some(id)));
             Some(id)
         }
-        "turn" => traffic?.first_turner.map(|o| o.0),
+        "turn" => traffic?.first_turner().map(|o| o.0),
         // the first car stopped by a red light, giving way at a junction without lights,
         // pulling out onto the other half of the road round an obstacle
-        "red" => traffic?.first_red.map(|o| o.0),
-        "yield" => traffic?.first_yield.map(|o| o.0),
-        "pass" => traffic?.first_passer.map(|o| o.0),
+        "red" => traffic?.first_red().map(|o| o.0),
+        "yield" => traffic?.first_yield().map(|o| o.0),
+        "pass" => traffic?.first_passer().map(|o| o.0),
         // whichever moving car steers hardest at this moment (wheel close-ups)
         "steer" => traffic?
-            .cars
+            .cars()
             .iter()
             .filter(|c| c.state.speed > 1.0 && !c.is_bus())
             .max_by(|a, b| a.body.steer.abs().total_cmp(&b.body.steer.abs()))
@@ -395,7 +395,7 @@ pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Opti
         v if v.starts_with("type:") => {
             let want = v[5..].to_ascii_lowercase();
             traffic?
-                .cars
+                .cars()
                 .iter()
                 .find(|c| {
                     c.vehicle
@@ -408,7 +408,7 @@ pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Opti
                 })
                 .map(|c| c.id)
         }
-        v => v.parse().ok(),
+        v => v.parse().ok().map(traffic::VehicleId),
     }
 }
 
@@ -416,7 +416,10 @@ pub(crate) fn follow_id(args: &Args, traffic: Option<&traffic::Traffic>) -> Opti
 /// `OMSI_FOLLOW_CAM=right,forward,up,yaw,pitch` puts it in the car's frame (metres, and
 /// degrees relative to the car's heading); a sixth value 1 reads the offset as east, north,
 /// up and the yaw as a compass heading, so the view does not turn with the car.
-pub(crate) fn follow_camera(traffic: Option<&traffic::Traffic>, id: u64) -> Option<Camera> {
+pub(crate) fn follow_camera(
+    traffic: Option<&traffic::Traffic>,
+    id: traffic::VehicleId,
+) -> Option<Camera> {
     let (pos, heading) = traffic?.car_pose(id)?;
     let h = (heading as f32).to_radians();
     let back = DVec3::new(-(h.sin() as f64), -(h.cos() as f64), 0.0);

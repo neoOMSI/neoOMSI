@@ -95,7 +95,7 @@ impl Humans {
         }
         self.use_map_humans(world);
         self.time += dt as f64;
-        let net = traffic.map(|t| &t.net);
+        let net = traffic.map(|t| t.net());
         if let Some(b) = bus {
             self.center = b.position;
         } else if let Some(e) = self.eye {
@@ -221,7 +221,7 @@ impl Humans {
         let mut cars: Vec<(DVec2, DVec2, f64)> = Vec::new();
         let mut blocks: Vec<Block> = Vec::new();
         if let Some(t) = traffic {
-            for c in &t.cars {
+            for c in t.cars() {
                 if (c.vehicle.position - self.center).length() > 320.0 {
                     continue;
                 }

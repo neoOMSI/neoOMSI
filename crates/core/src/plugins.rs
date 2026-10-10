@@ -79,7 +79,7 @@ pub(crate) fn game_info(app: &crate::App) -> Vec<(&'static str, InfoValue)> {
     v.push(("on_foot", Bool(app.on_foot.is_some())));
     v.push(("multiplayer", Bool(app.lan.is_some())));
     if let Some(t) = app.traffic.as_ref() {
-        v.push(("traffic", Num(t.cars.len() as f64)));
+        v.push(("traffic", Num(t.car_count() as f64)));
     }
     if let Some(p) = app.player.as_ref() {
         v.push(("speed", Num(p.vehicle.physics.velocity_kmh().abs() as f64)));

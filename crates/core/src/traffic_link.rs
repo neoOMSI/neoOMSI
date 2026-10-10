@@ -66,11 +66,43 @@ pub(crate) fn own_outlines(
 }
 
 /// The LAN players' buses as obstacles for the AI traffic (their speed as last sent).
+/// A remote's trailers share its id, so perception sees them as parts of the same vehicle
+/// and the traffic cannot drive through the back of an articulated remote bus.
 pub(crate) fn lan_outlines(game: &lan::LanGame) -> Vec<(u32, traffic::PlayerBox)> {
-    game.remotes
+    let mut out = Vec::new();
+    for (id, r) in game.remotes.iter() {
+        let v = r.vehicle();
+        let speed = r.last.speed_kmh / 3.6;
+        out.push((*id, vehicle_outline(v, speed)));
+        for t in &v.trailers {
+            let Some(bb) = t.ty.def.bounding_box else {
+                continue;
+            };
+            let h = t.heading.to_radians();
+            let centre = t.position
+                + DVec3::new(
+                    (bb[3] as f64) * h.cos() + (bb[4] as f64) * h.sin(),
+                    -(bb[3] as f64) * h.sin() + (bb[4] as f64) * h.cos(),
+                    0.0,
+                );
+            out.push((*id, (centre, t.heading, bb[1] * 0.5, bb[0] * 0.5, speed)));
+        }
+    }
+    // Deterministic order regardless of the remote map's hash order.
+    out.sort_by_key(|(id, _)| *id);
+    out
+}
+
+/// The LAN players whose state says they are on an emergency drive (`FLAG_EMERGENCY`).
+pub(crate) fn lan_emergencies(game: &lan::LanGame) -> Vec<u32> {
+    let mut out: Vec<u32> = game
+        .remotes
         .iter()
-        .map(|(id, r)| (*id, vehicle_outline(r.vehicle(), r.last.speed_kmh / 3.6)))
-        .collect()
+        .filter(|(_, r)| r.last.flags & ::network::FLAG_EMERGENCY != 0)
+        .map(|(id, _)| *id)
+        .collect();
+    out.sort_unstable();
+    out
 }
 
 /// What the traffic needs to know every frame besides the time: where the player looks
@@ -86,17 +118,19 @@ pub(crate) fn traffic_inputs(
     render: &::render::RenderOptions,
 ) {
     if let Some(c) = cam {
-        t.viewer = Some(
+        t.set_viewer(Some(
             traffic::Viewer::new(c, aspect, fog)
                 .with_culling(render.min_obj_size, render.max_obj_dist),
-        );
+        ));
     }
-    t.weekday = clock.weekday();
-    t.walkers = humans.map(|h| h.strollers()).unwrap_or_default();
-    t.people = humans.map(|h| h.on_foot()).unwrap_or_default();
-    // the player's obstacle boxes follow the streamed tiles; without a player the world's
-    // own are asked
-    t.occluders = player.and_then(|p| p.vehicle.collision.clone());
+    t.set_world_inputs(
+        clock.weekday(),
+        humans.map(|h| h.strollers()).unwrap_or_default(),
+        humans.map(|h| h.on_foot()).unwrap_or_default(),
+        // the player's obstacle boxes follow the streamed tiles; without a player the
+        // world's own are asked
+        player.and_then(|p| p.vehicle.collision.clone()),
+    );
 }
 
 /// Posts (`[crashmode_pole]`) the vehicle knocked over this frame: laid on the ground from

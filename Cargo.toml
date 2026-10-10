@@ -16,6 +16,7 @@ members = [
     "crates/geometry",
     "crates/render",
     "crates/simulation",
+    "crates/traffic",
     "crates/audio",
     "crates/network",
     "crates/legacy-plugin",

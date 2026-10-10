@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// Fixed simulation step for the traffic domain: decisions run at a stable rate,
+/// independent of the render frame rate. Rendering may run at any rate on top.
+pub(super) const SIM_DT: f32 = ::traffic::SIM_DT;
+/// Most fixed steps to run in one frame; a long stall is bounded and the rest of the
+/// debt is kept (capped) rather than silently lost or turned into one huge step.
+pub(super) const MAX_SIM_STEPS: u32 = ::traffic::MAX_SIM_STEPS;
+
 impl App {
     /// Tile streaming and the AI traffic.
     pub(super) fn redraw_traffic(&mut self, f: &Frame) {
@@ -60,17 +67,18 @@ impl App {
                 t.populate_seen(w, r, scene, center, view);
                 *self.profile.entry("traffic.populate").or_default() +=
                     __t5.elapsed().as_secs_f64();
-                t.keep_clear = self
+                let mut keep_clear = self
                     .player
                     .as_ref()
                     .map(|p| traffic::vehicle_bodies(&p.vehicle))
                     .unwrap_or_default();
-                t.keep_clear.extend(
+                keep_clear.extend(
                     self.remotes
                         .remotes
                         .values()
                         .flat_map(|r| traffic::vehicle_bodies(r.vehicle())),
                 );
+                t.set_keep_clear(keep_clear);
                 if let Some(s) = self.schedule.as_mut() {
                     let window = if self.first_populate {
                         20.0 * 60.0
@@ -78,7 +86,7 @@ impl App {
                         2.5
                     };
                     let __t6 = Instant::now();
-                    s.tick(w, t, r, scene, t.day_time, window);
+                    s.tick(w, t, r, scene, t.day_time(), window);
                     *self.profile.entry("traffic.schedule").or_default() +=
                         __t6.elapsed().as_secs_f64();
                 }
@@ -101,19 +109,31 @@ impl App {
             // Omsi switches the AI's lights on below a light value of 0.75, before
             // the street lamps (0.6), and off after them in the morning
             let daylight = ::simulation::Daylight::compute(&self.clock, self.envir.as_ref());
-            t.night = daylight.brightness < 0.75 || gloomy;
-            t.daylight = Some(daylight);
+            t.set_night(daylight.brightness < 0.75 || gloomy);
+            t.set_daylight(daylight);
             let __t2 = Instant::now();
-            t.others = lan_outlines(&self.remotes);
-            t.others
-                .extend(own_outlines(self.player.as_ref(), &self.placed));
+            let mut others = lan_outlines(&self.remotes);
+            others.extend(own_outlines(self.player.as_ref(), &self.placed));
+            t.set_external_actors(others);
+            t.set_external_emergencies(lan_emergencies(&self.remotes));
             if !self.paused {
-                t.player_priority = self
-                    .player
-                    .as_ref()
-                    .and_then(|p| p.vehicle.var("TrafficPriority"))
-                    .is_some_and(|v| v > 0.5);
-                t.tick(dt, self.player.as_ref().map(|p| player_outline(p)));
+                t.set_player_emergency(self.player.as_ref().is_some_and(|p|
+                    traffic::emergency_drive(&p.vehicle, p.vehicle.ty.def.ai_veh_type == 2)));
+                t.set_player_priority(
+                    self.player
+                        .as_ref()
+                        .and_then(|p| p.vehicle.var("TrafficPriority"))
+                        .is_some_and(|v| v > 0.5),
+                );
+                let steps = ::traffic::advance_fixed_clock(
+                    &mut self.sim_accum,
+                    dt,
+                    SIM_DT,
+                    MAX_SIM_STEPS,
+                );
+                for _ in 0..steps {
+                    t.tick(SIM_DT, self.player.as_ref().map(|p| player_outline(p)));
+                }
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());
                     let rail = self
@@ -127,7 +147,7 @@ impl App {
             *self.profile.entry("traffic.tick").or_default() += __t2.elapsed().as_secs_f64();
             for (k, v) in ["traffic.tick.lanes", "traffic.tick.plan", "traffic.tick.ai"]
                 .into_iter()
-                .zip(t.tick_split)
+                .zip(t.tick_split())
             {
                 *self.profile.entry(k).or_default() += v;
             }
@@ -153,7 +173,7 @@ impl App {
             }
             *self.profile.entry("traffic.audio").or_default() += __t3.elapsed().as_secs_f64();
             let __t4 = Instant::now();
-            t.camera = self.camera.as_ref().map(|c| c.position);
+            t.set_camera(self.camera.as_ref().map(|c| c.position));
             t.sync(w, r, scene);
             *self.profile.entry("traffic.sync").or_default() += __t4.elapsed().as_secs_f64();
         }

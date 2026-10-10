@@ -41,20 +41,12 @@ pub fn rotation_point(def: &Vehicle) -> (f32, f32) {
     (rot, (front - rot).max(0.8))
 }
 
-/// Clearance a vehicle pulling out keeps from the corner of what it goes round (m).
 pub const PULL_OUT_CLEARANCE: f64 = 0.25;
-/// Seconds a driver standing behind something turns the wheels before moving off round it
-/// (the shortest reaction time of the AI drivers).
+
 pub const PULL_OUT_WAIT: f32 = 0.4;
-/// Acceleration (m/s²) of a driver edging out round something standing close ahead, until
-/// the front is past its corner: pulling away briskly, a car covered too much ground while
-/// the wheels were still turning and came within 0.2 m of the corner.
+
 pub const PULL_OUT_ACCEL: f32 = 1.0;
 
-/// Lengths (m) of the S-curve that takes a vehicle out round something standing `real`
-/// metres ahead of its front bumper, gentlest first (`front`: origin to front bumper).
-/// From a standstill a driver turns out steeply; rolling up to a parked car they move over
-/// well before it.
 pub fn pull_out_ramps(real: f32, front: f32, rolling: bool) -> Vec<f32> {
     let base = real + 0.5 * front;
     let (factors, max): (&[f32], f32) = if rolling {
@@ -167,17 +159,39 @@ struct Wheel {
 
 /// How far over its way an AI car's wheel climbs onto what is drawn there (m), and how far
 /// under the way it goes down to it: the road drawn higher than the lane the map laid out
-/// (the car sank into it), not a deck overhead; and below the lane only a little - a lane
-/// running along the edge of a junction plate had its outer wheels drop onto the terrain
-/// beside it and the car leaned over by ten degrees (see `AiBody::settle`).
-const AI_STEP_UP: f64 = 0.6;
-const AI_STEP_DOWN: f64 = 0.1;
+/// (the car sank into it), not a deck overhead. The bounded, provisional search tolerates
+/// imperfect path heights in either direction. Later probes follow previous contacts and
+/// local path grade; missing wheels share the supported axle instead of dipping to terrain.
+const AI_CONTACT_RANGE: f64 = 1.5;
+/// A rear-axle target this far (m) from the body is not tracking error but a relocation, or a
+/// way that has not caught up with the body.
+const SNAP_DISTANCE: f64 = 8.0;
+/// How long (s) a way that far off is waited out before the body is put back on it.
+const SNAP_PATIENCE: f32 = 0.6;
+/// The furthest (m) the rotation point aims inside a bend to centre the body's sweep.
+const SWEEP_SHIFT_MAX: f64 = 2.0;
+/// A wider search is needed only when no wheel has found the current road level at all.
+/// It corrects displaced path Z without lowering a single unsupported axle onto terrain.
+const AI_CONTACT_REACQUIRE: f64 = 3.0;
+/// Reject isolated level changes larger than a curb when other tyres still confirm the
+/// previous road plane. This is a continuity filter, not a limit on the road's total grade.
+const AI_CONTACT_DISCONTINUITY: f64 = 0.35;
 
 #[derive(Debug, Clone)]
 pub struct AiBody {
     pub kind: MotionKind,
     rot_long: f32,
     wheelbase: f32,
+    /// Metres of close path tracking after a rejected corner step.
+    steering_recovery: f32,
+    recovery_preview_scale: f32,
+    recovery_steer: Option<(f32, f32)>,
+    /// Seconds the way's rear-axle target has stood further than `SNAP_DISTANCE` from the
+    /// body (see `drive`).
+    lost: f32,
+    /// Rotation point to the nose (m) for centring the sweep in bends; 0 for a vehicle
+    /// that pulls a trailer (see `sweep_shift`).
+    sweep_reach: f32,
     front_long: f32,
     rear_long: f32,
     /// Largest front wheel angle (deg) and how fast the driver turns towards it (deg/s).
@@ -201,6 +215,9 @@ pub struct AiBody {
     pub steer: f32,
     steer_cmd: f32,
     last_speed: f32,
+    /// Distance the body actually moved in the last `step` (m), the realized motion the
+    /// traffic domain reads back each tick.
+    travelled: f32,
     /// Longitudinal and lateral acceleration (m/s², forward / right positive).
     pub a_long: f32,
     pub a_lat: f32,
@@ -228,6 +245,10 @@ pub struct AiBody {
     /// frame: the wheels of every AI car twitched up and down in their arches while the
     /// body on its springs rode smoothly.
     contact_z: Vec<f64>,
+    contact_path_z: Vec<f64>,
+    /// At least one axle has valid support. Missing contacts extend that road plane;
+    /// complete loss of support is reported instead of substituting authored path height.
+    pub ground_supported: bool,
 }
 
 impl AiBody {
@@ -323,6 +344,19 @@ impl AiBody {
             kind,
             rot_long,
             wheelbase,
+            steering_recovery: 0.0,
+            recovery_preview_scale: 1.0,
+            recovery_steer: None,
+            lost: 0.0,
+            sweep_reach: if def.coupling_back.is_some() {
+                0.0
+            } else {
+                let nose = def
+                    .bounding_box
+                    .map(|b| b[1] * 0.5 + b[4])
+                    .unwrap_or(front_long + 0.8);
+                (nose - rot_long).max(0.0)
+            },
             front_long,
             rear_long,
             max_steer,
@@ -344,6 +378,7 @@ impl AiBody {
             steer: 0.0,
             steer_cmd: 0.0,
             last_speed: 0.0,
+            travelled: 0.0,
             a_long: 0.0,
             a_lat: 0.0,
             yaw_rate: 0.0,
@@ -360,6 +395,8 @@ impl AiBody {
             bank_deg: 0.0,
             suspension: vec![[0.0; 2]; axle_count],
             contact_z: Vec::new(),
+            contact_path_z: Vec::new(),
+            ground_supported: true,
         }
     }
 
@@ -375,6 +412,7 @@ impl AiBody {
         self.started = false;
         self.ground = None;
         self.contact_z.clear();
+        self.contact_path_z.clear();
         self.last_speed = speed;
         self.step(0.0, speed, way, ground, contact);
     }
@@ -390,6 +428,7 @@ impl AiBody {
         ground: Option<&dyn Fn(f64, f64) -> Option<f64>>,
         contact: Option<&dyn crate::rigid::Ground>,
     ) {
+        self.travelled = 0.0;
         if dt > 0.0 {
             let a = (speed - self.last_speed) / dt;
             self.a_long += (a - self.a_long) * (dt / 0.15).min(1.0);
@@ -397,7 +436,11 @@ impl AiBody {
         self.last_speed = speed;
         match self.kind {
             MotionKind::Road => {
-                self.drive(dt, speed, way);
+                if self.ground_supported || dt == 0.0 {
+                    self.drive(dt, speed, way);
+                } else {
+                    self.travelled = 0.0;
+                }
                 self.settle(dt, way, ground, contact);
             }
             MotionKind::Rail => self.ride(way),
@@ -405,11 +448,194 @@ impl AiBody {
         }
     }
 
+    /// The speed the body actually realized over `dt` (m/s), from the distance it moved in
+    /// the last [`AiBody::step`]. Fed back to the traffic domain's route progress.
+    pub fn realized_speed(&self, dt: f32) -> f32 {
+        if dt > 0.0 {
+            self.travelled / dt
+        } else {
+            0.0
+        }
+    }
+
+    /// A rejected physical step has no realized motion, regardless of its proposed speed.
+    pub fn stop_motion(&mut self) {
+        self.travelled = 0.0;
+        self.last_speed = 0.0;
+        self.a_long = 0.0;
+        self.a_lat = 0.0;
+    }
+
+    /// Reject translation/yaw at an obstacle while allowing the driver to keep
+    /// turning the wheels. Restoring the steering too repeats the same clipped
+    /// front-corner step forever, particularly with a bus's long wheelbase.
+    pub fn reject_motion(&mut self, previous: &Self) {
+        let (steer, command) = (self.steer, self.steer_cmd);
+        self.clone_from(previous);
+        self.steer = steer;
+        self.steer_cmd = command;
+        self.steering_recovery = self.steering_recovery.max(2.0 * self.wheelbase);
+        self.stop_motion();
+    }
+
+    /// Forecast the actual steering model without scripts or suspension. Distances
+    /// are measured from this pose; callers supply ground height and body obstacles.
+    pub fn predict_poses(
+        &self,
+        way: &dyn Fn(f32) -> DVec3,
+        speed: f32,
+        accel: f32,
+        cap: f32,
+        distance: f32,
+    ) -> Vec<(f32, DVec3, f64)> {
+        let mut body = self.clone();
+        let dt = 0.05;
+        let mut v = speed.max(0.0);
+        let mut d = 0.0;
+        if v < 0.1 {
+            for _ in 0..8 { body.drive(dt, 0.0, way); }
+        }
+        let mut poses = vec![(0.0, body.position, body.heading)];
+        for _ in 0..1200 {
+            if d >= distance { break; }
+            v = (v + accel.max(0.3) * dt).min(cap.max(0.5));
+            d += v * dt;
+            body.drive(dt, v, &|offset| way(d + offset));
+            let mut position = body.position;
+            position.z = way(d).z;
+            poses.push((d, position, body.heading));
+        }
+        poses
+    }
+
+    /// How far (m) this body would travel along `way` before `touches` reports contact, going
+    /// at `speed` (at least 1 m/s, so that a standing body still looks along its way). The real
+    /// steering is run - lock, rate and pure pursuit - so a bus's front corner and its swing
+    /// through a bend are where the real body will be, not where the lane centre line is.
+    /// `None`: it stays clear for `reach` metres, or already touches (a contact that exists is
+    /// not one it is about to make). The body is sampled every 0.5 m: a vehicle's box is far
+    /// longer than that, so nothing it would pass over is missed.
+    pub fn distance_to_contact(
+        &self,
+        way: &dyn Fn(f32) -> DVec3,
+        speed: f32,
+        reach: f32,
+        touches: &dyn Fn(&AiBody) -> bool,
+    ) -> Option<f32> {
+        if touches(self) {
+            return None;
+        }
+        let mut probe = self.clone();
+        let v = speed.max(1.0);
+        let dt = 0.05;
+        let (z0, z_body) = (way(0.0).z, self.position.z);
+        let (mut x, mut checked) = (0.0f32, 0.0f32);
+        while x < reach {
+            let at = x;
+            probe.drive(dt, v, &|d| way(at + d));
+            x += v * dt;
+            if x - checked >= 0.5 {
+                checked = x;
+                probe.position.z = z_body + (way(x).z - z0);
+                if touches(&probe) {
+                    return Some(x);
+                }
+            }
+        }
+        None
+    }
+
+    /// Choose the pursuit horizon whose realized front corner best clears the
+    /// obstacle. Keep steering rate/lock and pose integration identical to driving.
+    pub fn recover_corner(&mut self, way: &dyn Fn(f32) -> DVec3, extent: (f32, f32, f32), obstacle: &crate::collision::Obb) {
+        let mut best = (f64::MIN, self.recovery_preview_scale, None);
+        for scale in [0.5, 0.75, 1.0, 1.25, 1.5] {
+            let mut probe = self.clone();
+            probe.steering_recovery = 2.0 * self.wheelbase;
+            probe.recovery_preview_scale = scale;
+            probe.recovery_steer = None;
+            for _ in 0..10 { probe.drive(0.1, 0.0, way); }
+            probe.drive(0.1, 0.5, way);
+            let body = crate::collision::Obb::vehicle(probe.position.truncate(), probe.heading,
+                extent.0 as f64, extent.1 as f64, extent.2 as f64);
+            let gap = body.separation(obstacle);
+            if gap > best.0 { best = (gap, scale, None); }
+        }
+        // A side contact can require counter-steering briefly (e.g. the middle
+        // of a long bus beside a post). A horizon change alone cannot express it.
+        for angle in [-self.max_steer, 0.0, self.max_steer] {
+            let mut probe = self.clone();
+            probe.recovery_steer = Some((angle, 0.75));
+            for _ in 0..10 { probe.drive(0.1, 0.0, way); }
+            probe.drive(0.1, 0.5, way);
+            let body = crate::collision::Obb::vehicle(probe.position.truncate(), probe.heading,
+                extent.0 as f64, extent.1 as f64, extent.2 as f64);
+            let gap = body.separation(obstacle);
+            if gap > best.0 + 1e-4 { best = (gap, 1.0, Some((angle, 0.75))); }
+        }
+        self.steering_recovery = 2.0 * self.wheelbase;
+        self.recovery_preview_scale = best.1;
+        self.recovery_steer = best.2;
+    }
+
+    /// Where the rotation point aims beside the way in a bend: towards its inside, so that
+    /// the area the body sweeps lies across the way instead of outside it. With the rear axle
+    /// on a circle of radius R the nose, `sweep_reach` ahead of it, runs about reach²/2R
+    /// outside while the flank inside barely leaves the lane: a 12 m bus put its front over
+    /// the kerb of a roundabout and into the mast on the island of a left turn. Aiming
+    /// reach²/5R inside centres the sweep (measured on the C2, see `sweep_measure`; an
+    /// articulated bus has its trailer cutting inside and keeps its front section on the
+    /// way: `sweep_reach` 0).
+    fn sweep_shift(&self, way: &dyn Fn(f32) -> DVec3, look: f32) -> DVec2 {
+        let reach = self.sweep_reach;
+        if reach <= 0.0 {
+            return DVec2::ZERO;
+        }
+        let at = self.rot_long + look;
+        let (a, b, c) = (
+            way(at - 0.5 * reach).truncate(),
+            way(at).truncate(),
+            way(at + 0.5 * reach).truncate(),
+        );
+        let (u, w) = (b - a, c - b);
+        if u.length() < 0.1 || w.length() < 0.1 {
+            return DVec2::ZERO;
+        }
+        // signed: + bends left (x east, y north)
+        let turn = (u.x * w.y - u.y * w.x).atan2(u.dot(w));
+        let k = turn / (0.5 * reach as f64);
+        let shift = (reach as f64 * reach as f64 * k * 0.2).clamp(-SWEEP_SHIFT_MAX, SWEEP_SHIFT_MAX);
+        let t = (c - a).normalize_or_zero();
+        DVec2::new(-t.y, t.x) * shift
+    }
+
     /// Bicycle model: the rotation point follows the way, the front wheels steer towards a
     /// point further along it (pure pursuit, looking further ahead the faster the car goes).
     fn drive(&mut self, dt: f32, speed: f32, way: &dyn Fn(f32) -> DVec3) {
         let target = way(self.rot_long).truncate();
-        if !self.started || (target - self.rear).length() > 8.0 {
+        let off_way = (target - self.rear).length();
+        if self.started && off_way > SNAP_DISTANCE && self.lost < SNAP_PATIENCE {
+            // The way says the rear axle is a body length away. The body is the single
+            // pose owner and moves continuously, so the way is what is wrong: a joint the
+            // planner has not yet reconciled with where the body is. Putting the body on it
+            // at once was the bus that jumped back (or on) at a corner and left its rear
+            // section jack-knifed. Stand still for a moment: the planner re-reads the body
+            // every tick and the way follows it. Only a mismatch that lasts is a real
+            // relocation.
+            self.lost += dt;
+            self.travelled = 0.0;
+            self.yaw_rate = 0.0;
+            self.a_lat = 0.0;
+            return;
+        }
+        if !self.started || off_way > SNAP_DISTANCE {
+            if self.started {
+                log::warn!(
+                    "AI body put back on its way: {off_way:.1} m from ({:.1}, {:.1}) to ({:.1}, {:.1}), heading {:.0}",
+                    self.rear.x, self.rear.y, target.x, target.y, self.heading
+                );
+            }
+            self.lost = 0.0;
             // spawned, or put somewhere else: stand on the way, straight
             let ahead = way(self.rot_long + 2.0).truncate();
             let d = ahead - target;
@@ -423,17 +649,18 @@ impl AiBody {
             self.steer_cmd = 0.0;
             self.started = true;
         }
+        self.lost = 0.0;
         let fwd = dir(self.heading);
         let right = DVec2::new(fwd.y, -fwd.x);
-        // the planner's position along the way leads; the body keeps up with it
-        let along = (target - self.rear).dot(fwd) as f32;
-        let v = if speed < 0.02 && along.abs() < 0.05 {
-            0.0
-        } else {
-            (speed + 1.5 * along).clamp(0.0, speed + 3.0)
-        };
-        let look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
-        let g = way(self.rot_long + look).truncate() - self.rear;
+        // Route progress is committed from this body's motion. The old catch-up servo
+        // amplified the already advanced command and fed that extra speed into the next
+        // tick. Steering follows the way; only the longitudinal owner may choose speed.
+        let v = speed.max(0.0);
+        let normal_look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
+        let look = if self.steering_recovery > 0.0 {
+            (normal_look * self.recovery_preview_scale).max(3.5)
+        } else { normal_look };
+        let g = way(self.rot_long + look).truncate() + self.sweep_shift(way, look) - self.rear;
         let alpha = (g.dot(right) as f32)
             .atan2(g.dot(fwd) as f32)
             .clamp(-FRAC_PI_2, FRAC_PI_2);
@@ -452,13 +679,13 @@ impl AiBody {
         let turn = (u.x * w.y - u.y * w.x).atan2(u.dot(w)).abs() as f32;
         let bend_k = if look > 0.1 { 2.0 * turn / look } else { 0.0 };
         let need = (bend_k * self.wheelbase).atan().to_degrees() * 1.15;
-        let limit = if std::env::var_os("OMSI_AI_MODEL_LOCK").is_some() {
+        let limit = if env_switch(&MODEL_LOCK, "OMSI_AI_MODEL_LOCK") {
             self.max_steer
         } else {
             self.max_steer.max(need.min(60.0))
         };
         // OMSI_DEBUG_AI_WIDE: every tenth of a second a car stands over 1.5 m beside its way
-        if std::env::var_os("OMSI_DEBUG_AI_WIDE").is_some() {
+        if env_switch(&DEBUG_WIDE, "OMSI_DEBUG_AI_WIDE") {
             let off = ((target - self.rear).dot(right)).abs();
             if off > 1.5 {
                 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -474,10 +701,11 @@ impl AiBody {
                 }
             }
         }
-        let want = (2.0 * self.wheelbase * alpha.sin() / reach)
+        let pursuit = (2.0 * self.wheelbase * alpha.sin() / reach)
             .atan()
             .to_degrees()
             .clamp(-limit, limit);
+        let want = self.recovery_steer.map(|r| r.0).unwrap_or(pursuit);
         if dt > 0.0 {
             let rate = self.steer_rate * dt * if limit > self.max_steer { 1.5 } else { 1.0 };
             self.steer_cmd += (want - self.steer_cmd).clamp(-rate, rate);
@@ -487,6 +715,12 @@ impl AiBody {
         let dpsi = (v * dt * k) as f64;
         let mid = dir(self.heading + dpsi.to_degrees() * 0.5);
         self.rear += mid * (v * dt) as f64;
+        self.travelled += (v * dt).abs();
+        self.steering_recovery = (self.steering_recovery - (v * dt).abs()).max(0.0);
+        if let Some((angle, remaining)) = self.recovery_steer {
+            self.recovery_steer = (remaining > (v * dt).abs())
+                .then_some((angle, remaining - (v * dt).abs()));
+        }
         self.heading = (self.heading + dpsi.to_degrees()).rem_euclid(360.0);
         self.yaw_rate = if dt > 0.0 {
             (dpsi / dt as f64) as f32
@@ -512,66 +746,104 @@ impl AiBody {
         let fwd = dir(self.heading);
         let right = DVec2::new(fwd.y, -fwd.x);
         let origin = self.position.truncate();
+        let query = |p: DVec2, reference: f64, range: f64| match contact {
+            Some(c) => c.road_height(p.x, p.y, reference, range),
+            None => ground.and_then(|g| g(p.x, p.y))
+                .filter(|z| z.is_finite() && (*z - reference).abs() <= range),
+        };
+        let (grade, crossfall) = self.ground.map(|(_, p, r)| (p.tan() as f64, -r.tan() as f64))
+            .unwrap_or((0.0, 0.0));
         // the way's own height at each axle: the road the map says is there, which also
         // decides when a sampled height belongs to something else (a bridge over the road)
         let mut axle_z = vec![f64::NAN; self.axle_count];
-        // (lateral, longitudinal, axle, way height, what is drawn there)
-        let mut samples: Vec<(f32, f32, usize, f64, Option<f64>)> =
+        if self.contact_path_z.len() != self.wheels.len() {
+            self.contact_path_z = vec![f64::NAN; self.wheels.len()];
+        }
+        // (lateral, longitudinal, axle, way height, contact reference, actual support)
+        let mut samples: Vec<(f32, f32, usize, f64, f64, Option<f64>)> =
             Vec::with_capacity(self.wheels.len());
-        for w in &self.wheels {
+        for (wi, w) in self.wheels.iter().enumerate() {
             if axle_z[w.axle].is_nan() {
                 axle_z[w.axle] = way(w.long).z;
             }
             let path_z = axle_z[w.axle];
             let p = origin + right * w.lat as f64 + fwd * w.long as f64;
-            // What the wheel stands on, as Omsi.exe stands an AI car's wheels (its AI cars
-            // are bodies on the same wheel physics as the player's bus, 0x7d5124 ->
-            // 0x7e2574, asking the ground under each wheel, 0x7aec3c): the drawn road, the
-            // surface objects, the terrain beside them - up to `AI_STEP_UP` over the way and
-            // down to `AI_STEP_DOWN` under it (farther is another level: a bridge over the
-            // road, the road under a bridge). Without it the plain height sampler, which
-            // knows no levels.
-            let drawn = match contact {
-                Some(c) => c
-                    .probe(p.x, p.y, path_z + AI_STEP_UP)
-                    .below
-                    .filter(|g| *g >= path_z - AI_STEP_DOWN),
-                None => ground.and_then(|g| g(p.x, p.y)),
-            };
-            samples.push((w.lat, w.long, w.axle, path_z, drawn));
+            let previous = self.contact_z.get(wi).copied().filter(|z| z.is_finite());
+            let path_delta = path_z - self.contact_path_z[wi];
+            let reference = previous.map_or(path_z, |z| {
+                z + if path_delta.is_finite() { path_delta.clamp(-0.5, 0.5) } else { 0.0 }
+            });
+            // DriveGround exposes both sides of the probe. Pick the nearest support on
+            // this road level, including a drawn road above an imperfect path. Increasing
+            // the query top alone would incorrectly prefer a bridge over the same road.
+            let drawn = query(p, reference, AI_CONTACT_RANGE);
+            samples.push((w.lat, w.long, w.axle, path_z, reference, drawn));
+            self.contact_path_z[wi] = path_z;
         }
-        // How far each axle's road lies over its way (from what is drawn under its wheels):
-        // kept to the way alone, a car whose lane lay under the drawn road - a spline on a
-        // grade, a junction plate tilted on a hill - drove through the asphalt with only its
-        // roof showing. Per axle, not per wheel, and the least of its wheels: a wheel off
-        // the edge of the road or on the kerb would tip the car over, or lift it, when its
-        // neighbour stands on the way.
-        let mut lift = vec![f64::INFINITY; self.axle_count];
-        for &(_, _, a, path_z, drawn) in &samples {
-            let up = if contact.is_some() {
-                drawn.map_or(0.0, |g| g - path_z)
-            } else {
-                0.0
-            };
-            lift[a] = lift[a].min(up);
+        if let Some((z, _, _)) = self.ground {
+            let expected = |lat: f32, long: f32| z + grade * (long as f64 + self.travelled as f64)
+                + crossfall * lat as f64;
+            if samples.iter().any(|&(lat, long, _, _, _, h)|
+                h.is_some_and(|h| (h - expected(lat, long)).abs() <= AI_CONTACT_DISCONTINUITY))
+            {
+                for (lat, long, _, _, _, h) in &mut samples {
+                    if h.is_some_and(|h| (h - expected(*lat, *long)).abs() > AI_CONTACT_DISCONTINUITY) {
+                        *h = None;
+                    }
+                }
+            }
         }
+        // Tiny seams can miss all four exact tyre queries. Confirm the same road plane
+        // on nearby real faces before allowing a lower terrain/other level to take over.
+        if self.ground.is_some() && samples.iter().all(|s| s.5.is_none()) {
+            for (lat, long, _, _, reference, drawn) in &mut samples {
+                let p = origin + right * *lat as f64 + fwd * *long as f64;
+                *drawn = [0.5, -0.5, 1.0, -1.0, 2.0, -2.0].into_iter().find_map(|d|
+                    query(p + fwd * d, *reference + grade * d, AI_CONTACT_RANGE)
+                        .map(|h| h - grade * d));
+            }
+        }
+        // Reacquire a displaced road only when the entire body has no nearby support.
+        // If the rear axle still stands on the street at a road/tile end, its plane carries
+        // the front; the lower terrain beyond the asphalt is not a second road level.
+        if samples.iter().all(|s| s.5.is_none()) {
+            for (lat, long, _, _, reference, drawn) in &mut samples {
+                let p = origin + right * *lat as f64 + fwd * *long as f64;
+                *drawn = query(p, *reference, AI_CONTACT_REACQUIRE);
+            }
+        }
+        let mut axle_support = vec![None::<f64>; self.axle_count];
+        for &(_, _, a, _, _, drawn) in &samples {
+            if let Some(h) = drawn {
+                axle_support[a] = Some(axle_support[a].map_or(h, |old| old.min(h)));
+            }
+        }
+        let supported = (contact.is_none() && ground.is_none())
+            || axle_support.iter().any(Option::is_some);
+        if self.ground_supported && !supported && std::env::var_os("OMSI_DEBUG_AI_GROUND").is_some() {
+            for &(lat, long, _, path_z, _, drawn) in &samples {
+                if drawn.is_none() {
+                    let p = origin + right * lat as f64 + fwd * long as f64;
+                    let probe = contact.map(|g| g.probe(p.x, p.y, path_z));
+                    log::warn!("AI ground lost at ({:.3}, {:.3}), path {path_z:.3}, probe {probe:?}", p.x, p.y);
+                }
+            }
+        }
+        self.ground_supported = supported;
+        let (sum, count) = samples.iter().filter_map(|&(lat, long, _, _, _, h)|
+            h.map(|h| h - grade * long as f64 - crossfall * lat as f64))
+            .fold((0.0, 0usize), |(sum, n), h| (sum + h, n + 1));
+        let supported_plane = (count > 0).then(|| sum / count as f64);
         let contacts: Vec<(f32, f32, f64)> = samples
             .iter()
-            .map(|&(lat, long, a, path_z, drawn)| {
-                let base = path_z + lift[a].clamp(0.0, AI_STEP_UP);
-                // The surface under the wheel itself counts only within a few centimetres of
-                // that: taken up to 0.8 m off, a wheel beside the lane climbed the kerb and
-                // the gutter, and the texel steps of the road raster kept every bus rocking
-                // like a boat (faded out between 3 and 5 cm off, so that a sample near the
-                // limit does not flick between the two).
-                let h = match drawn {
-                    Some(h) => {
-                        let off = (h - base).abs();
-                        let t = ((0.05 - off) / 0.02).clamp(0.0, 1.0);
-                        base + (h - base) * t
-                    }
-                    None => base,
-                };
+            .enumerate()
+            .map(|(wi, &(lat, long, a, path_z, _, drawn))| {
+                // A missing wheel does not veto the other wheel's real axle support.
+                // With no support at all, preserve the last contact through streaming gaps.
+                let h = drawn.or(axle_support[a])
+                    .or_else(|| supported_plane.map(|z| z + grade * long as f64 + crossfall * lat as f64))
+                    .or_else(|| self.contact_z.get(wi).copied().filter(|z| z.is_finite()))
+                    .unwrap_or(path_z);
                 (lat, long, h)
             })
             .collect();
@@ -820,6 +1092,17 @@ impl AiBody {
     }
 }
 
+static MODEL_LOCK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static DEBUG_WIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// A debug switch of the environment, read once. `drive` runs a few dozen times per car and
+/// tick (the scenery look-ahead drives a probe body along the way), on every worker thread:
+/// asking the environment each time - a process-wide lock on Windows - was most of the AI
+/// bodies' time, the threads queueing for each other.
+fn env_switch(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
+    *cell.get_or_init(|| std::env::var_os(name).is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,7 +1129,7 @@ mod tests {
         assert_eq!(back_in_ramp(3.0, 1.0, BACK_IN_LAT_ACCEL), 10.5);
     }
 
-    fn golf() -> Vehicle {
+    pub(super) fn golf() -> Vehicle {
         let mut v = Vehicle {
             mass: 1.0,
             moment_of_inertia: [1.49, 0.40, 1.56],
@@ -887,6 +1170,32 @@ mod tests {
     }
 
     #[test]
+    fn a_body_finds_the_post_its_front_corner_would_meet_before_it_does() {
+        use crate::collision::Obb;
+        let def = lorry();
+        let (front, rear, half) = (5.5f32, 3.5f32, 1.25f32);
+        let way = |d: f32| DVec3::new(0.0, d as f64, 0.0);
+        let mut body = AiBody::new(&def, MotionKind::Road);
+        body.place(&way, None, None, 0.0);
+        let touches = |post: Obb| {
+            move |b: &AiBody| {
+                Obb::vehicle(b.position.truncate(), b.heading, front as f64, rear as f64, half as f64)
+                    .overlaps_plan(&post)
+            }
+        };
+        // a post 20 m ahead, in the lane: the nose reaches it after 20 - 0.3 - 5.5 m
+        let post = Obb::vehicle(DVec2::new(0.0, 20.0), 0.0, 0.3, 0.3, 0.3);
+        let d = body.distance_to_contact(&way, 5.0, 40.0, &touches(post)).expect("in the way");
+        assert!((d - 14.2).abs() < 0.6, "contact after {d} m");
+        // the same post two metres to the side of the bus's flank is not in the way
+        let beside = Obb::vehicle(DVec2::new(2.4, 20.0), 0.0, 0.3, 0.3, 0.3);
+        assert_eq!(body.distance_to_contact(&way, 5.0, 40.0, &touches(beside)), None);
+        // a body that is touching already is not about to touch
+        let inside = Obb::vehicle(DVec2::new(0.0, 0.0), 0.0, 0.5, 0.5, 0.5);
+        assert_eq!(body.distance_to_contact(&way, 5.0, 40.0, &touches(inside)), None);
+    }
+
+    #[test]
     fn follows_a_bend_smoothly() {
         let def = golf();
         let mut body = AiBody::new(&def, MotionKind::Road);
@@ -905,10 +1214,13 @@ mod tests {
                 worst_jump = worst_jump.max((body.yaw_rate - y).abs().to_degrees());
             }
             last_yaw = Some(body.yaw_rate);
-            // the rear axle stays on the way (a circle has no steady error; entering it costs a little)
+            // the rear axle stays by the way (a circle has no steady error; entering it costs
+            // a little, and it aims a little inside to centre the sweep, see `sweep_shift`)
             let rear = body.rear;
-            let q = bend(12.0, at + def.rot_pnt_long as f64).truncate();
-            worst_off = worst_off.max((rear - q).length());
+            let off = (0..400)
+                .map(|k| (rear - bend(12.0, at - 20.0 + k as f64 * 0.1).truncate()).length())
+                .fold(f64::MAX, f64::min);
+            worst_off = worst_off.max(off);
         }
         // a quarter turn done at 6 m/s: the heading has turned right, the yaw rate never
         // jumps by more than a few degrees per second between frames, the car keeps to its lane
@@ -963,7 +1275,7 @@ mod tests {
     }
 
     /// A two-axle lorry: 4.5 m between the axles, a turning circle of 11 m radius.
-    fn lorry() -> Vehicle {
+    pub(super) fn lorry() -> Vehicle {
         let mut v = Vehicle {
             mass: 12.0,
             moment_of_inertia: [40.0, 10.0, 45.0],
@@ -1115,5 +1427,147 @@ mod tests {
             "pitch {}",
             body.pitch_deg
         );
+    }
+}
+
+#[cfg(test)]
+#[path = "ai_motion/ground_tests.rs"]
+mod ground_tests;
+
+#[cfg(test)]
+#[path = "ai_motion/traffic_regression_tests.rs"]
+mod traffic_regression_tests;
+
+#[cfg(test)]
+mod sweep_measure {
+    use super::*;
+    use ::legacy_vehicle::Axle;
+
+    /// BRT Berlin's AI Citaro C2 (`C2_2T_AI.bus`): 12 m, axles at +2.94 / -2.95.
+    pub(super) fn c2() -> Vehicle {
+        let mut v = Vehicle { mass: 11.0, moment_of_inertia: [300.0, 30.0, 300.0], cog_height: 1.2,
+            rot_pnt_long: -2.95, inv_min_turn_radius: 0.13, ..Default::default() };
+        v.axles = vec![
+            Axle { long: 2.938, max_width: 2.1, spring: 300.0, damper: 20.0, wheel_diameter: 1.0, ..Default::default() },
+            Axle { long: -2.945, max_width: 2.1, spring: 300.0, damper: 20.0, wheel_diameter: 1.0, ..Default::default() },
+        ];
+        v.bounding_box = Some([2.52, 12.0, 2.5, 0.0, 0.04, 1.7]);
+        v
+    }
+
+    /// A way: straight north for 40 m, then a left arc of radius `r` through `deg` degrees,
+    /// then straight on.
+    pub(super) fn left_turn(r: f64, deg: f64, s: f64) -> DVec3 {
+        let arc = r * deg.to_radians();
+        if s < 40.0 {
+            DVec3::new(0.0, s, 0.0)
+        } else if s < 40.0 + arc {
+            let a = (s - 40.0) / r;
+            DVec3::new(-(r - r * a.cos()), 40.0 + r * a.sin(), 0.0)
+        } else {
+            let a = deg.to_radians();
+            let end = DVec2::new(-(r - r * a.cos()), 40.0 + r * a.sin());
+            let t = DVec2::new(-a.sin(), a.cos());
+            let p = end + t * (s - 40.0 - arc);
+            DVec3::new(p.x, p.y, 0.0)
+        }
+    }
+
+    /// Drive the body along `path` at `speed` and return the furthest the body's outline
+    /// gets to the right (+) and the left (-) of the way (m, beyond the body's half width).
+    pub(super) fn sweep(def: &Vehicle, path: &dyn Fn(f64) -> DVec3, length: f64, speed: f32) -> (f64, f64) {
+        sweep_with(def, path, length, speed, true)
+    }
+
+    pub(super) fn sweep_with(def: &Vehicle, path: &dyn Fn(f64) -> DVec3, length: f64, speed: f32, centred: bool) -> (f64, f64) {
+        let bb = def.bounding_box.unwrap();
+        let (front, rear, half) = ((bb[1] * 0.5 + bb[4]) as f64, (bb[1] * 0.5 - bb[4]) as f64, (bb[0] * 0.5) as f64);
+        let mut body = AiBody::new(def, MotionKind::Road);
+        if !centred {
+            body.sweep_reach = 0.0;
+        }
+        let dt = 1.0 / 60.0;
+        let mut s = 20.0f64;
+        body.place(&|d| path(s + d as f64), None, None, speed);
+        let samples: Vec<DVec2> = (0..((length + 60.0) / 0.05) as usize).map(|k| path(k as f64 * 0.05).truncate()).collect();
+        let (mut right, mut left) = (0.0f64, 0.0f64);
+        while s < length {
+            s += (speed * dt) as f64;
+            let at = s;
+            body.step(dt, speed, &|d| path(at + d as f64), None, None);
+            let f = dir(body.heading);
+            let r = DVec2::new(f.y, -f.x);
+            let o = body.position.truncate();
+            for (lo, la) in [(front, half), (front, -half), (-rear, half), (-rear, -half), (0.0, half), (0.0, -half),
+                (body.rot_long as f64, half), (body.rot_long as f64, -half)] {
+                let c = o + f * lo + r * la;
+                let k = samples.iter().enumerate().min_by(|a, b| (*a.1 - c).length().total_cmp(&(*b.1 - c).length())).unwrap().0;
+                let k = k.clamp(1, samples.len() - 2);
+                let t = (samples[k + 1] - samples[k - 1]).normalize();
+                let side = (c - samples[k]).dot(DVec2::new(t.y, -t.x));
+                right = right.max(side - half);
+                left = left.min(side + half);
+            }
+        }
+        (right, left)
+    }
+
+    #[test]
+    fn a_long_rigid_bus_sweeps_a_bend_evenly_about_its_way() {
+        let def = c2();
+        for v in [3.0f32, 5.0] {
+            // a roundabout: the nose kept off the outer kerb, the flank off the island
+            let (outside, inside) = sweep(&def, &|s| left_turn(14.0, 200.0, s), 40.0 + 14.0 * 200f64.to_radians() + 20.0, v);
+            assert!(outside < 1.9 && inside > -1.9 && (outside + inside).abs() < 0.4,
+                "ring at {v} m/s: {outside:.2} m outside, {inside:.2} m inside");
+            // a left turn at a junction: the nose no longer runs 3 m wide of the way
+            let (outside, _) = sweep(&def, &|s| left_turn(10.0, 90.0, s), 40.0 + 10.0 * 90f64.to_radians() + 20.0, v);
+            assert!(outside < 2.7, "left turn at {v} m/s: {outside:.2} m outside");
+        }
+    }
+
+    #[test]
+    fn an_articulated_front_section_keeps_its_axle_on_the_way() {
+        let mut def = c2();
+        def.coupling_back = Some(Default::default());
+        assert_eq!(AiBody::new(&def, MotionKind::Road).sweep_reach, 0.0);
+    }
+
+    /// `OMSI_VEHICLES=<OMSI 2>/vehicles cargo test -p simulation --lib every_bus -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn every_bus_in_a_vehicles_folder() {
+        let Ok(root) = std::env::var("OMSI_VEHICLES") else { return };
+        let mut files = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(root)];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() { stack.push(p) } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("bus")) { files.push(p) }
+            }
+        }
+        files.sort();
+        let mut seen = std::collections::HashSet::new();
+        let ring = |s: f64| left_turn(14.0, 200.0, s);
+        let turn = |s: f64| left_turn(10.0, 90.0, s);
+        let (lr, lt) = (40.0 + 14.0 * 200f64.to_radians() + 20.0, 40.0 + 10.0 * 90f64.to_radians() + 20.0);
+        for f in files {
+            let Ok(def) = Vehicle::load(&f) else { println!("LOADFAIL {}", f.display()); continue };
+            let kind = if def.coupling_front.is_some() { "trailer" } else if def.coupling_back.is_some() { "artic" } else { "rigid" };
+            if kind == "trailer" { continue; }
+            let Some(bb) = def.bounding_box else { println!("NOBBOX {}", f.display()); continue };
+            let axles: Vec<i32> = def.axles.iter().map(|a| (a.long * 100.0) as i32).collect();
+            let key = (axles.clone(), (def.rot_pnt_long * 100.0) as i32, (bb[1] * 100.0) as i32, (bb[4] * 100.0) as i32, kind);
+            if !seen.insert(key) { continue; }
+            let body = AiBody::new(&def, MotionKind::Road);
+            let mut row = format!("{kind:6} len {:5.2} wb {:4.2} reach {:4.2} |", bb[1], body.wheelbase, body.sweep_reach);
+            for centred in [false, true] {
+                let (ro, ri) = sweep_with(&def, &ring, lr, 4.0, centred);
+                let (to, ti) = sweep_with(&def, &turn, lt, 4.0, centred);
+                row += &format!(" ring {ro:5.2}/{ri:5.2} turn {to:5.2}/{ti:5.2} |");
+            }
+            let name = f.strip_prefix(std::env::var("OMSI_VEHICLES").unwrap()).unwrap_or(&f).display().to_string();
+            println!("ROW {row} {name}");
+        }
     }
 }

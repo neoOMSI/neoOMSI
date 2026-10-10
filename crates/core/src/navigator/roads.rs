@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn visible_road_lanes(net: &Network) -> Vec<(usize, &::simulation::traffic::Lane)> {
+pub(super) fn visible_road_lanes(net: &Network) -> Vec<(usize, &::traffic::Lane)> {
     let mut seen = hashbrown::HashSet::<(LaneKey, u32)>::new();
     net.lanes
         .iter()
@@ -123,7 +123,7 @@ pub(crate) fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, 
 pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
     let mut roads = Vec::new();
     let mut splines =
-        std::collections::BTreeMap::<((i32, i32), i64), Vec<&::simulation::traffic::Lane>>::new();
+        std::collections::BTreeMap::<((i32, i32), i64), Vec<&::traffic::Lane>>::new();
     for (_, lane) in visible_road_lanes(net) {
         if let Some(key) = lane.key.filter(|_| lane.source == 1) {
             splines.entry((key.tile, key.id)).or_default().push(lane);
@@ -175,7 +175,7 @@ pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
             } else {
                 0.0
             };
-            let point = |l: &::simulation::traffic::Lane, i: usize| {
+            let point = |l: &::traffic::Lane, i: usize| {
                 l.points[if l.reversed {
                     l.points.len() - 1 - i
                 } else {

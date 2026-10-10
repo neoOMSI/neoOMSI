@@ -139,6 +139,35 @@ impl ::simulation::rigid::Ground for DriveGround {
         drive_probe(&self.terrains, &self.surfaces, x, y, top)
     }
 
+    fn road_height(&self, x: f64, y: f64, reference: f64, range: f64) -> Option<f64> {
+        let key = tile_key(x, y);
+        let surface = self.surfaces.read().get(&key).cloned();
+        if let Some(surface) = surface {
+            let lx = (x - key.0 as f64 * tile_size()) as f32;
+            let ly = (y - key.1 as f64 * tile_size()) as f32;
+            let mut top = (reference + range) as f32;
+            let mut nearest: Option<f64> = None;
+            // Enumerate nearby drive faces, not the terrain fallback below the road.
+            // The bound also prevents pathological layered scenery from unbounded work.
+            for _ in 0..16 {
+                let Some(z) = surface.drive.probe(lx, ly, top).below else { break };
+                if z < (reference - range) as f32 { break; }
+                let z64 = z as f64;
+                if nearest.is_none_or(|old| (z64 - reference).abs() < (old - reference).abs()) {
+                    nearest = Some(z64);
+                }
+                top = z - 0.0005;
+                // Once below the reference, every remaining face is farther away.
+                if z64 <= reference { break; }
+            }
+            if nearest.is_some() { return nearest; }
+        }
+        let probe = self.probe(x, y, reference);
+        [probe.below, probe.above].into_iter().flatten()
+            .filter(|z| z.is_finite() && (*z - reference).abs() <= range)
+            .min_by(|a, b| (a - reference).abs().total_cmp(&(b - reference).abs()))
+    }
+
     /// The tiles under the vehicle are looked up once per step, not twice for every one of
     /// the few hundred points its tyres ask for (each a lock of both maps the loader works
     /// on, two lookups and two reference counts).

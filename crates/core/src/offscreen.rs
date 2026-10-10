@@ -57,15 +57,18 @@ pub(crate) fn run_offscreen(
     // (and without traffic it still runs the light programs and switches the lamps)
     let mut traffic = {
         let mut t = traffic::Traffic::new(&args.root, &world, args.traffic)?;
-        t.lights_only = !(args.traffic > 0
+        t.set_lights_only(!(args.traffic > 0
             || args.schedule
             || rail_drive::args_rail(args)
-            || args.lan_join.is_some());
+            || args.lan_join.is_some()));
         if let Some(seed) = lan_seed {
             t.set_lan_seed(seed);
         }
         if args.traffic > 0 {
             t.precache_random(&world, &renderer, &mut scene);
+        }
+        if let Ok(path) = ::legacy_config::env::var("OMSI_CAPTURE") {
+            t.enable_capture(path.into(), 8192);
         }
         Some(t)
     };
@@ -323,15 +326,15 @@ pub(crate) fn run_offscreen(
         }
     }
     if let Some(t) = traffic.as_mut() {
-        t.day_time = parse_time(&args.time);
+        t.set_day_time(parse_time(&args.time));
         let daylight = ::simulation::Daylight::compute(
             &start_clock(args),
             ::content::Envir::load(&args.root.join("envir.cfg"))
                 .ok()
                 .as_ref(),
         );
-        t.night = daylight.brightness < 0.75;
-        t.daylight = Some(daylight);
+        t.set_night(daylight.brightness < 0.75);
+        t.set_daylight(daylight);
         t.populate(&world, &renderer, &mut scene, center);
     }
     // OMSI_GROUND_SAMPLE=<csv>: what the wheels stand on every metre along the street lanes
@@ -344,7 +347,7 @@ pub(crate) fn run_offscreen(
             return Err(anyhow::anyhow!("OMSI_GROUND_SAMPLE: cannot write {path}"));
         };
         let collision = world.collision.lock().clone();
-        for (li, l) in t.net.lanes.iter().enumerate() {
+        for (li, l) in t.net().lanes.iter().enumerate() {
             if l.kind != traffic::LaneKind::Street {
                 continue;
             }
@@ -416,7 +419,7 @@ pub(crate) fn run_offscreen(
             p,
             args,
             &world,
-            traffic.as_ref().map(|t| &t.net),
+            traffic.as_ref().map(|t| t.net()),
             lan::WELCOME_WAIT,
         );
     }
@@ -451,6 +454,12 @@ pub(crate) fn run_offscreen(
             l.clock_speed = *speed;
         }
     }
+    // The traffic AI runs on the same fixed tick in the offscreen path as in the window:
+    // the loop's frame `dt` only feeds an accumulator, so the sequence of decision ticks
+    // depends on elapsed time rather than on the frame partition.
+    let mut sim_accum = 0.0f32;
+    let profile_traffic = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
+    let mut traffic_timings = Vec::<[f64; 4]>::new();
     for i in 0..total_frames {
         let t_s = i as f32 * dt;
         if server {
@@ -639,7 +648,7 @@ pub(crate) fn run_offscreen(
                 // `OMSI_POPULATION_SHOTS=1` (with OMSI_DEBUG_POPULATION): a picture from the
                 // viewer whenever a car was put inside its frustum (behind something), with
                 // where on the picture it stands - to see that it really is hidden
-                let framed = std::mem::take(&mut t.framed_spawns);
+                let framed = t.take_framed_spawns();
                 if !framed.is_empty() && ::legacy_config::env::var_os("OMSI_POPULATION_SHOTS").is_some() {
                     t.sync(&world, &renderer, &mut scene);
                     if let Some(p) = player.as_mut() {
@@ -694,37 +703,100 @@ pub(crate) fn run_offscreen(
                 // frame until they are all out, as the window does)
                 if i % 60 == 0 || s.pending() > 0 {
                     // no timetable vehicle is put into the player's bus or a LAN player's
-                    t.keep_clear = player
+                    let mut keep_clear = player
                         .as_ref()
                         .map(|p| traffic::vehicle_bodies(&p.vehicle))
                         .unwrap_or_default();
-                    t.keep_clear.extend(
+                    keep_clear.extend(
                         remotes_off
                             .remotes
                             .values()
                             .flat_map(|r| traffic::vehicle_bodies(r.vehicle())),
                     );
+                    t.set_keep_clear(keep_clear);
                     s.tick(
                         &world,
                         t,
                         &renderer,
                         &mut scene,
-                        t.day_time,
+                        t.day_time(),
                         if i == 0 { 20.0 * 60.0 } else { 2.5 },
                     );
                 }
             }
-            t.others = lan_outlines(&remotes_off);
-            t.others.extend(own_outlines(player.as_ref(), &[]));
-            t.player_priority = player
-                .as_ref()
-                .and_then(|p| p.vehicle.var("TrafficPriority"))
-                .is_some_and(|v| v > 0.5);
-            t.tick(dt, player.as_ref().map(|p| player_outline(p)));
+            let mut others = lan_outlines(&remotes_off);
+            others.extend(own_outlines(player.as_ref(), &[]));
+            t.set_external_actors(others);
+            t.set_external_emergencies(lan_emergencies(&remotes_off));
+            t.set_player_priority(
+                // General priority alone is insufficient for a scheduled/player bus.
+                player
+                    .as_ref()
+                    .and_then(|p| p.vehicle.var("TrafficPriority"))
+                    .is_some_and(|v| v > 0.5),
+            );
+            t.set_player_emergency(player.as_ref().is_some_and(|p|
+                traffic::emergency_drive(&p.vehicle, p.vehicle.ty.def.ai_veh_type == 2)));
+            let steps = ::traffic::advance_fixed_clock(
+                &mut sim_accum,
+                dt,
+                ::traffic::SIM_DT,
+                ::traffic::MAX_SIM_STEPS,
+            );
+            for _ in 0..steps {
+                let started = profile_traffic.then(std::time::Instant::now);
+                t.tick(
+                    ::traffic::SIM_DT,
+                    player.as_ref().map(|p| player_outline(p)),
+                );
+                if let Some(started) = started {
+                    let [presence, plan, bodies] = t.tick_split();
+                    traffic_timings.push([presence, plan, bodies, started.elapsed().as_secs_f64()]);
+                }
+            }
             world.set_switches(&t.switch_requests());
             world.set_signals(&t.signal_aspects(&world.signal_routes, None));
             if let Some(p) = player.as_mut() {
                 p.vehicle.dynamic_boxes = t.boxes(p.vehicle.position, 80.0);
+            }
+            // `OMSI_HEALTH_EVERY=<s>`: the traffic health every so many seconds of a long run
+            if let Some(every) = ::legacy_config::env::var("OMSI_HEALTH_EVERY")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|v| *v > 0.0)
+            {
+                if (t_s / every).floor() != ((t_s - dt) / every).floor() {
+                    let cars = t.cars();
+                    let n = cars.len().max(1) as f32;
+                    log::info!(
+                        "health t={:.0}: {} vehicles, mean {:.1} km/h, {} standing, {} stood >30 s, {} stood >60 s, {} yielding, {} at red",
+                        t_s,
+                        cars.len(),
+                        cars.iter().map(|c| c.state.speed).sum::<f32>() / n * 3.6,
+                        cars.iter().filter(|c| c.state.speed < 0.1).count(),
+                        cars.iter().filter(|c| c.stopped > 30.0).count(),
+                        cars.iter().filter(|c| c.stopped > 60.0).count(),
+                        cars.iter().filter(|c| c.yielding).count(),
+                        t.held_at_red(),
+                    );
+                    for c in cars.iter().filter(|c| c.stopped > 60.0) {
+                        log::info!(
+                            "  stood {:.0} s: car {} ({}) lane {} at ({:.1}, {:.1}) lead {:?} why {:?} {:.1} yielding {} light_hold {} junction {}",
+                            c.stopped,
+                            c.id,
+                            c.vehicle.ty.def.type_name,
+                            c.state.lane,
+                            c.vehicle.position.x,
+                            c.vehicle.position.y,
+                            c.lead_car,
+                            c.why.0,
+                            c.why.1,
+                            c.yielding,
+                            c.light_hold,
+                            c.junction_why
+                        );
+                    }
+                }
             }
         }
         if let Some(player) = player.as_mut() {
@@ -850,14 +922,14 @@ pub(crate) fn run_offscreen(
                     ::legacy_config::env::var("OMSI_AUTOPILOT")
                         .ok()
                         .and_then(|v| v.parse::<f32>().ok()),
-                    traffic.as_ref().map(|t| &t.net),
+                    traffic.as_ref().map(|t| t.net()),
                 ) {
                     let v = &player.vehicle;
                     let h = v.heading.to_radians();
                     let fwd = DVec3::new(h.sin(), h.cos(), 0.0);
                     let probe = v.position + fwd * 3.0;
                     if let Some((mut lane, mut s, _)) =
-                        net.nearest_lane(probe, ::simulation::traffic::LaneKind::Street)
+                        net.nearest_lane(probe, ::traffic::LaneKind::Street)
                     {
                         // (the lane that runs our way)
                         let lh = net.lanes[lane].at(s).1 as f64;
@@ -865,7 +937,7 @@ pub(crate) fn run_offscreen(
                         if dh.abs() > 100.0 {
                             if let Some((l2, s2, _)) = (0..net.lanes.len())
                                 .filter(|&k| {
-                                    net.lanes[k].kind == ::simulation::traffic::LaneKind::Street
+                                    net.lanes[k].kind == ::traffic::LaneKind::Street
                                 })
                                 .filter_map(|k| {
                                     net.lanes[k].nearest_point(probe).map(|(s, d)| (k, s, d))
@@ -962,7 +1034,7 @@ pub(crate) fn run_offscreen(
                         );
                     }
                 }
-                rail_drive::frame(player, traffic.as_ref().map(|t| &t.net), &world, dt);
+                rail_drive::frame(player, traffic.as_ref().map(|t| t.net()), &world, dt);
                 // (the autopilot's log: where the bus is against the ground under it, twice a
                 // second, and at once when the ground is not under it any more)
                 if ::legacy_config::env::var_os("OMSI_AUTOPILOT").is_some() {
@@ -1219,7 +1291,7 @@ pub(crate) fn run_offscreen(
                     Some(id) => {
                         if let Some(c) = traffic
                             .as_mut()
-                            .and_then(|t| t.cars.iter_mut().find(|c| c.id == id))
+                            .and_then(|t| t.car_mut_by_id(crate::traffic::VehicleId(id)))
                         {
                             c.vehicle.host.fired_sounds.push(::simulation::host::FiredSound::Trigger {
                                 name: "ev_Stamper".into(),
@@ -1232,10 +1304,10 @@ pub(crate) fn run_offscreen(
                 let (alighting, waiting) = h.stop_wishes();
                 t.set_stop_wishes(alighting, waiting);
                 for (id, secs, in_doorway) in h.take_holds() {
-                    t.hold_boarding(id, secs, in_doorway);
+                    t.hold_boarding(crate::traffic::VehicleId(id), secs, in_doorway);
                 }
                 for (id, entry, exit) in h.take_ai_requests() {
-                    t.set_pax_requests(id, &entry, &exit);
+                    t.set_pax_requests(crate::traffic::VehicleId(id), &entry, &exit);
                 }
             }
             if let Some(p) = player.as_mut() {
@@ -1330,11 +1402,11 @@ pub(crate) fn run_offscreen(
         }
         // mid-run snapshots (relative to the first overtake with --follow auto)
         let auto_base = match args.follow.as_deref() {
-            Some("auto") => traffic.as_ref().and_then(|t| t.last_overtaker).map(|o| o.1),
-            Some("turn") => traffic.as_ref().and_then(|t| t.first_turner).map(|o| o.1),
-            Some("red") => traffic.as_ref().and_then(|t| t.first_red).map(|o| o.1),
-            Some("yield") => traffic.as_ref().and_then(|t| t.first_yield).map(|o| o.1),
-            Some("pass") => traffic.as_ref().and_then(|t| t.first_passer).map(|o| o.1),
+            Some("auto") => traffic.as_ref().and_then(|t| t.last_overtaker()).map(|o| o.1),
+            Some("turn") => traffic.as_ref().and_then(|t| t.first_turner()).map(|o| o.1),
+            Some("red") => traffic.as_ref().and_then(|t| t.first_red()).map(|o| o.1),
+            Some("yield") => traffic.as_ref().and_then(|t| t.first_yield()).map(|o| o.1),
+            Some("pass") => traffic.as_ref().and_then(|t| t.first_passer()).map(|o| o.1),
             _ => Some(0.0),
         };
         if let (Some(&ts), Some(base)) = (snapshot_times.first(), auto_base) {
@@ -1399,7 +1471,7 @@ pub(crate) fn run_offscreen(
                         vehicles.push(&p.vehicle);
                     }
                     if let Some(t) = traffic.as_ref() {
-                        vehicles.extend(t.cars.iter().map(|c| &c.vehicle));
+                        vehicles.extend(t.cars().iter().map(|c| &c.vehicle));
                     }
                     vehicles.extend(remotes_off.remotes.values().map(|r| r.vehicle()));
                     lights::set_cone_strength(weather.fog.0, precip_of(&weather).1, daylight.night);
@@ -1477,6 +1549,15 @@ pub(crate) fn run_offscreen(
             }
         }
     }
+    if !traffic_timings.is_empty() {
+        for (column, name) in ["presence", "plan", "bodies/scripts", "total"].into_iter().enumerate() {
+            let mut values: Vec<f64> = traffic_timings.iter().map(|t| t[column] * 1000.0).collect();
+            values.sort_by(f64::total_cmp);
+            let percentile = |p: f64| values[((values.len() - 1) as f64 * p) as usize];
+            log::info!("traffic profile {name}: mean {:.3} ms, p50 {:.3}, p95 {:.3}, p99 {:.3} ({} ticks)",
+                values.iter().sum::<f64>() / values.len() as f64, percentile(0.50), percentile(0.95), percentile(0.99), values.len());
+        }
+    }
     if let Some(id) = follow_id(args, traffic.as_ref()) {
         match follow_camera(traffic.as_ref(), id) {
             Some(c) => {
@@ -1494,16 +1575,16 @@ pub(crate) fn run_offscreen(
     if let Some(t) = traffic.as_mut() {
         t.sync(&world, &renderer, &mut scene);
         let buses = t
-            .cars
+            .cars()
             .iter()
             .filter(|c| c.vehicle.ty.def.passenger_cabin.is_some())
             .count();
         // a car that is stopped where nothing is holding it, or one sitting inside another,
         // is a traffic bug: report both so they can be counted rather than guessed at
-        let stuck = t.cars.iter().filter(|c| c.stopped > 60.0).count();
+        let stuck = t.cars().iter().filter(|c| c.stopped > 60.0).count();
         let mut overlapping = 0;
-        for (i, a) in t.cars.iter().enumerate() {
-            for b in t.cars.iter().skip(i + 1) {
+        for (i, a) in t.cars().iter().enumerate() {
+            for b in t.cars().iter().skip(i + 1) {
                 if (a.vehicle.position - b.vehicle.position).length() < 2.5 {
                     overlapping += 1;
                 }
@@ -1511,7 +1592,7 @@ pub(crate) fn run_offscreen(
         }
         if let Some(p) = player_ref.as_ref() {
             let near = t
-                .cars
+                .cars()
                 .iter()
                 .map(|c| (c.vehicle.position - p.vehicle.position).length())
                 .fold(f64::MAX, f64::min);
@@ -1529,7 +1610,7 @@ pub(crate) fn run_offscreen(
                 "traffic health: {stuck} stuck for over a minute, {overlapping} pairs overlapping"
             );
             if ::legacy_config::env::var_os("OMSI_DEBUG_STUCK").is_some() {
-                for c in t.cars.iter().filter(|c| c.stopped > 30.0) {
+                for c in t.cars().iter().filter(|c| c.stopped > 30.0) {
                     log::info!(
                         "  waiting {:.0} s: car {} ({}) lane {} at ({:.1}, {:.1}) lead {:?} why {:?} {:.1} junction {}",
                         c.stopped,
@@ -1545,14 +1626,14 @@ pub(crate) fn run_offscreen(
                     );
                 }
             }
-            for c in t.cars.iter().filter(|c| c.stopped > 60.0).take(4) {
+            for c in t.cars().iter().filter(|c| c.stopped > 60.0).take(4) {
                 log::info!(
                     "  stuck {:.0} s at ({:.0}, {:.0}) on lane {} of {} ({}): {}",
                     c.stopped,
                     c.vehicle.position.x,
                     c.vehicle.position.y,
                     c.state.lane,
-                    t.net.lanes.len(),
+                    t.net().lanes.len(),
                     c.vehicle.ty.def.type_name,
                     c.holding.as_deref().unwrap_or("-")
                 );
@@ -1560,11 +1641,11 @@ pub(crate) fn run_offscreen(
         }
         log::info!(
             "traffic: {} vehicles ({buses} of them buses), {} waiting at red lights, mean speed {:.1} km/h",
-            t.cars.len(),
-            t.held_at_red,
-            t.cars.iter().map(|c| c.state.speed).sum::<f32>() / t.cars.len().max(1) as f32 * 3.6
+            t.cars().len(),
+            t.held_at_red(),
+            t.cars().iter().map(|c| c.state.speed).sum::<f32>() / t.cars().len().max(1) as f32 * 3.6
         );
-        for c in t.cars.iter().filter(|c| c.is_bus()) {
+        for c in t.cars().iter().filter(|c| c.is_bus()) {
             log::info!(
                 "scheduled {} at ({:.1}, {:.1}, {:.1}) heading {:.0} speed {:.1} km/h, {} stops left, at_station={} dwell={:.1} delay={:+.0} s",
                 c.vehicle.ty.def.type_name,
@@ -1575,8 +1656,8 @@ pub(crate) fn run_offscreen(
                 c.state.speed * 3.6,
                 c.bus.as_ref().map(|b| b.stops.len()).unwrap_or(0),
                 c.at_station(),
-                c.standing_for(t.day_time),
-                c.bus.as_ref().map(|b| b.delay).unwrap_or(0.0)
+                c.standing_for(t.day_time()),
+                c.bus.as_ref().map(|b| b.state.delay).unwrap_or(0.0)
             );
             if ::legacy_config::env::var_os("OMSI_DEBUG_PROPS").is_some() {
                 for v in [
@@ -1603,7 +1684,7 @@ pub(crate) fn run_offscreen(
                 );
             }
             let st = &c.state;
-            let lane = &t.net.lanes[st.lane];
+            let lane = &t.net().lanes[st.lane];
             log::info!(
                 "  lane {} (key {:?} len {:.1}) s={:.1} route_index {} of {} planned_next {:?} next stop {:?} light {:?}",
                 st.lane,
@@ -1614,7 +1695,7 @@ pub(crate) fn run_offscreen(
                 st.route.len(),
                 st.planned_next,
                 c.next_stop(),
-                st.planned_next.and_then(|n| t.net.lanes[n].traffic_light)
+                st.planned_next.and_then(|n| t.net().lanes[n].traffic_light)
             );
         }
     }
@@ -1825,7 +1906,7 @@ pub(crate) fn run_offscreen(
                 };
                 log::info!("tyres over the ground: {}", gaps(&player.vehicle));
                 if let Some(t) = traffic.as_ref() {
-                    for c in t.cars.iter().filter(|c| {
+                    for c in t.cars().iter().filter(|c| {
                         (c.vehicle.position - player.vehicle.position).length() < 1500.0
                     }) {
                         let def = &c.vehicle.ty.def;
@@ -2344,10 +2425,10 @@ pub(crate) fn run_offscreen(
             > = Default::default();
             let mut probes = 0usize;
             for l in t
-                .net
+                .net()
                 .lanes
                 .iter()
-                .filter(|l| l.kind == ::simulation::traffic::LaneKind::Street && !l.invisible)
+                .filter(|l| l.kind == ::traffic::LaneKind::Street && !l.invisible)
             {
                 let len = l.length();
                 let mut s = 0.0f32;
@@ -2384,16 +2465,18 @@ pub(crate) fn run_offscreen(
                 hits.len()
             );
             // `OMSI_LANES_NEAR=x,y,r`: the driving lanes passing there (where to put a test bus)
-            if let Ok(v) = ::legacy_config::env::var("OMSI_LANES_NEAR") {
+            // (several places: `x,y,r;x,y,r`)
+            for v in ::legacy_config::env::var("OMSI_LANES_NEAR").unwrap_or_default().split(';') {
                 let v: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
                 if v.len() == 3 {
+                    log::info!("lanes near ({}, {}):", v[0], v[1]);
                     let c = glam::DVec2::new(v[0], v[1]);
                     for (i, l) in t
-                        .net
+                        .net()
                         .lanes
                         .iter()
                         .enumerate()
-                        .filter(|(_, l)| l.kind == ::simulation::traffic::LaneKind::Street)
+                        .filter(|(_, l)| l.kind == ::traffic::LaneKind::Street)
                     {
                         if let Some(k) = l
                             .points
@@ -2410,6 +2493,27 @@ pub(crate) fn run_offscreen(
                                 l.headings[k],
                                 l.length(),
                                 l.width
+                            );
+                            for c in &t.net().crossings[i] {
+                                log::info!(
+                                    "    crosses lane {} at {:.1} (-{:.1}/+{:.1}){}",
+                                    c.other,
+                                    c.at,
+                                    c.before,
+                                    c.after,
+                                    if c.merge { " merge" } else { "" }
+                                );
+                            }
+                            log::info!(
+                                "    left {:?} right {:?} next {:?} light {:?} source {} key {:?} ring {} priority {}",
+                                l.left,
+                                l.right,
+                                l.next,
+                                l.traffic_light,
+                                l.source,
+                                l.key,
+                                t.net().is_ring(i),
+                                l.priority
                             );
                         }
                     }
@@ -2439,10 +2543,10 @@ pub(crate) fn run_offscreen(
         if let Some(t) = traffic.as_ref() {
             let (mut points, mut walls, mut steps) = (0usize, Vec::new(), Vec::new());
             for l in t
-                .net
+                .net()
                 .lanes
                 .iter()
-                .filter(|l| l.kind == ::simulation::traffic::LaneKind::Street && !l.invisible)
+                .filter(|l| l.kind == ::traffic::LaneKind::Street && !l.invisible)
             {
                 let len = l.length();
                 let mut s = 1.0f32;
@@ -2515,11 +2619,11 @@ pub(crate) fn run_offscreen(
     // What the map says about traffic on its roads
     if ::legacy_config::env::var_os("OMSI_CHECK_ROADS").is_some() {
         if let Some(t) = traffic.as_ref() {
-            let street: Vec<&::simulation::traffic::Lane> = t
-                .net
+            let street: Vec<&::traffic::Lane> = t
+                .net()
                 .lanes
                 .iter()
-                .filter(|l| l.kind == ::simulation::traffic::LaneKind::Street)
+                .filter(|l| l.kind == ::traffic::LaneKind::Street)
                 .collect();
             let no_cars = street.iter().filter(|l| l.no_cars).count();
             let zero = street
@@ -2545,10 +2649,10 @@ pub(crate) fn run_offscreen(
             let mut worst: Vec<(DVec3, f64)> = Vec::new();
             let mut runs: Vec<(DVec3, f32)> = Vec::new();
             for l in t
-                .net
+                .net()
                 .lanes
                 .iter()
-                .filter(|l| l.kind == ::simulation::traffic::LaneKind::Street && !l.invisible)
+                .filter(|l| l.kind == ::traffic::LaneKind::Street && !l.invisible)
             {
                 let len = l.length();
                 let mut s = 0.0f32;
@@ -2601,10 +2705,10 @@ pub(crate) fn run_offscreen(
                 let mut worst_b: Vec<(DVec3, f64)> = Vec::new();
                 let mut slight: Vec<(DVec3, f64)> = Vec::new();
                 for l in t
-                    .net
+                    .net()
                     .lanes
                     .iter()
-                    .filter(|l| l.kind == ::simulation::traffic::LaneKind::Street && !l.invisible)
+                    .filter(|l| l.kind == ::traffic::LaneKind::Street && !l.invisible)
                 {
                     let len = l.length();
                     let mut s = 0.0f32;
@@ -2693,10 +2797,10 @@ pub(crate) fn run_offscreen(
                     scene::drive_probe(&world.terrains, &world.surfaces, p.x, p.y, p.z + 1.5).below
                 };
                 for l in t
-                    .net
+                    .net()
                     .lanes
                     .iter()
-                    .filter(|l| l.kind == ::simulation::traffic::LaneKind::Street && !l.invisible)
+                    .filter(|l| l.kind == ::traffic::LaneKind::Street && !l.invisible)
                 {
                     let len = l.length();
                     let mut ground = surface(l.at(0.0).0);
@@ -2991,7 +3095,7 @@ pub(crate) fn run_offscreen(
             vehicles.push(&p.vehicle);
         }
         if let Some(t) = traffic.as_ref() {
-            vehicles.extend(t.cars.iter().map(|c| &c.vehicle));
+            vehicles.extend(t.cars().iter().map(|c| &c.vehicle));
         }
         vehicles.extend(remotes_off.remotes.values().map(|r| r.vehicle()));
         lights::set_cone_strength(weather.fog.0, precip_of(&weather).1, daylight.night);
@@ -3175,10 +3279,10 @@ pub(crate) fn run_offscreen(
                 .ok()
                 .and_then(|v| v.parse().ok());
             for l in t
-                .net
+                .net()
                 .lanes
                 .iter()
-                .filter(|l| l.kind == ::simulation::traffic::LaneKind::Street && !l.invisible)
+                .filter(|l| l.kind == ::traffic::LaneKind::Street && !l.invisible)
             {
                 let len = l.length();
                 let mut s = 3.0f32;

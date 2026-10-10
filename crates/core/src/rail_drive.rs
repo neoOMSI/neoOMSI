@@ -11,7 +11,7 @@
 use crate::player::Player;
 use crate::scene::World;
 use glam::DVec3;
-use ::simulation::traffic::{LaneKind, Network};
+use ::traffic::{LaneKind, Network};
 
 /// Where on the track the vehicle is.
 #[derive(Debug, Clone)]

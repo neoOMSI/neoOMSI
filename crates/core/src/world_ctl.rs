@@ -15,7 +15,7 @@ impl App {
             q.vehicle.host.clock.sync_game_time_from(&clock);
         }
         if let Some(t) = self.traffic.as_mut() {
-            for car in &mut t.cars {
+            for car in t.cars_mut() {
                 car.vehicle.host.clock.sync_game_time_from(&clock);
             }
         }
@@ -105,13 +105,16 @@ impl App {
                 self.clock.day_of_year = day_of_year;
                 self.clock.time = time;
                 if let Some(t) = self.traffic.as_mut() {
-                    t.day_time = time;
+                    t.set_day_time(time);
                 }
+                // a time jump is an explicit reset: do not let the fixed clock catch up
+                // the whole jump as one enormous motion update
+                self.sim_accum = 0.0;
             }
             lan::WorldUpdate::Slew(s) => {
                 self.clock.time = (self.clock.time + s).clamp(0.0, 86399.999);
                 if let Some(t) = self.traffic.as_mut() {
-                    t.day_time += s;
+                    t.advance_day_time(s);
                 }
             }
             lan::WorldUpdate::Weather(w) => {
@@ -829,8 +832,9 @@ impl App {
                 self.clock.day_of_year = real.day_of_year;
                 self.clock.time = real.time;
                 if let Some(tr) = self.traffic.as_mut() {
-                    tr.day_time += gap;
+                    tr.advance_day_time(gap);
                 }
+                self.sim_accum = 0.0;
             }
         }
         self.sync_vehicle_game_times();
@@ -860,11 +864,12 @@ impl App {
         }
         self.clock.time = t;
         if let Some(tr) = self.traffic.as_mut() {
-            tr.day_time += secs;
+            tr.advance_day_time(secs);
         }
+        self.sim_accum = 0.0;
         let mirrored = self.traffic.as_ref().is_some_and(|tr| tr.is_mirror());
         if !mirrored {
-            let day_time = self.traffic.as_ref().map(|tr| tr.day_time);
+            let day_time = self.traffic.as_ref().map(|tr| tr.day_time());
             if let (Some(w), Some(tr), Some(r), Some(scene)) = (
                 self.world.as_ref(),
                 self.traffic.as_mut(),
@@ -950,11 +955,11 @@ impl App {
         // flown there (#235). (the height of the point does not matter: the nearest by the
         // ground plan)
         let nets = [
-            self.traffic.as_ref().map(|t| &t.net),
+            self.traffic.as_ref().map(|t| t.net()),
             self.navigator.as_ref().and_then(|n| n.map_net()),
         ];
         let Some((net, (lane, s, _))) = nets.into_iter().flatten().find_map(|net| {
-            net.nearest_lane(p, ::simulation::traffic::LaneKind::Street)
+            net.nearest_lane(p, ::traffic::LaneKind::Street)
                 .filter(|(_, _, d)| *d <= 300.0)
                 .map(|f| (net, f))
         }) else {

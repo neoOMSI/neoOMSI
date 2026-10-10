@@ -48,6 +48,7 @@ mod sound_events;
 mod threads;
 mod tiles;
 mod traffic;
+mod traffic_runtime;
 mod ui;
 mod window_drops;
 mod window_wipers;
@@ -531,6 +532,7 @@ pub(crate) fn make_app(
         shot: None,
         screenshot_mode: None,
         paused: false,
+        sim_accum: 0.0,
         game_menu: None,
         lab_menu: None,
         lab_map_direct: false,

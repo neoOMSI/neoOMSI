@@ -664,7 +664,7 @@ fn consecutive_alighters_queue_at_the_door_and_disperse_around_existing_pedestri
             lanes: edges
                 .into_iter()
                 .map(|(a, b)| {
-                    ::simulation::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
+                    ::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
                 })
                 .collect(),
             ..Default::default()
@@ -860,7 +860,7 @@ fn post_alight_walks_do_not_reverse_forever_in_dead_ends_cycles_or_junctions() {
             lanes: edges
                 .into_iter()
                 .map(|(a, b)| {
-                    ::simulation::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
+                    ::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
                 })
                 .collect(),
             ..Default::default()
@@ -1768,7 +1768,7 @@ fn complete_journey(fare: TicketAction) {
         ..Default::default()
     }));
     let net = Network {
-        lanes: vec![::simulation::traffic::LaneBuilder::polyline(
+        lanes: vec![::traffic::LaneBuilder::polyline(
             vec![DVec3::ZERO, DVec3::Y * 50.0],
             LaneKind::Sidewalk,
             2.0,
@@ -3014,12 +3014,12 @@ fn installed_maps_provide_passenger_runtime_stops() {
 fn debarking_passengers_disperse_along_sidewalk_network() {
     let f = Fixture::new();
     let mut h = Humans::new(&f.root);
-    let lane = ::simulation::traffic::LaneBuilder::polyline(
+    let lane = ::traffic::LaneBuilder::polyline(
         vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 50.0, 0.0)],
-        ::simulation::traffic::LaneKind::Sidewalk,
+        ::traffic::LaneKind::Sidewalk,
         2.0,
     );
-    let net = ::simulation::traffic::Network {
+    let net = ::traffic::Network {
         lanes: vec![lane],
         ..Default::default()
     };

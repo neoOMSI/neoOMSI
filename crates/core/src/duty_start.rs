@@ -70,7 +70,7 @@ pub(crate) fn place_on_duty(args: &mut Args) {
     };
     let map = world.navigation_map();
     duty.learn_places(&map.places);
-    let mut net = ::simulation::traffic::Network {
+    let mut net = ::traffic::Network {
         lanes: map.lanes,
         ..Default::default()
     };

@@ -118,9 +118,9 @@ impl Schedule {
     /// The timetable bus on the road that runs departure `k` (not one that has been let go).
     pub(super) fn tour_bus(&self, k: usize, traffic: &Traffic) -> Option<usize> {
         traffic
-            .cars
+            .cars()
             .iter()
-            .position(|c| c.is_bus() && !c.gone && self.car_departure.get(&c.id) == Some(&k))
+            .position(|c| c.is_bus() && !c.gone && self.car_departure.get(&c.id.get()) == Some(&k))
     }
 
     /// The timetable buses at the end of their trip: each takes its tour's next trip on
@@ -133,17 +133,20 @@ impl Schedule {
         scene: &mut Scene,
         day_time: f64,
     ) {
-        let done: Vec<u64> = traffic
-            .cars
+        let done: Vec<::traffic::VehicleId> = traffic
+            .cars()
             .iter()
             .filter(|c| c.trip_done())
             .map(|c| c.id)
             .collect();
         for id in done {
-            let Some(ci) = traffic.cars.iter().position(|c| c.id == id) else {
+            let Some(ci) = traffic.cars().iter().position(|c| c.id == id) else {
                 continue;
             };
-            let next = self.car_departure.get(&id).and_then(|&k| self.tour_next[k]);
+            let next = self
+                .car_departure
+                .get(&id.get())
+                .and_then(|&k| self.tour_next[k]);
             let mut taken = false;
             if let Some(j) = next {
                 let d = &self.departures[j];
@@ -173,7 +176,7 @@ impl Schedule {
                 // the tour's last trip is over: Omsi takes the bus (and what is coupled to
                 // it) off the road at once rather than letting it drive on
                 traffic.remove_car(world, renderer, scene, id);
-                self.car_departure.remove(&id);
+                self.car_departure.remove(&id.get());
                 if ::legacy_config::env::var_os("OMSI_DEBUG_TRAFFIC").is_some() {
                     log::info!("scheduled bus {id}: the last trip of its tour is over: removed");
                 }
@@ -282,7 +285,7 @@ impl Schedule {
     /// tracks run over invisible one-way helper streets backwards, and the bus drove them
     /// forwards, against its route, and jumped back at their end.
     pub(super) fn add_twins(traffic: &mut Traffic, steps: &[Step]) {
-        let net = &traffic.net;
+        let net = traffic.net();
         let cands: Vec<Option<&Vec<usize>>> = steps
             .iter()
             .map(|st| {
@@ -331,7 +334,7 @@ impl Schedule {
     /// a connector lane across the gap (`Traffic::add_connector`), so that `bridge_gaps`
     /// finds a way to drive.
     pub(super) fn add_connectors(traffic: &mut Traffic, lanes: &[usize]) {
-        let net = &traffic.net;
+        let net = traffic.net();
         let holes: Vec<(usize, usize)> = lanes
             .windows(2)
             .filter(|w| !joins(net, w[0], w[1]))

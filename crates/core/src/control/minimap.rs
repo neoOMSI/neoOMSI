@@ -77,7 +77,7 @@ fn line(points: &[DVec3]) -> Vec<Point> {
 fn trip_routes(
     root: &std::path::Path,
     world: &World,
-    net: &::simulation::traffic::Network,
+    net: &::traffic::Network,
     date: &str,
 ) -> (Vec<MinimapLane>, HashMap<String, MinimapTrip>, Vec<usize>, HashSet<String>) {
     let mut clock = ::simulation::SimClock::default();
@@ -95,7 +95,7 @@ fn trip_routes(
         if route.is_empty() {
             continue;
         }
-        if route.iter().all(|&l| net.lanes[l].kind == ::simulation::traffic::LaneKind::Rail) {
+        if route.iter().all(|&l| net.lanes[l].kind == ::traffic::LaneKind::Rail) {
             trains.insert(trip.name.clone());
         }
         let ids = route
@@ -125,7 +125,7 @@ fn build(map: &str, date: &str) -> Result<Minimap> {
     world.index();
 
     let nav = world.navigation_map();
-    let mut net = ::simulation::traffic::Network {
+    let mut net = ::traffic::Network {
         lanes: nav.lanes,
         ..Default::default()
     };

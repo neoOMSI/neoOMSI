@@ -21,7 +21,7 @@ use ::render::{
     AlphaMode, MaterialExtra, MaterialId, MeshId, RenderPhase, Renderer, Scene, TextureId,
 };
 use ::scenery::{SceneryObject, Spline};
-use ::simulation::traffic::{Lane, LaneBuilder, LaneKey, LaneKind, TrafficLightController};
+use ::traffic::{BlockRule, Lane, LaneBuilder, LaneKey, LaneKind, TrafficLightController};
 use ::texture::{Image, TextureCache, TextureData};
 use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
@@ -154,7 +154,7 @@ pub struct World {
     texture_limit: std::sync::atomic::AtomicU64,
     budget_checked: Mutex<Option<std::time::Instant>>,
     /// Traffic-path lanes collected while building tiles.
-    pub lanes: Mutex<Vec<::simulation::traffic::Lane>>,
+    pub lanes: Mutex<Vec<::traffic::Lane>>,
     /// The tiles whose lanes and parked cars have been put into `lanes` and `parked_cars`.
     /// These two and `lanes` are only filled, and should only be taken, while the `lanes`
     /// lock is held: whoever takes them then has every parked car together with the lanes

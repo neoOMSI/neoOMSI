@@ -16,9 +16,9 @@ pub(super) fn build_streets(net: &Network, signs: &[(DVec3, f64, String)]) -> St
             }
         }
     }
-    let straight = |l: &::simulation::traffic::Lane| {
+    let straight = |l: &::traffic::Lane| {
         l.kind == LaneKind::Street
-            && ::simulation::traffic::wrap_deg(l.end_heading() - l.start_heading()).abs() < 30.0
+            && ::traffic::wrap_deg(l.end_heading() - l.start_heading()).abs() < 30.0
     };
     let debug = ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some();
     let mut hist = [0u32; 12];
@@ -115,7 +115,7 @@ pub(super) fn build_streets(net: &Network, signs: &[(DVec3, f64, String)]) -> St
                 let m = &net.lanes[j];
                 if of_lane[j] == u32::MAX
                     && straight(m)
-                    && ::simulation::traffic::wrap_deg(m.start_heading() - l.end_heading()).abs() < 20.0
+                    && ::traffic::wrap_deg(m.start_heading() - l.end_heading()).abs() < 20.0
                 {
                     queue.push((j, far + m.length()));
                 }
@@ -124,7 +124,7 @@ pub(super) fn build_streets(net: &Network, signs: &[(DVec3, f64, String)]) -> St
                 let m = &net.lanes[j];
                 if of_lane[j] == u32::MAX
                     && straight(m)
-                    && ::simulation::traffic::wrap_deg(l.start_heading() - m.end_heading()).abs() < 20.0
+                    && ::traffic::wrap_deg(l.start_heading() - m.end_heading()).abs() < 20.0
                 {
                     queue.push((j, far + m.length()));
                 }

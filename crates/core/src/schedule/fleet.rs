@@ -86,14 +86,14 @@ impl Schedule {
         world: &World,
         traffic: &Traffic,
         trip_name: &str,
-    ) -> (Vec<usize>, bool) {
+    ) -> (Vec<usize>, RouteStatus) {
         let Some(trip) = self
             .data
             .trips
             .iter()
             .find(|x| x.name.eq_ignore_ascii_case(trip_name))
         else {
-            return (Vec::new(), true);
+            return (Vec::new(), RouteStatus::Invalid);
         };
         let slots = self.slots(
             world,
@@ -101,20 +101,26 @@ impl Schedule {
             &self.steps_of(trip_name, &trip_stations(trip)).0,
             None,
         );
-        let complete = !slots.contains(&Slot::Waiting);
+        let status = if slots.contains(&Slot::Waiting) {
+            RouteStatus::PendingTiles
+        } else if slots.iter().any(|s| matches!(s, Slot::Lane(_))) {
+            RouteStatus::Complete
+        } else {
+            RouteStatus::Invalid
+        };
         (
             slots
                 .into_iter()
                 .filter_map(|s| if let Slot::Lane(l) = s { Some(l) } else { None })
                 .collect(),
-            complete,
+            status,
         )
     }
 
     /// The lanes a trip runs on in `net` - the navigator's network of the whole map, which
     /// has every tile's lanes whether loaded or not - chosen as `slots` chooses them (of a
     /// two-way path the direction that joins the lanes before and after).
-    pub fn trip_route_in(&self, net: &::simulation::traffic::Network, trip_name: &str) -> Vec<usize> {
+    pub fn trip_route_in(&self, net: &::traffic::Network, trip_name: &str) -> Vec<usize> {
         let Some(trip) = self
             .data
             .trips
@@ -124,47 +130,13 @@ impl Schedule {
             return Vec::new();
         };
         let (steps, _) = self.steps_of(trip_name, &trip_stations(trip));
-        let cands: Vec<Option<&Vec<usize>>> = steps
-            .iter()
-            .map(|st| {
-                st.key
-                    .and_then(|k| net.by_key.get(&k))
-                    .filter(|c| !c.is_empty())
-            })
-            .collect();
-        let mut out: Vec<Slot> = Vec::with_capacity(steps.len());
-        let mut last: Option<usize> = None;
-        for (i, c) in cands.iter().enumerate() {
-            let Some(c) = c else {
-                out.push(Slot::Absent);
-                continue;
-            };
-            let next = cands[i + 1..].iter().find_map(|x| *x);
-            let score = |l: usize| -> f64 {
-                let mut s = 0.0;
-                if let Some(prev) = last {
-                    s += (net.lanes[l].start() - net.lanes[prev].end()).length();
-                }
-                if let Some(next) = next {
-                    let end = net.lanes[l].end();
-                    s += next
-                        .iter()
-                        .map(|&n| (net.lanes[n].start() - end).length())
-                        .fold(f64::MAX, f64::min);
-                }
-                s
-            };
-            let best = c
-                .iter()
-                .copied()
-                .min_by(|a, b| score(*a).total_cmp(&score(*b)))
-                .unwrap();
-            out.push(Slot::Lane(best));
-            last = Some(best);
-        }
-        skip_detours(net, &mut out);
-        out.into_iter()
-            .filter_map(|s| if let Slot::Lane(l) = s { Some(l) } else { None })
+        let keys: Vec<Option<LaneKey>> = steps.iter().map(|st| st.key).collect();
+        // The navigator's whole-map network has every tile's lanes whether loaded or not:
+        // a key with no lane is missing here, never merely pending.
+        compile_route(net, &keys, |_| TileState::Unknown, None)
+            .lanes()
+            .into_iter()
+            .map(|l| l.index())
             .collect()
     }
 
@@ -190,7 +162,7 @@ impl Schedule {
             Self::add_connectors(traffic, &lanes);
         }
         let traffic = &*traffic;
-        let net = &traffic.net;
+        let net = traffic.net();
         let (mut trips, mut joints, mut linked, mut changes, mut gaps, mut wrong, mut partial) =
             (0, 0, 0, 0, 0, 0, 0);
         let mut bad_length = 0;
@@ -210,7 +182,7 @@ impl Schedule {
                         steps
                             .get(k)
                             .and_then(|s| s.key)
-                            .map(|key| traffic.lane_tiles.contains(&key.tile))
+                            .map(|key| traffic.has_lane_tile(key.tile))
                             .unwrap_or(false),
                         steps
                             .get(k)

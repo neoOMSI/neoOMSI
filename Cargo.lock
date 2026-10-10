@@ -731,6 +731,7 @@ dependencies = [
  "simulation",
  "texture",
  "timetable",
+ "traffic",
  "ureq",
  "user-interface",
  "wgpu",
@@ -3969,6 +3970,7 @@ dependencies = [
  "parking_lot",
  "scenery",
  "texture",
+ "traffic",
 ]
 
 [[package]]
@@ -4456,6 +4458,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "traffic"
+version = "0.2.0"
+dependencies = [
+ "glam",
+ "hashbrown 0.17.1",
+ "log",
 ]
 
 [[package]]

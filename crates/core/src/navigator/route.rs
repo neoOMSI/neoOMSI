@@ -4,8 +4,8 @@ pub(super) fn lane_from_right(net: &Network, lane: usize, bus: DVec3) -> usize {
     let Some(mut cur) = net.lanes.get(lane).map(|_| lane) else {
         return 0;
     };
-    let kerb = |l: &::simulation::traffic::Lane| if net.left_hand { l.left } else { l.right };
-    let away = |l: &::simulation::traffic::Lane| if net.left_hand { l.right } else { l.left };
+    let kerb = |l: &::traffic::Lane| if net.left_hand { l.left } else { l.right };
+    let away = |l: &::traffic::Lane| if net.left_hand { l.right } else { l.left };
     for _ in 0..6 {
         match kerb(&net.lanes[cur]) {
             Some(n) if n < net.lanes.len() && net.lanes[n].kind == LaneKind::Street => cur = n,
@@ -50,7 +50,7 @@ pub(super) fn build_route(
         let mut acc = 0.0f32;
         for &j in lanes.iter().skip(k + 1).take(40) {
             let Some(l) = net.lanes.get(j) else { break };
-            let d = ::simulation::traffic::wrap_deg(l.end_heading() - l.start_heading());
+            let d = ::traffic::wrap_deg(l.end_heading() - l.start_heading());
             if d.abs() > 35.0 && l.length() < 60.0 {
                 return if d > 0.0 { 1 } else { -1 };
             }

@@ -122,7 +122,7 @@ impl App {
                 c.position.x, c.position.y, c.position.z
             )
         });
-        let traffic = self.traffic.as_ref().map(|t| t.cars.len()).unwrap_or(0);
+        let traffic = self.traffic.as_ref().map(|t| t.car_count()).unwrap_or(0);
         let time = self.clock.time;
         let gpu = match (self.renderer.as_ref(), self.scene.as_ref()) {
             (Some(r), Some(sc)) => format!(

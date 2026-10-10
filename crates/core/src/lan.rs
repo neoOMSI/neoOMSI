@@ -3,7 +3,7 @@ use crate::{Args, Player};
 use ::legacy_script::VarId;
 use ::network::{Footprint, LanEvent, LanSession, PartPose, Pose, Role};
 use ::render::{Renderer, Scene};
-use ::simulation::traffic::{Lane, LaneKind, Network};
+use ::traffic::{Lane, LaneKind, Network};
 use glam::{DVec3, Mat4, Vec3};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -1699,6 +1699,10 @@ pub fn my_pose(
             on("wiperrunning") || on("wiper_running"),
         ),
         (::network::FLAG_STOP_BRAKE, on("bremse_halte")),
+        (
+            ::network::FLAG_EMERGENCY,
+            crate::traffic::emergency_drive(v, v.ty.def.ai_veh_type == 2),
+        ),
     ] {
         if set {
             flags |= bit;
@@ -1907,7 +1911,7 @@ fn host_footprints(
         out.push(footprint_of(&p.vehicle, BUS_BOX));
     }
     if let Some(t) = traffic {
-        out.extend(t.cars.iter().map(|c| footprint_of(&c.vehicle, CAR_BOX)));
+        out.extend(t.cars().iter().map(|c| footprint_of(&c.vehicle, CAR_BOX)));
     }
     out
 }
@@ -3016,7 +3020,7 @@ pub fn tick(
         if let (Some(near), Some(p), Some(world)) = (lan.near.clone(), player.as_deref_mut(), world)
         {
             if p.vehicle.physics.velocity_kmh().abs() < 1.0 {
-                clear_spawn(p, &near, world, traffic.map(|t| &t.net));
+                clear_spawn(p, &near, world, traffic.map(|t| t.net()));
             } else {
                 log::info!(
                     "LAN: the host's list came after we drove off; our bus stays where it is"

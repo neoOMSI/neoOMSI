@@ -13,7 +13,7 @@
 //! bytes 2-3  player id (little endian)
 //! bytes 4-5  sequence number (little endian, wraps)
 //! then, least significant bit first:
-//!   flags 10                        FLAG_*; without FLAG_VEHICLE nothing follows (a heartbeat)
+//!   flags 11                        FLAG_*; without FLAG_VEHICLE nothing follows (a heartbeat)
 //!   x, y 32 each                    centimetres (±21 000 km: Spandau's world coordinates fit)
 //!   z 24                            centimetres (±83 km)
 //!   heading 16                      360/65536 degrees
@@ -55,7 +55,10 @@ pub const FLAG_KNEELING: u32 = 128;
 pub const FLAG_WIPERS: u32 = 256;
 /// The bus stands at a stop with its stop brake (door release) set.
 pub const FLAG_STOP_BRAKE: u32 = 512;
-const FLAG_BITS: u32 = 10;
+/// An emergency vehicle on an emergency drive (warning lights / siren): AI traffic of the
+/// host makes way for it.
+pub const FLAG_EMERGENCY: u32 = 1024;
+const FLAG_BITS: u32 = 11;
 
 pub const MAX_DOORS: usize = 7;
 pub const MAX_WHEELS: usize = 15;
@@ -580,7 +583,7 @@ mod tests {
     fn bus() -> Pose {
         Pose {
             id: 3,
-            flags: FLAG_VEHICLE | FLAG_ENGINE | FLAG_ELECTRICS | FLAG_HORN,
+            flags: FLAG_VEHICLE | FLAG_ENGINE | FLAG_ELECTRICS | FLAG_HORN | FLAG_EMERGENCY,
             x: 892_248.37,
             y: 4_196_461.12,
             z: 33.21,

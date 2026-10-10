@@ -39,7 +39,7 @@ impl Navigator {
         }
         let s = (h / 760.0).clamp(0.95, 2.0) * f.ui_scale;
         let global = self.global.clone();
-        let net = global.as_deref().or(f.traffic.map(|t| &t.net));
+        let net = global.as_deref().or(f.traffic.map(|t| t.net()));
         let mut roads_verts = None;
         if let Some(n) = net {
             let version = self.global_version * 1_000_000 + n.lanes.len() as u64;
@@ -177,7 +177,7 @@ impl Navigator {
         let n_bg = bg.len();
         let mut dots = Painter::new();
         if let Some(t) = f.traffic.filter(|_| self.show_ai) {
-            for car in t.cars.iter().filter(|c| !c.gone) {
+            for car in t.cars().iter().filter(|c| !c.gone) {
                 dots.world_disc(
                     rel(car.vehicle.position),
                     2.2,

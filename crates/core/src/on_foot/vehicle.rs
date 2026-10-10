@@ -617,7 +617,7 @@ impl App {
             add(&q.vehicle);
         }
         if let Some(t) = self.traffic.as_ref() {
-            for c in &t.cars {
+            for c in t.cars() {
                 if c.render.hidden || c.gone {
                     continue;
                 }

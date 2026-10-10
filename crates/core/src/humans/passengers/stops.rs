@@ -4,7 +4,7 @@ use crate::scene::World;
 use glam::{DVec2, DVec3};
 use hashbrown::{HashMap, HashSet};
 use ::render::{Renderer, Scene};
-use ::simulation::traffic::Network;
+use ::traffic::Network;
 
 /// A waiting place of a stop (a `[passpos]` of an object near it, sub_620c0c).
 #[derive(Debug, Clone)]

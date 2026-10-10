@@ -112,11 +112,7 @@ impl crate::App {
                 tours.truncate(3000);
             }
         }
-        let quicksave = crate::startup::content_dir()
-            .unwrap_or_else(|| self.args.root.clone())
-            .join("Situations")
-            .join("quicksave.osn")
-            .exists();
+        let quicksave = quicksave_exists(&self.args.root);
         let mut beams: Vec<BeamMark> = Vec::new();
         let ls = crate::lights::settings();
         if ls.beam_marker || ls.spill.marker || ls.spot2.marker {
@@ -194,46 +190,49 @@ impl crate::App {
                 beams.truncate(32);
             }
         }
-        let vehicle = self.player.as_ref().map(|p| VehicleInfo {
-            actions: p.bound_actions(),
-            controls: p.control_list(),
-            interior: p
-                .vehicle
-                .ty
-                .model
-                .interior_lights
-                .iter()
-                .map(|l| InteriorInfo {
-                    variable: l.variable.clone(),
-                    pos: l.pos,
-                    color: l.color,
-                    range: l.range,
-                })
-                .collect(),
-            exterior: p
-                .vehicle
-                .ty
-                .model
-                .meshes
-                .iter()
-                .flat_map(|m| {
-                    let a = m.light_enh.iter().map(|l| InteriorInfo {
+        let vehicle = self.player.as_ref().map(|p| {
+            let (walk_points, walk_links) = walk_paths(&p.vehicle.ty.def);
+            VehicleInfo {
+                actions: p.bound_actions(),
+                controls: p.control_list(),
+                interior: p
+                    .vehicle
+                    .ty
+                    .model
+                    .interior_lights
+                    .iter()
+                    .map(|l| InteriorInfo {
                         variable: l.variable.clone(),
                         pos: l.pos,
                         color: l.color,
-                        range: l.size,
-                    });
-                    let b = m.light_enh_2.iter().map(|l| InteriorInfo {
-                        variable: l.variable.clone(),
-                        pos: l.pos,
-                        color: l.color,
-                        range: l.size,
-                    });
-                    a.chain(b)
-                })
-                .collect(),
-            walk_points: walk_paths(&p.vehicle.ty.def).0,
-            walk_links: walk_paths(&p.vehicle.ty.def).1,
+                        range: l.range,
+                    })
+                    .collect(),
+                exterior: p
+                    .vehicle
+                    .ty
+                    .model
+                    .meshes
+                    .iter()
+                    .flat_map(|m| {
+                        let a = m.light_enh.iter().map(|l| InteriorInfo {
+                            variable: l.variable.clone(),
+                            pos: l.pos,
+                            color: l.color,
+                            range: l.size,
+                        });
+                        let b = m.light_enh_2.iter().map(|l| InteriorInfo {
+                            variable: l.variable.clone(),
+                            pos: l.pos,
+                            color: l.color,
+                            range: l.size,
+                        });
+                        a.chain(b)
+                    })
+                    .collect(),
+                walk_points,
+                walk_links,
+            }
         });
         let pose = self.player.as_ref().map(|p| {
             let v = &p.vehicle;
@@ -260,8 +259,12 @@ impl crate::App {
             profile: self.profile.iter().map(|(k, v)| (*k, *v)).collect(),
             frames: self.total_frames,
             traffic: self.traffic.as_ref().map(|t| TrafficPerf {
-                cars: t.cars.len(),
-                dormant: t.dormant.len(),
+                cars: t.car_count(),
+                dormant: t.dormant_count(),
+            }),
+            traffic_debug: self.devtools.as_ref().and_then(|d| d.traffic_request()).and_then(|(radius, selected)| {
+                let at = self.camera.as_ref()?.position;
+                self.traffic.as_ref().map(|t| t.debug_frame(at, radius, selected))
             }),
             weather: self.dev_weather_info(),
         }
@@ -431,6 +434,20 @@ impl crate::App {
                     }
                 }
                 Action::CopyCode => self.copy_server_code(),
+                Action::CopyTrafficReport(report) => {
+                    log::info!("{report}");
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        std::thread_local! { static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> = const { std::cell::RefCell::new(None) }; }
+                        CLIPBOARD.with(|cell| {
+                            let mut cb = cell.borrow_mut();
+                            if cb.is_none() { *cb = arboard::Clipboard::new().ok(); }
+                            if let Some(cb) = cb.as_mut() {
+                                if let Err(e) = cb.set_text(report) { log::warn!("Traffic report clipboard: {e}"); }
+                            }
+                        });
+                    }
+                }
                 Action::Vehicle(name) => {
                     if let Some(p) = self.player.as_mut() {
                         p.action(&name, true);
@@ -514,6 +531,25 @@ impl crate::App {
         }
         if let Some(d) = self.devtools.as_mut() {
             d.release.extend(pressed);
+        }
+    }
+}
+
+/// Whether there is a quick save to load, asked of the disk once a second: asked every
+/// frame, it took the better part of a millisecond of each.
+fn quicksave_exists(root: &std::path::Path) -> bool {
+    static LAST: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    match *last {
+        Some((at, exists)) if at.elapsed().as_secs_f32() < 1.0 => exists,
+        _ => {
+            let exists = crate::startup::content_dir()
+                .unwrap_or_else(|| root.to_path_buf())
+                .join("Situations")
+                .join("quicksave.osn")
+                .exists();
+            *last = Some((std::time::Instant::now(), exists));
+            exists
         }
     }
 }

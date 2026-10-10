@@ -21,7 +21,7 @@ pub(super) fn congestion_on(net: &Network, traffic: &Network, c: &HashMap<usize,
 impl Navigator {
     pub(super) fn follow(&mut self, f: &NavFrame) {
         let global = self.global.clone();
-        let Some(net) = global.as_deref().or(f.traffic.map(|t| &t.net)) else {
+        let Some(net) = global.as_deref().or(f.traffic.map(|t| t.net())) else {
             return;
         };
         let r = &mut self.route;
@@ -225,7 +225,7 @@ impl Navigator {
         self.congestion_t = step;
         let Some(t) = f.traffic else { return };
         let mut by_lane: HashMap<usize, (f32, u32)> = HashMap::new();
-        for c in &t.cars {
+        for c in t.cars() {
             if c.gone || (c.vehicle.position - f.bus).truncate().length() > 1200.0 {
                 continue;
             }
@@ -238,7 +238,7 @@ impl Navigator {
             *v -= *v * k;
         }
         for (lane, (sum, n)) in by_lane {
-            let Some(l) = t.net.lanes.get(lane) else {
+            let Some(l) = t.net().lanes.get(lane) else {
                 continue;
             };
             let expected = (l.speed_limit_kmh.clamp(20.0, 70.0) / 3.6) * 0.75;
@@ -257,10 +257,10 @@ impl Navigator {
         self.congestion.retain(|_, v| *v > 0.03);
         let global = self.global.clone();
         let jam = match global.as_deref() {
-            Some(g) => congestion_on(g, &t.net, &self.congestion),
+            Some(g) => congestion_on(g, t.net(), &self.congestion),
             None => self.congestion.clone(),
         };
-        let net = global.as_deref().unwrap_or(&t.net);
+        let net = global.as_deref().unwrap_or(t.net());
         let r = &self.route;
         let mut route_jam = HashMap::new();
         let mut cost = 0.0;
@@ -303,9 +303,9 @@ impl Navigator {
                 break;
             }
             let (h0, h1) = (lane.start_heading(), lane.end_heading());
-            let mut d = ::simulation::traffic::wrap_deg(h1 - h0);
+            let mut d = ::traffic::wrap_deg(h1 - h0);
             if let Some(pe) = prev_end {
-                d += ::simulation::traffic::wrap_deg(h0 - pe);
+                d += ::traffic::wrap_deg(h0 - pe);
             }
             if d.abs() > 35.0 && (len < 60.0 || d.abs() > 70.0) && acc + len as f64 > 0.0 {
                 let dir = if d.abs() > 150.0 {

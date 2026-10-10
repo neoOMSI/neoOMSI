@@ -1,7 +1,7 @@
 use glam::{DMat3, DVec2, DVec3, Mat4, Vec2, Vec3};
 use hashbrown::HashMap;
 use ::render::{Renderer, Scene, TextureId};
-use ::simulation::traffic::{LaneKey, LaneKind, Network};
+use ::traffic::{LaneKey, LaneKind, Network};
 use ::user_interface::paint::Align;
 use ::user_interface::{Atlas, Color, Draw, Fonts, Gpu, Layer, Painter, Rect, Weight};
 
