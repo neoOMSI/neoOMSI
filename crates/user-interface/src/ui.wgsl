@@ -70,7 +70,10 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     // (sampled for every fragment: a sample in a branch has no derivatives)
     let t = textureSample(t_img, s_img, i.uv);
     var c = i.color;
-    if (i.tex > 0.5) {
+    if (i.tex > 1.5) {
+        // a render target holding premultiplied colour: straight first
+        c = vec4<f32>(c.rgb * t.rgb / max(t.a, 1e-4), c.a * t.a);
+    } else if (i.tex > 0.5) {
         c = vec4<f32>(c.rgb * t.rgb, c.a * t.a);
     } else if (i.uv.y > 0.5) {
         // a route ribbon: uv.x is how far along the route

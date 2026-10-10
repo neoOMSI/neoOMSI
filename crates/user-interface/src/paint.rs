@@ -370,6 +370,28 @@ impl Painter {
         self.circle(b, w * 0.5, c);
     }
 
+    /// A rounded box `r` showing a texture laid over `frame` (its corners at uv 0 and 1),
+    /// tinted `c`. `premultiplied`: the texture is a render target drawn with premultiplied
+    /// alpha (the draw's texture is not the atlas).
+    pub fn image_rounded(&mut self, r: Rect, radius: f32, frame: Rect, c: Color, premultiplied: bool) {
+        let pts = rounded_outline(r, radius);
+        let v = |p: Vec2| Vertex {
+            pos: [p.x, p.y, 0.0],
+            uv: [
+                (p.x - frame.x) / frame.w.max(1e-3),
+                (p.y - frame.y) / frame.h.max(1e-3),
+            ],
+            color: c.0,
+            mode: [0.0, if premultiplied { 2.0 } else { 1.0 }],
+            ..Default::default()
+        };
+        let m = r.center();
+        for k in 0..pts.len() {
+            self.verts
+                .extend([v(m), v(pts[k]), v(pts[(k + 1) % pts.len()])]);
+        }
+    }
+
     /// A sprite of the atlas with its top left at `at`, tinted `c`.
     pub fn sprite(&mut self, s: Sprite, at: Vec2, size: Vec2, c: Color) {
         let v = |p: Vec2, u: f32, w: f32| Vertex {

@@ -1,11 +1,9 @@
 use super::*;
 
 pub(super) const NAV_REDRAW_S: f32 = 1.0 / 30.0;
-pub(super) const PANEL: Color = Color::rgba(18, 18, 20, 1.0);
 pub(super) const CARD: Color = Color::rgba(24, 24, 26, 1.0);
 pub(super) const HAIR: Color = Color::rgba(40, 40, 44, 1.0);
 pub(super) const ACCENT: Color = Color::rgba(232, 160, 48, 1.0);
-pub(super) const BAR: Color = Color::rgba(18, 18, 20, 1.0);
 pub(super) const ROAD_CASING: Color = Color::rgba(18, 18, 20, 0.9);
 pub(super) const ROAD: Color = Color::rgba(56, 56, 63, 1.0);
 pub(super) const ROAD_MAIN: Color = Color::rgba(78, 78, 88, 1.0);
@@ -28,7 +26,6 @@ pub(super) const ROUTE_AHEAD: f64 = 2500.0;
 pub(super) const ROUTE_PX: f32 = 7.0;
 
 pub(super) const DRIVEN: Color = Color::rgba(30, 30, 34, 1.0);
-pub(super) const STREET: Color = Color::rgba(190, 190, 196, 1.0);
 
 pub(super) fn level(score: f32) -> usize {
     match score {

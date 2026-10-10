@@ -11,6 +11,7 @@ mod api;
 mod city;
 mod draw;
 mod follow;
+mod glass;
 mod graph;
 mod map_view;
 mod marks;
@@ -116,12 +117,16 @@ pub struct Navigator {
     speed_avg: f32,
     /// How far ahead of the bus the dimmed route begins (m), and when that was last moved.
     dim_ahead: f64,
+    /// The stop the bus heads for and how far off it was when it became the next (m).
+    leg: (i64, f64),
     dim_at: f32,
     pub opacity: f32,
     pub corner: String,
     pub city: CityMap,
     panel_rect: [f32; 4],
     gpu: Option<Gpu>,
+    /// The panel's frosted panes (`glass.rs`).
+    glass: Option<glass::Glass>,
     fonts: Fonts,
     atlas: Atlas,
     target: Option<(TextureId, u32, u32)>,
