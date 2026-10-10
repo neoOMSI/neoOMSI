@@ -289,6 +289,16 @@ pub struct Streets {
     labels: Vec<(DVec2, f32, u32)>,
 }
 
+/// The map's surfaces built away from the frame (`CityMap::ground`): for which version of
+/// the map, around where and how, and the vertex buffer holding them.
+struct Ground {
+    version: u64,
+    anchor: DVec2,
+    surf: (DVec2, f64, bool),
+    len: u32,
+    buffer: Option<(wgpu::Buffer, u64)>,
+}
+
 #[derive(Default)]
 pub struct CityMap {
     pub open: bool,
@@ -303,6 +313,8 @@ pub struct CityMap {
     roads: Option<(u64, u32, DVec2)>,
     /// The surfaces drawn: around where, how far, and whether coarsely.
     surf: Option<(DVec2, f64, bool)>,
+    /// Surfaces being built on a thread of their own, to replace those drawn when done.
+    ground: Option<std::sync::mpsc::Receiver<Ground>>,
     route: ((u64, u64, u32, u64), u32),
     extent: (DVec2, DVec2),
     buttons: Vec<(Rect, u8)>,

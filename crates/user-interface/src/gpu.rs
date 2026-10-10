@@ -105,7 +105,9 @@ pub struct Gpu {
     /// The vertex buffers and their capacity (None: making it failed; tried again next upload).
     buffers: Vec<(Option<wgpu::Buffer>, u64)>,
     textures: Vec<Option<Tex>>,
-    msaa: Option<(wgpu::TextureView, u32, u32)>,
+    /// The multisampled targets of the last sizes drawn at (the panel's and the map's: one
+    /// made anew each time the other is drawn cost a stall), the latest first.
+    msaa: Vec<(wgpu::TextureView, u32, u32)>,
     samples: u32,
     format: wgpu::TextureFormat,
     atlas_size: u32,
@@ -249,7 +251,7 @@ impl Gpu {
             sampler,
             buffers: Vec::new(),
             textures: Vec::new(),
-            msaa: None,
+            msaa: Vec::new(),
             samples,
             format,
             atlas_size: atlas_size.max(1),
@@ -470,6 +472,37 @@ impl Gpu {
         }
     }
 
+    fn msaa_target(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        samples: u32,
+        (w, h): (u32, u32),
+    ) -> wgpu::TextureView {
+        device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("user-interface msaa"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: samples,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&Default::default())
+    }
+
+    /// `view` as the multisampled target at `size`, the oldest beyond two dropped.
+    fn keep_msaa(&mut self, view: wgpu::TextureView, (w, h): (u32, u32)) {
+        self.msaa.retain(|m| (m.1, m.2) != (w, h));
+        self.msaa.insert(0, (view, w, h));
+        self.msaa.truncate(2);
+    }
+
     /// Put `verts` into vertex buffer `id` (grown as needed).
     pub fn upload(
         &mut self,
@@ -489,6 +522,47 @@ impl Gpu {
         if let (Some(buf), true) = (&self.buffers[id].0, bytes > 0) {
             queue.write_buffer(buf, 0, bytemuck::cast_slice(verts));
         }
+    }
+
+    /// A vertex buffer holding `verts`, made and filled on whichever thread calls this (a
+    /// big one is better filled away from the frame); hand it to [`Gpu::put`]. None when the
+    /// card could not make it.
+    pub fn filled(device: &wgpu::Device, verts: &[Vertex]) -> Option<(wgpu::Buffer, u64)> {
+        let bytes = size_of_val(verts) as u64;
+        let cap = bytes.max(4096).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
+        let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let valid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("user-interface vertices"),
+            size: cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        let invalid = pollster::block_on(valid.pop());
+        let out_of_memory = pollster::block_on(oom.pop());
+        if let Some(e) = invalid.or(out_of_memory) {
+            log::warn!("user-interface: a vertex buffer of {cap} bytes could not be made: {e}");
+            return None;
+        }
+        if bytes > 0 {
+            match buf.slice(..bytes).get_mapped_range_mut() {
+                Ok(mut view) => view.copy_from_slice(bytemuck::cast_slice(verts)),
+                Err(e) => {
+                    log::warn!("user-interface: a new vertex buffer could not be filled: {e}");
+                    return None;
+                }
+            }
+        }
+        buf.unmap();
+        Some((buf, cap))
+    }
+
+    /// Use a buffer from [`Gpu::filled`] as vertex buffer `id`.
+    pub fn put(&mut self, id: usize, (buf, cap): (wgpu::Buffer, u64)) {
+        while self.buffers.len() <= id {
+            self.buffers.push((None, 0));
+        }
+        self.buffers[id] = (Some(buf), cap);
     }
 
     /// A vertex buffer of `size` bytes, made where its failure can be seen: a card out of
@@ -552,32 +626,18 @@ impl Gpu {
             0,
             &data[..(SLOT as usize * layers.len().clamp(1, MAX_LAYERS as usize))],
         );
-        if self.samples > 1
-            && self
-                .msaa
-                .as_ref()
-                .map(|m| (m.1, m.2) != (w, h))
-                .unwrap_or(true)
-        {
-            let t = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("user-interface msaa"),
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: self.samples,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
-            self.msaa = Some((t.create_view(&Default::default()), w, h));
-        }
-        let (view, resolve) = match (&self.msaa, self.samples > 1) {
-            (Some(m), true) => (&m.0, Some(target)),
-            _ => (target, None),
+        let k = match self.msaa.iter().position(|m| (m.1, m.2) == (w, h)) {
+            Some(k) => Some(k),
+            None if self.samples > 1 => {
+                let view = Self::msaa_target(device, self.format, self.samples, (w, h));
+                self.keep_msaa(view, (w, h));
+                Some(0)
+            }
+            None => None,
+        };
+        let (view, resolve) = match k.filter(|_| self.samples > 1) {
+            Some(k) => (&self.msaa[k].0, Some(target)),
+            None => (target, None),
         };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("user-interface"),

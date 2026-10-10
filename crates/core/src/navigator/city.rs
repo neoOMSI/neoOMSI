@@ -2,6 +2,7 @@ use super::*;
 
 impl Navigator {
     pub(super) fn city(&mut self, renderer: &Renderer, scene: &mut Scene, f: &NavFrame) {
+        let t_frame = std::time::Instant::now();
         self.atlas.begin_frame();
         let (sw, sh) = f.screen;
         let (w, h) = ((sw * 0.8).round(), (sh * 0.82).round());
@@ -42,21 +43,40 @@ impl Navigator {
         let net = global.as_deref().or(f.traffic.map(|t| &t.net));
         let mut roads_verts = None;
         let surfaces = self.surfaces.clone();
-        if let Some(sm) = surfaces.as_deref() {
+        if let Some(sm) = surfaces.as_ref() {
             // Navigator 2.0: the ground around what the window shows, finely when close,
-            // coarsely from far; built again when the window leaves it or the detail changes
+            // coarsely from far; built again on a thread of its own when the window nears the
+            // edge of what is built or the detail changes, the old ground shown meanwhile
             let view = (w as f64).hypot(h as f64) * 0.5 * self.city.mpp;
             let coarse = self.city.mpp > 0.6;
+            let version = self.global_version * 1_000_000 + 999_999;
+            if let Some(rx) = self.city.ground.as_ref() {
+                match rx.try_recv() {
+                    Ok(g) => {
+                        self.city.ground = None;
+                        if let (Some(buffer), Some(gpu), true) =
+                            (g.buffer, self.gpu.as_mut(), g.version == version)
+                        {
+                            gpu.put(3, buffer);
+                            self.city.surf = Some(g.surf);
+                            self.city.roads = Some((g.version, g.len, g.anchor));
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => self.city.ground = None,
+                }
+            }
             let stale = match self.city.surf {
                 None => true,
                 Some((c, r, co)) => {
                     co != coarse
-                        || (self.city.center - c).length() + view > r
+                        || (self.city.center - c).length() + view * 1.5 > r
                         || r > view * 4.0 + 800.0
                 }
             };
-            let version = self.global_version * 1_000_000 + 999_999;
-            if stale || self.city.roads.map(|r| r.0 != version).unwrap_or(true) {
+            if self.city.ground.is_none()
+                && (stale || self.city.roads.map(|r| r.0 != version).unwrap_or(true))
+            {
                 let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
                 for k in sm.chunks.keys() {
                     let o = crate::navmap::SurfaceMap::chunk_origin(*k);
@@ -69,21 +89,51 @@ impl Navigator {
                 }
                 self.city.extent = (lo, hi);
                 // the anchor stays put while the window moves: the route drawn on it holds
-                let anchor = self.city.roads.map(|r| r.2).unwrap_or((lo + hi) * 0.5);
+                let anchor = self
+                    .city
+                    .roads
+                    .filter(|r| r.0 == version)
+                    .map(|r| r.2)
+                    .unwrap_or((lo + hi) * 0.5);
                 let radius = view * 2.0 + 250.0;
-                let mut p = Painter::new();
-                build_surfaces(
-                    &mut p,
-                    sm,
-                    anchor,
-                    self.city.center,
-                    radius,
-                    coarse,
-                    if coarse { 0.0 } else { 1.0 },
-                );
-                self.city.surf = Some((self.city.center, radius, coarse));
-                self.city.roads = Some((version, p.len(), anchor));
-                roads_verts = Some(p.verts);
+                let centre = self.city.center;
+                let (sm, device) = (sm.clone(), renderer.device.clone());
+                let (tx, rx) = std::sync::mpsc::channel();
+                let spawned = std::thread::Builder::new()
+                    .name("navigator map ground".into())
+                    .spawn(move || {
+                        let t0 = std::time::Instant::now();
+                        let mut p = Painter::new();
+                        build_surfaces(
+                            &mut p,
+                            &sm,
+                            anchor,
+                            centre,
+                            radius,
+                            coarse,
+                            if coarse { 0.0 } else { 1.0 },
+                        );
+                        let buffer = Gpu::filled(&device, &p.verts);
+                        if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+                            log::info!(
+                                "navigator map: ground within {radius:.0} m ({}) in {:.1} ms: {} vertices",
+                                if coarse { "coarse" } else { "fine" },
+                                t0.elapsed().as_secs_f64() * 1000.0,
+                                p.len()
+                            );
+                        }
+                        let _ = tx.send(Ground {
+                            version,
+                            anchor,
+                            surf: (centre, radius, coarse),
+                            len: p.len(),
+                            buffer,
+                        });
+                    });
+                match spawned {
+                    Ok(_) => self.city.ground = Some(rx),
+                    Err(e) => log::warn!("navigator: the map's ground cannot be built: {e}"),
+                }
             }
         } else if let Some(n) = net {
             let version = self.global_version * 1_000_000 + n.lanes.len() as u64;
@@ -156,6 +206,7 @@ impl Navigator {
             })
             .unwrap_or(0.0);
         if self.city.route.0 != key {
+            let t0 = std::time::Instant::now();
             let mut p = Painter::new();
             if let Some(n) = net {
                 let r = &self.route;
@@ -183,6 +234,13 @@ impl Navigator {
                     &self.route_jam,
                     f64::MAX,
                     6.0 * s,
+                );
+            }
+            if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+                log::info!(
+                    "navigator map: route line in {:.1} ms: {} vertices",
+                    t0.elapsed().as_secs_f64() * 1000.0,
+                    p.len()
                 );
             }
             self.city.route = (key, p.len());
@@ -579,6 +637,9 @@ impl Navigator {
         );
         queue.submit([enc.finish()]);
         let _ = n_dots;
+        if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+            log::info!("navigator map: frame in {:.1} ms", t_frame.elapsed().as_secs_f64() * 1000.0);
+        }
         if self.city.embed.is_some() {
             self.city.picture = Some(tex);
         } else {
