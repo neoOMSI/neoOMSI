@@ -65,6 +65,8 @@ mod controllers;
 mod dinput;
 mod duty_start;
 mod editor_ctl;
+#[cfg(target_os = "linux")]
+mod evdev_axes;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod evdev_ff;
 mod game_link;

@@ -966,6 +966,7 @@ message Controller {
   bool gamepad = 10;
   // the buttons held right now, by their place in `buttons`
   repeated uint32 pressed = 11;
+  optional string axis_mode = 12;
 }
 
 message ControllerList {

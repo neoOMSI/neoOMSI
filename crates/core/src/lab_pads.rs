@@ -1,4 +1,6 @@
 use crate::controllers::{self, Connected, Controllers, DeviceCfg, Func};
+#[cfg(target_os = "linux")]
+use crate::evdev_axes::AxisMode;
 use crate::game_lists::{Dropdown, HEADING, KeyView, row};
 use std::path::Path;
 use std::sync::Mutex;
@@ -75,7 +77,10 @@ pub(crate) fn button_label(n: usize, gamepad: bool) -> String {
         return if gamepad && hat == 0 {
             ::i18n::translate("pause.controls.hat.dpad", &[("dir", &dir)])
         } else {
-            ::i18n::translate("pause.controls.hat.hat", &[("n", &(hat + 1)), ("dir", &dir)])
+            ::i18n::translate(
+                "pause.controls.hat.hat",
+                &[("n", &(hat + 1)), ("dir", &dir)],
+            )
         };
     }
     if cfg!(windows) && gamepad {
@@ -112,6 +117,10 @@ pub(crate) fn save(pads: Option<&mut Controllers>, devices: &[DeviceCfg]) {
     let _ = ::config::save();
     if let Some(c) = pads {
         c.reload_cfg();
+    }
+    #[cfg(target_os = "linux")]
+    if let Ok(mut live) = LIVE.lock() {
+        *live = None;
     }
 }
 
@@ -291,7 +300,21 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
         ),
         "pad_on".to_string(),
     )];
-    let labels = axis_names(dev.is_some_and(|c| c.gamepad));
+    #[cfg(target_os = "linux")]
+    out.push((
+        row(
+            "pause.controls.axis_mode.name",
+            'o',
+            &tl(&format!(
+                "pause.controls.axis_mode.{}",
+                d.axis_mode.as_str()
+            )),
+            "pause.controls.axis_mode.desc",
+            None,
+        ),
+        "pad_mode".to_string(),
+    ));
+    let labels = axis_names(dev.is_some_and(Connected::gamepad_axes));
     out.push(heading("pause.controls.axes"));
     for a in 0..8 {
         if labels[a].is_empty() && d.axes[a].is_none() {
@@ -305,15 +328,20 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
         };
         let mut r = row(name, 'o', &v, "pause.controls.axis.desc", None);
         if let Some((_, x)) = dev.and_then(|c| c.axes.iter().find(|(k, _)| *k == a)) {
-            let cal = d.calibrated(a, *x);
-            let (inv, pedal) = match d.axes[a] {
-                Some((f, inv)) => (
-                    inv,
-                    matches!(f, Func::Throttle | Func::Brake | Func::Clutch),
-                ),
-                None => (false, false),
+            let pedal = d.axes[a]
+                .is_some_and(|(f, _)| matches!(f, Func::Throttle | Func::Brake | Func::Clutch));
+            #[cfg(target_os = "linux")]
+            let v = d.axis_preview(a, *x).clamp(-1.0, 1.0);
+            #[cfg(not(target_os = "linux"))]
+            let v = {
+                let cal = d.calibrated(a, *x);
+                if d.axes[a].is_some_and(|(_, inv)| inv) {
+                    -cal
+                } else {
+                    cal
+                }
+                .clamp(-1.0, 1.0)
             };
-            let v = if inv { -cal } else { cal }.clamp(-1.0, 1.0);
             r = if pedal {
                 format!("{r}\u{1f}\u{1f}{:.3}\u{1f}u", (v + 1.0) * 0.5)
             } else {
@@ -321,6 +349,17 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
             };
         }
         out.push((r, format!("pad_axis {a}")));
+        #[cfg(target_os = "linux")]
+        out.push((
+            row(
+                &format!("{name}: {}", tl("pause.controls.axis.invert.name")),
+                's',
+                if d.axis_reversed(a) { "on" } else { "off" },
+                "pause.controls.axis.invert.desc",
+                None,
+            ),
+            format!("pad_invert {a}"),
+        ));
     }
     out.push((
         row(
@@ -378,7 +417,13 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
         let names = names_of(root);
         let gamepad = dev.is_some_and(|c| c.gamepad);
         out.push((
-            row("pause.controls.buttons", 'h', &tl("pause.controls.find_hint"), "", None),
+            row(
+                "pause.controls.buttons",
+                'h',
+                &tl("pause.controls.find_hint"),
+                "",
+                None,
+            ),
             HEADING.to_string(),
         ));
         let q = search.filter.trim().to_lowercase();
@@ -417,7 +462,10 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
             out.push((r, format!("pad_btn {b}")));
         }
         if out.len() == before {
-            let none = ::i18n::translate("pause.controls.no_match", &[("query", &search.filter.trim())]);
+            let none = ::i18n::translate(
+                "pause.controls.no_match",
+                &[("query", &search.filter.trim())],
+            );
             out.push((row(&none, 'i', "", "", None), "noop".to_string()));
         }
     }
@@ -432,6 +480,16 @@ pub(crate) fn dropdown(root: &Path, row_k: usize, id: &str) -> Option<Dropdown> 
     let mut current = None;
     let mut search: Vec<String> = Vec::new();
     match verb {
+        #[cfg(target_os = "linux")]
+        "pad_mode" => {
+            current = Some(d.axis_mode.index());
+            for mode in [AxisMode::Auto, AxisMode::Gamepad, AxisMode::Native] {
+                items.push((
+                    tl(&format!("pause.controls.axis_mode.{}", mode.as_str())),
+                    format!("pad_set_mode {}", mode.as_str()),
+                ));
+            }
+        }
         "pad_axis" => {
             let a: usize = arg.parse().ok().filter(|a| *a < 8)?;
             let now = d.axes[a];
@@ -440,6 +498,18 @@ pub(crate) fn dropdown(root: &Path, row_k: usize, id: &str) -> Option<Dropdown> 
                 current = Some(0);
             }
             for c in 0..7 {
+                #[cfg(target_os = "linux")]
+                {
+                    let f = Func::from_code(c);
+                    if now.map(|(f, _)| f) == f {
+                        current = Some(items.len());
+                    }
+                    items.push((
+                        func_text(f.map(|f| (f, false))),
+                        format!("pad_set_axis {a} {c}"),
+                    ));
+                }
+                #[cfg(not(target_os = "linux"))]
                 for inv in [false, true] {
                     let f = Func::from_code(c);
                     if now == f.map(|f| (f, inv)) {
@@ -565,6 +635,8 @@ fn apply_inner(pads: Option<&mut Controllers>, verb: &str, arg: &str) {
     let mut it = arg.splitn(3, ' ');
     let n: Option<i64> = it.next().and_then(|x| x.parse().ok());
     match verb {
+        #[cfg(target_os = "linux")]
+        "pad_set_mode" => devices[i].axis_mode = AxisMode::from_str(arg),
         "pad_set_axis" => {
             let (Some(a), Some(c)) = (
                 n.filter(|a| (0..8).contains(a)),
@@ -572,8 +644,13 @@ fn apply_inner(pads: Option<&mut Controllers>, verb: &str, arg: &str) {
             ) else {
                 return;
             };
-            let inv = it.next() == Some("1");
-            devices[i].axes[a as usize] = Func::from_code(c).map(|f| (f, inv));
+            #[cfg(target_os = "linux")]
+            devices[i].set_axis_function(a as usize, Func::from_code(c));
+            #[cfg(not(target_os = "linux"))]
+            {
+                let inv = it.next() == Some("1");
+                devices[i].axes[a as usize] = Func::from_code(c).map(|f| (f, inv));
+            }
         }
         "pad_set_dz" => {
             let Some(v) = n else {
@@ -659,6 +736,17 @@ fn click_inner(pads: Option<&mut Controllers>, verb: &str, arg: &str) -> Option<
         "pad_on" => {
             if let Some(i) = selected(&devices) {
                 devices[i].enabled = !devices[i].enabled;
+                save(pads, &devices);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        "pad_invert" => {
+            if let (Some(i), Some(a)) = (
+                selected(&devices),
+                arg.parse::<usize>().ok().filter(|a| *a < 8),
+            ) {
+                let reversed = !devices[i].axis_reversed(a);
+                devices[i].set_axis_reversed(a, reversed);
                 save(pads, &devices);
             }
         }

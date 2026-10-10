@@ -1067,8 +1067,19 @@
         "desc": "Ein ausgeschalteter Controller wird ignoriert."
       },
       "axes": "Achsen",
+      "axis_mode": {
+        "name": "Achsenmodus",
+        "desc": "Auto erkennt Lenkräder und Pedale. Gamepad verwendet Sticks und Trigger; Nativ verwendet die eigenen Achsen des Geräts.",
+        "auto": "Auto",
+        "gamepad": "Gamepad",
+        "native": "Nativ"
+      },
       "axis": {
         "desc": "Was diese Achse bewirkt.",
+        "invert": {
+          "name": "Invertieren",
+          "desc": "Kehrt diese Achse um, auch bevor eine Funktion zugeordnet wurde."
+        },
         "name": {
           "0": "X-Achse",
           "1": "Y-Achse",

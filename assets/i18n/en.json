@@ -1067,8 +1067,19 @@
         "desc": "A controller that is switched off is ignored."
       },
       "axes": "Axes",
+      "axis_mode": {
+        "name": "Axis mode",
+        "desc": "Auto detects wheels and pedals. Gamepad uses sticks and triggers; Native uses the device's own axes.",
+        "auto": "Auto",
+        "gamepad": "Gamepad",
+        "native": "Native"
+      },
       "axis": {
         "desc": "What this axis does.",
+        "invert": {
+          "name": "Invert",
+          "desc": "Reverses this axis, even before a function is assigned."
+        },
         "name": {
           "0": "X axis",
           "1": "Y axis",
