@@ -45,8 +45,15 @@ impl Navigator {
             let version = self.global_version * 1_000_000 + n.lanes.len() as u64;
             if self.city.roads.map(|r| r.0 != version).unwrap_or(true) {
                 let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
-                let road_lanes = road_geometry(n);
-                for l in &road_lanes {
+                let from_lanes;
+                let road_lanes: &[MapRoad] = match self.graph.as_deref().filter(|_| global.is_some()) {
+                    Some(g) => &g.roads,
+                    None => {
+                        from_lanes = road_geometry(n);
+                        &from_lanes
+                    }
+                };
+                for l in road_lanes {
                     for p in &l.points {
                         lo = lo.min(p.truncate());
                         hi = hi.max(p.truncate());
@@ -62,7 +69,7 @@ impl Navigator {
                     |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
                 let mut p = Painter::new();
                 for pass in 0..2 {
-                    for l in &road_lanes {
+                    for l in road_lanes {
                         let pts =
                             simplify(&l.points.iter().map(|q| rel(*q)).collect::<Vec<_>>(), 0.12);
                         if pass == 0 {
@@ -85,44 +92,31 @@ impl Navigator {
         let anchor = self.city.roads.map(|r| r.2).unwrap_or(f.bus.truncate());
         let rel = |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
         let mut route_verts = None;
-        let every = 2f64.powf((90.0 * s as f64 * self.city.mpp).log2().round()) as f32;
         let key = (
             self.route.version,
             self.jam_version,
-            every.to_bits(),
+            0,
             self.city.roads.map(|r| r.0).unwrap_or(0),
         );
+        let done = self.route.progress.min(self.route.lanes.len());
         if self.city.route.0 != key {
             let mut p = Painter::new();
             if let Some(n) = net {
                 let r = &self.route;
-                let done = r.progress.min(r.lanes.len());
                 for &l in &r.lanes[..done] {
                     let Some(lane) = n.lanes.get(l) else { continue };
                     let pts: Vec<Vec3> = lane.points.iter().map(|q| rel(*q)).collect();
                     p.ribbon(&pts, lane.width.max(3.0) + 2.0, 5.0, DRIVEN, true);
                 }
-                let style = RouteStyle {
-                    extra_m: 0.0,
-                    min_px: 6.0,
-                    arrows: Some((every, f32::MAX)),
-                    max_len: f32::MAX,
-                    near: None,
-                };
-                let bus_lane = r
-                    .lanes
-                    .get(done)
-                    .map(|&l| lane_from_right(n, l, f.bus))
-                    .unwrap_or(0);
-                build_route(
+                build_route_line(
                     &mut p,
                     n,
                     &r.lanes[done..],
+                    0.0,
                     anchor,
-                    r.s,
                     &self.route_jam,
-                    &style,
-                    bus_lane,
+                    f64::MAX,
+                    6.0 * s,
                 );
             }
             self.city.route = (key, p.len());
@@ -149,6 +143,15 @@ impl Navigator {
             radius: 8.0 * s,
             opacity: 1.0,
             px_scale: self.city.mpp as f32,
+            route: [
+                if self.route.on_route && done < self.route.lanes.len() {
+                    self.route.s
+                } else {
+                    -1.0e9
+                },
+                1.0e9,
+                0.0,
+            ],
         };
         let to_screen = |q: DVec3| -> Vec2 {
             let d = q.truncate() - self.city.center;

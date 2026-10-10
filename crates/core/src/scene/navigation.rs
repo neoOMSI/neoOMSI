@@ -10,6 +10,71 @@ pub struct NavigationMap {
     pub places: HashMap<i64, DVec3>,
     /// Street name signs: where, the object's heading and the name on it.
     pub signs: Vec<(DVec3, f64, String)>,
+    /// The carriageways the splines draw, with or without a path for cars: what the
+    /// navigator shows as streets.
+    pub carriageways: Vec<NavCarriageway>,
+}
+
+/// One carriageway of a map spline: its centre line and drawn width.
+#[derive(Debug, Clone)]
+pub struct NavCarriageway {
+    pub points: Vec<DVec3>,
+    pub width: f32,
+    /// The spline (tile and id) - its lanes, if it has any, share the key.
+    pub tile: (i32, i32),
+    pub id: i64,
+    /// It carries a path for cars.
+    pub cars: bool,
+}
+
+/// Lateral spans (lo, hi, height) of a spline's carriageways: the street paths side by side
+/// widened to the road surface drawn under them, and road surfaces without a path. Offsets are
+/// as placed (a mirrored spline's profile turned over).
+pub(super) fn carriageway_sections(
+    file: &str,
+    def: &::scenery::sli::Spline,
+    mirror: bool,
+) -> Vec<(f32, f32, f32, bool)> {
+    let side = if mirror { -1.0 } else { 1.0 };
+    let flip = |(lo, hi): (f32, f32)| if mirror { (-hi, -lo) } else { (lo, hi) };
+    let mut paths: Vec<(f32, f32, f32)> = def
+        .paths
+        .iter()
+        .filter(|p| p.kind == 0 && p.width.is_finite() && p.start[0].is_finite())
+        .map(|p| {
+            let w = p.width.max(2.6) * 0.5;
+            let x = side * p.start[0];
+            (x - w, x + w, p.start[2])
+        })
+        .collect();
+    paths.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut spans: Vec<(f32, f32, f32, bool)> = Vec::new();
+    for (lo, hi, z) in paths {
+        match spans.last_mut() {
+            Some(s) if lo <= s.1 + 0.65 && (z - s.2).abs() < 1.5 => s.1 = s.1.max(hi),
+            _ => spans.push((lo, hi, z, true)),
+        }
+    }
+    if def.only_editor {
+        return Vec::new();
+    }
+    for (lo, hi, z) in road_surfaces_of(file, def) {
+        let (lo, hi) = flip((lo, hi));
+        let free = spans.iter().all(|s| hi <= s.0 + 0.3 || lo >= s.1 - 0.3);
+        match spans
+            .iter_mut()
+            .find(|s| s.3 && lo < s.1 - 0.3 && hi > s.0 + 0.3)
+        {
+            // the surface the paths run on, kerb to kerb
+            Some(s) => {
+                s.0 = s.0.min(lo);
+                s.1 = s.1.max(hi);
+            }
+            None if free => spans.push((lo, hi, z, false)),
+            None => {}
+        }
+    }
+    spans
 }
 
 /// Whether an asset name describes a road surface. Match whole filename tokens so objects
@@ -83,14 +148,20 @@ pub(super) fn road_surface_name(file: &str) -> bool {
 /// height. A texture merely listed in the file is not evidence of a road, and the origin
 /// need not be in the middle of the surface. Keep medians and pavements out of its width.
 pub(super) fn road_sections(file: &str, def: &::scenery::sli::Spline) -> Vec<(f32, f32, f32)> {
+    if def.only_editor || def.paths.iter().any(|p| p.kind == 2) {
+        return Vec::new();
+    }
+    road_surfaces_of(file, def)
+}
+
+/// The road surfaces a spline draws (see [`road_sections`]), whatever paths it has.
+pub(super) fn road_surfaces_of(file: &str, def: &::scenery::sli::Spline) -> Vec<(f32, f32, f32)> {
     let name = file.to_ascii_lowercase();
-    if def.only_editor
-        || [
+    if [
         "gehweg", "radweg", "fahrrad", "tram", "strab", "gleis", "rail", "parking",
     ]
         .iter()
         .any(|s| name.contains(s))
-        || def.paths.iter().any(|p| p.kind == 2)
     {
         return Vec::new();
     }
@@ -163,6 +234,7 @@ impl World {
             Vec<(i64, DVec3)>,
             Vec<(DVec3, f64, String)>,
             Vec<(Vec<DVec3>, f32)>,
+            Vec<NavCarriageway>,
         )> = tiles
             .par_iter()
             .map(|(_, tx, ty, path)| {
@@ -171,10 +243,11 @@ impl World {
                 let mut positions = Vec::new();
                 let mut signs = Vec::new();
                 let mut roads = Vec::new();
+                let mut ways = Vec::new();
                 let Some(tile) =
                     crate::tiles::read_tile(path, &self.chrono_dirs.read(), self.map_detail)
                 else {
-                    return (lanes, positions, signs, roads);
+                    return (lanes, positions, signs, roads, ways);
                 };
                 let origin2 = DVec2::new(tx as f64 * tile_size(), ty as f64 * tile_size());
                 let terrain = Terrain::load(&tile_companion(&path, ".terrain"))
@@ -206,6 +279,31 @@ impl World {
                                     })
                                     .collect();
                                 roads.push((pts, hi - lo));
+                            }
+                        }
+                    }
+                    if sp.length >= 2.0 {
+                        let sections = carriageway_sections(&sp.file, &st.def, sp.mirror);
+                        if !sections.is_empty() {
+                            let curve = SplineCurve::from_map(sp, origin2).with_sli(&st.def);
+                            let n = ((curve.length / 4.0).ceil() as usize).clamp(1, 400);
+                            for (lo, hi, z, cars) in sections {
+                                let offset = ((lo + hi) * 0.5) as f64;
+                                ways.push(NavCarriageway {
+                                    points: (0..=n)
+                                        .map(|k| {
+                                            curve.offset_point(
+                                                curve.length * k as f64 / n as f64,
+                                                offset,
+                                                z as f64,
+                                            )
+                                        })
+                                        .collect(),
+                                    width: hi - lo,
+                                    tile: (tx, ty),
+                                    id: sp.id,
+                                    cars,
+                                });
                             }
                         }
                     }
@@ -292,22 +390,26 @@ impl World {
                         ));
                     }
                 }
-                (lanes, positions, signs, roads)
+                (lanes, positions, signs, roads, ways)
             })
             .collect();
         let mut lanes = Vec::new();
         let mut positions = HashMap::new();
         let mut signs = Vec::new();
         let mut roads = Vec::new();
-        for (l, p, s, r) in parts {
+        let mut carriageways = Vec::new();
+        for (l, p, s, r, w) in parts {
             lanes.extend(l);
             positions.extend(p);
             signs.extend(s);
             roads.extend(r);
+            carriageways.extend(w);
         }
         log::info!(
-            "navigation map: {} roads without a path for cars",
-            roads.len()
+            "navigation map: {} roads without a path for cars, {} carriageways ({} of them without one)",
+            roads.len(),
+            carriageways.len(),
+            carriageways.iter().filter(|c: &&NavCarriageway| !c.cars).count()
         );
         log::info!(
             "navigation map: {} tiles, {} lanes, {} objects placed, {} street name signs, {} object types, {:.1} s",
@@ -323,6 +425,7 @@ impl World {
             road_surfaces: roads,
             places: positions,
             signs,
+            carriageways,
         }
     }
 }

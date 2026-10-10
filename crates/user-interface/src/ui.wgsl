@@ -2,9 +2,9 @@
 struct U {
     view_proj: mat4x4<f32>,
     viewport: vec4<f32>,   // x, y, w, h (target pixels) the world is drawn into
-    target_size: vec4<f32>, // w, h of the target, 0, 0
+    target_size: vec4<f32>, // w, h of the target; route: cut below, dimmed beyond
     clip: vec4<f32>,       // x0, y0, x1, y1: everything outside fades out
-    params: vec4<f32>,     // clip corner radius, opacity, metres per pixel per unit depth, 0
+    params: vec4<f32>,     // clip corner radius, opacity, metres per pixel per unit depth, route fade end
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(1) @binding(0) var t_img: texture_2d<f32>;
@@ -72,6 +72,19 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     var c = i.color;
     if (i.tex > 0.5) {
         c = vec4<f32>(c.rgb * t.rgb, c.a * t.a);
+    } else if (i.uv.y > 0.5) {
+        // a route ribbon: uv.x is how far along the route
+        let s = i.uv.x;
+        if (s < u.target_size.z) {
+            discard;
+        }
+        if (s > u.target_size.w) {
+            let grey = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
+            c = vec4<f32>(mix(c.rgb, vec3<f32>(grey), 0.45) * 0.62, c.a);
+        }
+        if (u.params.w > 0.0) {
+            c.a = c.a * clamp((u.params.w - s) / 150.0, 0.0, 1.0);
+        }
     }
     let a = c.a * rounded_mask(i.clip.xy) * u.params.y;
     return vec4<f32>(c.rgb * a, a);

@@ -1,166 +1,121 @@
 use super::*;
 
-pub(super) fn lane_from_right(net: &Network, lane: usize, bus: DVec3) -> usize {
-    let Some(mut cur) = net.lanes.get(lane).map(|_| lane) else {
-        return 0;
-    };
-    let kerb = |l: &::simulation::traffic::Lane| if net.left_hand { l.left } else { l.right };
-    let away = |l: &::simulation::traffic::Lane| if net.left_hand { l.right } else { l.left };
-    for _ in 0..6 {
-        match kerb(&net.lanes[cur]) {
-            Some(n) if n < net.lanes.len() && net.lanes[n].kind == LaneKind::Street => cur = n,
-            _ => break,
-        }
-    }
-    let (mut best, mut best_d, mut k) = (0usize, f64::MAX, 0usize);
-    loop {
-        if let Some((_, d)) = net.lanes[cur].nearest_point(bus) {
-            if d < best_d {
-                best_d = d;
-                best = k;
-            }
-        }
-        match away(&net.lanes[cur]) {
-            Some(n) if n < net.lanes.len() && net.lanes[n].kind == LaneKind::Street && k < 6 => {
-                cur = n;
-                k += 1;
-            }
-            _ => break,
-        }
-    }
-    best
-}
+/// Lanes this far apart do not join into one line (m): the route jumps there.
+const ROUTE_BREAK: f64 = 12.0;
+/// Half the stretch over which the line is smoothed (m): the step where the route changes
+/// lanes melts into a gentle shift, a turn keeps its shape.
+const ROUTE_SMOOTH: f64 = 8.0;
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_route(
-    p: &mut Painter,
+/// Points of the route ahead along `lanes` (the first starting `start` m along the route),
+/// as many lines as there are places where the lanes do not meet: each point with its
+/// distance along the route and the lane it lies on. Ends after `max_len` m.
+pub(super) fn route_lines(
     net: &Network,
     lanes: &[usize],
-    anchor: DVec2,
-    s0: f32,
-    jam: &HashMap<usize, f32>,
-    style: &RouteStyle,
-    bus_lane: usize,
-) {
-    let rel = |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
-    let mut runs: Vec<(Vec<Vec3>, f32, usize)> = Vec::new();
-    let mut arrows: Vec<(DVec3, f32, usize, f32)> = Vec::new();
-    let mut total = 0.0f32;
-    let turn_after = |k: usize| -> i32 {
-        let mut acc = 0.0f32;
-        for &j in lanes.iter().skip(k + 1).take(40) {
-            let Some(l) = net.lanes.get(j) else { break };
-            let d = ::simulation::traffic::wrap_deg(l.end_heading() - l.start_heading());
-            if d.abs() > 35.0 && l.length() < 60.0 {
-                return if d > 0.0 { 1 } else { -1 };
-            }
-            if l.left.is_none() && l.right.is_none() {
-                break;
-            }
-            acc += l.length();
-            if acc > 250.0 {
-                break;
-            }
-        }
-        0
-    };
-    let shown = |k: usize, l: usize| -> usize {
-        let side = turn_after(k);
-        let step = |cur: usize, left: bool| -> Option<usize> {
-            let n = if left {
-                net.lanes[cur].left
-            } else {
-                net.lanes[cur].right
-            }?;
-            (n < net.lanes.len() && net.lanes[n].kind == LaneKind::Street).then_some(n)
-        };
-        let mut cur = l;
-        let to_left = if side == 0 { net.left_hand } else { side < 0 };
-        for _ in 0..6 {
-            match step(cur, to_left) {
-                Some(n) => cur = n,
-                None => break,
-            }
-        }
-        if side == 0 {
-            for _ in 0..bus_lane {
-                match step(cur, !net.left_hand) {
-                    Some(n) => cur = n,
-                    None => break,
-                }
-            }
-        }
-        cur
-    };
-    for (k, &l) in lanes.iter().enumerate() {
+    start: f64,
+    max_len: f64,
+) -> Vec<Vec<(DVec3, f64, usize)>> {
+    let mut lines: Vec<Vec<(DVec3, f64, usize)>> = Vec::new();
+    let mut cur: Vec<(DVec3, f64, usize)> = Vec::new();
+    let mut s0 = start;
+    for &l in lanes {
         let Some(lane) = net.lanes.get(l) else { break };
-        let route_l = l;
-        let l = shown(k, l);
-        let lane = net.lanes.get(l).unwrap_or(lane);
-        if let Some((c, r)) = style.near {
-            if (c - lane.start().truncate()).length() > r {
-                break;
-            }
-        }
-        let from = if k == 0 { s0 } else { 0.0 };
-        let mut pts: Vec<Vec3> = Vec::new();
-        if k == 0 {
-            pts.push(rel(lane.at(s0).0));
-        }
         for (q, d) in lane.points.iter().zip(&lane.dist) {
-            if *d > from + 0.05 || k > 0 {
-                pts.push(rel(*q));
-            }
-        }
-        let lv = level(jam.get(&route_l).copied().unwrap_or(0.0));
-        let w = lane.width.max(2.6);
-        match runs.last_mut() {
-            Some(run) if run.2 == lv => {
-                run.0.extend(pts);
-                run.1 = run.1.max(w);
-            }
-            _ => {
-                let mut start = runs
-                    .last()
-                    .and_then(|r| r.0.last().copied())
-                    .map(|q| vec![q])
-                    .unwrap_or_default();
-                start.extend(pts);
-                runs.push((start, w, lv));
-            }
-        }
-        if let Some((every, reach)) = style.arrows {
-            let len = lane.length();
-            if total < reach && len > every * 0.4 && every > 0.5 {
-                let n = (len / every).round().clamp(1.0, 64.0);
-                let step = len / n;
-                for i in 0..n as usize {
-                    let at = step * (i as f32 + 0.5);
-                    if at > from + 4.0 && total + at - from < reach {
-                        let (q, h) = lane.at(at);
-                        arrows.push((q, h, lv, w));
-                    }
+            let s = s0 + *d as f64;
+            match cur.last() {
+                Some(last) if (*q - last.0).truncate().length() > ROUTE_BREAK => {
+                    lines.push(std::mem::take(&mut cur));
+                    cur.push((*q, s, l));
                 }
+                Some(last) if (*q - last.0).truncate().length() < 0.3 => {}
+                _ => cur.push((*q, s, l)),
             }
         }
-        total += lane.length() - from;
-        if total > style.max_len {
+        s0 += lane.length() as f64;
+        if s0 - start > max_len {
             break;
         }
     }
-    for (pts, w, lv) in &runs {
-        p.ribbon(pts, w + style.extra_m, style.min_px, LEVEL[*lv], true);
+    lines.push(cur);
+    lines.retain(|l| l.len() >= 2);
+    for line in lines.iter_mut() {
+        let orig = line.clone();
+        let n = orig.len();
+        let mut lo = 0;
+        for i in 1..n.saturating_sub(1) {
+            let si = orig[i].1;
+            while orig[lo].1 < si - ROUTE_SMOOTH {
+                lo += 1;
+            }
+            let (mut sum, mut wsum) = (DVec3::ZERO, 0.0);
+            let mut j = lo;
+            while j < n && orig[j].1 <= si + ROUTE_SMOOTH {
+                let w = 1.0 - (orig[j].1 - si).abs() / ROUTE_SMOOTH + 1e-3;
+                sum += orig[j].0 * w;
+                wsum += w;
+                j += 1;
+            }
+            // (the ends of the line stay where they are: the smoothing fades in)
+            let edge = ((si - orig[0].1).min(orig[n - 1].1 - si) / ROUTE_SMOOTH).clamp(0.0, 1.0);
+            line[i].0 = orig[i].0.lerp(sum / wsum, edge);
+        }
     }
-    for (q, h, lv, w) in arrows {
-        let hr = h.to_radians();
-        let d = Vec2::new(hr.sin(), hr.cos());
-        let n = Vec2::new(-d.y, d.x);
-        let (tip, bl, br) = (d * 0.55, -d * 0.45 + n * 0.75, -d * 0.45 - n * 0.75);
-        let t = -d * 0.42;
-        let (sm, spx) = ((w + style.extra_m) * 0.5 * 0.8, style.min_px * 0.5 * 1.05);
-        let c = ARROW[lv];
-        p.world_shape(rel(q), &[tip, bl, bl + t, tip + t], sm, spx, c);
-        p.world_shape(rel(q), &[tip, br, br + t, tip + t], sm, spx, c);
+    lines
+}
+
+/// The route ahead as one line of `w_px` pixels with a dark edge, coloured by the traffic
+/// on it, each point carrying its distance along the route for the layer's `route` cut.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_route_line(
+    p: &mut Painter,
+    net: &Network,
+    lanes: &[usize],
+    start: f64,
+    anchor: DVec2,
+    jam: &HashMap<usize, f32>,
+    max_len: f64,
+    w_px: f32,
+) {
+    let rel = |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
+    let lines = route_lines(net, lanes, start, max_len);
+    let simple: Vec<Vec<(Vec3, f32, usize)>> = lines
+        .iter()
+        .map(|line| {
+            let pts: Vec<Vec3> = line.iter().map(|(q, _, _)| rel(*q)).collect();
+            let kept = simplify(&pts, 0.05);
+            let mut k = 0;
+            kept.into_iter()
+                .map(|q| {
+                    while pts[k] != q {
+                        k += 1;
+                    }
+                    (q, line[k].1 as f32, line[k].2)
+                })
+                .collect()
+        })
+        .collect();
+    for line in &simple {
+        let pts: Vec<Vec3> = line.iter().map(|x| x.0).collect();
+        let along: Vec<f32> = line.iter().map(|x| x.1).collect();
+        p.ribbon_along(&pts, &along, 0.0, w_px + 3.0, ROUTE_EDGE, true);
+    }
+    for line in &simple {
+        let mut run: Vec<(Vec3, f32)> = Vec::new();
+        let mut lv = usize::MAX;
+        for &(q, s, l) in line {
+            let v = level(jam.get(&l).copied().unwrap_or(0.0));
+            if v != lv && !run.is_empty() {
+                let (pts, along): (Vec<Vec3>, Vec<f32>) = run.iter().copied().unzip();
+                p.ribbon_along(&pts, &along, 0.0, w_px, LEVEL[lv], true);
+                run = vec![*run.last().unwrap()];
+            }
+            lv = v;
+            run.push((q, s));
+        }
+        if run.len() >= 2 {
+            let (pts, along): (Vec<Vec3>, Vec<f32>) = run.into_iter().unzip();
+            p.ribbon_along(&pts, &along, 0.0, w_px, LEVEL[lv], true);
+        }
     }
 }
 

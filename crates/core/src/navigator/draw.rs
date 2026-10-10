@@ -13,13 +13,14 @@ impl Navigator {
         }
         self.time += f.dt;
         if let Some(rx) = self.building.as_ref() {
-            if let Ok((net, pos, streets)) = rx.try_recv() {
+            if let Ok((net, pos, streets, graph)) = rx.try_recv() {
                 log::info!(
                     "navigator: the map's road network is there ({} lanes, {} streets named)",
                     net.lanes.len(),
                     streets.names.len()
                 );
                 self.streets = Some(std::sync::Arc::new(streets));
+                self.graph = Some(std::sync::Arc::new(graph));
                 self.global = Some(std::sync::Arc::new(net));
                 self.stop_pos = std::sync::Arc::new(pos);
                 self.global_version += 1;
@@ -29,7 +30,7 @@ impl Navigator {
                     version: self.route.version + 1,
                     ..Route::default()
                 };
-                self.route_mesh.0 = u64::MAX;
+                self.route_mesh = RouteMesh::default();
                 self.route_jam.clear();
             }
         }
@@ -291,7 +292,10 @@ impl Navigator {
                 let anchor = f.bus.truncate();
                 let mut p = Painter::new();
                 let t0 = std::time::Instant::now();
-                build_roads(&mut p, net, anchor);
+                match self.graph.as_deref().filter(|_| global.is_some()) {
+                    Some(g) => build_roads_from(&mut p, g, anchor),
+                    None => build_roads(&mut p, net, anchor),
+                }
                 if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
                     log::info!(
                         "navigator: roads around ({:.0}, {:.0}) in {:.1} ms: {} vertices",
@@ -333,7 +337,7 @@ impl Navigator {
             Vec3::Z,
         );
         let clip_panel = [0.0, 0.0, pw, ph];
-        let map_layer = Layer::world(
+        let mut map_layer = Layer::world(
             view,
             FOV.to_radians(),
             vp,
@@ -344,54 +348,76 @@ impl Navigator {
         let vpm = map_layer.view_proj;
 
         let mut route_verts = None;
+        let mut route_cut = Layer::WHOLE_ROUTE;
         let route_net = global.as_deref().or(f.traffic.map(|t| &t.net));
         if let (Some(rn), true) = (route_net, !self.route.lanes.is_empty()) {
-            let first = self
-                .route
-                .lanes
-                .get(
-                    self.route
-                        .progress
-                        .min(self.route.lanes.len().saturating_sub(1)),
-                )
-                .copied();
-            let bus_lane = first.map(|l| lane_from_right(rn, l, f.bus)).unwrap_or(0);
-            if self.route_mesh.0 != self.route.version
-                || self.route_mesh.1 != self.jam_version
-                || self.route_mesh.2 != anchor
-                || self.route_mesh.4 != bus_lane
+            let print = lanes_print(&self.route.lanes);
+            if self.route_cum.0 != print {
+                let mut cum = Vec::with_capacity(self.route.lanes.len() + 1);
+                let mut acc = 0.0f64;
+                cum.push(0.0);
+                for &l in &self.route.lanes {
+                    acc += rn.lanes.get(l).map(|l| l.length() as f64).unwrap_or(0.0);
+                    cum.push(acc);
+                }
+                self.route_cum = (print, cum);
+            }
+            let cum = &self.route_cum.1;
+            let k = self.route.progress.min(self.route.lanes.len() - 1);
+            let bus_s = cum[k] + self.route.s as f64;
+            let total = cum[cum.len() - 1];
+            let px = ROUTE_PX * s;
+            let m = &self.route_mesh;
+            if m.lanes != print
+                || m.jam != self.jam_version
+                || m.anchor != anchor
+                || m.px != px
+                || k < m.from
+                || (bus_s + ROUTE_AHEAD + 100.0 > m.end && m.end < total)
             {
                 let mut p = Painter::new();
-                let style = RouteStyle {
-                    extra_m: -0.9,
-                    min_px: 4.0,
-                    arrows: Some((28.0, 900.0)),
-                    max_len: 12_000.0,
-                    near: Some((anchor, ROAD_RADIUS * 1.6)),
-                };
-                build_route(
+                let reach = bus_s - cum[k] + ROUTE_AHEAD + 1500.0;
+                build_route_line(
                     &mut p,
                     rn,
-                    &self.route.lanes[self.route.progress.min(self.route.lanes.len())..],
+                    &self.route.lanes[k..],
+                    cum[k],
                     anchor,
-                    self.route.s,
                     &self.route_jam,
-                    &style,
-                    bus_lane,
+                    reach,
+                    px,
                 );
-                self.route_mesh = (
-                    self.route.version,
-                    self.jam_version,
+                self.route_mesh = RouteMesh {
+                    lanes: print,
+                    jam: self.jam_version,
                     anchor,
-                    p.len(),
-                    bus_lane,
-                );
+                    px,
+                    from: k,
+                    end: (cum[k] + reach).min(total),
+                    verts: p.len(),
+                };
+                if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+                    log::info!(
+                        "navigator: route line built from route lane {k} ({:.0} m to {:.0} m along): {} vertices",
+                        cum[k],
+                        self.route_mesh.end,
+                        self.route_mesh.verts
+                    );
+                }
                 route_verts = Some(p.verts);
             }
-        } else if self.route_mesh.3 != 0 {
+            let dim = self
+                .next_turn
+                .as_ref()
+                .filter(|_| self.route.on_route)
+                .map(|t| bus_s + t.2 + 30.0)
+                .unwrap_or(1.0e9);
+            route_cut = [bus_s as f32, dim as f32, (bus_s + ROUTE_AHEAD) as f32];
+        } else if self.route_mesh.verts != 0 {
             route_verts = Some(Vec::new());
-            self.route_mesh = (self.route.version, self.jam_version, anchor, 0, 0);
+            self.route_mesh = RouteMesh::default();
         }
+        map_layer.route = route_cut;
 
         let mut bg = Painter::new();
         bg.rounded(
@@ -987,7 +1013,7 @@ impl Navigator {
             },
             Draw {
                 buffer: 1,
-                range: 0..self.route_mesh.3,
+                range: 0..self.route_mesh.verts,
                 layer: 1,
                 texture: 0,
             },

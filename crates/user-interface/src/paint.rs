@@ -476,6 +476,32 @@ impl Painter {
         }
     }
 
+    /// A [`Painter::ribbon`] that carries `along[i]` (the distance along a route, m) at
+    /// `pts[i]`: a [`crate::gpu::Layer`]'s `route` then cuts it off behind a point, dims it
+    /// beyond another and fades it out further on, every frame, without building it again.
+    pub fn ribbon_along(
+        &mut self,
+        pts: &[Vec3],
+        along: &[f32],
+        w_m: f32,
+        w_px: f32,
+        c: Color,
+        caps: bool,
+    ) {
+        let from = self.verts.len();
+        self.ribbon(pts, w_m, w_px, c, caps);
+        let at: std::collections::HashMap<[u32; 3], f32> = pts
+            .iter()
+            .zip(along)
+            .map(|(p, s)| (p.to_array().map(f32::to_bits), *s))
+            .collect();
+        for v in &mut self.verts[from..] {
+            if let Some(s) = at.get(&v.pos.map(f32::to_bits)) {
+                v.uv = [*s, 1.0];
+            }
+        }
+    }
+
     /// A band along `pts` (world), `w_m` metres wide but at least `w_px` pixels, with
     /// round ends when `caps`. Gentle bends are mitred; sharper ones get a round joint (a
     /// clamped mitre left notches in hairpins and turning loops).

@@ -3132,8 +3132,10 @@ pub(crate) fn run_offscreen(
             }
             nav.set_map(world.navigation_map());
             let (line, terminus, stops, trip) = navigator::duty_parts(duty.as_ref());
+            let mut trip_lanes = Vec::new();
             if let (Some((key, name)), Some(sch)) = (trip, schedule.as_ref()) {
                 let lanes = sch.trip_route_in(nav.map_net().unwrap(), &name);
+                trip_lanes = lanes.clone();
                 let g = nav.global_version + (1 << 40);
                 nav.set_route(&key, lanes, true, g);
             }
@@ -3162,6 +3164,79 @@ pub(crate) fn run_offscreen(
                 follow_window: ::config::get_bool("ui", "scale_window").unwrap_or(true),
                 dt: 0.1,
             };
+            // OMSI_NAV_SHOTS=<every m>[,<count>[,<from m>]]: the bus put down along the trip's
+            // route every so many metres, the navigator panel saved at each as
+            // <out>_nav_<k>.png (with OMSI_NAV_MAP, the full map beside it)
+            if let Ok(spec) = ::legacy_config::env::var("OMSI_NAV_SHOTS") {
+                let v: Vec<f64> = spec.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                let every = v.first().copied().unwrap_or(150.0).max(5.0);
+                let count = v.get(1).copied().unwrap_or(12.0) as usize;
+                let from = v.get(2).copied().unwrap_or(0.0);
+                let net = nav.map_net_arc().expect("the map's road network");
+                // where each stop lies along the route
+                let mut walked = 0.0f64;
+                let mut along: Vec<(DVec3, f32, f64)> = Vec::new();
+                for &l in &trip_lanes {
+                    let lane = &net.lanes[l];
+                    let mut s = 0.0f32;
+                    while s < lane.length() {
+                        let (q, h) = lane.at(s);
+                        along.push((q, h, walked + s as f64));
+                        s += 2.0;
+                    }
+                    walked += lane.length() as f64;
+                }
+                let stop_s: Vec<f64> = frame
+                    .stops
+                    .iter()
+                    .map(|st| {
+                        along
+                            .iter()
+                            .filter(|a| (a.0 - st.position).truncate().length() < 25.0)
+                            .map(|a| a.2)
+                            .next()
+                            .unwrap_or(f64::MAX)
+                    })
+                    .collect();
+                let stem = out.with_extension("");
+                for k in 0..count {
+                    let at = from + every * k as f64;
+                    // a few steps up to the spot, as the bus would have come
+                    for back in [40.0, 30.0, 20.0, 10.0, 0.0] {
+                        let Some(&(q, h, s)) = along.iter().find(|a| a.2 >= at - back) else {
+                            break;
+                        };
+                        let stops: Vec<_> = frame
+                            .stops
+                            .iter()
+                            .zip(&stop_s)
+                            .filter(|(_, ss)| **ss + 10.0 > s)
+                            .map(|(st, _)| st.clone())
+                            .collect();
+                        let f = navigator::NavFrame {
+                            bus: q,
+                            heading: h as f64,
+                            speed_kmh: 30.0,
+                            stops,
+                            ..frame.clone_ref()
+                        };
+                        for _ in 0..4 {
+                            nav.frame(&renderer, &mut scene, &f);
+                            scene.overlays.pop();
+                        }
+                        if back == 0.0 {
+                            if let Some((w, h, px)) = nav.shot(&renderer, &f) {
+                                let path = format!("{}_nav_{k:02}.png", stem.display());
+                                image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8)?;
+                                log::info!(
+                                    "navigator shot {k}: {:.0} m along the route at ({:.1}, {:.1}) heading {:.0}: {path}",
+                                    s, q.x, q.y, h
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             for _ in 0..30 {
                 nav.frame(&renderer, &mut scene, &frame);
                 scene.overlays.pop();

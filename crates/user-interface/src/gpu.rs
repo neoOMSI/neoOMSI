@@ -20,6 +20,15 @@ pub struct Layer {
     pub opacity: f32,
     /// Metres per pixel per metre of depth (`2 tan(fov/2) / viewport height`).
     pub px_scale: f32,
+    /// For ribbons drawn with [`crate::Painter::ribbon_along`]: cut off below this distance
+    /// along, dimmed beyond the second, faded out over the last 150 m before the third (0:
+    /// no fade).
+    pub route: [f32; 3],
+}
+
+impl Layer {
+    /// A `route` that shows the whole of a ribbon.
+    pub const WHOLE_ROUTE: [f32; 3] = [-1.0e9, 1.0e9, 0.0];
 }
 
 impl Layer {
@@ -32,6 +41,7 @@ impl Layer {
             radius,
             opacity,
             px_scale: 0.0,
+            route: Self::WHOLE_ROUTE,
         }
     }
     /// A perspective view of a world drawn into `viewport`.
@@ -52,6 +62,7 @@ impl Layer {
             radius,
             opacity,
             px_scale: 2.0 * (fov_y * 0.5).tan() / viewport[3].max(1.0),
+            route: Self::WHOLE_ROUTE,
         }
     }
 }
@@ -529,9 +540,9 @@ impl Gpu {
             let u = Uniform {
                 view_proj: l.view_proj.to_cols_array_2d(),
                 viewport: vp,
-                target: [w as f32, h as f32, 0.0, 0.0],
+                target: [w as f32, h as f32, l.route[0], l.route[1]],
                 clip: l.clip,
-                params: [l.radius, l.opacity, l.px_scale, 0.0],
+                params: [l.radius, l.opacity, l.px_scale, l.route[2]],
             };
             let at = k * SLOT as usize;
             data[at..at + size_of::<Uniform>()].copy_from_slice(bytemuck::bytes_of(&u));

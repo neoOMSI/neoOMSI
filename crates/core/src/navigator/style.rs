@@ -7,8 +7,10 @@ pub(super) const HAIR: Color = Color::rgba(40, 40, 44, 1.0);
 pub(super) const ACCENT: Color = Color::rgba(232, 160, 48, 1.0);
 pub(super) const BAR: Color = Color::rgba(18, 18, 20, 1.0);
 pub(super) const ROAD_CASING: Color = Color::rgba(18, 18, 20, 0.9);
-pub(super) const ROAD: Color = Color::rgba(38, 38, 43, 1.0);
-pub(super) const ROAD_MAIN: Color = Color::rgba(60, 60, 68, 1.0);
+pub(super) const ROAD: Color = Color::rgba(56, 56, 63, 1.0);
+pub(super) const ROAD_MAIN: Color = Color::rgba(78, 78, 88, 1.0);
+/// The pavement edge along a carriageway of the road graph.
+pub(super) const ROAD_KERB: Color = Color::rgba(34, 34, 39, 1.0);
 pub(super) const ROUTE: Color = Color::rgba(214, 48, 40, 1.0);
 pub(super) const DOT: Color = Color::rgba(70, 140, 255, 1.0);
 
@@ -20,13 +22,12 @@ pub(super) const LEVEL: [Color; 5] = [
     Color::rgba(122, 16, 22, 1.0),
 ];
 
-pub(super) const ARROW: [Color; 5] = [
-    Color::rgba(18, 14, 8, 1.0),
-    Color::rgba(12, 66, 28, 1.0),
-    Color::rgba(92, 58, 0, 1.0),
-    Color::rgba(150, 240, 150, 1.0),
-    Color::rgba(255, 206, 80, 1.0),
-];
+/// The dark edge along the route line.
+pub(super) const ROUTE_EDGE: Color = Color::rgba(14, 12, 10, 0.95);
+/// How far ahead of the bus the route shows in the panel (m).
+pub(super) const ROUTE_AHEAD: f64 = 2500.0;
+/// The route line's width in the panel (px at the panel's own scale).
+pub(super) const ROUTE_PX: f32 = 7.0;
 
 pub(super) const DRIVEN: Color = Color::rgba(30, 30, 34, 1.0);
 pub(super) const STREET: Color = Color::rgba(190, 190, 196, 1.0);

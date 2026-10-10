@@ -32,11 +32,13 @@ impl Navigator {
             global: None,
             stop_pos: Default::default(),
             streets: None,
+            graph: None,
             building: None,
             global_version: 0,
             roads: None,
             route: Route::default(),
-            route_mesh: (u64::MAX, 0, DVec2::ZERO, 0, 0),
+            route_mesh: RouteMesh::default(),
+            route_cum: (0, Vec::new()),
             congestion: HashMap::new(),
             route_jam: HashMap::new(),
             jam_version: 0,
@@ -75,7 +77,8 @@ impl Navigator {
                 confirm_road_surfaces(&mut net, &m.road_surfaces);
                 probe_lanes(&net);
                 let streets = build_streets(&net, &m.signs);
-                let _ = tx.send((net, m.places, streets));
+                let graph = RoadGraph::build(&net, &m.carriageways);
+                let _ = tx.send((net, m.places, streets, graph));
             })
             .ok();
         self.building = Some(rx);
@@ -90,6 +93,8 @@ impl Navigator {
         confirm_road_surfaces(&mut net, &map.road_surfaces);
         probe_lanes(&net);
         self.streets = Some(std::sync::Arc::new(build_streets(&net, &map.signs)));
+        self.graph = Some(std::sync::Arc::new(RoadGraph::build(&net, &map.carriageways)));
+        self.roads = None;
         let global = std::sync::Arc::new(net);
         self.global = Some(global);
         self.stop_pos = std::sync::Arc::new(map.places);
@@ -102,6 +107,10 @@ impl Navigator {
 
     pub fn map_net(&self) -> Option<&Network> {
         self.global.as_deref()
+    }
+
+    pub fn map_net_arc(&self) -> Option<std::sync::Arc<Network>> {
+        self.global.clone()
     }
 
     pub fn add_lanes(&mut self, lanes: Vec<::simulation::traffic::Lane>) {

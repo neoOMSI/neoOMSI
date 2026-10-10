@@ -11,9 +11,11 @@ mod api;
 mod city;
 mod draw;
 mod follow;
+mod graph;
 mod map_view;
 mod roads;
 mod route;
+mod shot;
 mod streets;
 mod style;
 #[cfg(test)]
@@ -23,6 +25,9 @@ mod words;
 
 pub(crate) use self::roads::{confirm_road_surfaces, road_geometry, simplify};
 pub(crate) use self::route::way_back;
+pub(crate) use self::graph::RoadGraph;
+#[cfg(test)]
+use self::graph::convex_hull;
 use self::{roads::*, route::*, streets::*, style::*, util::*, words::*};
 
 pub(crate) fn stop_requested(vehicle: &::simulation::vehicle::VehicleInstance) -> bool {
@@ -130,12 +135,16 @@ pub struct Navigator {
     global: Option<std::sync::Arc<Network>>,
     stop_pos: std::sync::Arc<HashMap<i64, DVec3>>,
     streets: Option<std::sync::Arc<Streets>>,
+    /// The streets drawn, built with the map's network.
+    graph: Option<std::sync::Arc<RoadGraph>>,
     #[allow(clippy::type_complexity)]
-    building: Option<std::sync::mpsc::Receiver<(Network, HashMap<i64, DVec3>, Streets)>>,
+    building: Option<std::sync::mpsc::Receiver<(Network, HashMap<i64, DVec3>, Streets, RoadGraph)>>,
     pub global_version: u64,
     roads: Option<Roads>,
     route: Route,
-    route_mesh: (u64, u64, DVec2, u32, usize),
+    route_mesh: RouteMesh,
+    /// The route's lanes (their fingerprint) and how far along the route each begins.
+    route_cum: (u64, Vec<f64>),
     congestion: HashMap<usize, f32>,
     route_jam: HashMap<usize, f32>,
     jam_version: u64,
@@ -197,7 +206,7 @@ pub fn duty_parts(
 }
 
 impl<'a> NavFrame<'a> {
-    fn clone_ref(&self) -> NavFrame<'a> {
+    pub(crate) fn clone_ref(&self) -> NavFrame<'a> {
         NavFrame {
             traffic: self.traffic,
             bus: self.bus,
@@ -223,18 +232,35 @@ impl<'a> NavFrame<'a> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct MapRoad {
     pub(crate) points: Vec<DVec3>,
     pub(crate) width: f32,
     pub(crate) main: bool,
+    /// The spline (tile, id) the road runs along, if it is one.
+    pub(crate) spline: Option<((i32, i32), i64)>,
 }
 
-struct RouteStyle {
-    extra_m: f32,
-    min_px: f32,
-    arrows: Option<(f32, f32)>,
-    max_len: f32,
-    near: Option<(DVec2, f64)>,
+/// What the route line in the panel was built for: the lanes (their fingerprint), the
+/// traffic on them, where it is drawn from, its width, the lane it starts at and how far along
+/// the route it reaches; `verts` vertices.
+#[derive(Default)]
+struct RouteMesh {
+    lanes: u64,
+    jam: u64,
+    anchor: DVec2,
+    px: f32,
+    from: usize,
+    end: f64,
+    verts: u32,
+}
+
+/// A fingerprint of a route's lanes: a new way back changes it, driving along does not.
+fn lanes_print(lanes: &[usize]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    lanes.hash(&mut h);
+    h.finish() | 1
 }
 
 pub struct Streets {
