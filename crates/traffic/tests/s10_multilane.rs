@@ -96,18 +96,54 @@ fn a_stopped_car_can_bypass_a_serving_bus() {
 
 #[test]
 fn a_stopped_car_bypasses_a_car_parked_in_its_lane() {
-    // the parked car is no actor of the scene: only the lead the world reports stands for it
+    // (also where the lane beside is no neighbour of the same spline: an object's paths)
+    for linked in [true, false] {
+        let mut net = two_lanes();
+        if !linked {
+            net.lanes[0].left = None;
+            net.lanes[1].right = None;
+        }
+        assert_eq!(parked_bypass(&net), Some((1, ChangeKind::Bypass)), "linked {linked}");
+    }
+}
+
+#[test]
+fn a_bypass_round_a_parked_car_goes_back_only_past_it() {
     let net = two_lanes();
+    let route_back = |odometer: f32| {
+        let mut a = ManeuverActor::new(VehicleId(1), 1, 60.0);
+        a.front = 6.0; a.rear = 6.0; a.length = 12.0; a.half_width = 1.25;
+        a.speed = 3.0; a.route_next = Some(0); a.odometer = odometer;
+        let actors = [a];
+        let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+        let mut coord = ManeuverCoordinator::new();
+        let mut state = ManeuverState { bypass_until: Some(100.0), ..Default::default() };
+        for tick in 0..50 {
+            let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+                static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+            coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+            if let Some(c) = coord.plan(&scene, &mut state, &ManeuverInputs::new(0)).change {
+                return Some(c.to);
+            }
+        }
+        None
+    };
+    assert_eq!(route_back(90.0), None, "moved back in beside the parked car");
+    assert_eq!(route_back(101.0), Some(0));
+}
+
+fn parked_bypass(net: &Network) -> Option<(usize, ChangeKind)> {
+    // the parked car is no actor of the scene: only the lead the world reports stands for it
     let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);
     ego.front = 6.0; ego.rear = 6.0; ego.length = 12.0; ego.half_width = 1.25;
     ego.stopped = 5.0; ego.pass_room = 5.5;
     let actors = [ego];
-    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, net)).collect());
     let mut coord = ManeuverCoordinator::new();
     let mut state = ManeuverState::default();
     let mut chosen = None;
     for tick in 0..150 {
-        let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+        let scene = ManeuverScene { net, occupancy: &occ, actors: &actors, people: &[],
             static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
         coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
         let mut input = ManeuverInputs::new(0);
@@ -117,8 +153,7 @@ fn a_stopped_car_bypasses_a_car_parked_in_its_lane() {
         chosen = coord.plan(&scene, &mut state, &input).change;
         if chosen.is_some() { break; }
     }
-    let change = chosen.expect("stood behind the parked car for good");
-    assert_eq!((change.to, change.kind), (1, ChangeKind::Bypass));
+    chosen.map(|c| (c.to, c.kind))
 }
 
 #[test]

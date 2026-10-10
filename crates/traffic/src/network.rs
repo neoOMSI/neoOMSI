@@ -611,8 +611,11 @@ impl Network {
         let (la, lb) = (self.lanes.get(a)?, self.lanes.get(b)?);
         let ([na], [nb]) = (la.next.as_slice(), lb.next.as_slice()) else { return None };
         let (next_a, next_b) = (self.lanes.get(*na)?, self.lanes.get(*nb)?);
+        // (lanes of an object have no neighbours: there, lanes that run beside each other)
+        let unlinked = |l: &Lane| l.left.is_none() && l.right.is_none();
         let paired = (la.left == Some(b) && next_a.left == Some(*nb))
-            || (la.right == Some(b) && next_a.right == Some(*nb));
+            || (la.right == Some(b) && next_a.right == Some(*nb))
+            || ((unlinked(la) || unlinked(next_a)) && self.parallel(a, b) && self.parallel(*na, *nb));
         if !paired { return None; }
         for (from, to) in [(la, next_a), (lb, next_b)] {
             if from.kind != to.kind || (from.end() - to.start()).length() > 1.5
@@ -1012,12 +1015,50 @@ impl Network {
         best
     }
 
-    /// The lanes traffic comes from towards distance `s` of `lane`, walked backwards over
-    /// joints and through junctions for up to `within` metres: (lane, offset, the lane it
-    /// leads into on the way to `lane`). A vehicle at distance `x` along such a lane is at
-    /// `x + offset` in `lane`'s own distances (negative before its start); the first entry
-    /// is `lane` itself with offset 0. Where several ways lead to one lane, the shortest
-    /// counts. At most `max` lanes.
+    pub fn beside_lane(&self, lane: usize, s: f32, dir: i32) -> Option<usize> {
+        let l = self.lanes.get(lane)?;
+        let junction = |i: usize| self.crossings.get(i).is_some_and(|c| !c.is_empty());
+        if junction(lane) {
+            return None;
+        }
+        let (p, h) = l.at(s);
+        let hr = (h as f64).to_radians();
+        let right = DVec3::new(hr.cos(), -hr.sin(), 0.0);
+        let (cx, cy) = Self::grid_cell(p);
+        let mut best: Option<(usize, f32)> = None;
+        let mut seen: Vec<usize> = Vec::new();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &i in self.grid.get(&(cx + dx, cy + dy)).map(|v| v.as_slice()).unwrap_or(&[]) {
+                    if i == lane || seen.contains(&i) {
+                        continue;
+                    }
+                    seen.push(i);
+                    let o = &self.lanes[i];
+                    if o.kind != LaneKind::Street || o.no_cars {
+                        continue;
+                    }
+                    let Some((os, d)) = o.nearest_point(p) else { continue };
+                    if !(1.5..6.0).contains(&d) {
+                        continue;
+                    }
+                    let (q, oh) = o.at(os);
+                    let side = (q - p).dot(right) as f32;
+                    if (side > 0.0) != (dir == 2) || wrap_deg(oh - h).abs() > 20.0 {
+                        continue;
+                    }
+                    if !self.parallel(lane, i) {
+                        continue;
+                    }
+                    if best.is_none_or(|b| side.abs() < b.1) {
+                        best = Some((i, side.abs()));
+                    }
+                }
+            }
+        }
+        best.map(|b| b.0)
+    }
+
     pub fn upstream(
         &self,
         lane: usize,
