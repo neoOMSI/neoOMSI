@@ -209,6 +209,7 @@ pub(crate) struct App {
     pub(crate) cursor_kind: u8,
     pub(crate) lan: Option<::network::LanSession>,
     pub(crate) remotes: lan::LanGame,
+    pub(crate) voice: crate::voice::VoiceChat,
     pub(crate) spikes: u32,
     pub(crate) worst_ms: f32,
     pub(crate) governor: (f32, u32, f32),

@@ -11,7 +11,7 @@ mod screen;
 
 use self::common::plain;
 pub use self::dialog::Dialog;
-pub use self::page::{Fmt, OptGroup, OptKind, OptRow, OptShow, ADMIN_PAGE, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, VEHICLE_PAGE, WORLD_PAGE};
+pub use self::page::{Fmt, OptGroup, OptKind, OptRow, OptShow, ADMIN_PAGE, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, VEHICLE_PAGE, VOICE_SUB, WORLD_PAGE};
 
 #[derive(Clone, Debug, Default)]
 pub struct WorldRow {

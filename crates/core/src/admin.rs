@@ -17,7 +17,8 @@
 //! `ban <id>`, `bring <id>`, `goto <id>`, `time <seconds>`, `speed <factor>`,
 //! `weather next`, `say <text>`, `bringall`, `service <repair|refuel|wash> <id|all>`,
 //! `unstick <id>`, `clock <seconds of the day>`, `traffic next`, `traffic clear`,
-//! `weather cycle`, `weather set <Weather/file.owt>`.
+//! `weather cycle`, `weather set <Weather/file.owt>`, `mute <id>`, `unmute <id>`,
+//! `voice on|off`.
 
 use crate::App;
 use ::network::{LanSession, Role};
@@ -55,7 +56,19 @@ pub(crate) fn items(app: &App) -> Vec<(String, String)> {
         out.push((::i18n::translate("pause.admin.unstick", &[("name", &name)]), format!("unstick {id}")));
         out.push((::i18n::translate("pause.admin.kick", &[("name", &name)]), format!("kick {id}")));
         out.push((::i18n::translate("pause.admin.ban", &[("name", &name)]), format!("ban {id}")));
+        let muted = lan.peers().find(|p| p.pose.id == *id).map(|p| p.voice_muted);
+        if lan.role == Role::Client || muted == Some(false) {
+            out.push((::i18n::translate("pause.admin.mute", &[("name", &name)]), format!("mute {id}")));
+        }
+        if lan.role == Role::Client || muted == Some(true) {
+            out.push((::i18n::translate("pause.admin.unmute", &[("name", &name)]), format!("unmute {id}")));
+        }
     }
+    let state = ::i18n::translate(if lan.voice.enabled { "pause.admin.on" } else { "pause.admin.off" }, &[]);
+    out.push((
+        ::i18n::translate("pause.admin.voice", &[("state", &state)]),
+        format!("voice {}", if lan.voice.enabled { "off" } else { "on" }),
+    ));
     if peers.len() > 1 {
         out.push((
             ::i18n::translate("pause.admin.bring_all", &[]),
@@ -155,6 +168,11 @@ pub(crate) fn run(app: &mut App, action: &str) {
 fn host_action(app: &mut App, action: &str, by: Option<u32>) {
     let (verb, arg) = action.split_once(' ').unwrap_or((action, ""));
     let id = arg.trim().parse::<u32>().ok();
+    if let Some(l) = app.lan.as_mut() {
+        if voice_action(l, verb, arg) {
+            return;
+        }
+    }
     match verb {
         "kick" | "ban" => {
             if let (Some(l), Some(id)) = (app.lan.as_mut(), id) {
@@ -572,6 +590,30 @@ pub(crate) fn command(app: &mut App, from: u32, text: &str) {
     }
 }
 
+fn voice_action(lan: &mut LanSession, verb: &str, arg: &str) -> bool {
+    match verb {
+        "mute" | "unmute" => {
+            let mute = verb == "mute";
+            if let Ok(id) = arg.trim().parse::<u32>() {
+                if lan.set_voice_muted(id, mute) {
+                    let _ = lan.say_to(
+                        id,
+                        "Admin (private)",
+                        if mute {
+                            "your microphone is muted in this session"
+                        } else {
+                            "you may speak again"
+                        },
+                    );
+                }
+            }
+        }
+        "voice" => lan.voice.enabled = arg.trim() == "on",
+        _ => return false,
+    }
+    true
+}
+
 /// The administration of a dedicated server (`omsi --server`): what it keeps.
 #[derive(Default)]
 pub(crate) struct ServerAdmin {
@@ -670,6 +712,9 @@ pub(crate) fn server_command(
             let (v, a) = arg.split_once(' ').unwrap_or((arg, ""));
             let id = a.trim().parse::<u32>().ok();
             log::info!("server: admin {from}: {arg}");
+            if voice_action(lan, v, a) {
+                return;
+            }
             match v {
                 "kick" | "ban" => {
                     if let Some(id) = id {

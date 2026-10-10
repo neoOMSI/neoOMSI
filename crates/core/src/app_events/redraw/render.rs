@@ -95,6 +95,19 @@ impl App {
             self.service_msg = self.service_msg.take().filter(|(_, l)| *l > 0.0);
             if let Some(lan) = self.lan.as_ref() {
                 lines.extend(lan::hud_lines(lan, &self.remotes, self.player.as_ref()));
+                match (self.voice.sending(), self.voice.error.as_ref()) {
+                    (Some(radio), _) => lines.push(::i18n::translate(
+                        if radio { "pause.msg.voice_radio" } else { "pause.msg.voice_talking" },
+                        &[],
+                    )),
+                    (None, Some(e))
+                        if ::config::get_bool("voice", "enabled").unwrap_or(true)
+                            && lan.voice_allowed() =>
+                    {
+                        lines.push(::i18n::translate("pause.msg.voice_error", &[("error", e)]))
+                    }
+                    _ => {}
+                }
             }
             if let Some(h) = self.humans.as_ref() {
                 if let Some(hint) = h.hint() {
@@ -267,6 +280,7 @@ impl App {
                 } else {
                     None
                 };
+                let speaking = |id| self.voice.speaking(id);
                 let tags =
                     if !screenshot_mode && ::config::get_bool("ui", "name_tags").unwrap_or(true) {
                         self.camera.as_ref().map_or_else(Vec::new, |camera| {
@@ -277,6 +291,7 @@ impl App {
                                     w,
                                     h,
                                     Some(views.projections[1]),
+                                    &speaking,
                                 ),
                                 Some(views) => {
                                     let panel_width = surface_width / 3.0;
@@ -289,27 +304,29 @@ impl App {
                                                 panel_width,
                                                 h,
                                                 Some(views.projections[panel]),
+                                                &speaking,
                                             )
                                             .into_iter()
-                                            .filter(|((x, y), _, _, _)| {
+                                            .filter(|((x, y), ..)| {
                                                 *x >= 0.0
                                                     && *x < panel_width
                                                     && *y >= 0.0
                                                     && *y <= h
                                             })
-                                            .map(|((x, y), name, sub, alpha)| {
+                                            .map(|((x, y), name, sub, alpha, talking)| {
                                                 (
                                                     (x + panel_width * panel as f32, y),
                                                     name,
                                                     sub,
                                                     alpha,
+                                                    talking,
                                                 )
                                             }),
                                         );
                                     }
                                     tags
                                 }
-                                None => lan::name_tags(&self.remotes, camera, w, h),
+                                None => lan::name_tags(&self.remotes, camera, w, h, &speaking),
                             }
                         })
                     } else {

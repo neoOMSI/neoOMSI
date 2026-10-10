@@ -159,8 +159,9 @@ pub struct Frame<'a> {
     pub info: Option<String>,
     /// A tutorial page: title, text, picture, page number and count.
     pub tutorial: Option<(&'a str, &'a str, Option<&'a std::path::Path>, usize, usize)>,
-    /// Name tags: a screen position (the point above a bus), the name and a second line.
-    pub tags: Vec<((f32, f32), String, String, f32)>,
+    /// Name tags: a screen position (the point above a bus), the name, a second line, the
+    /// opacity, and whether that player is heard speaking.
+    pub tags: Vec<((f32, f32), String, String, f32, bool)>,
     /// What kind of menu the lines belong to.
     pub menu_kind: MenuKind,
     pub report: Option<&'a RunReportView>,

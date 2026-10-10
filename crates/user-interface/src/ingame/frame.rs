@@ -123,11 +123,16 @@ impl Ui {
     pub fn draw(&mut self, r: &Renderer, scene: &mut Scene, f: &Frame, dt: f32) {
         let s = f.scale.max(0.5) * f.ui_scale;
         self.text.backdrop = f.opacity;
-        for ((x, y), name, sub, alpha) in &f.tags {
+        for ((x, y), name, sub, alpha, speaking) in &f.tags {
             let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+            let color = if *speaking {
+                [120, 255, 150, 255]
+            } else {
+                [255, 255, 255, 220]
+            };
             let l = self
                 .text
-                .label(r, scene, name, (19.0 * s) as u32, [255, 255, 255, 220]);
+                .label(r, scene, name, (19.0 * s) as u32, color);
             let x0 = x - l.w as f32 * 0.5;
             let y0 = y - l.h as f32;
             if a > 0 {

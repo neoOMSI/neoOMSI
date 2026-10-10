@@ -489,7 +489,8 @@
         "sound": "Ton",
         "vr": "VR",
         "head_tracking": "Head-Tracking",
-        "general": "Allgemein"
+        "general": "Allgemein",
+        "voice": "Sprachchat"
       },
       "info": {
         "time": {
@@ -802,6 +803,47 @@
           "yaw roll": "Gieren und Rollen",
           "pitch roll": "Nicken und Rollen",
           "yaw pitch roll": "Gieren, Nicken und Rollen"
+        },
+        "voice_mode": {
+          "ptt": "Sprechtaste (gedrückt halten)",
+          "auto": "Sprachaktivierung"
+        }
+      },
+      "voice": {
+        "voice": {
+          "name": "Sprachchat",
+          "desc": "Mit den Spielern in deiner Nähe sprechen, in einer Mehrspielersitzung"
+        },
+        "voice_mode": {
+          "name": "Sprechen",
+          "desc": "Die Sprechtaste halten (siehe Tastenbelegung; mit Umschalt: über Funk) oder immer, wenn du sprichst"
+        },
+        "mic": {
+          "name": "Mikrofon",
+          "desc": "Sprich: der Balken zeigt, wie laut du bist, und die Zeile leuchtet, solange dich die anderen hören",
+          "default": "Systemstandard",
+          "off": "Schalte den Sprachchat ein, um das Mikrofon zu testen"
+        },
+        "mic_gain": {
+          "name": "Mikrofonlautstärke",
+          "desc": "Wie laut dich die anderen hören"
+        },
+        "voice_sensitivity": {
+          "name": "Sprachaktivierung",
+          "desc": "Höher: auch leiseres Sprechen öffnet das Mikrofon"
+        },
+        "voice_denoise": {
+          "name": "Rauschunterdrückung",
+          "desc": "Filtert Motor, Wind und Tastatur aus deinem Mikrofon"
+        },
+        "vol_voice": {
+          "name": "Andere Spieler",
+          "desc": "Wie laut die Stimmen der anderen sind"
+        },
+        "pvol": {
+          "name": "Spieler",
+          "desc": "Die Stimme dieses Spielers (0: stumm)",
+          "muted": "stumm"
         }
       }
     },
@@ -1341,7 +1383,9 @@
       "view_set_schedule": "Ansicht: Fahrplan",
       "view_set_ticketselling": "Ansicht: Fahrscheinverkauf",
       "view_toggle_informationdisplay": "Informationsanzeige umschalten",
-      "view_toggle_viewpoint": "Blickpunkt umschalten"
+      "view_toggle_viewpoint": "Blickpunkt umschalten",
+      "voice_talk": "Mehrspieler: sprechen (halten)",
+      "voice_radio": "Mehrspieler: über Funk sprechen (halten)"
     },
     "keybinds": {
       "not_set": "Nicht belegt",
@@ -1375,7 +1419,11 @@
       "start_point_missing": "Dieser Startpunkt wurde nicht gefunden",
       "destination": "Ziel: {name}",
       "fleet_number": "Wagennummer: {number}",
-      "key_conflict": "Diese Taste wird bereits verwendet von: {keys}"
+      "key_conflict": "Diese Taste wird bereits verwendet von: {keys}",
+      "voice_talking": "Sprachchat: du sprichst",
+      "voice_radio": "Sprachchat: über Funk",
+      "voice_error": "Sprachchat: {error}",
+      "voice_mic_denied": "das Mikrofon ist nicht erlaubt"
     },
     "admin": {
       "player": "Spieler {id}",
@@ -1414,7 +1462,10 @@
       "host_brought": "Der Host hat dich hierher geholt",
       "host_service": "Der Host hat einen Service ausgeführt: {kind}",
       "host_upright": "Der Host hat dein Fahrzeug aufgerichtet",
-      "wrong_password": "Falsches Passwort"
+      "wrong_password": "Falsches Passwort",
+      "mute": "Mikrofon von {name} stummschalten",
+      "unmute": "{name} wieder sprechen lassen",
+      "voice": "Sprachchat: {state}"
     }
   }
 }

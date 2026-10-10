@@ -699,6 +699,11 @@ pub(crate) fn install_status() -> Option<(i32, String)> {
     })
 }
 
+pub(crate) fn microphone_allowed() -> bool {
+    with_activity(|env, activity| env.call_method(activity, "microphone", "()Z", &[])?.z())
+        .unwrap_or(false)
+}
+
 /// A web page in the phone's browser.
 pub(crate) fn open_url(url: &str) {
     let u = url.to_string();

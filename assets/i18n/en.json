@@ -489,7 +489,8 @@
         "sound": "Sound",
         "vr": "VR",
         "head_tracking": "Head tracking",
-        "general": "General"
+        "general": "General",
+        "voice": "Voice chat"
       },
       "info": {
         "time": {
@@ -802,6 +803,47 @@
           "yaw roll": "Yaw and roll",
           "pitch roll": "Pitch and roll",
           "yaw pitch roll": "Yaw, pitch and roll"
+        },
+        "voice_mode": {
+          "ptt": "Push-to-talk (hold the key)",
+          "auto": "Voice activation"
+        }
+      },
+      "voice": {
+        "voice": {
+          "name": "Voice chat",
+          "desc": "Talk to the players near you in a multiplayer session"
+        },
+        "voice_mode": {
+          "name": "Talk",
+          "desc": "Hold the push-to-talk key (see the key bindings; with Shift: over the radio), or whenever you speak"
+        },
+        "mic": {
+          "name": "Microphone",
+          "desc": "Speak: the bar shows how loud you are, and the row lights up while the others hear you",
+          "default": "System default",
+          "off": "Turn the voice chat on to test the microphone"
+        },
+        "mic_gain": {
+          "name": "Microphone volume",
+          "desc": "How loud the others hear you"
+        },
+        "voice_sensitivity": {
+          "name": "Voice activation",
+          "desc": "Higher: quieter speech opens the microphone too"
+        },
+        "voice_denoise": {
+          "name": "Noise suppression",
+          "desc": "Filters the engine, the wind and the keyboard out of your microphone"
+        },
+        "vol_voice": {
+          "name": "Other players",
+          "desc": "How loud the others' voices are"
+        },
+        "pvol": {
+          "name": "Player",
+          "desc": "This player's voice (0: muted)",
+          "muted": "muted"
         }
       }
     },
@@ -1341,7 +1383,9 @@
       "view_set_schedule": "View: timetable",
       "view_set_ticketselling": "View: ticket sales",
       "view_toggle_informationdisplay": "Switch information display",
-      "view_toggle_viewpoint": "Switch viewpoint"
+      "view_toggle_viewpoint": "Switch viewpoint",
+      "voice_talk": "Multiplayer: talk (hold)",
+      "voice_radio": "Multiplayer: talk over the radio (hold)"
     },
     "keybinds": {
       "not_set": "Not set",
@@ -1375,7 +1419,11 @@
       "start_point_missing": "This start point could not be found",
       "destination": "Destination: {name}",
       "fleet_number": "Fleet number: {number}",
-      "key_conflict": "This key is already used by: {keys}"
+      "key_conflict": "This key is already used by: {keys}",
+      "voice_talking": "Voice: talking",
+      "voice_radio": "Voice: on the radio",
+      "voice_error": "Voice: {error}",
+      "voice_mic_denied": "the microphone is not allowed"
     },
     "admin": {
       "player": "Player {id}",
@@ -1414,7 +1462,10 @@
       "host_brought": "The host brought you here",
       "host_service": "The host ran a service: {kind}",
       "host_upright": "The host put your vehicle upright",
-      "wrong_password": "Wrong password"
+      "wrong_password": "Wrong password",
+      "mute": "Mute {name}'s microphone",
+      "unmute": "Let {name} speak again",
+      "voice": "Voice chat: {state}"
     }
   }
 }

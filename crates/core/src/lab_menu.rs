@@ -1,7 +1,7 @@
 //! The pause menu
 
 use super::*;
-use crate::ui::{ADMIN_PAGE, Dialog, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PauseState, VEHICLE_PAGE, WORLD_PAGE, WorldDrop, WorldGroup, WorldRow};
+use crate::ui::{ADMIN_PAGE, Dialog, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PauseState, VEHICLE_PAGE, VOICE_SUB, WORLD_PAGE, WorldDrop, WorldGroup, WorldRow};
 
 #[derive(Clone, Default)]
 pub(crate) struct PlaceSel {
@@ -92,7 +92,7 @@ impl App {
         for (label, action) in items {
             let g = match action.split(' ').next().unwrap_or("") {
                 "back" => continue,
-                "goto" | "bring" | "kick" | "ban" | "unstick" | "bringall" | "service" => 0,
+                "goto" | "bring" | "kick" | "ban" | "unstick" | "bringall" | "service" | "mute" | "unmute" | "voice" => 0,
                 "clock" | "time" | "speed" => 1,
                 "weather" => 2,
                 _ => 3,
@@ -124,11 +124,23 @@ impl App {
         }
     }
 
+    pub(crate) fn lab_voice_shown(&self) -> bool {
+        self.lab_group_page() == Some(OPTIONS_PAGE)
+            && self.ui.as_ref().is_some_and(|u| {
+                u.world_sub > 0
+                    && u.world_view
+                        .get(u.world_group)
+                        .and_then(|g| g.subs.get(u.world_sub - 1))
+                        .is_some_and(|s| s.title == VOICE_SUB)
+            })
+    }
+
     fn lab_sync_due(&self) -> bool {
         let page = self.lab_group_page();
-        let live = self.ui.as_ref().is_some_and(|u| {
-            u.world_drag.is_some() || u.world_bar_grab.is_some() || (page == Some(OPTIONS_PAGE) && u.world_sub >= 2)
-        });
+        let live = self.lab_voice_shown()
+            || self.ui.as_ref().is_some_and(|u| {
+                u.world_drag.is_some() || u.world_bar_grab.is_some() || (page == Some(OPTIONS_PAGE) && u.world_sub >= 2)
+            });
         let forced = SYNC_NOW.with(|c| c.replace(false));
         SYNC.with(|c| {
             let due = live

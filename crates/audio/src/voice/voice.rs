@@ -11,11 +11,30 @@ use crate::voice::params::VoiceParams;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// A [`crate::Source`] with what its voice needs, made on the game thread: the audio
+/// thread does not allocate.
+pub struct Feed {
+    source: Arc<dyn crate::Source>,
+    block: Vec<f32>,
+    silent: Arc<Clip>,
+}
+
+impl Feed {
+    pub fn new(source: Arc<dyn crate::Source>) -> Feed {
+        Feed {
+            source,
+            block: vec![0.0; crate::engine::mixer::BLOCK_FRAMES],
+            silent: Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: Vec::new() }),
+        }
+    }
+}
+
 pub struct Voice {
     id: VoiceId,
     clip: Arc<Clip>,
     /// A voice fed while it plays (internet radio) instead of from `clip`.
     pub(crate) stream: Option<Arc<StreamBuf>>,
+    feed: Option<(Feed, f32)>,
     params: MixParams,
     pos: f64,
     kernel: Arc<resample::Kernel>,
@@ -46,7 +65,7 @@ impl Voice {
     pub(crate) fn clip_with_kernel(id: VoiceId, clip: Arc<Clip>, params: MixParams,
         kernel: Arc<resample::Kernel>) -> Voice {
         let seam = resample::Seam::new(&clip);
-        Voice { id, clip, seam, stream: None, params, pos: 0.0, kernel, reader: None, stream_last: [0.0; 2],
+        Voice { id, clip, seam, stream: None, feed: None, params, pos: 0.0, kernel, reader: None, stream_last: [0.0; 2],
             envelope: Envelope::default(), cur_step: 0.0, finished: false,
             cur_gain: 0.0, cur_reverb: 0.0, cur_pan: [1.0; 2], pan_ready: false, lp: LowPass::default(), doppler: (0.0, None, 1.0) }
     }
@@ -65,6 +84,13 @@ impl Voice {
         voice
     }
 
+    pub(crate) fn source_with_kernel(id: VoiceId, feed: Feed, params: MixParams,
+        kernel: Arc<resample::Kernel>) -> Voice {
+        let mut voice = Self::clip_with_kernel(id, feed.silent.clone(), params, kernel);
+        voice.feed = Some((feed, 0.0));
+        voice
+    }
+
     pub fn id(&self) -> VoiceId {
         self.id
     }
@@ -74,7 +100,7 @@ impl Voice {
     }
 
     pub fn is_stream(&self) -> bool {
-        self.stream.is_some()
+        self.stream.is_some() || self.feed.is_some()
     }
 
     pub fn params(&self) -> MixParams {
@@ -207,6 +233,10 @@ impl Voice {
         if self.cur_step == 0.0 { self.cur_step = target_step; }
         let nframes = self.clip.frames();
         let mut stalled = false;
+        if let Some((feed, _)) = self.feed.as_mut() {
+            let n = frames.min(feed.block.len());
+            feed.source.read(rate, &mut feed.block[..n]);
+        }
         for f in 0..frames {
             envelope::smooth(&mut self.cur_reverb, reverb_target, reverb_k);
             envelope::smooth(&mut self.cur_gain, target_gain, gain_k);
@@ -215,7 +245,9 @@ impl Voice {
             self.cur_step += (target_step - self.cur_step) * pitch_k;
             let fade = self.envelope.next(rate);
             if self.envelope.ended() { self.finished = true; break; }
-            let (l, r, tail) = if let Some(reader) = self.reader.as_mut() {
+            let (l, r, tail) = if let Some((feed, pole)) = self.feed.as_ref() {
+                (feed.block.get(f).copied().unwrap_or(0.0), *pole, 1.0)
+            } else if let Some(reader) = self.reader.as_mut() {
                 if self.stream.as_ref().is_some_and(|s| s.is_closed()) {
                     // close() also cancels the decoder immediately; fade the last decoded
                     // frame for 3 ms rather than abruptly dropping a radio at full level.
@@ -244,6 +276,13 @@ impl Voice {
                 (l, r, tail)
             };
             let (l, r) = self.lp.process(l, r, 0.0);
+            let (l, r) = match self.feed.as_mut() {
+                Some((_, pole)) => {
+                    *pole = l;
+                    (r, r)
+                }
+                None => (l, r),
+            };
             let gain = self.cur_gain * fade * tail;
             let (l, r) = (l * gain * self.cur_pan[0], r * gain * self.cur_pan[1]);
             let wet = if let Some(buffer) = send.as_deref_mut() {
@@ -255,7 +294,7 @@ impl Voice {
             else { out[f * ch] += l * (1.0 - wet); out[f * ch + 1] += r * (1.0 - wet); }
         }
         // Retire at the exact end even if it coincides with a callback boundary.
-        if self.reader.is_none() && !self.params.looping && self.pos >= nframes as f64 {
+        if self.reader.is_none() && self.feed.is_none() && !self.params.looping && self.pos >= nframes as f64 {
             self.finished = true;
         }
         stalled

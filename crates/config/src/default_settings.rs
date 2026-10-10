@@ -141,6 +141,14 @@ pub const DEFAULTS: &[(&str, &str, Def)] = &[
     ("audio", "ai-volume", Def::Float(1.0)),
     ("audio", "scenery-volume", Def::Float(1.0)),
     ("audio", "doppler", Def::Bool(true)),
+    // [voice]
+    ("voice", "enabled", Def::Bool(true)),
+    ("voice", "mode", Def::Str("ptt")),
+    ("voice", "mic", Def::Str("")),
+    ("voice", "denoise", Def::Bool(true)),
+    ("voice", "volume", Def::Float(1.0)),
+    ("voice", "mic_gain", Def::Float(1.0)),
+    ("voice", "sensitivity", Def::Float(0.5)),
     // [controller]
     ("controller", "deadzone", Def::Float(0.05)),
     ("controller", "ff_enabled", Def::Bool(true)),

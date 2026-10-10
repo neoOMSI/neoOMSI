@@ -31,6 +31,7 @@ import java.io.OutputStream;
  */
 public class OmsiActivity extends NativeActivity {
     private boolean askedStorage = false;
+    private boolean askedMicrophone = false;
 
     /** The package installer's answer, polled by the native side (see android.rs):
      * 0 nothing, 1 asking the player, 2 installed, 3 cancelled, 4 failed, 5 waiting for
@@ -132,6 +133,21 @@ public class OmsiActivity extends NativeActivity {
         } else {
             requestPermissions(new String[] {Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1);
         }
+    }
+
+    public boolean microphone() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            return true;
+        }
+        if (!askedMicrophone) {
+            askedMicrophone = true;
+            runOnUiThread(new Runnable() {
+                public void run() {
+                    requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO}, 2);
+                }
+            });
+        }
+        return false;
     }
 
     /** A short buzz (called from the native side for the on-screen buttons). */

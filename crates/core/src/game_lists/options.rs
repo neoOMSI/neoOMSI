@@ -30,7 +30,11 @@ pub(crate) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "atmosphere_brightness" => (0..=40).map(|v| v as f32 * 0.05).collect(),
         "ui_scale" => (10..=40).map(|v| v as f32 * 0.05).collect(),
         "ui_opacity" => (4..=20).map(|v| v as f32 * 0.05).collect(),
-        "vol_ai" | "vol_scenery" => (0..=20).map(|v| v as f32 * 0.05).collect(),
+        "vol_ai" | "vol_scenery" | "vol_voice" | "voice_sensitivity" => {
+            (0..=20).map(|v| v as f32 * 0.05).collect()
+        }
+        "mic_gain" => (0..=40).map(|v| v as f32 * 0.1).collect(),
+        "pvol" => (0..=20).map(|v| v as f32 * 0.1).collect(),
         "wheel_range" => (6..=96).map(|v| v as f32 * 30.0).collect(),
         "wheel_lock" => std::iter::once(0.0)
             .chain((2..=96).map(|v| v as f32 * 30.0))
@@ -199,6 +203,15 @@ pub(crate) fn option_now(app: Option<&App>, verb: &str, arg: &str) -> Option<f32
             .unwrap_or(0.85)
             .clamp(0.2, 1.0) as f32,
         "vol_ai" => ::config::get_float("audio", "ai-volume").unwrap_or(1.0) as f32,
+        "vol_voice" => ::config::get_float("voice", "volume").unwrap_or(1.0) as f32,
+        "voice_sensitivity" => ::config::get_float("voice", "sensitivity").unwrap_or(0.5) as f32,
+        "mic_gain" => ::config::get_float("voice", "mic_gain").unwrap_or(1.0) as f32,
+        "pvol" => app?
+            .voice
+            .volume
+            .get(&arg.trim().parse::<u32>().ok()?)
+            .copied()
+            .unwrap_or(1.0),
         "vol_scenery" => ::config::get_float("audio", "scenery-volume").unwrap_or(1.0) as f32,
         "wheel_range" => ::config::get_float("controls", "wheel_range").unwrap_or(900.0) as f32,
         "wheel_lock" => ::config::get_float("controls", "wheel_lock").unwrap_or(0.0) as f32,
@@ -359,6 +372,21 @@ pub(crate) fn option_set(
             ::config::set_setting("audio", "scenery-volume", v as f64);
             let _ = ::config::save();
             crate::startup::SOUND_SCENERY.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            None
+        }
+        "vol_voice" | "voice_sensitivity" | "mic_gain" => {
+            let key = match verb {
+                "vol_voice" => "volume",
+                "voice_sensitivity" => "sensitivity",
+                _ => "mic_gain",
+            };
+            ::config::set_setting("voice", key, ((v * 100.0).round() / 100.0) as f64);
+            let _ = ::config::save();
+            None
+        }
+        "pvol" => {
+            let id = arg.trim().parse().ok()?;
+            app?.voice.volume.insert(id, (v * 10.0).round() / 10.0);
             None
         }
         "wheel_range" => {
@@ -579,6 +607,8 @@ pub(crate) fn toggle_now(app: Option<&App>, id: &str) -> Option<bool> {
         "vr" => ::config::get_bool("vr", "enabled").unwrap_or(false),
         "vr_desktop_mirror" => ::config::get_bool("vr", "desktop-mirror").unwrap_or(true),
         "doppler" => ::config::get_bool("audio", "doppler").unwrap_or(true),
+        "voice" => ::config::get_bool("voice", "enabled").unwrap_or(true),
+        "voice_denoise" => ::config::get_bool("voice", "denoise").unwrap_or(true),
         "steering_linear" => ::config::get_bool("controls", "steering_linear").unwrap_or(false),
         "old_steering" => ::config::get_bool("controls", "old_steering").unwrap_or(false),
         "red_steer_spd" => ::config::get_bool("controls", "red_steer_spd").unwrap_or(false),
@@ -1021,6 +1051,12 @@ fn toggle_set_inner(mut app: Option<&mut App>, id: &str, on: bool) -> Option<(&'
             ::config::set_setting("audio", "doppler", on);
             let _ = ::config::save();
             ::audio::DOPPLER.store(on, std::sync::atomic::Ordering::Relaxed);
+            None
+        }
+        "voice" | "voice_denoise" => {
+            let key = if id == "voice" { "enabled" } else { "denoise" };
+            ::config::set_setting("voice", key, on);
+            let _ = ::config::save();
             None
         }
         "steering_linear" => {

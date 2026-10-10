@@ -89,6 +89,14 @@ impl AudioStats {
 pub(crate) enum VoiceAsset {
     Clip(Arc<Clip>),
     Stream(Arc<StreamBuf>),
+    Source(Arc<dyn crate::assets::Source>),
+}
+
+impl VoiceAsset {
+    /// Fed while it plays: kept over a lost device and played again.
+    pub(crate) fn fed(&self) -> bool {
+        matches!(self, VoiceAsset::Stream(_) | VoiceAsset::Source(_))
+    }
 }
 
 /// One voice the game started, as the game remembers it.

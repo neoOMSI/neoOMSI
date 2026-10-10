@@ -34,6 +34,7 @@ mod radio;
 mod rail_drive;
 mod touch;
 mod updater;
+mod voice;
 mod vr_navigator;
 
 mod puddles;
@@ -634,6 +635,7 @@ pub(crate) fn make_app(
         cursor_kind: 0,
         lan: None,
         remotes: Default::default(),
+        voice: Default::default(),
         spikes: 0,
         worst_ms: 0.0,
         governor: (0.0, 0, 0.0),

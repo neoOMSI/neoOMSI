@@ -48,6 +48,7 @@ pub(crate) struct ServerCfg {
     pub vehicles: Vec<String>,
     /// `GET /players` on the web port tells who drives what and where (for a web map).
     pub share_positions: bool,
+    pub voice: network::VoiceConfig,
 }
 
 pub(crate) const DEFAULT_CFG: &str = "\
@@ -107,6 +108,12 @@ vehicles =
 # tell anyone who asks the web port (GET /players) the players' names, buses, lines and
 # positions - for a live map of the server on a website; tell your players when it is on
 share_positions = 0
+
+# the players talk to each other (1 = on): a voice is heard up to voice_range metres away,
+# muffled through a bus's closed doors; the dispatch radio reaches everybody. The server
+# passes the voices on without listening to them
+voice = 1
+voice_range = 60
 ";
 
 impl ServerCfg {
@@ -193,6 +200,11 @@ impl ServerCfg {
                 })
                 .unwrap_or_default(),
             share_positions: flag("share_positions", false),
+            voice: network::VoiceConfig {
+                enabled: flag("voice", true),
+                range: (num("voice_range", network::voice::DEFAULT_RANGE as i64) as f32)
+                    .clamp(network::voice::MIN_RANGE, network::voice::MAX_RANGE),
+            },
         })
     }
 }
@@ -230,6 +242,7 @@ pub(crate) fn prepare(args: &mut Args, path: &Path) -> Result<ServerCfg> {
     ));
     crate::real_time::set_server_real(cfg.real_time);
     let _ = SERVER_VEHICLES.set(cfg.vehicles.clone());
+    let _ = SERVER_VOICE.set(cfg.voice);
     args.map = cfg.map.clone();
     args.time = cfg.time.clone();
     if let Some(d) = &cfg.date {
@@ -290,6 +303,9 @@ pub(crate) static SERVER_METAR: std::sync::OnceLock<Option<String>> = std::sync:
 
 /// The buses a dedicated server allows (`vehicles`; empty: every bus it has).
 pub(crate) static SERVER_VEHICLES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+pub(crate) static SERVER_VOICE: std::sync::OnceLock<network::VoiceConfig> =
+    std::sync::OnceLock::new();
 
 /// A dedicated server's admin password and clock speed (for the host loop).
 pub(crate) static SERVER_ADMIN: std::sync::OnceLock<(String, f64)> = std::sync::OnceLock::new();
