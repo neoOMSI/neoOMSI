@@ -85,7 +85,7 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
         let dim = clamp((s - u.target_size.w) / 25.0, 0.0, 1.0);
         if (dim > 0.0) {
             let grey = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
-            let muted = mix(c.rgb, vec3<f32>(grey), 0.35) * 0.7;
+            let muted = mix(c.rgb, vec3<f32>(grey), 0.2) * 0.82;
             c = vec4<f32>(mix(c.rgb, muted, dim), c.a);
         }
         if (u.params.w > 0.0) {

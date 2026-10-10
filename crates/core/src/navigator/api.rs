@@ -174,6 +174,7 @@ impl Navigator {
         }
         self.route.provisional = false;
         self.route.lanes = lanes;
+        self.route.lead = 0;
         if !same_trip {
             self.route.progress = 0;
             self.route.on_route = false;

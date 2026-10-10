@@ -7,6 +7,8 @@ const ROUTE_BREAK: f64 = 12.0;
 const ROUTE_SMOOTH: f64 = 8.0;
 /// How far back along the line a lane may start beside it and still join it (m).
 const ROUTE_REJOIN: f64 = 80.0;
+/// Over how much of a lane the line drifts across onto it after a change of lanes (m).
+const LANE_BLEND: f64 = 30.0;
 
 /// Points of the route ahead along `lanes` (the first starting `start` m along the route),
 /// as many lines as there are places where the lanes do not meet: each point with its
@@ -22,8 +24,22 @@ pub(super) fn route_lines(
     let mut s0 = start;
     for &l in lanes {
         let Some(lane) = net.lanes.get(l) else { break };
+        // a lane starting a little beside where the line is (a change of lanes): the line
+        // drifts across over its first metres instead of stepping
+        let step = match (cur.last(), lane.points.first()) {
+            (Some(last), Some(q)) => {
+                let d = last.0 - *q;
+                (0.3..=ROUTE_BREAK).contains(&d.truncate().length()).then_some(d)
+            }
+            _ => None,
+        };
+        let blend = (lane.length() as f64 * 0.8).min(LANE_BLEND);
         for (q, d) in lane.points.iter().zip(&lane.dist) {
             let s = s0 + *d as f64;
+            let q = &match step {
+                Some(off) if (*d as f64) < blend => *q + off * (1.0 - *d as f64 / blend),
+                _ => *q,
+            };
             match cur.last() {
                 Some(last) if (*q - last.0).truncate().length() > ROUTE_BREAK => {
                     // a lane that starts back beside the line (a stop's bay along the
@@ -159,6 +175,31 @@ pub(super) fn build_route_line(
     }
 }
 
+/// How far beside a lane's start another lane may start and be changed onto there (m).
+const LANE_CHANGE: f64 = 6.0;
+/// What a change of lanes costs the way search, as if that many metres more were driven.
+const LANE_CHANGE_COST: f32 = 40.0;
+
+/// Street lanes running the same way as lane `n` that start beside its start, up to
+/// `LANE_CHANGE` across and a little ahead or behind: the lanes a bus can change onto there.
+fn lanes_beside_start(net: &Network, n: usize) -> impl Iterator<Item = usize> + '_ {
+    let l = &net.lanes[n];
+    let (p, h) = (l.start(), l.start_heading() as f64);
+    let fwd = DVec2::new(h.to_radians().sin(), h.to_radians().cos());
+    lanes_near(net, p.truncate(), LANE_CHANGE).into_iter().filter(move |&j| {
+        let o = &net.lanes[j];
+        let d = o.start() - p;
+        let along = d.truncate().dot(fwd);
+        let across = (d.truncate() - fwd * along).length();
+        j != n
+            && o.kind == LaneKind::Street
+            && (1.0..=LANE_CHANGE).contains(&across)
+            && along.abs() < 4.0
+            && d.z.abs() < 1.5
+            && angle_diff(h, o.start_heading() as f64).abs() < 20.0
+    })
+}
+
 pub(crate) fn way_back(
     net: &Network,
     bus: DVec3,
@@ -253,11 +294,17 @@ pub(crate) fn way_back(
             }
             let u_turn =
                 angle_diff(l.end_heading() as f64, nl.start_heading() as f64).abs() > 150.0;
-            let c = cost + nl.length() + if u_turn { 400.0 } else { 0.0 };
-            if c < dist.get(&n).copied().unwrap_or(f32::INFINITY) {
-                dist.insert(n, c);
-                parent.insert(n, lane);
-                heap.push(Node(c, n));
+            let c = cost + if u_turn { 400.0 } else { 0.0 };
+            // the lane itself, or one beside it the same way: where the splines do not link
+            // the lanes of a road, the bus still changes lanes rather than drive a loop
+            let changes = lanes_beside_start(net, n).map(|j| (j, LANE_CHANGE_COST));
+            for (m, extra) in std::iter::once((n, 0.0)).chain(changes) {
+                let c = c + net.lanes[m].length() + extra;
+                if c < dist.get(&m).copied().unwrap_or(f32::INFINITY) {
+                    dist.insert(m, c);
+                    parent.insert(m, lane);
+                    heap.push(Node(c, m));
+                }
             }
         }
     }

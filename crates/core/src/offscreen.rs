@@ -3130,6 +3130,25 @@ pub(crate) fn run_offscreen(
             if let (Some((key, name)), Some(sch)) = (trip, schedule.as_ref()) {
                 let lanes = sch.trip_route_in(nav.map_net().unwrap(), &name);
                 trip_lanes = lanes.clone();
+                if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+                    let net = nav.map_net().unwrap();
+                    let steps: Vec<String> = lanes
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &l)| {
+                            let lane = &net.lanes[l];
+                            let (a, b) = (lane.start(), lane.end());
+                            let linked = k == 0 || net.lanes[lanes[k - 1]].next.contains(&l);
+                            format!(
+                                "{l}:{:?}:({:.0},{:.0})-({:.0},{:.0}){}",
+                                lane.key.map(|k| (k.tile, k.id)),
+                                a.x, a.y, b.x, b.y,
+                                if linked { "" } else { "*" }
+                            )
+                        })
+                        .collect();
+                    log::info!("navigator: the trip's lanes (* not linked): {}", steps.join(" "));
+                }
                 let g = nav.global_version + (1 << 40);
                 nav.set_route(&key, lanes, true, g);
             }
@@ -3245,6 +3264,12 @@ pub(crate) fn run_offscreen(
                     let path = format!("{}_nav.png", out.with_extension("").display());
                     image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8)?;
                     log::info!("navigator shot: {path}");
+                }
+                // with OMSI_NAV_MAP, the full map as <out>_map.png
+                if let Some((w, h, px)) = nav.city_shot(&renderer, &mut scene, &frame) {
+                    let path = format!("{}_map.png", out.with_extension("").display());
+                    image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8)?;
+                    log::info!("navigator map shot: {path}");
                 }
             }
             nav.frame(&renderer, &mut scene, &frame);

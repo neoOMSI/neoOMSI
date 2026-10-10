@@ -51,6 +51,51 @@ fn a_way_back_joins_the_route_ahead() {
 }
 
 #[test]
+fn a_way_back_changes_lanes_where_the_splines_do_not_link_them() {
+    let lanes = vec![
+        straight((0.0, 0.0), (0.0, 100.0)),
+        straight((0.0, 100.0), (0.0, 200.0)),
+        straight((3.5, 0.0), (3.5, 100.0)),
+        straight((3.5, 100.0), (3.5, 200.0)),
+        straight((3.5, 200.0), (3.5, 300.0)),
+    ];
+    let mut net = Network {
+        lanes,
+        ..Default::default()
+    };
+    net.link(1.5);
+    for (a, n) in [(0, vec![1]), (1, vec![]), (2, vec![3]), (3, vec![4])] {
+        net.lanes[a].next = n;
+    }
+    let route = [4usize];
+    let (path, join) = way_back(&net, DVec3::new(0.0, 10.0, 0.0), 0.0, &route, 6000.0)
+        .expect("a way over to the lane beside");
+    assert_eq!(path, vec![0, 3]);
+    assert_eq!(join, 0);
+    // the line drifts across instead of stepping
+    for l in net.lanes.iter_mut() {
+        *l = ::simulation::traffic::LaneBuilder::polyline(
+            (0..=50)
+                .map(|k| l.points[0].lerp(l.points[1], k as f64 / 50.0))
+                .collect(),
+            LaneKind::Street,
+            3.0,
+        );
+    }
+    let lines = route_lines(&net, &[0, 3, 4], 0.0, f64::MAX);
+    assert_eq!(lines.len(), 1);
+    let x_at = |y: f64| {
+        lines[0]
+            .windows(2)
+            .find(|w| w[0].0.y <= y && w[1].0.y >= y)
+            .map(|w| w[0].0.x + (w[1].0.x - w[0].0.x) * (y - w[0].0.y) / (w[1].0.y - w[0].0.y))
+            .unwrap()
+    };
+    assert!(x_at(102.0) < 1.0 && x_at(115.0) > 1.0 && x_at(115.0) < 2.5, "{lines:?}");
+    assert!((x_at(140.0) - 3.5).abs() < 0.01);
+}
+
+#[test]
 fn projection_puts_the_look_at_point_in_the_middle() {
     let view =
         glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, -50.0, 80.0), Vec3::ZERO, Vec3::Z);

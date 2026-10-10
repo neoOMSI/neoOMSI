@@ -99,6 +99,8 @@ struct Route {
     provisional: bool,
     joined: bool,
     approach: bool,
+    /// How many of `lanes` lead to the trip's route rather than belong to it.
+    lead: usize,
 }
 
 struct Roads {

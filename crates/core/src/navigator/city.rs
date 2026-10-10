@@ -143,6 +143,18 @@ impl Navigator {
             self.city.roads.map(|r| r.0).unwrap_or(0),
         );
         let done = self.route.progress.min(self.route.lanes.len());
+        // while the bus is still on its way to the trip's route, that way is the route
+        // shown, and the trip after it is a dimmed, thinner line beneath
+        let lead = self.route.lead.clamp(done, self.route.lanes.len());
+        let lead_len: f64 = net
+            .map(|n| {
+                self.route.lanes[done..lead]
+                    .iter()
+                    .filter_map(|&l| n.lanes.get(l))
+                    .map(|l| l.length() as f64)
+                    .sum()
+            })
+            .unwrap_or(0.0);
         if self.city.route.0 != key {
             let mut p = Painter::new();
             if let Some(n) = net {
@@ -155,7 +167,17 @@ impl Navigator {
                 build_route_line(
                     &mut p,
                     n,
-                    &r.lanes[done..],
+                    &r.lanes[lead..],
+                    lead_len,
+                    anchor,
+                    &self.route_jam,
+                    f64::MAX,
+                    if lead > done { 3.5 } else { 6.0 } * s,
+                );
+                build_route_line(
+                    &mut p,
+                    n,
+                    &r.lanes[done..lead],
                     0.0,
                     anchor,
                     &self.route_jam,
@@ -193,7 +215,7 @@ impl Navigator {
                 } else {
                     -1.0e9
                 },
-                1.0e9,
+                if lead > done { lead_len as f32 } else { 1.0e9 },
                 0.0,
             ],
         };
