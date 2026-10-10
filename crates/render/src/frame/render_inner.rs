@@ -1,5 +1,19 @@
 use crate::*;
 
+/// An ordered vehicle's meshes share an origin and must retain their authored order. A
+/// recycled scene-instance id is not that order, so use it only for all other ties.
+fn sort_blended_keys(keys: &mut [(u8, f32, [u64; 3], bool, u32, usize)]) {
+    keys.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then_with(|| {
+            if a.3 && b.3 && a.2 == b.2 {
+                a.4.cmp(&b.4)
+            } else {
+                a.5.cmp(&b.5)
+            }
+        })
+    });
+}
+
 fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u32, u32, u32)>) {
     if let Some((x, y, width, height)) = viewport {
         pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
@@ -1171,7 +1185,7 @@ impl Renderer {
                         Some((inst.origin, (c - cam_rel).length() - r))
                     }))
                 };
-                let mut keyed: Vec<(u8, f32, usize)> = blended
+                let mut keyed: Vec<(u8, f32, [u64; 3], bool, u32, usize)> = blended
                     .iter()
                     .map(|&i| {
                         let inst = &scene.instances[i];
@@ -1197,14 +1211,12 @@ impl Renderer {
                                 .copied()
                                 .unwrap_or(0.0)
                         };
-                        (rank, dist, i)
+                        (rank, dist, key, inst.ordered, inst.ordered_index, i)
                     })
                     .collect();
-                keyed.sort_unstable_by(|a, b| {
-                    a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then(a.2.cmp(&b.2))
-                });
+                sort_blended_keys(&mut keyed);
                 items.clear();
-                for (_, _, i) in keyed {
+                for (_, _, _, _, _, i) in keyed {
                     let inst = &scene.instances[i];
                     let cull = culls_back_faces(scene, inst);
                     for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
@@ -2444,5 +2456,32 @@ impl Renderer {
             t.pending = timed;
             t.unresolved = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordered_meshes_ignore_recycled_scene_instance_ids() {
+        let origin = [1, 2, 3];
+        // The text mesh acquired the lower recycled id, but it must follow its plate.
+        let mut keys = vec![
+            (0, 10.0, origin, true, 1, 3),
+            (0, 10.0, origin, true, 0, 81),
+        ];
+        sort_blended_keys(&mut keys);
+        assert_eq!(keys.iter().map(|k| k.4).collect::<Vec<_>>(), [0, 1]);
+    }
+
+    #[test]
+    fn unordered_instances_keep_their_scene_id_tiebreak() {
+        let mut keys = vec![
+            (0, 10.0, [1, 2, 3], false, 0, 81),
+            (0, 10.0, [1, 2, 3], false, 0, 3),
+        ];
+        sort_blended_keys(&mut keys);
+        assert_eq!(keys.iter().map(|k| k.5).collect::<Vec<_>>(), [3, 81]);
     }
 }
