@@ -916,6 +916,19 @@ fn log_empty(rel: &str, what: &str) {
     ));
 }
 
+/// A map's start points as OMSI's start dialog lists them: one per name, in name order, each
+/// the first entry point of that name. Its `index` is the game's `--entry`, the position in
+/// the map's list, not the index field.
+fn entry_list(g: &::map::GlobalCfg) -> Vec<EntryInfo> {
+    g.entry_point_groups()
+        .into_iter()
+        .map(|(name, places)| EntryInfo {
+            index: places[0] as i32,
+            name: name.to_string(),
+        })
+        .collect()
+}
+
 fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
     let g = match ::map::GlobalCfg::load(&d.join("global.cfg")) {
         Ok(g) => g,
@@ -937,32 +950,6 @@ fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
         .map(|x| x.description)
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| g.description.trim().to_string());
-    let mut entries: Vec<EntryInfo> = g
-        .entry_points
-        .iter()
-        .map(|e| EntryInfo {
-            index: e.index,
-            name: e.name.trim().to_string(),
-        })
-        .collect();
-    // the game's --entry is the position in the list, not the index field; several
-    // entries often share a name (one per stop position), so number them
-    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let total: std::collections::HashMap<String, usize> =
-        entries
-            .iter()
-            .fold(std::collections::HashMap::new(), |mut m, e| {
-                *m.entry(e.name.clone()).or_default() += 1;
-                m
-            });
-    for (i, e) in entries.iter_mut().enumerate() {
-        e.index = i as i32;
-        let n = seen.entry(e.name.clone()).or_default();
-        *n += 1;
-        if total.get(&e.name).copied().unwrap_or(0) > 1 {
-            e.name = format!("{} ({})", e.name, n);
-        }
-    }
     // (the depot groups' first: a plain car group's name line is no depot)
     let hof = ::map::ailists::AiLists::load(&d.join("ailists.cfg"))
         .ok()
@@ -983,7 +970,7 @@ fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
         friendly,
         file: format!("maps/{folder}/global.cfg"),
         description,
-        entry_points: entries,
+        entry_points: entry_list(&g),
         hof,
         installed: in_content(d),
     })
@@ -3084,6 +3071,37 @@ fn save_slots(dir: &Path) -> Vec<SavedSituation> {
         .collect();
     slots.sort_by(|a, b| b.saved.cmp(&a.saved).then_with(|| b.name.cmp(&a.name)));
     slots
+}
+
+#[cfg(test)]
+mod entry_list_tests {
+    use super::*;
+
+    #[test]
+    fn a_name_of_several_entry_points_is_one_start_point() {
+        let g = ::map::GlobalCfg {
+            entry_points: ["Nordspitze Bauernhof", "Einsteindorf", "Nordspitze Bauernhof"]
+                .iter()
+                .map(|n| ::map::EntryPoint {
+                    index: 7,
+                    name: n.to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let list: Vec<(i32, String)> = entry_list(&g)
+            .into_iter()
+            .map(|e| (e.index, e.name))
+            .collect();
+        assert_eq!(
+            list,
+            [
+                (1, "Einsteindorf".to_string()),
+                (0, "Nordspitze Bauernhof".to_string())
+            ]
+        );
+    }
 }
 
 #[cfg(test)]

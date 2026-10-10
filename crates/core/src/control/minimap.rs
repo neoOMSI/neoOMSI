@@ -184,25 +184,20 @@ fn build(map: &str, date: &str) -> Result<Minimap> {
         })
         .collect();
 
-    // numbered as `list_maps` does
+    // as `list_maps` lists them: every entry point of a name picks that name's line
     let eps = &world.global.entry_points;
-    let mut total: HashMap<&str, usize> = HashMap::new();
-    for e in eps {
-        *total.entry(e.name.trim()).or_default() += 1;
+    let mut line: HashMap<&str, usize> = HashMap::new();
+    for (name, places) in world.global.entry_point_groups() {
+        line.insert(name, places[0]);
     }
-    let mut counted: HashMap<&str, usize> = HashMap::new();
     let entries: Vec<MinimapEntry> = eps
         .iter()
-        .enumerate()
-        .filter_map(|(k, e)| {
+        .filter_map(|e| {
             let name = e.name.trim();
-            let n = counted.entry(name).or_default();
-            *n += 1;
-            let name = if total[name] > 1 { format!("{name} ({n})") } else { name.to_string() };
             let (p, rot) = world.entry_point_place(e)?;
             Some(MinimapEntry {
-                index: k as u32,
-                name,
+                index: line[name] as u32,
+                name: name.to_string(),
                 x: round(p.x),
                 y: round(p.y),
                 spawn: spawn(p, rot[0]),
