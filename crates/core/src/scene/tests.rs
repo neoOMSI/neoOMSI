@@ -209,6 +209,59 @@ fn freetex_preserves_other_stages_and_per_vehicle_script_textures() {
 }
 
 #[test]
+fn freetex_and_dynamic_lightmap_keep_the_live_display_texture() {
+    // C400R's dashboard pairs [matl_freetex] with two [matl_lightmap] declarations.
+    // When the screen finishes booting, the active light map must not rebuild the slot
+    // from its black placeholder texture.
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    base.lightmap = Some(11);
+    let spec = SlotSpec {
+        base,
+        item: None,
+        more: Vec::new(),
+    };
+    let mut changed = spec.with_freetex(Some(10), 20, true, false);
+    changed.set_lightmap(Some(30));
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.base.lightmap, Some(30));
+}
+
+#[test]
+fn item_only_freetex_overrides_a_matching_base_freetex() {
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    let item = base.clone();
+    let spec = SlotSpec {
+        base,
+        item: Some(item),
+        more: Vec::new(),
+    };
+    let base_changed = spec.with_freetex_from(&spec, Some(10), 20, true, false);
+    let changed = base_changed.with_freetex_from(&spec, Some(10), 30, true, true);
+
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(30));
+}
+
+#[test]
+fn inactive_dynamic_lightmap_keeps_the_original_lightmap() {
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    base.lightmap = Some(11);
+    let spec = SlotSpec {
+        base,
+        item: None,
+        more: Vec::new(),
+    };
+    let mut changed = spec.with_freetex(Some(10), 20, true, false);
+    changed.set_lightmap(None);
+
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.base.lightmap, Some(11));
+}
+
+#[test]
 fn spline_batches_keep_materials_cells_shadows_and_long_segments_separate() {
     use ::scenery::sli::SplineTexture;
     let def = |file: &str| Spline {

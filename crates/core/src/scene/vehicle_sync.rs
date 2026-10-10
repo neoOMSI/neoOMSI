@@ -160,6 +160,44 @@ pub(super) fn find_vehicle_freetex(name: &str, dirs: &[&Path]) -> Option<PathBuf
     ::texture::find_texture(&rel, dirs)
 }
 
+/// Resolve one live `[matl_freetex]` name and retain its shared GPU texture for this vehicle.
+fn resolve_freetex_texture(
+    renderer: &Renderer,
+    scene: &mut Scene,
+    f: &mut FreeTex,
+    name: &str,
+) -> Option<TextureId> {
+    if name.is_empty() {
+        return None;
+    }
+    let dirs: Vec<&Path> = f.dirs.iter().map(|p| p.as_path()).collect();
+    let resolved = find_vehicle_freetex(name, &dirs);
+    if resolved.is_none() {
+        log::warn!(
+            "vehicle [matl_freetex] '{}' = {:?}: texture not found",
+            f.var,
+            name
+        );
+    }
+    resolved.and_then(|path| {
+        let mut shared = f.shared.lock();
+        if let Some(e) = shared.get_mut(&path) {
+            e.1 += 1;
+            f.held.push(path);
+            return Some(e.0);
+        }
+        let (img, worth) = f.textures.get_gpu_fast(&path)?;
+        let id = renderer.add_texture_data(scene, &img);
+        if worth {
+            f.wants_upgrade.lock().push(path.clone());
+        }
+        attach_pbr(renderer, scene, &path, id);
+        shared.insert(path.clone(), (id, 1));
+        f.held.push(path);
+        Some(id)
+    })
+}
+
 pub(super) fn sync_materials(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -168,66 +206,62 @@ pub(super) fn sync_materials(
 ) {
     for v in &mut render.variants {
         let item_has_freetex = v.free.iter().any(|f| f.item_only);
+        let has_dynamic_lightmap = v.lights.is_some();
+        let mut freetex_changed = false;
         for f in &mut v.free {
             let raw = vehicle.str_var_str(&f.var);
             let trimmed = raw.trim();
-            if f.current.as_deref().is_some_and(|cur| cur.eq_ignore_ascii_case(trimmed)) {
+            if f.current
+                .as_deref()
+                .is_some_and(|current| current.eq_ignore_ascii_case(trimmed))
+            {
                 continue;
             }
             let name = trimmed.to_string();
             let key = name.to_ascii_lowercase();
             f.current = Some(key.clone());
-                let pair = match f.cache.get(&key) {
-                    Some(p) => *p,
+            if has_dynamic_lightmap {
+                // This material is built below with both changing stages. Retain only the
+                // resolved texture here: a free-texture-only material is never displayed.
+                f.texture = match f.texture_cache.get(&key) {
+                    Some(texture) => *texture,
                     None => {
-                        let dirs: Vec<&Path> = f.dirs.iter().map(|p| p.as_path()).collect();
-                        let found = if name.is_empty() {
-                            None
-                        } else {
-                            let resolved = find_vehicle_freetex(&name, &dirs);
-                            if resolved.is_none() {
-                                log::warn!(
-                                    "vehicle [matl_freetex] '{}' = {:?}: texture not found",
-                                    f.var,
-                                    name
-                                );
-                            }
-                            resolved.and_then(|path| {
-                                let mut shared = f.shared.lock();
-                                if let Some(e) = shared.get_mut(&path) {
-                                    e.1 += 1;
-                                    f.held.push(path);
-                                    return Some(e.0);
-                                }
-                                let (img, worth) = f.textures.get_gpu_fast(&path)?;
-                                let id = renderer.add_texture_data(scene, &img);
-                                if worth {
-                                    f.wants_upgrade.lock().push(path.clone());
-                                }
-                                attach_pbr(renderer, scene, &path, id);
-                                shared.insert(path.clone(), (id, 1));
-                                f.held.push(path);
-                                Some(id)
-                            })
-                        };
-                        // An empty string or a file not found leaves the slot its own
-                        // texture from the mesh (with its addressing): a roller blind's idle
-                        // "next" band then stays out of sight in its transparent border
-                        // instead of covering the display as an untextured white plane.
-                        let spec = match found {
-                            Some(tex) => v.spec.with_freetex(f.key, tex, f.diffuse, f.item_only),
-                            None => v.spec.clone(),
-                        };
-                        let p = spec.build(renderer, scene, v.base_tex);
-                        f.cache.insert(key, p);
-                        p
+                        let texture = resolve_freetex_texture(renderer, scene, f, &name);
+                        f.texture_cache.insert(key, texture);
+                        texture
                     }
                 };
+                freetex_changed = true;
+                continue;
+            }
+            let pair = match f.cache.get(&key) {
+                Some(p) => *p,
+                None => {
+                    let found = resolve_freetex_texture(renderer, scene, f, &name);
+                    // An empty string or a file not found leaves the slot its own texture
+                    // from the mesh, rather than covering the display with a white plane.
+                    let spec = match found {
+                        Some(tex) => v.spec.with_freetex(f.key, tex, f.diffuse, f.item_only),
+                        None => v.spec.clone(),
+                    };
+                    let p = spec.build(renderer, scene, v.base_tex);
+                    f.cache.insert(key, p);
+                    p
+                }
+            };
             if !f.item_only {
                 v.base = pair.0;
             }
             if f.item_only || !item_has_freetex {
                 v.item = pair.1;
+            }
+        }
+        if freetex_changed {
+            if let Some(l) = &mut v.lights {
+                // This is outside the valid 1–8-map mask range and therefore guarantees
+                // the material is recomposed below, even if its light variables did not
+                // change with this display frame.
+                l.current = u32::MAX;
             }
         }
         if let Some(l) = &mut v.lights {
@@ -247,16 +281,31 @@ pub(super) fn sync_materials(
             }
             if mask != l.current {
                 l.current = mask;
-                let pair = if mask == 0 {
+                let free_state: Vec<Option<TextureId>> = v.free.iter().map(|f| f.texture).collect();
+                let cache_key = (mask, free_state);
+                let pair = if v.free.is_empty() && mask == 0 {
                     l.plain
-                } else if let Some(p) = l.cache.get(&mask) {
+                } else if let Some(p) = l.cache.get(&cache_key) {
                     *p
                 } else {
-                    let tex = l.composite(renderer, scene, mask);
+                    let tex = (mask != 0)
+                        .then(|| l.composite(renderer, scene, mask))
+                        .flatten();
                     let mut spec = v.spec.clone();
+                    for f in &v.free {
+                        if let Some(tex) = f.texture {
+                            spec = spec.with_freetex_from(
+                                &v.spec,
+                                f.key,
+                                tex,
+                                f.diffuse,
+                                f.item_only,
+                            );
+                        }
+                    }
                     spec.set_lightmap(tex);
                     let p = spec.build(renderer, scene, v.base_tex);
-                    l.cache.insert(mask, p);
+                    l.cache.insert(cache_key, p);
                     p
                 };
                 v.base = pair.0;
