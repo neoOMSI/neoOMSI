@@ -83,6 +83,7 @@ impl Fixture {
             passing: false,
             kerb_swerve: None,
             junction_first: false,
+            berth_held_long: false,
         };
         let dec = self.coord.plan(&scene, &mut st, &inputs);
         (st, dec)

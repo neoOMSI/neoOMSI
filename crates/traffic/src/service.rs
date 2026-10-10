@@ -234,6 +234,11 @@ pub const MERGE_GAP: f32 = 25.0;
 pub const MERGE_AHEAD: f32 = 8.0;
 /// How far the rear must clear the berth point before the berth is released (m).
 pub const BERTH_CLEAR: f32 = 1.0;
+/// How far short of its berth (m, origin to berth point) a bus may serve the stop from
+/// behind the vehicle that holds the berth for long (`ServiceInputs::berth_held_long`). A bus
+/// on its layover at a stop of several lines held all of them, and the street behind them,
+/// for a quarter of an hour.
+pub const BEHIND_REACH: f32 = 40.0;
 
 /// Seconds the doors stay open at a stop without anyone holding them.
 pub fn boarding_time(id: u64) -> f32 {
@@ -327,6 +332,10 @@ pub struct StopPolicy {
     pub is_last: bool,
     /// The loaded tiles still carry the route on beyond this stop.
     pub route_open: bool,
+    /// The trip ends where its route ends, not at its last stop: a timetable track runs on
+    /// past the terminus stop to the stand where the bus waits for its next trip (the
+    /// engine ends the trip there, see `traffic::tick`).
+    pub ends_at_route_end: bool,
 }
 
 /// How a supported/unsupported door handshake stands, typed at the adapter boundary.
@@ -411,6 +420,9 @@ pub struct ServiceInputs {
     pub kerb_swerve: Option<f32>,
     /// A junction lies between the bus and the berth, too close for the S-curve into the bay.
     pub junction_first: bool,
+    /// The berth is held by a vehicle that will stand there for long (a bus on its layover):
+    /// a bus waiting for it serves the stop from behind it instead (see `BEHIND_REACH`).
+    pub berth_held_long: bool,
 }
 
 /// Where the vehicle is in its stop service.
@@ -436,6 +448,9 @@ pub struct ServiceState {
     /// Settled whether the front stop is served.
     pub serve_decided: bool,
     pub serve: bool,
+    /// Serving the stop from behind the vehicle that holds its berth: it never held the
+    /// berth, and leaves the stop behind as soon as it moves off.
+    pub behind: bool,
 }
 
 impl Default for ServiceState {
@@ -452,6 +467,7 @@ impl Default for ServiceState {
             fault: None,
             serve_decided: false,
             serve: true,
+            behind: false,
         }
     }
 }
@@ -731,12 +747,22 @@ impl ServiceCoordinator {
                         stop: berth.stop,
                     });
                     d.stop_at = Some(input.distance + actor.front + STOP_LINE_GAP);
+                } else if input.berth_held_long
+                    && actor.speed < DOCK_SPEED
+                    && state.phase_t >= DOCK_SETTLE
+                    && (0.0..BEHIND_REACH).contains(&input.distance)
+                {
+                    // the berth is taken for long (a layover): serve the stop from where it
+                    // stands behind, as a driver does at a busy terminus
+                    state.behind = true;
+                    d.stop_at = Some(actor.front);
+                    self.enter_boarding(state, &berth, scene.day_time, &actor, &input.policy, &mut d);
                 } else {
                     d.reasons.push(Reason::BerthBusy);
                     d.binding = Some(Reason::BerthBusy);
                     d.stop_at = Some(self.queue_hold(&actor, input.distance));
                 }
-                if !input.passing {
+                if !input.passing && !state.behind {
                     d.lateral_target = Some(input.kerb_swerve.unwrap_or(0.0));
                 }
             }
@@ -853,6 +879,25 @@ impl ServiceCoordinator {
                     state.phase_t = 0.0;
                 }
             }
+            ServicePhase::Departing if state.behind => {
+                // (served from behind the berth's holder: the stop is done as it moves off,
+                // and it goes round that vehicle like any other traffic)
+                state.behind = false;
+                self.release(id);
+                d.consume_stop = true;
+                d.events.push(TraceEvent::Departure { vehicle: id });
+                state.phase = if input.policy.is_last
+                    && !input.policy.route_open
+                    && !input.policy.ends_at_route_end
+                {
+                    ServicePhase::NextTrip
+                } else {
+                    ServicePhase::EnRoute
+                };
+                state.phase_t = 0.0;
+                state.serve_decided = false;
+                state.serve = true;
+            }
             ServicePhase::Departing => {
                 d.lateral_target = Some(0.0);
                 d.signal = Some((out_signal(berth.bay), 2.5));
@@ -869,7 +914,10 @@ impl ServiceCoordinator {
                         stop: held.stop,
                     });
                     d.events.push(TraceEvent::Departure { vehicle: id });
-                    state.phase = if input.policy.is_last && !input.policy.route_open {
+                    state.phase = if input.policy.is_last
+                        && !input.policy.route_open
+                        && !input.policy.ends_at_route_end
+                    {
                         ServicePhase::NextTrip
                     } else {
                         ServicePhase::EnRoute
@@ -893,6 +941,10 @@ impl ServiceCoordinator {
                 d.stop_at = Some(actor.front);
                 d.binding = Some(reason);
             }
+        }
+        if state.behind && d.lateral_target.is_some() {
+            // (standing behind the berth's holder, not in the bay: it stays where it is)
+            d.lateral_target = Some(actor.lateral);
         }
         d.phase = state.phase;
         d
@@ -1217,6 +1269,7 @@ mod tests {
             passing: false,
             kerb_swerve: None,
             junction_first: false,
+            berth_held_long: false,
         }
     }
 

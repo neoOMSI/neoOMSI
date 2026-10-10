@@ -61,3 +61,21 @@ pub(super) fn section_around(slots: &[Slot], at: usize) -> (usize, usize) {
         .unwrap_or(slots.len());
     (start, end)
 }
+
+/// When a bus on its layover at the start of `route` (at `s` on its first lane) leaves for
+/// its first stop (`ri`, `ss` on the route) to be there for `depart` (see `STAND_PACE`).
+pub(super) fn stand_leave(
+    net: &::traffic::Network,
+    route: &[usize],
+    s: f32,
+    (ri, ss): (usize, f32),
+    depart: f64,
+) -> f64 {
+    let mut d = ss - s;
+    for k in 0..ri.min(route.len().saturating_sub(1)) {
+        if !net.parallel(route[k], route[k + 1]) {
+            d += net.lanes[route[k]].length();
+        }
+    }
+    depart - d.max(0.0) as f64 / STAND_PACE - STAND_MARGIN
+}

@@ -344,6 +344,13 @@ impl Schedule {
                 })
                 .collect();
             let layover = departure > day_time;
+            // its track begins at the stand it has just pulled onto, short of the first stop:
+            // it waits there, not at the stop
+            let stand_hold = stops
+                .first()
+                .filter(|&&(ri, ss, ..)| track && layover && (ri > 0 || ss - s0 >= 2.0))
+                .map(|&(ri, ss, _, t, ..)| routing::stand_leave(net, &route, s0, (ri, ss), t))
+                .filter(|&t| t > day_time);
             let n_stops = stops.len();
             traffic.reroute(ci, route, s0, stops, layover);
             let line = self.display_line(i);
@@ -361,6 +368,7 @@ impl Schedule {
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             set_ai_destination(&mut car.vehicle, hof.as_deref(), &line, &terminus, &names);
             if let Some(b) = car.bus.as_mut() {
+                b.hold_until = stand_hold;
                 b.route_open = end < slots.len();
                 b.terminus = terminus.clone();
                 b.last_stop = last_stop;
@@ -524,6 +532,13 @@ impl Schedule {
             .map(|(ri, ss, lat, t, id, side)| (ri - start_index, ss, lat, t, id, side))
             .collect();
         let route: Vec<usize> = section[start_index..].to_vec();
+        // put out before its departure at the start of a track that begins short of the
+        // first stop (the stand): it waits there, not at the stop
+        let stand_hold = stops
+            .first()
+            .filter(|&&(ri, ss, ..)| track && departure > day_time && (ri > 0 || ss - s >= 2.0))
+            .map(|&(ri, ss, _, t, ..)| routing::stand_leave(traffic.net(), &route, s, (ri, ss), t))
+            .filter(|&t| t > day_time);
         // the trip's own line (" 5"), which is what the displays show; the timetable line's
         // name ("5 & 5N") only groups the tours
         let trip_line = self.data.trips[self.departures[i].trip]
@@ -611,6 +626,11 @@ impl Schedule {
                 .front()
                 .map(|st| st.route_index == 0 && (st.s - s).abs() < 2.0)
                 .unwrap_or(false);
+            // (or at the stand short of it: then it waits at the stop for its departure too)
+            if stand_hold.is_some() {
+                b.hold_until = stand_hold;
+                b.state.layover = true;
+            }
             b.route_open = end < slots.len();
             b.terminus = terminus.clone();
             b.last_stop = last_stop;

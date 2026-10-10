@@ -34,6 +34,9 @@ pub struct BusService {
     pub serve_early: Vec<i64>,
     /// The timetable still carries the route on as tiles bring their lanes.
     pub route_open: bool,
+    /// On its layover at the stand, where its timetable track begins short of the first
+    /// stop: it stands there until this day time (s), then drives to the stop.
+    pub hold_until: Option<f64>,
 }
 
 impl BusService {
@@ -46,6 +49,7 @@ impl BusService {
             always: Vec::new(),
             serve_early: Vec::new(),
             route_open: false,
+            hold_until: None,
         }
     }
 
@@ -77,6 +81,9 @@ impl BusService {
     /// round, or worth waiting for).
     pub fn standing_for(&self, day_time: f64) -> f32 {
         let wait = (self.state.leave_at - day_time).max(0.0) as f32;
+        if let Some(t) = self.hold_until {
+            return (t - day_time).max(0.0) as f32 + 2.0;
+        }
         match self.state.phase {
             ServicePhase::EnRoute | ServicePhase::Approach => 0.0,
             ServicePhase::Boarding => self.state.boarding_t.max(0.0) + 2.0 + wait,
@@ -103,6 +110,7 @@ impl BusService {
     pub fn restart(&mut self, stops: Vec<StopTarget>, layover: bool) {
         self.state.restart(layover);
         self.stops = stops.into();
+        self.hold_until = None;
     }
 
     /// The berth of the front stop, if any, against the vehicle's planned route. A stop whose
@@ -121,6 +129,7 @@ impl BusService {
             last_stop: self.last_stop,
             is_last: self.stops.len() <= 1 && !self.route_open,
             route_open: self.route_open,
+            ends_at_route_end: true,
         }
     }
 }

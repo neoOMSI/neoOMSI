@@ -133,6 +133,10 @@ const SCENERY_GHOST_AFTER: f32 = 3.0;
 /// How far beyond its own length (m) a vehicle that gave up on scenery ignores it.
 const SCENERY_GHOST_MARGIN: f32 = 10.0;
 
+/// A berth whose holder will stand there longer than this (s, a layover) is served from
+/// behind it by the next bus (`ServiceInputs::berth_held_long`), which then goes round it.
+const BERTH_HELD_LONG: f32 = 90.0;
+
 /// Room an oncoming vehicle needs beside a car (m from the car's side to the middle of the
 /// oncoming lane): its half width and a margin.
 const PLAYER_BOX_MARGIN: f32 = 0.5;

@@ -1053,6 +1053,21 @@ impl Traffic {
             self.cars[i].held = stop_at.is_some() || lead.map(|l| l.0.gap < 12.0).unwrap_or(false);
             // a timetable bus: its stops (see `bus_service`); any other car keeps to the middle
             // of its lane, or swerves round a car parked at the kerb
+            let berth_held_long = {
+                let c = &self.cars[i];
+                c.bus
+                    .as_ref()
+                    .and_then(|s| s.front_berth(&c.state.route))
+                    .and_then(|b| {
+                        let (stop, occurrence) = b.key();
+                        self.services.berth_owner(stop, occurrence)
+                    })
+                    .filter(|&o| o != c.id)
+                    .and_then(|o| self.index_of.get(&o).copied())
+                    .is_some_and(|j| {
+                        j < self.cars.len() && self.cars[j].standing_for(self.day_time) > BERTH_HELD_LONG
+                    })
+            };
             {
                 let car = &mut self.cars[i];
                 if let Some(service) = car.bus.as_mut() {
@@ -1106,6 +1121,7 @@ impl Traffic {
                         passing: car.maneuver.passing.is_some(),
                         kerb_swerve: car.maneuver.kerb_ramp.map(|r| r.1).or(kerb_swerve),
                         junction_first,
+                        berth_held_long,
                     };
                     let scene = ServiceScene {
                         net: &self.net,
@@ -1171,6 +1187,24 @@ impl Traffic {
                     }
                 }
             }
+            // on its layover at the stand (where its timetable track begins, short of the
+            // first stop): it stands there until it is time to drive to the stop
+            {
+                let car = &mut self.cars[i];
+                if let Some(b) = car.bus.as_deref_mut() {
+                    if let Some(t) = b.hold_until {
+                        if self.day_time >= t {
+                            b.hold_until = None;
+                        } else {
+                            let at = car.state.front + 0.1;
+                            stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
+                            if at < why.1 {
+                                why = (Reason::StopTarget, at);
+                            }
+                        }
+                    }
+                }
+            }
             // the end of the way: a timetable bus at the end of its trip drives on as
             // ordinary traffic until it is out of sight; a dead end is a place to stop
             {
@@ -1188,9 +1222,18 @@ impl Traffic {
                 let air = self.net.lanes[st.lane].kind == LaneKind::Air;
                 if exhausted && st.change.is_none() && end < 150.0 {
                     let service = car.bus.as_deref_mut();
+                    // (leaving its last stop where the route ends - a terminus stop at the
+                    // stand, the end of the timetable track: the berth is only cleared a body
+                    // length on, which the route does not reach, and the bus ran off its way
+                    // and was put back on it for ever. The end of the way ends the trip; the
+                    // next trip's track begins there.)
                     let in_service = service
                         .as_ref()
-                        .map(|b| b.route_open || (b.stops.is_empty() && !b.at_stop()))
+                        .map(|b| {
+                            b.route_open
+                                || (b.stops.is_empty() && !b.at_stop())
+                                || (b.stops.len() <= 1 && b.state.phase == ServicePhase::Departing)
+                        })
                         .unwrap_or(false);
                     let stops_left = service
                         .as_ref()
@@ -1220,6 +1263,10 @@ impl Traffic {
                                 b.state.phase_t = 0.0;
                             }
                         } else if st.speed < 0.3 && !b.trip_done() {
+                            if b.state.phase == ServicePhase::Departing {
+                                // (its berth was never cleared by driving on)
+                                self.services.release(car.id);
+                            }
                             b.state.phase = ServicePhase::NextTrip;
                             b.state.phase_t = 0.0;
                             if debug {

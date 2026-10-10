@@ -494,6 +494,14 @@ const TOUR_LAYOVER_MAX: f64 = 30.0 * 60.0;
 const LAYOVER: f64 = 900.0;
 const LAYOVER_SHARED: f64 = 60.0;
 
+/// A bus on its layover at the stand where its timetable track begins (the terminal's
+/// layover lanes, short of the first stop) leaves it for the stop at the stop's departure
+/// time less the way there at this pace (m/s) and `STAND_MARGIN` (s) to pull in and board.
+/// Waiting at the first stop instead, it held the street and every line behind it for a
+/// quarter of an hour (X10 Berlin, Hertzallee).
+const STAND_PACE: f64 = 5.0;
+const STAND_MARGIN: f64 = 60.0;
+
 
 mod duty;
 mod fleet;
