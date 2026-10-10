@@ -206,6 +206,11 @@ pub(super) fn road_surfaces_of(file: &str, def: &::scenery::sli::Spline) -> Vec<
 }
 
 impl World {
+    /// The detail level the map's tiles are read at.
+    pub(crate) fn map_detail(&self) -> u8 {
+        self.map_detail
+    }
+
     /// The whole map's road network and where its objects stand, read from the tile files
     /// alone - the splines' and objects' paths, no mesh, no texture - for the navigator,
     /// which must route beyond the tiles loaded around the bus. Objects placed on the ground

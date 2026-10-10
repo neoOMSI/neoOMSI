@@ -331,7 +331,7 @@ impl World {
     ///
     /// The mask is stored like a picture (first row = north), the terrain mesh's v runs
     /// north with y, so the rows are turned over here.
-    pub(super) fn load_ground_paint(&self, tile_path: &Path) -> Vec<(usize, Image)> {
+    pub(crate) fn load_ground_paint(&self, tile_path: &Path) -> Vec<(usize, Image)> {
         let Some(name) = tile_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())

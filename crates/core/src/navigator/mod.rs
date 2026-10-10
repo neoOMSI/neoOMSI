@@ -18,6 +18,7 @@ mod route;
 mod shot;
 mod streets;
 mod style;
+mod surfaces;
 #[cfg(test)]
 mod tests;
 mod util;
@@ -28,7 +29,7 @@ pub(crate) use self::route::way_back;
 pub(crate) use self::graph::RoadGraph;
 #[cfg(test)]
 use self::graph::convex_hull;
-use self::{roads::*, route::*, streets::*, style::*, util::*, words::*};
+use self::{roads::*, route::*, streets::*, style::*, surfaces::*, util::*, words::*};
 
 pub(crate) fn stop_requested(vehicle: &::simulation::vehicle::VehicleInstance) -> bool {
     ["haltewunsch", "haltewunschlampe"]
@@ -137,8 +138,18 @@ pub struct Navigator {
     streets: Option<std::sync::Arc<Streets>>,
     /// The streets drawn, built with the map's network.
     graph: Option<std::sync::Arc<RoadGraph>>,
+    /// Navigator 2.0's ground: the surfaces the map really draws.
+    surfaces: Option<std::sync::Arc<crate::navmap::SurfaceMap>>,
     #[allow(clippy::type_complexity)]
-    building: Option<std::sync::mpsc::Receiver<(Network, HashMap<i64, DVec3>, Streets, RoadGraph)>>,
+    building: Option<
+        std::sync::mpsc::Receiver<(
+            Network,
+            HashMap<i64, DVec3>,
+            Streets,
+            RoadGraph,
+            crate::navmap::SurfaceMap,
+        )>,
+    >,
     pub global_version: u64,
     roads: Option<Roads>,
     route: Route,
@@ -281,6 +292,8 @@ pub struct CityMap {
     drag: Option<(f32, f32)>,
     target: Option<(TextureId, u32, u32)>,
     roads: Option<(u64, u32, DVec2)>,
+    /// The surfaces drawn: around where, how far, and whether coarsely.
+    surf: Option<(DVec2, f64, bool)>,
     route: ((u64, u64, u32, u64), u32),
     extent: (DVec2, DVec2),
     buttons: Vec<(Rect, u8)>,

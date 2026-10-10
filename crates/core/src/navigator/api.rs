@@ -34,6 +34,7 @@ impl Navigator {
             streets: None,
             graph: None,
             building: None,
+            surfaces: None,
             global_version: 0,
             roads: None,
             route: Route::default(),
@@ -69,6 +70,7 @@ impl Navigator {
             .name("navigator map".into())
             .spawn(move || {
                 let m = world.navigation_map();
+                let surfaces = crate::navmap::build_surface_map(&world, &m.lanes);
                 let mut net = Network {
                     lanes: m.lanes,
                     ..Default::default()
@@ -78,7 +80,7 @@ impl Navigator {
                 probe_lanes(&net);
                 let streets = build_streets(&net, &m.signs);
                 let graph = RoadGraph::build(&net, &m.carriageways);
-                let _ = tx.send((net, m.places, streets, graph));
+                let _ = tx.send((net, m.places, streets, graph, surfaces));
             })
             .ok();
         self.building = Some(rx);
@@ -99,6 +101,13 @@ impl Navigator {
         self.global = Some(global);
         self.stop_pos = std::sync::Arc::new(map.places);
         self.global_version += 1;
+    }
+
+    /// Navigator 2.0's ground for the map (see [`crate::navmap`]).
+    pub fn set_surfaces(&mut self, surfaces: crate::navmap::SurfaceMap) {
+        self.surfaces = Some(std::sync::Arc::new(surfaces));
+        self.roads = None;
+        self.city.roads = None;
     }
 
     pub fn places(&self) -> Option<&HashMap<i64, DVec3>> {

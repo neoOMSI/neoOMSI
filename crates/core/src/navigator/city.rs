@@ -41,7 +41,51 @@ impl Navigator {
         let global = self.global.clone();
         let net = global.as_deref().or(f.traffic.map(|t| &t.net));
         let mut roads_verts = None;
-        if let Some(n) = net {
+        let surfaces = self.surfaces.clone();
+        if let Some(sm) = surfaces.as_deref() {
+            // Navigator 2.0: the ground around what the window shows, finely when close,
+            // coarsely from far; built again when the window leaves it or the detail changes
+            let view = (w as f64).hypot(h as f64) * 0.5 * self.city.mpp;
+            let coarse = self.city.mpp > 0.6;
+            let stale = match self.city.surf {
+                None => true,
+                Some((c, r, co)) => {
+                    co != coarse
+                        || (self.city.center - c).length() + view > r
+                        || r > view * 4.0 + 800.0
+                }
+            };
+            let version = self.global_version * 1_000_000 + 999_999;
+            if stale || self.city.roads.map(|r| r.0 != version).unwrap_or(true) {
+                let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
+                for k in sm.chunks.keys() {
+                    let o = crate::navmap::SurfaceMap::chunk_origin(*k);
+                    lo = lo.min(o);
+                    hi = hi.max(o + DVec2::splat(crate::navmap::CHUNK));
+                }
+                if lo.x == f64::MAX {
+                    lo = f.bus.truncate();
+                    hi = lo;
+                }
+                self.city.extent = (lo, hi);
+                // the anchor stays put while the window moves: the route drawn on it holds
+                let anchor = self.city.roads.map(|r| r.2).unwrap_or((lo + hi) * 0.5);
+                let radius = view * 2.0 + 250.0;
+                let mut p = Painter::new();
+                build_surfaces(
+                    &mut p,
+                    sm,
+                    anchor,
+                    self.city.center,
+                    radius,
+                    coarse,
+                    if coarse { 0.0 } else { 1.0 },
+                );
+                self.city.surf = Some((self.city.center, radius, coarse));
+                self.city.roads = Some((version, p.len(), anchor));
+                roads_verts = Some(p.verts);
+            }
+        } else if let Some(n) = net {
             let version = self.global_version * 1_000_000 + n.lanes.len() as u64;
             if self.city.roads.map(|r| r.0 != version).unwrap_or(true) {
                 let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));

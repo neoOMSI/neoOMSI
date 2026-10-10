@@ -13,7 +13,9 @@ impl Navigator {
         }
         self.time += f.dt;
         if let Some(rx) = self.building.as_ref() {
-            if let Ok((net, pos, streets, graph)) = rx.try_recv() {
+            if let Ok((net, pos, streets, graph, surfaces)) = rx.try_recv() {
+                self.surfaces = Some(std::sync::Arc::new(surfaces));
+                self.city.roads = None;
                 log::info!(
                     "navigator: the map's road network is there ({} lanes, {} streets named)",
                     net.lanes.len(),
@@ -279,22 +281,34 @@ impl Navigator {
             .or(f.traffic.map(|t| &t.net))
             .or(own.as_deref());
         let lanes_now = net.map(|n| n.lanes.len()).unwrap_or(0);
+        let surfaces = self.surfaces.clone();
+        // Navigator 2.0 draws the ground the map lays; the lanes are the fallback while
+        // that is being built
+        let reach = if surfaces.is_some() {
+            SURFACE_RADIUS * 0.4
+        } else {
+            ROAD_RADIUS * 0.45
+        };
         let rebuild = match &self.roads {
-            None => lanes_now > 0,
+            None => lanes_now > 0 || surfaces.is_some(),
             Some(r) => {
-                (r.anchor - f.bus.truncate()).length() > ROAD_RADIUS * 0.45
+                (r.anchor - f.bus.truncate()).length() > reach
                     || (r.lanes_seen != lanes_now && self.time - r.built_at > 1.5)
             }
         };
         let mut road_verts = None;
         if rebuild {
-            if let Some(net) = net {
+            if net.is_some() || surfaces.is_some() {
                 let anchor = f.bus.truncate();
                 let mut p = Painter::new();
                 let t0 = std::time::Instant::now();
-                match self.graph.as_deref().filter(|_| global.is_some()) {
-                    Some(g) => build_roads_from(&mut p, g, anchor),
-                    None => build_roads(&mut p, net, anchor),
+                match (surfaces.as_deref(), self.graph.as_deref().filter(|_| global.is_some()), net) {
+                    (Some(sm), _, _) => {
+                        build_surfaces(&mut p, sm, anchor, anchor, SURFACE_RADIUS, false, 1.0)
+                    }
+                    (None, Some(g), _) => build_roads_from(&mut p, g, anchor),
+                    (None, None, Some(net)) => build_roads(&mut p, net, anchor),
+                    (None, None, None) => {}
                 }
                 if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
                     log::info!(

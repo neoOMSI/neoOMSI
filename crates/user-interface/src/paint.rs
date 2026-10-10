@@ -681,6 +681,15 @@ impl Painter {
     }
 
     /// A convex polygon on the ground (world points).
+    /// Triangles (indices into `pts`, three a triangle) in world space, filled flat.
+    pub fn world_tris(&mut self, pts: &[Vec3], tris: &[u32], c: Color) {
+        self.verts.extend(
+            tris.iter()
+                .filter_map(|&i| pts.get(i as usize))
+                .map(|&p| Self::wv(p, Vec2::ZERO, 0.0, 0.0, c)),
+        );
+    }
+
     pub fn world_poly(&mut self, pts: &[Vec3], c: Color) {
         for k in 1..pts.len().saturating_sub(1) {
             self.verts.extend([

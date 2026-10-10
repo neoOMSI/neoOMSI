@@ -3130,7 +3130,9 @@ pub(crate) fn run_offscreen(
             if traffic.is_none() {
                 nav.add_lanes(world.lanes.lock().clone());
             }
-            nav.set_map(world.navigation_map());
+            let map = world.navigation_map();
+            nav.set_surfaces(crate::navmap::build_surface_map(&world, &map.lanes));
+            nav.set_map(map);
             let (line, terminus, stops, trip) = navigator::duty_parts(duty.as_ref());
             let mut trip_lanes = Vec::new();
             if let (Some((key, name)), Some(sch)) = (trip, schedule.as_ref()) {
@@ -3240,6 +3242,14 @@ pub(crate) fn run_offscreen(
             for _ in 0..30 {
                 nav.frame(&renderer, &mut scene, &frame);
                 scene.overlays.pop();
+            }
+            // OMSI_NAV_SHOT: the navigator panel alone as <out>_nav.png
+            if ::legacy_config::env::var_os("OMSI_NAV_SHOT").is_some() {
+                if let Some((w, h, px)) = nav.shot(&renderer, &frame) {
+                    let path = format!("{}_nav.png", out.with_extension("").display());
+                    image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8)?;
+                    log::info!("navigator shot: {path}");
+                }
             }
             nav.frame(&renderer, &mut scene, &frame);
         }
