@@ -3,6 +3,24 @@
 use super::*;
 
 impl App {
+    /// Give every local vehicle the session's calendar and time of day. A vehicle keeps
+    /// its own real-time script counters, but clocks, displays and timetable scripts must
+    /// agree with the game's clock regardless of when the vehicle was spawned.
+    pub(crate) fn sync_vehicle_game_times(&mut self) {
+        let clock = self.clock.clone();
+        if let Some(p) = self.player.as_mut() {
+            p.vehicle.host.clock.sync_game_time_from(&clock);
+        }
+        for q in &mut self.placed {
+            q.vehicle.host.clock.sync_game_time_from(&clock);
+        }
+        if let Some(t) = self.traffic.as_mut() {
+            for car in t.cars_mut() {
+                car.vehicle.host.clock.sync_game_time_from(&clock);
+            }
+        }
+    }
+
     pub(crate) fn tick_lan(&mut self, dt: f32) {
         let audio_inside = self.audio_in_cab();
         let walker = self.walker_pose();
@@ -112,9 +130,7 @@ impl App {
                 }
             }
         }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
     }
 
     pub(crate) fn edit_weather(&mut self, f: impl FnOnce(&mut ::content::weather::Weather)) {
@@ -807,26 +823,21 @@ impl App {
     }
 
     pub(crate) fn sync_real_time(&mut self) {
-        if !self.real_time_locked() {
-            return;
+        if self.real_time_locked()
+            && let Some(real) = crate::real_time::clock_now(&self.clock)
+        {
+            let gap = crate::real_time::gap(&self.clock, &real);
+            if gap.abs() >= 0.25 {
+                self.clock.year = real.year;
+                self.clock.day_of_year = real.day_of_year;
+                self.clock.time = real.time;
+                if let Some(tr) = self.traffic.as_mut() {
+                    tr.advance_day_time(gap);
+                }
+                self.sim_accum = 0.0;
+            }
         }
-        let Some(real) = crate::real_time::clock_now(&self.clock) else {
-            return;
-        };
-        let gap = crate::real_time::gap(&self.clock, &real);
-        if gap.abs() < 0.25 {
-            return;
-        }
-        self.clock.year = real.year;
-        self.clock.day_of_year = real.day_of_year;
-        self.clock.time = real.time;
-        if let Some(tr) = self.traffic.as_mut() {
-            tr.advance_day_time(gap);
-        }
-        self.sim_accum = 0.0;
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
     }
 
     pub(crate) fn shift_clock(&mut self, secs: f64) {
@@ -877,9 +888,7 @@ impl App {
             self.humans_populate_t = 0.0;
             self.first_populate = true;
         }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
         let h = (t / 3600.0) as u32;
         self.service_msg = Some((
             format!("Clock: {h:02}:{:02}", ((t / 60.0) as u32) % 60),

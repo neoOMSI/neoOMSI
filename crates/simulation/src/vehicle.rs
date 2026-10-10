@@ -3532,6 +3532,7 @@ pub struct TrailerPart {
     /// The track under its turning axle, when it runs on rails (`VehicleInstance::retrail`):
     /// it stands at the track's height, not on whatever the ground probe finds there.
     track: Option<DVec3>,
+    held: Option<DVec3>,
     /// Mesh property sources, resolved against the leading vehicle's variables.
     props_plan: PropsPlan,
     /// The meshes' transforms in the modelled pose, for `[smoothskin]` (made when needed).
@@ -3762,6 +3763,7 @@ impl TrailerPart {
             frame_brakes: Vec::new(),
             joint_angles: None,
             track: None,
+            held: None,
             v_alpha: program.var(&format!("articulation_{joint}_alpha")),
             v_beta: program.var(&format!("articulation_{joint}_beta")),
             animators,
@@ -3893,14 +3895,33 @@ impl TrailerPart {
         let rot = self.body_rotation();
         let c = position + rot.transform_point3(self.coupling_front).as_dvec3();
         let h = heading.to_radians();
-        self.pivot = Some(c - DVec3::new(h.sin(), h.cos(), 0.0) * self.length as f64);
+        let ahead = DVec3::new(h.sin(), h.cos(), 0.0);
+        let pivot = c - ahead * self.length as f64;
+        // (the follow step after this one sees the pivot standing still: the wheels roll
+        // as far as the pose moved)
+        if let Some(d) = self.pivot.map(|p| pivot - p).filter(|d| d.length() < 25.0) {
+            self.odometer += d.dot(ahead) as f32;
+        }
+        self.pivot = Some(pivot);
         self.position = position;
+        self.held = Some(position);
+    }
+
+    fn axle_z_through(&self, c: DVec3, origin: DVec3) -> f64 {
+        let h = self.heading.to_radians();
+        let d = c - origin;
+        let along = d.x * h.sin() + d.y * h.cos();
+        let reach = (self.coupling_front.y as f64).abs();
+        let pitch =
+            (d.z.atan2(along) - (self.coupling_front.z as f64).atan2(reach)).clamp(-0.3, 0.3);
+        c.z - self.coupling_front.z as f64 - self.length.max(0.5) as f64 * pitch.tan()
     }
 
     /// Forget where this part was: the next step puts it straight behind the leading part
     /// (after the vehicle was moved somewhere else).
     pub fn realign(&mut self) {
         self.pivot = None;
+        self.held = None;
         self.axle_z = None;
         self.track = None;
         self.rigid = None;
@@ -4031,10 +4052,14 @@ impl TrailerPart {
             self.ground_lift = lift as f32;
             // On rails: the track's height where it was put on it (the ground probe found the
             // platform edge or the embankment beside a bend, and the car jumped up and down).
-            let on_track = self
-                .track
-                .filter(|t| (t.truncate() - new_pivot.truncate()).length() < 1.0)
-                .map(|t| t.z);
+            // A LAN player's part: the height their game has it at.
+            let on_track = match self.held.take() {
+                Some(p) => Some(self.axle_z_through(c, p)),
+                None => self
+                    .track
+                    .filter(|t| (t.truncate() - new_pivot.truncate()).length() < 1.0)
+                    .map(|t| t.z),
+            };
             // the height of the part's origin over its axle (where the ground has none: level
             // with the coupling, as before)
             let level = c.z - self.coupling_front.z as f64;
@@ -4790,6 +4815,63 @@ mod tests {
                 "alpha {alpha} at heading {h}"
             );
         }
+    }
+
+    #[test]
+    fn a_remote_rear_section_takes_the_senders_pitch_and_rolls() {
+        let root = ::legacy_config::env::var_os("OMSI_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
+        let bus = root.join("Vehicles/MAN_NL_NG/MAN_GN92_main.bus");
+        let trail = root.join("Vehicles/MAN_NL_NG/MAN_GN92_trail.bus");
+        if !bus.exists() || !trail.exists() {
+            eprintln!("skipped: no {}", bus.display());
+            return;
+        }
+        let ty = Arc::new(VehicleType::load(&root, &bus).expect("GN92"));
+        let part = Arc::new(VehicleType::load(&root, &trail).expect("GN92 trail"));
+        let make = || {
+            let mut v =
+                VehicleInstance::new(ty.clone(), VehicleHost::new(crate::SimClock::default()));
+            v.attach_trailer_ex(part.clone(), false);
+            v
+        };
+        let (mut sender, mut copy) = (make(), make());
+        sender.ground = Some(Arc::new(|_, y| Some(y * 0.06)));
+        copy.ground = None;
+        let (dt, speed) = (1.0 / 60.0, 8.0f32);
+        let axle = sender.physics.wheels.len();
+        let wheel = |v: &VehicleInstance| v.var(&format!("Wheel_Rotation_{axle}_L")).unwrap();
+        let mut odometer = 0.0;
+        let mut turned = 0.0;
+        for f in 0..120 {
+            odometer += speed * dt;
+            let frame = AiFrame {
+                speed,
+                odometer,
+                ..Default::default()
+            };
+            for v in [&mut sender, &mut copy] {
+                v.position = DVec3::new(0.0, odometer as f64, odometer as f64 * 0.06 + 0.5);
+                v.heading = f as f64 * 0.1;
+                v.pitch = 0.06f32.atan().to_degrees();
+            }
+            sender.update_ai_with(dt, &frame, &[], &[]);
+            let (at, heading) = (sender.trailers[0].position, sender.trailers[0].heading);
+            let before = wheel(&copy);
+            copy.trailers[0].set_pose(at, heading);
+            copy.update_ai_with(dt, &frame, &[], &[]);
+            turned += (wheel(&copy) - before).rem_euclid(std::f32::consts::TAU);
+        }
+        let (s, c) = (&sender.trailers[0], &copy.trailers[0]);
+        assert!(s.pitch.abs() > 2.0, "sender pitch {}", s.pitch);
+        assert!((s.pitch - c.pitch).abs() < 0.05, "{} vs {}", s.pitch, c.pitch);
+        assert!((s.position - c.position).length() < 0.01, "{} vs {}", s.position, c.position);
+        let rolled = odometer / part.def.axles[0].wheel_diameter * 2.0;
+        assert!(
+            (turned - rolled).abs() < 0.1 * rolled,
+            "turned {turned}, rolled {rolled}"
+        );
     }
 
     /// The stock rattle (`klappern.osc`) as loud at 144 frames a second as at OMSI's 30.
