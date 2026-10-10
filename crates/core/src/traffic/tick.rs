@@ -441,6 +441,7 @@ impl Traffic {
                     at_stop: c.at_stop(),
                     pass_room: c.pass_room,
                     lat_accel: st.lat_accel,
+                    lead: c.lead_info.map(|l| l.0),
                 }
             })
             .collect();
@@ -837,10 +838,37 @@ impl Traffic {
                 if let Some(cmd) = decision.change {
                     let net = &self.net;
                     let car = &mut self.cars[i];
+                    // (a route vehicle going round something takes the lanes beside its route
+                    // into it until it is past, or stays where it is)
+                    let mut spliced = true;
+                    if cmd.kind == ChangeKind::Bypass && !car.state.route.is_empty() {
+                        let odometer = car.state.odometer;
+                        let reach = car.maneuver.bypass_until.map(|u| u - odometer)
+                            .unwrap_or(car.state.front + car.state.rear + 15.0)
+                            + car.state.front;
+                        let stops: Vec<usize> = car.bus.as_ref()
+                            .map(|b| b.stops.iter().map(|t| t.route_index).collect())
+                            .unwrap_or_default();
+                        match car.state.splice_bypass(net, cmd.to, reach, |k| stops.contains(&k)) {
+                            Some((old, new)) => {
+                                if let Some(b) = car.bus.as_deref_mut() {
+                                    for t in b.stops.iter_mut().filter(|t| t.route_index >= old) {
+                                        t.route_index = t.route_index - old + new;
+                                    }
+                                }
+                            }
+                            None => spliced = false,
+                        }
+                    }
+                    if !spliced {
+                        car.maneuver.change_to = None;
+                        car.maneuver.bypass_until = None;
+                    } else {
                     match cmd.kind {
                         ChangeKind::RouteChange => car.state.start_route_change(net, cmd.to, cmd.dir),
                         ChangeKind::Bypass => car.state.start_bypass(net, cmd.to, cmd.dir),
                         ChangeKind::Change => car.state.start_change(net, cmd.to, cmd.dir),
+                    }
                     }
                 }
                 let car = &mut self.cars[i];

@@ -201,6 +201,10 @@ pub struct ManeuverState {
     /// The gap (m) to a parked car standing in the lane ahead, as last planned: it is no
     /// vehicle of the scene, and the lane change round it is discovered from here.
     pub parked_block: Option<f32>,
+    /// Out round a parked car: the odometer reading by which its tail is past it. No route
+    /// change back before (a bus moved back into the bus lane beside the car and stood
+    /// there with its nose on it).
+    pub bypass_until: Option<f32>,
 }
 
 // ---- frozen per-tick scene and inputs --------------------------------------------------
@@ -246,6 +250,8 @@ pub struct ManeuverActor {
     /// Room the vehicle's own steering needs behind an obstacle before it can pull out (m).
     pub pass_room: f32,
     pub lat_accel: f32,
+    /// The vehicle it stood behind last tick, if any.
+    pub lead: Option<VehicleId>,
 }
 
 impl ManeuverActor {
@@ -281,6 +287,7 @@ impl ManeuverActor {
             at_stop: false,
             pass_room: 6.0,
             lat_accel: 2.8,
+            lead: None,
         }
     }
 
@@ -468,8 +475,9 @@ impl ManeuverCoordinator {
     /// Submit optional changes through the same arbitration as route-required changes.
     /// Discovery only reads the frozen scene; trajectory validation happens at commitment.
     pub fn intent(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &ManeuverState) -> ManeuverIntent {
+        let bypassing = state.bypass_until.is_some_and(|u| actor.odometer < u);
         let required = actor.change.map(|c| c.to).or_else(||
-            if actor.at_stop { None } else { required_target(scene.net, actor) });
+            if actor.at_stop || bypassing { None } else { required_target(scene.net, actor) });
         let target = required.or_else(|| self.discretionary_wish(scene, actor, state).map(|w| w.0));
         let s = target.map(|t| scene.net.beside_s(actor.lane, t, actor.s)).unwrap_or(actor.s);
         ManeuverIntent { vehicle: actor.id, target: target.map(LaneId), required: required.is_some(), s }
@@ -745,6 +753,8 @@ impl ManeuverCoordinator {
     ) -> Option<ManeuverDecision> {
         let net = scene.net;
         if actor.at_stop { return None; }
+        if state.bypass_until.is_some_and(|u| actor.odometer < u) { return None; }
+        state.bypass_until = None;
         let to = required_target(net, actor)?;
         let kind = if actor.route_next == Some(to) {
             ChangeKind::RouteChange
@@ -828,6 +838,12 @@ impl ManeuverCoordinator {
         state.change_to = Some(to);
         state.change_dir = dir;
         state.dwell_code = 0;
+        if code == 3 {
+            if let Some(p) = state.parked_block {
+                // its gap, the parked car (4.6 m) and the whole vehicle with a margin
+                state.bypass_until = Some(actor.odometer + p + 2.0 + 4.6 + actor.front + actor.rear + 3.0);
+            }
+        }
         let mut d = ManeuverDecision::new(ManeuverPhase::LaneChange);
         d.change = Some(ChangeCommand::new(to, dir, if code == 3 { ChangeKind::Bypass } else { ChangeKind::Change }));
         d.target_lane = Some(LaneId(to));
@@ -853,6 +869,8 @@ impl ManeuverCoordinator {
         } else {
             (lane.left, lane.right, 1, 2)
         };
+        // (where no path of the same spline lies beside it, the lane there by its place)
+        let pass_side = pass_side.or_else(|| net.beside_lane(actor.lane, actor.s, pass_dir));
         // Overtake a slow leader on the passing side.
         let mut wish: Option<(usize, i32, i16)> = None;
         if let Some(left) = pass_side {
@@ -890,7 +908,10 @@ impl ManeuverCoordinator {
             }
         }
         // Keep to the correct side when that lane is free.
-        if wish.is_none() && actor.speed >= 4.0 && actor.stopped <= 0.0 {
+        // (not back in beside the parked car it is going round)
+        if wish.is_none() && actor.speed >= 4.0 && actor.stopped <= 0.0
+            && !state.bypass_until.is_some_and(|u| actor.odometer < u)
+        {
             if let Some(right) = keep_side {
                 let s_right = net.beside_s(actor.lane, right, actor.s);
                 if self.open_to(net, actor, right) && self.stays_open(net, actor, right, s_right) {
@@ -1460,8 +1481,13 @@ impl ManeuverCoordinator {
                 }
             } else {
                 if iv.speed < 0.3 {
-                    // A standing body lets a car in only when it is not abreast of it.
-                    if front >= s_to - actor.rear && rear <= s_to + actor.front {
+                    // A standing body lets a car in only when it is not abreast of it - or
+                    // when it stands there waiting for that car (two buses side by side on
+                    // X10 Berlin's narrow lanes: the one ahead waited to move over, the one
+                    // behind for it, for good). The sweep still keeps the bodies apart.
+                    let waits_for_me = scene.actors.iter()
+                        .any(|a| a.id == iv.owner && a.lead == Some(actor.id));
+                    if !waits_for_me && front >= s_to - actor.rear && rear <= s_to + actor.front {
                         return false;
                     }
                     continue;

@@ -119,6 +119,7 @@ impl Car {
             at_stop: false,
             pass_room: 6.0,
             lat_accel: 2.8,
+            lead: None,
         }
     }
 

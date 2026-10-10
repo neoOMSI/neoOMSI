@@ -684,6 +684,52 @@ impl AiState {
         }
     }
 
+    /// A route vehicle pulling out into `to`, the lane beside its route lane: the lanes beside
+    /// the route on from there, for at least `reach` metres, go into its route, with a change
+    /// back onto the route after them. Without them the body out there was put back on the
+    /// route lane beside it (`commit_feedback` places a route vehicle on its route) and
+    /// steered back in at once - into the car it was going round. Returns the old route index
+    /// from which on the route kept its lanes and the new index of that lane, or `None` (no
+    /// route, or no lanes beside it far enough, or a route index `keep` refuses to drop - a
+    /// stop's lane; the route is unchanged).
+    pub fn splice_bypass(
+        &mut self,
+        net: &Network,
+        to: usize,
+        reach: f32,
+        keep: impl Fn(usize) -> bool,
+    ) -> Option<(usize, usize)> {
+        let ri = self.route_index;
+        if self.route.get(ri) != Some(&self.lane) {
+            return None;
+        }
+        let mut detour = vec![to];
+        let (mut a, mut b, mut k) = (self.lane, to, ri);
+        let mut covered = net.lanes[to].length() - net.beside_s(self.lane, to, self.s);
+        // (at least onto the next route lane: the change back must not be onto this one)
+        while covered < reach || k == ri {
+            let (na, nb) = net.parallel_continuation(a, b)?;
+            if self.route.get(k + 1) != Some(&na) {
+                return None;
+            }
+            detour.push(nb);
+            covered += net.lanes[nb].length();
+            (a, b, k) = (na, nb, k + 1);
+            if detour.len() > 12 {
+                return None;
+            }
+        }
+        if (ri + 1..k).any(keep) {
+            return None;
+        }
+        let new_k = ri + 1 + detour.len();
+        let mut route = self.route[..=ri].to_vec();
+        route.extend(detour);
+        route.extend_from_slice(&self.route[k..]);
+        self.route = route;
+        Some((k, new_k))
+    }
+
     /// Start the lane change a route asks for: at once (the indicator has been on while the
     /// driver waited for a gap) and quick enough to be done well before a fork's branches part.
     pub fn start_route_change(&mut self, net: &Network, to: usize, dir: i32) {
@@ -1419,6 +1465,39 @@ mod tests {
         c.speed = speed;
         c.plan_next(net);
         c
+    }
+
+    #[test]
+    fn a_bypass_takes_the_lanes_beside_into_the_route_until_past() {
+        // the route lanes 0 -> 1 -> 2 along x = 0, unlinked lanes 3 -> 4 -> 5 beside them
+        let mk = |x: f64, a: f64, b: f64| {
+            LaneBuilder::polyline(vec![DVec3::new(x, a, 0.0), DVec3::new(x, b, 0.0)], LaneKind::Street, 3.0)
+        };
+        let mut net = Network {
+            lanes: vec![
+                mk(0.0, 0.0, 20.0), mk(0.0, 20.0, 40.0), mk(0.0, 40.0, 80.0),
+                mk(-3.5, 0.0, 20.0), mk(-3.5, 20.0, 40.0), mk(-3.5, 40.0, 80.0),
+            ],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let bus = || {
+            let mut c = AiState::new(0, 5.0, 5);
+            c.route = vec![0, 1, 2];
+            c
+        };
+        // past the parked car on the next lane: one lane beside, then back onto 1
+        let mut c = bus();
+        assert_eq!(c.splice_bypass(&net, 3, 30.0, |_| false), Some((1, 3)));
+        assert_eq!(c.route, vec![0, 3, 4, 1, 2]);
+        // further: lane 1 is left out, and the change back is onto 2
+        let mut c = bus();
+        assert_eq!(c.splice_bypass(&net, 3, 50.0, |_| false), Some((2, 4)));
+        assert_eq!(c.route, vec![0, 3, 4, 5, 2]);
+        // unless a stop is on lane 1: then the route stays as it is
+        let mut c = bus();
+        assert_eq!(c.splice_bypass(&net, 3, 50.0, |k| k == 1), None);
+        assert_eq!(c.route, vec![0, 1, 2]);
     }
 
     #[test]
