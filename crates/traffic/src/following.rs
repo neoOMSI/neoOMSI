@@ -90,11 +90,6 @@ pub struct AiState {
     /// Sideways acceleration the driver accepts in a bend (m/s²): the speed through a
     /// curve of radius r is at most sqrt(this × r).
     pub lat_accel: f32,
-    /// The driver (`TPathInfo`'s rowdy_factor & co): how fast they like to go relative to
-    /// the limit, the time gap they keep to the car ahead (s), the distance they stop
-    /// behind it (m), the gap in the cross traffic they accept at a junction (s) and how
-    /// long they take to move off when the way clears (s). `accel` is how hard they pull
-    /// away and `decel` how hard they like to brake.
     pub desire: f32,
     /// Active emergency response; independent of collision-prevention braking.
     pub emergency_drive: bool,
@@ -194,16 +189,9 @@ pub fn ramp_progress_for(side: f32, clear: f32) -> f32 {
 /// Hardest braking of an AI driver (m/s²): an emergency stop.
 pub const MAX_BRAKE: f32 = 8.0;
 /// Gap a car leaves before a stop line or a stop point (m).
-/// The distance the follower stops its front bumper short of a stop point, as the service
-/// owner must account for when it hands a bus-stop target to the controller.
 pub const STOP_LINE_GAP: f32 = 0.6;
 
 /// Comfort envelope for ordinary longitudinal control, with units.
-///
-/// These are neoOMSI targets (plan section 6), not constants established by the reference.
-/// Acceleration, service braking, and the rate of change of comfortable acceleration are
-/// bounded together; collision prevention is a separate channel ([`MAX_BRAKE`]) that is not
-/// restricted by the comfort jerk.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BehaviorEnvelope {
     /// Comfortable acceleration (m/s²).
@@ -286,11 +274,6 @@ const FEEDBACK_MAX_LATERAL: f64 = 1.0;
 /// How far the realized heading may differ from the route before the projection is rejected
 /// (deg).
 const FEEDBACK_MAX_TURN: f32 = 60.0;
-/// On a timetable route the realized body is matched against the lanes around the planner's
-/// own, not the whole rest of the route: at least this many lanes beyond the current one and
-/// at least this many metres of them. A route that doubles back (a terminal loop, a street
-/// driven out and back) runs beside its own earlier lanes, and the nearest lane of the *whole*
-/// remaining route could be one a lap further on - the planner then skipped the loop.
 const FEEDBACK_ROUTE_LANES: usize = 3;
 /// How far (m) the planner may be ahead of a body it could not match onto the route.
 const FEEDBACK_MAX_LEAD: f32 = 2.0;

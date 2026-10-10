@@ -1728,7 +1728,8 @@ impl Traffic {
         }
         // Persistent unexplained holds: classify a cyclic stale-claim deadlock separately
         // from legal congestion or a physically full road; the coordinator cancels stale
-        // speculative claims so a valid safe manoeuvre can be retried. It never forces a
+        // speculative claims so a valid safe manoeuvre can be retried, and lets one vehicle
+        // of a lasting cycle that only gives way by the rules go first. It never forces a
         // vehicle across a conflicting body or a red signal.
         {
             let wait_scene = JunctionScene {
