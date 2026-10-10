@@ -51,6 +51,51 @@ fn a_way_back_joins_the_route_ahead() {
 }
 
 #[test]
+fn a_way_back_changes_lanes_where_the_splines_do_not_link_them() {
+    let lanes = vec![
+        straight((0.0, 0.0), (0.0, 100.0)),
+        straight((0.0, 100.0), (0.0, 200.0)),
+        straight((3.5, 0.0), (3.5, 100.0)),
+        straight((3.5, 100.0), (3.5, 200.0)),
+        straight((3.5, 200.0), (3.5, 300.0)),
+    ];
+    let mut net = Network {
+        lanes,
+        ..Default::default()
+    };
+    net.link(1.5);
+    for (a, n) in [(0, vec![1]), (1, vec![]), (2, vec![3]), (3, vec![4])] {
+        net.lanes[a].next = n;
+    }
+    let route = [4usize];
+    let (path, join) = way_back(&net, DVec3::new(0.0, 10.0, 0.0), 0.0, &route, 6000.0)
+        .expect("a way over to the lane beside");
+    assert_eq!(path, vec![0, 3]);
+    assert_eq!(join, 0);
+    // the line drifts across instead of stepping
+    for l in net.lanes.iter_mut() {
+        *l = ::simulation::traffic::LaneBuilder::polyline(
+            (0..=50)
+                .map(|k| l.points[0].lerp(l.points[1], k as f64 / 50.0))
+                .collect(),
+            LaneKind::Street,
+            3.0,
+        );
+    }
+    let lines = route_lines(&net, &[0, 3, 4], 0.0, f64::MAX);
+    assert_eq!(lines.len(), 1);
+    let x_at = |y: f64| {
+        lines[0]
+            .windows(2)
+            .find(|w| w[0].0.y <= y && w[1].0.y >= y)
+            .map(|w| w[0].0.x + (w[1].0.x - w[0].0.x) * (y - w[0].0.y) / (w[1].0.y - w[0].0.y))
+            .unwrap()
+    };
+    assert!(x_at(102.0) < 1.0 && x_at(115.0) > 1.0 && x_at(115.0) < 2.5, "{lines:?}");
+    assert!((x_at(140.0) - 3.5).abs() < 0.01);
+}
+
+#[test]
 fn projection_puts_the_look_at_point_in_the_middle() {
     let view =
         glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, -50.0, 80.0), Vec3::ZERO, Vec3::Z);
@@ -251,4 +296,169 @@ fn crowded_stop_markers_and_labels_do_not_overlap() {
     let edge = stop_label_rect(Vec2::new(590.0, 200.0), 150.0, 1.0, win, &[]).unwrap();
     assert!(edge.right() < 600.0);
     assert!(stop_label_rect(p, 150.0, 1.0, win, &[win]).is_none());
+}
+
+#[test]
+fn object_lanes_side_by_side_widen_into_one_carriageway() {
+    // two lanes of a road object 3.5 m apart, 2.6 m wide each: drawn as wide as their
+    // spacing they meet, a lane 9 m away (beyond a median) stays apart
+    let mut lanes = vec![
+        straight((0.0, 0.0), (0.0, 100.0)),
+        straight((3.5, 0.0), (3.5, 100.0)),
+        straight((12.5, 0.0), (12.5, 100.0)),
+    ];
+    for l in lanes.iter_mut() {
+        l.width = 2.6;
+        l.source = 2;
+    }
+    let mut net = Network {
+        lanes,
+        ..Default::default()
+    };
+    net.link(1.5);
+    net.build_grid();
+    let roads = road_geometry(&net);
+    let width_at = |x: f64| {
+        roads
+            .iter()
+            .find(|r| (r.points[0].x - x).abs() < 0.01)
+            .map(|r| r.width)
+            .unwrap()
+    };
+    assert!(width_at(0.0) >= 3.5 && width_at(3.5) >= 3.5, "{roads:?}");
+    assert!(width_at(12.5) < 3.0, "a lane beyond the median keeps its own width");
+}
+
+#[test]
+fn the_graph_draws_a_spline_once_and_joins_a_short_gap() {
+    // a spline whose carriageway the map gives, and a road object starting 2 m past its end
+    let mut a = straight((0.0, 0.0), (0.0, 100.0));
+    a.source = 1;
+    a.key = Some(LaneKey {
+        tile: (0, 0),
+        id: 7,
+        path: 0,
+    });
+    let mut b = straight((0.0, 104.5), (0.0, 200.0));
+    b.source = 2;
+    let mut net = Network {
+        lanes: vec![a, b],
+        ..Default::default()
+    };
+    net.link(1.5);
+    net.build_grid();
+    let ways = vec![crate::scene::NavCarriageway {
+        points: vec![DVec3::ZERO, DVec3::new(0.0, 100.0, 0.0)],
+        width: 6.0,
+        tile: (0, 0),
+        id: 7,
+        cars: true,
+    }];
+    let g = RoadGraph::build(&net, &ways);
+    let along_spline = g
+        .roads
+        .iter()
+        .filter(|r| r.spline == Some(((0, 0), 7)))
+        .count();
+    assert_eq!(along_spline, 1, "the spline's lanes are not drawn beside its carriageway");
+    assert!(
+        g.roads.iter().any(|r| r.spline.is_none()
+            && r.points.first().is_some_and(|p| (p.y - 100.0).abs() < 0.01)),
+        "the gap after the carriageway is joined: {:?}",
+        g.roads.iter().map(|r| (r.points.first(), r.points.last())).collect::<Vec<_>>()
+    );
+    assert!(g.open_ends.is_empty());
+    let (near, _) = g.near(DVec2::new(0.0, 50.0), 20.0);
+    assert!(!near.is_empty());
+}
+
+#[test]
+fn a_junction_object_gets_its_surface() {
+    let mut lanes = vec![
+        straight((-10.0, 0.0), (10.0, 0.0)),
+        straight((10.0, 2.0), (-10.0, 2.0)),
+        straight((0.0, -10.0), (0.0, 0.0)),
+    ];
+    for l in lanes.iter_mut() {
+        l.source = 2;
+        l.key = Some(LaneKey {
+            tile: (0, 0),
+            id: 99,
+            path: 0,
+        });
+    }
+    let net = Network {
+        lanes,
+        ..Default::default()
+    };
+    let g = RoadGraph::build(&net, &[]);
+    assert_eq!(g.areas.len(), 1);
+    // a ring of paths (a roundabout): its island stays dark
+    let ring: Vec<_> = (0..8)
+        .map(|k| {
+            let a = |k: usize| (k as f64 * std::f64::consts::FRAC_PI_4).sin_cos();
+            let ((s0, c0), (s1, c1)) = (a(k), a(k + 1));
+            let mut l = straight((15.0 * s0, 15.0 * c0), (15.0 * s1, 15.0 * c1));
+            l.source = 2;
+            l.key = Some(LaneKey {
+                tile: (0, 0),
+                id: 100,
+                path: k as u16,
+            });
+            l
+        })
+        .collect();
+    let ring = Network {
+        lanes: ring,
+        ..Default::default()
+    };
+    assert!(RoadGraph::build(&ring, &[]).areas.is_empty());
+    let hull = &g.areas[0];
+    assert!(hull.iter().any(|p| p.y < -9.0) && hull.iter().any(|p| p.y > 2.5));
+}
+
+#[test]
+fn the_route_line_is_one_smooth_line_and_breaks_where_lanes_jump() {
+    // a lane change: two parallel lanes 3.5 m apart, the route steps from one to the other
+    let lanes = vec![
+        straight((0.0, 0.0), (0.0, 100.0)),
+        straight((3.5, 100.0), (3.5, 200.0)),
+        straight((500.0, 0.0), (500.0, 100.0)),
+    ];
+    let mut net = Network {
+        lanes,
+        ..Default::default()
+    };
+    for l in net.lanes.iter_mut() {
+        *l = ::simulation::traffic::LaneBuilder::polyline(
+            (0..=50)
+                .map(|k| l.points[0].lerp(l.points[1], k as f64 / 50.0))
+                .collect(),
+            LaneKind::Street,
+            3.0,
+        );
+    }
+    let lines = route_lines(&net, &[0, 1, 2], 1000.0, f64::MAX);
+    assert_eq!(lines.len(), 2, "the jump to the third lane starts a new line");
+    let first = &lines[0];
+    assert!((first[0].1 - 1000.0).abs() < 1e-6);
+    assert!(first.windows(2).all(|w| w[1].1 >= w[0].1), "distance along grows");
+    // no step: neighbouring points never more than a few metres apart sideways
+    for w in first.windows(2) {
+        assert!((w[1].0.x - w[0].0.x).abs() < 1.0, "{:?} -> {:?}", w[0].0, w[1].0);
+    }
+    assert_eq!(first[0].0, net.lanes[0].start(), "the line starts where the route does");
+}
+
+#[test]
+fn a_convex_hull_keeps_the_outline() {
+    let pts = vec![
+        DVec3::new(0.0, 0.0, 0.0),
+        DVec3::new(10.0, 0.0, 0.0),
+        DVec3::new(10.0, 10.0, 0.0),
+        DVec3::new(0.0, 10.0, 0.0),
+        DVec3::new(5.0, 5.0, 0.0),
+    ];
+    let h = convex_hull(pts);
+    assert_eq!(h.len(), 4);
 }

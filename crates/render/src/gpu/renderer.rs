@@ -44,7 +44,6 @@ pub struct Renderer {
     pub(crate) cloud_detail_view: wgpu::TextureView,
     pub(crate) cloud_sampler: wgpu::Sampler,
     pub(crate) sky_mesh: (wgpu::Buffer, wgpu::Buffer, u32),
-    pub(crate) overlay_pipeline: wgpu::RenderPipeline,
     pub(crate) overlay_layout: wgpu::BindGroupLayout,
     pub(crate) sampler: wgpu::Sampler,
     pub(crate) camera_buf: wgpu::Buffer,
@@ -98,6 +97,8 @@ pub struct Renderer {
     pub(crate) last_frame: Option<std::time::Instant>,
     pub instant_exposure: bool,
     pub(crate) overlay_pipeline_1x: wgpu::RenderPipeline,
+    /// The frosted backdrops of overlays, made when one is first wanted.
+    pub(crate) frost: Option<Frost>,
     pub(crate) xr_ui_pipeline: wgpu::RenderPipeline,
     pub(crate) started: std::time::Instant,
     pub(crate) clamp_sampler: wgpu::Sampler,

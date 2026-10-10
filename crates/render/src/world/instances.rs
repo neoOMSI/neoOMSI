@@ -34,6 +34,7 @@ impl Renderer {
             sky_bind_group: None,
             overlays: Vec::new(),
             premultiplied: Default::default(),
+            frosted: Default::default(),
             overlay_res: Vec::new(),
             dirty: true,
             changed: Vec::new(),

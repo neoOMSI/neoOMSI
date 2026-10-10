@@ -370,6 +370,28 @@ impl Painter {
         self.circle(b, w * 0.5, c);
     }
 
+    /// A rounded box `r` showing a texture laid over `frame` (its corners at uv 0 and 1),
+    /// tinted `c`. `premultiplied`: the texture is a render target drawn with premultiplied
+    /// alpha (the draw's texture is not the atlas).
+    pub fn image_rounded(&mut self, r: Rect, radius: f32, frame: Rect, c: Color, premultiplied: bool) {
+        let pts = rounded_outline(r, radius);
+        let v = |p: Vec2| Vertex {
+            pos: [p.x, p.y, 0.0],
+            uv: [
+                (p.x - frame.x) / frame.w.max(1e-3),
+                (p.y - frame.y) / frame.h.max(1e-3),
+            ],
+            color: c.0,
+            mode: [0.0, if premultiplied { 2.0 } else { 1.0 }],
+            ..Default::default()
+        };
+        let m = r.center();
+        for k in 0..pts.len() {
+            self.verts
+                .extend([v(m), v(pts[k]), v(pts[(k + 1) % pts.len()])]);
+        }
+    }
+
     /// A sprite of the atlas with its top left at `at`, tinted `c`.
     pub fn sprite(&mut self, s: Sprite, at: Vec2, size: Vec2, c: Color) {
         let v = |p: Vec2, u: f32, w: f32| Vertex {
@@ -473,6 +495,32 @@ impl Painter {
             color: c.0,
             mode: [1.0, 0.0],
             ..Default::default()
+        }
+    }
+
+    /// A [`Painter::ribbon`] that carries `along[i]` (the distance along a route, m) at
+    /// `pts[i]`: a [`crate::gpu::Layer`]'s `route` then cuts it off behind a point, dims it
+    /// beyond another and fades it out further on, every frame, without building it again.
+    pub fn ribbon_along(
+        &mut self,
+        pts: &[Vec3],
+        along: &[f32],
+        w_m: f32,
+        w_px: f32,
+        c: Color,
+        caps: bool,
+    ) {
+        let from = self.verts.len();
+        self.ribbon(pts, w_m, w_px, c, caps);
+        let at: std::collections::HashMap<[u32; 3], f32> = pts
+            .iter()
+            .zip(along)
+            .map(|(p, s)| (p.to_array().map(f32::to_bits), *s))
+            .collect();
+        for v in &mut self.verts[from..] {
+            if let Some(s) = at.get(&v.pos.map(f32::to_bits)) {
+                v.uv = [*s, 1.0];
+            }
         }
     }
 
@@ -655,6 +703,15 @@ impl Painter {
     }
 
     /// A convex polygon on the ground (world points).
+    /// Triangles (indices into `pts`, three a triangle) in world space, filled flat.
+    pub fn world_tris(&mut self, pts: &[Vec3], tris: &[u32], c: Color) {
+        self.verts.extend(
+            tris.iter()
+                .filter_map(|&i| pts.get(i as usize))
+                .map(|&p| Self::wv(p, Vec2::ZERO, 0.0, 0.0, c)),
+        );
+    }
+
     pub fn world_poly(&mut self, pts: &[Vec3], c: Color) {
         for k in 1..pts.len().saturating_sub(1) {
             self.verts.extend([

@@ -262,6 +262,7 @@ impl Ui {
             radius: radius * s,
             opacity: 1.0,
             px_scale: 0.0,
+            route: Layer::WHOLE_ROUTE,
         };
         self.layers.push((layer, Painter::with_scale(s), 0));
     }

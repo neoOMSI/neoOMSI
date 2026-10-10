@@ -122,6 +122,10 @@ impl App {
                     self.surface.as_ref(),
                 ) {
                     let old_enabled = nav.enabled;
+                    // (the setting as it is now: it can change while the game runs)
+                    nav.opacity = ::config::get_float("ui", "opacity")
+                        .unwrap_or(0.85)
+                        .clamp(0.2, 1.0) as f32;
                     let old_opacity = nav.opacity;
                     nav.cockpit_display = vr_active;
                     if vr_active {

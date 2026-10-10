@@ -26,6 +26,7 @@ mod mac_hid;
 mod menu;
 mod money;
 mod navigator;
+pub mod navmap;
 #[cfg(windows)]
 mod openxr;
 mod placing;

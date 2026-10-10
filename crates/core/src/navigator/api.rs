@@ -9,6 +9,9 @@ impl Navigator {
             enabled,
             schedule: false,
             speed_avg: 8.0,
+            dim_ahead: 0.0,
+            glass: None,
+            dim_at: 0.0,
             opacity: opacity.clamp(0.2, 1.0),
             corner: corner.to_string(),
             city: CityMap::default(),
@@ -32,11 +35,14 @@ impl Navigator {
             global: None,
             stop_pos: Default::default(),
             streets: None,
+            graph: None,
             building: None,
+            surfaces: None,
             global_version: 0,
             roads: None,
             route: Route::default(),
-            route_mesh: (u64::MAX, 0, DVec2::ZERO, 0, 0),
+            route_mesh: RouteMesh::default(),
+            route_cum: (0, Vec::new()),
             congestion: HashMap::new(),
             route_jam: HashMap::new(),
             jam_version: 0,
@@ -67,6 +73,7 @@ impl Navigator {
             .name("navigator map".into())
             .spawn(move || {
                 let m = world.navigation_map();
+                let surfaces = crate::navmap::build_surface_map(&world, &m.lanes);
                 let mut net = Network {
                     lanes: m.lanes,
                     ..Default::default()
@@ -75,7 +82,8 @@ impl Navigator {
                 confirm_road_surfaces(&mut net, &m.road_surfaces);
                 probe_lanes(&net);
                 let streets = build_streets(&net, &m.signs);
-                let _ = tx.send((net, m.places, streets));
+                let graph = RoadGraph::build(&net, &m.carriageways);
+                let _ = tx.send((net, m.places, streets, graph, surfaces));
             })
             .ok();
         self.building = Some(rx);
@@ -90,10 +98,19 @@ impl Navigator {
         confirm_road_surfaces(&mut net, &map.road_surfaces);
         probe_lanes(&net);
         self.streets = Some(std::sync::Arc::new(build_streets(&net, &map.signs)));
+        self.graph = Some(std::sync::Arc::new(RoadGraph::build(&net, &map.carriageways)));
+        self.roads = None;
         let global = std::sync::Arc::new(net);
         self.global = Some(global);
         self.stop_pos = std::sync::Arc::new(map.places);
         self.global_version += 1;
+    }
+
+    /// Navigator 2.0's ground for the map (see [`crate::navmap`]).
+    pub fn set_surfaces(&mut self, surfaces: crate::navmap::SurfaceMap) {
+        self.surfaces = Some(std::sync::Arc::new(surfaces));
+        self.roads = None;
+        self.city.roads = None;
     }
 
     pub fn places(&self) -> Option<&HashMap<i64, DVec3>> {
@@ -102,6 +119,10 @@ impl Navigator {
 
     pub fn map_net(&self) -> Option<&Network> {
         self.global.as_deref()
+    }
+
+    pub fn map_net_arc(&self) -> Option<std::sync::Arc<Network>> {
+        self.global.clone()
     }
 
     pub fn add_lanes(&mut self, lanes: Vec<::simulation::traffic::Lane>) {
@@ -152,6 +173,7 @@ impl Navigator {
         }
         self.route.provisional = false;
         self.route.lanes = lanes;
+        self.route.lead = 0;
         if !same_trip {
             self.route.progress = 0;
             self.route.on_route = false;

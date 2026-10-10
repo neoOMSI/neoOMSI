@@ -11,11 +11,16 @@ mod api;
 mod city;
 mod draw;
 mod follow;
+mod glass;
+mod graph;
 mod map_view;
+mod marks;
 mod roads;
 mod route;
+mod shot;
 mod streets;
 mod style;
+mod surfaces;
 #[cfg(test)]
 mod tests;
 mod util;
@@ -23,7 +28,10 @@ mod words;
 
 pub(crate) use self::roads::{confirm_road_surfaces, road_geometry, simplify};
 pub(crate) use self::route::way_back;
-use self::{roads::*, route::*, streets::*, style::*, util::*, words::*};
+pub(crate) use self::graph::RoadGraph;
+#[cfg(test)]
+use self::graph::convex_hull;
+use self::{roads::*, route::*, streets::*, style::*, surfaces::*, util::*, words::*};
 
 pub(crate) fn stop_requested(vehicle: &::simulation::vehicle::VehicleInstance) -> bool {
     ["haltewunsch", "haltewunschlampe"]
@@ -91,6 +99,8 @@ struct Route {
     provisional: bool,
     joined: bool,
     approach: bool,
+    /// How many of `lanes` lead to the trip's route rather than belong to it.
+    lead: usize,
 }
 
 struct Roads {
@@ -107,11 +117,16 @@ pub struct Navigator {
     pub enabled: bool,
     pub schedule: bool,
     speed_avg: f32,
+    /// How far ahead of the bus the dimmed route begins (m), and when that was last moved.
+    dim_ahead: f64,
+    dim_at: f32,
     pub opacity: f32,
     pub corner: String,
     pub city: CityMap,
     panel_rect: [f32; 4],
     gpu: Option<Gpu>,
+    /// The panel's frosted panes (`glass.rs`).
+    glass: Option<glass::Glass>,
     fonts: Fonts,
     atlas: Atlas,
     target: Option<(TextureId, u32, u32)>,
@@ -130,12 +145,26 @@ pub struct Navigator {
     global: Option<std::sync::Arc<Network>>,
     stop_pos: std::sync::Arc<HashMap<i64, DVec3>>,
     streets: Option<std::sync::Arc<Streets>>,
+    /// The streets drawn, built with the map's network.
+    graph: Option<std::sync::Arc<RoadGraph>>,
+    /// Navigator 2.0's ground: the surfaces the map really draws.
+    surfaces: Option<std::sync::Arc<crate::navmap::SurfaceMap>>,
     #[allow(clippy::type_complexity)]
-    building: Option<std::sync::mpsc::Receiver<(Network, HashMap<i64, DVec3>, Streets)>>,
+    building: Option<
+        std::sync::mpsc::Receiver<(
+            Network,
+            HashMap<i64, DVec3>,
+            Streets,
+            RoadGraph,
+            crate::navmap::SurfaceMap,
+        )>,
+    >,
     pub global_version: u64,
     roads: Option<Roads>,
     route: Route,
-    route_mesh: (u64, u64, DVec2, u32, usize),
+    route_mesh: RouteMesh,
+    /// The route's lanes (their fingerprint) and how far along the route each begins.
+    route_cum: (u64, Vec<f64>),
     congestion: HashMap<usize, f32>,
     route_jam: HashMap<usize, f32>,
     jam_version: u64,
@@ -197,7 +226,7 @@ pub fn duty_parts(
 }
 
 impl<'a> NavFrame<'a> {
-    fn clone_ref(&self) -> NavFrame<'a> {
+    pub(crate) fn clone_ref(&self) -> NavFrame<'a> {
         NavFrame {
             traffic: self.traffic,
             bus: self.bus,
@@ -223,24 +252,51 @@ impl<'a> NavFrame<'a> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct MapRoad {
     pub(crate) points: Vec<DVec3>,
     pub(crate) width: f32,
     pub(crate) main: bool,
+    /// The spline (tile, id) the road runs along, if it is one.
+    pub(crate) spline: Option<((i32, i32), i64)>,
 }
 
-struct RouteStyle {
-    extra_m: f32,
-    min_px: f32,
-    arrows: Option<(f32, f32)>,
-    max_len: f32,
-    near: Option<(DVec2, f64)>,
+/// What the route line in the panel was built for: the lanes (their fingerprint), the
+/// traffic on them, where it is drawn from, its width, the lane it starts at and how far along
+/// the route it reaches; `verts` vertices.
+#[derive(Default)]
+struct RouteMesh {
+    lanes: u64,
+    jam: u64,
+    anchor: DVec2,
+    px: f32,
+    from: usize,
+    end: f64,
+    verts: u32,
+}
+
+/// A fingerprint of a route's lanes: a new way back changes it, driving along does not.
+fn lanes_print(lanes: &[usize]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    lanes.hash(&mut h);
+    h.finish() | 1
 }
 
 pub struct Streets {
     names: Vec<String>,
     of_lane: Vec<u32>,
     labels: Vec<(DVec2, f32, u32)>,
+}
+
+/// The map's surfaces built away from the frame (`CityMap::ground`): for which version of
+/// the map, around where and how, and the vertex buffer holding them.
+struct Ground {
+    version: u64,
+    anchor: DVec2,
+    surf: (DVec2, f64, bool),
+    len: u32,
+    buffer: Option<(wgpu::Buffer, u64)>,
 }
 
 #[derive(Default)]
@@ -255,7 +311,13 @@ pub struct CityMap {
     drag: Option<(f32, f32)>,
     target: Option<(TextureId, u32, u32)>,
     roads: Option<(u64, u32, DVec2)>,
+    /// The surfaces drawn: around where, how far, and whether coarsely.
+    surf: Option<(DVec2, f64, bool)>,
+    /// Surfaces being built on a thread of their own, to replace those drawn when done.
+    ground: Option<std::sync::mpsc::Receiver<Ground>>,
     route: ((u64, u64, u32, u64), u32),
     extent: (DVec2, DVec2),
     buttons: Vec<(Rect, u8)>,
+    /// Where the next drawing goes instead of `target` (`Navigator::city_shot`).
+    shot: Option<wgpu::TextureView>,
 }

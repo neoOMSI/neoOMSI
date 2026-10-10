@@ -1969,15 +1969,6 @@ impl Renderer {
                 pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             }
             self.encode_particles(&mut pass, scene, &pp.smoke_pipeline, &pp.corona_pipeline);
-            if !overlays.is_empty() && !masked_frame && !scaled {
-                pass.set_pipeline(&self.overlay_pipeline);
-                for (k, _) in overlays.iter().enumerate() {
-                    if let Some((_, _, bg, _)) = scene.overlay_res.get(k) {
-                        pass.set_bind_group(0, bg, &[]);
-                        pass.draw(0..6, 0..1);
-                    }
-                }
-            }
         }
         let puddles_on = puddles_wanted
             && main_batches
@@ -2112,10 +2103,6 @@ impl Renderer {
             pass.set_pipeline(&self.copy_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
-            if !overlays.is_empty() && !scaled {
-                pass.set_pipeline(&self.overlay_pipeline_1x);
-                draw_overlays(&mut pass, scene, overlays.len());
-            }
         }
         if enhanced {
             let secs = |tau: f32| {
@@ -2262,10 +2249,6 @@ impl Renderer {
                     pass.set_bind_group(0, &h.fxaa_bg, &[]);
                     pass.draw(0..3, 0..1);
                 }
-                if !overlays.is_empty() && !scaled {
-                    pass.set_pipeline(&self.overlay_pipeline_1x);
-                    draw_overlays(&mut pass, scene, overlays.len());
-                }
             }
         }
         if let Some((_, bg)) = &scene_target {
@@ -2300,9 +2283,36 @@ impl Renderer {
             pass.set_pipeline(&self.upscale_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
-            if !overlays.is_empty() {
+        }
+        // the overlays, last over the finished picture: those that are frosted over a blurred
+        // copy of what lies beneath them
+        if !overlays.is_empty() {
+            let under =
+                self.frost_backdrops(&mut encoder, scene, target, &overlays, (full_w, full_h), output_viewport);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("overlays"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            set_output_viewport(&mut pass, output_viewport);
+            for (k, (_, _, bg, _)) in scene.overlay_res.iter().take(overlays.len()).enumerate() {
+                if let (Some(slot), Some(frost)) = (under[k], self.frost.as_ref()) {
+                    frost.draw_under(&mut pass, slot);
+                }
                 pass.set_pipeline(&self.overlay_pipeline_1x);
-                draw_overlays(&mut pass, scene, overlays.len());
+                pass.set_bind_group(0, bg, &[]);
+                pass.draw(0..6, 0..1);
             }
         }
         stage(self, "encode", "mirror.encode");
