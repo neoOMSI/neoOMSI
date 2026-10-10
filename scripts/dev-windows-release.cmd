@@ -14,6 +14,8 @@ if errorlevel 1 goto :failed
 if not exist "dist\windows-dev" mkdir "dist\windows-dev"
 copy /y "target\dev-release\neoomsi.exe" "dist\windows-dev\neoomsi.exe" >nul || goto :failed
 copy /y "target\dev-release\neoomsi-launcher.exe" "dist\windows-dev\neoomsi-launcher.exe" >nul || goto :failed
+call scripts\build-windows-launcher.cmd "dist\windows-dev\launcher"
+if errorlevel 1 goto :failed
 echo.
 echo Done. Run: "%CD%\dist\windows-dev\neoomsi.exe"
 exit /b 0

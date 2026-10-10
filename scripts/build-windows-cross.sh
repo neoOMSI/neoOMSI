@@ -18,4 +18,5 @@ export CARGO_PROFILE_RELEASE_DEBUG=0
 cargo build --locked --release --target x86_64-pc-windows-gnu -p core -p legacy-launcher-core
 mkdir -p dist/windows   # (the folder is also the content folder: mods stay)
 cp target/x86_64-pc-windows-gnu/release/neoomsi.exe target/x86_64-pc-windows-gnu/release/neoomsi-launcher.exe dist/windows/
+scripts/ci/build-launcher.sh windows x64
 printf '\nneoOMSI %s built in dist/windows\n' "$neoomsi_VERSION"

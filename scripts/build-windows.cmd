@@ -9,6 +9,8 @@ setlocal
 cd /d "%~dp0\.."
 set "TARGET=%~1"
 if "%TARGET%"=="" set "TARGET=x86_64-pc-windows-msvc"
+set "LAUNCHER_ARCH=x64"
+if "%TARGET%"=="aarch64-pc-windows-msvc" set "LAUNCHER_ARCH=arm64"
 set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 where cargo >nul 2>nul
 if errorlevel 1 (
@@ -20,6 +22,8 @@ if errorlevel 1 goto :failed
 if not exist "dist\windows" mkdir "dist\windows"
 copy /y "target\%TARGET%\release\neoomsi.exe" "dist\windows\neoomsi.exe" >nul || goto :failed
 copy /y "target\%TARGET%\release\neoomsi-launcher.exe" "dist\windows\neoomsi-launcher.exe" >nul || goto :failed
+call scripts\build-windows-launcher.cmd "dist\windows\launcher" "%LAUNCHER_ARCH%"
+if errorlevel 1 goto :failed
 echo.
 echo Done. Run: "%CD%\dist\windows\neoomsi.exe"
 exit /b 0
