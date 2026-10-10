@@ -350,7 +350,7 @@ impl Renderer {
         } else {
             wgpu::Features::empty()
         };
-        if ::legacy_config::env::var_os("OMSI_GPU_TIMERS").is_some() {
+        if ::legacy_config::env::var_os("OMSI_NO_GPU_TIMERS").is_none() {
             required_features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
         }
         if ::legacy_config::env::var_os("OMSI_NO_BC").is_none() {
@@ -2681,9 +2681,11 @@ impl Renderer {
             device_lost,
             blend_by_origin: false,
             gpu_timers,
+            mip_encoder: Default::default(),
             stats: Default::default(),
             counts: Default::default(),
-            profiling: ::legacy_config::env::var_os("OMSI_PROFILE").is_some(),
+            profiling: ::legacy_config::env::var_os("OMSI_PROFILE").is_some() || cfg!(debug_assertions),
+            audit_lines: Default::default(),
             draw_audit_at: std::time::Instant::now(),
             encoding_pool: if ::legacy_config::env::var_os("OMSI_NO_RENDER_POOL").is_some() {
                 None

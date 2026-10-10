@@ -720,7 +720,7 @@ impl App {
                             };
                             MIRROR_RATE
                                 .max(mirrors as f32 * MIRROR_MIN_HZ)
-                                .min(max_hz * self.mirrors_seen.max(1) as f32)
+                                .min(max_hz * self.mirrors_seen.clamp(1, 2) as f32)
                         }
                     };
                     let mirror_view = if vr_active {
@@ -755,11 +755,11 @@ impl App {
                     }
                     while (self.in_cab || near)
                         && drawn
-                            < (if vr_active {
-                                draw_limit
-                            } else {
-                                self.mirrors_seen.clamp(1, 2)
-                            })
+                        < (if vr_active {
+                        draw_limit
+                    } else {
+                        1
+                    })
                         && (vr_active || self.mirror_budget >= 1.0)
                     {
                         let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) else {
@@ -848,11 +848,11 @@ impl App {
                     if !xr_active
                         && triple_projection
                         && let Some(views) =
-                            camera_util::triple_screen_cameras(
-                                cam,
-                                s.config.width,
-                                s.config.height,
-                            )
+                        camera_util::triple_screen_cameras(
+                            cam,
+                            s.config.width,
+                            s.config.height,
+                        )
                     {
                         r.render_triple(
                             scene,
@@ -898,15 +898,19 @@ impl App {
                         lights: scene.lights.len(),
                         interior_lights: scene.interior_lights.len(),
                         coronas: scene.coronas.len(),
+                        gpu_passes: r.gpu_pass_times(),
+                        draw_report: r.draw_report(),
                     };
                     let scale = self
                         .window
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
                     if self.lab_menu.is_none() {
+                        let __td = Instant::now();
                         self.devtools
                             .get_or_insert_with(devtools::DevTools::new)
                             .render(r, &view, scale, &snap, &dev_extra);
+                        *self.profile.entry("render.devui").or_default() += __td.elapsed().as_secs_f64();
                     }
                 }
                 *self.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();

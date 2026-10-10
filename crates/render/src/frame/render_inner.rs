@@ -66,6 +66,7 @@ impl Renderer {
         if self.gpu_error.load(std::sync::atomic::Ordering::Relaxed) {
             self.fall_back_to_single_sample(scene);
         }
+        self.flush_mips();
         self.collect_gpu_timers();
         let tset: Option<wgpu::QuerySet> = self.gpu_timers[with_overlays as usize]
             .as_ref()
@@ -1278,6 +1279,7 @@ impl Renderer {
         }
         if self.profiling && with_overlays {
             let mut c = self.counts.borrow_mut();
+            *c.entry("(frames)").or_default() += 1.0;
             *c.entry("scene instances").or_default() += scene.instances.len() as f64;
             *c.entry("visible instances").or_default() += visible.len() as f64;
             *c.entry("main draws").or_default() += (main_draws[0] + main_draws[1]) as f64;
@@ -1299,7 +1301,7 @@ impl Renderer {
             *c.entry("ktris shadow far").or_default() += tris(&shadow_batches[1]);
             *c.entry("ktris shadow close").or_default() += tris(&shadow_batches[2]);
         }
-        if self.profiling && with_overlays && self.draw_audit_at.elapsed().as_secs() >= 10 {
+        if self.profiling && with_overlays && self.draw_audit_at.elapsed().as_secs() >= 2 {
             self.draw_audit_at = std::time::Instant::now();
             let mut assets: HashMap<&str, (usize, usize, u64)> = HashMap::new();
             for b in &main_batches {
@@ -1313,18 +1315,20 @@ impl Renderer {
                 cost.2 += b.count as u64 / 3 * b.instances.len() as u64;
             }
             let mut assets: Vec<_> = assets.into_iter().collect();
+            let mut lines: Vec<String> = Vec::new();
             assets.sort_unstable_by(|a, b| b.1.0.cmp(&a.1.0).then(a.0.cmp(b.0)));
             for (source, (batches, draws, tris)) in assets.iter().take(12) {
-                log::info!(
-                    "draw audit: {batches} batches, {draws} draws, {tris} triangles: {source}"
-                );
+                lines.push(format!(
+                    "most draws: {batches} batches, {draws} draws, {tris} triangles: {source}"
+                ));
             }
             assets.sort_unstable_by(|a, b| b.1.2.cmp(&a.1.2).then(a.0.cmp(b.0)));
             for (source, (batches, draws, tris)) in assets.iter().take(12) {
-                log::info!(
-                    "triangle audit: {tris} triangles in {draws} draws ({batches} batches): {source}"
-                );
+                lines.push(format!(
+                    "most triangles: {tris} triangles in {draws} draws ({batches} batches): {source}"
+                ));
             }
+            *self.audit_lines.borrow_mut() = lines;
         }
         stage(self, "items", "mirror.items");
         let mut rain_batches = Vec::new();
@@ -1469,7 +1473,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: pass_timer(tset.as_ref(), &mut timed, "spot shadow"),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1862,7 +1866,7 @@ impl Renderer {
                             }),
                             stencil_ops: None,
                         }),
-                        timestamp_writes: None,
+                        timestamp_writes: pass_timer(tset.as_ref(), &mut timed, "main part"),
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
@@ -2064,7 +2068,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: pass_timer(tset.as_ref(), &mut timed, "rain"),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -2092,7 +2096,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: pass_timer(tset.as_ref(), &mut timed, "reflections present"),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

@@ -6,8 +6,8 @@ pub(super) const MIRROR_RATE: f32 = 75.0;
 pub(super) const MIRROR_MIN_HZ: f32 = 8.0;
 /// The most a mirror in the picture is redrawn a second, with the real-time reflections
 /// economical (`mirror_refresh=eco`) and full (the default).
-pub(super) const MIRROR_MAX_HZ_ECO: f32 = 15.0;
-pub(super) const MIRROR_MAX_HZ_FULL: f32 = 30.0;
+pub(super) const MIRROR_MAX_HZ_ECO: f32 = 8.0;
+pub(super) const MIRROR_MAX_HZ_FULL: f32 = 15.0;
 /// With no real-time reflections (`mirror_refresh=off`) a bus's mirrors are drawn once when
 /// it is taken over and once more this many seconds later.
 pub(super) const MIRROR_FREEZE_REDRAW: f32 = 2.0;

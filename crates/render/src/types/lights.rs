@@ -129,6 +129,7 @@ impl Default for Corona {
 pub(crate) const LIGHT_CELL: f32 = 25.0;
 pub(crate) const LIGHT_GRID_SIDE: usize = 64;
 pub(crate) const LIGHT_CELL_CAP: usize = 64;
+pub(crate) const LIGHT_CELL_SOFT_CAP: usize = 32;
 
 pub(crate) fn drawn_by(l: &PointLight, enhanced: bool) -> bool {
     l.radius > 0.0

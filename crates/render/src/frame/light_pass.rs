@@ -83,7 +83,7 @@ impl Renderer {
             for y in (y0.max(0.0) as usize)..=(y1.min(side as f32 - 1.0) as usize) {
                 for x in (x0.max(0.0) as usize)..=(x1.min(side as f32 - 1.0) as usize) {
                     let base = (y * side + x) * LIGHT_CELL_CAP;
-                    if let Some(slot) = grid[base..base + LIGHT_CELL_CAP]
+                    if let Some(slot) = grid[base..base + LIGHT_CELL_SOFT_CAP]
                         .iter()
                         .position(|v| *v == u32::MAX)
                     {

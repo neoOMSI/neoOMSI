@@ -25,6 +25,18 @@ impl Renderer {
         }
     }
 
+    pub fn draw_report(&self) -> Vec<String> {
+        let counts = self.counts.borrow();
+        let frames = counts.get("(frames)").copied().unwrap_or(0.0).max(1.0);
+        let mut out: Vec<String> = counts
+            .iter()
+            .filter(|(k, _)| **k != "(frames)")
+            .map(|(k, v)| format!("{k}: {:.1} per frame", v / frames))
+            .collect();
+        out.extend(self.audit_lines.borrow().iter().cloned());
+        out
+    }
+
     pub fn gpu_pass_times(&self) -> Vec<(String, f64, u32)> {
         let mut out = Vec::new();
         for (k, t) in self.gpu_timers.iter().enumerate() {
@@ -204,11 +216,11 @@ pub(crate) struct GpuTimers {
     pub(crate) totals: std::collections::BTreeMap<&'static str, (f64, u32)>,
 }
 
-pub(crate) const GPU_TIMER_PASSES: u32 = 16;
+pub(crate) const GPU_TIMER_PASSES: u32 = 40;
 
 impl GpuTimers {
     pub(crate) fn new(device: &wgpu::Device) -> Option<GpuTimers> {
-        if ::legacy_config::env::var_os("OMSI_GPU_TIMERS").is_none()
+        if ::legacy_config::env::var_os("OMSI_NO_GPU_TIMERS").is_some()
             || !device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         {
             return None;

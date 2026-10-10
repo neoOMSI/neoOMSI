@@ -2366,8 +2366,10 @@ impl Player {
                 &self.render,
             ));
         }
+        let t = Instant::now();
         let wipers = self.render.window_wipers.as_mut().unwrap();
         wipers.update(renderer, scene, &self.vehicle, &self.render.instances);
+        sync_time(6, t);
     }
 
     /// Pose and place the driver at the wheel; `show` false hides the figure (the `driver`
@@ -2724,8 +2726,32 @@ pub(crate) fn orbit_pivot(position: DVec3, heading_deg: f64, center: [f32; 3]) -
         .as_dvec3()
 }
 
-/// Put a vehicle's meshes where its state says (animations, visibility, lights, the
-/// matrix textures) - the player's bus, and the launcher's showroom bus.
+thread_local! {
+    static SYNC_TIMES: std::cell::Cell<[f64; 7]> = const { std::cell::Cell::new([0.0; 7]) };
+}
+
+fn sync_time(slot: usize, t: Instant) {
+    SYNC_TIMES.with(|c| {
+        let mut a = c.get();
+        a[slot] += t.elapsed().as_secs_f64();
+        c.set(a);
+    });
+}
+
+pub(crate) fn take_sync_times() -> [f64; 7] {
+    SYNC_TIMES.with(|c| c.replace([0.0; 7]))
+}
+
+pub(crate) const SYNC_NAMES: [&str; 7] = [
+    "player.sync.materials",
+    "player.sync.skinned",
+    "player.sync.instances",
+    "player.sync.trailer_instances",
+    "player.sync.textures",
+    "player.sync.trailer_parts",
+    "player.sync.wipers",
+];
+
 pub(crate) fn sync_vehicle_transforms(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -2734,8 +2760,13 @@ pub(crate) fn sync_vehicle_transforms(
     trailer_renders: &mut [scene::VehicleRender],
     inside: bool,
 ) {
+    let t = Instant::now();
     scene::sync_vehicle_materials(renderer, scene, vehicle, render);
+    sync_time(0, t);
+    let t = Instant::now();
     scene::sync_skinned(renderer, scene, vehicle, render, trailer_renders);
+    sync_time(1, t);
+    let t = Instant::now();
     for (i, inst) in render.instances.iter().enumerate() {
         renderer.set_transform(
             scene,
@@ -2776,6 +2807,8 @@ pub(crate) fn sync_vehicle_transforms(
         renderer.set_interior(scene, *inst, p.interior);
         renderer.set_cabin(scene, *inst, !def.illumination_interior.is_empty());
     }
+    sync_time(2, t);
+    let t_tr = Instant::now();
     for (t, r) in vehicle.trailers.iter().zip(trailer_renders.iter()) {
         for (i, inst) in r.instances.iter().enumerate() {
             renderer.set_transform(scene, *inst, t.position, t.mesh_local_transform(i));
@@ -2810,12 +2843,17 @@ pub(crate) fn sync_vehicle_transforms(
             renderer.set_cabin(scene, *inst, !def.illumination_interior.is_empty());
         }
     }
+    sync_time(3, t_tr);
+    let t = Instant::now();
     scene::sync_vehicle_textures(renderer, scene, vehicle, render, &mut { usize::MAX });
+    sync_time(4, t);
+    let t = Instant::now();
     let mut trailers = std::mem::take(&mut vehicle.trailers);
     for (t, r) in trailers.iter_mut().zip(trailer_renders.iter_mut()) {
         scene::sync_vehicle_part(renderer, scene, &vehicle, t, r);
     }
     vehicle.trailers = trailers;
+    sync_time(5, t);
 }
 
 pub(crate) fn pick_in(

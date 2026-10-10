@@ -44,6 +44,23 @@ pub(super) type LampVis = (
 pub(super) static LAMP_VIS: std::sync::LazyLock<std::sync::Mutex<LampVis>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new((None, Default::default(), 0)));
 
+thread_local! {
+    static COLLECT_TIMES: std::cell::Cell<[f64; 6]> = const { std::cell::Cell::new([0.0; 6]) };
+}
+
+pub fn take_collect_times() -> [f64; 6] {
+    COLLECT_TIMES.with(|c| c.replace([0.0; 6]))
+}
+
+pub const COLLECT_NAMES: [&str; 6] = [
+    "lights.collect.map",
+    "lights.collect.lamp_objects",
+    "lights.collect.particles",
+    "lights.collect.vehicles",
+    "lights.collect.coronas_sort",
+    "lights.collect.occluders",
+];
+
 pub fn collect(
     world: &World,
     scene: &mut Scene,
@@ -732,6 +749,17 @@ pub fn collect(
     let t_occ = std::time::Instant::now();
     assign_occluders(&coll, &seen, generation, scene, camera_pos, vehicles);
     let total = t_start.elapsed();
+    COLLECT_TIMES.with(|c| {
+        let mut a = c.get();
+        let d = |x: std::time::Instant, y: std::time::Instant| (y - x).as_secs_f64();
+        a[0] += d(t_start, t_lamps);
+        a[1] += d(t_lamps, t_lamp_loop);
+        a[2] += d(t_lamp_loop, t_particles);
+        a[3] += d(t_particles, t_vehicles);
+        a[4] += d(t_vehicles, t_occ);
+        a[5] += t_occ.elapsed().as_secs_f64();
+        c.set(a);
+    });
     if total.as_millis() > 10 {
         static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());

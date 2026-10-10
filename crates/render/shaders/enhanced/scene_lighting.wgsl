@@ -394,7 +394,7 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         if (l.extra.z >= 199.0) {
             e = e * smoothstep(0.00015, 0.004, e);
         }
-        if (e < 0.00005 || (!thin && dot(n, ld) <= 0.0)) {
+        if (e < 0.0003 || (!thin && dot(n, ld) <= 0.0)) {
             continue;
         }
         e = e * light_shadow(l, p + n * 0.08);
@@ -841,7 +841,11 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
             // windows was a millisecond of the frame)
             shadow = sun_shadow_hard(in.world, n);
         } else if (nl > 0.0 || thin) {
-            shadow = sun_shadow_soft(in.world, n, thin);
+            if (!thin && max(1.0 - outside, select(0.0, 1.0, in.params.y > 1.5)) > 0.5) {
+                shadow = sun_shadow_hard(in.world, n);
+            } else {
+                shadow = sun_shadow_soft(in.world, n, thin);
+            }
         }
         let e_sun = enh.sun.rgb * shadow * cloud_sun_visibility(in.world);
         if (thin) {
@@ -983,7 +987,10 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // lamp was cut from it)
     let cabin_light = interior_lamps(in.world, n, in.params2.z);
     let saloon_lit = select(0.0, clamp(max(cabin_light.r, max(cabin_light.g, cabin_light.b)) * 4.0, 0.0, 1.0), in.params2.z >= 1.0);
-    let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
+    var lamps = vec3<f32>(0.0);
+    if (!(material.params.y > 0.2 && material.params.y < 0.3) && saloon_lit < 1.0) {
+        lamps = lamp_light(in.world, n, v, sf, thin) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
+    }
     // [interiorlight]: OMSI adds its lamps' light to the lit meshes whatever the daylight,
     // so a switched-on saloon is brighter by day as well and only stands out more at night.
     // Taken as a lamp against the daylight exposure it vanished by day altogether.

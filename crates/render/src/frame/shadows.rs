@@ -7,8 +7,8 @@ pub(crate) const SHADOW_CLOSE_MAX: u32 = 2048;
 
 pub(crate) const SPOT_SLOTS: usize = 32;
 pub(crate) const SPOT_ROWS: usize = SPOT_SLOTS / 4;
-pub(crate) const SPOT_DRAWS_PER_FRAME: usize = 16;
-pub(crate) const SPOT_REDRAW_AGE: u32 = 6;
+pub(crate) const SPOT_DRAWS_PER_FRAME: usize = 6;
+pub(crate) const SPOT_REDRAW_AGE: u32 = 45;
 pub(crate) const SPOT_CAM_RANGE: f64 = 70.0;
 pub(crate) const SPOT_RANGE_MAX: f32 = 45.0;
 pub(crate) const SPOT_NEAR: f32 = 0.8;
