@@ -3422,9 +3422,6 @@ pub fn pick_file(title: &str) -> Option<PathBuf> {
 }
 
 pub fn external_launcher(game: &Path) -> Option<PathBuf> {
-    if std::env::var_os("OMSI_BUILTIN_LAUNCHER").is_some() {
-        return None;
-    }
     let app = match std::env::var_os("OMSI_LAUNCHER") {
         Some(p) => PathBuf::from(p),
         None => shipped_launcher(game)?,
@@ -3440,7 +3437,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
     std::fs::canonicalize(a).ok().is_some_and(|a| std::fs::canonicalize(b).ok() == Some(a))
 }
 
-fn shipped_launcher(game: &Path) -> Option<PathBuf> {
+pub fn shipped_launcher(game: &Path) -> Option<PathBuf> {
     let dir = game.parent()?;
     Some(if cfg!(target_os = "macos") {
         dir.parent()?
@@ -3452,7 +3449,7 @@ fn shipped_launcher(game: &Path) -> Option<PathBuf> {
     })
 }
 
-/// False when there is none: the built-in launcher is the one then.
+/// False when there is none: the caller handles missing launcher with an actionable error.
 pub fn start_external_launcher(game: &Path) -> Result<bool> {
     let Some(app) = external_launcher(game) else {
         return Ok(false);

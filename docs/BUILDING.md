@@ -44,15 +44,18 @@ scripts\dev-windows.cmd --map maps/Grundorf/global.cfg
 | **Dedicated server** | `scripts/build-server.sh [folder]` | `dist/server/` with `start.sh`                     |
 
 Release archives also carry the launcher ([neoOMSI/launcher](https://github.com/neoOMSI/launcher),
-Electron), built by CI at the commit in `scripts/launcher-ref` into `dist/<platform>/launcher`
-(on macOS into `neoOMSI.app/Contents/Resources/launcher`). To add it to a local build (Node 24):
+Electron), into `dist/<platform>/launcher`. Nightly CI selects the latest launcher `main`
+commit once per build; tagged release candidates and stable releases use `scripts/launcher-ref`.
+(on macOS into `neoOMSI.app/Contents/Resources/launcher`).
+
+To package the launcher in local builds:
+- Pass `--package-launcher` to `scripts/build-windows.cmd`, `scripts/build-linux.sh`, or `scripts/build-macos.sh`.
+- Or run `scripts/ci/build-launcher.sh` directly (requires Node 24+ and pnpm):
 
 ```sh
 bash scripts/ci/build-launcher.sh windows x64                          # the pinned commit
 LAUNCHER_SRC=../launcher bash scripts/ci/build-launcher.sh windows x64 # a local checkout
 ```
-
-Without it, neoOMSI opens its built-in launcher.
 
 Direct Cargo compilation is also supported:
 
@@ -62,9 +65,9 @@ cargo build --release -p core
 
 ## Binaries
 
-- `neoomsi` (`../crates/core`) – The main simulator executable. Without arguments, it opens the launcher shipped beside it, else the built-in one (`--launcher`; `OMSI_BUILTIN_LAUNCHER=1` keeps it). `--control-protocol` serves the launcher ([LAUNCHER_PROTOCOL.md](LAUNCHER_PROTOCOL.md)).
-- `neoomsi-launcher` (`../crates/legacy-launcher-core`) – Opens the launcher like `neoomsi` without arguments; with `--cli` a command-line interface for headless management, mod installation, and asset operations.
-- `omsi-check` (`tools/omsi-check`) – Validation utility that verifies content integrity against an OMSI 2 installation.
+- `neoomsi` (`../crates/core`) - The main simulator executable. Without arguments, it starts the external launcher shipped beside it (`dist/<platform>/launcher`). Running `--control-protocol` serves the launcher over stdin/stdout ([LAUNCHER_PROTOCOL.md](LAUNCHER_PROTOCOL.md)).
+- `neoomsi-launcher` (`../crates/legacy-launcher-core`) - Starts the external launcher when invoked without arguments; with `--cli` provides a command-line interface for headless management, mod installation, and asset operations.
+- `omsi-check` (`tools/omsi-check`) - Validation utility that verifies content integrity against an OMSI 2 installation.
 
 ## Running tests
 

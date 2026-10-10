@@ -1,8 +1,7 @@
 #!/bin/sh
-# Build neoOMSI for macOS (the Mac it runs on: Apple silicon or Intel) and pack it as
-# dist/macos/neoOMSI.app. The game binary is the bundle's executable; started with no
-# arguments it opens the launcher window. Needs Rust (https://rustup.rs) and the Xcode
-# Command Line Tools (xcode-select --install).
+# Build neoOMSI for macOS (Apple silicon or Intel) into dist/macos/neoOMSI.app.
+# Pass --package-launcher to also bundle the pinned Electron launcher.
+# Needs Rust (https://rustup.rs) and the Xcode Command Line Tools (xcode-select --install).
 set -eu
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -23,4 +22,11 @@ cp "target/$target/release/neoomsi-launcher" "$app/Contents/MacOS/neoomsi-launch
 cp assets/icons/app/neoomsi.icns "$app/Contents/Resources/neoomsi.icns"
 sed -e "s/@VERSION@/$version/g" scripts/macos/Info.plist > "$app/Contents/Info.plist"
 codesign --force --deep --sign - "$app" >/dev/null 2>&1 || true
+if [ "${1:-}" = "--package-launcher" ]; then
+  arch=arm64
+  case "$target" in
+    x86_64*) arch=x64 ;;
+  esac
+  scripts/ci/build-launcher.sh macos "$arch"
+fi
 printf '\nneoOMSI %s built. Play: open "%s/%s"\n' "$version" "$PWD" "$app"
