@@ -29,7 +29,7 @@
 use crate::diagnostics::{JunctionState, Reason};
 use crate::following::{AiState, Lead, MAX_BRAKE};
 use crate::ids::{LaneId, VehicleId};
-use crate::network::{BlockRule, Network};
+use crate::network::{wrap_deg, BlockRule, Network};
 use crate::signals::Aspect;
 mod emergency;
 use crate::world::Arbiter;
@@ -54,6 +54,14 @@ const QUEUE_SPEED: f32 = 1.5;
 const RING_QUEUE_KEEP: f32 = 10.0;
 /// Half the width of a footpath crossing a lane (m), for where a vehicle is past it.
 const WALK_HALF_WIDTH: f32 = 2.0;
+/// Seconds a cycle of standing vehicles that only give way to each other by the rules
+/// persists before the one waiting longest is let go (nobody else would end it).
+const GRIDLOCK_AFTER: f32 = 8.0;
+/// Seconds that permission lasts: enough to set off and get into the junction.
+const GRIDLOCK_PASS: f32 = 12.0;
+/// A turn across the oncoming traffic at a signal pulls into the junction to wait at the
+/// meeting place when that lies at least this far (m) past the line.
+const PULL_IN_MIN: f32 = 3.0;
 
 /// Where a vehicle meets a crossing lane on its way: its lane in the sequence and the distance
 /// from the vehicle origin to that lane's start.
@@ -385,6 +393,9 @@ pub enum Recovery {
     RequestRouteRecovery { vehicle: VehicleId },
     /// The hold is legal (a red signal or a physically full road): wait, do not force.
     WaitLegal { vehicle: VehicleId },
+    /// A cycle of vehicles that only give way to each other by the rules has stood too
+    /// long: this one is let go (it still waits for bodies, people, signals and a full exit).
+    GridlockPass { vehicle: VehicleId },
 }
 
 /// How a persistent hold is classified.
@@ -396,6 +407,10 @@ pub enum WaitDiagnosis {
     LegalCongestion { cycle: Vec<VehicleId> },
     /// A physically full downstream/closed loop: capacity, not a bug.
     FullCapacity { cycle: Vec<VehicleId> },
+    /// Standing vehicles that each give way to the next by the right of way alone (four
+    /// cars at a right-before-left crossing that each see one coming from the right): no
+    /// rule ends it, so the coordinator lets one go after a while.
+    YieldCycle { cycle: Vec<VehicleId> },
     /// A member's route changed or was removed.
     RouteRecovery { vehicle: VehicleId },
 }
@@ -412,6 +427,14 @@ pub struct JunctionCoordinator {
     through_light: HashMap<VehicleId, (((i32, i32), i64), Vec<(usize, usize)>)>,
     commitments: HashMap<VehicleId, Commitment>,
     wait_for: HashMap<VehicleId, VehicleId>,
+    /// Every hold this tick (ego -> all it waits for), for the cycle search.
+    wait_edges: HashMap<VehicleId, Vec<VehicleId>>,
+    /// Vehicles held this tick only by the right of way (no body, signal or full exit).
+    rule_waiters: HashSet<VehicleId>,
+    /// Since when (s) a vehicle stands in a cycle of rule waiters.
+    gridlock_since: HashMap<VehicleId, f32>,
+    /// Vehicles let go out of such a cycle, and until when (s).
+    gridlock_pass: HashMap<VehicleId, f32>,
     /// Tick a vehicle last entered `Waiting`, for stable fairness ordering.
     waiting_since: HashMap<VehicleId, u64>,
 }
@@ -476,6 +499,17 @@ impl JunctionCoordinator {
             }
         }
         self.wait_for.clear();
+        self.wait_edges.clear();
+        self.rule_waiters.clear();
+    }
+
+    /// Record that `me` waits for `other` this tick.
+    fn wait_on(&mut self, me: VehicleId, other: VehicleId) {
+        self.wait_for.insert(me, other);
+        let edges = self.wait_edges.entry(me).or_default();
+        if !edges.contains(&other) {
+            edges.push(other);
+        }
     }
 
     /// Release every claim and the exit storage of `id`, with a reason.
@@ -492,6 +526,9 @@ impl JunctionCoordinator {
         self.amber.remove(&id);
         self.through_light.remove(&id);
         self.wait_for.remove(&id);
+        self.wait_edges.remove(&id);
+        self.gridlock_since.remove(&id);
+        self.gridlock_pass.remove(&id);
         self.waiting_since.remove(&id);
     }
 
@@ -503,6 +540,7 @@ impl JunctionCoordinator {
             c.lanes.retain(|l| way.contains(l));
             if c.lanes.len() != before {
                 self.wait_for.remove(&id);
+                self.wait_edges.remove(&id);
             }
             empty = c.lanes.is_empty() && c.storage.is_none();
         }
@@ -518,6 +556,10 @@ impl JunctionCoordinator {
         self.claims = Arbiter::new();
         self.commitments.clear();
         self.wait_for.clear();
+        self.wait_edges.clear();
+        self.rule_waiters.clear();
+        self.gridlock_since.clear();
+        self.gridlock_pass.clear();
         self.waiting_since.clear();
         self.through_light.clear();
     }
@@ -727,8 +769,17 @@ impl JunctionCoordinator {
         let cannot_stop = !jn.inside && v > 1.0 && room < v * v / (2.0 * MAX_BRAKE * 0.7);
         let cannot_stop_gently = !jn.inside && v > 1.0 && room < v * v / (2.0 * actor.decel * 1.5);
         let mut hard = false;
+        // held back by a full exit or the box rule
         let mut ruled = false;
+        // held back by the right of way alone
+        let mut yields = false;
+        // (of those, for a vehicle that is moving)
+        let mut yields_moving = false;
         let mut soft: Vec<usize> = Vec::new();
+        // (where a hold stops the vehicle short of its meeting place, and whether the one
+        // held for comes the other way)
+        let mut holds: Vec<(f32, bool)> = Vec::new();
+        let mut pedestrian = false;
         let mut stop_at = if jn.inside { None } else { Some(entry) };
         let me_prio = actor.priority;
         let wait = actor.yield_time;
@@ -740,6 +791,12 @@ impl JunctionCoordinator {
                 if way.iter().any(|w| w.0 == m) {
                     continue;
                 }
+                let oncoming = wrap_deg(
+                    scene.net.lanes[m].start_heading() - scene.net.lanes[l].start_heading(),
+                )
+                .abs()
+                    > 135.0;
+                let hold = (point - c.before, oncoming);
                 if point + c.after < -actor.rear - 0.3 {
                     continue;
                 }
@@ -831,11 +888,12 @@ impl JunctionCoordinator {
                         && !stalled
                     {
                         hard = true;
+                        holds.push(hold);
                         reasons.push(Reason::JunctionClaim);
                         if jn.inside {
                             stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
                         }
-                        self.wait_for.insert(me_id, o.id);
+                        self.wait_on(me_id, o.id);
                         continue;
                     }
                     if is_on && theirs <= 0.3 {
@@ -846,8 +904,9 @@ impl JunctionCoordinator {
                                 || ((mine_in - theirs_in).abs() <= 0.3 && me_id > o.id));
                         if !ahead {
                             hard = true;
+                            holds.push(hold);
                             reasons.push(Reason::Yield);
-                            self.wait_for.insert(me_id, o.id);
+                            self.wait_on(me_id, o.id);
                             if jn.inside {
                                 stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
                             }
@@ -876,9 +935,11 @@ impl JunctionCoordinator {
                     if entering_ring && !actor.emergency && o.speed < 1.0
                         && theirs > 0.3 && theirs < RING_QUEUE_KEEP
                     {
-                        ruled = true;
+                        yields = true;
+                        yields_moving |= o.speed >= 0.3;
+                        holds.push(hold);
                         reasons.push(Reason::Yield);
-                        self.wait_for.insert(me_id, o.id);
+                        self.wait_on(me_id, o.id);
                         if jn.inside {
                             stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
                         }
@@ -898,8 +959,9 @@ impl JunctionCoordinator {
                         };
                         if first && t_j < t_clear * if me_decided { 1.0 } else { patience } + 1.0 {
                             hard = true;
+                            holds.push(hold);
                             reasons.push(Reason::JunctionClaim);
-                            self.wait_for.insert(me_id, o.id);
+                            self.wait_on(me_id, o.id);
                             if jn.inside {
                                 stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
                             }
@@ -918,12 +980,14 @@ impl JunctionCoordinator {
                         // (a priority-road vehicle standing only for a moment is about to
                         // come on: the entry's long wait does not outrank it; a stalled
                         // queue is left to the fairness rule below)
+                        holds.push(hold);
                         if t_j == f32::MAX || (o.speed < 0.3 && (stalled || !signed)) {
                             soft.push(j);
                         } else {
-                            ruled = true;
+                            yields = true;
+                            yields_moving |= o.speed >= 0.3;
                             reasons.push(Reason::Yield);
-                            self.wait_for.insert(me_id, o.id);
+                            self.wait_on(me_id, o.id);
                             if jn.inside {
                                 stop_at = Some(stop_at.unwrap_or(f32::MAX).min(point - c.before));
                             }
@@ -944,6 +1008,7 @@ impl JunctionCoordinator {
                     && point - actor.front < 30.0
                 {
                     hard = true;
+                    pedestrian = true;
                     reasons.push(Reason::Pedestrian);
                     let before = point - 2.5;
                     stop_at = Some(stop_at.unwrap_or(before).min(before));
@@ -1016,15 +1081,23 @@ impl JunctionCoordinator {
                 reasons.push(Reason::OccupiedExit);
             }
         }
-        let mut blocked =
-            (hard && !cannot_stop) || ((ruled || !soft.is_empty()) && !cannot_stop_gently);
+        // Let go out of a gridlock of vehicles that all only give way to each other (see
+        // `classify_waits`): the right of way to the standing ones no longer holds it, moving
+        // vehicles, bodies, people, signals and a full exit still do.
+        let pass = self.gridlock_pass.get(&me_id).is_some_and(|&until| scene.time < until);
+        if pass {
+            yields = yields_moving;
+            soft.clear();
+        }
+        let mut blocked = (hard && !cannot_stop)
+            || ((ruled || yields || !soft.is_empty()) && !cannot_stop_gently);
         // An emergency vehicle waits for whoever moves or has the right of way, but not for
         // vehicles that only stand there - they stand for it, held by its reservation, and
         // waiting for them as well, it stood at the line for good.
         if actor.emergency {
-            blocked |= hard || ruled;
+            blocked |= hard || ruled || yields;
         }
-        if !hard && !ruled && !soft.is_empty() && wait > 2.5 + actor.reaction {
+        if !hard && !ruled && !yields && !soft.is_empty() && wait > 2.5 + actor.reaction {
             // everybody is waiting for somebody: the longest waiter goes (bounded fairness)
             let wins = soft.iter().all(|&j| {
                 let o = &scene.actors[j];
@@ -1048,6 +1121,36 @@ impl JunctionCoordinator {
             let old = self.commitments.remove(&me_id).map(|c| c.lanes).unwrap_or_default();
             for l in old {
                 self.claims.release(LaneId(l), me_id);
+            }
+            if !hard && !ruled && !exit_full {
+                self.rule_waiters.insert(me_id);
+            }
+            // A turn across the oncoming traffic at a signal does not wait at the line for
+            // a gap that may never come in its green: it pulls into the junction up to where
+            // it meets the oncoming lanes and goes when they stop (waiting at the line, one
+            // car a cycle got through on yellow and the queue grew into the junctions
+            // behind). Only one at a time, and only when nothing else holds it.
+            let signalized = jn
+                .lanes
+                .iter()
+                .any(|&(l, _)| scene.net.lanes[l].traffic_light.is_some())
+                || scene.net.prev.get(jn.lanes[0].0).is_some_and(|p| {
+                    p.iter().any(|&q| scene.net.lanes[q].traffic_light.is_some())
+                });
+            if signalized
+                && !pedestrian
+                && !exit_full
+                && !jn.keep_clear
+                && !actor.light_hold
+                && !actor.emergency
+                && !holds.is_empty()
+                && holds.iter().all(|h| h.1)
+            {
+                let pull = holds.iter().map(|h| h.0).fold(f32::MAX, f32::min);
+                let lead_clear = lead.is_none_or(|l| actor.front + l.gap > pull + 1.0);
+                if pull - entry >= PULL_IN_MIN && lead_clear {
+                    stop_at = Some(pull);
+                }
             }
             self.note_wait(me_id, scene.tick);
             reasons.sort_unstable_by_key(|r| r.label());
@@ -1084,6 +1187,7 @@ impl JunctionCoordinator {
             JunctionState::Admitted
         };
         self.waiting_since.remove(&me_id);
+        self.gridlock_pass.remove(&me_id);
         (None, reasons, c.state)
     }
 
@@ -1106,55 +1210,28 @@ impl JunctionCoordinator {
 
     /// Classify persistent holds. A cyclic set of vehicles each waiting on the next, all
     /// stationary and holding speculative claims but none physically in a conflict, is a
-    /// stale-claim deadlock; a cycle that includes a red signal or a physically full
-    /// downstream is legal and must not be forced.
+    /// stale-claim deadlock; one that only gives way to each other by the rules is a yield
+    /// cycle; a cycle that includes a red signal or a physically full downstream is legal and
+    /// must not be forced. Every hold of a vehicle counts (it may wait for several), so a
+    /// cycle through any of them is found.
     pub fn classify_waits(
         &mut self,
         scene: &JunctionScene,
     ) -> (Vec<WaitDiagnosis>, Vec<Recovery>) {
         let mut out = Vec::new();
-        let mut seen: HashSet<VehicleId> = HashSet::new();
-        let ids: Vec<VehicleId> = self.wait_for.keys().copied().collect();
-        for start in ids {
-            if seen.contains(&start) {
-                continue;
-            }
-            let mut path: Vec<VehicleId> = Vec::new();
-            let mut on_path: HashSet<VehicleId> = HashSet::new();
-            let mut cur = start;
-            loop {
-                if on_path.contains(&cur) {
-                    let at = path.iter().position(|&x| x == cur).unwrap_or(0);
-                    let cycle: Vec<VehicleId> = path[at..].to_vec();
-                    if cycle.len() >= 2 {
-                        for &id in &cycle {
-                            seen.insert(id);
-                        }
-                        out.push(self.classify_cycle(scene, &cycle));
-                    }
-                    break;
-                }
-                if path.len() > self.wait_for.len() + 1 {
-                    break;
-                }
-                on_path.insert(cur);
-                path.push(cur);
-                match self.wait_for.get(&cur) {
-                    Some(&n) => cur = n,
-                    None => break,
-                }
-            }
+        for mut cycle in self.wait_cycles() {
+            // (deterministic: the same set is reported in the same order every tick)
+            cycle.sort_unstable();
+            out.push(self.classify_cycle(scene, &cycle));
         }
         let mut recoveries = Vec::new();
+        let mut in_yield_cycle: HashSet<VehicleId> = HashSet::new();
         for d in &out {
             match d {
                 WaitDiagnosis::StaleClaimCycle { cycle } => {
                     // deterministic order: the lowest id keeps the first safe retry, the rest
                     // cancel their speculative claims
-                    let mut sorted = cycle.clone();
-                    sorted.sort_unstable_by_key(|id| {
-                        (self.waiting_since.get(id).copied().unwrap_or(u64::MAX), *id)
-                    });
+                    let sorted = self.by_wait(cycle);
                     for &id in sorted.iter().skip(1) {
                         let lanes = self
                             .commitments
@@ -1173,12 +1250,32 @@ impl JunctionCoordinator {
                         recoveries.push(Recovery::RetrySafeManeuver { vehicle: id });
                     }
                 }
-                WaitDiagnosis::LegalCongestion { cycle } => {
+                WaitDiagnosis::YieldCycle { cycle } => {
                     for &id in cycle {
-                        recoveries.push(Recovery::WaitLegal { vehicle: id });
+                        in_yield_cycle.insert(id);
+                        self.gridlock_since.entry(id).or_insert(scene.time);
+                    }
+                    let passed = cycle.iter().any(|id| {
+                        self.gridlock_pass.get(id).is_some_and(|&until| scene.time < until)
+                    });
+                    let stood = cycle
+                        .iter()
+                        .map(|id| scene.time - self.gridlock_since[id])
+                        .fold(f32::MAX, f32::min);
+                    let first = self.by_wait(cycle).first().copied();
+                    if let Some(id) = first.filter(|_| !passed && stood >= GRIDLOCK_AFTER) {
+                        self.gridlock_pass.insert(id, scene.time + GRIDLOCK_PASS);
+                        recoveries.push(Recovery::GridlockPass { vehicle: id });
+                        log::info!(
+                            "t={:.1}: junction gridlock of {} vehicles {:?}: vehicle {} goes first",
+                            scene.time,
+                            cycle.len(),
+                            cycle,
+                            id
+                        );
                     }
                 }
-                WaitDiagnosis::FullCapacity { cycle } => {
+                WaitDiagnosis::LegalCongestion { cycle } | WaitDiagnosis::FullCapacity { cycle } => {
                     for &id in cycle {
                         recoveries.push(Recovery::WaitLegal { vehicle: id });
                     }
@@ -1188,7 +1285,91 @@ impl JunctionCoordinator {
                 }
             }
         }
+        self.gridlock_since.retain(|id, _| in_yield_cycle.contains(id));
+        self.gridlock_pass.retain(|_, until| scene.time < *until);
         (out, recoveries)
+    }
+
+    /// `ids` ordered by how long they have waited (longest first), then by id.
+    fn by_wait(&self, ids: &[VehicleId]) -> Vec<VehicleId> {
+        let mut sorted = ids.to_vec();
+        sorted.sort_unstable_by_key(|id| {
+            (self.waiting_since.get(id).copied().unwrap_or(u64::MAX), *id)
+        });
+        sorted
+    }
+
+    /// The cycles of the wait-for graph: its strongly connected sets of two or more vehicles
+    /// (Tarjan), from every hold recorded this tick and the single ones put in directly.
+    fn wait_cycles(&self) -> Vec<Vec<VehicleId>> {
+        let mut edges: HashMap<VehicleId, Vec<VehicleId>> = self.wait_edges.clone();
+        for (&a, &b) in &self.wait_for {
+            let e = edges.entry(a).or_default();
+            if !e.contains(&b) {
+                e.push(b);
+            }
+        }
+        let mut nodes: Vec<VehicleId> = edges.keys().copied().collect();
+        nodes.sort_unstable();
+        struct Tarjan<'a> {
+            edges: &'a HashMap<VehicleId, Vec<VehicleId>>,
+            index: HashMap<VehicleId, usize>,
+            low: HashMap<VehicleId, usize>,
+            stack: Vec<VehicleId>,
+            on_stack: HashSet<VehicleId>,
+            next: usize,
+            out: Vec<Vec<VehicleId>>,
+        }
+        impl Tarjan<'_> {
+            fn visit(&mut self, v: VehicleId) {
+                self.index.insert(v, self.next);
+                self.low.insert(v, self.next);
+                self.next += 1;
+                self.stack.push(v);
+                self.on_stack.insert(v);
+                let edges = self.edges;
+                for &w in edges.get(&v).map(|e| e.as_slice()).unwrap_or(&[]) {
+                    if !self.index.contains_key(&w) {
+                        self.visit(w);
+                        let lw = self.low[&w];
+                        let lv = self.low.get_mut(&v).unwrap();
+                        *lv = (*lv).min(lw);
+                    } else if self.on_stack.contains(&w) {
+                        let iw = self.index[&w];
+                        let lv = self.low.get_mut(&v).unwrap();
+                        *lv = (*lv).min(iw);
+                    }
+                }
+                if self.low[&v] == self.index[&v] {
+                    let mut set = Vec::new();
+                    while let Some(w) = self.stack.pop() {
+                        self.on_stack.remove(&w);
+                        set.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    if set.len() >= 2 {
+                        self.out.push(set);
+                    }
+                }
+            }
+        }
+        let mut t = Tarjan {
+            edges: &edges,
+            index: HashMap::new(),
+            low: HashMap::new(),
+            stack: Vec::new(),
+            on_stack: HashSet::new(),
+            next: 0,
+            out: Vec::new(),
+        };
+        for v in nodes {
+            if !t.index.contains_key(&v) {
+                t.visit(v);
+            }
+        }
+        t.out
     }
 
     fn classify_cycle(&self, scene: &JunctionScene, cycle: &[VehicleId]) -> WaitDiagnosis {
@@ -1213,6 +1394,18 @@ impl JunctionCoordinator {
         });
         if only_claims {
             return WaitDiagnosis::StaleClaimCycle {
+                cycle: cycle.to_vec(),
+            };
+        }
+        let standing_by_rule = cycle.iter().all(|id| {
+            self.rule_waiters.contains(id)
+                && scene
+                    .index_of
+                    .get(id)
+                    .is_some_and(|&i| scene.actors[i].speed < 0.3)
+        });
+        if standing_by_rule {
+            return WaitDiagnosis::YieldCycle {
                 cycle: cycle.to_vec(),
             };
         }
@@ -1261,6 +1454,16 @@ mod tests {
         index_of: &HashMap<VehicleId, usize>,
         net: &Network,
     ) -> (Vec<WaitDiagnosis>, Vec<Recovery>) {
+        classify_at(coord, actors, index_of, net, 0.0)
+    }
+
+    fn classify_at(
+        coord: &mut JunctionCoordinator,
+        actors: &[JunctionActor],
+        index_of: &HashMap<VehicleId, usize>,
+        net: &Network,
+        time: f32,
+    ) -> (Vec<WaitDiagnosis>, Vec<Recovery>) {
         let on_lane = HashMap::new();
         let coming = HashMap::new();
         let walkers = HashMap::new();
@@ -1275,7 +1478,7 @@ mod tests {
             walkers: &walkers,
             geo_prev: &geo_prev,
             aspects: &aspects,
-            time: 0.0,
+            time,
             tick: 0,
         };
         coord.classify_waits(&scene)
@@ -1354,6 +1557,69 @@ mod tests {
         assert!(diagnoses
             .iter()
             .any(|d| matches!(d, WaitDiagnosis::FullCapacity { .. })));
+    }
+
+    #[test]
+    fn a_cycle_through_a_vehicles_second_hold_is_found() {
+        let mut c = JunctionCoordinator::new();
+        // 10 waits for 20 and for 30 (the last recorded); 20 waits for 10
+        c.wait_on(VehicleId(10), VehicleId(20));
+        c.wait_on(VehicleId(10), VehicleId(30));
+        c.wait_on(VehicleId(20), VehicleId(10));
+        let actors = vec![
+            JunctionActor::new(VehicleId(10), 0, 0.0),
+            JunctionActor::new(VehicleId(20), 1, 0.0),
+        ];
+        let net = Network::default();
+        let (diagnoses, _) = classify_with(&mut c, &actors, &index2(), &net);
+        assert_eq!(diagnoses.len(), 1, "{diagnoses:?}");
+    }
+
+    #[test]
+    fn a_standing_yield_cycle_lets_one_vehicle_go_after_a_while() {
+        let mut c = JunctionCoordinator::new();
+        let actors = vec![
+            JunctionActor::new(VehicleId(10), 0, 0.0),
+            JunctionActor::new(VehicleId(20), 1, 0.0),
+        ];
+        let net = Network::default();
+        let mut passes = Vec::new();
+        for k in 0..=10 {
+            c.begin_tick(k);
+            c.wait_on(VehicleId(10), VehicleId(20));
+            c.wait_on(VehicleId(20), VehicleId(10));
+            c.rule_waiters.insert(VehicleId(10));
+            c.rule_waiters.insert(VehicleId(20));
+            let (diagnoses, recoveries) = classify_at(&mut c, &actors, &index2(), &net, k as f32);
+            assert!(diagnoses
+                .iter()
+                .all(|d| matches!(d, WaitDiagnosis::YieldCycle { .. })));
+            passes.extend(recoveries.into_iter().filter_map(|r| match r {
+                Recovery::GridlockPass { vehicle } => Some((k, vehicle)),
+                _ => None,
+            }));
+        }
+        assert_eq!(passes.len(), 1, "exactly one vehicle let go: {passes:?}");
+        assert!(passes[0].0 as f32 >= GRIDLOCK_AFTER, "let go too early: {passes:?}");
+        assert!(c.gridlock_pass.contains_key(&passes[0].1));
+    }
+
+    #[test]
+    fn a_moving_member_is_no_yield_cycle() {
+        let mut c = JunctionCoordinator::new();
+        let mut a = JunctionActor::new(VehicleId(10), 0, 0.0);
+        a.speed = 5.0;
+        let actors = vec![a, JunctionActor::new(VehicleId(20), 1, 0.0)];
+        let net = Network::default();
+        c.wait_on(VehicleId(10), VehicleId(20));
+        c.wait_on(VehicleId(20), VehicleId(10));
+        c.rule_waiters.insert(VehicleId(10));
+        c.rule_waiters.insert(VehicleId(20));
+        let (diagnoses, _) = classify_at(&mut c, &actors, &index2(), &net, 100.0);
+        assert!(diagnoses
+            .iter()
+            .all(|d| matches!(d, WaitDiagnosis::FullCapacity { .. })));
+        assert!(c.gridlock_pass.is_empty());
     }
 
     #[test]

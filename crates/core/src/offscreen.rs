@@ -759,6 +759,45 @@ pub(crate) fn run_offscreen(
             if let Some(p) = player.as_mut() {
                 p.vehicle.dynamic_boxes = t.boxes(p.vehicle.position, 80.0);
             }
+            // `OMSI_HEALTH_EVERY=<s>`: the traffic health every so many seconds of a long run
+            if let Some(every) = ::legacy_config::env::var("OMSI_HEALTH_EVERY")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|v| *v > 0.0)
+            {
+                if (t_s / every).floor() != ((t_s - dt) / every).floor() {
+                    let cars = t.cars();
+                    let n = cars.len().max(1) as f32;
+                    log::info!(
+                        "health t={:.0}: {} vehicles, mean {:.1} km/h, {} standing, {} stood >30 s, {} stood >60 s, {} yielding, {} at red",
+                        t_s,
+                        cars.len(),
+                        cars.iter().map(|c| c.state.speed).sum::<f32>() / n * 3.6,
+                        cars.iter().filter(|c| c.state.speed < 0.1).count(),
+                        cars.iter().filter(|c| c.stopped > 30.0).count(),
+                        cars.iter().filter(|c| c.stopped > 60.0).count(),
+                        cars.iter().filter(|c| c.yielding).count(),
+                        t.held_at_red(),
+                    );
+                    for c in cars.iter().filter(|c| c.stopped > 60.0) {
+                        log::info!(
+                            "  stood {:.0} s: car {} ({}) lane {} at ({:.1}, {:.1}) lead {:?} why {:?} {:.1} yielding {} light_hold {} junction {}",
+                            c.stopped,
+                            c.id,
+                            c.vehicle.ty.def.type_name,
+                            c.state.lane,
+                            c.vehicle.position.x,
+                            c.vehicle.position.y,
+                            c.lead_car,
+                            c.why.0,
+                            c.why.1,
+                            c.yielding,
+                            c.light_hold,
+                            c.junction_why
+                        );
+                    }
+                }
+            }
         }
         if let Some(player) = player.as_mut() {
             player.tick_startup(dt);

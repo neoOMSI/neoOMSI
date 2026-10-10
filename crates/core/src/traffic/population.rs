@@ -1101,7 +1101,11 @@ impl Traffic {
                 }
             }
             if gone {
-                self.dormant.swap_remove(i);
+                // (out of the coordinator's registry too: left there, the dormant cars that
+                // drove off the network filled its capacity, `fill_map` put no new ones on the
+                // map, and the traffic round the player died out within a quarter of an hour)
+                let d = self.dormant.swap_remove(i);
+                self.population.release(d.id, RemovalCause::Finished);
             } else {
                 i += 1;
             }
