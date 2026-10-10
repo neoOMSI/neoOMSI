@@ -66,6 +66,42 @@ fn a_berth_held_for_long_is_served_from_behind_and_then_left() {
 }
 
 #[test]
+fn a_layover_behind_the_berth_moves_up_when_the_berth_clears() {
+    let mut w = ServiceWorld::new();
+    // its trip begins here a quarter of an hour on: it lays over
+    w.add(Bus::new(1, 90.0, vec![berth(STOP, BERTH_S, 36000.0 + 900.0)]));
+    w.bus_mut(1).state.layover = true;
+    w.extras.push(occupier(9999, BERTH_S));
+    w.held_long = true;
+
+    let mut behind_at = None;
+    for _ in 0..3000 {
+        w.step();
+        if w.bus(1).phase() == ServicePhase::Layover && w.bus(1).state.behind {
+            behind_at = Some(w.bus(1).s);
+            break;
+        }
+    }
+    let at = behind_at.expect("the bus never laid over behind the berth's holder");
+    assert!(at < BERTH_S);
+
+    // the holder leaves: the bus moves up onto the berth for the rest of its layover
+    w.extras.clear();
+    w.held_long = false;
+    for _ in 0..3000 {
+        w.step();
+        if w.bus(1).phase() == ServicePhase::Layover && !w.bus(1).state.behind {
+            break;
+        }
+    }
+    assert_eq!(w.bus(1).phase(), ServicePhase::Layover, "it did not lay over on the berth");
+    assert!(!w.bus(1).state.behind, "it stayed behind the empty berth");
+    assert!((w.bus(1).s - BERTH_S).abs() < 3.0, "not on the berth (at {})", w.bus(1).s);
+    assert_eq!(w.coord.berth_count(), 1, "it holds the berth now");
+    assert!(w.bus(1).served.is_empty(), "the stop is served at its departure, not before");
+}
+
+#[test]
 fn overshoot_records_a_missed_stop_without_opening_the_doors() {
     let net = {
         let mut n = Network::default();
