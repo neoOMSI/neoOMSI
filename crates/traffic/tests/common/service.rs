@@ -111,6 +111,8 @@ pub struct ServiceWorld {
     pub day_time: f64,
     pub cruise: f32,
     pub merges: usize,
+    /// Every berth counts as held for long (`ServiceInputs::berth_held_long`).
+    pub held_long: bool,
 }
 
 impl ServiceWorld {
@@ -133,6 +135,7 @@ impl ServiceWorld {
             day_time: 36000.0,
             cruise: 12.0,
             merges: 0,
+            held_long: false,
         }
     }
 
@@ -199,6 +202,7 @@ impl ServiceWorld {
                 passing: false,
                 kerb_swerve: None,
                 junction_first: false,
+                berth_held_long: self.held_long,
             };
             let scene = ServiceScene {
                 net: &self.net,

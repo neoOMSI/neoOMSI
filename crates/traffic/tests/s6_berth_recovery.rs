@@ -40,6 +40,32 @@ fn an_occupied_stop_is_waited_for_not_docked_through() {
 }
 
 #[test]
+fn a_berth_held_for_long_is_served_from_behind_and_then_left() {
+    let mut w = ServiceWorld::new();
+    w.add(Bus::new(1, 90.0, vec![berth(STOP, BERTH_S, 36000.0)]));
+    // A bus on its layover stands on the berth for a quarter of an hour.
+    w.extras.push(occupier(9999, BERTH_S));
+    w.held_long = true;
+
+    let mut boarded_at = None;
+    for _ in 0..3000 {
+        w.step();
+        if boarded_at.is_none() && w.bus(1).phase() == ServicePhase::Boarding {
+            boarded_at = Some(w.bus(1).s);
+        }
+        if !w.bus(1).served.is_empty() {
+            break;
+        }
+    }
+    let at = boarded_at.expect("the bus never served the stop from behind the layover");
+    assert!(at < BERTH_S, "boarded through the vehicle on the berth (at {at})");
+    assert_eq!(w.bus(1).served, vec![StopId(STOP)], "the stop is done as it moves off");
+    assert_eq!(w.bus(1).phase(), ServicePhase::EnRoute);
+    assert!(!w.bus(1).state.behind);
+    assert_eq!(w.coord.berth_count(), 0, "it never took the berth");
+}
+
+#[test]
 fn overshoot_records_a_missed_stop_without_opening_the_doors() {
     let net = {
         let mut n = Network::default();
@@ -86,6 +112,7 @@ fn overshoot_records_a_missed_stop_without_opening_the_doors() {
         passing: false,
         kerb_swerve: None,
         junction_first: false,
+        berth_held_long: false,
     };
     let dec = coord.plan(&scene, &mut st, &inputs);
     assert!(dec.consume_stop, "the missed stop must be advanced, not silently kept");

@@ -75,6 +75,7 @@ fn a_route_that_ends_is_diagnosed_pending_not_hidden() {
         passing: false,
         kerb_swerve: None,
         junction_first: false,
+        berth_held_long: false,
     };
     let dec = coord.plan(&scene, &mut st, &inputs);
     assert_eq!(st.phase, ServicePhase::RoutePending);

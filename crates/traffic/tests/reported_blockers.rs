@@ -286,6 +286,7 @@ fn unreachable_docking_poses_release_the_berth_and_allow_the_bus_to_continue() {
             passing: false,
             kerb_swerve: None,
             junction_first: false,
+            berth_held_long: false,
         };
         let mut state = ServiceState::new();
         state.phase = ServicePhase::Docking;
@@ -514,6 +515,7 @@ fn a_bus_resting_close_to_its_berth_serves_the_stop_instead_of_missing_it() {
             passing: false,
             kerb_swerve: None,
             junction_first: false,
+            berth_held_long: false,
         };
         let mut state = ServiceState::new();
         state.phase = ServicePhase::Docking;
