@@ -2460,6 +2460,7 @@ const SETTINGS: &[(&str, &str, &str, Kind)] = &[
     ("seat_x", "camera", "seat_x", Float(-1.5, 1.5)),
     ("seat_y", "camera", "seat_y", Float(-1.5, 1.5)),
     ("seat_z", "camera", "seat_z", Float(-1.5, 1.5)),
+    ("head_pitch", "camera", "head_pitch", Float(-45.0, 45.0)),
     ("look_sens", "camera", "look_sens", Float(0.1, 2.0)),
     ("alt_view", "camera", "alt_view", Bool),
     ("free_look", "camera", "free_look", Bool),
@@ -3852,6 +3853,7 @@ mod tests {
         assert_eq!(v["graphics"], "vanilla_plus");
         assert_eq!(v["enhanced"], false);
         assert_eq!(v["ai_unsched_factor"], 100);
+        assert_eq!(v["head_pitch"], 0.0);
         assert_eq!(v["time_speed"], "1");
         assert_eq!(v["mirror_refresh"], "full");
         assert_eq!(v["pax_prefer_seats"], false);
@@ -3875,6 +3877,7 @@ mod tests {
             ("look_sens", json!(0.5)),
             ("pedal_brake", json!(1.5)),
             ("seat_y", json!(-0.1)),
+            ("head_pitch", json!(-17.0)),
             ("vr", json!(true)),
             ("vr_scale", json!(0.8)),
             ("vr_mirror_rate", json!(120.0)),
@@ -3902,6 +3905,7 @@ mod tests {
         let _g = settings_guard();
         let mut v = default_settings();
         v["ui_scale"] = json!(9);
+        v["head_pitch"] = json!(90.0);
         v["mirror_size"] = json!(10);
         v["anisotropy"] = json!(32);
         v["view_distance"] = json!("1500");
@@ -3913,6 +3917,7 @@ mod tests {
         apply_settings(&v);
         let back = current_settings();
         assert_eq!(back["ui_scale"], 2.0);
+        assert_eq!(back["head_pitch"], 45.0);
         assert_eq!(back["mirror_size"], 64);
         assert_eq!(back["anisotropy"], 16);
         assert_eq!(back["view_distance"], "1500");
