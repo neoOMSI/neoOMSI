@@ -8,8 +8,9 @@ impl Traffic {
         self.road_collision = world.collision.lock().clone();
         let shapes = world.parked_boxes.lock().clone();
         if Arc::ptr_eq(&shapes, &self.parked_shapes) { return; }
-        self.parked_collision = Default::default();
-        for &body in shapes.iter() { self.parked_collision.add(body); }
+        let mut parked = ::simulation::collision::CollisionWorld::default();
+        for &body in shapes.iter() { parked.add(body); }
+        self.parked_collision = Arc::new(parked);
         self.parked_shapes = shapes;
     }
 

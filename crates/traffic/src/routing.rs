@@ -63,13 +63,7 @@ impl RouteCompilation {
     }
 }
 
-/// Compile a route from the map keys its timetable names.
-///
-/// Each step resolves to the loaded lane of its key whose direction best joins the lanes
-/// before and after it (both directions of a two-way path share a key); a step whose tile is
-/// in the map but unloaded becomes `PendingTiles`, and one with no tile becomes `Missing`.
-/// Detours (a link that runs on past its station) are dropped. `tile_state` reports what the
-/// caller knows of a tile, so the compiler never depends on the map loader.
+/// Compile a route from the map keys its timetable names
 pub fn compile_route(
     net: &Network,
     keys: &[Option<LaneKey>],
@@ -134,6 +128,7 @@ pub fn compile_route(
         last = Some(best);
     }
     skip_detours(net, &mut out);
+    skip_lane_detours(net, &mut out);
     let status = if out.iter().any(|s| matches!(s, RouteStepState::PendingTiles)) {
         RouteStatus::PendingTiles
     } else if out.iter().any(|s| matches!(s, RouteStepState::Lane(_))) {
@@ -155,10 +150,6 @@ pub fn joins(net: &Network, a: usize, b: usize) -> bool {
             < 2.0
 }
 
-/// A station link often runs on past its station: such a detour is passed over (made
-/// `Missing`): where the route does not join, the lane a few steps back that the next one
-/// continues from - or the lane a few steps on that continues this one - is where the route
-/// really goes.
 fn skip_detours(net: &Network, slots: &mut [RouteStepState]) {
     const REACH: usize = 8;
     let lane_at = |slots: &[RouteStepState], k: usize| match slots[k] {
@@ -192,10 +183,62 @@ fn skip_detours(net: &Network, slots: &mut [RouteStepState]) {
     }
 }
 
-/// Where consecutive lanes of a route do not join (a path the timetable names that the map
-/// no longer has, or a junction a mod map edited after its tracks were made), the shortest
-/// way between them through the network, when there is one not much longer than the gap.
-/// Returns the lanes and, for each lane given, its index in them.
+/// A station link that leaves its lane only to change back onto it a little later: such a
+/// detour into the lane beside is passed over (made `Missing`), so the route stays on the
+/// lane it came along and `bridge_gaps` puts the way along it back in. X10 Berlin's link
+/// from U Kurfuerstendamm to U Uhlandstr. crosses the junction into the inner lane and
+/// changes back onto the bus lane 60 m on: the buses pulled out of the bus lane and back.
+/// Every lane of the way along it must run beside the detour, so the route is not cut short.
+fn skip_lane_detours(net: &Network, slots: &mut [RouteStepState]) {
+    const REACH: usize = 8;
+    const MAX_DETOUR: f32 = 200.0;
+    let lane_at = |slots: &[RouteStepState], k: usize| match slots[k] {
+        RouteStepState::Lane(l) => Some(l.index()),
+        _ => None,
+    };
+    for m in 1..slots.len().saturating_sub(1) {
+        // a change back onto the lane beside: route[m] -> c
+        let (Some(y), Some(c)) = (lane_at(slots, m), lane_at(slots, m + 1)) else {
+            continue;
+        };
+        if !net.parallel(y, c) {
+            continue;
+        }
+        // (only a detour away from the kerb: a stop bay beside the lane is changed into on
+        // purpose, and its stop must stay on it)
+        let (pc, hc) = net.lanes[c].at(0.0);
+        let py = net.lanes[y].at(net.beside_s(c, y, 0.0)).0;
+        let h = (hc as f64).to_radians();
+        let right = (py - pc).truncate().dot(glam::DVec2::new(h.cos(), -h.sin())) > 0.0;
+        if right != net.left_hand {
+            continue;
+        }
+        // the farthest lane back the route could have stayed on instead
+        let mut along = 0.0;
+        let mut skip = None;
+        for p in (m.saturating_sub(REACH)..m).rev() {
+            let Some(q) = lane_at(slots, p + 1) else { break };
+            along += net.lanes[q].length();
+            if along > MAX_DETOUR {
+                break;
+            }
+            let Some(a) = lane_at(slots, p) else { break };
+            let Some(way) = way_between(net, a, c, along + 20.0) else {
+                continue;
+            };
+            let beside = |l: usize| {
+                (p + 1..=m).any(|k| lane_at(slots, k).is_some_and(|d| d != l && net.parallel(l, d)))
+            };
+            if way.iter().all(|&l| beside(l)) {
+                skip = Some(p);
+            }
+        }
+        if let Some(p) = skip {
+            slots[p + 1..=m].fill(RouteStepState::Missing);
+        }
+    }
+}
+
 pub fn bridge_gaps(net: &Network, lanes: &[usize]) -> (Vec<usize>, Vec<usize>) {
     let mut out: Vec<usize> = Vec::with_capacity(lanes.len());
     let mut index = Vec::with_capacity(lanes.len());
@@ -217,8 +260,6 @@ pub fn bridge_gaps(net: &Network, lanes: &[usize]) -> (Vec<usize>, Vec<usize>) {
     (out, index)
 }
 
-/// The lanes strictly between `a` and `b` on the shortest way from the end of `a` to the
-/// start of `b`, if that is at most `max` metres long.
 pub fn way_between(net: &Network, a: usize, b: usize, max: f32) -> Option<Vec<usize>> {
     use std::cmp::Reverse;
     use std::collections::HashMap;
@@ -412,6 +453,51 @@ mod tests {
         let (lanes, index) = bridge_gaps(&net, &[0, 2]);
         assert_eq!(lanes, vec![0, 1, 2]);
         assert_eq!(index, vec![0, 2]);
+    }
+
+    #[test]
+    fn a_detour_into_the_inner_lane_and_back_is_passed_over() {
+        use crate::network::{LaneBuilder, LaneKind};
+        use glam::DVec3;
+        // a lane 0 -> 1 -> 2 north along x = 0; beside it at x = side, lanes 3 -> 4. The
+        // route crosses from 0 into 3 (a junction path) and changes back from 4 onto 2.
+        let route = |side: f64| {
+            let mk = |x: f64, a: f64, b: f64| {
+                LaneBuilder::polyline(
+                    vec![DVec3::new(x, a, 0.0), DVec3::new(x, b, 0.0)],
+                    LaneKind::Street,
+                    3.0,
+                )
+            };
+            let mut net = Network {
+                lanes: vec![
+                    mk(0.0, 0.0, 20.0),
+                    mk(0.0, 20.0, 80.0),
+                    mk(0.0, 80.0, 120.0),
+                    mk(side, 20.0, 80.0),
+                    mk(side, 80.0, 120.0),
+                ],
+                ..Default::default()
+            };
+            net.link(1.5);
+            net.lanes[0].next.push(3);
+            assert!(net.parallel(4, 2));
+            let mut slots: Vec<RouteStepState> =
+                [0, 3, 4, 2].map(|l| RouteStepState::Lane(LaneId(l))).to_vec();
+            skip_lane_detours(&net, &mut slots);
+            let lanes: Vec<usize> = slots
+                .iter()
+                .filter_map(|s| match s {
+                    RouteStepState::Lane(l) => Some(l.index()),
+                    _ => None,
+                })
+                .collect();
+            bridge_gaps(&net, &lanes).0
+        };
+        // the inner lane (left in right-hand traffic): stays on its lane
+        assert_eq!(route(-3.5), vec![0, 1, 2]);
+        // the kerb side (a stop bay): the route goes as the timetable has it
+        assert_eq!(route(3.5), vec![0, 3, 4, 2]);
     }
 
     #[test]
