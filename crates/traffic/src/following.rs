@@ -742,7 +742,7 @@ impl AiState {
     }
 
     /// The lane sequence the car is driving along: where it came from, where it is, the plan.
-    fn seq(&self) -> LaneSeq {
+    fn seq(&self, net: &Network) -> LaneSeq {
         let mut q = LaneSeq {
             lanes: [0; PLAN_LANES + 2],
             n: 0,
@@ -755,6 +755,17 @@ impl AiState {
         q.cur = q.n;
         q.lanes[q.n] = self.lane;
         q.n += 1;
+        // A route change onto the lane beside still to be made: the way goes straight on at
+        // the end of this lane, not over to the lane after that one. (Joined up as a joint,
+        // the way bent over towards it, and a bus waiting for its gap at the end of the lane
+        // turned half into the lane beside - where the car coming up stopped behind its
+        // corner, and the gap never came.)
+        let pending = self.change.is_none()
+            && self.route.get(self.route_index + 1).is_some_and(|&b| net.parallel(self.lane, b))
+            && self.planned_next.is_some_and(|n| !net.lanes[self.lane].next.contains(&n));
+        if pending {
+            return q;
+        }
         for l in self.upcoming() {
             if q.n == q.lanes.len() {
                 break;
@@ -788,7 +799,7 @@ impl AiState {
     /// out to the side where it pulls into a bay or round a parked car. The steering
     /// follows this curve; it has no steps, so neither does the car.
     pub fn way_point(&self, net: &Network, d: f32) -> DVec3 {
-        let (mut p, mut h) = self.seq().point(net, self.s, d);
+        let (mut p, mut h) = self.seq(net).point(net, self.s, d);
         if let Some(c) = self.change {
             if c.to < net.lanes.len() {
                 let (pt, ht) = self.change_seq(c.to).point(net, c.s_to, d);
@@ -813,7 +824,7 @@ impl AiState {
     /// own curvature or the turn of the way over 6 m, whichever is sharper: lanes are linked
     /// with up to 40° between them, and such a kink is a bend too.
     pub fn curve_speed(&self, net: &Network) -> f32 {
-        let mut best = self.curve_speed_on(net, &self.seq(), self.s);
+        let mut best = self.curve_speed_on(net, &self.seq(net), self.s);
         if let Some(c) = self.change {
             if c.to < net.lanes.len() {
                 best = best.min(self.curve_speed_on(net, &self.change_seq(c.to), c.s_to));
@@ -1465,6 +1476,26 @@ mod tests {
         c.speed = speed;
         c.plan_next(net);
         c
+    }
+
+    #[test]
+    fn a_route_change_still_to_be_made_does_not_bend_the_way_over() {
+        // lanes 0 -> 1 along x = 0, lanes 2 -> 3 beside them; the route changes 0 -> 2 -> 3
+        let mk = |x: f64, a: f64, b: f64| {
+            LaneBuilder::polyline(vec![DVec3::new(x, a, 0.0), DVec3::new(x, b, 0.0)], LaneKind::Street, 3.0)
+        };
+        let mut net = Network {
+            lanes: vec![mk(0.0, 0.0, 20.0), mk(0.0, 20.0, 60.0), mk(2.75, 0.0, 20.0), mk(2.75, 20.0, 60.0)],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let mut c = AiState::new(0, 18.0, 5);
+        c.route = vec![0, 2, 3];
+        c.plan_next(&net);
+        assert_eq!(c.planned_next, Some(3));
+        for d in [0.0, 1.0, 2.0, 5.0] {
+            assert!(c.way_point(&net, d).x.abs() < 0.05, "the way bent over {d} m on");
+        }
     }
 
     #[test]

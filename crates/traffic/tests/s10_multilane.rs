@@ -132,6 +132,36 @@ fn a_bypass_round_a_parked_car_goes_back_only_past_it() {
     assert_eq!(route_back(101.0), Some(0));
 }
 
+#[test]
+fn a_blocked_route_change_moves_on_to_the_lanes_beside_after_the_joint() {
+    // lanes 0 -> 1 along x = 0, lanes 2 -> 3 beside them on the right; the route changes
+    // from 0 onto 2 and goes on to 3. A car stands on 2 beside the bus near the end of 0.
+    let mk = |x: f64, a: f64, b: f64| {
+        LaneBuilder::polyline(vec![DVec3::new(x, a, 0.0), DVec3::new(x, b, 0.0)], LaneKind::Street, 3.0)
+    };
+    let mut net = Network {
+        lanes: vec![mk(0.0, 0.0, 20.0), mk(0.0, 20.0, 60.0), mk(3.0, 0.0, 20.0), mk(3.0, 20.0, 60.0)],
+        ..Default::default()
+    };
+    net.link(1.5);
+    let mut bus = ManeuverActor::new(VehicleId(1), 0, 10.0);
+    bus.front = 6.0; bus.rear = 6.0; bus.length = 12.0; bus.half_width = 1.25;
+    bus.veh_type = -1; bus.route_next = Some(2); bus.planned_next = Some(3);
+    let mut car = ManeuverActor::new(VehicleId(2), 2, 6.0);
+    car.front = 2.2; car.rear = 2.2; car.length = 4.4; car.half_width = 0.9;
+    let actors = [bus, car];
+    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+    let mut coord = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+        static_clearance: None, time: 0.0, dt: 0.02, tick: 0 };
+    coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], 0);
+    let d = coord.plan(&scene, &mut state, &ManeuverInputs::new(0));
+    assert!(d.change.is_none());
+    assert_eq!(d.defer_change, Some((2, 1)));
+    assert_eq!(d.stop_at, None, "stopped at the end of its lane instead");
+}
+
 fn parked_bypass(net: &Network) -> Option<(usize, ChangeKind)> {
     // the parked car is no actor of the scene: only the lead the world reports stands for it
     let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);

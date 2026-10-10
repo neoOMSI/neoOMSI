@@ -835,6 +835,17 @@ impl Traffic {
                 if let Some(binding) = decision.binding {
                     maneuver_why = Some((binding, decision.stop_at.unwrap_or(0.0)));
                 }
+                if let Some((to, from)) = decision.defer_change {
+                    let net = &self.net;
+                    let car = &mut self.cars[i];
+                    let k = car.state.route_index + 1;
+                    let stop_there = car.bus.as_ref()
+                        .is_some_and(|b| b.stops.iter().any(|t| t.route_index == k));
+                    if car.state.route.get(k) == Some(&to) && !stop_there {
+                        car.state.route[k] = from;
+                        car.state.plan_next(net);
+                    }
+                }
                 if let Some(cmd) = decision.change {
                     let net = &self.net;
                     let car = &mut self.cars[i];
