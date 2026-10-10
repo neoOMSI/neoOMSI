@@ -820,21 +820,18 @@ impl App {
     }
 
     pub(crate) fn sync_real_time(&mut self) {
-        if !self.real_time_locked() {
-            return;
-        }
-        let Some(real) = crate::real_time::clock_now(&self.clock) else {
-            return;
-        };
-        let gap = crate::real_time::gap(&self.clock, &real);
-        if gap.abs() < 0.25 {
-            return;
-        }
-        self.clock.year = real.year;
-        self.clock.day_of_year = real.day_of_year;
-        self.clock.time = real.time;
-        if let Some(tr) = self.traffic.as_mut() {
-            tr.day_time += gap;
+        if self.real_time_locked()
+            && let Some(real) = crate::real_time::clock_now(&self.clock)
+        {
+            let gap = crate::real_time::gap(&self.clock, &real);
+            if gap.abs() >= 0.25 {
+                self.clock.year = real.year;
+                self.clock.day_of_year = real.day_of_year;
+                self.clock.time = real.time;
+                if let Some(tr) = self.traffic.as_mut() {
+                    tr.day_time += gap;
+                }
+            }
         }
         self.sync_vehicle_game_times();
     }
