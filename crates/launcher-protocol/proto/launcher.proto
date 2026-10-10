@@ -54,6 +54,7 @@ message Request {
     Empty servers = 38;
     SaveServersArgs save_servers = 39;
     Empty version = 40;
+    InstallUpdateArgs install_update = 41;
   }
 }
 
@@ -99,6 +100,7 @@ message Response {
     ServerList servers = 38;
     Empty save_servers = 39;
     EngineVersion version = 40;
+    GameUpdate install_update = 41;
   }
 }
 
@@ -109,6 +111,7 @@ message Event {
     ContentChanged content_changed = 3;
     SessionEvent session_event = 4;
     PaxPack pax_pack_changed = 5;
+    GameUpdate update_changed = 6;
   }
 }
 
@@ -872,6 +875,27 @@ message GameRelease {
 
 message UpdateCheck {
   GameRelease release = 1;
+  GameUpdate update = 2;
+}
+
+message InstallUpdateArgs {
+  uint32 launcher_pid = 1;
+}
+
+enum UpdateState {
+  UPDATE_STATE_UNSPECIFIED = 0;
+  UPDATE_STATE_IDLE = 1;
+  UPDATE_STATE_DOWNLOADING = 2;
+  UPDATE_STATE_RESTARTING = 3;
+  UPDATE_STATE_FAILED = 4;
+}
+
+message GameUpdate {
+  UpdateState state = 1;
+  GameRelease release = 2;
+  uint64 done = 3;
+  uint64 total = 4;
+  string message = 5;
 }
 
 message KeyBinding {

@@ -133,6 +133,11 @@ use winit::window::{Window, WindowId};
 use world_load::*;
 
 pub fn run() -> Result<()> {
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some(updater::FINISH_UPDATE) {
+        logging::init("update");
+        return updater::finish_update(&raw[2..]);
+    }
     #[cfg(target_os = "macos")]
     restart_with_allocator_settings();
     let protocol = std::env::args().any(|a| a == "--control-protocol");

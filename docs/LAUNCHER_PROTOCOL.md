@@ -77,7 +77,8 @@ launcher shows that the engine went away.
 | `join` | what a join field means, and the LAN sessions hosted here |
 | `settings`, `save_settings`, `option_presets` | `Settings` has a field for every setting the engine keeps; saving changes only the fields that are set, and saving `pax_models` realistic downloads the pack when it is missing |
 | `pax_pack`, `install_pax_pack` | the realistic passengers' pack; `latest` is the newest `realistic-pax-v<n>` release, looked for every 6 hours, and makes an older pack `outdated` |
-| `update_check` | the newest neoOMSI release for this build's channel and platform, if there is one |
+| `update_check` | the newest neoOMSI release for this build's channel and platform, if there is one, and `update`: the state of an installation, `UPDATE_STATE_FAILED` with the reason when the last one did not go in |
+| `install_update` | downloads that release (progress as `update_changed`), then starts `neoomsi --finish-update`, which puts it in place once the process `launcher_pid` has ended and starts neoOMSI again; the launcher quits on `UPDATE_STATE_RESTARTING`, since its own folder is among the files replaced |
 | `keybindings`, `save_keybindings`, `controllers`, `save_controllers` | the whole list; `controllers` reads the devices as they are now (the first call waits half a second for them to be found), each axis with its raw value and calibration; an Xbox-type pad is read through XInput, which works without a window |
 | `preview` | the path of a `.glb` file |
 | `situations`, `tutorials`, `version` | |
@@ -92,6 +93,7 @@ launcher shows that the engine went away.
 | `content_changed` | maps, buses or weather were added or removed: lists the launcher holds are stale |
 | `session_event` | a game moved to another state |
 | `pax_pack_changed` | the realistic passengers' download or install moved on, or a newer release was found |
+| `update_changed` | the neoOMSI download moved on, failed, or is ready for the restart |
 
 A game ends as `SESSION_STATE_FAILED` when it reported a failure, or when it exited with a
 non-zero code without being stopped. Each `Instance` also carries `link`, what the game reported
