@@ -3,7 +3,8 @@ mod minimap;
 mod pads;
 
 use launcher_protocol::api::{
-    self, Empty, Frame, GameLinkState, HandshakeResponse, PaxState, SessionState, Status, StatusCode, event::Event, frame::Body,
+    self, Empty, Frame, GameLinkState, HandshakeResponse, PaxState, SessionState, Status, StatusCode, UpdateState, event::Event,
+    frame::Body,
     request::Command, response::Answer,
 };
 use launcher_protocol::link;
@@ -37,6 +38,11 @@ pub(crate) fn run() -> anyhow::Result<()> {
     let out = take_stdout()?;
     omsi_launcher_lib::init_settings();
     omsi_launcher_lib::cleanup();
+    crate::updater::cleanup_after_update();
+    if let Some(message) = crate::updater::take_failure() {
+        commands::update_failed(message);
+    }
+    let _ = crate::updater::just_updated();
     let (server, woken) = Server::new(Box::new(out));
     let s = server.clone();
     match link::listen(move |_| s.wake()) {
@@ -260,6 +266,9 @@ impl Server {
                                 if let Some(e) = seen.pax(commands::pax_status()) {
                                     this.send(&event(e));
                                 }
+                                if let Some(e) = seen.game_update(commands::update_status()) {
+                                    this.send(&event(e));
+                                }
                             }
                             Err(e) => log::debug!("poll: {e:#}"),
                         }
@@ -321,9 +330,19 @@ struct Seen {
     phases: HashMap<String, Phase>,
     installing: bool,
     pax: Option<api::PaxPack>,
+    update: Option<api::GameUpdate>,
 }
 
 impl Seen {
+    fn game_update(&mut self, status: api::GameUpdate) -> Option<Event> {
+        self.installing |= status.state() == UpdateState::Downloading;
+        if self.update.as_ref() == Some(&status) {
+            return None;
+        }
+        self.update = Some(status.clone());
+        Some(Event::UpdateChanged(status))
+    }
+
     fn pax(&mut self, status: api::PaxPack) -> Option<Event> {
         self.installing |= matches!(status.state(), PaxState::Downloading | PaxState::Installing);
         if self.pax.as_ref() == Some(&status) {

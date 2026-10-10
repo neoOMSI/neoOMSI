@@ -3,13 +3,14 @@ use crate::pax_pack::{PaxPack, Status as PaxStatus};
 use anyhow::{Result, anyhow};
 use omsi_launcher_lib as lib;
 use launcher_protocol::api::{
-    self, AxisFunction, AxisShape, Controller, ControllerAxis, Empty, PaxModels, PaxState, request::Command,
-    response::Answer,
+    self, AxisFunction, AxisShape, Controller, ControllerAxis, Empty, PaxModels, PaxState, UpdateState,
+    request::Command, response::Answer,
 };
+use crate::updater::{Release, Status as UpdaterStatus, Updater};
 use omsi_launcher_lib::servers;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 type Slot = Arc<Mutex<Option<Answer>>>;
 
@@ -179,14 +180,19 @@ pub(super) fn call(command: Command) -> Result<Answer> {
             Answer::InstallPaxPack(pax_status())
         }
         Command::UpdateCheck(_) => Answer::UpdateCheck(api::UpdateCheck {
-            release: crate::updater::latest()?.map(|r| api::GameRelease {
-                version: r.version,
-                page: r.page,
-                notes: r.notes,
-                prerelease: r.prerelease,
-                size: r.size,
-            }),
+            release: crate::updater::latest()?.as_ref().map(game_release),
+            update: Some(update_status()),
         }),
+        Command::InstallUpdate(a) => {
+            if a.launcher_pid == 0 {
+                return Err(anyhow!("the launcher did not say which process it is"));
+            }
+            if matches!(update_status().state(), UpdateState::Idle | UpdateState::Failed) {
+                let release = crate::updater::latest()?.ok_or_else(|| anyhow!("neoOMSI is up to date"))?;
+                updater().install_after(release, a.launcher_pid);
+            }
+            Answer::InstallUpdate(update_status())
+        }
         Command::OptionPresets(_) => Answer::OptionPresets(api::OptionPresetList {
             presets: lib::option_presets()
                 .into_iter()
@@ -267,6 +273,46 @@ fn content() -> Option<PathBuf> {
         .unwrap_or_else(|e| e.into_inner())
         .get_or_insert_with(lib::content_dir)
         .clone()
+}
+
+static UPDATER: LazyLock<Mutex<Updater>> = LazyLock::new(Default::default);
+
+fn updater() -> std::sync::MutexGuard<'static, Updater> {
+    UPDATER.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(super) fn update_failed(message: String) {
+    updater().fail(message);
+}
+
+fn game_release(r: &Release) -> api::GameRelease {
+    api::GameRelease {
+        version: r.version.clone(),
+        page: r.page.clone(),
+        notes: r.notes.clone(),
+        prerelease: r.prerelease,
+        size: r.size,
+    }
+}
+
+pub(super) fn update_status() -> api::GameUpdate {
+    let (state, release, done, total, message) = match updater().status() {
+        UpdaterStatus::Downloading { release, done, total } => (UpdateState::Downloading, Some(release), done, total, String::new()),
+        UpdaterStatus::Installing(r) | UpdaterStatus::WaitingForInstaller(r) | UpdaterStatus::Restarting(r) => {
+            (UpdateState::Restarting, Some(r), 0, 0, String::new())
+        }
+        UpdaterStatus::Failed(e) => (UpdateState::Failed, None, 0, 0, e),
+        UpdaterStatus::Idle | UpdaterStatus::Checking | UpdaterStatus::UpToDate | UpdaterStatus::Available(_) => {
+            (UpdateState::Idle, None, 0, 0, String::new())
+        }
+    };
+    api::GameUpdate {
+        state: state.into(),
+        release: release.as_ref().map(game_release),
+        done,
+        total,
+        message,
+    }
 }
 
 pub(super) fn pax_status() -> api::PaxPack {

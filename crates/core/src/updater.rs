@@ -144,6 +144,18 @@ impl Updater {
 
     /// Download and install `r` (in the background).
     pub fn install(&mut self, r: Release) {
+        self.start(r, download_and_install);
+    }
+
+    pub fn install_after(&mut self, r: Release, launcher: u32) {
+        self.start(r, move |r, status| download_and_hand_over(r, status, launcher));
+    }
+
+    fn start(
+        &mut self,
+        r: Release,
+        job: impl FnOnce(&Release, &Mutex<Status>) -> anyhow::Result<()> + Send + 'static,
+    ) {
         if matches!(
             self.status(),
             Status::Downloading { .. }
@@ -161,8 +173,7 @@ impl Updater {
         });
         let status = self.status.clone();
         std::thread::spawn(move || {
-            let result = download_and_install(&r, &status);
-            if let Err(e) = result {
+            if let Err(e) = job(&r, &status) {
                 log::warn!("update to {}: {e:#}", r.version);
                 *lock(&status) =
                     Status::Failed(format!("neoOMSI was not updated to {}: {e}", r.version));
@@ -183,6 +194,10 @@ impl Updater {
                 _ => {}
             }
         }
+    }
+
+    pub fn fail(&mut self, message: String) {
+        self.set(Status::Failed(message));
     }
 
     /// Forget a failure or an offer (the dialog's "Close" / "Not now").
@@ -486,23 +501,25 @@ pub(crate) fn fetch_file(
     Ok(())
 }
 
-fn download_and_install(r: &Release, status: &Mutex<Status>) -> anyhow::Result<()> {
-    // (on a computer: where it goes must be writable before 15 MB are fetched for nothing)
-    #[cfg(not(target_os = "android"))]
-    {
-        let place = install_place()?;
-        if !writable(&place.dir) {
-            let admin = if cfg!(windows) {
-                " (or start it once as administrator)"
-            } else {
-                ""
-            };
-            anyhow::bail!(
-                "the folder {} cannot be written. Put neoOMSI in a folder of yours{admin} and update again",
-                short_path(&place.dir)
-            );
-        }
+fn writable_place() -> anyhow::Result<Place> {
+    let place = install_place()?;
+    if !writable(&place.dir) {
+        let admin = if cfg!(windows) {
+            " (or start it once as administrator)"
+        } else {
+            ""
+        };
+        anyhow::bail!(
+            "the folder {} cannot be written. Put neoOMSI in a folder of yours{admin} and update again",
+            short_path(&place.dir)
+        );
     }
+    Ok(place)
+}
+
+fn download_and_install(r: &Release, status: &Mutex<Status>) -> anyhow::Result<()> {
+    #[cfg(not(target_os = "android"))]
+    writable_place()?;
     let file = download_dir().join(&r.asset_name);
     download(r, &file, status)?;
     log::info!("update {}: downloaded {}", r.version, file.display());
@@ -524,6 +541,88 @@ fn download_and_install(r: &Release, status: &Mutex<Status>) -> anyhow::Result<(
         *lock(status) = Status::Restarting(r.clone());
         Ok(())
     }
+}
+
+fn download_and_hand_over(r: &Release, status: &Mutex<Status>, launcher: u32) -> anyhow::Result<()> {
+    let place = writable_place()?;
+    let file = download_dir().join(&r.asset_name);
+    download(r, &file, status)?;
+    log::info!("update {}: downloaded {}, put in place once the launcher has ended", r.version, file.display());
+    std::process::Command::new(&place.exe)
+        .arg(FINISH_UPDATE)
+        .arg(&file)
+        .arg(&r.version)
+        .arg(launcher.to_string())
+        .current_dir(&place.dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("{} could not be started to install it ({e})", short_path(&place.exe)))?;
+    *lock(status) = Status::Restarting(r.clone());
+    Ok(())
+}
+
+pub const FINISH_UPDATE: &str = "--finish-update";
+
+pub fn finish_update(args: &[String]) -> anyhow::Result<()> {
+    let [zip, version, launcher] = args else {
+        anyhow::bail!("{FINISH_UPDATE} <archive> <version> <launcher pid>");
+    };
+    let launcher: u32 = launcher.parse()?;
+    let zip = Path::new(zip);
+    let start = std::time::Instant::now();
+    while omsi_launcher_lib::install::pid_alive(launcher) && start.elapsed().as_secs() < 60 {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    // (its files are still in use, and starting neoOMSI again would only bring it to the front)
+    if omsi_launcher_lib::install::pid_alive(launcher) {
+        let e = anyhow::anyhow!("the launcher did not close within a minute; close it and update again");
+        log::error!("update to {version}: {e}");
+        note_failure(version, &e);
+        let _ = std::fs::remove_file(zip);
+        return Err(e);
+    }
+    log::info!("update to {version}: the launcher ended after {:.1} s", start.elapsed().as_secs_f32());
+    let place = install_place()?;
+    // (Windows lets go of a program's folder a moment after the program has ended)
+    let mut result = install_archive(zip, &place);
+    for _ in 0..10 {
+        let Err(e) = &result else { break };
+        log::warn!("update to {version}: {e:#}; trying again");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        result = install_archive(zip, &place);
+    }
+    let _ = std::fs::remove_file(zip);
+    match &result {
+        Ok(()) => {
+            let _ = std::fs::write(download_dir().join("updating-to"), version);
+        }
+        Err(e) => {
+            log::error!("update to {version}: {e:#}; the installed version starts again");
+            note_failure(version, e);
+        }
+    }
+    relaunch(&place)?;
+    result
+}
+
+const FAILED_NOTE: &str = "update-failed";
+
+/// Kept for the next start to tell the player: the helper has no window of its own.
+fn note_failure(version: &str, e: &anyhow::Error) {
+    let _ = std::fs::write(
+        download_dir().join(FAILED_NOTE),
+        format!("neoOMSI was not updated to {version}: {e}"),
+    );
+}
+
+/// Why the last update did not go in, once.
+pub fn take_failure() -> Option<String> {
+    let p = download_dir().join(FAILED_NOTE);
+    let message = std::fs::read_to_string(&p).ok()?;
+    let _ = std::fs::remove_file(&p);
+    Some(message.trim().to_string()).filter(|m| !m.is_empty())
 }
 
 // --- installing on a computer -----------------------------------------------------------------
