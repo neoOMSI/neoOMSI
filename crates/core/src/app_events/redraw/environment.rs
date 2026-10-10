@@ -264,15 +264,7 @@ impl App {
                 w.sync_html_departures(&mut p.vehicle.host);
             }
             match self.schedule.as_mut() {
-                Some(s) => s.update_boards(
-                    w,
-                    traffic,
-                    self.duty.as_ref(),
-                    self.player
-                        .as_ref()
-                        .and_then(|p| p.vehicle.host.hof.as_deref()),
-                    &self.clock,
-                ),
+                Some(s) => s.update_boards(w, traffic, self.duty.as_ref(), &self.clock),
                 None => w.timetable_boards.lock().clock = Some(self.clock.clone()),
             }
             *self.profile.entry("scripted.boards").or_default() += __tb.elapsed().as_secs_f64();
