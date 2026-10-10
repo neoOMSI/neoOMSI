@@ -23,6 +23,20 @@ fn script_speed(speed_kmh: f32) -> f32 {
     }
 }
 
+/// Resolve a model text source by name or OMSI's numeric string-variable slot syntax.
+fn string_var_value<'a>(program: &Program, values: &'a [String], name: &str) -> &'a str {
+    let index = program.str_var(name).or_else(|| {
+        name.trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| u32::try_from(i).ok())
+    });
+    index
+        .and_then(|i| values.get(i as usize))
+        .map(String::as_str)
+        .unwrap_or("")
+}
+
 /// Built-in variables every road vehicle has (`program/varlist_roadvehicle.txt` + generated).
 pub fn builtin_vars(root: &Path) -> Vec<String> {
     let mut v: Vec<String> =
@@ -1305,12 +1319,12 @@ impl VehicleInstance {
     }
 
     /// Current text of a string variable as a borrowed slice (empty when it does not exist).
+    ///
+    /// OMSI model files may name a `[texttexture]`'s source by its string-variable slot
+    /// rather than its name. In particular, `0` is the built-in `ident` slot used by a
+    /// number of AI car models for their registration plates.
     pub fn str_var_str(&self, name: &str) -> &str {
-        self.ty
-            .program
-            .str_var(name)
-            .map(|i| self.state.str_vars[i as usize].as_str())
-            .unwrap_or("")
+        string_var_value(&self.ty.program, &self.state.str_vars, name)
     }
 
     /// Current text of a string variable (empty when it does not exist).
@@ -4471,6 +4485,19 @@ mod tests {
         assert_eq!(script_speed(0.000251), 0.0);
         assert_eq!(script_speed(-0.000251), 0.0);
         assert_eq!(script_speed(0.02), 0.02);
+    }
+
+    #[test]
+    fn numeric_texttexture_variable_reads_its_string_slot() {
+        let mut program = Program::default();
+        program.declare_str_var("ident");
+        program.declare_str_var("number");
+        let values = vec!["AP06 NSD".to_string(), "12345".to_string()];
+
+        assert_eq!(string_var_value(&program, &values, "ident"), "AP06 NSD");
+        assert_eq!(string_var_value(&program, &values, "0"), "AP06 NSD");
+        assert_eq!(string_var_value(&program, &values, "1"), "12345");
+        assert_eq!(string_var_value(&program, &values, "9"), "");
     }
 
     /// A shadow blob at the model's z = 0 is laid onto the plane through the wheels: 15 cm
