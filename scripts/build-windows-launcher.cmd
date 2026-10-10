@@ -24,5 +24,6 @@ if errorlevel 1 exit /b %ERRORLEVEL%
 
 if /I "%LAUNCHER_DEST%"=="dist\windows\launcher" exit /b 0
 if exist "%LAUNCHER_DEST%" rmdir /s /q "%LAUNCHER_DEST%"
-move /y "dist\windows\launcher" "%LAUNCHER_DEST%" >nul
-exit /b %ERRORLEVEL%
+robocopy "dist\windows\launcher" "%LAUNCHER_DEST%" /e /njh /njs /ndl /nfl >nul
+if errorlevel 8 exit /b %ERRORLEVEL%
+exit /b 0
