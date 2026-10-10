@@ -407,6 +407,18 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "pause.options.camera.seat_0.desc",
                 Fmt::Cm,
             ),
+            sl(
+                "head_pitch",
+                "pause.options.camera.head_pitch.name",
+                "pause.options.camera.head_pitch.desc",
+                Fmt::Deg,
+            ),
+            row(
+                "head_pitch_reset",
+                "pause.options.camera.head_pitch_reset.name",
+                "pause.options.camera.head_pitch_reset.desc",
+                OptKind::Button("pause.options.button.reset"),
+            ),
             row(
                 "seat_reset",
                 "pause.options.camera.seat_reset.name",

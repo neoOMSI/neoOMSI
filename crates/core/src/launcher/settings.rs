@@ -798,6 +798,10 @@ fn act(l: &mut Launcher, a: Act) {
                     }
                     let _ = ::config::save();
                 }
+                "head_pitch_reset" => {
+                    ::config::set_setting("camera", "head_pitch", 0.0_f64);
+                    let _ = ::config::save();
+                }
                 "keycancel" => l.settings.capture = None,
                 "pax_pack_get" => {
                     crate::pax_pack::shared(

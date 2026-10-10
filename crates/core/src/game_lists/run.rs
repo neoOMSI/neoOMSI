@@ -118,6 +118,10 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         let _ = ::config::save();
                     }
                 }
+                "head_pitch_reset" if step => {
+                    ::config::set_setting("camera", "head_pitch", 0.0_f64);
+                    let _ = ::config::save();
+                }
                 "clock_ontime" if step => {
                     if app
                         .lan

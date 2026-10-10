@@ -86,6 +86,14 @@
           "desc": "The view moves with the acceleration of the vehicle",
           "name": "Head movement"
         },
+        "head_pitch": {
+          "desc": "Adjusts the driver's default viewing angle up or down",
+          "name": "Head pitch"
+        },
+        "head_pitch_reset": {
+          "desc": "Resets the driver's viewing angle to 0°",
+          "name": "Reset head pitch"
+        },
         "headtrack": {
           "desc": "Head tracking with opentrack (UDP port 4242)",
           "name": "Head tracking",

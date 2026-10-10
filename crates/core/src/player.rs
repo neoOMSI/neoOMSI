@@ -1795,7 +1795,7 @@ impl Player {
             // samples outside, the rain on the roof in the cab)
             ss.set_inside(inside && driven);
             let cabin = ss.prepare_listener_cabin(a, &xf,
-                &|i| v.trailers.get(i).map(|t| t.world_transform()));
+                                                  &|i| v.trailers.get(i).map(|t| t.world_transform()));
             let acoustic_inside = inside || cabin > 0.5;
             ss.set_muffled(acoustic_inside);
             ss.set_listener_vehicle(listener_follows_bus && driven);
@@ -2425,9 +2425,17 @@ impl Player {
             .or(def.cameras_driver.first())?;
         Some(::legacy_vehicle::Camera {
             yaw: c.yaw + look.0 + self.steer_look,
-            pitch: (c.pitch + look.1).clamp(-89.0, 89.0),
+            pitch: self.driver_pitch(c.pitch, look.1),
             ..c.clone()
         })
+    }
+
+    fn driver_pitch(&self, camera_pitch: f32, look_pitch: f32) -> f32 {
+        driver_pitch(
+            camera_pitch,
+            look_pitch,
+            (::config::get_float("camera", "head_pitch").unwrap_or(0.0) as f32).clamp(-45.0, 45.0),
+        )
     }
 
     /// `driver_local`'s camera in the world, with the bus's pitch and bank and the head on it
@@ -2596,7 +2604,7 @@ impl Player {
                 if let Some((t, c)) = self.trailer_driver_camera() {
                     let turned = ::legacy_vehicle::Camera {
                         yaw: c.yaw + look.0 + self.steer_look,
-                        pitch: (c.pitch + look.1).clamp(-89.0, 89.0),
+                        pitch: self.driver_pitch(c.pitch, look.1),
                         ..c.clone()
                     };
                     let (eye, yaw, pitch, roll) = t.camera_world_full(&turned);
@@ -2670,7 +2678,11 @@ impl Player {
                     } else {
                         0.0
                     },
-                    pitch: (c.pitch + look.1).clamp(-89.0, 89.0),
+                    pitch: if view == "driver" {
+                        self.driver_pitch(c.pitch, look.1)
+                    } else {
+                        (c.pitch + look.1).clamp(-89.0, 89.0)
+                    },
                     ..c.clone()
                 };
                 let (eye, yaw, pitch, roll) = self.vehicle.camera_world_full(&turned);
@@ -2724,6 +2736,28 @@ pub(crate) fn orbit_pivot(position: DVec3, heading_deg: f64, center: [f32; 3]) -
         + glam::Mat4::from_rotation_z((-(heading_deg as f32)).to_radians())
         .transform_point3(Vec3::new(center[0], center[1], center[2]))
         .as_dvec3()
+}
+
+fn driver_pitch(camera_pitch: f32, look_pitch: f32, head_pitch: f32) -> f32 {
+    (camera_pitch + head_pitch + look_pitch).clamp(-89.0, 89.0)
+}
+
+#[cfg(test)]
+mod driver_pitch_tests {
+    use super::driver_pitch;
+
+    #[test]
+    fn offset_is_added_to_the_configured_pitch_before_manual_look() {
+        assert_eq!(driver_pitch(12.0, 0.0, 0.0), 12.0);
+        assert_eq!(driver_pitch(12.0, 3.0, 8.0), 23.0);
+        assert_eq!(driver_pitch(-12.0, -3.0, -8.0), -23.0);
+    }
+
+    #[test]
+    fn driver_pitch_keeps_the_existing_limits() {
+        assert_eq!(driver_pitch(80.0, 20.0, 45.0), 89.0);
+        assert_eq!(driver_pitch(-80.0, -20.0, -45.0), -89.0);
+    }
 }
 
 thread_local! {
