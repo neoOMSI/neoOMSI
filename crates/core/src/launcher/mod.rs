@@ -34,7 +34,7 @@ use theme::*;
 use ui::{Key, Ui};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
@@ -151,14 +151,6 @@ pub struct Launcher {
     discord: Option<crate::discord::Discord>,
     #[cfg(not(target_os = "android"))]
     discord_next_try: Instant,
-}
-
-/// Run the launcher window until it is closed.
-pub fn run(instance: wgpu::Instance) -> anyhow::Result<()> {
-    let event_loop = EventLoop::new()?;
-    let mut app = Launcher::new(instance);
-    event_loop.run_app(&mut app)?;
-    Ok(())
 }
 
 impl Launcher {

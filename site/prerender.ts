@@ -118,7 +118,7 @@ const summary = `# neoOMSI
 
 > ${s.DESCRIPTION}
 
-neoOMSI needs an installed copy of OMSI 2 and contains no game content of its own. It targets the observable behavior of OMSI 2.2.032 and is licensed under GPL-3.0-or-later. It is a separate project from openOMSI.
+neoOMSI requires an installed copy of OMSI 2 and contains no game content of its own. It targets the observable behavior of OMSI 2.2.032 on a modern 64-bit engine and is licensed under GPL-3.0-or-later. It developed independently from an earlier openOMSI codebase.
 `;
 
 write(
@@ -126,10 +126,10 @@ write(
   `${summary}
 ## Pages
 
-- [Download](${canonical("/download")}): Builds for Windows, macOS, Linux, Android and the dedicated server
-- [FAQ](${canonical("/faq")}): What neoOMSI is, what it needs and which platforms it runs on
-- [neoOMSI vs openOMSI](${canonical("/openomsi")}): How neoOMSI relates to openOMSI and how to switch
-- [Releases](${canonical("/releases")}): Every version and what changed
+- [Download](${canonical("/download")}): Development builds for Windows, macOS and Linux, plus dedicated server
+- [FAQ](${canonical("/faq")}): Purpose, requirements, 64-bit architecture, and supported platforms
+- [neoOMSI and openOMSI](${canonical("/openomsi")}): Relationship to openOMSI, shared origin, and side-by-side setup
+- [Releases](${canonical("/releases")}): Published engine versions, nightly builds, and changelogs
 
 ## Docs
 
@@ -138,7 +138,7 @@ ${docs.join("\n")}
 ## Optional
 
 - [Full text](${s.absolute("llms-full.txt")}): The FAQ and every document in one file
-- [Source code](https://github.com/neoOMSI/neoOMSI): The neoOMSI repository on GitHub
+- [Source code](https://github.com/${s.REPO}): The neoOMSI repository on GitHub
 `,
 );
 
