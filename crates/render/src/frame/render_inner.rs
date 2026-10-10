@@ -97,8 +97,8 @@ impl Renderer {
             && self.options.fxaa
             && self.options.msaa <= 1
             && !(lighting.enhanced
-                && self.hdr_pass.is_some()
-                && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none())
+            && self.hdr_pass.is_some()
+            && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none())
             && ::legacy_config::env::var_os("OMSI_NO_FXAA").is_none();
         let enhanced_view = lighting.enhanced
             && self.hdr_pass.is_some()
@@ -139,8 +139,8 @@ impl Renderer {
             && self.hdr_pass.is_some()
             && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none()
             && (with_overlays
-                || xr_view
-                || ::legacy_config::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
+            || xr_view
+            || ::legacy_config::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
         let enhanced = enhanced_frame;
         let puddles_wanted = with_overlays
             && self.puddles.is_some()
@@ -287,11 +287,11 @@ impl Renderer {
             (near_m.project_point3(cam_rel) - near_wanted.project_point3(cam_rel)).length() > 0.03;
         let redraw_near = draw_shadows
             && (near_age >= 1
-                || near_jumped
-                || near_m == Mat4::IDENTITY
-                || near_origin != scene.render_origin
-                || near_sun.dot(sun) < 0.99999
-                || ::legacy_config::env::var_os("OMSI_SHADOW_NEAR_EVERY_FRAME").is_some());
+            || near_jumped
+            || near_m == Mat4::IDENTITY
+            || near_origin != scene.render_origin
+            || near_sun.dot(sun) < 0.99999
+            || ::legacy_config::env::var_os("OMSI_SHADOW_NEAR_EVERY_FRAME").is_some());
         let light_view_proj = if let Some((_, _, near, _, _)) = shared_xr_shadows {
             near
         } else if !shadows {
@@ -314,11 +314,11 @@ impl Renderer {
             (far_m.project_point3(cam_rel) - far_wanted.project_point3(cam_rel)).length() > 0.12;
         let redraw_far = draw_shadows
             && (far_age >= 3
-                || far_moved
-                || far_m == Mat4::IDENTITY
-                || far_origin != scene.render_origin
-                || far_sun.dot(sun) < 0.99999
-                || ::legacy_config::env::var_os("OMSI_SHADOW_FAR_EVERY_FRAME").is_some());
+            || far_moved
+            || far_m == Mat4::IDENTITY
+            || far_origin != scene.render_origin
+            || far_sun.dot(sun) < 0.99999
+            || ::legacy_config::env::var_os("OMSI_SHADOW_FAR_EVERY_FRAME").is_some());
         if redraw_far && ::legacy_config::env::var_os("OMSI_DEBUG_SHADOW_FAR").is_some() {
             log::info!(
                 "far shadow redrawn: age {far_age} moved {far_moved} origin {} sun {:.6}",
@@ -387,7 +387,7 @@ impl Renderer {
                         SPOT_NEAR,
                         p.far,
                     )
-                    .to_cols_array_2d();
+                        .to_cols_array_2d();
                 }
             }
             let sz = self.options.shadow_size as f32;
@@ -420,12 +420,12 @@ impl Renderer {
                 .to_array(),
             ambient: (lighting.ambient
                 * if enhanced {
-                    1.0
-                } else {
-                    night_scale(lighting.night, lighting.atmosphere_brightness)
-                })
-            .extend(lighting.snow.clamp(0.0, 1.0))
-            .to_array(),
+                1.0
+            } else {
+                night_scale(lighting.night, lighting.atmosphere_brightness)
+            })
+                .extend(lighting.snow.clamp(0.0, 1.0))
+                .to_array(),
             fog: lighting.fog_color.extend(lighting.fog_density).to_array(),
             sun_color: lighting
                 .sun_color
@@ -433,16 +433,16 @@ impl Renderer {
                 .to_array(),
             sky_color: (lighting.secondary
                 * if enhanced {
-                    1.0
-                } else {
-                    night_scale(lighting.night, lighting.atmosphere_brightness)
-                })
-            .extend(if lighting.classic && !enhanced {
                 1.0
             } else {
-                0.0
+                night_scale(lighting.night, lighting.atmosphere_brightness)
             })
-            .to_array(),
+                .extend(if lighting.classic && !enhanced {
+                    1.0
+                } else {
+                    0.0
+                })
+                .to_array(),
             light_grid: grid,
             sky: [
                 lighting.sun_azimuth,
@@ -1218,9 +1218,9 @@ impl Renderer {
                         }
                         if mat.alpha == AlphaMode::Blend
                             && inst
-                                .slot_alpha
-                                .get(*slot as usize)
-                                .is_some_and(|a| *a < 1.0 / 512.0)
+                            .slot_alpha
+                            .get(*slot as usize)
+                            .is_some_and(|a| *a < 1.0 / 512.0)
                         {
                             continue;
                         }
@@ -1341,6 +1341,12 @@ impl Renderer {
         }
         self.upload_draw_list(scene, &list);
         stage(self, "upload", "mirror.upload");
+        // GPU profiling: the main pass is cut into one pass per run of the same kind of draw
+        // (opaque, alpha test, blended, surface depth), each timed on its own
+        let split_runs = (self.profiling || ::legacy_config::env::var_os("OMSI_PROFILE_GPU").is_some())
+            && with_overlays
+            && !main_batches.is_empty();
+        let mut run_ranges: Vec<(usize, usize, &'static str)> = Vec::new();
         let main_bundles = if ::legacy_config::env::var_os("OMSI_NO_BUNDLES").is_none() {
             let pp = self.main_pass(enhanced, reflection_frame);
             let format = if masked_frame {
@@ -1348,16 +1354,50 @@ impl Renderer {
             } else {
                 self.format
             };
-            record_bundles(
-                &self.device,
-                self.encoding_pool.as_ref(),
-                scene,
-                &main_batches,
-                pp,
-                scene.camera_bind_group.as_ref().expect("camera bind group"),
-                format,
-                self.options.msaa,
-            )
+            if split_runs {
+                let run_label = |b: &Batch| -> &'static str {
+                    match b.pipe / 4 {
+                        PIPE_OPAQUE => "main: opaque",
+                        PIPE_ALPHA_TEST => "main: alpha test",
+                        PIPE_SURFACE_DEPTH => "main: surface depth",
+                        _ => "main: blended",
+                    }
+                };
+                let mut out: Vec<wgpu::RenderBundle> = Vec::new();
+                let mut s0 = 0;
+                while s0 < main_batches.len() {
+                    let label = run_label(&main_batches[s0]);
+                    let mut e0 = s0 + 1;
+                    while e0 < main_batches.len() && run_label(&main_batches[e0]) == label {
+                        e0 += 1;
+                    }
+                    let first = out.len();
+                    out.extend(record_bundles(
+                        &self.device,
+                        self.encoding_pool.as_ref(),
+                        scene,
+                        &main_batches[s0..e0],
+                        pp,
+                        scene.camera_bind_group.as_ref().expect("camera bind group"),
+                        format,
+                        self.options.msaa,
+                    ));
+                    run_ranges.push((first, out.len(), label));
+                    s0 = e0;
+                }
+                out
+            } else {
+                record_bundles(
+                    &self.device,
+                    self.encoding_pool.as_ref(),
+                    scene,
+                    &main_batches,
+                    pp,
+                    scene.camera_bind_group.as_ref().expect("camera bind group"),
+                    format,
+                    self.options.msaa,
+                )
+            }
         } else {
             Vec::new()
         };
@@ -1456,7 +1496,7 @@ impl Renderer {
                 SPOT_NEAR,
                 pose.far,
             )
-            .to_cols_array_2d();
+                .to_cols_array_2d();
             self.queue
                 .write_buffer(&self.spot_cam_bufs[k], 0, bytemuck::bytes_of(&cu_spot));
             let tile = self.spot_tile;
@@ -1691,9 +1731,12 @@ impl Renderer {
             && !single
             && prepass_on
             && ::legacy_config::env::var_os("OMSI_NO_MSAA_PREPASS").is_none();
-        let parts = if !cfg!(any(target_os = "macos", target_os = "ios"))
+        let by_run = run_ranges.len() >= 2 && run_ranges.len() <= 40;
+        let parts = if by_run {
+            run_ranges.len()
+        } else if !cfg!(any(target_os = "macos", target_os = "ios"))
             && main_bundles.len() >= 2
-            && ::legacy_config::env::var_os("OMSI_NO_MAIN_SPLIT").is_none()
+            && ::legacy_config::env::var_os("OMSI_MAIN_SPLIT").is_some()
         {
             main_bundles.len().min(2)
         } else {
@@ -1798,6 +1841,20 @@ impl Renderer {
                 },
             });
             let per_part = main_bundles.len().div_ceil(parts.max(1));
+            let part_range = |g: usize| -> (usize, usize) {
+                if by_run {
+                    (run_ranges[g].0, run_ranges[g].1)
+                } else {
+                    (g * per_part, ((g + 1) * per_part).min(main_bundles.len()))
+                }
+            };
+            let part_label = |g: usize| -> &'static str {
+                if by_run {
+                    run_ranges[g].2
+                } else {
+                    "main part"
+                }
+            };
             let sky_clear = wgpu::LoadOp::Clear(wgpu::Color {
                 r: sky.x as f64,
                 g: sky.y as f64,
@@ -1866,7 +1923,7 @@ impl Renderer {
                             }),
                             stencil_ops: None,
                         }),
-                        timestamp_writes: pass_timer(tset.as_ref(), &mut timed, "main part"),
+                        timestamp_writes: pass_timer(tset.as_ref(), &mut timed, part_label(g)),
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
@@ -1884,14 +1941,12 @@ impl Renderer {
                             pass.draw_indexed(0..self.sky_mesh.2, 0, 0..1);
                         }
                     }
-                    pass.execute_bundles(
-                        main_bundles[g * per_part..((g + 1) * per_part).min(main_bundles.len())]
-                            .iter(),
-                    );
+                    let (b0, b1) = part_range(g);
+                    pass.execute_bundles(main_bundles[b0..b1].iter());
                 }
                 main_parts.push(part);
             }
-            let tail = (parts - 1) * per_part;
+            let tail = part_range(parts - 1).0;
             let main_attachment = Some(wgpu::RenderPassColorAttachment {
                 view: draw_view,
                 depth_slice: None,
@@ -1937,7 +1992,13 @@ impl Renderer {
                 timestamp_writes: pass_timer(
                     tset.as_ref(),
                     &mut timed,
-                    if with_overlays { "main" } else { "mirror" },
+                    if by_run {
+                        part_label(parts - 1)
+                    } else if with_overlays {
+                        "main"
+                    } else {
+                        "mirror"
+                    },
                 ),
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -1973,17 +2034,17 @@ impl Renderer {
         }
         let puddles_on = puddles_wanted
             && main_batches
-                .iter()
-                .any(|b| scene.materials[b.material as usize].uniform.params2[2] > 0.0)
+            .iter()
+            .any(|b| scene.materials[b.material as usize].uniform.params2[2] > 0.0)
             && self.prepare_puddle_reflections(
-                width,
-                height,
-                camera,
-                aspect,
-                render_projection,
-                &cu,
-                lighting,
-            );
+            width,
+            height,
+            camera,
+            aspect,
+            render_projection,
+            &cu,
+            lighting,
+        );
         if puddles_on {
             self.encode_puddle_reflections(
                 &mut encoder,

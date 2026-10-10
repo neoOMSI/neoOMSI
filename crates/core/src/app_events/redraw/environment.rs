@@ -95,9 +95,7 @@ impl App {
             }
             vehicles.extend(self.remotes.remotes.values().map(|r| r.vehicle()));
             let __tc = Instant::now();
-            if self.total_frames % 2 == 0 || scene.lights.is_empty() || self.editor.as_ref().is_some_and(|e| e.selected.is_some()) {
-                lights::collect(w, scene, &daylight, cam.position, &vehicles);
-            }
+            lights::collect(w, scene, &daylight, cam.position, &vehicles);
             *self.profile.entry("lights.collect").or_default() += __tc.elapsed().as_secs_f64();
             for (name, secs) in lights::COLLECT_NAMES.iter().zip(lights::take_collect_times()) {
                 *self.profile.entry(*name).or_default() += secs;

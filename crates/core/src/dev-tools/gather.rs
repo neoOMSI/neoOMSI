@@ -1,6 +1,5 @@
 #![allow(unused_imports)]
 use super::types::*;
-use ::simulation::collision::Obb;
 
 impl crate::App {
     pub(crate) fn dev_gather(&self) -> Extra {
@@ -257,7 +256,35 @@ impl crate::App {
             lan,
             tours,
             quicksave,
-            profile: self.profile.iter().map(|(k, v)| (*k, *v)).collect(),
+            profile: {
+                let mut p: Vec<(&'static str, f64)> =
+                    self.profile.iter().map(|(k, v)| (*k, *v)).collect();
+                // the renderer's own CPU stages, so that "render" can be taken apart
+                if let Some(r) = self.renderer.as_ref() {
+                    for (k, v) in r.stats.borrow().iter() {
+                        let name: &'static str = match *k {
+                            "setup" => "render.setup",
+                            "prepare" => "render.prepare",
+                            "shadow items" => "render.shadow items",
+                            "cull" => "render.cull",
+                            "items" => "render.items",
+                            "upload" => "render.upload",
+                            "bundles" => "render.bundles",
+                            "encode" => "render.encode",
+                            "finish" => "render.finish",
+                            "submit" => "render.submit",
+                            "finish.shadow" => "render.finish.shadow",
+                            "finish.prepass" => "render.finish.prepass",
+                            "finish.main" => "render.finish.main",
+                            "finish.wait shadow" => "render.finish.wait shadow",
+                            "finish.wait prepass" => "render.finish.wait prepass",
+                            other => other,
+                        };
+                        p.push((name, *v));
+                    }
+                }
+                p
+            },
             frames: self.total_frames,
             traffic: self.traffic.as_ref().map(|t| TrafficPerf {
                 cars: t.cars.len(),

@@ -250,6 +250,27 @@ fn build_report(rec: &Recording, snap: &Snapshot, extra: &Extra) -> String {
         over(50.0),
         over(100.0)
     );
+    {
+        let edges = [4.5f32, 8.0, 11.0, 15.0, 19.0, 25.0, 31.0, 38.0, 46.0, f32::MAX];
+        let mut hist = [0usize; 10];
+        for d in &sorted {
+            let i = edges.iter().position(|e| *d <= *e).unwrap_or(9);
+            hist[i] += 1;
+        }
+        let mut lo = 0.0f32;
+        let mut parts: Vec<String> = Vec::new();
+        for (i, e) in edges.iter().enumerate() {
+            if hist[i] > 0 {
+                if *e == f32::MAX {
+                    parts.push(format!(">{lo:.0}: {}", hist[i]));
+                } else {
+                    parts.push(format!("{lo:.0}-{e:.0}: {}", hist[i]));
+                }
+            }
+            lo = *e;
+        }
+        let _ = writeln!(o, "Frame histogram (ms: frames): {}", parts.join(", "));
+    }
 
     struct Row {
         name: &'static str,

@@ -315,7 +315,14 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
     let a = max(sf.rough * sf.rough, 0.3);
     let nv = max(dot(n, v), 1e-4);
     let base = (u32(y) * side + u32(x)) * CELL_CAP;
+    // far from the eye a light's shadow ray is not worth its cost, and a pixel takes only the first few
+    // lights that reach it
+    let cam_far = distance(p, camera.cam_pos.xyz) > 45.0;
+    var used = 0u;
     for (var j = 0u; j < CELL_CAP; j = j + 1u) {
+        if (used >= 10u) {
+            break;
+        }
         let li = grid[base + j];
         if (li == 0xffffffffu) {
             break;
@@ -394,10 +401,13 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         if (l.extra.z >= 199.0) {
             e = e * smoothstep(0.00015, 0.004, e);
         }
-        if (e < 0.0003 || (!thin && dot(n, ld) <= 0.0)) {
+        if (e < 0.001 || (!thin && dot(n, ld) <= 0.0)) {
             continue;
         }
-        e = e * light_shadow(l, p + n * 0.08);
+        used = used + 1u;
+        if (!cam_far || e > 0.05) {
+            e = e * light_shadow(l, p + n * 0.08);
+        }
         if (e <= 0.0) {
             continue;
         }
@@ -847,7 +857,10 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
                 shadow = sun_shadow_soft(in.world, n, thin);
             }
         }
-        let e_sun = enh.sun.rgb * shadow * cloud_sun_visibility(in.world);
+        var e_sun = vec3<f32>(0.0);
+        if (shadow > 0.0) {
+            e_sun = enh.sun.rgb * shadow * cloud_sun_visibility(in.world);
+        }
         if (thin) {
             // foliage: a crown of leaves facing every way, whose normals OMSI points up
             // only to light it evenly - lit by the sun from any side (the shadow map
