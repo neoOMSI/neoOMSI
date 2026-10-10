@@ -880,6 +880,16 @@ impl Traffic {
         self.target = target;
     }
 
+    /// Set the options' `[AIUnschedFactor]` (the share of the random traffic).
+    pub fn set_unsched_factor(&mut self, factor: f32) {
+        self.unsched_factor = factor;
+    }
+
+    /// Set the options' `[AIMaxCountScheduled]` (0 = no limit).
+    pub fn set_max_scheduled(&mut self, max: u32) {
+        self.max_scheduled = max;
+    }
+
     /// The per-frame view inputs the population and lighting use.
     pub fn set_viewer(&mut self, viewer: Option<Viewer>) {
         self.viewer = viewer;

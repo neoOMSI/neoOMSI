@@ -142,7 +142,7 @@ fn subs_of(host: &Host, file: &std::sync::Arc<serde_json::Value>, g: &OptGroup) 
 
     if g.rows.iter().any(|r| r.kind == OptKind::Pads) {
         subs.extend(
-            crate::lab_pads::device_tabs(host.pads, host.root)
+            crate::lab_pads::device_tabs(host.pads, host.root, &host.keys)
                 .into_iter()
                 .map(|(t, r)| (t.to_string(), r)),
         );

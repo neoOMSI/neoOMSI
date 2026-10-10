@@ -10,12 +10,14 @@ use ab_glyph::{Font, FontVec, PxScale, ScaleFont, VariableFont};
 use ::render::{Renderer, Scene, TextureId};
 
 mod frame;
+mod infobar;
 #[path = "../pause-menu/mod.rs"]
 mod pause_menu;
 mod loading;
 mod run_report;
 mod shapes;
 mod style;
+mod timetable;
 #[cfg(test)]
 mod tests;
 mod text;
@@ -116,6 +118,7 @@ pub struct Ui {
     pub world_sub_rc: Vec<[f32; 4]>,
     pub world_scroll: usize,
     pub world_pos: f32,
+    world_held: Option<usize>,
     pub world_bar: Option<([f32; 4], [f32; 4])>,
     pub world_bar_grab: Option<f32>,
     pub world_first: usize,

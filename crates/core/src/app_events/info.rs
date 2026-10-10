@@ -92,48 +92,89 @@ pub(super) fn info_line(
     duty: Option<&schedule::PlayerDuty>,
     passengers: Option<usize>,
 ) -> String {
+    let on = |k: &str| ::config::get_bool("ui", k).unwrap_or(true);
     let t = clock.time;
-    let mut parts = vec![format!(
-        "{:02}:{:02}:{:02}",
-        ((t / 3600.0) as i64).rem_euclid(24),
-        ((t % 3600.0) / 60.0) as i64,
-        (t % 60.0) as i64
-    )];
-    if let Some(p) = player {
+    let mut parts: Vec<String> = Vec::new();
+    if on("info_time") {
         parts.push(format!(
-            "{:.0} km/h",
-            p.vehicle.physics.velocity_kmh().abs()
+            "{:02}:{:02}:{:02}",
+            ((t / 3600.0) as i64).rem_euclid(24),
+            ((t % 3600.0) / 60.0) as i64,
+            (t % 60.0) as i64
         ));
-        let (outside, inside) = vehicle_temperatures(p);
-        parts.push(format!("Ext. {:.0} °C / Int. {:.0} °C", outside, inside));
-        if let Some(tank) = p.vehicle.var("tank_percent").filter(|v| v.is_finite()) {
-            parts.push(format!("Fuel {:.0} %", (tank * 100.0).round()));
+    }
+    if let Some(p) = player {
+        if on("info_speed") {
+            parts.push(format!(
+                "{:.0} km/h",
+                p.vehicle.physics.velocity_kmh().abs()
+            ));
         }
-        if let Some(n) = passengers {
-            parts.push(passengers_aboard(n));
+        if on("info_temp") {
+            let (outside, inside) = vehicle_temperatures(p);
+            parts.push(format!(
+                "{} {:.0} °C / {} {:.0} °C",
+                ::user_interface::tr("ingame.infobar.outside"),
+                outside,
+                ::user_interface::tr("ingame.infobar.inside"),
+                inside
+            ));
         }
-        if let Some(d) = duty {
-            if let Some(trip) = d.trips.get(d.trip_index) {
-                let line = if trip.line.trim().is_empty() {
-                    d.line.trim()
-                } else {
-                    trip.line.trim()
-                };
-                parts.push(format!("{line} › {}", trip.terminus.trim()));
-                if let Some(s) = trip.stops.get(d.next_stop) {
-                    parts.push(format!("Next stop: {}", s.name.trim()));
-                }
-                let delay = p.vehicle.host.tt_delay;
+        if on("info_fuel") {
+            if let Some(tank) = p.vehicle.var("tank_percent").filter(|v| v.is_finite()) {
                 parts.push(format!(
-                    "{}{}:{:02}",
-                    if delay < 0.0 { "−" } else { "+" },
-                    (delay.abs() / 60.0) as i64,
-                    (delay.abs() % 60.0) as i64
+                    "{} {:.0} %",
+                    ::user_interface::tr("ingame.infobar.fuel"),
+                    (tank * 100.0).round()
                 ));
             }
         }
+        if on("info_pax") {
+            if let Some(n) = passengers {
+                parts.push(passengers_aboard(n));
+            }
+        }
+        if let Some(d) = duty {
+            if let Some(trip) = d.trips.get(d.trip_index) {
+                if on("info_line") {
+                    let line = if trip.line.trim().is_empty() {
+                        d.line.trim()
+                    } else {
+                        trip.line.trim()
+                    };
+                    parts.push(format!("{line} › {}", trip.terminus.trim()));
+                }
+                if on("info_next") {
+                    if let Some(s) = trip.stops.get(d.next_stop) {
+                        parts.push(format!(
+                            "{}: {}",
+                            ::user_interface::tr("ingame.infobar.next_stop"),
+                            s.name.trim()
+                        ));
+                    }
+                }
+                if on("info_delay") {
+                    let delay = p.vehicle.host.tt_delay;
+                    // the interface colours the cell by its first char: L late, E early, O on time
+                    let tone = if delay > 59.0 {
+                        'L'
+                    } else if delay < -59.0 {
+                        'E'
+                    } else {
+                        'O'
+                    };
+                    parts.push(format!(
+                        "\u{1e}{tone}{}{}:{:02}",
+                        if delay < 0.0 { "−" } else { "+" },
+                        (delay.abs() / 60.0) as i64,
+                        (delay.abs() % 60.0) as i64
+                    ));
+                }
+            }
+        }
     }
-    parts.join("   ·   ")
+    // the parts are told apart by the interface, which draws each as its own cell
+    parts.join("\u{1f}")
 }
 
 /// `n` with the word for a passenger in the interface's language (singular for one; both
@@ -141,7 +182,11 @@ pub(super) fn info_line(
 pub(super) fn passengers_aboard(n: usize) -> String {
     format!(
         "{n} {}",
-        ::user_interface::tr(if n == 1 { "Passenger" } else { "Passengers" })
+        ::user_interface::tr(if n == 1 {
+            "ingame.infobar.passenger"
+        } else {
+            "ingame.infobar.passengers"
+        })
     )
 }
 

@@ -531,6 +531,8 @@ pub(crate) fn make_app(
         game_menu: None,
         lab_menu: None,
         lab_map_direct: false,
+        restart_pending: false,
+        restart_prompt: None,
         lab_list: None,
         lab_load: None,
         lab_place: None,

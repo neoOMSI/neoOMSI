@@ -504,6 +504,14 @@ pub(crate) fn toggle_now(app: Option<&App>, id: &str) -> Option<bool> {
         "blinker_cancel" => ::config::get_bool("controls", "blinker_cancel").unwrap_or(true),
         "steer_center" => ::config::get_bool("controls", "steer_center").unwrap_or(true),
         "fps" => ::config::get_bool("ui", "show_fps").unwrap_or(false),
+        "info_time" => ::config::get_bool("ui", "info_time").unwrap_or(true),
+        "info_speed" => ::config::get_bool("ui", "info_speed").unwrap_or(true),
+        "info_temp" => ::config::get_bool("ui", "info_temp").unwrap_or(true),
+        "info_fuel" => ::config::get_bool("ui", "info_fuel").unwrap_or(true),
+        "info_pax" => ::config::get_bool("ui", "info_pax").unwrap_or(true),
+        "info_line" => ::config::get_bool("ui", "info_line").unwrap_or(true),
+        "info_next" => ::config::get_bool("ui", "info_next").unwrap_or(true),
+        "info_delay" => ::config::get_bool("ui", "info_delay").unwrap_or(true),
         "auto_ibis" => ::config::get_bool("gameplay", "auto_ibis").unwrap_or(false),
         "time_sync" => ::config::get_bool("gameplay", "time_sync").unwrap_or(false),
         "metar_sync" => ::config::get_bool("gameplay", "metar_sync").unwrap_or(false),
@@ -567,7 +575,57 @@ pub(crate) fn toggle_now(app: Option<&App>, id: &str) -> Option<bool> {
     })
 }
 
+pub(crate) const RESTART_KEYS: &[&str] = &[
+    "graphics", "graphics_api", "msaa", "render_scale", "anisotropy", "shadow_size", "clouds", "map_detail",
+    "view_distance", "mirror_size", "texture_memory", "texture_compression", "vr", "vr_scale",
+    "vr_head_smoothing_ms", "vr_mirror_rate", "vr_desktop_mirror", "pax_models", "ai_max_parked",
+];
+
+pub(crate) fn apply_live_settings(app: &mut App) {
+    let max_obj_dist = match ::config::get_float("graphics", "max_obj_dist").unwrap_or(-1.0) as f32 {
+        d if d >= 0.0 => d,
+        _ => ::config::get_float("graphics", "view_distance")
+            .filter(|v| *v > 0.0)
+            .map(|v| v as f32)
+            .unwrap_or(900.0),
+    };
+    if let Some(r) = app.renderer.as_mut() {
+        r.options.ssao = ::config::get_bool("graphics", "ssao").unwrap_or(true);
+        r.options.reflections = ::config::get_bool("graphics", "reflections").unwrap_or(true);
+        r.options.omsi_shadow_casters = ::config::get_string("graphics", "shadow_casters").as_deref() == Some("omsi");
+        r.options.min_obj_size = ::config::get_float("graphics", "min_obj_size").unwrap_or(0.013) as f32;
+        r.options.max_obj_dist = max_obj_dist;
+    }
+    if let Some(p) = app.player.as_mut() {
+        p.momentary_gears = ::config::get_bool("gameplay", "momentary_gears").unwrap_or(false);
+        p.vehicle.host.wear_lifespan = [1.5e6, 0.01, 0.1, 1.0, 10.0]
+            [::config::get_int("gameplay", "maintenance").unwrap_or(0).clamp(0, 4) as usize];
+    }
+    if let Some(t) = app.traffic.as_mut() {
+        t.set_unsched_factor(::config::get_float("ai", "unsched_factor").unwrap_or(1.0) as f32);
+        t.set_max_scheduled(
+            ::config::get_int("ai", "max_scheduled")
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or(0),
+        );
+    }
+    if let Some(n) = app.navigator.as_mut() {
+        n.corner = ::config::get_string("ui", "navigator_corner").unwrap_or_else(|| "bottom-left".into());
+    }
+}
+
 pub(crate) fn toggle_set(mut app: Option<&mut App>, id: &str, on: bool) -> Option<(&'static str, String)> {
+    let out = toggle_set_inner(app.as_deref_mut(), id, on);
+    if let Some(app) = app {
+        if RESTART_KEYS.contains(&id) {
+            app.restart_pending = true;
+        }
+        apply_live_settings(app);
+    }
+    out
+}
+
+fn toggle_set_inner(mut app: Option<&mut App>, id: &str, on: bool) -> Option<(&'static str, String)> {
     match id {
         "navigator" => {
             if let Some(app) = app.as_deref_mut().filter(|a| a.vr_active()) {
@@ -754,6 +812,11 @@ pub(crate) fn toggle_set(mut app: Option<&mut App>, id: &str, on: bool) -> Optio
         }
         "fps" => {
             ::config::set_setting("ui", "show_fps", on);
+            let _ = ::config::save();
+            None
+        }
+        id @ ("info_time" | "info_speed" | "info_temp" | "info_fuel" | "info_pax" | "info_line" | "info_next" | "info_delay") => {
+            ::config::set_setting("ui", id, on);
             let _ = ::config::save();
             None
         }

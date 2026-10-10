@@ -158,11 +158,38 @@ impl App {
         }
     }
 
+    pub(crate) fn restart_game(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        game_lists::flush_settings(true);
+        let Some(file) = self.save_last_situation() else {
+            self.service_msg = Some(("The game cannot be restarted here".into(), 5.0));
+            return false;
+        };
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
+        let mut cmd = std::process::Command::new(exe);
+        game_link::unlinked(&mut cmd);
+        cmd.arg("--root")
+            .arg(&self.args.root)
+            .arg("--no-menu")
+            .arg("--situation")
+            .arg(&file);
+        if let Err(e) = cmd.spawn() {
+            self.service_msg = Some((format!("Could not start the game again: {e}"), 5.0));
+            return false;
+        }
+        self.game_menu = None;
+        self.lab_menu = None;
+        self.finish_session();
+        platform::exit(event_loop);
+        true
+    }
+
     pub(crate) fn quick_save(&mut self) {
         let (Some(w), Some(cam)) = (self.world.as_ref(), self.camera.as_ref()) else {
             return;
         };
-        let dir = crate::startup::content_dir()
+        let dir = content_dir()
             .unwrap_or_else(|| self.args.root.clone())
             .join("Situations");
         let _ = std::fs::create_dir_all(&dir);

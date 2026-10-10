@@ -289,11 +289,22 @@ message MinimapEntry {
 }
 
 // In world metres.
+message MinimapLane {
+  repeated Point points = 1;
+}
+
+// the lanes a trip drives, in order, by their place in `lanes`
+message MinimapTrip {
+  repeated uint32 lanes = 1;
+}
+
 message Minimap {
   string map = 1;
   repeated MinimapRoad roads = 2;
   repeated MinimapStop stops = 3;
   repeated MinimapEntry entries = 4;
+  repeated MinimapLane lanes = 5;
+  map<string, MinimapTrip> trips = 6;
 }
 
 message IbisArgs {

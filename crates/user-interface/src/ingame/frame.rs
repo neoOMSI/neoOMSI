@@ -65,6 +65,7 @@ impl Ui {
             world_sub_rc: Vec::new(),
             world_scroll: 0,
             world_pos: 0.0,
+            world_held: None,
             world_bar: None,
             world_bar_grab: None,
             world_first: 0,
@@ -287,111 +288,9 @@ impl Ui {
             ));
             l.place(scene, x, 10.0 * s);
         }
-        if let Some(info) = f.info.as_ref() {
-            self.text.flat = true;
-            let l = self.text.label(r, scene, info, (15.0 * s) as u32, WHITE);
-            let pad = 12.0 * s;
-            let (w, h) = (l.w as f32 + pad * 2.0, l.h as f32 + pad * 0.8);
-            let x = ((f.width - w) * 0.5).round();
-            let y = (8.0 * s).round();
-            let radius = ROW_R * s;
-            let card = [14, 14, 14, 245];
-            self.text.rounded(
-                r,
-                scene,
-                [x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0],
-                radius + 1.0,
-                BORDER,
-            );
-            self.text
-                .rounded(r, scene, [x, y, x + w, y + h], radius, card);
-            l.place(scene, x + pad, y + pad * 0.4);
-            self.text.flat = false;
-        }
+        self.draw_info_bar(r, scene, f, s);
         let tutorial_w = (420.0 * s).min(f.width * 0.42);
-        if let Some((title, rows)) = f.timetable.as_ref() {
-            let px = (14.0 * s) as u32;
-            let lh = px as f32 * 1.55;
-            let w = (340.0 * s).min(f.width * 0.4);
-            let shown = rows.len().min(((f.height * 0.7) / lh) as usize).max(1);
-            let next = rows.iter().position(|r| r.2 == 1).unwrap_or(0);
-            let first = next.saturating_sub(1).min(rows.len().saturating_sub(shown));
-            let h = lh * (shown as f32 + 1.6);
-            let beside = if f.tutorial.is_some() {
-                tutorial_w + 12.0 * s
-            } else {
-                0.0
-            };
-            let x = (f.width - w - 16.0 * s - beside).max(16.0 * s);
-            let y = corner_top;
-            self.text.flat = true;
-            let radius = CARD_R * s;
-            let card = [14, 14, 14, 245];
-            self.text.rounded(
-                r,
-                scene,
-                [x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0],
-                radius + 1.0,
-                BORDER,
-            );
-            self.text
-                .rounded(r, scene, [x, y, x + w, y + h], radius, card);
-            let t = self.text.label(
-                r,
-                scene,
-                &clip_to(&self.text, title, px as f32 * 1.1, w - 20.0 * s),
-                (px as f32 * 1.1) as u32,
-                WHITE,
-            );
-            t.place(scene, x + 10.0 * s, y + 6.0 * s);
-            let hair = (y + lh * 1.25).round();
-            self.text.rounded(
-                r,
-                scene,
-                [x, hair, x + w, hair + 1.0_f32.max(s).round()],
-                0.0,
-                BORDER,
-            );
-            let time_w = rows
-                .iter()
-                .map(|r| self.text.width(&r.1, px as f32))
-                .fold(0.0f32, f32::max)
-                .max(40.0 * s);
-            let name_x = x + 10.0 * s + time_w + 12.0 * s;
-            for (k, (name, time, state)) in rows.iter().skip(first).take(shown).enumerate() {
-                let ry = y + lh * (k as f32 + 1.3);
-                if *state == 1 {
-                    self.text.rounded(
-                        r,
-                        scene,
-                        [
-                            x + 4.0 * s,
-                            ry - 2.0 * s,
-                            x + w - 4.0 * s,
-                            ry + lh - 4.0 * s,
-                        ],
-                        ROW_R * s,
-                        ACCENT_SOFT,
-                    );
-                }
-                let color = match state {
-                    0 => MUTED,
-                    1 => [232, 160, 48, 0],
-                    _ => WHITE,
-                };
-                let tl = self.text.label(r, scene, time, px, color);
-                tl.place(scene, x + 10.0 * s, ry);
-                let nl = self.text.label(
-                    r,
-                    scene,
-                    &clip_to(&self.text, name, px as f32, x + w - name_x - 10.0 * s),
-                    px,
-                    color,
-                );
-                nl.place(scene, name_x, ry);
-            }
-            self.text.flat = false;
-        }
+        self.draw_timetable(r, scene, f, s, corner_top, tutorial_w);
         if let Some((title, text, image, at, count)) = f.tutorial {
             let w = tutorial_w;
             let x = f.width - w - 16.0 * s;

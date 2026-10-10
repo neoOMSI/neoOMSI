@@ -1,5 +1,5 @@
 use crate::controllers::{self, Connected, Controllers, DeviceCfg, Func};
-use crate::game_lists::{Dropdown, HEADING, row};
+use crate::game_lists::{Dropdown, HEADING, KeyView, row};
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,6 +11,8 @@ static IMPORT_MSG: Mutex<Option<String>> = Mutex::new(None);
 static TABMAP: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 type Rows = Vec<(String, String)>;
+
+const LONG_LIST: usize = 8;
 
 fn connected(pads: Option<&Controllers>) -> Vec<Connected> {
     let Ok(mut g) = LIVE.lock() else {
@@ -61,6 +63,30 @@ pub(crate) fn axis_names(gamepad: bool) -> [String; 8] {
         (true, _) => String::new(),
         (false, _) => tl(&format!("pause.controls.axis.name.{i}")),
     })
+}
+
+pub(crate) fn button_label(n: usize, gamepad: bool) -> String {
+    const PAD: [&str; 6] = ["X", "A", "B", "Y", "LB", "RB"];
+    const DIRS: [&str; 4] = ["up", "right", "down", "left"];
+    let hats = controllers::HAT_BUTTONS..controllers::HAT_BUTTONS + 16;
+    if cfg!(windows) && hats.contains(&n) {
+        let (hat, dir) = ((n - hats.start) / 4, (n - hats.start) % 4);
+        let dir = tl(&format!("pause.controls.hat.{}", DIRS[dir]));
+        return if gamepad && hat == 0 {
+            ::i18n::translate("pause.controls.hat.dpad", &[("dir", &dir)])
+        } else {
+            ::i18n::translate("pause.controls.hat.hat", &[("n", &(hat + 1)), ("dir", &dir)])
+        };
+    }
+    if cfg!(windows) && gamepad {
+        if let Some(p) = PAD.get(n) {
+            return p.to_string();
+        }
+        if let Some(k) = ["view", "menu", "left_stick", "right_stick"].get(n.wrapping_sub(8)) {
+            return tl(&format!("pause.controls.pad.{k}"));
+        }
+    }
+    format!("{} {}", tl("pause.controls.button.name"), n + 1)
 }
 
 fn func_text(f: Option<(Func, bool)>) -> String {
@@ -218,7 +244,11 @@ pub(crate) fn rows(pads: Option<&Controllers>) -> Rows {
     out
 }
 
-pub(crate) fn device_tabs(pads: Option<&Controllers>, root: &Path) -> Vec<(&'static str, Rows)> {
+pub(crate) fn device_tabs(
+    pads: Option<&Controllers>,
+    root: &Path,
+    search: &KeyView,
+) -> Vec<(&'static str, Rows)> {
     let live = connected(pads);
     let devices = controllers::read_cfg();
     let sel = selected(&devices).unwrap_or(usize::MAX);
@@ -240,7 +270,7 @@ pub(crate) fn device_tabs(pads: Option<&Controllers>, root: &Path) -> Vec<(&'sta
                 });
             Some((
                 intern(&d.name),
-                device_rows(root, d, Some(fresh.as_ref().unwrap_or(dev))),
+                device_rows(root, d, Some(fresh.as_ref().unwrap_or(dev)), search),
             ))
         })
         .collect();
@@ -250,7 +280,7 @@ pub(crate) fn device_tabs(pads: Option<&Controllers>, root: &Path) -> Vec<(&'sta
     tabs
 }
 
-fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>) -> Rows {
+fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &KeyView) -> Rows {
     let mut out: Rows = vec![(
         row(
             "pause.controls.use.name",
@@ -346,7 +376,25 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>) -> Rows {
     let n = shown_buttons(d, dev.map_or(0, |c| c.buttons));
     if n > 0 {
         let names = names_of(root);
-        out.push(heading("pause.controls.buttons"));
+        let gamepad = dev.is_some_and(|c| c.gamepad);
+        out.push((
+            row("pause.controls.buttons", 'h', &tl("pause.controls.find_hint"), "", None),
+            HEADING.to_string(),
+        ));
+        let q = search.filter.trim().to_lowercase();
+        if n > LONG_LIST {
+            out.push((
+                row(
+                    "pause.controls.button_search",
+                    if search.searching { 'F' } else { 'f' },
+                    search.filter,
+                    "",
+                    None,
+                ),
+                "keysearch".to_string(),
+            ));
+        }
+        let before = out.len();
         for b in 0..n {
             let act = d.buttons.get(b).map(|x| x.0.trim()).unwrap_or("");
             let v = if act.is_empty() {
@@ -354,17 +402,23 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>) -> Rows {
             } else {
                 names.key_label(act)
             };
-            let mut r = row(
-                &format!("{} {}", tl("pause.controls.button.name"), b + 1),
-                'o',
-                &v,
-                "pause.controls.button.desc",
-                None,
-            );
+            let label = button_label(b, gamepad);
+            if n > LONG_LIST
+                && !q.is_empty()
+                && !label.to_lowercase().contains(&q)
+                && (act.is_empty() || !v.to_lowercase().contains(&q))
+            {
+                continue;
+            }
+            let mut r = row(&label, 'o', &v, "pause.controls.button.desc", None);
             if controllers::is_pressed(&d.name, b) {
                 r.push_str("\u{1f}\u{1f}\u{1f}\u{1f}1");
             }
             out.push((r, format!("pad_btn {b}")));
+        }
+        if out.len() == before {
+            let none = ::i18n::translate("pause.controls.no_match", &[("query", &search.filter.trim())]);
+            out.push((row(&none, 'i', "", "", None), "noop".to_string()));
         }
     }
     out
@@ -620,4 +674,27 @@ fn click_inner(pads: Option<&mut Controllers>, verb: &str, arg: &str) -> Option<
         _ => {}
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::button_label;
+
+    #[cfg(windows)]
+    #[test]
+    fn pad_buttons_have_the_launchers_names() {
+        let h = crate::controllers::HAT_BUTTONS;
+        assert_eq!(button_label(1, true), "A");
+        assert_eq!(button_label(4, true), "LB");
+        assert_eq!(button_label(9, true), "Menu");
+        assert_eq!(button_label(h, true), "D-pad up");
+        assert_eq!(button_label(h + 5, false), "Hat 2 right");
+        assert_eq!(button_label(6, true), "Button 7");
+    }
+
+    #[test]
+    fn other_buttons_are_numbered() {
+        assert_eq!(button_label(1, false), "Button 2");
+        assert_eq!(button_label(20, true), "Button 21");
+    }
 }

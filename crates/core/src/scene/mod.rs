@@ -103,6 +103,8 @@ mod crossing_tests;
 #[cfg(test)]
 mod detail_loading_tests;
 #[cfg(test)]
+mod object_tile_tests;
+#[cfg(test)]
 mod parity_acceptance_tests;
 #[cfg(test)]
 mod render_queue_tests;

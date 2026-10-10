@@ -26,21 +26,20 @@ pub fn export_glb(
     out: &Path,
 ) -> Result<()> {
     let textures = ::texture::TextureCache::new();
-    let dirs = vt.texture_dirs(root);
-    let (subst, scheme_dir): (
-        hashbrown::HashMap<String, String>,
-        Option<std::path::PathBuf>,
-    ) = match scheme {
-        Some(i) => vt.scheme_substitutions(i),
-        None => (vt.default_substitutions(root), None),
+    let look = |vt: &VehicleType, scheme: Option<usize>| {
+        let (subst, scheme_dir) = match scheme {
+            Some(i) => vt.scheme_substitutions(i),
+            None => (vt.default_substitutions(root), None),
+        };
+        let mut dirs = vt.texture_dirs(root);
+        if let Some(d) = scheme_dir {
+            dirs.insert(0, d);
+        }
+        let folders = dirs.iter().map(|d| d.to_string_lossy()).collect::<Vec<_>>().join("|");
+        (subst, dirs, folders)
     };
-    let mut dirs_all: Vec<&Path> = Vec::new();
-    if let Some(d) = &scheme_dir {
-        dirs_all.push(d.as_path());
-    }
-    dirs_all.extend(dirs.iter().map(|p| p.as_path()));
-    // textures by (lower-case) file name → (png bytes, has alpha)
-    let mut images: Vec<(Vec<u8>, bool)> = Vec::new();
+    // textures by (lower-case) file name → (encoded image, has alpha, its type)
+    let mut images: Vec<(Vec<u8>, bool, &str)> = Vec::new();
     let mut image_index: HashMap<String, Option<usize>> = HashMap::new();
     let mut materials: Vec<(Option<usize>, bool, [f32; 4])> = Vec::new(); // (image, blended, colour)
     let mut material_names: Vec<String> = Vec::new();
@@ -48,27 +47,26 @@ pub fn export_glb(
     let mut prims: Vec<Prim> = Vec::new();
     let mut skipped = 0;
     // the vehicle itself, then every coupled part (the rear of an articulated bus) at its
-    // offset from the front section
-    let mut parts: Vec<(
-        &VehicleType,
-        Vec<(glam::Mat4, &::simulation::vehicle::MeshProps, usize)>,
-    )> = Vec::new();
-    parts.push((
+    // offset from the front section, each in the scheme of its own number, as the game paints it
+    let mut parts = vec![(
         vt,
+        look(vt, scheme),
         (0..vt.meshes.len())
             .map(|i| (vehicle.mesh_local_transform(i), &vehicle.mesh_props[i], i))
-            .collect(),
-    ));
+            .collect::<Vec<_>>(),
+    )];
     for t in &vehicle.trailers {
         let offset = glam::Mat4::from_translation((t.position - vehicle.position).as_vec3());
         parts.push((
             &t.ty,
+            look(&t.ty, scheme.filter(|i| *i < t.ty.paint_schemes.len())),
             (0..t.ty.meshes.len())
                 .map(|i| (offset * t.mesh_local_transform(i), &t.mesh_props[i], i))
                 .collect(),
         ));
     }
-    for (vt, meshes) in &parts {
+    for (vt, (subst, dirs, folders), meshes) in &parts {
+        let dirs_all: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
         for (xf, props, i) in meshes.iter().copied() {
             let vm = &vt.meshes[i];
             let def = &vt.model.meshes[vm.def_index];
@@ -112,7 +110,7 @@ pub fn export_glb(
                     .max()
                     .unwrap_or(0);
                 let alpha_override = alpha_mode >= 2;
-                let key = format!("{}|{}", tex_name.to_ascii_lowercase(), alpha_mode);
+                let key = format!("{folders}|{}|{}", tex_name.to_ascii_lowercase(), alpha_mode);
                 let material = match material_index.get(&key) {
                     Some(m) => *m,
                     None => {
@@ -120,25 +118,18 @@ pub fn export_glb(
                         let img = if crate::scene::is_null_texture(&tex_name) {
                             None
                         } else {
-                            match image_index.get(&tex_name.to_ascii_lowercase()) {
+                            let image_key = format!("{folders}|{}", tex_name.to_ascii_lowercase());
+                            match image_index.get(&image_key) {
                                 Some(v) => *v,
                                 None => {
                                     let found =
                                         textures.get(&tex_name, &dirs_all).and_then(|img| {
-                                            let mut png = Vec::new();
-                                            let enc = image::codecs::png::PngEncoder::new(&mut png);
-                                            use image::ImageEncoder;
-                                            enc.write_image(
-                                                &img.rgba,
-                                                img.width,
-                                                img.height,
-                                                image::ExtendedColorType::Rgba8,
-                                            )
-                                            .ok()?;
-                                            images.push((png, img.has_alpha));
+                                            let (bytes, mime) =
+                                                preview_image(&img.rgba, img.width, img.height, img.has_alpha)?;
+                                            images.push((bytes, img.has_alpha, mime));
                                             Some(images.len() - 1)
                                         });
-                                    image_index.insert(tex_name.to_ascii_lowercase(), found);
+                                    image_index.insert(image_key, found);
                                     found
                                 }
                             }
@@ -266,9 +257,9 @@ pub fn export_glb(
         meshes.push(serde_json::json!({ "name": p.name, "primitives": [{ "attributes": { "POSITION": a_pos, "NORMAL": a_nrm, "TEXCOORD_0": a_uv }, "indices": a_idx, "material": p.material }] }));
     }
     let mut gltf_images = Vec::new();
-    for (png, _) in &images {
-        let v = push_view(&mut bin, png, None);
-        gltf_images.push(serde_json::json!({ "bufferView": v, "mimeType": "image/png" }));
+    for (bytes, _, mime) in &images {
+        let v = push_view(&mut bin, bytes, None);
+        gltf_images.push(serde_json::json!({ "bufferView": v, "mimeType": mime }));
     }
     let gltf_textures: Vec<serde_json::Value> = (0..images.len())
         .map(|i| serde_json::json!({ "source": i, "sampler": 0 }))
@@ -337,6 +328,34 @@ pub fn export_glb(
         file.len() as f64 / 1e6
     );
     Ok(())
+}
+
+const PREVIEW_SIZE: u32 = 1024;
+
+fn preview_image(rgba: &[u8], width: u32, height: u32, alpha: bool) -> Option<(Vec<u8>, &'static str)> {
+    use image::ImageEncoder;
+    let mut img = image::RgbaImage::from_raw(width, height, rgba.to_vec())?;
+    let longest = width.max(height);
+    if longest > PREVIEW_SIZE {
+        let scale = PREVIEW_SIZE as f32 / longest as f32;
+        let (w, h) = (
+            ((width as f32 * scale).round() as u32).max(1),
+            ((height as f32 * scale).round() as u32).max(1),
+        );
+        img = image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle);
+    }
+    let mut out = Vec::new();
+    if alpha {
+        image::codecs::png::PngEncoder::new(&mut out)
+            .write_image(&img, img.width(), img.height(), image::ExtendedColorType::Rgba8)
+            .ok()?;
+        return Some((out, "image/png"));
+    }
+    let rgb = image::DynamicImage::ImageRgba8(img).into_rgb8();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 88)
+        .write_image(&rgb, rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+        .ok()?;
+    Some((out, "image/jpeg"))
 }
 
 fn bytemuck_cast(v: &[[f32; 3]]) -> &[u8] {

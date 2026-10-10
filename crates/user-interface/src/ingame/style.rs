@@ -23,6 +23,18 @@ pub(super) const SOFT: [u8; 4] = [200, 200, 200, 0];
 pub(super) const MUTED: [u8; 4] = [142, 142, 142, 0];
 pub(super) const AMBER: [u8; 4] = [255, 200, 110, 0];
 
+/// The settings pages' neutral greys, after the launcher's.
+pub(super) const OPT_ROW: [u8; 4] = [24, 24, 26, 255];
+pub(super) const OPT_ROW_HOT: [u8; 4] = [36, 36, 40, 255];
+pub(super) const OPT_GROUP: [u8; 4] = [22, 22, 24, 255];
+pub(super) const OPT_GROUP_HOT: [u8; 4] = [32, 32, 35, 255];
+pub(super) const OPT_GROUP_ON: [u8; 4] = [42, 42, 46, 255];
+pub(super) const OPT_CARD: [u8; 4] = [18, 18, 20, 255];
+pub(super) const OPT_TRACK: [u8; 4] = [16, 16, 18, 255];
+pub(super) const OPT_LINE: [u8; 4] = [40, 40, 44, 255];
+pub(super) const OPT_FIELD: [u8; 4] = [30, 30, 32, 255];
+pub(super) const OPT_FIELD_HOT: [u8; 4] = [37, 37, 40, 255];
+
 /// The card's radius, a line's, and the inset of lines from the card's edge and of their
 /// text from the line's edge (all times the scale).
 pub(super) const CARD_R: f32 = 8.0;

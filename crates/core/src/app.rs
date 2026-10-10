@@ -107,6 +107,8 @@ pub(crate) struct App {
     pub(crate) game_menu: Option<usize>,
     pub(crate) lab_menu: Option<ui::PauseState>,
     pub(crate) lab_map_direct: bool,
+    pub(crate) restart_pending: bool,
+    pub(crate) restart_prompt: Option<Option<ui::PauseState>>,
     /// The list a vehicle page row opened, shown as a select dialog: the list, its kind and
     /// the list index of each option.
     /// The action of the vehicle page that waits for the vehicle list.

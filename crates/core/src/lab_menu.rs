@@ -249,6 +249,7 @@ impl App {
             u.world_group = g;
             u.world_sub = 0;
             u.world_scroll = 0;
+            self.key_filter.clear();
             return;
         }
         if let Some(i) = hit(&u.world_sub_rc) {
@@ -261,6 +262,7 @@ impl App {
                 (u.world_sub + 1).min(tabs - 1)
             };
             u.world_scroll = 0;
+            self.key_filter.clear();
             return;
         }
         let Some(i) = hit(&u.world_rows_rc) else {
@@ -1130,7 +1132,85 @@ impl App {
         }
     }
 
+    pub(crate) fn restart_ask(&mut self, target: Option<PauseState>) {
+        self.restart_prompt = Some(target);
+        if let Some(u) = self.ui.as_mut() {
+            u.dialog = Some(Dialog::Confirm {
+                title: tl("pause.dialog.restart.title"),
+                text: tl("pause.dialog.restart.text"),
+                yes: tl("pause.dialog.restart.yes"),
+                no: tl("pause.dialog.restart.no"),
+            });
+        }
+    }
+
+    fn restart_answer(&mut self, event_loop: &ActiveEventLoop, now: bool) {
+        let Some(target) = self.restart_prompt.take() else {
+            return;
+        };
+        if let Some(u) = self.ui.as_mut() {
+            u.dialog = None;
+            u.dialog_under = None;
+        }
+        self.restart_pending = false;
+        if now && self.restart_game(event_loop) {
+            return;
+        }
+        match target {
+            Some(s) => self.lab_menu = Some(s),
+            None => self.close_game_menu(),
+        }
+    }
+
+    fn restart_gate(&mut self, before: Option<PauseState>) {
+        if !self.restart_pending || self.restart_prompt.is_some() {
+            return;
+        }
+        if before.and_then(|s| s.page) != Some(OPTIONS_PAGE) {
+            return;
+        }
+        let now = self.lab_menu;
+        if now.and_then(|s| s.page) != Some(OPTIONS_PAGE) {
+            self.lab_menu = before;
+            self.restart_ask(now);
+        }
+    }
+
     pub(crate) fn lab_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode) {
+        if self.restart_prompt.is_some() {
+            match code {
+                KeyCode::Enter | KeyCode::NumpadEnter => self.restart_answer(event_loop, true),
+                KeyCode::Escape => self.restart_answer(event_loop, false),
+                _ => {}
+            }
+            return;
+        }
+        let before = self.lab_menu;
+        self.lab_key_inner(event_loop, code);
+        self.restart_gate(before);
+    }
+
+    pub(crate) fn lab_click(&mut self, event_loop: &ActiveEventLoop) {
+        if self.restart_prompt.is_some() {
+            let (x, y) = self.cursor;
+            let hit = self.ui.as_ref().and_then(|u| {
+                u.dialog_rects
+                    .iter()
+                    .position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3])
+            });
+            match hit {
+                Some(0) => self.restart_answer(event_loop, true),
+                Some(1) => self.restart_answer(event_loop, false),
+                _ => {}
+            }
+            return;
+        }
+        let before = self.lab_menu;
+        self.lab_click_inner(event_loop);
+        self.restart_gate(before);
+    }
+
+    fn lab_key_inner(&mut self, event_loop: &ActiveEventLoop, code: KeyCode) {
         SYNC_NOW.with(|c| c.set(true));
         let n = self.lab_pages();
         let st = self.lab_menu.unwrap_or_default();
@@ -1272,7 +1352,7 @@ impl App {
         }
     }
 
-    pub(crate) fn lab_click(&mut self, event_loop: &ActiveEventLoop) {
+    fn lab_click_inner(&mut self, event_loop: &ActiveEventLoop) {
         SYNC_NOW.with(|c| c.set(true));
         let (x, y) = self.cursor;
         let st = self.lab_menu.unwrap_or_default();

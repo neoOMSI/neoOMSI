@@ -24,12 +24,10 @@ impl Ui {
         m: Metrics,
         tab: usize,
     ) -> f32 {
-        let Metrics { w, u, mx, line, .. } = m;
+        let Metrics { w, u, mx, .. } = m;
         self.lab_tabs.clear();
         let bar_h = (56.0 * u).round();
-        self.text.rounded(r, scene, [0.0, 0.0, w, bar_h], 0.0, [0, 0, 0, 200]);
-        self.text
-            .rounded(r, scene, [0.0, bar_h, w, bar_h + line], 0.0, BORDER);
+        self.text.rounded(r, scene, [0.0, 0.0, w, bar_h], 0.0, SIDEBAR);
         self.ensure_logo();
         if let Some((tex, iw, ih)) = self.logo_at(r, scene, (bar_h * 0.46).round()) {
             let (lw, lh) = (iw as f32, ih as f32);
@@ -70,7 +68,7 @@ impl Ui {
             let hv = self.ease((201, "hover", i), if hot && i != tab { 1.0 } else { 0.0 }, 8.0);
             let tv = self.easeq((201, "tab", i), if i == tab { 1.0 } else { 0.0 }, 7.0);
             if hv > 0.0 {
-                self.text.rounded(r, scene, rc, 0.0, fade(LIT, hv));
+                self.text.rounded(r, scene, rc, 0.0, fade([255, 255, 255, 8], hv));
             }
             let name = t(p.nav);
             let l = self.text.label(
@@ -78,7 +76,7 @@ impl Ui {
                 scene,
                 &name,
                 tpx,
-                mix(if hot { SOFT } else { MUTED }, WHITE, tv),
+                mix(if hot { WHITE } else { SOFT }, WHITE, tv),
             );
             l.place(scene, x + (widths[i] - l.w as f32) * 0.5, (bar_h - l.h as f32) * 0.5);
             self.lab_tabs.push(rc);

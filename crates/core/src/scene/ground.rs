@@ -220,6 +220,19 @@ impl World {
             .filter(|g| near - g < 3.0)
     }
 
+    /// Where object `id` of tile `group` stands: timetables name a stop by the index of its
+    /// tile in the `[map]` list, as ids repeat on maps joined from several.
+    pub fn object_on_tile(&self, group: i32, id: i64) -> Option<(DVec3, [f64; 3])> {
+        let tile = usize::try_from(group)
+            .ok()
+            .and_then(|i| self.global.raw_tiles.get(i))
+            .copied();
+        if let Some(p) = tile.and_then(|t| self.object_dups.lock().get(&(t, id)).copied()) {
+            return Some(p);
+        }
+        self.object_positions.lock().get(&id).copied()
+    }
+
     /// Where entry point `ep` stands (position, heading): its object, found on the tile
     /// the entry point names (global.cfg's `[entrypoints]` record holds the index of its
     /// tile in the `[map]` list, and the place within that tile). An object of that id on

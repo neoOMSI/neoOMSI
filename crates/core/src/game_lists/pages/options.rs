@@ -34,8 +34,8 @@ pub(crate) fn map_options_page(app: &App) -> Page {
         switch_row(
             Some(app),
             "navigator",
-            &tx("pause.options.group.map"),
-            &tx("pause.page.text.enables_disables_the_minimap"),
+            &tx("pause.options.map.navigator.name"),
+            &tx("pause.options.map.navigator.desc"),
         ),
         switch_row(
             Some(app),
@@ -71,7 +71,7 @@ pub(crate) fn map_options_page(app: &App) -> Page {
             &file,
             "navigator_corner",
             &tx("pause.options.map.navigator_corner.name"),
-            &tx("pause.options.later"),
+            "",
         ),
     ]
     .into_iter()
@@ -121,7 +121,7 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
             &tx("pause.page.text.boarding_at_the_rear_doors"),
             &tx("pause.page.text.passengers_who_need_no_ticket_from_the_driver_also_get_on_at_the_rear_doors"),
         ),
-        pick("maintenance", &tx("pause.options.gameplay.maintenance.name"), later),
+        pick("maintenance", &tx("pause.options.gameplay.maintenance.name"), ""),
         switch_row(
             Some(app),
             "coll_objects",
@@ -140,8 +140,8 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
             &tx("pause.options.gameplay.collision_pedestrians.name"),
             &tx("pause.options.gameplay.collision_pedestrians.desc"),
         ),
-        pick("ai_unsched_factor", &tx("pause.options.gameplay.ai_unsched_factor.name"), later),
-        pick("ai_max_scheduled", &tx("pause.options.gameplay.ai_max_scheduled.name"), later),
+        pick("ai_unsched_factor", &tx("pause.options.gameplay.ai_unsched_factor.name"), ""),
+        pick("ai_max_scheduled", &tx("pause.options.gameplay.ai_max_scheduled.name"), ""),
         pick("ai_max_parked", &tx("pause.options.gameplay.ai_max_parked.name"), later),
     ]
         .into_iter()
@@ -164,7 +164,7 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
             Some(app),
             "momentary_gears",
             &tx("pause.options.driving.momentary_gears.name"),
-            later,
+            &tx("pause.options.driving.momentary_gears.desc"),
         ),
         switch_row(
             Some(app),
@@ -464,9 +464,9 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
         pick(
             "shadow_casters",
             &tx("pause.options.graphics.shadow_casters.name"),
-            later,
+            "",
         ),
-        switch_row(Some(app), "ssao", &tx("pause.options.graphics.ssao.name"), later),
+        switch_row(Some(app), "ssao", &tx("pause.options.graphics.ssao.name"), ""),
         switch_row(
             Some(app),
             "reflections",
@@ -498,12 +498,12 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
         pick(
             "max_obj_dist",
             &tx("pause.options.graphics.max_obj_dist.name"),
-            later,
+            "",
         ),
         pick(
             "min_obj_size",
             &tx("pause.options.graphics.min_obj_size.name"),
-            later,
+            "",
         ),
         pick(
             "mirror_size",
@@ -826,41 +826,38 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
         vr.push(button(
             &tx("pause.options.vr.vr_nav_edit.name"),
             &tx("pause.options.button.open"),
-            desc,
+            &tx("pause.options.vr.vr_nav_edit.desc"),
             "vr_nav_edit",
         ));
-        for (id, label) in [
-            ("x", &tx("pause.options.vr.vr_nav_x.name")),
-            ("y", &tx("pause.options.vr.vr_nav_y.name")),
-            ("z", &tx("pause.options.vr.vr_nav_z.name")),
-            ("width", &tx("pause.options.vr.vr_nav_width.name")),
-        ] {
-            vr.extend(slider_row(Some(app), &format!("vr_nav_{id}"), label, desc, &cm));
-        }
-        for (id, label) in [
-            ("yaw", &tx("pause.options.vr.vr_nav_yaw.name")),
-            ("tilt", &tx("pause.options.vr.vr_nav_tilt.name")),
-            ("roll", &tx("pause.options.vr.vr_nav_roll.name")),
-        ] {
+        for id in ["x", "y", "z", "width"] {
             vr.extend(slider_row(
                 Some(app),
                 &format!("vr_nav_{id}"),
-                label,
-                desc,
+                &tx(&format!("pause.options.vr.vr_nav_{id}.name")),
+                &tx(&format!("pause.options.vr.vr_nav_{id}.desc")),
+                &cm,
+            ));
+        }
+        for id in ["yaw", "tilt", "roll"] {
+            vr.extend(slider_row(
+                Some(app),
+                &format!("vr_nav_{id}"),
+                &tx(&format!("pause.options.vr.vr_nav_{id}.name")),
+                &tx(&format!("pause.options.vr.vr_nav_{id}.desc")),
                 &|v| format!("{v:.0}°"),
             ));
         }
         vr.extend(slider_row(
             Some(app),
             "vr_nav_opacity",
-            &tx("pause.options.interface.ui_opacity.name"),
-            desc,
+            &tx("pause.options.vr.vr_nav_opacity.name"),
+            &tx("pause.options.vr.vr_nav_opacity.desc"),
             &pct,
         ));
         vr.push(button(
             &tx("pause.options.vr.vr_nav_reset.name"),
             &tx("pause.options.button.reset"),
-            desc,
+            &tx("pause.options.vr.vr_nav_reset.desc"),
             "vr_nav_reset",
         ));
     }

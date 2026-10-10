@@ -1,4 +1,34 @@
 {
+  "ingame": {
+    "navigator": {
+      "kmh": "km/h",
+      "off_route": "Abseits der Route",
+      "rerouting": "Route wird neu berechnet",
+      "recalculated": "Route neu berechnet",
+      "jam": "Stau",
+      "slow": "Langsam",
+      "map": "Karte",
+      "last_stop": "Endhaltestelle",
+      "on_time": "Pünktlich",
+      "days": {
+        "mon": "Mo",
+        "tue": "Di",
+        "wed": "Mi",
+        "thu": "Do",
+        "fri": "Fr",
+        "sat": "Sa",
+        "sun": "So"
+      }
+    },
+    "infobar": {
+      "outside": "Außen",
+      "inside": "Innen",
+      "fuel": "Tank",
+      "next_stop": "Nächste Haltestelle",
+      "passenger": "Fahrgast",
+      "passengers": "Fahrgäste"
+    }
+  },
   "pause": {
     "entry": {
       "admin": "Verwaltung",
@@ -42,10 +72,10 @@
         },
         "driver": {
           "desc": "Zeigt den Fahrer in den Außenansichten und in den Spiegeln",
-          "name": "Fahrer am Steuer (Außenansichten)"
+          "name": "Fahrer anzeigen (Außenansichten)"
         },
         "fov": {
-          "desc": "Der Blickwinkel der Ansichten aus dem Fahrzeug",
+          "desc": "Der Blickwinkel der Kameras im Inneren des Fahrzeugs",
           "name": "Sichtfeld"
         },
         "hands_in_cab": {
@@ -102,7 +132,7 @@
           "desc": "Welche Achsen des Head-Trackings umgekehrt werden"
         },
         "free_look": {
-          "desc": "Stelle den freien Blick, das Fadenkreuz und die Tastennamen ein"
+          "desc": "Stelle den freien Blick, das Fadenkreuz und die Namen der Bedienelemente ein"
         }
       },
       "controls": {
@@ -147,8 +177,8 @@
           "name": "Stärke des Gaspedals"
         },
         "steer_center": {
-          "desc": "Kleine Abweichungen von der Mittelstellung zählen als Geradeausfahrt",
-          "name": "Totzone der Lenkungsmitte"
+          "desc": "Kleine Abweichungen des Sticks von der Mittelstellung zählen als Geradeausfahrt",
+          "name": "Totzone des Gamepad-Sticks"
         },
         "stick_sens": {
           "desc": "Wie weit eine kleine Stick-Bewegung das Rad dreht; ein voll ausgelenkter Stick ergibt weiterhin vollen Einschlag",
@@ -269,7 +299,7 @@
         },
         "tooltips": {
           "desc": "Zeigt den Namen des Bedienelements, auf das der Mauszeiger oder die Bildschirmmitte zeigt",
-          "name": "Namen der Tasten"
+          "name": "Namen der Bedienelemente"
         }
       },
       "gameplay": {
@@ -365,8 +395,8 @@
           "name": "LED-Leuchten"
         },
         "led_mips": {
-          "desc": "Behält die Mipmaps der LED-Masken (weicher aus der Ferne)",
-          "name": "Mipmaps der LED-Masken"
+          "desc": "Wie stark die Punkte der LED-Zielanzeigen mit der Entfernung verwischen; bei 0 bleibt jeder Punkt scharf",
+          "name": "Weichheit der LED-Punkte"
         },
         "map_detail": {
           "name": "Kartendetails"
@@ -398,7 +428,7 @@
           "name": "Renderauflösung"
         },
         "shadow_casters": {
-          "name": "Schatten werfen"
+          "name": "Schatten werfen von"
         },
         "shadow_size": {
           "name": "Auflösung der Schattenkarte"
@@ -444,6 +474,7 @@
         "free_look": "Freier Blick",
         "gameplay": "Spielablauf",
         "graphics": "Grafik",
+        "info": "Infoleiste",
         "interface": "Oberfläche",
         "keybinds": "Tastenbelegung",
         "map": "Karte",
@@ -451,6 +482,40 @@
         "vr": "VR",
         "head_tracking": "Head-Tracking",
         "general": "Allgemein"
+      },
+      "info": {
+        "time": {
+          "desc": "Zeigt die Simulationszeit",
+          "name": "Uhrzeit"
+        },
+        "speed": {
+          "desc": "Zeigt die aktuelle Geschwindigkeit",
+          "name": "Geschwindigkeit"
+        },
+        "temp": {
+          "desc": "Zeigt die Außen- und Innentemperatur",
+          "name": "Temperatur"
+        },
+        "fuel": {
+          "desc": "Zeigt den Füllstand des Tanks",
+          "name": "Tankinhalt"
+        },
+        "pax": {
+          "desc": "Zeigt die Zahl der Fahrgäste an Bord",
+          "name": "Fahrgäste"
+        },
+        "line": {
+          "desc": "Zeigt die Linie und das Fahrtziel",
+          "name": "Linie und Ziel"
+        },
+        "next": {
+          "desc": "Zeigt den Namen der nächsten Haltestelle",
+          "name": "Nächste Haltestelle"
+        },
+        "delay": {
+          "desc": "Zeigt die Abweichung vom Fahrplan",
+          "name": "Verspätung"
+        }
       },
       "interface": {
         "chat": {
@@ -627,6 +692,86 @@
         }
       },
       "value": {
+        "boarding": {
+          "auto": "Bezahlen und Ticket nehmen",
+          "pay": "Fahrer verkauft das Ticket",
+          "walk": "Einfach einsteigen"
+        },
+        "pax_motion": {
+          "natural": "Natürlich",
+          "omsi": "OMSI 2"
+        },
+        "maintenance": {
+          "0": "Unendlich (Kein Verschleiß)",
+          "1": "Sehr schlecht",
+          "2": "Schlecht",
+          "3": "Normal",
+          "4": "Gut"
+        },
+        "ai_max_scheduled": {
+          "0": "Alle",
+          "10": "Höchstens 10",
+          "25": "Höchstens 25",
+          "50": "Höchstens 50"
+        },
+        "ai_max_parked": {
+          "-1": "Keine",
+          "0": "Jeder Platz",
+          "35": "Höchstens 35",
+          "100": "Höchstens 100",
+          "250": "Höchstens 250"
+        },
+        "pax_models": {
+          "omsi": "OMSI 2",
+          "realistic": "Realistisch"
+        },
+        "shadow_casters": {
+          "all": "Jedes feste Mesh",
+          "omsi": "OMSI 2"
+        },
+        "map_detail": {
+          "-1": "OMSI-Einstellung",
+          "0": "Niedrig",
+          "1": "Normal",
+          "2": "Voll",
+          "255": "Alle erstellten Stufen"
+        },
+        "view_distance": {
+          "0": "Standard (900 m)",
+          "600": "600 m – am schnellsten"
+        },
+        "max_obj_dist": {
+          "-1": "Automatisch"
+        },
+        "min_obj_size": {
+          "0_005": "Alle",
+          "0_013": "Normal",
+          "0_02": "Weniger (schneller)",
+          "0_03": "Wenige (am schnellsten)"
+        },
+        "texture_memory": {
+          "0": "Automatisch"
+        },
+        "max_fps": {
+          "0": "Bildwiederholrate des Bildschirms",
+          "1000": "Unbegrenzt"
+        },
+        "pax_voices": {
+          "all": "Begrüßungen und Tickets",
+          "tickets": "Nur das gewünschte Ticket",
+          "off": "Stumm"
+        },
+        "navigator_corner": {
+          "top-left": "Oben links",
+          "top-right": "Oben rechts",
+          "bottom-left": "Unten links",
+          "bottom-right": "Unten rechts"
+        },
+        "window_mode": {
+          "windowed": "Fenster",
+          "borderless": "Rahmenlos",
+          "fullscreen": "Vollbild"
+        },
         "post_aa": {
           "fxaa": "FXAA",
           "off": "Aus"
@@ -660,7 +805,7 @@
         "run": "Ausführen"
       },
       "map": {
-        "nav": "Stadtkarte",
+        "nav": "Karte",
         "tour": "Linie und Tour"
       },
       "options": {
@@ -754,7 +899,7 @@
             "button": "Reparieren"
           },
           "reset_vehicle": {
-            "name": "Wieder auf die Räder stellen",
+            "name": "Aufrichten",
             "desc": "Stellt das Fahrzeug wieder aufrecht hin",
             "button": "Zurücksetzen"
           },
@@ -801,7 +946,7 @@
       "keys": {
         "load_error": "Die Tastenbelegung konnte nicht gelesen werden",
         "find": "Tastenbelegung suchen",
-        "group_driving": "Fahren und der Bus",
+        "group_driving": "Fahren und Bus",
         "group_vr": "Headset (VR)",
         "group_scripted": "Per Skript (dieses Fahrzeug)",
         "press_key": "Taste drücken...",
@@ -862,11 +1007,11 @@
         "the_kind_of_clouds_in_the_sky": "Die Art der Wolken am Himmel.",
         "none": "Keine",
         "few_clouds": "Wenige Wolken",
-        "scattered": "Aufgelockert",
+        "scattered": "Aufgelockerte Wolken",
         "broken": "Stark bewölkt",
         "overcast": "Bedeckt",
         "visibility": "Sichtweite",
-        "how_far_one_can_see_less_is_fog": "Wie weit du sehen kannst; weniger bedeutet mehr Nebel.",
+        "how_far_one_can_see_less_is_fog": "Wie weit du sehen kannst; niedrigere Werte bedeuten mehr Nebel.",
         "brightness": "Helligkeit",
         "brightness_of_the_custom_weather_lighting": "Helligkeit der Beleuchtung des eigenen Wetters.",
         "precipitation": "Niederschlag",
@@ -878,7 +1023,7 @@
         "wet_roads": "Nasse Straßen",
         "how_wet_the_roads_are_now_they_dry_in_the_sun_wet_in_the_rain": "Wie nass die Straßen gerade sind (sie trocknen in der Sonne und werden im Regen nass).",
         "snow_cover": "Schneedecke",
-        "snow_lying_on_the_world_and_ground": "Wie viel Schnee auf dem Boden und der Umgebung liegt.",
+        "snow_lying_on_the_world_and_ground": "Ob Schnee auf dem Boden und in der Umgebung liegt.",
         "snow_on_road": "Schnee auf der Straße",
         "treat_the_road_surface_as_snow_covered": "Behandelt die Fahrbahn als schneebedeckt.",
         "temperature": "Temperatur",
@@ -969,9 +1114,33 @@
       "button": {
         "name": "Taste",
         "desc": "Was diese Taste bewirkt."
+      },
+      "pressed": "Gedrückt",
+      "find_hint": "Drücke eine Taste am Controller, um sie hier zu finden",
+      "button_search": "Tasten suchen",
+      "no_match": "Keine Taste passt zu „{query}“",
+      "pad": {
+        "view": "Ansicht",
+        "menu": "Menü",
+        "left_stick": "Linker Stick (drücken)",
+        "right_stick": "Rechter Stick (drücken)"
+      },
+      "hat": {
+        "up": "oben",
+        "right": "rechts",
+        "down": "unten",
+        "left": "links",
+        "dpad": "Steuerkreuz {dir}",
+        "hat": "Coolie-Hat {n} {dir}"
       }
     },
     "dialog": {
+      "restart": {
+        "title": "Neustart erforderlich",
+        "text": "Damit deine Änderungen vollständig in Kraft gehen, musst du das Spiel neustarten",
+        "yes": "Neustarten",
+        "no": "Später"
+      },
       "place": {
         "models": "Modelle",
         "random_livery": "Zufällige Lackierung",
@@ -1025,10 +1194,10 @@
       "route_set": "Linie {line}",
       "route_number": "Liniennummer",
       "no_destinations": "Dieser Bus hat keine Betriebshofdatei (.hof) mit Zielen",
-      "no_routes": "Keine Linienummern in der Betriebshofdatei oder im Fahrplan",
+      "no_routes": "Keine Liniennummern in der Betriebshofdatei oder im Fahrplan",
       "no_hofs": "Dieser Bus hat keine Betriebshofdateien (.hof)",
-      "entry": "Zugang {number}",
-      "no_entries": "Diese Karte hat keine Zugangspunkte",
+      "entry": "Spawnpunkt {number}",
+      "no_entries": "Diese Karte hat keine Spawnpunkt",
       "maker_models": "{name}  ({count} Modelle)",
       "unknown_maker": "Unbekannter Hersteller",
       "no_numbers": "Dieser Bus hat keine Liste mit Wagennummern",
