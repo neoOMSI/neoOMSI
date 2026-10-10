@@ -539,6 +539,8 @@ impl App {
             ::config::get_float("graphics", "atmosphere_brightness").unwrap_or(1.0) as f32;
         lighting.html_glow = lights::screen_fx(0);
         lighting.html_light = lights::screen_fx(1);
+        lighting.nightmap_gain = lights::settings().nightmap_gain;
+        lighting.lightmap_gain = lights::settings().lightmap_gain;
         lighting.script_glow = lights::screen_fx(2);
         lighting.script_light = lights::screen_fx(3);
         let mut finish = false;

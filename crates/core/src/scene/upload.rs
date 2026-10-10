@@ -1,13 +1,6 @@
 use super::*;
 
 impl World {
-    /// Texture names (with their search folders) a prepared tile will ask for that are not
-    /// on the GPU yet.
-    ///
-    /// Runs on the loader thread. The GPU cache is only locked for two quick looks (which
-    /// types are there, then which of the found files are): the lookups themselves go to
-    /// the disk or into an archive the first time a name comes up, and the thread that
-    /// draws waited for them - a tile upload of the Ahlheim main station took 372 ms.
     pub(super) fn wanted_textures(&self, p: &Prepared) -> Vec<(String, Vec<PathBuf>)> {
         let (have_types, have_splines, have_trees): (
             hashbrown::HashSet<usize>,
@@ -83,9 +76,6 @@ impl World {
             {
                 for m in mats {
                     push(&m.texture, &dirs, &mut names);
-                    // and its copy in the `night` folder, which `type_gpu` looks for: left to
-                    // the main thread, big night JPEGs of a mod map were decoded there, up to
-                    // 1.7 s for one object type (the freezes on Grande Porto, Novi Sad)
                     if !is_null_texture(&m.texture) {
                         push(&night_texture_name(&m.texture), &dirs, &mut names);
                     }
@@ -121,7 +111,6 @@ impl World {
                 push(tex, &texture_dirs(&self.root, &ot.model_dir), &mut names);
             }
         }
-        // the painted ground layers (and their detail textures) of the tile
         let ground_dirs = vec![self.root.clone()];
         for (layer, _) in &p.paint_masks {
             if let Some(gt) = self.global.ground_textures.get(*layer) {
@@ -131,7 +120,6 @@ impl World {
         }
         names.sort();
         names.dedup();
-        // find the files without the lock, then keep what the GPU does not have yet
         let found: Vec<(PathBuf, (String, Vec<PathBuf>))> = names
             .into_iter()
             .filter_map(|(name, dirs)| {
@@ -147,7 +135,6 @@ impl World {
             .collect()
     }
 
-    /// The materials every tile shares: the plain ground, the water, the tree quad.
     pub(super) fn ensure_ground(&self, renderer: &Renderer, scene: &mut Scene, gpu: &mut GpuCache) {
         if gpu.ground.is_some() {
             return;
@@ -177,8 +164,6 @@ impl World {
             None,
             None,
         );
-        // The first [groundtex] is what the whole map starts as; its two numbers say how
-        // often the texture and its detail texture repeat across one tile.
         let ground_repeats = if ground0.params[1] > 0.0 {
             ground0.repeats()
         } else {
@@ -193,13 +178,6 @@ impl World {
                 &none,
             )
             .map(|t| (t.0, ground0.detail_repeats()));
-        // The base layer wets in the rain exactly like a painted one when its own
-        // <texture>.cfg carries [moisture]/[puddles] - this used to be dropped on the
-        // floor (add_terrain_material had no moisture parameter at all), so a map whose
-        // default ground is a wet-tagged surface (rather than the untagged stock grass)
-        // never showed it, while the very same texture painted as a later [groundtex]
-        // layer (add_terrain_layer_material) got it right: a patchwork of wet and dry
-        // that had nothing to do with the weather.
         let ground_dirs_ref: Vec<&Path> = ground_dirs.iter().map(|p| p.as_path()).collect();
         let ground_cfg = self.textures.cfg(&ground_tex, &ground_dirs_ref);
         let ground_wet = if ground_cfg.moisture || ground_cfg.puddles {
@@ -216,10 +194,6 @@ impl World {
             None,
             ground_wet,
         );
-        // Water: the map carries its own colour in `texture/water.tga` (the stock maps use
-        // an 8x8 swatch of 47, 74, 83 at three quarters opacity, so the riverbed shows
-        // through) and its own sphere map in `texture/water_envmap.bmp`. A map or mod that
-        // ships different ones gets its own water.
         let water_mat = {
             let wdir = ::legacy_config::resolve_path(&self.map_dir, "texture");
             let dirs: Vec<&Path> = vec![wdir.as_path(), self.root.as_path()];
@@ -278,8 +252,6 @@ impl World {
         });
     }
 
-    /// The GPU side of an object type (meshes, materials with their variants and night maps,
-    /// lower LODs), uploaded once while any loaded tile uses it.
     pub(super) fn type_gpu(
         &self,
         renderer: &Renderer,
@@ -323,10 +295,6 @@ impl World {
                 };
                 let for_slot =
                     |o: &&MaterialDef| ::simulation::vehicle::override_slot(o3d_mats, o) == Some(slot);
-                // a slot fed by [useTextTexture] / [useScriptTexture] gets a generated picture:
-                // the name in the mesh is a placeholder (the stop poles' Textfeld_1.bmp, the
-                // street signs' StrSchild_Text1.bmp), and looking for it on disk only wrote
-                // "Did not find texture file" into the log for every map
                 let generated = overrides
                     .iter()
                     .filter(|o| !o.item)
@@ -344,13 +312,10 @@ impl World {
                     .iter()
                     .filter(|o| !o.item && o.nightmap.is_some())
                     .filter(for_slot)
+                    .rev()
                     .find_map(|o| o.nightmap.clone())
                 {
                     Some(n) => tex_of(gpu, scene, &n, &mut t),
-                    // OMSI's own night textures: a copy of the texture in the `night` folder
-                    // beside it, black but for the lit windows and signs, added at night as
-                    // the object's [NightMapMode] says. Every stock building has them (the
-                    // Buildings_RW1HH folder alone 60), and without them the city stood dark.
                     None if !is_null_texture(&m.texture) => {
                         let rel = night_texture_name(&m.texture);
                         let dirs_ref: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
@@ -370,7 +335,6 @@ impl World {
                     .collect();
                 let (color, emissive, specular, ambient) =
                     d3d_material(m, slot_ov.iter().find_map(|o| o.allcolor), tex.is_some());
-                // [matl_transmap]: transparency from a separate map (parked cars: body opaque, windows clear)
                 let transmap = match overrides
                     .iter()
                     .filter(|o| !o.item)
@@ -392,12 +356,7 @@ impl World {
                     }
                     None => None,
                 };
-                // A separate transmap is a mask, not an automatic instruction to make the
-                // whole material transparent. Opaque body panels must stay opaque unless the
-                // model's `[matl_alpha]` or a material override explicitly says otherwise.
                 let alpha = alpha;
-                // [matl_envmap]: the same reflection rule as on vehicles (factor x mask; a
-                // texture without an alpha channel reads as a full mask)
                 let envmap = match slot_ov.iter().find_map(|o| o.envmap.clone()) {
                     Some((name, f)) => tex_of(gpu, scene, &name, &mut t).map(|id| (id, f)),
                     None => None,
@@ -439,7 +398,6 @@ impl World {
                 let address = tex_addressing(overrides.iter().filter(for_slot));
                 renderer.address_next.set(address);
                 renderer.light_map_next.set(ot.sco.light_map_mapping);
-                // OMSI_DEBUG_OBJMAT=<part of the object's file name>: how its slots are made
                 if let Ok(f) = ::legacy_config::env::var("OMSI_DEBUG_OBJMAT") {
                     if ot
                         .sco
@@ -463,11 +421,7 @@ impl World {
                         );
                     }
                 }
-                // [matl_lightmap]: laid on the light as on a vehicle (a lamp's lens, a lit
-                // shelter or advertising pillar); switched by its variable per placement
-                // (`LampSlots`), on where nothing switches it. (Left out, a signal whose
-                // lenses are lit by their light maps stayed dark, #826.)
-                let light = match slot_ov.iter().find_map(|o| o.lightmap.clone()) {
+                let light = match slot_ov.iter().rev().find_map(|o| o.lightmap.clone()) {
                     Some((name, _)) => tex_of(gpu, scene, &name, &mut t),
                     None => None,
                 };
@@ -477,7 +431,6 @@ impl World {
                 );
                 let base = gpu.material(renderer, scene, base);
                 t.materials.push(base);
-                // variant of a [matl_change]
                 let change_var = overrides
                     .iter()
                     .filter(|o| !o.item)
@@ -489,8 +442,6 @@ impl World {
                     .filter(for_slot)
                     .collect();
                 if let (Some(var), false) = (change_var, items.is_empty()) {
-                    // every [matl_item] of the change is a material of its own (item n shows
-                    // at the variable n); the commands after one change that one only
                     let mut item_ids: Vec<MaterialId> = Vec::new();
                     for it in &items {
                         let one: [&MaterialDef; 1] = [*it];
@@ -543,13 +494,6 @@ impl World {
                 },
             ));
         }
-        // lower LODs (plain materials). OMSI picks a level the way the model lists them
-        // (Omsi.exe 0x5ef860): the first whose least size the object's screen size reaches,
-        // else the last one whatever its own. A level is so drawn from its least size (the
-        // last from 0) up to the least of the sizes listed before it. The stock Sv signals
-        // say [LOD] 0.1 (the signal) before [LOD] 1 (its low version): taken as size bands
-        // the low version stood in close up and the signal vanished in the distance; and a
-        // model with a single [LOD] 0.5 is drawn at any size.
         let mins: Vec<f32> = std::iter::once(ot.lod0_min)
             .chain(ot.lower_lods.iter().map(|l| l.0))
             .collect();
@@ -564,7 +508,6 @@ impl World {
             for (mesh, o3d_mats, overrides) in meshes {
                 let mut mats = Vec::new();
                 for (slot, m) in o3d_mats.iter().enumerate() {
-                    // (a text or script texture slot's name is a placeholder, see above)
                     let generated = overrides.iter().any(|o| {
                         !o.item
                             && ::simulation::vehicle::override_slot(o3d_mats, o) == Some(slot)
@@ -617,7 +560,6 @@ impl World {
         key
     }
 
-    /// Put a prepared tile on the GPU in one go.
     pub fn upload_tile(
         &self,
         renderer: &Renderer,
@@ -630,8 +572,6 @@ impl World {
         self.finish_upload(renderer, scene, u, stats);
     }
 
-    /// Give up on a tile on its way in (it went out of range): what it already has on the
-    /// GPU - textures and object types it holds, instances placed so far - goes back.
     pub fn abandon_upload(
         &self,
         renderer: &Renderer,
@@ -668,8 +608,6 @@ impl World {
         }
     }
 
-    /// Start putting a prepared tile on the GPU: what it needs that is not there yet (the
-    /// textures decoded for it, its new object types) goes up in steps first.
     pub fn begin_upload(&self, p: Prepared) -> PendingUpload {
         let gpu = self.gpu.lock();
         let mut textures: Vec<PathBuf> = p
@@ -687,7 +625,6 @@ impl World {
                 types.push(o.ot.clone());
             }
         }
-        // the objects are placed from the back of the list: in the order of the tile
         let mut p = p;
         p.objects.reverse();
         PendingUpload {
@@ -699,8 +636,6 @@ impl World {
         }
     }
 
-    /// Upload one texture or one object type after the other until `deadline` (just one
-    /// with no deadline). True when only the tile itself is left to place.
     pub fn upload_step(
         &self,
         renderer: &Renderer,
@@ -719,9 +654,6 @@ impl World {
                 if !gpu.textures.contains_key(&path) {
                     if let Some(img) = u.prepared.images.get(&path) {
                         let id = gpu.add_data(renderer, scene, img);
-                        // (the PBR maps beside it: only the textures decoded on the spot had
-                        // them, the ones the tile's preparation brought - nearly all of a
-                        // map's - were drawn flat)
                         if !path.to_string_lossy().ends_with("#bump") {
                             attach_pbr(renderer, scene, &path, id);
                         }
@@ -737,7 +669,6 @@ impl World {
                                 dropped: 0,
                             },
                         );
-                        // the tile holds the texture until its object types take it over
                         if slow && t_item.elapsed().as_millis() > 8 {
                             log::info!(
                                 "upload: texture {} ({}x{} {:?}) took {} ms",
@@ -778,8 +709,6 @@ impl World {
         }
     }
 
-    /// Place a tile whose textures and object types are on the GPU, in one go (see
-    /// [`World::place_step`]).
     pub fn finish_upload(
         &self,
         renderer: &Renderer,
@@ -791,8 +720,6 @@ impl World {
         self.commit_upload(u, stats);
     }
 
-    /// Hand a placed tile's records to its [`TileState`], so that [`World::unload_tile`] can
-    /// give everything back.
     pub fn commit_upload(&self, u: PendingUpload, stats: &mut LoadStats) {
         let key = u.key();
         let PendingUpload { tg, placing, .. } = u;

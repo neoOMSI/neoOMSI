@@ -1,63 +1,41 @@
-use super::*;
+use super::tuning::CORONA_RANGE;
+use glam::Vec3;
+use ::render::Lighting;
+use ::simulation::Daylight;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-pub(super) fn weather_darkness() -> f32 {
-    let (vis, _) = cone_weather();
+static FOG_VISIBILITY: AtomicU32 = AtomicU32::new(0);
+static FOG_NIGHT: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_cone_strength(fog_visibility_m: f32, _precip: f32, night: f32) {
+    FOG_VISIBILITY.store(fog_visibility_m.to_bits(), Ordering::Relaxed);
+    FOG_NIGHT.store(night.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+
+pub(super) fn fog_state() -> (f32, f32) {
+    let vis = f32::from_bits(FOG_VISIBILITY.load(Ordering::Relaxed));
+    let night = f32::from_bits(FOG_NIGHT.load(Ordering::Relaxed));
+    (if vis > 0.0 { vis } else { 1.0e6 }, night)
+}
+
+pub(super) fn visible_range() -> f64 {
+    let (vis, _) = fog_state();
+    CORONA_RANGE.min((vis as f64 * 2.0).max(60.0))
+}
+
+pub(super) fn fog_darkness() -> f32 {
+    let (vis, _) = fog_state();
     (1.0 - vis / 3000.0).clamp(0.0, 1.0)
 }
 
-pub(super) fn headlight_radius(range: f32) -> f32 {
-    range.max(6.0)
-}
+const LUMA: Vec3 = Vec3::new(0.3, 0.59, 0.11);
 
-pub(super) fn headlight_core(range: f32) -> f32 {
-    headlight_radius(range) / 30.0
-}
-
-/// How far a `[spotlight]` reaches for a picture whose low beam is cut at `low` metres.
-pub(super) fn spot_reach(range: f32, low: f32) -> f32 {
-    range.clamp(0.5, low).max(range * low / 100.0).min(low * 5.0)
-}
-
-/// A short-range `[spotlight]` is a faint lamp (square of range / 10 m below 10 m).
-pub(super) fn short_range_gain(range: f32) -> f32 {
-    if range >= 10.0 {
-        1.0
-    } else {
-        let r = range.max(0.5) / 10.0;
-        r * r
-    }
-}
-
-pub(super) fn ai_spotlight(lamps: &[[f32; 3]]) -> Option<[f32; 12]> {
-    let nose = lamps.iter().map(|l| l[1]).reduce(f32::max)?;
-    let front: Vec<&[f32; 3]> = lamps.iter().filter(|l| nose - l[1] < 0.4).collect();
-    let n = front.len() as f32;
-    let z = front.iter().map(|l| l[2]).sum::<f32>() / n;
-    Some([
-        0.0, nose, z, 0.0, 1.0, -0.05, 255.0, 245.0, 225.0, 40.0, 30.0, 70.0,
-    ])
-}
-
-#[allow(dead_code)]
-pub(super) fn spot_face(
-    lamp: Option<f32>,
-    edge: Option<f32>,
-    apex_y: f32,
-    dir: f32,
-) -> Option<f32> {
-    let fwd = |y: f32| y * dir;
-    let lamp = lamp.filter(|l| fwd(*l) > fwd(apex_y));
-    let face = match (lamp, edge) {
-        (Some(l), Some(e)) => fwd(l).min(fwd(e)),
-        (Some(l), None) => fwd(l),
-        (None, Some(e)) => fwd(e).min(fwd(apex_y) + 1.5),
-        (None, None) => return None,
-    };
-    Some(face * dir).filter(|f| fwd(*f) > fwd(apex_y))
+fn desaturate(c: Vec3, k: f32) -> Vec3 {
+    c.lerp(Vec3::splat(c.dot(LUMA)), k)
 }
 
 pub fn lighting_from(d: &Daylight, fog_range: f32) -> Lighting {
-    let density = (2.3 / fog_range.max(50.0)).max(0.00005);
+    let lamps = d.lamps_on || d.night >= 0.5;
     Lighting {
         sun_dir: d.sun_dir,
         sun_intensity: 1.0,
@@ -65,14 +43,10 @@ pub fn lighting_from(d: &Daylight, fog_range: f32) -> Lighting {
         secondary: d.secondary,
         ambient: d.ambient,
         fog_color: d.sky,
-        fog_density: density,
+        fog_density: (2.3 / fog_range.max(50.0)).max(0.00005),
         sky_color: d.sky,
         night: d.night,
-        night_maps: Some(if d.lamps_on || d.night >= 0.5 {
-            1.0
-        } else {
-            0.0
-        }),
+        night_maps: Some(if lamps { 1.0 } else { 0.0 }),
         sun_azimuth: d.azimuth_rad,
         sky_weights: d.sky_weights,
         envir_tint: d.envir_tint,
@@ -87,21 +61,18 @@ pub fn apply_weather(
     precip: f32,
     snow: f32,
 ) {
-    let o = cloud_density.clamp(0.0, 1.0);
-    let overcast = (o - 0.45).max(0.0) / 0.55;
-    let grey = |c: Vec3, k: f32| -> Vec3 {
-        let lum = c.dot(Vec3::new(0.3, 0.59, 0.11));
-        c.lerp(Vec3::splat(lum), k)
-    };
+    let cloud = cloud_density.clamp(0.0, 1.0);
+    let overcast = (cloud - 0.45).max(0.0) / 0.55;
     l.sun_intensity *= 1.0 - 0.85 * overcast;
-    l.sun_color = grey(l.sun_color, 0.6 * o);
-    let sky_lum = l.sky_color.dot(Vec3::new(0.3, 0.59, 0.11));
-    let cloud_sky = Vec3::splat(sky_lum * 0.82)
+    l.sun_color = desaturate(l.sun_color, 0.6 * cloud);
+    let sky_lum = l.sky_color.dot(LUMA);
+    let grey_sky = Vec3::splat(sky_lum * 0.82)
         .lerp(Vec3::new(0.62, 0.65, 0.70) * sky_lum.max(0.25) * 1.3, 0.5);
-    l.sky_color = l.sky_color.lerp(cloud_sky, overcast * 0.9);
-    l.secondary = grey(l.secondary, o * 0.7) * (1.0 - 0.15 * overcast);
-    l.ambient = grey(l.ambient, o * 0.7) * (1.0 + 0.25 * overcast);
+    l.sky_color = l.sky_color.lerp(grey_sky, overcast * 0.9);
+    l.secondary = desaturate(l.secondary, cloud * 0.7) * (1.0 - 0.15 * overcast);
+    l.ambient = desaturate(l.ambient, cloud * 0.7) * (1.0 + 0.25 * overcast);
     l.fog_color = l.fog_color.lerp(l.sky_color, overcast);
+
     let rain = if precip_kind != 0 {
         precip.clamp(0.0, 1.0)
     } else {
@@ -117,11 +88,13 @@ pub fn apply_weather(
     }
     l.overcast = overcast;
     l.rain = rain;
+
     let gloom = (overcast * 0.5 + rain * 0.5).clamp(0.0, 1.0);
     l.night = l.night.max(0.45 * gloom);
     if l.night >= 0.5 {
         l.night_maps = Some(1.0);
     }
+
     if snow > 0.0 {
         l.ambient *= 1.0 + 0.35 * snow;
         l.secondary *= 1.0 + 0.2 * snow;
@@ -135,13 +108,24 @@ pub fn apply_weather(
 
 #[cfg(test)]
 mod tests {
-    use super::{headlight_core, headlight_radius};
+    use super::*;
 
     #[test]
-    fn full_beam_range_is_not_capped_to_dipped_beam_distance() {
-        // Studio Polygon Renown's third `[spotlight]` (full beam) has a 125 m range.
-        assert_eq!(headlight_radius(125.0), 125.0);
-        assert!((headlight_core(40.0) - 40.0 / 30.0).abs() < 1e-5);
-        assert!((headlight_core(125.0) - 125.0 / 30.0).abs() < 1e-5);
+    fn clear_sky_changes_nothing() {
+        let mut l = Lighting::default();
+        l.sun_intensity = 1.0;
+        apply_weather(&mut l, 0.0, 0, 0.0, 0.0);
+        assert_eq!(l.sun_intensity, 1.0);
+        assert_eq!(l.rain, 0.0);
+        assert_eq!(l.snow, 0.0);
+    }
+
+    #[test]
+    fn rain_dims_the_sun_and_adds_gloom() {
+        let mut l = Lighting::default();
+        l.sun_intensity = 1.0;
+        apply_weather(&mut l, 1.0, 1, 1.0, 0.0);
+        assert!(l.sun_intensity < 0.1);
+        assert!(l.night >= 0.45);
     }
 }

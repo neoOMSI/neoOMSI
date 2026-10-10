@@ -1,9 +1,5 @@
 use super::*;
 
-/// Give the `[smoothskin]` meshes of a vehicle instance copies of their own: their vertices
-/// are rewritten as the joint turns, which a mesh shared between every instance of the type
-/// (the AI pool, and the player's own set before this ran) cannot be. Called for the
-/// player's vehicle and for every AI copy alike (`render.set` says which).
 pub(super) fn own_skinned_meshes(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -17,7 +13,6 @@ pub(super) fn own_skinned_meshes(
         let Some(&inst) = render.instances.get(i) else {
             continue;
         };
-        // (a mesh OMSI_ONLY_MESH / OMSI_HIDE_MESH left out stays out)
         if scene
             .meshes
             .get(scene.instances[inst].mesh)
@@ -43,8 +38,6 @@ pub(super) fn own_skinned_meshes(
             .file_name()
             .unwrap_or_default()
             .to_string_lossy();
-        // the player's own vehicle says so once; an AI copy (the timetable's articulated
-        // buses spawn dozens of these) only on demand
         match render.set {
             None => log::info!("{name}: {} skinned meshes ({names})", render.skinned.len()),
             Some(_) => log::debug!(
@@ -55,8 +48,6 @@ pub(super) fn own_skinned_meshes(
     }
 }
 
-/// Reshape the skinned meshes of a vehicle and its coupled parts whose bones moved (the
-/// player's own, or an AI copy's - see `own_skinned_meshes`).
 pub fn sync_skinned(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -89,10 +80,6 @@ pub fn sync_skinned(
     }
 }
 
-/// Upload the text and script textures of a vehicle that changed since the last frame.
-/// Switch the material of every slot a variable controls: `[matl_freetex]` loads the file a
-/// string variable names, `[texchanges]` picks an entry of its master, `[matl_change]` picks
-/// between the plain material and the `[matl_item]` variant.
 pub fn sync_vehicle_materials(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -102,8 +89,6 @@ pub fn sync_vehicle_materials(
     sync_materials(renderer, scene, vehicle, render);
 }
 
-/// A coupled part's switched materials and text textures, driven by the variables of the
-/// vehicle it is coupled to (its scripts are shared with it).
 pub fn sync_vehicle_part(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -141,9 +126,6 @@ pub fn sync_vehicle_part(
     }
 }
 
-/// Resolve a vehicle `[matl_freetex]` name. OMSI add-ons often write paths such as
-/// `..\\Texture\\mb_pmon\\warning.bmp`: if the normal lookup misses, retry the part
-/// below the `Texture` component against the vehicle's texture search directories.
 pub(super) fn find_vehicle_freetex(name: &str, dirs: &[&Path]) -> Option<PathBuf> {
     if let Some(path) = ::texture::find_texture(name, dirs) {
         return Some(path);
@@ -177,57 +159,58 @@ pub(super) fn sync_materials(
             let name = trimmed.to_string();
             let key = name.to_ascii_lowercase();
             f.current = Some(key.clone());
-                let pair = match f.cache.get(&key) {
-                    Some(p) => *p,
-                    None => {
-                        let dirs: Vec<&Path> = f.dirs.iter().map(|p| p.as_path()).collect();
-                        let found = if name.is_empty() {
-                            None
-                        } else {
-                            let resolved = find_vehicle_freetex(&name, &dirs);
-                            if resolved.is_none() {
-                                log::warn!(
+            let pair = match f.cache.get(&key) {
+                Some(p) => *p,
+                None => {
+                    let dirs: Vec<&Path> = f.dirs.iter().map(|p| p.as_path()).collect();
+                    let found = if name.is_empty() {
+                        None
+                    } else {
+                        let resolved = find_vehicle_freetex(&name, &dirs);
+                        if resolved.is_none() {
+                            log::warn!(
                                     "vehicle [matl_freetex] '{}' = {:?}: texture not found",
                                     f.var,
                                     name
                                 );
-                            }
-                            resolved.and_then(|path| {
-                                let mut shared = f.shared.lock();
-                                if let Some(e) = shared.get_mut(&path) {
-                                    e.1 += 1;
-                                    f.held.push(path);
-                                    return Some(e.0);
-                                }
-                                let (img, worth) = f.textures.get_gpu_fast(&path)?;
-                                let id = renderer.add_texture_data(scene, &img);
-                                if worth {
-                                    f.wants_upgrade.lock().push(path.clone());
-                                }
-                                attach_pbr(renderer, scene, &path, id);
-                                shared.insert(path.clone(), (id, 1));
+                        }
+                        resolved.and_then(|path| {
+                            let mut shared = f.shared.lock();
+                            if let Some(e) = shared.get_mut(&path) {
+                                e.1 += 1;
                                 f.held.push(path);
-                                Some(id)
-                            })
-                        };
-                        // An empty string or a file not found leaves the slot its own
-                        // texture from the mesh (with its addressing): a roller blind's idle
-                        // "next" band then stays out of sight in its transparent border
-                        // instead of covering the display as an untextured white plane.
-                        let spec = match found {
-                            Some(tex) => v.spec.with_freetex(f.key, tex, f.diffuse, f.item_only),
-                            None => v.spec.clone(),
-                        };
-                        let p = spec.build(renderer, scene, v.base_tex);
-                        f.cache.insert(key, p);
-                        p
-                    }
-                };
+                                return Some(e.0);
+                            }
+                            let (img, worth) = f.textures.get_gpu_fast(&path)?;
+                            let id = renderer.add_texture_data(scene, &img);
+                            if worth {
+                                f.wants_upgrade.lock().push(path.clone());
+                            }
+                            attach_pbr(renderer, scene, &path, id);
+                            shared.insert(path.clone(), (id, 1));
+                            f.held.push(path);
+                            Some(id)
+                        })
+                    };
+                    let spec = match found {
+                        Some(tex) => v.spec.with_freetex(f.key, tex, f.diffuse, f.item_only),
+                        None => v.spec.clone(),
+                    };
+                    let p = spec.build(renderer, scene, v.base_tex);
+                    let more = spec.build_more(renderer, scene, v.base_tex, |_, m| m);
+                    f.more_cache.insert(key.clone(), more);
+                    f.cache.insert(key.clone(), p);
+                    p
+                }
+            };
             if !f.item_only {
                 v.base = pair.0;
             }
             if f.item_only || !item_has_freetex {
                 v.item = pair.1;
+                if let Some(more) = f.more_cache.get(&key) {
+                    v.more = more.clone();
+                }
             }
         }
         if let Some(l) = &mut v.lights {
@@ -239,8 +222,6 @@ pub(super) fn sync_materials(
                     .ok()
                     .or_else(|| vehicle.var(var))
                     .unwrap_or(0.0);
-                // (on at 0.5, as each map's texture stage is, 0x7fe51f: a variable a script
-                // dims through 0.1 lit the map at full)
                 if x >= 0.5 {
                     mask |= 1 << k;
                 }
@@ -286,17 +267,6 @@ pub(super) fn sync_materials(
     }
 }
 
-/// A vehicle's `[interiorlight]`s (`variable range r g b x y z`) as lamps for this frame:
-/// points of light at their place in the vehicle, as strong as their variable (0..1) times
-/// `range` (1 for a saloon lamp, 0.4 for a door lamp, 2 for the LiAZ's saloon rows - a door
-/// lamp 0.4 m across could not reach the step 2 m below it, so it is no distance), each
-/// lighting only the meshes that list it in
-/// their `[illumination_interior]` - OMSI's four per mesh, or as many as a model lists
-/// (up to `::render::MAX_LAMPS_PER_MESH`), as OMSI switches those lights on
-/// for just that mesh. Every set of lamps some mesh names gets a run of slots of its own
-/// (the LiAZ 5292 has 32 lamps; only the first eight were drawn, and its saloon stayed dark).
-/// The seats' sets (`PassPos::illumination`, the lamps that light a person sitting there)
-/// get theirs too: see [`VehicleRender::seat_lamps`].
 pub(super) fn sync_interior_lamps(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -365,8 +335,6 @@ pub(super) fn sync_interior_lamps(
     for (first, set) in blocks {
         for (k, &li) in set.iter().enumerate() {
             let il = &ty.model.interior_lights[li];
-            // on or off: OMSI enables the lamp when its variable is 0.5 or more
-            //, there is no dimming
             let on = il
                 .variable
                 .trim()
@@ -384,9 +352,6 @@ pub(super) fn sync_interior_lamps(
                 first + k as u32,
                 ::render::PointLight {
                     position: position + at.as_dvec3(),
-                    // OMSI's Direct3D light: a point light of the
-                    // colour / 255, Range 100 m, attenuation 1 / (d² / range²) - full
-                    // light at `range` metres, stronger closer in, a quarter at twice
                     radius: 100.0,
                     core: (il.range * ic.range).max(0.01),
                     color: [
@@ -402,8 +367,6 @@ pub(super) fn sync_interior_lamps(
     }
 }
 
-/// The lamps (indices into the model's `[interiorlight]`s) a mesh's or a seat's
-/// `[illumination_interior]` names: those that exist, each once, as many as a mesh may have.
 pub(super) fn lamp_set(indices: &[i32], n: usize) -> Vec<usize> {
     let mut set: Vec<usize> = Vec::new();
     for &k in indices {
@@ -419,9 +382,6 @@ pub(super) fn lamp_set(indices: &[i32], n: usize) -> Vec<usize> {
 }
 
 impl VehicleRender {
-    /// The lamp slots (first, count) for `set_interior_lamps` that light a person on a seat
-    /// with these four lamps (`PassPos::illumination`) in a vehicle of `n` lamps; None
-    /// before the vehicle's lamps are first synced, or when none of them exists.
     pub fn seat_lamps(&self, n: usize, lamps: &[i32; 4]) -> Option<(u32, u32)> {
         let set = lamp_set(lamps, n);
         let blocks = self.interior_blocks.get()?;
@@ -469,7 +429,6 @@ pub fn sync_vehicle_textures(
     }
     let mut rebound = Vec::new();
     for (i, st) in vehicle.host.script_textures.iter_mut().enumerate() {
-        // (far away what the scripts redraw goes up every half second: `displays_far`)
         if !render.displays_far {
             if let Some(Some(tex)) = render.script_textures.get(i) {
                 if *budget == 0 {
@@ -498,36 +457,27 @@ pub fn sync_vehicle_textures(
     renderer.rebind_textures(scene, &rebound);
 }
 
-/// Identify a solid vehicle body material that should participate in the depth buffer.
-/// Some bus packs put either `[matl_alpha] 2` or `[matl_noZcheck]` on a complete body mesh.
-/// The decision must not depend on one creator's language or on a particular bus name:
-/// use the model metadata and the material's actual mesh volume, while keeping thin glass
-/// and explicit overlay/transparency materials on their authored paths.
-/// Words that name a pane of glass in a mesh or texture file, in the languages OMSI's
-/// add-ons are made in. The body-depth repair must not turn one of these opaque when the
-/// model.cfg declares it blended: a Czech bus's `okna.o3d` (windows) on the shared
-/// `body.png` was drawn as a black wall, where OMSI shows the tinted glass.
 pub(super) const GLASS_WORDS: [&str; 20] = [
     "window",
     "fenster",
     "glas",
     "scheibe",
     "windshield",
-    "windscreen", // en, de ("glas" is also German: `Leuchtmelderglas.tga`)
+    "windscreen",
     "okn",
-    "sklo", // cs, sk (okna, okno, sklo)
+    "sklo",
     "szyb",
-    "okien",  // pl
-    "ablak",  // hu
-    "steklo", // ru (transliterated)
+    "okien",
+    "ablak",
+    "steklo",
     "vitre",
-    "fenetre", // fr
+    "fenetre",
     "vetro",
-    "finestr", // it
+    "finestr",
     "raam",
-    "ruit", // nl
+    "ruit",
     "ventan",
-    "cristal", // es
+    "cristal",
 ];
 
 pub(super) fn is_vehicle_body_material(
@@ -555,12 +505,8 @@ pub(super) fn is_vehicle_body_material(
     true
 }
 
-/// Side of the square a texture's alpha is kept at for [`slot_is_see_through`].
 pub(super) const ALPHA_MASK: usize = 256;
 
-/// A texture's alpha channel, thinned out to [`ALPHA_MASK`] squared (a body texture is
-/// 4096 squared, and every blended slot of a bus asks). None for a file that cannot be
-/// read or has no alpha.
 pub(super) fn alpha_mask(path: &Path) -> Option<Arc<Vec<u8>>> {
     static MASKS: std::sync::OnceLock<Mutex<HashMap<PathBuf, Option<Arc<Vec<u8>>>>>> =
         std::sync::OnceLock::new();
@@ -589,10 +535,6 @@ pub(super) fn alpha_mask(path: &Path) -> Option<Arc<Vec<u8>>> {
     mask
 }
 
-/// Whether the triangles of material `slot` lie on a see-through part of their texture
-/// (`mask`, see [`alpha_mask`]): nine in ten of them with an alpha under 0.9 at their
-/// middle. A pane does - the SOR NB12's glass is 62 of 255 on its body texture; a door or
-/// a body panel blended by `[matl_alpha] 2` has its paint at 255 and does not.
 pub(super) fn slot_is_see_through(mesh: &MeshData, slot: usize, mask: &[u8]) -> bool {
     let (mut clear, mut all) = (0usize, 0usize);
     for &(first, count, material) in &mesh.ranges {
@@ -626,9 +568,6 @@ pub(super) fn slot_is_see_through(mesh: &MeshData, slot: usize, mask: &[u8]) -> 
     all > 0 && clear * 10 >= all * 9
 }
 
-/// Return whether the triangles of one material occupy a volumetric part of the vehicle.
-/// Windows and rain films are normally very thin sheets; this lets unnamed/modded body
-/// meshes be repaired without maintaining a language-specific list of mesh names.
 pub(super) fn material_has_vehicle_volume(mesh: &MeshData, slot: usize) -> bool {
     let mut lo = glam::Vec3::splat(f32::MAX);
     let mut hi = glam::Vec3::splat(f32::MIN);
@@ -653,8 +592,6 @@ pub(super) fn material_has_vehicle_volume(mesh: &MeshData, slot: usize) -> bool 
     let extent = hi - lo;
     let mut sides = [extent.x.abs(), extent.y.abs(), extent.z.abs()];
     sides.sort_by(f32::total_cmp);
-    // A solid shell has meaningful thickness compared with both of its other dimensions.
-    // A windshield or side pane may be wide and tall, but remains a sheet in its thin axis.
     sides[2] > 3.0
         && sides[1] > 1.0
         && sides[0] > 0.5
@@ -662,10 +599,6 @@ pub(super) fn material_has_vehicle_volume(mesh: &MeshData, slot: usize) -> bool 
         && sides[0] / sides[2] > 0.02
 }
 
-/// Whether the triangles of material `slot` lie on the faces of another slot of the same
-/// mesh: a layer modelled as a copy of the surface under it with a material of its own (a
-/// baked ambient-occlusion or shading film over the floor, `[matl_alpha] 2`), which OMSI
-/// blends over the surface as declared.
 pub(super) fn slot_overlays_another(mesh: &MeshData, slot: usize) -> bool {
     let key = |p: &glam::Vec3| {
         (
@@ -693,42 +626,23 @@ pub(super) fn slot_overlays_another(mesh: &MeshData, slot: usize) -> bool {
     own.len() >= 3 && own.iter().filter(|k| others.contains(*k)).count() * 10 >= own.len() * 9
 }
 
-/// GPU-side representation of a vehicle instance: one render instance per mesh.
 pub struct VehicleRender {
     pub window_wipers: Option<crate::window_wipers::WindowWipers>,
     pub instances: Vec<usize>,
-    /// Materials made for this vehicle alone (its text and script texture slots).
     pub own_materials: Vec<MaterialId>,
-    /// The shared set it is drawn with (None for the player's own).
     pub set: Option<VehicleKey>,
-    /// `[matl_change]` / `[texchanges]` slots whose material a variable switches.
     pub variants: Vec<VariantSlot>,
-    /// GPU texture per `[texttexture]` index.
     pub text_textures: Vec<Option<TextureId>>,
-    /// GPU texture per `[scripttexture]` index.
     pub script_textures: Vec<Option<TextureId>>,
-    /// `script_textures` belong to the vehicle this part is coupled to (`[scriptshare]`):
-    /// they are not this render's to give back.
     pub shared_script: bool,
-    /// The script textures (cockpit and passenger displays, 1024×512 pictures for a C2) wait
-    /// with their upload this frame: the vehicle is far and it is not its half second.
     pub displays_far: bool,
-    /// The half second a far vehicle's displays were last uploaded in.
     pub display_tick: u64,
-    /// `[smoothskin]` meshes drawn from a copy of their own (the player's articulated bus's
-    /// bellows): (mesh index, the copy, the bone transforms it was last shaped for).
     pub skinned: Vec<(usize, MeshId, Vec<Mat4>)>,
-    /// An AI vehicle out of sight: its instances are hidden and not updated (see
-    /// `Traffic::sync`).
     pub hidden: bool,
-    /// The renderer's slots for the vehicle's `[interiorlight]` lamps (first, count), taken
-    /// the first time the vehicle is synced (see `sync_interior_lamps`).
     pub interior_lamps: std::cell::Cell<Option<(u32, u32)>>,
-    /// The runs of lamp slots and which of the vehicle's lamps each holds.
     pub interior_blocks: std::cell::OnceCell<Vec<(u32, Vec<usize>)>>,
 }
 
-/// A material slot whose texture is generated per vehicle (text or script texture).
 #[derive(Debug, Clone)]
 pub struct DynSlot {
     pub mesh: usize,
@@ -742,12 +656,8 @@ pub struct DynSlot {
     pub night: Option<TextureId>,
     pub lightmap: Option<TextureId>,
     pub envmap: Option<(TextureId, f32)>,
-    /// `[matl_texadress_*]`: how the slot's textures read outside [0, 1].
     pub address: ::render::TexAddressing,
-    /// Depth handling, reflection mask and specular term of the slot.
     pub extra: MaterialExtra,
-    /// Diffuse and emissive colour of the slot's D3D material (see `d3d_material`); a
-    /// script texture is drawn unlit and keeps its own colours.
     pub color: [f32; 4],
     pub emissive: [f32; 3],
 }
