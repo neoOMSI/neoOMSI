@@ -95,6 +95,33 @@ fn a_stopped_car_can_bypass_a_serving_bus() {
 }
 
 #[test]
+fn a_stopped_car_bypasses_a_car_parked_in_its_lane() {
+    // the parked car is no actor of the scene: only the lead the world reports stands for it
+    let net = two_lanes();
+    let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    ego.front = 6.0; ego.rear = 6.0; ego.length = 12.0; ego.half_width = 1.25;
+    ego.stopped = 5.0; ego.pass_room = 5.5;
+    let actors = [ego];
+    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+    let mut coord = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    let mut chosen = None;
+    for tick in 0..150 {
+        let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+            static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+        coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+        let mut input = ManeuverInputs::new(0);
+        input.lead_gap = Some(4.0);
+        input.lead_standing = true;
+        input.parked = true;
+        chosen = coord.plan(&scene, &mut state, &input).change;
+        if chosen.is_some() { break; }
+    }
+    let change = chosen.expect("stood behind the parked car for good");
+    assert_eq!((change.to, change.kind), (1, ChangeKind::Bypass));
+}
+
+#[test]
 fn a_following_car_does_not_need_fifty_empty_metres_after_the_first_passer() {
     let net = two_lanes();
     let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);

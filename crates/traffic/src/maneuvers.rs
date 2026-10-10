@@ -198,6 +198,9 @@ pub struct ManeuverState {
     /// A stopped vehicle's corner-clearance trajectory, anchored until it clears
     /// the parked row. Re-anchoring it every tick prevents steering recovery.
     pub kerb_ramp: Option<(f32, f32, f32, f32)>,
+    /// The gap (m) to a parked car standing in the lane ahead, as last planned: it is no
+    /// vehicle of the scene, and the lane change round it is discovered from here.
+    pub parked_block: Option<f32>,
 }
 
 // ---- frozen per-tick scene and inputs --------------------------------------------------
@@ -548,6 +551,7 @@ impl ManeuverCoordinator {
             state.emergency_ramp = None;
         }
         if input.kerb_swerve.is_none() { state.kerb_ramp = None; }
+        state.parked_block = input.lead_gap.filter(|_| input.parked && input.lead_standing);
 
         // A committed lane change finished or was cancelled: start its cooldown.
         if state.change_to.is_some() && actor.change.is_none() {
@@ -854,8 +858,19 @@ impl ManeuverCoordinator {
         if let Some(left) = pass_side {
             let s_left = net.beside_s(actor.lane, left, actor.s);
             if self.open_to(net, actor, left) && self.stays_open(net, actor, left, s_left) {
-                if let Some((gap, v, owner)) = self.nearest_ahead_on_way(scene, actor, 45.0) {
-                    let standing = v < 0.3 && self.standing_queue(scene, actor, owner);
+                // (a parked car standing in the lane is no vehicle of the scene: without it, a
+                // bus behind one in X10 Berlin's bus lane waited there for good)
+                let ahead = self.nearest_ahead_on_way(scene, actor, 45.0)
+                    .map(|(gap, v, owner)| (gap, v, Some(owner)));
+                // (its lead gap keeps 2 m back from it, as `plan_passing` reckons)
+                let ahead = match (ahead, state.parked_block.map(|p| p + 2.0)) {
+                    (Some(a), Some(p)) if a.0 <= p + 0.5 => Some(a),
+                    (_, Some(p)) if p <= 45.0 => Some((p, 0.0, None)),
+                    (a, _) => a,
+                };
+                if let Some((gap, v, owner)) = ahead {
+                    let standing = v < 0.3
+                        && owner.is_none_or(|o| self.standing_queue(scene, actor, o));
                     let bypass = standing && (actor.speed > 0.5 || actor.stopped >= 3.0);
                     let room = if bypass {
                         BYPASS_RAMP + actor.front + actor.speed * SIGNAL_BEFORE_CHANGE

@@ -212,6 +212,7 @@ impl Traffic {
         let by_lane = occupancy.lane_view(&self.index_of);
         let maneuver_people: Vec<_> = self.people.iter().map(|&(p, _, _)| p).collect();
         let road_collision = self.road_collision.clone();
+        let parked_collision = self.parked_collision.clone();
         let maneuver_geometry: HashMap<_, _> = self.cars.iter().map(|c| {
             let parts: Vec<_> = c.vehicle.trailers.iter().filter_map(|t| {
                 let (back, front) = t.couplings();
@@ -229,6 +230,9 @@ impl Traffic {
         let scenery_clear = |samples: &[::traffic::perception::SweepSample], actor: &ManeuverActor| {
             let Some((contact, rear, parts, body)) = maneuver_geometry.get(&actor.id) else { return false; };
             safety::articulated_clear(&road_collision, &occupancy, samples, actor, contact.as_deref(), *rear, parts, body)
+                // (parked cars are no scenery: a bus pulling out round one in its lane must
+                // not clip it either)
+                && safety::scenery_clear(&parked_collision, samples, actor, contact.as_deref())
         };
         // The external road users' synthetic ids (see `body_feet`): bodies to keep clear of,
         // not AI blockers to sort out by `geo_block`.
@@ -745,14 +749,16 @@ impl Traffic {
             let emergency_behind_slow = junction_actors[i].emergency
                 && lead.is_some_and(|l| l.0.speed < 3.0);
             if standing || may_stand || emergency_behind_slow {
-                if let Some((l, who)) = lead.filter(|_| !parked_ahead) {
+                // (a parked car standing in the lane too: two metres behind one, a bus in X10
+                // Berlin's bus lane had no room to steer out round it and stood there for good)
+                if let Some((l, who)) = lead {
                     let car = &self.cars[i];
                     let st = &car.state;
                     let real = l.gap
-                        + if who == Some(usize::MAX) {
-                        PLAYER_BOX_MARGIN
-                    } else {
-                        0.0
+                        + match who {
+                        Some(usize::MAX) => PLAYER_BOX_MARGIN,
+                        None if parked_ahead => 2.0,
+                        _ => 0.0,
                     };
                     // (a timetable bus queueing for its own stop is not going round it)
                     let queues = car
@@ -1464,11 +1470,11 @@ impl Traffic {
                 self.first_turner = Some((car.id, self.time));
             }
             car.state.update_blinker(&self.net);
-            if matches!(
-                car.bus.as_ref().map(|b| b.state.phase),
-                Some(ServicePhase::Boarding | ServicePhase::Layover)
-            ) {
-                // waiting at a stop: dark until it is about to pull away
+            if car.bus.as_ref().is_some_and(|b| {
+                b.hold_until.is_some()
+                    || matches!(b.state.phase, ServicePhase::Boarding | ServicePhase::Layover)
+            }) {
+                // waiting at a stop or on its stand: dark until it is about to pull away
                 car.state.blinker = 0;
             }
             if debug_doors
