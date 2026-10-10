@@ -941,22 +941,22 @@ function Navigator() {
 export const DEMOS = [
   {
     title: "Choose a bus",
-    text: "Every bus in your OMSI 2 folder, sorted by maker, with its liveries and a 3D preview.",
+    text: "Buses detected in your OMSI 2 folder, sorted by manufacturer, with available liveries and a 3D preview.",
     Demo: Bus,
   },
   {
     title: "Pick a line and a tour",
-    text: "Lines and tours come straight from the map's timetable.",
+    text: "Choose a line and a trip from the map's timetable.",
     Demo: Route,
   },
   {
     title: "Set the time and the weather",
-    text: "Any date and season, live METAR weather, or a cycle that changes while you drive.",
+    text: "Choose a date and weather, use live weather reports, or let conditions change as you drive.",
     Demo: Weather,
   },
   {
     title: "Drive with the navigator",
-    text: "Your speed, the next turn and the next stops, with your delay at a glance.",
+    text: "See your speed, upcoming turns and stops, and whether you are running late.",
     Demo: Navigator,
   },
 ];

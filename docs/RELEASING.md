@@ -59,7 +59,7 @@ main branch (trunk)
 
 ### 1. Nightly builds
 
-Automated CI builds run nightly at 03:37 in `Europe/Berlin` (and on manual workflow dispatch) for Windows, macOS, and Linux. Nightlies provide immediate visibility into recent changes but carry no guarantee against regressions. Android packages are built locally using `scripts/build-android.sh`.
+Automated CI builds run nightly at 03:37 in `Europe/Berlin` (and on manual workflow dispatch) for Windows, macOS, and Linux. Nightlies provide immediate visibility into recent changes but carry no guarantee against regressions.
 
 The public Nightly version uses the source commit (`0.x.y-nightly.g<short-sha>`). The Actions run number remains linked in the release notes for CI traceability. Each nightly release shows changelog fragments changed since the previous release, falling back to all pending fragments when none are found.
 
