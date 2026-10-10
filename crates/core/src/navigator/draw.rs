@@ -264,7 +264,10 @@ impl Navigator {
         let wd = words();
         self.atlas.begin_frame();
         let panel = Rect::new(0.0, 0.0, pw, ph);
-        let radius = 11.0 * s;
+        // the corners nest: whatever sits `d` inside a rounded shape is rounded `d` less
+        let gap = 8.0 * s;
+        let card_r = 14.0 * s;
+        let radius = card_r + gap;
         let top_h = if self.show_topbar {
             (34.0 * s).round()
         } else {
@@ -518,13 +521,12 @@ impl Navigator {
         }
         if let Some(bp) = project(vpm, vp, rel(f.bus)) {
             let a = (angle_diff(self.cam_heading, f.heading) as f32).to_radians();
-            marks::own_arrow(&mut pins, bp, a, 9.0 * s, ACCENT, Some(ACCENT));
+            marks::own_arrow(&mut pins, bp, a, 9.0 * s, ACCENT, None);
         }
 
         // the cards: each a frosted pane (`panes`) with what it says on top (`ui`)
         let mut panes: Vec<(Rect, f32, f32)> = Vec::new();
         let mut ui = Painter::new();
-        let gap = 8.0 * s;
         let miles = uses_miles(f.units);
         let bottom_e = self.bottom_e;
         let base_h = 52.0 * s;
@@ -558,9 +560,9 @@ impl Navigator {
                 .map(|v| ((f.speed_kmh.abs() - v - 1.0) / 4.0).clamp(0.0, 1.0))
                 .unwrap_or(0.0);
             let over = over * over * (3.0 - 2.0 * over);
-            panes.push((card, 14.0 * s, 1.0));
+            panes.push((card, card_r, 1.0));
             if over > 0.0 {
-                ui.rounded(card, 14.0 * s, Color::rgba(240, 64, 56, 0.22 * over));
+                ui.rounded(card, card_r, Color::rgba(240, 64, 56, 0.22 * over));
             }
             let speed_color = TEXT.mix(Color::rgba(255, 92, 84, 1.0), over);
             let num = format!("{:.0}", speed(f.speed_kmh.abs(), miles));
@@ -663,9 +665,10 @@ impl Navigator {
                 56.0 * s + tw.max(sw_),
                 if street.is_some() { 48.0 } else { 42.0 } * s,
             );
-            panes.push((card, 14.0 * s, ta));
-            let tile = Rect::new(card.x + 6.0 * s, card.center().y - 17.0 * s, 34.0 * s, 34.0 * s);
-            ui.rounded(tile, 10.0 * s, ACCENT.alpha(ta));
+            panes.push((card, card_r, ta));
+            let inset = 6.0 * s;
+            let tile = Rect::new(card.x + inset, card.center().y - 17.0 * s, 34.0 * s, 34.0 * s);
+            ui.rounded(tile, card_r - inset, ACCENT.alpha(ta));
             ui.icon(
                 &mut self.atlas,
                 icon,
@@ -744,7 +747,7 @@ impl Navigator {
             let card = Rect::new(stop_x, row_bottom - h + lift, pw - gap - stop_x, h);
             cards_top = cards_top.min(card.y);
             let a = bottom_e;
-            panes.push((card, 14.0 * s, a));
+            panes.push((card, card_r, a));
             let inner = card.pad(11.0 * s, 0.0);
             let base1 = card.y + 21.0 * s;
             let base2 = card.y + 38.0 * s;

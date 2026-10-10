@@ -380,7 +380,7 @@ impl Navigator {
                 s,
             );
         }
-        marks::own_arrow(&mut ui, bus_at, (f.heading as f32).to_radians(), 9.5 * s, TEXT, None);
+        marks::own_arrow(&mut ui, bus_at, (f.heading as f32).to_radians(), 9.5 * s, TEXT, Some(Color::rgba(0, 0, 0, 0.35)));
         let head = Rect::new(0.0, 0.0, w, if emb { 0.0 } else { 44.0 * s });
         let pad = 16.0 * s;
         if !emb {

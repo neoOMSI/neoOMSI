@@ -358,7 +358,7 @@ pub(super) fn own_arrow(
     angle: f32,
     size: f32,
     fill: Color,
-    glow: Option<Color>,
+    halo: Option<Color>,
 ) {
     let (sn, cs) = angle.sin_cos();
     let rot = |v: Vec2| at + Vec2::new(v.x * cs - v.y * sn, v.x * sn + v.y * cs) * size;
@@ -368,9 +368,8 @@ pub(super) fn own_arrow(
         rot(Vec2::new(0.0, 0.38)),
         rot(Vec2::new(0.72, 0.82)),
     );
-    match glow {
-        Some(g) => ui.circle(at, size * 1.45, g.alpha(0.18)),
-        None => ui.circle(at, size * 1.5, Color::rgba(0, 0, 0, 0.35)),
+    if let Some(c) = halo {
+        ui.circle(at, size * 1.5, c);
     }
     let grow = |p: Vec2| at + (p - at) * 1.32;
     ui.tri(grow(tip), grow(l), grow(m), RIM, RIM, RIM);
