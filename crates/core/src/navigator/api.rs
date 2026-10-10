@@ -9,6 +9,8 @@ impl Navigator {
             enabled,
             schedule: false,
             speed_avg: 8.0,
+            dim_ahead: 0.0,
+            dim_at: 0.0,
             opacity: opacity.clamp(0.2, 1.0),
             corner: corner.to_string(),
             city: CityMap::default(),

@@ -100,7 +100,7 @@ impl Navigator {
             );
         }
         self.update_congestion(f);
-        let want = (110.0 + f.speed_kmh as f64 * 2.2).clamp(110.0, 280.0);
+        let want = (126.0 + f.speed_kmh as f64 * 2.5).clamp(126.0, 320.0);
         if self.first {
             self.zoom = want;
             self.cam_heading = f.heading;
@@ -420,12 +420,22 @@ impl Navigator {
                 }
                 route_verts = Some(p.verts);
             }
-            let dim = self
+            // the route past the next turn is dimmed; where that begins glides after the
+            // turn ahead rather than jumping each time it is worked out again
+            let want = self
                 .next_turn
                 .as_ref()
                 .filter(|_| self.route.on_route)
-                .map(|t| bus_s + t.2 + 30.0)
-                .unwrap_or(1.0e9);
+                .map(|t| t.2 + 30.0)
+                .unwrap_or(ROUTE_AHEAD + 200.0);
+            let dt = (self.time - self.dim_at).clamp(0.0, 0.2);
+            self.dim_at = self.time;
+            self.dim_ahead = if self.dim_ahead <= 0.0 {
+                want
+            } else {
+                self.dim_ahead + (want - self.dim_ahead) * ease(dt, 0.35)
+            };
+            let dim = bus_s + self.dim_ahead;
             route_cut = [bus_s as f32, dim as f32, (bus_s + ROUTE_AHEAD) as f32];
         } else if self.route_mesh.verts != 0 {
             route_verts = Some(Vec::new());

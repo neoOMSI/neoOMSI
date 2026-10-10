@@ -114,6 +114,9 @@ pub struct Navigator {
     pub enabled: bool,
     pub schedule: bool,
     speed_avg: f32,
+    /// How far ahead of the bus the dimmed route begins (m), and when that was last moved.
+    dim_ahead: f64,
+    dim_at: f32,
     pub opacity: f32,
     pub corner: String,
     pub city: CityMap,

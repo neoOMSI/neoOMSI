@@ -78,9 +78,12 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
         if (s < u.target_size.z) {
             discard;
         }
-        if (s > u.target_size.w) {
+        // past the next turn: greyed and darkened, faded in over 25 m
+        let dim = clamp((s - u.target_size.w) / 25.0, 0.0, 1.0);
+        if (dim > 0.0) {
             let grey = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
-            c = vec4<f32>(mix(c.rgb, vec3<f32>(grey), 0.45) * 0.62, c.a);
+            let muted = mix(c.rgb, vec3<f32>(grey), 0.35) * 0.7;
+            c = vec4<f32>(mix(c.rgb, muted, dim), c.a);
         }
         if (u.params.w > 0.0) {
             c.a = c.a * clamp((u.params.w - s) / 150.0, 0.0, 1.0);

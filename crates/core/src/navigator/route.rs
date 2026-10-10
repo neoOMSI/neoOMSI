@@ -5,6 +5,8 @@ const ROUTE_BREAK: f64 = 12.0;
 /// Half the stretch over which the line is smoothed (m): the step where the route changes
 /// lanes melts into a gentle shift, a turn keeps its shape.
 const ROUTE_SMOOTH: f64 = 8.0;
+/// How far back along the line a lane may start beside it and still join it (m).
+const ROUTE_REJOIN: f64 = 80.0;
 
 /// Points of the route ahead along `lanes` (the first starting `start` m along the route),
 /// as many lines as there are places where the lanes do not meet: each point with its
@@ -24,8 +26,20 @@ pub(super) fn route_lines(
             let s = s0 + *d as f64;
             match cur.last() {
                 Some(last) if (*q - last.0).truncate().length() > ROUTE_BREAK => {
-                    lines.push(std::mem::take(&mut cur));
-                    cur.push((*q, s, l));
+                    // a lane that starts back beside the line (a stop's bay along the
+                    // carriageway the trip has already covered): the line turns off into it
+                    // where it begins instead of breaking into two strokes side by side
+                    match rejoin(&cur, *q) {
+                        Some((k, p, ps)) => {
+                            cur.truncate(k + 1);
+                            cur.push((p, ps, cur[k].2));
+                            cur.push((*q, s, l));
+                        }
+                        None => {
+                            lines.push(std::mem::take(&mut cur));
+                            cur.push((*q, s, l));
+                        }
+                    }
                 }
                 Some(last) if (*q - last.0).truncate().length() < 0.3 => {}
                 _ => cur.push((*q, s, l)),
@@ -61,6 +75,32 @@ pub(super) fn route_lines(
         }
     }
     lines
+}
+
+/// Where `q` lies beside the last `ROUTE_REJOIN` m of `line`, if within `ROUTE_BREAK` of it:
+/// the segment it falls on (its first point's index), the nearest point there and its
+/// distance along the route.
+fn rejoin(line: &[(DVec3, f64, usize)], q: DVec3) -> Option<(usize, DVec3, f64)> {
+    let end = line.last()?.1;
+    let mut best: Option<(f64, usize, DVec3, f64)> = None;
+    for k in (0..line.len().saturating_sub(1)).rev() {
+        let (a, b) = (line[k], line[k + 1]);
+        if end - b.1 > ROUTE_REJOIN {
+            break;
+        }
+        let ab = (b.0 - a.0).truncate();
+        let t = if ab.length_squared() > 1e-6 {
+            ((q - a.0).truncate().dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let p = a.0.lerp(b.0, t);
+        let d = (q - p).truncate().length();
+        if d <= ROUTE_BREAK && best.map(|x| d < x.0).unwrap_or(true) {
+            best = Some((d, k, p, a.1 + (b.1 - a.1) * t));
+        }
+    }
+    best.map(|(_, k, p, s)| (k, p, s))
 }
 
 /// The route ahead as one line of `w_px` pixels with a dark edge, coloured by the traffic
