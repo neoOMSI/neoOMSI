@@ -1,4 +1,9 @@
-use super::*;
+use super::beam::*;
+use super::config::{half_cos, LightSettings};
+use super::fader::Faders;
+use super::tuning::*;
+use glam::{DVec3, Mat4, Vec3};
+use ::render::{LightMode, PointLight};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -20,26 +25,28 @@ fn role_of(range: f32, outer_deg: f32) -> Role {
     }
 }
 
-pub fn spotlights_2(
-    model: &::model::Model,
-    xf: glam::Mat4,
-    origin: DVec3,
-    key: usize,
+pub(super) struct Section<'a> {
+    pub model: &'a ::model::Model,
+    pub rot: Mat4,
+    pub origin: DVec3,
+    pub owner: usize,
+}
+
+pub(super) fn spotlights_2(
+    cfg: &LightSettings,
+    faders: &mut Faders,
+    s: &Section,
     value_of: &dyn Fn(&str) -> f32,
     night: f32,
     lights: &mut Vec<PointLight>,
 ) {
-    if model.spotlights_2.is_empty() {
+    let model = s.model;
+    if model.spotlights_2.is_empty() || !cfg.low.on || !cfg.spot2.on {
         return;
     }
-    let cfg = settings();
-    let bc = cfg.low;
-    let sc = cfg.spot2;
-    if !bc.on || !sc.on {
-        return;
-    }
-    // (the lamp positions are walked once, not per lamp and side)
-    let nose_front = model
+    let (bc, sc) = (cfg.low, cfg.spot2);
+
+    let extent = model
         .meshes
         .iter()
         .flat_map(|m| {
@@ -51,13 +58,11 @@ pub fn spotlights_2(
         .fold(None, |a: Option<(f32, f32)>, y| {
             Some(a.map_or((y, y), |(hi, lo)| (hi.max(y), lo.min(y))))
         });
-    let nose_of = |dir_y: f32| -> Option<f32> {
-        nose_front.map(|(hi, lo)| if dir_y > 0.0 { hi } else { lo })
-    };
-    let half = |deg: f32| (deg.clamp(1.0, 179.0) * 0.5).to_radians().cos();
+    let nose_of = |dir_y: f32| extent.map(|(hi, lo)| if dir_y > 0.0 { hi } else { lo });
+
     for (si, sp) in model.spotlights_2.iter().enumerate() {
         let target = if value_of(&sp.variable) >= 0.5 { 1.0 } else { 0.0 };
-        let level = lamp_level(key, SLOT_SPOT2 + si as u32, target, LAMP_RISE, LAMP_FALL);
+        let level = faders.level(s.owner, SLOT_SPOT2 + si as u32, target, LAMP_RISE, LAMP_FALL);
         if level < 0.01 {
             continue;
         }
@@ -71,67 +76,49 @@ pub fn spotlights_2(
         let range = vals[9] * bc.range.max(0.05) * sc.range.max(0.05);
         let role = role_of(range, inner.max(outer));
 
-        let cone = {
-            let o = outer.max(inner);
-            if vals[4] < -0.3 && role == Role::Driving {
-                [half(inner.min(outer)), half(o)]
-            } else {
-                [half(inner.min(outer).min(o * 0.3)), half(o)]
-            }
+        let widest = outer.max(inner);
+        let narrow = inner.min(outer);
+        let cone = if vals[4] < -0.3 && role == Role::Driving {
+            [half_cos(narrow), half_cos(widest)]
+        } else {
+            [half_cos(narrow.min(widest * 0.3)), half_cos(widest)]
         };
         let (factor, beam, radius) = match role {
             Role::Fog => (0.6, cfg.low_beam_gain, range.clamp(6.0, 45.0)),
-            Role::Driving => (
-                1.0,
-                beam::beam_code(beam::BeamKind::Main, range),
-                spot_reach(range, 60.0),
-            ),
+            Role::Driving => (1.0, main_beam_code(range), spot_reach(range, 60.0)),
             Role::Cornering => (0.35 * short_range_gain(range), 0.0, headlight_radius(range)),
             Role::Low => (1.0, cfg.low_beam_gain, headlight_radius(range)),
         };
+
         let mirrored = !sp.no_mirror && vals[0].abs() > 0.01;
         let sides: &[f32] = if mirrored { &[1.0, -1.0] } else { &[1.0] };
-        for side in sides {
-            let mut local_pos = Vec3::new(vals[0] * side, vals[1], vals[2]);
-            let mut local_dir =
-                Vec3::new(vals[3] * side, vals[4], vals[5]).normalize_or_zero();
-            let dir_y = if local_dir.y > 0.3 {
-                1.0
-            } else if local_dir.y < -0.3 {
-                -1.0
-            } else {
-                0.0
-            };
+        for &side in sides {
+            let mut pos = Vec3::new(vals[0] * side, vals[1], vals[2]);
+            let mut dir = Vec3::new(vals[3] * side, vals[4], vals[5]).normalize_or_zero();
+            let dir_y = facing(dir);
             if dir_y != 0.0 {
-                if let Some(face) = spot_face(nose_of(dir_y), None, local_pos.y, dir_y) {
-                    local_pos.y = face + dir_y * 0.05;
+                if let Some(face) = spot_face(nose_of(dir_y), None, pos.y, dir_y) {
+                    pos.y = face + dir_y * 0.05;
                 }
-                let std_drop = beam::aim_drop(local_pos.z);
+                let std_drop = aim_drop(pos.z);
                 let drop = match role {
-                    Role::Fog => beam::FOG_DROP.max(std_drop),
+                    Role::Fog => FOG_DROP.max(std_drop),
                     Role::Driving | Role::Low => std_drop,
                     Role::Cornering => 0.0,
                 };
-                local_dir = beam::aimed(local_dir, drop);
+                dir = aimed(dir, drop);
             } else {
-                // (a lamp never shines up into the sky)
-                local_dir.z = local_dir.z.min(0.0);
-                local_dir = local_dir.normalize_or_zero();
+                dir.z = dir.z.min(0.0);
+                dir = dir.normalize_or_zero();
             }
-            let d = xf.transform_vector3(local_dir).normalize_or_zero();
-            let at = origin
-                + xf.transform_point3(local_pos).as_dvec3()
-                + DVec3::Z * sc.height as f64;
+            let world_dir = s.rot.transform_vector3(dir).normalize_or_zero();
             let lamp = PointLight {
-                position: at,
+                position: s.origin
+                    + s.rot.transform_point3(pos).as_dvec3()
+                    + DVec3::Z * sc.height as f64,
                 radius,
                 color,
-                direction: {
-                    let (mut c2, mut b2) = (cfg, bc);
-                    c2.lamp_yaw *= side;
-                    b2.yaw *= side;
-                    lamp_aim(d, &c2, &b2)
-                },
+                direction: cfg.aim(world_dir, &bc, side),
                 cone,
                 ..Default::default()
             };
@@ -148,5 +135,18 @@ pub fn spotlights_2(
                 ..lamp
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roles_follow_range_and_cone() {
+        assert!(role_of(100.0, 40.0) == Role::Driving);
+        assert!(role_of(10.0, 40.0) == Role::Cornering);
+        assert!(role_of(30.0, 90.0) == Role::Fog);
+        assert!(role_of(30.0, 40.0) == Role::Low);
     }
 }

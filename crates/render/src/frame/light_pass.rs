@@ -232,12 +232,26 @@ impl Renderer {
         let n = LM_TILE_PX as usize;
         let mut px = vec![0u8; n * n * 4];
         if let Some(img) = img.filter(|i| i.width > 0 && i.height > 0) {
+            let (iw, ih) = (img.width as usize, img.height as usize);
             for y in 0..n {
+                let y0 = y * ih / n;
+                let y1 = ((y + 1) * ih / n).max(y0 + 1).min(ih);
                 for x in 0..n {
-                    let sx = x * img.width as usize / n;
-                    let sy = y * img.height as usize / n;
-                    let o = (sy * img.width as usize + sx) * 4;
-                    px[(y * n + x) * 4..(y * n + x) * 4 + 4].copy_from_slice(&img.rgba[o..o + 4]);
+                    let x0 = x * iw / n;
+                    let x1 = ((x + 1) * iw / n).max(x0 + 1).min(iw);
+                    let mut sum = [0u32; 4];
+                    for sy in y0..y1 {
+                        for sx in x0..x1 {
+                            let o = (sy * iw + sx) * 4;
+                            for c in 0..4 {
+                                sum[c] += img.rgba[o + c] as u32;
+                            }
+                        }
+                    }
+                    let cnt = ((y1 - y0) * (x1 - x0)) as u32;
+                    for c in 0..4 {
+                        px[(y * n + x) * 4 + c] = ((sum[c] + cnt / 2) / cnt) as u8;
+                    }
                 }
             }
         }

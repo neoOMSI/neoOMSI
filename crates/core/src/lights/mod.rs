@@ -1,30 +1,40 @@
-use crate::scene::{LightSwitch, World};
-use glam::{DVec3, Vec3};
-use ::render::{Corona, LightMode, Lighting, PointLight, SCREEN_CONE, Scene};
-use ::simulation::{Daylight, VehicleInstance};
-
 mod beam;
 mod collect;
-mod consts;
-mod glow;
-mod interior;
-mod occlusion;
-mod rig;
-mod settings;
+mod config;
+mod cones;
+mod fader;
+mod frame;
+mod geom;
+mod map_lights;
+mod occluders;
+mod particles;
+mod screens;
+mod sources;
+mod spill;
 mod spot2;
 mod sprites;
+mod tuning;
 mod vehicle;
 mod weather;
 
-pub use collect::*;
-use beam::headlamps;
-use consts::*;
-pub use glow::*;
-use interior::*;
-use occlusion::*;
-use rig::*;
-pub(crate) use settings::*;
-pub use spot2::*;
-pub use sprites::*;
-pub use vehicle::*;
-pub use weather::*;
+pub use collect::collect;
+pub(crate) use config::{
+    exterior_cfg, interior_cfg, reset_exterior_cfg, reset_interior_cfg, set_exterior_cfg,
+    set_interior_cfg, set_settings, settings, BeamCfg, ExteriorCfg, InteriorCfg, LampLightCfg,
+    LightSettings, MapSpotCfg, SourceCfg, SpillCfg, Spot2Cfg,
+};
+pub use config::{reset_screen_fx, screen_fx, set_led_glow, set_screen_fx};
+pub use sprites::{
+    cone_texture_id, corona_texture_id, glow_texture_id, load_smoke_texture, set_corona_root,
+    star_texture_id, upload_corona_textures,
+};
+pub use weather::{apply_weather, lighting_from, set_cone_strength};
+
+fn owner_key<T>(t: &T) -> usize {
+    t as *const T as usize
+}
+
+pub fn vehicle_velocity(v: &::simulation::VehicleInstance) -> glam::Vec3 {
+    let h = v.heading.to_radians();
+    glam::Vec3::new(h.sin() as f32, h.cos() as f32, 0.0) * v.physics.speed
+}

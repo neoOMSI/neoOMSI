@@ -36,6 +36,7 @@ pub(crate) struct CameraUniform {
     pub(crate) wind: [f32; 4],
     pub(crate) spot_vp: [[[f32; 4]; 4]; SPOT_SLOTS],
     pub(crate) spot_info: [f32; 4],
+    pub(crate) tune: [f32; 4],
 }
 
 pub(crate) const CLOUD_ORIGIN_PERIOD: f64 = 70000.0;

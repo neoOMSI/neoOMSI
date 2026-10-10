@@ -1,4 +1,10 @@
-use super::*;
+use super::config::{half_cos, LightSettings};
+use super::fader::Faders;
+use super::sprites::glow_texture_id;
+use super::tuning::*;
+use glam::{DVec3, Mat4, Vec3};
+use ::render::{Corona, LightMode, PointLight};
+use ::simulation::VehicleInstance;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BeamKind {
@@ -8,77 +14,191 @@ pub(super) enum BeamKind {
 
 const MAIN_MIN_RANGE: f32 = 80.0;
 const MAIN_RANGE_RATIO: f32 = 1.25;
+const MAX_DROP: f32 = 0.03;
 pub(super) const FOG_DROP: f32 = 0.025;
 
-/// Compatibility profiles for UK Studio Polygon buses.
-///
-/// OMSI does not link a classic `[spotlight]` entry to physical lamp entities, and does not
-/// standardise their order or ranges. These models deliberately use non-generic layouts, so
-/// range-based inference would select the wrong beam or create a road light for their DRLs.
-/// Keep this content-specific: applying it to every OMSI vehicle would be equally incorrect.
+pub(super) fn headlight_radius(range: f32) -> f32 {
+    range.max(6.0)
+}
+
+pub(super) fn headlight_core(range: f32) -> f32 {
+    headlight_radius(range) / 30.0
+}
+
+pub(super) fn spot_reach(range: f32, low: f32) -> f32 {
+    range.clamp(0.5, low).max(range * low / 100.0).min(low * 5.0)
+}
+
+pub(super) fn short_range_gain(range: f32) -> f32 {
+    if range >= 10.0 {
+        1.0
+    } else {
+        let r = range.max(0.5) / 10.0;
+        r * r
+    }
+}
+
+pub(super) fn main_beam_code(range: f32) -> f32 {
+    let k = (spot_reach(range, 60.0) / 60.0).max(1.0);
+    -(k * k)
+}
+
+pub(super) fn aim_drop(mount_height: f32) -> f32 {
+    if mount_height < 0.8 {
+        0.010
+    } else if mount_height <= 1.0 {
+        0.012
+    } else {
+        0.015
+    }
+}
+
+pub(super) fn aimed(dir: Vec3, drop: f32) -> Vec3 {
+    let h = dir.truncate().length();
+    if h < 1e-4 {
+        return dir;
+    }
+    let slope = (dir.z / h).min(-drop);
+    Vec3::new(dir.x / h, dir.y / h, slope).normalize_or_zero()
+}
+
+fn aimed_limited(dir: Vec3, drop: f32) -> Vec3 {
+    let a = aimed(dir, drop);
+    let h = a.truncate().length().max(1e-4);
+    Vec3::new(a.x / h, a.y / h, (a.z / h).max(-MAX_DROP)).normalize_or_zero()
+}
+
+pub(super) fn facing(dir: Vec3) -> f32 {
+    if dir.y > 0.3 {
+        1.0
+    } else if dir.y < -0.3 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
+pub(super) fn spot_face(lamp: Option<f32>, edge: Option<f32>, apex_y: f32, dir: f32) -> Option<f32> {
+    let fwd = |y: f32| y * dir;
+    let lamp = lamp.filter(|l| fwd(*l) > fwd(apex_y));
+    let face = match (lamp, edge) {
+        (Some(l), Some(e)) => fwd(l).min(fwd(e)),
+        (Some(l), None) => fwd(l),
+        (None, Some(e)) => fwd(e).min(fwd(apex_y) + 1.5),
+        (None, None) => return None,
+    };
+    Some(face * dir).filter(|f| fwd(*f) > fwd(apex_y))
+}
+
+pub(super) fn ai_spotlight(lamps: &[[f32; 3]]) -> Option<[f32; 12]> {
+    let nose = lamps.iter().map(|l| l[1]).reduce(f32::max)?;
+    let front: Vec<&[f32; 3]> = lamps.iter().filter(|l| nose - l[1] < 0.4).collect();
+    let z = front.iter().map(|l| l[2]).sum::<f32>() / front.len() as f32;
+    Some([0.0, nose, z, 0.0, 1.0, -0.05, 255.0, 245.0, 225.0, 40.0, 30.0, 70.0])
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UkStudioPolygonProfile {
+pub(super) enum Profile {
     Enviro400Mmc,
     Renown,
+    LedHalo,
 }
 
-fn uk_studio_polygon_profile_path(path: &str) -> Option<UkStudioPolygonProfile> {
-    let path = path.to_ascii_lowercase();
-    if path.contains("studio polygon 400mmc") {
-        Some(UkStudioPolygonProfile::Enviro400Mmc)
-    } else if path.contains("studio polygon renown") {
-        Some(UkStudioPolygonProfile::Renown)
-    } else {
-        None
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LampRole {
+    Beam,
+    Fog,
+    Cornering,
+    Drl,
 }
 
-fn uk_studio_polygon_profile(v: &VehicleInstance) -> Option<UkStudioPolygonProfile> {
-    uk_studio_polygon_profile_path(&v.ty.def.path.to_string_lossy())
-}
-
-fn uk_studio_polygon_kind(profile: UkStudioPolygonProfile, selected: usize) -> BeamKind {
-    match profile {
-        // SP400: full, dipped, fog, DRL. Its fourth entry is visual-only.
-        UkStudioPolygonProfile::Enviro400Mmc => {
-            if selected == 0 {
-                BeamKind::Main
-            } else {
-                BeamKind::Dipped
-            }
-        }
-        // Renown: low, dipped, full. Its 80 m dipped entry must not be inferred as full.
-        UkStudioPolygonProfile::Renown => {
-            if selected == 2 {
-                BeamKind::Main
-            } else {
-                BeamKind::Dipped
-            }
+impl LampRole {
+    fn gain(self) -> f32 {
+        match self {
+            Self::Beam => 1.0,
+            Self::Fog => 0.6,
+            Self::Cornering => 0.35,
+            Self::Drl => 0.08,
         }
     }
 }
 
-fn uk_studio_polygon_visual_only(
-    profile: Option<UkStudioPolygonProfile>,
-    selected: Option<usize>,
-) -> bool {
-    matches!(
-        (profile, selected),
-        (Some(UkStudioPolygonProfile::Enviro400Mmc), Some(3))
-    )
-}
+impl Profile {
+    pub(super) fn of_path(path: &str) -> Option<Self> {
+        let path = path.to_ascii_lowercase();
+        if path.contains("studio polygon 400mmc") {
+            Some(Self::Enviro400Mmc)
+        } else if path.contains("studio polygon renown") {
+            Some(Self::Renown)
+        } else {
+            None
+        }
+    }
 
-fn uk_studio_polygon_lamp_variable(
-    profile: UkStudioPolygonProfile,
-    selected: usize,
-) -> Option<&'static str> {
-    match (profile, selected) {
-        (UkStudioPolygonProfile::Enviro400Mmc, 0) => Some("lights_highbeam"),
-        (UkStudioPolygonProfile::Enviro400Mmc, 1) => Some("lights_mainbeam"),
-        (UkStudioPolygonProfile::Renown, 0) => Some("lights_lowbeam"),
-        (UkStudioPolygonProfile::Renown, 1) => Some("lights_mainbeam"),
-        (UkStudioPolygonProfile::Renown, 2) => Some("lights_highbeam"),
-        _ => None,
+    pub(super) fn of_model(path: &str, spots: usize, has_var: &dyn Fn(&str) -> bool) -> Option<Self> {
+        Self::of_path(path).or_else(|| {
+            (spots == 11 && has_var("lights_fern_led") && has_var("lights_abbl_halo"))
+                .then_some(Self::LedHalo)
+        })
+    }
+
+    pub(super) fn kind(self, entry: usize) -> BeamKind {
+        let is_main = match self {
+            Self::Enviro400Mmc => entry == 0,
+            Self::Renown => entry == 2,
+            Self::LedHalo => entry == 0 || entry == 6,
+        };
+        if is_main {
+            BeamKind::Main
+        } else {
+            BeamKind::Dipped
+        }
+    }
+
+    pub(super) fn role(self, entry: usize) -> LampRole {
+        match (self, entry) {
+            (Self::LedHalo, 1 | 7) => LampRole::Fog,
+            (Self::LedHalo, 2 | 3 | 8 | 9) => LampRole::Cornering,
+            (Self::LedHalo, 5) => LampRole::Drl,
+            _ => LampRole::Beam,
+        }
+    }
+
+    pub(super) fn side(self, entry: usize) -> Option<f32> {
+        match (self, entry) {
+            (Self::LedHalo, 2 | 8) => Some(1.0),
+            (Self::LedHalo, 3 | 9) => Some(-1.0),
+            _ => None,
+        }
+    }
+
+    pub(super) fn partner(self, entry: usize) -> Option<usize> {
+        match (self, entry) {
+            (Self::LedHalo, 0) => Some(4),
+            (Self::LedHalo, 6) => Some(10),
+            (Self::LedHalo, _) => None,
+            _ => Some(1),
+        }
+    }
+
+    pub(super) fn visual_only(self, entry: usize) -> bool {
+        self == Self::Enviro400Mmc && entry == 3
+    }
+
+    pub(super) fn lamp_variables(self, entry: usize) -> &'static [&'static str] {
+        match (self, entry) {
+            (Self::Enviro400Mmc, 0) => &["lights_highbeam"],
+            (Self::Enviro400Mmc, 1) => &["lights_mainbeam"],
+            (Self::Renown, 0) => &["lights_lowbeam"],
+            (Self::Renown, 1) => &["lights_mainbeam"],
+            (Self::Renown, 2) => &["lights_highbeam"],
+            (Self::LedHalo, 0) => &["lights_fern_LED"],
+            (Self::LedHalo, 1 | 7) => &["light_nebelfront_R", "light_nebelfront_L"],
+            (Self::LedHalo, 2 | 3 | 4 | 5) => &["lights_abbl_LED"],
+            (Self::LedHalo, 6) => &["lights_fern_halo"],
+            (Self::LedHalo, 8 | 9 | 10) => &["lights_abbl_halo"],
+            _ => &[],
+        }
     }
 }
 
@@ -97,88 +217,58 @@ pub(super) fn classify(ranges: &[f32], selected: usize) -> BeamKind {
     }
 }
 
-pub(super) fn beam_code(kind: BeamKind, range: f32) -> f32 {
-    match kind {
-        BeamKind::Dipped => 100.0,
-        BeamKind::Main => {
-            let k = (spot_reach(range, 60.0) / 60.0).max(1.0);
-            -(k * k)
-        }
-    }
-}
-
-pub(super) fn aim_drop(mount_height: f32) -> f32 {
-    if mount_height < 0.8 {
-        0.010
-    } else if mount_height <= 1.0 {
-        0.012
-    } else {
-        0.015
-    }
-}
-
-pub(super) fn aimed(dir: Vec3, drop: f32) -> Vec3 {
-    let h = (dir.x * dir.x + dir.y * dir.y).sqrt();
-    if h < 1e-4 {
-        return dir;
-    }
-    let slope = (dir.z / h).min(-drop);
-    Vec3::new(dir.x / h, dir.y / h, slope).normalize_or_zero()
-}
-
-pub(super) struct Headlamp<'a> {
-    pub vals: [f32; 12],
-    pub kind: BeamKind,
-    pub body: glam::Mat4,
-    pub origin: DVec3,
-    pub lamps: &'a [[f32; 3]],
-    /// The physical lamp positions for this particular road-light selection.  Most OMSI
-    /// vehicles do not provide an association, so they retain the symmetric fallback.
-    pub sources: &'a [[f32; 3]],
-    pub bounding_box: Option<[f32; 6]>,
-    pub night: f32,
-    pub level: f32,
-    pub gain: f32,
-    pub range_mul: f32,
+struct Headlamp<'a> {
+    vals: [f32; 12],
+    kind: BeamKind,
+    body: Mat4,
+    origin: DVec3,
+    lamps: &'a [[f32; 3]],
+    sources: &'a [[f32; 3]],
+    bounding_box: Option<[f32; 6]>,
+    night: f32,
+    level: f32,
+    gain: f32,
+    range_mul: f32,
+    role: LampRole,
+    side: Option<f32>,
 }
 
 pub(super) fn headlamps(
+    cfg: &LightSettings,
+    faders: &mut Faders,
     v: &VehicleInstance,
     night: f32,
     lights: &mut Vec<PointLight>,
     coronas: &mut Vec<Corona>,
 ) {
-    let cfg = settings();
     if !cfg.low.on && !cfg.high.on {
         return;
     }
     let ty = &v.ty;
     let ai_on = v.ai_lights;
-    // `-1` is OMSI's explicit "no road beam" value.  Do not turn it into
-    // spotlight zero for player vehicles.
+    // `-1` is OMSI's explicit "no road beam"; it must not turn into spotlight zero.
     let selected = v.var("Spot_Select").filter(|s| *s >= 0.0);
     let sel = selected.or(ai_on.then_some(0.0));
-    let lamps: Vec<[f32; 3]> = ty
-        .model
-        .meshes
-        .iter()
-        .flat_map(|m| {
+
+    let lamp_sprites = || {
+        ty.model.meshes.iter().flat_map(|m| {
             m.light_enh
                 .iter()
-                .map(|l| l.pos)
-                .chain(m.light_enh_2.iter().map(|l| l.pos))
+                .map(|l| (l.pos, l.variable.as_str()))
+                .chain(m.light_enh_2.iter().map(|l| (l.pos, l.variable.as_str())))
         })
-        .collect();
+    };
+    let lamps: Vec<[f32; 3]> = lamp_sprites().map(|(p, _)| p).collect();
+
     let mut spots: Vec<[f32; 12]> = ty.model.spotlights.iter().map(|s| s.values).collect();
     if spots.is_empty() && ai_on {
-        if let Some(vals) = ai_spotlight(&lamps) {
-            spots.push(vals);
-        }
+        spots.extend(ai_spotlight(&lamps));
     }
     if spots.is_empty() {
         return;
     }
-    let lit = sel.filter(|s| *s >= 0.0).map(|s| {
+
+    let lit = sel.map(|s| {
         let i = s as usize;
         if i < spots.len() {
             i
@@ -189,73 +279,52 @@ pub(super) fn headlamps(
         }
     });
     let ranges: Vec<f32> = spots.iter().map(|s| s[9]).collect();
-    let uk_profile = uk_studio_polygon_profile(v);
+    let profile = Profile::of_model(&v.ty.def.path.to_string_lossy(), spots.len(), &|name| {
+        lamp_sprites().any(|(_, var)| var.eq_ignore_ascii_case(name))
+    });
     let kinds: Vec<BeamKind> = (0..spots.len())
-        .map(|i| {
-            uk_profile.map_or_else(
-                || classify(&ranges, i),
-                |profile| uk_studio_polygon_kind(profile, i),
-            )
-        })
+        .map(|i| profile.map_or_else(|| classify(&ranges, i), |p| p.kind(i)))
         .collect();
 
-    let partner = if uk_profile.is_some() && spots.len() > 1 {
-        Some(1)
+    // The shortest dipped entry burns together with a full beam.
+    let partner = if let Some(p) = profile {
+        lit.and_then(|i| p.partner(i)).filter(|&i| i < spots.len())
     } else {
         (0..spots.len())
             .filter(|&i| {
-                kinds[i] == BeamKind::Dipped
-                    && !matches!(uk_profile, Some(UkStudioPolygonProfile::Enviro400Mmc) if i == 3)
+                kinds[i] == BeamKind::Dipped && !profile.is_some_and(|p| p.visual_only(i))
             })
             .min_by(|&a, &b| ranges[a].total_cmp(&ranges[b]))
     };
     let main_lit = lit.is_some_and(|i| i < spots.len() && kinds[i] == BeamKind::Main);
-    let visual_only = uk_studio_polygon_visual_only(uk_profile, lit);
-    let key = key_of(v);
+    let visual_only = matches!((profile, lit), (Some(p), Some(i)) if p.visual_only(i));
+
+    let owner = super::owner_key(v);
     for (i, vals) in spots.iter().enumerate() {
-        // The SP400's visual DRL entities are rendered by `vehicle_lights`; their selected
-        // road-spot entry must not create an environmental beam.
         let on = !visual_only && (lit == Some(i) || (main_lit && partner == Some(i)));
-        let level = lamp_level(
-            key,
-            i as u32,
-            if on { 1.0 } else { 0.0 },
-            LAMP_RISE,
-            LAMP_FALL,
-        );
+        let level = faders.level(owner, i as u32, if on { 1.0 } else { 0.0 }, LAMP_RISE, LAMP_FALL);
         if level < 0.01 {
             continue;
         }
         let kind = kinds[i];
-        let bc = match kind {
+        let beam_cfg = match kind {
             BeamKind::Dipped => cfg.low,
             BeamKind::Main => cfg.high,
         };
-        if !bc.on {
+        if !beam_cfg.on {
             continue;
         }
-        // These Studio Polygon models centre their classic road-spot definitions, but name
-        // the real lamp effects.  Bind the generated road beam to those real positions.
-        // This also avoids using the generic symmetric fallback for the Renown's compact
-        // inner/outer lamp cluster.
-        let source_variable =
-            uk_profile.and_then(|profile| uk_studio_polygon_lamp_variable(profile, i));
-        let sources: Vec<[f32; 3]> = if let Some(source_variable) = source_variable {
-            ty.model
-                .meshes
-                .iter()
-                .flat_map(|m| {
-                    m.light_enh
-                        .iter()
-                        .map(|l| (l.pos, l.variable.as_str()))
-                        .chain(m.light_enh_2.iter().map(|l| (l.pos, l.variable.as_str())))
-                })
-                .filter_map(|(pos, variable)| (variable == source_variable).then_some(pos))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        headlamp_lights(
+        // Profiled models name their real lamp effects: bind the beam to those positions.
+        let role = profile.map_or(LampRole::Beam, |p| p.role(i));
+        let side = profile.and_then(|p| p.side(i));
+        let vars = profile.map_or(&[][..], |p| p.lamp_variables(i));
+        let sources: Vec<[f32; 3]> = lamp_sprites()
+            .filter(|(_, v)| vars.iter().any(|n| v.eq_ignore_ascii_case(n)))
+            .filter(|(p, _)| side.map_or(true, |s| p[0] * s > 0.0))
+            .map(|(p, _)| p)
+            .collect();
+        emit_headlamp(
+            cfg,
             &Headlamp {
                 vals: *vals,
                 kind,
@@ -266,8 +335,10 @@ pub(super) fn headlamps(
                 bounding_box: ty.def.bounding_box,
                 night,
                 level,
-                gain: bc.gain,
-                range_mul: bc.range,
+                gain: beam_cfg.gain,
+                range_mul: beam_cfg.range,
+                role,
+                side,
             },
             lights,
             coronas,
@@ -275,31 +346,20 @@ pub(super) fn headlamps(
     }
 }
 
-pub(super) const CODE_DIPPED: f32 = 200.0;
-pub(super) const CODE_MAIN: f32 = 300.0;
-
-const MAX_DROP: f32 = 0.03;
-
-pub(super) fn headlamp_lights(
+fn emit_headlamp(
+    cfg: &LightSettings,
     h: &Headlamp,
     lights: &mut Vec<PointLight>,
     coronas: &mut Vec<Corona>,
 ) {
-    let cfg = settings();
     let vals = h.vals;
     let raw_dir = Vec3::new(vals[3], vals[4], vals[5]).normalize_or_zero();
     if raw_dir == Vec3::ZERO {
         return;
     }
     let range = vals[9] * h.range_mul.max(0.05);
+    let dir_y = facing(raw_dir);
     let mut apex = Vec3::new(vals[0], vals[1], vals[2]);
-    let dir_y = if raw_dir.y > 0.3 {
-        1.0
-    } else if raw_dir.y < -0.3 {
-        -1.0
-    } else {
-        0.0
-    };
     if dir_y != 0.0 {
         let nose = h
             .lamps
@@ -312,16 +372,17 @@ pub(super) fn headlamp_lights(
             apex.y = face + dir_y * 0.05;
         }
     }
-    let local_dir = if dir_y != 0.0 {
-        let a = aimed(raw_dir, aim_drop(apex.z));
-        let hz = (a.x * a.x + a.y * a.y).sqrt().max(1e-4);
-        Vec3::new(a.x / hz, a.y / hz, (a.z / hz).max(-MAX_DROP)).normalize_or_zero()
-    } else {
-        raw_dir
+    let axis_at = |mount_z: f32| -> Vec3 {
+        if dir_y != 0.0 {
+            aimed_limited(raw_dir, aim_drop(mount_z))
+        } else {
+            raw_dir
+        }
     };
-    let color = [vals[6] / 255.0, vals[7] / 255.0, vals[8] / 255.0];
-    let half_width = h.bounding_box.map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
 
+    // Lamp spacing: the entry's own offset, else the sprites at the same height, else the
+    // body width.
+    let half_width = h.bounding_box.map_or(1.25, |bb| (bb[0] * 0.5).min(1.25));
     let face_x: Vec<f32> = h
         .lamps
         .iter()
@@ -335,36 +396,37 @@ pub(super) fn headlamp_lights(
     } else {
         half_width * 0.6
     }
-    .min(half_width.max(0.3));
+        .min(half_width.max(0.3));
     let right = h.body.transform_vector3(Vec3::X).normalize_or_zero();
     let base = h.body.transform_point3(Vec3::new(0.0, apex.y, apex.z));
-    let half = |deg: f32| (deg.clamp(1.0, 179.0) * 0.5).to_radians().cos();
 
     let outer = vals[10].max(vals[11]).max(match h.kind {
         BeamKind::Dipped => 80.0,
         BeamKind::Main => 50.0,
     });
-
-    let cone = if dir_y < 0.0 {
-        [half(outer * 0.6), half(outer)]
-    } else {
-        [half(outer * 0.3), half(outer)]
+    let inner_frac = if dir_y < 0.0 { 0.6 } else { 0.3 };
+    let cone = [half_cos(outer * inner_frac), half_cos(outer)];
+    let reach_vanilla = spot_reach(range, 45.0);
+    let radius = match (h.role, h.kind) {
+        (LampRole::Fog, _) => range.clamp(6.0, 45.0),
+        (LampRole::Cornering, _) => range.clamp(6.0, 25.0),
+        (LampRole::Drl, _) => range.clamp(3.0, 8.0),
+        (LampRole::Beam, BeamKind::Dipped) => spot_reach(range, 60.0).max(60.0),
+        (LampRole::Beam, BeamKind::Main) => range.clamp(MAIN_MIN_RANGE, 300.0),
     };
-    let reach_v = spot_reach(range, 45.0);
-    let radius = match h.kind {
-        BeamKind::Dipped => spot_reach(range, 60.0).max(60.0),
-        BeamKind::Main => range.clamp(MAIN_MIN_RANGE, 300.0),
-    };
+    let role_gain = h.role.gain();
     let short = short_range_gain(range);
-    let beam = match h.kind {
+    let code = match h.kind {
         BeamKind::Dipped => CODE_DIPPED,
         BeamKind::Main => CODE_MAIN,
     };
+    let color = [vals[6] / 255.0, vals[7] / 255.0, vals[8] / 255.0];
 
-    let base_d = h.body.transform_vector3(local_dir).normalize_or_zero();
-    if h.kind == BeamKind::Dipped {
+    // A dipped beam also lights the bumper area right in front of the lamps.
+    if h.kind == BeamKind::Dipped && h.role == LampRole::Beam {
+        let forward = h.body.transform_vector3(axis_at(apex.z)).normalize_or_zero();
         lights.push(PointLight {
-            position: h.origin + (base + base_d * 0.35).as_dvec3(),
+            position: h.origin + (base + forward * 0.35).as_dvec3(),
             radius: 1.6,
             color,
             intensity: 0.35 * (0.4 + 0.6 * h.night) * h.level * h.gain.min(1.5),
@@ -373,41 +435,37 @@ pub(super) fn headlamp_lights(
             ..Default::default()
         });
     }
+
     let sources: Vec<(Vec3, f32)> = if h.sources.is_empty() {
         [-1.0f32, 1.0]
             .into_iter()
+            .filter(|side| h.side.map_or(true, |s| s == *side))
             .map(|side| (base + right * spread * side, apex.z))
             .collect()
     } else {
         h.sources
             .iter()
-            .map(|source| (h.body.transform_point3(Vec3::from(*source)), source[2]))
+            .map(|s| (h.body.transform_point3(Vec3::from(*s)), s[2]))
             .collect()
     };
-    for (spot_at, source_height) in sources {
-        let source_dir = if dir_y != 0.0 {
-            let a = aimed(raw_dir, aim_drop(source_height));
-            let hz = (a.x * a.x + a.y * a.y).sqrt().max(1e-4);
-            Vec3::new(a.x / hz, a.y / hz, (a.z / hz).max(-MAX_DROP)).normalize_or_zero()
-        } else {
-            raw_dir
-        };
-        let d = h.body.transform_vector3(source_dir).normalize_or_zero();
+    for (at, mount_z) in sources {
+        let d = h.body.transform_vector3(axis_at(mount_z)).normalize_or_zero();
         let lamp = PointLight {
-            position: h.origin + spot_at.as_dvec3(),
+            position: h.origin + at.as_dvec3(),
             color,
             direction: d,
             cone,
             ..Default::default()
         };
-        if h.kind == BeamKind::Dipped && h.sources.is_empty() {
+        if h.kind == BeamKind::Dipped && h.role == LampRole::Beam && h.sources.is_empty() {
+            // glare sprite on the nearest lamp sprite
             let glare_at = h
                 .lamps
                 .iter()
                 .map(|l| h.body.transform_point3(Vec3::from(*l)))
-                .filter(|p| (*p - spot_at).length() < 0.6)
-                .min_by(|a, b| (*a - spot_at).length().total_cmp(&(*b - spot_at).length()))
-                .unwrap_or(spot_at + d * 0.05);
+                .filter(|p| (*p - at).length() < 0.6)
+                .min_by(|a, b| (*a - at).length().total_cmp(&(*b - at).length()))
+                .unwrap_or(at + d * 0.05);
             coronas.push(Corona {
                 position: h.origin + glare_at.as_dvec3(),
                 size: 0.15,
@@ -420,17 +478,19 @@ pub(super) fn headlamp_lights(
                 ..Default::default()
             });
         }
+        // vanilla renderer's lamp
         lights.push(PointLight {
-            radius: reach_v,
-            intensity: cfg.vanilla * 0.5 * (0.3 + 0.7 * h.night) * short * h.level * h.gain,
+            radius: reach_vanilla,
+            intensity: cfg.vanilla * 0.5 * (0.3 + 0.7 * h.night) * short * role_gain * h.level * h.gain,
             mode: LightMode::Vanilla,
             ..lamp
         });
+        // enhanced renderer's lamp
         lights.push(PointLight {
             radius,
-            intensity: cfg.headlight * 0.5 * short * h.level * h.gain,
+            intensity: cfg.headlight * 0.5 * short * role_gain * h.level * h.gain,
             core: 1.0,
-            beam,
+            beam: code,
             mode: LightMode::Enhanced,
             ..lamp
         });
@@ -442,57 +502,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn studio_polygon_400mmc_keeps_drls_visual_only() {
-        let profile = uk_studio_polygon_profile_path(
-            r"Vehicles\[SP] Studio Polygon 400MMC\Model\E400MMC.bus",
-        );
-        assert_eq!(profile, Some(UkStudioPolygonProfile::Enviro400Mmc));
-        let profile = profile.unwrap();
-
-        assert_eq!(uk_studio_polygon_kind(profile, 0), BeamKind::Main);
-        assert_eq!(uk_studio_polygon_kind(profile, 1), BeamKind::Dipped);
-        assert!(uk_studio_polygon_visual_only(Some(profile), Some(3)));
-        assert_eq!(
-            uk_studio_polygon_lamp_variable(profile, 0),
-            Some("lights_highbeam")
-        );
-        assert_eq!(
-            uk_studio_polygon_lamp_variable(profile, 1),
-            Some("lights_mainbeam")
-        );
-        assert_eq!(uk_studio_polygon_lamp_variable(profile, 3), None);
+    fn full_beam_range_is_not_capped_to_dipped_beam_distance() {
+        assert_eq!(headlight_radius(125.0), 125.0);
+        assert!((headlight_core(125.0) - 125.0 / 30.0).abs() < 1e-5);
     }
 
     #[test]
-    fn studio_polygon_renown_keeps_only_its_third_entry_as_full_beam() {
-        let profile =
-            uk_studio_polygon_profile_path(r"Vehicles\[SP] Studio Polygon Renown\Model\Renown.bus");
-        assert_eq!(profile, Some(UkStudioPolygonProfile::Renown));
-        let profile = profile.unwrap();
-
-        assert_eq!(uk_studio_polygon_kind(profile, 0), BeamKind::Dipped);
-        assert_eq!(uk_studio_polygon_kind(profile, 1), BeamKind::Dipped);
-        assert_eq!(uk_studio_polygon_kind(profile, 2), BeamKind::Main);
-        assert_eq!(
-            uk_studio_polygon_lamp_variable(profile, 0),
-            Some("lights_lowbeam")
-        );
-        assert_eq!(
-            uk_studio_polygon_lamp_variable(profile, 1),
-            Some("lights_mainbeam")
-        );
-        assert_eq!(
-            uk_studio_polygon_lamp_variable(profile, 2),
-            Some("lights_highbeam")
-        );
+    fn sp400_keeps_drls_visual_only() {
+        let p = Profile::of_path(r"Vehicles\[SP] Studio Polygon 400MMC\Model\E400MMC.bus").unwrap();
+        assert_eq!(p, Profile::Enviro400Mmc);
+        assert_eq!(p.kind(0), BeamKind::Main);
+        assert_eq!(p.kind(1), BeamKind::Dipped);
+        assert!(p.visual_only(3));
+        assert_eq!(p.lamp_variables(0), ["lights_highbeam"]);
+        assert!(p.lamp_variables(3).is_empty());
     }
 
     #[test]
-    fn unrelated_content_uses_the_generic_classifier() {
-        assert_eq!(
-            uk_studio_polygon_profile_path(r"Vehicles\MAN_NL202\NL202.bus"),
-            None
-        );
+    fn renown_keeps_only_its_third_entry_as_full_beam() {
+        let p = Profile::of_path(r"Vehicles\[SP] Studio Polygon Renown\Model\Renown.bus").unwrap();
+        assert_eq!(p.kind(0), BeamKind::Dipped);
+        assert_eq!(p.kind(1), BeamKind::Dipped);
+        assert_eq!(p.kind(2), BeamKind::Main);
+        assert_eq!(p.lamp_variables(1), ["lights_mainbeam"]);
+    }
+
+    #[test]
+    fn led_halo_profile_roles() {
+        let p = Profile::of_model("x.bus", 11, &|n| n == "lights_fern_led" || n == "lights_abbl_halo").unwrap();
+        assert_eq!(p, Profile::LedHalo);
+        assert_eq!(p.kind(0), BeamKind::Main);
+        assert_eq!(p.kind(4), BeamKind::Dipped);
+        assert_eq!(p.role(5), LampRole::Drl);
+        assert_eq!(p.role(2), LampRole::Cornering);
+        assert_eq!(p.side(3), Some(-1.0));
+        assert_eq!(p.partner(6), Some(10));
+    }
+
+    #[test]
+    fn generic_classifier() {
+        assert_eq!(Profile::of_path(r"Vehicles\MAN_NL202\NL202.bus"), None);
         assert_eq!(classify(&[40.0, 80.0], 1), BeamKind::Main);
+        assert_eq!(classify(&[40.0, 80.0], 0), BeamKind::Dipped);
+    }
+
+    #[test]
+    fn aim_never_rises_above_drop() {
+        let d = aimed(Vec3::new(0.0, 1.0, 0.2), 0.01);
+        assert!(d.z < 0.0);
     }
 }

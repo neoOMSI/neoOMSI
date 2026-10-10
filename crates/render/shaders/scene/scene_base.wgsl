@@ -24,6 +24,7 @@ struct Camera {
     wind: vec4<f32>,         // the player's vehicle's velocity (m/s, world): the airstream on its glass
     spot_vp: array<mat4x4<f32>, 32>, // the spot light shadow maps' matrices (see `spot_shadow`)
     spot_info: vec4<f32>,    // x tile width, y tile height (uv of the far map's texture), z the far cascade's share of its height, w tile pixels
+    tune: vec4<f32>,
 };
 
 const PUDDLE_SPREAD: f32 = 0.45;
@@ -1840,7 +1841,7 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
     if (classic && material.params.y < 0.5) {
         var v = clamp(material.emissive.rgb + mat_light + material.color.rgb * interior_lamps(in.world, n, in.params2.z), vec3<f32>(0.0), vec3<f32>(1.0));
         if (light_mapped) {
-            let lm = srgb_encode(textureSample(t_light, s_diffuse, buv).rgb) * clamp(in.params2.x, 0.0, 1.0);
+            let lm = srgb_encode(textureSample(t_light, s_diffuse, buv).rgb) * clamp(in.params2.x, 0.0, 1.0) * camera.tune.y;
             v = v + lm * (vec3<f32>(1.0) - v);
         }
         if (terrain_night) {
@@ -1871,7 +1872,7 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
         // too, 0x5fa8f0) among them - clamped at 1. (Added once more after the map, the
         // saloon lamps lit a cabin twice over, flat white where the map was full; and the
         // material's colour took the map down with it.)
-        let lm = textureSample(t_light, s_diffuse, buv).rgb * clamp(in.params2.x, 0.0, 1.0);
+        let lm = textureSample(t_light, s_diffuse, buv).rgb * clamp(in.params2.x, 0.0, 1.0) * camera.tune.y;
         let v = clamp(material.emissive.rgb + mat_light + material.color.rgb * interior_lamps(in.world, n, in.params2.z), vec3<f32>(0.0), vec3<f32>(1.0));
         lit = albedo * (v + lm * (vec3<f32>(1.0) - v));
     }
@@ -1903,18 +1904,7 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
         // it glows whenever that is on, by day as well; the others fade in with the night
         let night = select(camera.sun_color.w, 1.0, material.extra.w > 1.5);
         let glow = night * select(clamp(in.params2.y, 0.0, 1.0), 1.0, material.extra.w > 1.5);
-        if (material.extra.w > 1.5) {
-            // a switched item (button, lamp): laid on with ADDSMOOTH (lit + glow x (1 - lit)) instead
-            // of plainly added, which blew the already lit texture out to white by day
-            let e = clamp(lit, vec3<f32>(0.0), vec3<f32>(1.0));
-            let gl = nm.rgb * glow * 0.2;
-            lit = e + gl * (vec3<f32>(1.0) - e) * (vec3<f32>(1.0) - e);
-        } else {
-            lit = lit + nm.rgb * glow;
-        }
-    }
-    if (material.extra.w > 1.5 && !screen_unlit) {
-        lit = lit * 0.7;
+        lit = lit + nm.rgb * glow * camera.tune.x;
     }
     if (material.params2.y > 0.0 && !screen_unlit) {
         // [matl_envmap]: sphere map reflection, masked by the diffuse alpha like the original
