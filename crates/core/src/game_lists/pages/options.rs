@@ -412,6 +412,13 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
             &tx("pause.options.camera.seat_0.desc"),
             &cm,
         ),
+        slider_row(
+            Some(app),
+            "head_pitch",
+            &tx("pause.options.camera.head_pitch.name"),
+            &tx("pause.options.camera.head_pitch.desc"),
+            &|v| format!("{v:.0}°"),
+        ),
     ]
     .into_iter()
     .flatten()
@@ -421,6 +428,12 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
         &tx("pause.options.button.reset"),
         &tx("pause.options.camera.seat_reset.desc"),
         "seat_reset",
+    ));
+    camera.push(button(
+        &tx("pause.options.camera.head_pitch_reset.name"),
+        &tx("pause.options.button.reset"),
+        &tx("pause.options.camera.head_pitch_reset.desc"),
+        "head_pitch_reset",
     ));
     let graphics: Vec<(String, String)> = vec![
         preset_row(

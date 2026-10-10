@@ -56,6 +56,7 @@ pub(crate) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "stick_sens" => (2..=40).map(|v| v as f32 * 0.05).collect(),
         "look_sens" => (2..=40).map(|v| v as f32 * 0.05).collect(),
         "seat" => (-50..=50).map(|v| v as f32 / 100.0).collect(),
+        "head_pitch" => (-45..=45).map(|v| v as f32).collect(),
         "hour" => (0..24).map(|v| v as f32).collect(),
         "minute" => (0..60).map(|v| v as f32).collect(),
         "visibility" => {
@@ -96,6 +97,20 @@ pub(super) const CLOUD_TYPES: [(&str, &str); 5] = [
 pub(super) const PRECIP_KINDS: [&str; 3] = ["None", "Rain", "Snow"];
 
 pub(crate) const CUSTOM_WEATHER: &str = "Custom weather";
+
+#[cfg(test)]
+mod tests {
+    use super::steps_of;
+
+    #[test]
+    fn head_pitch_slider_covers_each_degree_from_minus_to_plus_45() {
+        let steps = steps_of("head_pitch").unwrap();
+        assert_eq!(steps.len(), 91);
+        assert_eq!(steps.first(), Some(&-45.0));
+        assert_eq!(steps.last(), Some(&45.0));
+        assert!(steps.windows(2).all(|w| w[1] - w[0] == 1.0));
+    }
+}
 
 pub(super) fn cloud_index(kind: &str) -> Option<usize> {
     let k = kind.trim();
@@ -188,6 +203,7 @@ pub(crate) fn option_now(app: Option<&App>, verb: &str, arg: &str) -> Option<f32
         "wheel_range" => ::config::get_float("controls", "wheel_range").unwrap_or(900.0) as f32,
         "wheel_lock" => ::config::get_float("controls", "wheel_lock").unwrap_or(0.0) as f32,
         "fov" => ::config::get_float("camera", "fov").unwrap_or(0.0) as f32,
+        "head_pitch" => ::config::get_float("camera", "head_pitch").unwrap_or(0.0) as f32,
         "triple_screen_width_mm" => {
             ::config::get_float("graphics", "triple_screen_width_mm").unwrap_or(690.0) as f32
         }
@@ -365,6 +381,11 @@ pub(crate) fn option_set(
                 "fov",
                 (if v < 20.0 { 0.0 } else { v.round() }) as f64,
             );
+            let _ = ::config::save();
+            None
+        }
+        "head_pitch" => {
+            ::config::set_setting("camera", "head_pitch", v.round().clamp(-45.0, 45.0) as f64);
             let _ = ::config::save();
             None
         }

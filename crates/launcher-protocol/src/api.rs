@@ -230,9 +230,11 @@ mod tests {
             "graphics_api": "dx12",
             "enhanced": false,
             "units": "parsecs",
+            "head_pitch": -12.0,
         });
         let s = settings(&page);
         assert_eq!((s.vsync, s.msaa, s.time_speed), (Some(true), Some(4), Some(2.0)));
+        assert_eq!(s.head_pitch, Some(-12.0));
         assert_eq!(s.window_mode(), WindowMode::Borderless);
         assert_eq!(s.graphics(), GraphicsMode::VanillaPlus);
         assert_eq!(s.units, None, "not one of the choices");
@@ -249,6 +251,7 @@ mod tests {
                 "window_mode": "borderless",
                 "graphics": "vanilla_plus",
                 "graphics_api": "dx12",
+                "head_pitch": -12.0,
             })
         );
     }

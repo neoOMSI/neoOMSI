@@ -157,6 +157,7 @@ pub const DEFAULTS: &[(&str, &str, Def)] = &[
     ("camera", "seat_x", Def::Float(0.0)),
     ("camera", "seat_y", Def::Float(0.0)),
     ("camera", "seat_z", Def::Float(0.0)),
+    ("camera", "head_pitch", Def::Float(0.0)),
     ("camera", "look_sens", Def::Float(1.0)),
     ("camera", "alt_view", Def::Bool(true)),
     ("camera", "free_look", Def::Bool(false)),

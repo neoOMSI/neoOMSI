@@ -86,6 +86,14 @@
           "desc": "Die Ansicht bewegt sich mit der Beschleunigung des Fahrzeugs",
           "name": "Kopfbewegung"
         },
+        "head_pitch": {
+          "desc": "Passt den vertikalen Standardblickwinkel des Fahrers an",
+          "name": "Kopfneigung"
+        },
+        "head_pitch_reset": {
+          "desc": "Setzt den Blickwinkel des Fahrers auf 0° zurück",
+          "name": "Kopfneigung zurücksetzen"
+        },
         "headtrack": {
           "desc": "Head-Tracking mit opentrack (UDP-Port 4242)",
           "name": "Head-Tracking",
