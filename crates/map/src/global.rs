@@ -209,6 +209,16 @@ impl GlobalCfg {
         groups
     }
 
+    /// The lines of OMSI's entry point list: each name of [`Self::entry_point_groups`] with
+    /// the first of its entry points for which `taken` is false; a name whose entry points
+    /// are all taken is left out.
+    pub fn free_entry_points(&self, mut taken: impl FnMut(usize) -> bool) -> Vec<(&str, usize)> {
+        self.entry_point_groups()
+            .into_iter()
+            .filter_map(|(name, places)| Some((name, places.into_iter().find(|&i| !taken(i))?)))
+            .collect()
+    }
+
     pub fn load(path: &Path) -> Result<GlobalCfg, ::legacy_config::CfgError> {
         let f = CfgFile::read(path)?;
         Ok(Self::parse(&f))
@@ -418,5 +428,35 @@ mod tests {
                 ("Nordspitze Bauernhof", vec![0, 2]),
             ]
         );
+    }
+
+    #[test]
+    fn a_taken_entry_point_gives_way_to_the_next_of_its_name() {
+        let names = [
+            "Nordspitze Bauernhof",
+            "Bhf.",
+            "Nordspitze Bauernhof",
+            "Nordspitze Bauernhof",
+        ];
+        let g = GlobalCfg {
+            entry_points: names
+                .iter()
+                .map(|n| EntryPoint { name: n.to_string(), ..Default::default() })
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            g.free_entry_points(|_| false),
+            vec![("Bhf.", 1), ("Nordspitze Bauernhof", 0)]
+        );
+        assert_eq!(
+            g.free_entry_points(|i| i == 0),
+            vec![("Bhf.", 1), ("Nordspitze Bauernhof", 2)]
+        );
+        assert_eq!(
+            g.free_entry_points(|i| i != 3),
+            vec![("Nordspitze Bauernhof", 3)]
+        );
+        assert_eq!(g.free_entry_points(|_| true), vec![]);
     }
 }

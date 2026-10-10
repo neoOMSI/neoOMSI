@@ -389,10 +389,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                         || app.traffic.as_ref().is_some_and(|t| t.occupied(&there, pos))
                 };
                 // one line per name, its first free place; a name with none is left out
-                for (name, places) in w.global.entry_point_groups() {
-                    let Some(i) = places.into_iter().find(|&i| !taken(i)) else {
-                        continue;
-                    };
+                for (name, i) in w.global.free_entry_points(taken) {
                     let label = if name.is_empty() {
                         let e = &w.global.entry_points[i];
                         ::i18n::translate("pause.list.entry", &[("number", &(e.index + 1))])
