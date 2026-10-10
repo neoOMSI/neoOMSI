@@ -540,18 +540,33 @@ impl World {
                 }
             }
         }
+        // A generated text layer can likewise rely on the model order.  The WH UK AI cars,
+        // for example, draw the solid plate first and its transparent registration glyphs in
+        // the following mesh, with both layers marked `[matl_noZwrite]`.  Drawing an AI car
+        // opaque-then-blended lets those two surfaces contend at the plate rather than follow
+        // the order authored by the model.
+        let ordered_text_layer = set
+            .dyn_slots
+            .iter()
+            .any(|d| d.text.is_some() && d.extra.no_z_write);
         // (the Sprinter's, the Mercus's, the Urbino 15's saloon showed through half their
         // panels drawn so while `[matl_noZcheck]` still took their inner glass out of the
         // depth test; OMSI_NO_MODEL_ORDER=1 draws opaque parts first again)
-        // AI uses opaque-then-blended rendering; player vehicles retain model order.
-        if ordered && key.is_none() && ::legacy_config::env::var_os("OMSI_NO_MODEL_ORDER").is_none() {
+        if (ordered || ordered_text_layer)
+            && ::legacy_config::env::var_os("OMSI_NO_MODEL_ORDER").is_none()
+        {
             log::debug!(
-                "{}: drawn in model order (a blended slot writes depth before an opaque one)",
-                vt.def.path.display()
+                "{}: drawn in model order ({})",
+                vt.def.path.display(),
+                if ordered {
+                    "a blended slot writes depth before an opaque one"
+                } else {
+                    "a non-depth-writing generated text layer follows its backing surface"
+                }
             );
-            for &i in &instances {
+            for (model_order, &i) in instances.iter().enumerate() {
                 if scene.instances.get(i).is_some_and(|x| !x.blob) {
-                    renderer.set_ordered(scene, i, true);
+                    renderer.set_ordered(scene, i, model_order as u32);
                 }
             }
         }
@@ -1027,7 +1042,9 @@ impl World {
                         dirs: dirs.clone(),
                         textures: self.textures.clone(),
                         cache: HashMap::new(),
+                        texture_cache: HashMap::new(),
                         current: None,
+                        texture: None,
                         shared: self.vehicle_textures.clone(),
                         held: Vec::new(),
                         wants_upgrade: self.freetex_upgrades.clone(),

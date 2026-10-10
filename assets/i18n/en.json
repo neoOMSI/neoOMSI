@@ -777,7 +777,7 @@
         },
         "window_mode": {
           "windowed": "Windowed",
-          "borderless": "Borderless",
+          "borderless": "Windowed Borderless",
           "fullscreen": "Fullscreen"
         },
         "post_aa": {

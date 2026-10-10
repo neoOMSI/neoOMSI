@@ -138,8 +138,10 @@ pub struct MultiLight {
     pub maps: Vec<(PathBuf, String)>,
     /// The set's own materials (the last map), shown while none is on.
     pub plain: (MaterialId, MaterialId),
-    /// Materials made per switched-on combination (bit k: map k).
-    pub cache: HashMap<u32, (MaterialId, MaterialId)>,
+    /// Materials made per switched-on light-map combination (bit k: map k) and the
+    /// live `[matl_freetex]` textures present when it was made.  The latter is normally
+    /// empty, but a dashboard may combine a live screen with several light maps.
+    pub cache: HashMap<(u32, Vec<Option<TextureId>>), (MaterialId, MaterialId)>,
     pub current: u32,
     /// Composite maps are shared like the vehicles' pictures (see `FreeTex::shared`).
     pub shared: Arc<Mutex<HashMap<PathBuf, (TextureId, usize)>>>,
@@ -235,8 +237,13 @@ pub struct FreeTex {
     pub textures: Arc<::texture::TextureCache>,
     /// File name (lower case) → the materials already built for it.
     pub cache: HashMap<String, (MaterialId, MaterialId)>,
+    /// File name (lower case) → its resolved GPU texture, including failed lookups.
+    pub texture_cache: HashMap<String, Option<TextureId>>,
     /// The name currently applied.
     pub current: Option<String>,
+    /// GPU texture for the current name. This is retained so that a slot which also has
+    /// dynamic light maps can rebuild both stages together.
+    pub texture: Option<TextureId>,
     /// The world's shared vehicle textures (a picture is one texture for every vehicle
     /// showing it; every bus had its own copy, half a gigabyte of destination pictures on
     /// Ahlheim), the pictures this vehicle holds, and where pictures uploaded as RGBA are
@@ -409,36 +416,64 @@ impl SlotSpec {
         diffuse: bool,
         item_only: bool,
     ) -> Self {
+        self.with_freetex_from(self, key, tex, diffuse, item_only)
+    }
+
+    /// Apply a free texture while matching its source against the slot before any other
+    /// free-texture replacements.  An item-only declaration can therefore override the
+    /// powered material even when a preceding base declaration replaced the same source.
+    pub(super) fn with_freetex_from(
+        &self,
+        source: &Self,
+        key: Option<TextureId>,
+        tex: TextureId,
+        diffuse: bool,
+        item_only: bool,
+    ) -> Self {
         let mut spec = self.clone();
-        let replace = |look: &mut Look| {
+        let replace = |look: &mut Look, source: &Look| {
             // A per-vehicle text/script texture has already replaced the original
             // diffuse and is not the file named by this free-texture declaration.
-            if (diffuse && look.diffuse.is_none()) || (key.is_some() && look.diffuse == key) {
+            if (diffuse && look.diffuse.is_none())
+                || (key.is_some()
+                    && (look.diffuse == key || (item_only && source.diffuse == key)))
+            {
                 look.diffuse = Some(tex);
             }
             if let Some(key) = key {
-                for stage in [&mut look.night, &mut look.lightmap] {
-                    if *stage == Some(key) {
+                for (stage, source_stage) in [
+                    (&mut look.night, source.night),
+                    (&mut look.lightmap, source.lightmap),
+                ] {
+                    if *stage == Some(key) || (item_only && source_stage == Some(key)) {
                         *stage = Some(tex);
                     }
                 }
                 if let Some((id, _)) = &mut look.transmap {
-                    if *id == key {
+                    if *id == key
+                        || (item_only
+                            && source.transmap.is_some_and(|(source_id, _)| source_id == key))
+                    {
                         *id = tex;
                     }
                 }
                 if let Some((id, _)) = &mut look.envmap {
-                    if *id == key {
+                    if *id == key
+                        || (item_only
+                            && source.envmap.is_some_and(|(source_id, _)| source_id == key))
+                    {
                         *id = tex;
                     }
                 }
             }
         };
         if !item_only {
-            replace(&mut spec.base);
+            replace(&mut spec.base, &source.base);
         }
         if let Some(item) = &mut spec.item {
-            replace(item);
+            if let Some(source_item) = &source.item {
+                replace(item, source_item);
+            }
         }
         spec
     }
@@ -463,12 +498,15 @@ impl SlotSpec {
     /// `for_vehicle`.
     /// The same slot with another light map.
     pub fn set_lightmap(&mut self, tex: Option<TextureId>) {
-        self.base.lightmap = tex;
+        let Some(tex) = tex else {
+            return;
+        };
+        self.base.lightmap = Some(tex);
         if let Some(it) = &mut self.item {
-            it.lightmap = tex;
+            it.lightmap = Some(tex);
         }
         for it in &mut self.more {
-            it.lightmap = tex;
+            it.lightmap = Some(tex);
         }
     }
 

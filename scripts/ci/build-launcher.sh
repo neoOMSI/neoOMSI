@@ -18,12 +18,12 @@ esac
 if [ -n "${LAUNCHER_SRC:-}" ]; then
   src="$(cd "$LAUNCHER_SRC" && pwd)"
 else
-  ref="$(tr -d '[:space:]' < "$root/scripts/launcher-ref")"
+  ref="${LAUNCHER_SHA:-$(tr -d '[:space:]' < "$root/scripts/launcher-ref")}"
   if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "scripts/launcher-ref must hold a full launcher commit SHA, not '$ref'" >&2
+    echo "Launcher ref must be a full 40-character commit SHA, found: '$ref'" >&2
     exit 1
   fi
-  src="${RUNNER_TEMP:-$root/target}/neoomsi-launcher-src"
+  src="$root/target/neoomsi-launcher-src"
   rm -rf "$src"
   git init --quiet "$src"
   git -C "$src" fetch --quiet --depth 1 https://github.com/neoOMSI/launcher.git "$ref"
@@ -37,7 +37,7 @@ pnpm install --frozen-lockfile
 pnpm build
 out="$src/release/$platform-$arch"
 rm -rf "$out"
-pnpm exec electron-builder --dir "$flag" "--$arch" -c.directories.output="$out"
+pnpm run package:app --platform "$platform" --arch "$arch" --out "$out"
 
 cd "$root"
 case "$platform" in
@@ -51,11 +51,28 @@ case "$platform" in
     codesign --force --deep --sign - "$dest/neoOMSI Launcher.app"
     codesign --force --deep --sign - "$app"
     codesign --verify --deep --strict "$app"
+    [ -f "$dest/neoOMSI Launcher.app/Contents/MacOS/neoOMSI Launcher" ] || {
+      echo "::error::Packaged macOS launcher executable not found in $dest" >&2
+      exit 1
+    }
     ;;
-  *)
-    dest="dist/$platform/launcher"
+  windows)
+    dest="dist/windows/launcher"
     rm -rf "$dest"
     cp -R "$(ls -d "$out"/"${flag#--}"-*unpacked)" "$dest"
+    [ -f "$dest/neoOMSI Launcher.exe" ] || {
+      echo "::error::Packaged Windows launcher executable not found in $dest" >&2
+      exit 1
+    }
+    ;;
+  linux)
+    dest="dist/linux/launcher"
+    rm -rf "$dest"
+    cp -R "$(ls -d "$out"/"${flag#--}"-*unpacked)" "$dest"
+    [ -f "$dest/neoomsi-launcher-app" ] || {
+      echo "::error::Packaged Linux launcher executable not found in $dest" >&2
+      exit 1
+    }
     ;;
 esac
 echo "launcher $(git -C "$src" rev-parse --short HEAD 2>/dev/null || echo "(local)") -> $dest"

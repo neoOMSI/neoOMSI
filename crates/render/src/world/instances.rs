@@ -100,6 +100,7 @@ impl Renderer {
             mirror_only: false,
             omsi_caster: false,
             ordered: false,
+            ordered_index: 0,
             casts_shadow: true,
             roof: None,
         });
@@ -152,6 +153,7 @@ impl Renderer {
             mirror_only: false,
             omsi_caster: false,
             ordered: false,
+            ordered_index: 0,
             casts_shadow: false,
             roof: None,
         });
@@ -239,9 +241,13 @@ impl Renderer {
         }
     }
 
-    pub fn set_ordered(&self, scene: &mut Scene, instance: usize, on: bool) {
+    /// Draw an instance in its model's authored mesh order. `index` is supplied by the
+    /// owner each time it attaches an instance, because GPU cache reuse may change the
+    /// scene instance id after a vehicle despawns.
+    pub fn set_ordered(&self, scene: &mut Scene, instance: usize, index: u32) {
         if let Some(i) = scene.instances.get_mut(instance) {
-            i.ordered = on;
+            i.ordered = true;
+            i.ordered_index = index;
         }
     }
 

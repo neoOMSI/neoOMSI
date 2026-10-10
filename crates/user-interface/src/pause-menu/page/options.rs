@@ -1096,6 +1096,21 @@ mod tests {
     }
 
     #[test]
+    fn display_options_keep_the_three_window_modes() {
+        let display = OPTION_GROUPS
+            .iter()
+            .find(|group| group.title == "pause.options.group.display")
+            .expect("display options group");
+        let window_mode = display
+            .rows
+            .iter()
+            .find(|row| row.id == "window_mode")
+            .expect("window mode selector");
+        assert_eq!(window_mode.kind, OptKind::Select);
+        assert_eq!(window_mode.name, "pause.options.display.window_mode.name");
+    }
+
+    #[test]
     fn ids_unique_within_a_group() {
         for g in OPTION_GROUPS {
             let mut ids: Vec<&str> = g.rows.iter().map(|r| r.id).collect();

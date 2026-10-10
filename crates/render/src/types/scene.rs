@@ -109,6 +109,9 @@ pub struct Instance {
     pub casts_shadow: bool,
     pub roof: Option<f32>,
     pub ordered: bool,
+    /// Position in a model's authored mesh order when `ordered` is set. This must not
+    /// depend on the scene instance id: vehicle instances are recycled after despawn.
+    pub ordered_index: u32,
 }
 
 impl Instance {

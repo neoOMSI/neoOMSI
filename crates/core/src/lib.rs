@@ -193,16 +193,20 @@ pub fn run() -> Result<()> {
         return Ok(());
     };
     if args.launcher || (bare && !args.menu) {
-        // `--launcher` always means the built-in one
-        if !args.launcher {
-            match omsi_launcher_lib::start_external_launcher(&std::env::current_exe()?) {
-                Ok(true) => return Ok(()),
-                Ok(false) => {}
-                Err(e) => log::warn!("{e:#}: the built-in launcher opens instead"),
+        let exe = std::env::current_exe()?;
+        match omsi_launcher_lib::start_external_launcher(&exe) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {
+                let expected = omsi_launcher_lib::shipped_launcher(&exe)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "dist/<platform>/launcher".to_string());
+                anyhow::bail!(
+                    "neoOMSI desktop launcher was not found at {expected}.\n\
+                     To run the engine directly for development, specify a map (e.g. `--map maps/Grundorf/global.cfg`) or `--menu`."
+                );
             }
+            Err(e) => anyhow::bail!("Failed to start neoOMSI desktop launcher: {e:#}"),
         }
-        launcher_statics();
-        return launcher::run(graphics_instance());
     }
     if server_cfg.is_none() {
         game_link::connect();

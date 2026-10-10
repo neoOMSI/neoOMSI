@@ -7,14 +7,14 @@ This guide covers running neoOMSI, essential keybindings, and common configurati
 
 ## Getting started
 
-1. Download the latest release from the [Releases](https://github.com/neoOMSI/neoOMSI/releases) page for your operating system.
-2. Extract the archive into a folder with write permissions (e.g. within your user directory).
+1. Download the build for your operating system from the [Download page](https://neoomsi.com/download/) or GitHub [Releases](https://github.com/neoOMSI/neoOMSI/releases).
+2. Extract the archive into a dedicated folder with write permissions (e.g. inside your user directory, not `Program Files`).
 3. Launch `neoomsi` (`neoomsi.exe` on Windows).
-4. If prompted, select your OMSI 2 installation directory (containing `Omsi.exe` and `maps/`).
-5. Select a map, vehicle, and duty, then start the simulation.
+4. On first start, select your OMSI 2 installation folder (the directory containing `maps` and `Vehicles`). neoOMSI reads these files without modifying them.
+5. Select a map, vehicle, and timetable duty, then start driving.
 
 > [!NOTE]
-> **Linux:** the launcher runs in Chromium's sandbox. Where the system restricts the user namespaces it needs (Ubuntu 24.04 and later), the built-in launcher opens instead until the sandbox helper is set up once, from the neoOMSI folder:
+> **Linux:** the launcher runs in Chromium's sandbox. If the system restricts user namespaces (Ubuntu 24.04 and later), configure the sandbox helper once from the neoOMSI folder:
 >
 > ```sh
 > sudo chown root:root launcher/chrome-sandbox && sudo chmod 4755 launcher/chrome-sandbox
@@ -60,13 +60,12 @@ continue running.
 The table lists every planned stop with planned and actual arrival/departure
 times (`HH:MM:SS`), signed differences in seconds, and a status. Positive
 differences mean late; negative differences mean early. Day offsets identify
-trips crossing midnight. Missing observations appear as `—`; the final departure
+trips crossing midnight. Missing observations appear as `-`; the final departure
 has no actual time when the report opens on arrival.
 
 Use the in-game menu to view the current trip or the last completed trip. Scroll
 with the mouse wheel, arrow keys, or Page Up/Page Down. Select **Save as text…**
 (or press `Ctrl+S`) to export the table. **Continue** or `Esc` resumes driving.
-On Android, exports are saved in the content directory's `Reports/` folder.
 
 Observations are recorded while a duty is active. Earlier observations are not
 reconstructed when loading a saved situation or joining a trip partway through.

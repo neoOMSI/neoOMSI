@@ -25,6 +25,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       channel: ${{ steps.v.outputs.channel }}
+      launcher_sha: ${{ steps.v.outputs.launcher_sha }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -39,17 +40,31 @@ jobs:
               *-rc.*) channel=rc ;;
               *) channel=stable ;;
             esac
+            launcher_sha="$(tr -d '[:space:]' < scripts/launcher-ref)"
+            if ! [[ "$launcher_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::scripts/launcher-ref must contain a 40-character hex SHA"
+              exit 1
+            fi
           else
             channel=nightly
-            short_sha="${GITHUB_SHA:0:8}"
-            v="$(sh scripts/version.sh)-nightly.g${short_sha}"
+            # Resolve latest launcher commit on main branch for nightlies
+            resolved_sha="$(git ls-remote https://github.com/neoOMSI/launcher.git refs/heads/main | awk '{print $1}')"
+            if [ -z "$resolved_sha" ] || ! [[ "$resolved_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Failed to resolve latest commit of neoOMSI/launcher main branch"
+              exit 1
+            fi
+            launcher_sha="$resolved_sha"
+            short_engine="${GITHUB_SHA:0:8}"
+            short_launcher="${launcher_sha:0:8}"
+            v="$(sh scripts/version.sh)-nightly.g${short_engine}.l${short_launcher}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "launcher_sha=$launcher_sha" >> "$GITHUB_OUTPUT"
       - shell: bash
         run: |
           echo "### neoOMSI ${{ steps.v.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Commit \`${GITHUB_SHA:0:8}\` · Actions run #${GITHUB_RUN_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit \`${GITHUB_SHA:0:8}\` · Launcher \`${{ steps.v.outputs.launcher_sha }}\` · Actions run #${GITHUB_RUN_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
 
   windows:
     needs: version
@@ -71,6 +86,7 @@ jobs:
       arch: ${{ matrix.arch }}
       version: ${{ needs.version.outputs.version }}
       channel: ${{ needs.version.outputs.channel }}
+      launcher_sha: ${{ needs.version.outputs.launcher_sha }}
       source_repository: ${{ github.repository }}
       source_ref: ${{ github.sha }}
       cache_write: ${{ github.ref == 'refs/heads/main' }}
@@ -97,6 +113,7 @@ jobs:
       arch: ${{ matrix.arch }}
       version: ${{ needs.version.outputs.version }}
       channel: ${{ needs.version.outputs.channel }}
+      launcher_sha: ${{ needs.version.outputs.launcher_sha }}
       source_repository: ${{ github.repository }}
       source_ref: ${{ github.sha }}
       cache_write: ${{ github.ref == 'refs/heads/main' }}
@@ -122,19 +139,51 @@ jobs:
       arch: ${{ matrix.arch }}
       version: ${{ needs.version.outputs.version }}
       channel: ${{ needs.version.outputs.channel }}
+      launcher_sha: ${{ needs.version.outputs.launcher_sha }}
       source_repository: ${{ github.repository }}
       source_ref: ${{ github.sha }}
       cache_write: ${{ github.ref == 'refs/heads/main' }}
       direct_artifact: false
       retention_days: 1
 
+  verify:
+    needs: [version, windows]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Download Windows x64 release package
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-x64
+          path: out
+      - name: Extract Windows release package
+        shell: pwsh
+        run: |
+          $zip = Get-Item out/neoOMSI-*-windows-x64.zip | Where-Object { $_.Name -notmatch '-server-' } | Select-Object -First 1
+          if (-not $zip) {
+              throw "Windows x64 client package zip not found in downloaded artifacts"
+          }
+          Write-Host "Extracting $($zip.FullName) to dist/windows..."
+          Expand-Archive -Path $zip.FullName -DestinationPath dist/windows -Force
+      - name: Verify combined bundle with resolved launcher SHA
+        shell: pwsh
+        env:
+          LAUNCHER_SHA: ${{ needs.version.outputs.launcher_sha }}
+        run: scripts/ci/test-combined-bundle.ps1 -DistDir dist/windows -SkipBuild
+
   release:
-    needs: [version, windows, macos, linux]
+    needs: [version, windows, macos, linux, verify]
     runs-on: ubuntu-slim
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      CHANNEL: ${{ needs.version.outputs.channel }}
+      LAUNCHER_SHA: ${{ needs.version.outputs.launcher_sha }}
       PRERELEASE: ${{ contains(needs.version.outputs.version, '-') }}
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}
       GH_TOKEN: ${{ github.token }}

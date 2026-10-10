@@ -777,7 +777,7 @@
         },
         "window_mode": {
           "windowed": "Fenster",
-          "borderless": "Rahmenlos",
+          "borderless": "Fenster ohne Rahmen",
           "fullscreen": "Vollbild"
         },
         "post_aa": {
