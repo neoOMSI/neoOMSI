@@ -711,3 +711,20 @@ pub(crate) fn preset_row(
     };
     Some((row(name, 'o', &label, desc, None), "preset".to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::select_options;
+
+    #[test]
+    fn window_mode_choices_remain_distinct() {
+        assert_eq!(
+            select_options("window_mode"),
+            vec![
+                ("windowed", "Windowed"),
+                ("borderless", "Windowed Borderless"),
+                ("fullscreen", "Fullscreen"),
+            ]
+        );
+    }
+}
