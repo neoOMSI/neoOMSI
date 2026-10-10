@@ -2965,15 +2965,7 @@ pub(crate) fn run_offscreen(
             // the time of day and the departure displays' boards (the first pass says which
             // stops have displays)
             match schedule.as_mut() {
-                Some(s) => s.update_boards(
-                    &world,
-                    traffic.as_ref(),
-                    duty.as_ref(),
-                    player_ref
-                        .as_ref()
-                        .and_then(|p| p.vehicle.host.hof.as_deref()),
-                    &clock,
-                ),
+                Some(s) => s.update_boards(&world, traffic.as_ref(), duty.as_ref(), &clock),
                 None => world.timetable_boards.lock().clock = Some(clock.clone()),
             }
             n = world.update_scripted(

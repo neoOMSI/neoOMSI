@@ -647,7 +647,8 @@ impl Model {
                 let font = r.str().to_string();
                 let width = r.i32();
                 let height = r.i32();
-                let full_color = r.bool();
+                // any non-zero value means full colour (add-ons write 255)
+                let full_color = r.i32() != 0;
                 let color = r.f32s::<3>();
                 self.text_textures.push(TextTexture {
                     variable,
@@ -671,7 +672,7 @@ impl Model {
                 let font = r.str().to_string();
                 let width = r.i32();
                 let height = r.i32();
-                let full_color = r.bool();
+                let full_color = r.i32() != 0;
                 let color = r.f32s::<3>();
                 let extra: Vec<String> = (0..2).map(|_| r.str().to_string()).collect();
                 let orientation = ::legacy_config::parse_i32(&extra[0]);
@@ -1347,6 +1348,21 @@ mod tests {
             model.terrain_hole_meshes().collect::<Vec<_>>(),
             ["first.o3d", "second.o3d", "third.o3d", "legacy.o3d"]
         );
+    }
+
+    /// A full colour flag of 255 counts as set (Urbino II Faremaster, issue #179).
+    #[test]
+    fn texttexture_full_color_is_any_non_zero_value() {
+        let m = super::Model::parse(&::legacy_config::CfgFile::from_str(
+            "x.cfg",
+            "[texttexture_enh]\nv\nf\n650\n57\n255\n255\n255\n0\n1\n1\n\n[texttexture]\nv\nf\n120\n55\n200\n200\n200\n200\n\n[texttexture]\nv\nf\n64\n64\n0\n1\n2\n3\n",
+        ));
+        let tt = &m.text_textures;
+        assert!(tt[0].full_color);
+        assert_eq!(tt[0].color, [255.0, 255.0, 0.0]);
+        assert_eq!((tt[0].orientation, tt[0].grid), (1, 1));
+        assert!(tt[1].full_color);
+        assert!(!tt[2].full_color);
     }
 
     /// Two [matl] blocks of one material are one material (Absperrung_grau.sco).

@@ -454,14 +454,14 @@ impl Schedule {
 
     /// The buses due at one bus stop (map object id) within the next two hours, unsorted, as
     /// (expected arrival, line, terminus, time it stands at the stop), all in seconds of the day:
-    /// the timetable buses with the delay they run with, and the player's.
+    /// the timetable buses with the delay they run with, and the player's. The terminus is the
+    /// trip's own, as OMSI hands it to the displays.
     pub(super) fn stop_list(
         &self,
         stop: i64,
         now: f64,
         on_road: &HashMap<usize, OnRoad>,
         duty: Option<&PlayerDuty>,
-        player_hof: Option<&::legacy_vehicle::Hof>,
     ) -> Vec<(f64, String, String, f64)> {
         let mut list: Vec<(f64, String, String, f64)> = Vec::new();
         for &(trip, k) in self.visits.get(&stop).map(|v| v.as_slice()).unwrap_or(&[]) {
@@ -509,15 +509,10 @@ impl Schedule {
                     None if leave < now => continue,
                     None => arrive.max(now),
                 };
-                let terminus = &self.data.trips[d.trip].terminus;
-                let hof = self
-                    .depots
-                    .get(&d.ai_group.to_ascii_lowercase())
-                    .and_then(|v| v.iter().find_map(|x| x.2.as_deref()));
                 list.push((
                     expected,
                     self.display_line(i),
-                    terminus_text(hof, terminus),
+                    self.data.trips[d.trip].terminus.clone(),
                     (leave - arrive).max(0.0),
                 ));
             }
@@ -557,7 +552,7 @@ impl Schedule {
                     list.push((
                         expected,
                         trip.line.trim().to_string(),
-                        terminus_text(player_hof, &trip.terminus),
+                        trip.terminus.clone(),
                         (s.dep - s.arr).max(0.0),
                     ));
                 }
@@ -575,7 +570,6 @@ impl Schedule {
         world: &World,
         traffic: Option<&Traffic>,
         duty: Option<&PlayerDuty>,
-        player_hof: Option<&::legacy_vehicle::Hof>,
         clock: &::simulation::SimClock,
     ) {
         let now = clock.time;
@@ -625,7 +619,7 @@ impl Schedule {
         let wanted = boards.wanted.clone();
         let mut made = HashMap::new();
         for stop in wanted {
-            let mut list = self.stop_list(stop, now, &on_road, duty, player_hof);
+            let mut list = self.stop_list(stop, now, &on_road, duty);
             list.sort_by(|a, b| a.0.total_cmp(&b.0));
             list.truncate(8);
             if ::legacy_config::env::var_os("OMSI_DEBUG_BOARDS").is_some() {
@@ -658,9 +652,7 @@ impl Schedule {
             ids.dedup();
             let mut list: Vec<(f64, String, String)> = Vec::new();
             for id in ids {
-                for (expected, line, terminus, dwell) in
-                    self.stop_list(id, now, &on_road, duty, player_hof)
-                {
+                for (expected, line, terminus, dwell) in self.stop_list(id, now, &on_road, duty) {
                     let leaves = expected + dwell;
                     if leaves <= now + BOARD_AHEAD {
                         list.push((leaves, line, terminus));

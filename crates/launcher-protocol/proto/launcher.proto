@@ -828,6 +828,7 @@ message Settings {
   optional bool update_auto = 117;
   // read only: the texture memory "automatic" stands for on this machine, in MB
   optional uint32 texture_memory_auto = 118;
+  optional double head_pitch = 119;
 }
 
 message OptionPreset {
