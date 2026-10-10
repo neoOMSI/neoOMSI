@@ -25,6 +25,18 @@ impl Renderer {
         }
     }
 
+    pub fn draw_report(&self) -> Vec<String> {
+        let counts = self.counts.borrow();
+        let frames = counts.get("(frames)").copied().unwrap_or(0.0).max(1.0);
+        let mut out: Vec<String> = counts
+            .iter()
+            .filter(|(k, _)| **k != "(frames)")
+            .map(|(k, v)| format!("{k}: {:.1} per frame", v / frames))
+            .collect();
+        out.extend(self.audit_lines.borrow().iter().cloned());
+        out
+    }
+
     pub fn gpu_pass_times(&self) -> Vec<(String, f64, u32)> {
         let mut out = Vec::new();
         for (k, t) in self.gpu_timers.iter().enumerate() {
@@ -36,6 +48,18 @@ impl Renderer {
                     label.to_string()
                 };
                 out.push((name, v.0 / v.1.max(1) as f64 * 1000.0, v.1));
+            }
+            // passes that run several times a frame: what they cost per frame, not per pass
+            for (label, v) in &t.frame_totals {
+                let passes = t.totals.get(label).map_or(0, |x| x.1);
+                if v.1 > 0 && passes > v.1 + v.1 / 20 {
+                    let name = if k == 0 {
+                        format!("mirrors: {label} (per frame)")
+                    } else {
+                        format!("{label} (per frame)")
+                    };
+                    out.push((name, v.0 / v.1 as f64 * 1000.0, v.1));
+                }
             }
         }
         out
@@ -75,12 +99,20 @@ impl GpuTimers {
                 .collect();
             order.sort_by_key(|(_, b, _)| *b);
             let mut prev: Option<u64> = None;
+            let mut sums: std::collections::BTreeMap<&'static str, f64> = Default::default();
             for (a, b, label) in &order {
                 let from = prev.unwrap_or(*a);
+                let ms = b.saturating_sub(from) as f64 * period * 1e-9;
                 let e = t.totals.entry(label).or_default();
-                e.0 += b.saturating_sub(from) as f64 * period * 1e-9;
+                e.0 += ms;
                 e.1 += 1;
+                *sums.entry(label).or_default() += ms;
                 prev = Some(*b);
+            }
+            for (label, ms) in sums {
+                let e = t.frame_totals.entry(label).or_default();
+                e.0 += ms;
+                e.1 += 1;
             }
             if let (Some(first), Some(last)) = (order.iter().map(|o| o.0).min(), order.last()) {
                 let e = t.totals.entry("(all passes)").or_default();
@@ -202,13 +234,15 @@ pub(crate) struct GpuTimers {
     pub(crate) waiting: bool,
     pub(crate) ready: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) totals: std::collections::BTreeMap<&'static str, (f64, u32)>,
+    /// per label: the sum over one frame's passes, and how many frames
+    pub(crate) frame_totals: std::collections::BTreeMap<&'static str, (f64, u32)>,
 }
 
-pub(crate) const GPU_TIMER_PASSES: u32 = 16;
+pub(crate) const GPU_TIMER_PASSES: u32 = 64;
 
 impl GpuTimers {
     pub(crate) fn new(device: &wgpu::Device) -> Option<GpuTimers> {
-        if ::legacy_config::env::var_os("OMSI_GPU_TIMERS").is_none()
+        if ::legacy_config::env::var_os("OMSI_NO_GPU_TIMERS").is_some()
             || !device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         {
             return None;
@@ -241,6 +275,7 @@ impl GpuTimers {
             waiting: false,
             ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             totals: Default::default(),
+            frame_totals: Default::default(),
         })
     }
 }

@@ -338,6 +338,7 @@ impl App {
                 }
             }
         }
+        *self.profile.entry("player.input").or_default() += __t.elapsed().as_secs_f64();
         self.touch_frame(dt);
         if let (Some(p), Some(r), Some(scene)) = (
             self.player.as_mut(),
@@ -356,6 +357,7 @@ impl App {
                 );
                 w.terrains.read().contains_key(&k) || w.surfaces.read().contains_key(&k)
             });
+            let __tk = Instant::now();
             if !self.paused && ground_here {
                 p.tick(
                     dt,
@@ -378,9 +380,12 @@ impl App {
                     rail_drive::frame(p, self.traffic.as_ref().map(|t| &t.net), w, dt);
                 }
             }
+            *self.profile.entry("player.tick").or_default() += __tk.elapsed().as_secs_f64();
+            let __ts = Instant::now();
             if let Some(t) = p.vehicle.host.time_written.take() {
                 self.pending_time = Some(t);
             }
+            let __tp = Instant::now();
             let mut placed_boxes = Vec::new();
             for q in self.placed.iter_mut() {
                 if !self.paused {
@@ -406,11 +411,26 @@ impl App {
                 }
                 p.vehicle.dynamic_boxes.extend(placed_boxes);
             }
+            *self.profile.entry("player.sync.placed").or_default() += __tp.elapsed().as_secs_f64();
+            let __tl = Instant::now();
             if let Some(w) = self.world.as_ref() {
                 lay_down_poles(w, r, scene, &mut p.vehicle);
             }
+            *self.profile.entry("player.sync.poles").or_default() += __tl.elapsed().as_secs_f64();
+            let __tv = Instant::now();
             let inside = self.in_cab;
             p.sync_transforms(r, scene, inside);
+            *self.profile.entry("player.sync.vehicle").or_default() += __tv.elapsed().as_secs_f64();
+            for (name, secs) in crate::player::SYNC_NAMES.iter().zip(crate::player::take_sync_times()) {
+                *self.profile.entry(*name).or_default() += secs;
+            }
+            for (name, secs) in crate::window_wipers::WIPER_NAMES
+                .iter()
+                .zip(crate::window_wipers::take_wiper_times())
+            {
+                *self.profile.entry(*name).or_default() += secs;
+            }
+            *self.profile.entry("player.sync").or_default() += __ts.elapsed().as_secs_f64();
             if let Some(d) = p.driver.as_mut() {
                 d.cue = self
                     .humans
@@ -720,6 +740,7 @@ impl App {
                 });
             }
         }
+        let __ta = Instant::now();
         self.update_placed_sounds();
         if let Some(a) = self.audio.as_ref() {
             match self.player.as_ref() {
@@ -732,6 +753,7 @@ impl App {
                 None => self.radio.stop(a),
             }
         }
+        *self.profile.entry("player.audio").or_default() += __ta.elapsed().as_secs_f64();
         *self.profile.entry("player").or_default() += __t.elapsed().as_secs_f64();
     }
 }

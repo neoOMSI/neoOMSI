@@ -7,8 +7,8 @@ pub(crate) const SHADOW_CLOSE_MAX: u32 = 2048;
 
 pub(crate) const SPOT_SLOTS: usize = 32;
 pub(crate) const SPOT_ROWS: usize = SPOT_SLOTS / 4;
-pub(crate) const SPOT_DRAWS_PER_FRAME: usize = 16;
-pub(crate) const SPOT_REDRAW_AGE: u32 = 6;
+pub(crate) const SPOT_DRAWS_PER_FRAME: usize = 12;
+pub(crate) const SPOT_REDRAW_AGE: u32 = 45;
 pub(crate) const SPOT_CAM_RANGE: f64 = 70.0;
 pub(crate) const SPOT_RANGE_MAX: f32 = 45.0;
 pub(crate) const SPOT_NEAR: f32 = 0.8;
@@ -157,7 +157,7 @@ impl Renderer {
                         let moved =
                             (d.pos - pose.pos).length() > 0.04 || d.dir.dot(pose.dir) < 0.99999;
                         if moved {
-                            10.0 + *score
+                            10.0 + (d.pos - pose.pos).length() as f32 * 50.0 + *score
                         } else if slots[k].age >= SPOT_REDRAW_AGE {
                             1.0 + slots[k].age as f32 * 0.01
                         } else {
@@ -199,9 +199,9 @@ impl Renderer {
             if let Some(k) = assign[ci] {
                 if let Some(d) = slots[k].drawn {
                     let (tol, cos) = if scene.lights[*li].shadow_first {
-                        (2.0, 0.9)
+                        (2.5, 0.7)
                     } else {
-                        (0.5, 0.98)
+                        (2.5, 0.7)
                     };
                     if (d.pos - pose.pos).length() < tol && d.dir.dot(pose.dir) > cos {
                         out[*li] = k as u32 + 1;

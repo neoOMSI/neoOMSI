@@ -440,12 +440,13 @@ impl MeshShape {
     /// Indices of the parts within `r` of the local point `c` (each once).
     fn near(&self, c: DVec2, r: f64) -> Vec<u32> {
         let mut out: Vec<u32> = Vec::new();
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for y in ((c.y - r) / PART_CELL).floor() as i32..=((c.y + r) / PART_CELL).floor() as i32 {
             for x in ((c.x - r) / PART_CELL).floor() as i32..=((c.x + r) / PART_CELL).floor() as i32
             {
                 for &i in self.grid.get(&(x, y)).map(|v| v.as_slice()).unwrap_or(&[]) {
                     let p = &self.parts[i as usize];
-                    if (p.center - c).length() <= r + p.radius() && !out.contains(&i) {
+                    if (p.center - c).length() <= r + p.radius() && seen.insert(i) {
                         out.push(i);
                     }
                 }
@@ -606,7 +607,7 @@ impl MeshObstacle {
         }
     }
 
-    pub fn triangles_near(&self, b: &Obb, out: &mut Vec<[DVec3; 3]>) {
+    pub fn triangles_near(&self, b: &Obb, min_area: f64, out: &mut Vec<[DVec3; 3]>) {
         if !self.bounds.overlaps_plan(b) {
             return;
         }
@@ -615,6 +616,10 @@ impl MeshObstacle {
         for i in self.shape.near(self.to_local(b.center), b.radius()) {
             let t = self.shape.part_tri[i as usize];
             if !done.insert(t) {
+                continue;
+            }
+            let lt = self.shape.tris[t as usize].map(|v| v.as_dvec3());
+            if 0.5 * (lt[1] - lt[0]).cross(lt[2] - lt[0]).length() < min_area {
                 continue;
             }
             out.push(self.shape.tris[t as usize].map(|v| {
@@ -723,6 +728,7 @@ impl CollisionWorld {
     fn meshes_near(&self, b: &Obb) -> Vec<usize> {
         let r = b.radius();
         let mut out = Vec::new();
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for y in ((b.center.y - r) / CELL).floor() as i32..=((b.center.y + r) / CELL).floor() as i32
         {
             for x in
@@ -735,7 +741,7 @@ impl CollisionWorld {
                     .unwrap_or(&[])
                 {
                     let o = &self.meshes[i].bounds;
-                    if (o.center - b.center).length() <= r + o.radius() && !out.contains(&i) {
+                    if (o.center - b.center).length() <= r + o.radius() && seen.insert(i) {
                         out.push(i);
                     }
                 }
@@ -760,10 +766,10 @@ impl CollisionWorld {
         out
     }
 
-    pub fn triangles_near(&self, b: &Obb) -> Vec<[DVec3; 3]> {
+    pub fn triangles_near(&self, b: &Obb, min_area: f64) -> Vec<[DVec3; 3]> {
         let mut out = Vec::new();
         for i in self.meshes_near(b) {
-            self.meshes[i].triangles_near(b, &mut out);
+            self.meshes[i].triangles_near(b, min_area, &mut out);
         }
         out
     }
@@ -891,12 +897,13 @@ impl CollisionWorld {
             ((b.center.y + r) / CELL).floor() as i32,
         );
         let mut out = Vec::new();
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for y in y0..=y1 {
             for x in x0..=x1 {
                 if let Some(list) = self.grid.get(&(x, y)) {
                     for &i in list {
                         let o = &self.boxes[i];
-                        if (o.center - b.center).length() <= r + o.radius() && !out.contains(&i) {
+                        if (o.center - b.center).length() <= r + o.radius() && seen.insert(i) {
                             out.push(i);
                         }
                     }

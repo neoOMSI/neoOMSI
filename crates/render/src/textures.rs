@@ -254,6 +254,28 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("mips"),
             });
+        self.encode_mips(&mut encoder, texture, mip_count);
+        self.queue.submit([encoder.finish()]);
+    }
+
+    fn queue_mip_chain(&self, texture: &wgpu::Texture, mip_count: u32) {
+        let mut slot = self.mip_encoder.borrow_mut();
+        let encoder = slot.get_or_insert_with(|| {
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("mips"),
+                })
+        });
+        self.encode_mips(encoder, texture, mip_count);
+    }
+
+    pub(crate) fn flush_mips(&self) {
+        if let Some(encoder) = self.mip_encoder.borrow_mut().take() {
+            self.queue.submit([encoder.finish()]);
+        }
+    }
+
+    fn encode_mips(&self, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture, mip_count: u32) {
         for level in 1..mip_count {
             let src = texture.create_view(&wgpu::TextureViewDescriptor {
                 base_mip_level: level - 1,
@@ -299,7 +321,6 @@ impl Renderer {
             pass.set_bind_group(0, &bg, &[]);
             pass.draw(0..3, 0..1);
         }
-        self.queue.submit([encoder.finish()]);
     }
 
     pub fn texture_view(&self, scene: &Scene, id: TextureId) -> Option<wgpu::TextureView> {
@@ -391,7 +412,7 @@ impl Renderer {
         }
         self.update_texture(scene, id, img);
         if levels > 1 {
-            self.generate_mip_chain(&scene.textures[id].texture, levels);
+            self.queue_mip_chain(&scene.textures[id].texture, levels);
         }
         false
     }
@@ -558,10 +579,10 @@ pub fn prepare_texture(
     let (w, h) = (data.width.max(1), data.height.max(1));
     if data.levels.is_empty()
         || (data.format == PixelFormat::Rgba8
-            && data.levels.len() == 1
-            && data.gpu_mips
-            && w > 1
-            && h > 1)
+        && data.levels.len() == 1
+        && data.gpu_mips
+        && w > 1
+        && h > 1)
     {
         return None;
     }

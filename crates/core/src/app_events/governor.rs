@@ -1,19 +1,11 @@
-//! Frame-rate governor: how often mirrors are redrawn and how the render scale follows the frame rate.
+//! Frame-rate governor: how often mirrors are redrawn and how the render scale follows the frame rate
 
-/// Mirror pictures drawn per second at most, all mirrors together (see the redraw).
-pub(super) const MIRROR_RATE: f32 = 75.0;
-/// The least a mirror is redrawn a second (see the mirrors in `redraw_render`).
+pub(super) const MIRROR_RATE: f32 = 120.0;
 pub(super) const MIRROR_MIN_HZ: f32 = 8.0;
-/// The most a mirror in the picture is redrawn a second, with the real-time reflections
-/// economical (`mirror_refresh=eco`) and full (the default).
 pub(super) const MIRROR_MAX_HZ_ECO: f32 = 15.0;
-pub(super) const MIRROR_MAX_HZ_FULL: f32 = 30.0;
-/// With no real-time reflections (`mirror_refresh=off`) a bus's mirrors are drawn once when
-/// it is taken over and once more this many seconds later.
+pub(super) const MIRROR_MAX_HZ_FULL: f32 = 40.0;
 pub(super) const MIRROR_FREEZE_REDRAW: f32 = 2.0;
 
-/// Consume the VR redraw budget without updating a mirror twice in one frame.
-/// Negative rates request every mirror each frame; zero freezes immediately.
 pub(super) fn vr_mirror_updates(budget: &mut f32, dt: f32, rate: f32, mirrors: usize) -> usize {
     if mirrors == 0 || rate == 0.0 {
         *budget = 0.0;
@@ -30,10 +22,6 @@ pub(super) fn vr_mirror_updates(budget: &mut f32, dt: f32, rate: f32, mirrors: u
 }
 
 pub(super) fn render_scale_step(fps: f32, slow_frame_wait_share: f32) -> f32 {
-    // (three levels, far apart, and a wide band between going down and up again: every
-    // step makes the picture's targets anew - hundreds of MB with MSAA and HDR - and a
-    // scale that went up and down by 5 % every two seconds stuttered at each change and
-    // filled the card's memory with the old ones until the driver gave up)
     if fps < 40.0 && slow_frame_wait_share >= 0.4 {
         -0.15
     } else if fps > 58.0 || slow_frame_wait_share < 0.2 {

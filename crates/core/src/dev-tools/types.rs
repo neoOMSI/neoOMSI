@@ -20,6 +20,8 @@ pub(crate) struct Snapshot {
     pub lights: usize,
     pub interior_lights: usize,
     pub coronas: usize,
+    pub gpu_passes: Vec<(String, f64, u32)>,
+    pub draw_report: Vec<String>,
 }
 
 pub(crate) struct FootInfo {

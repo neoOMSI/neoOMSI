@@ -315,7 +315,14 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
     let a = max(sf.rough * sf.rough, 0.3);
     let nv = max(dot(n, v), 1e-4);
     let base = (u32(y) * side + u32(x)) * CELL_CAP;
+    // far from the eye a light's shadow ray is not worth its cost, and a pixel takes only the first few
+    // lights that reach it
+    let cam_far = distance(p, camera.cam_pos.xyz) > 45.0;
+    var used = 0u;
     for (var j = 0u; j < CELL_CAP; j = j + 1u) {
+        if (used >= 10u) {
+            break;
+        }
         let li = grid[base + j];
         if (li == 0xffffffffu) {
             break;
@@ -394,10 +401,13 @@ fn lamp_light(p: vec3<f32>, n: vec3<f32>, v: vec3<f32>, sf: Surface, thin: bool)
         if (l.extra.z >= 199.0) {
             e = e * smoothstep(0.00015, 0.004, e);
         }
-        if (e < 0.00005 || (!thin && dot(n, ld) <= 0.0)) {
+        if (e < 0.001 || (!thin && dot(n, ld) <= 0.0)) {
             continue;
         }
-        e = e * light_shadow(l, p + n * 0.08);
+        used = used + 1u;
+        if (!cam_far || e > 0.05) {
+            e = e * light_shadow(l, p + n * 0.08);
+        }
         if (e <= 0.0) {
             continue;
         }
@@ -841,9 +851,16 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
             // windows was a millisecond of the frame)
             shadow = sun_shadow_hard(in.world, n);
         } else if (nl > 0.0 || thin) {
-            shadow = sun_shadow_soft(in.world, n, thin);
+            if (!thin && max(1.0 - outside, select(0.0, 1.0, in.params.y > 1.5)) > 0.5) {
+                shadow = sun_shadow_hard(in.world, n);
+            } else {
+                shadow = sun_shadow_soft(in.world, n, thin);
+            }
         }
-        let e_sun = enh.sun.rgb * shadow * cloud_sun_visibility(in.world);
+        var e_sun = vec3<f32>(0.0);
+        if (shadow > 0.0) {
+            e_sun = enh.sun.rgb * shadow * cloud_sun_visibility(in.world);
+        }
         if (thin) {
             // foliage: a crown of leaves facing every way, whose normals OMSI points up
             // only to light it evenly - lit by the sun from any side (the shadow map
@@ -983,7 +1000,10 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // lamp was cut from it)
     let cabin_light = interior_lamps(in.world, n, in.params2.z);
     let saloon_lit = select(0.0, clamp(max(cabin_light.r, max(cabin_light.g, cabin_light.b)) * 4.0, 0.0, 1.0), in.params2.z >= 1.0);
-    let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
+    var lamps = vec3<f32>(0.0);
+    if (!(material.params.y > 0.2 && material.params.y < 0.3) && saloon_lit < 1.0) {
+        lamps = lamp_light(in.world, n, v, sf, thin) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
+    }
     // [interiorlight]: OMSI adds its lamps' light to the lit meshes whatever the daylight,
     // so a switched-on saloon is brighter by day as well and only stands out more at night.
     // Taken as a lamp against the daylight exposure it vanished by day altogether.

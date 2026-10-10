@@ -9,6 +9,34 @@ use ::simulation::VehicleInstance;
 
 const SIZE: usize = 256;
 const WIPED_FILM: f32 = -0.04;
+thread_local! {
+    static WIPER_TIMES: std::cell::Cell<[f64; 6]> = const { std::cell::Cell::new([0.0; 6]) };
+}
+
+fn wiper_time(slot: usize, t: std::time::Instant) {
+    WIPER_TIMES.with(|c| {
+        let mut a = c.get();
+        a[slot] += t.elapsed().as_secs_f64();
+        c.set(a);
+    });
+}
+
+pub(crate) fn take_wiper_times() -> [f64; 6] {
+    WIPER_TIMES.with(|c| c.replace([0.0; 6]))
+}
+
+pub(crate) const WIPER_NAMES: [&str; 6] = [
+    "wipers.water",
+    "wipers.wipe",
+    "wipers.drops_paint",
+    "wipers.mask_encode",
+    "wipers.mask_upload",
+    "wipers.material",
+];
+
+/// How often the 256x256 mask is re-wetted, encoded and uploaded (the blade's sweep itself
+/// is still cleared every frame). Doing it every frame cost ~10 ms per frame.
+const MASK_HZ: f32 = 20.0;
 
 // Eight codes below zero identify a short-lived residual film, without another texture.
 fn encode_wetness(wet: f32) -> u8 {
@@ -55,6 +83,11 @@ struct Film {
     local: bool,
     image: ::texture::Image,
     bounds: [f32; 4],
+    
+    pending_dt: f32,
+    mask_time: f32,
+    encoded: f32,
+    rate: f32,
 }
 
 pub(crate) struct WindowWipers {
@@ -253,6 +286,10 @@ impl WindowWipers {
                         local: false,
                         image,
                         bounds,
+                        pending_dt: 0.0,
+                        mask_time: 0.0,
+                        encoded: wetness,
+                        rate: 0.0,
                     });
                 }
             }
@@ -382,6 +419,7 @@ impl WindowWipers {
                 .map(|p| vehicle.mesh_transforms[blade.mesh].transform_point3(p));
         }
         for film in &mut self.films {
+            let tw = std::time::Instant::now();
             let liquid = vehicle.host.precip_type != 2.0 || vehicle.host.temperature > 0.0;
             let previous_wetness = film.unwiped;
             if dt > 0.0 {
@@ -401,12 +439,14 @@ impl WindowWipers {
                 film.unwiped = (film.unwiped + rate * dt).clamp(0.0, 1.0);
                 // An untouched pane has uniform wetness. Once it is saturated,
                 // only its moving drops need updates, not every mask pixel.
+                film.rate = rate;
                 if film.local {
-                    for wet in &mut film.wet {
-                        *wet = advance_wetness(*wet, rate, dt);
+                    film.pending_dt += dt;
+                } else {
+                    film.pending_dt = 0.0;
+                    if previous_wetness != film.unwiped {
+                        film.wet.fill(film.unwiped);
                     }
-                } else if previous_wetness != film.unwiped {
-                    film.wet.fill(film.unwiped);
                 }
                 air.z += normal_air * 0.6;
                 let tangent = pane_project(air, film.bounds[2] < 0.0);
@@ -437,6 +477,8 @@ impl WindowWipers {
                         },
                     );
                 }
+                wiper_time(0, tw);
+                let tp = std::time::Instant::now();
                 let inverse = vehicle.mesh_transforms[film.mesh].inverse();
                 for blade in &self.blades {
                     if !vehicle.mesh_props[blade.mesh].visible {
@@ -457,10 +499,12 @@ impl WindowWipers {
                         wipe_drops(film, previous, current);
                     }
                 }
+                wiper_time(1, tp);
             }
+            let td = std::time::Instant::now();
             film.paint_time += dt;
-            if film.paint_time >= 1.0 / 30.0 {
-                film.paint_time %= 1.0 / 30.0;
+            if film.paint_time >= 1.0 / 15.0 {
+                film.paint_time %= 1.0 / 15.0;
                 if liquid {
                     // Also discard initial seeds which landed outside the mesh's slot.
                     let bounds = film.bounds;
@@ -478,11 +522,35 @@ impl WindowWipers {
                     renderer.update_texture(scene, film.drops_texture, &film.drops.image);
                 }
             }
+            wiper_time(2, td);
+            let te = std::time::Instant::now();
             let mut changed = false;
-            if film.local || previous_wetness != film.unwiped {
+            film.mask_time += dt;
+            if film.mask_time >= 1.0 / MASK_HZ && (film.local || film.encoded != film.unwiped) {
+                film.mask_time = 0.0;
+                film.encoded = film.unwiped;
+                if film.local && film.pending_dt > 0.0 {
+                    let (rate, step) = (film.rate, film.pending_dt);
+                    for wet in &mut film.wet {
+                        *wet = advance_wetness(*wet, rate, step);
+                    }
+                    film.pending_dt = 0.0;
+                }
+                let uniform = !film.local;
                 film.local = false;
                 let unwiped = (film.unwiped * 255.0).round() as u8;
+                if uniform {
+                    let alpha = encode_wetness(film.unwiped);
+                    for pixel in film.image.rgba.chunks_exact_mut(4) {
+                        changed |= pixel[3] != alpha || pixel[2] != unwiped;
+                        pixel[2] = unwiped;
+                        pixel[3] = alpha;
+                    }
+                }
                 for (i, (&point, wet)) in film.points.iter().zip(&film.wet).enumerate() {
+                    if uniform {
+                        break;
+                    }
                     film.local |= point.is_finite() && *wet != film.unwiped;
                     let alpha = encode_wetness(if point.is_finite() {
                         *wet
@@ -495,9 +563,13 @@ impl WindowWipers {
                     pixel[3] = alpha;
                 }
             }
+            wiper_time(3, te);
+            let tu = std::time::Instant::now();
             if changed {
                 renderer.update_texture(scene, film.texture, &film.image);
             }
+            wiper_time(4, tu);
+            let tm = std::time::Instant::now();
             let inst = instances[film.mesh];
             renderer.set_material(scene, inst, film.slot, film.material);
             self.alpha.clear();
@@ -512,6 +584,7 @@ impl WindowWipers {
                 visible,
                 &vehicle.mesh_props[film.mesh].slot_uv,
             );
+            wiper_time(5, tm);
         }
         for blade in &mut self.blades {
             blade.previous = blade.current;
@@ -772,10 +845,10 @@ fn film_points_in_cab(
                 }
                 let p = lo
                     + size
-                        * Vec2::new(
-                            (x as f32 + 0.5) / SIZE as f32,
-                            (y as f32 + 0.5) / SIZE as f32,
-                        );
+                    * Vec2::new(
+                    (x as f32 + 0.5) / SIZE as f32,
+                    (y as f32 + 0.5) / SIZE as f32,
+                );
                 let u = (p - a2).perp_dot(c2 - a2) / det;
                 let v = (b2 - a2).perp_dot(p - a2) / det;
                 if u >= -0.001 && v >= -0.001 && u + v <= 1.001 {
