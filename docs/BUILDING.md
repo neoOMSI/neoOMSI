@@ -11,7 +11,6 @@ All build scripts are located in `scripts/`. Output binaries are placed into `di
   - Rust `x86_64-pc-windows-msvc` toolchain.
   - Visual Studio Build Tools with the _Desktop development with C++_ workload and Windows SDK.
   - CMake on `PATH` (required for OpenXR).
-  - Git for Windows and Node 24 (required to package the launcher UI).
 - **macOS:**
   - Xcode Command Line Tools (`xcode-select --install`).
   - Metal is used as the rendering backend.
@@ -40,16 +39,22 @@ scripts\dev-windows.cmd --map maps/Grundorf/global.cfg
 
 | Platform             | Command                            | Output                                             |
 | -------------------- | ---------------------------------- | -------------------------------------------------- |
-| **Windows**          | `scripts\build-windows.cmd`        | `dist\windows\neoomsi.exe`, `neoomsi-launcher.exe`, `launcher\` |
+| **Windows**          | `scripts\build-windows.cmd`        | `dist\windows\neoomsi.exe`, `neoomsi-launcher.exe` |
 | **macOS**            | `scripts/build-macos.sh`           | `dist/macos/neoOMSI.app`                           |
 | **Linux**            | `scripts/build-linux.sh`           | `dist/linux/neoomsi`, `neoomsi-launcher`           |
 | **Android**          | `scripts/build-android.sh`         | `dist/android/neoOMSI-<version>.apk`               |
 | **Dedicated server** | `scripts/build-server.sh [folder]` | `dist/server/` with `start.sh`                     |
 
-Every packaged build includes the launcher ([neoOMSI/launcher](https://github.com/neoOMSI/launcher),
-Electron), built from the commit pinned in `scripts/launcher-ref` into `dist/<platform>/launcher`
-(on macOS into `neoOMSI.app/Contents/Resources/launcher`). This keeps local Windows packages and
-nightly builds on the same launcher UI.
+Release archives also carry the launcher ([neoOMSI/launcher](https://github.com/neoOMSI/launcher),
+Electron), built by CI at the commit in `scripts/launcher-ref` into `dist/<platform>/launcher`
+(on macOS into `neoOMSI.app/Contents/Resources/launcher`). To add it to a local build (Node 24):
+
+```sh
+bash scripts/ci/build-launcher.sh windows x64                          # the pinned commit
+LAUNCHER_SRC=../launcher bash scripts/ci/build-launcher.sh windows x64 # a local checkout
+```
+
+Without it, neoOMSI opens its built-in launcher.
 
 Direct Cargo compilation is also supported:
 

@@ -18,6 +18,11 @@ if not exist "%BASH%" (
   exit /b 1
 )
 
-set "NEOOMSI_LAUNCHER_DEST=%LAUNCHER_DEST:\=/%"
+if not exist "dist\windows" mkdir "dist\windows"
 "%BASH%" "%CD%/scripts/ci/build-launcher.sh" windows %LAUNCHER_ARCH%
+if errorlevel 1 exit /b %ERRORLEVEL%
+
+if /I "%LAUNCHER_DEST%"=="dist\windows\launcher" exit /b 0
+if exist "%LAUNCHER_DEST%" rmdir /s /q "%LAUNCHER_DEST%"
+move /y "dist\windows\launcher" "%LAUNCHER_DEST%" >nul
 exit /b %ERRORLEVEL%

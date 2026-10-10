@@ -22,8 +22,11 @@ if errorlevel 1 goto :failed
 if not exist "dist\windows" mkdir "dist\windows"
 copy /y "target\%TARGET%\release\neoomsi.exe" "dist\windows\neoomsi.exe" >nul || goto :failed
 copy /y "target\%TARGET%\release\neoomsi-launcher.exe" "dist\windows\neoomsi-launcher.exe" >nul || goto :failed
+rem CI packages the launcher later, after setup-node. Local builds package it here.
+if defined GITHUB_ACTIONS goto :launcher_done
 call scripts\build-windows-launcher.cmd "dist\windows\launcher" "%LAUNCHER_ARCH%"
 if errorlevel 1 goto :failed
+:launcher_done
 echo.
 echo Done. Run: "%CD%\dist\windows\neoomsi.exe"
 exit /b 0

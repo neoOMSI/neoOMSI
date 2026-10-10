@@ -53,7 +53,7 @@ case "$platform" in
     codesign --verify --deep --strict "$app"
     ;;
   *)
-    dest="${NEOOMSI_LAUNCHER_DEST:-dist/$platform/launcher}"
+    dest="dist/$platform/launcher"
     rm -rf "$dest"
     cp -R "$(ls -d "$out"/"${flag#--}"-*unpacked)" "$dest"
     ;;
