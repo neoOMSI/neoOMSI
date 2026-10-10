@@ -470,15 +470,8 @@ impl Navigator {
         }
         let n_traffic = dy.len();
         if let Some(t) = f.traffic.filter(|_| self.show_ai) {
-            for c in &t.cars {
-                if c.gone
-                    || (c.vehicle.position - f.bus).truncate().length() > self.zoom * 3.5 + 150.0
-                {
-                    continue;
-                }
-                dy.world_disc(rel(c.vehicle.position), 1.7, 3.6, Color::rgba(8, 8, 8, 0.9));
-                dy.world_disc(rel(c.vehicle.position), 1.2, 2.6, DOT);
-            }
+            let reach = self.zoom * 3.5 + 150.0;
+            marks::vehicles(&mut dy, t, &rel, |q| (q - f.bus).truncate().length() <= reach, true);
         }
         let n_world = dy.len();
 
@@ -574,54 +567,11 @@ impl Navigator {
             20.0 * s,
         );
         for (k, sp) in markers.into_iter().rev() {
-            if k + 1 == n_stops {
-                ui.icon(
-                    &mut self.atlas,
-                    "sports_score",
-                    sp - Vec2::new(0.0, 12.0 * s),
-                    14.0 * s,
-                    TEXT,
-                );
-            }
-            let next = k == 0;
-            let badge = if next { 8.0 } else { 6.5 } * s;
-            ui.circle(sp, badge + 1.5 * s, CARD);
-            let fill = if next {
-                ACCENT
-            } else if k + 1 == n_stops {
-                ROUTE
-            } else {
-                Color::rgba(66, 66, 74, 0.98)
-            };
-            ui.circle(sp, badge, fill);
-            ui.icon(
-                &mut self.atlas,
-                "directions_bus",
-                sp,
-                if next { 12.5 } else { 10.5 } * s,
-                if next {
-                    Color::rgba(18, 14, 8, 1.0)
-                } else {
-                    TEXT
-                },
-            );
+            marks::stop_pin(&mut ui, &mut self.atlas, sp, marks::Pin::of(k, n_stops), s * 1.05);
         }
         if let Some(bp) = project(vpm, vp, rel(f.bus)) {
             let a = (angle_diff(self.cam_heading, f.heading) as f32).to_radians();
-            let rot =
-                |v: Vec2| Vec2::new(v.x * a.cos() - v.y * a.sin(), v.x * a.sin() + v.y * a.cos());
-            let k = 9.0 * s;
-            let tip = bp + rot(Vec2::new(0.0, -1.0) * k);
-            let l = bp + rot(Vec2::new(-0.7, 0.8) * k);
-            let m = bp + rot(Vec2::new(0.0, 0.4) * k);
-            let r = bp + rot(Vec2::new(0.7, 0.8) * k);
-            let dark = Color::rgba(12, 12, 14, 0.9);
-            let grow = |p: Vec2| bp + (p - bp) * 1.3;
-            ui.circle(bp, 12.0 * s, ACCENT.alpha(0.16));
-            ui.tri(grow(tip), grow(l), grow(m), dark, dark, dark);
-            ui.tri(grow(tip), grow(m), grow(r), dark, dark, dark);
-            ui.tri(tip, l, m, ACCENT, ACCENT, ACCENT);
-            ui.tri(tip, m, r, ACCENT, ACCENT, ACCENT);
+            marks::own_arrow(&mut ui, bp, a, 9.0 * s, ACCENT, Some(ACCENT));
         }
 
         let pad = 11.0 * s;
@@ -1025,15 +975,16 @@ impl Navigator {
                 layer: 1,
                 texture: 0,
             },
+            // the traffic under the route: parked cars must not cut the line up
             Draw {
-                buffer: 1,
-                range: 0..self.route_mesh.verts,
+                buffer: 2,
+                range: n_bg + n_traffic..n_bg + n_world,
                 layer: 1,
                 texture: 0,
             },
             Draw {
-                buffer: 2,
-                range: n_bg + n_traffic..n_bg + n_world,
+                buffer: 1,
+                range: 0..self.route_mesh.verts,
                 layer: 1,
                 texture: 0,
             },

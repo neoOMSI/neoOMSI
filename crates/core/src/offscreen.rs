@@ -3235,6 +3235,10 @@ pub(crate) fn run_offscreen(
                                     s, q.x, q.y, h
                                 );
                             }
+                            if let Some((w, h, px)) = nav.city_shot(&renderer, &mut scene, &f) {
+                                let path = format!("{}_map_{k:02}.png", stem.display());
+                                image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8)?;
+                            }
                         }
                     }
                 }

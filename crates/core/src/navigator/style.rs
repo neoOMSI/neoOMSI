@@ -11,8 +11,6 @@ pub(super) const ROAD: Color = Color::rgba(56, 56, 63, 1.0);
 pub(super) const ROAD_MAIN: Color = Color::rgba(78, 78, 88, 1.0);
 /// The pavement edge along a carriageway of the road graph.
 pub(super) const ROAD_KERB: Color = Color::rgba(34, 34, 39, 1.0);
-pub(super) const ROUTE: Color = Color::rgba(214, 48, 40, 1.0);
-pub(super) const DOT: Color = Color::rgba(70, 140, 255, 1.0);
 
 pub(super) const LEVEL: [Color; 5] = [
     Color::rgba(232, 160, 48, 1.0),

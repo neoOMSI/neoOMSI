@@ -13,6 +13,7 @@ mod draw;
 mod follow;
 mod graph;
 mod map_view;
+mod marks;
 mod roads;
 mod route;
 mod shot;
@@ -297,4 +298,6 @@ pub struct CityMap {
     route: ((u64, u64, u32, u64), u32),
     extent: (DVec2, DVec2),
     buttons: Vec<(Rect, u8)>,
+    /// Where the next drawing goes instead of `target` (`Navigator::city_shot`).
+    shot: Option<wgpu::TextureView>,
 }
