@@ -8,7 +8,7 @@ neoomsi --control-protocol
 ```
 
 and talks to it over the child's stdin and stdout. Games the engine starts report back to it over
-a loopback link. Version: **2**.
+a loopback link. Version: **1**.
 
 ```text
 launcher ──stdin/stdout──▶ neoomsi --control-protocol ──127.0.0.1──▶ neoomsi (game)  ×n
@@ -45,7 +45,7 @@ anything printed goes to stderr with the log. The launcher shows stderr as diagn
 
 ## Session
 
-1. The launcher sends `handshake` first, with `protocol_version` `"2"`, its own version and its
+1. The launcher sends `handshake` first, with `protocol_version` `"1"`, its own version and its
    platform. Any other request before it, except `shutdown`, is answered with an error.
 2. The engine answers with `status`, its `protocol_version`, `engine_version`,
    `supported_capabilities` (`events.instances`, `events.installs`, `events.content`,
@@ -58,7 +58,7 @@ anything printed goes to stderr with the log. The launcher shows stderr as diagn
    (10 s at most). Games it started keep running, and the next engine finds them through
    `~/.neoomsi/instances`.
 
-A launcher of protocol 1 sends JSON, which is no `Frame`: the engine ends the connection, and the
+A launcher of the earlier JSON protocol sends JSON, which is no `Frame`: the engine ends the connection, and the
 launcher shows that the engine went away.
 
 ## Commands
@@ -75,10 +75,10 @@ launcher shows that the engine went away.
 | `cancel_install`, `clear_installs` | |
 | `instances`, `launch`, `stop`, `log` | `stop` asks over the game link first, then by signal |
 | `join` | what a join field means, and the LAN sessions hosted here |
-| `settings`, `save_settings`, `option_presets` | settings are flags, numbers and texts by key; saving `pax_models: "realistic"` downloads the pack when it is missing |
+| `settings`, `save_settings`, `option_presets` | `Settings` has a field for every setting the engine keeps; saving changes only the fields that are set, and saving `pax_models` realistic downloads the pack when it is missing |
 | `pax_pack`, `install_pax_pack` | the realistic passengers' pack; `latest` is the newest `realistic-pax-v<n>` release, looked for every 6 hours, and makes an older pack `outdated` |
 | `update_check` | the newest neoOMSI release for this build's channel and platform, if there is one |
-| `keybindings`, `save_keybindings`, `controllers`, `save_controllers` | the whole list; `controllers` reads the devices as they are now (the first call waits half a second for them to be found) |
+| `keybindings`, `save_keybindings`, `controllers`, `save_controllers` | the whole list; `controllers` reads the devices as they are now (the first call waits half a second for them to be found), each axis with its raw value and calibration; an Xbox-type pad is read through XInput, which works without a window |
 | `preview` | the path of a `.glb` file |
 | `situations`, `tutorials`, `version` | |
 | `servers`, `save_servers` | `servers` asks every server for its status |

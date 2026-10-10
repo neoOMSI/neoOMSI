@@ -2236,6 +2236,10 @@ fn keyboard_cfg_read_path() -> Result<PathBuf> {
     Ok(::legacy_config::original_keyboard_cfg(&root()?))
 }
 
+pub fn omsi_gamectrler_cfg() -> Result<PathBuf> {
+    Ok(::legacy_config::original_gamectrler_cfg(&root()?))
+}
+
 /// The `keyboard.cfg` the launcher saved, if there is one: where [`save_keybindings`] writes it.
 pub fn saved_keyboard_cfg() -> Option<PathBuf> {
     let own = keyboard_cfg_write_path().ok()?;
@@ -2469,6 +2473,10 @@ const SETTINGS: &[(&str, &str, &str, Kind)] = &[
     ("update_check", "launcher", "update_check", Bool),
     ("update_auto", "launcher", "update_auto", Bool),
 ];
+
+pub fn setting_keys() -> impl Iterator<Item = &'static str> {
+    SETTINGS.iter().map(|s| s.0)
+}
 
 fn toml_num(v: &Toml) -> Option<f64> {
     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))

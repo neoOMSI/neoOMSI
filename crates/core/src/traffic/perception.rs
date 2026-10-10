@@ -314,14 +314,45 @@ impl Traffic {
         // as far as the car needs to stop without a jolt, and never less than a car length
         let reach = (v * v / 5.0 + v + 6.0).clamp(8.0, 45.0);
         let origin = car.vehicle.position.truncate();
-        let near: Vec<&(DVec2, DVec2, bool)> = self
-            .people
-            .iter()
-            .filter(|(p, _, _)| (*p - origin).length() < (st.front + reach) as f64 + 6.0)
-            .collect();
-        if near.is_empty() {
+        let max_dist = (st.front + reach) as f64 + 6.0;
+        let max_dist_sq = max_dist * max_dist;
+        let (min_gx, min_gy) = people_cell(origin - DVec2::splat(max_dist));
+        let (max_gx, max_gy) = people_cell(origin + DVec2::splat(max_dist));
+        let mut near_buf = [0usize; 32];
+        let mut near_overflow = Vec::new();
+        let mut near_len = 0;
+        for gy in min_gy..=max_gy {
+            for gx in min_gx..=max_gx {
+                let Some(list) = self.people_grid.get(&(gx, gy)) else {
+                    continue;
+                };
+                for &idx in list {
+                    if (self.people[idx].0 - origin).length_squared() >= max_dist_sq {
+                        continue;
+                    }
+                    if near_len < near_buf.len() {
+                        near_buf[near_len] = idx;
+                    } else {
+                        if near_overflow.is_empty() {
+                            near_overflow.extend_from_slice(&near_buf);
+                        }
+                        near_overflow.push(idx);
+                    }
+                    near_len += 1;
+                }
+            }
+        }
+        if near_len == 0 {
             return None;
         }
+        // in `people` order, as the full scan visited them
+        let near: &[usize] = if near_len <= near_buf.len() {
+            near_buf[..near_len].sort_unstable();
+            &near_buf[..near_len]
+        } else {
+            near_overflow.sort_unstable();
+            &near_overflow
+        };
         let from = st.front - 1.0;
         let mut first = true;
         for &(l, dl) in way {
@@ -342,7 +373,8 @@ impl Traffic {
                 let c = q.truncate() + right * lat;
                 // when the car's front gets here, at most two seconds on
                 let t = (((d - st.front).max(0.0)) / v.max(1.0)).min(2.0) as f64;
-                for (p, pv, waiting) in &near {
+                for &idx in near {
+                    let (p, pv, waiting) = &self.people[idx];
                     let half = if *waiting && car.is_bus() {
                         car.half_width as f64 - 0.3
                     } else {
@@ -363,37 +395,45 @@ impl Traffic {
     }
 
 
-    pub(crate) fn way_lanes(&self, st: &AiState, within: f32) -> Vec<(usize, f32)> {
-        let mut out = vec![(st.lane, -st.s)];
-        let mut d = self.net.lanes[st.lane].length() - st.s;
-        let plan: Vec<usize> = match st.change {
-            Some(c) => std::iter::once(c.to)
-                .chain(st.change_plan.iter().copied())
-                .collect(),
-            None => st.upcoming().collect(),
-        };
+    pub(crate) fn way_lanes_into(&self, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
+        out.clear();
         if let Some(c) = st.change {
             // over on the new lane: its distances count from the same place
-            out.clear();
             out.push((c.to, -c.s_to));
-            d = self.net.lanes[c.to].length() - c.s_to;
-            for &l in plan.iter().skip(1) {
+            let mut d = self.net.lanes[c.to].length() - c.s_to;
+            for &l in &st.change_plan {
                 if d > within {
                     break;
                 }
                 out.push((l, d));
                 d += self.net.lanes[l].length();
             }
-            return out;
+            return;
         }
-        for l in plan {
+        out.push((st.lane, -st.s));
+        let mut d = self.net.lanes[st.lane].length() - st.s;
+        for l in st.upcoming() {
             if d > within {
                 break;
             }
             out.push((l, d));
             d += self.net.lanes[l].length();
         }
+    }
+
+    pub(crate) fn way_lanes(&self, st: &AiState, within: f32) -> Vec<(usize, f32)> {
+        let mut out = Vec::new();
+        self.way_lanes_into(st, within, &mut out);
         out
+    }
+
+    /// Prefix of a precomputed route lookahead that falls within `within` metres.
+    pub(crate) fn way_prefix(way: &[(usize, f32)], within: f32) -> &[(usize, f32)] {
+        if way.is_empty() {
+            return way;
+        }
+        let count = 1 + way[1..].iter().take_while(|&&(_, d)| d <= within).count();
+        &way[..count]
     }
 
 

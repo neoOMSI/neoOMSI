@@ -52,6 +52,49 @@ pub(crate) fn pick_variant(
     }
 }
 
+/// Apply [matl_change] variant switches to scenery instances, honoring any active dynamic
+/// material overrides from [CTC] / [texchanges].
+pub(crate) fn apply_scenery_variants(
+    variants: &[SceneryVariant],
+    dynamic_materials: &HashMap<(usize, usize), Vec<MaterialId>>,
+    nightlight: f32,
+    var: &impl Fn(&str) -> Option<f32>,
+    renderer: &Renderer,
+    scene: &mut Scene,
+) {
+    for (inst, slot, base, item, var_name, more) in variants {
+        let x = if var_name.trim().eq_ignore_ascii_case("NightlightA") {
+            nightlight
+        } else {
+            var_name
+                .trim()
+                .parse()
+                .ok()
+                .or_else(|| var(var_name))
+                .unwrap_or(0.0)
+        };
+        let n = variant_number(x);
+        let target_mat = if let Some(dyn_looks) = dynamic_materials.get(&(*inst, *slot)) {
+            look_of(dyn_looks, n)
+        } else {
+            pick_variant(x, *base, *item, more)
+        };
+        if scene
+            .instances
+            .get(*inst)
+            .and_then(|i| i.materials.get(*slot))
+            != Some(&target_mat)
+        {
+            renderer.set_material(
+                scene,
+                *inst,
+                *slot,
+                target_mat,
+            );
+        }
+    }
+}
+
 /// A material variant switched by a variable.
 #[derive(Clone)]
 pub struct VariantSlot {

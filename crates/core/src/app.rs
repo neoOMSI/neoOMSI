@@ -122,6 +122,7 @@ pub(crate) struct App {
     pub(crate) lab_list: Option<(Vec<(String, String)>, game_lists::ListKind, Vec<usize>)>,
     pub(crate) menu_top: Option<f32>,
     pub(crate) menu_scroll_drag: bool,
+    pub(crate) lab_bar_drag: u8,
     pub(crate) pane_scroll: Option<(usize, usize)>,
     pub(crate) menu_edit: Option<String>,
     pub(crate) menu_edit_icao: bool,

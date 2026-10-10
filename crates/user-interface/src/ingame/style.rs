@@ -5,6 +5,8 @@ pub(super) const FADE_SECS: f32 = 0.15;
 
 pub(super) const PANEL: [u8; 4] = [22, 22, 22, 255];
 pub(super) const PANEL_ALT: [u8; 4] = [31, 31, 31, 255];
+/// The website's dark background (`--page` in `site/src/style.css`).
+pub(super) const SIDEBAR: [u8; 4] = [15, 15, 15, 255];
 pub(super) const BORDER: [u8; 4] = [255, 255, 255, 15];
 pub(super) const ACCENT: [u8; 4] = [232, 160, 48, 255];
 pub(super) const ACCENT_SOFT: [u8; 4] = [232, 160, 48, 34];

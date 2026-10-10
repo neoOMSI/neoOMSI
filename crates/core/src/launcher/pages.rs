@@ -3,13 +3,13 @@
 
 use super::state::{fmt_bytes, hhmm, short_map};
 use super::theme::*;
-use super::ui::{ButtonKind, Ui, id_of};
+use super::ui::{ButtonKind, id_of};
 use super::Launcher;
 use glam::Vec2;
 use omsi_launcher_lib as core;
 use ::user_interface::paint::Align;
 use ::user_interface::{Color, Rect, Weight};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 #[derive(Default)]
 pub struct PagesView {
@@ -410,111 +410,6 @@ fn chrono_like(t: u64) -> String {
         secs / 3600,
         (secs % 3600) / 60
     )
-}
-
-// --- settings (updates only) -----------------------------------------------------------------
-
-/// A value of the settings as the pages show it.
-fn get<'a>(v: &'a Value, k: &str) -> &'a Value {
-    v.get(k).unwrap_or(&Value::Null)
-}
-
-fn toggle_setting(ui: &mut Ui, s: &mut Value, dirty: &mut f32, r: Rect, label: &str, key: &str) {
-    let mut v = get(s, key).as_bool().unwrap_or(false);
-    if ui.toggle(&format!("set-{key}"), r, &mut v, label) {
-        s[key] = json!(v);
-        *dirty = 0.3;
-    }
-}
-
-/// The settings page: only the updates from the GitHub releases (see `crate::updater`).
-pub fn settings(l: &mut Launcher, area: Rect) {
-    let body = l.page_title(
-        area,
-        "Settings",
-        "Updates from the GitHub releases; every change is saved at once.",
-    );
-    let r = Rect::new(body.x, body.y, body.w.min(620.0), 230.0);
-    l.ui.panel(r);
-    let inner = l.ui.heading(
-        Rect::new(r.x + 18.0, r.y + 14.0, r.w - 36.0, r.h - 28.0),
-        "Updates",
-        None,
-    );
-    let status = l.update.status();
-    let mut check = false;
-    let mut y = inner.y;
-    let row = |y: f32| Rect::new(inner.x, y, inner.w, ROW - 2.0);
-    toggle_setting(
-        &mut l.ui,
-        &mut l.state.settings,
-        &mut l.state.settings_dirty,
-        row(y),
-        "Look for updates when the launcher starts",
-        "update_check",
-    );
-    y += ROW + 4.0;
-    toggle_setting(
-        &mut l.ui,
-        &mut l.state.settings,
-        &mut l.state.settings_dirty,
-        row(y),
-        "Install updates without asking",
-        "update_auto",
-    );
-    y += ROW + 4.0;
-    {
-        use crate::updater::Status;
-        let r = row(y);
-        let busy = matches!(
-            status,
-            Status::Checking
-                | Status::Downloading { .. }
-                | Status::Installing(_)
-                | Status::WaitingForInstaller(_)
-                | Status::Restarting(_)
-        );
-        if l.ui.button(
-            "s-upd-check",
-            Rect::new(r.x, r.y, 150.0, r.h),
-            if busy { "Checking…" } else { "Check now" },
-            Some("refresh"),
-            ButtonKind::Normal,
-        ) && !busy
-        {
-            check = true;
-        }
-        let text = match &status {
-            Status::UpToDate => format!(
-                "{} is the latest version",
-                crate::updater::current_version()
-            ),
-            Status::Available(rel) => format!("{} is available", rel.version),
-            Status::Failed(_) => "The last check failed".to_string(),
-            _ => format!("This is neoOMSI {}", crate::updater::current_version()),
-        };
-        l.ui.text_in(
-            &text,
-            Rect::new(r.x + 162.0, r.y, r.w - 162.0, r.h),
-            12.5,
-            Weight::Regular,
-            TEXT_DIM,
-            Align::Left,
-        );
-    }
-    y += ROW + 4.0;
-    if l.ui.button(
-        "s-upd-github",
-        row(y),
-        "github.com/neoOMSI/neoOMSI",
-        Some("open_in_new"),
-        ButtonKind::Ghost,
-    ) {
-        crate::updater::open_url(crate::updater::REPO_URL);
-    }
-    if check {
-        l.update.check();
-    }
 }
 
 // --- sessions ---------------------------------------------------------------------------------

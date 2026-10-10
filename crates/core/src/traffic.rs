@@ -38,6 +38,17 @@ use ::simulation::{VehicleInstance, VehicleType};
 use std::path::Path;
 use std::sync::Arc;
 
+/// Edge length of a `people_grid` cell in metres.
+const PEOPLE_GRID_CELL: f64 = 32.0;
+
+/// The `people_grid` cell a position falls into.
+fn people_cell(p: DVec2) -> (i32, i32) {
+    (
+        (p.x / PEOPLE_GRID_CELL).floor() as i32,
+        (p.y / PEOPLE_GRID_CELL).floor() as i32,
+    )
+}
+
 
 // ---- Stage 9b decomposition: the adapter is split into owned submodules ----
 mod car;
@@ -437,6 +448,9 @@ pub struct Traffic {
     /// at a stop (set every frame) - the cars stop for anybody in their way, not only on
     /// a crossing.
     people: Vec<(DVec2, DVec2, bool)>,
+    /// Spatial broadphase grid over `people` (cells of [`PEOPLE_GRID_CELL`] metres),
+    /// rebuilt with them for the corridor queries in `people_stop`.
+    people_grid: HashMap<(i32, i32), Vec<usize>>,
     /// No car has been placed yet: the first population may fill the view.
     initial: bool,
     /// Seconds of the last tick (the lamp scripts run in `sync`).
@@ -882,6 +896,10 @@ impl Traffic {
         self.weekday = weekday;
         self.walkers = walkers;
         self.people = people;
+        self.people_grid.clear();
+        for (idx, (p, _, _)) in self.people.iter().enumerate() {
+            self.people_grid.entry(people_cell(*p)).or_default().push(idx);
+        }
         self.occluders = occluders;
     }
 

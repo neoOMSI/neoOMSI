@@ -324,6 +324,18 @@
         "pax_prefer_seats": {
           "desc": "Fahrgäste setzen sich beim Einsteigen auf einen freien Sitz und nutzen Stehplätze erst, wenn alle Sitze belegt sind",
           "name": "Fahrgäste bevorzugen freie Sitze"
+        },
+        "pax_pack": {
+          "download": "Herunterladen",
+          "downloading": "Wird heruntergeladen und beim nächsten Spielstart übernommen",
+          "installed": "Installiert",
+          "installing": "Wird installiert und beim nächsten Spielstart übernommen",
+          "missing": "Noch nicht heruntergeladen; „Realistisch“ als Fahrgastmodelle braucht sie",
+          "name": "Realistische Fahrgastmodelle",
+          "next_start": "Aktuell. Ein vor dem Download gestartetes Spiel hat noch die alten Fahrgäste",
+          "outdated": "Eine neuere Version ist verfügbar",
+          "retry": "Erneut versuchen",
+          "update": "Aktualisieren"
         }
       },
       "graphics": {
@@ -888,6 +900,11 @@
       }
     },
     "controls": {
+      "import": {
+        "title": "Aus OMSI 2 importieren",
+        "name": "Importieren",
+        "desc": "Übernimmt die Controller aus Inputs/gamectrler.cfg von OMSI 2"
+      },
       "setup": {
         "name": "Einrichten",
         "desc": "Richte diesen Controller ein, damit er im Spiel verwendet werden kann."

@@ -397,6 +397,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_setting_of_the_table_is_in_the_protocol() {
+        let mut table: Vec<_> = crate::setting_keys().collect();
+        let mut fields: Vec<_> = api::SETTING_FIELDS
+            .iter()
+            .copied()
+            .filter(|f| *f != "texture_memory_auto")
+            .collect();
+        table.sort();
+        fields.sort();
+        assert_eq!(table, fields);
+    }
+
+    #[test]
     fn install_states_and_modes_keep_their_meaning() {
         let p = InstallProgress::from(crate::install::Progress {
             state: "unpacking".into(),

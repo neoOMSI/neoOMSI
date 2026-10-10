@@ -941,6 +941,11 @@ pub fn original_keyboard_cfg(root: &Path) -> PathBuf {
         .unwrap_or_else(|| root.join("Inputs").join("keyboard.cfg"))
 }
 
+pub fn original_gamectrler_cfg(root: &Path) -> PathBuf {
+    resolve_existing(root, &["Inputs", "gamectrler.cfg"])
+        .unwrap_or_else(|| root.join("Inputs").join("gamectrler.cfg"))
+}
+
 /// The essentials (see [`ORIGINAL_ESSENTIALS`]) that `root` lacks; empty for a complete
 /// original installation. neoOMSI's content folder never counts as one.
 pub fn missing_original_essentials(root: &Path) -> Vec<String> {

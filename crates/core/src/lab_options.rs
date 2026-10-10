@@ -1,21 +1,40 @@
 use crate::game_lists::*;
 use crate::ui::{OptGroup, OptKind, OptRow, OptShow, OPTION_GROUPS};
 use crate::App;
+use crate::controllers::Controllers;
 
-fn shown(app: &App, show: OptShow) -> bool {
+pub(crate) struct Host<'a> {
+    pub app: Option<&'a App>,
+    pub root: &'a std::path::Path,
+    pub pads: Option<&'a Controllers>,
+    pub keys: KeyView<'a>,
+}
+
+impl<'a> Host<'a> {
+    pub(crate) fn game(app: &'a App) -> Host<'a> {
+        Host {
+            app: Some(app),
+            root: &app.args.root,
+            pads: app.controllers.as_ref(),
+            keys: KeyView::of(app),
+        }
+    }
+}
+
+fn shown(host: &Host, show: OptShow) -> bool {
     match show {
         OptShow::Always => true,
         OptShow::Windows => cfg!(windows),
         OptShow::VrOn => cfg!(windows) && ::config::get_bool("vr", "enabled").unwrap_or(false),
-        OptShow::VrBus => app.vr_active() && app.player.is_some(),
+        OptShow::VrBus => host.app.is_some_and(|a| a.vr_active() && a.player.is_some()),
         OptShow::Profiles => !::config::get_subs("graphics_profiles").is_empty(),
     }
 }
 
-fn row_of(app: &App, file: &std::sync::Arc<serde_json::Value>, r: &OptRow) -> Option<(String, String)> {
+fn row_of(host: &Host, file: &std::sync::Arc<serde_json::Value>, r: &OptRow) -> Option<(String, String)> {
     match r.kind {
-        OptKind::Switch => switch_row(app, r.id, r.name, r.desc),
-        OptKind::Slider(f) => slider_row(app, r.id, r.name, r.desc, &|v| f.apply(v)),
+        OptKind::Switch => switch_row(host.app, r.id, r.name, r.desc),
+        OptKind::Slider(f) => slider_row(host.app, r.id, r.name, r.desc, &|v| f.apply(v)),
         OptKind::Select => select_row(file, r.id, r.name, r.desc),
         OptKind::Preset => preset_row(r.name, r.desc),
         OptKind::Opens => Some(opens(r.name, r.desc, r.id)),
@@ -99,38 +118,43 @@ fn retag((text, id): (String, String)) -> (String, String) {
     (p.join("\u{1f}"), id)
 }
 
-fn rows_of(app: &App, file: &std::sync::Arc<serde_json::Value>, rows: &[OptRow]) -> Vec<(String, String)> {
+fn rows_of(host: &Host, file: &std::sync::Arc<serde_json::Value>, rows: &[OptRow]) -> Vec<(String, String)> {
     rows.iter()
-        .filter(|r| shown(app, r.show))
+        .filter(|r| shown(host, r.show))
         .flat_map(|r| match r.kind {
-            OptKind::Keybinds => key_rows(app).into_iter().map(retag).collect(),
-            OptKind::Pads => crate::lab_pads::rows(app),
-            _ => row_of(app, file, r).into_iter().collect(),
+            OptKind::Keybinds => key_rows(host.root, &host.keys).into_iter().map(retag).collect(),
+            OptKind::Pads => crate::lab_pads::rows(host.pads),
+            _ if r.id == "pax_models" => row_of(host, file, r).into_iter().chain([pax_pack_row()]).collect(),
+            _ => row_of(host, file, r).into_iter().collect(),
         })
         .collect()
 }
 
 pub(crate) type Subs = Vec<(String, Vec<(String, String)>)>;
 
-fn subs_of(app: &App, file: &std::sync::Arc<serde_json::Value>, g: &OptGroup) -> Subs {
+fn subs_of(host: &Host, file: &std::sync::Arc<serde_json::Value>, g: &OptGroup) -> Subs {
     let mut subs: Subs = g
         .subs
         .iter()
-        .map(|s| (s.title.to_string(), rows_of(app, file, s.rows)))
+        .map(|s| (s.title.to_string(), rows_of(host, file, s.rows)))
         .filter(|s| !s.1.is_empty())
         .collect();
 
     if g.rows.iter().any(|r| r.kind == OptKind::Pads) {
-        subs.extend(crate::lab_pads::device_tabs(app).into_iter().map(|(t, r)| (t.to_string(), r)));
+        subs.extend(
+            crate::lab_pads::device_tabs(host.pads, host.root)
+                .into_iter()
+                .map(|(t, r)| (t.to_string(), r)),
+        );
     }
     subs
 }
 
-pub(crate) fn options_groups(app: &App) -> Vec<(String, Vec<(String, String)>, Subs)> {
+pub(crate) fn options_groups(host: &Host) -> Vec<(String, Vec<(String, String)>, Subs)> {
     let file = settings_file();
     OPTION_GROUPS
         .iter()
-        .map(|g| (g.title.to_string(), rows_of(app, &file, g.rows), subs_of(app, &file, g)))
+        .map(|g| (g.title.to_string(), rows_of(host, &file, g.rows), subs_of(host, &file, g)))
         .filter(|g| !g.1.is_empty() || !g.2.is_empty())
         .collect()
 }

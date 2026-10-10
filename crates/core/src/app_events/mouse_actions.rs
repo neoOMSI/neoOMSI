@@ -114,10 +114,13 @@ impl App {
         }
         if self.lab_menu.is_some() {
             if !pressed {
+                self.lab_bar_drag = 0;
                 if let Some(u) = self.ui.as_mut() {
                     u.world_drag = None;
                     u.world_bar_grab = None;
                 }
+            } else if self.lab_bar_press() {
+                return;
             }
             if self.lab_map_mouse(Some(pressed)) {
                 return;

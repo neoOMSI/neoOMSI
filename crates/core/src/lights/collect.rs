@@ -126,7 +126,7 @@ pub fn collect(
         }
         if let Some(mut b) = near.build.take() {
             let t_build = std::time::Instant::now();
-            while b.li < b.src_lights.len() && t_build.elapsed().as_micros() < 4000 {
+            while b.li < b.src_lights.len() && t_build.elapsed().as_micros() < 1500 {
                 let mut l = b.src_lights[b.li];
                 b.li += 1;
                 if let Some(ext) = enclosure(&coll, l.position) {
@@ -140,7 +140,7 @@ pub fn collect(
             }
             while b.li >= b.src_lights.len()
                 && b.ci < b.src_coronas.len()
-                && t_build.elapsed().as_micros() < 4000
+                && t_build.elapsed().as_micros() < 1500
             {
                 let c = b.src_coronas[b.ci];
                 b.ci += 1;
@@ -191,12 +191,13 @@ pub fn collect(
             near.vis_cursor += 1;
             budget -= 1;
         }
+        let light_range2 = MAP_LIGHT_RANGE.min(visible_range).powi(2);
         scene.lights.extend(
             near.lights
                 .iter()
                 .zip(&near.light_vis)
                 .filter(|(l, vis)| {
-                    **vis && (l.position - camera_pos).length() < MAP_LIGHT_RANGE.min(visible_range)
+                    **vis && (l.position - camera_pos).length_squared() < light_range2
                 })
                 .map(|(l, _)| apply_map_spot(*l, &map_spot)),
         );
@@ -243,7 +244,9 @@ pub fn collect(
             near.coronas
                 .iter()
                 .zip(&near.corona_vis)
-                .filter(|(c, vis)| **vis && (c.position - camera_pos).length() <= visible_range)
+                .filter(|(c, vis)| {
+                    **vis && (c.position - camera_pos).length_squared() <= visible_range * visible_range
+                })
                 .map(|(c, _)| *c),
         );
     }
@@ -320,7 +323,7 @@ pub fn collect(
     for list in world.particle_objects.lock().values() {
         for po in list {
             if (po.pos - camera_pos).length() < visible_range {
-                particle_sprites(&po.set, &mut scene.smoke, &mut scene.coronas);
+                particle_sprites(&po.set, false, &mut scene.smoke, &mut scene.coronas);
             }
         }
     }
@@ -367,7 +370,7 @@ pub fn collect(
     // (each vehicle keeps the last answers of its mesh walks and asks again for an eighth of
     // them a frame, the whole-vehicle answer every eighth frame)
     static VEH_OCC: std::sync::LazyLock<
-        std::sync::Mutex<std::collections::HashMap<usize, (bool, std::collections::HashMap<[i32; 3], bool>)>>,
+        std::sync::Mutex<std::collections::HashMap<usize, (bool, std::collections::HashMap<[i32; 3], bool>, bool)>>,
     > = std::sync::LazyLock::new(Default::default);
     static OCC_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let frame = OCC_FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -375,8 +378,11 @@ pub fn collect(
     if veh_occ.len() > 128 {
         veh_occ.clear();
     }
-    let mut mesh_tests = 8usize;
+    let mut mesh_tests = 3usize;
+    let mut veh_tests = 2usize;
     let beam_cfg = settings();
+    let seen_world = world.light_occluders.lock().clone();
+    let dark_v = 0.3 + 0.7 * night.clamp(0.0, 1.0);
     for (vi, v) in vehicles.iter().enumerate() {
         // (a vehicle out of sight: no lamps, no ray tests, no smoke)
         if (v.position - camera_pos).length() > visible_range {
@@ -390,18 +396,22 @@ pub fn collect(
             night,
             spill_ok[vi],
         );
-        let seen_world = world.light_occluders.lock().clone();
         let sections = body_sections(v);
         let vkey = *v as *const VehicleInstance as usize;
         let entry = veh_occ
             .entry(vkey)
-            .or_insert_with(|| (false, Default::default()));
+            .or_insert_with(|| (false, Default::default(), false));
         if entry.1.len() > 256 {
             entry.1.clear();
         }
         let inv = sections[0].1;
-        if (frame + vi) % 8 == 0 {
+        let due = (frame + vi) % 8 == 0 || entry.2;
+        if due && veh_tests > 0 {
+            veh_tests -= 1;
+            entry.2 = false;
             entry.0 = blocked_by_meshes(&coll, &seen_world, camera_pos, v.position);
+        } else if due {
+            entry.2 = true;
         }
         // (the mesh walk costs a probe every few metres: near vehicles test each lamp, far
         // ones once for the whole vehicle)
@@ -411,7 +421,7 @@ pub fn collect(
         let mut mine = scene.coronas.split_off(first_corona);
         corona_lights(
             &mine,
-            0.3 + 0.7 * night.clamp(0.0, 1.0),
+            dark_v,
             SRC_MAX_VEHICLE,
             &mut scene.lights,
         );
@@ -425,7 +435,11 @@ pub fn collect(
                 (q.y * 10.0).round() as i32,
                 (q.z * 10.0).round() as i32,
             ];
-            let blocked = near_v && !body_hides(&sections, camera_pos, c.position) && {
+            let hidden = body_hides(&sections, camera_pos, c.position);
+            if hidden || (far_hidden && !near_v) {
+                return false;
+            }
+            let blocked = near_v && {
                 if (i + frame) % 8 == 0 && mesh_tests > 0 {
                     mesh_tests -= 1;
                     let b = blocked_by_meshes(&coll, &seen_world, camera_pos, c.position);
@@ -433,7 +447,7 @@ pub fn collect(
                 }
                 entry.1.get(&key).copied().unwrap_or(false)
             };
-            if body_hides(&sections, camera_pos, c.position) || far_hidden || blocked {
+            if far_hidden || blocked {
                 return false;
             }
             if !c.beam && !c.halo {
@@ -446,13 +460,14 @@ pub fn collect(
             true
         });
         scene.coronas.extend(mine);
-        particle_sprites(&v.particles, &mut scene.smoke, &mut scene.coronas);
+        particle_sprites(&v.particles, true, &mut scene.smoke, &mut scene.coronas);
         for t in &v.trailers {
-            particle_sprites(&t.particles, &mut scene.smoke, &mut scene.coronas);
+            particle_sprites(&t.particles, true, &mut scene.smoke, &mut scene.coronas);
         }
     }
     let t_vehicles = std::time::Instant::now();
     let (vis, night) = cone_weather();
+    let corona_gain = settings().corona;
     scene.coronas.retain_mut(|c| {
         if !c.beam && !c.halo {
             return true;
@@ -460,7 +475,7 @@ pub fn collect(
         if vis >= 2000.0 {
             return false;
         }
-        let glow = (night * night + 0.8) * 0.6 * c.brightness * settings().corona;
+        let glow = (night * night + 0.8) * 0.6 * c.brightness * corona_gain;
         let reach = 3.0 * (100.0 / vis.max(1.0)).sqrt() * glow * c.size;
         c.size = if c.beam { 2.0 * reach } else { reach };
         c.brightness = if c.beam { 0.3 } else { 0.2 };
@@ -491,101 +506,125 @@ pub fn collect(
         let glow = f32::from_bits(LED_GLOW.load(std::sync::atomic::Ordering::Relaxed));
         // (a switch to measure what the screens' light costs)
         let no_screen_light = ::legacy_config::env::var_os("OMSI_NO_SCREEN_LIGHT").is_some();
-        let mut panels: Vec<(f64, DVec3, f32, bool, [f32; 3], Vec3)> = scene
-            .instances
-            .iter()
-            .filter(|i| i.visible && !no_screen_light)
-            .filter_map(|i| {
-                // (gate, colour, slot) of the brightest matching screen slot of the instance
-                let gate = |led: bool| {
-                    i.materials
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, m)| {
-                            scene.materials.get(**m).is_some_and(|m| {
-                                if led {
-                                    m.is_led()
-                                } else {
-                                    m.is_screen() && !m.is_led()
-                                }
-                            })
+        let luma_guard = if no_screen_light {
+            None
+        } else {
+            scene.tex_luma.lock().ok()
+        };
+        let mut panels: Vec<(f64, DVec3, f32, bool, [f32; 3], Vec3)> = if no_screen_light {
+            Vec::new()
+        } else {
+            scene
+                .instances
+                .iter()
+                .filter(|i| {
+                    i.visible
+                        && (i.world_centre() - camera_pos).length_squared()
+                            < (LED_RANGE + 60.0) * (LED_RANGE + 60.0)
+                        && i.materials.iter().any(|m| {
+                            scene
+                                .materials
+                                .get(*m)
+                                .is_some_and(|mat| mat.is_screen() || mat.is_led())
                         })
-                        .map(|(k, m)| {
-                            let gate = i.slot_light.get(k).copied().unwrap_or(1.0).clamp(0.0, 1.0);
-                            let seen = |t: Option<usize>| {
-                                t.and_then(|t| {
-                                    scene.tex_luma.lock().ok().and_then(|l| l.get(&t).copied())
+                })
+                .filter_map(|i| {
+                    // (gate, colour, slot) of the brightest matching screen slot of the instance
+                    let gate = |led: bool| {
+                        i.materials
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, m)| {
+                                scene.materials.get(**m).is_some_and(|m| {
+                                    if led {
+                                        m.is_led()
+                                    } else {
+                                        m.is_screen() && !m.is_led()
+                                    }
                                 })
-                            };
-                            // a screen throws only the light it shows: a black or switched-off
-                            // script / HTML picture throws none; an LED panel (its dots are the
-                            // alpha of its `\S:n` script texture) only as many dots as are lit
-                            let mat = scene.materials.get(*m);
-                            let (shown, colour) = if led {
+                            })
+                            .map(|(k, m)| {
+                                let gate =
+                                    i.slot_light.get(k).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+                                let seen = |t: Option<usize>| {
+                                    t.and_then(|t| {
+                                        luma_guard.as_ref().and_then(|l| l.get(&t).copied())
+                                    })
+                                };
+                                // a screen throws only the light it shows: a black or switched-off
+                                // script / HTML picture throws none; an LED panel (its dots are the
+                                // alpha of its `\S:n` script texture) only as many dots as are lit
+                                let mat = scene.materials.get(*m);
+                                let (shown, colour) = if led {
+                                    (
+                                        seen(mat.and_then(|m| m.transmap.map(|t| t.0)))
+                                            .map(|(_, a, _)| a)
+                                            .unwrap_or(0.0),
+                                        LED_COLOR,
+                                    )
+                                } else {
+                                    // (the light takes the colour of the picture)
+                                    seen(mat.and_then(|m| m.texture))
+                                        .map(|(c, _, rgb)| (c, rgb))
+                                        .unwrap_or((0.0, SCREEN_COLOR))
+                                };
+                                let fx = if led {
+                                    1.0
+                                } else if mat.is_some_and(|m| m.is_html()) {
+                                    screen_fx(1)
+                                } else {
+                                    screen_fx(3)
+                                };
                                 (
-                                    seen(mat.and_then(|m| m.transmap.map(|t| t.0)))
-                                        .map(|(_, a, _)| a)
-                                        .unwrap_or(0.0),
-                                    LED_COLOR,
+                                    gate * (shown * if led { 8.0 } else { 3.0 }).clamp(0.0, 1.0)
+                                        * fx,
+                                    colour,
+                                    k,
                                 )
-                            } else {
-                                // (the light takes the colour of the picture)
-                                seen(mat.and_then(|m| m.texture))
-                                    .map(|(c, _, rgb)| (c, rgb))
-                                    .unwrap_or((0.0, SCREEN_COLOR))
-                            };
-                            let fx = if led {
-                                1.0
-                            } else if mat.is_some_and(|m| m.is_html()) {
-                                screen_fx(1)
-                            } else {
-                                screen_fx(3)
-                            };
-                            (
-                                gate * (shown * if led { 8.0 } else { 3.0 }).clamp(0.0, 1.0) * fx,
-                                colour,
-                                k,
-                            )
-                        })
-                        .fold((0.0f32, SCREEN_COLOR, usize::MAX), |a, b| {
-                            if b.0 > a.0 { b } else { a }
-                        })
-                };
-                let led_gate = if glow > 0.0 {
-                    gate(true)
-                } else {
-                    (0.0, SCREEN_COLOR, usize::MAX)
-                };
-                let (led, (g, colour, slot)) = if led_gate.0 > 0.01 {
-                    (true, led_gate)
-                } else {
-                    let screen_gate = gate(false);
-                    if screen_gate.0 > 0.01 {
-                        (false, screen_gate)
+                            })
+                            .fold((0.0f32, SCREEN_COLOR, usize::MAX), |a, b| {
+                                if b.0 > a.0 { b } else { a }
+                            })
+                    };
+                    let led_gate = if glow > 0.0 {
+                        gate(true)
                     } else {
+                        (0.0, SCREEN_COLOR, usize::MAX)
+                    };
+                    let (led, (g, colour, slot)) = if led_gate.0 > 0.01 {
+                        (true, led_gate)
+                    } else {
+                        let screen_gate = gate(false);
+                        if screen_gate.0 > 0.01 {
+                            (false, screen_gate)
+                        } else {
+                            return None;
+                        }
+                    };
+                    // a screen shines to the side it renders to: its slot's facing direction
+                    let face = scene
+                        .meshes
+                        .get(i.mesh)
+                        .and_then(|m| m.slot_faces.get(slot))
+                        .filter(|f| f.0 != Vec3::ZERO);
+                    let (c, dir) = match face {
+                        Some((n, centre)) => {
+                            let d = i.transform.transform_vector3(*n).normalize_or_zero();
+                            (
+                                i.origin + i.transform.transform_point3(*centre).as_dvec3(),
+                                d,
+                            )
+                        }
+                        None => (i.world_centre(), Vec3::ZERO),
+                    };
+                    let dist = (c - camera_pos).length();
+                    if dist >= LED_RANGE {
                         return None;
                     }
-                };
-                // a screen shines to the side it renders to: its slot's facing direction
-                let face = scene
-                    .meshes
-                    .get(i.mesh)
-                    .and_then(|m| m.slot_faces.get(slot))
-                    .filter(|f| f.0 != Vec3::ZERO);
-                let (c, dir) = match face {
-                    Some((n, centre)) => {
-                        let d = i.transform.transform_vector3(*n).normalize_or_zero();
-                        (
-                            i.origin + i.transform.transform_point3(*centre).as_dvec3(),
-                            d,
-                        )
-                    }
-                    None => (i.world_centre(), Vec3::ZERO),
-                };
-                Some(((c - camera_pos).length(), c, g, led, colour, dir))
-            })
-            .filter(|(d, _, _, _, _, _)| *d < LED_RANGE)
-            .collect();
+                    Some((dist, c, g, led, colour, dir))
+                })
+                .collect()
+        };
         panels.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, c, gate, led, colour, dir) in panels.into_iter().take(LED_PANELS) {
             let directional = dir != Vec3::ZERO;
@@ -683,19 +722,17 @@ pub fn collect(
                 .collect::<Vec<_>>()
         );
     }
-    scene.lights.sort_by(|a, b| {
-        (a.position - camera_pos)
-            .length_squared()
-            .total_cmp(&(b.position - camera_pos).length_squared())
+    scene.lights.sort_by_cached_key(|l| {
+        ((l.position - camera_pos).length_squared() * 16.0) as u64
     });
     let generation = world
         .tiles_generation
         .load(std::sync::atomic::Ordering::Relaxed);
-    let seen = world.light_occluders.lock().clone();
+    let seen = seen_world;
     let t_occ = std::time::Instant::now();
     assign_occluders(&coll, &seen, generation, scene, camera_pos, vehicles);
     let total = t_start.elapsed();
-    if total.as_millis() > 40 {
+    if total.as_millis() > 10 {
         static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
         if last

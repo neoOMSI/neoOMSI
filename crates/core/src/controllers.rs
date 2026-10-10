@@ -132,11 +132,11 @@ impl DeviceCfg {
     pub(crate) fn stick_deadzone(&self, k: usize) -> f32 {
         let own = self.deadzone.is_some()
             || self
-                .calibration
-                .get(k)
-                .copied()
-                .flatten()
-                .is_some_and(|c| c.deadzone.is_some());
+            .calibration
+            .get(k)
+            .copied()
+            .flatten()
+            .is_some_and(|c| c.deadzone.is_some());
         if own {
             self.deadzone(k)
         } else {
@@ -349,6 +349,106 @@ pub(crate) fn write_device(d: &DeviceCfg) {
     dev_put(n, "ff_scale_vibration", Some(Value::from(sc.1 as f64)));
     dev_put(n, "ff_invert", d.ff_invert.map(Value::from));
     dev_put(n, "deadzone", d.deadzone.map(|v| Value::from(v as f64)));
+}
+
+pub(crate) fn parse_omsi_cfg(lines: &[String]) -> Vec<DeviceCfg> {
+    let tag = |l: &str| l.trim().to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if tag(&lines[i]) != "[ctrl]" {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let start = i;
+        while i < lines.len() && tag(&lines[i]) != "[ctrl]" {
+            i += 1;
+        }
+        let block = &lines[start..i];
+        let split = block
+            .iter()
+            .position(|l| tag(l) == "[buttons]")
+            .unwrap_or(block.len());
+        let (head, buttons) = block.split_at(split);
+        let mut head = head.iter();
+        let name = head.next().map(|l| l.trim().to_string()).unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        let second = head.next().map(|l| l.trim().to_string()).unwrap_or_default();
+        let nums: Vec<i32> = head
+            .flat_map(|l| l.split_whitespace())
+            .filter_map(|t| t.parse::<i32>().ok())
+            .collect();
+        let mut d = DeviceCfg {
+            name,
+            second,
+            ..Default::default()
+        };
+        for a in 0..8 {
+            let f = nums.get(a * 2).copied().unwrap_or(-1);
+            let flags = nums.get(a * 2 + 1).copied().unwrap_or(0);
+            d.axes[a] = Func::from_code(f).map(|f| (f, flags & 1 != 0));
+            d.axis_flags[a] = flags & !1;
+        }
+        let mut b: Vec<&str> = buttons.iter().skip(1).map(|l| l.trim()).collect();
+        while b.last().is_some_and(|l| l.is_empty()) {
+            b.pop();
+        }
+        let count = b.first().and_then(|l| l.parse::<usize>().ok());
+        if let Some(n) = count.filter(|n| b.len() > 2 * n) {
+            b = b[1..1 + 2 * n].to_vec();
+        } else if b.len() % 2 == 1 {
+            b.remove(0);
+        }
+        for p in b.chunks(2) {
+            let num = p.get(1).copied().filter(|s| !s.is_empty()).unwrap_or("0");
+            d.buttons.push((p[0].to_string(), num.to_string()));
+        }
+        d.buttons.truncate(512);
+        if let Some(k) = block.iter().position(|l| tag(l) == "[ffscale]") {
+            let v: Vec<f32> = block[k + 1..]
+                .iter()
+                .take(2)
+                .filter_map(|l| l.trim().parse::<f32>().ok())
+                .collect();
+            if let [steer, vibration] = v[..] {
+                d.ff_scale = Some((steer, vibration));
+            }
+        }
+        out.push(d);
+    }
+    out
+}
+
+/// Take the devices of OMSI's `gamectrler.cfg` into the settings: a device already set up
+/// is replaced (what only neoOMSI knows - calibration, force feedback - stays), the others
+/// stay as they are. Returns the names imported.
+pub(crate) fn import_omsi_cfg(path: &Path) -> Result<Vec<String>, String> {
+    let file = ::legacy_config::CfgFile::read(path).map_err(|e| e.to_string())?;
+    let found = parse_omsi_cfg(&file.lines);
+    if found.is_empty() {
+        return Err(format!("{}: no controller in it", path.display()));
+    }
+    let mut devices = read_cfg();
+    let mut names = Vec::new();
+    for mut n in found {
+        names.push(n.name.clone());
+        let same = |d: &DeviceCfg| normalized_device_name(&d.name) == normalized_device_name(&n.name);
+        if let Some(old) = devices.iter_mut().find(|d| same(d)) {
+            n.calibration = old.calibration;
+            n.enabled = old.enabled;
+            n.ff_scale = n.ff_scale.or(old.ff_scale);
+            n.ff_invert = old.ff_invert;
+            n.deadzone = old.deadzone;
+            *old = n;
+        } else {
+            devices.push(n);
+        }
+    }
+    write_cfg(&devices);
+    Ok(names)
 }
 
 /// The analog controls a controller gives this frame (None: that one is not on it).
@@ -832,7 +932,7 @@ pub(crate) fn is_system_gamepad(name: &str, is_di_device: bool) -> bool {
 
 /// A DirectInput name of an Xbox-type pad (which gilrs lists with the system's layout).
 #[cfg_attr(not(windows), allow(dead_code))]
-fn xinput_name(name: &str) -> bool {
+pub(crate) fn xinput_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     n.contains("xbox") || n.contains("xinput") || n.starts_with("controller (")
 }

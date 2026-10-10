@@ -81,6 +81,14 @@ pub const HTML_OBJECT_NEAR: f64 = 60.0;
 pub const DISPLAYS_FAR: f64 = 50.0;
 
 impl World {
+    pub(crate) fn push_scripted(&self, obj: ScriptedObject) {
+        let map_id = obj.map_id;
+        let mut scripted = self.scripted.lock();
+        let idx = scripted.len();
+        scripted.push(obj);
+        self.scripted_of_object.lock().insert(map_id, idx);
+    }
+
     /// Light or darken the night textures of the objects with a `[NightMapMode]` timetable
     /// for this hour of the day (0..24).
     pub fn update_night_modes(
@@ -214,7 +222,13 @@ impl World {
         kind: ::simulation::htmltex::PointerKind,
     ) -> bool {
         let mut scripted = self.scripted.lock();
-        match scripted.iter_mut().find(|o| o.map_id == map_id) {
+        let idx = self.scripted_of_object.lock().get(&map_id).copied();
+        let o = if let Some(i) = idx.filter(|&i| scripted.get(i).is_some_and(|o| o.map_id == map_id)) {
+            scripted.get_mut(i)
+        } else {
+            scripted.iter_mut().find(|o| o.map_id == map_id)
+        };
+        match o {
             Some(o) => o.inst.html_pointer(page, u, v, kind),
             None => false,
         }
@@ -228,6 +242,7 @@ impl World {
             return;
         }
         let scripted = self.scripted.lock();
+        let by_id = self.scripted_of_object.lock();
         static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *DEBUG.get_or_init(|| ::legacy_config::env::var_os("OMSI_DEBUG_PARTICLES").is_some()) {
             let mut near: Vec<(f64, &ParticleObject)> = objs
@@ -252,9 +267,11 @@ impl World {
                 if (po.pos - center).length() > 1500.0 {
                     continue;
                 }
-                let inst = scripted
-                    .iter()
-                    .find(|s| s.map_id == po.map_id)
+                let inst = by_id
+                    .get(&po.map_id)
+                    .and_then(|&i| scripted.get(i))
+                    .filter(|s| s.map_id == po.map_id)
+                    .or_else(|| scripted.iter().find(|s| s.map_id == po.map_id))
                     .map(|s| &s.inst);
                 let value = |n: &str| inst.and_then(|i| i.var(n)).unwrap_or(0.0);
                 po.set.update(dt, po.pos, po.rot, &value);
@@ -308,6 +325,7 @@ impl World {
         let mut wanted: Vec<i64> = Vec::new();
         let mut wanted_names: Vec<String> = Vec::new();
         let mut texture_updates: Vec<(
+            i64,
             Arc<ObjectType>,
             Vec<usize>,
             Vec<usize>,
@@ -418,8 +436,8 @@ impl World {
             if !o.texts.is_empty() && dist < 250.0 {
                 let _ = o.inst.take_refresh_strings();
                 for (tex, st) in o.texts.iter_mut() {
-                    let text = o.inst.str_var(st.def.variable.trim()).to_string();
-                    if st.update(&text) {
+                    let text = o.inst.str_var(st.def.variable.trim());
+                    if st.update(text) {
                         let (w, h) = (st.def.width.max(1) as u32, st.def.height.max(1) as u32);
                         if let Some(rgba) = st.pending.take() {
                             // OMSI_DUMP_SCENERY_TEXT=<dir>: the pictures as drawn
@@ -531,24 +549,21 @@ impl World {
                     );
                 }
             }
-            for (inst, slot, base, item, var, more) in &o.variants {
-                let x = if var.trim().eq_ignore_ascii_case("NightlightA") {
-                    nightlight
-                } else {
-                    var.trim()
-                        .parse()
-                        .ok()
-                        .or_else(|| o.inst.var(var))
-                        .unwrap_or(0.0)
-                };
-                renderer.set_material(
-                    scene,
-                    *inst,
-                    *slot,
-                    pick_variant(x, *base, *item, more),
-                );
-            }
-            if !o.ty.dynamic_textures.is_empty() {
+            apply_scenery_variants(
+                &o.variants,
+                &o.dynamic_materials,
+                nightlight,
+                &|n| o.inst.var(n),
+                renderer,
+                scene,
+            );
+            if !o.ty.dynamic_textures.is_empty()
+                && !scenery_texture_selection_matches(
+                    &o.ty,
+                    &o.inst,
+                    o.last_tex_selection.as_deref(),
+                )
+            {
                 let selection = scenery_texture_selection(&o.ty, &o.inst);
                 let switches = o
                     .variants
@@ -566,7 +581,7 @@ impl World {
                         ((*inst, *slot), variant_number(value))
                     })
                     .collect();
-                texture_updates.push((o.ty.clone(), selection, o.instances.clone(), switches));
+                texture_updates.push((o.map_id, o.ty.clone(), selection, o.instances.clone(), switches));
             }
             for ((inst, xf), &visible) in o
                 .instances
@@ -598,7 +613,7 @@ impl World {
         // Scenery placement takes the GPU-cache lock before the script list. Apply dynamic
         // texture changes after releasing the script-list lock to keep that lock order
         // consistent.
-        for (ty, selection, instances, switches) in texture_updates {
+        for (map_id, ty, selection, instances, switches) in texture_updates {
             let variant = {
                 let mut gpu = self.gpu.lock();
                 gpu.dynamic_texture_variant(
@@ -611,14 +626,31 @@ impl World {
                 )
             };
             if let Some(rows) = variant {
+                let mut dyn_mats: Vec<((usize, usize), Vec<MaterialId>)> = Vec::new();
                 for (mi, row) in rows.iter().enumerate() {
                     let Some(&mesh_inst) = instances.get(mi) else {
                         continue;
                     };
                     for (slot, pair) in row.iter().enumerate() {
                         let Some(looks) = pair else { continue };
+                        dyn_mats.push(((mesh_inst, slot), looks.clone()));
                         let picked = switches.get(&(mesh_inst, slot)).copied().unwrap_or(0);
-                        renderer.set_material(scene, mesh_inst, slot, look_of(looks, picked));
+                        let target_mat = look_of(looks, picked);
+                        if scene
+                            .instances
+                            .get(mesh_inst)
+                            .and_then(|i| i.materials.get(slot))
+                            != Some(&target_mat)
+                        {
+                            renderer.set_material(scene, mesh_inst, slot, target_mat);
+                        }
+                    }
+                }
+                let mut scripted = self.scripted.lock();
+                if let Some(o) = scripted.iter_mut().find(|o| o.map_id == map_id) {
+                    o.last_tex_selection = Some(selection);
+                    for (key, looks) in dyn_mats {
+                        o.dynamic_materials.insert(key, looks);
                     }
                 }
             }

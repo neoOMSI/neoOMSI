@@ -430,6 +430,9 @@ impl App {
             if let Some(n) = self.navigator.as_mut().filter(|n| n.city.embed.is_some()) {
                 n.map_move(x, y);
             }
+            if self.lab_bar_drag != 0 {
+                self.lab_bar_set();
+            }
             if self.ui.as_ref().is_some_and(|u| u.world_drag.is_some()) {
                 self.lab_world_set(x);
             }

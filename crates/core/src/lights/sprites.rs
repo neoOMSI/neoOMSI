@@ -1,12 +1,21 @@
 use super::*;
 
+/// `vehicle`: the particles are a vehicle's (not a placed object's).
 pub fn particle_sprites(
     set: &::simulation::particles::ParticleSet,
+    vehicle: bool,
     smoke: &mut Vec<::render::SmokeParticle>,
     coronas: &mut Vec<Corona>,
 ) {
+    let classic = crate::startup::CLASSIC.load(std::sync::atomic::Ordering::Relaxed);
     for (p, def) in set.particles() {
-        let alpha = p.alpha();
+        let (alpha, radius, angle, pull) = if draws_as_plume(p, def, vehicle, classic) {
+            let radius = smoke_diameter(p) * 0.5;
+            let (angle, pull) = smoke_turn_and_pull(p, radius);
+            (smoke_alpha(p), radius, angle, pull)
+        } else {
+            (p.alpha(), p.size() * 0.5, 0.0, 0.0)
+        };
         if alpha <= 0.002 {
             continue;
         }
@@ -24,12 +33,61 @@ pub fn particle_sprites(
         } else {
             smoke.push(::render::SmokeParticle {
                 position: p.pos,
-                size: p.size() * 0.5,
+                size: radius,
                 color: p.color,
                 alpha,
+                angle,
+                pull,
             });
         }
     }
+}
+
+/// Vanilla+ and Enhanced draw a vehicle's rising smoke (exhaust, coolant steam: a negative
+/// gravity factor) as a gas plume. Falling spray, placed objects' smoke and glowing particles
+/// keep the Vanilla look.
+fn draws_as_plume(
+    p: &::simulation::particles::Particle,
+    def: &::model::ParticleSystemDef,
+    vehicle: bool,
+    classic: bool,
+) -> bool {
+    vehicle && !classic && !def.emissive && p.gravity < 0.0
+}
+
+/// The share of the `[smoke]` sizes a plume is drawn at: a real exhaust plume starts at the
+/// pipe and widens by about a fifth of its way, several times less than vehicles give.
+const SMOKE_SIZE: f32 = 0.3;
+
+/// Vanilla+ and Enhanced smoke: the puff's width (m).
+fn smoke_diameter(p: &::simulation::particles::Particle) -> f32 {
+    p.size() * SMOKE_SIZE
+}
+
+/// A plume puff carries the smoke Vanilla's alpha (initial towards final) gives it at the
+/// vehicle's start size (or, growing from less, the size it reaches while fading in); drawn
+/// smaller and spreading, its optical depth goes with the inverse of its area, so it thins
+/// without clipping at 1. Faded in quickly (the plume is densest at the pipe) and out
+/// towards the end of its life.
+fn smoke_alpha(p: &::simulation::particles::Particle) -> f32 {
+    const FADE_IN: f32 = 0.06;
+    let smooth = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let t = p.age / p.life.max(1e-3);
+    let d = smoke_diameter(p).max(0.05);
+    let size = p.size0.max(p.grow * FADE_IN).max(0.0);
+    let depth = -(1.0 - p.alpha().min(0.99)).ln() * size * size / (d * d);
+    (1.0 - (-depth).exp()) * smooth(0.0, FADE_IN, p.age) * (1.0 - smooth(0.4, 1.0, t))
+}
+
+/// A plume puff slowly turning from its own angle (one turn for all shows the picture's
+/// pattern), and drawn half its radius (at most 0.3 m) towards the viewer so that the ground
+/// does not cut a hard edge through it.
+fn smoke_turn_and_pull(p: &::simulation::particles::Particle, radius: f32) -> (f32, f32) {
+    let angle = p.seed * std::f32::consts::TAU + (p.seed - 0.5) * 0.8 * p.age;
+    (angle, (radius * 0.5).min(0.3))
 }
 
 pub fn load_smoke_texture(renderer: &mut ::render::Renderer, root: &std::path::Path) {
@@ -202,4 +260,103 @@ pub(super) fn visible_range() -> f64 {
 pub fn vehicle_velocity(v: &::simulation::VehicleInstance) -> glam::Vec3 {
     let h = v.heading.to_radians();
     glam::Vec3::new(h.sin() as f32, h.cos() as f32, 0.0) * v.physics.speed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::simulation::particles::Particle;
+
+    fn puff(age: f32, seed: f32) -> Particle {
+        Particle {
+            pos: glam::DVec3::ZERO,
+            vel: Vec3::ZERO,
+            age,
+            life: 2.0,
+            size0: 0.5,
+            grow: 3.0,
+            alpha0: 0.2,
+            alpha1: 10.0,
+            color: [0.66, 0.66, 0.8],
+            brake: 0.95,
+            gravity: -0.2,
+            seed,
+        }
+    }
+
+    fn with_alpha(mut p: Particle, alpha0: f32, alpha1: f32) -> Particle {
+        p.alpha0 = alpha0;
+        p.alpha1 = alpha1;
+        p
+    }
+
+    /// A plume puff starts and ends invisible.
+    #[test]
+    fn smoke_fades_in_and_out() {
+        assert_eq!(smoke_alpha(&puff(0.0, 0.5)), 0.0);
+        assert!(smoke_alpha(&puff(1.999, 0.5)) < 1e-3);
+        assert!(smoke_alpha(&puff(0.3, 0.5)) > 0.1);
+    }
+
+    /// A plume puff keeps its smoke while it spreads: optical depth times area stays the same.
+    #[test]
+    fn smoke_spreads_its_amount() {
+        let (young, old) = (
+            with_alpha(puff(0.3, 0.5), 0.2, 0.2),
+            with_alpha(puff(0.6, 0.5), 0.2, 0.2),
+        );
+        assert_eq!(smoke_diameter(&young), young.size() * SMOKE_SIZE);
+        let amount = |p: &Particle| -(1.0 - smoke_alpha(p)).ln() * smoke_diameter(p).powi(2);
+        assert!((amount(&young) - amount(&old)).abs() < 1e-4);
+        assert!(smoke_alpha(&old) < smoke_alpha(&young));
+    }
+
+    /// The final alpha counts: smoke that starts clear shows once its alpha rises, and a
+    /// thicker puff stays thicker instead of both clipping to opaque.
+    #[test]
+    fn smoke_follows_alpha_without_clipping() {
+        assert!(smoke_alpha(&with_alpha(puff(1.0, 0.5), 0.0, 1.0)) > 0.1);
+        let thin = smoke_alpha(&with_alpha(puff(0.1, 0.5), 0.2, 0.2));
+        let thick = smoke_alpha(&with_alpha(puff(0.1, 0.5), 0.4, 0.4));
+        assert!(thin < thick && thick < 1.0);
+    }
+
+    /// A puff growing from size 0 still carries smoke: the size it reaches while fading in.
+    #[test]
+    fn smoke_growing_from_nothing_shows() {
+        let mut p = puff(0.3, 0.5);
+        p.size0 = 0.0;
+        assert!(smoke_alpha(&p) > 0.1);
+    }
+
+    /// Only a vehicle's rising smoke is drawn as a plume, and only outside Vanilla.
+    #[test]
+    fn only_rising_vehicle_smoke_is_a_plume() {
+        let def = ::model::ParticleSystemDef::default();
+        let mut spray = puff(0.5, 0.5);
+        spray.gravity = 1.0;
+        assert!(draws_as_plume(&puff(0.5, 0.5), &def, true, false));
+        assert!(!draws_as_plume(&spray, &def, true, false));
+        assert!(!draws_as_plume(&puff(0.5, 0.5), &def, false, false));
+        assert!(!draws_as_plume(&puff(0.5, 0.5), &def, true, true));
+        let glow = ::model::ParticleSystemDef {
+            emissive: true,
+            ..Default::default()
+        };
+        assert!(!draws_as_plume(&puff(0.5, 0.5), &glow, true, false));
+    }
+
+    /// Puffs are turned by their seed and pulled towards the viewer by half their radius
+    /// (0.3 m at most).
+    #[test]
+    fn smoke_turns_by_seed_and_pulls_by_radius() {
+        let (a, pull) = smoke_turn_and_pull(&puff(0.0, 0.25), 0.4);
+        assert!((a - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert_eq!(pull, 0.2);
+        assert_eq!(smoke_turn_and_pull(&puff(0.0, 0.25), 5.0).1, 0.3);
+        assert_ne!(
+            smoke_turn_and_pull(&puff(1.0, 0.1), 1.0).0,
+            smoke_turn_and_pull(&puff(1.0, 0.6), 1.0).0
+        );
+    }
 }

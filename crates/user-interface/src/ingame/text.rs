@@ -26,13 +26,7 @@ impl TextCache {
         px: u32,
         color: [u8; 4],
     ) -> Label {
-        let color = if self.alpha < 1.0 {
-            let k = (self.alpha * 6.0).round() / 6.0;
-            let l = |from: u8, to: u8| (from as f32 + (to as f32 - from as f32) * k).round() as u8;
-            [l(14, color[0]), l(16, color[1]), l(20, color[2]), color[3]]
-        } else {
-            color
-        };
+        let color = self.faded(color);
         let color = [
             color[0],
             color[1],
@@ -55,6 +49,48 @@ impl TextCache {
         };
         self.labels.insert(key, l);
         l
+    }
+
+    fn faded(&self, color: [u8; 4]) -> [u8; 4] {
+        if self.alpha >= 1.0 {
+            return color;
+        }
+        let k = (self.alpha * 6.0).round() / 6.0;
+        let l = |from: u8, to: u8| (from as f32 + (to as f32 - from as f32) * k).round() as u8;
+        [l(14, color[0]), l(16, color[1]), l(20, color[2]), color[3]]
+    }
+
+    pub(super) fn icon(
+        &mut self,
+        r: &Renderer,
+        scene: &mut Scene,
+        name: &str,
+        px: u32,
+        color: [u8; 4],
+    ) -> Option<Label> {
+        let c = self.faded(color);
+        let key = (format!("\u{0}icon:{name}"), px, [c[0], c[1], c[2], 0]);
+        if let Some(l) = self.labels.get_mut(&key) {
+            l.used = self.frame;
+            return Some(*l);
+        }
+        let mask = crate::icons::rasterize(name, px)?;
+        let rgba = mask.iter().flat_map(|&a| [c[0], c[1], c[2], a]).collect();
+        let img = ::texture::Image {
+            width: px,
+            height: px,
+            rgba,
+            has_alpha: true,
+        };
+        let tex = r.add_texture(scene, &img, false);
+        let l = Label {
+            tex,
+            w: px,
+            h: px,
+            used: self.frame,
+        };
+        self.labels.insert(key, l);
+        Some(l)
     }
 
     /// Text width in pixels, without rendering it.

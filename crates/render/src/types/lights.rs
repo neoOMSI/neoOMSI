@@ -73,6 +73,11 @@ pub struct SmokeParticle {
     pub size: f32,
     pub color: [f32; 3],
     pub alpha: f32,
+    /// The sprite's turn about the line of sight (radians).
+    pub angle: f32,
+    /// How far the sprite is drawn towards the viewer (m), so that it does not cut a hard
+    /// edge into the ground or the body it stands in.
+    pub pull: f32,
 }
 
 pub const LM_ATLAS_TILES: u32 = 5;

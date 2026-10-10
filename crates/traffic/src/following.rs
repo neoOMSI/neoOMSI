@@ -282,7 +282,7 @@ const FEEDBACK_ROUTE_REACH: f32 = 80.0;
 /// A lane change: the car moves over from its lane to `to` along `length` metres of road
 /// (by distance, not by time: a car that has to stop halfway stands still, and so does its
 /// way).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaneChange {
     pub to: usize,
     /// Progress 0..1.

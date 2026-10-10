@@ -213,6 +213,8 @@ pub struct Humans {
     pub entry_req: Vec<bool>,
     /// `PAX_Exit<i>_Req`: somebody inside wants out through exit `i`.
     pub exit_req: Vec<bool>,
+    pub(crate) door_occupancy: HashMap<(BusId, usize), usize>,
+    pub(crate) alighting_occupancy: HashMap<(BusId, usize), usize>,
     /// Procedural inverse kinematics animation enabled.
     pub ik: bool,
     /// Natural movement and gait, independent of the skeletal pose used to draw people.
@@ -446,6 +448,8 @@ impl Humans {
             ticket_points: 0,
             entry_req: Vec::new(),
             exit_req: Vec::new(),
+            door_occupancy: HashMap::new(),
+            alighting_occupancy: HashMap::new(),
             ik: ::legacy_config::env::var("OMSI_PAX_IK")
                 .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
                 .unwrap_or(true),

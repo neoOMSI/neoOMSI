@@ -69,8 +69,10 @@ impl Traffic {
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
         }
+        let mut way_scratch: Vec<(usize, f32)> = Vec::new();
         for c in &self.cars {
-            for (l, d) in self.way_lanes(&c.state, 160.0) {
+            self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
+            for &(l, d) in &way_scratch {
                 if let Some((ci, li)) = self.net.lanes[l].traffic_light {
                     if let Some(ctl) = self.lights.get_mut(ci) {
                         let gap = d - c.state.front;
@@ -97,7 +99,7 @@ impl Traffic {
             // beside every lane there, the bus never opened the barrier in front of it)
             let h = heading.to_radians();
             let fwd = glam::DVec2::new(h.sin(), h.cos());
-            for l in 0..self.net.lanes.len() {
+            for l in self.net.lanes_starting_near(pos, 35.0) {
                 let lane = &self.net.lanes[l];
                 let Some((ci, li)) = lane.traffic_light else {
                     continue;
@@ -238,12 +240,10 @@ impl Traffic {
         );
         // cars coming to a junction lane: (car, distance from its origin to the lane start)
         let mut coming: HashMap<usize, Vec<(usize, f32)>> = HashMap::new();
+        let mut way_scratch: Vec<(usize, f32)> = Vec::new();
         for (i, c) in self.cars.iter().enumerate() {
-            for (l, d) in self
-                .way_lanes(&c.state, LOOK_AHEAD + 30.0)
-                .into_iter()
-                .skip(1)
-            {
+            self.way_lanes_into(&c.state, LOOK_AHEAD + 30.0, &mut way_scratch);
+            for &(l, d) in way_scratch.iter().skip(1) {
                 if !self.net.crossings[l].is_empty() {
                     coming.entry(l).or_default().push((i, d));
                 }
@@ -532,10 +532,13 @@ impl Traffic {
             let mut parked_ahead = false;
             let kerb_swerve: Option<f32>;
             let mut squeeze: Option<VehicleId> = None;
+            // (the car's state does not change before the maneuver block below: one lookahead
+            // serves both the parked-car check and the plans)
+            self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
             {
                 let car = &self.cars[i];
                 let st = &car.state;
-                let near_way = self.way_lanes(st, 100.0);
+                let near_way = Self::way_prefix(&way_scratch, 100.0);
                 let passing = car.maneuver.passing.map(|p| !p.aborted).unwrap_or(false);
                 let mut swerve: Option<f32> = None;
                 let mut stand: Option<(f32, usize, f32, f32)> = None;
@@ -587,7 +590,7 @@ impl Traffic {
                     .change
                     .filter(|c| c.t > 0.4 || (c.bypass && c.wait <= 0.0))
                     .map(|_| st.lane);
-                for &(l, d) in &near_way {
+                for &(l, d) in near_way {
                     if Some(l) == leaving {
                         continue;
                     }
@@ -624,7 +627,7 @@ impl Traffic {
                 // steered the car into the bus)
                 if !passing {
                     let swerving = st.lateral_target.abs() > 0.1;
-                    for &(l, d) in &near_way {
+                    for &(l, d) in near_way {
                         for &(j, os, lat, foreign) in
                             by_lane.get(&l).map(|v| v.as_slice()).unwrap_or(&[])
                         {
@@ -780,7 +783,7 @@ impl Traffic {
             // The maneuver owner decides every lateral intent from the frozen scene: passing,
             // lane changes, bypass, route changes and the kerb swerve round a parked car. No
             // other function writes `lateral_target`.
-            let way = self.way_lanes(&self.cars[i].state, 200.0);
+            let way = &way_scratch[..];
             let merge_wait: Option<f32>;
             let mut maneuver_why: Option<(Reason, f32)> = None;
             {
@@ -859,7 +862,7 @@ impl Traffic {
             // view; it is the only writer of junction claims.
             let decision = self.junction_plan(
                 i,
-                &way,
+                way,
                 lead.map(|l| l.0),
                 &junction_on_lane,
                 &junction_coming,
@@ -887,7 +890,7 @@ impl Traffic {
             let junction = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                junction_ahead(&self.net, &way).filter(|jn| {
+                junction_ahead(&self.net, way).filter(|jn| {
                     light
                         .map(|l| jn.inside || jn.lanes[0].1 < l - 0.5)
                         .unwrap_or(true)
@@ -932,7 +935,7 @@ impl Traffic {
             let for_people = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                self.people_stop(i, &way)
+                self.people_stop(i, way)
             };
             if let Some((at, who)) = for_people {
                 let car = &self.cars[i];

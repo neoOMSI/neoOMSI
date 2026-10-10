@@ -491,7 +491,7 @@ mod tests {
         let (server, _woken) = Server::new(Box::new(out.clone()));
         server.serve(std::io::Cursor::new(frames(&[
             request("a", version()),
-            request("b", handshake("2.0")),
+            request("b", handshake("1.0")),
             request("c", Some(Command::Shutdown(Empty {}))),
             request("d", version()),
         ])));
@@ -513,7 +513,7 @@ mod tests {
         let out = Shared::default();
         let (server, _woken) = Server::new(Box::new(out.clone()));
         server.serve(std::io::Cursor::new(frames(&[
-            request("a", handshake("1.0")),
+            request("a", handshake("2.0")),
             request("b", Some(Command::Config(Empty {}))),
         ])));
         let got = answers(&out);
@@ -552,7 +552,7 @@ mod tests {
         let Answer::Version(v) = answer_of(by("2")) else {
             panic!("not the version")
         };
-        assert_eq!(v.protocol, 2);
+        assert_eq!(v.protocol, 1);
     }
 
     fn game(id: &str, running: bool) -> Instance {

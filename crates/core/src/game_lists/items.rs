@@ -198,7 +198,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 return map_options_page(app).1;
             }
             if matches!(kind, ListKind::Options(t) if *t == KEYS_TAB) {
-                return key_rows(app);
+                return key_rows(&app.args.root, &KeyView::of(app));
             }
             if matches!(kind, ListKind::Options(t) if *t == LOOK_TAB) {
                 return look_options_page(app).1;

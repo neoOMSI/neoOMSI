@@ -2313,7 +2313,7 @@ fn embedded(l: &mut Launcher, page: Page, body: Rect, back: bool) {
         Page::Drive => super::drive::draw(l, content),
         Page::Multiplayer => super::multiplayer::draw(l, content),
         Page::Profile => super::pages::profile(l, content),
-        Page::Settings => super::pages::settings(l, content),
+        Page::Settings => super::settings::page(l, content),
         Page::Sessions => super::pages::sessions(l, content),
         Page::Mods => super::pages::mods(l, content),
         Page::Tutorials => super::pages::tutorials(l, content),

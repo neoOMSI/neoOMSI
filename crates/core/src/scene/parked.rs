@@ -476,6 +476,11 @@ impl World {
             }
         }
         *scripted = kept;
+        let mut by_id = self.scripted_of_object.lock();
+        by_id.clear();
+        for (i, o) in scripted.iter().enumerate() {
+            by_id.insert(o.map_id, i);
+        }
     }
 
     /// The placed objects that stop the outside camera and may reach into the rectangle

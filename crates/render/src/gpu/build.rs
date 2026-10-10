@@ -1327,7 +1327,7 @@ impl Renderer {
             alpha: wgpu::BlendComponent::REPLACE,
         };
         let alpha_blend = ALPHA_BLEND;
-        let corona_pipeline_for = |f: wgpu::TextureFormat, fs: &str, blend: wgpu::BlendState, samples, capture| {
+        let corona_pipeline_for = |f: wgpu::TextureFormat, vs: &str, fs: &str, blend: wgpu::BlendState, samples, capture| {
             let targets = if capture {
                 vec![Some(wgpu::ColorTargetState {
                     format: f,
@@ -1342,7 +1342,7 @@ impl Renderer {
                 layout: Some(&corona_pl),
                 vertex: wgpu::VertexState {
                     module: &corona_shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vs),
                     buffers: &[Some(corona_vertex.clone())],
                     compilation_options: Default::default(),
                 },
@@ -1534,10 +1534,10 @@ impl Renderer {
             pipelines: scene_pipelines(format, "fs_main", msaa),
             rain_pipelines: scene_pipelines(format, "fs_main", 1),
             wire_pipelines: wire_for(format, "fs_main"),
-            corona_pipeline: corona_pipeline_for(format, "fs_main", screen, msaa, false),
-            smoke_pipeline: corona_pipeline_for(format, "fs_smoke", alpha_blend, msaa, false),
-            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen, 1, true),
-            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend, 1, true),
+            corona_pipeline: corona_pipeline_for(format, "vs_main", "fs_main", screen, msaa, false),
+            smoke_pipeline: corona_pipeline_for(format, "vs_smoke", "fs_smoke", alpha_blend, msaa, false),
+            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_main", screen, 1, true),
+            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke", alpha_blend, 1, true),
             sky_pipeline: sky_pipeline_for(format, "fs_main", msaa, false),
             reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", 1, true),
         };
@@ -1547,10 +1547,10 @@ impl Renderer {
             pipelines: scene_pipelines(hdr_format, "fs_enhanced", msaa),
             rain_pipelines: scene_pipelines(hdr_format, "fs_enhanced", 1),
             wire_pipelines: wire_for(hdr_format, "fs_enhanced"),
-            corona_pipeline: corona_pipeline_for(hdr_format, "fs_enhanced", additive, msaa, false),
-            smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke_enhanced", alpha_blend, msaa, false),
-            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "fs_enhanced", additive, 1, true),
-            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke_enhanced", alpha_blend, 1, true),
+            corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_enhanced", additive, msaa, false),
+            smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke_enhanced", alpha_blend, msaa, false),
+            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_enhanced", additive, 1, true),
+            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke_enhanced", alpha_blend, 1, true),
             sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced", msaa, false),
             reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced", 1, true),
         });
@@ -1558,10 +1558,10 @@ impl Renderer {
             pipelines: scene_pipelines(hdr_format, "fs_vanilla_reflections", msaa),
             rain_pipelines: scene_pipelines(hdr_format, "fs_vanilla_reflections", 1),
             wire_pipelines: wire_for(hdr_format, "fs_vanilla_reflections"),
-            corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen, msaa, false),
-            smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend, msaa, false),
-            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen, 1, true),
-            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend, 1, true),
+            corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_main", screen, msaa, false),
+            smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke", alpha_blend, msaa, false),
+            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_main", screen, 1, true),
+            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke", alpha_blend, 1, true),
             sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", msaa, false),
             reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", 1, true),
         });

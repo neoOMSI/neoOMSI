@@ -1255,7 +1255,7 @@ impl World {
                             // (a scripted object with [terrainmapping] slots had more instances
                             // than its script has meshes: "index out of bounds", #111)
                             all_instances.truncate(mesh_instances);
-                            self.scripted.lock().push(ScriptedObject {
+                            self.push_scripted(ScriptedObject {
                                 ty: ot.clone(),
                                 pos,
                                 xf,
@@ -1271,6 +1271,8 @@ impl World {
                                 texts: script_texts,
                                 arrivals,
                                 htmls: html_pages,
+                                last_tex_selection: None,
+                                dynamic_materials: HashMap::new(),
                             });
                         }
                     }

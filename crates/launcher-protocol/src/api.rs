@@ -1,11 +1,10 @@
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
 
 include!(concat!(env!("OUT_DIR"), "/neoomsi.launcher.rs"));
 include!(concat!(env!("OUT_DIR"), "/commands.rs"));
 
-pub const VERSION: &str = "2";
+pub const VERSION: &str = "1";
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -99,38 +98,111 @@ pub fn lan_status(v: &Value) -> LanStatus {
     }
 }
 
-/// A value that is not a flag, a number or a text is left out.
-pub fn setting_values(v: &Value) -> HashMap<String, SettingValue> {
-    v.as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(k, v)| {
-            let value = match v {
-                Value::Bool(b) => setting_value::Value::Flag(*b),
-                Value::Number(n) => setting_value::Value::Number(n.as_f64()?),
-                Value::String(s) => setting_value::Value::Text(s.clone()),
-                _ => return None,
-            };
-            Some((k.clone(), SettingValue { value: Some(value) }))
-        })
-        .collect()
+trait Setting: Sized {
+    fn read(v: &Value) -> Option<Self>;
+    fn json(&self) -> Value;
 }
 
-pub fn settings_json(values: &HashMap<String, SettingValue>) -> Value {
-    Value::Object(
-        values
-            .iter()
-            .filter_map(|(k, v)| {
-                let value = match v.value.as_ref()? {
-                    setting_value::Value::Flag(b) => Value::Bool(*b),
-                    setting_value::Value::Number(n) => Value::from(*n),
-                    setting_value::Value::Text(s) => Value::String(s.clone()),
-                };
-                Some((k.clone(), value))
-            })
-            .collect(),
-    )
+fn number(v: &Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_str()?.trim().parse().ok())
+        .filter(|x: &f64| x.is_finite())
 }
+
+impl Setting for bool {
+    fn read(v: &Value) -> Option<bool> {
+        v.as_bool()
+    }
+    fn json(&self) -> Value {
+        Value::from(*self)
+    }
+}
+
+impl Setting for f64 {
+    fn read(v: &Value) -> Option<f64> {
+        number(v)
+    }
+    fn json(&self) -> Value {
+        Value::from(*self)
+    }
+}
+
+impl Setting for i32 {
+    fn read(v: &Value) -> Option<i32> {
+        number(v).map(|x| x.round() as i32)
+    }
+    fn json(&self) -> Value {
+        Value::from(*self)
+    }
+}
+
+impl Setting for u32 {
+    fn read(v: &Value) -> Option<u32> {
+        number(v).map(|x| x.round() as u32)
+    }
+    fn json(&self) -> Value {
+        Value::from(*self)
+    }
+}
+
+impl Setting for String {
+    fn read(v: &Value) -> Option<String> {
+        v.as_str().map(str::to_string)
+    }
+    fn json(&self) -> Value {
+        Value::from(self.as_str())
+    }
+}
+
+impl Setting for AutoNumber {
+    fn read(v: &Value) -> Option<AutoNumber> {
+        if v.as_str() == Some("auto") {
+            return Some(AutoNumber {
+                automatic: true,
+                value: 0.0,
+            });
+        }
+        number(v).map(|value| AutoNumber {
+            automatic: false,
+            value,
+        })
+    }
+    fn json(&self) -> Value {
+        if self.automatic { Value::from("auto") } else { Value::from(self.value) }
+    }
+}
+
+/// The settings travel as the engine's settings table keeps them: the field names are its keys,
+/// and a choice is its value's name in lower case.
+macro_rules! settings_fields {
+    (plain [$($key:ident),*] choices [$($choice:ident: $ty:ident = $prefix:literal),*]) => {
+        pub const SETTING_FIELDS: &[&str] = &[$(stringify!($key),)* $(stringify!($choice)),*];
+
+        pub fn settings(v: &Value) -> Settings {
+            Settings {
+                $($key: v.get(stringify!($key)).and_then(Setting::read),)*
+                $($choice: v
+                    .get(stringify!($choice))
+                    .and_then(Value::as_str)
+                    .and_then(|t| $ty::from_str_name(&format!("{}{}", $prefix, t.to_ascii_uppercase())))
+                    .map(Into::into),)*
+            }
+        }
+
+        pub fn settings_json(s: &Settings) -> Value {
+            let mut m = serde_json::Map::new();
+            $(if let Some(x) = &s.$key {
+                m.insert(stringify!($key).into(), x.json());
+            })*
+            $(if let Some(x) = s.$choice.and_then(|x| $ty::try_from(x).ok()).filter(|x| *x != $ty::Unspecified) {
+                m.insert(stringify!($choice).into(), x.as_str_name()[$prefix.len()..].to_ascii_lowercase().into());
+            })*
+            Value::Object(m)
+        }
+    };
+}
+
+include!(concat!(env!("OUT_DIR"), "/settings.rs"));
 
 #[cfg(test)]
 mod tests {
@@ -144,14 +216,50 @@ mod tests {
     }
 
     #[test]
-    fn settings_keep_flags_numbers_and_texts() {
-        let v = json!({ "vsync": true, "msaa": 4, "ui_opacity": 0.8, "language": "de", "gone": null });
-        let values = setting_values(&v);
-        assert_eq!(values.len(), 4);
+    fn settings_keep_their_kinds() {
+        let page = json!({
+            "vsync": true,
+            "msaa": 4,
+            "ui_opacity": 0.8,
+            "language": "de",
+            "time_speed": "2",
+            "view_distance": "auto",
+            "max_obj_dist": "900",
+            "window_mode": "borderless",
+            "graphics": "vanilla_plus",
+            "graphics_api": "dx12",
+            "enhanced": false,
+            "units": "parsecs",
+        });
+        let s = settings(&page);
+        assert_eq!((s.vsync, s.msaa, s.time_speed), (Some(true), Some(4), Some(2.0)));
+        assert_eq!(s.window_mode(), WindowMode::Borderless);
+        assert_eq!(s.graphics(), GraphicsMode::VanillaPlus);
+        assert_eq!(s.units, None, "not one of the choices");
         assert_eq!(
-            settings_json(&values),
-            json!({ "vsync": true, "msaa": 4.0, "ui_opacity": 0.8, "language": "de" })
+            settings_json(&s),
+            json!({
+                "vsync": true,
+                "msaa": 4,
+                "ui_opacity": 0.8,
+                "language": "de",
+                "time_speed": 2.0,
+                "view_distance": "auto",
+                "max_obj_dist": 900.0,
+                "window_mode": "borderless",
+                "graphics": "vanilla_plus",
+                "graphics_api": "dx12",
+            })
         );
+    }
+
+    #[test]
+    fn only_the_settings_that_are_set_are_saved() {
+        let changes = Settings {
+            pax_models: Some(PaxModels::Realistic.into()),
+            ..Default::default()
+        };
+        assert_eq!(settings_json(&changes), json!({ "pax_models": "realistic" }));
     }
 
     #[test]

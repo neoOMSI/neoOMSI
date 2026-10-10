@@ -219,6 +219,9 @@ pub struct State {
     pub instances: Vec<core::Instance>,
     pub queued_launch: Option<core::Duty>,
     pub restarting: Vec<core::Instance>,
+    /// When the realistic passengers last changed (chosen, downloaded): games started before
+    /// still have the old ones.
+    pub pax_changed: Option<u64>,
     /// Start was pressed: the graphics device stays given up until the list of games has the
     /// game started (its process, once it is known), 15 s at most.
     pub launch_hold: Option<Instant>,
@@ -292,6 +295,7 @@ impl State {
             instances: Vec::new(),
             queued_launch: None,
             restarting: Vec::new(),
+            pax_changed: None,
             launch_hold: None,
             launched_pid: None,
             crash: None,
@@ -621,6 +625,29 @@ impl State {
         });
     }
 
+    pub fn old_passenger_games(&self) -> usize {
+        self.instances.iter().filter(|i| self.has_old_passengers(i)).count()
+    }
+
+    fn has_old_passengers(&self, game: &core::Instance) -> bool {
+        self.pax_changed.is_some_and(|t| game.running && game.started < t)
+    }
+
+    pub fn restart_games(&mut self) {
+        let games: Vec<core::Instance> = self
+            .instances
+            .iter()
+            .filter(|i| self.has_old_passengers(i) && !self.restarting.iter().any(|r| r.id == i.id))
+            .cloned()
+            .collect();
+        for i in games {
+            if !self.stopping.contains(&i.pid) {
+                self.stop(i.pid);
+            }
+            self.restarting.push(i);
+        }
+    }
+
     fn restart_next(&mut self) {
         if self.queued_launch.is_some()
             || self
@@ -808,7 +835,7 @@ impl State {
 
     /// Settings a game changed while it ran: taken over, unless the launcher's own changes
     /// wait to be saved (those win, as the later ones).
-    fn reload_changed_settings(&mut self) {
+    pub(super) fn reload_changed_settings(&mut self) {
         if self.settings_dirty > 0.0 {
             return;
         }
@@ -822,7 +849,15 @@ impl State {
         }
     }
 
-    fn save_pending_settings(&mut self) -> bool {
+    /// The settings page wrote `settings.toml` itself (the game's options do).
+    pub(super) fn settings_written(&mut self) {
+        if let Ok(v) = core::get_settings() {
+            self.settings = v;
+        }
+        self.settings_file = read_settings_file();
+    }
+
+    pub(super) fn save_pending_settings(&mut self) -> bool {
         if self.settings_dirty <= 0.0 {
             return true;
         }

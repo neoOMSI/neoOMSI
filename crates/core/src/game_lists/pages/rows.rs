@@ -21,7 +21,7 @@ pub(crate) fn button(name: &str, text: &str, desc: &str, id: &str) -> (String, S
     (row(name, 'a', text, desc, None), id.to_string())
 }
 
-pub(crate) fn switch_row(app: &App, id: &str, name: &str, desc: &str) -> Option<(String, String)> {
+pub(crate) fn switch_row(app: Option<&App>, id: &str, name: &str, desc: &str) -> Option<(String, String)> {
     let on = toggle_now(app, id)?;
     Some((
         row(name, 's', if on { "on" } else { "off" }, desc, None),
@@ -30,7 +30,7 @@ pub(crate) fn switch_row(app: &App, id: &str, name: &str, desc: &str) -> Option<
 }
 
 pub(crate) fn slider_row(
-    app: &App,
+    app: Option<&App>,
     id: &str,
     name: &str,
     desc: &str,

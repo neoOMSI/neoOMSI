@@ -196,23 +196,17 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_, p)| p.alpha > 0.002 && p.size > 0.0)
-            .map(|(i, p)| (-(p.position - eye).length_squared(), i))
+            // (far to near where each is drawn: pulled towards the viewer, at most 0.9 of the
+            // way, as `vs_smoke` does)
+            .map(|(i, p)| {
+                let dist = (p.position - eye).length();
+                (-(dist - (p.pull.max(0.0) as f64).min(dist * 0.9)), i)
+            })
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let data: Vec<GpuCorona> = order
             .iter()
-            .map(|&(_, i)| {
-                let p = &scene.smoke[i];
-                GpuCorona {
-                    pos: (p.position - ro).as_vec3().to_array(),
-                    size: p.size,
-                    color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
-                    dir: [0.0, 0.0, 0.0, -1.0],
-                    up: [0.0, 0.0, 1.0, 2.0],
-                    // Smoke uses an ordinary billboard; extra.w = 1 selects a fog cone.
-                    extra: [-2.0, 0.0, 0.0, 0.0],
-                }
-            })
+            .map(|&(_, i)| smoke_sprite(&scene.smoke[i], ro))
             .collect();
         scene.smoke_count = data.len() as u32;
         if data.is_empty() {
@@ -309,17 +303,21 @@ impl Renderer {
 
     pub(crate) fn prepare_coronas(&self, scene: &mut Scene, night: f32) {
         let ro = scene.render_origin;
-        let mut order: Vec<&Corona> = scene
-            .coronas
-            .iter()
-            .filter(|c| c.brightness > 0.001)
-            .collect();
-        order.sort_by_key(|c| c.texture);
-        let mut runs: Vec<(u16, u32, u32)> = Vec::new();
-        for (k, c) in order.iter().enumerate() {
+        let mut order = std::mem::take(&mut scene.corona_order);
+        order.clear();
+        for (i, c) in scene.coronas.iter().enumerate() {
+            if c.brightness > 0.001 {
+                order.push(i);
+            }
+        }
+        order.sort_by_key(|&i| scene.coronas[i].texture);
+        let mut runs = std::mem::take(&mut scene.corona_runs);
+        runs.clear();
+        for (k, &i) in order.iter().enumerate() {
+            let tex = scene.coronas[i].texture;
             match runs.last_mut() {
-                Some(r) if r.0 == c.texture => r.2 += 1,
-                _ => runs.push((c.texture, k as u32, 1)),
+                Some(r) if r.0 == tex => r.2 += 1,
+                _ => runs.push((tex, k as u32, 1)),
             }
         }
         if ::legacy_config::env::var_os("OMSI_DEBUG_CONES").is_some() {
@@ -328,46 +326,49 @@ impl Renderer {
                 order.len(),
                 runs.len(),
                 runs,
-                order.iter().filter(|c| c.beam).count()
+                order.iter().filter(|&&i| scene.coronas[i].beam).count()
             );
         }
         scene.corona_runs = runs;
-        let data: Vec<GpuCorona> = order
-            .into_iter()
-            .map(|c| {
-                let p = (c.position - ro).as_vec3();
-                let b = if c.cone_cos < -1.5 || c.beam || c.halo {
-                    c.brightness
-                } else {
-                    c.brightness * (night * night + 0.8) * 0.6
-                };
-                GpuCorona {
-                    pos: p.to_array(),
-                    size: c.size,
-                    color: [c.color[0], c.color[1], c.color[2], b],
-                    dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
-                    up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],
-                    extra: [
-                        c.inner_cos,
-                        if c.beam || c.halo {
-                            c.beam_width
-                        } else {
-                            c.z_offset
-                        },
-                        c.flags as f32,
-                        if c.beam {
-                            1.0
-                        } else if c.halo {
-                            2.0
-                        } else {
-                            0.0
-                        },
-                    ],
-                }
-            })
-            .collect();
+        let mut data = std::mem::take(&mut scene.corona_data);
+        data.clear();
+        data.reserve(order.len());
+        for &i in order.iter() {
+            let c = &scene.coronas[i];
+            let p = (c.position - ro).as_vec3();
+            let b = if c.cone_cos < -1.5 || c.beam || c.halo {
+                c.brightness
+            } else {
+                c.brightness * (night * night + 0.8) * 0.6
+            };
+            data.push(GpuCorona {
+                pos: p.to_array(),
+                size: c.size,
+                color: [c.color[0], c.color[1], c.color[2], b],
+                dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
+                up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],
+                extra: [
+                    c.inner_cos,
+                    if c.beam || c.halo {
+                        c.beam_width
+                    } else {
+                        c.z_offset
+                    },
+                    c.flags as f32,
+                    if c.beam {
+                        1.0
+                    } else if c.halo {
+                        2.0
+                    } else {
+                        0.0
+                    },
+                ],
+            });
+        }
+        scene.corona_order = order;
         scene.corona_count = data.len() as u32;
         if data.is_empty() {
+            scene.corona_data = data;
             return;
         }
         let bytes: &[u8] = bytemuck::cast_slice(&data);
@@ -384,5 +385,44 @@ impl Renderer {
                 scene.corona_buf = Some(b);
             }
         }
+        scene.corona_data = data;
+    }
+}
+
+/// A smoke particle as corona.wgsl's `vs_smoke` draws it: a sprite turned to the viewer.
+fn smoke_sprite(p: &SmokeParticle, ro: DVec3) -> GpuCorona {
+    GpuCorona {
+        pos: (p.position - ro).as_vec3().to_array(),
+        size: p.size,
+        color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
+        dir: [0.0, 0.0, 0.0, -1.0],
+        up: [0.0, 0.0, 1.0, 2.0],
+        // (x its turn, y its pull towards the viewer; w 0, as `vs_main` would draw a plain
+        // sprite)
+        extra: [p.angle, p.pull, 0.0, 0.0],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoke is drawn as a plain sprite, not as a fog cone or halo: those branches of
+    /// corona.wgsl normalise the zero direction smoke has and drop every particle.
+    #[test]
+    fn smoke_is_a_plain_sprite() {
+        let p = SmokeParticle {
+            position: DVec3::new(10.0, 20.0, 1.0),
+            size: 0.5,
+            color: [0.66, 0.66, 0.8],
+            alpha: 0.2,
+            angle: 1.5,
+            pull: 0.25,
+        };
+        let g = smoke_sprite(&p, DVec3::new(10.0, 0.0, 0.0));
+        assert!(g.extra[3] < 0.5);
+        assert_eq!(g.pos, [0.0, 20.0, 1.0]);
+        assert_eq!(g.color, [0.66, 0.66, 0.8, 0.2]);
+        assert_eq!([g.extra[0], g.extra[1]], [1.5, 0.25]);
     }
 }

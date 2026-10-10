@@ -337,6 +337,7 @@ impl Traffic {
             road_collision: world.collision.lock().clone(),
             walkers: Vec::new(),
             people: Vec::new(),
+            people_grid: HashMap::new(),
             initial: true,
             last_dt: 0.0,
             lamp_dt: 0.0,

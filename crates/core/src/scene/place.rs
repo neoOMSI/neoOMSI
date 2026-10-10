@@ -259,7 +259,7 @@ impl World {
                         self.script_clock(),
                         &o.extra,
                     );
-                    self.scripted.lock().push(ScriptedObject {
+                    self.push_scripted(ScriptedObject {
                         ty: ot.clone(),
                         pos,
                         xf,
@@ -275,6 +275,8 @@ impl World {
                         texts: Vec::new(),
                         arrivals: false,
                         htmls: Vec::new(),
+                        last_tex_selection: None,
+                        dynamic_materials: HashMap::new(),
                     });
                 }
                 // An editor-only object still lays its paths out: OMSI's invisible
@@ -348,7 +350,8 @@ impl World {
             let mesh_shape = ot
                 .collision
                 .as_ref()
-                .filter(|_| solid && !ot.sco.no_collision && !is_surface && !ot.meshes.is_empty());
+                .filter(|_| solid && !ot.sco.no_collision && !is_surface && !ot.meshes.is_empty())
+                .filter(|_| !(o.parked && ot.sco.bounding_box.is_some()));
             if let Some(c) = mesh_shape {
                 let tris = |m: &dyn Fn(glam::Vec3) -> glam::DVec3| -> Vec<[glam::DVec3; 3]> {
                     c.indices

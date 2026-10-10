@@ -94,7 +94,7 @@ pub(crate) fn preset_now() -> Option<usize> {
     })
 }
 
-pub(super) fn store_with(app: &mut App, change: impl FnOnce(&mut serde_json::Value)) {
+pub(super) fn store_with(app: Option<&mut App>, change: impl FnOnce(&mut serde_json::Value)) {
     flush_settings(true);
     let Ok(mut v) = omsi_launcher_lib::get_settings() else {
         return;
@@ -107,13 +107,13 @@ pub(super) fn store_with(app: &mut App, change: impl FnOnce(&mut serde_json::Val
     }
 }
 
-pub(super) fn reload_settings(app: &mut App) {
+pub(super) fn reload_settings(app: Option<&mut App>) {
     flush_settings(true);
     crate::ui_language(&::config::get_string("ui", "language").unwrap_or_else(|| "ENG".into()));
     sync_live(app);
 }
 
-pub(super) fn sync_live(app: &mut App) {
+pub(crate) fn sync_live(app: Option<&mut App>) {
     crate::startup::SOUND_AI.store(
         (::config::get_float("audio", "ai-volume").unwrap_or(1.0) as f32).to_bits(),
         std::sync::atomic::Ordering::Relaxed,
@@ -126,6 +126,9 @@ pub(super) fn sync_live(app: &mut App) {
         ::config::get_bool("audio", "doppler").unwrap_or(true),
         std::sync::atomic::Ordering::Relaxed,
     );
+    let Some(app) = app else {
+        return;
+    };
     if let Some(n) = app.navigator.as_mut() {
         n.arrows = ::config::get_bool("navigator", "arrows").unwrap_or(false);
     }

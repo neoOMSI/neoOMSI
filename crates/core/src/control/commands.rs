@@ -1,14 +1,13 @@
-use crate::controllers::{self, DeviceCfg, Func};
+use crate::controllers::{self, AxisCal, DeviceCfg, Func};
 use crate::pax_pack::{PaxPack, Status as PaxStatus};
 use anyhow::{Result, anyhow};
 use omsi_launcher_lib as lib;
 use launcher_protocol::api::{
-    self, AxisFunction, AxisShape, Controller, ControllerAxis, Empty, PaxState, request::Command, response::Answer,
-    setting_value,
+    self, AxisFunction, AxisShape, Controller, ControllerAxis, Empty, PaxModels, PaxState, request::Command,
+    response::Answer,
 };
 use omsi_launcher_lib::servers;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -67,12 +66,6 @@ pub(super) fn forget_content() {
 
 fn list<T, U: From<T>>(items: Vec<T>) -> Vec<U> {
     items.into_iter().map(Into::into).collect()
-}
-
-fn settings(v: &Value) -> api::Settings {
-    api::Settings {
-        values: api::setting_values(v),
-    }
 }
 
 pub(super) fn call(command: Command) -> Result<Answer> {
@@ -160,11 +153,11 @@ pub(super) fn call(command: Command) -> Result<Answer> {
         Command::Settings(_) => {
             let _file = settings_file();
             lib::init_settings();
-            Answer::Settings(settings(&lib::get_settings()?))
+            Answer::Settings(api::settings(&lib::get_settings()?))
         }
         Command::SaveSettings(changes) => {
             let saved = save_settings_with(
-                &api::settings_json(&changes.values),
+                &api::settings_json(&changes),
                 || {
                     lib::init_settings();
                     lib::get_settings()
@@ -172,21 +165,17 @@ pub(super) fn call(command: Command) -> Result<Answer> {
                 lib::save_settings,
             )?;
             // content names come in the settings' language
-            if changes.values.contains_key("language") {
+            if changes.language.is_some() {
                 forget_content();
             }
-            if text_of(&changes.values, "pax_models") == Some("realistic") {
-                with_pax(|p| {
-                    if matches!(p.status(), PaxStatus::Missing | PaxStatus::Outdated) {
-                        p.start();
-                    }
-                });
+            if changes.pax_models() == PaxModels::Realistic {
+                crate::pax_pack::fetch_if_needed(content);
             }
-            Answer::SaveSettings(settings(&saved))
+            Answer::SaveSettings(api::settings(&saved))
         }
         Command::PaxPack(_) => Answer::PaxPack(pax_status()),
         Command::InstallPaxPack(_) => {
-            with_pax(PaxPack::start);
+            crate::pax_pack::shared(content, PaxPack::start);
             Answer::InstallPaxPack(pax_status())
         }
         Command::UpdateCheck(_) => Answer::UpdateCheck(api::UpdateCheck {
@@ -203,7 +192,7 @@ pub(super) fn call(command: Command) -> Result<Answer> {
                 .into_iter()
                 .map(|(name, values)| api::OptionPreset {
                     name,
-                    values: api::setting_values(&values),
+                    values: Some(api::settings(&values)),
                 })
                 .collect(),
         }),
@@ -269,14 +258,6 @@ pub(super) fn call(command: Command) -> Result<Answer> {
     })
 }
 
-fn text_of<'a>(values: &'a HashMap<String, api::SettingValue>, key: &str) -> Option<&'a str> {
-    match values.get(key)?.value.as_ref()? {
-        setting_value::Value::Text(s) => Some(s),
-        _ => None,
-    }
-}
-
-static PAX: Mutex<Option<PaxPack>> = Mutex::new(None);
 /// The game's content folder, as `launch` starts it: looking it up writes a probe file.
 static CONTENT: Mutex<Option<Option<PathBuf>>> = Mutex::new(None);
 
@@ -288,24 +269,8 @@ fn content() -> Option<PathBuf> {
         .clone()
 }
 
-fn with_pax<T>(f: impl FnOnce(&mut PaxPack) -> T) -> T {
-    let mut pax = PAX.lock().unwrap_or_else(|e| e.into_inner());
-    let p = match pax.take() {
-        Some(p)
-            if matches!(
-                p.status(),
-                PaxStatus::Downloading { .. } | PaxStatus::Installing | PaxStatus::Failed(_)
-            ) =>
-        {
-            p
-        }
-        _ => PaxPack::new(content()),
-    };
-    f(pax.insert(p))
-}
-
 pub(super) fn pax_status() -> api::PaxPack {
-    let (state, done, total, message) = match with_pax(|p| p.status()) {
+    let (state, done, total, message) = match crate::pax_pack::shared(content, |p| p.status()) {
         PaxStatus::Missing => (PaxState::Missing, 0, 0, String::new()),
         PaxStatus::Outdated => (PaxState::Outdated, 0, 0, String::new()),
         PaxStatus::Downloading { done, total } => (PaxState::Downloading, done, total, String::new()),
@@ -418,6 +383,12 @@ fn controller(d: &DeviceCfg, live: Option<&controllers::Connected>) -> Controlle
                 function: function.into(),
                 reversed: d.axes[k].is_some_and(|(_, r)| r),
                 shape: shape.into(),
+                calibration: d.calibration[k].map(|c| api::AxisCalibration {
+                    min: c.min,
+                    max: c.max,
+                    centre: c.centre,
+                    deadzone: c.deadzone,
+                }),
             }
         })
         .collect();
@@ -436,11 +407,16 @@ fn controller(d: &DeviceCfg, live: Option<&controllers::Connected>) -> Controlle
                 number: number.clone(),
             })
             .collect(),
+        ff_invert: d.ff_invert,
+        ff_capable: live.is_some_and(|c| c.ff_capable),
+        gamepad: live.is_some_and(|c| c.gamepad),
+        pressed: Vec::new(),
     }
 }
 
 fn controllers_now() -> api::ControllerList {
-    let connected = super::pads::connected();
+    let pads = super::pads::now();
+    let connected = &pads.connected;
     let configured = controllers::read_cfg();
     let live = |name: &str| {
         connected
@@ -451,7 +427,7 @@ fn controllers_now() -> api::ControllerList {
         .iter()
         .map(|d| controller(d, live(&d.name)))
         .collect();
-    for c in &connected {
+    for c in connected {
         if !configured.iter().any(|d| controllers::names_match(&c.name, &d.name)) {
             let d = DeviceCfg {
                 name: c.name.clone(),
@@ -460,21 +436,25 @@ fn controllers_now() -> api::ControllerList {
             out.push(controller(&d, Some(c)));
         }
     }
+    for c in &mut out {
+        if let Some(l) = live(&c.name) {
+            c.pressed = pads.pressed(&l.name);
+        }
+    }
     api::ControllerList { controllers: out }
 }
 
-/// Keeps what the page does not show: calibration, other axis flags, vibration strength.
+/// Keeps what the page does not show: other axis flags, vibration strength.
 fn apply(d: &mut DeviceCfg, c: &Controller) {
     d.enabled = c.enabled;
-    let deadzone = c.deadzone.clamp(0.0, 0.3);
-    // a calibrated axis's own dead zone would outrank the new one
-    if (deadzone - d.deadzone.unwrap_or_else(controllers::global_deadzone)).abs() > 1e-4 {
-        d.deadzone = Some(deadzone);
-        for cal in d.calibration.iter_mut().flatten() {
-            cal.deadzone = None;
-        }
-    }
+    d.ff_invert = c.ff_invert;
     for (k, axis) in c.axes.iter().take(8).enumerate() {
+        d.calibration[k] = axis.calibration.as_ref().map(|c| AxisCal {
+            min: c.min,
+            max: c.max,
+            centre: c.centre,
+            deadzone: c.deadzone,
+        });
         d.axes[k] = FUNCTIONS
             .iter()
             .find(|(_, function)| *function == axis.function())
@@ -484,6 +464,14 @@ fn apply(d: &mut DeviceCfg, c: &Controller) {
             .find(|(shape, _)| *shape == axis.shape())
             .map_or(0, |(_, bits)| *bits);
         d.axis_flags[k] = (d.axis_flags[k] & !SHAPE_BITS) | bits;
+    }
+    let deadzone = c.deadzone.clamp(0.0, 0.3);
+    // a calibrated axis's own dead zone would outrank the new one
+    if (deadzone - d.deadzone.unwrap_or_else(controllers::global_deadzone)).abs() > 1e-4 {
+        d.deadzone = Some(deadzone);
+        for cal in d.calibration.iter_mut().flatten() {
+            cal.deadzone = None;
+        }
     }
     d.buttons = c
         .buttons
@@ -549,6 +537,35 @@ mod tests {
     }
 
     #[test]
+    fn the_wizard_sets_the_calibration_and_the_force_direction() {
+        let mut d = DeviceCfg {
+            name: "G29".into(),
+            ..Default::default()
+        };
+        d.calibration[1] = Some(controllers::AxisCal {
+            min: -0.8,
+            centre: None,
+            max: 0.9,
+            deadzone: None,
+        });
+        let mut changed = controller(&d, None);
+        assert_eq!(changed.axes[1].calibration.map(|c| (c.min, c.max)), Some((-0.8, 0.9)));
+        assert_eq!(changed.ff_invert, None);
+        changed.axes[0].calibration = Some(api::AxisCalibration {
+            min: -0.95,
+            max: 0.97,
+            centre: Some(0.01),
+            deadzone: None,
+        });
+        changed.axes[1].calibration = None;
+        changed.ff_invert = Some(true);
+        apply(&mut d, &changed);
+        assert_eq!(d.calibration[0].map(|c| c.centre), Some(Some(0.01)));
+        assert!(d.calibration[1].is_none(), "cleared on the page");
+        assert_eq!(d.ff_invert, Some(true));
+    }
+
+    #[test]
     fn a_new_dead_zone_replaces_the_calibrated_ones() {
         let mut d = DeviceCfg {
             name: "G29".into(),
@@ -606,7 +623,7 @@ mod tests {
         let Answer::Version(v) = call(Command::Version(Empty {})).unwrap() else {
             panic!("not a version");
         };
-        assert_eq!((v.version.as_str(), v.protocol), (crate::startup::VERSION, 2));
+        assert_eq!((v.version.as_str(), v.protocol), (crate::startup::VERSION, 1));
         assert!(call(Command::Shutdown(Empty {})).is_err());
     }
 }
