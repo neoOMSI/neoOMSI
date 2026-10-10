@@ -820,6 +820,28 @@ impl ServiceCoordinator {
                     d.events.push(TraceEvent::CloseRequest { vehicle: id });
                 }
             }
+            ServicePhase::Layover
+                if state.behind
+                    && self.berths.get(&berth.key()).is_none_or(|&o| o == id)
+                    && self.berth_free(scene, &berth, id)
+                    && self.first_in_order(&berth, id) =>
+            {
+                // on its layover behind the berth's holder, which has left: it moves up onto
+                // the berth and waits there. Standing on behind it, its tail kept the lanes
+                // behind it shut for the rest of its layover (X10 Berlin, Hertzallee).
+                state.behind = false;
+                state.layover = true;
+                self.grant(&berth, id);
+                state.berth = Some(berth);
+                state.phase = ServicePhase::Docking;
+                state.phase_t = 0.0;
+                d.events.push(TraceEvent::BerthGranted {
+                    vehicle: id,
+                    stop: berth.stop,
+                });
+                d.stop_at = Some(input.distance + actor.front + STOP_LINE_GAP);
+                d.lateral_target = Some(berth.bay);
+            }
             ServicePhase::Layover => {
                 d.stop_at = Some(actor.front);
                 d.lateral_target = Some(berth.bay);
