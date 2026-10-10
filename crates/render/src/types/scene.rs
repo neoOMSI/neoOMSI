@@ -152,6 +152,9 @@ pub struct Scene {
     pub(crate) sky_bind_group: Option<wgpu::BindGroup>,
     pub overlays: Vec<(TextureId, [f32; 4])>,
     pub premultiplied: std::collections::HashSet<TextureId>,
+    /// Overlays with these textures are drawn over a blurred copy of what lies beneath
+    /// them, rounded at the corners by the radius given (pixels).
+    pub frosted: HashMap<TextureId, f32>,
     pub(crate) overlay_res: Vec<(TextureId, wgpu::Buffer, wgpu::BindGroup, [f32; 8])>,
     pub(crate) dirty: bool,
     pub(crate) uploaded_instances: usize,

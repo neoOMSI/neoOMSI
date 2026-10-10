@@ -119,8 +119,6 @@ pub struct Navigator {
     speed_avg: f32,
     /// How far ahead of the bus the dimmed route begins (m), and when that was last moved.
     dim_ahead: f64,
-    /// The stop the bus heads for and how far off it was when it became the next (m).
-    leg: (i64, f64),
     dim_at: f32,
     pub opacity: f32,
     pub corner: String,

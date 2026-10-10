@@ -226,9 +226,12 @@ impl Navigator {
             if let Some((t, _, _)) = self.target.take() {
                 renderer.free_texture(scene, t);
                 scene.premultiplied.remove(&t);
+                scene.frosted.remove(&t);
             }
             let t = renderer.add_render_texture(scene, w, h);
             scene.premultiplied.insert(t);
+            // the panel over a blur of what lies beneath it
+            scene.frosted.insert(t, (CARD_RADIUS + CARD_GAP) * s);
             self.target = Some((t, w, h));
         }
         let (tex, _, _) = self.target.unwrap();
@@ -265,8 +268,8 @@ impl Navigator {
         self.atlas.begin_frame();
         let panel = Rect::new(0.0, 0.0, pw, ph);
         // the corners nest: whatever sits `d` inside a rounded shape is rounded `d` less
-        let gap = 8.0 * s;
-        let card_r = 14.0 * s;
+        let gap = CARD_GAP * s;
+        let card_r = CARD_RADIUS * s;
         let radius = card_r + gap;
         let top_h = if self.show_topbar {
             (34.0 * s).round()
@@ -706,8 +709,8 @@ impl Navigator {
             }
         }
 
-        // the next stop, bottom right: line, name, how far and when, the delay, the way
-        // there, and with the timetable the stops after it
+        // the next stop, bottom right: line, name, how far and when, the delay, and with the
+        // timetable the stops after it
         let note = if self.route.note > 0.0 {
             Some((wd.recalculated.clone(), ON_TIME))
         } else if self.route.joined
@@ -860,22 +863,6 @@ impl Navigator {
                         Align::Left,
                         c2.alpha(a),
                     );
-                    // the way to the stop: a thin amber line filling as it comes nearer
-                    if let Some(d) = self.next_dist {
-                        if self.leg.0 != st.object_id || d > self.leg.1 {
-                            self.leg = (st.object_id, d.max(1.0));
-                        }
-                        let done = (1.0 - d / self.leg.1).clamp(0.0, 1.0) as f32;
-                        let track = Rect::new(inner.x, card.y + base_h - 7.0 * s, inner.w, 2.5 * s);
-                        ui.rounded(track, 1.25 * s, Color::WHITE.alpha(0.1 * a));
-                        if done > 0.0 {
-                            ui.rounded(
-                                Rect::new(track.x, track.y, (track.w * done).max(track.h), track.h),
-                                1.25 * s,
-                                ACCENT.alpha(a),
-                            );
-                        }
-                    }
                     if sched_h > 0.0 {
                         let late = f.delay.unwrap_or(0.0);
                         let ea = a * self.sched_e;

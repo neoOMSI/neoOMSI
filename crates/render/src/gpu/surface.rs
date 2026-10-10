@@ -41,8 +41,10 @@ impl<'w> SurfaceState<'w> {
         vsync: bool,
     ) -> Result<Self> {
         let surface = instance.create_surface(window).context("create_surface")?;
+        // copied from as well where the device allows it: the frosted overlays blur what is
+        // beneath them (`Renderer::frost_backdrops`)
         let mut config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             format: renderer.format(),
             color_space: wgpu::SurfaceColorSpace::Auto,
             width: width.max(1),
@@ -58,7 +60,16 @@ impl<'w> SurfaceState<'w> {
         };
         config.width = width.max(1);
         config.height = height.max(1);
+        let scope = renderer.device.push_error_scope(wgpu::ErrorFilter::Validation);
         surface.configure(&renderer.device, &config);
+        if let Some(e) = pollster::block_on(scope.pop()) {
+            log::warn!(
+                "the window's picture cannot be copied from on this device ({}); overlays are not frosted",
+                gpu_error_text(&e)
+            );
+            config.usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+            surface.configure(&renderer.device, &config);
+        }
         Ok(SurfaceState {
             surface: std::mem::ManuallyDrop::new(surface),
             config,

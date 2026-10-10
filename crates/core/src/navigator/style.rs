@@ -44,6 +44,10 @@ pub(super) const EARLY: Color = Color::rgba(90, 160, 240, 1.0);
 pub(super) const ON_TIME: Color = Color::rgba(110, 200, 120, 1.0);
 pub(super) const WARN: Color = Color::rgba(235, 170, 60, 1.0);
 pub(super) const STOP_REQUEST: Color = Color::hex(0xF0A030);
+/// The cards' corner radius and the gap between them and the panel's edge (pixels at
+/// 360 wide): the corners nest, the panel rounded by the two together.
+pub(super) const CARD_RADIUS: f32 = 14.0;
+pub(super) const CARD_GAP: f32 = 8.0;
 pub(super) const FOV: f32 = 40.0;
 pub(super) const PITCH: f64 = 52.0;
 pub(super) const ROAD_RADIUS: f64 = 1300.0;
