@@ -697,6 +697,32 @@ pub fn vehicle_bodies(v: &VehicleInstance) -> Vec<::simulation::collision::Obb> 
     out
 }
 
+/// `bodies` of a vehicle standing with its origin at `from`, heading `from_heading`, moved
+/// with it to `to`, heading `to_heading` (degrees, clockwise from north).
+pub fn bodies_moved(
+    bodies: &[::simulation::collision::Obb],
+    from: DVec3,
+    from_heading: f64,
+    to: DVec3,
+    to_heading: f64,
+) -> Vec<::simulation::collision::Obb> {
+    let (h0, h1) = (from_heading.to_radians(), to_heading.to_radians());
+    let (fwd0, right0) = (DVec2::new(h0.sin(), h0.cos()), DVec2::new(h0.cos(), -h0.sin()));
+    let (fwd1, right1) = (DVec2::new(h1.sin(), h1.cos()), DVec2::new(h1.cos(), -h1.sin()));
+    bodies
+        .iter()
+        .map(|b| {
+            let d = b.center - from.truncate();
+            let mut m = *b;
+            m.center = to.truncate() + fwd1 * d.dot(fwd0) + right1 * d.dot(right0);
+            m.heading = b.heading + h1 - h0;
+            m.z0 += to.z - from.z;
+            m.z1 += to.z - from.z;
+            m
+        })
+        .collect()
+}
+
 /// Cruising speed of an AI aircraft where its flight path sets no limit (km/h): an
 /// airliner on its final approach.
 const AIRCRAFT_KMH: f32 = 280.0;
@@ -7248,6 +7274,12 @@ impl Traffic {
             )));
             lead = t;
         }
+        self.occupied(&bodies, pos)
+    }
+
+    /// Do `bodies` (a vehicle's, placed with its origin at `pos`) touch one that is already
+    /// there - an AI vehicle, or one of `keep_clear`?
+    pub fn occupied(&self, bodies: &[::simulation::collision::Obb], pos: DVec3) -> bool {
         let reach = bodies
             .iter()
             .map(|b| (b.center - pos.truncate()).length() + b.half.length())
@@ -8471,5 +8503,27 @@ mod group_density_tests {
     #[test]
     fn defaults_naming_each_other_end() {
         assert_eq!(uvg_density(&[], &[1, 3, 2], 1), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod bodies_moved_tests {
+    use super::bodies_moved;
+    use ::simulation::collision::Obb;
+    use glam::DVec3;
+
+    /// A bus's bodies moved and turned with it: a box 6 m behind the origin facing north
+    /// stands 6 m west of the new origin when the bus faces east.
+    #[test]
+    fn bodies_turn_with_the_vehicle() {
+        let from = DVec3::new(10.0, 20.0, 1.0);
+        let body = Obb::from_box([2.5, 12.0, 3.0, 0.0, -6.0, 1.5], from, 0.0);
+        let to = DVec3::new(100.0, 50.0, 4.0);
+        let m = bodies_moved(&[body], from, 0.0, to, 90.0)[0];
+        let want = Obb::from_box([2.5, 12.0, 3.0, 0.0, -6.0, 1.5], to, 90.0);
+        assert!((m.center - want.center).length() < 1e-9);
+        assert!((m.center - glam::DVec2::new(94.0, 50.0)).length() < 1e-9);
+        assert!((m.heading - want.heading).abs() < 1e-9);
+        assert!((m.z0 - want.z0).abs() < 1e-9 && (m.z1 - want.z1).abs() < 1e-9);
     }
 }

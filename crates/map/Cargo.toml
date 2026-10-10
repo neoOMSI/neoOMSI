@@ -9,3 +9,4 @@ description = "Map loading: global.cfg, tiles, terrain, calendar, AI lists, chro
 legacy-config = { path = "../legacy-config" }
 log.workspace = true
 thiserror.workspace = true
+unicode-normalization = "0.1"

@@ -366,11 +366,35 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
         }
         ListKind::Spots => {
             if let Some(w) = app.world.as_ref() {
-                for (i, e) in w.global.entry_points.iter().enumerate() {
-                    let label = if e.name.trim().is_empty() {
+                // (the entry points of tiles that are not loaded come from the map index)
+                w.index();
+                // our bus where it stands, to put it at each place: one where it would touch
+                // a vehicle - an AI one, or our bus itself - is taken
+                let ours = app.player.as_ref().map(|p| {
+                    let v = &p.vehicle;
+                    (crate::traffic::vehicle_bodies(v), v.position, v.heading)
+                });
+                let taken = |i: usize| {
+                    let (Some((bodies, from, from_heading)), Some((pos, rot))) =
+                        (ours.as_ref(), w.entry_point_place(&w.global.entry_points[i]))
+                    else {
+                        return false;
+                    };
+                    let mut there =
+                        crate::traffic::bodies_moved(bodies, *from, *from_heading, pos, rot[0]);
+                    for b in &mut there {
+                        b.half += glam::DVec2::splat(0.5);
+                    }
+                    bodies.iter().any(|o| there.iter().any(|b| b.overlaps(o)))
+                        || app.traffic.as_ref().is_some_and(|t| t.occupied(&there, pos))
+                };
+                // one line per name, its first free place; a name with none is left out
+                for (name, i) in w.global.free_entry_points(taken) {
+                    let label = if name.is_empty() {
+                        let e = &w.global.entry_points[i];
                         ::i18n::translate("pause.list.entry", &[("number", &(e.index + 1))])
                     } else {
-                        e.name.trim().to_string()
+                        name.to_string()
                     };
                     out.push((label, format!("spot {i}")));
                 }
