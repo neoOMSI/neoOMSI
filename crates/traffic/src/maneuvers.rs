@@ -419,6 +419,10 @@ pub struct ManeuverDecision {
     pub target_lane: Option<LaneId>,
     pub reasons: Vec<Reason>,
     pub binding: Option<Reason>,
+    /// A route change that cannot be made before its lane ends, made from the lanes after
+    /// them instead: `(to, from)`, the route step `to` becomes `from` (the lane the current
+    /// one goes on into, beside the route's next lane).
+    pub defer_change: Option<(usize, usize)>,
 }
 
 impl ManeuverDecision {
@@ -434,6 +438,7 @@ impl ManeuverDecision {
             target_lane: None,
             reasons: Vec::new(),
             binding: None,
+            defer_change: None,
         }
     }
 }
@@ -795,6 +800,22 @@ impl ManeuverCoordinator {
             d.change = Some(ChangeCommand::new(to, dir, kind));
             d.target_lane = Some(LaneId(to));
             return d;
+        }
+        // Not now, and the lane ends soon: where it and the lane beside go on side by side to
+        // the route's next lane, the change is made from there. (Waiting at the end, a bus
+        // steered at the lane it could not get onto, and a car that came up beside it stood
+        // there behind its corner for good.)
+        let near_end = wait_at - actor.front
+            < actor.speed * actor.speed / (2.0 * actor.decel.max(1.0)) + 8.0;
+        if near_end && kind == ChangeKind::RouteChange {
+            if let Some((na, nb)) = scene.net.parallel_continuation(actor.lane, to) {
+                if actor.planned_next == Some(nb) && self.open_to(scene.net, actor, na) {
+                    let mut d = ManeuverDecision::new(ManeuverPhase::RouteChange);
+                    d.signal = Some((dir, 1.0));
+                    d.defer_change = Some((to, na));
+                    return d;
+                }
+            }
         }
         // Not now: indicate and wait before the end of the lane (a legal wait outcome, never
         // cutting through the queue or jumping to another lane).
