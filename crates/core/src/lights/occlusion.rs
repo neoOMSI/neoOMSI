@@ -79,6 +79,7 @@ pub(super) const SPOT_MAX: usize = 32;
 pub(super) const SPOT_MIN_AREA: f64 = 0.01;
 pub(super) const SPOT_MARGIN: f64 = 2.0;
 pub(super) const GATHERS_PER_FRAME: usize = 2;
+pub(super) const GATHER_BUDGET_S: f64 = 0.0015;
 
 pub(super) type OccKey = (i64, i64, i64, u32, i32);
 
@@ -102,7 +103,7 @@ pub(super) fn gather_spot_occluders(
     let probe = ::simulation::collision::Obb::point(mid, range * 0.5 + SPOT_MARGIN + 2.0);
     let half_angle = (cone_out as f64).clamp(-1.0, 1.0).acos();
     let mut tris: Vec<(f64, [DVec3; 3])> = seen
-        .triangles_near(&probe)
+        .triangles_near(&probe, SPOT_MIN_AREA)
         .into_iter()
         .filter_map(|t| {
             let area = 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).length();
@@ -177,7 +178,7 @@ pub(super) fn gather_occluders(
         .collect();
 
     let mut tris: Vec<(f64, [DVec3; 3])> = seen
-        .triangles_near(&probe)
+        .triangles_near(&probe, POINT_TRI_MIN_AREA)
         .into_iter()
         .filter_map(|t| {
             let area = 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).length();
@@ -216,6 +217,7 @@ pub(super) fn assign_occluders(
     vehicles: &[&VehicleInstance],
 ) {
     scene.occluders.clear();
+    let t_assign = std::time::Instant::now();
     let mut bodies: Vec<(::simulation::collision::Obb, ::render::Occluder)> = Vec::new();
     for v in vehicles
         .iter()
@@ -317,7 +319,7 @@ pub(super) fn assign_occluders(
             dir_key,
         );
         if !capped && !cache.map.contains_key(&key) {
-            if gathers >= GATHERS_PER_FRAME {
+            if gathers >= GATHERS_PER_FRAME || t_assign.elapsed().as_secs_f64() > GATHER_BUDGET_S {
                 capped = true;
             } else {
                 gathers += 1;
