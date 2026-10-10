@@ -564,9 +564,9 @@ impl World {
                     "a non-depth-writing generated text layer follows its backing surface"
                 }
             );
-            for &i in &instances {
+            for (model_order, &i) in instances.iter().enumerate() {
                 if scene.instances.get(i).is_some_and(|x| !x.blob) {
-                    renderer.set_ordered(scene, i, true);
+                    renderer.set_ordered(scene, i, model_order as u32);
                 }
             }
         }
