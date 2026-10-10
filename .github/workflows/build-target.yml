@@ -28,6 +28,11 @@ on:
         description: neoOMSI build channel.
         required: true
         type: string
+      launcher_sha:
+        description: Commit SHA of the launcher to build and package. If empty, falls back to scripts/launcher-ref.
+        required: false
+        default: ""
+        type: string
       source_repository:
         description: Repository containing the source commit to build.
         required: true
@@ -170,6 +175,8 @@ jobs:
 
       - name: Launcher
         shell: bash
+        env:
+          LAUNCHER_SHA: ${{ inputs.launcher_sha }}
         run: bash scripts/ci/build-launcher.sh ${{ inputs.platform }} ${{ inputs.arch }}
 
       - name: Package

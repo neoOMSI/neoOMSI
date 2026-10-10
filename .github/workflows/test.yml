@@ -25,6 +25,7 @@ jobs:
 
     outputs:
       run-tests: ${{ steps.changes.outputs.run-tests }}
+      run-bundle: ${{ steps.changes.outputs.run-bundle }}
 
     steps:
       - uses: actions/checkout@v7
@@ -41,6 +42,10 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_HEAD: ${{ github.sha }}
         run: bash scripts/ci/detect-test-changes.sh
+
+      - name: Validate release publishing logic
+        shell: bash
+        run: bash scripts/ci/test-publish-release-logic.sh
 
   test:
     name: Workspace tests
@@ -68,9 +73,34 @@ jobs:
       - name: Run workspace tests
         run: cargo nextest run --workspace --locked
 
+  bundle:
+    name: Combined bundle verification
+    needs: changes
+    if: needs.changes.outputs.run-bundle == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-msvc-bundle
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Run combined bundle test
+        shell: pwsh
+        run: scripts/ci/test-combined-bundle.ps1
+
   required:
     name: Tests
-    needs: [changes, test]
+    needs: [changes, test, bundle]
     if: always()
     runs-on: ubuntu-slim
 
@@ -80,7 +110,9 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          BUNDLE_RESULT: ${{ needs.bundle.result }}
           RUN_TESTS: ${{ needs.changes.outputs.run-tests }}
+          RUN_BUNDLE: ${{ needs.changes.outputs.run-bundle }}
         run: |
           set -euo pipefail
 
@@ -94,8 +126,17 @@ jobs:
               echo "::error::Workspace tests were required but did not pass."
               exit 1
             fi
-
             echo "Workspace tests passed."
           else
             echo "No Rust/test-relevant changes. Workspace tests were safely skipped."
+          fi
+
+          if [ "$RUN_BUNDLE" = "true" ]; then
+            if [ "$BUNDLE_RESULT" != "success" ]; then
+              echo "::error::Combined bundle verification was required but did not pass."
+              exit 1
+            fi
+            echo "Combined bundle verification passed."
+          else
+            echo "No bundle-relevant changes. Bundle verification was safely skipped."
           fi

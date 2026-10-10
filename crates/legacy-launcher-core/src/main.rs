@@ -35,17 +35,15 @@ fn main() {
     };
     match omsi_launcher_lib::start_external_launcher(&game) {
         Ok(true) => return,
-        Ok(false) => {}
-        Err(e) => eprintln!("{e:#}: the built-in launcher opens instead"),
-    }
-    match std::process::Command::new(&game)
-        .arg("--launcher")
-        .args(&args[1..])
-        .status()
-    {
-        Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+        Ok(false) => {
+            let expected = omsi_launcher_lib::shipped_launcher(&game)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "dist/<platform>/launcher".to_string());
+            eprintln!("error: neoOMSI desktop launcher was not found at {expected}.");
+            std::process::exit(1);
+        }
         Err(e) => {
-            eprintln!("starting {}: {e}", game.display());
+            eprintln!("error starting launcher: {e:#}");
             std::process::exit(1);
         }
     }

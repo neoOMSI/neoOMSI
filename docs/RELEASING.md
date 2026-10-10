@@ -6,12 +6,12 @@ neoOMSI maintains a clear distinction between rapid development snapshots and st
 
 neoOMSI follows Semantic Versioning (`MAJOR.MINOR.PATCH`) during pre-1.0 development:
 
-| Type                  | Format                       | Example                   |
-| --------------------- | ---------------------------- | ------------------------- |
-| **Nightly**           | `0.x.y-nightly.g<short-sha>` | `0.2.0-nightly.gdb76899d` |
-| **Release Candidate** | `v0.x.y-rc.<n>`              | `v0.2.0-rc.1`             |
-| **Stable**            | `v0.x.y`                     | `v0.2.0`                  |
-| **Patch**             | `v0.x.y+1`                   | `v0.2.1`                  |
+| Type                  | Format                                           | Example                             |
+| --------------------- | ------------------------------------------------ | ----------------------------------- |
+| **Nightly**           | `0.x.y-nightly.g<engine-sha>.l<launcher-sha>`    | `0.2.0-nightly.gc3652dc0.l0d83a55b` |
+| **Release Candidate** | `v0.x.y-rc.<n>`                                  | `v0.2.0-rc.1`                       |
+| **Stable**            | `v0.x.y`                                         | `v0.2.0`                            |
+| **Patch**             | `v0.x.y+1`                                       | `v0.2.1`                            |
 
 `1.0.0` is reserved for achieving comprehensive behavioral parity across the OMSI 2.2.032 baseline, not simply for elapsed development time.
 
@@ -21,13 +21,16 @@ Release CI stamps `neoomsi_BUILD_CHANNEL` as `stable`, `rc`, or `nightly` alongs
 `neoomsi_VERSION`. Builds without an explicit channel are `developer`, including
 local optimized builds.
 
-## Launcher version
+## Launcher versioning and build manifest
 
-Every build packs the launcher at the full commit SHA in `scripts/launcher-ref`, a commit of
-[neoOMSI/launcher](https://github.com/neoOMSI/launcher)'s `main`; the release notes link it.
-Moving to a newer launcher is a PR of its own that changes that line, so a release can be
-rebuilt as it was. Launcher and engine agree on the protocol version at their handshake
-(`docs/LAUNCHER_PROTOCOL.md`).
+Combined application packages include the external Electron launcher ([neoOMSI/launcher](https://github.com/neoOMSI/launcher)).
+
+- **Nightly builds:** The CI workflow resolves the latest commit SHA from `neoOMSI/launcher`'s `main` branch once at workflow start and builds that exact snapshot across all target platforms. The nightly version tag explicitly records both engine and launcher revisions (e.g. `v0.2.0-nightly.g<engine>.l<launcher>`).
+- **Stable and Release Candidate builds:** Builds lock to the vetted commit SHA pinned in `scripts/launcher-ref` (or a release branch pin) to ensure exact reproducibility.
+- **Local development:** `scripts/launcher-ref` serves as the default pinned commit, or developers can pass an explicit commit via `LAUNCHER_SHA` or a local path via `LAUNCHER_SRC`.
+- **Build Manifest:** Every release publishes a machine-readable `build-manifest.json` asset recording the exact engine commit, launcher commit, version, channel, and CI run identity. When verifying existing immutable releases, CI validates the recorded manifest contents.
+
+Launcher and engine negotiate compatibility dynamically via the protocol version handshake (`docs/LAUNCHER_PROTOCOL.md`).
 
 ## Tags
 
@@ -40,7 +43,7 @@ v0.2.0
 v0.2.1
 ```
 
-Nightly snapshots publish under versioned tags (e.g. `v0.2.0-nightly.g<sha>`) on GitHub Releases.
+Nightly snapshots publish under versioned tags (e.g. `v0.2.0-nightly.g<engine>.l<launcher>`) on GitHub Releases.
 
 ## Release workflow
 
