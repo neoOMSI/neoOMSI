@@ -97,6 +97,31 @@ pub fn curve_at(curve: &[(f32, f32)], hour: f32) -> f32 {
     pts[pts.len() - 1].1
 }
 
+/// The order of OMSI's list of entry points, which is Windows' for names, not the
+/// characters' codes: case and accents do not count (`ab`, `Alpha`, `Äpfel`, `Apfelz`,
+/// `beta`), hyphens and apostrophes are left out (`a-c` comes after `ab`), and spaces and
+/// punctuation come before digits, digits before letters (`( Depot) …`, `(518) …`,
+/// `(518, 519) …`, `(A) …`). Names equal by that are put in the characters' order.
+pub fn entry_name_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    fn key(s: &str) -> Vec<(u8, char)> {
+        use unicode_normalization::UnicodeNormalization;
+        let mut out = Vec::with_capacity(s.len());
+        for c in s.to_lowercase().nfd() {
+            match c {
+                '-' | '\'' | '\u{2019}' => {}
+                // (a combining accent of a decomposed letter)
+                '\u{300}'..='\u{36f}' => {}
+                'ß' => out.extend([(2, 's'), (2, 's')]),
+                c if c.is_alphabetic() => out.push((2, c)),
+                c if c.is_numeric() => out.push((1, c)),
+                c => out.push((0, c)),
+            }
+        }
+        out
+    }
+    key(a).cmp(&key(b)).then_with(|| a.cmp(b))
+}
+
 /// `[entrypoints]` record: the entry point is a scenery object (`[entrypoint]`) placed on the
 /// map; the position is stored in the object's own frame order (x, height, y) and the
 /// orientation as a quaternion.
@@ -164,6 +189,24 @@ impl GlobalCfg {
     /// Passenger density factor at an hour of the day.
     pub fn passenger_density(&self, hour: f32) -> f32 {
         curve_at(&self.traffic_density_passenger, hour)
+    }
+
+    /// The entry points as OMSI's list of them shows them: one line per name, in name order
+    /// (see [`entry_name_cmp`]), each with the places of all entry points of that name in
+    /// `entry_points`, in file order. OMSI takes the first of them that is free (Grundorf's
+    /// three "Nordspitze Bauernhof" are one line; with the bus on the first, it goes to the
+    /// second) and leaves out a name whose places are all taken.
+    pub fn entry_point_groups(&self) -> Vec<(&str, Vec<usize>)> {
+        let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
+        for (i, e) in self.entry_points.iter().enumerate() {
+            let name = e.name.trim();
+            match groups.iter_mut().find(|g| g.0 == name) {
+                Some(g) => g.1.push(i),
+                None => groups.push((name, vec![i])),
+            }
+        }
+        groups.sort_by(|a, b| entry_name_cmp(a.0, b.0));
+        groups
     }
 
     pub fn load(path: &Path) -> Result<GlobalCfg, ::legacy_config::CfgError> {
@@ -312,5 +355,68 @@ mod tests {
         assert_eq!(g.raw_tiles, vec![(0, 0), (0, 0), (5, 5)]);
         assert_eq!(g.tiles[1].index, 2);
         assert_eq!(g.raw_tiles.get(2), Some(&(5, 5)));
+    }
+
+    /// The order OMSI 2.2.032 showed for a copy of Grundorf with these names, and the start
+    /// of Gerolstein's list.
+    #[test]
+    fn entry_names_sort_as_omsi_lists_them() {
+        let mut v = vec![
+            "Nordspitze Bauernhof", "beta", "Äpfel", "Apfelz", "Alpha", "Gamma", "Az", "a-c", "ab",
+        ];
+        v.sort_by(|a, b| entry_name_cmp(a, b));
+        assert_eq!(
+            v,
+            ["ab", "a-c", "Alpha", "Äpfel", "Apfelz", "Az", "beta", "Gamma", "Nordspitze Bauernhof"]
+        );
+        let mut v = vec![
+            "(A) Gerolstein, Godesberger Allee",
+            "(581, R81) Kleinenberg, Bahnhof",
+            "(518, 519, 563) Fürstenau, Schulen",
+            "(581) Willegassen, Trafo",
+            "( Depot) Taxi Lindsperger",
+            "(519) Niederursel, Zentralhaltestelle",
+            "(518) Familien-Landhotel Koller",
+            "( Depot) Petra Schattschneider Stadtverkehr",
+            "(A) Gerolstein, Florianshöhe, Föhrer Straße",
+            "( Depot) Petra Schattschneider Regionalverkehr",
+        ];
+        v.sort_by(|a, b| entry_name_cmp(a, b));
+        assert_eq!(
+            v,
+            [
+                "( Depot) Petra Schattschneider Regionalverkehr",
+                "( Depot) Petra Schattschneider Stadtverkehr",
+                "( Depot) Taxi Lindsperger",
+                "(518) Familien-Landhotel Koller",
+                "(518, 519, 563) Fürstenau, Schulen",
+                "(519) Niederursel, Zentralhaltestelle",
+                "(581) Willegassen, Trafo",
+                "(581, R81) Kleinenberg, Bahnhof",
+                "(A) Gerolstein, Florianshöhe, Föhrer Straße",
+                "(A) Gerolstein, Godesberger Allee",
+            ]
+        );
+    }
+
+    /// Entry points of one name are one line, with their places in file order.
+    #[test]
+    fn entry_points_of_one_name_are_one_line() {
+        let names = ["Nordspitze Bauernhof", "Einsteindorf", "Nordspitze Bauernhof ", "Bhf."];
+        let g = GlobalCfg {
+            entry_points: names
+                .iter()
+                .map(|n| EntryPoint { name: n.to_string(), ..Default::default() })
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            g.entry_point_groups(),
+            vec![
+                ("Bhf.", vec![3]),
+                ("Einsteindorf", vec![1]),
+                ("Nordspitze Bauernhof", vec![0, 2]),
+            ]
+        );
     }
 }
