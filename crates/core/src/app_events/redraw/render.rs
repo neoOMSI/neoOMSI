@@ -13,8 +13,8 @@ impl App {
         // (the last picture is submitted before this frame's pictures write to the card)
         let __t = Instant::now();
         if let Some(r) = self.renderer.as_ref() {
-            r.flush_deferred();
             r.wait_submitted();
+            r.flush_deferred();
         }
         *self.profile.entry("wait submit").or_default() += __t.elapsed().as_secs_f64();
         #[cfg(all(feature = "devtools", debug_assertions))]

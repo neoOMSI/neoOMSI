@@ -37,6 +37,7 @@ mod win {
         pub fn GetCurrentThreadId() -> u32;
         pub fn GetCurrentProcess() -> isize;
         pub fn OpenThread(access: u32, inherit: i32, id: u32) -> isize;
+        pub fn CloseHandle(handle: isize) -> i32;
         pub fn SuspendThread(thread: isize) -> u32;
         pub fn ResumeThread(thread: isize) -> u32;
         pub fn GetThreadContext(thread: isize, context: *mut c_void) -> i32;
@@ -58,6 +59,33 @@ mod win {
     #[link(name = "winmm")]
     unsafe extern "system" {
         pub fn timeBeginPeriod(ms: u32) -> u32;
+        pub fn timeEndPeriod(ms: u32) -> u32;
+    }
+
+    /// The opened main thread and the 1 ms timer period, given back however sampling ends.
+    pub struct Sampling {
+        pub thread: isize,
+    }
+    impl Sampling {
+        pub fn begin(tid: u32) -> Option<Sampling> {
+            // THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION
+            // SAFETY: plain calls
+            let thread = unsafe { OpenThread(0x0002 | 0x0008 | 0x0040, 0, tid) };
+            if thread == 0 {
+                return None;
+            }
+            unsafe { timeBeginPeriod(1) };
+            Some(Sampling { thread })
+        }
+    }
+    impl Drop for Sampling {
+        fn drop(&mut self) {
+            // SAFETY: the handle OpenThread gave, closed once; the period begun in `begin`
+            unsafe {
+                timeEndPeriod(1);
+                CloseHandle(self.thread);
+            }
+        }
     }
 
     /// x64 `CONTEXT`: 1232 bytes, 16-aligned; only the flags, Rsp and Rip are read by name.
@@ -81,13 +109,10 @@ fn sample(tid: u32, length: f64) -> anyhow::Result<std::path::PathBuf> {
     use std::collections::HashMap;
     use win::*;
     const DEPTH: usize = 64;
-    // THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION
-    // SAFETY: plain calls
-    let thread = unsafe { OpenThread(0x0002 | 0x0008 | 0x0040, 0, tid) };
-    if thread == 0 {
+    let Some(sampling) = Sampling::begin(tid) else {
         anyhow::bail!("could not open the main thread");
-    }
-    unsafe { timeBeginPeriod(1) };
+    };
+    let thread = sampling.thread;
     let mut stacks: HashMap<Vec<u64>, u32> = HashMap::new();
     let mut buf = [0u64; DEPTH];
     let mut ctx = Box::new(Context([0; 1232]));
@@ -146,6 +171,9 @@ fn sample(tid: u32, length: f64) -> anyhow::Result<std::path::PathBuf> {
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+    // (the main thread is no longer stopped: its handle and the timer period go back now,
+    // not after the names are looked up)
+    drop(sampling);
     // names
     type SymInit = unsafe extern "system" fn(isize, *const u16, i32) -> i32;
     type SymOpts = unsafe extern "system" fn(u32) -> u32;

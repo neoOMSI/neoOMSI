@@ -308,9 +308,33 @@ impl Renderer {
 
     /// Replace the pixels of a texture (same size as when created, no mipmaps regenerated).
     pub fn update_texture(&self, scene: &Scene, id: TextureId, img: &::texture::Image) {
-        // what the screen shows, for the light it throws (`lights.rs`): a few samples, and
-        // only every 4th upload of a texture - the light follows the picture slowly, while
-        // the strided reads of a big texture are cache misses
+        Self::note_luma(scene, id, img, false);
+        let t = &scene.textures[id].texture;
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: t,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &img.rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(img.width * 4),
+                rows_per_image: Some(img.height),
+            },
+            wgpu::Extent3d {
+                width: img.width,
+                height: img.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// What the screen shows, for the light it throws (`lights.rs`): a few samples, and
+    /// only every 4th upload of a texture unless `always` - the light follows the picture
+    /// slowly, while the strided reads of a big texture are cache misses.
+    fn note_luma(scene: &Scene, id: TextureId, img: &::texture::Image, always: bool) {
         {
             static UPLOADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let tick = UPLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -319,7 +343,7 @@ impl Renderer {
                 .lock()
                 .map(|m| m.contains_key(&id))
                 .unwrap_or(true);
-            if !known || (tick + id) % 4 == 0 {
+            if always || !known || (tick + id) % 4 == 0 {
                 let n = (img.rgba.len() / 4).max(1);
                 let step = (n / 1024).max(1);
                 let (mut sum, mut asum, mut cnt) = (0.0f32, 0.0f32, 0u32);
@@ -350,26 +374,6 @@ impl Renderer {
                 }
             }
         }
-        let t = &scene.textures[id].texture;
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: t,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &img.rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(img.width * 4),
-                rows_per_image: Some(img.height),
-            },
-            wgpu::Extent3d {
-                width: img.width,
-                height: img.height,
-                depth_or_array_layers: 1,
-            },
-        );
     }
 
     pub fn update_texture_changed(&self, scene: &mut Scene, id: TextureId, img: &::texture::Image) {
@@ -383,15 +387,23 @@ impl Renderer {
             return false;
         };
         match scene.uploaded.get_mut(&id) {
-            Some((g, px)) if *g == generation && *px == img.rgba => true,
-            Some((g, px)) => {
+            Some((g, px, luma)) if *g == generation && *px == img.rgba => {
+                // (the light it throws is taken from every 4th upload only: a picture that
+                // changed once and then stays is measured here, once)
+                if !std::mem::replace(luma, true) {
+                    Self::note_luma(&*scene, id, img, true);
+                }
+                true
+            }
+            Some((g, px, luma)) => {
                 *g = generation;
                 px.clear();
                 px.extend_from_slice(&img.rgba);
+                *luma = false;
                 false
             }
             None => {
-                scene.uploaded.insert(id, (generation, img.rgba.clone()));
+                scene.uploaded.insert(id, (generation, img.rgba.clone(), false));
                 false
             }
         }

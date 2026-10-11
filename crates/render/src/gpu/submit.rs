@@ -20,6 +20,8 @@ struct Shared {
     busy: Mutex<usize>,
     done: Condvar,
     times: Mutex<SubmitTimes>,
+    /// Jobs that panicked since the main thread last asked (`take_failures`).
+    failures: Mutex<usize>,
 }
 
 pub(crate) struct Submitter {
@@ -37,6 +39,7 @@ impl Submitter {
             busy: Mutex::new(0),
             done: Condvar::new(),
             times: Mutex::new(SubmitTimes::default()),
+            failures: Mutex::new(0),
         });
         let worker = shared.clone();
         let (thread_queue, thread_pool) = (queue.clone(), pool.clone());
@@ -44,10 +47,13 @@ impl Submitter {
             .name("render-submit".into())
             .spawn(move || {
                 for job in rx {
-                    // (a panic in the driver must not leave the main thread waiting)
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if crate::catch(|| {
                         run(&thread_queue, thread_pool.as_deref(), job, &worker.times)
-                    }));
+                    })
+                    .is_none()
+                    {
+                        *worker.failures.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+                    }
                     let mut busy = worker.busy.lock().unwrap_or_else(|e| e.into_inner());
                     *busy = busy.saturating_sub(1);
                     worker.done.notify_all();
@@ -84,6 +90,11 @@ impl Submitter {
                 .unwrap_or_else(|e| e.into_inner());
         }
         waited
+    }
+
+    /// How many jobs failed (panicked) since the last call.
+    pub fn take_failures(&self) -> usize {
+        std::mem::take(&mut *self.shared.failures.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     pub fn take_times(&self) -> SubmitTimes {
@@ -206,6 +217,12 @@ impl crate::Renderer {
         };
         let t = std::time::Instant::now();
         let waited = s.wait();
+        let failed = s.take_failures();
+        if failed > 0 {
+            log::error!(
+                "render-submit: {failed} picture(s) not submitted or presented (the error is logged above as caught by the renderer)"
+            );
+        }
         if self.profiling {
             let times = s.take_times();
             let mut stats = self.stats.borrow_mut();

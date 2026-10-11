@@ -127,7 +127,7 @@ pub struct Scene {
     /// `update_texture`: what a script or HTML screen actually shows. light = alpha x brightest
     /// channel, alpha 0..1; colour = the lit pixels' mean hue, its brightest channel 1.
     pub tex_luma: std::sync::Mutex<std::collections::HashMap<TextureId, (f32, f32, [f32; 3])>>,
-    pub(crate) uploaded: std::collections::HashMap<TextureId, (u64, Vec<u8>)>,
+    pub(crate) uploaded: std::collections::HashMap<TextureId, (u64, Vec<u8>, bool)>,
     pub(crate) glass_slot: Option<TextureId>,
     pub materials: Vec<Material>,
     pub instances: Vec<Instance>,
