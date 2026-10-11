@@ -9,6 +9,7 @@ pub(crate) struct DrawItem {
     pub(crate) entry: u32,
 }
 
+#[derive(Clone, PartialEq)]
 pub(crate) struct Batch {
     pub(crate) pipe: u8,
     pub(crate) mesh: u32,
@@ -214,6 +215,52 @@ pub(crate) fn culls_back_faces(scene: &Scene, inst: &Instance) -> bool {
         && glam::Mat3::from_mat4(inst.transform).determinant() > 0.0
 }
 
+/// The window's main-pass bundles as last recorded, part by part, with what each part was
+/// recorded from (see `record_bundles`).
+#[derive(Default)]
+pub(crate) struct KeptBundles {
+    key: Option<(wgpu::TextureFormat, u32, wgpu::BindGroup)>,
+    parts: Vec<(Vec<Batch>, Vec<BatchBinds>, wgpu::RenderBundle)>,
+}
+
+/// What a batch's draw binds: its pipeline, its mesh's buffers and its material's group (a
+/// mesh or material slot can be given to another since, or a pipeline made anew).
+struct BatchBinds(
+    wgpu::RenderPipeline,
+    wgpu::Buffer,
+    wgpu::Buffer,
+    wgpu::BindGroup,
+);
+
+fn batch_binds<'s>(
+    scene: &'s Scene,
+    pp: &'s PassPipelines,
+    b: &Batch,
+) -> (
+    &'s wgpu::RenderPipeline,
+    &'s wgpu::Buffer,
+    &'s wgpu::Buffer,
+    &'s wgpu::BindGroup,
+) {
+    let m = &scene.meshes[b.mesh as usize];
+    (
+        main_pipeline(pp, b.pipe),
+        &m.vertex_buf,
+        &m.index_buf,
+        &scene.materials[b.material as usize].bind_group,
+    )
+}
+
+/// The main pass's batches as render bundles, recorded on several threads. Checking every
+/// draw is the costliest CPU step of a frame; a bundle is checked when it is made, and the
+/// pass that runs it only replays it. The bundles keep the batches' order.
+///
+/// With `kept` (the window's picture) a part whose batches are the same as last frame's and
+/// bind the same pipelines, buffers and groups, with the same camera group and targets, is
+/// drawn with last frame's bundle again: a bundle holds only which draws to make, and what
+/// they read (the instances' places, the draw list) is in buffers written every frame - the
+/// picture is the same. A view standing still (the bus at a stop) recorded the same
+/// thousands of draws anew every frame.
 pub(crate) fn record_bundles(
     device: &wgpu::Device,
     pool: Option<&rayon::ThreadPool>,
@@ -223,6 +270,7 @@ pub(crate) fn record_bundles(
     camera: &wgpu::BindGroup,
     format: wgpu::TextureFormat,
     samples: u32,
+    kept: Option<&std::cell::RefCell<KeptBundles>>,
 ) -> Vec<wgpu::RenderBundle> {
     let color_formats = [Some(format), Some(MASK_FORMAT)];
     let record = |chunk: &[Batch]| -> wgpu::RenderBundle {
@@ -266,12 +314,73 @@ pub(crate) fn record_bundles(
         .map(|p| (p.current_num_threads() + 1).clamp(4, 8))
         .unwrap_or(4);
     let parts = (batches.len() / 250).clamp(1, max_parts);
-    if parts == 1 {
-        return record(batches).into_iter().collect();
+    let chunks: Vec<&[Batch]> = if parts == 1 {
+        vec![batches]
+    } else {
+        batches.chunks(batches.len().div_ceil(parts)).collect()
+    };
+    let key = (format, samples, camera.clone());
+    let mut reuse: Vec<Option<wgpu::RenderBundle>> = vec![None; chunks.len()];
+    if let Some(k) = kept.map(|k| k.borrow()) {
+        if k.key.as_ref() == Some(&key) {
+            for (n, chunk) in chunks.iter().enumerate() {
+                let Some((was, binds, bundle)) = k.parts.get(n) else {
+                    continue;
+                };
+                let same = was.as_slice() == *chunk
+                    && chunk.iter().zip(binds).all(|(b, k)| {
+                        let (p, v, i, g) = batch_binds(scene, pp, b);
+                        *p == k.0 && *v == k.1 && *i == k.2 && *g == k.3
+                    });
+                if same {
+                    reuse[n] = Some(bundle.clone());
+                }
+            }
+        }
     }
-    let chunks: Vec<&[Batch]> = batches.chunks(batches.len().div_ceil(parts)).collect();
-    run_parts(pool, chunks.len(), |k| record(chunks[k]))
-        .into_iter()
-        .flatten()
-        .collect()
+    let part = |n: usize| reuse[n].clone().or_else(|| record(chunks[n]));
+    let bundles: Vec<Option<wgpu::RenderBundle>> = if chunks.len() == 1 {
+        vec![part(0)]
+    } else {
+        run_parts(pool, chunks.len(), part)
+    };
+    if let Some(kept) = kept {
+        let mut k = kept.borrow_mut();
+        // (not with a part left out: it would stay out frame after frame)
+        if bundles.iter().all(Option::is_some) {
+            let parts = chunks
+                .iter()
+                .zip(&bundles)
+                .enumerate()
+                .map(
+                    |(n, (chunk, bundle))| match (reuse[n].is_some(), k.parts.get_mut(n)) {
+                        // (unchanged: what it was made of is kept as it is)
+                        (true, Some(old)) => (
+                            std::mem::take(&mut old.0),
+                            std::mem::take(&mut old.1),
+                            bundle.clone().expect("recorded"),
+                        ),
+                        _ => (
+                            chunk.to_vec(),
+                            chunk
+                                .iter()
+                                .map(|b| {
+                                    let (p, v, i, g) = batch_binds(scene, pp, b);
+                                    BatchBinds(p.clone(), v.clone(), i.clone(), g.clone())
+                                })
+                                .collect(),
+                            bundle.clone().expect("recorded"),
+                        ),
+                    },
+                )
+                .collect();
+            *k = KeptBundles {
+                key: Some(key),
+                parts,
+            };
+        } else {
+            *k = KeptBundles::default();
+        }
+    }
+    bundles.into_iter().flatten().collect()
 }

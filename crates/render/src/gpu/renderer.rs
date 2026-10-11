@@ -151,6 +151,10 @@ pub struct Renderer {
     pub(crate) uploads: std::cell::RefCell<Uploads>,
     pub(crate) _device_poller: Option<DevicePoller>,
     pub(crate) pending_meshes: std::cell::RefCell<hashbrown::HashMap<MeshId, Vec<Vertex>>>,
+    /// The window's main-pass bundles as last recorded (see `record_bundles`).
+    pub(crate) main_bundles: std::cell::RefCell<KeptBundles>,
+    /// The vertex lists of meshes sent, kept for the next frame's `update_mesh`.
+    pub(crate) spare_vertices: std::cell::RefCell<Vec<Vec<Vertex>>>,
     pub(crate) freed: std::cell::OnceCell<Freed>,
     // (last: dropped after the rest, once the thread has submitted everything)
     pub(crate) submitter: Option<Submitter>,

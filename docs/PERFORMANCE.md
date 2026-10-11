@@ -53,6 +53,20 @@ The renderer keeps these costs bounded without changing graphics settings:
 - A picture's buffer writes (camera, lights, light grid, instance ranges, post uniforms) are
   gathered into one staging buffer and copied by a command buffer submitted just before the
   picture's. `write_buffer` made a staging buffer per call, some 25 a picture.
+- The culling, the shadow casters' search and the search for screen lights pass by whole
+  blocks of 128 instances whose bounding box is out of the view, the light boxes or reach.
+  A moved instance grows its block's box at once; a few grown boxes are measured again each
+  frame. The instances' fields read by these passes lie together at the start of `Instance`.
+- The window's main-pass bundles are kept part by part: a part whose batches bind the same
+  pipelines, buffers and groups as last frame's is replayed instead of recorded again. The
+  shadow casters' entries go after the passes' own in the draw list, so that changing
+  shadows do not move the main pass's batches.
+- Passengers are skinned and uploaded only at the level of detail shown, and the vertex
+  lists of animated meshes are reused between frames. Their bones are made in parallel.
+- The game uses mimalloc on every system: with the render, tile and navigator threads
+  allocating at once, the Windows process heap's lock took a tenth of a busy frame.
+- The navigator's map is built at a lower priority, and the panel's ground on a thread of its
+  own; the old ground is drawn until the new one is ready.
 
 On Windows, DirectX 12 compiles shaders with DXC when `dxcompiler.dll` and `dxil.dll`
 sit next to `neoomsi.exe`, as release packages ship them. Without them wgpu falls back

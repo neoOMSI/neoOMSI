@@ -1,5 +1,24 @@
 use crate::*;
 
+/// Instances in a block of the culling (see `Scene::block_bounds`): those of a tile or a
+/// vehicle are made one after another and lie together.
+pub(crate) const CULL_BLOCK: usize = 128;
+/// How many grown blocks are measured again a frame.
+const CULL_BLOCK_MEASURES: usize = 8;
+
+/// The block's box made to hold the instance's sphere too.
+fn grow_block(bb: &mut (DVec3, DVec3), i: &Instance) {
+    let c = i.origin + i.bounds.centre.as_dvec3();
+    let r = i.bounds.radius as f64;
+    if !c.is_finite() || !r.is_finite() {
+        // (no box holds it: the block is never passed by)
+        *bb = (DVec3::splat(-f64::MAX), DVec3::splat(f64::MAX));
+        return;
+    }
+    bb.0 = bb.0.min(c - r);
+    bb.1 = bb.1.max(c + r);
+}
+
 impl Renderer {
     pub fn new_scene(&self) -> Scene {
         Scene {
@@ -43,6 +62,10 @@ impl Renderer {
             cache_bounds: ::legacy_config::env::var_os("OMSI_NO_BOUNDS_CACHE").is_none(),
             bounds_meshes: Vec::new(),
             bounds_dirty: false,
+            block_bounds: Vec::new(),
+            block_dirty: Vec::new(),
+            block_cursor: 0,
+            block_instances: 0,
             uploaded_instances: 0,
             uploaded_entries: 0,
             cpu_models: Vec::new(),
@@ -389,23 +412,35 @@ impl Renderer {
         if !scene.cache_bounds {
             return;
         }
+        let blocks = scene.instances.len().div_ceil(CULL_BLOCK);
+        let all = scene.dirty || scene.block_bounds.len() != blocks;
+        scene
+            .block_bounds
+            .resize(blocks, (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN)));
+        scene.block_dirty.resize(blocks, false);
         if scene.dirty {
             for i in &mut scene.instances {
                 i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
             }
         } else {
-            for i in &mut scene.instances[scene.uploaded_instances..] {
+            for k in scene.uploaded_instances..scene.instances.len() {
+                let i = &mut scene.instances[k];
                 i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
+                grow_block(&mut scene.block_bounds[k / CULL_BLOCK], i);
             }
             for &idx in &scene.changed {
                 if let Some(i) = scene.instances.get_mut(idx) {
                     i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
+                    grow_block(&mut scene.block_bounds[idx / CULL_BLOCK], i);
+                    scene.block_dirty[idx / CULL_BLOCK] = true;
                 }
             }
             if scene.bounds_dirty {
-                for i in &mut scene.instances {
+                for (k, i) in scene.instances.iter_mut().enumerate() {
                     if scene.bounds_meshes.get(i.mesh).copied().unwrap_or(false) {
                         i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
+                        grow_block(&mut scene.block_bounds[k / CULL_BLOCK], i);
+                        scene.block_dirty[k / CULL_BLOCK] = true;
                     }
                 }
             }
@@ -414,6 +449,59 @@ impl Renderer {
             scene.bounds_meshes.fill(false);
             scene.bounds_dirty = false;
         }
+        scene.block_instances = scene.instances.len();
+        let measure = |scene: &mut Scene, b: usize| {
+            let mut bb = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
+            let end = ((b + 1) * CULL_BLOCK).min(scene.instances.len());
+            for i in &scene.instances[b * CULL_BLOCK..end] {
+                grow_block(&mut bb, i);
+            }
+            scene.block_bounds[b] = bb;
+            scene.block_dirty[b] = false;
+        };
+        if all {
+            for b in 0..blocks {
+                measure(scene, b);
+            }
+            return;
+        }
+        // (a grown box is never too small, only larger than it need be: a few of them are
+        // made tight again each frame)
+        let mut left = CULL_BLOCK_MEASURES;
+        for _ in 0..blocks {
+            if left == 0 {
+                break;
+            }
+            scene.block_cursor = (scene.block_cursor + 1) % blocks;
+            if scene.block_dirty[scene.block_cursor] {
+                measure(scene, scene.block_cursor);
+                left -= 1;
+            }
+        }
+    }
+
+    /// The spheres around the blocks of `CULL_BLOCK` instances, relative to the render
+    /// origin: a block whose sphere is out of a view holds nothing that view draws. None
+    /// without cached bounds (nothing is passed by then).
+    pub(crate) fn cull_blocks(scene: &Scene) -> Option<Vec<(Vec3, f32)>> {
+        (scene.cache_bounds
+            && scene.block_bounds.len() == scene.instances.len().div_ceil(CULL_BLOCK))
+        .then(|| {
+            scene
+                .block_bounds
+                .iter()
+                .map(|&(lo, hi)| {
+                    if lo.x > hi.x {
+                        (Vec3::ZERO, 0.0)
+                    } else {
+                        (
+                            ((lo + hi) * 0.5 - scene.render_origin).as_vec3(),
+                            ((hi - lo).length() * 0.5) as f32,
+                        )
+                    }
+                })
+                .collect()
+        })
     }
 
     pub fn set_params(

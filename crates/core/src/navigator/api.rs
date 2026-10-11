@@ -5,6 +5,8 @@ fn build_pool() -> Option<std::sync::Arc<rayon::ThreadPool>> {
     rayon::ThreadPoolBuilder::new()
         .num_threads((cpus / 4).clamp(1, 3))
         .thread_name(|i| format!("navigator map {i}"))
+        // (minutes of work on a big map that the frame need not wait for, see `threads`)
+        .start_handler(|_| crate::threads::lower_thread_priority())
         .build()
         .ok()
         .map(std::sync::Arc::new)
@@ -61,6 +63,8 @@ impl Navigator {
             surfaces: None,
             global_version: 0,
             roads: None,
+            surfaces_ready: false,
+            roads_building: None,
             route: Route::default(),
             route_mesh: RouteMesh::default(),
             route_cum: (0, Vec::new()),
@@ -93,6 +97,7 @@ impl Navigator {
         let spawned = std::thread::Builder::new()
             .name("navigator map".into())
             .spawn(move || {
+                crate::threads::lower_thread_priority();
                 let t0 = std::time::Instant::now();
                 let pool = build_pool();
                 let m = on_pool(&pool, || world.navigation_map());
@@ -103,6 +108,7 @@ impl Navigator {
                 let ground = std::thread::Builder::new()
                     .name("navigator ground".into())
                     .spawn(move || {
+                        crate::threads::lower_thread_priority();
                         on_pool(&pool_ground, || {
                             let tx_part = tx_ground.clone();
                             let mut emit = |part| {
@@ -164,6 +170,7 @@ impl Navigator {
     /// Navigator 2.0's ground for the map (see [`crate::navmap`]).
     pub fn set_surfaces(&mut self, surfaces: crate::navmap::SurfaceMap) {
         self.surfaces = Some(std::sync::Arc::new(surfaces));
+        self.surfaces_ready = true;
         self.roads = None;
         self.city.roads = None;
     }

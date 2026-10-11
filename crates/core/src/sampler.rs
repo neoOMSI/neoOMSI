@@ -211,7 +211,20 @@ fn sample(tid: u32, length: f64) -> anyhow::Result<std::path::PathBuf> {
         let process = GetCurrentProcess();
         // SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS
         opts(0x2 | 0x4);
-        init(process, std::ptr::null(), 1);
+        // (the PDB lies next to the program; without a search path dbghelp only looks in the
+        // working folder, and a run started elsewhere gets no names)
+        let search: Option<Vec<u16>> = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.as_os_str().to_owned()))
+            .map(|d| {
+                use std::os::windows::ffi::OsStrExt;
+                d.encode_wide().chain([0]).collect()
+            });
+        init(
+            process,
+            search.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            1,
+        );
         let mut names: HashMap<u64, String> = HashMap::new();
         for stack in stacks.keys() {
             for &pc in stack {

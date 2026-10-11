@@ -38,6 +38,8 @@ geometry = { path = "../geometry" }
 render = { path = "../render" }
 simulation = { path = "../simulation" }
 legacy-plugin = { path = "../legacy-plugin" }
+# the game's allocator (see lib.rs)
+mimalloc = { version = "0.1", default-features = false }
 legacy-vehicle = { path = "../vehicle" }
 content = { path = "../content" }
 timetable = { path = "../timetable" }

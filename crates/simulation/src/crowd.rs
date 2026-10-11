@@ -96,8 +96,15 @@ impl Block {
 
     /// Whether `p` lies within `margin` of the box.
     pub fn near(&self, p: DVec2, margin: f64) -> bool {
-        let (r, f) = self.axes();
         let d = p - self.center;
+        // (nothing farther than the corners of the widened box can be in it: told without
+        // the heading's sine and cosine, which were most of the people's step at a station
+        // with hundreds of people and parked cars - the margin keeps rounding on the safe side)
+        let (hx, hy) = (self.half.x + margin, self.half.y + margin);
+        if d.length_squared() > (hx * hx + hy * hy) * (1.0 + 1e-9) + 1e-9 {
+            return false;
+        }
+        let (r, f) = self.axes();
         d.dot(r).abs() < self.half.x + margin && d.dot(f).abs() < self.half.y + margin
     }
 }
@@ -723,6 +730,44 @@ mod tests {
             fixed: false,
             ghost: false,
             corridor: None,
+        }
+    }
+
+    #[test]
+    fn near_a_block_is_told_as_by_its_axes() {
+        // (the quick test by distance may only leave out what the axes leave out)
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for _ in 0..2000 {
+            let b = Block {
+                center: DVec2::new(rnd() * 200.0 - 100.0, rnd() * 200.0 - 100.0),
+                half: DVec2::new(rnd() * 6.0, rnd() * 9.0),
+                heading: rnd() * 7.0 - 0.5,
+                vel: DVec2::ZERO,
+            };
+            let (r, f) = b.axes();
+            for _ in 0..50 {
+                let margin = rnd() * 30.0;
+                // points around the box, a few right on the widened edges and corners
+                let (x, y) = if rnd() < 0.2 {
+                    (
+                        (b.half.x + margin) * if rnd() < 0.5 { -1.0 } else { 1.0 },
+                        (b.half.y + margin) * (rnd() * 2.0 - 1.0),
+                    )
+                } else {
+                    ((rnd() * 2.0 - 1.0) * 60.0, (rnd() * 2.0 - 1.0) * 60.0)
+                };
+                let p = b.center + r * x + f * y;
+                let d = p - b.center;
+                let by_axes =
+                    d.dot(r).abs() < b.half.x + margin && d.dot(f).abs() < b.half.y + margin;
+                assert_eq!(b.near(p, margin), by_axes, "{b:?} {p:?} {margin}");
+            }
         }
     }
 

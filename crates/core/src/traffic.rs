@@ -6720,10 +6720,11 @@ impl Traffic {
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
-            // (a few cars per job: every job handed out wakes a worker, and the waking cost
-            // the main thread more than a car's work)
+            // (a car per job: in packs of four the forty cars and buses of a busy station
+            // kept ten workers busy while the others waited, and the frame waited for the
+            // slowest pack of scripts - a third longer than for the slowest car)
             work.par_iter_mut()
-                .with_min_len(4)
+                .with_min_len(1)
                 .for_each(|(state, body, vehicle, frame, trail)| {
                     let t0 = std::time::Instant::now();
                     let ground = vehicle.ground.clone();

@@ -1,6 +1,23 @@
 use super::*;
 
 impl Navigator {
+    /// The panel's ground is to be built again: the one there is drawn until the new one is
+    /// ready, and not more often than every second and a half while the map arrives (dropped
+    /// at once, the panel showed no ground for a few frames with each part - it flickered).
+    fn roads_stale(&mut self) {
+        if let Some(r) = self.roads.as_mut() {
+            r.lanes_seen = usize::MAX;
+        }
+    }
+
+    /// The same for the city map: its ground is built again on its thread, the old one shown
+    /// meanwhile.
+    fn city_roads_stale(&mut self) {
+        if let Some(r) = self.city.roads.as_mut() {
+            r.0 = u64::MAX;
+        }
+    }
+
     pub fn frame(&mut self, renderer: &Renderer, scene: &mut Scene, f: &NavFrame) {
         self.panel_overlay = None;
         if !self.enabled && !self.city.open && !self.arrows && self.shown < 0.01 {
@@ -25,9 +42,15 @@ impl Navigator {
                             .get_or_insert_with(|| std::sync::Arc::new(Default::default())),
                     );
                     map.chunks.extend(part);
+                    // (the parts come nearest first: one with nothing near the bus means
+                    // the ground around it is whole)
+                    if !near && !self.surfaces_ready {
+                        self.surfaces_ready = true;
+                        self.roads_stale();
+                    }
                     if near {
-                        self.roads = None;
-                        self.city.roads = None;
+                        self.roads_stale();
+                        self.city_roads_stale();
                     }
                 }
                 Ok(MapPart::GroundDone(meta)) => {
@@ -38,9 +61,11 @@ impl Navigator {
                     );
                     map.rails = meta.rails;
                     map.materials = meta.materials;
-                    self.city.roads = None;
-                    self.roads = None;
-                    log::info!("navigator: the map's ground is there ({} chunks)", map.chunks.len());
+                    let chunks = map.chunks.len();
+                    self.surfaces_ready = true;
+                    self.city_roads_stale();
+                    self.roads_stale();
+                    log::info!("navigator: the map's ground is there ({chunks} chunks)");
                 }
                 Ok(MapPart::Network(part)) => {
                     let (net, pos, streets, graph) = *part;
@@ -54,8 +79,8 @@ impl Navigator {
                     self.global = Some(std::sync::Arc::new(net));
                     self.stop_pos = std::sync::Arc::new(pos);
                     self.global_version += 1;
-                    self.city.roads = None;
-                    self.roads = None;
+                    self.city_roads_stale();
+                    self.roads_stale();
                     self.route = Route {
                         version: self.route.version + 1,
                         ..Route::default()
@@ -326,7 +351,9 @@ impl Navigator {
             .or(f.traffic.map(|t| &t.net))
             .or(own.as_deref());
         let lanes_now = net.map(|n| n.lanes.len()).unwrap_or(0);
-        let surfaces = self.surfaces.clone();
+        // (the panel goes over to the ground once it is whole around the bus: drawn from the
+        // first parts on, it changed with each part for the first seconds - it flickered)
+        let surfaces = self.surfaces.clone().filter(|_| self.surfaces_ready);
         // Navigator 2.0 draws the ground the map lays; the lanes are the fallback while
         // that is being built
         let reach = if surfaces.is_some() {
@@ -342,18 +369,60 @@ impl Navigator {
             }
         };
         let mut road_verts = None;
-        if rebuild {
-            if net.is_some() || surfaces.is_some() {
+        if let Some(rx) = self.roads_building.as_ref() {
+            match rx.try_recv() {
+                Ok((anchor, lanes_seen, verts)) => {
+                    self.roads_building = None;
+                    road_verts = Some(verts);
+                    self.roads = Some(Roads {
+                        anchor,
+                        lanes_seen,
+                        verts: 0,
+                        built_at: self.time,
+                    });
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.roads_building = None,
+            }
+        }
+        if rebuild && self.roads_building.is_none() && road_verts.is_none() {
+            // the ground from the map's surfaces on a thread of its own: built here, every
+            // part of the map arriving near the bus and every few hundred metres driven
+            // held the frame up for a tenth of a second
+            if let Some(sm) = surfaces.clone().filter(|_| self.roads.is_none()) {
+                // (nothing drawn yet - a picture taken offscreen: built now)
+                let anchor = f.bus.truncate();
+                let mut p = Painter::new();
+                build_surfaces(&mut p, &sm, anchor, anchor, SURFACE_RADIUS, false, 1.0);
+                road_verts = Some(p.verts);
+                self.roads = Some(Roads {
+                    anchor,
+                    lanes_seen: lanes_now,
+                    verts: 0,
+                    built_at: self.time,
+                });
+            } else if let Some(sm) = surfaces.clone() {
+                let anchor = f.bus.truncate();
+                let (tx, rx) = std::sync::mpsc::channel();
+                let spawned = std::thread::Builder::new()
+                    .name("navigator ground".into())
+                    .spawn(move || {
+                        let mut p = Painter::new();
+                        build_surfaces(&mut p, &sm, anchor, anchor, SURFACE_RADIUS, false, 1.0);
+                        let _ = tx.send((anchor, lanes_now, p.verts));
+                    })
+                    .is_ok();
+                if spawned {
+                    self.roads_building = Some(rx);
+                }
+            } else if net.is_some() {
                 let anchor = f.bus.truncate();
                 let mut p = Painter::new();
                 let t0 = std::time::Instant::now();
-                match (surfaces.as_deref(), self.graph.as_deref().filter(|_| global.is_some()), net) {
-                    (Some(sm), _, _) => {
-                        build_surfaces(&mut p, sm, anchor, anchor, SURFACE_RADIUS, false, 1.0)
-                    }
-                    (None, Some(g), _) => build_roads_from(&mut p, g, anchor),
-                    (None, None, Some(net)) => build_roads(&mut p, net, anchor),
-                    (None, None, None) => {}
+                match (self.graph.as_deref().filter(|_| global.is_some()), net) {
+                    (Some(g), _) => build_roads_from(&mut p, g, anchor),
+                    (None, Some(net)) => build_roads(&mut p, net, anchor),
+                    (None, None) => {}
                 }
                 if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
                     log::info!(

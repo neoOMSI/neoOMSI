@@ -117,8 +117,11 @@ fn switching_lod_uses_the_current_pose_and_recycles_contact_shadows() {
                 scene.instances[*instance].visible,
                 p.ty.mesh_at(k).0 == expected
             );
-            assert_ne!(p.render.skins[k].0, p.ty.mesh_at(k).1.data.positions);
-            assert!(p.render.skins[k].0.iter().all(|v| v.is_finite()));
+            // (only the level shown is skinned)
+            if p.ty.mesh_at(k).0 == expected {
+                assert_ne!(p.render.skins[k].0, p.ty.mesh_at(k).1.data.positions);
+                assert!(p.render.skins[k].0.iter().all(|v| v.is_finite()));
+            }
         }
         assert!(p.render.blob.is_none());
     }

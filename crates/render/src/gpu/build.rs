@@ -2671,6 +2671,8 @@ impl Renderer {
             defer_views: Default::default(),
             uploads: Default::default(),
             pending_meshes: Default::default(),
+            spare_vertices: Default::default(),
+            main_bundles: Default::default(),
             freed: std::cell::OnceCell::new(),
         }
     }

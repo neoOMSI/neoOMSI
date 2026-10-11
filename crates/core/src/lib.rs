@@ -1,3 +1,10 @@
+/// The game's allocator, on every system (the Android library as well as the program):
+/// the render threads recording, the tile loaders and the navigator's map building all
+/// allocate at once, and on Windows the main thread spent a tenth of a busy station's frame
+/// waiting for the process heap's lock. mimalloc keeps a heap per thread.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod admin;
 mod ambience;
 mod camera_arm;

@@ -436,3 +436,172 @@ fn vehicle_box_contains_the_driver() {
     assert!(!point_in_vehicle_box(DVec3::new(104.6, 200.0, 34.0), &bus));
     assert!(!point_in_vehicle_box(DVec3::new(93.0, 200.0, 31.0), &bus));
 }
+
+fn line_of_instances(renderer: &Renderer, scene: &mut Scene, n: usize) -> MeshId {
+    let material = renderer.add_material(scene, None, AlphaMode::Opaque, [1.0; 4], true);
+    let data = MeshData {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+        normals: vec![Vec3::Z; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        ranges: vec![(0, 3, 0)],
+        ..Default::default()
+    };
+    let mesh = renderer.add_mesh(scene, &data);
+    for id in 0..n {
+        renderer.add_instance(
+            scene,
+            mesh,
+            DVec3::new(id as f64 * 10.0, 0.0, 0.0),
+            Mat4::IDENTITY,
+            vec![material],
+        );
+    }
+    mesh
+}
+
+fn assert_blocks_hold_their_instances(scene: &Scene) {
+    for (k, i) in scene.instances.iter().enumerate() {
+        let (lo, hi) = scene.block_bounds[k / crate::world::CULL_BLOCK];
+        let c = i.world_centre();
+        let r = i.bounds.radius as f64;
+        assert!(
+            (c - r).cmpge(lo - 1e-6).all() && (c + r).cmple(hi + 1e-6).all(),
+            "instance {k} at {c:?} outside its block {lo:?}..{hi:?}"
+        );
+    }
+}
+
+#[test]
+fn culling_blocks_hold_moved_and_new_instances() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mesh = line_of_instances(&renderer, &mut scene, 1000);
+    renderer.prepare(&mut scene);
+    assert_blocks_hold_their_instances(&scene);
+    // moved far off, a few at a time over several frames, and more added
+    for frame in 0..40 {
+        let k = (frame * 37) % 1000;
+        renderer.set_transform(
+            &mut scene,
+            k,
+            DVec3::new(-5000.0, 3000.0 + frame as f64, 20.0),
+            Mat4::IDENTITY,
+        );
+        if frame % 10 == 0 {
+            renderer.add_instance(
+                &mut scene,
+                mesh,
+                DVec3::new(frame as f64, -800.0, 0.0),
+                Mat4::IDENTITY,
+                vec![0],
+            );
+        }
+        renderer.prepare(&mut scene);
+        assert_blocks_hold_their_instances(&scene);
+    }
+}
+
+#[test]
+fn instances_near_a_point_are_all_that_can_be_in_reach() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mesh = line_of_instances(&renderer, &mut scene, 1000);
+    renderer.prepare(&mut scene);
+    let p = DVec3::new(4000.0, 5.0, 0.0);
+    let reach = 120.0;
+    let check = |scene: &Scene| {
+        let mut near = Vec::new();
+        scene.instances_near(p, reach, &mut near);
+        assert!(near.windows(2).all(|w| w[0] < w[1]), "in order, each once");
+        let wanted: Vec<usize> = (0..scene.instances.len())
+            .filter(|&i| (scene.instances[i].world_centre() - p).length_squared() < reach * reach)
+            .collect();
+        for i in &wanted {
+            assert!(
+                near.binary_search(i).is_ok(),
+                "instance {i} in reach left out"
+            );
+        }
+        // (and far fewer than all of them)
+        assert!(near.len() < scene.instances.len() / 2);
+    };
+    check(&scene);
+    // moved into reach and made there since the boxes were measured
+    renderer.set_transform(&mut scene, 3, p + DVec3::X, Mat4::IDENTITY);
+    renderer.add_instance(&mut scene, mesh, p - DVec3::X, Mat4::IDENTITY, vec![0]);
+    check(&scene);
+    renderer.prepare(&mut scene);
+    check(&scene);
+}
+
+#[test]
+fn kept_main_bundles_are_drawn_again_only_where_nothing_changed() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mesh = line_of_instances(&renderer, &mut scene, 8);
+    let other = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.5; 4], true);
+    let mut renderer = renderer;
+    let view = Camera {
+        position: DVec3::new(0.0, -20.0, 2.0),
+        yaw: 0.0,
+        pitch: 0.0,
+        roll: 0.0,
+        fov_deg: 60.0,
+        near: 0.1,
+        far: 500.0,
+    };
+    // (a picture made makes the camera's group)
+    let _ = renderer.render_to_image(&mut scene, 64, 64, &view, &Lighting::default());
+    let renderer = renderer;
+    let camera = scene.camera_bind_group.clone().expect("camera bind group");
+    let pp = renderer.main_pass(false, false);
+    let mut batches: Vec<Batch> = (0..1200)
+        .map(|k| Batch {
+            pipe: PIPE_OPAQUE,
+            mesh: mesh as u32,
+            first: 0,
+            count: 3,
+            material: 0,
+            instances: k..k + 1,
+        })
+        .collect();
+    let kept = std::cell::RefCell::new(KeptBundles::default());
+    let record = |batches: &[Batch]| {
+        record_bundles(
+            &renderer.device,
+            renderer.encoding_pool.as_deref(),
+            &scene,
+            batches,
+            pp,
+            &camera,
+            renderer.format,
+            1,
+            Some(&kept),
+        )
+    };
+    let first = record(&batches);
+    assert!(first.len() > 2, "several parts");
+    // the same batches: every part drawn with the bundle recorded before
+    let again = record(&batches);
+    assert_eq!(again, first);
+    // one batch of the last part bound to another material: that part alone is new
+    batches[1199].material = other as u32;
+    let changed = record(&batches);
+    let last = first.len() - 1;
+    assert_eq!(changed[..last], first[..last]);
+    assert_ne!(changed[last], first[last]);
+    // without keeping, nothing is taken over
+    let fresh = record_bundles(
+        &renderer.device,
+        renderer.encoding_pool.as_deref(),
+        &scene,
+        &batches,
+        pp,
+        &camera,
+        renderer.format,
+        1,
+        None,
+    );
+    assert!(fresh.iter().all(|b| !changed.contains(b)));
+}

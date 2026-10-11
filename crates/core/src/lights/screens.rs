@@ -66,7 +66,10 @@ fn find_panels(f: &Frame, scene: &Scene) -> Vec<Panel> {
     let glow = led_glow();
     let mut out = Vec::new();
 
-    for inst in scene.instances.iter() {
+    // (the scene's blocks out of reach passed by: their instances fail the test below)
+    let mut near = Vec::new();
+    scene.instances_near(f.camera, reach, &mut near);
+    for inst in near.iter().map(|&i| &scene.instances[i]) {
         if !inst.visible || (inst.world_centre() - f.camera).length_squared() >= reach * reach {
             continue;
         }

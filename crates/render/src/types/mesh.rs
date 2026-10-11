@@ -133,7 +133,14 @@ impl Renderer {
             return;
         }
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-        let mut verts: Vec<Vertex> = Vec::with_capacity(n);
+        // (a list kept from a mesh sent before: a new one for every person's mesh, every
+        // frame, was as slow as the copying)
+        let mut pending = self.pending_meshes.borrow_mut();
+        let verts = pending
+            .entry(id)
+            .or_insert_with(|| self.spare_vertices.borrow_mut().pop().unwrap_or_default());
+        verts.clear();
+        verts.reserve(n);
         for ((p, nrm), uv) in positions.iter().zip(normals).zip(uvs) {
             lo = lo.min(*p);
             hi = hi.max(*p);
@@ -143,8 +150,9 @@ impl Renderer {
                 uv: uv.to_array(),
             });
         }
-        // Keep only the last pose before submission, without walking every other person's mesh.
-        self.pending_meshes.borrow_mut().insert(id, verts);
+        // (only the last pose before submission is kept, without walking every other
+        // person's mesh)
+        drop(pending);
         if n > 0 {
             m.bounds_center = (lo + hi) * 0.5;
             m.bounds_radius = (hi - m.bounds_center).length();
@@ -205,7 +213,11 @@ impl Renderer {
             }
         }
         drop(uploads);
-        pending.clear();
+        // (the lists go back for the next frame; drain retains the table's capacity)
+        let mut spare = self.spare_vertices.borrow_mut();
+        spare.extend(pending.drain().map(|(_, v)| v));
+        // (no more than a frame's worth is kept)
+        spare.truncate(512);
     }
 
     pub fn add_mesh(&self, scene: &mut Scene, data: &MeshData) -> MeshId {

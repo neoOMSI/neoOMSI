@@ -89,6 +89,8 @@ impl Humans {
             if level != p.render.level {
                 p.render.level = level;
                 p.render.skinned = false;
+                // (only the level shown is skinned: the new one is made afresh)
+                p.render.skin_bones = None;
             }
             let d = p.position + DVec3::Z * 0.9 - from;
             let dist = d.length();
@@ -141,10 +143,12 @@ impl Humans {
                         skin_bones,
                         pose_changed,
                         active_bones,
+                        level,
                         ..
                     },
                 ..
             } = p;
+            let level = *level;
             *pose_changed = false;
             let bones = if let Some(bones) = active_bones {
                 *bones
@@ -181,8 +185,13 @@ impl Humans {
                 return;
             }
             skins.resize_with(ty.mesh_count(), Default::default);
+            // (the other levels' meshes are hidden: skinning them too took most of the
+            // posing - a realistic passenger has a mesh of each level)
             for k in 0..ty.mesh_count() {
-                let (_, m) = ty.mesh_at(k);
+                let (l, m) = ty.mesh_at(k);
+                if l != level {
+                    continue;
+                }
                 let (pos, nrm) = &mut skins[k];
                 skin(m, &bones, pos, nrm);
             }
@@ -209,6 +218,9 @@ impl Humans {
             if go {
                 if p.render.pose_changed || !p.render.skinned {
                     for (k, (id, _)) in p.render.meshes.iter().enumerate() {
+                        if p.ty.mesh_at(k).0 != p.render.level {
+                            continue;
+                        }
                         if let Some((pos, nrm)) = p.render.skins.get(k) {
                             renderer.update_mesh(scene, *id, pos, nrm, &p.ty.mesh_at(k).1.data.uvs);
                         }

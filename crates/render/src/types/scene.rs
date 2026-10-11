@@ -75,38 +75,43 @@ impl RenderPhase {
     ];
 }
 
+/// (`repr(C)`, the fields every pass over all the scene's objects reads first: the
+/// culling of the picture and of each mirror and the search for shadow casters go through
+/// tens of thousands of objects a frame, and with the fields where the compiler put them
+/// each object cost them four or five cache lines instead of one or two)
+#[repr(C)]
 pub struct Instance {
-    pub mesh: MeshId,
-    pub transform: Mat4,
     pub origin: DVec3,
+    pub(crate) bounds: InstanceBounds,
+    pub lod: (f32, f32),
+    pub object_radius: f32,
+    pub mesh: MeshId,
+    pub detail: f32,
+    pub(crate) base: u32,
+    pub visible: bool,
+    pub mirror_only: bool,
+    pub blob: bool,
+    pub surface: bool,
+    pub any_distance: bool,
+    pub casts_shadow: bool,
+    pub omsi_caster: bool,
+    pub presurface: bool,
+    pub near_only: Option<[f64; 4]>,
+    pub transform: Mat4,
     pub materials: Vec<MaterialId>,
     pub slot_alpha: Vec<f32>,
     pub slot_light: Vec<f32>,
     pub slot_night: Vec<f32>,
-    pub visible: bool,
     pub slot_uv: Vec<[f32; 2]>,
     pub interior: f32,
     pub interior_lamps: u32,
     /// Enclosed cabin mesh, independent of switched interior lamps.
     pub cabin: bool,
-    pub(crate) base: u32,
-    pub(crate) bounds: InstanceBounds,
-    pub surface: bool,
-    pub presurface: bool,
     pub render_phase: RenderPhase,
     pub surface_bias: bool,
     pub blend_sort_origin: Option<DVec3>,
-    pub lod: (f32, f32),
-    pub blob: bool,
     pub ground_layer: bool,
     pub decal: bool,
-    pub object_radius: f32,
-    pub detail: f32,
-    pub any_distance: bool,
-    pub near_only: Option<[f64; 4]>,
-    pub mirror_only: bool,
-    pub omsi_caster: bool,
-    pub casts_shadow: bool,
     pub roof: Option<f32>,
     pub ordered: bool,
     /// Position in a model's authored mesh order when `ordered` is set. This must not
@@ -168,6 +173,14 @@ pub struct Scene {
     pub(crate) cache_bounds: bool,
     pub(crate) bounds_meshes: Vec<bool>,
     pub(crate) bounds_dirty: bool,
+    /// The box (lowest, highest corner) around each `CULL_BLOCK` instances in a row, for the
+    /// culling to pass by whole blocks out of the picture: an instance that moves grows its
+    /// block's box at once, and the boxes of such blocks are measured again, a few a frame.
+    pub(crate) block_bounds: Vec<(DVec3, DVec3)>,
+    pub(crate) block_dirty: Vec<bool>,
+    pub(crate) block_cursor: usize,
+    /// How many instances there were when the boxes were last brought up to date.
+    pub(crate) block_instances: usize,
     pub(crate) cpu_models: Vec<[[f32; 4]; 4]>,
     pub(crate) cpu_params: Vec<[f32; 4]>,
     pub(crate) light_grid: LightGrid,
@@ -178,6 +191,45 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// The instances whose sphere (`Instance::world_centre` and its radius) may come within
+    /// `reach` of `p`, in their order: every instance of the culling's blocks whose box is
+    /// in reach, those moved or made since the boxes were last measured, and all of them
+    /// while the boxes are being made anew. A pass over the scene for what is near a point
+    /// (the screens' and LEDs' lights) looks at these instead of all.
+    pub fn instances_near(&self, p: DVec3, reach: f64, out: &mut Vec<usize>) {
+        out.clear();
+        let n = self.instances.len();
+        // (the boxes hold the instances as `prepare_bounds` last saw them, with the bounds
+        // that `world_centre` reads until then)
+        let measured = self.block_instances;
+        if !self.cache_bounds || self.dirty || measured > n {
+            out.extend(0..n);
+            return;
+        }
+        let near = |b: usize| {
+            let (lo, hi) = self.block_bounds[b];
+            // (the box's nearest point; an empty block, lo > hi, is never near)
+            lo.x <= hi.x && (p.clamp(lo, hi) - p).length_squared() < reach * reach
+        };
+        for b in 0..self.block_bounds.len() {
+            if near(b) {
+                let end = ((b + 1) * crate::world::CULL_BLOCK).min(measured);
+                out.extend(b * crate::world::CULL_BLOCK..end);
+            }
+        }
+        // (moved since: their box may not hold them yet)
+        let before = out.len();
+        for &i in &self.changed {
+            if i < measured && !near(i / crate::world::CULL_BLOCK) {
+                out.push(i);
+            }
+        }
+        out.extend(measured..n);
+        if out.len() > before {
+            out.sort_unstable();
+        }
+    }
+
     pub fn gpu_bytes(&self) -> (u64, u64, u64) {
         let tex = self.textures.iter().map(|t| t.bytes).sum();
         let mut seen: std::collections::HashSet<*const ()> = std::collections::HashSet::new();

@@ -159,6 +159,11 @@ pub struct Navigator {
     build_failed: bool,
     pub global_version: u64,
     roads: Option<Roads>,
+    /// The map's ground has arrived around the bus (see `frame`).
+    surfaces_ready: bool,
+    /// The panel's ground being built on a thread of its own (anchor, lanes seen, vertices):
+    /// the old ground is drawn meanwhile.
+    roads_building: Option<std::sync::mpsc::Receiver<(DVec2, usize, Vec<::user_interface::paint::Vertex>)>>,
     route: Route,
     route_mesh: RouteMesh,
     /// The route's lanes (their fingerprint) and how far along the route each begins.
