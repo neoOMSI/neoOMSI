@@ -2531,6 +2531,25 @@ impl Renderer {
         let gpu_timers = [GpuTimers::new(&device), GpuTimers::new(&device)];
         let puddles = (!leave_out_enhanced)
             .then(|| puddles::Pipelines::new(&device, &shader, &camera_layout, &material_layout));
+        let encoding_pool = if ::legacy_config::env::var_os("OMSI_NO_RENDER_POOL").is_some() {
+            None
+        } else {
+            let workers = std::thread::available_parallelism()
+                .map(|n| n.get() / 2)
+                .unwrap_or(2)
+                .clamp(2, 8);
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .thread_name(|i| format!("render-{i}"))
+                .build()
+                .ok()
+                .map(Arc::new)
+        };
+        let submitter = if ::legacy_config::env::var_os("OMSI_NO_SUBMIT_THREAD").is_some() {
+            None
+        } else {
+            Submitter::new(queue.clone(), encoding_pool.clone())
+        };
         Renderer {
             _device_poller: DevicePoller::start(&device),
             upscale_pipeline,
@@ -2645,19 +2664,12 @@ impl Renderer {
             counts: Default::default(),
             profiling: ::legacy_config::env::var_os("OMSI_PROFILE").is_some(),
             draw_audit_at: std::time::Instant::now(),
-            encoding_pool: if ::legacy_config::env::var_os("OMSI_NO_RENDER_POOL").is_some() {
-                None
-            } else {
-                let workers = std::thread::available_parallelism()
-                    .map(|n| n.get() / 2)
-                    .unwrap_or(2)
-                    .clamp(2, 8);
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(workers)
-                    .thread_name(|i| format!("render-{i}"))
-                    .build()
-                    .ok()
-            },
+            submitter,
+            encoding_pool,
+            queued: Default::default(),
+            defer_next: Default::default(),
+            defer_views: Default::default(),
+            uploads: Default::default(),
             pending_meshes: Default::default(),
             freed: std::cell::OnceCell::new(),
         }

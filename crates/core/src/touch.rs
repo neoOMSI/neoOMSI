@@ -1562,6 +1562,8 @@ impl Touch {
         let Some((gpu, _)) = self.gpu.as_mut() else {
             return;
         };
+        // (drawn over the picture: its commands go first)
+        r.flush_deferred();
         gpu.upload(&r.device, &r.queue, 0, &self.painter.verts);
         gpu.upload_atlas(&r.queue, &mut self.atlas);
         let layers = [Layer::flat([0.0, 0.0, w as f32, h as f32], 0.0, 1.0)];

@@ -152,6 +152,7 @@ impl Renderer {
         cursor_transforms: [Option<Mat4>; 2],
         navigator: Option<(TextureId, [Mat4; 2])>,
     ) {
+        self.flush_deferred();
         let Some(menu) = scene.overlays.get(menu_range) else {
             return;
         };

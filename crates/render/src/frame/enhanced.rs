@@ -228,8 +228,7 @@ impl Renderer {
             ],
             layers: lighting.cloud_layers,
         };
-        self.queue
-            .write_buffer(&self.enh_buf, 0, bytemuck::bytes_of(&u));
+        self.write_buffer(&self.enh_buf, 0, bytemuck::bytes_of(&u));
         redraw
     }
 }

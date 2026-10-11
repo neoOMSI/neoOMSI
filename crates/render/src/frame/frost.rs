@@ -266,7 +266,7 @@ impl Renderer {
                 ],
             ];
             for (buf, p) in s.bufs.iter().zip(&params) {
-                self.queue.write_buffer(buf, 0, bytemuck::cast_slice(p));
+                write_gathered(&self.uploads, &self.queue, buf, 0, bytemuck::cast_slice(p));
             }
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {

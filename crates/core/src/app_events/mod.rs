@@ -19,6 +19,9 @@ impl ApplicationHandler for App {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(r) = self.renderer.as_ref() {
+            r.wait_submitted();
+        }
         self.surface = None;
         self.touch.drop_gpu();
         self.keys.clear();
@@ -165,6 +168,9 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(r) = self.renderer.as_ref() {
+            r.wait_submitted();
+        }
         game_lists::flush_settings(true);
         self.finish_session();
         if let Some(lan) = self.lan.take() {

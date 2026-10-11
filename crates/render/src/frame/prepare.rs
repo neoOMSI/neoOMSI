@@ -47,7 +47,7 @@ impl Renderer {
             let content: &[u8] = bytemuck::cast_slice(&data[start..end]);
             let offset = (start * std::mem::size_of::<T>()) as u64;
             if offset + content.len() as u64 <= buffer.size() {
-                self.queue.write_buffer(buffer, offset, content);
+                self.write_buffer(buffer, offset, content);
                 bytes += content.len() as u64;
                 writes += 1;
             }
@@ -157,8 +157,8 @@ impl Renderer {
                 && scene.cpu_models.len() == scene.uploaded_entries as usize
             {
                 if !mb.is_empty() {
-                    self.queue.write_buffer(buf, mo, mb);
-                    self.queue.write_buffer(params_buf, po, pb);
+                    self.write_buffer(buf, mo, mb);
+                    self.write_buffer(params_buf, po, pb);
                 }
                 scene.cpu_models.extend_from_slice(&mats);
                 scene.cpu_params.extend_from_slice(&params);
@@ -247,8 +247,8 @@ impl Renderer {
             if buf.size() as usize >= bytes.len()
                 && params_buf.size() as usize >= cpu_param_bytes.len()
             {
-                self.queue.write_buffer(buf, 0, bytes);
-                self.queue.write_buffer(params_buf, 0, cpu_param_bytes);
+                self.write_buffer(buf, 0, bytes);
+                self.write_buffer(params_buf, 0, cpu_param_bytes);
                 scene.dirty = false;
                 return;
             }
@@ -266,8 +266,8 @@ impl Renderer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.queue.write_buffer(&model_buf, 0, bytes);
-        self.queue.write_buffer(&params_buf, 0, cpu_param_bytes);
+        self.write_buffer(&model_buf, 0, bytes);
+        self.write_buffer(&params_buf, 0, cpu_param_bytes);
         scene.model_buf = Some(model_buf);
         scene.params_buf = Some(params_buf);
         self.rebuild_camera_bind_group(scene);
@@ -445,7 +445,7 @@ impl Renderer {
             self.rebuild_camera_bind_group(scene);
         }
         if let Some(b) = &scene.draw_buf {
-            self.queue.write_buffer(b, 0, bytes);
+            self.write_buffer(b, 0, bytes);
         }
     }
 }

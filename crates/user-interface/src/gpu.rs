@@ -113,6 +113,7 @@ pub struct Gpu {
     atlas_size: u32,
     /// (to make the atlas texture anew when the atlas grows)
     device: wgpu::Device,
+    next_slot: u64,
 }
 
 impl Gpu {
@@ -248,6 +249,7 @@ impl Gpu {
             tex_layout,
             uniform,
             uniform_group,
+            next_slot: 0,
             sampler,
             buffers: Vec::new(),
             textures: Vec::new(),
@@ -603,8 +605,14 @@ impl Gpu {
         draws: &[Draw],
     ) {
         let (w, h) = (size.0.max(1), size.1.max(1));
+        let n_layers = layers.len().clamp(1, MAX_LAYERS as usize) as u64;
+        if self.next_slot + n_layers > MAX_LAYERS {
+            self.next_slot = 0;
+        }
+        let base = self.next_slot;
+        self.next_slot += n_layers;
         // the layers' uniforms
-        let mut data = vec![0u8; (SLOT * MAX_LAYERS) as usize];
+        let mut data = vec![0u8; (SLOT * n_layers) as usize];
         for (k, l) in layers.iter().take(MAX_LAYERS as usize).enumerate() {
             let vp = if l.viewport[2] > 0.0 {
                 l.viewport
@@ -621,11 +629,7 @@ impl Gpu {
             let at = k * SLOT as usize;
             data[at..at + size_of::<Uniform>()].copy_from_slice(bytemuck::bytes_of(&u));
         }
-        queue.write_buffer(
-            &self.uniform,
-            0,
-            &data[..(SLOT as usize * layers.len().clamp(1, MAX_LAYERS as usize))],
-        );
+        queue.write_buffer(&self.uniform, base * SLOT, &data);
         let k = match self.msaa.iter().position(|m| (m.1, m.2) == (w, h)) {
             Some(k) => Some(k),
             None if self.samples > 1 => {
@@ -672,10 +676,14 @@ impl Gpu {
             let Some(Some(tex)) = self.textures.get(d.texture).or(self.textures.first()) else {
                 continue;
             };
-            if d.range.is_empty() || d.layer as u64 >= MAX_LAYERS {
+            if d.range.is_empty() || d.layer as u64 >= n_layers {
                 continue;
             }
-            pass.set_bind_group(0, &self.uniform_group, &[(d.layer as u64 * SLOT) as u32]);
+            pass.set_bind_group(
+                0,
+                &self.uniform_group,
+                &[((base + d.layer as u64) * SLOT) as u32],
+            );
             pass.set_bind_group(1, &tex.group, &[]);
             // A flat layer's `viewport` is the size its pixels are laid out in (an interface in
             // logical pixels): drawn over the whole target, scaled to it. As the rasteriser's

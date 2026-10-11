@@ -90,7 +90,7 @@ impl Glass {
     }
 
     /// Scale the map down level by level into the blurred texture.
-    pub(super) fn blur(&mut self, renderer: &Renderer) {
+    pub(super) fn blur(&mut self, renderer: &Renderer, enc: &mut wgpu::CommandEncoder) {
         let (device, queue) = (&renderer.device, &renderer.queue);
         for k in 0..LEVELS {
             let (w, h) = self.sizes[k + 1];
@@ -99,14 +99,11 @@ impl Glass {
             p.image_rounded(r, 0.0, r, Color::WHITE, true);
             self.chain.upload(device, queue, k, &p.verts);
             let layer = Layer::flat([0.0, 0.0, w as f32, h as f32], 0.0, 1.0);
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("navigator glass"),
-            });
-            // (one submit a level: the layer uniforms are written for each)
+            // (each level's layer uniforms in slots of their own: one encoder for all)
             self.chain.render(
                 device,
                 queue,
-                &mut enc,
+                enc,
                 &self.views[k + 1],
                 (w, h),
                 Some(wgpu::Color::TRANSPARENT),
@@ -118,7 +115,6 @@ impl Glass {
                     texture: self.chain_ids[k],
                 }],
             );
-            queue.submit([enc.finish()]);
         }
     }
 }

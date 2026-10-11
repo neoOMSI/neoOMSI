@@ -6,8 +6,10 @@ mod prepare;
 mod render;
 mod render_inner;
 mod shadows;
+mod uploads;
 
 pub(crate) use batching::*;
 pub(crate) use frost::Frost;
 pub(crate) use render::*;
 pub use shadows::*;
+pub(crate) use uploads::*;

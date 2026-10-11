@@ -90,10 +90,32 @@ impl Renderer {
                 view_formats: &[],
             });
         }
+        // (the last picture's commands go first: everything below writes to its buffers)
+        self.wait_submitted();
+        // Left for `present` (see gpu/submit.rs): the window picture drawn with
+        // `render_deferred`, and the mirrors drawn before it. Everything this call writes to a
+        // buffer is copied by its own first command buffer, so the pictures queued before it
+        // keep what they wrote.
+        let defer = self.submitter.is_some()
+            && if with_overlays {
+                std::mem::take(&mut *self.defer_next.get_mut())
+                    && lead_frame
+                    && output_viewport.is_none()
+            } else {
+                projection.is_none() && self.defer_views.get()
+            };
+        if !defer {
+            // (what is queued is drawn before this: the panels it shows, the mirrors)
+            self.flush_deferred();
+        }
         if self.gpu_error.load(std::sync::atomic::Ordering::Relaxed) {
             self.fall_back_to_single_sample(scene);
         }
-        self.collect_gpu_timers();
+        self.open_uploads();
+        // (a queued picture's timers are read once it is submitted)
+        if !self.has_queued() {
+            self.collect_gpu_timers();
+        }
         let tset: Option<wgpu::QuerySet> = self.gpu_timers[with_overlays as usize]
             .as_ref()
             .filter(|t| !t.waiting && !t.unresolved)
@@ -248,7 +270,7 @@ impl Renderer {
                 if let Some((_, buf, _, last)) = scene.overlay_res.get_mut(k).filter(|o| o.0 == tex)
                 {
                     if *last != ndc {
-                        self.queue.write_buffer(buf, 0, bytemuck::cast_slice(&ndc));
+                        self.write_buffer(buf, 0, bytemuck::cast_slice(&ndc));
                         *last = ndc;
                     }
                     continue;
@@ -406,8 +428,7 @@ impl Renderer {
                 side as f32,
                 if side > 0.0 { 1.0 } else { 0.0 },
             ];
-            self.queue
-                .write_buffer(&self.lm_uniform, 0, bytemuck::cast_slice(&v));
+            self.write_buffer(&self.lm_uniform, 0, bytemuck::cast_slice(&v));
         }
         let (spot_vp, spot_info) = {
             let st = self.spot_state.borrow();
@@ -554,8 +575,7 @@ impl Renderer {
             spot_info,
             tune: [lighting.nightmap_gain, lighting.lightmap_gain, 0.0, 0.0],
         };
-        self.queue
-            .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cu));
+        self.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cu));
         let probe_redraw = enhanced
             && (lead_view || self.sky_state.is_none())
             && self.prepare_enhanced(lighting, cam_rel, ro, dt);
@@ -747,9 +767,9 @@ impl Renderer {
         };
         if active.iter().any(|a| *a) {
             let n = scene.instances.len();
-            let (parts, chunk) = split_parts(self.encoding_pool.as_ref(), n);
+            let (parts, chunk) = split_parts(self.encoding_pool.as_deref(), n);
             let mut found: [Vec<DrawItem>; SHADOW_SETS] = std::array::from_fn(|_| Vec::new());
-            for part in run_parts(self.encoding_pool.as_ref(), parts, |p| {
+            for part in run_parts(self.encoding_pool.as_deref(), parts, |p| {
                 casters(p * chunk..((p + 1) * chunk).min(n))
             }) {
                 for (a, b) in found.iter_mut().zip(part) {
@@ -969,10 +989,10 @@ impl Renderer {
             Some((i, z, inside))
         };
         let n = scene.instances.len();
-        let (parts, chunk) = split_parts(self.encoding_pool.as_ref(), n);
+        let (parts, chunk) = split_parts(self.encoding_pool.as_deref(), n);
         let (mut visible, mut found): (Vec<(usize, f32, bool)>, Vec<([u64; 4], f32)>) =
             (Vec::new(), Vec::new());
-        for (v, sizes) in run_parts(self.encoding_pool.as_ref(), parts, |p| {
+        for (v, sizes) in run_parts(self.encoding_pool.as_deref(), parts, |p| {
             let mut sizes = Vec::new();
             let v: Vec<_> = (p * chunk..((p + 1) * chunk).min(n))
                 .filter_map(|i| cull_one(i, &mut sizes))
@@ -1093,7 +1113,7 @@ impl Renderer {
             .iter()
             .any(|&(i, _, _)| scene.instances[i].presurface);
         let mut prepass_found: Option<(Vec<u32>, Vec<Batch>)> = None;
-        let pool = self.encoding_pool.as_ref();
+        let pool = self.encoding_pool.as_deref();
         in_scope(pool, |scope| {
             if prepass_on {
                 let job = &prepass_job;
@@ -1384,7 +1404,7 @@ impl Renderer {
             };
             record_bundles(
                 &self.device,
-                self.encoding_pool.as_ref(),
+                self.encoding_pool.as_deref(),
                 scene,
                 &main_batches,
                 pp,
@@ -1491,8 +1511,7 @@ impl Renderer {
                 pose.far,
             )
                 .to_cols_array_2d();
-            self.queue
-                .write_buffer(&self.spot_cam_bufs[k], 0, bytemuck::bytes_of(&cu_spot));
+            self.write_buffer(&self.spot_cam_bufs[k], 0, bytemuck::bytes_of(&cu_spot));
             let tile = self.spot_tile;
             let x = (k as u32 % 4) * tile;
             let y = self.options.shadow_size + (k as u32 / 4) * tile;
@@ -1536,8 +1555,7 @@ impl Renderer {
                     height.div_ceil(2) as f32,
                 ],
             };
-            self.queue
-                .write_buffer(&self.ao_buf, 0, bytemuck::bytes_of(&u));
+            self.write_buffer(&self.ao_buf, 0, bytemuck::bytes_of(&u));
             let ao = self.ao.as_ref().unwrap();
             {
                 let mut pass = prepass_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2157,8 +2175,7 @@ impl Renderer {
                 ],
                 d: [lighting.nightmap_glow * 4.0, 0.0, 0.0, 0.0],
             };
-            self.queue
-                .write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&pu));
+            self.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&pu));
             let fxaa = with_overlays
                 && self.options.fxaa
                 && ::legacy_config::env::var_os("OMSI_NO_FXAA").is_none();
@@ -2277,7 +2294,7 @@ impl Renderer {
         }
         if let Some((_, bg)) = &scene_target {
             let sharpen = (1.0 - width as f32 / full_w as f32) * 2.0;
-            self.queue.write_buffer(
+            self.write_buffer(
                 &self.upscale_buf,
                 0,
                 bytemuck::cast_slice(&[
@@ -2340,6 +2357,30 @@ impl Renderer {
             }
         }
         stage(self, "encode", "mirror.encode");
+        // this picture's writes, copied before its commands
+        let mut upload_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("picture uploads"),
+                });
+        self.flush_uploads(&mut upload_encoder);
+        if defer {
+            let mut queued = self.queued.borrow_mut();
+            queued.extend([upload_encoder, shadow_encoder, prepass_encoder]);
+            queued.extend(main_parts);
+            queued.push(encoder);
+            drop(queued);
+            if let (Some(t), false) = (
+                self.gpu_timers[with_overlays as usize].as_mut(),
+                timed.is_empty(),
+            ) {
+                t.pending = timed;
+                t.unresolved = true;
+            }
+            stage(self, "finish", "mirror.finish");
+            return;
+        }
+        let upload_commands = upload_encoder.finish();
         let big = shadow_batches.iter().map(|b| b.len()).sum::<usize>() + prepass_batches.len()
             > 64
             || !main_parts.is_empty();
@@ -2355,7 +2396,7 @@ impl Renderer {
         let (shadow_commands, prepass_commands, part_commands, commands, finish_times) =
             if big && self.encoding_pool.is_some() {
                 self.encoding_pool
-                    .as_ref()
+                    .as_deref()
                     .unwrap()
                     .in_place_scope_fifo(|scope| {
                         let (shadow_tx, shadow_rx) = std::sync::mpsc::sync_channel(1);
@@ -2477,7 +2518,7 @@ impl Renderer {
         }
         stage(self, "finish", "mirror.finish");
         self.queue.submit(
-            [shadow_commands, prepass_commands]
+            [upload_commands, shadow_commands, prepass_commands]
                 .into_iter()
                 .chain(part_commands)
                 .chain([commands]),

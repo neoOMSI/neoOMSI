@@ -83,6 +83,8 @@ impl<'w> SurfaceState<'w> {
         if renderer.device_lost().is_some() {
             return;
         }
+        // (not while the submit thread still has a picture of the surface to present)
+        renderer.wait_submitted();
         self.surface.configure(&renderer.device, &self.config);
     }
 
@@ -95,6 +97,7 @@ impl<'w> SurfaceState<'w> {
         if self.config.present_mode == mode || renderer.device_lost().is_some() {
             return;
         }
+        renderer.wait_submitted();
         self.config.present_mode = mode;
         self.config.desired_maximum_frame_latency = 2;
         self.surface.configure(&renderer.device, &self.config);

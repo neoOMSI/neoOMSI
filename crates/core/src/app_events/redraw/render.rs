@@ -10,6 +10,13 @@ impl App {
         let Frame {
             now, raw_dt, dt, ..
         } = *f;
+        // (the last picture is submitted before this frame's pictures write to the card)
+        let __t = Instant::now();
+        if let Some(r) = self.renderer.as_ref() {
+            r.flush_deferred();
+            r.wait_submitted();
+        }
+        *self.profile.entry("wait submit").or_default() += __t.elapsed().as_secs_f64();
         #[cfg(all(feature = "devtools", debug_assertions))]
         self.dev_actions(event_loop);
         #[cfg(all(feature = "devtools", debug_assertions))]
@@ -670,6 +677,8 @@ impl App {
                     }
                 }
                 let __t = Instant::now();
+                // (the mirrors' commands go out with the picture's, on the submit thread)
+                r.set_defer_views(frame.is_some());
                 if ::config::get_int("graphics", "mirror_size").unwrap_or(256) as u32 == 0 {
                     self.mirror_budget = 0.0;
                     self.mirrors_seen = 0;
@@ -790,6 +799,7 @@ impl App {
                         );
                     }
                 }
+                r.set_defer_views(false);
                 *self.profile.entry("mirrors").or_default() += __t.elapsed().as_secs_f64();
                 let __t = Instant::now();
                 #[cfg(windows)]
@@ -873,6 +883,16 @@ impl App {
                             &lighting,
                             ::config::get_bool("graphics", "triple_screen_hud").unwrap_or(true),
                         );
+                    } else if frame.is_some() {
+                        // (finished, submitted and presented on the submit thread)
+                        r.render_deferred(
+                            scene,
+                            &view,
+                            s.config.width,
+                            s.config.height,
+                            cam,
+                            &lighting,
+                        );
                     } else {
                         r.render(
                             scene,
@@ -925,6 +945,8 @@ impl App {
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
                     if self.lab_menu.is_none() {
+                        // (drawn over the picture: its commands go first)
+                        r.flush_deferred();
                         self.devtools
                             .get_or_insert_with(devtools::DevTools::new)
                             .render(r, &view, scale, &snap, &dev_extra);
@@ -942,9 +964,10 @@ impl App {
                         if ::config::get_bool("graphics", "vsync").unwrap_or(true) {
                             win.pre_present_notify();
                         }
-                        r.queue.present(frame);
+                        r.present(frame);
                     }
                     None => {
+                        r.flush_deferred();
                         let _ = ::render::wait_gpu(&r.device, None);
                     }
                 }

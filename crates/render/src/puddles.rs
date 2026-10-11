@@ -677,12 +677,12 @@ impl Renderer {
             ],
             vehicle_parts: parts,
         };
-        self.queue.write_buffer(
+        self.write_buffer(
             &self.puddles.as_ref().unwrap().vehicle_params,
             0,
             bytemuck::bytes_of(&VehicleUniform { plane, parts }),
         );
-        self.queue.write_buffer(
+        self.write_buffer(
             &self.puddles.as_ref().unwrap().params,
             0,
             bytemuck::bytes_of(&u),

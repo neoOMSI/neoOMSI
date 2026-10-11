@@ -1087,11 +1087,10 @@ impl Navigator {
                 },
             ],
         );
-        queue.submit([enc.finish()]);
 
         // 2: the map blurred for the panes
         if !panes.is_empty() {
-            glass.blur(renderer);
+            glass.blur(renderer, &mut enc);
         }
 
         // 3: the panel: the map, its pins, the panes and what they say
@@ -1109,9 +1108,6 @@ impl Navigator {
         gpu.upload(device, queue, 6, &all);
         let mut panel_layer = Layer::flat(clip_panel, radius, 1.0);
         panel_layer.opacity *= self.shown;
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("navigator"),
-        });
         gpu.render(
             device,
             queue,
@@ -1147,6 +1143,8 @@ impl Navigator {
                 },
             ],
         );
-        queue.submit([enc.finish()]);
+        // (finished and submitted with the picture, on the submit thread: a submission of
+        // its own cost a millisecond every time the panel was drawn)
+        renderer.submit_with_frame(enc);
     }
 }
