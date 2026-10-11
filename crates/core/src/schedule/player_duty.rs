@@ -511,7 +511,7 @@ impl Schedule {
                 };
                 list.push((
                     expected,
-                    self.display_line(i),
+                    bus_line(&self.data.trips[d.trip]),
                     self.data.trips[d.trip].terminus.clone(),
                     (leave - arrive).max(0.0),
                 ));
@@ -672,8 +672,6 @@ impl Schedule {
         boards.departures_gen = boards.departures_gen.wrapping_add(1);
     }
 
-    /// The line a departure's displays show: its trip's own (" 5"), else the timetable
-    /// line's name.
     /// The name of station `i` (object `id`) of `trip`, as the map's stop calls it.
     pub(super) fn station_name(&self, trip: &::timetable::Trip, i: usize, id: i64) -> String {
         self.data
@@ -707,15 +705,5 @@ impl Schedule {
             .enumerate()
             .map(|(i, id)| self.station_name(trip, i, *id))
             .collect()
-    }
-
-    pub(super) fn display_line(&self, i: usize) -> String {
-        let d = &self.departures[i];
-        let own = self.data.trips[d.trip].line.trim();
-        if own.is_empty() {
-            d.line.trim().to_string()
-        } else {
-            own.to_string()
-        }
     }
 }
