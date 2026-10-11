@@ -28,6 +28,14 @@ pub fn init(mods_dir: &Path, legacy: Option<&Path>) -> std::io::Result<()> {
     let legacy = legacy.map(Path::to_path_buf);
     let mods = discover(mods_dir);
 
+    // The launcher calls this from its regular content poll. Re-registering an unchanged
+    // layout remounts every mod and turns startup diagnostics into continuous log noise.
+    if STATE.read().unwrap().as_ref().is_some_and(|state| {
+        state.mods_dir == mods_dir && state.legacy == legacy && state.mods == mods
+    }) {
+        return Ok(());
+    }
+
     // forget the previous registration
     for r in REGISTERED.lock().unwrap().drain(..) {
         clear_root_scope(&r);

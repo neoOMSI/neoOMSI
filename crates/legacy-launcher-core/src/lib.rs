@@ -502,8 +502,11 @@ pub struct ModsStatus {
     pub content_dir: String,
     /// (folder, number of entries)
     pub folders: Vec<(String, usize)>,
+    /// The directory containing mounted mod folders and archives. Kept as `inbox` on
+    /// the wire for compatibility with existing launcher clients.
     pub inbox: String,
-    /// What lies in the inbox now.
+    /// The mounted mod folders and archives in `inbox`. Kept as `inbox_items` on the
+    /// wire for compatibility with existing launcher clients.
     pub inbox_items: Vec<String>,
     /// Packs waiting in mods/waiting for the bus they belong to.
     pub waiting: Vec<String>,
@@ -562,9 +565,9 @@ pub fn install_mod_blocking(
     ))
 }
 
-fn inbox_entries(content: &Path) -> Vec<PathBuf> {
-    let inbox = content.join("mods");
-    let Ok(rd) = std::fs::read_dir(&inbox) else {
+fn mounted_mod_entries(content: &Path) -> Vec<PathBuf> {
+    let mods = content.join("mods");
+    let Ok(rd) = std::fs::read_dir(&mods) else {
         return Vec::new();
     };
     let mut v: Vec<PathBuf> = rd
@@ -577,6 +580,7 @@ fn inbox_entries(content: &Path) -> Vec<PathBuf> {
                 .to_string_lossy()
                 .to_string();
             !(name.starts_with('.')
+                || name.eq_ignore_ascii_case(::mods::SHARED_DIR)
                 || name.eq_ignore_ascii_case("installed")
                 || name.eq_ignore_ascii_case(install::WAITING)
                 || name.eq_ignore_ascii_case(install::PLUGINS_HELD)
@@ -585,7 +589,7 @@ fn inbox_entries(content: &Path) -> Vec<PathBuf> {
                 && (p.is_dir()
                 || p.extension()
                 .map(|x| {
-                    ["zip", "7z", "rar"]
+                    ["zip"]
                         .iter()
                         .any(|ext| x.eq_ignore_ascii_case(ext))
                 })
@@ -596,49 +600,20 @@ fn inbox_entries(content: &Path) -> Vec<PathBuf> {
     v
 }
 
-/// (size, newest time, files) of a file or a folder tree.
-fn tree_signature(p: &Path) -> (u64, u64, u64) {
-    let Ok(md) = std::fs::symlink_metadata(p) else {
-        return (0, 0, 0);
-    };
-    let t = md
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    if !md.is_dir() {
-        return (md.len(), t, 1);
-    }
-    let mut acc = (0, t, 0);
-    if let Ok(rd) = std::fs::read_dir(p) {
-        for e in rd.flatten() {
-            let (s, m, n) = tree_signature(&e.path());
-            acc = (acc.0 + s, acc.1.max(m), acc.2 + n);
-        }
-    }
-    acc
-}
-
-/// The inbox watcher: something dropped into mods/ is installed once it has stopped
-/// growing (the same size and time on two looks at least two seconds apart); packs in
-/// mods/waiting are installed once their bus is. Returns the sources of the jobs started.
+/// `mods/` is the live mod directory. Its entries are mounted directly; there is no
+/// second inbox or automatic copy stage.
 fn watch_inbox(_content: &Path) -> Vec<String> {
-    // mods/ is the mod folder itself now: what lies in it is a mod already (see `mods`)
     Vec::new()
 }
 
-/// Install everything in the inbox (and the waiting packs whose bus is there) now, and
-/// wait (the terminal's `mods`).
+/// Install waiting packs whose bus is present. Normal `mods/` entries are already live,
+/// so they must not be copied into the directory a second time.
 pub fn install_inbox_blocking() -> Vec<install::Progress> {
     let Some(content) = content_dir() else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for p in inbox_entries(&content)
-        .into_iter()
-        .chain(install::waiting_ready(&content, root().ok().as_deref()))
-    {
+    for p in install::waiting_ready(&content, root().ok().as_deref()) {
         let job = install::start(
             content.clone(),
             root().ok(),
@@ -702,7 +677,7 @@ pub fn mods_status() -> Result<ModsStatus> {
         content_dir: content.to_string_lossy().to_string(),
         folders,
         inbox: content.join("mods").to_string_lossy().to_string(),
-        inbox_items: names(inbox_entries(&content)),
+        inbox_items: names(mounted_mod_entries(&content)),
         waiting: names(waiting),
         archives,
         free_bytes: install::free_space(&content).unwrap_or(0),
@@ -3534,6 +3509,28 @@ pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mods_status_lists_mounted_entries_not_an_install_inbox() {
+        let root = std::env::temp_dir().join(format!(
+            "neoomsi-mounted-mods-{}",
+            std::process::id()
+        ));
+        let mods = root.join("mods");
+        std::fs::create_dir_all(mods.join("scenery-pack")).unwrap();
+        std::fs::create_dir_all(mods.join("shared")).unwrap();
+        std::fs::create_dir_all(mods.join("waiting")).unwrap();
+        std::fs::write(mods.join("vehicle-pack.zip"), b"not read here").unwrap();
+        std::fs::write(mods.join("README.txt"), b"not a mod").unwrap();
+
+        let names: Vec<_> = super::mounted_mod_entries(&root)
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["scenery-pack", "vehicle-pack.zip"]);
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
     #[test]
     fn vehicle_type_label_falls_back_to_the_file_name() {
         let path = std::path::Path::new("Vehicles/Pack/NL_202.bus");

@@ -18,7 +18,7 @@ pub enum ModKind {
     Zip,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModEntry {
     pub name: String,
     pub path: PathBuf,

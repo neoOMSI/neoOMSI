@@ -959,7 +959,7 @@ pub fn mods(l: &mut Launcher, area: Rect) {
         y += 30.0;
         y += l.ui.paragraph(
             &format!(
-                "Anything put into {} is installed by itself once it has finished copying.",
+                "Folders and ZIP files in {} are mounted as mods immediately.",
                 m.inbox
             ),
             Vec2::new(inner.x, y),
@@ -970,7 +970,7 @@ pub fn mods(l: &mut Launcher, area: Rect) {
         );
         if !m.inbox_items.is_empty() {
             l.ui.paragraph(
-                &format!("In it now: {}", m.inbox_items.join(", ")),
+                &format!("Mounted: {}", m.inbox_items.join(", ")),
                 Vec2::new(inner.x, y + 4.0),
                 inner.w,
                 12.0,
