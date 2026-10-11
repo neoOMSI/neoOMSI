@@ -304,9 +304,7 @@ impl App {
             } else if self.real_time_locked() {
                 self.service_msg = Some((i18n::translate("pause.msg.clock_locked", &[]), 3.0));
             } else {
-                self.clock.set_date(year, month, day);
-                // the world follows like at any clock change
-                self.shift_clock(0.0);
+                self.set_clock_date(year, month, day);
                 self.service_msg = Some((format!("Date: {day:02}.{month:02}.{year:04}"), 3.0));
             }
         }

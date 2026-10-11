@@ -146,6 +146,19 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
                 &tx("pause.world.text.set_the_minute_directly"),
                 &|v| format!("{:02}", v as i64),
             ));
+            for (id, key, desc) in [
+                ("day", "day", "set_the_day_directly"),
+                ("month", "month", "set_the_month_directly"),
+                ("year", "year", "set_the_year_directly"),
+            ] {
+                time.extend(slider_row(
+                    Some(app),
+                    id,
+                    &tx(&format!("pause.world.text.{key}")),
+                    &tx(&format!("pause.world.text.{desc}")),
+                    &|v| format!("{}", v as i64),
+                ));
+            }
             for (name, hm, secs) in [
                 (&tx("pause.world.text.morning"), "06:00", 6 * 3600),
                 (&tx("pause.world.text.noon"), "12:00", 12 * 3600),
