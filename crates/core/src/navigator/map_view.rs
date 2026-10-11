@@ -171,6 +171,10 @@ impl Navigator {
         Some(self.city.center + DVec2::new(lx, -ly) * self.city.mpp)
     }
 
+    pub fn map_dragging(&self) -> bool {
+        self.city.drag.is_some()
+    }
+
     pub fn map_release(&mut self) {
         self.city.drag = None;
     }

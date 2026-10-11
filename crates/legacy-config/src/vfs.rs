@@ -477,16 +477,16 @@ pub fn mount_zip(path: &Path) -> io::Result<PathBuf> {
     );
     if archive.prefix.is_empty()
         && !archive
-            .dirs
-            .get("")
-            .map(|l| {
-                l.iter().any(|(n, _)| {
-                    crate::CONTENT_FOLDERS
-                        .iter()
-                        .any(|f| f.eq_ignore_ascii_case(n))
-                })
+        .dirs
+        .get("")
+        .map(|l| {
+            l.iter().any(|(n, _)| {
+                crate::CONTENT_FOLDERS
+                    .iter()
+                    .any(|f| f.eq_ignore_ascii_case(n))
             })
-            .unwrap_or(false)
+        })
+        .unwrap_or(false)
     {
         log::warn!(
             "zip {}: no OMSI content folders (Vehicles, maps, Sceneryobjects ...) found; mounted as it is",
@@ -495,13 +495,6 @@ pub fn mount_zip(path: &Path) -> io::Result<PathBuf> {
     }
     let mount = archive.path.clone();
     MOUNTS.write().unwrap().push(Arc::new(archive));
-    Ok(mount)
-}
-
-/// Mount a zip archive and make it a content root (searched after the roots added before).
-pub fn add_content_zip(path: &Path) -> io::Result<PathBuf> {
-    let mount = mount_zip(path)?;
-    crate::add_content_root(mount.clone());
     Ok(mount)
 }
 
@@ -620,52 +613,6 @@ pub fn read_dir_paths(path: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// Mount every `.zip` in `dir` (in name order) as a content root: where an installer puts
-/// map and mod archives that are read in place. Returns the mount points.
-pub fn mount_dir_zips(dir: &Path) -> Vec<PathBuf> {
-    let mut zips: Vec<PathBuf> = match std::fs::read_dir(dir) {
-        Ok(rd) => rd
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.is_file()
-                    && p.extension()
-                        .map(|e| e.eq_ignore_ascii_case("zip"))
-                        .unwrap_or(false)
-            })
-            .collect(),
-        Err(_) => return Vec::new(),
-    };
-    zips.sort();
-    let mut out = Vec::new();
-    for p in zips {
-        match add_content_zip(&p) {
-            Ok(m) => out.push(m),
-            Err(e) => log::warn!("content zip {}: {e}", p.display()),
-        }
-    }
-    out
-}
-
-/// Mount every archive listed in `OMSI_CONTENT_ZIP` (separated like `PATH`) as a content
-/// root. Returns the mount points.
-pub fn mount_env_zips() -> Vec<PathBuf> {
-    let Some(v) = std::env::var_os("OMSI_CONTENT_ZIP") else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for p in std::env::split_paths(&v) {
-        if p.as_os_str().is_empty() {
-            continue;
-        }
-        match add_content_zip(&p) {
-            Ok(m) => out.push(m),
-            Err(e) => log::warn!("content zip {}: {e}", p.display()),
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -759,9 +706,18 @@ mod tests {
         assert!(is_dir(&mount.join("maps")));
         assert!(is_dir(&mount.join("vehicles")));
         assert!(!exists(&mount.join("Docs")));
-        let sco = crate::resolve_path(&mount, "sceneryobjects\\STRASSE_DOES_NOT_EXIST\\x.sco");
-        assert!(!exists(&sco));
-        let sco = crate::resolve_path(&mount, "Sceneryobjects\\straße\\schild.sco");
+        assert!(
+            crate::resolve_existing(
+                &mount,
+                &crate::windows_components("sceneryobjects\\STRASSE_DOES_NOT_EXIST\\x.sco")
+            )
+                .is_none()
+        );
+        let sco = crate::resolve_existing(
+            &mount,
+            &crate::windows_components("Sceneryobjects\\straße\\schild.sco"),
+        )
+            .unwrap();
         assert!(is_file(&sco), "{}", sco.display());
         assert_eq!(read(&sco).unwrap(), b"[mesh]\r\nschild.o3d\r\n");
         let names: Vec<String> = list_dir(&mount)
@@ -822,67 +778,6 @@ mod tests {
         // on a tie, the shallowest, then the first by name
         assert_eq!(prefix(&["b/Vehicles/x.bus", "a/Vehicles/y.bus"]), "a/");
         assert_eq!(prefix(&["docs/readme.txt"]), "");
-    }
-
-    /// Archives in the content folder's `Archives` lie inside the content folder, yet a path in
-    /// one of them falls back to the archives and roots after it, like any other archive.
-    #[test]
-    fn archive_inside_the_content_folder() {
-        let dir = std::env::temp_dir().join(format!("legacy-config-roots-{}", std::process::id()));
-        let content = dir.join("content");
-        let install = dir.join("install");
-        std::fs::create_dir_all(content.join("Archives")).unwrap();
-        std::fs::create_dir_all(content.join("Vehicles").join("MyBus")).unwrap();
-        std::fs::write(
-            content.join("Vehicles").join("MyBus").join("override.txt"),
-            b"content",
-        )
-        .unwrap();
-        std::fs::create_dir_all(install.join("Vehicles").join("MAN_SD202").join("Sound")).unwrap();
-        std::fs::write(
-            install
-                .join("Vehicles")
-                .join("MAN_SD202")
-                .join("Sound")
-                .join("x.wav"),
-            b"stock",
-        )
-        .unwrap();
-        let x = content.join("Archives").join("x.zip");
-        write_zip(
-            &x,
-            &[
-                ("OMSI 2/Vehicles/MyBus/bus.bus", b"bus".to_vec(), false),
-                ("OMSI 2/Vehicles/MyBus/override.txt", b"zip".to_vec(), false),
-            ],
-        );
-        let y = content.join("Archives").join("y.zip");
-        write_zip(&y, &[("Vehicles/Other/y.txt", b"y".to_vec(), false)]);
-        crate::add_content_root(content.clone());
-        let mounts = mount_dir_zips(&content.join("Archives"));
-        assert_eq!(mounts, vec![x.clone(), y.clone()]);
-        crate::add_content_root(install.clone());
-        let bus = x.join("Vehicles").join("MyBus");
-        assert!(is_file(&crate::resolve_path(&bus, "bus.bus")));
-        // the content folder has priority over the archive
-        assert_eq!(
-            read(&crate::resolve_path(&bus, "override.txt")).unwrap(),
-            b"content"
-        );
-        // the installation after it
-        let wav = crate::resolve_path(&bus, "..\\MAN_SD202\\Sound\\x.wav");
-        assert_eq!(
-            wav,
-            install
-                .join("Vehicles")
-                .join("MAN_SD202")
-                .join("Sound")
-                .join("x.wav")
-        );
-        // and an archive after it
-        let other = crate::resolve_path(&bus, "..\\other\\Y.TXT");
-        assert_eq!(read(&other).unwrap(), b"y", "{}", other.display());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

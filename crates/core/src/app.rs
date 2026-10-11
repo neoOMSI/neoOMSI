@@ -133,6 +133,7 @@ pub(crate) struct App {
     pub(crate) clock_hold: f32,
     pub(crate) pad_look: [bool; 4],
     pub(crate) teleport_pick: bool,
+    pub(crate) teleport_down: Option<(f32, f32)>,
     pub(crate) discord: Option<discord::Discord>,
     pub(crate) discord_next_update: Instant,
     pub(crate) headtrack: Option<headtrack::HeadTracker>,

@@ -3,7 +3,6 @@
 //! roots), script errors, callbacks and fonts the scripts ask for, textures and sounds,
 //! its coupled parts - and whether it can be put into service by itself.
 
-use ::legacy_config::resolve_path;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -141,7 +140,7 @@ fn missing(label: &str, base: &Path, rel: &str, out: &mut Vec<String>) -> Option
     if rel.trim().is_empty() {
         return None;
     }
-    let p = resolve_path(base, rel);
+    let p = ::mods::resolve_path(base, rel);
     if ::legacy_config::vfs::exists(&p) {
         Some(p)
     } else {
@@ -307,7 +306,7 @@ pub fn check_vehicle(root: &Path, path: &Path, run: bool) -> (Vec<String>, Vec<S
         .unwrap_or(vt.model.meshes.len());
     let mut bad_meshes = Vec::new();
     for md in &vt.model.meshes[vt.model.lods.first().map(|l| l.first_mesh).unwrap_or(0)..lod0_end] {
-        let p = resolve_path(&model_dir, &md.file);
+        let p = ::mods::resolve_path(&model_dir, &md.file);
         if !::legacy_config::vfs::is_file(&p) {
             bad_meshes.push(md.file.clone());
         } else if let Err(e) = ::legacy_o3d::load_mesh(&p) {
@@ -379,7 +378,7 @@ pub fn check_vehicle(root: &Path, path: &Path, run: bool) -> (Vec<String>, Vec<S
         ));
     }
     for c in &vt.model.ctc {
-        if !::legacy_config::vfs::is_dir(&resolve_path(&dir, &c.path)) {
+        if !::legacy_config::vfs::is_dir(&::mods::resolve_path(&dir, &c.path)) {
             problems.push(format!("paint scheme folder [CTC] not found: {}", c.path));
         }
     }
@@ -392,7 +391,7 @@ pub fn check_vehicle(root: &Path, path: &Path, run: bool) -> (Vec<String>, Vec<S
     ));
     // sounds
     if let Some(rel) = &def.sound {
-        let p = resolve_path(&dir, rel);
+        let p = ::mods::resolve_path(&dir, rel);
         if let Ok(cfg) = ::legacy_vehicle::SoundCfg::load(&p) {
             let sdir = p.parent().map(Path::to_path_buf).unwrap_or_default();
             // a blank file name is a real `[sound]` block, not a broken reference: it is
@@ -406,7 +405,7 @@ pub fn check_vehicle(root: &Path, path: &Path, run: bool) -> (Vec<String>, Vec<S
                 .filter(|s| {
                     !s.file.trim().is_empty()
                         && s.file.trim().parse::<i32>().is_err()
-                        && !::legacy_config::vfs::is_file(&resolve_path(&sdir, &s.file))
+                        && !::legacy_config::vfs::is_file(&::mods::resolve_path(&sdir, &s.file))
                 })
                 .map(|s| s.file.clone())
                 .collect::<std::collections::BTreeSet<_>>()
@@ -795,7 +794,7 @@ pub fn check_fleet(
             if has_vehicle(&f) {
                 continue;
             }
-            let elsewhere = ::legacy_config::content_dirs(&format!("Vehicles/{name}"))
+            let elsewhere = ::mods::content_dirs(&format!("Vehicles/{name}"))
                 .iter()
                 .any(|x| has_vehicle(x));
             println!(

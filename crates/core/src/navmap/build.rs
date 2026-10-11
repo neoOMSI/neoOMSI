@@ -152,7 +152,7 @@ struct ObjectFloors {
 /// An object type's faces that can be ground: facing up, near the object's foot unless it
 /// carries a street (a bridge, a ramp).
 fn object_floors(world: &World, file: &str, materials: &Mutex<Materials>) -> Option<ObjectFloors> {
-    let path = ::legacy_config::resolve_path(&world.root, file);
+    let path = ::mods::resolve_path(&world.root, file);
     let sco = ::scenery::SceneryObject::load(&path).ok()?;
     if sco.only_editor {
         return None;
@@ -160,7 +160,7 @@ fn object_floors(world: &World, file: &str, materials: &Mutex<Materials>) -> Opt
     let sco_dir = path.parent()?.to_path_buf();
     let (model, model_dir) = match &sco.model_file {
         Some(m) => {
-            let mp = ::legacy_config::resolve_path(&sco_dir, m);
+            let mp = ::mods::resolve_path(&sco_dir, m);
             (::model::Model::load(&mp).ok()?, mp.parent()?.to_path_buf())
         }
         None => (sco.model.clone(), sco_dir.clone()),
@@ -172,11 +172,11 @@ fn object_floors(world: &World, file: &str, materials: &Mutex<Materials>) -> Opt
     let dirs = texture_dirs(&world.root, &model_dir);
     let mut faces = Vec::new();
     for md in model.lod_meshes(0) {
-        let mp = ::legacy_config::resolve_path(&::legacy_config::resolve_path(&model_dir, "model"), &md.file);
+        let mp = ::mods::resolve_path(&::mods::resolve_path(&model_dir, "model"), &md.file);
         let mp = if ::legacy_config::vfs::is_file(&mp) {
             mp
         } else {
-            ::legacy_config::resolve_path(&model_dir, &md.file)
+            ::mods::resolve_path(&model_dir, &md.file)
         };
         let Ok(m) = ::legacy_o3d::load_mesh(&mp) else {
             continue;

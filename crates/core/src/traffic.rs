@@ -1102,7 +1102,7 @@ impl Traffic {
                     {
                         continue;
                     }
-                    let path = ::legacy_config::resolve_path(root, &v.file);
+                    let path = ::mods::resolve_path(root, &v.file);
                     match VehicleType::load_ai(root, &path) {
                         Ok(t) => {
                             // `[type]` 2 = rail (only as scheduled trains), 3 = aircraft on flight paths
@@ -7143,7 +7143,7 @@ impl Traffic {
                 let Some(rel) = def.sound_ai.clone().or_else(|| def.sound.clone()) else {
                     continue;
                 };
-                let path = ::legacy_config::resolve_path(def.dir(), &rel);
+                let path = ::mods::resolve_path(def.dir(), &rel);
                 let cfg = self
                     .sound_cfgs
                     .entry(path.clone())
@@ -7163,7 +7163,7 @@ impl Traffic {
                         let Some(rel) = def.sound_ai.clone().or_else(|| def.sound.clone()) else {
                             continue;
                         };
-                        let path = ::legacy_config::resolve_path(def.dir(), &rel);
+                        let path = ::mods::resolve_path(def.dir(), &rel);
                         let part = self
                             .sound_cfgs
                             .entry(path.clone())

@@ -552,7 +552,7 @@ impl App {
             if n.map_open() {
                 let ctrl = self.keys.contains(&KeyCode::ControlLeft)
                     || self.keys.contains(&KeyCode::ControlRight);
-                if pressed && (ctrl || self.teleport_pick) {
+                if pressed && ctrl {
                     if let Some(at) = n.map_point(x, y) {
                         if std::mem::take(&mut self.teleport_pick) {
                             n.toggle_map();
@@ -561,8 +561,20 @@ impl App {
                     }
                 } else if pressed {
                     n.map_press(x, y);
+                    if self.teleport_pick && n.map_dragging() {
+                        self.teleport_down = Some((x, y));
+                    }
                 } else {
                     n.map_release();
+                    if let Some((px, py)) = self.teleport_down.take() {
+                        if self.teleport_pick && (x - px).abs() + (y - py).abs() < 6.0 {
+                            if let Some(at) = n.map_point(x, y) {
+                                self.teleport_pick = false;
+                                n.toggle_map();
+                                self.place_bus_at(at);
+                            }
+                        }
+                    }
                 }
                 return;
             }

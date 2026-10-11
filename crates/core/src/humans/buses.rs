@@ -214,13 +214,13 @@ impl Cabin {
         let (lead, _, _) = parts.first()?;
         let load_cabin = |def: &::legacy_vehicle::Vehicle| -> Option<PassengerCabin> {
             let rel = def.passenger_cabin.as_ref()?;
-            PassengerCabin::load(&::legacy_config::resolve_path(def.dir(), rel))
+            PassengerCabin::load(&::mods::resolve_path(def.dir(), rel))
                 .map_err(|e| log::warn!("{e}"))
                 .ok()
         };
         let load_paths = |def: &::legacy_vehicle::Vehicle| {
             def.paths.as_ref().and_then(|rel| {
-                ::legacy_vehicle::VehiclePaths::load(&::legacy_config::resolve_path(def.dir(), rel))
+                ::legacy_vehicle::VehiclePaths::load(&::mods::resolve_path(def.dir(), rel))
                     .map_err(|e| log::warn!("{e}"))
                     .ok()
             })

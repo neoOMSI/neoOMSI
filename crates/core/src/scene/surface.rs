@@ -51,14 +51,14 @@ pub fn texture_dirs(root: &Path, content_dir: &Path) -> Vec<PathBuf> {
     // (found whatever its case: `Texture` of a parked car's folder on Linux, whose file
     // system tells `texture` from `Texture`, left the car white)
     let mut dirs = vec![
-        ::legacy_config::resolve_path(content_dir, "texture"),
+        ::mods::resolve_path(content_dir, "texture"),
         content_dir.to_path_buf(),
     ];
     // vehicle folders keep the model in `model\` and the textures in `texture\` next to it
     if let Some(parent) = content_dir.parent() {
-        dirs.push(::legacy_config::resolve_path(parent, "texture"));
+        dirs.push(::mods::resolve_path(parent, "texture"));
     }
-    dirs.push(::legacy_config::resolve_path(root, "Texture"));
+    dirs.push(::mods::resolve_path(root, "Texture"));
     dirs
 }
 
@@ -80,7 +80,7 @@ pub(super) fn surface_height_map(name: &str, dirs: &[PathBuf]) -> Option<Arc<Hei
     }
     let requested = format!("{}.surf", name.trim().replace('\\', "/"));
     for dir in dirs {
-        let path = ::legacy_config::resolve_path(dir, &requested);
+        let path = ::mods::resolve_path(dir, &requested);
         if !candidates.contains(&path) {
             candidates.push(path);
         }

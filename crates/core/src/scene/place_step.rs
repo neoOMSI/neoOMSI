@@ -1186,7 +1186,7 @@ impl World {
                                 .parent()
                                 .map(|p| p.to_path_buf())
                                 .unwrap_or_default();
-                            ::legacy_config::resolve_path(&dir, rel)
+                            ::mods::resolve_path(&dir, rel)
                         });
                         pl.light_objects.push(LightObject {
                             parent,

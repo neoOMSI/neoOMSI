@@ -152,7 +152,7 @@ pub(super) fn liveries(def: &::legacy_vehicle::Vehicle) -> Vec<String> {
     let Some(m) = def.model.as_ref() else {
         return Vec::new();
     };
-    let mp = ::legacy_config::resolve_path(def.dir(), m);
+    let mp = ::mods::resolve_path(def.dir(), m);
     let Ok(model) = ::model::Model::load(&mp) else {
         return Vec::new();
     };
@@ -160,7 +160,7 @@ pub(super) fn liveries(def: &::legacy_vehicle::Vehicle) -> Vec<String> {
         .ctc
         .iter()
         .flat_map(|c| {
-            ::simulation::vehicle::load_paint_schemes(&::legacy_config::resolve_path(def.dir(), &c.path))
+            ::simulation::vehicle::load_paint_schemes(&::mods::resolve_path(def.dir(), &c.path))
         })
         .map(|s| s.name)
         .collect();
@@ -718,7 +718,7 @@ pub(crate) fn menu_extras(
 
 pub(super) fn driver_names(_app: &App) -> Vec<String> {
     scan_cached(&DRIVER_SCAN, || {
-        let mut names: Vec<String> = ::legacy_config::read_dir_merged("Drivers")
+        let mut names: Vec<String> = ::mods::read_dir_merged("Drivers")
             .into_iter()
             .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("odr")))
             .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))

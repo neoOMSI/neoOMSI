@@ -118,9 +118,7 @@ pub(super) fn probe_tile(
     }
 }
 
-/// How far a road face may lie under drawn ground before it counts as buried (m): far more
-/// than the ground poking through the asphalt that the road is there to keep out.
-pub(super) const BURIED_FACE: f32 = 1.0;
+pub(super) const BURIED_FACE: f32 = 0.25;
 
 /// How far over the ground a wall's top must stand to be a wall to the wheels (a kerb is
 /// less, and the tyre climbs it).
@@ -341,7 +339,7 @@ impl World {
         let mut out = Vec::new();
         for layer in 1..self.global.ground_textures.len() {
             let path =
-                ::legacy_config::resolve_path(&self.map_dir, &format!("texture/map/{name}.{layer}.dds"));
+                ::mods::resolve_path(&self.map_dir, &format!("texture/map/{name}.{layer}.dds"));
             if !::legacy_config::vfs::is_file(&path) {
                 continue;
             }

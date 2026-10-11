@@ -218,7 +218,7 @@ impl App {
             return;
         };
         let file = &p.vehicle.ty.def.path;
-        let bus = ::legacy_config::content_roots()
+        let bus = ::mods::content_roots()
             .iter()
             .chain(std::iter::once(&self.args.root))
             .find_map(|r| file.strip_prefix(r).ok())
@@ -504,7 +504,7 @@ impl App {
             self.service_msg = Some(("In a LAN session the host sets the weather".into(), 3.0));
             return;
         }
-        let mut files: Vec<String> = ::legacy_config::read_dir_merged("Weather")
+        let mut files: Vec<String> = ::mods::read_dir_merged("Weather")
             .into_iter()
             .filter(|p| {
                 p.extension()

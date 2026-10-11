@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn weather_files() -> Vec<String> {
     scan_cached(&WEATHER_SCAN, || {
-        let mut files: Vec<String> = ::legacy_config::read_dir_merged("Weather")
+        let mut files: Vec<String> = ::mods::read_dir_merged("Weather")
             .into_iter()
             .filter(|p| {
                 p.extension()

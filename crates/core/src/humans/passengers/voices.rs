@@ -24,7 +24,7 @@ impl Humans {
         // voices themselves and name no path; the later packs point at theirs)
         let Some(base) = self.tickets.as_ref().and_then(|t| match &t.voice_path {
             Some(vp) if !vp.trim().is_empty() => {
-                Some(::legacy_config::resolve_path(&self.root, vp.trim()))
+                Some(::mods::resolve_path(&self.root, vp.trim()))
             }
             _ => t.path.parent().map(|p| p.to_path_buf()),
         }) else {
@@ -34,8 +34,8 @@ impl Humans {
         if voice.is_empty() {
             return false;
         }
-        let dir = ::legacy_config::resolve_path(&base, &voice);
-        let primary = ::legacy_config::resolve_path(&dir, &format!("{name}.wav"));
+        let dir = ::mods::resolve_path(&base, &voice);
+        let primary = ::mods::resolve_path(&dir, &format!("{name}.wav"));
         let path = if ::legacy_config::vfs::is_file(&primary) {
             primary
         } else if name.starts_with("TooBad_") {
@@ -43,9 +43,9 @@ impl Humans {
             // passenger types but ship no driving-complaint samples.  Use OMSI's
             // standard Berlin voices of the same type when they are installed, so the
             // simulation feedback is not silently lost with such content.
-            let standard = ::legacy_config::resolve_path(&self.root, "TicketPacks\\Berlin_86");
-            let fallback = ::legacy_config::resolve_path(
-                &::legacy_config::resolve_path(&standard, &voice),
+            let standard = ::mods::resolve_path(&self.root, "TicketPacks\\Berlin_86");
+            let fallback = ::mods::resolve_path(
+                &::mods::resolve_path(&standard, &voice),
                 &format!("{name}.wav"),
             );
             if !::legacy_config::vfs::is_file(&fallback) {

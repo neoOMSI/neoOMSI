@@ -80,7 +80,7 @@ impl App {
             } as f64)
                 .to_radians();
             let kind = ::network::human_path(&figure)
-                .map(|rel| ::legacy_config::resolve_path(&self.args.root, &rel))
+                .map(|rel| ::mods::resolve_path(&self.args.root, &rel))
                 .filter(|p| ::legacy_config::vfs::exists(p))
                 .and_then(|p| crate::driver::cached_type(&p))
                 .map(|t| h.avatar_figure(t))

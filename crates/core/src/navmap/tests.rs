@@ -34,7 +34,7 @@ fn surfaces_of_a_real_map() {
     let root = std::path::PathBuf::from(std::env::var("OMSI_ROOT").expect("OMSI_ROOT"));
     let _ = crate::startup::content_dir();
     let map = std::env::var("NAVMAP_MAP").expect("NAVMAP_MAP");
-    let cfg = ::legacy_config::resolve_path(&root, &map);
+    let cfg = ::mods::resolve_path(&root, &map);
     let world = crate::scene::World::open(&root, &cfg, 20261001).unwrap();
     world.index();
     let nav = world.navigation_map();

@@ -656,14 +656,14 @@ impl Host for VehicleHost {
                 // vehicle: the Krüger matrix loads `..\..\Anzeigen\Krueger\<bitmap>`,
                 // which is `Vehicles\Anzeigen\...` seen from `Vehicles\<bus>\Texture`
                 // (and found in whichever content root has it)
-                let mut full = ::legacy_config::resolve_path(
-                    &::legacy_config::resolve_path(&self.content_dir, "Texture"),
+                let mut full = ::mods::resolve_path(
+                    &::mods::resolve_path(&self.content_dir, "Texture"),
                     &path,
                 );
                 // (then the global `Texture` folder, as OMSI looks)
                 if !::legacy_config::vfs::is_file(&full) {
                     if let Some((_, p)) =
-                        ::legacy_config::find_in_roots(&format!("Texture/{}", path.replace('\\', "/")))
+                        ::mods::find_in_roots(&format!("Texture/{}", path.replace('\\', "/")))
                     {
                         full = p;
                     }

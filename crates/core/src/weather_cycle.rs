@@ -102,7 +102,7 @@ pub fn lerp(a: &Weather, b: &Weather, k: f32) -> Weather {
 
 /// The installed weathers (`Weather/*.owt`), as (file, weather).
 pub fn installed() -> Vec<(String, Weather)> {
-    let mut files: Vec<String> = ::legacy_config::read_dir_merged("Weather")
+    let mut files: Vec<String> = ::mods::read_dir_merged("Weather")
         .into_iter()
         .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("owt")))
         .filter_map(|p| {
@@ -115,7 +115,7 @@ pub fn installed() -> Vec<(String, Weather)> {
     files
         .into_iter()
         .filter_map(|f| {
-            let path = ::legacy_config::find_in_roots(&f).map(|x| x.1)?;
+            let path = ::mods::find_in_roots(&f).map(|x| x.1)?;
             Weather::load(&path).ok().map(|w| (f, w))
         })
         .collect()

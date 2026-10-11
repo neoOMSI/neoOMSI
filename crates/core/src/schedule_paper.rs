@@ -206,7 +206,7 @@ fn tt_labels() -> &'static (String, String) {
     LABELS.get_or_init(|| {
         let lang = ::config::get_string("ui", "language").unwrap_or_else(|| "en".into());
         let find = |lang: &str| {
-            ::legacy_config::content_dirs("Languages")
+            ::mods::content_dirs("Languages")
                 .into_iter()
                 .find_map(|dir| {
                     ::content::language::Language::load(&dir.join(format!("{lang}_basic.olf")))
@@ -305,7 +305,7 @@ fn content_signature(lines: &[String]) -> u64 {
 }
 
 fn paper_base() -> Image {
-    let dirs = ::legacy_config::content_dirs("Texture");
+    let dirs = ::mods::content_dirs("Texture");
     let refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
     ::texture::find_texture("Schedule.bmp", &refs)
         .and_then(|path| ::texture::decode_file(&path).ok())

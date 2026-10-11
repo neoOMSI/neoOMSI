@@ -12,9 +12,9 @@ pub(crate) fn load() -> Plugins {
         return Plugins::default();
     }
     // (never from content another machine sent: a LAN host's mods are data only)
-    let dirs: Vec<std::path::PathBuf> = ::legacy_config::content_roots()
+    let dirs: Vec<std::path::PathBuf> = ::mods::content_roots()
         .iter()
-        .filter(|r| !::legacy_config::is_sandbox(r))
+        .filter(|r| !::mods::is_sandbox(r))
         .filter_map(|r| ::legacy_plugin::resolve_path(r, "plugins"))
         .filter(|d| d.is_dir())
         .collect();

@@ -557,7 +557,7 @@ fn walk_paths(def: &::legacy_vehicle::Vehicle) -> (Vec<[f32; 3]>, Vec<(i32, i32,
         .paths
         .as_ref()
         .and_then(|rel| {
-            ::legacy_vehicle::VehiclePaths::load(&::legacy_config::resolve_path(def.dir(), rel)).ok()
+            ::legacy_vehicle::VehiclePaths::load(&::mods::resolve_path(def.dir(), rel)).ok()
         })
         .map(|vp| {
             (

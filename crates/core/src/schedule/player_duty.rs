@@ -288,7 +288,7 @@ impl Schedule {
                 .iter()
                 .find(|(l, _)| l.trim().eq_ignore_ascii_case(line.trim()))
             {
-                let from = Some(::legacy_config::resolve_path(dir, "Chrono.cfg"))
+                let from = Some(::mods::resolve_path(dir, "Chrono.cfg"))
                     .and_then(|p| ::legacy_config::CfgFile::read(&p).ok())
                     .map(|f| ::map::ailists::parse_chrono_cfg(&f).start_date)
                     .filter(|d| *d > 0);

@@ -248,7 +248,7 @@ impl Showroom {
     fn start_loading(&mut self, renderer: &Renderer, look: Look) {
         let args = args_for(&look);
         let root = look.root.clone();
-        let map_cfg = ::legacy_config::resolve_path(&root, &look.map);
+        let map_cfg = ::mods::resolve_path(&root, &look.map);
         let date = start_clock(&args).date_code();
         let t0 = Instant::now();
         let world = match World::open(&root, &map_cfg, date) {

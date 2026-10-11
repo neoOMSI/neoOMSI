@@ -115,7 +115,7 @@ fn report(t: &HumanType) {
     poses(t);
     for (li, _lod) in t.model.lods.iter().enumerate() {
         for md in t.model.lod_meshes(li) {
-            let p = ::legacy_config::resolve_path(&t.model_dir, &md.file);
+            let p = ::mods::resolve_path(&t.model_dir, &md.file);
             let Ok(m) = ::legacy_o3d::load_mesh(&p) else {
                 println!("   lod {li} {}: cannot load", md.file);
                 continue;

@@ -195,7 +195,7 @@ impl World {
             ground_wet,
         );
         let water_mat = {
-            let wdir = ::legacy_config::resolve_path(&self.map_dir, "texture");
+            let wdir = ::mods::resolve_path(&self.map_dir, "texture");
             let dirs: Vec<&Path> = vec![wdir.as_path(), self.root.as_path()];
             let tex = match self.textures.get("water.tga", &dirs) {
                 Some(img) => renderer.add_texture(scene, &img, true),
@@ -217,7 +217,7 @@ impl World {
                         "envmap_unscharf.bmp",
                         &[
                             &self.root.join("Vehicles/MAN_SD202/Texture"),
-                            &::legacy_config::resolve_path(&self.root, "Texture"),
+                            &::mods::resolve_path(&self.root, "Texture"),
                         ],
                     )
                 })

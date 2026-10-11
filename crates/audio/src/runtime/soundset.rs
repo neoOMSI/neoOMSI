@@ -68,7 +68,7 @@ impl SoundSet {
         cfg.sounds
             .iter()
             .filter(|def| def.file.trim().parse::<i32>().is_err())
-            .map(|def| ::legacy_config::resolve_path(dir, &def.file))
+            .map(|def| ::mods::resolve_path(dir, &def.file))
             .collect()
     }
 
@@ -82,7 +82,7 @@ impl SoundSet {
                 // a fixed file is read lazily on the first update (see `RuntimeSound`)
                 let dynamic = def.file.trim().parse::<i32>().is_ok();
                 let path = if engine.enabled() && !dynamic {
-                    Some(::legacy_config::resolve_path(dir, &def.file))
+                    Some(::mods::resolve_path(dir, &def.file))
                 } else {
                     None
                 };

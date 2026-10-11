@@ -67,7 +67,7 @@ fn ray_sphere(origin: DVec3, dir: Vec3, spread: f32, center: DVec3, radius: f32)
 
 impl Money {
     pub fn new(root: &Path, money_system: &str) -> Money {
-        let path = ::legacy_config::resolve_path(root, money_system);
+        let path = ::mods::resolve_path(root, money_system);
         let currency = Currency::load(&path)
             .map_err(|e| log::warn!("money system {}: {e}", path.display()))
             .ok();
@@ -240,12 +240,12 @@ impl Money {
         } else {
             c.bills.get(coin - n)?.0.clone()
         };
-        let m = ::legacy_o3d::load_mesh(&::legacy_config::resolve_path(&self.dir, &file))
+        let m = ::legacy_o3d::load_mesh(&::mods::resolve_path(&self.dir, &file))
             .map_err(|e| log::warn!("{e}"))
             .ok()?;
         let dirs = [
             self.dir.clone(),
-            ::legacy_config::resolve_path(&world.root, "Texture"),
+            ::mods::resolve_path(&world.root, "Texture"),
         ];
         let dirs_ref: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
         let mats: Vec<MaterialId> = m
@@ -587,7 +587,7 @@ mod tests {
         }
         let ty = VehicleType::load(&root, &bus).expect("EN92");
         let rel = ty.def.passenger_cabin.as_ref().expect("passenger cabin");
-        let cabin = ::legacy_vehicle::PassengerCabin::load(&::legacy_config::resolve_path(
+        let cabin = ::legacy_vehicle::PassengerCabin::load(&::mods::resolve_path(
             ty.def.dir(),
             rel,
         ))

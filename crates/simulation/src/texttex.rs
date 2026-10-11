@@ -73,7 +73,7 @@ impl FontLibrary {
             // the installation): a mod's display fonts live in the content folder, and looking
             // only in the installation's `Fonts` left the O530's number plate, matrix and
             // dashboard displays empty. A file of the same name higher up replaces the stock one.
-            let mut files = ::legacy_config::read_dir_merged("Fonts");
+            let mut files = ::mods::read_dir_merged("Fonts");
             if files.is_empty() {
                 files = ::legacy_config::vfs::read_dir_paths(&self.root.join("Fonts"));
             }
@@ -224,8 +224,8 @@ impl FontLibrary {
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| self.root.join("Fonts"));
-            let alpha_path = ::legacy_config::resolve_path(&fonts_dir, &f.alpha);
-            let color_path = ::legacy_config::resolve_path(&fonts_dir, &f.bitmap);
+            let alpha_path = ::mods::resolve_path(&fonts_dir, &f.alpha);
+            let color_path = ::mods::resolve_path(&fonts_dir, &f.bitmap);
             let (aw, ah, alpha) = decode(&alpha_path)?;
             let color = if color_path == alpha_path {
                 alpha.clone()

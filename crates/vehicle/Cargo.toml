@@ -7,4 +7,5 @@ description = "Vehicle definitions: .bus/.ovh/.zug, HOF files, passenger cabins,
 
 [dependencies]
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 log.workspace = true

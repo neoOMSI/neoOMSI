@@ -207,7 +207,7 @@ pub fn snow_on_glass(root: &std::path::Path) -> ::texture::Image {
     const SIDE: usize = 512;
     let mut rgba = vec![0u8; SIDE * SIDE * 4];
     let flake =
-        ::texture::decode_file(&::legacy_config::resolve_path(root, "Texture\\snowflake.tga")).ok();
+        ::texture::decode_file(&::mods::resolve_path(root, "Texture\\snowflake.tga")).ok();
     let mut rng = 0x9E37_79B9_7F4A_7C15u64;
     let mut rand = move || {
         rng ^= rng << 13;

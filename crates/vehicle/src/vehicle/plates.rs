@@ -29,13 +29,13 @@ impl Vehicle {
     }
 
     fn read_numbers_with_plates(&self, list: &str) -> Vec<(String, String)> {
-        let Ok(numbers) = CfgFile::read(&::legacy_config::resolve_path(self.dir(), list)) else {
+        let Ok(numbers) = CfgFile::read(&::mods::resolve_path(self.dir(), list)) else {
             return Vec::new();
         };
         let plates = self
             .registration_list
             .as_ref()
-            .and_then(|(f, _, _)| CfgFile::read(&::legacy_config::resolve_path(self.dir(), f)).ok());
+            .and_then(|(f, _, _)| CfgFile::read(&::mods::resolve_path(self.dir(), f)).ok());
         numbers
             .lines
             .iter()

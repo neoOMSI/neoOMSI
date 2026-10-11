@@ -130,11 +130,11 @@ impl Career {
         } else {
             let own = crate::startup::content_dir()
                 .map(|c| c.join(rel))
-                .unwrap_or_else(|| ::legacy_config::resolve_path(root, rel));
+                .unwrap_or_else(|| ::mods::resolve_path(root, rel));
             let read = if own.exists() {
                 own.clone()
             } else {
-                ::legacy_config::resolve_path(root, rel)
+                ::mods::resolve_path(root, rel)
             };
             (own, read)
         };

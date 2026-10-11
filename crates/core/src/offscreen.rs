@@ -532,7 +532,7 @@ pub(crate) fn run_offscreen(
                 }
                 if let Some(want) = srv_admin.set_weather.take() {
                     // only an installed weather (the name came over the network)
-                    let found = ::legacy_config::read_dir_merged("Weather")
+                    let found = ::mods::read_dir_merged("Weather")
                         .into_iter()
                         .filter_map(|p| {
                             p.file_name()
@@ -549,7 +549,7 @@ pub(crate) fn run_offscreen(
                 }
                 // (the weather follows the METAR report: no next weather for the admins)
                 if std::mem::take(&mut srv_admin.next_weather) && srv_metar.is_none() {
-                    let mut files: Vec<String> = ::legacy_config::read_dir_merged("Weather")
+                    let mut files: Vec<String> = ::mods::read_dir_merged("Weather")
                         .into_iter()
                         .filter(|p| {
                             p.extension()

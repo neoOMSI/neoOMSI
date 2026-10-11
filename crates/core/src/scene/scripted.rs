@@ -118,7 +118,7 @@ impl World {
                 .iter()
                 .rev()
                 .chain(std::iter::once(&self.map_dir))
-                .map(|d| ::legacy_config::resolve_path(d, "registrations.txt"))
+                .map(|d| ::mods::resolve_path(d, "registrations.txt"))
                 .find(|p| ::legacy_config::vfs::is_file(p))
                 .map(|p| ::map::ailists::load_list(&p))
                 .unwrap_or_default()
@@ -532,7 +532,7 @@ impl World {
                         .parent()
                         .map(|p| p.to_path_buf())
                         .unwrap_or_default();
-                    Some(::legacy_config::resolve_path(&dir, rel))
+                    Some(::mods::resolve_path(&dir, rel))
                 });
                 if let Some(path) = path {
                     let inst = &o.inst;

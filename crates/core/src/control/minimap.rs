@@ -119,7 +119,7 @@ fn build(map: &str, date: &str) -> Result<Minimap> {
     let root = PathBuf::from(lib::load_config().root);
     // registers the content folder's roots with the OMSI readers
     let _ = lib::content_dir();
-    let cfg = ::legacy_config::resolve_path(&root, map);
+    let cfg = ::mods::resolve_path(&root, map);
     let code = ::map::date_code(date).with_context(|| format!("'{date}' is not a date (YYYY-MM-DD)"))?;
     let world = World::open(&root, &cfg, code)?;
     world.index();

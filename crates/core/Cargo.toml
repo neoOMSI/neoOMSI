@@ -26,6 +26,7 @@ winresource = "0.1"
 
 [dependencies]
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 config = { path = "../config" }
 logging = { path = "../logging" }
 map = { path = "../map" }

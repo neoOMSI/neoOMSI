@@ -226,7 +226,7 @@ impl World {
             if let Some(v) = scos.lock().get(&key) {
                 return v.clone();
             }
-            let v = SceneryObject::load(&::legacy_config::resolve_path(&self.root, file))
+            let v = SceneryObject::load(&::mods::resolve_path(&self.root, file))
                 .ok()
                 .map(Arc::new);
             scos.lock().insert(key, v.clone());
@@ -375,7 +375,7 @@ impl World {
                                 let model_path = sco
                                     .model_file
                                     .as_ref()
-                                    .map(|f| ::legacy_config::resolve_path(sco_dir, f));
+                                    .map(|f| ::mods::resolve_path(sco_dir, f));
                                 let model_dir = model_path
                                     .as_deref()
                                     .and_then(Path::parent)
