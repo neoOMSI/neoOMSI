@@ -541,7 +541,7 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("6000", "6 GB"),
         ],
         "post_aa" => vec![("fxaa", "FXAA"), ("off", "Off")],
-        "mirror_refresh" => vec![("eco", "Economy"), ("full", "Full")],
+        "mirror_refresh" => vec![("off", "Frozen"), ("eco", "Economy"), ("full", "Full")],
         "graphics_api" => vec![("auto", "Automatic"), ("vulkan", "Vulkan"), ("dx12", "DirectX 12")],
         "head_tracking_invert" => vec![
             ("none", "None"),
@@ -750,6 +750,24 @@ mod tests {
                 ("borderless", "Windowed Borderless"),
                 ("fullscreen", "Fullscreen"),
             ]
+        );
+    }
+
+    #[test]
+    fn graphics_choices_include_the_engine_and_launcher_values() {
+        assert_eq!(
+            select_options("anisotropy"),
+            vec![
+                ("1", "Off"),
+                ("2", "2x"),
+                ("4", "4x"),
+                ("8", "8x"),
+                ("16", "16x"),
+            ]
+        );
+        assert_eq!(
+            select_options("mirror_refresh"),
+            vec![("off", "Frozen"), ("eco", "Economy"), ("full", "Full")]
         );
     }
 }
