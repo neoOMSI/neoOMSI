@@ -436,7 +436,7 @@ impl SlotSpec {
             // diffuse and is not the file named by this free-texture declaration.
             if (diffuse && look.diffuse.is_none())
                 || (key.is_some()
-                    && (look.diffuse == key || (item_only && source.diffuse == key)))
+                && (look.diffuse == key || (item_only && source.diffuse == key)))
             {
                 look.diffuse = Some(tex);
             }
@@ -452,7 +452,7 @@ impl SlotSpec {
                 if let Some((id, _)) = &mut look.transmap {
                     if *id == key
                         || (item_only
-                            && source.transmap.is_some_and(|(source_id, _)| source_id == key))
+                        && source.transmap.is_some_and(|(source_id, _)| source_id == key))
                     {
                         *id = tex;
                     }
@@ -460,7 +460,7 @@ impl SlotSpec {
                 if let Some((id, _)) = &mut look.envmap {
                     if *id == key
                         || (item_only
-                            && source.envmap.is_some_and(|(source_id, _)| source_id == key))
+                        && source.envmap.is_some_and(|(source_id, _)| source_id == key))
                     {
                         *id = tex;
                     }

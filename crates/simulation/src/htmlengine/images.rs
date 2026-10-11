@@ -71,7 +71,7 @@ impl ImageStore {
         let path = self
             .dirs
             .iter()
-            .map(|d| ::legacy_config::resolve_path(d, rel))
+            .map(|d| ::mods::resolve_path(d, rel))
             .find(|p| ::legacy_config::vfs::is_file(p));
         let Some(path) = path else {
             log::debug!("htmltexture: image {rel} not found");

@@ -331,7 +331,7 @@ impl World {
     ///
     /// The mask is stored like a picture (first row = north), the terrain mesh's v runs
     /// north with y, so the rows are turned over here.
-    pub(super) fn load_ground_paint(&self, tile_path: &Path) -> Vec<(usize, Image)> {
+    pub(crate) fn load_ground_paint(&self, tile_path: &Path) -> Vec<(usize, Image)> {
         let Some(name) = tile_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -341,7 +341,7 @@ impl World {
         let mut out = Vec::new();
         for layer in 1..self.global.ground_textures.len() {
             let path =
-                ::legacy_config::resolve_path(&self.map_dir, &format!("texture/map/{name}.{layer}.dds"));
+                ::mods::resolve_path(&self.map_dir, &format!("texture/map/{name}.{layer}.dds"));
             if !::legacy_config::vfs::is_file(&path) {
                 continue;
             }

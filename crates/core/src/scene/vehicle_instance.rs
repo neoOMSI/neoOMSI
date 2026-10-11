@@ -461,7 +461,7 @@ impl World {
                 extra.screen = d.script.is_some() || d.script_trans.is_some();
                 // ... and a `\S:n` mask makes it an LED panel: its lit dots are its own
                 // light, which the enhanced picture blooms (see `MaterialExtra::led`)
-                extra.led = d.script_trans.is_some() && d.extra.led;
+                extra.led = (d.script_trans.is_some() || d.script.is_some()) && d.extra.led;
                 let m = renderer.add_material_extra(
                     scene,
                     tex,
@@ -840,7 +840,10 @@ impl World {
                     let html_page = |n: Option<usize>| n.is_some_and(|n| vt.model.html_textures.iter().any(|d| d.script_index == n));
                     let lm_white = |ov: &[&MaterialDef]| -> bool {
                         let named = ov.iter().filter_map(|o| o.lightmap.as_ref().map(|l| l.0.as_str())).chain(std::iter::once(m.texture.as_str())).any(is_led_name);
-                        named && ov.iter().find_map(|o| o.lightmap.as_ref()).and_then(|(t, _)| lightmap_is_white(t, &dirs_ref)).unwrap_or(true)
+                        match ov.iter().find_map(|o| o.lightmap.as_ref()).and_then(|(t, _)| lightmap_is_white(t, &dirs_ref)) {
+                            Some(white) => white,
+                            None => named || ov.iter().all(|o| o.lightmap.is_none()),
+                        }
                     };
                     // [matl_envmap] tex factor: reflectivity = factor (saturating at 1) x the
                     // reflection mask, which is the [matl_envmap_mask]'s alpha or else the
@@ -884,7 +887,7 @@ impl World {
                     // without the flags on this `extra` the K++ and Krueger panels showed
                     // their dots but never glowed.
                     extra.screen = script_slot.is_some() || script_trans.is_some();
-                    extra.led = script_trans.is_some() && !html_page(script_trans) && lm_white(&ov);
+                    extra.led = (script_trans.is_some() || script_slot.is_some()) && !html_page(script_trans) && !html_page(script_slot) && lm_white(&ov);
                     // (an HTML page glows by itself, as an LED panel's dots do)
                     extra.html = !extra.led && (html_page(script_slot) || html_page(script_trans));
                     if dirt_overlay {
@@ -979,7 +982,7 @@ impl World {
                         it_extra.screen = script_item.is_some() || it_script_trans.is_some();
                         // (the item's `\S:n`, or the one it inherits from its base, keeps it
                         // an LED panel: see `MaterialExtra::led`)
-                        it_extra.led = it_script_trans.is_some() && !html_page(it_script_trans) && if ov_item.iter().any(|o| o.lightmap.is_some()) { lm_white(ov_item) } else { lm_white(&ov) };
+                        it_extra.led = (it_script_trans.is_some() || script_item.is_some()) && !html_page(it_script_trans) && !html_page(script_item) && if ov_item.iter().any(|o| o.lightmap.is_some()) { lm_white(ov_item) } else { lm_white(&ov) };
                         it_extra.html = !it_extra.led && (html_page(script_item) || html_page(it_script_trans));
                         it_extra.no_z_write |= extra.no_z_write;
                         it_extra.no_z_check |= extra.no_z_check;

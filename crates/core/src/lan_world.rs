@@ -256,7 +256,7 @@ fn fnv(data: &[u8]) -> u64 {
 
 /// A file path as it is written for the other games: relative to its content root.
 fn relative_file(path: &Path, root: &Path) -> String {
-    let mut roots = ::legacy_config::content_roots();
+    let mut roots = ::mods::content_roots();
     roots.push(root.to_path_buf());
     for r in roots {
         if let Ok(rel) = path.strip_prefix(&r) {
@@ -268,7 +268,7 @@ fn relative_file(path: &Path, root: &Path) -> String {
 
 /// A content-relative file from the host as a file here, when it exists here.
 fn local_file(args: &Args, rel: &str) -> Option<PathBuf> {
-    let path = ::legacy_config::resolve_path(&args.root, rel);
+    let path = ::mods::resolve_path(&args.root, rel);
     ::legacy_config::vfs::is_file(&path).then_some(path)
 }
 

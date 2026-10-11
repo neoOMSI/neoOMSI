@@ -63,7 +63,7 @@ pub(crate) fn apply_situation(args: &mut Args) -> Result<()> {
     let path = if Path::new(&rel).is_absolute() {
         PathBuf::from(&rel)
     } else {
-        ::legacy_config::resolve_path(&args.root, &rel)
+        ::mods::resolve_path(&args.root, &rel)
     };
     let sit = ::content::Situation::load(&path)
         .map_err(|e| anyhow!("loading {}: {e}", path.display()))?;
@@ -104,7 +104,7 @@ pub(crate) fn apply_situation_parsed(sit: &::content::situation::Situation, args
         });
     // the map's tile grid first: a position is a tile and a place in it, and a
     // `[worldcoordinates]` map's tiles are ~372 m and scaled onto the grid
-    let global_path = ::legacy_config::resolve_path(&args.root, &args.map);
+    let global_path = ::mods::resolve_path(&args.root, &args.map);
     match ::map::GlobalCfg::load(&global_path) {
         Ok(g) => ::map::configure_grid(&g),
         Err(e) => log::warn!("situation: map {}: {e}", global_path.display()),

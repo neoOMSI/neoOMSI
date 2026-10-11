@@ -1824,7 +1824,7 @@ impl Player {
                 &|n| v.var_slot(n),
             );
             for (f, vol) in &html_sounds {
-                let path = ::legacy_config::resolve_path(v.ty.def.dir(), f);
+                let path = ::mods::resolve_path(v.ty.def.dir(), f);
                 ss.play_file_direct(a, &path, *vol);
             }
             if let Some(every) = debug_sound_every() {
@@ -1855,7 +1855,7 @@ impl Player {
     pub(crate) fn load_sounds(&mut self, audio: &::audio::AudioEngine) {
         let def = &self.vehicle.ty.def;
         if let Some(rel) = &def.sound {
-            let path = ::legacy_config::resolve_path(def.dir(), rel);
+            let path = ::mods::resolve_path(def.dir(), rel);
             match ::legacy_vehicle::SoundCfg::load(&path) {
                 Ok(cfg) => {
                     // the bus's own `[next_random]` sounds, chosen by its fleet number
@@ -1877,7 +1877,7 @@ impl Player {
                     for (i, t) in self.vehicle.trailers.iter().enumerate() {
                         connected_cabin &= t.ty.def.couple_front_open_for_sound && !t.reversed;
                         let Some(rel) = &t.ty.def.sound else { continue };
-                        let path = ::legacy_config::resolve_path(t.ty.def.dir(), rel);
+                        let path = ::mods::resolve_path(t.ty.def.dir(), rel);
                         match ::legacy_vehicle::SoundCfg::load(&path) {
                             Ok(cfg) => {
                                 let dir =

@@ -697,3 +697,25 @@ fn bays() {
         assert_eq!(bay_offset(lat), lat);
     }
 }
+
+#[test]
+fn a_service_trip_without_a_line_shows_none() {
+    // two trips of Gerolstein's `Diensttafeln.ttl`: OMSI 2 shows no line for the first,
+    // not "Diensttafeln" (#185)
+    let trip = |name: &str, text: &str| {
+        ::timetable::Trip::parse(&::legacy_config::CfgFile::from_str(
+            format!("TTData/{name}.ttp"),
+            text,
+        ))
+    };
+    let service = trip(
+        "BTF_Bth-Spur1_Schulz",
+        "[trip]\nBTF_Bth-Spur1_Schulz\nBetriebsfahrt\n\n",
+    );
+    assert_eq!(bus_line(&service), "");
+    let swim = trip(
+        "S_Schulz_Hallenbad",
+        "[trip]\nS_Schulz_Hallenbad\nSchwimmkinder\n&\n",
+    );
+    assert_eq!(bus_line(&swim), "&");
+}

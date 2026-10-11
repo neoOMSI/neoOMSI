@@ -26,6 +26,7 @@ sevenz-rust2 = { version = "0.23", default-features = false, features = ["util",
 unrar-rs = { version = "0.10", default-features = false, features = ["crypto-rust"] }
 config = { path = "../config" }
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 map = { path = "../map" }
 legacy-vehicle = { path = "../vehicle" }
 timetable = { path = "../timetable" }

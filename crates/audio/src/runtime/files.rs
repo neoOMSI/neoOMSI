@@ -21,7 +21,7 @@ impl SoundSet {
         if !engine.enabled() || file.trim().is_empty() {
             return;
         }
-        let path = ::legacy_config::resolve_path(&self.dir, file);
+        let path = ::mods::resolve_path(&self.dir, file);
         let Some(clip) = engine.load_clip(&path) else {
             warn_missing_once(trigger, &path);
             return;

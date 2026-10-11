@@ -5,7 +5,7 @@ fn read_list(r: &mut ::legacy_config::CfgReader, base: &Path) -> Vec<PathBuf> {
     (0..n)
         .map(|_| r.str().to_string())
         .filter(|s| !s.trim().is_empty())
-        .map(|s| ::legacy_config::resolve_path(base, &s))
+        .map(|s| ::mods::resolve_path(base, &s))
         .collect()
 }
 

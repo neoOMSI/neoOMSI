@@ -1282,7 +1282,7 @@ pub fn parse_texchanges(file: &CfgFile) -> Vec<TexChangeMaster> {
 pub fn load_texchanges(base: &Path, files: &[String]) -> Vec<TexChangeMaster> {
     let mut out = Vec::new();
     for f in files {
-        let path = ::legacy_config::resolve_path(base, f);
+        let path = ::mods::resolve_path(base, f);
         match CfgFile::read(&path) {
             Ok(cfg) => out.extend(parse_texchanges(&cfg)),
             Err(e) => log::warn!("[texchanges] {}: {e}", path.display()),

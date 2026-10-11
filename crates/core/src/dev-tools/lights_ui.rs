@@ -12,9 +12,12 @@ pub(super) fn lights_window(ui: &imgui::Ui, open: &mut bool) {
         .size([400.0, 300.0], Condition::FirstUseEver)
         .position([12.0, 32.0], Condition::FirstUseEver)
         .build(|| {
-            ui.slider("Weather Boost", 0.0, 4.0, &mut s.weather_boost);
             ui.slider("Weather Night", 0.0, 1.0, &mut s.weather_night);
             ui.slider("Corona / Cone", 0.0, 4.0, &mut s.corona);
+            ui.separator();
+            ui.text("Night / Light Maps");
+            ui.slider("Night Map Glow x", 0.0, 3.0, &mut s.nightmap_gain);
+            ui.slider("Light Map x", 0.0, 3.0, &mut s.lightmap_gain);
             ui.separator();
             ui.text("HTML & Scripting textures");
             for (i, n) in [
@@ -69,9 +72,10 @@ pub(super) fn lights_window(ui: &imgui::Ui, open: &mut bool) {
 
 pub(super) fn reset_global(s: &mut crate::lights::LightSettings) {
     let d = crate::lights::LightSettings::DEFAULT;
-    s.weather_boost = d.weather_boost;
     s.weather_night = d.weather_night;
     s.corona = d.corona;
+    s.nightmap_gain = d.nightmap_gain;
+    s.lightmap_gain = d.lightmap_gain;
     s.map_spot = d.map_spot;
     s.lamp_light = d.lamp_light;
 }
@@ -150,8 +154,6 @@ pub(super) fn spots_panel(
         ui.slider("Intensity x##s2", 0.0, 4.0, &mut m.gain);
         ui.slider("Range x##s2", 0.1, 4.0, &mut m.range);
         ui.slider("Core x##s2", 0.1, 4.0, &mut m.core);
-        ui.slider("Inner Angle +deg##s2", -60.0, 60.0, &mut m.inner_add);
-        ui.slider("Outer Angle +deg##s2", -60.0, 60.0, &mut m.outer_add);
         ui.slider("Height (m)##s2", -3.0, 3.0, &mut m.height);
         if ui.button("Reset Extra Spotlights##s2") {
             *m = crate::lights::Spot2Cfg::DEFAULT;
@@ -218,7 +220,6 @@ pub(super) fn spots_panel(
 
 pub(super) fn vehicle_panel(ui: &imgui::Ui, s: &mut crate::lights::LightSettings) {
     if ui.collapsing_header("Headlights", imgui::TreeNodeFlags::DEFAULT_OPEN) {
-        ui.checkbox("Force High Beam", &mut s.force_high_beam);
         ui.checkbox("Show Beam Markers", &mut s.beam_marker);
         ui.slider("Headlight", 0.0, 100.0, &mut s.headlight);
         ui.slider("Vanilla Headlight", 0.0, 2.0, &mut s.vanilla);
@@ -228,77 +229,53 @@ pub(super) fn vehicle_panel(ui: &imgui::Ui, s: &mut crate::lights::LightSettings
         ui.slider("Right##cone", -5.0, 5.0, &mut s.cone_side);
         ui.slider("Height##cone", -5.0, 5.0, &mut s.cone_height);
         ui.separator();
-        ui.text_colored([0.1, 0.9, 1.0, 1.0], "Headlight start (cyan), m");
-        ui.slider("Forward##lamp", -20.0, 20.0, &mut s.lamp_offset);
-        ui.slider("Right##lamp", -5.0, 5.0, &mut s.lamp_side);
-        ui.slider("Height##lamp", -5.0, 5.0, &mut s.lamp_height);
+        ui.text_colored([0.1, 0.9, 1.0, 1.0], "Aim ([spotlight_2] lamps)");
         ui.slider("Yaw (deg, left +)##lamp", -45.0, 45.0, &mut s.lamp_yaw);
         ui.slider("Pitch (deg, up +)##lamp", -45.0, 45.0, &mut s.lamp_pitch);
-        ui.slider("Lamp Distance x##lamp", 0.0, 3.0, &mut s.lamp_spread);
-        ui.slider("Range x##lamp", 0.1, 4.0, &mut s.lamp_range);
-        ui.slider("Core x##lamp", 0.1, 10.0, &mut s.lamp_core);
-        ui.slider("Inner Angle +deg##lamp", -60.0, 60.0, &mut s.lamp_inner_add);
-        ui.slider("Outer Angle +deg##lamp", -60.0, 60.0, &mut s.lamp_outer_add);
-        ui.color_edit3("Color Tint##lamp", &mut s.lamp_color);
     }
     beam_panel(ui, s);
     ui.separator();
     if ui.button("Reset Vehicle Lights") {
         let d = crate::lights::LightSettings::DEFAULT;
         let (sp, s2) = (s.spill, s.spot2);
-        let (wb, wn, co, ms, ll) = (
-            s.weather_boost,
+        let (wn, co, ms, ll, ng, lg) = (
             s.weather_night,
             s.corona,
             s.map_spot,
             s.lamp_light,
+            s.nightmap_gain,
+            s.lightmap_gain,
         );
         *s = d;
         s.map_spot = ms;
         s.spill = sp;
         s.spot2 = s2;
         s.lamp_light = ll;
-        s.weather_boost = wb;
         s.weather_night = wn;
         s.corona = co;
+        s.nightmap_gain = ng;
+        s.lightmap_gain = lg;
     }
 }
 
 fn beam_panel(ui: &imgui::Ui, s: &mut crate::lights::LightSettings) {
     if ui.collapsing_header("Low Beam", imgui::TreeNodeFlags::DEFAULT_OPEN) {
         ui.slider("Gain##low", 1.0, 10.0, &mut s.low_beam_gain);
-        beam_controls(ui, "low", &mut s.low);
+        beam_controls(ui, "low", &mut s.low, true);
     }
     if ui.collapsing_header("High Beam", imgui::TreeNodeFlags::DEFAULT_OPEN) {
-        ui.slider("Gain##high", 0.0, 3.0, &mut s.high_beam);
-        ui.slider("Range (global x)##high", 0.5, 4.0, &mut s.high_beam_range);
-        ui.slider(
-            "Spread (global x)##high",
-            0.25,
-            3.0,
-            &mut s.high_beam_spread,
-        );
-        beam_controls(ui, "high", &mut s.high);
+        beam_controls(ui, "high", &mut s.high, false);
     }
 }
 
-fn beam_controls(ui: &imgui::Ui, id: &str, b: &mut crate::lights::BeamCfg) {
+fn beam_controls(ui: &imgui::Ui, id: &str, b: &mut crate::lights::BeamCfg, full: bool) {
     ui.checkbox(format!("Enabled##{id}"), &mut b.on);
     ui.slider(format!("Intensity x##{id}b"), 0.0, 4.0, &mut b.gain);
     ui.slider(format!("Range x##{id}b"), 0.1, 4.0, &mut b.range);
+    if !full {
+        return;
+    }
     ui.slider(format!("Core x##{id}b"), 0.1, 4.0, &mut b.core);
-    ui.slider(
-        format!("Inner Angle +deg##{id}b"),
-        -60.0,
-        60.0,
-        &mut b.inner_add,
-    );
-    ui.slider(
-        format!("Outer Angle +deg##{id}b"),
-        -60.0,
-        60.0,
-        &mut b.outer_add,
-    );
     ui.slider(format!("Yaw (deg, left +)##{id}b"), -30.0, 30.0, &mut b.yaw);
     ui.slider(
         format!("Pitch (deg, up +)##{id}b"),
@@ -306,8 +283,4 @@ fn beam_controls(ui: &imgui::Ui, id: &str, b: &mut crate::lights::BeamCfg) {
         30.0,
         &mut b.pitch,
     );
-    ui.slider(format!("Forward (m)##{id}b"), -5.0, 5.0, &mut b.forward);
-    ui.slider(format!("Right (m)##{id}b"), -3.0, 3.0, &mut b.side);
-    ui.slider(format!("Height (m)##{id}b"), -3.0, 3.0, &mut b.height);
-    ui.color_edit3(format!("Color##{id}b"), &mut b.color);
 }

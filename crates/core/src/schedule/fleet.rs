@@ -349,7 +349,7 @@ impl Schedule {
                     if v.file.to_ascii_lowercase().ends_with(".zug") {
                         continue;
                     }
-                    let path = ::legacy_config::resolve_path(root, &v.file);
+                    let path = ::mods::resolve_path(root, &v.file);
                     match VehicleType::load_ai(root, &path) {
                         Ok(t) => out.push(Arc::new(t)),
                         Err(e) => log::warn!("AI group '{}' vehicle {}: {e}", g.name, v.file),

@@ -122,6 +122,10 @@ impl App {
                     self.surface.as_ref(),
                 ) {
                     let old_enabled = nav.enabled;
+                    // (the setting as it is now: it can change while the game runs)
+                    nav.opacity = ::config::get_float("ui", "opacity")
+                        .unwrap_or(0.85)
+                        .clamp(0.2, 1.0) as f32;
                     let old_opacity = nav.opacity;
                     nav.cockpit_display = vr_active;
                     if vr_active {
@@ -129,7 +133,10 @@ impl App {
                         nav.opacity = vr_nav_display.map(|d| d.placement.opacity).unwrap_or(0.95);
                     }
                     if let Some(w) = self.world.as_ref() {
-                        nav.start_map(w.clone());
+                        nav.start_map(
+                            w.clone(),
+                            glam::DVec2::new(p.vehicle.position.x, p.vehicle.position.y),
+                        );
                     }
                     if let (Some(places), Some(d)) = (nav.places(), self.duty.as_mut()) {
                         if !self.duty_places {
@@ -533,12 +540,14 @@ impl App {
             ::config::get_int("graphics", "led_glow").unwrap_or(6) as u8 as f32 * 0.25;
         lights::set_led_glow(lighting.led_glow);
         lighting.nightmap_glow =
-            ::config::get_int("graphics", "nightmap_glow").unwrap_or(6) as u8 as f32 * 0.25;
+            ::config::get_int("graphics", "nightmap_glow").unwrap_or(6) as u8 as f32 * 0.1875;
         lighting.led_mips = ::config::get_float("graphics", "led_mips").unwrap_or(1.3) as f32;
         lighting.atmosphere_brightness =
             ::config::get_float("graphics", "atmosphere_brightness").unwrap_or(1.0) as f32;
         lighting.html_glow = lights::screen_fx(0);
         lighting.html_light = lights::screen_fx(1);
+        lighting.nightmap_gain = lights::settings().nightmap_gain;
+        lighting.lightmap_gain = lights::settings().lightmap_gain;
         lighting.script_glow = lights::screen_fx(2);
         lighting.script_light = lights::screen_fx(3);
         let mut finish = false;
@@ -898,6 +907,18 @@ impl App {
                         lights: scene.lights.len(),
                         interior_lights: scene.interior_lights.len(),
                         coronas: scene.coronas.len(),
+                        gpu_passes: r.gpu_pass_times(),
+                        draw_report: r
+                            .counts
+                            .borrow()
+                            .iter()
+                            .map(|(k, v)| format!("{k}: {v:.1}"))
+                            .collect(),
+                        light_stats: devtools::LightStats::gather(
+                            scene,
+                            &lighting,
+                            cam.position,
+                        ),
                     };
                     let scale = self
                         .window

@@ -368,7 +368,7 @@ fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> O
     // the main folder, as OMSI does (`Splines\BS_ADDON_CreativeStreets\Gehwege\texture\
     // BS_Gehweg_Allgemein1.bmp` in a spline of another folder of that add-on).
     let from_root: Vec<PathBuf> = if name.contains('/') {
-        ::legacy_config::content_roots().into_iter().take(1).collect()
+        ::mods::content_roots().into_iter().take(1).collect()
     } else {
         Vec::new()
     };
@@ -397,7 +397,7 @@ fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> O
                 .any(|f| f.eq_ignore_ascii_case(p))
         }) {
             let rel = parts[i..].join("/");
-            for root in ::legacy_config::content_roots() {
+            for root in ::mods::content_roots() {
                 if let Some(found) = find_texture_in_dir(&root, &rel) {
                     return Some(found);
                 }
@@ -417,16 +417,16 @@ fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> O
 fn find_texture_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
     let stem = Path::new(name).with_extension("");
     let dds = format!("{}.dds", stem.display());
-    let p = ::legacy_config::resolve_path(dir, &dds);
+    let p = ::mods::resolve_path(dir, &dds);
     if ::legacy_config::vfs::is_file(&p) {
         return Some(p);
     }
-    let p = ::legacy_config::resolve_path(dir, name);
+    let p = ::mods::resolve_path(dir, name);
     if ::legacy_config::vfs::is_file(&p) {
         return Some(p);
     }
     for ext in EXTENSIONS.into_iter().filter(|e| *e != "dds") {
-        let p = ::legacy_config::resolve_path(dir, &format!("{}.{}", stem.display(), ext));
+        let p = ::mods::resolve_path(dir, &format!("{}.{}", stem.display(), ext));
         if ::legacy_config::vfs::is_file(&p) {
             return Some(p);
         }

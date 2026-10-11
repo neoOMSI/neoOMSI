@@ -18,7 +18,7 @@
 //! content (a Windows, Linux or macOS executable or a script with `#!`, whatever it is
 //! called). OMSI's own vehicle scripts are data for the game's own interpreter, which
 //! touches nothing outside the vehicle. No plugin is ever loaded from the session folder
-//! (`::legacy_config::mark_sandbox`).
+//! (`::mods::mark_sandbox`).
 
 use crate::Args;
 use sha2::{Digest, Sha256};
@@ -265,7 +265,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         if depth > 12 {
             return;
         }
-        let roots = ::legacy_config::content_roots();
+        let roots = ::mods::content_roots();
         let comps = ::legacy_config::windows_components(rel);
         let mut seen: HashSet<String> = HashSet::new();
         for r in roots {
@@ -275,7 +275,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             let dir = comps.iter().fold(r.clone(), |p, c| p.join(c));
             let Some(list) = ::legacy_config::vfs::list_dir(&dir).or_else(|| {
                 // (case-insensitively, as Windows would find it)
-                ::legacy_config::find_in_roots(rel)
+                ::mods::find_in_roots(rel)
                     .filter(|(root, _)| *root == r)
                     .and_then(|(_, p)| ::legacy_config::vfs::list_dir(&p))
             }) else {
@@ -294,7 +294,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     if files.contains_key(&key) {
                         continue;
                     }
-                    if let Some((root, path)) = ::legacy_config::find_in_roots(&child) {
+                    if let Some((root, path)) = ::mods::find_in_roots(&child) {
                         if is_original(&root, original) {
                             continue;
                         }
@@ -351,7 +351,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     }
     if let Some(w) = args.weather.as_deref() {
         let w = norm(w);
-        if let Some((root, path)) = ::legacy_config::find_in_roots(&w) {
+        if let Some((root, path)) = ::mods::find_in_roots(&w) {
             if root != original {
                 files.insert(w.to_lowercase(), (w, path));
             }
@@ -361,7 +361,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     // the map's tiles and lists, and every text file of what they bring: the objects,
     // splines, vehicles and people they name, with the folders those name in turn
     let mut map_texts: Vec<(String, PathBuf)> = Vec::new();
-    for r in ::legacy_config::content_roots() {
+    for r in ::mods::content_roots() {
         let comps = ::legacy_config::windows_components(&map_dir);
         let dir = comps.iter().fold(r.clone(), |p, c| p.join(c));
         for (name, is_dir) in ::legacy_config::vfs::list_dir(&dir).unwrap_or_default() {
@@ -423,7 +423,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     if !FOLDERS.contains(&top.as_str()) {
                         continue;
                     }
-                    let Some((root, _)) = ::legacy_config::find_in_roots(&c) else {
+                    let Some((root, _)) = ::mods::find_in_roots(&c) else {
                         continue;
                     };
                     if is_original(&root, &original) {
@@ -447,11 +447,11 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     }
     // the mod fonts those text textures use (OMSI reads the `.oft` files of `Fonts` itself,
     // not its sub-folders): each `.oft` with a `[newfont]` of a name in use, and its bitmaps
-    for r in ::legacy_config::content_roots() {
+    for r in ::mods::content_roots() {
         if is_original(&r, &original) {
             continue;
         }
-        let Some(dir) = ::legacy_config::find_in_roots("Fonts")
+        let Some(dir) = ::mods::find_in_roots("Fonts")
             .filter(|(root, _)| *root == r)
             .map(|(_, p)| p)
             .or_else(|| Some(r.join("Fonts")))
@@ -486,7 +486,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             }
             for f in std::iter::once(n.clone()).chain(bitmaps) {
                 let rel = format!("Fonts/{f}");
-                if let Some((root, path)) = ::legacy_config::find_in_roots(&rel) {
+                if let Some((root, path)) = ::mods::find_in_roots(&rel) {
                     if !is_original(&root, &original) {
                         files.insert(rel.to_lowercase(), (rel, path));
                     }
@@ -743,7 +743,7 @@ fn process_alive(pid: u32) -> bool {
 pub fn clean_up() {
     let taken = SANDBOX.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some(dir) = taken {
-        ::legacy_config::remove_content_root(&dir);
+        ::mods::remove_content_root(&dir);
         match std::fs::remove_dir_all(&dir) {
             Ok(()) => log::info!("LAN mods: the host's mods of this session were removed"),
             Err(e) => log::warn!(
@@ -909,8 +909,8 @@ pub fn fetch(
         todo.par_iter()
             .map(|&k| {
                 let e = &manifest.entries[k];
-                let Some((_, p)) = ::legacy_config::find_in_roots(&e.path)
-                    .filter(|(root, _)| !::legacy_config::is_sandbox(root))
+                let Some((_, p)) = ::mods::find_in_roots(&e.path)
+                    .filter(|(root, _)| !::mods::is_sandbox(root))
                 else {
                     return (k, false, None);
                 };
@@ -1098,11 +1098,11 @@ pub fn fetch(
     }
     // the session folder is content like any other, searched first, and never a source of
     // plugins
-    ::legacy_config::mark_sandbox(dir.clone());
-    ::legacy_config::add_content_root_first(dir.clone());
+    ::mods::mark_sandbox(dir.clone());
+    ::mods::add_content_root_first(dir.clone());
     // the host's map (now that we have it)
     let map_ok =
-        refuse_path(&manifest.map).is_none() && ::legacy_config::find_in_roots(&manifest.map).is_some();
+        refuse_path(&manifest.map).is_none() && ::mods::find_in_roots(&manifest.map).is_some();
     if map_ok
         && !manifest.map.is_empty()
         && !manifest

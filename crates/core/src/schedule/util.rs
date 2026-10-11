@@ -89,3 +89,9 @@ pub(super) fn tt_terminus_index(hof: Option<&::legacy_vehicle::hof::Hof>, termin
     hof.and_then(|h| h.termini.iter().position(|t| t.texture_id == terminus))
         .map_or(-1, |i| i as i32)
 }
+
+/// The line a trip's bus and the departure boards show: the trip's own, empty when it has
+/// none - never the `.ttl`'s name, as in OMSI 2 (#185).
+pub(super) fn bus_line(trip: &::timetable::Trip) -> String {
+    trip.line.trim().to_string()
+}

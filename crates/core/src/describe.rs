@@ -27,7 +27,7 @@ impl ControlNames {
             _ => "en".to_string(),
         };
         let mut texts = HashMap::new();
-        let mut dirs = ::legacy_config::content_dirs("Languages");
+        let mut dirs = ::mods::content_dirs("Languages");
         dirs.reverse(); // the installation first, the mods' files override it
         let own = root.join("Languages");
         if !dirs.iter().any(|d| d == &own) {

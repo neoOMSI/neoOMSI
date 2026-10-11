@@ -342,7 +342,7 @@ impl Schedule {
             let layover = departure > day_time;
             let n_stops = stops.len();
             traffic.reroute(ci, route, s0, stops, layover);
-            let line = self.display_line(i);
+            let line = bus_line(&self.data.trips[self.departures[i].trip]);
             let terminus = self.data.trips[self.departures[i].trip].terminus.clone();
             let names = self.trip_stop_names(self.departures[i].trip);
             let last_stop = trip_stations(&self.data.trips[self.departures[i].trip])
@@ -520,17 +520,7 @@ impl Schedule {
             .map(|(ri, ss, lat, t, id, side)| (ri - start_index, ss, lat, t, id, side))
             .collect();
         let route: Vec<usize> = section[start_index..].to_vec();
-        // the trip's own line (" 5"), which is what the displays show; the timetable line's
-        // name ("5 & 5N") only groups the tours
-        let trip_line = self.data.trips[self.departures[i].trip]
-            .line
-            .trim()
-            .to_string();
-        let line = if trip_line.is_empty() {
-            self.departures[i].line.clone()
-        } else {
-            trip_line
-        };
+        let line = bus_line(&self.data.trips[self.departures[i].trip]);
         let tour = self.departures[i].tour.clone();
         let terminus = self.data.trips[self.departures[i].trip].terminus.clone();
         let Some(ci) = traffic.spawn_bus(

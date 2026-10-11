@@ -12,6 +12,7 @@ legacy-o3d = { path = "../../crates/legacy-o3d" }
 model = { path = "../../crates/model" }
 scenery = { path = "../../crates/scenery" }
 map = { path = "../../crates/map" }
+mods = { path = "../../crates/mods" }
 legacy-vehicle = { path = "../../crates/vehicle" }
 timetable = { path = "../../crates/timetable" }
 content = { path = "../../crates/content" }

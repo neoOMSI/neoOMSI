@@ -33,7 +33,7 @@ impl World {
         if let Some(t) = self.object_types.lock().get(&key) {
             return t.clone();
         }
-        let path = ::legacy_config::resolve_path(&self.root, rel);
+        let path = ::mods::resolve_path(&self.root, rel);
         let loaded = (|| -> Option<Arc<ObjectType>> {
             let mut sco = SceneryObject::load(&path)
                 .map_err(|e| log::warn!("{e}"))
@@ -41,7 +41,7 @@ impl World {
             let sco_dir = path.parent()?.to_path_buf();
             let (model, model_dir) = match &sco.model_file {
                 Some(m) => {
-                    let mp = ::legacy_config::resolve_path(&sco_dir, m);
+                    let mp = ::mods::resolve_path(&sco_dir, m);
                     let model = Model::load(&mp).map_err(|e| log::warn!("{e}")).ok()?;
                     (model, mp.parent()?.to_path_buf())
                 }
@@ -59,14 +59,14 @@ impl World {
             if !model.lods.is_empty() {
                 let start = model.lods[0].first_mesh;
                 for (i, md) in model.lod_meshes(0).iter().enumerate() {
-                    let mesh_path = ::legacy_config::resolve_path(
-                        &::legacy_config::resolve_path(&model_dir, "model"),
+                    let mesh_path = ::mods::resolve_path(
+                        &::mods::resolve_path(&model_dir, "model"),
                         &md.file,
                     );
                     let mesh_path = if ::legacy_config::vfs::is_file(&mesh_path) {
                         mesh_path
                     } else {
-                        ::legacy_config::resolve_path(&model_dir, &md.file)
+                        ::mods::resolve_path(&model_dir, &md.file)
                     };
                     match ::legacy_o3d::load_mesh(&mesh_path) {
                         Ok(m) => {
@@ -88,14 +88,14 @@ impl World {
             for l in 1..model.lods.len() {
                 let mut list = Vec::new();
                 for md in model.lod_meshes(l) {
-                    let mesh_path = ::legacy_config::resolve_path(
-                        &::legacy_config::resolve_path(&model_dir, "model"),
+                    let mesh_path = ::mods::resolve_path(
+                        &::mods::resolve_path(&model_dir, "model"),
                         &md.file,
                     );
                     let mesh_path = if ::legacy_config::vfs::is_file(&mesh_path) {
                         mesh_path
                     } else {
-                        ::legacy_config::resolve_path(&model_dir, &md.file)
+                        ::mods::resolve_path(&model_dir, &md.file)
                     };
                     if let Ok(m) = ::legacy_o3d::load_mesh(&mesh_path) {
                         list.push((mesh_from_o3d(&m), m.materials.clone(), md.materials.clone()));
@@ -112,7 +112,7 @@ impl World {
                 .map(|c| {
                     (
                         c.variable.clone(),
-                        ::simulation::vehicle::load_paint_schemes(&::legacy_config::resolve_path(
+                        ::simulation::vehicle::load_paint_schemes(&::mods::resolve_path(
                             &sco_dir, &c.path,
                         )),
                     )
@@ -173,7 +173,7 @@ impl World {
                     // (the scheme's picture lies in the scheme's folder, as for the buses;
                     // taken as a bare name it was looked for among the model's textures, not
                     // found, and the parked car stood there white)
-                    let in_scheme = ::legacy_config::resolve_path(&ps.dir, file);
+                    let in_scheme = ::mods::resolve_path(&ps.dir, file);
                     let file = if ::legacy_config::vfs::is_file(&in_scheme) {
                         in_scheme.to_string_lossy().into_owned()
                     } else {
@@ -261,11 +261,11 @@ impl World {
                 .filter_map(|(hole_dir, f)| {
                     // the cutter sits next to the model, which is either the object's own
                     // folder or a `model` folder inside it
-                    let mp = ::legacy_config::resolve_path(hole_dir, f);
+                    let mp = ::mods::resolve_path(hole_dir, f);
                     let mp = if ::legacy_config::vfs::is_file(&mp) {
                         mp
                     } else {
-                        ::legacy_config::resolve_path(&::legacy_config::resolve_path(hole_dir, "model"), f)
+                        ::mods::resolve_path(&::mods::resolve_path(hole_dir, "model"), f)
                     };
                     match ::legacy_o3d::load_mesh(&mp) {
                         Ok(m) => Some(mesh_from_o3d(&m)),
@@ -282,16 +282,16 @@ impl World {
                 .filter(|_| !sco.no_collision)
                 .and_then(|f| {
                     let mp =
-                        ::legacy_config::resolve_path(&::legacy_config::resolve_path(&model_dir, "model"), f);
+                        ::mods::resolve_path(&::mods::resolve_path(&model_dir, "model"), f);
                     let mp = if ::legacy_config::vfs::is_file(&mp) {
                         mp
                     } else {
-                        ::legacy_config::resolve_path(&model_dir, f)
+                        ::mods::resolve_path(&model_dir, f)
                     };
                     let mp = if ::legacy_config::vfs::is_file(&mp) {
                         mp
                     } else {
-                        ::legacy_config::resolve_path(&sco_dir, f)
+                        ::mods::resolve_path(&sco_dir, f)
                     };
                     ::legacy_o3d::load_mesh(&mp)
                         .map(|m| mesh_from_o3d(&m))
@@ -340,7 +340,7 @@ impl World {
         if let Some(t) = self.spline_types.lock().get(&key) {
             return t.clone();
         }
-        let path = ::legacy_config::resolve_path(&self.root, rel);
+        let path = ::mods::resolve_path(&self.root, rel);
         let loaded = Spline::load(&path)
             .map_err(|e| log::warn!("{e}"))
             .ok()

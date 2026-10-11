@@ -281,7 +281,7 @@ pub(crate) fn load_weather(args: &Args) -> ::content::weather::Weather {
             .or_else(|| rel.strip_prefix("METAR:"))
         {
             Some(icao) => Ok(fetch_metar(icao.trim())),
-            None => ::content::weather::Weather::load(&::legacy_config::resolve_path(&args.root, &rel)),
+            None => ::content::weather::Weather::load(&::mods::resolve_path(&args.root, &rel)),
         }
     };
     match loaded {
@@ -338,12 +338,12 @@ pub(crate) fn setup_sky(
         .unwrap_or_else(|| STOCK.map(String::from));
     let mut ids = Vec::new();
     for (n, stock) in names.iter().zip(STOCK) {
-        let p = ::legacy_config::resolve_path(&args.root, n);
+        let p = ::mods::resolve_path(&args.root, n);
         // a sky pack's picture that cannot be read leaves the stock one in its place: giving
         // up here took the clouds with it, whatever the weather (#749)
         let img = ::texture::decode_file(&p).or_else(|e| {
             log::warn!("sky texture {}: {e}", p.display());
-            ::texture::decode_file(&::legacy_config::resolve_path(&args.root, stock))
+            ::texture::decode_file(&::mods::resolve_path(&args.root, stock))
         });
         match img {
             Ok(img) => ids.push(renderer.add_texture(scene, &img, false)),
@@ -360,7 +360,7 @@ pub(crate) fn setup_sky(
         .unwrap_or_default();
     let typed = cloud_texture(&args.root, &kind);
     let cover = typed.or_else(|| {
-        ::texture::decode_file(&::legacy_config::resolve_path(&args.root, "Texture\\clouds.tga")).ok()
+        ::texture::decode_file(&::mods::resolve_path(&args.root, "Texture\\clouds.tga")).ok()
     });
     let t = Instant::now();
     let field = cloud_field(cover.as_ref());
@@ -530,8 +530,8 @@ fn cloud_texture(root: &Path, kind: &str) -> Option<::texture::Image> {
         }
     }
     let file = file?;
-    let mut img = ::texture::decode_file(&::legacy_config::resolve_path(
-        &::legacy_config::resolve_path(&root, "Texture"),
+    let mut img = ::texture::decode_file(&::mods::resolve_path(
+        &::mods::resolve_path(&root, "Texture"),
         &file,
     ))
     .ok()?;
@@ -878,7 +878,7 @@ pub(crate) fn metar_airports(root: &Path) -> Vec<(String, String)> {
     {
         return v;
     }
-    let text = std::fs::read(::legacy_config::resolve_path(root, "Weather/ICAO.txt"))
+    let text = std::fs::read(::mods::resolve_path(root, "Weather/ICAO.txt"))
         .map(|b| ::legacy_config::codepage::decode(&b))
         .unwrap_or_default();
     let mut v: Vec<(String, String)> = text

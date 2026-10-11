@@ -120,22 +120,53 @@ pub(crate) fn confirm_road_surfaces(net: &mut Network, surfaces: &[(Vec<DVec3>, 
     }
 }
 
+/// How far the nearest street lane running alongside lane `i` is (centre to centre, at its
+/// middle), up to a lane's width: a lane drawn that wide meets its neighbour, so the lanes of a
+/// road built from objects show as one carriageway instead of strands with dark gaps between.
+pub(super) fn beside(net: &Network, i: usize) -> f32 {
+    let lane = &net.lanes[i];
+    let (p, h) = lane.at(lane.length() * 0.5);
+    let mut best = 0.0f32;
+    for j in lanes_near(net, p.truncate(), 10.0) {
+        let o = &net.lanes[j];
+        if j == i || o.kind != LaneKind::Street || o.invisible {
+            continue;
+        }
+        let Some((s, d)) = o.nearest_point(p) else {
+            continue;
+        };
+        if !(0.8..=4.2).contains(&d) || s <= 0.5 || s >= o.length() - 0.5 {
+            continue;
+        }
+        let (q, oh) = o.at(s);
+        let a = angle_diff(h as f64, oh as f64).abs();
+        if a.min(180.0 - a) > 15.0 || (q.z - p.z).abs() > 1.5 {
+            continue;
+        }
+        if best == 0.0 || (d as f32) < best {
+            best = d as f32;
+        }
+    }
+    best
+}
+
 pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
     let mut roads = Vec::new();
     let mut splines =
         std::collections::BTreeMap::<((i32, i32), i64), Vec<&::simulation::traffic::Lane>>::new();
-    for (_, lane) in visible_road_lanes(net) {
+    for (i, lane) in visible_road_lanes(net) {
         if let Some(key) = lane.key.filter(|_| lane.source == 1) {
             splines.entry((key.tile, key.id)).or_default().push(lane);
         } else {
             roads.push(MapRoad {
                 points: lane.points.clone(),
-                width: lane.width.max(2.6),
+                width: lane.width.max(2.6).max(beside(net, i) + 0.2),
                 main: lane.speed_limit_kmh >= 55.0,
+                spline: None,
             });
         }
     }
-    for mut lanes in splines.into_values() {
+    for (key, mut lanes) in splines {
         lanes.sort_by(|a, b| a.offset.total_cmp(&b.offset));
         let mut start = 0;
         while start < lanes.len() {
@@ -189,6 +220,7 @@ pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
                 points,
                 width: hi - lo,
                 main: lanes[start..end].iter().any(|l| l.speed_limit_kmh >= 55.0),
+                spline: Some(key),
             });
             start = end;
         }
@@ -212,6 +244,7 @@ pub(crate) fn road_geometry(net: &Network) -> Vec<MapRoad> {
                     points: vec![lane.end(), next.start()],
                     width: lane.width.min(next.width).max(2.6),
                     main: lane.speed_limit_kmh >= 55.0 && next.speed_limit_kmh >= 55.0,
+                    spline: None,
                 });
             }
         }
@@ -244,6 +277,54 @@ pub(super) fn build_roads(p: &mut Painter, net: &Network, anchor: DVec2) {
             if l.main { ROAD_MAIN } else { ROAD },
             true,
         );
+    }
+}
+
+/// The streets of the road graph within `ROAD_RADIUS` of `anchor`: a pale kerb, the junction
+/// surfaces, then the carriageways on top. `OMSI_DEBUG_NAV=graph` marks the gaps left.
+pub(super) fn build_roads_from(p: &mut Painter, g: &RoadGraph, anchor: DVec2) {
+    let rel = |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
+    let (near, areas) = g.near(anchor, ROAD_RADIUS);
+    let roads: Vec<(&MapRoad, Vec<Vec3>)> = near
+        .into_iter()
+        .map(|i| &g.roads[i])
+        .map(|r| {
+            let pts = simplify(&r.points.iter().map(|q| rel(*q)).collect::<Vec<_>>(), 0.12);
+            (r, pts)
+        })
+        .collect();
+    for (r, pts) in &roads {
+        p.ribbon(pts, r.width + 2.4, 2.6, ROAD_KERB, true);
+    }
+    for &a in &areas {
+        let pts: Vec<Vec3> = g.areas[a].iter().map(|q| rel(*q)).collect();
+        p.world_poly(&pts, ROAD);
+    }
+    for main in [false, true] {
+        for (r, pts) in roads.iter().filter(|(r, _)| r.main == main) {
+            p.ribbon(
+                pts,
+                r.width,
+                1.6,
+                if r.main { ROAD_MAIN } else { ROAD },
+                true,
+            );
+        }
+    }
+    if ::legacy_config::env::var("OMSI_DEBUG_NAV").is_ok_and(|v| v == "graph") {
+        for (r, pts) in &roads {
+            let c = if r.spline.is_some() {
+                Color::rgba(70, 110, 200, 0.9)
+            } else {
+                Color::rgba(90, 170, 90, 0.9)
+            };
+            p.ribbon(pts, 0.4, 1.0, c, false);
+        }
+        for q in &g.open_ends {
+            if (q.truncate() - anchor).length() < ROAD_RADIUS {
+                p.world_disc(rel(*q), 2.0, 4.0, Color::rgba(230, 40, 40, 1.0));
+            }
+        }
     }
 }
 

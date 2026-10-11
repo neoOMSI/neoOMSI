@@ -89,7 +89,7 @@ fn scripts(lists: [&[PathBuf]; 4], vehicle: bool) -> String {
 fn meshes(dir: &Path, model: &::model::Model) -> String {
     let mut s = String::from("meshes:\n");
     for m in &model.meshes {
-        let p = ::legacy_config::resolve_path(dir, &m.file);
+        let p = ::mods::resolve_path(dir, &m.file);
         s.push_str(&format!(
             "  {} -> {} {}\n",
             m.file,

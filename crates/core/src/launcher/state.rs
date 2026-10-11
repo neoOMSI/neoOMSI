@@ -1322,7 +1322,7 @@ impl State {
     /// 92), which the bus has, else its first.
     pub fn default_hof(&self) -> String {
         let on_date = self.map().and_then(|m| {
-            let dir = legacy_config::resolve_path(std::path::Path::new(&self.config.root), &m.file);
+            let dir = ::mods::resolve_path(std::path::Path::new(&self.config.root), &m.file);
             map::ailists::depot_hof_on(
                 dir.parent()?,
                 map::ailists::date_code(&self.choice.date)?,

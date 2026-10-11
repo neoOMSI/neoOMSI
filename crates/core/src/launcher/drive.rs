@@ -2424,7 +2424,7 @@ pub(super) fn selected_weather_as_custom(root: &str, file: &str) -> Option<Strin
     {
         return None;
     }
-    let path = ::legacy_config::resolve_path(std::path::Path::new(root), file);
+    let path = ::mods::resolve_path(std::path::Path::new(root), file);
     let w = ::content::weather::Weather::load(&path).ok()?;
     let wet = (w.ground_wet[0] / 255.0).clamp(0.0, 1.0);
     Some(crate::weather_setup::CustomWeather::from_weather(&w, 1.0, wet).encode())
@@ -2504,7 +2504,7 @@ pub(crate) fn nearest_airport(root: &str, map: &str) -> String {
         .parent()
         .map(|d| d.to_string_lossy().to_string())
         .unwrap_or_default();
-    let tz = ::legacy_config::resolve_path(std::path::Path::new(root), &format!("{dir}/timezone.txt"));
+    let tz = ::mods::resolve_path(std::path::Path::new(root), &format!("{dir}/timezone.txt"));
     let code = ::map::TimeZone::load(&tz)
         .ok()
         .and_then(|t| t.lat_lon())

@@ -81,6 +81,15 @@ pub(super) fn heading_vec(h: f64) -> DVec2 {
     m.transform_vector2(DVec2::Y)
 }
 
+/// A time of day (s since midnight) as `HH:MM`.
+pub(super) fn clock(secs: f64) -> String {
+    format!(
+        "{:02}:{:02}",
+        (secs / 3600.0) as i32 % 24,
+        ((secs % 3600.0) / 60.0) as i32
+    )
+}
+
 pub(super) fn uses_miles(units: &str) -> bool {
     units.eq_ignore_ascii_case("uk") || units.eq_ignore_ascii_case("imperial")
 }

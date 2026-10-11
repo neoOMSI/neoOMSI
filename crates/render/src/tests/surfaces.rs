@@ -424,6 +424,96 @@ fn transmap_reads_the_border_outside_the_texture() {
 }
 
 #[test]
+#[ignore = "requires a graphics adapter; renders a sphere-mapped dark body in both vanilla pictures"]
+fn envmap_lerp_over_dark_paint_is_the_same_in_vanilla_plus() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    let mut scene = renderer.new_scene();
+    let black = renderer.add_texture(&mut scene, &::texture::Image::solid([0, 0, 0, 255]), false);
+    let sky = renderer.add_texture(
+        &mut scene,
+        &::texture::Image::solid([160, 160, 160, 255]),
+        false,
+    );
+    // the BHD A20's window band: opaque, `[matl_envmap] … 0.18`, no mask
+    let body = renderer.add_material_extra(
+        &mut scene,
+        Some(black),
+        AlphaMode::Opaque,
+        [1.0; 4],
+        false,
+        None,
+        None,
+        None,
+        Some((sky, 0.18)),
+        [0.0; 3],
+        MaterialExtra::default(),
+    );
+    let mesh = renderer.add_mesh(
+        &mut scene,
+        &MeshData {
+            positions: vec![
+                Vec3::new(-5.0, -5.0, 0.0),
+                Vec3::new(5.0, -5.0, 0.0),
+                Vec3::new(5.0, 5.0, 0.0),
+                Vec3::new(-5.0, 5.0, 0.0),
+            ],
+            normals: vec![Vec3::Z; 4],
+            uvs: vec![glam::Vec2::ZERO; 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            ranges: vec![(0, 6, 0)],
+            one_sided: false,
+        },
+    );
+    renderer.add_instance(&mut scene, mesh, DVec3::ZERO, Mat4::IDENTITY, vec![body]);
+    let camera = Camera {
+        position: DVec3::new(0.0, -0.105, 6.0),
+        yaw: 0.0,
+        pitch: -89.0,
+        roll: 0.0,
+        fov_deg: 90.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    let mut centre = |classic: bool| -> [u8; 3] {
+        let lighting = Lighting {
+            classic,
+            shadows: false,
+            fog_density: 0.0,
+            ..Default::default()
+        };
+        let rgba = renderer
+            .render_to_image(&mut scene, 64, 64, &camera, &lighting)
+            .unwrap();
+        rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3]
+            .try_into()
+            .unwrap()
+    };
+    let (vanilla, plus) = (centre(true), centre(false));
+    assert!(
+        vanilla[0] > 10,
+        "the sphere map must show over the dark paint: {vanilla:?}"
+    );
+    assert!(
+        vanilla.iter().zip(plus).all(|(v, p)| v.abs_diff(p) <= 3),
+        "Vanilla+ must reflect as strongly as Vanilla: vanilla {vanilla:?}, plus {plus:?}"
+    );
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; run with --ignored on a GPU host"]
 fn presurface_reveals_excavation_before_terrain_is_drawn() {
     fn quad(renderer: &Renderer, scene: &mut Scene, y: f32, half: f32) -> MeshId {

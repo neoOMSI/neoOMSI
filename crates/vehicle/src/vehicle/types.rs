@@ -165,7 +165,7 @@ impl Vehicle {
     pub fn couple_back_path(&self) -> Option<PathBuf> {
         self.couple_back
             .as_ref()
-            .map(|(f, _)| ::legacy_config::resolve_path(self.dir(), f))
+            .map(|(f, _)| ::mods::resolve_path(self.dir(), f))
     }
 
     /// A part that is only ever coupled behind another vehicle: the rear section of an

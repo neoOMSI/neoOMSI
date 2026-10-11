@@ -2,6 +2,7 @@ use super::*;
 
 impl Navigator {
     pub(super) fn city(&mut self, renderer: &Renderer, scene: &mut Scene, f: &NavFrame) {
+        let t_frame = std::time::Instant::now();
         self.atlas.begin_frame();
         let (sw, sh) = f.screen;
         let (w, h) = ((sw * 0.8).round(), (sh * 0.82).round());
@@ -41,12 +42,112 @@ impl Navigator {
         let global = self.global.clone();
         let net = global.as_deref().or(f.traffic.map(|t| &t.net));
         let mut roads_verts = None;
-        if let Some(n) = net {
+        let surfaces = self.surfaces.clone();
+        if let Some(sm) = surfaces.as_ref() {
+            // Navigator 2.0: the ground around what the window shows, finely when close,
+            // coarsely from far; built again on a thread of its own when the window nears the
+            // edge of what is built or the detail changes, the old ground shown meanwhile
+            let view = (w as f64).hypot(h as f64) * 0.5 * self.city.mpp;
+            let coarse = self.city.mpp > 0.6;
+            let version = self.global_version * 1_000_000 + 999_999;
+            if let Some(rx) = self.city.ground.as_ref() {
+                match rx.try_recv() {
+                    Ok(g) => {
+                        self.city.ground = None;
+                        if let (Some(buffer), Some(gpu), true) =
+                            (g.buffer, self.gpu.as_mut(), g.version == version)
+                        {
+                            gpu.put(3, buffer);
+                            self.city.surf = Some(g.surf);
+                            self.city.roads = Some((g.version, g.len, g.anchor));
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => self.city.ground = None,
+                }
+            }
+            let stale = match self.city.surf {
+                None => true,
+                Some((c, r, co)) => {
+                    co != coarse
+                        || (self.city.center - c).length() + view * 1.5 > r
+                        || r > view * 4.0 + 800.0
+                }
+            };
+            if self.city.ground.is_none()
+                && (stale || self.city.roads.map(|r| r.0 != version).unwrap_or(true))
+            {
+                let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
+                for k in sm.chunks.keys() {
+                    let o = crate::navmap::SurfaceMap::chunk_origin(*k);
+                    lo = lo.min(o);
+                    hi = hi.max(o + DVec2::splat(crate::navmap::CHUNK));
+                }
+                if lo.x == f64::MAX {
+                    lo = f.bus.truncate();
+                    hi = lo;
+                }
+                self.city.extent = (lo, hi);
+                // the anchor stays put while the window moves: the route drawn on it holds
+                let anchor = self
+                    .city
+                    .roads
+                    .filter(|r| r.0 == version)
+                    .map(|r| r.2)
+                    .unwrap_or((lo + hi) * 0.5);
+                let radius = view * 2.0 + 250.0;
+                let centre = self.city.center;
+                let (sm, device) = (sm.clone(), renderer.device.clone());
+                let (tx, rx) = std::sync::mpsc::channel();
+                let spawned = std::thread::Builder::new()
+                    .name("navigator map ground".into())
+                    .spawn(move || {
+                        let t0 = std::time::Instant::now();
+                        let mut p = Painter::new();
+                        build_surfaces(
+                            &mut p,
+                            &sm,
+                            anchor,
+                            centre,
+                            radius,
+                            coarse,
+                            if coarse { 0.0 } else { 1.0 },
+                        );
+                        let buffer = Gpu::filled(&device, &p.verts);
+                        if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+                            log::info!(
+                                "navigator map: ground within {radius:.0} m ({}) in {:.1} ms: {} vertices",
+                                if coarse { "coarse" } else { "fine" },
+                                t0.elapsed().as_secs_f64() * 1000.0,
+                                p.len()
+                            );
+                        }
+                        let _ = tx.send(Ground {
+                            version,
+                            anchor,
+                            surf: (centre, radius, coarse),
+                            len: p.len(),
+                            buffer,
+                        });
+                    });
+                match spawned {
+                    Ok(_) => self.city.ground = Some(rx),
+                    Err(e) => log::warn!("navigator: the map's ground cannot be built: {e}"),
+                }
+            }
+        } else if let Some(n) = net {
             let version = self.global_version * 1_000_000 + n.lanes.len() as u64;
             if self.city.roads.map(|r| r.0 != version).unwrap_or(true) {
                 let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
-                let road_lanes = road_geometry(n);
-                for l in &road_lanes {
+                let from_lanes;
+                let road_lanes: &[MapRoad] = match self.graph.as_deref().filter(|_| global.is_some()) {
+                    Some(g) => &g.roads,
+                    None => {
+                        from_lanes = road_geometry(n);
+                        &from_lanes
+                    }
+                };
+                for l in road_lanes {
                     for p in &l.points {
                         lo = lo.min(p.truncate());
                         hi = hi.max(p.truncate());
@@ -62,7 +163,7 @@ impl Navigator {
                     |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
                 let mut p = Painter::new();
                 for pass in 0..2 {
-                    for l in &road_lanes {
+                    for l in road_lanes {
                         let pts =
                             simplify(&l.points.iter().map(|q| rel(*q)).collect::<Vec<_>>(), 0.12);
                         if pass == 0 {
@@ -85,44 +186,61 @@ impl Navigator {
         let anchor = self.city.roads.map(|r| r.2).unwrap_or(f.bus.truncate());
         let rel = |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
         let mut route_verts = None;
-        let every = 2f64.powf((90.0 * s as f64 * self.city.mpp).log2().round()) as f32;
         let key = (
             self.route.version,
             self.jam_version,
-            every.to_bits(),
+            0,
             self.city.roads.map(|r| r.0).unwrap_or(0),
         );
+        let done = self.route.progress.min(self.route.lanes.len());
+        // while the bus is still on its way to the trip's route, that way is the route
+        // shown, and the trip after it is a dimmed, thinner line beneath
+        let lead = self.route.lead.clamp(done, self.route.lanes.len());
+        let lead_len: f64 = net
+            .map(|n| {
+                self.route.lanes[done..lead]
+                    .iter()
+                    .filter_map(|&l| n.lanes.get(l))
+                    .map(|l| l.length() as f64)
+                    .sum()
+            })
+            .unwrap_or(0.0);
         if self.city.route.0 != key {
+            let t0 = std::time::Instant::now();
             let mut p = Painter::new();
             if let Some(n) = net {
                 let r = &self.route;
-                let done = r.progress.min(r.lanes.len());
                 for &l in &r.lanes[..done] {
                     let Some(lane) = n.lanes.get(l) else { continue };
                     let pts: Vec<Vec3> = lane.points.iter().map(|q| rel(*q)).collect();
                     p.ribbon(&pts, lane.width.max(3.0) + 2.0, 5.0, DRIVEN, true);
                 }
-                let style = RouteStyle {
-                    extra_m: 0.0,
-                    min_px: 6.0,
-                    arrows: Some((every, f32::MAX)),
-                    max_len: f32::MAX,
-                    near: None,
-                };
-                let bus_lane = r
-                    .lanes
-                    .get(done)
-                    .map(|&l| lane_from_right(n, l, f.bus))
-                    .unwrap_or(0);
-                build_route(
+                build_route_line(
                     &mut p,
                     n,
-                    &r.lanes[done..],
+                    &r.lanes[lead..],
+                    lead_len,
                     anchor,
-                    r.s,
                     &self.route_jam,
-                    &style,
-                    bus_lane,
+                    f64::MAX,
+                    if lead > done { 3.5 } else { 6.0 } * s,
+                );
+                build_route_line(
+                    &mut p,
+                    n,
+                    &r.lanes[done..lead],
+                    0.0,
+                    anchor,
+                    &self.route_jam,
+                    f64::MAX,
+                    6.0 * s,
+                );
+            }
+            if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+                log::info!(
+                    "navigator map: route line in {:.1} ms: {} vertices",
+                    t0.elapsed().as_secs_f64() * 1000.0,
+                    p.len()
                 );
             }
             self.city.route = (key, p.len());
@@ -149,6 +267,15 @@ impl Navigator {
             radius: 8.0 * s,
             opacity: 1.0,
             px_scale: self.city.mpp as f32,
+            route: [
+                if self.route.on_route && done < self.route.lanes.len() {
+                    self.route.s
+                } else {
+                    -1.0e9
+                },
+                if lead > done { lead_len as f32 } else { 1.0e9 },
+                0.0,
+            ],
         };
         let to_screen = |q: DVec3| -> Vec2 {
             let d = q.truncate() - self.city.center;
@@ -176,19 +303,31 @@ impl Navigator {
         );
         let n_bg = bg.len();
         let mut dots = Painter::new();
+        let mut ui = Painter::new();
         if let Some(t) = f.traffic.filter(|_| self.show_ai) {
-            for car in t.cars.iter().filter(|c| !c.gone) {
-                dots.world_disc(
-                    rel(car.vehicle.position),
-                    2.2,
-                    3.4,
-                    Color::rgba(8, 8, 8, 0.9),
-                );
-                dots.world_disc(rel(car.vehicle.position), 1.5, 2.3, DOT);
+            // only what the window shows: a big map runs hundreds of cars
+            let seen = win.pad(-30.0 * s, -30.0 * s);
+            // from far the cars are only noise; the buses stay
+            marks::vehicles(
+                &mut dots,
+                t,
+                &rel,
+                |q| seen.contains(to_screen(q)),
+                self.city.mpp < 2.5,
+            );
+            if self.city.mpp > 1.1 {
+                // from far a bus is a few pixels: a badge says what it is
+                for c in t.cars.iter().filter(|c| !c.gone && c.is_bus()) {
+                    let p = to_screen(c.vehicle.position);
+                    if win.contains(p) {
+                        ui.circle(p, 7.5 * s, marks::RIM);
+                        ui.circle(p, 6.2 * s, marks::AI_BUS);
+                        ui.icon(&mut self.atlas, "directions_bus", p, 8.5 * s, TEXT);
+                    }
+                }
             }
         }
         let n_dots = dots.len();
-        let mut ui = Painter::new();
         let n_stops = f.stops.len();
         let markers = spaced_markers(
             f.stops
@@ -196,40 +335,72 @@ impl Navigator {
                 .enumerate()
                 .map(|(k, st)| (k, to_screen(st.position)))
                 .filter(|(_, p)| win.contains(*p) && p.y > 50.0 * s),
-            20.0 * s,
+            16.0 * s,
         );
+        let bus_at = to_screen(f.bus);
         let mut taken: Vec<Rect> = markers
             .iter()
-            .map(|(_, p)| Rect::new(p.x - 9.0 * s, p.y - 9.0 * s, 18.0 * s, 18.0 * s))
+            .map(|(_, p)| Rect::new(p.x - 8.0 * s, p.y - 8.0 * s, 16.0 * s, 16.0 * s))
             .collect();
         taken.push(Rect::new(0.0, 0.0, w, 50.0 * s));
+        taken.push(Rect::new(bus_at.x - 14.0 * s, bus_at.y - 14.0 * s, 28.0 * s, 28.0 * s));
+        // the route ahead as small boxes, so no name is written across the line
+        let mut on_route: Vec<Rect> = Vec::new();
+        if let Some(n) = net {
+            let step = 8.0 * s;
+            let mut last: Option<Vec2> = None;
+            for &l in &self.route.lanes[done..] {
+                let Some(lane) = n.lanes.get(l) else { continue };
+                for q in &lane.points {
+                    let b = to_screen(*q);
+                    let a = last.unwrap_or(b);
+                    last = Some(b);
+                    if !win.pad(-step, -step).contains(b) && !win.pad(-step, -step).contains(a) {
+                        continue;
+                    }
+                    let k = ((b - a).length() / step).ceil().max(1.0) as usize;
+                    for i in 1..=k {
+                        let c = a + (b - a) * (i as f32 / k as f32);
+                        on_route.push(Rect::new(c.x - 4.0 * s, c.y - 4.0 * s, 8.0 * s, 8.0 * s));
+                    }
+                }
+            }
+        }
+        let far = self.city.mpp >= 4.0;
         let mut stop_labels = Vec::new();
         for &(k, p) in &markers {
-            if self.city.mpp >= 4.0 && k != 0 && k + 1 != n_stops {
+            let pin = marks::Pin::of(k, n_stops);
+            if far && pin == marks::Pin::On {
                 continue;
             }
             let st = &f.stops[k];
-            let weight = if k == 0 { Weight::Bold } else { Weight::Medium };
-            let name = format!(
-                "{}  {:02}:{:02}",
+            // the times of the stops between only when there is room for them
+            let time = (pin != marks::Pin::On || self.city.mpp < 1.6).then(|| clock(st.arrival));
+            let (lw, name, nw) = marks::stop_label_size(
+                &self.fonts,
                 st.name.trim(),
-                (st.arrival / 3600.0) as i32 % 24,
-                ((st.arrival % 3600.0) / 60.0) as i32
+                time.as_deref(),
+                pin,
+                (280.0 * s).min(w * 0.3),
+                s,
             );
-            let name = self
-                .fonts
-                .fit(&name, 12.5 * s, weight, (300.0 * s).min(w * 0.3));
-            let lw = self.fonts.width(&name, 12.5 * s, weight) + 14.0 * s;
-            if let Some(r) = stop_label_rect(p, lw, s, win, &taken) {
+            let clear = [taken.as_slice(), on_route.as_slice()].concat();
+            // the next and the last stop always say their name, on the line if need be
+            let r = stop_label_rect(p, lw, s, win, &clear)
+                .or_else(|| (pin != marks::Pin::On).then(|| stop_label_rect(p, lw, s, win, &taken)).flatten());
+            if let Some(r) = r {
                 taken.push(r);
-                stop_labels.push((k, name, r));
+                stop_labels.push((pin, name, nw, time, r));
             }
         }
         if let (Some(st), true) = (
             self.streets.clone(),
             self.city.mpp < 3.2 && self.global.is_some(),
         ) {
-            let px = 12.0 * s;
+            let px = 11.0 * s;
+            // street names fade out as the map zooms away, rather than all leaving at once
+            let fade = ((3.2 - self.city.mpp as f32) / 1.2).clamp(0.0, 1.0);
+            let color = Color::rgba(168, 168, 176, fade);
             for (q, a, id) in &st.labels {
                 let p = to_screen(q.extend(0.0));
                 if !win.pad(60.0 * s, 30.0 * s).contains(p) {
@@ -249,30 +420,14 @@ impl Navigator {
                     (ang.cos() * tw * 0.5).abs() + (ang.sin() * px * 0.6).abs(),
                     (ang.sin() * tw * 0.5).abs() + (ang.cos() * px * 0.6).abs(),
                 );
-                let bb = Rect::new(c.x - hx, c.y - hy, hx * 2.0, hy * 2.0);
-                if taken.iter().any(|t| rects_overlap(t, &bb)) {
+                // a little air round each name, so they never crowd one another
+                let bb = Rect::new(c.x - hx, c.y - hy, hx * 2.0, hy * 2.0).pad(-6.0 * s, -4.0 * s);
+                if taken.iter().chain(&on_route).any(|t| rects_overlap(t, &bb)) {
                     continue;
                 }
                 taken.push(bb);
-                let halo = Color::rgba(22, 22, 22, 0.9);
-                for o in [
-                    Vec2::new(1.0, 0.0),
-                    Vec2::new(-1.0, 0.0),
-                    Vec2::new(0.0, 1.0),
-                    Vec2::new(0.0, -1.0),
-                ] {
-                    ui.text_rotated(
-                        &mut self.atlas,
-                        &self.fonts,
-                        name,
-                        px,
-                        Weight::Medium,
-                        c + o * s,
-                        ang,
-                        halo,
-                    );
-                }
-                ui.text_rotated(
+                marks::halo_text_rotated(
+                    &mut ui,
                     &mut self.atlas,
                     &self.fonts,
                     name,
@@ -280,70 +435,32 @@ impl Navigator {
                     Weight::Medium,
                     c,
                     ang,
-                    STREET,
+                    color,
+                    s,
                 );
             }
         }
         for (k, p) in markers.into_iter().rev() {
-            let next = k == 0;
-            if self.city.mpp < 4.0 || next || k + 1 == n_stops {
-                let badge = if next { 7.0 } else { 5.5 } * s;
-                ui.circle(p, badge + 1.5 * s, CARD);
-                let fill = if next {
-                    ACCENT
-                } else if k + 1 == n_stops {
-                    ROUTE
-                } else {
-                    Color::rgba(76, 91, 112, 0.98)
-                };
-                ui.circle(p, badge, fill);
-                ui.icon(
-                    &mut self.atlas,
-                    "directions_bus",
-                    p,
-                    if next { 11.5 } else { 9.5 } * s,
-                    if next {
-                        Color::rgba(18, 14, 8, 1.0)
-                    } else {
-                        TEXT
-                    },
-                );
-            } else {
-                ui.circle(p, 5.0 * s, CARD);
-                ui.circle(p, 3.2 * s, TEXT_DIM);
+            let pin = marks::Pin::of(k, n_stops);
+            if far && pin == marks::Pin::On {
+                continue;
             }
+            marks::stop_pin(&mut ui, &mut self.atlas, p, pin, s);
         }
-        for (k, name, r) in stop_labels {
-            ui.rounded(r, 6.0 * s, CARD);
-            ui.rounded_border(r, 6.0 * s, 1.0_f32.max(s), HAIR);
-            ui.text_in(
+        for (pin, name, nw, time, r) in stop_labels {
+            marks::stop_label(
+                &mut ui,
                 &mut self.atlas,
                 &self.fonts,
+                r,
                 &name,
-                12.5 * s,
-                if k == 0 { Weight::Bold } else { Weight::Medium },
-                r.pad(6.0 * s, 0.0),
-                Align::Left,
-                if k == 0 { TEXT } else { TEXT_DIM },
+                nw,
+                time.as_deref(),
+                pin,
+                s,
             );
         }
-        {
-            let bp = to_screen(f.bus);
-            let a = (f.heading as f32).to_radians();
-            let rot =
-                |v: Vec2| Vec2::new(v.x * a.cos() - v.y * a.sin(), v.x * a.sin() + v.y * a.cos());
-            let k = 10.0 * s;
-            let tip = bp + rot(Vec2::new(0.0, -1.0) * k);
-            let l = bp + rot(Vec2::new(-0.7, 0.8) * k);
-            let m = bp + rot(Vec2::new(0.0, 0.4) * k);
-            let r = bp + rot(Vec2::new(0.7, 0.8) * k);
-            let dark = Color::rgba(22, 22, 22, 0.85);
-            let grow = |p: Vec2| bp + (p - bp) * 1.25;
-            ui.tri(grow(tip), grow(l), grow(m), dark, dark, dark);
-            ui.tri(grow(tip), grow(m), grow(r), dark, dark, dark);
-            ui.tri(tip, l, m, TEXT, TEXT, TEXT);
-            ui.tri(tip, m, r, TEXT, TEXT, TEXT);
-        }
+        marks::own_arrow(&mut ui, bus_at, (f.heading as f32).to_radians(), 9.5 * s, TEXT, Some(Color::rgba(0, 0, 0, 0.35)));
         let head = Rect::new(0.0, 0.0, w, if emb { 0.0 } else { 44.0 * s });
         let pad = 16.0 * s;
         if !emb {
@@ -450,7 +567,7 @@ impl Navigator {
         }
 
         let (tex, _, _) = self.city.target.unwrap();
-        let Some(view) = renderer.texture_view(scene, tex) else {
+        let Some(view) = self.city.shot.clone().or_else(|| renderer.texture_view(scene, tex)) else {
             return;
         };
         let (Some(gpu), device, queue) = (self.gpu.as_mut(), &renderer.device, &renderer.queue)
@@ -485,15 +602,16 @@ impl Navigator {
                 layer: 1,
                 texture: 0,
             },
+            // the traffic under the route: parked cars must not cut the line up
             Draw {
-                buffer: 4,
-                range: 0..self.city.route.1,
+                buffer: 5,
+                range: n_bg..n_bg + n_dots,
                 layer: 1,
                 texture: 0,
             },
             Draw {
-                buffer: 5,
-                range: n_bg..n_bg + n_dots,
+                buffer: 4,
+                range: 0..self.city.route.1,
                 layer: 1,
                 texture: 0,
             },
@@ -519,6 +637,9 @@ impl Navigator {
         );
         queue.submit([enc.finish()]);
         let _ = n_dots;
+        if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+            log::info!("navigator map: frame in {:.1} ms", t_frame.elapsed().as_secs_f64() * 1000.0);
+        }
         if self.city.embed.is_some() {
             self.city.picture = Some(tex);
         } else {

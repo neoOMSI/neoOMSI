@@ -333,7 +333,7 @@ impl World {
             } else {
                 format!("parklist_p_{index}.txt")
             };
-            let text = ::legacy_config::vfs::read(&::legacy_config::resolve_path(&self.map_dir, &filename))
+            let text = ::legacy_config::vfs::read(&::mods::resolve_path(&self.map_dir, &filename))
                 .ok()
                 .map(|b| ::legacy_config::decode_text(&b))
                 .unwrap_or_default();

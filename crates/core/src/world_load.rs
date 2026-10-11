@@ -43,7 +43,7 @@ pub(crate) fn season_folder_on(
 /// camera, and the point the tiles are loaded around (the spawn entry point when a vehicle
 /// is requested).
 pub(crate) fn open_world(args: &Args) -> Result<(World, Camera, DVec3)> {
-    let map_cfg = ::legacy_config::resolve_path(&args.root, &args.map);
+    let map_cfg = ::mods::resolve_path(&args.root, &args.map);
     let date = start_clock(args).date_code();
     let world = match crate::duty_start::take_preopened(&map_cfg, date) {
         Some(w) => w,

@@ -1,5 +1,25 @@
 use super::*;
 
+fn build_pool() -> Option<std::sync::Arc<rayon::ThreadPool>> {
+    let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
+    rayon::ThreadPoolBuilder::new()
+        .num_threads((cpus / 4).clamp(1, 3))
+        .thread_name(|i| format!("navigator map {i}"))
+        .build()
+        .ok()
+        .map(std::sync::Arc::new)
+}
+
+fn on_pool<T: Send>(
+    pool: &Option<std::sync::Arc<rayon::ThreadPool>>,
+    f: impl FnOnce() -> T + Send,
+) -> T {
+    match pool {
+        Some(p) => p.install(f),
+        None => f(),
+    }
+}
+
 impl Navigator {
     pub fn new(enabled: bool, opacity: f32, corner: &str) -> Navigator {
         Navigator {
@@ -9,6 +29,9 @@ impl Navigator {
             enabled,
             schedule: false,
             speed_avg: 8.0,
+            dim_ahead: 0.0,
+            glass: None,
+            dim_at: 0.0,
             opacity: opacity.clamp(0.2, 1.0),
             corner: corner.to_string(),
             city: CityMap::default(),
@@ -32,11 +55,15 @@ impl Navigator {
             global: None,
             stop_pos: Default::default(),
             streets: None,
+            graph: None,
             building: None,
+            build_failed: false,
+            surfaces: None,
             global_version: 0,
             roads: None,
             route: Route::default(),
-            route_mesh: (u64::MAX, 0, DVec2::ZERO, 0, 0),
+            route_mesh: RouteMesh::default(),
+            route_cum: (0, Vec::new()),
             congestion: HashMap::new(),
             route_jam: HashMap::new(),
             jam_version: 0,
@@ -58,15 +85,39 @@ impl Navigator {
         }
     }
 
-    pub fn start_map(&mut self, world: std::sync::Arc<crate::scene::World>) {
-        if self.building.is_some() || self.global.is_some() {
+    pub fn start_map(&mut self, world: std::sync::Arc<crate::scene::World>, centre: DVec2) {
+        if self.building.is_some() || self.global.is_some() || self.build_failed {
             return;
         }
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("navigator map".into())
             .spawn(move || {
-                let m = world.navigation_map();
+                let t0 = std::time::Instant::now();
+                let pool = build_pool();
+                let m = on_pool(&pool, || world.navigation_map());
+                let lanes_for_ground = m.lanes.clone();
+                let tx_ground = tx.clone();
+                let world_ground = world.clone();
+                let pool_ground = pool.clone();
+                let ground = std::thread::Builder::new()
+                    .name("navigator ground".into())
+                    .spawn(move || {
+                        on_pool(&pool_ground, || {
+                            let tx_part = tx_ground.clone();
+                            let mut emit = |part| {
+                                let _ = tx_part.send(MapPart::Chunks(part));
+                            };
+                            let meta = crate::navmap::build_surface_stream(
+                                &world_ground,
+                                &lanes_for_ground,
+                                centre,
+                                &mut emit,
+                            );
+                            let _ = tx_ground.send(MapPart::GroundDone(Box::new(meta)));
+                        });
+                    })
+                    .ok();
                 let mut net = Network {
                     lanes: m.lanes,
                     ..Default::default()
@@ -75,9 +126,21 @@ impl Navigator {
                 confirm_road_surfaces(&mut net, &m.road_surfaces);
                 probe_lanes(&net);
                 let streets = build_streets(&net, &m.signs);
-                let _ = tx.send((net, m.places, streets));
+                let graph = RoadGraph::build(&net, &m.carriageways);
+                log::info!(
+                    "navigator: network built in {:.0} ms",
+                    t0.elapsed().as_secs_f64() * 1e3
+                );
+                let _ = tx.send(MapPart::Network(Box::new((net, m.places, streets, graph))));
+                if let Some(g) = ground {
+                    let _ = g.join();
+                }
             })
-            .ok();
+            .is_ok();
+        if !spawned {
+            self.build_failed = true;
+            return;
+        }
         self.building = Some(rx);
     }
 
@@ -90,10 +153,19 @@ impl Navigator {
         confirm_road_surfaces(&mut net, &map.road_surfaces);
         probe_lanes(&net);
         self.streets = Some(std::sync::Arc::new(build_streets(&net, &map.signs)));
+        self.graph = Some(std::sync::Arc::new(RoadGraph::build(&net, &map.carriageways)));
+        self.roads = None;
         let global = std::sync::Arc::new(net);
         self.global = Some(global);
         self.stop_pos = std::sync::Arc::new(map.places);
         self.global_version += 1;
+    }
+
+    /// Navigator 2.0's ground for the map (see [`crate::navmap`]).
+    pub fn set_surfaces(&mut self, surfaces: crate::navmap::SurfaceMap) {
+        self.surfaces = Some(std::sync::Arc::new(surfaces));
+        self.roads = None;
+        self.city.roads = None;
     }
 
     pub fn places(&self) -> Option<&HashMap<i64, DVec3>> {
@@ -102,6 +174,10 @@ impl Navigator {
 
     pub fn map_net(&self) -> Option<&Network> {
         self.global.as_deref()
+    }
+
+    pub fn map_net_arc(&self) -> Option<std::sync::Arc<Network>> {
+        self.global.clone()
     }
 
     pub fn add_lanes(&mut self, lanes: Vec<::simulation::traffic::Lane>) {
@@ -152,6 +228,7 @@ impl Navigator {
         }
         self.route.provisional = false;
         self.route.lanes = lanes;
+        self.route.lead = 0;
         if !same_trip {
             self.route.progress = 0;
             self.route.on_route = false;

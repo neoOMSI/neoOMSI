@@ -539,7 +539,7 @@ mod tests {
                 "unexpected housing texture: {}",
                 material.texture
             );
-            let texture = ::legacy_config::resolve_path(&object.join("texture"), &material.texture);
+            let texture = ::mods::resolve_path(&object.join("texture"), &material.texture);
             assert!(
                 texture.is_file(),
                 "missing referenced texture: {}",

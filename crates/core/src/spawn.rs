@@ -6,7 +6,7 @@ use super::*;
 /// driven on its own (OMSI does not even list it): asked for one, the bus it belongs to is
 /// spawned, and a rear section that nothing couples is refused.
 pub(crate) fn player_bus_path(root: &Path, bus: &str) -> Result<PathBuf> {
-    let path = ::legacy_config::resolve_path(root, bus);
+    let path = ::mods::resolve_path(root, bus);
     let def = ::legacy_vehicle::Vehicle::load(&path)
         .with_context(|| format!("loading {}", path.display()))?;
     // a part with a front coupling that another vehicle couples behind itself is a rear
@@ -56,7 +56,7 @@ pub(crate) fn next_coupled(
     } else {
         def.couple_front.as_ref()
     }?;
-    let path = ::legacy_config::resolve_path(def.dir(), file);
+    let path = ::mods::resolve_path(def.dir(), file);
     let same = path.file_name().map(|f| f.to_ascii_lowercase())
         == def.path.file_name().map(|f| f.to_ascii_lowercase());
     if !flag && same {
@@ -211,7 +211,7 @@ pub(crate) fn spawn_player(
     host.hof = find_hof(args, world, &vt);
     host.font_lib = Some(world.fonts.clone());
     if !world.ticket_pack.trim().is_empty() {
-        let p = ::legacy_config::resolve_path(&args.root, &world.ticket_pack);
+        let p = ::mods::resolve_path(&args.root, &world.ticket_pack);
         match ::content::tickets::TicketPack::load(&p) {
             Ok(t) => {
                 log::info!("ticket pack {}: {} tickets", p.display(), t.tickets.len());

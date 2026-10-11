@@ -188,7 +188,7 @@ impl World {
                     .parent()
                     .map(|d| d.to_path_buf())
                     .unwrap_or_default();
-                if let Some(cabin) = self.waiting_cabin(&::legacy_config::resolve_path(&dir, rel)) {
+                if let Some(cabin) = self.waiting_cabin(&::mods::resolve_path(&dir, rel)) {
                     for pp in &cabin.pass_positions {
                         let p = pos + xf.transform_vector3(glam::Vec3::from(pp.pos)).as_dvec3();
                         state
@@ -697,7 +697,7 @@ impl World {
             .iter()
             .find(|t| t.x == tx && t.y == ty)
             .and_then(|t| {
-                let p = ::legacy_config::resolve_path(&self.map_dir, &format!("{}.LM.bmp", t.file));
+                let p = ::mods::resolve_path(&self.map_dir, &format!("{}.LM.bmp", t.file));
                 if ::legacy_config::vfs::is_file(&p) {
                     ::texture::decode_file(&p)
                         .ok()

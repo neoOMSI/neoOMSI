@@ -1652,46 +1652,6 @@ impl Renderer {
             },
             alpha: wgpu::BlendComponent::OVER,
         };
-        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("overlay"),
-            layout: Some(&overlay_pl),
-            vertex: wgpu::VertexState {
-                module: &overlay_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                front_face: wgpu::FrontFace::Ccw,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: msaa,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &overlay_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(premul),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
         log::info!("renderer: compiling the SSAO shaders");
         let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao"),
@@ -2627,6 +2587,7 @@ impl Renderer {
             last_frame: None,
             instant_exposure: false,
             overlay_pipeline_1x,
+            frost: None,
             xr_ui_pipeline,
             started: std::time::Instant::now(),
             ao: None,
@@ -2655,7 +2616,6 @@ impl Renderer {
             cloud_detail_view,
             cloud_sampler,
             sky_mesh,
-            overlay_pipeline,
             overlay_layout,
             sampler,
             camera_buf,

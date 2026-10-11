@@ -156,7 +156,7 @@ fn save_all(tv: &mut TimetableView) -> (usize, Option<String>) {
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let original = ::legacy_config::resolve_path(&tv.map_dir, "TTData");
+    let original = ::mods::resolve_path(&tv.map_dir, "TTData");
     let mut saved = 0;
     let mut err = None;
     for line in data.lines.iter_mut().filter(|l| tv.dirty.contains(&l.name)) {
@@ -248,7 +248,7 @@ pub fn draw(l: &mut Launcher, area: Rect) {
         let global = core::content_dir()
             .map(|c| c.join(file))
             .filter(|p| p.is_file())
-            .unwrap_or_else(|| ::legacy_config::resolve_path(&root, file));
+            .unwrap_or_else(|| ::mods::resolve_path(&root, file));
         tv.map_dir = global.parent().map(Path::to_path_buf).unwrap_or_default();
         let mut d = TimetableData::load(&tv.map_dir);
         d.lines.sort_by_key(|x| x.name.to_lowercase());
@@ -372,7 +372,7 @@ pub fn draw(l: &mut Launcher, area: Rect) {
         {
             status = Some((format!("Line {name} is there already"), true));
         } else {
-            let path = ::legacy_config::resolve_path(&tv.map_dir, "TTData").join(format!("{name}.ttl"));
+            let path = ::mods::resolve_path(&tv.map_dir, "TTData").join(format!("{name}.ttl"));
             data.lines.push(Line {
                 path,
                 name: name.clone(),

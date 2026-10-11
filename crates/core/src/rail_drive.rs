@@ -35,7 +35,7 @@ const TRAIL: f64 = 400.0;
 pub(crate) fn args_rail(args: &crate::Args) -> bool {
     args.bus
         .as_deref()
-        .map(|b| ::legacy_config::resolve_path(&args.root, b))
+        .map(|b| ::mods::resolve_path(&args.root, b))
         .and_then(|p| ::legacy_vehicle::Vehicle::load(&p).ok())
         .is_some_and(|d| is_rail(&d))
 }

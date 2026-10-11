@@ -121,7 +121,7 @@ fn find_file(dirs: &[&Path], rel: &str) -> Option<PathBuf> {
         all.push(parent.to_path_buf());
     }
     all.iter()
-        .map(|d| ::legacy_config::resolve_path(d, rel))
+        .map(|d| ::mods::resolve_path(d, rel))
         .find(|p| p.is_file())
 }
 

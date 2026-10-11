@@ -256,6 +256,7 @@ dependencies = [
  "legacy-config",
  "legacy-vehicle",
  "log",
+ "mods",
  "parking_lot",
  "symphonia",
  "ureq",
@@ -713,6 +714,7 @@ dependencies = [
  "logging",
  "map",
  "model",
+ "mods",
  "ndk-context",
  "network",
  "objc2-core-foundation",
@@ -1538,9 +1540,9 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.34.1"
+version = "0.33.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc148d4ddd3930c52f9e5ae79b89805c6f07e9ff417e7b083e0348cea60a5aba"
+checksum = "37bfe73dc8ec21f54d181e5a60554327ec3f1c600c455a75ccbfc65d2106a6c4"
 
 [[package]]
 name = "gpu-allocator"
@@ -1984,6 +1986,7 @@ dependencies = [
  "libc",
  "map",
  "model",
+ "mods",
  "network",
  "rayon",
  "rfd",
@@ -2005,6 +2008,7 @@ dependencies = [
  "glam",
  "legacy-config",
  "log",
+ "mods",
  "thiserror 2.0.20",
 ]
 
@@ -2033,6 +2037,7 @@ version = "0.2.0"
 dependencies = [
  "legacy-config",
  "log",
+ "mods",
 ]
 
 [[package]]
@@ -2234,7 +2239,9 @@ version = "0.2.0"
 dependencies = [
  "legacy-config",
  "log",
+ "mods",
  "thiserror 2.0.20",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -2337,6 +2344,15 @@ dependencies = [
 
 [[package]]
 name = "model"
+version = "0.2.0"
+dependencies = [
+ "legacy-config",
+ "log",
+ "mods",
+]
+
+[[package]]
+name = "mods"
 version = "0.2.0"
 dependencies = [
  "legacy-config",
@@ -2939,6 +2955,7 @@ dependencies = [
  "log",
  "map",
  "model",
+ "mods",
  "parking_lot",
  "rayon",
  "scenery",
@@ -3787,6 +3804,7 @@ dependencies = [
  "legacy-config",
  "log",
  "model",
+ "mods",
 ]
 
 [[package]]
@@ -3967,6 +3985,7 @@ dependencies = [
  "legacy-vehicle",
  "log",
  "model",
+ "mods",
  "parking_lot",
  "scenery",
  "texture",
@@ -4245,6 +4264,7 @@ dependencies = [
  "image",
  "legacy-config",
  "log",
+ "mods",
  "parking_lot",
  "rayon",
  "thiserror 2.0.20",
@@ -4296,6 +4316,7 @@ version = "0.2.0"
 dependencies = [
  "legacy-config",
  "log",
+ "mods",
 ]
 
 [[package]]

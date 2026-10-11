@@ -369,7 +369,7 @@ impl CarUse {
     /// Every `car_use/*.ocu` of a map folder, in the order the folder lists them.
     pub fn load_dir(map_dir: &Path) -> Vec<CarUse> {
         let mut files: Vec<std::path::PathBuf> =
-            ::legacy_config::vfs::read_dir_paths(&::legacy_config::resolve_path(map_dir, "car_use"))
+            ::legacy_config::vfs::read_dir_paths(&::mods::resolve_path(map_dir, "car_use"))
                 .into_iter()
                 .filter(|p| {
                     p.extension()
@@ -449,7 +449,7 @@ impl TimetableData {
     /// Load `TTData` under a map directory.
     pub fn load(map_dir: &Path) -> TimetableData {
         let mut d = TimetableData::default();
-        d.merge_dir(&::legacy_config::resolve_path(map_dir, "TTData"), true);
+        d.merge_dir(&::mods::resolve_path(map_dir, "TTData"), true);
         d
     }
 
@@ -464,9 +464,9 @@ impl TimetableData {
         chrono_dirs: &[PathBuf],
         deactivated: &[(String, PathBuf)],
     ) -> TimetableData {
-        let mut folders = vec![::legacy_config::resolve_path(map_dir, "TTData")];
+        let mut folders = vec![::mods::resolve_path(map_dir, "TTData")];
         for c in chrono_dirs {
-            let dir = ::legacy_config::resolve_path(c, "TTData");
+            let dir = ::mods::resolve_path(c, "TTData");
             if ::legacy_config::vfs::is_dir(&dir) {
                 folders.push(dir);
             } else {

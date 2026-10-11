@@ -50,7 +50,7 @@ pub fn front_sections_of(rear: &Path) -> Vec<PathBuf> {
         };
         // the folder under every content root (archives read in place too)
         let mut dirs = vec![dir.to_path_buf()];
-        for d in ::legacy_config::mirrored_dirs(dir) {
+        for d in ::mods::mirrored_dirs(dir) {
             if !dirs.contains(&d) {
                 dirs.push(d);
             }

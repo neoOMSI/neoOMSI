@@ -31,7 +31,7 @@ impl Menu {
         // the folders of every content root: the installation, the installed mods and the
         // archives read in place
         let merged = |rel: &str| {
-            let mut dirs = ::legacy_config::read_dir_merged(rel);
+            let mut dirs = ::mods::read_dir_merged(rel);
             if dirs.is_empty() {
                 dirs = ::legacy_config::vfs::read_dir_paths(&root.join(rel));
             }
@@ -41,7 +41,7 @@ impl Menu {
         };
         let mut maps = Vec::new();
         for d in merged("maps") {
-            let cfg = ::legacy_config::resolve_path(&d, "global.cfg");
+            let cfg = ::mods::resolve_path(&d, "global.cfg");
             if !::legacy_config::vfs::is_file(&cfg) {
                 continue;
             }
@@ -69,7 +69,7 @@ impl Menu {
             let folder = d.file_name().unwrap().to_string_lossy().to_string();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut files: Vec<PathBuf> = Vec::new();
-            for dd in ::legacy_config::mirrored_dirs(&d) {
+            for dd in ::mods::mirrored_dirs(&d) {
                 for f in ::legacy_config::vfs::read_dir_paths(&dd) {
                     if seen.insert(
                         f.file_name()
@@ -113,7 +113,7 @@ impl Menu {
         log::info!("menu: {} vehicles offered", vehicles.len());
         let mut situations = vec![("-".to_string(), String::new())];
         // the installation's and the content folder's (where the game saves them)
-        let mut files: Vec<PathBuf> = ::legacy_config::read_dir_merged("Situations");
+        let mut files: Vec<PathBuf> = ::mods::read_dir_merged("Situations");
         if files.is_empty() {
             files = std::fs::read_dir(root.join("Situations"))
                 .map(|rd| rd.flatten().map(|e| e.path()).collect())

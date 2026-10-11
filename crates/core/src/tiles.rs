@@ -212,7 +212,7 @@ impl MapIndex {
                 part.traffic_light_parents = traffic_light_parents(&tile, |file| {
                     let key = file.replace('/', "\\").to_ascii_lowercase();
                     *signal_types.lock().entry(key).or_insert_with(|| {
-                        let path = ::legacy_config::resolve_path(root, file);
+                        let path = ::mods::resolve_path(root, file);
                         match ::scenery::SceneryObject::load(&path) {
                             Ok(sco) => sco.is_traffic_light,
                             Err(e) => {
@@ -371,7 +371,7 @@ impl MapIndex {
                 let file = &names[k as usize];
                 let key = file.replace('/', "\\").to_ascii_lowercase();
                 let has = *programs.entry(key).or_insert_with(|| {
-                    ::scenery::SceneryObject::load(&::legacy_config::resolve_path(root, file))
+                    ::scenery::SceneryObject::load(&::mods::resolve_path(root, file))
                         .map(|sco| !sco.traffic_lights.is_empty())
                         .unwrap_or(false)
                 });
@@ -461,7 +461,7 @@ impl MapIndex {
         let named: Vec<(&String, &(usize, (i32, i32)))> = self.files.iter().collect();
         let mut missing: Vec<(String, usize, (i32, i32))> = named
             .into_par_iter()
-            .filter(|(f, _)| !::legacy_config::vfs::is_file(&::legacy_config::resolve_path(root, f)))
+            .filter(|(f, _)| !::legacy_config::vfs::is_file(&::mods::resolve_path(root, f)))
             .map(|(f, (n, t))| (f.clone(), *n, *t))
             .collect();
         missing.sort();
@@ -525,7 +525,7 @@ pub fn read_tile(path: &Path, chrono_dirs: &[PathBuf], detail_limit: u8) -> Opti
     };
     if let Some(name) = path.file_name() {
         for c in chrono_dirs {
-            let p = ::legacy_config::resolve_path(c, &name.to_string_lossy());
+            let p = ::mods::resolve_path(c, &name.to_string_lossy());
             if !::legacy_config::vfs::is_file(&p) {
                 continue;
             }

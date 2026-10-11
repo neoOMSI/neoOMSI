@@ -42,7 +42,7 @@ fn type_path_key(path: &Path) -> String {
 pub(super) fn load_figures(
     root: &Path,
 ) -> (Vec<Arc<HumanType>>, HashMap<String, Vec<Arc<HumanType>>>) {
-    let mut roots = ::legacy_config::content_dirs("Humans");
+    let mut roots = ::mods::content_dirs("Humans");
     if roots.is_empty() {
         roots.push(root.join("Humans"));
     }

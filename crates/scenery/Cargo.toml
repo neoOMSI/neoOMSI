@@ -7,5 +7,6 @@ description = "Scenery object (.sco) and spline (.sli) definitions (units mc_com
 
 [dependencies]
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 model = { path = "../model" }
 log.workspace = true

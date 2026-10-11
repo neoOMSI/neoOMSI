@@ -308,7 +308,7 @@ fn map_human_types(root: &Path, list: &[String]) -> Vec<Arc<HumanType>> {
         } else {
             format!("Humans/{rel}")
         };
-        let path = ::legacy_config::resolve_path(root, &rel);
+        let path = ::mods::resolve_path(root, &rel);
         let ty = loaded
             .entry(path.to_string_lossy().to_lowercase())
             .or_insert_with(|| match HumanType::load(&path) {
@@ -981,7 +981,7 @@ impl Humans {
             return;
         }
         self.map_humans_done = true;
-        let path = ::legacy_config::resolve_path(&world.map_dir, "humans.txt");
+        let path = ::mods::resolve_path(&world.map_dir, "humans.txt");
         let list = ::map::ailists::load_list(&path);
         if list.is_empty() {
             return;

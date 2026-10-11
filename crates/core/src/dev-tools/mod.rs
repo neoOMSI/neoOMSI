@@ -170,7 +170,7 @@ impl DevTools {
             io.font_global_scale = scale.max(1.0);
             io.delta_time = (snap.dt_ms / 1000.0).clamp(0.0001, 0.25);
         }
-        self.perf.update(extra, snap.dt_ms);
+        self.perf.update(extra, snap, snap.dt_ms);
         self.ensure_gpu(r);
         let mut mode = self.mode;
         {

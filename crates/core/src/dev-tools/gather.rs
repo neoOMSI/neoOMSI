@@ -1,6 +1,5 @@
 #![allow(unused_imports)]
 use super::types::*;
-use ::simulation::collision::Obb;
 
 impl crate::App {
     pub(crate) fn dev_gather(&self) -> Extra {
@@ -257,7 +256,34 @@ impl crate::App {
             lan,
             tours,
             quicksave,
-            profile: self.profile.iter().map(|(k, v)| (*k, *v)).collect(),
+            profile: {
+                let mut p: Vec<(&'static str, f64)> =
+                    self.profile.iter().map(|(k, v)| (*k, *v)).collect();
+                if let Some(r) = self.renderer.as_ref() {
+                    for (k, v) in r.stats.borrow().iter() {
+                        let name: &'static str = match *k {
+                            "setup" => "render.setup",
+                            "prepare" => "render.prepare",
+                            "shadow items" => "render.shadow items",
+                            "cull" => "render.cull",
+                            "items" => "render.items",
+                            "upload" => "render.upload",
+                            "bundles" => "render.bundles",
+                            "encode" => "render.encode",
+                            "finish" => "render.finish",
+                            "submit" => "render.submit",
+                            "finish.shadow" => "render.finish.shadow",
+                            "finish.prepass" => "render.finish.prepass",
+                            "finish.main" => "render.finish.main",
+                            "finish.wait shadow" => "render.finish.wait shadow",
+                            "finish.wait prepass" => "render.finish.wait prepass",
+                            other => other,
+                        };
+                        p.push((name, *v));
+                    }
+                }
+                p
+            },
             frames: self.total_frames,
             traffic: self.traffic.as_ref().map(|t| TrafficPerf {
                 cars: t.cars.len(),
@@ -531,7 +557,7 @@ fn walk_paths(def: &::legacy_vehicle::Vehicle) -> (Vec<[f32; 3]>, Vec<(i32, i32,
         .paths
         .as_ref()
         .and_then(|rel| {
-            ::legacy_vehicle::VehiclePaths::load(&::legacy_config::resolve_path(def.dir(), rel)).ok()
+            ::legacy_vehicle::VehiclePaths::load(&::mods::resolve_path(def.dir(), rel)).ok()
         })
         .map(|vp| {
             (

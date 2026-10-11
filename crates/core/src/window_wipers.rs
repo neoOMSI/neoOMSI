@@ -57,7 +57,7 @@ struct Film {
     bounds: [f32; 4],
 }
 
-pub(crate) struct WindowWipers {
+pub struct WindowWipers {
     blades: Vec<Blade>,
     films: Vec<Film>,
     time: f64,

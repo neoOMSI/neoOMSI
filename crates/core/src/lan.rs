@@ -184,7 +184,7 @@ impl SyncTable {
         );
         let def = &ty.def;
         let load = |rel: &str| -> Option<(Arc<::legacy_vehicle::SoundCfg>, PathBuf)> {
-            let path = ::legacy_config::resolve_path(def.dir(), rel);
+            let path = ::mods::resolve_path(def.dir(), rel);
             match ::legacy_vehicle::SoundCfg::load(&path) {
                 Ok(c) => Some((
                     Arc::new(c),
@@ -224,7 +224,7 @@ impl SyncTable {
         for (k, part) in parts.iter().enumerate() {
             let pdef = &part.def;
             if let Some(rel) = pdef.sound_ai.as_deref().or(pdef.sound.as_deref()) {
-                let path = ::legacy_config::resolve_path(pdef.dir(), rel);
+                let path = ::mods::resolve_path(pdef.dir(), rel);
                 match ::legacy_vehicle::SoundCfg::load(&path) {
                     Ok(c) => part_sounds.push((
                         k,
@@ -1160,7 +1160,7 @@ pub fn take_host_map(args: &mut Args, lan: &mut LanSession) {
     if crate::lan_mods::refuse_path(&theirs).is_some() || !norm(&theirs).starts_with("maps/") {
         return;
     }
-    match ::legacy_config::find_in_roots(&theirs) {
+    match ::mods::find_in_roots(&theirs) {
         Some(_) => {
             log::info!(
                 "LAN: the session is on the host's map {theirs} (not {})",
@@ -1236,7 +1236,7 @@ fn host_weather(args: &Args, weather: &str) -> Result<Option<String>, String> {
             Err(format!("the host's weather {w} cannot be read here"))
         };
     }
-    let path = ::legacy_config::resolve_path(&args.root, w);
+    let path = ::mods::resolve_path(&args.root, w);
     let inside = !w.contains("..") && !w.starts_with('/') && !w.contains(':');
     if inside && ::legacy_config::vfs::is_file(&path) {
         Ok(Some(w.to_string()))
@@ -1573,7 +1573,7 @@ pub(crate) fn name_tags_with_projection(
 }
 
 fn content_relative(path: &Path, root: &Path) -> String {
-    let mut roots = ::legacy_config::content_roots();
+    let mut roots = ::mods::content_roots();
     roots.push(root.to_path_buf());
     for r in roots {
         if let Ok(rel) = path.strip_prefix(&r) {
@@ -2261,18 +2261,18 @@ pub fn settle_spawn(
 fn remote_bus_file(args: &Args, bus: &str) -> Result<PathBuf, String> {
     let rel = ::network::vehicle_path(bus)
         .ok_or_else(|| "not a vehicle file inside a content folder".to_string())?;
-    let mut path = ::legacy_config::resolve_path(&args.root, &rel);
+    let mut path = ::mods::resolve_path(&args.root, &rel);
     if !::legacy_config::vfs::is_file(&path) {
         // The sender may keep it elsewhere (an archive, its own content folder): look up the
         // `vehicles/...` tail under our content roots.
         let lower = rel.to_ascii_lowercase().replace('\\', "/");
         if let Some(k) = lower.find("vehicles/") {
-            if let Some((_, p)) = ::legacy_config::find_in_roots(&rel.replace('\\', "/")[k..]) {
+            if let Some((_, p)) = ::mods::find_in_roots(&rel.replace('\\', "/")[k..]) {
                 path = p;
             }
         }
     }
-    let mut roots = ::legacy_config::content_roots();
+    let mut roots = ::mods::content_roots();
     roots.push(args.root.clone());
     if !roots.iter().any(|r| path.starts_with(r)) {
         return Err("not inside a content folder".into());

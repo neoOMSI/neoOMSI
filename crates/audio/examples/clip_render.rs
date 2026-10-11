@@ -16,9 +16,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || !gain.is_finite() || gain < 0.0 {
         return Err("invalid rate, pitch or gain".into());
     }
-    for root in args.iter().skip(5) { ::legacy_config::add_content_root(root.into()); }
+    for root in args.iter().skip(5) { ::mods::add_content_root(root.into()); }
     let input = Path::new(&args[0]);
-    let input = ::legacy_config::resolve_path(input.parent().ok_or("input has no parent")?,
+    let input = ::mods::resolve_path(input.parent().ok_or("input has no parent")?,
         input.file_name().ok_or("input has no filename")?.to_str().ok_or("invalid filename")?);
     println!("source: {}", input.display());
     let clip = read_clip(&input).ok_or("cannot decode input WAV")?;

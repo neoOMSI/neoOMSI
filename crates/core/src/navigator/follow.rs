@@ -50,6 +50,7 @@ impl Navigator {
                     stop.name.trim()
                 );
                 r.lanes = path;
+                r.lead = 0;
                 r.progress = 0;
                 r.s = 0.0;
                 r.version += 1;
@@ -195,6 +196,19 @@ impl Navigator {
                     .map(|k| format!(" (the next stop is on route lane {k})"))
                     .unwrap_or_default()
             );
+            if ::legacy_config::env::var_os("OMSI_DEBUG_NAV").is_some() {
+                let steps: Vec<String> = path
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &l)| {
+                        let p = net.lanes[l].start();
+                        let linked = k == 0 || net.lanes[path[k - 1]].next.contains(&l);
+                        format!("{l}@({:.0},{:.0}){}", p.x, p.y, if linked { "" } else { "*" })
+                    })
+                    .collect();
+                log::info!("navigator: the way (* a change of lanes): {}", steps.join(" "));
+            }
+            let join_at = path.len();
             let mut lanes = path;
             lanes.extend(rest);
             r.s = lanes
@@ -203,6 +217,7 @@ impl Navigator {
                 .and_then(|l| l.nearest_point(f.bus))
                 .map(|p| p.0)
                 .unwrap_or(0.0);
+            r.lead = if r.joined { 0 } else { join_at };
             r.lanes = lanes;
             r.progress = 0;
             r.version += 1;

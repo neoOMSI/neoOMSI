@@ -97,6 +97,25 @@ impl App {
             let __tc = Instant::now();
             lights::collect(w, scene, &daylight, cam.position, &vehicles);
             *self.profile.entry("lights.collect").or_default() += __tc.elapsed().as_secs_f64();
+            {
+                let t = *lights::TIMES.lock().unwrap_or_else(|e| e.into_inner());
+                for (name, v) in [
+                    "lights.collect.near",
+                    "lights.collect.objects",
+                    "lights.collect.particles",
+                    "lights.collect.vehicles",
+                    "lights.collect.screens",
+                    "lights.collect.sort",
+                    "lights.collect.occluders",
+                ]
+                    .into_iter()
+                    .zip(t)
+                {
+                    *self.profile.entry(name).or_default() += v;
+                }
+                *self.profile.entry("lights.gathers").or_default() += 0.001
+                    * lights::GATHERS.load(std::sync::atomic::Ordering::Relaxed) as f64;
+            }
             if let Some(id) = self.editor.as_ref().and_then(|e| e.selected) {
                 let at = w.edit_objects.lock().get(&id).map(|o| o.pos);
                 let moved = w

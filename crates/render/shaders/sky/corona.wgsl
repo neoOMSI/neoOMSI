@@ -154,7 +154,7 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
     }
     // a star grows with the light's strength; every sprite's strength stops at 1
     let star_sprite = (u32(in.extra.z + 0.5) & 8u) != 0u && !streak;
-    let grow = select(1.0, brightness, star_sprite);
+    let grow = select(1.0, min(brightness, 1.0), star_sprite);
     if (!streak) {
         brightness = min(brightness, 1.0);
     }

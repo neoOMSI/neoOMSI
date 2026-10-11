@@ -325,13 +325,18 @@ fn register_roots(content: &Path) {
     static DONE: std::sync::Once = std::sync::Once::new();
     let content = content.to_path_buf();
     DONE.call_once(|| {
-        ::legacy_config::add_content_root(content.clone());
+        ::mods::add_content_root(content.clone());
         mount_archives(&content);
     });
     // the OMSI folder - also one chosen under Setup while the launcher runs (it was only
     // looked for once, at the start, and a folder set later was never a root)
-    if let Some(r) = find_root(&load_config_raw().root) {
-        ::legacy_config::add_content_root(r);
+    let legacy = find_root(&load_config_raw().root);
+    // mods/<name>[.zip] -> mods/shared -> legacy (registers the legacy root too)
+    if let Err(e) = ::mods::init(&content.join("mods"), legacy.as_deref()) {
+        log_to_file(&format!("mods folder: {e}"));
+        if let Some(r) = legacy {
+            ::mods::add_content_root(r);
+        }
     }
 }
 
@@ -367,8 +372,8 @@ fn mount_archives(content: &Path) {
 pub(crate) fn mount_archive(zip: &Path) {
     match ::legacy_config::vfs::mount_zip(zip) {
         Ok(m) => match find_root(&load_config_raw().root) {
-            Some(r) => ::legacy_config::add_content_root_before(m, &r),
-            None => ::legacy_config::add_content_root(m),
+            Some(r) => ::mods::add_content_root_before(m, &r),
+            None => ::mods::add_content_root(m),
         },
         Err(e) => {
             log_to_file(&format!("archive {}: {e}", zip.display()));
@@ -403,12 +408,12 @@ fn resolve_content(rel: &str) -> Result<PathBuf> {
         if b == root {
             continue;
         }
-        let p = ::legacy_config::resolve_path(&b, rel);
+        let p = ::mods::resolve_path(&b, rel);
         if ::legacy_config::vfs::exists(&p) {
             return Ok(p);
         }
     }
-    Ok(::legacy_config::resolve_path(&root, rel))
+    Ok(::mods::resolve_path(&root, rel))
 }
 
 /// The folders the lists are made of: the content folder first, then the archives used in
@@ -500,7 +505,7 @@ pub struct ModsStatus {
     pub inbox: String,
     /// What lies in the inbox now.
     pub inbox_items: Vec<String>,
-    /// Packs waiting in Mods/waiting for the bus they belong to.
+    /// Packs waiting in mods/waiting for the bus they belong to.
     pub waiting: Vec<String>,
     /// Archives used in place (in `<content>/Archives`): (name, size in bytes).
     pub archives: Vec<(String, u64)>,
@@ -521,7 +526,7 @@ pub fn start_install(src: &Path, mode: &str) -> Result<install::Progress> {
     if !src.exists() {
         return Err(anyhow!("{} does not exist", src.display()));
     }
-    let from_inbox = src.starts_with(content.join("Mods"));
+    let from_inbox = src.starts_with(content.join("mods"));
     let job = install::start(
         content,
         root().ok(),
@@ -558,7 +563,7 @@ pub fn install_mod_blocking(
 }
 
 fn inbox_entries(content: &Path) -> Vec<PathBuf> {
-    let inbox = content.join("Mods");
+    let inbox = content.join("mods");
     let Ok(rd) = std::fs::read_dir(&inbox) else {
         return Vec::new();
     };
@@ -615,114 +620,12 @@ fn tree_signature(p: &Path) -> (u64, u64, u64) {
     acc
 }
 
-/// The inbox watcher: something dropped into Mods/ is installed once it has stopped
+/// The inbox watcher: something dropped into mods/ is installed once it has stopped
 /// growing (the same size and time on two looks at least two seconds apart); packs in
-/// Mods/waiting are installed once their bus is. Returns the sources of the jobs started.
-fn watch_inbox(content: &Path) -> Vec<String> {
-    struct Seen {
-        sig: (u64, u64, u64),
-        at: std::time::Instant,
-        started: bool,
-        /// When the signature was last read (a big folder whose install failed is looked
-        /// at again only now and then).
-        checked: std::time::Instant,
-    }
-    static SEEN: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Seen>>> =
-        std::sync::Mutex::new(None);
-    // a mod deleted from Mods/installed is taken out of the lists (#819)
-    let gone = install::uninstall_removed(content);
-    for g in &gone {
-        log_line(&format!(
-            "mods: {g} was deleted from Mods/installed - uninstalled, its folders are in Mods/{}/{g}",
-            install::UNINSTALLED
-        ));
-    }
-    if !gone.is_empty() {
-        ::legacy_config::content_changed();
-    }
-    let mut started = Vec::new();
-    let mut guard = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    let seen = guard.get_or_insert_with(Default::default);
-    let waiting_dir = content.join("Mods").join(install::WAITING);
-    let items = inbox_entries(content);
-    seen.retain(|p, _| items.contains(p) || (p.starts_with(&waiting_dir) && p.exists()));
-    for p in items {
-        if install::is_busy(&p) {
-            continue;
-        }
-        let now = std::time::Instant::now();
-        if seen
-            .get(&p)
-            .map(|s| {
-                s.started && now.duration_since(s.checked) < std::time::Duration::from_secs(30)
-            })
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        let sig = tree_signature(&p);
-        if let Some(s) = seen.get_mut(&p) {
-            s.checked = now;
-        }
-        match seen.get_mut(&p) {
-            Some(s) if s.sig == sig => {
-                if !s.started && now.duration_since(s.at) >= std::time::Duration::from_secs(2) {
-                    s.started = true;
-                    install::start(
-                        content.to_path_buf(),
-                        root().ok(),
-                        p.clone(),
-                        install::InstallMode::Auto,
-                        true,
-                    );
-                    started.push(p.to_string_lossy().to_string());
-                }
-            }
-            // new, still growing (a copy in progress), or changed after a failed try
-            _ => {
-                seen.insert(
-                    p.clone(),
-                    Seen {
-                        sig,
-                        at: now,
-                        started: false,
-                        checked: now,
-                    },
-                );
-            }
-        }
-    }
-    let busy = install::jobs().iter().any(|j| j.finished.is_none());
-    if !busy {
-        for p in install::waiting_ready(content, root().ok().as_deref()) {
-            let sig = tree_signature(&p);
-            if seen
-                .get(&p)
-                .map(|s| s.started && s.sig == sig)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            seen.insert(
-                p.clone(),
-                Seen {
-                    sig,
-                    at: std::time::Instant::now(),
-                    started: true,
-                    checked: std::time::Instant::now(),
-                },
-            );
-            install::start(
-                content.to_path_buf(),
-                root().ok(),
-                p.clone(),
-                install::InstallMode::Extract,
-                true,
-            );
-            started.push(p.to_string_lossy().to_string());
-        }
-    }
-    started
+/// mods/waiting are installed once their bus is. Returns the sources of the jobs started.
+fn watch_inbox(_content: &Path) -> Vec<String> {
+    // mods/ is the mod folder itself now: what lies in it is a mod already (see `mods`)
+    Vec::new()
 }
 
 /// Install everything in the inbox (and the waiting packs whose bus is there) now, and
@@ -773,7 +676,7 @@ pub fn mods_status() -> Result<ModsStatus> {
             .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .collect::<Vec<_>>()
     };
-    let waiting: Vec<PathBuf> = std::fs::read_dir(content.join("Mods").join(install::WAITING))
+    let waiting: Vec<PathBuf> = std::fs::read_dir(content.join("mods").join(install::WAITING))
         .map(|rd| rd.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
     let mut archives: Vec<(String, u64)> = std::fs::read_dir(content.join(install::ARCHIVES))
@@ -798,7 +701,7 @@ pub fn mods_status() -> Result<ModsStatus> {
     Ok(ModsStatus {
         content_dir: content.to_string_lossy().to_string(),
         folders,
-        inbox: content.join("Mods").to_string_lossy().to_string(),
+        inbox: content.join("mods").to_string_lossy().to_string(),
         inbox_items: names(inbox_entries(&content)),
         waiting: names(waiting),
         archives,
@@ -824,7 +727,7 @@ pub fn poll() -> Result<Poll> {
     let started = content.as_deref().map(watch_inbox).unwrap_or_default();
     let stamp = index::content_stamp(
         &bases(),
-        content.as_ref().map(|c| c.join("Mods")).as_deref(),
+        content.as_ref().map(|c| c.join("mods")).as_deref(),
     );
     Ok(Poll {
         stamp,
@@ -916,6 +819,19 @@ fn log_empty(rel: &str, what: &str) {
     ));
 }
 
+/// A map's start points as OMSI's start dialog lists them: one per name, in name order, each
+/// the first entry point of that name. Its `index` is the game's `--entry`, the position in
+/// the map's list, not the index field.
+fn entry_list(g: &::map::GlobalCfg) -> Vec<EntryInfo> {
+    g.entry_point_groups()
+        .into_iter()
+        .map(|(name, places)| EntryInfo {
+            index: places[0] as i32,
+            name: name.to_string(),
+        })
+        .collect()
+}
+
 fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
     let g = match ::map::GlobalCfg::load(&d.join("global.cfg")) {
         Ok(g) => g,
@@ -937,32 +853,6 @@ fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
         .map(|x| x.description)
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| g.description.trim().to_string());
-    let mut entries: Vec<EntryInfo> = g
-        .entry_points
-        .iter()
-        .map(|e| EntryInfo {
-            index: e.index,
-            name: e.name.trim().to_string(),
-        })
-        .collect();
-    // the game's --entry is the position in the list, not the index field; several
-    // entries often share a name (one per stop position), so number them
-    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let total: std::collections::HashMap<String, usize> =
-        entries
-            .iter()
-            .fold(std::collections::HashMap::new(), |mut m, e| {
-                *m.entry(e.name.clone()).or_default() += 1;
-                m
-            });
-    for (i, e) in entries.iter_mut().enumerate() {
-        e.index = i as i32;
-        let n = seen.entry(e.name.clone()).or_default();
-        *n += 1;
-        if total.get(&e.name).copied().unwrap_or(0) > 1 {
-            e.name = format!("{} ({})", e.name, n);
-        }
-    }
     // (the depot groups' first: a plain car group's name line is no depot)
     let hof = ::map::ailists::AiLists::load(&d.join("ailists.cfg"))
         .ok()
@@ -983,7 +873,7 @@ fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
         friendly,
         file: format!("maps/{folder}/global.cfg"),
         description,
-        entry_points: entries,
+        entry_points: entry_list(&g),
         hof,
         installed: in_content(d),
     })
@@ -1046,14 +936,14 @@ fn missing_packs_of(model: &Path) -> Vec<String> {
         if !l.starts_with("..") {
             continue;
         }
-        let p = ::legacy_config::resolve_path(dir, l);
+        let p = ::mods::resolve_path(dir, l);
         // (the game also finds a part from the model's parent folders - `<vehicle>/model`
         // and the vehicle folder for a cfg in `model/Configuration Files`: mesh_path)
-        let found = |d: &Path| ::legacy_config::vfs::is_file(&::legacy_config::resolve_path(d, l));
+        let found = |d: &Path| ::legacy_config::vfs::is_file(&::mods::resolve_path(d, l));
         if ::legacy_config::vfs::is_file(&p) || dir.ancestors().skip(1).take(2).any(found) {
             continue;
         }
-        if let Some(pack) = ::legacy_config::missing_vehicle_pack(&p) {
+        if let Some(pack) = ::mods::missing_vehicle_pack(&p) {
             if !out.contains(&pack) {
                 out.push(pack);
             }
@@ -1070,15 +960,15 @@ fn paint_schemes(vehicle: &::legacy_vehicle::Vehicle) -> (Vec<String>, Vec<PathB
     let Some(model_rel) = vehicle.model.as_ref() else {
         return (names, dirs_read);
     };
-    let model_path = ::legacy_config::resolve_path(vehicle.dir(), model_rel);
+    let model_path = ::mods::resolve_path(vehicle.dir(), model_rel);
     let Ok(model) = ::model::Model::load(&model_path) else {
         return (names, dirs_read);
     };
     for c in &model.ctc {
-        let dir = ::legacy_config::resolve_path(vehicle.dir(), &c.path);
+        let dir = ::mods::resolve_path(vehicle.dir(), &c.path);
         let mut files: Vec<PathBuf> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut copies = ::legacy_config::mirrored_dirs(&dir);
+        let mut copies = ::mods::mirrored_dirs(&dir);
         if !copies.contains(&dir) {
             copies.push(dir.clone());
         }
@@ -1332,7 +1222,7 @@ fn read_vehicle_folder(
             .to_string_lossy()
             .to_ascii_lowercase();
         // a vehicle file whose model is not there would load as nothing
-        let model = v.model.as_ref().map(|m| ::legacy_config::resolve_path(v.dir(), m));
+        let model = v.model.as_ref().map(|m| ::mods::resolve_path(v.dir(), m));
         if !model
             .as_ref()
             .map(|m| ::legacy_config::vfs::is_file(m))
@@ -3088,6 +2978,37 @@ fn save_slots(dir: &Path) -> Vec<SavedSituation> {
 }
 
 #[cfg(test)]
+mod entry_list_tests {
+    use super::*;
+
+    #[test]
+    fn a_name_of_several_entry_points_is_one_start_point() {
+        let g = ::map::GlobalCfg {
+            entry_points: ["Nordspitze Bauernhof", "Einsteindorf", "Nordspitze Bauernhof"]
+                .iter()
+                .map(|n| ::map::EntryPoint {
+                    index: 7,
+                    name: n.to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let list: Vec<(i32, String)> = entry_list(&g)
+            .into_iter()
+            .map(|e| (e.index, e.name))
+            .collect();
+        assert_eq!(
+            list,
+            [
+                (1, "Einsteindorf".to_string()),
+                (0, "Nordspitze Bauernhof".to_string())
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
 mod save_slot_tests {
     use super::*;
 
@@ -3633,7 +3554,7 @@ mod tests {
         std::fs::create_dir_all(&obj).unwrap();
         std::fs::create_dir_all(&cfgs).unwrap();
         std::fs::write(obj.join("a.o3d"), b"x").unwrap();
-        ::legacy_config::add_content_root(root.clone());
+        ::mods::add_content_root(root.clone());
         let model = cfgs.join("m.cfg");
         std::fs::write(
             &model,
@@ -3641,7 +3562,7 @@ mod tests {
         )
             .unwrap();
         let packs = super::missing_packs_of(&model);
-        ::legacy_config::remove_content_root(&root);
+        ::mods::remove_content_root(&root);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(packs, vec!["Other".to_string()]);
     }

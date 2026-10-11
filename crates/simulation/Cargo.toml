@@ -7,6 +7,7 @@ description = "Simulation runtime: vehicle instances with scripts and animations
 
 [dependencies]
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 legacy-script = { path = "../legacy-script" }
 model = { path = "../model" }
 legacy-vehicle = { path = "../vehicle" }

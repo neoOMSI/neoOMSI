@@ -1,0 +1,10 @@
+[package]
+name = "mods"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "neoOMSI mod system"
+
+[dependencies]
+legacy-config = { path = "../legacy-config" }
+log.workspace = true

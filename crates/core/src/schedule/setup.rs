@@ -121,7 +121,7 @@ impl Schedule {
             for g in lists.groups.iter().filter(|g| g.is_depot) {
                 let mut vehicles = Vec::new();
                 for tg in &g.typgroups {
-                    let path = ::legacy_config::resolve_path(root, &tg.file);
+                    let path = ::mods::resolve_path(root, &tg.file);
                     match load(&path) {
                         Ok(t) => {
                             let hof = g
@@ -150,7 +150,7 @@ impl Schedule {
                     if !v.file.to_ascii_lowercase().ends_with(".zug") {
                         continue;
                     }
-                    let path = ::legacy_config::resolve_path(root, &v.file);
+                    let path = ::mods::resolve_path(root, &v.file);
                     let Ok(train) = ::legacy_vehicle::vehicle::Train::load(&path) else {
                         continue;
                     };
@@ -158,7 +158,7 @@ impl Schedule {
                     let mut pick = 0usize;
                     for (file, rev) in &train.cars {
                         // an entry is a vehicle file, or the name of a vehicle pool group
-                        let p = ::legacy_config::resolve_path(root, file);
+                        let p = ::mods::resolve_path(root, file);
                         let path = if ::legacy_config::vfs::is_file(&p) {
                             Some(p)
                         } else {
@@ -171,7 +171,7 @@ impl Schedule {
                                 })
                                 .map(|g| {
                                     pick += 1;
-                                    ::legacy_config::resolve_path(
+                                    ::mods::resolve_path(
                                         root,
                                         &g.vehicles[pick % g.vehicles.len()].file,
                                     )
