@@ -62,7 +62,7 @@ pub(super) fn sorted_tours(line: &::timetable::Line) -> Vec<&::timetable::Tour> 
                 tour_start(a).unwrap_or(f64::MAX),
                 tour_start(b).unwrap_or(f64::MAX),
             );
-            ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal)
+            ta.total_cmp(&tb)
         })
     });
     tours

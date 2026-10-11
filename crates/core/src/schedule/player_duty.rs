@@ -88,11 +88,7 @@ impl Schedule {
                 None => order.push((s.0, s.3, s.3)),
             }
         }
-        order.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.0.cmp(&b.0))
-        });
+        order.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
         order.iter().position(|o| o.2 >= now - 60.0).unwrap_or(0)
     }
 
@@ -111,11 +107,7 @@ impl Schedule {
                 order.push((s.0, s.3));
             }
         }
-        order.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.0.cmp(&b.0))
-        });
+        order.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
         let Some(&(k, _)) = order.get(pos) else {
             return Vec::new();
         };

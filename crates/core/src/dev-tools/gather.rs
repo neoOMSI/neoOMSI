@@ -64,11 +64,7 @@ impl crate::App {
             let exempt = doors
                 .iter()
                 .filter(|d| d.in_lane)
-                .min_by(|a, b| {
-                    a.lateral
-                        .partial_cmp(&b.lateral)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+                .min_by(|a, b| a.lateral.total_cmp(&b.lateral))
                 .map(|d| glam::DVec2::new(d.inside[0], d.inside[1]));
             self.dev_blockers(exempt)
         } else {
@@ -188,7 +184,7 @@ impl crate::App {
                 beams.sort_by(|a, b| {
                     let da = (glam::DVec3::from(a.pos) - at).length_squared();
                     let db = (glam::DVec3::from(b.pos) - at).length_squared();
-                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    da.total_cmp(&db)
                 });
                 beams.truncate(32);
             }
