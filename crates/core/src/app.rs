@@ -704,6 +704,16 @@ impl App {
             self.weather_cycle = Some(c);
         }
         self.weather = Some(load_weather(&self.args));
+        if self
+            .args
+            .weather
+            .as_deref()
+            .is_some_and(|weather| weather.starts_with("metar-sync:"))
+        {
+            // The first report was loaded above; wait for the selected refresh interval before
+            // asking Aviation Weather again.
+            self.metar_next = 600.0;
+        }
         self.wetness = self.weather.as_ref().map(initial_wetness).unwrap_or(0.0);
         self.clock = start_clock(&self.args);
         setup_sky(

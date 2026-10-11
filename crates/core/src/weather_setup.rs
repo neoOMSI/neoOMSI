@@ -2,6 +2,8 @@
 
 use super::*;
 
+const AVIATION_WEATHER_USER_AGENT: &str = "neoOMSI weather";
+
 pub(crate) const CUSTOM_CLOUDS: [&str; 5] = [
     "No clouds",
     "Cumulus 1",
@@ -253,6 +255,26 @@ pub(crate) fn custom_weather(text: Option<&str>) -> Option<CustomWeather> {
     text.and_then(CustomWeather::parse)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetarMode {
+    /// A launcher explicitly requested one report for this drive.
+    Once,
+    /// A launcher explicitly requested periodic reports for this drive.
+    Sync,
+    /// The original `metar:` form; it still follows the legacy game setting.
+    Legacy,
+}
+
+/// Recognise a launcher METAR weather value and retain whether it is a one-off or live choice.
+pub(crate) fn metar_mode(weather: &str) -> Option<(MetarMode, &str)> {
+    weather
+        .strip_prefix("metar-once:")
+        .map(|station| (MetarMode::Once, station))
+        .or_else(|| weather.strip_prefix("metar-sync:").map(|station| (MetarMode::Sync, station)))
+        .or_else(|| weather.strip_prefix("metar:").map(|station| (MetarMode::Legacy, station)))
+        .or_else(|| weather.strip_prefix("METAR:").map(|station| (MetarMode::Legacy, station)))
+}
+
 /// Weather from `--weather`, else the clear-sky default.
 pub(crate) fn load_weather(args: &Args) -> ::content::weather::Weather {
     let rel = args
@@ -271,16 +293,20 @@ pub(crate) fn load_weather(args: &Args) -> ::content::weather::Weather {
         ::simulation::host::set_ambient_weather(w.temp.0, w.temp.1);
         return w;
     }
-    // OMSI 2's current weather: `metar:<ICAO>` fetches the airport's report
+    // Current weather: a one-off or continuously refreshed airport METAR report.
     let loaded = if rel.starts_with(REPORT) {
         // a report the host or server tells (see `report_wire`): its values, no download
         Ok(from_report(&rel).unwrap_or_else(|| ::content::weather::from_metar("", "CAVOK")))
     } else {
-        match rel
-            .strip_prefix("metar:")
-            .or_else(|| rel.strip_prefix("METAR:"))
-        {
-            Some(icao) => Ok(fetch_metar(icao.trim())),
+        match metar_mode(&rel) {
+            Some((_, icao)) => {
+                let station = if icao.trim().is_empty() {
+                    crate::launcher::drive::nearest_airport(&args.root.to_string_lossy(), &args.map)
+                } else {
+                    icao.trim().to_ascii_uppercase()
+                };
+                Ok(fetch_metar(&station))
+            }
             None => ::content::weather::Weather::load(&::mods::resolve_path(&args.root, &rel)),
         }
     };
@@ -928,6 +954,7 @@ pub(crate) fn try_metar(icao: &str) -> Option<::content::weather::Weather> {
     };
     let url = format!("https://aviationweather.gov/api/data/metar?ids={icao}&format=raw");
     let text = ureq::get(&url)
+        .header("User-Agent", AVIATION_WEATHER_USER_AGENT)
         .config()
         .timeout_global(Some(std::time::Duration::from_secs(6)))
         .build()
@@ -980,4 +1007,73 @@ pub(crate) fn from_report(s: &str) -> Option<::content::weather::Weather> {
     let mut w = ::content::weather::from_metar(icao, raw);
     w.path = PathBuf::from(format!("metar:{icao}"));
     Some(w)
+}
+
+/// A station name resolved from Aviation Weather's current station catalogue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MetarStationInfo {
+    pub icao: String,
+    pub name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct StationInfoResponse {
+    #[serde(rename = "icaoId")]
+    icao: String,
+    site: String,
+}
+
+fn parse_metar_station_info(icao: &str, text: &str) -> Option<MetarStationInfo> {
+    let station = serde_json::from_str::<Vec<StationInfoResponse>>(text)
+        .ok()?
+        .into_iter()
+        .next()?;
+    (station.icao.eq_ignore_ascii_case(icao) && !station.site.trim().is_empty()).then_some(MetarStationInfo {
+        icao: station.icao.to_ascii_uppercase(),
+        name: station.site.trim().to_string(),
+    })
+}
+
+/// Resolve an ICAO code without downloading a weather report. Invalid or unavailable stations
+/// intentionally return None so the launcher can show that the code cannot be used.
+pub(crate) fn metar_station_info(icao: &str) -> Option<MetarStationInfo> {
+    let icao = icao.trim().to_ascii_uppercase();
+    if icao.len() != 4 || !icao.chars().all(|character| character.is_ascii_alphabetic()) {
+        return None;
+    }
+    let url = format!("https://aviationweather.gov/api/data/stationinfo?ids={icao}&format=json");
+    let text = ureq::get(&url)
+        .header("User-Agent", AVIATION_WEATHER_USER_AGENT)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(6)))
+        .build()
+        .call()
+        .ok()?
+        .into_body()
+        .read_to_string()
+        .ok()?;
+    parse_metar_station_info(&icao, &text)
+}
+
+#[cfg(test)]
+mod metar_mode_tests {
+    use super::{metar_mode, parse_metar_station_info, MetarMode};
+
+    #[test]
+    fn distinguishes_a_one_off_report_from_live_sync() {
+        assert_eq!(metar_mode("metar-once:EGNX"), Some((MetarMode::Once, "EGNX")));
+        assert_eq!(metar_mode("metar-sync:EGNX"), Some((MetarMode::Sync, "EGNX")));
+        assert_eq!(metar_mode("metar:EGNX"), Some((MetarMode::Legacy, "EGNX")));
+    }
+
+    #[test]
+    fn resolves_an_airport_name_from_the_live_station_response() {
+        let station = parse_metar_station_info(
+            "EGNX",
+            r#"[{"icaoId":"EGNX","site":"Nottingham/E Midlands Arpt"}]"#,
+        )
+        .unwrap();
+        assert_eq!(station.icao, "EGNX");
+        assert_eq!(station.name, "Nottingham/E Midlands Arpt");
+    }
 }

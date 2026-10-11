@@ -20,7 +20,7 @@ message Request {
     ConfigChanges save_config = 4;
     Empty maps = 5;
     Empty vehicles = 6;
-    Empty weather = 7;
+    WeatherArgs weather = 7;
     LinesArgs lines = 8;
     MinimapArgs minimap = 9;
     IbisArgs ibis = 10;
@@ -209,8 +209,22 @@ message WeatherInfo {
   bool installed = 9;
 }
 
+message WeatherArgs {
+  // The selected map. Used to resolve its nearest weather station.
+  string map = 1;
+  // A station the player entered. The engine resolves it through the live source.
+  optional string metar_icao = 2;
+}
+
+message MetarStation {
+  string icao = 1;
+  string name = 2;
+}
+
 message WeatherList {
   repeated WeatherInfo weather = 1;
+  MetarStation automatic_metar_station = 2;
+  optional MetarStation selected_metar_station = 3;
 }
 
 message LinesArgs {

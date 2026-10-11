@@ -648,7 +648,15 @@ impl App {
     }
 
     pub(crate) fn metar_locked(&self) -> bool {
-        ::config::get_bool("gameplay", "metar_sync").unwrap_or(false)
+        let launch_mode = self
+            .args
+            .weather
+            .as_deref()
+            .and_then(crate::weather_setup::metar_mode)
+            .map(|(mode, _)| mode);
+        let launch_sync = launch_mode == Some(crate::weather_setup::MetarMode::Sync);
+        let launch_once = launch_mode == Some(crate::weather_setup::MetarMode::Once);
+        (launch_sync || (!launch_once && ::config::get_bool("gameplay", "metar_sync").unwrap_or(false)))
             && !self
             .lan
             .as_ref()
@@ -656,21 +664,25 @@ impl App {
     }
 
     pub(crate) fn metar_station(&self) -> String {
-        if !::config::get_string("gameplay", "metar_station").unwrap_or_default().is_empty() {
-            return ::config::get_string("gameplay", "metar_station").unwrap_or_default().to_ascii_uppercase();
-        }
-        match self
+        let launch_station = self
             .args
             .weather
             .as_deref()
-            .and_then(|w| w.strip_prefix("metar:"))
-        {
-            Some(code) if !code.trim().is_empty() => code.trim().to_ascii_uppercase(),
-            _ => crate::launcher::drive::nearest_airport(
+            .and_then(crate::weather_setup::metar_mode)
+            .map(|(_, station)| station);
+        if let Some(code) = launch_station {
+            if !code.trim().is_empty() {
+                return code.trim().to_ascii_uppercase();
+            }
+            return crate::launcher::drive::nearest_airport(
                 &self.args.root.to_string_lossy(),
                 &self.args.map,
-            ),
+            );
         }
+        if !::config::get_string("gameplay", "metar_station").unwrap_or_default().is_empty() {
+            return ::config::get_string("gameplay", "metar_station").unwrap_or_default().to_ascii_uppercase();
+        }
+        crate::launcher::drive::nearest_airport(&self.args.root.to_string_lossy(), &self.args.map)
     }
 
     pub(crate) fn load_metar_once(&mut self) {
@@ -767,7 +779,9 @@ impl App {
         if self.metar_next > 0.0 {
             return;
         }
-        self.metar_next = 60.0;
+        // METAR reports are ordinarily issued hourly. Ten minutes keeps live weather useful
+        // without needlessly polling the public source during a long drive.
+        self.metar_next = 600.0;
         let icao = self.metar_station();
         let (tx, rx) = std::sync::mpsc::channel();
         self.metar_rx = Some(rx);

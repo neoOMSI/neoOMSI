@@ -96,11 +96,29 @@ pub(super) fn call(command: Command) -> Result<Answer> {
                 vehicles: list(lib::list_vehicles()?),
             }))
         })?,
-        Command::Weather(_) => cached("weather", || {
-            Ok(Answer::Weather(api::WeatherList {
+        Command::Weather(a) => {
+            let root = std::path::PathBuf::from(lib::load_config().root);
+            let automatic = crate::launcher::drive::nearest_airport(&root.to_string_lossy(), &a.map);
+            let station = |icao: String| {
+                let resolved = crate::weather_setup::metar_station_info(&icao);
+                api::MetarStation {
+                    icao,
+                    name: resolved.map(|station| station.name).unwrap_or_default(),
+                }
+            };
+            Answer::Weather(api::WeatherList {
                 weather: list(lib::list_weather()?),
-            }))
-        })?,
+                automatic_metar_station: Some(station(automatic)),
+                selected_metar_station: a.metar_icao
+                    .as_deref()
+                    .filter(|icao| icao.len() == 4 && icao.chars().all(|character| character.is_ascii_alphabetic()))
+                    .and_then(crate::weather_setup::metar_station_info)
+                    .map(|station| api::MetarStation {
+                        icao: station.icao,
+                        name: station.name,
+                    }),
+            })
+        }
         Command::Lines(a) => Answer::Lines(api::LineList {
             lines: list(lib::list_lines(&a.map, &a.date)?),
         }),
