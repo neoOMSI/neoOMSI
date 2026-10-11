@@ -1390,6 +1390,7 @@
       "ticket_give": "Issue ticket",
       "toggel_ctrler": "Switch controller",
       "toggel_mouse_ctrl": "Switch mouse control",
+      "toggle_navigator": "Show/hide navigator",
       "view_interiorcam_minus": "Interior camera: previous",
       "view_interiorcam_plus": "Interior camera: next",
       "view_reset_all_directions": "Reset all view directions",

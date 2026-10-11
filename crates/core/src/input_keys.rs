@@ -812,6 +812,10 @@ impl App {
                 self.service_msg = Some((msg, 4.0));
             }
             "toggle_city_map" => self.toggle_map_page(),
+            "toggle_navigator" => {
+                let on = !crate::game_lists::toggle_now(Some(self), "navigator").unwrap_or(true);
+                crate::game_lists::toggle_set(Some(self), "navigator", on);
+            }
             "show_position" => self.show_position(),
             "save_personnel" => self.save_personnel(),
             "toggel_ctrler" => {

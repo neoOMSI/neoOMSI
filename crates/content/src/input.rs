@@ -180,6 +180,7 @@ impl KeyboardCfg {
             ("voice_talk", 58, 0),
             ("voice_radio", 58, KEY_SHIFT),
             ("toggle_city_map", 50, KEY_SHIFT),
+            ("toggle_navigator", 49, KEY_SHIFT),
             ("show_position", 87, KEY_CTRL),
             ("save_personnel", 67, 0),
             ("open_mainmenue", 1, 0),
