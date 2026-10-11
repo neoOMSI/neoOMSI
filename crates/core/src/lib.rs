@@ -33,6 +33,7 @@ mod radio;
 mod rail_drive;
 mod touch;
 mod updater;
+mod voice;
 mod vr_navigator;
 
 mod puddles;
@@ -64,6 +65,8 @@ mod controllers;
 mod dinput;
 mod duty_start;
 mod editor_ctl;
+#[cfg(target_os = "linux")]
+mod evdev_axes;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod evdev_ff;
 mod game_link;
@@ -645,6 +648,7 @@ pub(crate) fn make_app(
         cursor_kind: 0,
         lan: None,
         remotes: Default::default(),
+        voice: Default::default(),
         spikes: 0,
         worst_ms: 0.0,
         governor: (0.0, 0, 0.0),

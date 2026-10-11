@@ -32,7 +32,7 @@ pub const MAX_VOICES: usize = 200;
 /// Hard storage bound, including streams, virtual voices and stop tails. Excess starts
 /// are counted and returned to the game thread without growing the callback storage.
 pub(crate) const VOICE_CAPACITY: usize = 512;
-const BLOCK_FRAMES: usize = 256;
+pub(crate) const BLOCK_FRAMES: usize = 256;
 pub(crate) const MIX_SAMPLE_RATE: u32 = 48000;
 
 pub(crate) struct AudioCore {
@@ -114,6 +114,9 @@ impl AudioCore {
             Command::PlayStream { id, stream, params } => {
                 self.voices.push(Voice::stream_with_kernel(id, stream, params, self.kernel.clone()));
             }
+            Command::PlaySource { id, feed, params } => {
+                self.voices.push(Voice::source_with_kernel(id, feed, params, self.kernel.clone()));
+            }
             Command::Stop { id } => {
                 if let Some(v) = self.voices.iter_mut().find(|v| v.id() == id) {
                     v.stop();
@@ -155,7 +158,7 @@ impl AudioCore {
         if rejected.is_empty() {
             self.queue.drain_into(&mut cmds);
             for cmd in cmds.drain(..) {
-                if self.voices.len() >= VOICE_CAPACITY && matches!(cmd, Command::Play { .. } | Command::PlayStream { .. }) {
+                if self.voices.len() >= VOICE_CAPACITY && matches!(cmd, Command::Play { .. } | Command::PlayStream { .. } | Command::PlaySource { .. }) {
                     self.counters.dropped_commands.fetch_add(1, Ordering::Relaxed);
                     if let Err(cmd) = self.reaper.reject(cmd) { rejected.push(cmd); }
                 } else { self.apply(cmd); }

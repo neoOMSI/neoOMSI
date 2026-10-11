@@ -24,7 +24,7 @@ mod text;
 mod view;
 mod widgets;
 
-pub use self::pause_menu::{Dialog, Fmt, OptGroup, OptKind, OptRow, OptShow, PauseState, WorldDrop, WorldGroup, WorldRow, ADMIN_PAGE, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PAUSE_ENTRIES, VEHICLE_PAGE, WORLD_PAGE};
+pub use self::pause_menu::{Dialog, Fmt, OptGroup, OptKind, OptRow, OptShow, PauseState, WorldDrop, WorldGroup, WorldRow, ADMIN_PAGE, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PAUSE_ENTRIES, VEHICLE_PAGE, VOICE_SUB, WORLD_PAGE};
 pub use self::view::*;
 #[allow(unused_imports)]
 use self::{style::*, text::*};

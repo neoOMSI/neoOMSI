@@ -263,6 +263,33 @@ impl AudioEngine {
         id
     }
 
+    /// Play `source` until the voice is stopped (on the passenger bus: speech).
+    pub fn play_source(&self, source: Arc<dyn crate::assets::Source>, params: VoiceParams) -> VoiceId {
+        self.pump();
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        if self.active.borrow().len() >= mixer::VOICE_CAPACITY {
+            self.counters.dropped_commands.fetch_add(1, Ordering::Relaxed);
+            return id;
+        }
+        let mut params = MixParams::from(params);
+        params.bus = bus::Bus::Passenger;
+        self.active.borrow_mut().insert(
+            id,
+            ActiveVoice {
+                params,
+                asset: VoiceAsset::Source(source.clone()),
+            },
+        );
+        if !self.output_available() {
+            return id;
+        }
+        let feed = crate::voice::voice::Feed::new(source);
+        if let Some(dropped) = self.commands.push(Command::PlaySource { id, feed, params }) {
+            self.active.borrow_mut().remove(&dropped);
+        }
+        id
+    }
+
     /// New parameters for a voice: queued for the mixer's next block (a few milliseconds),
     /// so the game never waits for a block being mixed. Given twice before that block, the
     /// later ones win.
@@ -323,5 +350,26 @@ mod tests {
         assert!(device.is_open());
         assert_eq!(device.name(), before);
         assert!(!device.reopen_flag().load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_source_plays_until_it_is_stopped() {
+        struct Tone;
+        impl crate::Source for Tone {
+            fn read(&self, _: u32, out: &mut [f32]) {
+                out.fill(0.5);
+            }
+        }
+        let e = AudioEngine::new_offline(48_000, 2);
+        let id = e.play_source(Arc::new(Tone), VoiceParams::default());
+        let mut out = vec![0.0; 4800];
+        e.render_offline(&mut out);
+        e.render_offline(&mut out);
+        assert!(out[4000].abs() > 0.05, "{}", out[4000]);
+        e.stop(id);
+        for _ in 0..5 {
+            e.render_offline(&mut out);
+        }
+        assert!(out.iter().all(|x| x.abs() < 1e-4));
     }
 }

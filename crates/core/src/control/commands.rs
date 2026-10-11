@@ -427,6 +427,9 @@ fn controller(d: &DeviceCfg, live: Option<&controllers::Connected>) -> Controlle
                     .and_then(|c| c.axes.iter().find(|(slot, _)| *slot == k))
                     .map_or(0.0, |(_, v)| *v),
                 function: function.into(),
+                #[cfg(target_os = "linux")]
+                reversed: d.axis_reversed(k),
+                #[cfg(not(target_os = "linux"))]
                 reversed: d.axes[k].is_some_and(|(_, r)| r),
                 shape: shape.into(),
                 calibration: d.calibration[k].map(|c| api::AxisCalibration {
@@ -457,6 +460,10 @@ fn controller(d: &DeviceCfg, live: Option<&controllers::Connected>) -> Controlle
         ff_capable: live.is_some_and(|c| c.ff_capable),
         gamepad: live.is_some_and(|c| c.gamepad),
         pressed: Vec::new(),
+        #[cfg(target_os = "linux")]
+        axis_mode: Some(d.axis_mode.as_str().into()),
+        #[cfg(not(target_os = "linux"))]
+        axis_mode: None,
     }
 }
 
@@ -492,6 +499,10 @@ fn controllers_now() -> api::ControllerList {
 
 /// Keeps what the page does not show: other axis flags, vibration strength.
 fn apply(d: &mut DeviceCfg, c: &Controller) {
+    #[cfg(target_os = "linux")]
+    if let Some(mode) = &c.axis_mode {
+        d.axis_mode = crate::evdev_axes::AxisMode::from_str(mode);
+    }
     d.enabled = c.enabled;
     d.ff_invert = c.ff_invert;
     for (k, axis) in c.axes.iter().take(8).enumerate() {
@@ -501,10 +512,19 @@ fn apply(d: &mut DeviceCfg, c: &Controller) {
             centre: c.centre,
             deadzone: c.deadzone,
         });
-        d.axes[k] = FUNCTIONS
+        let function = FUNCTIONS
             .iter()
             .find(|(_, function)| *function == axis.function())
-            .map(|(f, _)| (*f, axis.reversed));
+            .map(|(f, _)| *f);
+        #[cfg(target_os = "linux")]
+        {
+            d.set_axis_function(k, function);
+            d.set_axis_reversed(k, axis.reversed);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            d.axes[k] = function.map(|f| (f, axis.reversed));
+        }
         let bits = SHAPES
             .iter()
             .find(|(shape, _)| *shape == axis.shape())
@@ -574,12 +594,99 @@ mod tests {
         let mut back = d.clone();
         apply(&mut back, &changed);
         assert_eq!(back.axes[1], Some((Func::Clutch, false)));
-        assert_eq!(back.axis_flags[2], 2 | 4 | 0x10, "the range bit stays");
-        assert_eq!(back.ff_scale, Some((0.0, 0.4)), "the vibration strength stays");
+        let expected = 2 | 4 | 0x10 | i32::from(cfg!(target_os = "linux"));
+        assert_eq!(back.axis_flags[2], expected, "the range bit stays");
+        assert_eq!(
+            back.ff_scale,
+            Some((0.0, 0.4)),
+            "the vibration strength stays"
+        );
         assert_eq!(back.buttons, d.buttons);
         changed.force_feedback = true;
         apply(&mut back, &changed);
         assert_eq!(back.ff_scale, Some((1.0, 0.4)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_mode_and_unassigned_inversion_survive_launcher_edits() {
+        use crate::evdev_axes::AxisMode;
+        use launcher_protocol::{encode, read_frame};
+        let mut d = DeviceCfg {
+            name: "T128".into(),
+            axis_mode: AxisMode::Native,
+            ..Default::default()
+        };
+        d.set_axis_reversed(2, true);
+        d.axis_flags[2] |= 2 | 8;
+        let mut changed = controller(&d, None);
+        assert_eq!(changed.axis_mode.as_deref(), Some("native"));
+        assert_eq!(changed.axes[2].function(), AxisFunction::None);
+        assert!(changed.axes[2].reversed);
+        changed.axis_mode = None;
+        let legacy: Controller = read_frame(&mut std::io::Cursor::new(encode(&changed).unwrap()))
+            .unwrap()
+            .unwrap();
+        apply(&mut d, &legacy);
+        assert_eq!(d.axis_mode, AxisMode::Native);
+        assert!(d.axis_reversed(2));
+        assert_eq!(d.axis_flags[2], 1 | 2 | 8);
+        changed.axis_mode = Some("gamepad".into());
+        changed.axes[2].set_function(AxisFunction::Brake);
+        apply(&mut d, &changed);
+        assert_eq!(d.axis_mode, AxisMode::Gamepad);
+        assert_eq!(d.axes[2], Some((Func::Brake, true)));
+        changed.axis_mode = Some("future_mode".into());
+        changed.axes[2].set_function(AxisFunction::None);
+        apply(&mut d, &changed);
+        assert_eq!(d.axis_mode, AxisMode::Auto);
+        assert_eq!(d.axes[2], None);
+        assert!(d.axis_reversed(2));
+        changed.axes[2].reversed = false;
+        apply(&mut d, &changed);
+        assert!(!d.axis_reversed(2));
+        assert_eq!(d.axis_flags[2], 2 | 8);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn launcher_preview_keeps_unassigned_values_raw() {
+        let mut d = DeviceCfg::default();
+        d.set_axis_reversed(2, true);
+        d.calibration[2] = Some(AxisCal {
+            min: -0.5,
+            max: 0.75,
+            centre: None,
+            deadzone: None,
+        });
+        let live = controllers::Connected {
+            name: "T128".into(),
+            hardware_id: None,
+            axes: vec![(2, 0.75)],
+            native_axes: true,
+            ff: false,
+            buttons: 0,
+            ff_capable: true,
+            gamepad: false,
+        };
+        let shown = controller(&d, Some(&live));
+        assert_eq!(shown.axes[2].value, 0.75);
+        assert!(shown.axes[2].reversed);
+        assert_eq!(shown.axes[2].function(), AxisFunction::None);
+        assert!(shown.axes[2].calibration.is_some());
+        assert!(shown.ff_capable && !shown.gamepad);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn linux_axis_mode_metadata_is_unset_and_ignored_elsewhere() {
+        let mut d = DeviceCfg::default();
+        let original = d.clone();
+        let mut changed = controller(&d, None);
+        assert_eq!(changed.axis_mode, None);
+        changed.axis_mode = Some("native".into());
+        apply(&mut d, &changed);
+        assert_eq!(d, original);
     }
 
     #[test]

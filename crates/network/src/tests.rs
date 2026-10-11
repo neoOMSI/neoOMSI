@@ -1613,3 +1613,103 @@ fn a_returning_player_is_known_by_its_nonce_not_its_name() {
     let back = hello_id(&raw(), &mut host, "alice", 0x1234).expect("welcomed");
     assert_eq!(back, first);
 }
+
+/// A host and three clients: Anton next to the host, Berta 40 m away, Clara 2 km away.
+fn voice_session(port: u16) -> (LanSession, [LanSession; 3], [Pose; 4]) {
+    let mut host = LanSession::host(port, "Server", world("m"), true).unwrap();
+    host.voice.range = 50.0;
+    let port = host.local_addr().unwrap().port();
+    let join = |n: &str| {
+        LanSession::join(&port.to_string(), n, world("m"), Duration::from_secs(1)).unwrap()
+    };
+    let (mut a, mut b, mut c) = (join("Anton"), join("Berta"), join("Clara"));
+    let poses = [pose(0.0), pose(5.0), pose(40.0), pose(2000.0)];
+    pump(&mut [&mut host, &mut a, &mut b, &mut c], &poses, 100, |s| {
+        s[1..].iter().all(|c| c.connected) && s[0].peers().filter(|p| p.has_pose).count() == 3
+    });
+    for s in [&mut host, &mut a, &mut b, &mut c] {
+        s.take_voice();
+    }
+    (host, [a, b, c], poses)
+}
+
+fn heard(s: &mut LanSession) -> Vec<(u32, u16, bool)> {
+    s.take_voice()
+        .into_iter()
+        .map(|f| (f.id, f.seq, f.radio()))
+        .collect()
+}
+
+#[test]
+fn a_voice_carries_as_far_as_the_host_allows() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28010);
+    assert!(a.voice_allowed() && a.voice.range == 50.0, "{:?}", a.voice);
+    for k in 0..5u16 {
+        a.send_voice(k, 0, &[0xF8, k as u8]);
+    }
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 40, |s| {
+        s[2].voice_in.len() == 5 && s[0].voice_in.len() == 5
+    });
+    let (h, b_heard, c_heard) = (heard(&mut host), heard(&mut b), heard(&mut c));
+    assert_eq!(h.len(), 5);
+    assert_eq!(b_heard.iter().map(|f| f.1).collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+    assert!(b_heard.iter().all(|f| f.0 == a.my_id && !f.2));
+    assert!(c_heard.is_empty(), "Clara is 2 km away");
+    assert!(heard(&mut a).is_empty(), "nobody hears themselves");
+    // the radio reaches everybody, the host's own voice those near it
+    a.send_voice(9, voice::FLAG_RADIO, &[0xF8]);
+    host.send_voice(1, 0, &[0xF8]);
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 40, |s| s[3].voice_in.len() == 1 && s[2].voice_in.len() == 2);
+    assert_eq!(heard(&mut c), [(a.my_id, 9, true)]);
+    assert_eq!(heard(&mut a), [(1, 1, false)]);
+}
+
+#[test]
+fn muted_spoofed_and_unasked_voices_go_nowhere() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28020);
+    assert!(host.set_voice_muted(a.my_id, true));
+    a.send_voice(1, 0, &[0xF8]);
+    // Berta pretending to be Anton
+    let fake = voice::encode_voice(a.my_id, 2, 0, &[0xF8]);
+    b.send(&fake, b.host.unwrap());
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |_| false);
+    assert!(heard(&mut host).is_empty() && heard(&mut b).is_empty());
+    // the host turns voice off: the clients learn it with the next clock message
+    host.set_voice_muted(a.my_id, false);
+    host.voice.enabled = false;
+    host.clock_acc = CLOCK_EVERY;
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 40, |s| !s[1].voice.enabled);
+    assert!(!a.voice_allowed());
+    b.send(&voice::encode_voice(b.my_id, 3, 0, &[0xF8]), b.host.unwrap());
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |_| false);
+    assert!(heard(&mut a).is_empty() && heard(&mut host).is_empty());
+}
+
+#[test]
+fn a_flood_of_voice_is_cut_to_the_rate() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28030);
+    for k in 0..300u16 {
+        a.send_voice(k, 0, &[0xF8]);
+    }
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |_| false);
+    let n = heard(&mut b).len();
+    assert!((50..=80).contains(&n), "{n} frames passed on");
+}
+
+#[test]
+fn an_older_game_gets_no_voice() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28040);
+    let old = host.peers.get_mut(&b.my_id).unwrap();
+    old.voice = false;
+    a.send_voice(1, 0, &[0xF8]);
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |s| !s[0].voice_in.is_empty());
+    assert!(heard(&mut b).is_empty());
+    assert_eq!(heard(&mut host).len(), 1);
+}

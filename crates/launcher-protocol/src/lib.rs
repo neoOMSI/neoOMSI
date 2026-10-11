@@ -33,7 +33,10 @@ pub fn read_frame<M: Message + Default>(r: &mut impl Read) -> io::Result<Option<
     read_frame_max(r, MAX_FRAME)
 }
 
-pub fn read_frame_max<M: Message + Default>(r: &mut impl Read, max: usize) -> io::Result<Option<M>> {
+pub fn read_frame_max<M: Message + Default>(
+    r: &mut impl Read,
+    max: usize,
+) -> io::Result<Option<M>> {
     let mut len = [0u8; 4];
     match r.read_exact(&mut len) {
         Ok(()) => {}
@@ -82,6 +85,52 @@ mod tests {
         assert_eq!(read_frame(&mut r).unwrap(), Some(a));
         assert_eq!(read_frame(&mut r).unwrap(), Some(b));
         assert_eq!(read_frame::<Frame>(&mut r).unwrap(), None);
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    struct ControllerBeforeAxisMode {
+        #[prost(string, tag = "1")]
+        name: String,
+        #[prost(message, repeated, tag = "6")]
+        axes: Vec<api::ControllerAxis>,
+        #[prost(bool, optional, tag = "8")]
+        ff_invert: Option<bool>,
+    }
+
+    #[test]
+    fn controller_axis_mode_is_optional_and_old_decoders_keep_existing_fields() {
+        for mode in [None, Some("native"), Some(""), Some("future_mode")] {
+            let controller = api::Controller {
+                name: "T128".into(),
+                axes: vec![api::ControllerAxis {
+                    reversed: true,
+                    calibration: Some(api::AxisCalibration {
+                        min: -0.8,
+                        max: 0.9,
+                        centre: Some(0.01),
+                        deadzone: None,
+                    }),
+                    ..Default::default()
+                }],
+                ff_invert: Some(true),
+                axis_mode: mode.map(str::to_owned),
+                ..Default::default()
+            };
+            let bytes = controller.encode_to_vec();
+            assert_eq!(
+                api::Controller::decode(bytes.as_slice()).unwrap(),
+                controller
+            );
+            let legacy = ControllerBeforeAxisMode::decode(bytes.as_slice()).unwrap();
+            assert_eq!(legacy.name, controller.name);
+            assert_eq!(legacy.axes, controller.axes);
+            assert_eq!(legacy.ff_invert, controller.ff_invert);
+            let legacy_bytes = legacy.encode_to_vec();
+            let restored = api::Controller::decode(legacy_bytes.as_slice()).unwrap();
+            assert_eq!(restored.axis_mode, None);
+            assert_eq!(restored.axes, controller.axes);
+            assert_eq!(restored.ff_invert, Some(true));
+        }
     }
 
     #[test]

@@ -84,6 +84,10 @@ launcher shows that the engine went away.
 | `situations`, `tutorials`, `version` | |
 | `servers`, `save_servers` | `servers` asks every server for its status |
 
+On Linux, `Controller.axis_mode` is an optional string (field 12): `"auto"`, `"gamepad"`, or `"native"`. Omitting it from `save_controllers` preserves the saved mode for older launchers; unknown values select Auto. The controller reader applies mode changes on its next poll without repeating capability queries. Other platforms leave this field unset and ignore it when saving.
+
+Linux retains an axis's `reversed` value even with `AXIS_FUNCTION_NONE`; changing its function keeps inversion, and setting `reversed` false clears it while preserving other flags. Axis `value` is raw normalized input; previews apply its calibration and inversion. The in-game controller options provide the mode selector and an independent Invert toggle.
+
 ## Events
 
 | `Event` | When |

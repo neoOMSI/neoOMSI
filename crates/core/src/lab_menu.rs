@@ -1,7 +1,7 @@
 //! The pause menu
 
 use super::*;
-use crate::ui::{ADMIN_PAGE, Dialog, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PauseState, VEHICLE_PAGE, WORLD_PAGE, WorldDrop, WorldGroup, WorldRow};
+use crate::ui::{ADMIN_PAGE, Dialog, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PauseState, VEHICLE_PAGE, VOICE_SUB, WORLD_PAGE, WorldDrop, WorldGroup, WorldRow};
 
 #[derive(Clone, Default)]
 pub(crate) struct PlaceSel {
@@ -92,7 +92,7 @@ impl App {
         for (label, action) in items {
             let g = match action.split(' ').next().unwrap_or("") {
                 "back" => continue,
-                "goto" | "bring" | "kick" | "ban" | "unstick" | "bringall" | "service" => 0,
+                "goto" | "bring" | "kick" | "ban" | "unstick" | "bringall" | "service" | "mute" | "unmute" | "voice" => 0,
                 "clock" | "time" | "speed" => 1,
                 "weather" => 2,
                 _ => 3,
@@ -124,11 +124,23 @@ impl App {
         }
     }
 
+    pub(crate) fn lab_voice_shown(&self) -> bool {
+        self.lab_group_page() == Some(OPTIONS_PAGE)
+            && self.ui.as_ref().is_some_and(|u| {
+                u.world_sub > 0
+                    && u.world_view
+                        .get(u.world_group)
+                        .and_then(|g| g.subs.get(u.world_sub - 1))
+                        .is_some_and(|s| s.title == VOICE_SUB)
+            })
+    }
+
     fn lab_sync_due(&self) -> bool {
         let page = self.lab_group_page();
-        let live = self.ui.as_ref().is_some_and(|u| {
-            u.world_drag.is_some() || u.world_bar_grab.is_some() || (page == Some(OPTIONS_PAGE) && u.world_sub >= 2)
-        });
+        let live = self.lab_voice_shown()
+            || self.ui.as_ref().is_some_and(|u| {
+                u.world_drag.is_some() || u.world_bar_grab.is_some() || (page == Some(OPTIONS_PAGE) && u.world_sub >= 2)
+            });
         let forced = SYNC_NOW.with(|c| c.replace(false));
         SYNC.with(|c| {
             let due = live
@@ -199,7 +211,7 @@ impl App {
 
     /// Delete / Backspace on the key binding under the mouse.
     fn lab_key_clear_hovered(&mut self) {
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let Some(u) = self.ui.as_ref() else {
             return;
         };
@@ -215,7 +227,7 @@ impl App {
 
     fn lab_world_click(&mut self) {
         SYNC_NOW.with(|c| c.set(true));
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let hit = |list: &[[f32; 4]]| list.iter().position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
 
         if self.key_capture.take().is_some() {
@@ -330,7 +342,7 @@ impl App {
     }
 
     fn lab_world_drop_click(&mut self) {
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let Some(u) = self.ui.as_ref() else {
             return;
         };
@@ -571,7 +583,7 @@ impl App {
         if !self.lab_menu.is_some_and(|s| s.page == Some(0)) || self.lab_place.is_some() || self.lab_list.is_some() {
             return false;
         }
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let Some(n) = self.navigator.as_mut().filter(|n| n.city.embed.is_some()) else {
             return false;
         };
@@ -609,7 +621,7 @@ impl App {
         if self.lab_list.is_none() {
             return false;
         }
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let inside = |r: [f32; 4]| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
         let kind = match self.ui.as_ref() {
             Some(u) if u.dialog_bar.is_some_and(inside) => 1,
@@ -625,7 +637,7 @@ impl App {
     }
 
     pub(crate) fn lab_bar_set(&mut self) {
-        let y = self.cursor.1;
+        let y = self.ui_cursor().1;
         let kind = self.lab_bar_drag;
         let vis = self.ui.as_ref().map_or(1, |u| u.dialog_vis);
         let Some(u) = self.ui.as_mut() else { return };
@@ -644,7 +656,7 @@ impl App {
         if self.lab_list.is_none() {
             return false;
         }
-        let (cx, cy) = self.cursor;
+        let (cx, cy) = self.ui_cursor();
         if let Some(u) = self.ui.as_mut() {
             let r = u.dialog_pane_rc;
             if u.dialog_pane_max > 0 && cx >= r[0] && cx <= r[2] && cy >= r[1] && cy <= r[3] {
@@ -1197,7 +1209,7 @@ impl App {
 
     pub(crate) fn lab_click(&mut self, event_loop: &ActiveEventLoop) {
         if self.restart_prompt.is_some() {
-            let (x, y) = self.cursor;
+            let (x, y) = self.ui_cursor();
             let hit = self.ui.as_ref().and_then(|u| {
                 u.dialog_rects
                     .iter()
@@ -1359,7 +1371,7 @@ impl App {
 
     fn lab_click_inner(&mut self, event_loop: &ActiveEventLoop) {
         SYNC_NOW.with(|c| c.set(true));
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let st = self.lab_menu.unwrap_or_default();
         let hit = |list: &[[f32; 4]]| {
             list.iter()
@@ -1373,7 +1385,6 @@ impl App {
                 Some(4) => self.lab_place_create(),
                 Some(i) => self.lab_place_open(i),
                 None => {
-                    let (x, y) = self.cursor;
                     let b = self.ui.as_ref().map_or([0.0; 4], |u| u.place_box);
                     if !(x >= b[0] && x < b[2] && y >= b[1] && y < b[3]) {
                         self.lab_dialog_close();

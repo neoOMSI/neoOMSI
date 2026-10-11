@@ -60,19 +60,6 @@ fn nodes(name: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-pub(crate) fn constant_force(name: &str) -> bool {
-    static SEEN: std::sync::Mutex<Vec<(String, bool)>> = std::sync::Mutex::new(Vec::new());
-    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((_, f)) = seen.iter().find(|(n, _)| n == name) {
-        return *f;
-    }
-    let f = nodes(name)
-        .iter()
-        .any(|(_, caps)| has_bit(caps, FF_CONSTANT));
-    seen.push((name.to_string(), f));
-    f
-}
-
 impl Wheel {
     pub fn open(name: &str) -> Option<Wheel> {
         for (node, caps) in nodes(name) {

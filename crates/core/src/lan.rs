@@ -1492,8 +1492,9 @@ pub fn name_tags(
     cam: &::render::Camera,
     width: f32,
     height: f32,
-) -> Vec<((f32, f32), String, String, f32)> {
-    name_tags_with_projection(game, cam, width, height, None)
+    speaking: &dyn Fn(u32) -> bool,
+) -> Vec<((f32, f32), String, String, f32, bool)> {
+    name_tags_with_projection(game, cam, width, height, None, speaking)
 }
 
 pub(crate) fn name_tags_with_projection(
@@ -1502,7 +1503,8 @@ pub(crate) fn name_tags_with_projection(
     width: f32,
     height: f32,
     projection: Option<Mat4>,
-) -> Vec<((f32, f32), String, String, f32)> {
+    speaking: &dyn Fn(u32) -> bool,
+) -> Vec<((f32, f32), String, String, f32, bool)> {
     let vp = projection.map_or_else(
         || cam.view_proj(width / height.max(1.0), cam.position),
         |projection| {
@@ -1510,7 +1512,7 @@ pub(crate) fn name_tags_with_projection(
         },
     );
     let mut tags = Vec::new();
-    for r in game.remotes.values() {
+    for (id, r) in &game.remotes {
         let v = &r.vehicle;
         let top =
             v.ty.def
@@ -1567,6 +1569,7 @@ pub(crate) fn name_tags_with_projection(
             name,
             sub,
             alpha,
+            speaking(*id),
         ));
     }
     tags

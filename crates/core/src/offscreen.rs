@@ -451,6 +451,9 @@ pub(crate) fn run_offscreen(
             l.clock_speed = *speed;
         }
     }
+    if let (true, Some(v), Some(l)) = (server, server::SERVER_VOICE.get(), lan_off.as_mut()) {
+        l.voice = *v;
+    }
     for i in 0..total_frames {
         let t_s = i as f32 * dt;
         if server {

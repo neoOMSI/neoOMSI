@@ -17,11 +17,12 @@ pub mod spatial;
 pub mod voice;
 
 // Façade aliases: the module paths the rest of the workspace uses.
-pub use assets::{radio, stream, wav};
+pub use assets::{radio, stream, talk, wav};
+pub use device::mic;
 pub use engine::mixer;
 pub use runtime::soundset;
 
-pub use assets::Clip;
+pub use assets::{Clip, Source};
 pub use clock::Clock;
 pub use engine::{AudioEngine, Playback};
 pub use runtime::event::{ordered, EventSource, SoundEvent};

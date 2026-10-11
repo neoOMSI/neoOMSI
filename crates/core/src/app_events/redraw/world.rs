@@ -9,6 +9,7 @@ impl App {
         let __t = Instant::now();
         self.tick_run_report_save();
         self.tick_lan(dt);
+        self.tick_voice();
         *self.profile.entry("lan").or_default() += __t.elapsed().as_secs_f64();
         self.tick_on_foot(if self.paused { 0.0 } else { dt });
         self.sync_remote_walkers();

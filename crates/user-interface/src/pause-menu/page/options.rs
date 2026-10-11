@@ -58,7 +58,11 @@ pub enum OptKind {
     Button(&'static str),
     Keybinds,
     Pads,
+    Mic,
+    VoicePlayers,
 }
+
+pub const VOICE_SUB: &str = "pause.options.group.voice";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptShow {
@@ -688,7 +692,56 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "pause.options.sound.pax_voices.desc",
             ),
         ],
-        subs: &[],
+        subs: &[OptSub {
+            title: VOICE_SUB,
+            rows: &[
+                sw(
+                    "voice",
+                    "pause.options.voice.voice.name",
+                    "pause.options.voice.voice.desc",
+                ),
+                sel(
+                    "voice_mode",
+                    "pause.options.voice.voice_mode.name",
+                    "pause.options.voice.voice_mode.desc",
+                ),
+                row(
+                    "voicemic",
+                    "pause.options.voice.mic.name",
+                    "pause.options.voice.mic.desc",
+                    OptKind::Mic,
+                ),
+                sl(
+                    "mic_gain",
+                    "pause.options.voice.mic_gain.name",
+                    "pause.options.voice.mic_gain.desc",
+                    Fmt::Pct,
+                ),
+                sl(
+                    "voice_sensitivity",
+                    "pause.options.voice.voice_sensitivity.name",
+                    "pause.options.voice.voice_sensitivity.desc",
+                    Fmt::Pct,
+                ),
+                sw(
+                    "voice_denoise",
+                    "pause.options.voice.voice_denoise.name",
+                    "pause.options.voice.voice_denoise.desc",
+                ),
+                sl(
+                    "vol_voice",
+                    "pause.options.voice.vol_voice.name",
+                    "pause.options.voice.vol_voice.desc",
+                    Fmt::Pct,
+                ),
+                row(
+                    "pvol",
+                    "pause.options.voice.pvol.name",
+                    "pause.options.voice.pvol.desc",
+                    OptKind::VoicePlayers,
+                ),
+            ],
+        }],
     },
     OptGroup {
         title: "pause.options.group.interface",
