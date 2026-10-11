@@ -209,6 +209,25 @@ fn freetex_preserves_other_stages_and_per_vehicle_script_textures() {
 }
 
 #[test]
+fn freetex_updates_every_light_state_of_a_changed_slot() {
+    // London's Powerblind uses a free-texture picture with `[matl_change] lights_stand`.
+    // AI buses can select item 2+, so it must receive the live destination picture too.
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    let item = base.clone();
+    let spec = SlotSpec {
+        base,
+        item: Some(item.clone()),
+        more: vec![item],
+    };
+
+    let changed = spec.with_freetex(Some(10), 20, true, false);
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(20));
+    assert_eq!(changed.more[0].diffuse, Some(20));
+}
+
+#[test]
 fn freetex_and_dynamic_lightmap_keep_the_live_display_texture() {
     // C400R's dashboard pairs [matl_freetex] with two [matl_lightmap] declarations.
     // When the screen finishes booting, the active light map must not rebuild the slot

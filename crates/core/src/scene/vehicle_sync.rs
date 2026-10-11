@@ -245,7 +245,9 @@ pub(super) fn sync_materials(
                         None => v.spec.clone(),
                     };
                     let p = spec.build(renderer, scene, v.base_tex);
-                    f.cache.insert(key, p);
+                    let more = spec.build_more(renderer, scene, v.base_tex, |_, material| material);
+                    f.more_cache.insert(key.clone(), more);
+                    f.cache.insert(key.clone(), p);
                     p
                 }
             };
@@ -254,6 +256,9 @@ pub(super) fn sync_materials(
             }
             if f.item_only || !item_has_freetex {
                 v.item = pair.1;
+                if let Some(more) = f.more_cache.get(&key) {
+                    v.more = more.clone();
+                }
             }
         }
         if freetex_changed {

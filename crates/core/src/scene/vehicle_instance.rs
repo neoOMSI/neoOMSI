@@ -1045,6 +1045,7 @@ impl World {
                         dirs: dirs.clone(),
                         textures: self.textures.clone(),
                         cache: HashMap::new(),
+                        more_cache: HashMap::new(),
                         texture_cache: HashMap::new(),
                         current: None,
                         texture: None,
