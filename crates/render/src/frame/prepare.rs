@@ -1,6 +1,64 @@
 use crate::*;
 
+pub(crate) struct InstanceUploadRange {
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    useful: u32,
+}
+
+pub(crate) fn push_instance_upload_range(out: &mut Vec<InstanceUploadRange>, start: u32, end: u32) {
+    if start == end {
+        return;
+    }
+    if let Some(last) = out.last_mut() {
+        if start <= last.end {
+            last.useful += end.saturating_sub(last.end);
+            last.end = last.end.max(end);
+            return;
+        }
+        let useful = last.useful as u64 + (end - start) as u64;
+        // Amortize nearby writes, but never copy more padding than changed data. A chain
+        // of individually small gaps used to upload most of a large static scene.
+        if start - last.end <= 4096 && (end - last.start) as u64 <= useful * 2 {
+            last.end = end;
+            last.useful = useful as u32;
+            return;
+        }
+    }
+    out.push(InstanceUploadRange {
+        start,
+        end,
+        useful: end - start,
+    });
+}
+
 impl Renderer {
+    fn upload_instance_ranges<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        data: &[T],
+        ranges: &[InstanceUploadRange],
+        stride: usize,
+    ) {
+        let (mut bytes, mut writes) = (0u64, 0u64);
+        for range in ranges {
+            let start = range.start as usize * stride;
+            let end = range.end as usize * stride;
+            let content: &[u8] = bytemuck::cast_slice(&data[start..end]);
+            let offset = (start * std::mem::size_of::<T>()) as u64;
+            if offset + content.len() as u64 <= buffer.size() {
+                self.queue.write_buffer(buffer, offset, content);
+                bytes += content.len() as u64;
+                writes += 1;
+            }
+        }
+        if self.profiling {
+            let mut counts = self.counts.borrow_mut();
+            *counts.entry("instance update bytes").or_default() += bytes as f64;
+            *counts.entry("instance update writes").or_default() += writes as f64;
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn ensure_depth(&mut self, w: u32, h: u32) {
         if let Some((_, _, dw, dh)) = &self.depth {
@@ -121,13 +179,13 @@ impl Renderer {
                 }
                 if let (Some(buf), Some(params_buf)) = (&scene.model_buf, &scene.params_buf) {
                     let ro = scene.render_origin;
-                    const MERGE_GAP: u32 = 4096;
                     scene.changed.sort_unstable_by_key(|&i| {
                         scene.instances.get(i).map(|x| x.base).unwrap_or(u32::MAX)
                     });
                     let mut mats: Vec<[[f32; 4]; 4]> = Vec::new();
                     let mut params: Vec<[f32; 4]> = Vec::new();
-                    let mut ranges: Vec<(u32, u32)> = Vec::new();
+                    let mut model_ranges = Vec::new();
+                    let mut param_ranges = Vec::new();
                     for &idx in &scene.changed {
                         let Some(i) = scene.instances.get(idx) else {
                             continue;
@@ -139,28 +197,18 @@ impl Renderer {
                         if b + n > scene.cpu_models.len() || (b + n) * 2 > scene.cpu_params.len() {
                             continue;
                         }
-                        scene.cpu_models[b..b + n].copy_from_slice(&mats);
-                        scene.cpu_params[b * 2..(b + n) * 2].copy_from_slice(&params);
                         let (start, end) = (b as u32, (b + n) as u32);
-                        match ranges.last_mut() {
-                            Some(r) if start <= r.1 + MERGE_GAP => r.1 = r.1.max(end),
-                            _ => ranges.push((start, end)),
+                        if scene.cpu_models[b..b + n] != mats {
+                            scene.cpu_models[b..b + n].copy_from_slice(&mats);
+                            push_instance_upload_range(&mut model_ranges, start, end);
+                        }
+                        if scene.cpu_params[b * 2..(b + n) * 2] != params {
+                            scene.cpu_params[b * 2..(b + n) * 2].copy_from_slice(&params);
+                            push_instance_upload_range(&mut param_ranges, start, end);
                         }
                     }
-                    for (start, end) in ranges {
-                        let mb: &[u8] =
-                            bytemuck::cast_slice(&scene.cpu_models[start as usize..end as usize]);
-                        let pb: &[u8] = bytemuck::cast_slice(
-                            &scene.cpu_params[start as usize * 2..end as usize * 2],
-                        );
-                        let (mo, po) = (start as u64 * 64, start as u64 * 32);
-                        if mo + mb.len() as u64 <= buf.size()
-                            && po + pb.len() as u64 <= params_buf.size()
-                        {
-                            self.queue.write_buffer(buf, mo, mb);
-                            self.queue.write_buffer(params_buf, po, pb);
-                        }
-                    }
+                    self.upload_instance_ranges(buf, &scene.cpu_models, &model_ranges, 1);
+                    self.upload_instance_ranges(params_buf, &scene.cpu_params, &param_ranges, 2);
                 }
                 for &idx in &scene.changed {
                     if let Some(m) = scene.changed_mark.get_mut(idx) {
@@ -399,5 +447,52 @@ impl Renderer {
         if let Some(b) = &scene.draw_buf {
             self.queue.write_buffer(b, 0, bytes);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_ranges_merge_adjacent_and_overlapping_changes() {
+        let mut ranges = Vec::new();
+        for (start, end) in [(0, 4), (4, 8), (6, 12), (12, 12)] {
+            push_instance_upload_range(&mut ranges, start, end);
+        }
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(
+            (ranges[0].start, ranges[0].end, ranges[0].useful),
+            (0, 12, 12)
+        );
+    }
+
+    #[test]
+    fn chained_gaps_never_upload_more_padding_than_changed_data() {
+        let mut ranges = Vec::new();
+        for start in (0..30_000).step_by(3) {
+            push_instance_upload_range(&mut ranges, start, start + 1);
+        }
+        assert_eq!(ranges.iter().map(|r| r.useful).sum::<u32>(), 10_000);
+        assert!(ranges.iter().all(|r| r.end - r.start <= 2 * r.useful));
+        assert_eq!(ranges.first().unwrap().start, 0);
+        assert_eq!(ranges.last().unwrap().end, 29_998);
+        for start in (0..30_000).step_by(3) {
+            assert!(ranges.iter().any(|r| r.start <= start && start < r.end));
+        }
+    }
+
+    #[test]
+    fn sparse_updates_stay_small_and_large_gaps_stay_separate() {
+        let mut ranges = Vec::new();
+        for start in (0..120_000).step_by(400) {
+            push_instance_upload_range(&mut ranges, start, start + 4);
+        }
+        assert_eq!(ranges.len(), 300);
+        assert_eq!(ranges.iter().map(|r| r.end - r.start).sum::<u32>(), 1200);
+        ranges.clear();
+        push_instance_upload_range(&mut ranges, 0, 5000);
+        push_instance_upload_range(&mut ranges, 10_000, 15_000);
+        assert_eq!(ranges.len(), 2);
     }
 }

@@ -1,5 +1,48 @@
 use super::*;
 
+/// Decode shared files once, retaining every spelling the GPU cache will look up.
+pub(super) fn prepare_texture_images(
+    wanted: &[(String, Vec<PathBuf>)],
+) -> Arc<HashMap<PathBuf, Arc<TextureData>>> {
+    let mut files: Vec<PathBuf> = wanted
+        .par_iter()
+        .filter_map(|(name, dirs)| {
+            let dirs_ref: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
+            ::texture::find_texture(name, &dirs_ref)
+        })
+        .collect();
+    files.sort_unstable();
+    files.dedup();
+    let mut groups: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for path in files {
+        // Windows can return both Foo.png and foo.png for one file. Archive-only paths
+        // cannot be canonicalized, so keep their resolved VFS identity as before.
+        let identity = if ::legacy_config::vfs::archive_of(&path).is_some() {
+            path.clone()
+        } else {
+            path.canonicalize().unwrap_or_else(|_| path.clone())
+        };
+        groups.entry(identity).or_default().push(path);
+    }
+    let decoded: Vec<(PathBuf, Arc<TextureData>)> = groups
+        .into_values()
+        .collect::<Vec<_>>()
+        .par_iter()
+        .filter_map(|aliases| {
+            let (data, _) = ::texture::gpu::load_gpu(&aliases[0]).ok()?;
+            let data = Arc::new(data);
+            Some(
+                aliases
+                    .iter()
+                    .map(|path| (path.clone(), data.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .collect();
+    Arc::new(decoded.into_iter().collect())
+}
+
 impl World {
     /// Texture names (with their search folders) a prepared tile will ask for that are not
     /// on the GPU yet.

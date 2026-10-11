@@ -21,6 +21,17 @@ fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u
     }
 }
 
+fn view_render_origin(position: DVec3, current: DVec3, reuse: bool) -> DVec3 {
+    // Mirrors, stereo eyes and side panels share the scene buffers with the primary view.
+    // Crossing a cell boundary between views must not re-upload every static instance.
+    // A distant texture camera still rebases to keep its relative coordinates precise.
+    if reuse && (position - current).abs().max_element() <= 200.0 {
+        current
+    } else {
+        (position / 100.0).floor() * 100.0
+    }
+}
+
 impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_inner(
@@ -97,7 +108,12 @@ impl Renderer {
                 stage_t = now;
             }
         };
-        let ro = (camera.position / 100.0).floor() * 100.0;
+        let primary_view = (with_overlays && lead_frame) || (projection.is_some() && !second_eye);
+        let ro = view_render_origin(
+            camera.position,
+            scene.render_origin,
+            scene.model_buf.is_some() && !primary_view,
+        );
         self.set_render_origin(scene, ro);
         let (full_w, full_h) = (width, height);
         let (width, height) = if with_overlays {
@@ -630,26 +646,7 @@ impl Renderer {
                         continue;
                     }
                 }
-                ranges.clear();
-                for (ri, (_, _, slot)) in m.ranges.iter().enumerate() {
-                    let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
-                    let mat = &scene.materials[mat_id];
-                    let mut kind = kind_of(mat.alpha);
-                    let cut_body = kind == PIPE_BLEND && mat.transmap.is_some() && !mat.no_z_write;
-                    if (kind == PIPE_BLEND && !cut_body) || mat.no_z_check {
-                        if dbg_shadow && r >= dbg_r {
-                            log::info!(
-                                "shadow: mesh r={r:.1} at {:?} slot {slot} is blended, never a caster",
-                                inst.origin
-                            );
-                        }
-                        continue;
-                    }
-                    if cut_body {
-                        kind = PIPE_ALPHA_TEST;
-                    }
-                    ranges.push((kind, ri as u32, *slot, mat_id));
-                }
+                let mut receives = [false; SHADOW_SETS];
                 for (cascade, &(range, lvp, min_radius)) in boxes.iter().enumerate() {
                     if !active[cascade] {
                         continue;
@@ -677,22 +674,7 @@ impl Renderer {
                         }
                         continue;
                     }
-                    if dbg {
-                        log::info!(
-                            "shadow: caster r={r:.1} at {:?} slots {:?}",
-                            inst.origin,
-                            ranges.iter().map(|x| x.0).collect::<Vec<_>>()
-                        );
-                    }
-                    for &(kind, ri, slot, mat_id) in &ranges {
-                        out[cascade].push(DrawItem {
-                            pipe: kind,
-                            mesh: inst.mesh as u32,
-                            range: ri,
-                            material: depth_only_material(kind, mat_id),
-                            entry: inst.base + slot,
-                        });
-                    }
+                    receives[cascade] = true;
                 }
                 for &(k, lpos, ldir, half, far) in &spot_cull {
                     let v = c - lpos;
@@ -706,8 +688,46 @@ impl Renderer {
                             continue;
                         }
                     }
+                    receives[3 + k] = true;
+                }
+                // Most of a large map is outside all shadow cameras. Inspect its materials
+                // only after the unchanged geometric tests find a pass that needs it.
+                if !receives.iter().any(|&keep| keep) {
+                    continue;
+                }
+                ranges.clear();
+                for (ri, (_, _, slot)) in m.ranges.iter().enumerate() {
+                    let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
+                    let mat = &scene.materials[mat_id];
+                    let mut kind = kind_of(mat.alpha);
+                    let cut_body = kind == PIPE_BLEND && mat.transmap.is_some() && !mat.no_z_write;
+                    if (kind == PIPE_BLEND && !cut_body) || mat.no_z_check {
+                        if dbg_shadow && r >= dbg_r {
+                            log::info!(
+                                "shadow: mesh r={r:.1} at {:?} slot {slot} is blended, never a caster",
+                                inst.origin
+                            );
+                        }
+                        continue;
+                    }
+                    if cut_body {
+                        kind = PIPE_ALPHA_TEST;
+                    }
+                    ranges.push((kind, ri as u32, *slot, mat_id));
+                }
+                if dbg_shadow && receives[0] && r >= dbg_r {
+                    log::info!(
+                        "shadow: caster r={r:.1} at {:?} slots {:?}",
+                        inst.origin,
+                        ranges.iter().map(|x| x.0).collect::<Vec<_>>()
+                    );
+                }
+                for (cascade, keep) in receives.into_iter().enumerate() {
+                    if !keep {
+                        continue;
+                    }
                     for &(kind, ri, slot, mat_id) in &ranges {
-                        out[3 + k].push(DrawItem {
+                        out[cascade].push(DrawItem {
                             pipe: kind,
                             mesh: inst.mesh as u32,
                             range: ri,
@@ -2462,6 +2482,24 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secondary_views_share_the_origin_across_cell_boundaries() {
+        for origin in [DVec3::ZERO, DVec3::splat(-100.0), DVec3::splat(1_000_000.0)] {
+            for offset in [DVec3::splat(-0.1), DVec3::splat(100.1)] {
+                assert_eq!(view_render_origin(origin + offset, origin, true), origin);
+                assert_ne!(view_render_origin(origin + offset, origin, false), origin);
+            }
+        }
+    }
+
+    #[test]
+    fn distant_secondary_cameras_and_initial_views_rebase() {
+        let position = DVec3::new(1000.5, -201.0, 2.0);
+        let expected = DVec3::new(1000.0, -300.0, 0.0);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, true), expected);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, false), expected);
+    }
 
     #[test]
     fn ordered_meshes_ignore_recycled_scene_instance_ids() {

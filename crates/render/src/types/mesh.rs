@@ -143,13 +143,8 @@ impl Renderer {
                 uv: uv.to_array(),
             });
         }
-        {
-            let mut pending = self.pending_meshes.borrow_mut();
-            match pending.iter_mut().find(|(mid, _)| *mid == id) {
-                Some(e) => e.1 = verts,
-                None => pending.push((id, verts)),
-            }
-        }
+        // Keep only the last pose before submission, without walking every other person's mesh.
+        self.pending_meshes.borrow_mut().insert(id, verts);
         if n > 0 {
             m.bounds_center = (lo + hi) * 0.5;
             m.bounds_radius = (hi - m.bounds_center).length();
@@ -158,12 +153,13 @@ impl Renderer {
     }
 
     pub(crate) fn flush_pending_meshes(&self, scene: &Scene, _encoder: &mut wgpu::CommandEncoder) {
-        let pending = std::mem::take(&mut *self.pending_meshes.borrow_mut());
-        for (id, verts) in &pending {
-            let Some(m) = scene.meshes.get(*id) else {
+        // Drain retains the table's capacity for the next frame.
+        let mut pending = self.pending_meshes.borrow_mut();
+        for (id, verts) in pending.drain() {
+            let Some(m) = scene.meshes.get(id) else {
                 continue;
             };
-            let b: &[u8] = bytemuck::cast_slice(verts);
+            let b: &[u8] = bytemuck::cast_slice(&verts);
             let len = (b.len() as u64) / 4 * 4;
             if len == 0 || m.vertex_buf.size() < len {
                 continue;

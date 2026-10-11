@@ -1,5 +1,210 @@
 use crate::*;
 
+fn noop_renderer() -> Renderer {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::NOOP;
+    descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+    let instance = wgpu::Instance::new(descriptor);
+    pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            fxaa: false,
+            no_enhanced: true,
+            shadow_size: 1024,
+            ..Default::default()
+        },
+    ))
+    .expect("noop test renderer")
+}
+
+#[test]
+fn scattered_updates_upload_only_the_changed_stream_and_slots() {
+    let mut renderer = noop_renderer();
+    renderer.profiling = true;
+    let mut scene = renderer.new_scene();
+    let material = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [1.0; 4], true);
+    let data = MeshData {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+        normals: vec![Vec3::Z; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        ranges: (0..4).map(|slot| (0, 3, slot)).collect(),
+        ..Default::default()
+    };
+    let mesh = renderer.add_mesh(&mut scene, &data);
+    for id in 0..128 {
+        renderer.add_instance(
+            &mut scene,
+            mesh,
+            DVec3::new(id as f64, 0.0, 0.0),
+            Mat4::IDENTITY,
+            vec![material; 4],
+        );
+    }
+    renderer.prepare(&mut scene);
+    let models = scene.cpu_models.clone();
+    renderer.counts.borrow_mut().clear();
+    for id in [0, 32, 64, 96] {
+        renderer.set_slot_light(&mut scene, id, &[0.5; 4]);
+    }
+    renderer.prepare(&mut scene);
+    assert_eq!(scene.cpu_models, models);
+    assert_eq!(
+        renderer.counts.borrow()["instance update bytes"],
+        4.0 * 4.0 * 32.0
+    );
+    assert_eq!(renderer.counts.borrow()["instance update writes"], 4.0);
+    let params = scene.cpu_params.clone();
+    renderer.counts.borrow_mut().clear();
+    renderer.set_transform(&mut scene, 64, DVec3::new(64.0, 0.0, 1.0), Mat4::IDENTITY);
+    renderer.prepare(&mut scene);
+    assert_eq!(scene.cpu_params, params);
+    assert_eq!(
+        renderer.counts.borrow()["instance update bytes"],
+        4.0 * 64.0
+    );
+    assert_eq!(renderer.counts.borrow()["instance update writes"], 1.0);
+    renderer.counts.borrow_mut().clear();
+    scene.instances[64].roof = Some(2.0);
+    renderer.set_transform(&mut scene, 64, DVec3::new(64.0, 0.0, 2.0), Mat4::IDENTITY);
+    renderer.prepare(&mut scene);
+    assert_eq!(
+        renderer.counts.borrow()["instance update bytes"],
+        4.0 * 96.0
+    );
+    assert_eq!(renderer.counts.borrow()["instance update writes"], 2.0);
+    // The incremental CPU state must match a complete rebuild, including roof parameters.
+    let mut expected_models = Vec::new();
+    let mut expected_params = Vec::new();
+    for inst in &scene.instances {
+        Renderer::instance_entries(
+            inst,
+            scene.render_origin,
+            &mut expected_models,
+            &mut expected_params,
+        );
+    }
+    assert_eq!(scene.cpu_models, expected_models);
+    assert_eq!(scene.cpu_params, expected_params);
+    assert!(scene.changed.is_empty());
+    assert!(scene.changed_mark.iter().all(|&marked| !marked));
+}
+
+#[test]
+fn animated_uploads_keep_only_the_last_valid_pose_and_drain() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let data = MeshData {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+        normals: vec![Vec3::Z; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        ranges: vec![(0, 3, 0)],
+        ..Default::default()
+    };
+    let first = renderer.add_mesh(&mut scene, &data);
+    let second = renderer.add_mesh(&mut scene, &data);
+    let posed: Vec<_> = data.positions.iter().map(|p| *p + Vec3::Z * 2.0).collect();
+    renderer.update_mesh(&mut scene, first, &data.positions, &data.normals, &data.uvs);
+    renderer.update_mesh(
+        &mut scene,
+        second,
+        &data.positions,
+        &data.normals,
+        &data.uvs,
+    );
+    renderer.update_mesh(&mut scene, first, &posed, &data.normals, &data.uvs);
+    // An update that exceeds the allocated vertex buffer must not replace a valid one.
+    renderer.update_mesh(
+        &mut scene,
+        first,
+        &[Vec3::ZERO; 4],
+        &[Vec3::Z; 4],
+        &[glam::Vec2::ZERO; 4],
+    );
+    let pending = renderer.pending_meshes.borrow();
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[&first][0].pos, posed[0].to_array());
+    assert_eq!(pending[&second][0].pos, data.positions[0].to_array());
+    let capacity = pending.capacity();
+    drop(pending);
+    let mut encoder = renderer.device.create_command_encoder(&Default::default());
+    renderer.flush_pending_meshes(&scene, &mut encoder);
+    assert!(renderer.pending_meshes.borrow().is_empty());
+    assert_eq!(renderer.pending_meshes.borrow().capacity(), capacity);
+    renderer.queue.submit([encoder.finish()]);
+}
+
+#[test]
+fn mirror_and_second_eye_reuse_uploaded_models_at_a_cell_boundary() {
+    let mut renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let material = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [1.0; 4], true);
+    let data = MeshData {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Z],
+        normals: vec![Vec3::Y; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        ranges: vec![(0, 3, 0)],
+        ..Default::default()
+    };
+    let mesh = renderer.add_mesh(&mut scene, &data);
+    renderer.add_instance(
+        &mut scene,
+        mesh,
+        DVec3::new(100.0, 5.0, 0.0),
+        Mat4::IDENTITY,
+        vec![material],
+    );
+    let output = renderer.add_render_texture(&mut scene, 64, 64);
+    let view = scene.textures[output].view.clone();
+    let camera = Camera {
+        position: DVec3::new(99.99, 0.0, 2.0),
+        yaw: 0.0,
+        pitch: 0.0,
+        roll: 0.0,
+        fov_deg: 60.0,
+        near: 0.1,
+        far: 6000.0,
+    };
+    let lighting = Lighting {
+        shadows: false,
+        light_shadows: false,
+        ..Default::default()
+    };
+    renderer.render(&mut scene, &view, 64, 64, &camera, &lighting);
+    let models = scene.cpu_models.clone();
+    let mirror = Camera {
+        position: camera.position + DVec3::X,
+        ..camera
+    };
+    renderer.render_to_texture(&mut scene, output, &mirror, &lighting, 1.0);
+    assert_eq!(scene.render_origin, DVec3::ZERO);
+    assert_eq!(scene.cpu_models, models);
+    let projection = glam::camera::rh::proj::directx::perspective(
+        camera.fov_deg.to_radians(),
+        1.0,
+        camera.far,
+        camera.near,
+    );
+    renderer.render_xr_eye(
+        &mut scene, &view, 64, 64, &camera, &lighting, projection, false,
+    );
+    renderer.render_xr_eye(
+        &mut scene, &view, 64, 64, &mirror, &lighting, projection, true,
+    );
+    assert_eq!(scene.render_origin, DVec3::ZERO);
+    assert_eq!(scene.cpu_models, models);
+    // The primary view still rebases normally when the bus crosses the boundary.
+    renderer.render(&mut scene, &view, 64, 64, &mirror, &lighting);
+    assert_eq!(scene.render_origin, DVec3::new(100.0, 0.0, 0.0));
+    assert_ne!(scene.cpu_models, models);
+}
+
 #[test]
 fn overlays_land_on_whole_pixels() {
     assert_eq!(

@@ -440,17 +440,7 @@ impl World {
                 .collect();
             wanted.sort();
             wanted.dedup();
-            let decoded: Vec<(PathBuf, Arc<TextureData>)> = wanted
-                .par_iter()
-                .filter_map(|(name, dirs)| {
-                    let dirs_ref: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
-                    let path = ::texture::find_texture(name, &dirs_ref)?;
-                    let (img, _) = ::texture::gpu::load_gpu(&path).ok()?;
-                    Some((path, Arc::new(img)))
-                })
-                .collect();
-            let decoded: Arc<HashMap<PathBuf, Arc<TextureData>>> =
-                Arc::new(decoded.into_iter().collect());
+            let decoded = prepare_texture_images(&wanted);
             for p in prepared.iter_mut() {
                 p.images = decoded.clone();
             }

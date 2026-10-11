@@ -33,6 +33,42 @@ impl Drop for Fixture {
     }
 }
 
+#[test]
+fn texture_preparation_deduplicates_files_without_merging_search_priorities() {
+    let fixture = Fixture::new();
+    let first = fixture.0.join("first");
+    let second = fixture.0.join("second");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    for (dir, color) in [(&first, [40, 80, 120, 255]), (&second, [120, 80, 40, 255])] {
+        image::RgbaImage::from_pixel(8, 8, image::Rgba(color))
+            .save(dir.join("shared.png"))
+            .unwrap();
+    }
+    let mut wanted = vec![
+        ("shared.png".into(), vec![first.clone(), second.clone()]),
+        ("shared.png".into(), vec![first.clone()]),
+        ("SHARED.PNG".into(), vec![first.clone(), fixture.0.clone()]),
+        ("missing.png".into(), vec![first.clone()]),
+    ];
+    let images = prepare_texture_images(&wanted);
+    let data = &images[&first.join("shared.png")];
+    assert_eq!((data.width, data.height), (8, 8));
+    // All requested aliases remain available, sharing the same decoded allocation.
+    for (name, dirs) in &wanted[..3] {
+        let dirs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
+        let path = ::texture::find_texture(name, &dirs).unwrap();
+        assert!(Arc::ptr_eq(&images[&path], data));
+    }
+    // Identically named textures in a higher-priority pack must keep their own identity.
+    wanted.push(("shared.png".into(), vec![second.clone(), first.clone()]));
+    let images = prepare_texture_images(&wanted);
+    assert!(!Arc::ptr_eq(
+        &images[&first.join("shared.png")],
+        &images[&second.join("shared.png")]
+    ));
+}
+
 fn triangle(z: f32) -> MeshData {
     MeshData {
         positions: vec![
