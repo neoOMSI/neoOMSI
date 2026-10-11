@@ -437,6 +437,9 @@ pub(crate) fn teleport(app: &mut App, at: glam::DVec3, heading: f64) {
                 p.vehicle.update(1.0 / 30.0);
             }
         }
+        // (the place it was put is where it last stood: a fall from here comes back here)
+        app.safe_pose = Some((glam::DVec3::new(at.x, at.y, z), heading));
+        app.safe_age = 0.0;
         log::info!(
             "teleported to ({:.1}, {:.1}) heading {heading:.0}",
             at.x,
@@ -781,8 +784,7 @@ pub(crate) fn server_command(
 
 /// The bus fallen through the world (a hole in the ground, a tile that was not there yet,
 /// a mod's road without a surface) fell for ever. Where it last stood on the ground is
-/// kept every second; a bus more than 8 m under the ground there is - or 40 m under where
-/// it last stood, where there is no ground - is put back there.
+/// kept every second; a bus more than 8 m under the ground there is put back there.
 pub(crate) fn guard_fall(app: &mut App, dt: f32) {
     let Some(p) = app.player.as_ref() else { return };
     let at = p.vehicle.position;
@@ -797,12 +799,7 @@ pub(crate) fn guard_fall(app: &mut App, dt: f32) {
         None => (None, None),
     };
     app.safe_age += dt;
-    let fallen = match (under, ground) {
-        (Some(_), _) => false,
-        (None, Some(g)) => at.z < g - 8.0,
-        (None, None) => app.safe_pose.map(|s| at.z < s.0.z - 40.0).unwrap_or(false),
-    };
-    if fallen {
+    if fallen(at.z, under, ground) {
         if let Some((pos, heading)) = app.safe_pose {
             log::warn!(
                 "the bus fell through the world at ({:.1}, {:.1}, {:.1}): put back at ({:.1}, {:.1})",
@@ -825,6 +822,37 @@ pub(crate) fn guard_fall(app: &mut App, dt: f32) {
             app.safe_age = 0.0;
             app.safe_pose = Some((glam::DVec3::new(at.x, at.y, g), p.vehicle.heading));
         }
+    }
+}
+
+/// Whether a bus at height `z` has fallen through the world, from the face under it and
+/// the highest ground there. No ground at all is a tile still being read, where the bus is
+/// held, not a fall: a start point far below the last one was taken for one (#194).
+fn fallen(z: f64, under: Option<f64>, ground: Option<f64>) -> bool {
+    match (under, ground) {
+        (None, Some(g)) => z < g - 8.0,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod fall_tests {
+    use super::fallen;
+
+    #[test]
+    fn a_tile_still_being_read_is_no_fall() {
+        assert!(!fallen(45.8, None, None));
+    }
+
+    #[test]
+    fn more_than_8_m_under_the_ground_is_a_fall() {
+        assert!(fallen(91.0, None, Some(100.0)));
+        assert!(!fallen(93.0, None, Some(100.0)));
+    }
+
+    #[test]
+    fn a_face_under_the_bus_is_no_fall() {
+        assert!(!fallen(50.0, Some(49.5), Some(100.0)));
     }
 }
 
