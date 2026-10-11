@@ -130,6 +130,91 @@ pub(crate) const LIGHT_CELL: f32 = 25.0;
 pub(crate) const LIGHT_GRID_SIDE: usize = 64;
 pub(crate) const LIGHT_CELL_CAP: usize = 64;
 
+#[derive(Default)]
+pub(crate) struct LightGrid {
+    /// The grid as last sent (empty before the first frame).
+    pub(crate) cells: Vec<u32>,
+    /// Lights in each cell of `cells`.
+    counts: Vec<u16>,
+    /// This frame's lights in each cell, and (cell, light) in the order they came.
+    next_counts: Vec<u16>,
+    entries: Vec<(u32, u32)>,
+    /// `entries` grouped by cell, and where each cell's group starts.
+    sorted: Vec<u32>,
+    starts: Vec<u32>,
+    fill: Vec<u32>,
+}
+
+impl LightGrid {
+    const CELLS: usize = LIGHT_GRID_SIDE * LIGHT_GRID_SIDE;
+
+    pub(crate) fn begin(&mut self) {
+        self.next_counts.clear();
+        self.next_counts.resize(Self::CELLS, 0);
+        self.entries.clear();
+    }
+
+    /// Adds `light` to `cell`; false when the cell already holds `LIGHT_CELL_CAP` lights.
+    pub(crate) fn add(&mut self, cell: usize, light: u32) -> bool {
+        let n = &mut self.next_counts[cell];
+        if *n as usize >= LIGHT_CELL_CAP {
+            return false;
+        }
+        *n += 1;
+        self.entries.push((cell as u32, light));
+        true
+    }
+
+    /// Writes this frame's cells into `cells`. Returns the span of `cells` that changed
+    /// (everything the first time), or `None` when it is the same as before.
+    pub(crate) fn finish(&mut self) -> Option<std::ops::Range<usize>> {
+        let mut lo = usize::MAX;
+        let mut hi = 0;
+        if self.cells.len() != Self::CELLS * LIGHT_CELL_CAP {
+            self.cells = vec![u32::MAX; Self::CELLS * LIGHT_CELL_CAP];
+            self.counts = vec![0; Self::CELLS];
+            (lo, hi) = (0, self.cells.len());
+        }
+        self.starts.clear();
+        let mut at = 0u32;
+        for &n in &self.next_counts {
+            self.starts.push(at);
+            at += n as u32;
+        }
+        self.sorted.clear();
+        self.sorted.resize(self.entries.len(), u32::MAX);
+        self.fill.clone_from(&self.starts);
+        for &(cell, light) in &self.entries {
+            let k = &mut self.fill[cell as usize];
+            self.sorted[*k as usize] = light;
+            *k += 1;
+        }
+        for c in 0..Self::CELLS {
+            let (old, new) = (self.counts[c] as usize, self.next_counts[c] as usize);
+            if old == 0 && new == 0 {
+                continue;
+            }
+            let base = c * LIGHT_CELL_CAP;
+            let start = self.starts[c] as usize;
+            for j in 0..old.max(new) {
+                let v = if j < new {
+                    self.sorted[start + j]
+                } else {
+                    u32::MAX
+                };
+                let slot = &mut self.cells[base + j];
+                if *slot != v {
+                    *slot = v;
+                    lo = lo.min(base + j);
+                    hi = hi.max(base + j + 1);
+                }
+            }
+            self.counts[c] = new as u16;
+        }
+        (lo < hi).then_some(lo..hi)
+    }
+}
+
 pub(crate) fn drawn_by(l: &PointLight, enhanced: bool) -> bool {
     l.radius > 0.0
         && l.intensity > 0.0
@@ -161,5 +246,75 @@ pub(crate) fn gpu_light(l: &PointLight, p: Vec3) -> GpuPointLight {
         dir,
         extra: [l.cone[0], l.core, l.beam, l.radius],
         occ: [0.0; 4],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The grid as it was made every frame before: a fresh grid, each light in the first
+    /// free slot of its cells.
+    fn rebuilt(adds: &[(usize, u32)]) -> Vec<u32> {
+        let mut grid = vec![u32::MAX; LIGHT_GRID_SIDE * LIGHT_GRID_SIDE * LIGHT_CELL_CAP];
+        for &(cell, light) in adds {
+            let base = cell * LIGHT_CELL_CAP;
+            if let Some(slot) = grid[base..base + LIGHT_CELL_CAP]
+                .iter()
+                .position(|v| *v == u32::MAX)
+            {
+                grid[base + slot] = light;
+            }
+        }
+        grid
+    }
+
+    #[test]
+    fn kept_grid_equals_a_rebuilt_one_and_sends_only_changes() {
+        let mut grid = LightGrid::default();
+        let mut sent = vec![0u32; LIGHT_GRID_SIDE * LIGHT_GRID_SIDE * LIGHT_CELL_CAP];
+        let mut seed = 12345u32;
+        let mut rnd = |n: u32| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) % n
+        };
+        let mut frames: Vec<Vec<(usize, u32)>> = Vec::new();
+        for f in 0..40 {
+            let lights = if f % 7 == 3 { 0 } else { rnd(150) };
+            let mut adds = Vec::new();
+            for light in 0..lights {
+                // a crowded corner, so that some cells overflow
+                let (cx, cy) = if light % 3 == 0 {
+                    (rnd(2) as usize, rnd(2) as usize)
+                } else {
+                    (rnd(64) as usize, rnd(64) as usize)
+                };
+                for dy in 0..=rnd(2) as usize {
+                    for dx in 0..=rnd(2) as usize {
+                        let (x, y) = ((cx + dx).min(63), (cy + dy).min(63));
+                        adds.push((y * LIGHT_GRID_SIDE + x, light));
+                    }
+                }
+            }
+            frames.push(adds);
+        }
+        // the same frame twice: nothing to send the second time
+        frames.insert(10, frames[9].clone());
+        for (f, adds) in frames.iter().enumerate() {
+            grid.begin();
+            for &(cell, light) in adds {
+                grid.add(cell, light);
+            }
+            let span = grid.finish();
+            let want = rebuilt(adds);
+            assert_eq!(grid.cells, want, "frame {f}");
+            if let Some(span) = span.clone() {
+                sent[span.clone()].copy_from_slice(&grid.cells[span]);
+            }
+            assert_eq!(sent, want, "frame {f}: the card's copy");
+            if f == 10 {
+                assert_eq!(span, None);
+            }
+        }
     }
 }

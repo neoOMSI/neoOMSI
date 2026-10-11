@@ -991,9 +991,21 @@ impl App {
             }
             self.frames += 1;
             let profiling = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
-            if profiling && self.cpu_mark.is_none() && self.started.elapsed().as_secs_f32() > 15.0 {
+            // (from 15 s, or half of an automated run: its loading is not the steady frame)
+            let mark_at = self.args.exit_after.map_or(15.0, |l| (l * 0.5).max(15.0));
+            if profiling
+                && self.cpu_mark.is_none()
+                && self.started.elapsed().as_secs_f32() > mark_at
+            {
                 self.cpu_mark =
                     process_cpu_seconds().map(|c| (c, Instant::now(), self.total_frames));
+                self.thread_cpu_mark = thread_cpu_seconds();
+                self.profile_mark = Some(ProfileMark {
+                    frames: self.total_frames,
+                    stages: self.profile.clone(),
+                    render: r.stats.borrow().clone(),
+                    counts: r.counts.borrow().clone(),
+                });
             }
             if let (Some(limit), false) = (self.args.exit_after, self.exiting) {
                 if self.started.elapsed().as_secs_f32() > limit {
@@ -1031,18 +1043,48 @@ impl App {
                         st.stats.log_ground();
                     }
                     if ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
-                        let n = self.total_frames.max(1) as f64;
+                        // (over the frames after the mark when there is one: the loading
+                        // frames' work would be spread over the steady ones)
+                        type Totals = std::collections::BTreeMap<&'static str, f64>;
+                        let empty = Totals::new();
+                        let (n, stages0, render0, counts0) = match &self.profile_mark {
+                            Some(m) => {
+                                log::info!(
+                                    "profile: stages over the {} frames since the mark",
+                                    self.total_frames.saturating_sub(m.frames)
+                                );
+                                (
+                                    self.total_frames.saturating_sub(m.frames).max(1) as f64,
+                                    &m.stages,
+                                    &m.render,
+                                    &m.counts,
+                                )
+                            }
+                            None => (self.total_frames.max(1) as f64, &empty, &empty, &empty),
+                        };
+                        let since = |k: &&'static str, v: f64, at: &Totals| {
+                            v - at.get(k).copied().unwrap_or(0.0)
+                        };
                         for (k, v) in &self.profile {
-                            log::info!("profile {k:10}: {:.1} ms/frame", v / n * 1000.0);
+                            log::info!(
+                                "profile {k:10}: {:.2} ms/frame",
+                                since(k, *v, stages0) / n * 1000.0
+                            );
                         }
                         if let Some(h) = self.humans.as_ref() {
                             log::info!("profile people: {} ({})", h.people.len(), h.summary());
                         }
                         for (k, v) in r.stats.borrow().iter() {
-                            log::info!("profile render.{k:10}: {:.2} ms/frame", v / n * 1000.0);
+                            log::info!(
+                                "profile render.{k:10}: {:.2} ms/frame",
+                                since(k, *v, render0) / n * 1000.0
+                            );
                         }
                         for (k, v) in r.counts.borrow().iter() {
-                            log::info!("profile count {k}: {:.0} a frame", v / n);
+                            log::info!(
+                                "profile count {k}: {:.0} a frame",
+                                since(k, *v, counts0) / n
+                            );
                         }
                         for (pass, ms, frames) in r.gpu_pass_times() {
                             log::info!(
@@ -1054,11 +1096,42 @@ impl App {
                         {
                             let frames = self.total_frames.saturating_sub(f0).max(1) as f64;
                             log::info!(
-                                "profile: since 15 s {:.1} ms wall and {:.1} ms CPU (all threads) per frame, {:.1} cores busy",
+                                "profile: since the mark {:.1} ms wall and {:.1} ms CPU (all threads) per frame, {:.1} cores busy",
                                 t0.elapsed().as_secs_f64() / frames * 1000.0,
                                 (c1 - c0) / frames * 1000.0,
                                 (c1 - c0) / t0.elapsed().as_secs_f64().max(1e-3)
                             );
+                            let mut busy: Vec<(String, f64)> = thread_cpu_seconds()
+                                .into_iter()
+                                .map(|(id, name, secs)| {
+                                    let before = self
+                                        .thread_cpu_mark
+                                        .iter()
+                                        .find(|m| m.0 == id)
+                                        .map_or(0.0, |m| m.2);
+                                    let name = if name.is_empty() {
+                                        format!("#{id}")
+                                    } else {
+                                        name
+                                    };
+                                    (name, secs - before)
+                                })
+                                .filter(|(_, secs)| *secs / frames > 0.05e-3)
+                                .collect();
+                            busy.sort_by(|a, b| b.1.total_cmp(&a.1));
+                            for (name, secs) in busy.iter().take(16) {
+                                log::info!(
+                                    "profile thread {name}: {:.2} ms CPU per frame",
+                                    secs / frames * 1000.0
+                                );
+                            }
+                            if busy.len() > 16 {
+                                log::info!(
+                                    "profile thread ({} more): {:.2} ms CPU per frame",
+                                    busy.len() - 16,
+                                    busy[16..].iter().map(|b| b.1).sum::<f64>() / frames * 1000.0
+                                );
+                            }
                         }
                         let (sw, sh) = r.scene_size(s.config.width, s.config.height);
                         log::info!(

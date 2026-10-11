@@ -54,7 +54,7 @@ impl Renderer {
         for l in &scene.interior_lights {
             gpu_lights.push(gpu_light(l, (l.position - ro).as_vec3()));
         }
-        let mut grid = vec![u32::MAX; side * side * LIGHT_CELL_CAP];
+        scene.light_grid.begin();
         let mut occ_users: Vec<(usize, u32)> = Vec::new();
         for (li, l) in scene.lights.iter().enumerate() {
             if !drawn_by(l, enhanced) {
@@ -82,13 +82,9 @@ impl Renderer {
             }
             for y in (y0.max(0.0) as usize)..=(y1.min(side as f32 - 1.0) as usize) {
                 for x in (x0.max(0.0) as usize)..=(x1.min(side as f32 - 1.0) as usize) {
-                    let base = (y * side + x) * LIGHT_CELL_CAP;
-                    if let Some(slot) = grid[base..base + LIGHT_CELL_CAP]
-                        .iter()
-                        .position(|v| *v == u32::MAX)
+                    if !scene.light_grid.add(y * side + x, idx)
+                        && ::legacy_config::env::var_os("OMSI_DEBUG_LIGHT_GRID").is_some()
                     {
-                        grid[base + slot] = idx;
-                    } else if ::legacy_config::env::var_os("OMSI_DEBUG_LIGHT_GRID").is_some() {
                         log::info!(
                             "light grid: cell ({x}, {y}) full, light at ({:.1}, {:.1}) radius {:.0} {} left out",
                             p.x,
@@ -142,7 +138,7 @@ impl Renderer {
             });
         }
         let gpu_lights_bytes: &[u8] = bytemuck::cast_slice(&gpu_lights);
-        let grid_bytes: &[u8] = bytemuck::cast_slice(&grid);
+        let grid_changed = scene.light_grid.finish();
         let mut rebuilt = false;
         match &scene.light_buf {
             Some(b) if b.size() as usize >= gpu_lights_bytes.len() => {
@@ -165,8 +161,12 @@ impl Renderer {
         }
         match &scene.grid_buf {
             Some(b) => {
-                if scene.last_grid != grid {
-                    self.queue.write_buffer(b, 0, grid_bytes);
+                if let Some(span) = grid_changed {
+                    self.queue.write_buffer(
+                        b,
+                        (span.start * size_of::<u32>()) as u64,
+                        bytemuck::cast_slice(&scene.light_grid.cells[span]),
+                    );
                 }
             }
             None => {
@@ -174,7 +174,7 @@ impl Renderer {
                     &self.device,
                     &self.queue,
                     Some("light grid"),
-                    grid_bytes,
+                    bytemuck::cast_slice(&scene.light_grid.cells),
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 ));
                 rebuilt = true;
@@ -182,7 +182,6 @@ impl Renderer {
         }
         scene.last_lights.clear();
         scene.last_lights.extend_from_slice(gpu_lights_bytes);
-        scene.last_grid = grid;
         if rebuilt {
             self.rebuild_camera_bind_group(scene);
         }

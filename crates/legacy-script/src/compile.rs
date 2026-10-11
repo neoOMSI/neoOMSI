@@ -48,11 +48,32 @@ pub struct Program {
     var_index: HashMap<String, VarId>,
     str_var_index: HashMap<String, StrVarId>,
     name_index: HashMap<String, NameId>,
+    /// The variables some block stores into, found on the first `stores` (the passengers ask
+    /// for a bus's door variables several times a frame, and each answer went through every
+    /// op of every block), with the block and op counts it was found for.
+    stored: std::sync::OnceLock<(usize, usize, Vec<bool>)>,
+}
+
+/// `f` of `name` in lower case, without a new string for the usual short names (the
+/// lookups by name run for every lamp and door each frame).
+fn lower<R>(name: &str, f: impl FnOnce(&str) -> R) -> R {
+    if !name.bytes().any(|b| b.is_ascii_uppercase()) {
+        f(name)
+    } else if name.len() <= 64 {
+        let mut buf = [0u8; 64];
+        let key = &mut buf[..name.len()];
+        key.copy_from_slice(name.as_bytes());
+        key.make_ascii_lowercase();
+        // (lowering ASCII letters keeps the text valid UTF-8)
+        f(std::str::from_utf8(key).unwrap_or(name))
+    } else {
+        f(&name.to_ascii_lowercase())
+    }
 }
 
 impl Program {
     pub fn var(&self, name: &str) -> Option<VarId> {
-        self.var_index.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.var_index.get(k).copied())
     }
     /// The name of a variable (lower case); a linear search, for diagnostics.
     pub fn var_name(&self, id: VarId) -> Option<&str> {
@@ -67,13 +88,13 @@ impl Program {
     }
 
     pub fn str_var(&self, name: &str) -> Option<StrVarId> {
-        self.str_var_index.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.str_var_index.get(k).copied())
     }
     pub fn name(&self, id: NameId) -> &str {
         &self.names[id as usize]
     }
     pub fn trigger(&self, name: &str) -> Option<BlockId> {
-        self.triggers.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.triggers.get(k).copied())
     }
     /// Every input trigger a script set exposes, in stable order.  A vehicle mod is free to
     /// give its ignition and starter controls its own names; callers that need to discover a
@@ -84,11 +105,11 @@ impl Program {
         out
     }
     pub fn macro_block(&self, name: &str) -> Option<BlockId> {
-        self.macros.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.macros.get(k).copied())
     }
     /// A `[const]` of the constfiles, as `(C.L.name)` reads it.
     pub fn constant(&self, name: &str) -> Option<f32> {
-        self.consts.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.consts.get(k).copied())
     }
 
     /// Declare a variable (idempotent), returning its id.
@@ -105,7 +126,7 @@ impl Program {
 
     /// Whether variable `name` was declared in the script set's varlists (as opposed to built-in host variables).
     pub fn has_script_var(&self, name: &str) -> bool {
-        self.script_vars.contains(&name.to_ascii_lowercase())
+        lower(name, |k| self.script_vars.contains(k))
     }
 
     /// Declare a script variable (from a varlist), recording it in `script_vars` and returning its id.
@@ -127,6 +148,24 @@ impl Program {
 
     /// Whether any block of the program stores into `var`.
     pub fn stores(&self, var: VarId) -> bool {
+        let ops = || self.blocks.iter().map(|b| b.ops.len()).sum::<usize>();
+        let (blocks, op_count, stored) = self.stored.get_or_init(|| {
+            let mut stored = Vec::new();
+            for op in self.blocks.iter().flat_map(|b| &b.ops) {
+                if let Op::Store(v) = op {
+                    let v = *v as usize;
+                    if stored.len() <= v {
+                        stored.resize(v + 1, false);
+                    }
+                    stored[v] = true;
+                }
+            }
+            (self.blocks.len(), ops(), stored)
+        });
+        if *blocks == self.blocks.len() && *op_count == ops() {
+            return stored.get(var as usize).copied().unwrap_or(false);
+        }
+        // (blocks changed after the first answer)
         self.blocks.iter().any(|b| {
             b.ops
                 .iter()
@@ -1074,6 +1113,39 @@ fn patch(op: &mut Op, target: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `stores` answers from the set it makes on the first call as the scan of every op
+    /// did, and scans again when blocks were added after it.
+    #[test]
+    fn stores_answers_as_the_full_scan() {
+        let scan = |p: &Program, var: VarId| {
+            p.blocks.iter().any(|b| {
+                b.ops
+                    .iter()
+                    .any(|op| matches!(op, Op::Store(v) if *v == var))
+            })
+        };
+        let mut p = Program::default();
+        let a = p.declare_var("a");
+        let b = p.declare_var("b");
+        let c = p.declare_var("c");
+        p.blocks.push(Block {
+            ops: vec![Op::Load(a), Op::Store(b)],
+            ..Default::default()
+        });
+        for v in [a, b, c, 99] {
+            assert_eq!(p.stores(v), scan(&p, v), "var {v}");
+        }
+        assert!(p.stores(b) && !p.stores(a));
+        p.blocks.push(Block {
+            ops: vec![Op::Store(c)],
+            ..Default::default()
+        });
+        assert!(p.stores(c));
+        for v in [a, b, c] {
+            assert_eq!(p.stores(v), scan(&p, v), "var {v} after a new block");
+        }
+    }
 
     fn program_of(script: &str) -> Program {
         let dir = std::env::temp_dir().join(format!(

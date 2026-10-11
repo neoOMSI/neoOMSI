@@ -46,7 +46,7 @@ impl Renderer {
             uploaded_entries: 0,
             cpu_models: Vec::new(),
             cpu_params: Vec::new(),
-            last_grid: Vec::new(),
+            light_grid: Default::default(),
             last_lights: Vec::new(),
             bind_groups: HashMap::new(),
             pbr_maps: HashMap::new(),

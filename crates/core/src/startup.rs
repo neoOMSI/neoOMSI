@@ -2,22 +2,106 @@
 
 use super::*;
 
-/// CPU seconds this process has used so far (all threads), from `ps`.
+/// CPU seconds this process has used so far (all threads): the kernel's count on Windows,
+/// else from `ps`. OMSI_PROFILE asks every frame until it has an answer, so a `ps` that
+/// fails is not started again (each start took ~10 ms of the frame).
+#[cfg(windows)]
 pub(crate) fn process_cpu_seconds() -> Option<f64> {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "cputime=", "-p", &std::process::id().to_string()])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    // [[dd-]hh:]mm:ss.ss
-    let (days, rest) = match text.trim().split_once('-') {
-        Some((d, r)) => (d.parse::<f64>().ok()?, r.to_string()),
-        None => (0.0, text.trim().to_string()),
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    let mut t = [FILETIME::default(); 4];
+    let [created, exited, kernel, user] = &mut t;
+    // SAFETY: the pseudo handle of this process and four FILETIMEs to write
+    unsafe { GetProcessTimes(GetCurrentProcess(), created, exited, kernel, user) }.ok()?;
+    let ticks = |f: &FILETIME| ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64;
+    // (100 ns units)
+    Some((ticks(kernel) + ticks(user)) * 1e-7)
+}
+
+/// CPU seconds of each thread of this process, by thread id, with its name (OMSI_PROFILE:
+/// which threads besides the main one keep the processor busy).
+#[cfg(windows)]
+pub(crate) fn thread_cpu_seconds() -> Vec<(u32, String, f64)> {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, HLOCAL, LocalFree};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
-    let secs = rest.split(':').try_fold(0.0, |acc, part| {
-        part.parse::<f64>().ok().map(|v| acc * 60.0 + v)
-    })?;
-    Some(days * 86400.0 + secs)
+    use windows::Win32::System::Threading::{
+        GetThreadDescription, GetThreadTimes, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
+    };
+    let mut out = Vec::new();
+    let me = std::process::id();
+    // SAFETY: a snapshot handle, entries of the size it is told, and thread handles that are
+    // closed again; the description is the system's string, freed with LocalFree
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else {
+            return out;
+        };
+        let mut e = THREADENTRY32 {
+            dwSize: size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut more = Thread32First(snap, &mut e).is_ok();
+        while more {
+            if e.th32OwnerProcessID == me {
+                if let Ok(h) = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, e.th32ThreadID) {
+                    let mut t = [FILETIME::default(); 4];
+                    let [c, x, k, u] = &mut t;
+                    if GetThreadTimes(h, c, x, k, u).is_ok() {
+                        let ticks = |f: &FILETIME| {
+                            ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64
+                        };
+                        let name = match GetThreadDescription(h) {
+                            Ok(p) if !p.is_null() => {
+                                let n = p.to_string().unwrap_or_default();
+                                let _ = LocalFree(Some(HLOCAL(p.0 as _)));
+                                n
+                            }
+                            _ => String::new(),
+                        };
+                        out.push((e.th32ThreadID, name, (ticks(k) + ticks(u)) * 1e-7));
+                    }
+                    let _ = CloseHandle(h);
+                }
+            }
+            more = Thread32Next(snap, &mut e).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    out
+}
+
+#[cfg(not(windows))]
+pub(crate) fn thread_cpu_seconds() -> Vec<(u32, String, f64)> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn process_cpu_seconds() -> Option<f64> {
+    static PS_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if PS_FAILED.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    let secs = (|| {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "cputime=", "-p", &std::process::id().to_string()])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        // [[dd-]hh:]mm:ss.ss
+        let (days, rest) = match text.trim().split_once('-') {
+            Some((d, r)) => (d.parse::<f64>().ok()?, r.to_string()),
+            None => (0.0, text.trim().to_string()),
+        };
+        let secs = rest.split(':').try_fold(0.0, |acc, part| {
+            part.parse::<f64>().ok().map(|v| acc * 60.0 + v)
+        })?;
+        Some(days * 86400.0 + secs)
+    })();
+    if secs.is_none() {
+        PS_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    secs
 }
 
 pub(crate) fn shift_held_now(keys: &hashbrown::HashSet<KeyCode>) -> bool {

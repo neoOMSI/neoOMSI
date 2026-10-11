@@ -169,7 +169,7 @@ pub struct Scene {
     pub(crate) bounds_dirty: bool,
     pub(crate) cpu_models: Vec<[[f32; 4]; 4]>,
     pub(crate) cpu_params: Vec<[f32; 4]>,
-    pub(crate) last_grid: Vec<u32>,
+    pub(crate) light_grid: LightGrid,
     pub(crate) last_lights: Vec<u8>,
     pub(crate) bind_groups: HashMap<BindKey, (wgpu::BindGroup, wgpu::Buffer)>,
     pub pbr_maps: HashMap<TextureId, PbrMaps>,

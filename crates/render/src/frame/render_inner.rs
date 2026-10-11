@@ -2,6 +2,8 @@ use crate::*;
 
 /// An ordered vehicle's meshes share an origin and must retain their authored order. A
 /// recycled scene-instance id is not that order, so use it only for all other ties.
+const MAIN_PASS_PARTS: usize = 4;
+
 fn sort_blended_keys(keys: &mut [(u8, f32, [u64; 3], bool, u32, usize)]) {
     keys.sort_unstable_by(|a, b| {
         a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then_with(|| {
@@ -186,9 +188,12 @@ impl Renderer {
         if !lighting.light_shadows {
             *self.spot_state.borrow_mut() = Default::default();
         }
+        stage(self, "setup", "mirror.setup");
         let grid = self.prepare_lights(scene, cam_rel, enhanced_frame, spot_plan);
+        stage(self, "setup.lights", "mirror.setup.lights");
         self.prepare_coronas(scene, lighting.night);
         self.prepare_smoke(scene, camera.position);
+        stage(self, "setup.coronas", "mirror.setup.coronas");
         let ao_on = with_overlays
             && self.options.ssao
             && self.ssao_pipeline.is_some()
@@ -1724,7 +1729,7 @@ impl Renderer {
             && main_bundles.len() >= 2
             && ::legacy_config::env::var_os("OMSI_NO_MAIN_SPLIT").is_none()
         {
-            main_bundles.len().min(2)
+            main_bundles.len().min(MAIN_PASS_PARTS)
         } else {
             1
         };
@@ -1826,7 +1831,8 @@ impl Renderer {
                     },
                 },
             });
-            let per_part = main_bundles.len().div_ceil(parts.max(1));
+            // (part g draws bundles part_start(g)..part_start(g + 1), as evenly as they go)
+            let part_start = |g: usize| g * main_bundles.len() / parts.max(1);
             let sky_clear = wgpu::LoadOp::Clear(wgpu::Color {
                 r: sky.x as f64,
                 g: sky.y as f64,
@@ -1913,14 +1919,11 @@ impl Renderer {
                             pass.draw_indexed(0..self.sky_mesh.2, 0, 0..1);
                         }
                     }
-                    pass.execute_bundles(
-                        main_bundles[g * per_part..((g + 1) * per_part).min(main_bundles.len())]
-                            .iter(),
-                    );
+                    pass.execute_bundles(main_bundles[part_start(g)..part_start(g + 1)].iter());
                 }
                 main_parts.push(part);
             }
-            let tail = (parts - 1) * per_part;
+            let tail = part_start(parts - 1);
             let main_attachment = Some(wgpu::RenderPassColorAttachment {
                 view: draw_view,
                 depth_slice: None,

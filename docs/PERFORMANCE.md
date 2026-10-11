@@ -28,11 +28,34 @@ The renderer keeps these costs bounded without changing graphics settings:
 - Tile workers resolve texture paths before decoding and compressing them. Different
   search-folder lists that resolve to one file share one decode within the batch, reducing
   CPU work and temporary image memory. Different pack files retain their own identities.
+- The 1 MB light grid is kept between frames. Only cells that hold a light now, or held
+  one before, are rewritten, and only the changed span is uploaded. Previously the grid
+  was rebuilt, compared and, once a headlight moved, uploaded in full for the picture and
+  for each mirror.
+- Animated meshes (cars, people, the driver) are uploaded through one staging buffer per
+  frame and copied before the first pass. wgpu's `write_buffer` creates a staging buffer
+  per call, so one call per mesh meant one driver allocation per mesh per frame.
+- The main pass is recorded in up to four parts, each finished on an encoding thread;
+  culling and shadow-caster collection split the scene into parts of 4,096 objects.
+  Parts keep the draw order, so the picture is unchanged.
+- Script programs answer `stores(var)` from a set built once, and name lookups no longer
+  allocate a lower-case copy. Passengers and the driver figure query a bus's door
+  variables several times a frame; each query used to scan every op of every block.
+
+On Windows, DirectX 12 compiles shaders with DXC when `dxcompiler.dll` and `dxil.dll`
+sit next to `neoomsi.exe`, as release packages ship them. Without them wgpu falls back
+to FXC, and the first start takes about 55 s instead of about 16 s on a fast CPU.
+Local builds in `target/` have no DXC: copy the two DLLs there to start as fast as a release.
+Compiling the pipeline variants on several threads does not help. DXC and FXC serialize
+the compiles internally, and parallel cache misses compile shared stages several times.
 
 For report of very low FPS, run the game with `OMSI_PROFILE=1`, `RUST_LOG=info`, and
 `--exit-after 120` using the reported map, vehicle, view and traffic settings. The exit
 summary records CPU stage times, draw counts, tile streaming spikes, incremental instance
-upload bytes/write counts, and GPU pass times where the adapter supports them.
+upload bytes/write counts, and GPU pass times where the adapter supports them
+(`OMSI_GPU_TIMERS=1`). With `--exit-after`, stage averages cover only the second half of
+the run, after loading. `frame.*` entries time every phase of the frame without gaps.
+`profile thread` lines list each thread's CPU time per frame.
 Include the map/vehicle, graphics mode, mirror/VR
 settings, adapter, and whether the problem occurs during steady driving or loading.
 Do not infer that one improved CPU benchmark explains every low-FPS report: streaming,

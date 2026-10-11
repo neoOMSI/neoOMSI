@@ -12,6 +12,14 @@ pub(crate) struct ScreenshotMode {
     pub(crate) help_left: f32,
 }
 
+/// See `App::profile_mark`.
+pub(crate) struct ProfileMark {
+    pub(crate) frames: u32,
+    pub(crate) stages: std::collections::BTreeMap<&'static str, f64>,
+    pub(crate) render: std::collections::BTreeMap<&'static str, f64>,
+    pub(crate) counts: std::collections::BTreeMap<&'static str, f64>,
+}
+
 pub(crate) struct App {
     pub(crate) args: Args,
     pub(crate) instance: wgpu::Instance,
@@ -66,6 +74,9 @@ pub(crate) struct App {
     pub(crate) radio: radio::Radio,
     pub(crate) profile: std::collections::BTreeMap<&'static str, f64>,
     pub(crate) profile_prev: std::collections::BTreeMap<&'static str, f64>,
+    /// When the last `redraw` returned: the time until the next one is the event loop's
+    /// (`frame.between` in OMSI_PROFILE).
+    pub(crate) redraw_ended: Option<Instant>,
     pub(crate) first_populate: bool,
     pub(crate) envir: Option<::content::Envir>,
     pub(crate) weather: Option<::content::weather::Weather>,
@@ -220,6 +231,11 @@ pub(crate) struct App {
     #[cfg(all(feature = "devtools", debug_assertions))]
     pub(crate) devtools: Option<devtools::DevTools>,
     pub(crate) cpu_mark: Option<(f64, Instant, u32)>,
+    /// Each thread's CPU seconds when `cpu_mark` was taken (OMSI_PROFILE).
+    pub(crate) thread_cpu_mark: Vec<(u32, String, f64)>,
+    /// The stage, renderer stage and count totals when `cpu_mark` was taken: the summary
+    /// averages over the steady frames after it, not over the loading.
+    pub(crate) profile_mark: Option<ProfileMark>,
     pub(crate) plugins: Option<::legacy_plugin::Plugins>,
     pub(crate) touch: touch::Touch,
 }

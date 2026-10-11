@@ -152,21 +152,60 @@ impl Renderer {
         }
     }
 
-    pub(crate) fn flush_pending_meshes(&self, scene: &Scene, _encoder: &mut wgpu::CommandEncoder) {
+    /// Sends the animated meshes' new vertices to their buffers, before anything this frame
+    /// draws: all of them through one staging buffer, copied at the start of `encoder` (the
+    /// first one submitted). A `write_buffer` each made the driver create and free a staging
+    /// buffer per mesh, every frame - a few hundredths of a millisecond each, for every car,
+    /// person and driver in sight.
+    pub(crate) fn flush_pending_meshes(&self, scene: &Scene, encoder: &mut wgpu::CommandEncoder) {
         // Drain retains the table's capacity for the next frame.
         let mut pending = self.pending_meshes.borrow_mut();
-        for (id, verts) in pending.drain() {
-            let Some(m) = scene.meshes.get(id) else {
-                continue;
+        let uploads: Vec<(&wgpu::Buffer, &[u8])> = pending
+            .iter()
+            .filter_map(|(id, verts)| {
+                let m = scene.meshes.get(*id)?;
+                let b: &[u8] = bytemuck::cast_slice(verts);
+                let len = b.len() / 4 * 4;
+                (len > 0 && m.vertex_buf.size() >= len as u64).then(|| (&m.vertex_buf, &b[..len]))
+            })
+            .collect();
+        let total: usize = uploads.iter().map(|u| u.1.len()).sum();
+        let staging = (uploads.len() > 1).then(|| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("animated meshes"),
+                size: total as u64,
+                usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: true,
+            })
+        });
+        let staged = staging.as_ref().is_some_and(|staging| {
+            let Ok(mut view) = staging.slice(..).get_mapped_range_mut() else {
+                return false;
             };
-            let b: &[u8] = bytemuck::cast_slice(&verts);
-            let len = (b.len() as u64) / 4 * 4;
-            if len == 0 || m.vertex_buf.size() < len {
-                continue;
+            let mut at = 0;
+            for (_, b) in &uploads {
+                view.slice(at..at + b.len()).copy_from_slice(b);
+                at += b.len();
             }
-            self.queue
-                .write_buffer(&m.vertex_buf, 0, &b[..len as usize]);
+            true
+        });
+        match staging {
+            Some(staging) if staged => {
+                staging.unmap();
+                let mut at = 0u64;
+                for (buf, b) in &uploads {
+                    encoder.copy_buffer_to_buffer(&staging, at, buf, 0, b.len() as u64);
+                    at += b.len() as u64;
+                }
+            }
+            _ => {
+                for (buf, b) in &uploads {
+                    self.queue.write_buffer(buf, 0, b);
+                }
+            }
         }
+        drop(uploads);
+        pending.clear();
     }
 
     pub fn add_mesh(&self, scene: &mut Scene, data: &MeshData) -> MeshId {
