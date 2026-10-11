@@ -1657,8 +1657,9 @@ fn rain_through(g: RainGlass, v: vec3<f32>) -> vec3<f32> {
 // way meets it a few metres on - through a drop's rim the way bends far round, so the
 // drop holds the whole street small and upside down, the sky at its bottom, as a real
 // one does. The rain film's reflection slot holds that picture (see `Renderer::glass_slot`);
-// without it (a mirror's view) or off the picture's edge,
-// `fallback` (the sky's colours). `scale` takes the picture into the caller's units.
+// without it (a mirror's view) or behind the eye, `fallback` (the sky's colours). Off the
+// picture's edge, the unbent view through the glass: the film covers the whole pane, so the
+// sky there would turn the screen's edges milky. `scale` takes the picture into the caller's units.
 fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale: f32, scatter: f32) -> vec3<f32> {
     if (camera.flags.z > -0.5 || dot(through, through) < 1e-4) {
         return fallback;
@@ -1667,14 +1668,16 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     if (c.w <= 0.05) {
         return fallback;
     }
+    let o = camera.view_proj * vec4<f32>(world, 1.0);
     let ndc = c.xy / c.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let own = vec2<f32>(o.x / o.w * 0.5 + 0.5, 0.5 - o.y / o.w * 0.5);
     let inside = smoothstep(0.0, 0.06, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
+    let at = mix(own, uv, inside);
     let offset = vec2<f32>(1.0, 0.6) * scatter * 4.0 / (vec2<f32>(textureDimensions(t_env)) * 2.0);
-    let a = textureSampleLevel(t_env, s_diffuse, clamp(uv - offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
-    let b = textureSampleLevel(t_env, s_diffuse, clamp(uv + offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
-    let seen = finite_or((a + b) * (0.5 * scale), fallback);
-    return mix(fallback, seen, inside);
+    let a = textureSampleLevel(t_env, s_diffuse, clamp(at - offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
+    let b = textureSampleLevel(t_env, s_diffuse, clamp(at + offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
+    return finite_or((a + b) * (0.5 * scale), fallback);
 }
 
 // A drop lit: `refl` what the dome mirrors, `thru` what is seen through it (both

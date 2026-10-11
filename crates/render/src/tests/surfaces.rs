@@ -514,6 +514,135 @@ fn envmap_lerp_over_dark_paint_is_the_same_in_vanilla_plus() {
 }
 
 #[test]
+#[ignore = "requires a graphics adapter; renders a wet pane across the whole screen"]
+fn rain_film_is_as_clear_at_the_screen_edge_as_in_the_middle() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    let mut scene = renderer.new_scene();
+    // a dark street behind the glass, far darker than the sky a drop falls back to
+    let backdrop = renderer.add_material(
+        &mut scene,
+        None,
+        AlphaMode::Opaque,
+        [0.02, 0.05, 0.02, 1.0],
+        true,
+    );
+    let film = renderer.add_material_extra(
+        &mut scene,
+        None,
+        AlphaMode::Blend,
+        [1.0; 4],
+        false,
+        None,
+        None,
+        None,
+        None,
+        [0.0; 3],
+        MaterialExtra {
+            rain_film: true,
+            no_z_write: true,
+            ..Default::default()
+        },
+    );
+    let mut quad = |y: f32, half: f32, material| {
+        let mesh = renderer.add_mesh(
+            &mut scene,
+            &MeshData {
+                positions: vec![
+                    Vec3::new(-half, y, -half),
+                    Vec3::new(half, y, -half),
+                    Vec3::new(half, y, half),
+                    Vec3::new(-half, y, half),
+                ],
+                normals: vec![-Vec3::Y; 4],
+                uvs: vec![
+                    glam::Vec2::new(0.0, 1.0),
+                    glam::Vec2::new(1.0, 1.0),
+                    glam::Vec2::new(1.0, 0.0),
+                    glam::Vec2::new(0.0, 0.0),
+                ],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ranges: vec![(0, 6, 0)],
+                one_sided: false,
+            },
+        );
+        renderer.add_instance(
+            &mut scene,
+            mesh,
+            DVec3::ZERO,
+            Mat4::IDENTITY,
+            vec![material],
+        )
+    };
+    quad(10.0, 40.0, backdrop);
+    // the pane fills the whole picture: the edge of the screen is not the edge of the glass
+    quad(1.0, 3.0, film);
+    let camera = Camera {
+        position: DVec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        roll: 0.0,
+        fov_deg: 70.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    const SIZE: usize = 128;
+    let mean = |rgba: &[u8], xs: std::ops::Range<usize>, ys: std::ops::Range<usize>| -> f32 {
+        let (mut sum, mut n) = (0.0, 0.0);
+        for y in ys {
+            for x in xs.clone() {
+                let p = &rgba[(y * SIZE + x) * 4..(y * SIZE + x) * 4 + 3];
+                sum += p.iter().map(|&c| c as f32).sum::<f32>() / 3.0;
+                n += 1.0;
+            }
+        }
+        sum / n
+    };
+    let (inner, outer) = (24..SIZE - 24, 0..4);
+    let far = SIZE - 4..SIZE;
+    for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+        let lighting = Lighting {
+            enhanced,
+            classic,
+            wetness: 1.0,
+            rain: 0.8,
+            shadows: false,
+            fog_density: 0.0,
+            ..Default::default()
+        };
+        let rgba = renderer
+            .render_to_image(&mut scene, SIZE as u32, SIZE as u32, &camera, &lighting)
+            .unwrap();
+        let middle = mean(&rgba, inner.clone(), inner.clone());
+        for (side, xs, ys) in [
+            ("left", outer.clone(), inner.clone()),
+            ("right", far.clone(), inner.clone()),
+            ("top", inner.clone(), outer.clone()),
+            ("bottom", inner.clone(), far.clone()),
+        ] {
+            let edge = mean(&rgba, xs, ys);
+            assert!(
+                edge - middle < 5.0,
+                "the {side} edge of the screen turns the wet glass milky (enhanced {enhanced}, classic {classic}): edge {edge:.1}, middle {middle:.1}"
+            );
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; run with --ignored on a GPU host"]
 fn presurface_reveals_excavation_before_terrain_is_drawn() {
     fn quad(renderer: &Renderer, scene: &mut Scene, y: f32, half: f32) -> MeshId {
