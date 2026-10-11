@@ -1147,7 +1147,7 @@ impl App {
         }
         self.wheel_acc -= steps as f32;
         if let (Some(u), Some(k)) = (self.ui.as_ref(), self.chooser) {
-            let (x, y) = self.cursor;
+            let (x, y) = self.ui_cursor();
             if u.menu_pane_box
                 .is_some_and(|r| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3])
             {

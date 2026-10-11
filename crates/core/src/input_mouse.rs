@@ -415,12 +415,13 @@ impl App {
         let last = self.cursor;
         self.cursor = (x, y);
         if self.lab_menu.is_some() {
+            let (ui_x, ui_y) = self.ui_cursor();
             if (x, y) != last {
                 if let Some(st) = self.lab_menu.filter(|s| s.page.is_none()) {
                     let hit = self.ui.as_ref().and_then(|u| {
                         u.pause_items
                             .iter()
-                            .position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3])
+                            .position(|r| ui_x >= r[0] && ui_x < r[2] && ui_y >= r[1] && ui_y < r[3])
                     });
                     if let Some(k) = hit {
                         self.lab_menu = Some(crate::ui::PauseState { sel: k, ..st });
@@ -428,16 +429,16 @@ impl App {
                 }
             }
             if let Some(n) = self.navigator.as_mut().filter(|n| n.city.embed.is_some()) {
-                n.map_move(x, y);
+                n.map_move(ui_x, ui_y);
             }
             if self.lab_bar_drag != 0 {
                 self.lab_bar_set();
             }
             if self.ui.as_ref().is_some_and(|u| u.world_drag.is_some()) {
-                self.lab_world_set(x);
+                self.lab_world_set(ui_x);
             }
             if self.ui.as_ref().is_some_and(|u| u.world_bar_grab.is_some()) {
-                self.lab_world_bar_set(y);
+                self.lab_world_bar_set(ui_y);
             }
         }
         if self.game_menu.is_some() && (x, y) != last {
