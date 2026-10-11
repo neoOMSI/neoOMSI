@@ -635,8 +635,8 @@ fn rain_film_is_as_clear_at_the_screen_edge_as_in_the_middle() {
         ] {
             let edge = mean(&rgba, xs, ys);
             assert!(
-                edge - middle < 5.0,
-                "the {side} edge of the screen turns the wet glass milky (enhanced {enhanced}, classic {classic}): edge {edge:.1}, middle {middle:.1}"
+                (edge - middle).abs() < 5.0,
+                "the wet glass at the {side} edge of the screen differs from the middle (enhanced {enhanced}, classic {classic}): edge {edge:.1}, middle {middle:.1}"
             );
         }
     }
