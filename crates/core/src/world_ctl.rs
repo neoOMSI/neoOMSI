@@ -795,7 +795,7 @@ impl App {
         let Some(l) = self.lan.as_mut().filter(|l| l.role == ::network::Role::Host) else {
             return;
         };
-        if !l.weather().to_ascii_lowercase().starts_with("metar:") {
+        if !shares_start_metar(l.weather()) {
             return;
         }
         if let Some(wire) = self
@@ -1042,5 +1042,23 @@ impl App {
         } else if !changed.is_empty() {
             st.reload(r, scene, Some(&changed), self.audio.as_ref());
         }
+    }
+}
+
+fn shares_start_metar(weather: &str) -> bool {
+    crate::weather_setup::metar_mode(weather).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shares_start_metar;
+
+    #[test]
+    fn all_metar_modes_share_initial_weather_with_lan_clients() {
+        assert!(shares_start_metar("metar:EGNX"));
+        assert!(shares_start_metar("metar-once:EGNX"));
+        assert!(shares_start_metar("metar-sync:EGNX"));
+        assert!(shares_start_metar("METAR:EGNX"));
+        assert!(!shares_start_metar("Clear"));
     }
 }
