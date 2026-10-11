@@ -214,6 +214,7 @@ impl Renderer {
 
     pub fn free_texture(&self, scene: &mut Scene, id: TextureId) {
         scene.snow_textures.remove(&id);
+        scene.uploaded.remove(&id);
         if let Some(m) = scene.pbr_maps.remove(&id) {
             for t in [m.normal, m.orm].into_iter().flatten() {
                 self.free_texture(scene, t);

@@ -539,8 +539,9 @@ pub fn sync_vehicle_textures(
                         rebound.push(*tex);
                     }
                 } else {
-                    renderer.update_texture(scene, *tex, &img);
+                    renderer.update_texture_changed(scene, *tex, &img);
                 }
+                st.recycle(img.rgba);
             }
         }
     }

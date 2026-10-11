@@ -6,6 +6,7 @@ impl Renderer {
             meshes: Vec::new(),
             textures: Vec::new(),
             tex_luma: Default::default(),
+            uploaded: Default::default(),
             glass_slot: None,
             materials: Vec::new(),
             instances: Vec::new(),

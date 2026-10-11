@@ -372,6 +372,31 @@ impl Renderer {
         );
     }
 
+    pub fn update_texture_changed(&self, scene: &mut Scene, id: TextureId, img: &::texture::Image) {
+        if !Self::same_as_uploaded(scene, id, img) {
+            self.update_texture(scene, id, img);
+        }
+    }
+
+    fn same_as_uploaded(scene: &mut Scene, id: TextureId, img: &::texture::Image) -> bool {
+        let Some(generation) = scene.textures.get(id).map(|t| t.generation) else {
+            return false;
+        };
+        match scene.uploaded.get_mut(&id) {
+            Some((g, px)) if *g == generation && *px == img.rgba => true,
+            Some((g, px)) => {
+                *g = generation;
+                px.clear();
+                px.extend_from_slice(&img.rgba);
+                false
+            }
+            None => {
+                scene.uploaded.insert(id, (generation, img.rgba.clone()));
+                false
+            }
+        }
+    }
+
     /// Replace the top pixels of a dynamic texture and rebuild its mip chain. Returns true
     /// when the texture had to be recreated (and its materials therefore need rebinding).
     /// This is used for OMSI script textures after `STFilter`.
@@ -387,7 +412,11 @@ impl Renderer {
         let levels = (32 - img.width.max(img.height).leading_zeros()).max(1);
         if old.size != (img.width, img.height) || old.texture.mip_level_count() != levels {
             scene.textures[id] = self.upload_texture_gpu_mips(img);
+            Self::same_as_uploaded(scene, id, img);
             return true;
+        }
+        if Self::same_as_uploaded(scene, id, img) {
+            return false;
         }
         self.update_texture(scene, id, img);
         if levels > 1 {

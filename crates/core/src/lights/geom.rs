@@ -93,8 +93,8 @@ pub(super) fn blocked_by_meshes(
     for k in 0..=steps {
         let q = eye + dir * (k as f64 * 7.0).min(len);
         let probe = Obb::point(q, 4.0);
-        let near = seen.obstacles_near(&probe);
-        let near2 = coll.obstacles_near(&probe);
+        let near = seen.obstacles_near_solid(&probe, None);
+        let near2 = coll.obstacles_near_solid(&probe, None);
         for o in near.into_iter().chain(near2) {
             let solid_wall = o.mass == 0.0
                 && o.pole.is_none()
