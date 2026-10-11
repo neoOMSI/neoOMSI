@@ -126,6 +126,7 @@ pub(crate) struct App {
     pub(crate) pane_scroll: Option<(usize, usize)>,
     pub(crate) menu_edit: Option<String>,
     pub(crate) menu_edit_icao: bool,
+    pub(crate) menu_edit_date: bool,
     pub(crate) swap_pending: bool,
     pub(crate) menu_drag: Option<usize>,
     pub(crate) menu_kbd: bool,

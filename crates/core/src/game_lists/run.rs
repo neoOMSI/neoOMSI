@@ -84,8 +84,28 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         app.start_icao_edit();
                     }
                 }
+                "date_edit" if step => {
+                    if app.menu_edit.is_some() && app.menu_edit_date {
+                        app.apply_date_edit();
+                    } else if app
+                        .lan
+                        .as_ref()
+                        .is_some_and(|l| l.role == ::network::Role::Client)
+                    {
+                        app.service_msg =
+                            Some(("In a LAN session the host sets the clock".into(), 3.0));
+                    } else if app.real_time_locked() {
+                        app.service_msg = Some((
+                            "The date cannot be changed while the real-time sync is on".into(),
+                            3.0,
+                        ));
+                    } else {
+                        app.menu_edit = Some(String::new());
+                        app.menu_edit_date = true;
+                    }
+                }
                 "time_edit" if step => {
-                    if app.menu_edit.is_some() {
+                    if app.menu_edit.is_some() && !app.menu_edit_date {
                         app.apply_time_edit();
                     } else if app
                         .lan
@@ -101,6 +121,7 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         ));
                     } else {
                         app.menu_edit = Some(String::new());
+                        app.menu_edit_date = false;
                     }
                 }
                 "keybind" if step => {

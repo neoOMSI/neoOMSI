@@ -59,6 +59,9 @@ pub(crate) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "head_pitch" => (-45..=45).map(|v| v as f32).collect(),
         "hour" => (0..24).map(|v| v as f32).collect(),
         "minute" => (0..60).map(|v| v as f32).collect(),
+        "day" => (1..=31).map(|v| v as f32).collect(),
+        "month" => (1..=12).map(|v| v as f32).collect(),
+        "year" => (1950..=2100).map(|v| v as f32).collect(),
         "visibility" => {
             let mut v: Vec<f32> = (0..=120)
                 .map(|i| {
@@ -227,6 +230,9 @@ pub(crate) fn option_now(app: Option<&App>, verb: &str, arg: &str) -> Option<f32
         "seat" => ["seat_x", "seat_y", "seat_z"].map(|k| ::config::get_float("camera", k).unwrap_or(0.0) as f32)[arg.trim().parse::<usize>().unwrap_or(0).min(2)],
         "hour" => ((app?.clock.time / 3600.0) as i64).rem_euclid(24) as f32,
         "minute" => (((app?.clock.time / 60.0) as i64) % 60) as f32,
+        "day" => app?.clock.day_month().0 as f32,
+        "month" => app?.clock.day_month().1 as f32,
+        "year" => app?.clock.year as f32,
         "visibility" => app?.weather.as_ref()?.fog.0,
         "rain_amt" => {
             let w = app?.weather.as_ref()?;
@@ -445,6 +451,25 @@ pub(crate) fn option_set(
             };
             let target = (h * 3600 + m * 60) as f64 + t % 60.0;
             app.shift_clock(target - t);
+            None
+        }
+        "day" | "month" | "year" => {
+            let app = app?;
+            if app
+                .lan
+                .as_ref()
+                .is_some_and(|l| l.role == ::network::Role::Client)
+            {
+                app.service_msg = Some((::i18n::translate("pause.msg.lan_clock", &[]), 3.0));
+                return None;
+            }
+            let (d, m) = app.clock.day_month();
+            let (y, m, d) = match verb {
+                "day" => (app.clock.year, m, v.round() as i32),
+                "month" => (app.clock.year, v.round() as i32, d),
+                _ => (v.round() as i32, m, d),
+            };
+            app.set_clock_date(y, m, d);
             None
         }
         // the weather, made by hand (what the preset was stays as it was but for this)

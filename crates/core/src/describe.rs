@@ -246,7 +246,7 @@ const WORDS: &[(&str, &str)] = &[
     ("door", "door"),
     ("doors", "doors"),
     ("doorfront", "front door"),
-    ("dooraft", "rear door"),
+    ("dooraft", "door release"),
     ("tuerfluegel", "door leaf"),
     ("fluegel", "leaf"),
     ("tuerbuegel", "door grab rail"),

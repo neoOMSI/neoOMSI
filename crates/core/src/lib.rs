@@ -633,6 +633,7 @@ pub(crate) fn make_app(
         cloud_drift: [0.0; 2],
         menu_edit: None,
         menu_edit_icao: false,
+        menu_edit_date: false,
         swap_pending: false,
         menu_drag: None,
         menu_kbd: true,

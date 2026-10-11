@@ -229,12 +229,17 @@ impl App {
                 }
             }
             KeyCode::Enter | KeyCode::NumpadEnter => {
-                self.apply_time_edit();
+                if self.menu_edit_date {
+                    self.apply_date_edit();
+                } else {
+                    self.apply_time_edit();
+                }
                 return;
             }
             _ => {
+                let max = if self.menu_edit_date { 8 } else { 6 };
                 if let (Some(c), Some(d)) = (digit, self.menu_edit.as_mut()) {
-                    if d.len() < 6 {
+                    if d.len() < max {
                         d.push(c);
                     }
                 }
@@ -266,6 +271,43 @@ impl App {
                         t.push(c);
                     }
                 }
+            }
+        }
+        self.refresh_list();
+    }
+
+    pub(crate) fn apply_date_edit(&mut self) {
+        let Some(d) = self.menu_edit.take() else {
+            return;
+        };
+        self.menu_edit_date = false;
+        if !d.is_empty() {
+            let mut c = d.clone();
+            while c.len() < 8 {
+                c.push('0');
+            }
+            let (day, month, year) = (
+                c[0..2].parse::<i32>().unwrap_or(0),
+                c[2..4].parse::<i32>().unwrap_or(0),
+                c[4..8].parse::<i32>().unwrap_or(0),
+            );
+            let mut probe = self.clock.clone();
+            probe.set_date(year, month, day);
+            if year < 1 || probe.day_month() != (day, month) {
+                self.service_msg = Some((format!("{day:02}.{month:02}.{year:04} is no date"), 3.0));
+            } else if self
+                .lan
+                .as_ref()
+                .is_some_and(|l| l.role == network::Role::Client)
+            {
+                self.service_msg = Some((i18n::translate("pause.msg.lan_clock", &[]), 3.0));
+            } else if self.real_time_locked() {
+                self.service_msg = Some((i18n::translate("pause.msg.clock_locked", &[]), 3.0));
+            } else {
+                self.clock.set_date(year, month, day);
+                // the world follows like at any clock change
+                self.shift_clock(0.0);
+                self.service_msg = Some((format!("Date: {day:02}.{month:02}.{year:04}"), 3.0));
             }
         }
         self.refresh_list();
