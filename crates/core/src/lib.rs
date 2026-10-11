@@ -561,6 +561,7 @@ pub(crate) fn make_app(
         clock_hold: 0.0,
         pad_look: [false; 4],
         teleport_pick: false,
+        teleport_down: None,
         discord: None,
         discord_next_update: Instant::now(),
         headtrack: None,

@@ -581,19 +581,24 @@ impl App {
         let inside = x >= r[0] && x < r[2] && y >= r[1] && y < r[3] && !on_btn;
         match pressed {
             Some(true) if inside => {
-                if self.teleport_pick {
-                    if let Some(at) = n.map_point(x, y) {
-                        self.teleport_pick = false;
-                        self.close_game_menu();
-                        self.place_bus_at(at);
-                    }
-                } else {
-                    n.map_press(x, y);
+                n.map_press(x, y);
+                if self.teleport_pick && n.map_dragging() {
+                    self.teleport_down = Some((x, y));
                 }
                 true
             }
             Some(false) => {
                 n.map_release();
+                if let Some((px, py)) = self.teleport_down.take() {
+                    if self.teleport_pick && (x - px).abs() + (y - py).abs() < 6.0 {
+                        if let Some(at) = n.map_point(x, y) {
+                            self.teleport_pick = false;
+                            self.close_game_menu();
+                            self.place_bus_at(at);
+                            return true;
+                        }
+                    }
+                }
                 false
             }
             _ => false,
