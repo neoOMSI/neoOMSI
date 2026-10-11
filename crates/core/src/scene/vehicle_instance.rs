@@ -1063,6 +1063,7 @@ impl World {
                             maps,
                             plain: (base, item),
                             cache: HashMap::new(),
+                            more_cache: HashMap::new(),
                             current: 0,
                             shared: self.vehicle_textures.clone(),
                             held: Vec::new(),

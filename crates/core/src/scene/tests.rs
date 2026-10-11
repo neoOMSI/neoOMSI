@@ -235,15 +235,20 @@ fn freetex_and_dynamic_lightmap_keep_the_live_display_texture() {
     let mut base = freetex_test_look();
     base.diffuse = Some(10);
     base.lightmap = Some(11);
+    let item = base.clone();
     let spec = SlotSpec {
         base,
-        item: None,
-        more: Vec::new(),
+        item: Some(item.clone()),
+        more: vec![item],
     };
     let mut changed = spec.with_freetex(Some(10), 20, true, false);
     changed.set_lightmap(Some(30));
     assert_eq!(changed.base.diffuse, Some(20));
     assert_eq!(changed.base.lightmap, Some(30));
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(20));
+    assert_eq!(changed.item.as_ref().unwrap().lightmap, Some(30));
+    assert_eq!(changed.more[0].diffuse, Some(20));
+    assert_eq!(changed.more[0].lightmap, Some(30));
 }
 
 #[test]

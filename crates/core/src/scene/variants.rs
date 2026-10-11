@@ -142,6 +142,8 @@ pub struct MultiLight {
     /// live `[matl_freetex]` textures present when it was made.  The latter is normally
     /// empty, but a dashboard may combine a live screen with several light maps.
     pub cache: HashMap<(u32, Vec<Option<TextureId>>), (MaterialId, MaterialId)>,
+    /// The rebuilt items 2, 3, ... for each light-map and FreeTex combination.
+    pub more_cache: HashMap<(u32, Vec<Option<TextureId>>), Vec<MaterialId>>,
     pub current: u32,
     /// Composite maps are shared like the vehicles' pictures (see `FreeTex::shared`).
     pub shared: Arc<Mutex<HashMap<PathBuf, (TextureId, usize)>>>,
