@@ -743,6 +743,9 @@ impl State {
             number: Some(c.number.clone()).filter(|n| !n.trim().is_empty()),
             hof: Some(c.hof.clone()).filter(|p| !p.is_empty()),
             entry: Some(c.entry),
+            // The in-game launcher currently selects entry points, not an arbitrary map
+            // position as the standalone launcher does.
+            spawn: None,
             line: if c.free { None } else { c.line.clone() },
             tour: if c.free { None } else { c.tour.clone() },
             trip: if c.free {
