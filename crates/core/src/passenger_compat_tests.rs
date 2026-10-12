@@ -1668,6 +1668,23 @@ fn stop(pos: DVec3, heading: f64, name: &str) -> PaxStop {
 }
 
 #[test]
+fn timetable_gate_applies_to_stops_missing_from_busstops_cfg() {
+    let f = Fixture::new();
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mut h = Humans::new(&f.root);
+    h.stops.insert(1, stop(DVec3::ZERO, 0.0, "Unlisted stop"));
+    // Timetable targets are deliberately empty and there is no Busstops.cfg name for
+    // this stop. It must still be treated as having no due service.
+    h.passenger_targets = Some(HashMap::new());
+
+    h.stops_tick(0.05, &f.world, &renderer, &mut scene);
+
+    assert_eq!(h.stops[&1].want, 0);
+    assert!(h.people.is_empty());
+}
+
+#[test]
 fn reachable_seats_are_preferred_and_reservations_are_unique() {
     let mut h = Humans::new(Path::new("/nonexistent"));
     h.prefer_seats = true;

@@ -419,24 +419,28 @@ impl Humans {
                 };
                 s.factor = (r * 2.0 - 1.0) * k + 1.0;
             }
+            // Retire expired timetable passengers and count the remaining ones in one pass.
+            // This runs for every nearby stop every frame, so a separate count scan is costly.
+            let mut count = 0;
             for index in (0..self.people.len()).rev() {
-                let expired = matches!(&self.people[index].state, State::Pax(pax)
-                    if pax.stop == Some(id)
-                        && pax.inside.is_none()
-                        && pax.journey.service_deadline.is_some_and(|deadline| self.time_of_day >= deadline)
-                        && matches!(pax.task, Task::WalkingToBusstop | Task::WaitingForBus));
+                let (at_stop, expired) = match &self.people[index].state {
+                    State::Pax(pax) if pax.stop == Some(id) => (
+                        true,
+                        pax.inside.is_none()
+                            && pax.journey.service_deadline.is_some_and(|deadline| self.time_of_day >= deadline)
+                            && matches!(pax.task, Task::WalkingToBusstop | Task::WaitingForBus),
+                    ),
+                    _ => (false, false),
+                };
                 if expired {
                     self.release(index);
                     let passenger = self.people.swap_remove(index);
                     self.retire(&passenger);
+                } else if at_stop {
+                    count += 1;
                 }
             }
-            let count = self
-                .people
-                .iter()
-                .filter(|p| matches!(&p.state, State::Pax(x) if x.stop == Some(id)))
-                .count()
-                + self.network.handed.iter().filter(|h| h.0 == id).count();
+            let count = count + self.network.handed.iter().filter(|h| h.0 == id).count();
             let want = {
                 let s = &self.stops[&id];
                 let mean = (s.enter_max + s.enter_min) / 2.0;
@@ -444,9 +448,7 @@ impl Humans {
                 let wanted = forced.unwrap_or(w).min(s.spots.len());
                 // A timetable stop only gains passengers when a compatible service is
                 // actually due. Its normal crowd cap is otherwise unchanged.
-                if self.stop_targets.is_some()
-                    && self.stop_names.as_ref().is_some_and(|names| names.contains_key(&id))
-                    && s.lines.is_empty()
+                if self.passenger_targets.is_some() && s.lines.is_empty()
                 {
                     0
                 } else {
