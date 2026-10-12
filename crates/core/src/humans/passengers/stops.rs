@@ -18,6 +18,11 @@ pub(in crate::humans) struct WaitSpot {
 }
 
 impl WaitSpot {
+    /// The floor beneath this place. A seated `[passpos]` gives the person's hip height.
+    pub fn floor(&self) -> f64 {
+        self.pos.z - self.height as f64
+    }
+
     /// Put the feet ahead of the seated hip, using the selected human's geometry.
     pub fn foot_root(&self, front: f32, floor: f64) -> DVec3 {
         let yaw = self.face.to_radians();

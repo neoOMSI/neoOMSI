@@ -1206,6 +1206,29 @@ fn a_waiting_passenger_stays_on_a_raised_platform_above_a_sloped_kerb() {
     h.pax_move(0, 0.05, 50.0, &f.world, &[], &HashMap::new());
 
     assert_eq!(h.pax(0).unwrap().pos.z, floor);
+
+    // Returning to the place must keep the same floor while walking, not merely once the
+    // passenger is standing there again.
+    {
+        let p = h.pax_mut(0).unwrap();
+        p.task = Task::WalkingToBusstop;
+        p.movement = Movement::ToTarget;
+        p.target = DVec3::new(3.0, 2.0, floor);
+    }
+    h.pax_move(0, 0.05, 50.0, &f.world, &[], &HashMap::new());
+    assert_eq!(h.pax(0).unwrap().pos.z, floor);
+
+    // The task transition itself samples the nearby road too; it must retain the waiting
+    // point's floor rather than snapping down for one frame before the next movement tick.
+    h.pax_mut(0).unwrap().pos.z = 0.0;
+    h.set_task(
+        0,
+        Task::WaitingForBus,
+        &[],
+        &HashMap::new(),
+        &f.world,
+    );
+    assert_eq!(h.pax(0).unwrap().pos.z, floor);
 }
 
 #[test]

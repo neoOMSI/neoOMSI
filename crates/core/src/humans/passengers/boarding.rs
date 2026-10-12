@@ -110,10 +110,10 @@ impl Humans {
                     .zip(spot)
                     .and_then(|(s, k)| self.stops.get(&s).and_then(|s| s.spots.get(k)).cloned());
                 let floor = sp.as_ref().map(|sp| {
-                    let near = sp.pos.z - sp.height as f64;
+                    let near = sp.floor();
                     world
                         .walk_height_near(sp.pos.x, sp.pos.y, near)
-                        .unwrap_or(near)
+                        .map_or(near, |ground| ground.max(near))
                 });
                 let procedural = self.ik;
                 let front = self.people[i].ty.rig.seat_front();

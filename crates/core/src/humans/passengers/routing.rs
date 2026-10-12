@@ -281,7 +281,7 @@ impl Humans {
                     self.stops
                         .get(&stop)
                         .and_then(|s| s.spots.get(spot))
-                        .map(|sp| sp.pos.z - sp.height as f64)
+                        .map(|sp| sp.floor())
                 })
             })
             .flatten();
@@ -570,12 +570,8 @@ impl Humans {
             && p.posture != Posture::Sitting
             && matches!(p.task, Task::WaitingForBus | Task::WalkingToBusstop)
         {
-            if let Some(stop) = p.stop {
-                if let Some(s) = self.stops.get(&stop) {
-                    let floor = s.pos.z;
-                    let p = self.pax_mut(i).unwrap();
-                    p.pos.z = p.pos.z.max(floor);
-                }
+            if let Some(floor) = wait_floor {
+                p.pos.z = p.pos.z.max(floor);
             }
         }
         let _ = dt;
