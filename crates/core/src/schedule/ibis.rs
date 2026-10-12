@@ -50,7 +50,7 @@ pub fn set_ai_destination(
     terminus: &str,
     stops: &[&str],
 ) {
-    set_destination(v, hof, line, terminus, stops, true)
+    set_destination(v, hof, line, terminus, stops, false)
 }
 
 /// The same for the player's bus, done the driver's way: a typing job
@@ -519,7 +519,7 @@ pub(super) fn set_destination(
     line: &str,
     terminus: &str,
     stops: &[&str],
-    run_scheduled_target: bool,
+    direct_player: bool,
 ) {
     let Some(hof) = hof else { return };
     let terminus = terminus.trim();
@@ -558,7 +558,7 @@ pub(super) fn set_destination(
     };
     // the original's way: SetLineTo + AI_target_index, then the ai_scheduled_settarget trigger
     set_line_to(v, line);
-    if run_scheduled_target {
+    if !direct_player {
         v.set_var("AI_target_index", ti as f32);
         if v.trigger("ai_scheduled_settarget") {
             v.set_var(
@@ -600,4 +600,11 @@ pub(super) fn set_destination(
         "IBIS_terminus_texture",
         hof.termini[ti].texture_id.clone(),
     );
+    // A destination picked from the player's menu is not typed through the vehicle's
+    // electronics, so complete the normal IBIS state first.  The scheduled-target script
+    // can then consume that state for content which uses the callback to update its display.
+    if direct_player {
+        v.set_var("AI_target_index", ti as f32);
+        v.trigger("ai_scheduled_settarget");
+    }
 }

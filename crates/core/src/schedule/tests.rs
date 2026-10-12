@@ -16,10 +16,14 @@ fn direct_player_destination_runs_the_scheduled_target_trigger() {
     )
     .unwrap();
     std::fs::write(dir.join("model.cfg"), "").unwrap();
-    std::fs::write(dir.join("vars.txt"), "destination_triggered\n").unwrap();
+    std::fs::write(
+        dir.join("vars.txt"),
+        "destination_triggered\nAI_target_index\nIBIS_LinieKurs\nIBIS_Linie_Complex\nIBIS_Linie_Suffix\nIBIS_TerminusIndex\nIBIS_TerminusCode\nIBIS_RouteIndex\nIBIS_mode\n",
+    )
+    .unwrap();
     std::fs::write(
         dir.join("main.osc"),
-        "{trigger:ai_scheduled_settarget}\n1 (S.L.destination_triggered)\n{end}\n",
+        "{trigger:ai_scheduled_settarget}\n(L.L.IBIS_TerminusCode) (S.L.destination_triggered)\n{end}\n",
     )
     .unwrap();
     let ty = std::sync::Arc::new(
@@ -28,19 +32,33 @@ fn direct_player_destination_runs_the_scheduled_target_trigger() {
     let mut vehicle =
         ::simulation::VehicleInstance::new(ty, ::simulation::VehicleHost::new(Default::default()));
     let hof = ::legacy_vehicle::Hof {
-        termini: vec![::legacy_vehicle::hof::Terminus {
-            code: 1,
-            texture_id: "Terminus".into(),
-            terminus_stop: Some("Terminus".into()),
-            all_exit: false,
-            strings: vec![],
-        }],
+        termini: vec![
+            ::legacy_vehicle::hof::Terminus {
+                code: 1,
+                texture_id: "Other".into(),
+                terminus_stop: Some("Other".into()),
+                all_exit: false,
+                strings: vec![],
+            },
+            ::legacy_vehicle::hof::Terminus {
+                code: 2,
+                texture_id: "Terminus".into(),
+                terminus_stop: Some("Terminus".into()),
+                all_exit: false,
+                strings: vec![],
+            },
+        ],
         ..Default::default()
     };
 
     set_player_destination_directly(&mut vehicle, Some(&hof), "1", "Terminus", &[]);
 
-    assert_eq!(vehicle.var("destination_triggered"), Some(1.0));
+    // The trigger sees the state the normal direct-destination path writes, rather than
+    // replacing that path by returning early.
+    assert_eq!(vehicle.var("destination_triggered"), Some(2.0));
+    assert_eq!(vehicle.var("IBIS_TerminusIndex"), Some(1.0));
+    assert_eq!(vehicle.var("IBIS_TerminusCode"), Some(2.0));
+    assert_eq!(vehicle.var("IBIS_LinieKurs"), Some(1.0));
     std::fs::remove_dir_all(dir).ok();
 }
 
