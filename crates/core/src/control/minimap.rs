@@ -59,7 +59,13 @@ fn round(v: f64) -> f64 {
 }
 
 fn spawn(p: DVec3, heading: f64) -> String {
-    format!("{},{},{}", round(p.x), round(p.y), round(heading.rem_euclid(360.0)))
+    format!(
+        "{},{},{},{}",
+        round(p.x),
+        round(p.y),
+        round(heading.rem_euclid(360.0)),
+        round(p.z)
+    )
 }
 
 fn line(points: &[DVec3]) -> Vec<Point> {

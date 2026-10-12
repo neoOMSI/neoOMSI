@@ -31,7 +31,6 @@ pub(crate) fn place_on_duty(args: &mut Args) {
     };
     if !args.schedule
         || args.bus.is_none()
-        || args.spawn.is_some()
         || !args.situation_vars.is_empty()
     {
         return;

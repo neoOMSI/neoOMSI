@@ -89,7 +89,7 @@ pub(crate) fn open_world(args: &Args) -> Result<(World, Camera, DVec3)> {
 }
 
 /// Where the vehicle starts: `--spawn`, else the requested bus's entry point (None without
-/// either, or when the entry point's object is not in the map). The height is not known.
+/// either, or when the entry point's object is not in the map).
 pub(crate) fn spawn_point(args: &Args, world: Option<&World>) -> Option<DVec3> {
     if let Some(sp) = &args.spawn {
         let v: Vec<f64> = sp
@@ -97,7 +97,7 @@ pub(crate) fn spawn_point(args: &Args, world: Option<&World>) -> Option<DVec3> {
             .filter_map(|x| x.trim().parse().ok())
             .collect();
         if v.len() >= 2 {
-            return Some(DVec3::new(v[0], v[1], 0.0));
+            return Some(DVec3::new(v[0], v[1], v.get(3).copied().unwrap_or(0.0)));
         }
     }
     args.bus.as_ref()?;
