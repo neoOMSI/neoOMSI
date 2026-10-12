@@ -105,6 +105,14 @@ pub(super) fn drawn_on_surfaces(sco: &SceneryObject) -> bool {
     sco.surface || matches!(sco.render_type, RenderType::Surface | RenderType::OnSurface)
 }
 
+/// ToSpline objects stand relative to the visible spline, which is lifted above its
+/// authored height. Surface objects already receive that lift when drawn; ordinary
+/// objects (including parked cars) need it in their pose, also used by their children.
+pub(super) fn spline_attachment_pose(mut pose: Pose, sco: &SceneryObject) -> Pose {
+    pose.pos = scenery_draw_position(pose.pos, !drawn_on_surfaces(sco));
+    pose
+}
+
 /// A spline whose profiles all hang this far (m) over its line - wires, catenaries, a
 /// canopy - is no ground surface: it neither cuts the terrain nor carries anything.
 pub(super) const SPLINE_OVERHEAD: f32 = 2.0;

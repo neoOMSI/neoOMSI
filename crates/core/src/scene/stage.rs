@@ -555,7 +555,14 @@ impl World {
             let first = objs.iter().map(|o| o.1.index).min().unwrap_or(0);
             for (_, ro) in objs {
                 if a.repeater.is_none() && ro.index == first {
-                    out.anchors.push((a.id, ro.pose, row_type.clone()));
+                    out.anchors.push((
+                        a.id,
+                        Pose {
+                            pos: scenery_draw_position(ro.pose.pos, true),
+                            ..ro.pose
+                        },
+                        row_type.clone(),
+                    ));
                 }
                 // every car park of a row draws its own car
                 let key = a.id.wrapping_mul(1_000_003).wrapping_add(ro.index as i64);
@@ -565,10 +572,11 @@ impl World {
                     continue;
                 };
                 let key = row_object_key(tx, ty, a.id, ro.index);
+                let pose = spline_attachment_pose(ro.pose, &ot.sco);
                 out.objects.push(StagedObject {
                     ot,
                     id: a.id,
-                    place: Placement::Pose(ro.pose),
+                    place: Placement::Pose(pose),
                     rules: a.rules.clone(),
                     extra: a.strings.clone(),
                     lamp_parent: a.var_parent,

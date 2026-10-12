@@ -499,6 +499,73 @@ fn scripted_surface_draw_pose_keeps_the_upload_lift() {
 }
 
 #[test]
+fn spline_attachment_rows_stand_on_the_visible_spline() {
+    let spline = ::map::MapSpline {
+        id: 1,
+        pos: [12.0, 18.0, 3.5],
+        length: 40.0,
+        heading: 37.0,
+        grad_start: 10.0,
+        grad_end: 10.0,
+        cant_start: 5.0,
+        cant_end: 5.0,
+        ..Default::default()
+    };
+    let curve = SplineCurve::from_map(&spline, DVec2::ZERO);
+    // Zero-height parking spaces and a fence with its own height offset, repeated
+    // along an inclined, banked spline. Tangential placement keeps its rotation.
+    for (height, tilt) in [(0.0, false), (0.25, true)] {
+        let row = ::map::SplineAttachment {
+            offset: [3.0, height, 5.0],
+            interval: 10.0,
+            range: 20.0,
+            tilt,
+            ..Default::default()
+        };
+        let objects = crate::tiles::tile_row_objects(&row, &[spline.clone()], DVec2::ZERO, None);
+        assert_eq!(objects.len(), 3);
+        for (_, object) in objects {
+            let sco = SceneryObject::default();
+            let pose = spline_attachment_pose(object.pose, &sco);
+            let along = 5.0 + object.index as f64 * 10.0;
+            let surface = scenery_draw_position(curve.offset_point(along, 3.0, 0.0), true);
+            let drawn = scenery_draw_position(pose.pos, drawn_on_surfaces(&sco));
+            assert!((drawn.z - surface.z - height).abs() < 1e-8);
+            assert_eq!(pose.pos.truncate(), object.pose.pos.truncate());
+            assert_eq!(pose.rot, object.pose.rot);
+
+            // An attachObj on the row's first object inherits the corrected height.
+            if object.index == 0 {
+                let point = Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.0));
+                let child = pose.attached(&point, [0.0; 3]);
+                let old_child = object.pose.attached(&point, [0.0; 3]);
+                assert!((child.pos.z - old_child.pos.z - 0.08).abs() < 1e-8);
+            }
+        }
+    }
+}
+
+#[test]
+fn spline_attachment_surface_objects_receive_the_lift_once() {
+    let authored = Pose {
+        pos: DVec3::new(12.0, 18.0, 3.5),
+        rot: object_rotation([37.0, 10.0, 5.0]),
+    };
+    for text in [
+        "[surface]\n",
+        "[rendertype]\nsurface\n",
+        "[rendertype]\non_surface\n",
+    ] {
+        let sco = SceneryObject::parse(&::legacy_config::CfgFile::from_str("marking.sco", text));
+        let pose = spline_attachment_pose(authored, &sco);
+        let drawn = scenery_draw_position(pose.pos, drawn_on_surfaces(&sco));
+        assert!((drawn.z - authored.pos.z - 0.08).abs() < 1e-8);
+        assert_eq!(pose.rot, authored.rot);
+        assert_eq!(drawn.truncate(), authored.pos.truncate());
+    }
+}
+
+#[test]
 fn scenery_render_types_map_to_the_cpp_pass_order() {
     use ::scenery::sco::RenderType as ScoPhase;
     for (source, expected) in [
