@@ -382,7 +382,10 @@ impl WindowWipers {
                 .map(|p| vehicle.mesh_transforms[blade.mesh].transform_point3(p));
         }
         for film in &mut self.films {
-            let liquid = vehicle.host.precip_type != 2.0 || vehicle.host.temperature > 0.0;
+            if !vehicle.mesh_props[film.mesh].visible {
+                continue;
+            }
+            let liquid =vehicle.host.precip_type != 2.0 || vehicle.host.temperature > 0.0;
             let previous_wetness = film.unwiped;
             if dt > 0.0 {
                 // Gravity follows the pane's actual inclination. Relative airflow can
