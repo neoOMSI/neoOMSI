@@ -2799,7 +2799,6 @@ pub struct Duty {
     pub entry: Option<i32>,
     /// An explicit map position selected in the launcher's map preview. This takes priority
     /// over an entry point, including the automatic nearest-entry choice for a service.
-    #[serde(default)]
     pub spawn: Option<String>,
     pub line: Option<String>,
     pub tour: Option<String>,
