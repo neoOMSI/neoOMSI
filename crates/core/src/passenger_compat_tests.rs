@@ -1190,11 +1190,13 @@ fn a_waiting_passenger_stays_on_a_raised_platform_above_a_sloped_kerb() {
         .insert((0, 0), Arc::new(::map::Terrain::flat()));
     let mut h = Humans::new(&f.root);
     let floor = 0.25;
-    h.stops
-        .insert(1, stop(DVec3::new(2.0, 2.0, floor), 0.0, "Platform"));
+    let mut platform = stop(DVec3::new(2.0, 2.0, 0.0), 0.0, "Platform");
+    platform.spots[0].pos.z = floor;
+    h.stops.insert(1, platform);
     let mut pax = Pax::new(1.1);
     pax.task = Task::WaitingForBus;
     pax.stop = Some(1);
+    pax.spot = Some(0);
     pax.pos = DVec3::new(2.0, 2.0, floor);
     pax.movement = Movement::Standing;
     let mut person = f.person(7, State::Pax(Box::new(pax)), false);

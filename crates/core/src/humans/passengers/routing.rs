@@ -272,10 +272,18 @@ impl Humans {
     ) {
         let p0 = self.pax(i).unwrap().clone();
         // The object-defined waiting point is on the platform, but an angled kerb can make a
-        // ground probe at that point select the road below. Waiting passengers must not sink
-        // through the platform before they have begun walking to a bus.
+        // ground probe at that point select the road below. The stop marker can itself be at
+        // road height, so use the selected [passpos]'s floor instead. Waiting passengers must
+        // not sink through the platform before they have begun walking to a bus.
         let wait_floor = matches!(p0.task, Task::WaitingForBus | Task::WalkingToBusstop)
-            .then(|| p0.stop.and_then(|stop| self.stops.get(&stop).map(|s| s.pos.z)))
+            .then(|| {
+                p0.stop.zip(p0.spot).and_then(|(stop, spot)| {
+                    self.stops
+                        .get(&stop)
+                        .and_then(|s| s.spots.get(spot))
+                        .map(|sp| sp.pos.z - sp.height as f64)
+                })
+            })
             .flatten();
         if self.ik && p0.task != Task::SittingInBus && self.people[i].pose.sit_amount() > 0.02 {
             let p = self.pax_mut(i).unwrap();
