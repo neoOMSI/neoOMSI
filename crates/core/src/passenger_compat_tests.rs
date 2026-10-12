@@ -1967,6 +1967,27 @@ fn a_seat_being_vacated_still_counts_for_the_scripts() {
 }
 
 #[test]
+fn a_seated_on_foot_player_counts_for_the_vehicle_scripts() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    h.buses.player_cabin = Some(cabin());
+    h.avatars.avatar_cmds.insert(
+        0,
+        AvatarCmd {
+            pos: DVec3::ZERO,
+            heading: 0.0,
+            vel: DVec2::ZERO,
+            lift: 0.0,
+            seat: Some((BusId::Player, 1)),
+            floor: None,
+            aboard: None,
+            wheel: None,
+        },
+    );
+    assert_eq!(h.seat_counts()[2], 1);
+}
+
+#[test]
 fn opening_another_exit_preserves_the_current_path_progress() {
     let f = Fixture::new();
     let mut h = Humans::new(&f.root);

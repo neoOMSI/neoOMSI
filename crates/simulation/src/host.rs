@@ -1048,6 +1048,18 @@ mod tests {
     }
 
     #[test]
+    fn human_count_on_seat_returns_the_current_seat_count() {
+        let p = compile(&CompileInput::default());
+        let mut state = State::new(&p);
+        let mut host = VehicleHost::new(SimClock::default());
+        host.humans_on_seat = vec![0, 2];
+        let mut stacks = Stacks::default();
+        stacks.push(1.0);
+        host.callback("GetHumanCountOnSeat", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop(), 2.0);
+    }
+
+    #[test]
     fn script_texture_colour_is_kept_per_texture() {
         let p = compile(&CompileInput::default());
         let mut state = State::new(&p);

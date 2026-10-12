@@ -1377,7 +1377,11 @@ impl Humans {
                 .filter(|_| x.task == Task::SittingInBus)
                 .or(x.vacating),
             _ => None,
-        });
+        }).chain(self.avatars.avatar_cmds.values().filter_map(|avatar| {
+            avatar
+                .seat
+                .and_then(|(bus, seat)| (bus == BusId::Player).then_some(seat))
+        }));
         seat_numbers(&cabin.seats, sitting)
     }
 
