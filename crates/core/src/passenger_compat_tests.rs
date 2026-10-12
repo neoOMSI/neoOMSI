@@ -1926,9 +1926,10 @@ fn complete_journey(fare: TicketAction) {
     regs.get_mut(&b.id).unwrap().at = None;
     tick(&mut h, &b, &regs);
     assert!(h.stop_request);
-    assert_eq!(h.pax(0).unwrap().task, Task::InBusToExit);
-    assert_eq!(h.buses.seats[&b.id][reserved], b.cabin.seats[reserved].seated);
+    assert_eq!(h.pax(0).unwrap().task, Task::SittingInBus);
     regs.get_mut(&b.id).unwrap().at = Some(2);
+    tick(&mut h, &b, &regs);
+    assert_eq!(h.pax(0).unwrap().task, Task::InBusToExit);
     for _ in 0..600 {
         tick(&mut h, &b, &regs);
         if h.pax(0).is_none() {

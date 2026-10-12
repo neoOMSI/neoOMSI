@@ -26,13 +26,6 @@ impl App {
                 .map(|p| p.vehicle.position)
                 .or(self.camera.as_ref().map(|c| c.position))
                 .unwrap_or(DVec3::ZERO);
-            if let Some(schedule) = self.schedule.as_ref() {
-                h.set_timetable_targets(
-                    w,
-                    schedule.stop_targets_within(self.clock.time, 5.0 * 60.0),
-                    schedule.stop_names(),
-                );
-            }
             h.driver_away = self.on_foot.as_ref().is_some_and(|f| {
                 let own = Some(humans::BusId::Player);
                 f.seat.map(|s| s.0) != own && f.inside.map(|i| i.0) != own
@@ -50,6 +43,15 @@ impl App {
             self.humans_populate_t -= dt;
             if self.humans_populate_t <= 0.0 && !self.paused {
                 self.humans_populate_t = 2.0;
+                // Timetable targets only affect passenger spawning, which is itself
+                // throttled. Rebuild them on that cadence rather than for every frame.
+                if let Some(schedule) = self.schedule.as_ref() {
+                    h.set_timetable_targets(
+                        w,
+                        schedule.stop_targets_within(self.clock.time, 5.0 * 60.0),
+                        schedule.stop_names(),
+                    );
+                }
                 h.populate(w, r, scene, center);
             }
             if let (Some(cam), Some(s)) = (self.camera.as_ref(), self.surface.as_ref()) {
