@@ -3,7 +3,8 @@
 use super::*;
 
 impl Schedule {
-    /// The destinations for timetable calls due within `ahead` seconds.
+    /// The destinations for timetable calls due within `ahead` seconds of the traffic
+    /// clock. Unlike a time of day, that clock counts through midnight.
     ///
     /// Passenger demand is keyed by a destination and the compatible terminus, not a
     /// specific departure. This lets either bus on the same service carry the passengers.

@@ -14,6 +14,13 @@ impl App {
         self.tick_on_foot(if self.paused { 0.0 } else { dt });
         self.sync_remote_walkers();
         let __t = Instant::now();
+        // The simulation clock is a time of day, whereas traffic and the timetable keep
+        // counting past midnight. Passenger service deadlines must use that same clock.
+        let service_time = self
+            .traffic
+            .as_ref()
+            .map(|traffic| traffic.day_time)
+            .unwrap_or(self.clock.time);
         if let (Some(h), Some(w), Some(r), Some(scene)) = (
             self.humans.as_mut(),
             self.world.as_ref(),
@@ -34,7 +41,7 @@ impl App {
                 .global
                 .passenger_density((self.clock.time / 3600.0) as f32)
                 * ::config::get_float("passengers", "density").unwrap_or(1.0) as f32;
-            h.time_of_day = self.clock.time;
+            h.time_of_day = service_time;
             h.delay = self
                 .duty
                 .as_ref()
@@ -48,7 +55,7 @@ impl App {
                 if let Some(schedule) = self.schedule.as_ref() {
                     h.set_timetable_targets(
                         w,
-                        schedule.stop_targets_within(self.clock.time, 5.0 * 60.0),
+                        schedule.stop_targets_within(service_time, 5.0 * 60.0),
                         schedule.stop_names(),
                     );
                 }

@@ -263,12 +263,29 @@ impl Humans {
         let (enter_max, enter_min) = world.stop_enter(id);
         // the destinations: the stops the trips from here go on to, as likely as people
         // get off there; each with the termini of the buses that go there
-        let lines: Vec<(String, HashSet<String>)> = self
-            .stop_targets
+        let (lines, line_deadlines) = self
+            .passenger_targets
             .as_ref()
-            .and_then(|m| m.get(&id))
-            .cloned()
-            .unwrap_or_default();
+            .and_then(|targets| targets.get(&id))
+            .map(|targets| {
+                (
+                    targets
+                        .iter()
+                        .map(|target| (target.destination.clone(), target.termini.clone()))
+                        .collect(),
+                    targets.iter().map(|target| target.deadline).collect(),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    self.stop_targets
+                        .as_ref()
+                        .and_then(|targets| targets.get(&id))
+                        .cloned()
+                        .unwrap_or_default(),
+                    Vec::new(),
+                )
+            });
         let dests = destination_weights(world, &lines);
         if debug_pax() {
             log::info!(
@@ -307,7 +324,7 @@ impl Humans {
             buses: Vec::new(),
             dests,
             lines,
-            line_deadlines: Vec::new(),
+            line_deadlines,
         }
     }
 
