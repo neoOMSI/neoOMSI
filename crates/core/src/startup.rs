@@ -278,26 +278,43 @@ pub(crate) fn graphics_instance() -> wgpu::Instance {
         descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();
         return wgpu::Instance::new(descriptor);
     }
-    let mut last = None;
+    // (an interface whose only adapter is a software renderer - DirectX 12's "Microsoft
+    // Basic Render Driver" on a chip without a usable DirectX 12 driver - comes after the
+    // others)
+    let (mut software, mut last) = (None, None);
     for b in backend_order() {
         let instance = backend_instance(b);
         let adapters = pollster::block_on(instance.enumerate_adapters(b));
-        if !adapters.is_empty() {
-            log::info!(
-                "graphics: {:?} ({})",
-                b,
-                adapters
-                    .iter()
-                    .map(|a| a.get_info().name)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+        let names = || {
+            adapters
+                .iter()
+                .map(|a| a.get_info().name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        if adapters.iter().any(|a| !is_software(&a.get_info())) {
+            log::info!("graphics: {:?} ({})", b, names());
             return instance;
         }
-        log::info!("graphics: no {b:?} adapter here");
-        last = Some(instance);
+        if adapters.is_empty() {
+            log::info!("graphics: no {b:?} adapter here");
+            last = Some(instance);
+        } else {
+            log::info!("graphics: {b:?} has only a software renderer ({})", names());
+            software.get_or_insert(instance);
+        }
     }
-    last.unwrap_or_else(|| wgpu::Instance::new(descriptor))
+    software
+        .or(last)
+        .unwrap_or_else(|| wgpu::Instance::new(descriptor))
+}
+
+/// A renderer in software on the processor (wgpu calls it a CPU adapter: WARP, llvmpipe,
+/// SwiftShader). It draws a frame every second or so.
+fn is_software(info: &wgpu::AdapterInfo) -> bool {
+    info.device_type == wgpu::DeviceType::Cpu
+        || info.name.contains("Microsoft Basic Render Driver")
+        || info.name.contains("llvmpipe")
 }
 
 /// The graphics interfaces in the order they are tried: Metal on a Mac; on Windows DirectX
@@ -366,45 +383,62 @@ pub(crate) fn window_renderer(
     for b in backend_order() {
         candidates.push((Some(b), backend_instance(b)));
     }
-    for (b, inst) in candidates {
-        let surface = match inst.create_surface(window.clone()) {
-            Ok(s) => s,
-            Err(e) => {
-                failures.push(format!(
-                    "{}: no surface ({e})",
-                    b.map(|b| format!("{b:?}"))
-                        .unwrap_or_else(|| "first choice".into())
-                ));
-                continue;
-            }
-        };
-        for adapter in Renderer::adapters_for(&inst, &surface) {
-            let info = adapter.get_info();
-            let what = format!("{} ({:?})", info.name, info.backend);
-            if failures.iter().any(|f| f.starts_with(&what)) {
-                continue;
-            }
-            match ::render::catch(|| {
-                pollster::block_on(Renderer::new_on(adapter, Some(&surface), None, options))
-            }) {
-                Some(Ok(r)) => {
-                    if !failures.is_empty() {
-                        log::warn!(
-                            "graphics: drawing on {what}; before it {}",
-                            failures.join("; ")
-                        );
+    // A software renderer only when no graphics chip opens on any interface: when the chip's
+    // DirectX 12 device could not be opened, DirectX 12's "Microsoft Basic Render Driver" was
+    // the next adapter tried, and the game ran on the processor at a frame a second instead
+    // of on the chip's Vulkan.
+    for software_round in [false, true] {
+        for (b, inst) in &candidates {
+            let surface = match inst.create_surface(window.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    let what = format!(
+                        "{}: no surface ({e})",
+                        b.map(|b| format!("{b:?}"))
+                            .unwrap_or_else(|| "first choice".into())
+                    );
+                    if !failures.contains(&what) {
+                        failures.push(what);
                     }
-                    drop(surface);
-                    *instance = inst;
-                    return Ok(r);
+                    continue;
                 }
-                Some(Err(e)) => {
-                    log::warn!("graphics: {what} could not be opened: {e:#}");
-                    failures.push(format!("{what}: {e:#}"));
+            };
+            for adapter in Renderer::adapters_for(inst, &surface) {
+                let info = adapter.get_info();
+                if is_software(&info) != software_round {
+                    continue;
                 }
-                None => {
-                    log::warn!("graphics: {what} failed while being opened");
-                    failures.push(format!("{what}: failed while being opened"));
+                let what = format!("{} ({:?})", info.name, info.backend);
+                if failures.iter().any(|f| f.starts_with(&what)) {
+                    continue;
+                }
+                if software_round {
+                    log::warn!(
+                        "graphics: no graphics chip could be opened; trying the software renderer {what} (a few frames a second at best)"
+                    );
+                }
+                match ::render::catch(|| {
+                    pollster::block_on(Renderer::new_on(adapter, Some(&surface), None, options))
+                }) {
+                    Some(Ok(r)) => {
+                        if !failures.is_empty() {
+                            log::warn!(
+                                "graphics: drawing on {what}; before it {}",
+                                failures.join("; ")
+                            );
+                        }
+                        drop(surface);
+                        *instance = inst.clone();
+                        return Ok(r);
+                    }
+                    Some(Err(e)) => {
+                        log::warn!("graphics: {what} could not be opened: {e:#}");
+                        failures.push(format!("{what}: {e:#}"));
+                    }
+                    None => {
+                        log::warn!("graphics: {what} failed while being opened");
+                        failures.push(format!("{what}: failed while being opened"));
+                    }
                 }
             }
         }

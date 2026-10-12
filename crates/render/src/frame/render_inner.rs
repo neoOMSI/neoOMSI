@@ -1561,7 +1561,33 @@ impl Renderer {
                 });
             }
         }
+        // (all of the frame's spotlight maps in one pass, each in its own tile: a pass of its
+        // own for each - up to 16 a frame, each loading and storing the whole far map - cost
+        // the card more than drawing them)
+        let mut spot_pass = spot_draws
+            .iter()
+            .any(|&(k, _)| scene.spot_bind_groups.get(k).is_some())
+            .then(|| {
+                shadow_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("spot shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.shadow_view_far,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+            });
         for &(k, pose) in &spot_draws {
+            let Some(pass) = spot_pass.as_mut() else {
+                break;
+            };
             let Some(bg) = scene.spot_bind_groups.get(k) else {
                 continue;
             };
@@ -1578,30 +1604,16 @@ impl Renderer {
             let tile = self.spot_tile;
             let x = (k as u32 % 4) * tile;
             let y = self.options.shadow_size + (k as u32 / 4) * tile;
-            let mut pass = shadow_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("spot shadow"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view_far,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
             pass.set_viewport(x as f32, y as f32, tile as f32, tile as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, tile, tile);
             pass.set_pipeline(&self.shadow_clear_pipeline);
             pass.draw(0..3, 0..1);
             pass.set_bind_group(0, bg, &[]);
-            encode_batches(&mut pass, scene, &shadow_batches[3 + k], |pipe| {
+            encode_batches(pass, scene, &shadow_batches[3 + k], |pipe| {
                 &self.shadow_pipelines[pipe as usize]
             });
         }
+        drop(spot_pass);
         if prepass_on {
             let proj = glam::camera::rh::proj::directx::perspective(
                 camera.fov_deg.to_radians(),

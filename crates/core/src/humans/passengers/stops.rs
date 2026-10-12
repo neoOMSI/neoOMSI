@@ -394,6 +394,14 @@ impl Humans {
         scene: &mut Scene,
         id: i64,
     ) -> Option<usize> {
+        let ours = self
+            .people
+            .iter()
+            .filter(|p| !p.remote && p.puppet.is_none())
+            .count();
+        if ours >= super::super::MAX_PEOPLE {
+            return None;
+        }
         let k = self.take_spot(id, None)?;
         let sp = self.stops[&id].spots[k].clone();
         let (dest, line) = self.draw_dest(id);

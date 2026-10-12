@@ -91,6 +91,12 @@ const BODY_OUTSIDE: f64 = 0.28;
 const STOP_RANGE: f64 = 450.0;
 /// Pedestrians stroll within this distance of the player (m).
 const STROLL_RADIUS: f64 = 200.0;
+/// The most people of our own (not a LAN host's, not test puppets) a stop is filled up to,
+/// counting everybody: Omsi.exe keeps a fixed pool of people (`[AIMaxCountRandom]`, 200 by
+/// default) and a stop gets none once it is used up. Every stop near a big interchange
+/// filled to its own want made 400 and more people, waiting where nobody looks, each
+/// simulated, posed and drawn. A quiet map never comes near it.
+const MAX_PEOPLE: usize = 300;
 /// Over this distance on either side of a joint (m) a point of an articulated bus's cabin
 /// moves from the frame of the section in front to the one behind.
 const JOINT_BLEND: f32 = 0.5;

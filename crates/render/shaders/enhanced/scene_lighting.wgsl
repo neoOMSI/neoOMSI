@@ -206,18 +206,24 @@ fn beam_angle(to_surface: vec3<f32>, f: vec3<f32>) -> BeamAngle {
 }
 
 fn headlamp_profile(to_surface: vec3<f32>, f: vec3<f32>, cos_outer: f32, main_beam: bool) -> f32 {
-    let a = beam_angle(to_surface, f);
-    if (a.state == BEAM_VERTICAL) {
+    // (the cheap tests of beam_angle first, and the edge before the beam's shape: outside
+    // the edge the profile is 0 whatever the shape, and most pixels a lamp's cell holds are)
+    let r = cross(f, vec3<f32>(0.0, 0.0, 1.0));
+    if (dot(r, r) < 1e-6) {
         return 1.0;
     }
-    if (a.state == BEAM_BEHIND) {
+    if (dot(to_surface, f) <= 0.001) {
         return 0.0;
     }
-    let h = a.h;
-    let v = a.v;
     let outer = max(degrees(acos(clamp(cos_outer, -1.0, 1.0))), 5.0);
     let off_axis = degrees(acos(clamp(dot(to_surface, f) / max(length(to_surface), 1e-4), -1.0, 1.0)));
     let edge = 1.0 - smoothstep(0.15 * outer, 1.45 * outer, off_axis);
+    if (edge <= 0.0) {
+        return 0.0;
+    }
+    let a = beam_angle(to_surface, f);
+    let h = a.h;
+    let v = a.v;
 
     if (main_beam) {
         let core = exp(-0.5 * (h * h / 49.0 + v * v / 17.6));

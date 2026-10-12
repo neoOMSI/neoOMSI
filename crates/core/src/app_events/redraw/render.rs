@@ -962,8 +962,8 @@ impl App {
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
                     if self.lab_menu.is_none() {
-                        // (drawn over the picture: its commands go first)
-                        r.flush_deferred();
+                        // (drawn over the picture: its commands are queued after the
+                        // picture's, see `DevTools::submit`)
                         self.devtools
                             .get_or_insert_with(devtools::DevTools::new)
                             .render(r, &view, scale, &snap, &dev_extra);
