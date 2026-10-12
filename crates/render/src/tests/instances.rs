@@ -95,6 +95,37 @@ fn scattered_updates_upload_only_the_changed_stream_and_slots() {
 }
 
 #[test]
+fn instance_keeps_state_for_declared_material_slots_without_geometry_ranges() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let material = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [1.0; 4], true);
+    let data = MeshData {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+        normals: vec![Vec3::Z; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        // OMSI model.cfg files may declare material slots which this particular
+        // mesh does not draw. They still need renderer state for live overrides.
+        ranges: vec![(0, 3, 0)],
+        ..Default::default()
+    };
+    let mesh = renderer.add_mesh(&mut scene, &data);
+    let instance = renderer.add_instance(
+        &mut scene,
+        mesh,
+        DVec3::ZERO,
+        Mat4::IDENTITY,
+        vec![material; 4],
+    );
+
+    let i = &scene.instances[instance];
+    assert_eq!(i.slot_alpha.len(), 4);
+    assert_eq!(i.slot_light.len(), 4);
+    assert_eq!(i.slot_night.len(), 4);
+    assert_eq!(i.slot_uv.len(), 4);
+}
+
+#[test]
 fn animated_uploads_keep_only_the_last_valid_pose_and_drain() {
     let renderer = noop_renderer();
     let mut scene = renderer.new_scene();
