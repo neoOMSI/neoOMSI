@@ -23,11 +23,21 @@ fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u
     }
 }
 
-fn view_render_origin(position: DVec3, current: DVec3, reuse: bool) -> DVec3 {
-    // Mirrors, stereo eyes and side panels share the scene buffers with the primary view.
-    // Crossing a cell boundary between views must not re-upload every static instance.
-    // A distant texture camera still rebases to keep its relative coordinates precise.
-    if reuse && (position - current).abs().max_element() <= 200.0 {
+/// How far (on any axis) the window's camera goes from the render origin before the origin
+/// follows it. Every move rewrites the models of the whole scene; at 400 m a coordinate
+/// still has a step of 0.03 mm in 32 bits.
+const ORIGIN_KEEP: f64 = 400.0;
+/// The same for mirrors, stereo eyes and side panels, which share the scene buffers with
+/// the window's view: they keep its origin while they are anywhere near its camera.
+const SHARED_ORIGIN_KEEP: f64 = ORIGIN_KEEP + 200.0;
+
+/// The render origin a view draws with: `current` while the camera is within `keep` of it,
+/// else the 100 m cell the camera is in (the shaders' patterns take the origin modulo
+/// 1000 m, a whole number of cells).
+fn view_render_origin(position: DVec3, current: DVec3, keep: f64) -> DVec3 {
+    // Crossing a cell boundary must not re-upload every static instance; a distant texture
+    // camera still rebases to keep its relative coordinates precise.
+    if (position - current).abs().max_element() <= keep {
         current
     } else {
         (position / 100.0).floor() * 100.0
@@ -136,7 +146,13 @@ impl Renderer {
         let ro = view_render_origin(
             camera.position,
             scene.render_origin,
-            scene.model_buf.is_some() && !primary_view,
+            if scene.model_buf.is_none() {
+                0.0
+            } else if primary_view {
+                ORIGIN_KEEP
+            } else {
+                SHARED_ORIGIN_KEEP
+            },
         );
         self.set_render_origin(scene, ro);
         let (full_w, full_h) = (width, height);
@@ -2614,21 +2630,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secondary_views_share_the_origin_across_cell_boundaries() {
+    fn views_keep_the_origin_across_cell_boundaries() {
         for origin in [DVec3::ZERO, DVec3::splat(-100.0), DVec3::splat(1_000_000.0)] {
-            for offset in [DVec3::splat(-0.1), DVec3::splat(100.1)] {
-                assert_eq!(view_render_origin(origin + offset, origin, true), origin);
-                assert_ne!(view_render_origin(origin + offset, origin, false), origin);
+            for offset in [DVec3::splat(-0.1), DVec3::splat(100.1), DVec3::splat(-399.0)] {
+                assert_eq!(view_render_origin(origin + offset, origin, ORIGIN_KEEP), origin);
+                assert_eq!(view_render_origin(origin + offset, origin, SHARED_ORIGIN_KEEP), origin);
+                assert_ne!(view_render_origin(origin + offset, origin, 0.0), origin);
             }
         }
     }
 
     #[test]
-    fn distant_secondary_cameras_and_initial_views_rebase() {
+    fn a_mirror_near_the_window_camera_never_moves_the_origin() {
+        // the window's camera at the edge of its reach, a mirror a few metres beyond it
+        let origin = DVec3::new(5000.0, -2000.0, 100.0);
+        let camera = origin + DVec3::new(ORIGIN_KEEP, -ORIGIN_KEEP, 0.0);
+        assert_eq!(view_render_origin(camera, origin, ORIGIN_KEEP), origin);
+        let mirror = camera + DVec3::new(30.0, -30.0, 2.0);
+        assert_eq!(view_render_origin(mirror, origin, SHARED_ORIGIN_KEEP), origin);
+    }
+
+    #[test]
+    fn distant_cameras_and_initial_views_rebase() {
         let position = DVec3::new(1000.5, -201.0, 2.0);
         let expected = DVec3::new(1000.0, -300.0, 0.0);
-        assert_eq!(view_render_origin(position, DVec3::ZERO, true), expected);
-        assert_eq!(view_render_origin(position, DVec3::ZERO, false), expected);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, SHARED_ORIGIN_KEEP), expected);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, ORIGIN_KEEP), expected);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, 0.0), expected);
     }
 
     #[test]

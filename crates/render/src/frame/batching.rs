@@ -76,7 +76,11 @@ pub(crate) fn encode_batches_filtered<'a, E: wgpu::util::RenderEncoder<'a>>(
     include: impl Fn(&Batch) -> bool,
     pipeline: impl Fn(u8) -> &'a wgpu::RenderPipeline,
 ) {
-    let (mut pipe, mut mesh, mut material) = (u8::MAX, u32::MAX, u32::MAX);
+    // (meshes in one page share its buffers and materials that look alike share a group:
+    // they are bound once for all the draws in a row that use them)
+    let mut pipe = u8::MAX;
+    let mut buffers: Option<(&wgpu::Buffer, &wgpu::Buffer)> = None;
+    let mut group: Option<&wgpu::BindGroup> = None;
     for b in batches {
         if !include(b) {
             continue;
@@ -85,21 +89,19 @@ pub(crate) fn encode_batches_filtered<'a, E: wgpu::util::RenderEncoder<'a>>(
             pass.set_pipeline(pipeline(b.pipe));
             pipe = b.pipe;
         }
-        if b.mesh != mesh {
-            let m = &scene.meshes[b.mesh as usize];
+        let m = &scene.meshes[b.mesh as usize];
+        if buffers != Some((&m.vertex_buf, &m.index_buf)) {
             pass.set_vertex_buffer(0, Some(m.vertex_buf.slice(..)));
             pass.set_index_buffer(m.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-            mesh = b.mesh;
+            buffers = Some((&m.vertex_buf, &m.index_buf));
         }
-        if b.material != material {
-            pass.set_bind_group(
-                1,
-                Some(&scene.materials[b.material as usize].bind_group),
-                &[],
-            );
-            material = b.material;
+        let g = &scene.materials[b.material as usize].bind_group;
+        if group != Some(g) {
+            pass.set_bind_group(1, Some(g), &[]);
+            group = Some(g);
         }
-        pass.draw_indexed(b.first..b.first + b.count, 0, b.instances.clone());
+        let first = m.first_index + b.first;
+        pass.draw_indexed(first..first + b.count, m.base_vertex, b.instances.clone());
     }
 }
 
@@ -223,15 +225,18 @@ pub(crate) struct KeptBundles {
     parts: Vec<(Vec<Batch>, Vec<BatchBinds>, wgpu::RenderBundle)>,
 }
 
-/// What a batch's draw binds: its pipeline, its mesh's buffers and its material's group (a
-/// mesh or material slot can be given to another since, or a pipeline made anew).
+/// What a batch's draw binds: its pipeline, its mesh's buffers and where in them it lies,
+/// and its material's group (a mesh or material slot can be given to another since, in
+/// another place of the same page, or a pipeline made anew).
 struct BatchBinds(
     wgpu::RenderPipeline,
     wgpu::Buffer,
     wgpu::Buffer,
     wgpu::BindGroup,
+    (i32, u32),
 );
 
+#[allow(clippy::type_complexity)]
 fn batch_binds<'s>(
     scene: &'s Scene,
     pp: &'s PassPipelines,
@@ -241,6 +246,7 @@ fn batch_binds<'s>(
     &'s wgpu::Buffer,
     &'s wgpu::Buffer,
     &'s wgpu::BindGroup,
+    (i32, u32),
 ) {
     let m = &scene.meshes[b.mesh as usize];
     (
@@ -248,6 +254,7 @@ fn batch_binds<'s>(
         &m.vertex_buf,
         &m.index_buf,
         &scene.materials[b.material as usize].bind_group,
+        (m.base_vertex, m.first_index),
     )
 }
 
@@ -329,8 +336,8 @@ pub(crate) fn record_bundles(
                 };
                 let same = was.as_slice() == *chunk
                     && chunk.iter().zip(binds).all(|(b, k)| {
-                        let (p, v, i, g) = batch_binds(scene, pp, b);
-                        *p == k.0 && *v == k.1 && *i == k.2 && *g == k.3
+                        let (p, v, i, g, at) = batch_binds(scene, pp, b);
+                        *p == k.0 && *v == k.1 && *i == k.2 && *g == k.3 && at == k.4
                     });
                 if same {
                     reuse[n] = Some(bundle.clone());
@@ -365,8 +372,8 @@ pub(crate) fn record_bundles(
                             chunk
                                 .iter()
                                 .map(|b| {
-                                    let (p, v, i, g) = batch_binds(scene, pp, b);
-                                    BatchBinds(p.clone(), v.clone(), i.clone(), g.clone())
+                                    let (p, v, i, g, at) = batch_binds(scene, pp, b);
+                                    BatchBinds(p.clone(), v.clone(), i.clone(), g.clone(), at)
                                 })
                                 .collect(),
                             bundle.clone().expect("recorded"),

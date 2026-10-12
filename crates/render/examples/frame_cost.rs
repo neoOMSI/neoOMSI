@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     let meshes: Vec<_> = (0..4096)
-        .map(|_| renderer.add_mesh(&mut scene, &data))
+        .map(|_| renderer.add_animated_mesh(&mut scene, &data))
         .collect();
     let output = renderer.add_render_texture(&mut scene, 64, 64);
     let lighting = Lighting {
@@ -143,5 +143,67 @@ fn main() -> anyhow::Result<()> {
             started.elapsed().as_secs_f64() * 1000.0 / 60.0
         );
     }
+
+    // the render origin following the bus sideways, and in height (every entry made anew)
+    for (what, step) in [("sideways", DVec3::new(100.0, 0.0, 0.0)), ("in height", DVec3::new(0.0, 0.0, 100.0))] {
+        let started = Instant::now();
+        for frame in 0..60 {
+            let origin = if frame % 2 == 0 { DVec3::ZERO } else { step };
+            renderer.set_render_origin(&mut scene, origin);
+            renderer.prepare(&mut scene);
+            renderer.queue.submit([]);
+        }
+        println!(
+            "render origin moved {what}, 30,000 instances: {:.3} ms/move",
+            started.elapsed().as_secs_f64() * 1000.0 / 60.0
+        );
+    }
+
+    // a person's pose among the 30,000 static instances
+    let person = renderer.add_animated_mesh(&mut scene, &data);
+    renderer.add_instance(&mut scene, person, DVec3::ZERO, Mat4::IDENTITY, vec![material; 4]);
+    renderer.prepare(&mut scene);
+    let started = Instant::now();
+    for frame in 0..60 {
+        let s = 1.0 + (frame % 2) as f32;
+        let posed: Vec<Vec3> = data.positions.iter().map(|p| *p * s).collect();
+        renderer.update_mesh(&mut scene, person, &posed, &data.normals, &data.uvs);
+        renderer.prepare(&mut scene);
+        renderer.queue.submit([]);
+    }
+    println!(
+        "one pose among 30,000 instances: {:.3} ms/frame",
+        started.elapsed().as_secs_f64() * 1000.0 / 60.0
+    );
+
+    // a picture of thousands of different small meshes (a map's splines and objects), as a
+    // mirror draws it: recorded every frame (OMSI_NO_MESH_PAGES=1: each in buffers of its own)
+    let mut scene = renderer.new_scene();
+    let material = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [1.0; 4], true);
+    for k in 0..8000 {
+        let mesh = renderer.add_mesh(&mut scene, &data);
+        renderer.add_instance(
+            &mut scene,
+            mesh,
+            DVec3::new((k % 100) as f64 * 4.0 - 200.0, 20.0 + (k / 100) as f64 * 4.0, 0.0),
+            Mat4::IDENTITY,
+            vec![material; 4],
+        );
+    }
+    let output = renderer.add_render_texture(&mut scene, 64, 64);
+    let camera = Camera {
+        position: DVec3::new(0.0, 0.0, 3.0),
+        fov_deg: 90.0,
+        ..camera
+    };
+    renderer.render_to_texture(&mut scene, output, &camera, &lighting, 1.0);
+    let started = Instant::now();
+    for _ in 0..60 {
+        renderer.render_to_texture(&mut scene, output, &camera, &lighting, 1.0);
+    }
+    println!(
+        "8,000 different meshes in sight: {:.3} ms/frame",
+        started.elapsed().as_secs_f64() * 1000.0 / 60.0
+    );
     Ok(())
 }

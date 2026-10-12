@@ -203,13 +203,26 @@ impl Renderer {
             let f = self.freed(scene);
             (f.vertex_buf.clone(), f.index_buf.clone())
         };
+        let (vertex_bytes, index_bytes) = (vertex_buf.size(), index_buf.size());
+        // (the page's space goes to the next mesh)
+        release_mesh_space(&mut scene.mesh_pages, &scene.meshes[id]);
         let m = &mut scene.meshes[id];
         m.vertex_buf = vertex_buf;
         m.index_buf = index_buf;
+        m.page = NO_PAGE;
+        m.base_vertex = 0;
+        m.first_index = 0;
+        m.vertex_offset = 0;
+        m.vertex_bytes = vertex_bytes;
+        m.index_bytes = index_bytes;
         m.ranges.clear();
         m.bounds_center = Vec3::ZERO;
         m.bounds_radius = 0.0;
         Self::mesh_bounds_changed(scene, id);
+        // (a pose makes it a reshaped mesh again; the slot may take a static one now)
+        if let Some(r) = scene.reshaped_meshes.get_mut(id) {
+            *r = false;
+        }
     }
 
     pub fn free_texture(&self, scene: &mut Scene, id: TextureId) {
@@ -286,9 +299,14 @@ impl Renderer {
                 }
             }
         }
+        for m in scene.meshes.iter().skip(meshes) {
+            release_mesh_space(&mut scene.mesh_pages, m);
+        }
         cut(&mut scene.meshes, meshes);
         cut(&mut scene.textures, textures);
         cut(&mut scene.materials, materials);
+        scene.reshaped_meshes.truncate(scene.meshes.len());
+        Self::forget_reshaped_users(scene);
         let (nm, nt) = (scene.meshes.len(), scene.materials.len());
         for inst in scene.instances.iter_mut() {
             if inst.mesh >= nm {
@@ -316,8 +334,13 @@ impl Renderer {
             return new;
         }
         let m = scene.meshes.pop().unwrap();
+        // (a slot taken over before it was freed gives its page space back)
+        release_mesh_space(&mut scene.mesh_pages, &scene.meshes[into]);
         scene.meshes[into] = m;
         Self::mesh_bounds_changed(scene, into);
+        if let Some(r) = scene.reshaped_meshes.get_mut(into) {
+            *r = false;
+        }
         into
     }
 
@@ -354,6 +377,7 @@ impl Renderer {
         let mut inst = scene.instances.pop().unwrap();
         inst.base = scene.instances[into].base;
         scene.instances[into] = inst;
+        Self::note_instance_mesh(scene, into);
         Self::mark_changed(scene, into);
         into
     }

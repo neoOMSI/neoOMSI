@@ -26,7 +26,7 @@ pub(super) fn own_skinned_meshes(
         {
             continue;
         }
-        let id = renderer.add_mesh(scene, &vm.data);
+        let id = renderer.add_animated_mesh(scene, &vm.data);
         renderer.set_instance_mesh(scene, inst, id);
         render.skinned.push((i, id, Vec::new()));
     }

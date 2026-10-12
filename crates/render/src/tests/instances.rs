@@ -199,10 +199,136 @@ fn mirror_and_second_eye_reuse_uploaded_models_at_a_cell_boundary() {
     );
     assert_eq!(scene.render_origin, DVec3::ZERO);
     assert_eq!(scene.cpu_models, models);
-    // The primary view still rebases normally when the bus crosses the boundary.
+    // The window's view keeps the origin across the boundary too...
     renderer.render(&mut scene, &view, 64, 64, &mirror, &lighting);
-    assert_eq!(scene.render_origin, DVec3::new(100.0, 0.0, 0.0));
+    assert_eq!(scene.render_origin, DVec3::ZERO);
+    assert_eq!(scene.cpu_models, models);
+    // ...and takes it along once the bus is far from it.
+    let far = Camera {
+        position: DVec3::new(612.5, -20.0, 2.0),
+        ..camera
+    };
+    renderer.render(&mut scene, &view, 64, 64, &far, &lighting);
+    assert_eq!(scene.render_origin, DVec3::new(600.0, -100.0, 0.0));
     assert_ne!(scene.cpu_models, models);
+    assert_entries_match_a_rebuild(&scene);
+}
+
+/// The uploaded entries are the ones a complete rebuild would make.
+fn assert_entries_match_a_rebuild(scene: &Scene) {
+    let mut models = Vec::new();
+    let mut params = Vec::new();
+    for inst in &scene.instances {
+        assert_eq!(inst.base as usize, models.len());
+        Renderer::instance_entries(inst, scene.render_origin, &mut models, &mut params);
+    }
+    assert_eq!(scene.cpu_models, models);
+    assert_eq!(scene.cpu_params, params);
+}
+
+#[test]
+fn a_sideways_origin_move_rewrites_only_the_translations() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let material = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [1.0; 4], true);
+    let mesh_of = |slots: u32| MeshData {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+        normals: vec![Vec3::Z; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        ranges: (0..slots).map(|slot| (0, 3, slot)).collect(),
+        ..Default::default()
+    };
+    let meshes = [1, 3, 2].map(|slots| renderer.add_mesh(&mut scene, &mesh_of(slots)));
+    for k in 0..300usize {
+        let transform = Mat4::from_scale_rotation_translation(
+            Vec3::splat(1.0 + k as f32 * 0.01),
+            glam::Quat::from_rotation_z(k as f32 * 0.1),
+            Vec3::new(0.5, -1.5, 0.25),
+        );
+        let i = renderer.add_instance(
+            &mut scene,
+            meshes[k % 3],
+            DVec3::new(4_400_000.0 + k as f64 * 7.3, -2_400_000.0 - k as f64 * 3.1, 12.0),
+            transform,
+            vec![material; 3],
+        );
+        if k % 5 == 0 {
+            scene.instances[i].roof = Some(3.0);
+        }
+    }
+    renderer.set_render_origin(&mut scene, DVec3::new(4_400_000.0, -2_400_100.0, 0.0));
+    renderer.prepare(&mut scene);
+    assert_entries_match_a_rebuild(&scene);
+    let params = scene.cpu_params.clone();
+    let (models_buf, params_buf) = (scene.model_buf.clone(), scene.params_buf.clone());
+    // sideways: the parameters (roof heights) stay, no buffer is made anew
+    renderer.set_render_origin(&mut scene, DVec3::new(4_400_500.0, -2_400_400.0, 0.0));
+    assert!(scene.origin_moved && !scene.dirty);
+    // (an instance moved and one added in the same frame)
+    renderer.set_transform(&mut scene, 7, DVec3::new(4_400_510.0, -2_400_390.0, 14.0), Mat4::IDENTITY);
+    renderer.add_instance(
+        &mut scene,
+        meshes[1],
+        DVec3::new(4_400_520.0, -2_400_380.0, 12.0),
+        Mat4::IDENTITY,
+        vec![material; 3],
+    );
+    renderer.prepare(&mut scene);
+    assert!(!scene.origin_moved && !scene.dirty);
+    assert_eq!(scene.model_buf, models_buf);
+    assert_eq!(scene.params_buf, params_buf);
+    assert_eq!(scene.cpu_params[..params.len()], params[..]);
+    assert_entries_match_a_rebuild(&scene);
+    // a move in height makes everything anew (the roof heights depend on it)
+    renderer.set_render_origin(&mut scene, DVec3::new(4_400_500.0, -2_400_400.0, 100.0));
+    assert!(scene.dirty);
+    renderer.prepare(&mut scene);
+    assert_entries_match_a_rebuild(&scene);
+}
+
+#[test]
+fn a_pose_measures_the_instances_drawing_reshaped_meshes() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    scene.cache_bounds = true;
+    let mesh = line_of_instances(&renderer, &mut scene, 600);
+    let data = MeshData {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+        normals: vec![Vec3::Z; 3],
+        uvs: vec![glam::Vec2::ZERO; 3],
+        indices: vec![0, 1, 2],
+        ranges: vec![(0, 3, 0)],
+        ..Default::default()
+    };
+    let person = renderer.add_mesh(&mut scene, &data);
+    let first = renderer.add_instance(&mut scene, person, DVec3::new(5.0, 5.0, 0.0), Mat4::IDENTITY, vec![0]);
+    renderer.prepare(&mut scene);
+    let pose = |scale: f32| -> Vec<Vec3> { data.positions.iter().map(|p| *p * scale).collect() };
+    renderer.update_mesh(&mut scene, person, &pose(4.0), &data.normals, &data.uvs);
+    renderer.prepare(&mut scene);
+    assert_eq!(scene.reshaped_users, vec![first]);
+    // one made after the first pose, one given the reshaped mesh, one put in another's place
+    let late = renderer.add_instance(&mut scene, person, DVec3::new(50.0, 5.0, 0.0), Mat4::IDENTITY, vec![0]);
+    renderer.set_instance_mesh(&mut scene, 123, person);
+    renderer.prepare(&mut scene);
+    let replacement =
+        renderer.add_instance(&mut scene, person, DVec3::new(90.0, 5.0, 0.0), Mat4::IDENTITY, vec![0]);
+    assert_eq!(renderer.recycle_instance(&mut scene, replacement, 321), 321);
+    renderer.prepare(&mut scene);
+    renderer.update_mesh(&mut scene, person, &pose(9.0), &data.normals, &data.uvs);
+    renderer.prepare(&mut scene);
+    let expected = InstanceBounds::new(&scene.meshes[person], Mat4::IDENTITY);
+    for i in [first, late, 123, 321] {
+        assert_eq!(scene.instances[i].bounds.radius, expected.radius, "instance {i}");
+    }
+    // the other instances are not on the list, and their bounds stay
+    let mut users = scene.reshaped_users.clone();
+    users.sort_unstable();
+    assert_eq!(users, vec![123, 321, first, late]);
+    let plain = InstanceBounds::new(&scene.meshes[mesh], Mat4::IDENTITY);
+    assert_eq!(scene.instances[0].bounds.radius, plain.radius);
+    assert_blocks_hold_their_instances(&scene);
 }
 
 #[test]
@@ -604,4 +730,83 @@ fn kept_main_bundles_are_drawn_again_only_where_nothing_changed() {
         None,
     );
     assert!(fresh.iter().all(|b| !changed.contains(b)));
+}
+
+#[test]
+fn page_spans_are_taken_first_fit_and_joined_when_given_back() {
+    let (mut free, mut top) = (Vec::new(), 0u64);
+    let a = page_take(&mut free, &mut top, 1000, 100).unwrap();
+    let b = page_take(&mut free, &mut top, 1000, 200).unwrap();
+    let c = page_take(&mut free, &mut top, 1000, 300).unwrap();
+    assert_eq!((a, b, c, top), (0, 100, 300, 600));
+    assert_eq!(page_take(&mut free, &mut top, 1000, 401), None);
+    page_give(&mut free, &mut top, a, 100);
+    // (too small a gap: taken from the top)
+    assert_eq!(page_take(&mut free, &mut top, 1000, 150), Some(600));
+    page_give(&mut free, &mut top, b, 200);
+    // the two gaps side by side are one now, and the first fit
+    assert_eq!(free, vec![(0, 300)]);
+    assert_eq!(page_take(&mut free, &mut top, 1000, 250), Some(0));
+    assert_eq!(free, vec![(250, 50)]);
+    // the last span given back lowers the top, with the gap below it
+    page_give(&mut free, &mut top, 600, 150);
+    page_give(&mut free, &mut top, c, 300);
+    page_give(&mut free, &mut top, 0, 250);
+    assert!(free.is_empty());
+    assert_eq!(top, 0);
+}
+
+#[test]
+fn small_meshes_share_a_page_and_freed_space_is_used_again() {
+    let mut renderer = noop_renderer();
+    renderer.mesh_pages = true;
+    let mut scene = renderer.new_scene();
+    let tri = |n: usize| MeshData {
+        positions: vec![Vec3::ZERO; n],
+        normals: vec![Vec3::Z; n],
+        uvs: vec![glam::Vec2::ZERO; n],
+        indices: (0..n as u32).collect(),
+        ranges: vec![(0, n as u32, 0)],
+        ..Default::default()
+    };
+    let a = renderer.add_mesh(&mut scene, &tri(3));
+    let b = renderer.add_mesh(&mut scene, &tri(6));
+    let c = renderer.add_mesh(&mut scene, &tri(3));
+    assert_eq!(scene.mesh_pages.len(), 1);
+    let (ma, mb, mc) = (&scene.meshes[a], &scene.meshes[b], &scene.meshes[c]);
+    assert!(ma.vertex_buf == mb.vertex_buf && mb.index_buf == mc.index_buf);
+    assert_eq!((ma.base_vertex, mb.base_vertex, mc.base_vertex), (0, 3, 9));
+    assert_eq!((ma.first_index, mb.first_index, mc.first_index), (0, 3, 9));
+    let one_page = scene.mesh_buffer_bytes();
+    assert_eq!(one_page, MESH_PAGE_VERTEX_BYTES + MESH_PAGE_INDEX_BYTES);
+    // b's place goes to the next mesh that fits
+    renderer.free_mesh(&mut scene, b);
+    assert_eq!(scene.meshes[b].page, NO_PAGE);
+    let d = renderer.add_mesh(&mut scene, &tri(6));
+    assert_eq!((scene.meshes[d].base_vertex, scene.meshes[d].first_index), (3, 3));
+    // a pose is written where the mesh lies in its page
+    renderer.update_mesh(&mut scene, d, &[Vec3::X; 6], &[Vec3::Z; 6], &[glam::Vec2::ZERO; 6]);
+    assert!(renderer.pending_meshes.borrow().contains_key(&d));
+    let mut encoder = renderer.device.create_command_encoder(&Default::default());
+    renderer.flush_pending_meshes(&scene, &mut encoder);
+    renderer.queue.submit([encoder.finish()]);
+    // (a pose larger than the mesh's place is left out)
+    renderer.update_mesh(&mut scene, a, &[Vec3::X; 6], &[Vec3::Z; 6], &[glam::Vec2::ZERO; 6]);
+    assert!(!renderer.pending_meshes.borrow().contains_key(&a));
+    // a mesh too large for a page, and the meshes cut off, give their space back
+    let big = renderer.add_mesh(&mut scene, &tri((MESH_PAGE_VERTEX_BYTES / 4 / 32) as usize + 1));
+    assert_eq!(scene.meshes[big].page, NO_PAGE);
+    assert!(scene.mesh_buffer_bytes() > one_page);
+    let (textures, materials) = (scene.textures.len(), scene.materials.len());
+    renderer.truncate(&mut scene, a + 1, textures, materials, 0);
+    let e = renderer.add_mesh(&mut scene, &tri(9));
+    assert_eq!((scene.meshes[e].base_vertex, scene.meshes[e].first_index), (3, 3));
+    // a mesh posed every frame keeps buffers of its own
+    let posed = renderer.add_animated_mesh(&mut scene, &tri(3));
+    assert_eq!(scene.meshes[posed].page, NO_PAGE);
+    // without pages every mesh has buffers of its own
+    renderer.mesh_pages = false;
+    let own = renderer.add_mesh(&mut scene, &tri(3));
+    assert_eq!(scene.meshes[own].page, NO_PAGE);
+    assert_eq!(scene.meshes[own].base_vertex, 0);
 }

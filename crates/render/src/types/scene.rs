@@ -7,6 +7,15 @@ pub type MaterialId = usize;
 pub struct GpuMesh {
     pub(crate) vertex_buf: wgpu::Buffer,
     pub(crate) index_buf: wgpu::Buffer,
+    /// The scene's page (`Scene::mesh_pages`) the buffers belong to, `NO_PAGE` for buffers
+    /// of the mesh's own; where in them the mesh lies, as the draw takes it (a base vertex
+    /// and the first index) and in bytes.
+    pub(crate) page: u32,
+    pub(crate) base_vertex: i32,
+    pub(crate) first_index: u32,
+    pub(crate) vertex_offset: u64,
+    pub(crate) vertex_bytes: u64,
+    pub(crate) index_bytes: u64,
     pub ranges: Vec<(u32, u32, u32)>,
     pub bounds_center: Vec3,
     pub bounds_radius: f32,
@@ -127,6 +136,8 @@ impl Instance {
 
 pub struct Scene {
     pub meshes: Vec<GpuMesh>,
+    /// Buffers shared by many meshes (see `MeshPage`).
+    pub(crate) mesh_pages: Vec<MeshPage>,
     pub textures: Vec<GpuTexture>,
     /// Mean (light, alpha, colour) of a texture the last time it was uploaded by
     /// `update_texture`: what a script or HTML screen actually shows. light = alpha x brightest
@@ -170,9 +181,20 @@ pub struct Scene {
     pub(crate) uploaded_entries: u32,
     pub(crate) changed: Vec<usize>,
     pub(crate) changed_mark: Vec<bool>,
+    /// The render origin moved sideways since the models were uploaded: only their
+    /// translations are written again (see `prepare`), not every instance's entries.
+    pub(crate) origin_moved: bool,
     pub(crate) cache_bounds: bool,
     pub(crate) bounds_meshes: Vec<bool>,
     pub(crate) bounds_dirty: bool,
+    /// A mesh changed once (freed, recycled): the next bounds update looks at every instance.
+    pub(crate) bounds_full: bool,
+    /// The meshes reshaped by poses (people, the driver, skinned vehicle parts) and the
+    /// instances drawing one of them, found up to `reshaped_upto`: a new pose measures
+    /// these again, not the whole scene, every frame.
+    pub(crate) reshaped_meshes: Vec<bool>,
+    pub(crate) reshaped_users: Vec<usize>,
+    pub(crate) reshaped_upto: usize,
     /// The box (lowest, highest corner) around each `CULL_BLOCK` instances in a row, for the
     /// culling to pass by whole blocks out of the picture: an instance that moves grows its
     /// block's box at once, and the boxes of such blocks are measured again, a few a frame.
@@ -232,18 +254,7 @@ impl Scene {
 
     pub fn gpu_bytes(&self) -> (u64, u64, u64) {
         let tex = self.textures.iter().map(|t| t.bytes).sum();
-        let mut seen: std::collections::HashSet<*const ()> = std::collections::HashSet::new();
-        let mut mesh = 0u64;
-        for m in &self.meshes {
-            if m.ranges.is_empty() {
-                continue;
-            }
-            for b in [&m.vertex_buf, &m.index_buf] {
-                if seen.insert(b as *const wgpu::Buffer as *const ()) {
-                    mesh += b.size();
-                }
-            }
-        }
+        let mesh = self.mesh_buffer_bytes();
         let other = [
             &self.model_buf,
             &self.params_buf,

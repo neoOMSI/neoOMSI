@@ -496,7 +496,7 @@ impl DriverFigure {
                 };
                 mats.push(renderer.add_material(scene, tex, alpha, [1.0; 4], false));
             }
-            let id = renderer.add_mesh(scene, &hm.data);
+            let id = renderer.add_animated_mesh(scene, &hm.data);
             let inst = renderer.add_instance(scene, id, v.position, Mat4::IDENTITY, mats);
             // (hidden until `update` has posed and placed it: drawn as loaded, the figure
             // stood in the file's T-pose at the bus's origin, in the middle of the aisle)

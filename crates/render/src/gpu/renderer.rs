@@ -156,6 +156,8 @@ pub struct Renderer {
     /// The vertex lists of meshes sent, kept for the next frame's `update_mesh`.
     pub(crate) spare_vertices: std::cell::RefCell<Vec<Vec<Vertex>>>,
     pub(crate) freed: std::cell::OnceCell<Freed>,
+    /// Meshes share pages of buffers (`MeshPage`): the adapter draws with a base vertex.
+    pub(crate) mesh_pages: bool,
     // (last: dropped after the rest, once the thread has submitted everything)
     pub(crate) submitter: Option<Submitter>,
 }

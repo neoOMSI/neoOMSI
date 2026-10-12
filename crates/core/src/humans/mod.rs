@@ -827,7 +827,7 @@ impl Humans {
                 self.render.gpu_materials.insert(key, mats);
             }
             let mats = self.render.gpu_materials[&key].clone();
-            let id = renderer.add_mesh(scene, &hm.data);
+            let id = renderer.add_animated_mesh(scene, &hm.data);
             let inst = renderer.add_instance(scene, id, position, Mat4::IDENTITY, mats);
             renderer.set_omsi_caster(scene, inst, true);
             if level > 0 {

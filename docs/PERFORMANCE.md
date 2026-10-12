@@ -13,8 +13,23 @@ The renderer keeps these costs bounded without changing graphics settings:
 - Nearby mirrors, the second stereo eye and side panels reuse the primary view's
   floating origin. Previously each view snapped its own camera to a 100 m cell. A
   mirror across the cell boundary invalidated and rebuilt every instance's model and
-  material parameters, even for static objects outside the picture. The primary view
-  still rebases normally; distant secondary cameras also rebase to preserve precision.
+  material parameters, even for static objects outside the picture. Distant secondary
+  cameras still rebase to preserve precision.
+- The window's view keeps its render origin until the camera is 400 m from it (a 0.03 mm
+  step in 32 bits), not only within its 100 m cell. When the origin moves sideways, only
+  the uploaded model matrices are written again; parameters, bounds and culling blocks do
+  not depend on it. A move in height still makes every entry anew (roof heights). Before,
+  every 100 m the bus drove made all entries of the scene anew, a stutter of tens of
+  milliseconds on a large map and a slower CPU.
+- An instance given another mesh (a person or a bus part taking its skinned copy) is
+  updated alone instead of the whole scene. A pose measures again the instances drawing
+  a reshaped mesh, kept in a list, instead of walking every instance of the map each frame.
+- Small meshes (splines, terrain, objects) share 16 MB vertex and 8 MB index pages and are
+  drawn with a base vertex and first index; a draw binds buffers, and a material group,
+  only when they differ from the previous draw's. Before, almost every draw bound two
+  buffers of its own. Meshes larger than a quarter of a page, meshes made on other threads
+  and adapters without base-vertex draws keep buffers of their own
+  (`OMSI_NO_MESH_PAGES=1` forces that).
 - Pending animated meshes are indexed by mesh ID. Updating all `N` meshes previously
   performed roughly `N * (N - 1) / 2` ID comparisons. The indexed queue replaces the
   last pending pose and retains its table capacity after submission.

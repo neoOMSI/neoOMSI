@@ -459,14 +459,23 @@ impl Renderer {
                 (true, true) => "DXT as blocks, others compressed where close",
             }
         );
+        let mesh_pages = adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::BASE_VERTEX)
+            && ::legacy_config::env::var_os("OMSI_NO_MESH_PAGES").is_none();
+        if !mesh_pages {
+            log::info!("renderer: every mesh in buffers of its own (no shared mesh pages)");
+        }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let renderer = Self::build(
+        let mut renderer = Self::build(
             device.clone(),
             queue.clone(),
             format!("{} ({:?})", info.name, info.backend),
             format,
             options,
         );
+        renderer.mesh_pages = mesh_pages;
         match scope.pop().await {
             None => Ok(renderer),
             Some(e) if options.msaa > 1 => {
@@ -477,13 +486,15 @@ impl Renderer {
                     gpu_error_text(&e)
                 );
                 drop(renderer);
-                Ok(Self::build(
+                let mut renderer = Self::build(
                     device,
                     queue,
                     format!("{} ({:?})", info.name, info.backend),
                     format,
                     RenderOptions { msaa: 1, ..options },
-                ))
+                );
+                renderer.mesh_pages = mesh_pages;
+                Ok(renderer)
             }
             Some(e) => Err(anyhow!("renderer pipelines: {}", gpu_error_text(&e))),
         }
@@ -2674,6 +2685,7 @@ impl Renderer {
             spare_vertices: Default::default(),
             main_bundles: Default::default(),
             freed: std::cell::OnceCell::new(),
+            mesh_pages: false,
         }
     }
 }

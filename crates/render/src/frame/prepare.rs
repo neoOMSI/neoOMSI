@@ -127,9 +127,40 @@ impl Renderer {
         }
     }
 
+    /// The render origin moved sideways: write the uploaded instances' model matrices again
+    /// (their translations are relative to it), the same matrices `instance_entries` makes.
+    /// The parameters, bounds and blocks do not depend on it.
+    fn shift_origin(&self, scene: &mut Scene) {
+        let ro = scene.render_origin;
+        let n = scene.uploaded_entries as usize;
+        if n > scene.cpu_models.len() || scene.uploaded_instances > scene.instances.len() {
+            scene.dirty = true;
+            return;
+        }
+        for i in &scene.instances[..scene.uploaded_instances] {
+            let m = (Mat4::from_translation((i.origin - ro).as_vec3()) * i.transform)
+                .to_cols_array_2d();
+            let (b, k) = (i.base as usize, i.slot_alpha.len());
+            if b + k > n {
+                scene.dirty = true;
+                return;
+            }
+            scene.cpu_models[b..b + k].fill(m);
+        }
+        match scene.model_buf.as_ref() {
+            Some(buf) if (n * 64) as u64 <= buf.size() => {
+                self.write_buffer(buf, 0, bytemuck::cast_slice(&scene.cpu_models[..n]));
+            }
+            _ => scene.dirty = true,
+        }
+    }
+
     pub fn prepare(&self, scene: &mut Scene) {
         Self::prepare_bounds(scene);
         scene.bind_groups.clear();
+        if std::mem::take(&mut scene.origin_moved) && !scene.dirty {
+            self.shift_origin(scene);
+        }
         if !scene.dirty
             && scene.instances.len() > scene.uploaded_instances
             && scene.model_buf.is_some()

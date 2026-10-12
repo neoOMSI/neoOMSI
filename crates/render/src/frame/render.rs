@@ -19,6 +19,8 @@ impl Renderer {
             msaa: 1,
             ..self.options
         };
+        // (the meshes already lie in pages: the new renderer draws them from there too)
+        let mesh_pages = self.mesh_pages;
         *self = Self::build(
             self.device.clone(),
             self.queue.clone(),
@@ -26,6 +28,7 @@ impl Renderer {
             self.format,
             options,
         );
+        self.mesh_pages = mesh_pages;
         scene.dirty = true;
         scene.model_buf = None;
         scene.params_buf = None;
