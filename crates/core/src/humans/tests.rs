@@ -89,6 +89,7 @@ fn reset_test_stop(taken: bool) -> PaxStop {
         buses: Vec::new(),
         dests: Vec::new(),
         lines: Vec::new(),
+        line_deadlines: Vec::new(),
     }
 }
 

@@ -1663,6 +1663,7 @@ fn stop(pos: DVec3, heading: f64, name: &str) -> PaxStop {
         buses: vec![],
         dests: vec![],
         lines: vec![],
+        line_deadlines: vec![],
     }
 }
 

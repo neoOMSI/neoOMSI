@@ -210,8 +210,13 @@ pub(crate) fn run_offscreen(
             .passenger_density((parse_time(&args.time) / 3600.0) as f32)
             * ::config::get_float("passengers", "density").unwrap_or(1.0) as f32;
         h.time_of_day = parse_time(&args.time);
-        h.stop_targets = schedule.as_ref().map(|s| s.stop_targets());
-        h.stop_names = schedule.as_ref().map(|s| s.stop_names());
+        if let Some(schedule) = schedule.as_ref() {
+            h.set_timetable_targets(
+                &world,
+                schedule.stop_targets_within(parse_time(&args.time), 5.0 * 60.0),
+                schedule.stop_names(),
+            );
+        }
         h.populate(&world, &renderer, &mut scene, center);
         if let Some(p) = player.as_ref() {
             if args.riders > 0 {

@@ -27,6 +27,15 @@ struct Departure {
     spawned: bool,
 }
 
+/// A currently relevant passenger destination at a stop.
+#[derive(Clone, PartialEq)]
+pub(crate) struct PassengerTarget {
+    pub(crate) destination: String,
+    pub(crate) termini: HashSet<String>,
+    /// Waiting passengers give up after the next comparable call has had time to arrive.
+    pub(crate) deadline: f64,
+}
+
 /// One step of a trip's route: a lane in map terms (None when the tile index is not in the
 /// map's list) and the leg between two stations it belongs to (0 for a track).
 #[derive(Debug, Clone, Copy)]

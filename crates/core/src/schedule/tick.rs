@@ -3,6 +3,85 @@
 use super::*;
 
 impl Schedule {
+    /// The destinations for timetable calls due within `ahead` seconds.
+    ///
+    /// Passenger demand is keyed by a destination and the compatible terminus, not a
+    /// specific departure. This lets either bus on the same service carry the passengers.
+    pub fn stop_targets_within(
+        &self,
+        now: f64,
+        ahead: f64,
+    ) -> HashMap<i64, Vec<PassengerTarget>> {
+        let names = self.stop_names();
+        let name_of = |id: i64| names.get(&id).cloned().unwrap_or_else(|| id.to_string());
+        let calls: Vec<(usize, i64, f64)> = self.departures.iter().enumerate()
+            .filter(|(departure, _)| self.runs(*departure))
+            .flat_map(|(departure, entry)| {
+                let times = self.times_of(departure);
+                trip_stations(&self.data.trips[entry.trip]).into_iter().enumerate().filter_map(move |(index, stop)| {
+                    times.stops.get(index).copied().unwrap_or(true)
+                        .then(|| times.stations.get(index).map(|station| (departure, stop, self.dep_time(departure) + station.1)))
+                        .flatten()
+                })
+            })
+            .collect();
+        let mut targets: HashMap<i64, Vec<PassengerTarget>> = HashMap::new();
+        for (departure, entry) in self.departures.iter().enumerate() {
+            if !self.runs(departure) {
+                continue;
+            }
+            let times = self.times_of(departure);
+            let stations = trip_stations(&self.data.trips[entry.trip]);
+            let terminus = self.data.trips[entry.trip].terminus.trim().to_string();
+            for from in 0..stations.len() {
+                let Some((_, offset)) = times.stations.get(from) else { continue };
+                let call = self.dep_time(departure) + offset;
+                if !times.stops.get(from).copied().unwrap_or(true)
+                    || !(now..=now + ahead).contains(&call)
+                {
+                    continue;
+                }
+                let here = name_of(stations[from]);
+                let list = targets.entry(stations[from]).or_default();
+                let deadline = calls.iter()
+                    .filter(|(candidate, stop, candidate_time)| {
+                        *stop == stations[from]
+                            && *candidate_time > call
+                            && if entry.line.trim().is_empty() {
+                                self.departures[*candidate].trip == entry.trip
+                            } else {
+                                self.departures[*candidate].line == entry.line
+                            }
+                    })
+                    .map(|(_, _, candidate_time)| *candidate_time)
+                    .min_by(|a, b| a.total_cmp(b))
+                    .map(|next| call + (next - call) * 1.25)
+                    .unwrap_or(call + 60.0 * 60.0);
+                for (to, stop) in stations.iter().enumerate().skip(from + 1) {
+                    if !times.stops.get(to).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    let destination = name_of(*stop);
+                    if destination == here {
+                        continue;
+                    }
+                    match list.iter_mut().find(|target| target.destination == destination) {
+                        Some(target) => {
+                            target.termini.insert(terminus.clone());
+                            target.deadline = target.deadline.max(deadline);
+                        }
+                        None => list.push(PassengerTarget {
+                            destination,
+                            termini: HashSet::from_iter([terminus.clone()]),
+                            deadline,
+                        }),
+                    }
+                }
+            }
+        }
+        targets
+    }
+
     /// How many due departures are still waiting to be put on the road.
     /// Omsi.exe's station targets (0x61cb18): per bus stop, the stops the timetable's trips
     /// go on to from there, each with the termini of the trips that do. A passenger waiting

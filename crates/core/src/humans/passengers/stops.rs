@@ -71,6 +71,7 @@ pub(in crate::humans) struct PaxStop {
     /// stop name and the termini of the buses that go there.
     pub dests: Vec<(String, f32)>,
     pub lines: Vec<(String, HashSet<String>)>,
+    pub line_deadlines: Vec<f64>,
 }
 
 impl PaxStop {
@@ -104,7 +105,76 @@ pub(in crate::humans) fn terminus_matches(hof_name: &str, timetable_name: &str) 
     is_line && rest.trim() == timetable_name
 }
 
+fn destination_weights(world: &World, lines: &[(String, HashSet<String>)]) -> Vec<(String, f32)> {
+    let weights: Vec<f32> = lines
+        .iter()
+        .map(|(name, _)| {
+            world
+                .bus_stops
+                .lock()
+                .iter()
+                .find(|stop| stop.3.trim() == name.trim())
+                .map(|stop| world.stop_exit_weight(stop.0))
+                .unwrap_or(0.5)
+        })
+        .collect();
+    let total: f32 = weights.iter().sum();
+    if total > 0.0 {
+        lines
+            .iter()
+            .zip(weights)
+            .map(|((name, _), weight)| (name.clone(), weight / total))
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 impl Humans {
+    /// Refresh the destinations that are relevant to passengers right now.
+    ///
+    /// The timetable only decides where people can travel. The normal stop-density and
+    /// physical-place limit still decide how many can wait, with no allocation per bus.
+    pub(crate) fn set_timetable_targets(
+        &mut self,
+        world: &World,
+        targets: HashMap<i64, Vec<crate::schedule::PassengerTarget>>,
+        names: HashMap<i64, String>,
+    ) {
+        if self.passenger_targets.as_ref() == Some(&targets) && self.stop_names.as_ref() == Some(&names) {
+            return;
+        }
+        self.passenger_targets = Some(targets);
+        self.stop_names = Some(names);
+        let lines_by_stop: HashMap<i64, Vec<(String, HashSet<String>)>> = self.passenger_targets.as_ref()
+            .unwrap()
+            .iter()
+            .map(|(id, targets)| (*id, targets.iter().map(|target| {
+                (target.destination.clone(), target.termini.clone())
+            }).collect()))
+            .collect();
+        self.stop_targets = Some(lines_by_stop);
+        let ids: Vec<i64> = self.stops.keys().copied().collect();
+        for id in ids {
+            let targets = self.passenger_targets.as_ref()
+                .and_then(|targets| targets.get(&id))
+                .cloned()
+                .unwrap_or_default();
+            let lines: Vec<(String, HashSet<String>)> = targets.iter()
+                .map(|target| (target.destination.clone(), target.termini.clone()))
+                .collect();
+            let dests = destination_weights(world, &lines);
+            let stop = self.stops.get_mut(&id).unwrap();
+            stop.alias = self.stop_names.as_ref()
+                .and_then(|names| names.get(&id))
+                .cloned()
+                .unwrap_or_else(|| id.to_string());
+            stop.lines = lines;
+            stop.line_deadlines = targets.iter().map(|target| target.deadline).collect();
+            stop.dests = dests;
+        }
+    }
+
     /// A stop as Omsi.exe sets it up (sub_620058, sub_620c0c, sub_61c604): its waiting
     /// places are the `[passpos]` of every object near it - within 10 m to the platform's
     /// side and from 10 m behind to the stop's length ahead of it -, the gather point a
@@ -199,28 +269,7 @@ impl Humans {
             .and_then(|m| m.get(&id))
             .cloned()
             .unwrap_or_default();
-        let weights: Vec<f32> = lines
-            .iter()
-            .map(|(n, _)| {
-                world
-                    .bus_stops
-                    .lock()
-                    .iter()
-                    .find(|s| s.3.trim() == n.trim())
-                    .map(|s| world.stop_exit_weight(s.0))
-                    .unwrap_or(0.5)
-            })
-            .collect();
-        let total: f32 = weights.iter().sum();
-        let dests: Vec<(String, f32)> = if total > 0.0 {
-            lines
-                .iter()
-                .zip(&weights)
-                .map(|((n, _), w)| (n.clone(), w / total))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let dests = destination_weights(world, &lines);
         if debug_pax() {
             log::info!(
                 "stop {id} '{name}' at ({:.1}, {:.1}, {:.2}) heading {heading:.0}: {} waiting places, length {length}, side {side}, {} destinations",
@@ -258,6 +307,7 @@ impl Humans {
             buses: Vec::new(),
             dests,
             lines,
+            line_deadlines: Vec::new(),
         }
     }
 
@@ -352,6 +402,18 @@ impl Humans {
                 };
                 s.factor = (r * 2.0 - 1.0) * k + 1.0;
             }
+            for index in (0..self.people.len()).rev() {
+                let expired = matches!(&self.people[index].state, State::Pax(pax)
+                    if pax.stop == Some(id)
+                        && pax.inside.is_none()
+                        && pax.journey.service_deadline.is_some_and(|deadline| self.time_of_day >= deadline)
+                        && matches!(pax.task, Task::WalkingToBusstop | Task::WaitingForBus));
+                if expired {
+                    self.release(index);
+                    let passenger = self.people.swap_remove(index);
+                    self.retire(&passenger);
+                }
+            }
             let count = self
                 .people
                 .iter()
@@ -362,7 +424,17 @@ impl Humans {
                 let s = &self.stops[&id];
                 let mean = (s.enter_max + s.enter_min) / 2.0;
                 let w = (self.density.max(0.0) * mean * s.factor).round().max(0.0) as usize;
-                forced.unwrap_or(w).min(s.spots.len())
+                let wanted = forced.unwrap_or(w).min(s.spots.len());
+                // A timetable stop only gains passengers when a compatible service is
+                // actually due. Its normal crowd cap is otherwise unchanged.
+                if self.stop_targets.is_some()
+                    && self.stop_names.as_ref().is_some_and(|names| names.contains_key(&id))
+                    && s.lines.is_empty()
+                {
+                    0
+                } else {
+                    wanted
+                }
             };
             let s = self.stops.get_mut(&id).unwrap();
             s.want = want;
@@ -440,6 +512,12 @@ impl Humans {
         pax.yaw = sp.face.to_radians();
         pax.journey.dest = dest;
         pax.journey.line = line;
+        pax.journey.service_deadline = line
+            .and_then(|index| self.stops.get(&id).and_then(|stop| stop.line_deadlines.get(index)))
+            .copied();
+        pax.journey.allowed_termini = line
+            .and_then(|index| self.stops.get(&id).and_then(|stop| stop.lines.get(index)))
+            .map(|(_, termini)| termini.clone());
         pax.movement = Movement::Standing;
         if self.ik {
             let near = sp.pos.z - sp.height as f64;

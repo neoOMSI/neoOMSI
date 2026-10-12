@@ -249,6 +249,9 @@ pub struct Humans {
     /// wants one of them and boards only a bus showing one of its termini; at a stop no trip
     /// goes on from, anybody takes the first bus (0x61c33c).
     pub stop_targets: Option<HashMap<i64, Vec<(String, HashSet<String>)>>>,
+    /// Time-limited timetable demand used to refresh the stop targets without reserving
+    /// capacity for a particular departure.
+    pub passenger_targets: Option<HashMap<i64, Vec<crate::schedule::PassengerTarget>>>,
     /// The timetable's name of each stop object (`Schedule::stop_names`), the names the
     /// targets above are made of.
     pub stop_names: Option<HashMap<i64, String>>,
@@ -469,6 +472,7 @@ impl Humans {
             avatar_only: false,
             driver_away: false,
             stop_targets: None,
+            passenger_targets: None,
             stop_names: None,
             stamped: Vec::new(),
             pedestrians: 14,
@@ -548,6 +552,7 @@ impl Humans {
         self.buses.served_stop = None;
         self.network.handed.clear();
         self.stop_targets = None;
+        self.passenger_targets = None;
         self.stop_names = None;
         self.walking.started = false;
         self.walking.stroll_timer = 0.0;

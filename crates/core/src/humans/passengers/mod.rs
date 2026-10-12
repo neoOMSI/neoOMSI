@@ -606,6 +606,7 @@ mod tests {
             buses: Vec::new(),
             dests: Vec::new(),
             lines: Vec::new(),
+            line_deadlines: Vec::new(),
         };
         let s = stop("Koenigsrath Bf Ausstieg");
         assert!(s.is_named("Königsrath, Bf. Ausstieg "));

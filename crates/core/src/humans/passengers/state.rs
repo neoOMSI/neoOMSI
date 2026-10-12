@@ -164,6 +164,7 @@ impl Pax {
             journey: Journey {
                 dest: None,
                 line: None,
+                service_deadline: None,
                 allowed_termini: None,
                 alt: None,
                 alt_seen: false,
@@ -346,6 +347,8 @@ pub(in crate::humans) struct Journey {
     /// (+0x60c, km).
     pub dest: Option<String>,
     pub line: Option<usize>,
+    /// The passenger leaves the stop if their compatible service remains overdue.
+    pub service_deadline: Option<f64>,
     /// Semantic line permission from the host; independent of a client's timetable cache.
     pub allowed_termini: Option<HashSet<String>>,
     pub alt: Option<String>,

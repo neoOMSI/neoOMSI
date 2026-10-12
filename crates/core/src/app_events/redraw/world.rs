@@ -26,12 +26,12 @@ impl App {
                 .map(|p| p.vehicle.position)
                 .or(self.camera.as_ref().map(|c| c.position))
                 .unwrap_or(DVec3::ZERO);
-            if h.stop_targets.is_none() {
-                h.stop_targets = self.schedule.as_ref().map(|s| s.stop_targets());
-                h.stop_names = self.schedule.as_ref().map(|s| s.stop_names());
-                if let Some(t) = &h.stop_targets {
-                    log::info!("people: {} bus stops with timetable targets", t.len());
-                }
+            if let Some(schedule) = self.schedule.as_ref() {
+                h.set_timetable_targets(
+                    w,
+                    schedule.stop_targets_within(self.clock.time, 5.0 * 60.0),
+                    schedule.stop_names(),
+                );
             }
             h.driver_away = self.on_foot.as_ref().is_some_and(|f| {
                 let own = Some(humans::BusId::Player);
