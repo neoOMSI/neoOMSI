@@ -1182,6 +1182,31 @@ fn procedural_waiting_points_start_on_the_floor_and_keep_it_when_walking() {
 }
 
 #[test]
+fn a_waiting_passenger_stays_on_a_raised_platform_above_a_sloped_kerb() {
+    let f = Fixture::new();
+    f.world
+        .terrains
+        .write()
+        .insert((0, 0), Arc::new(::map::Terrain::flat()));
+    let mut h = Humans::new(&f.root);
+    let floor = 0.25;
+    h.stops
+        .insert(1, stop(DVec3::new(2.0, 2.0, floor), 0.0, "Platform"));
+    let mut pax = Pax::new(1.1);
+    pax.task = Task::WaitingForBus;
+    pax.stop = Some(1);
+    pax.pos = DVec3::new(2.0, 2.0, floor);
+    pax.movement = Movement::Standing;
+    let mut person = f.person(7, State::Pax(Box::new(pax)), false);
+    person.position = DVec3::new(2.0, 2.0, floor);
+    h.people.push(person);
+
+    h.pax_move(0, 0.05, 50.0, &f.world, &[], &HashMap::new());
+
+    assert_eq!(h.pax(0).unwrap().pos.z, floor);
+}
+
+#[test]
 fn streamed_floor_correction_changes_the_passenger_authority() {
     let f = Fixture::new();
     let mut p = Pax::new(1.1);

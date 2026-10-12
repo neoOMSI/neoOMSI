@@ -271,6 +271,12 @@ impl Humans {
         bus_ix: &HashMap<BusId, usize>,
     ) {
         let p0 = self.pax(i).unwrap().clone();
+        // The object-defined waiting point is on the platform, but an angled kerb can make a
+        // ground probe at that point select the road below. Waiting passengers must not sink
+        // through the platform before they have begun walking to a bus.
+        let wait_floor = matches!(p0.task, Task::WaitingForBus | Task::WalkingToBusstop)
+            .then(|| p0.stop.and_then(|stop| self.stops.get(&stop).map(|s| s.pos.z)))
+            .flatten();
         if self.ik && p0.task != Task::SittingInBus && self.people[i].pose.sit_amount() > 0.02 {
             let p = self.pax_mut(i).unwrap();
             p.speed = 0.0;
@@ -489,7 +495,7 @@ impl Humans {
             // on the terrain - 25-35 cm down in the platform
             if p.inside.is_none() && p.posture != Posture::Sitting {
                 if let Some(g) = world.walk_height_near(p.pos.x, p.pos.y, p.pos.z) {
-                    p.pos.z = g;
+                    p.pos.z = g.max(wait_floor.unwrap_or(f64::NEG_INFINITY));
                 }
             }
             return;
