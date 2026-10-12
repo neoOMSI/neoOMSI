@@ -15,17 +15,37 @@ impl Schedule {
     ) -> HashMap<i64, Vec<PassengerTarget>> {
         let names = self.stop_names();
         let name_of = |id: i64| names.get(&id).cloned().unwrap_or_else(|| id.to_string());
-        let calls: Vec<(usize, i64, f64)> = self.departures.iter().enumerate()
-            .filter(|(departure, _)| self.runs(*departure))
-            .flat_map(|(departure, entry)| {
-                let times = self.times_of(departure);
-                trip_stations(&self.data.trips[entry.trip]).into_iter().enumerate().filter_map(move |(index, stop)| {
-                    times.stops.get(index).copied().unwrap_or(true)
-                        .then(|| times.stations.get(index).map(|station| (departure, stop, self.dep_time(departure) + station.1)))
-                        .flatten()
-                })
-            })
-            .collect();
+        // Index calls once by stop and service. Looking up the next call below is then a
+        // binary search, rather than scanning every call for every eligible departure stop.
+        // An empty line uses the trip as its service identity, matching the old comparison.
+        let mut calls: HashMap<(i64, Option<&str>, usize), Vec<f64>> = HashMap::new();
+        for (departure, entry) in self.departures.iter().enumerate() {
+            if !self.runs(departure) {
+                continue;
+            }
+            let (line, trip) = if entry.line.trim().is_empty() {
+                (None, entry.trip)
+            } else {
+                (Some(entry.line.as_str()), 0)
+            };
+            let times = self.times_of(departure);
+            for (index, stop) in trip_stations(&self.data.trips[entry.trip])
+                .into_iter()
+                .enumerate()
+            {
+                if times.stops.get(index).copied().unwrap_or(true) {
+                    if let Some((_, offset)) = times.stations.get(index) {
+                        calls
+                            .entry((stop, line, trip))
+                            .or_default()
+                            .push(self.dep_time(departure) + offset);
+                    }
+                }
+            }
+        }
+        for times in calls.values_mut() {
+            times.sort_by(|a, b| a.total_cmp(b));
+        }
         let mut targets: HashMap<i64, Vec<PassengerTarget>> = HashMap::new();
         for (departure, entry) in self.departures.iter().enumerate() {
             if !self.runs(departure) {
@@ -44,18 +64,18 @@ impl Schedule {
                 }
                 let here = name_of(stations[from]);
                 let list = targets.entry(stations[from]).or_default();
-                let deadline = calls.iter()
-                    .filter(|(candidate, stop, candidate_time)| {
-                        *stop == stations[from]
-                            && *candidate_time > call
-                            && if entry.line.trim().is_empty() {
-                                self.departures[*candidate].trip == entry.trip
-                            } else {
-                                self.departures[*candidate].line == entry.line
-                            }
+                let (line, trip) = if entry.line.trim().is_empty() {
+                    (None, entry.trip)
+                } else {
+                    (Some(entry.line.as_str()), 0)
+                };
+                let deadline = calls
+                    .get(&(stations[from], line, trip))
+                    .and_then(|times| {
+                        times
+                            .get(times.partition_point(|candidate| *candidate <= call))
+                            .copied()
                     })
-                    .map(|(_, _, candidate_time)| *candidate_time)
-                    .min_by(|a, b| a.total_cmp(b))
                     .map(|next| call + (next - call) * 1.25)
                     .unwrap_or(call + 60.0 * 60.0);
                 for (to, stop) in stations.iter().enumerate().skip(from + 1) {
