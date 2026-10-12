@@ -45,7 +45,7 @@ pub(super) fn vehicles(
         if !buses && !cars {
             continue;
         }
-        for c in t.cars.iter().filter(|c| !c.gone && c.is_bus() == buses) {
+        for c in t.cars.iter().filter(|c| c.is_bus() == buses) {
             let at = c.vehicle.position;
             if !keep(at) {
                 continue;

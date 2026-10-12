@@ -317,7 +317,7 @@ impl Navigator {
             );
             if self.city.mpp > 1.1 {
                 // from far a bus is a few pixels: a badge says what it is
-                for c in t.cars.iter().filter(|c| !c.gone && c.is_bus()) {
+                for c in t.cars.iter().filter(|c| c.is_bus()) {
                     let p = to_screen(c.vehicle.position);
                     if win.contains(p) {
                         ui.circle(p, 7.5 * s, marks::RIM);
