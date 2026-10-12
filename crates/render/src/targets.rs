@@ -43,6 +43,7 @@ impl Renderer {
         self.msaa_targets.clear();
         self.hdr_targets.clear();
         self.glass_picture = None;
+        self.glass_depth = None;
         self.glass_snapshot_source = None;
     }
 
@@ -64,11 +65,7 @@ impl Renderer {
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | if self.puddles.is_some() {
-                    wgpu::TextureUsages::COPY_SRC
-                } else {
-                    wgpu::TextureUsages::empty()
-                },
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         // Half-resolution AO uses one quarter of the pixels; the blur masks the lower resolution.
