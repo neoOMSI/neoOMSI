@@ -93,6 +93,13 @@ impl App {
                     None => "End of the duty: the tour's last trip is done".into(),
                 });
             }
+            if let Some(player) = self.player.as_mut() {
+                if let Some(msg) =
+                    next_script_message(&player.vehicle.host, &mut player.message_serial)
+                {
+                    self.service_msg = Some((msg, 6.0));
+                }
+            }
             if let Some((msg, left)) = self.service_msg.as_mut() {
                 *left -= dt;
                 if *left > 0.0 {
@@ -1213,5 +1220,36 @@ impl App {
         if finish {
             self.finish_session();
         }
+    }
+}
+
+/// The newest `$msg` the player has not yet seen. The serial is independent of the retained
+/// message list so a script can deliberately repeat the same text and still have it shown.
+fn next_script_message(
+    host: &::simulation::VehicleHost,
+    seen: &mut u64,
+) -> Option<String> {
+    if host.message_serial == *seen {
+        return None;
+    }
+    *seen = host.message_serial;
+    host.messages.last().cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_messages_are_shown_once_each_even_when_the_text_repeats() {
+        let mut host = ::simulation::VehicleHost::default();
+        let mut seen = 0;
+
+        ::legacy_script::Host::message(&mut host, "Destination set");
+        assert_eq!(next_script_message(&host, &mut seen).as_deref(), Some("Destination set"));
+        assert_eq!(next_script_message(&host, &mut seen), None);
+
+        ::legacy_script::Host::message(&mut host, "Destination set");
+        assert_eq!(next_script_message(&host, &mut seen).as_deref(), Some("Destination set"));
     }
 }

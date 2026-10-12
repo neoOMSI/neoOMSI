@@ -643,6 +643,267 @@ fn rain_film_is_as_clear_at_the_screen_edge_as_in_the_middle() {
 }
 
 #[test]
+#[ignore = "requires a graphics adapter; renders a wet pane beside a dark frame"]
+fn rain_film_drops_do_not_take_the_colour_of_a_frame_beside_the_pane() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    let mut scene = renderer.new_scene();
+    let flat = |renderer: &mut Renderer, scene: &mut Scene, c: f32| {
+        renderer.add_material(scene, None, AlphaMode::Opaque, [c, c, c, 1.0], true)
+    };
+    // a light street far behind the glass, and the bus's dark frame right behind the film
+    let street = flat(&mut renderer, &mut scene, 0.8);
+    let frame = flat(&mut renderer, &mut scene, 0.02);
+    let film = renderer.add_material_extra(
+        &mut scene,
+        None,
+        AlphaMode::Blend,
+        [1.0; 4],
+        false,
+        None,
+        None,
+        None,
+        None,
+        [0.0; 3],
+        MaterialExtra {
+            rain_film: true,
+            no_z_write: true,
+            ..Default::default()
+        },
+    );
+    let mut quad = |y: f32, (x0, x1): (f32, f32), half: f32, material| {
+        let mesh = renderer.add_mesh(
+            &mut scene,
+            &MeshData {
+                positions: vec![
+                    Vec3::new(x0, y, -half),
+                    Vec3::new(x1, y, -half),
+                    Vec3::new(x1, y, half),
+                    Vec3::new(x0, y, half),
+                ],
+                normals: vec![-Vec3::Y; 4],
+                uvs: vec![
+                    glam::Vec2::new(0.0, 1.0),
+                    glam::Vec2::new(1.0, 1.0),
+                    glam::Vec2::new(1.0, 0.0),
+                    glam::Vec2::new(0.0, 0.0),
+                ],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ranges: vec![(0, 6, 0)],
+                one_sided: false,
+            },
+        );
+        renderer.add_instance(
+            &mut scene,
+            mesh,
+            DVec3::ZERO,
+            Mat4::IDENTITY,
+            vec![material],
+        )
+    };
+    quad(10.0, (-40.0, 40.0), 40.0, street);
+    // the left half of the picture is the frame; the film covers the frame and the glass alike
+    quad(0.16, (-3.0, 0.0), 3.0, frame);
+    quad(0.15, (-3.0, 3.0), 3.0, film);
+    let camera = Camera {
+        position: DVec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        roll: 0.0,
+        fov_deg: 70.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    const SIZE: usize = 256;
+    let mean = |rgba: &[u8], xs: std::ops::Range<usize>| -> f32 {
+        let (mut sum, mut n) = (0.0, 0.0);
+        for y in 32..SIZE - 32 {
+            for x in xs.clone() {
+                let p = &rgba[(y * SIZE + x) * 4..(y * SIZE + x) * 4 + 3];
+                sum += p.iter().map(|&c| c as f32).sum::<f32>() / 3.0;
+                n += 1.0;
+            }
+        }
+        sum / n
+    };
+    let half = SIZE / 2;
+    for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+        let lighting = Lighting {
+            enhanced,
+            classic,
+            wetness: 1.0,
+            rain: 0.8,
+            shadows: false,
+            fog_density: 0.0,
+            ..Default::default()
+        };
+        let rgba = renderer
+            .render_to_image(&mut scene, SIZE as u32, SIZE as u32, &camera, &lighting)
+            .unwrap();
+        // the wet glass next to the frame, against the wet glass well away from it
+        let (beside, open) = (
+            mean(&rgba, half + 4..half + 36),
+            mean(&rgba, SIZE - 40..SIZE - 8),
+        );
+        assert!(
+            open - beside < 4.0,
+            "drops beside the frame take its colour (enhanced {enhanced}, classic {classic}): beside {beside:.1}, away {open:.1}"
+        );
+        // and the wet frame next to the glass, against the wet frame away from it
+        let (beside, away) = (mean(&rgba, half - 36..half - 4), mean(&rgba, 8..40));
+        assert!(
+            beside - away < 4.0,
+            "drops on the frame take the street's colour beside the glass (enhanced {enhanced}, classic {classic}): beside {beside:.1}, away {away:.1}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a graphics adapter; renders wet glass that writes depth"]
+fn rain_film_drops_bend_the_view_through_glass_that_writes_depth() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    const SIZE: usize = 256;
+    let mut render = |no_z_write: bool| -> Vec<u8> {
+        let renderer = &mut renderer;
+        let mut scene = renderer.new_scene();
+        let flat = |renderer: &mut Renderer, scene: &mut Scene, c: f32| {
+            renderer.add_material(scene, None, AlphaMode::Opaque, [c, c, c, 1.0], true)
+        };
+        let dark = flat(renderer, &mut scene, 0.05);
+        let light = flat(renderer, &mut scene, 0.9);
+        let glass = renderer.add_material_extra(
+            &mut scene,
+            None,
+            AlphaMode::Blend,
+            [0.5, 0.5, 0.5, 0.3],
+            false,
+            None,
+            None,
+            None,
+            None,
+            [0.0; 3],
+            MaterialExtra {
+                glass: true,
+                no_z_write,
+                ..Default::default()
+            },
+        );
+        let film = renderer.add_material_extra(
+            &mut scene,
+            None,
+            AlphaMode::Blend,
+            [1.0; 4],
+            false,
+            None,
+            None,
+            None,
+            None,
+            [0.0; 3],
+            MaterialExtra {
+                rain_film: true,
+                no_z_write: true,
+                ..Default::default()
+            },
+        );
+        let mut quad = |y: f32, (x0, x1): (f32, f32), half: f32, material| {
+            let mesh = renderer.add_mesh(
+                &mut scene,
+                &MeshData {
+                    positions: vec![
+                        Vec3::new(x0, y, -half),
+                        Vec3::new(x1, y, -half),
+                        Vec3::new(x1, y, half),
+                        Vec3::new(x0, y, half),
+                    ],
+                    normals: vec![-Vec3::Y; 4],
+                    uvs: vec![
+                        glam::Vec2::new(0.0, 1.0),
+                        glam::Vec2::new(1.0, 1.0),
+                        glam::Vec2::new(1.0, 0.0),
+                        glam::Vec2::new(0.0, 0.0),
+                    ],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ranges: vec![(0, 6, 0)],
+                    one_sided: false,
+                },
+            );
+            renderer.add_instance(
+                &mut scene,
+                mesh,
+                DVec3::ZERO,
+                Mat4::IDENTITY,
+                vec![material],
+            )
+        };
+        // a striped street behind the glass, so that a bent view shows
+        for i in -20..20 {
+            let x = i as f32 * 2.0;
+            let stripe = if i % 2 == 0 { dark } else { light };
+            quad(10.0, (x, x + 2.0), 40.0, stripe);
+        }
+        quad(0.16, (-3.0, 3.0), 3.0, glass);
+        quad(0.15, (-3.0, 3.0), 3.0, film);
+        let camera = Camera {
+            position: DVec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.0,
+            fov_deg: 70.0,
+            near: 0.1,
+            far: 100.0,
+        };
+        let lighting = Lighting {
+            wetness: 1.0,
+            rain: 0.8,
+            shadows: false,
+            fog_density: 0.0,
+            ..Default::default()
+        };
+        renderer
+            .render_to_image(&mut scene, SIZE as u32, SIZE as u32, &camera, &lighting)
+            .unwrap()
+    };
+    let (plain, writing) = (render(true), render(false));
+    let diff = plain
+        .iter()
+        .zip(&writing)
+        .map(|(&a, &b)| (a as f32 - b as f32).abs())
+        .sum::<f32>()
+        / plain.len() as f32;
+    assert!(
+        diff < 0.5,
+        "glass that writes depth changes the drops on it: mean difference {diff:.2}"
+    );
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; run with --ignored on a GPU host"]
 fn presurface_reveals_excavation_before_terrain_is_drawn() {
     fn quad(renderer: &Renderer, scene: &mut Scene, y: f32, half: f32) -> MeshId {

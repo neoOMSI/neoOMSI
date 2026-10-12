@@ -2445,45 +2445,71 @@ impl Renderer {
                 include_str!("../../shaders/post/upscale.wgsl").into(),
             ),
         });
+        let picture_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ];
         let upscale_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("upscale"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: &picture_entries,
         });
         let upscale_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("upscale"),
             bind_group_layouts: &[Some(&upscale_layout)],
             immediate_size: 0,
         });
-        let upscale_pipeline_for = |entry, target_format| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        // the upscale's bindings plus the depth prepass
+        let glass_snapshot_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("glass snapshot"),
+                entries: &[
+                    picture_entries[0],
+                    picture_entries[1],
+                    picture_entries[2],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let glass_snapshot_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("glass snapshot"),
+            bind_group_layouts: &[Some(&glass_snapshot_layout)],
+            immediate_size: 0,
+        });
+        let upscale_pipeline_for = |entry, target_format, layout| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("upscale"),
-            layout: Some(&upscale_pl),
+            layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &upscale_shader,
                 entry_point: Some("vs_main"),
@@ -2510,18 +2536,11 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        let upscale_pipeline = upscale_pipeline_for("fs_main", format);
-        let copy_pipeline = upscale_pipeline_for("fs_copy", format);
-        let glass_picture_format = if device
-            .features()
-            .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
-        {
-            wgpu::TextureFormat::Rg11b10Ufloat
-        } else {
-            HDR_FORMAT
-        };
+        let upscale_pipeline = upscale_pipeline_for("fs_main", format, &upscale_pl);
+        let copy_pipeline = upscale_pipeline_for("fs_copy", format, &upscale_pl);
+        // alpha holds the depth behind the glass
         let glass_snapshot_pipeline =
-            upscale_pipeline_for("fs_glass_snapshot", glass_picture_format);
+            upscale_pipeline_for("fs_glass_snapshot", HDR_FORMAT, &glass_snapshot_pl);
         let upscale_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("upscale params"),
             size: 16,
@@ -2555,11 +2574,12 @@ impl Renderer {
             upscale_pipeline,
             copy_pipeline,
             glass_snapshot_pipeline,
-            glass_picture_format,
+            glass_snapshot_layout,
             upscale_layout,
             upscale_buf,
             scale_targets: HashMap::new(),
             glass_picture: None,
+            glass_depth: None,
             glass_snapshot_source: None,
             target_use: HashMap::new(),
             dynamic_scale: std::cell::Cell::new(1.0),

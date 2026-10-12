@@ -107,6 +107,8 @@ pub struct VehicleHost {
     pub snapshot_triggers: hashbrown::HashSet<String>,
     pub fired_trigger_vars: Vec<(String, Vec<f32>)>,
     pub messages: Vec<String>,
+    /// Increments for every `$msg`, including repeated text, so the UI can show each message.
+    pub message_serial: u64,
     /// Fonts registered by `GetFontIndex` (index = position), loaded through `font_lib`.
     pub fonts: FontTable,
     pub font_lib: Option<Arc<Mutex<FontLibrary>>>,
@@ -969,6 +971,7 @@ impl Host for VehicleHost {
     /// AI bus says one per stop, and the list grew all session).
     fn message(&mut self, text: &str) {
         const KEEP: usize = 16;
+        self.message_serial = self.message_serial.wrapping_add(1);
         log::debug!("script message: {text}");
         if self.messages.len() >= KEEP {
             self.messages.remove(0);

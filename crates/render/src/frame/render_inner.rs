@@ -1614,6 +1614,13 @@ impl Renderer {
             });
         }
         drop(spot_pass);
+        let single = self.options.msaa <= 1;
+        let share_depth =
+            prepass_on && single && self.ao.is_some() && !has_presurface && !puddles_wanted;
+        // A shared depth gets glass drawn into it, so the glass snapshot reads a copy.
+        if glass_on && share_depth {
+            self.prepare_glass_depth(width, height);
+        }
         if prepass_on {
             let proj = glam::camera::rh::proj::directx::perspective(
                 camera.fov_deg.to_radians(),
@@ -1679,6 +1686,14 @@ impl Renderer {
                 pass.set_pipeline(pipe);
                 pass.set_bind_group(0, bg, &[]);
                 pass.draw(0..3, 0..1);
+            }
+            if glass_on && share_depth {
+                let copy = self.glass_depth.as_ref().unwrap().texture();
+                prepass_encoder.copy_texture_to_texture(
+                    ao.depth_view.texture().as_image_copy(),
+                    copy.as_image_copy(),
+                    copy.size(),
+                );
             }
         }
         if enhanced && (lead_view || probe_redraw) {
@@ -1804,9 +1819,6 @@ impl Renderer {
                 }
             }
         }
-        let single = self.options.msaa <= 1;
-        let share_depth =
-            prepass_on && single && self.ao.is_some() && !has_presurface && !puddles_wanted;
         let targets = if share_depth {
             None
         } else {
@@ -2122,14 +2134,21 @@ impl Renderer {
                     .filter(|_| puddles_on)
                     .map_or(&h.view, |p| &p.view)
             });
+            let ao_depth = &self.ao.as_ref().unwrap().depth_view;
+            let depth = self
+                .glass_depth
+                .as_ref()
+                .filter(|_| share_depth)
+                .unwrap_or(ao_depth);
             if self
                 .glass_snapshot_source
                 .as_ref()
-                .is_none_or(|(source, _)| source != view)
+                .is_none_or(|(source, d, _)| source != view || d != depth)
             {
-                self.glass_snapshot_source = Some((view.clone(), self.picture_group(view)));
+                let bg = self.glass_snapshot_group(view, depth);
+                self.glass_snapshot_source = Some((view.clone(), depth.clone(), bg));
             }
-            let (_, bg) = self.glass_snapshot_source.as_ref().unwrap();
+            let (_, _, bg) = self.glass_snapshot_source.as_ref().unwrap();
             let behind = self.glass_picture.as_ref().unwrap();
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

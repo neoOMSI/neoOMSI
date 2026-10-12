@@ -70,17 +70,41 @@ impl Renderer {
         self.texture_aspect = None;
     }
 
+    /// Holds the depth prepass for the glass snapshot when the main pass draws into it.
+    pub(crate) fn prepare_glass_depth(&mut self, width: u32, height: u32) {
+        if self
+            .glass_depth
+            .as_ref()
+            .is_none_or(|v| v.texture().width() != width || v.texture().height() != height)
+        {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("depth prepass behind glass"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            self.glass_depth = Some(texture.create_view(&Default::default()));
+        }
+    }
+
     /// Refraction reads a half-resolution current scene before films are drawn, avoiding feedback.
     pub(crate) fn prepare_glass_behind(&mut self, scene: &mut Scene, width: u32, height: u32) {
         let Some(id) = scene.glass_slot else { return };
         // TODO 960×540 max
         let (width, height) = (width.div_ceil(2).max(1), height.div_ceil(2).max(1));
-        let format = self.glass_picture_format;
-        if self.glass_picture.as_ref().is_none_or(|v| {
-            v.texture().width() != width
-                || v.texture().height() != height
-                || v.texture().format() != format
-        }) {
+        if self
+            .glass_picture
+            .as_ref()
+            .is_none_or(|v| v.texture().width() != width || v.texture().height() != height)
+        {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("current picture behind glass"),
                 size: wgpu::Extent3d {
@@ -91,7 +115,7 @@ impl Renderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format,
+                format: HDR_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],

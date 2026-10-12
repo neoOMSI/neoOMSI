@@ -119,12 +119,14 @@ pub struct Renderer {
     pub(crate) upscale_pipeline: wgpu::RenderPipeline,
     pub(crate) copy_pipeline: wgpu::RenderPipeline,
     pub(crate) glass_snapshot_pipeline: wgpu::RenderPipeline,
-    pub(crate) glass_picture_format: wgpu::TextureFormat,
+    pub(crate) glass_snapshot_layout: wgpu::BindGroupLayout,
     pub(crate) upscale_layout: wgpu::BindGroupLayout,
     pub(crate) upscale_buf: wgpu::Buffer,
     pub(crate) scale_targets: HashMap<(u32, u32), (wgpu::TextureView, wgpu::BindGroup)>,
     pub(crate) glass_picture: Option<wgpu::TextureView>,
-    pub(crate) glass_snapshot_source: Option<(wgpu::TextureView, wgpu::BindGroup)>,
+    pub(crate) glass_depth: Option<wgpu::TextureView>,
+    pub(crate) glass_snapshot_source:
+        Option<(wgpu::TextureView, wgpu::TextureView, wgpu::BindGroup)>,
     pub(crate) target_use: HashMap<(u32, u32), std::time::Instant>,
     pub(crate) dynamic_scale: std::cell::Cell<f32>,
     pub(crate) flicker: std::cell::RefCell<HashMap<usize, bool>>,
@@ -177,6 +179,36 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+            ],
+        })
+    }
+
+    /// The glass snapshot's sources: the scene's picture and its depth prepass.
+    pub(crate) fn glass_snapshot_group(
+        &self,
+        view: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glass snapshot"),
+            layout: &self.glass_snapshot_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.upscale_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(depth),
                 },
             ],
         })

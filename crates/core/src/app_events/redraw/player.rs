@@ -2,6 +2,10 @@
 
 use super::*;
 
+fn driver_animation_dt(dt: f32, paused: bool, screenshot_mode: bool) -> f32 {
+    (!paused && !screenshot_mode).then_some(dt).unwrap_or(0.0)
+}
+
 impl App {
     /// Game controllers, mouse steering and the player's vehicle with its frame; the free camera and placed vehicles on foot; radio.
     pub(super) fn redraw_player(&mut self, f: &Frame) {
@@ -418,10 +422,13 @@ impl App {
                     .map(|h| h.driver_cue())
                     .unwrap_or_default();
             }
+            // The driver figure has its own idle/look animation clock.  Vehicle ticking is
+            // already paused above, so keep this clock paused as well (including the clean
+            // free-camera screenshot mode) while still syncing its visibility and mirrors.
             p.sync_driver_hands(
                 r,
                 scene,
-                dt,
+                driver_animation_dt(dt, self.paused, self.screenshot_mode.is_some()),
                 ::config::get_bool("gameplay", "driver").unwrap_or(true) && self.on_foot.is_none(),
                 self.view == "driver",
                 ::config::get_bool("gameplay", "hands_in_cab").unwrap_or(false),
@@ -733,5 +740,17 @@ impl App {
             }
         }
         *self.profile.entry("player").or_default() += __t.elapsed().as_secs_f64();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::driver_animation_dt;
+
+    #[test]
+    fn driver_animation_only_advances_while_playing() {
+        assert_eq!(driver_animation_dt(0.016, false, false), 0.016);
+        assert_eq!(driver_animation_dt(0.016, true, false), 0.0);
+        assert_eq!(driver_animation_dt(0.016, false, true), 0.0);
     }
 }

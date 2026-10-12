@@ -324,7 +324,7 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         .filter(|l| *l > 0.0)
                         .map(|l| format!("{}", l as i64))
                         .unwrap_or_default();
-                    let name = t.strings.first().cloned().unwrap_or_default();
+                    let name = crate::game_lists::terminus_target(t);
                     crate::schedule::set_player_destination_directly(
                         &mut p.vehicle,
                         hof.as_deref(),

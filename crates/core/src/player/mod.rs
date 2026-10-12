@@ -63,6 +63,8 @@ pub(crate) struct Player {
     pub(crate) arm: camera_arm::SpringArm,
     pub(crate) blinker_key_state: u8,
     pub(crate) blinker_cancel: bool,
+    /// Last `$msg` from the player's vehicle which reached the HUD.
+    pub(crate) message_serial: u64,
 }
 
 pub(crate) const ACTION_ALIASES: &[(&str, &[&str])] = &[

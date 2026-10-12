@@ -1659,7 +1659,10 @@ fn rain_through(g: RainGlass, v: vec3<f32>) -> vec3<f32> {
 // one does. The rain film's reflection slot holds that picture (see `Renderer::glass_slot`);
 // without it (a mirror's view) or behind the eye, `fallback` (the sky's colours). Off the
 // picture's edge, the unbent view through the glass: the film covers the whole pane, so the
-// sky there would turn the screen's edges milky. `scale` takes the picture into the caller's units.
+// sky there would turn the screen's edges milky. The same where the picture there or at the
+// drop is not behind the pane (its alpha holds the depth): drops near a window frame took
+// the frame's or the paint's colour, a band of specks round each pane. `scale` takes the
+// picture into the caller's units.
 fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale: f32, scatter: f32) -> vec3<f32> {
     if (camera.flags.z > -0.5 || dot(through, through) < 1e-4) {
         return fallback;
@@ -1673,7 +1676,13 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     let own = vec2<f32>(o.x / o.w * 0.5 + 0.5, 0.5 - o.y / o.w * 0.5);
     let inside = smoothstep(0.0, 0.06, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
-    let at = mix(own, uv, inside);
+    // metres the picture lies behind the pane (reversed depth: ~1 / distance); frames and
+    // paint sit within centimetres of the film
+    let pane = o.z / o.w;
+    let there = textureSampleLevel(t_env, s_diffuse, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
+    let here = textureSampleLevel(t_env, s_diffuse, clamp(own, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
+    let gap = o.w * (pane / max(max(there, here), 1e-7) - 1.0);
+    let at = mix(own, uv, inside * smoothstep(0.05, 0.2, gap));
     let offset = vec2<f32>(1.0, 0.6) * scatter * 4.0 / (vec2<f32>(textureDimensions(t_env)) * 2.0);
     let a = textureSampleLevel(t_env, s_diffuse, clamp(at - offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
     let b = textureSampleLevel(t_env, s_diffuse, clamp(at + offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
