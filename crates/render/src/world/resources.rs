@@ -5,6 +5,7 @@ pub(crate) struct Freed {
     pub(crate) index_buf: wgpu::Buffer,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) buf: wgpu::Buffer,
+    pub(crate) buf_offset: u64,
 }
 
 impl Renderer {
@@ -214,6 +215,7 @@ impl Renderer {
                 index_buf,
                 bind_group,
                 buf,
+                buf_offset: m.buf_offset,
             });
         }
         self.freed.get().unwrap()
@@ -272,9 +274,9 @@ impl Renderer {
         if id >= scene.materials.len() {
             return;
         }
-        let (bind_group, buf) = {
+        let (bind_group, buf, buf_offset) = {
             let f = self.freed(scene);
-            (f.bind_group.clone(), f.buf.clone())
+            (f.bind_group.clone(), f.buf.clone(), f.buf_offset)
         };
         scene.materials[id] = Material {
             texture: None,
@@ -294,6 +296,7 @@ impl Renderer {
             address: TexAddressing::Wrap,
             uniform: <MaterialUniform as bytemuck::Zeroable>::zeroed(),
             buf,
+            buf_offset,
             bind_group,
         };
     }

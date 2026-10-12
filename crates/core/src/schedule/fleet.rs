@@ -18,8 +18,8 @@ impl Schedule {
         if let Some(key) = ready {
             if let Some(ty) = self.fleet_reading.remove(&key) {
                 let t = std::time::Instant::now();
-                world.precache_vehicle(renderer, scene, &ty, key.1);
-                if ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
+                let uploaded = world.precache_vehicle(renderer, scene, &ty, key.1);
+                if uploaded && ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
                     log::info!(
                         "timetable fleet: {} (scheme {:?}) uploaded ahead in {:.1} ms",
                         ty.def
@@ -30,6 +30,11 @@ impl Schedule {
                         key.1,
                         t.elapsed().as_secs_f64() * 1000.0
                     );
+                }
+                // A finished worker may race a budget reduction. Drop its unused GPU
+                // copies too; retaining them outside Scene defeats the cache limit.
+                if !uploaded && self.fleet_reading.is_empty() {
+                    world.forget_prefetched();
                 }
             }
         }
@@ -57,6 +62,10 @@ impl Schedule {
             .unwrap_or(FLEET_IDLE);
         if world.trim_vehicle_sets(renderer, scene, &keep, idle) > 0 {
             crate::release_free_memory();
+        }
+        if !world.can_precache_vehicle(renderer, scene) {
+            world.forget_prefetched();
+            return;
         }
         let prefetch = world.vehicle_prefetch(renderer);
         for (ty, scheme) in sets {

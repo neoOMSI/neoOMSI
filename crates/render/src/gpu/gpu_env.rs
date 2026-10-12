@@ -2,6 +2,47 @@ use crate::*;
 
 pub static ADAPTER_TEXTURE_MB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The opened adapter's PCI ids (`vendor << 32 | device`), for [`video_memory`].
+pub(crate) static ADAPTER_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The graphics card's own memory this process uses and the budget the system gives it
+/// (bytes), as Windows counts them for the opened adapter (DXGI, whatever the backend:
+/// Vulkan's allocations are counted there too); None elsewhere or when unknown.
+pub fn video_memory() -> Option<(u64, u64)> {
+    let ids = ADAPTER_IDS.load(std::sync::atomic::Ordering::Relaxed);
+    if ids == 0 {
+        return None;
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::core::Interface;
+        use windows::Win32::Graphics::Dxgi::{
+            CreateDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO,
+            IDXGIAdapter3, IDXGIFactory1,
+        };
+        let (vendor, device) = ((ids >> 32) as u32, ids as u32);
+        let f: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+        let mut i = 0;
+        while let Ok(a) = f.EnumAdapters1(i) {
+            i += 1;
+            let Ok(d) = a.GetDesc1() else { continue };
+            if d.VendorId != vendor || d.DeviceId != device {
+                continue;
+            }
+            let a3: IDXGIAdapter3 = a.cast().ok()?;
+            let mut m = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+            a3.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut m)
+                .ok()?;
+            return Some((m.CurrentUsage, m.Budget));
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 pub fn wait_gpu(
     device: &wgpu::Device,
     submission: Option<wgpu::SubmissionIndex>,

@@ -653,7 +653,7 @@ pub(crate) fn toggle_now(app: Option<&App>, id: &str) -> Option<bool> {
 
 pub(crate) const RESTART_KEYS: &[&str] = &[
     "graphics", "graphics_api", "msaa", "render_scale", "anisotropy", "shadow_size", "clouds", "map_detail",
-    "view_distance", "mirror_size", "texture_memory", "texture_compression", "vr", "vr_scale",
+    "view_distance", "mirror_size", "texture_compression", "vr", "vr_scale",
     "vr_head_smoothing_ms", "vr_mirror_rate", "vr_desktop_mirror", "pax_models", "ai_max_parked",
 ];
 

@@ -141,10 +141,14 @@ impl Schedule {
         let sets = self.upcoming_sets(world, t, day_time);
         // a few sets at a time: read on the workers, uploaded, and the copies let go
         let mut most_held = 0usize;
+        let mut uploaded = 0;
         for chunk in sets.chunks(3) {
+            if !world.can_precache_vehicle(renderer, scene) {
+                break;
+            }
             most_held = most_held.max(world.prefetch_vehicle_sets(renderer, chunk));
             for (ty, scheme) in chunk {
-                world.precache_vehicle(renderer, scene, ty, *scheme);
+                uploaded += usize::from(world.precache_vehicle(renderer, scene, ty, *scheme));
             }
         }
         let t1 = std::time::Instant::now();
@@ -172,7 +176,7 @@ impl Schedule {
         crate::release_free_memory();
         self.fleet_check = day_time;
         log::info!(
-            "timetable fleet: {} vehicle/paint sets of the first {:.0} minutes read and uploaded in {:.1} s (at most {:.0} MB read ahead at once), a first start of every type in {:.1} s",
+            "timetable fleet: {uploaded}/{} vehicle/paint sets of the first {:.0} minutes read and uploaded in {:.1} s (at most {:.0} MB read ahead at once), a first start of every type in {:.1} s",
             sets.len(),
             fleet_ahead() / 60.0,
             (t1 - t0).as_secs_f32(),

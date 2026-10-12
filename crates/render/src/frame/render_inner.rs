@@ -1843,7 +1843,7 @@ impl Renderer {
         let targets = if share_depth {
             None
         } else {
-            Some(self.msaa_targets(width, height))
+            Some(self.msaa_targets(width, height, !single && !masked_frame))
         };
         let msaa_prepass = enhanced
             && !has_presurface
@@ -1915,7 +1915,7 @@ impl Renderer {
             } else {
                 lighting.sky_color
             };
-            let msaa_color = targets.as_ref().map(|t| &t.0);
+            let msaa_color = targets.as_ref().and_then(|t| t.0.as_ref());
             let depth_view: &wgpu::TextureView = match &targets {
                 Some(t) => &t.1,
                 None => &self.ao.as_ref().unwrap().depth_view,

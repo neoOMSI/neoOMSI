@@ -152,6 +152,8 @@ pub struct World {
     /// OMSI's `[texmemlimit]`: bytes the scenery and vehicle textures may take on the GPU
     /// (0 = no limit), and when the budget was last looked at.
     texture_limit: std::sync::atomic::AtomicU64,
+    /// The latest driver-adjusted limit for optional GPU caches (0 before the first check).
+    texture_cache_limit: std::sync::atomic::AtomicU64,
     budget_checked: Mutex<Option<std::time::Instant>>,
     /// Traffic-path lanes collected while building tiles.
     pub lanes: Mutex<Vec<::simulation::traffic::Lane>>,

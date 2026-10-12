@@ -1,6 +1,42 @@
 use super::*;
 
+/// Leave room for in-flight uploads and allocations outside the scene's texture array.
+/// DXGI's per-process budget already accounts for other GPU users, including the launcher.
+fn cache_texture_limit(requested: u64, textures: u64, memory: Option<(u64, u64)>) -> u64 {
+    let Some((used, budget)) = memory.filter(|(_, budget)| *budget > 0) else {
+        return requested;
+    };
+    let reserve = (budget / 20).clamp(128_000_000, 512_000_000);
+    let available = budget.saturating_sub(used.saturating_sub(textures) + reserve);
+    requested.min(available.max(64_000_000))
+}
+
 impl World {
+    /// Optional fleet uploads must leave room for visible vehicles and their displays.
+    /// Mandatory uploads retain every texture level, regardless of this cache limit.
+    pub fn can_precache_vehicle(&self, renderer: &Renderer, scene: &Scene) -> bool {
+        let requested = self.texture_budget_bytes();
+        if requested == 0 {
+            return true;
+        }
+        let live = self
+            .texture_cache_limit
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let textures = renderer.texture_bytes(scene);
+        let limit = if live == 0 {
+            // Before the first rendered frame (and after a live setting change), obtain
+            // the driver limit before preloading. Small cards must not allocate the
+            // entire requested fleet first and only discover pressure a second later.
+            let initial = cache_texture_limit(requested, textures, ::render::video_memory());
+            self.texture_cache_limit
+                .store(initial, std::sync::atomic::Ordering::Relaxed);
+            initial
+        } else {
+            requested.min(live)
+        };
+        textures < limit - limit / 10
+    }
+
     /// Swap in the textures compressed on the workers since the last call (until
     /// `deadline`), and start compressing the ones uploaded as RGBA since. Returns how many
     /// were swapped.
@@ -106,6 +142,8 @@ impl World {
     pub fn set_texture_budget(&self, bytes: u64) {
         self.texture_limit
             .store(bytes, std::sync::atomic::Ordering::Relaxed);
+        self.texture_cache_limit
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The textures' budget now (bytes, 0 = none).
@@ -149,6 +187,29 @@ impl World {
             *last = Some(std::time::Instant::now());
         }
         let t0 = std::time::Instant::now();
+        // Count the complete texture array: PBR maps, generated displays, tile-owned
+        // textures and variant maps all consume VRAM even without a named-cache entry.
+        // Release unused fleet sets first. This changes residency, never their appearance.
+        let all_bytes = renderer.texture_bytes(scene);
+        let cache_limit = cache_texture_limit(limit, all_bytes, ::render::video_memory());
+        self.texture_cache_limit
+            .store(cache_limit, std::sync::atomic::Ordering::Relaxed);
+        let evicted = if all_bytes > cache_limit {
+            self.trim_vehicle_cache(renderer, scene, cache_limit - cache_limit / 10)
+        } else {
+            0
+        };
+        if evicted > 0 {
+            log::info!(
+                "texture cache: {:.0} -> {:.0} MB, {:.0} MB limit ({:.0} MB requested), {evicted} unused vehicle sets released",
+                all_bytes as f64 / 1e6,
+                renderer.texture_bytes(scene) as f64 / 1e6,
+                cache_limit as f64 / 1e6,
+                limit as f64 / 1e6,
+            );
+        }
+        // Preserve the existing scenery mip policy below. Additional pressure from
+        // PBR/display textures or other applications must not blur visible assets.
         let vehicle_bytes: u64 = self
             .vehicle_textures
             .lock()
@@ -172,7 +233,7 @@ impl World {
         if gpu.textures.values().map(|e| e.bytes).sum::<u64>() + vehicle_bytes <= limit
             && gpu.textures.values().all(|e| e.dropped == 0)
         {
-            return 0;
+            return evicted;
         }
         // how near each scenery texture is: the nearest tile that uses it
         let mut near: hashbrown::HashMap<TextureId, f64> = hashbrown::HashMap::new();
@@ -339,7 +400,7 @@ impl World {
                 t0.elapsed().as_secs_f64() * 1000.0
             );
         }
-        shrunk.len() + restoring
+        shrunk.len() + restoring + evicted
     }
 
     /// After big unloads, cut the free tail off the scene's arrays (meshes, textures,
@@ -422,5 +483,132 @@ impl World {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+}
+
+#[cfg(test)]
+mod residency_tests {
+    use super::*;
+
+    #[test]
+    fn driver_budget_reserves_non_texture_allocations_and_headroom() {
+        // A requested 6 GB remains available on an 8 GB card when the non-texture
+        // allocation and driver headroom fit. A lower setting must still cap it.
+        let memory = Some((2_000_000_000, 7_500_000_000));
+        assert_eq!(cache_texture_limit(6_000_000_000, 1_000_000_000, memory), 6_000_000_000);
+        assert_eq!(cache_texture_limit(2_000_000_000, 1_000_000_000, memory), 2_000_000_000);
+        // 2 GB textures + 3 GB targets/buffers; another process reduces our budget to 4 GB.
+        assert_eq!(
+            cache_texture_limit(
+                3_000_000_000,
+                2_000_000_000,
+                Some((5_000_000_000, 4_000_000_000))
+            ),
+            800_000_000,
+        );
+        assert_eq!(cache_texture_limit(2_000_000_000, 1, None), 2_000_000_000);
+        assert_eq!(
+            cache_texture_limit(2_000_000_000, 1, Some((1, 0))),
+            2_000_000_000
+        );
+        assert_eq!(
+            cache_texture_limit(2_000_000_000, 0, Some((8_000_000_000, 4_000_000_000))),
+            64_000_000
+        );
+        // A user's lower limit remains authoritative, also below the emergency floor.
+        assert_eq!(
+            cache_texture_limit(32_000_000, 0, Some((8_000_000_000, 4_000_000_000))),
+            32_000_000
+        );
+    }
+
+    #[test]
+    fn budget_releases_unused_sets_but_preserves_active_and_shared_textures() {
+        let root = std::env::temp_dir().join(format!("neoomsi-residency-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("global.cfg"), "[name]\nResidency test\n").unwrap();
+        let world = World::open(&root, &root.join("global.cfg"), 20261012).unwrap();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::NOOP;
+        desc.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+        let renderer = pollster::block_on(Renderer::new_with(
+            &wgpu::Instance::new(desc),
+            None,
+            Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            ::render::RenderOptions {
+                msaa: 1,
+                ssao: false,
+                no_enhanced: true,
+                shadow_size: 512,
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+        let mut scene = renderer.new_scene();
+        let image = ::texture::Image {
+            width: 128,
+            height: 128,
+            rgba: vec![128; 128 * 128 * 4],
+            has_alpha: false,
+        };
+        let active = renderer.add_texture(&mut scene, &image, false);
+        let shared = renderer.add_texture(&mut scene, &image, false);
+        let unused = renderer.add_texture(&mut scene, &image, false);
+        // PBR storage is outside vehicle_textures but must disappear with its diffuse.
+        renderer.add_pbr_maps(
+            &mut scene,
+            unused,
+            &::texture::pbr::PbrImages {
+                normal: Some(image.clone()),
+                orm: None,
+                flags: [1.0, 0.0, 0.0, 0.0],
+            },
+        );
+        let normal = scene.pbr_maps[&unused].normal.unwrap();
+        let a = PathBuf::from("active.dds");
+        let b = PathBuf::from("shared.dds");
+        let c = PathBuf::from("unused.dds");
+        world.vehicle_textures.lock().extend([
+            (a.clone(), (active, 1)),
+            (b.clone(), (shared, 2)),
+            (c.clone(), (unused, 1)),
+        ]);
+        let set = |users, textures| super::super::vehicles::VehicleSet {
+            meshes: Vec::new(),
+            dyn_slots: Vec::new(),
+            variants: Vec::new(),
+            textures,
+            mesh_keys: Vec::new(),
+            materials: Vec::new(),
+            users,
+            idle_since: (users == 0).then(std::time::Instant::now),
+        };
+        let active_key = (PathBuf::from("active.bus"), None);
+        let unused_key = (PathBuf::from("unused.bus"), None);
+        world.vehicle_gpu.lock().extend([
+            (active_key.clone(), set(1, vec![a, b.clone()])),
+            (unused_key.clone(), set(0, vec![b.clone(), c])),
+        ]);
+        let active_bytes = scene.texture_bytes_of(active) + scene.texture_bytes_of(shared);
+        world.set_texture_budget(active_bytes);
+        assert!(!world.can_precache_vehicle(&renderer, &scene));
+        assert_eq!(
+            world.trim_vehicle_cache(&renderer, &mut scene, active_bytes),
+            1
+        );
+        assert!(world.has_vehicle_set(&active_key));
+        assert!(!world.has_vehicle_set(&unused_key));
+        assert_eq!(renderer.texture_bytes(&scene), active_bytes);
+        assert_eq!(scene.texture_bytes_of(normal), 0);
+        assert_eq!(world.vehicle_textures.lock()[&b].1, 1);
+        assert_eq!(renderer.texture_levels(&scene, active), Some((128, 128, 1)));
+        // An impossible limit cannot evict an active vehicle or reduce its texture.
+        assert_eq!(world.trim_vehicle_cache(&renderer, &mut scene, 1), 0);
+        assert_eq!(renderer.texture_bytes(&scene), active_bytes);
+        // Check the resolved test directory before recursive cleanup.
+        let actual = root.canonicalize().unwrap();
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        assert!(actual.starts_with(&temp) && actual != temp);
+        std::fs::remove_dir_all(actual).unwrap();
     }
 }

@@ -79,6 +79,7 @@ impl Renderer {
             light_grid: Default::default(),
             last_lights: Vec::new(),
             bind_groups: HashMap::new(),
+            material_uniform_page: None,
             pbr_maps: HashMap::new(),
             snow_textures: Default::default(),
         }

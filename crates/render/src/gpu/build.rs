@@ -223,6 +223,10 @@ impl Renderer {
             _ => 800,
         };
         ADAPTER_TEXTURE_MB.store(guess_mb, std::sync::atomic::Ordering::Relaxed);
+        ADAPTER_IDS.store(
+            ((info.vendor as u64) << 32) | info.device as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         log::info!(
             "graphics adapter: {} ({:?}, {:?}{}), texture memory taken for it: {guess_mb} MB",
             info.name,

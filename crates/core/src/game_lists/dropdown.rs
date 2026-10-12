@@ -271,6 +271,13 @@ pub(crate) fn settings_pick(mut app: Option<&mut App>, action: &str) -> Option<S
         if restart {
             app.restart_pending = true;
         }
+        if action.starts_with("pick texture_memory ") {
+            if let Some(world) = app.world.as_ref() {
+                let budget = crate::memory::texture_budget();
+                world.set_texture_budget(budget);
+                log::info!("texture budget changed: {:.0} MB", budget as f64 / 1e6);
+            }
+        }
         apply_live_settings(app);
     }
     msg

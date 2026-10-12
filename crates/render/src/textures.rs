@@ -563,6 +563,7 @@ impl Renderer {
                 },
                 m.address,
                 &m.buf,
+                m.buf_offset,
             );
             n += 1;
         }

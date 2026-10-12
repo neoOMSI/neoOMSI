@@ -3193,10 +3193,14 @@ impl Traffic {
     pub fn precache_random(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
         let t0 = std::time::Instant::now();
         let sets = self.random_sets();
+        let mut uploaded = 0;
         for chunk in sets.chunks(3) {
+            if !world.can_precache_vehicle(renderer, scene) {
+                break;
+            }
             world.prefetch_vehicle_sets(renderer, chunk);
             for (ty, scheme) in chunk {
-                world.precache_vehicle(renderer, scene, ty, *scheme);
+                uploaded += usize::from(world.precache_vehicle(renderer, scene, ty, *scheme));
             }
         }
         world.forget_prefetched();
@@ -3204,7 +3208,7 @@ impl Traffic {
             self.prime_pull_out_room(ty, false);
         }
         log::info!(
-            "traffic: {} vehicle/paint sets of the random traffic read and uploaded in {:.1} s",
+            "traffic: {uploaded}/{} vehicle/paint sets of the random traffic read and uploaded in {:.1} s (remaining sets load on demand)",
             sets.len(),
             t0.elapsed().as_secs_f32()
         );

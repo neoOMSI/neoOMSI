@@ -215,7 +215,7 @@ impl World {
         scene: &mut Scene,
         vt: &::simulation::VehicleType,
         scheme: Option<usize>,
-    ) {
+    ) -> bool {
         let key = (vt.def.path.clone(), scheme);
         if self.vehicle_gpu.lock().contains_key(&key) {
             // uploaded meanwhile (a bus came first): what was read for it can go
@@ -237,10 +237,14 @@ impl World {
             for k in on_gpu {
                 r.meshes.remove(&k);
             }
-            return;
+            return true;
+        }
+        if !self.can_precache_vehicle(renderer, scene) {
+            return false;
         }
         let c = self.upload_vehicle(renderer, scene, vt, scheme, 0);
         self.vehicle_gpu.lock().insert(key, c);
+        true
     }
 
     /// Like `add_vehicle`, but meshes and static materials uploaded for the same vehicle
@@ -390,9 +394,37 @@ impl World {
         keep: &hashbrown::HashSet<VehicleKey>,
         idle: std::time::Duration,
     ) -> usize {
+        self.trim_vehicle_sets_inner(renderer, scene, keep, idle, None)
+    }
+
+    /// Under memory pressure, evict only sets with no live instances. Future departures
+    /// can upload them on demand; active buses, trailers and their texture levels stay.
+    pub(super) fn trim_vehicle_cache(
+        &self,
+        renderer: &Renderer,
+        scene: &mut Scene,
+        target: u64,
+    ) -> usize {
+        self.trim_vehicle_sets_inner(
+            renderer,
+            scene,
+            &hashbrown::HashSet::new(),
+            std::time::Duration::ZERO,
+            Some(target),
+        )
+    }
+
+    fn trim_vehicle_sets_inner(
+        &self,
+        renderer: &Renderer,
+        scene: &mut Scene,
+        keep: &hashbrown::HashSet<VehicleKey>,
+        idle: std::time::Duration,
+        target: Option<u64>,
+    ) -> usize {
         let now = std::time::Instant::now();
         let mut sets = self.vehicle_gpu.lock();
-        let gone: Vec<VehicleKey> = sets
+        let mut gone: Vec<VehicleKey> = sets
             .iter()
             .filter(|(k, s)| {
                 s.users == 0
@@ -403,6 +435,8 @@ impl World {
             })
             .map(|(k, _)| k.clone())
             .collect();
+        // Oldest first, with a stable tie break so benchmarks and residency are repeatable.
+        gone.sort_by(|a, b| sets[a].idle_since.cmp(&sets[b].idle_since).then(a.cmp(b)));
         if gone.is_empty() {
             return 0;
         }
@@ -410,8 +444,13 @@ impl World {
         let mut mesh_ids = self.vehicle_meshes.lock();
         let mut gpu = self.gpu.lock();
         let (mut textures, mut meshes) = (0usize, 0usize);
+        let mut removed = 0;
         for k in &gone {
+            if target.is_some_and(|bytes| renderer.texture_bytes(scene) <= bytes) {
+                break;
+            }
             let s = sets.remove(k).unwrap();
+            removed += 1;
             for m in s.materials {
                 gpu.free_material(renderer, scene, m);
             }
@@ -445,10 +484,10 @@ impl World {
         if ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
             log::info!(
                 "vehicle sets: {} let go ({textures} textures, {meshes} meshes), {} kept",
-                gone.len(),
+                removed,
                 sets.len()
             );
         }
-        gone.len()
+        removed
     }
 }

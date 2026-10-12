@@ -207,7 +207,9 @@ pub struct Scene {
     pub(crate) cpu_params: Vec<[f32; 4]>,
     pub(crate) light_grid: LightGrid,
     pub(crate) last_lights: Vec<u8>,
-    pub(crate) bind_groups: HashMap<BindKey, (wgpu::BindGroup, wgpu::Buffer)>,
+    pub(crate) bind_groups: HashMap<BindKey, (wgpu::BindGroup, wgpu::Buffer, u64)>,
+    /// Append-only uniform page. Older pages live as long as their material bindings.
+    pub(crate) material_uniform_page: Option<(wgpu::Buffer, u64)>,
     pub pbr_maps: HashMap<TextureId, PbrMaps>,
     pub snow_textures: std::collections::HashSet<TextureId>,
 }
@@ -255,7 +257,7 @@ impl Scene {
     pub fn gpu_bytes(&self) -> (u64, u64, u64) {
         let tex = self.textures.iter().map(|t| t.bytes).sum();
         let mesh = self.mesh_buffer_bytes();
-        let other = [
+        let other: u64 = [
             &self.model_buf,
             &self.params_buf,
             &self.light_buf,
@@ -267,6 +269,12 @@ impl Scene {
         .filter_map(|b| b.as_ref())
         .map(|b| b.size())
         .sum();
-        (tex, mesh, other)
+        let mut uniforms: std::collections::HashSet<&wgpu::Buffer> =
+            self.materials.iter().map(|m| &m.buf).collect();
+        if let Some((buf, _)) = &self.material_uniform_page {
+            uniforms.insert(buf);
+        }
+        let material_bytes: u64 = uniforms.into_iter().map(|b| b.size()).sum();
+        (tex, mesh, other + material_bytes)
     }
 }

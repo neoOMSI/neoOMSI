@@ -156,6 +156,7 @@ impl World {
             upgrades_done: Default::default(),
             freetex_upgrades: Default::default(),
             texture_limit: Default::default(),
+            texture_cache_limit: Default::default(),
             budget_checked: Default::default(),
             lanes: Mutex::new(Vec::new()),
             lane_tiles: Mutex::new(Vec::new()),

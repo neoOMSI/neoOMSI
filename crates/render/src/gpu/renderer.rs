@@ -52,7 +52,7 @@ pub struct Renderer {
     pub(crate) flat_normal_texture: GpuTexture,
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) depth: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
-    pub(crate) msaa_targets: HashMap<(u32, u32), (wgpu::TextureView, wgpu::TextureView)>,
+    pub(crate) msaa_targets: HashMap<(u32, u32), (Option<wgpu::TextureView>, wgpu::TextureView)>,
     pub(crate) ao: Option<AoTargets>,
     pub(crate) ao_sampler: wgpu::Sampler,
     pub(crate) ao_layout: wgpu::BindGroupLayout,
