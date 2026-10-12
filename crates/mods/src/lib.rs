@@ -4,7 +4,9 @@ use std::sync::{Mutex, RwLock};
 
 mod layout;
 mod resolver;
-pub use layout::{Layer, ModEntry, ModKind, SHARED_DIR, discover, ensure_layout};
+pub use layout::{
+    Layer, ModEntry, ModKind, SHARED_DIR, discover, ensure_layout, folder_content_root,
+};
 pub use resolver::*;
 
 struct State {
@@ -74,7 +76,7 @@ pub fn init(mods_dir: &Path, legacy: Option<&Path>) -> std::io::Result<()> {
     let mut mounts_complete = true;
     for m in &mods {
         let root = match m.kind {
-            ModKind::Folder => m.path.clone(),
+            ModKind::Folder => folder_content_root(&m.path),
             ModKind::Zip => match vfs::mount_zip(&m.path) {
                 Ok(mount) => mount,
                 Err(e) => {
@@ -162,7 +164,7 @@ pub fn find(mod_name: Option<&str>, rel: &str) -> Option<Resolved> {
     if let Some(name) = mod_name {
         let m = mods.iter().find(|m| m.name.eq_ignore_ascii_case(name))?;
         let root = match m.kind {
-            ModKind::Folder => m.path.clone(),
+            ModKind::Folder => folder_content_root(&m.path),
             ModKind::Zip => m.path.clone(), // the mount point is the archive path
         };
         chain.push((root, Layer::Mod));

@@ -381,18 +381,6 @@ pub(crate) fn mount_archive(zip: &Path) {
     }
 }
 
-/// The archives of the content folder that are mounted, in name order.
-fn archive_roots(content: &Path) -> Vec<PathBuf> {
-    let dir = content.join(install::ARCHIVES);
-    let mut v: Vec<PathBuf> = ::legacy_config::vfs::mounts()
-        .iter()
-        .map(|m| m.path().to_path_buf())
-        .filter(|p| p.starts_with(&dir) && p.exists())
-        .collect();
-    v.sort();
-    v
-}
-
 fn load_config_raw() -> Config {
     std::fs::read_to_string(config_path())
         .ok()
@@ -416,23 +404,23 @@ fn resolve_content(rel: &str) -> Result<PathBuf> {
     Ok(::mods::resolve_path(&root, rel))
 }
 
-/// The folders the lists are made of: the content folder first, then the archives used in
-/// place (mounted as folders), then the OMSI folder.
+/// The folders the lists are made of, in the same order as the game resolves them: the
+/// content folder, each mounted mod and archive, the shared mod folder, then OMSI 2.
 fn bases() -> Vec<PathBuf> {
-    let mut v = Vec::new();
     if let Some(c) = content_dir() {
         mount_archives(&c);
-        v.push(c.clone());
-        v.extend(archive_roots(&c));
     }
-    if let Ok(r) = root() {
-        v.push(r);
+    let registered = ::mods::content_roots();
+    if !registered.is_empty() {
+        return registered;
     }
-    v
+    // Keep the old fallback for callers that cannot initialise the content folder (for
+    // example while setup is incomplete).
+    root().into_iter().collect()
 }
 
-/// Entries of `rel` (e.g. "Vehicles") across the content folder and the OMSI 2 folder;
-/// a name in the content folder hides the same name in the installation.
+/// Entries of `rel` (e.g. "Vehicles") across all content roots; a name in an earlier root
+/// hides the same name in the roots after it.
 fn merged_entries(rel: &str) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -448,12 +436,15 @@ fn merged_entries(rel: &str) -> Vec<PathBuf> {
     out
 }
 
-/// Folders of `rel` by name across the content folder and the OMSI folder: each name with
-/// all its copies, the content folder's first (a mod may add files to a stock folder).
-fn merged_folders(rel: &str) -> Vec<(String, Vec<PathBuf>)> {
+/// Folders of `rel` by name across the supplied roots: each name with all its copies, the
+/// earlier root first (a mod may add files to a stock folder).
+fn merged_folders_in(
+    bases: impl IntoIterator<Item = PathBuf>,
+    rel: &str,
+) -> Vec<(String, Vec<PathBuf>)> {
     let mut out: Vec<(String, Vec<PathBuf>)> = Vec::new();
     let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for base in bases() {
+    for base in bases {
         let dir = base.join(rel);
         let Some(list) = ::legacy_config::vfs::list_dir(&dir) else {
             continue;
@@ -485,6 +476,13 @@ fn merged_folders(rel: &str) -> Vec<(String, Vec<PathBuf>)> {
     }
     out.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
     out
+}
+
+/// Folders of `rel` by name across every content root. A separately mounted mod is a
+/// content root in its own right, so it must be included here as well as the main content
+/// directory and the original OMSI installation.
+fn merged_folders(rel: &str) -> Vec<(String, Vec<PathBuf>)> {
+    merged_folders_in(bases(), rel)
 }
 
 /// Is `p` in the content folder (a mod) rather than the OMSI folder?
@@ -3509,6 +3507,30 @@ pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mounted_mod_roots_contribute_vehicle_folders_to_the_drive_list() {
+        let root = std::env::temp_dir().join(format!(
+            "neoomsi-drive-mod-roots-{}",
+            std::process::id()
+        ));
+        let content = root.join("content");
+        let mod_root = root.join("mods/bus-pack");
+        std::fs::create_dir_all(content.join("Vehicles/Stock")).unwrap();
+        std::fs::create_dir_all(mod_root.join("Vehicles/Mod Bus")).unwrap();
+
+        let folders = super::merged_folders_in(vec![content.clone(), mod_root.clone()], "Vehicles");
+
+        assert_eq!(
+            folders,
+            vec![
+                ("Mod Bus".to_string(), vec![mod_root.join("Vehicles/Mod Bus")]),
+                ("Stock".to_string(), vec![content.join("Vehicles/Stock")]),
+            ]
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
     #[test]
     fn mods_status_lists_mounted_entries_not_an_install_inbox() {
         let root = std::env::temp_dir().join(format!(
