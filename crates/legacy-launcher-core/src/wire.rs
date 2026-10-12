@@ -326,6 +326,7 @@ impl From<Duty> for crate::Duty {
             number: d.number,
             hof: d.hof,
             entry: d.entry,
+            spawn: d.spawn,
             line: d.line,
             tour: d.tour,
             trip: d.trip,

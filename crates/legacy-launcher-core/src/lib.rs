@@ -2797,6 +2797,10 @@ pub struct Duty {
     pub number: Option<String>,
     pub hof: Option<String>,
     pub entry: Option<i32>,
+    /// An explicit map position selected in the launcher's map preview. This takes priority
+    /// over an entry point, including the automatic nearest-entry choice for a service.
+    #[serde(default)]
+    pub spawn: Option<String>,
     pub line: Option<String>,
     pub tour: Option<String>,
     /// The trip of the tour to start with: its departure (HH:MM) or its place in the tour.
@@ -3089,20 +3093,24 @@ fn duty_args_from_root(root: &Path, d: &Duty) -> Result<Vec<String>> {
     }) {
         a.extend(["--hof".into(), h.trim().to_string()]);
     }
-    // the entry point's place in the map's list; -1: the one nearest to the duty's first
-    // stop (a free drive takes the list's first then)
-    match d.entry {
-        Some(e) if e < 0 => {
-            if d.line
-                .as_deref()
-                .map(|l| !l.trim().is_empty())
-                .unwrap_or(false)
-            {
-                a.push("--auto-entry".into());
+    if let Some(spawn) = d.spawn.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        a.extend(["--spawn".into(), spawn.to_string()]);
+    } else {
+        // the entry point's place in the map's list; -1: the one nearest to the duty's first
+        // stop (a free drive takes the list's first then)
+        match d.entry {
+            Some(e) if e < 0 => {
+                if d.line
+                    .as_deref()
+                    .map(|l| !l.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    a.push("--auto-entry".into());
+                }
             }
+            Some(e) => a.extend(["--entry".into(), e.to_string()]),
+            None => {}
         }
-        Some(e) => a.extend(["--entry".into(), e.to_string()]),
-        None => {}
     }
     let date = d
         .date
@@ -3780,6 +3788,21 @@ mod tests {
             a.windows(2).any(|w| w[0] == "--number" && w[1] == "4711"),
             "{a:?}"
         );
+    }
+
+    #[test]
+    fn a_map_preview_stop_is_passed_as_the_spawn_position() {
+        let d: Duty = serde_json::from_str(
+            r#"{"map":"maps/x/global.cfg","bus":"Vehicles/x.bus","time":"09:00","entry":-1,"spawn":"123.4,567.8,90"}"#,
+        )
+        .unwrap();
+        let a = duty_args_from_root(Path::new("C:/OMSI 2"), &d).unwrap();
+        assert!(
+            a.windows(2)
+                .any(|w| w[0] == "--spawn" && w[1] == "123.4,567.8,90"),
+            "{a:?}"
+        );
+        assert!(!a.iter().any(|v| v == "--auto-entry"), "{a:?}");
     }
 
     fn settings_guard() -> std::sync::MutexGuard<'static, ()> {

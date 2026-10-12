@@ -620,6 +620,8 @@ message Duty {
   optional string season = 23;
   optional uint32 tutorial = 24;
   optional string situation = 25;
+  // x,y,heading (and optionally z) selected from the launcher's map preview.
+  optional string spawn = 26;
 }
 
 message Launched {
