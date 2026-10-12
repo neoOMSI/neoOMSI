@@ -710,6 +710,14 @@ mod tests {
         );
         assert_eq!(
             start_centers(
+                &args(&["--bus", "Vehicles/x.bus", "--spawn", "10,20,90,12.5"]),
+                &cam,
+                None
+            ),
+            vec![DVec3::new(10.0, 20.0, 12.5)]
+        );
+        assert_eq!(
+            start_centers(
                 &args(&[
                     "--bus",
                     "Vehicles/x.bus",
