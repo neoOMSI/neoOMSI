@@ -535,6 +535,17 @@ fn only_depth_writing_blends_get_a_depth_pipe_before_the_rain() {
 }
 
 #[test]
+fn only_parts_after_a_rain_layer_follow_the_rain() {
+    // pillar, rain pane, divider, another rain pane, sticker
+    let mut seen = false;
+    let follows: Vec<bool> = [false, true, false, true, false]
+        .into_iter()
+        .map(|rain| follows_rain(&mut seen, rain))
+        .collect();
+    assert_eq!(follows, [false, false, true, false, true]);
+}
+
+#[test]
 fn nearest_by_origin_picks_the_closest_mesh_of_each_object() {
     let bus = DVec3::new(0.0, 0.0, 0.0);
     let car = DVec3::new(1.0, 0.0, 0.0);

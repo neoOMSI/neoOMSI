@@ -21,6 +21,13 @@ fn sort_blended_keys(keys: &mut [(u8, f32, [u64; 3], bool, u32, usize)]) {
     });
 }
 
+/// Whether one of the instance's materials is a rain layer (drawn after the scene).
+fn has_rain_layer(scene: &Scene, inst: &Instance) -> bool {
+    inst.materials
+        .iter()
+        .any(|&m| scene.materials[m].uniform.emissive[3] > 1.5)
+}
+
 fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u32, u32, u32)>) {
     if let Some((x, y, width, height)) = viewport {
         pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
@@ -1184,6 +1191,7 @@ impl Renderer {
             (list, batches)
         };
         let mut main_batches: Vec<Batch> = Vec::new();
+        let mut late_batches: Vec<Batch> = Vec::new();
         let mut main_draws = [0usize; 2];
         let has_presurface = visible
             .iter()
@@ -1338,9 +1346,14 @@ impl Renderer {
                     .collect();
                 sort_blended_keys(&mut keyed);
                 items.clear();
+                let mut late_items = Vec::new();
+                let mut rain_seen = false;
                 for (_, _, _, _, _, i) in keyed {
                     let inst = &scene.instances[i];
                     let cull = culls_back_faces(scene, inst);
+                    let after_rain = glass_on
+                        && player == Some(inst.origin)
+                        && follows_rain(&mut rain_seen, has_rain_layer(scene, inst));
                     for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
                         let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
                         let mat = &scene.materials[mat_id];
@@ -1367,17 +1380,23 @@ impl Renderer {
                         } else {
                             PIPE_BLEND
                         };
-                        items.push(DrawItem {
+                        let item = DrawItem {
                             pipe: pipe_code(kind, cull, instance_depth_bias(inst, mat)),
                             mesh: inst.mesh as u32,
                             range: ri as u32,
                             material: mat_id as u32,
                             entry: inst.base + *slot,
-                        });
+                        };
+                        if after_rain && kind == PIPE_BLEND_NO_WRITE {
+                            late_items.push(item);
+                        } else {
+                            items.push(item);
+                        }
                     }
                 }
-                main_draws[1] += items.len();
+                main_draws[1] += items.len() + late_items.len();
                 batch_items(scene, &mut items, false, &mut list, &mut main_batches);
+                batch_items(scene, &mut late_items, false, &mut list, &mut late_batches);
             }
         });
         if let Some((pre_list, mut pre_batches)) = prepass_found {
@@ -2214,7 +2233,7 @@ impl Renderer {
             ];
             // The prepass depth lacks the blended surfaces that write depth (a shared depth
             // has them): add them, or the rain draws over a blended dashboard in front of it.
-            if !share_depth && !rain_batches.is_empty() {
+            if !share_depth && (!rain_batches.is_empty() || !late_batches.is_empty()) {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("blended depth before rain"),
                     color_attachments: &[],
@@ -2257,6 +2276,9 @@ impl Renderer {
             });
             pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             encode_batches(&mut pass, scene, &rain_batches, |pipe| {
+                &pipes[pipe as usize]
+            });
+            encode_batches(&mut pass, scene, &late_batches, |pipe| {
                 &pipes[pipe as usize]
             });
         }

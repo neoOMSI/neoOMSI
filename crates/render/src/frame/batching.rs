@@ -159,6 +159,15 @@ pub(crate) fn blended_depth_pipe(pipe: u8) -> Option<u8> {
     (pipe / 4 == PIPE_BLEND).then_some((pipe >> 1) & 1)
 }
 
+/// Whether a vehicle's next blended instance in drawing order follows one of its rain
+/// layers and has none itself; `seen` carries its earlier instances. OMSI draws in authored
+/// order, so such a part without depth writes (the NLC's door dividers) covers the drops.
+pub(crate) fn follows_rain(seen: &mut bool, rain: bool) -> bool {
+    let follows = *seen && !rain;
+    *seen |= rain;
+    follows
+}
+
 pub(crate) fn instance_depth_bias(instance: &Instance, material: &Material) -> bool {
     instance.surface_bias || material.z_bias > 0 || (material.no_z_check && !instance.surface)
 }
