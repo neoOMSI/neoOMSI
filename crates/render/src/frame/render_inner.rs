@@ -6,13 +6,18 @@ const MAIN_PASS_PARTS: usize = 4;
 
 fn sort_blended_keys(keys: &mut [(u8, f32, [u64; 3], bool, u32, usize)]) {
     keys.sort_unstable_by(|a, b| {
-        a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then_with(|| {
-            if a.3 && b.3 && a.2 == b.2 {
-                a.4.cmp(&b.4)
-            } else {
-                a.5.cmp(&b.5)
-            }
-        })
+        a.0.cmp(&b.0)
+            .then(b.1.total_cmp(&a.1))
+            .then(a.2.cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+            .then_with(|| {
+                if a.3 {
+                    a.4.cmp(&b.4)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then(a.5.cmp(&b.5))
     });
 }
 
@@ -2651,5 +2656,28 @@ mod tests {
         ];
         sort_blended_keys(&mut keys);
         assert_eq!(keys.iter().map(|k| k.5).collect::<Vec<_>>(), [3, 81]);
+    }
+
+    #[test]
+    fn mixed_ordered_and_unordered_ties_sort_consistently() {
+        // Ordered meshes whose recycled ids run against their authored order, tied with
+        // unordered instances in between, once formed a cycle that made the sort panic.
+        let origin = [1, 2, 3];
+        let mut keys: Vec<(u8, f32, [u64; 3], bool, u32, usize)> = Vec::new();
+        for i in 0..40u32 {
+            keys.push((0, 10.0, origin, true, i, 200 - 2 * i as usize));
+            keys.push((0, 10.0, [4, 5, 6], false, 0, 201 - 2 * i as usize));
+            keys.push((0, 10.0, origin, false, 0, 1 + 2 * i as usize));
+        }
+        sort_blended_keys(&mut keys);
+        for w in keys.windows(2) {
+            assert_ne!(
+                (w[0].0, w[0].2, w[0].3, w[0].4, w[0].5)
+                    .cmp(&(w[1].0, w[1].2, w[1].3, w[1].4, w[1].5)),
+                std::cmp::Ordering::Greater
+            );
+        }
+        let ordered: Vec<u32> = keys.iter().filter(|k| k.3).map(|k| k.4).collect();
+        assert_eq!(ordered, (0..40).collect::<Vec<_>>());
     }
 }
