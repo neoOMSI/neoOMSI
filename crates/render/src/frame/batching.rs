@@ -153,6 +153,12 @@ pub(crate) fn depth_prepass_kind(kind: u8, material: &Material, resurface: bool)
     }
 }
 
+/// The depth prepass pipeline (kind 0, by cull) that writes a main pass batch's depth when
+/// the main pass blends it with depth writes; `None` for every other batch.
+pub(crate) fn blended_depth_pipe(pipe: u8) -> Option<u8> {
+    (pipe / 4 == PIPE_BLEND).then_some((pipe >> 1) & 1)
+}
+
 pub(crate) fn instance_depth_bias(instance: &Instance, material: &Material) -> bool {
     instance.surface_bias || material.z_bias > 0 || (material.no_z_check && !instance.surface)
 }

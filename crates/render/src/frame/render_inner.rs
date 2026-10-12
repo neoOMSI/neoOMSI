@@ -2212,6 +2212,33 @@ impl Renderer {
                     },
                 }),
             ];
+            // The prepass depth lacks the blended surfaces that write depth (a shared depth
+            // has them): add them, or the rain draws over a blended dashboard in front of it.
+            if !share_depth && !rain_batches.is_empty() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("blended depth before rain"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.ao.as_ref().unwrap().depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
+                encode_batches_filtered(
+                    &mut pass,
+                    scene,
+                    &main_batches,
+                    |b| blended_depth_pipe(b.pipe).is_some(),
+                    |pipe| &self.prepass_pipelines[blended_depth_pipe(pipe).unwrap() as usize],
+                );
+            }
             let pipes = &self.main_pass(enhanced, reflection_frame).rain_pipelines;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rain on current scene"),
