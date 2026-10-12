@@ -1,3 +1,4 @@
+use super::passengers::terminus_matches;
 use super::*;
 
 /// Where one of the host's people is this frame, as a client draws them.
@@ -469,7 +470,7 @@ impl Humans {
                 && grant.allowed_termini.as_ref().is_none_or(|names| {
                     bus.terminus
                         .as_ref()
-                        .is_some_and(|t| names.iter().any(|n| n.trim() == t.trim()))
+                        .is_some_and(|t| names.iter().any(|n| terminus_matches(t, n)))
                 }),
         )
     }

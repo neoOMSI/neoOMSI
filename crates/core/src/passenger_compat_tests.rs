@@ -2600,6 +2600,52 @@ fn a_client_without_timetable_records_keeps_the_hosts_line_permission() {
 }
 
 #[test]
+fn a_hof_line_prefix_does_not_make_a_timetable_service_ineligible() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    let mut pax = Pax::new(1.1);
+    pax.task = Task::WaitingForBus;
+    pax.stop = Some(1);
+    pax.journey.allowed_termini = Some(["Apsley Station".into()].into_iter().collect());
+    h.people.push(f.person(7, State::Pax(Box::new(pax)), false));
+    let mut s = stop(DVec3::ZERO, 0.0, "Apsley Station");
+    s.buses.push((BusId::Player, true));
+    h.stops.insert(1, s);
+    let grant = PassengerGrant {
+        id: 7,
+        transfer: 1,
+        stop: 1,
+        spot: 0,
+        destination: Some("Apsley Station".into()),
+        alternative: None,
+        alternative_m: 0.0,
+        ride_km: 12.0,
+        line_destination: Some("Apsley Station".into()),
+        allowed_termini: Some(vec!["Apsley Station".into()]),
+    };
+    let mut b = bus(cabin());
+    b.terminus = Some("402 Apsley Station".into());
+    h.buses.last_buses = vec![b.clone()];
+    assert_eq!(h.grant_eligible(&grant), Some(true));
+    let ix = [(b.id, 0)].into_iter().collect();
+    assert_eq!(h.bus_for(0, 1, &[b], &ix), Some(BusId::Player));
+}
+
+#[test]
+fn a_hof_line_prefix_is_not_part_of_the_terminus_stop_name() {
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    h.stops.insert(1, stop(DVec3::ZERO, 0.0, "Apsley Station"));
+    let mut b = bus(cabin());
+    b.terminus = Some("B2 Apsley Station".into());
+    let regs = h.register_buses(std::slice::from_ref(&b), 0.05);
+    assert!(regs[&b.id].all_exit);
+    assert!(h.stops[&1].buses.is_empty());
+    b.terminus = Some("402 Apsley Bus Station".into());
+    let regs = h.register_buses(&[b], 0.05);
+    assert!(!regs[&BusId::Player].all_exit, "similar names remain distinct");
+}
+
+#[test]
 fn a_grant_without_a_destination_does_not_draw_one_from_the_clients_timetable() {
     let f = Fixture::new();
     let mut h = Humans::new(&f.root);

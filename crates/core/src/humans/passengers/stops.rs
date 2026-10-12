@@ -72,9 +72,31 @@ impl PaxStop {
     /// Whether a destination or a terminus `name` is this stop: its label, or its name in
     /// the timetable.
     pub(in crate::humans) fn is_named(&self, name: &str) -> bool {
-        let name = name.trim();
-        name == self.name.trim() || (!self.alias.is_empty() && name == self.alias.trim())
+        terminus_matches(name, &self.name)
+            || (!self.alias.is_empty() && terminus_matches(name, &self.alias))
     }
+}
+
+/// Does a selected HOF terminus name identify this timetable destination?
+///
+/// A timetable normally uses the stop's plain name, whereas many UK HOFs prefix the
+/// texture identifier with the line (for example, `402 Apsley Station` or `B2 Apsley
+/// Bus Station`).  That prefix is presentation data, not part of the destination.  Keep
+/// ordinary destination comparisons exact, but also accept that one well-defined HOF
+/// spelling so a correctly programmed bus is not mistaken for a different service.
+pub(in crate::humans) fn terminus_matches(hof_name: &str, timetable_name: &str) -> bool {
+    let hof_name = hof_name.trim();
+    let timetable_name = timetable_name.trim();
+    if hof_name == timetable_name {
+        return true;
+    }
+    let Some((prefix, rest)) = hof_name.split_once(char::is_whitespace) else {
+        return false;
+    };
+    let is_line = !prefix.is_empty()
+        && prefix.chars().all(|c| c.is_ascii_alphanumeric())
+        && prefix.chars().any(|c| c.is_ascii_digit());
+    is_line && rest.trim() == timetable_name
 }
 
 impl Humans {
@@ -555,7 +577,7 @@ impl Humans {
                         continue;
                     }
                     let Some(t) = &bn.terminus else { continue };
-                    if !termini.contains(t.trim()) {
+                    if !termini.iter().any(|name| terminus_matches(t, name)) {
                         continue;
                     }
                     let d = (bn.pos - self.people[i].position).length();
