@@ -37,6 +37,20 @@ pub(super) fn route_numbers(app: &App) -> Vec<String> {
     out
 }
 
+/// The HOF's terminus target/ident: OMSI uses this to set and describe a destination.
+/// Older content occasionally leaves it blank, where field 0 is the best available fallback.
+pub(super) fn terminus_target(t: &::legacy_vehicle::hof::Terminus) -> String {
+    let target = t.texture_id.trim();
+    if !target.is_empty() {
+        return target.to_string();
+    }
+    t.strings
+        .iter()
+        .find(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| t.code.to_string())
+}
+
 pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
     let line = line.trim();
     if line.is_empty() {
@@ -46,7 +60,7 @@ pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
         let hof = p.vehicle.host.hof.clone();
         let code = p.vehicle.var("IBIS_TerminusCode").unwrap_or(-1.0) as i32;
         let named = |t: &&::legacy_vehicle::hof::Terminus| {
-            t.strings.first().is_some_and(|s| !s.trim().is_empty())
+            !t.texture_id.trim().is_empty() || t.strings.iter().any(|s| !s.trim().is_empty())
         };
         let term = hof.as_ref().and_then(|h| {
             h.termini
@@ -55,9 +69,7 @@ pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
                 .find(|t| t.code == code)
                 .or_else(|| h.termini.iter().find(named))
         });
-        let name = term
-            .and_then(|t| t.strings.first().cloned())
-            .unwrap_or_default();
+        let name = term.map(terminus_target).unwrap_or_default();
         crate::schedule::set_player_destination_directly(
             &mut p.vehicle,
             hof.as_deref(),
@@ -293,16 +305,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 let mut termini: Vec<(String, String)> = hof
                     .termini
                     .iter()
-                    .map(|t| {
-                        (
-                            t.strings
-                                .iter()
-                                .find(|s| !s.trim().is_empty())
-                                .cloned()
-                                .unwrap_or_else(|| t.code.to_string()),
-                            t.code.to_string(),
-                        )
-                    })
+                    .map(|t| (terminus_target(t), t.code.to_string()))
                     .collect();
                 termini.sort_by_key(|(name, _)| name.trim().to_lowercase());
                 for (name, code) in termini {
@@ -511,6 +514,32 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
     }
     out.push((::i18n::translate("pause.dialog.back", &[]), "back".into()));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminus_target_prefers_the_hof_ident_over_display_field_zero() {
+        let term = ::legacy_vehicle::hof::Terminus {
+            code: 1000,
+            texture_id: "Apsley Station".into(),
+            strings: vec!["0".into(), "Apsley".into()],
+            ..Default::default()
+        };
+        assert_eq!(terminus_target(&term), "Apsley Station");
+    }
+
+    #[test]
+    fn terminus_target_falls_back_when_an_old_hof_has_no_ident() {
+        let term = ::legacy_vehicle::hof::Terminus {
+            code: 1000,
+            strings: vec!["  Apsley Station  ".into()],
+            ..Default::default()
+        };
+        assert_eq!(terminus_target(&term), "Apsley Station");
+    }
 }
 
 pub(crate) fn menu_extras(
