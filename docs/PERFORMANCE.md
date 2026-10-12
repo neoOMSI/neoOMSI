@@ -15,6 +15,12 @@ The renderer keeps these costs bounded without changing graphics settings:
   mirror across the cell boundary invalidated and rebuilt every instance's model and
   material parameters, even for static objects outside the picture. Distant secondary
   cameras still rebase to preserve precision.
+- A texture's `.cfg` sidecar is looked for in the folder's cached listing and read once
+  per texture (until the content changes), not probed and read again for every material
+  slot. Placing an object type on the main thread while a map streams in looked up the
+  sidecar of each of its slots: a building with 945 slots took 180 ms of a frame on
+  Grande Porto, now about 10 ms. `OMSI_DEBUG_UPLOAD=1` logs every texture and object type
+  whose upload takes more than 8 ms.
 - The window's view keeps its render origin until the camera is 400 m from it (a 0.03 mm
   step in 32 bits), not only within its 100 m cell. When the origin moves sideways, only
   the uploaded model matrices are written again; parameters, bounds and culling blocks do

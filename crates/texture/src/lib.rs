@@ -485,10 +485,15 @@ pub fn cfg_path(requested: &str, found: &Path) -> Option<PathBuf> {
             // the parent folder is only for a seasonal subfolder's texture
             names.truncate(1);
         }
+        // (from the folder's listing, read once: up to five file probes for every new texture
+        // - most have no sidecar - took a building with hundreds of textures tens of
+        // milliseconds of a frame while a map streamed in)
         for n in names {
-            let c = d.join(&n);
-            if c.is_file() {
-                return Some(c);
+            if let Some(entry) = ::legacy_config::find_in_dir(d, &n) {
+                let c = d.join(entry);
+                if ::legacy_config::vfs::is_file(&c) {
+                    return Some(c);
+                }
             }
         }
     }
@@ -503,13 +508,25 @@ impl TextureCache {
     /// The `<texture>.cfg` sidecar of a texture, if it has one: `[moisture]` marks a
     /// surface that darkens in the wet, `[puddles]` one that collects puddles.
     pub fn cfg(&self, name: &str, dirs: &[&Path]) -> TextureCfg {
-        match find_texture(name, dirs) {
-            Some(p) => match cfg_path(name, &p) {
-                Some(c) => TextureCfg::load(&c),
-                None => TextureCfg::default(),
-            },
-            None => TextureCfg::default(),
+        static MEMO: std::sync::OnceLock<Mutex<HashMap<(String, PathBuf), (u64, TextureCfg)>>> =
+            std::sync::OnceLock::new();
+        let Some(p) = find_texture(name, dirs) else {
+            return TextureCfg::default();
+        };
+        let generation = ::legacy_config::content_generation();
+        let key = (name.trim().to_string(), p);
+        let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some((g, c)) = memo.lock().get(&key) {
+            if *g == generation {
+                return c.clone();
+            }
         }
+        let c = match cfg_path(name, &key.1) {
+            Some(c) => TextureCfg::load(&c),
+            None => TextureCfg::default(),
+        };
+        memo.lock().insert(key, (generation, c.clone()));
+        c
     }
 
     /// Load (or fetch from cache) a texture found through `find_texture`.
@@ -854,5 +871,37 @@ mod tests {
         );
         assert!(h.has_alpha);
         assert_eq!((h.width, h.height), (3, 1));
+    }
+
+    #[test]
+    fn a_texture_cfg_is_read_once_until_the_content_changes() {
+        let dir = std::env::temp_dir().join(format!(
+            "texture-cfg-memo-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("wall.bmp"), b"lookup-only fixture").unwrap();
+        std::fs::write(dir.join("wall.bmp.cfg"), "[moisture]
+").unwrap();
+        let dirs = [dir.as_path()];
+        let cache = TextureCache::new();
+        assert!(cache.cfg("wall.bmp", &dirs).moisture);
+        // (the second slot with the same texture is answered without reading the file)
+        std::fs::write(dir.join("wall.bmp.cfg"), "[puddles]
+").unwrap();
+        let again = cache.cfg("wall.bmp", &dirs);
+        assert!(again.moisture && !again.puddles);
+        // content installed while the game runs is read again
+        ::legacy_config::content_changed();
+        let changed = cache.cfg("wall.bmp", &dirs);
+        assert!(!changed.moisture && changed.puddles);
+        // a texture without a sidecar keeps the defaults
+        std::fs::write(dir.join("plain.bmp"), b"lookup-only fixture").unwrap();
+        assert_eq!(cache.cfg("plain.bmp", &dirs), TextureCfg::default());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
