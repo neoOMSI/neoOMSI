@@ -29,6 +29,31 @@ pub(super) struct BusAtStops {
 
 const DOOR_GIVE_UP: f32 = 20.0;
 
+/// Returns the destination stop only while the bus is actually inside its service box.
+///
+/// `BusAtStops::next` is deliberately predictive: it can name a stop up to 60 metres
+/// ahead.  Starting an alighting task from it lets a passenger leave at an intervening
+/// stop whose doors open first.
+fn destination_in_service_box(
+    stops: &HashMap<i64, PaxStop>,
+    at_stops: &BusAtStops,
+    destination: &str,
+) -> Option<i64> {
+    at_stops
+        .at
+        .filter(|id| stops.get(id).is_some_and(|stop| stop.is_named(destination)))
+}
+
+fn destination_is_approaching(
+    stops: &HashMap<i64, PaxStop>,
+    at_stops: &BusAtStops,
+    destination: &str,
+) -> bool {
+    at_stops
+        .next
+        .is_some_and(|id| stops.get(&id).is_some_and(|stop| stop.is_named(destination)))
+}
+
 fn wrap(a: f64) -> f64 {
     let mut a = a;
     let pi = std::f64::consts::PI;
@@ -398,13 +423,21 @@ impl Humans {
                     self.set_task(i, Task::InBusToExit, buses, bus_ix, world);
                     return;
                 }
-                if let (Some(next), Some(dest)) = (reg.next, p.journey.dest.as_ref()) {
+                // Ask the player to stop as soon as the destination is the approaching
+                // stop.  The passenger must still remain seated until that stop's service
+                // box contains the bus, otherwise they can leave at the preceding stop.
+                if let Some(dest) = p.journey.dest.as_ref() {
+                    if destination_is_approaching(&self.stops, &reg, dest) && b == BusId::Player {
+                        self.stop_request = true;
+                    }
+                }
+                if let (Some(at), Some(dest)) = (reg.at, p.journey.dest.as_ref()) {
                     let name = self
                         .stops
-                        .get(&next)
+                        .get(&at)
                         .map(|s| s.name.trim().to_string())
                         .unwrap_or_default();
-                    if self.stops.get(&next).is_some_and(|s| s.is_named(dest)) {
+                    if destination_in_service_box(&self.stops, &reg, dest).is_some() {
                         self.set_task(i, Task::InBusToExit, buses, bus_ix, world);
                         return;
                     }
@@ -618,6 +651,52 @@ mod tests {
         // a stop the timetable does not know: its id, as the riders' destinations then are
         assert!(stop("4711").is_named("4711"));
         assert!(!stop("").is_named(""), "no timetable name: no empty match");
+    }
+
+    #[test]
+    fn passengers_do_not_prepare_to_alight_at_the_stop_before_their_destination() {
+        let stop = |name: &str| PaxStop {
+            name: name.into(),
+            alias: String::new(),
+            pos: DVec3::ZERO,
+            heading: 0.0,
+            gather: DVec3::ZERO,
+            spots: Vec::new(),
+            taken: Vec::new(),
+            enter_max: 1.0,
+            enter_min: 0.0,
+            length: 30.0,
+            lane: None,
+            was_near: false,
+            near: false,
+            clock_ms: 0.0,
+            want: 0,
+            factor: 1.0,
+            buses: Vec::new(),
+            dests: Vec::new(),
+            lines: Vec::new(),
+            line_deadlines: Vec::new(),
+        };
+        let stops = HashMap::from_iter([(1, stop("Before the school")), (2, stop("QEHS"))]);
+
+        // The school is the upcoming stop, but the bus is still inside the preceding stop.
+        let before = BusAtStops {
+            next: Some(2),
+            at: Some(1),
+            ..Default::default()
+        };
+        assert!(destination_is_approaching(&stops, &before, "QEHS"));
+        assert_eq!(destination_in_service_box(&stops, &before, "QEHS"), None);
+
+        let at_destination = BusAtStops {
+            next: Some(2),
+            at: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(
+            destination_in_service_box(&stops, &at_destination, "QEHS"),
+            Some(2)
+        );
     }
 
     #[test]
