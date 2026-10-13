@@ -53,6 +53,7 @@ fn destination_is_approaching(
 ) -> bool {
     at_stops
         .approaching
+        .or(at_stops.next)
         .is_some_and(|id| stops.get(&id).is_some_and(|stop| stop.is_named(destination)))
 }
 
@@ -689,6 +690,14 @@ mod tests {
         };
         assert!(destination_is_approaching(&stops, &before, "QEHS"));
         assert_eq!(destination_in_service_box(&stops, &before, "QEHS"), None);
+
+        // The normal stop record remains a valid short-range fallback for callers that
+        // do not have the longer bell-range lookup.
+        let short_range = BusAtStops {
+            next: Some(2),
+            ..Default::default()
+        };
+        assert!(destination_is_approaching(&stops, &short_range, "QEHS"));
 
         let at_destination = BusAtStops {
             approaching: Some(2),
