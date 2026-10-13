@@ -4642,20 +4642,6 @@ impl Traffic {
         }
     }
 
-    /// Like `way_lanes_into`, along the timetable route.
-    fn route_lanes_into(&self, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
-        out.clear();
-        out.push((st.lane, -st.s));
-        let mut d = self.net.lanes[st.lane].length() - st.s;
-        for &l in st.route.iter().skip(st.route_index + 1) {
-            if d > within {
-                break;
-            }
-            out.push((l, d));
-            d += self.net.lanes[l].length();
-        }
-    }
-
     fn way_lanes(&self, st: &AiState, within: f32) -> Vec<(usize, f32)> {
         let mut out = Vec::new();
         self.way_lanes_into(st, within, &mut out);
@@ -5706,9 +5692,16 @@ impl Traffic {
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
         }
+        // (a set `[approachdist]` counts for trains as written, however far)
+        let rail_within = self
+            .lights
+            .iter()
+            .flat_map(|c| c.approach.iter().flatten())
+            .fold(RAIL_APPROACH, |m, &d| m.max(d))
+            + 10.0;
         for c in &self.cars {
             if c.train && !c.state.route.is_empty() {
-                self.route_lanes_into(&c.state, RAIL_APPROACH + 10.0, &mut way_scratch);
+                route_lanes_into(&self.net, &c.state, rail_within, &mut way_scratch);
             } else {
                 self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
             }
@@ -8068,6 +8061,30 @@ impl Traffic {
     }
 }
 
+/// Like `Traffic::way_lanes_into`, along the timetable route (as `AiState::route_distance`).
+fn route_lanes_into(net: &Network, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
+    out.clear();
+    let (mut k, mut l, mut d) = (st.route_index, st.lane, -st.s);
+    if let Some(c) = st.change {
+        if st.route.get(k + 1) == Some(&c.to) {
+            (k, l, d) = (k + 1, c.to, -c.s_to);
+        }
+    }
+    out.push((l, d));
+    while let Some(&next) = st.route.get(k + 1) {
+        if net.parallel(l, next) {
+            d -= net.beside_delta(l, next);
+        } else {
+            d += net.lanes[l].length();
+        }
+        if d > within {
+            break;
+        }
+        out.push((next, d));
+        (k, l) = (k + 1, next);
+    }
+}
+
 /// Whether a street lane (a depot gate's) starts just ahead of a bus; never a rail lane.
 fn gate_lane_ahead(lane: &::simulation::traffic::Lane, pos: DVec3, heading: f64) -> bool {
     let h = heading.to_radians();
@@ -8594,5 +8611,45 @@ mod gate_lane_tests {
             |kind| LaneBuilder::arc(DVec3::new(3.0, 10.0, 0.0), 0.0, 20.0, 0.0, 0.0, kind, 3.0);
         assert!(gate_lane_ahead(&lane(LaneKind::Street), DVec3::ZERO, 0.0));
         assert!(!gate_lane_ahead(&lane(LaneKind::Rail), DVec3::ZERO, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod route_lanes_tests {
+    use super::{AiState, LaneKind, Network, route_lanes_into};
+    use ::simulation::traffic::LaneBuilder;
+    use glam::DVec3;
+
+    /// A lane beside the one before it counts from where it lies beside it.
+    #[test]
+    fn a_lane_beside_counts_from_beside() {
+        let line = |a: [f64; 2], b: [f64; 2]| {
+            LaneBuilder::polyline(
+                vec![DVec3::new(a[0], a[1], 0.0), DVec3::new(b[0], b[1], 0.0)],
+                LaneKind::Rail,
+                3.0,
+            )
+        };
+        let mut net = Network {
+            lanes: vec![
+                line([0.0, 0.0], [0.0, 100.0]),
+                line([3.5, 40.0], [3.5, 140.0]),
+                line([3.5, 140.0], [3.5, 200.0]),
+            ],
+            ..Default::default()
+        };
+        net.link(1.5);
+        assert!(net.parallel(0, 1));
+        let mut st = AiState::new(0, 10.0, 1);
+        st.route = vec![0, 1, 2];
+        let mut out = Vec::new();
+        route_lanes_into(&net, &st, 1000.0, &mut out);
+        assert_eq!(out.len(), 3);
+        for (ri, &(l, d)) in out.iter().enumerate() {
+            assert_eq!(l, st.route[ri]);
+            let want = st.route_distance(&net, ri, 0.0);
+            assert!((d - want).abs() < 0.01, "{out:?}");
+        }
+        assert!((out[1].1 - 30.0).abs() < 0.01, "{out:?}");
     }
 }
