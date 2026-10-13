@@ -557,10 +557,7 @@ impl World {
                 if a.repeater.is_none() && ro.index == first {
                     out.anchors.push((
                         a.id,
-                        Pose {
-                            pos: scenery_draw_position(ro.pose.pos, true),
-                            ..ro.pose
-                        },
+                        ro.pose,
                         row_type.clone(),
                     ));
                 }
@@ -572,11 +569,10 @@ impl World {
                     continue;
                 };
                 let key = row_object_key(tx, ty, a.id, ro.index);
-                let pose = spline_attachment_pose(ro.pose, &ot.sco);
                 out.objects.push(StagedObject {
                     ot,
                     id: a.id,
-                    place: Placement::Pose(pose),
+                    place: Placement::Pose(ro.pose),
                     rules: a.rules.clone(),
                     extra: a.strings.clone(),
                     lamp_parent: a.var_parent,

@@ -95,7 +95,7 @@ impl World {
                         match drive {
                             StagedDrive::HeightProfiles(mesh, _) => ts.add_height_profiles(
                                 mesh,
-                                scenery_draw_position(q.origin, true),
+                                q.origin,
                                 tx,
                                 ty,
                             ),
@@ -104,7 +104,7 @@ impl World {
                             } => ts.add_drive_mesh(
                                 mesh,
                                 &Mat4::IDENTITY,
-                                scenery_draw_position(q.origin, true),
+                                q.origin,
                                 tx,
                                 ty,
                                 surface_maps.as_deref(),
@@ -195,7 +195,7 @@ impl World {
                                 ts.add_drive_mesh(
                                     mesh,
                                     &pose.rot,
-                                    scenery_draw_position(pose.pos, true),
+                                    pose.pos,
                                     tx,
                                     ty,
                                     ot.surface_maps.as_deref(),

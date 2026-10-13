@@ -589,12 +589,11 @@ impl World {
                 .zip(&o.inst.mesh_transforms)
                 .zip(&o.inst.mesh_visible)
             {
-                // Scripted tram switches keep the same world-space lift as on upload.
-                // `o.pos` is the authored pose used by scripts/physics, not the draw pose.
+                // Keep the authored pose, matching upload and the ground queries :O
                 renderer.set_transform(
                     scene,
                     *inst,
-                    scenery_draw_position(o.pos, drawn_on_surfaces(&o.ty.sco)),
+                    o.pos,
                     o.xf * *xf,
                 );
                 let p = &mut scene.instances[*inst];

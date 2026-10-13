@@ -83,36 +83,6 @@ pub(super) struct StagedSpline {
 /// it (the sun shadow's bias is 6 cm). Splines are surfaces and cast nothing otherwise.
 pub(super) const SPLINE_SHADOW_CLEARANCE: f32 = 0.75;
 
-/// OMSI's metric separation for a spline or `[surface]` object's vertices.
-pub(super) const OMSI_SURFACE_LIFT: f32 = 0.08;
-
-pub(super) fn scenery_draw_position(authored: DVec3, surface: bool) -> DVec3 {
-    authored
-        + if surface {
-        DVec3::Z * OMSI_SURFACE_LIFT as f64
-    } else {
-        DVec3::ZERO
-    }
-}
-
-/// Whether a scenery object is drawn with the roads' `OMSI_SURFACE_LIFT`: a `[surface]`
-/// object, and whatever is drawn in the surfaces' phases on them - a `[rendertype] surface`
-/// plate and an `on_surface` marking. A road arrow or a zebra laid a few centimetres over
-/// the authored road went under the road drawn 8 cm higher (every turn arrow of Spandau's
-/// Falkenseer Chaussee, the zebra crossings of many maps, #871).
-pub(super) fn drawn_on_surfaces(sco: &SceneryObject) -> bool {
-    use ::scenery::sco::RenderType;
-    sco.surface || matches!(sco.render_type, RenderType::Surface | RenderType::OnSurface)
-}
-
-/// ToSpline objects stand relative to the visible spline, which is lifted above its
-/// authored height. Surface objects already receive that lift when drawn; ordinary
-/// objects (including parked cars) need it in their pose, also used by their children.
-pub(super) fn spline_attachment_pose(mut pose: Pose, sco: &SceneryObject) -> Pose {
-    pose.pos = scenery_draw_position(pose.pos, !drawn_on_surfaces(sco));
-    pose
-}
-
 /// A spline whose profiles all hang this far (m) over its line - wires, catenaries, a
 /// canopy - is no ground surface: it neither cuts the terrain nor carries anything.
 pub(super) const SPLINE_OVERHEAD: f32 = 2.0;

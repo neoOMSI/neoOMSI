@@ -85,6 +85,55 @@ fn triangle(z: f32) -> MeshData {
 }
 
 #[test]
+fn authored_surface_heights_meet_the_terrain_without_an_added_step() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "global.cfg",
+        "[name]\nSurface height regression\n[map]\n0\n0\ntile_0_0.map\n",
+    );
+    fixture.write(
+        "road.sli",
+        "[profile]\n0\n[profilepnt]\n-2\n0\n0\n1\n[profilepnt]\n2\n0\n1\n1\n",
+    );
+    fixture.write("surface.sco", "[surface]\n[mesh]\nsurface.x\n");
+    fixture.write(
+        "surface.x",
+        "xof 0303txt 0032\nMesh surface {3;0;0;0;,10;0;0;,0;0.5;10;;1;3;0,2,1;;}",
+    );
+    fixture.write(
+        "tile_0_0.map",
+        "[version]\n14\n[terrain]\n\n[spline]\n0\nroad.sli\n1\n0\n0\n20\n2\n20\n0\n20\n0\n5\n5\n0\n0\n0\n0\n0\n0\n\n[object]\n0\nsurface.sco\n2\n90\n20\n0\n0\n0\n0\n0\n",
+    );
+    let mut terrain = Terrain::flat();
+    let cell = tile_size() as f32 / terrain.cells as f32;
+    let n = terrain.samples();
+    for iy in 0..n {
+        for ix in 0..n {
+            terrain.heights[iy * n + ix] = 1.0 + iy as f32 * cell * 0.05;
+        }
+    }
+    std::fs::write(fixture.0.join("tile_0_0.map.terrain"), terrain.to_bytes()).unwrap();
+    let world = World::open(&fixture.0, &fixture.0.join("global.cfg"), 20261001).unwrap();
+    let (prepared, _) = world.prepare_tiles(&[(0, 0, fixture.0.join("tile_0_0.map"))]);
+    assert_eq!(prepared.len(), 1);
+    assert_eq!(prepared[0].splines.len(), 1);
+    assert_eq!(prepared[0].objects.len(), 1);
+    // Cross both ends of an inclined spline whose authored surface matches the terrain.
+    // The old 8 cm lift affected the spline alone and made a step at each end. Paul likes :)
+    for y in [19.9, 20.1, 25.0, 39.9, 40.1] {
+        let expected = 1.0 + y * 0.05;
+        let got = drive_probe(&world.terrains, &world.surfaces, 20.0, y, expected + 1.0);
+        assert!(
+            (got.below.unwrap() - expected).abs() < 1e-5,
+            "y={y}: {got:?}"
+        );
+    }
+    // A terrain-relative [surface] object must use the same height as well
+    let got = drive_probe(&world.terrains, &world.surfaces, 91.0, 21.0, 3.0);
+    assert!((got.below.unwrap() - 2.05).abs() < 1e-5, "surface: {got:?}");
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; uploads an isolated synthetic tile"]
 fn mapped_splines_and_objects_use_uncut_base_while_ground_keeps_paint() {
     let fixture = Fixture::new();
@@ -222,6 +271,8 @@ fn mapped_splines_and_objects_use_uncut_base_while_ground_keeps_paint() {
         2
     );
     for instance in mapped {
+        assert_eq!(instance.transform, Mat4::IDENTITY);
+        assert_eq!(instance.origin, DVec3::ZERO);
         assert_eq!(instance.materials.len(), 1);
         let material = &scene.materials[instance.materials[0]];
         assert_eq!(material.texture, Some(base_texture));

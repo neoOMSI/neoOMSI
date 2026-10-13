@@ -260,7 +260,7 @@ impl World {
                                 scene,
                                 id,
                                 p.origin,
-                                Mat4::from_translation(glam::Vec3::Z * OMSI_SURFACE_LIFT),
+                                Mat4::IDENTITY,
                                 vec![mat]
                             ));
                             if let Some(inst) = scene.instances.get_mut(si) {
@@ -387,7 +387,7 @@ impl World {
                                 scene,
                                 gid,
                                 p.origin,
-                                Mat4::from_translation(glam::Vec3::Z * OMSI_SURFACE_LIFT),
+                                Mat4::IDENTITY,
                                 vec![mat],
                             ));
                             if let Some(inst) = scene.instances.get_mut(terrain_instance) {
@@ -404,7 +404,7 @@ impl World {
                         scene,
                         id,
                         p.origin,
-                        Mat4::from_translation(glam::Vec3::Z * OMSI_SURFACE_LIFT),
+                        Mat4::IDENTITY,
                         mats
                     ));
                     if let Some(inst) = scene.instances.get_mut(si) {
@@ -524,7 +524,7 @@ impl World {
                     };
                     let surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
                     let render_phase = scenery_render_phase(ot.sco.render_type);
-                    let draw_pos = scenery_draw_position(pos, drawn_on_surfaces(&ot.sco));
+                    let draw_pos = pos;
                     let has_lower = !type_lods.is_empty();
                     let mut lamp_instances = Vec::new();
                     let mut lamp_slots = Vec::new();
@@ -685,8 +685,8 @@ impl World {
                         if let Some(inst) = scene.instances.get_mut(inst) {
                             inst.render_phase = render_phase;
                             if surface {
-                                // The authored OMSI phase and fixed `[surface]` lift replace
-                                // camera-angle-sensitive bias for these road-layer meshes.
+                                // Ordered surface phases use the authored geometry; moving
+                                // it upward creates steps where it meets the terrain.
                                 inst.decal = true;
                                 inst.surface_bias = false;
                             }

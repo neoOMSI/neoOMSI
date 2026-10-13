@@ -463,43 +463,7 @@ fn a_light_map_is_laid_on_its_middle_third() {
 }
 
 #[test]
-fn surface_contact_height_matches_the_visible_surface_lift() {
-    let authored = DVec3::new(12.0, 18.0, 3.5);
-    let contact = scenery_draw_position(authored, true);
-    assert!((contact.z - authored.z - OMSI_SURFACE_LIFT as f64).abs() < 1e-8);
-}
-
-#[test]
-fn road_markings_are_lifted_with_the_road_they_lie_on() {
-    let sco = |text: &str| SceneryObject::parse(&::legacy_config::CfgFile::from_str("x.sco", text));
-    // Spandau's VZ_surfmark_arrow_L: a terrain-relative object drawn on the surfaces
-    assert!(drawn_on_surfaces(&sco(
-        "[rendertype]\non_surface\n[mesh]\narrow.o3d\n"
-    )));
-    assert!(drawn_on_surfaces(&sco(
-        "[rendertype]\nsurface\n[mesh]\nplate.o3d\n"
-    )));
-    assert!(drawn_on_surfaces(&sco("[surface]\n[mesh]\nplate.o3d\n")));
-    assert!(!drawn_on_surfaces(&sco("[mesh]\nhouse.o3d\n")));
-    assert!(!drawn_on_surfaces(&sco(
-        "[rendertype]\npresurface\n[mesh]\nground.o3d\n"
-    )));
-}
-
-#[test]
-fn scripted_surface_draw_pose_keeps_the_upload_lift() {
-    let authored = DVec3::new(-2165.1, -2368.8, -0.068);
-    let uploaded = scenery_draw_position(authored, true);
-    for _frame in 0..8 {
-        assert_eq!(scenery_draw_position(authored, true), uploaded);
-    }
-    assert_eq!(scenery_draw_position(authored, false), authored);
-    assert_eq!(uploaded.truncate(), authored.truncate());
-    assert!((uploaded.z - authored.z - 0.08).abs() < 1e-8);
-}
-
-#[test]
-fn spline_attachment_rows_stand_on_the_visible_spline() {
+fn spline_attachment_rows_keep_the_authored_height_above_the_spline() {
     let spline = ::map::MapSpline {
         id: 1,
         pos: [12.0, 18.0, 3.5],
@@ -525,43 +489,10 @@ fn spline_attachment_rows_stand_on_the_visible_spline() {
         let objects = crate::tiles::tile_row_objects(&row, &[spline.clone()], DVec2::ZERO, None);
         assert_eq!(objects.len(), 3);
         for (_, object) in objects {
-            let sco = SceneryObject::default();
-            let pose = spline_attachment_pose(object.pose, &sco);
             let along = 5.0 + object.index as f64 * 10.0;
-            let surface = scenery_draw_position(curve.offset_point(along, 3.0, 0.0), true);
-            let drawn = scenery_draw_position(pose.pos, drawn_on_surfaces(&sco));
-            assert!((drawn.z - surface.z - height).abs() < 1e-8);
-            assert_eq!(pose.pos.truncate(), object.pose.pos.truncate());
-            assert_eq!(pose.rot, object.pose.rot);
-
-            // An attachObj on the row's first object inherits the corrected height.
-            if object.index == 0 {
-                let point = Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.0));
-                let child = pose.attached(&point, [0.0; 3]);
-                let old_child = object.pose.attached(&point, [0.0; 3]);
-                assert!((child.pos.z - old_child.pos.z - 0.08).abs() < 1e-8);
-            }
+            let surface = curve.offset_point(along, 3.0, 0.0);
+            assert!((object.pose.pos.z - surface.z - height).abs() < 1e-8);
         }
-    }
-}
-
-#[test]
-fn spline_attachment_surface_objects_receive_the_lift_once() {
-    let authored = Pose {
-        pos: DVec3::new(12.0, 18.0, 3.5),
-        rot: object_rotation([37.0, 10.0, 5.0]),
-    };
-    for text in [
-        "[surface]\n",
-        "[rendertype]\nsurface\n",
-        "[rendertype]\non_surface\n",
-    ] {
-        let sco = SceneryObject::parse(&::legacy_config::CfgFile::from_str("marking.sco", text));
-        let pose = spline_attachment_pose(authored, &sco);
-        let drawn = scenery_draw_position(pose.pos, drawn_on_surfaces(&sco));
-        assert!((drawn.z - authored.pos.z - 0.08).abs() < 1e-8);
-        assert_eq!(pose.rot, authored.rot);
-        assert_eq!(drawn.truncate(), authored.pos.truncate());
     }
 }
 

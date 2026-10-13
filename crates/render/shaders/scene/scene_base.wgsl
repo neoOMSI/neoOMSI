@@ -493,9 +493,9 @@ fn vs_main(in: VsIn) -> VsOut {
     let m = model_matrix(e);
     let wp = m * vec4<f32>(in.pos, 1.0);
     var out: VsOut;
-    // Legacy surfaces are pulled towards the eye along the line of sight. OMSI splines and
-    // [surface] objects use a fixed 8 cm world lift; ordered scenery phases use their authored
-    // world positions. Both use code 0.9 to keep weather classification without view-space pull.
+    // Legacy surfaces are pulled towards the eye along the line of sight. Ordered spline
+    // and scenery phases use their authored world positions and code 0.9 to keep weather
+    // classification without view-space pull
     // Painted ground (0.75) stays put.
     let surf = inst_params[e * 2u + 1u].w;
     var cp = wp.xyz;
