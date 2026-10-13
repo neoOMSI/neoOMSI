@@ -812,12 +812,7 @@ pub(crate) fn weather_lighting(
         if w.snow { 1.0 } else { 0.0 },
     );
     if let Some(custom) = CustomWeather::parse(&w.path.to_string_lossy()) {
-        let k = custom.brightness;
-        lighting.sun_intensity *= k;
-        lighting.secondary *= k;
-        lighting.ambient *= k;
-        lighting.sky_color *= k;
-        lighting.fog_color *= k;
+        apply_custom_brightness(&mut lighting, custom.brightness);
     }
     lighting.wetness = wetness;
     // Omsi.exe hides the sun under an 'ovc' cloud type (the Overcast ones in clouds.cfg) and
@@ -825,6 +820,19 @@ pub(crate) fn weather_lighting(
     lighting.shadows = shadows && density < 0.85 && w.fog.0 > 350.0;
     lighting.light_shadows = shadows;
     lighting
+}
+
+/// A custom weather's brightness. Enhanced lights the window from its own sky, which only the
+/// sun reaches; the plain light its mirrors and smoke use stays at that level (#232).
+fn apply_custom_brightness(lighting: &mut ::render::Lighting, k: f32) {
+    lighting.sun_intensity *= k;
+    if lighting.enhanced {
+        return;
+    }
+    lighting.secondary *= k;
+    lighting.ambient *= k;
+    lighting.sky_color *= k;
+    lighting.fog_color *= k;
 }
 
 /// Push the weather into a vehicle's script host.
@@ -1075,5 +1083,36 @@ mod metar_mode_tests {
         .unwrap();
         assert_eq!(station.icao, "EGNX");
         assert_eq!(station.name, "Nottingham/E Midlands Arpt");
+    }
+}
+
+#[cfg(test)]
+mod brightness_tests {
+    use super::apply_custom_brightness;
+
+    #[test]
+    fn plain_graphics_take_all_the_light_down() {
+        let mut l = ::render::Lighting::default();
+        apply_custom_brightness(&mut l, 0.0);
+        assert_eq!(l.sun_intensity, 0.0);
+        assert_eq!(l.ambient, glam::Vec3::ZERO);
+        assert_eq!(l.secondary, glam::Vec3::ZERO);
+        assert_eq!(l.sky_color, glam::Vec3::ZERO);
+        assert_eq!(l.fog_color, glam::Vec3::ZERO);
+    }
+
+    #[test]
+    fn enhanced_graphics_keep_the_mirrors_light_at_zero_brightness() {
+        let mut l = ::render::Lighting {
+            enhanced: true,
+            ..Default::default()
+        };
+        let before = l.clone();
+        apply_custom_brightness(&mut l, 0.0);
+        assert_eq!(l.sun_intensity, 0.0);
+        assert_eq!(l.ambient, before.ambient);
+        assert_eq!(l.secondary, before.secondary);
+        assert_eq!(l.sky_color, before.sky_color);
+        assert_eq!(l.fog_color, before.fog_color);
     }
 }
