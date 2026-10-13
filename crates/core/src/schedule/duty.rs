@@ -311,7 +311,12 @@ impl PlayerDuty {
     ) -> Option<(f64, f64)> {
         let day_time = self.duty_time(day_time);
         self.heading = bus.heading;
-        let served = self.advance(bus.position, day_time);
+        // A later stop can be close to the road out of the current stand (especially at
+        // terminals).  Being inside its service circle is not enough to say it was served:
+        // the bus must actually be standing with a door open there.
+        let served_here =
+            crate::humans::Humans::any_door_open(bus) && bus.physics.velocity_kmh().abs() < 1.0;
+        let served = self.advance_while_serving(bus.position, day_time, served_here);
         let delay = self.delay(day_time);
         let trip = &self.trips[self.trip_index];
         let host = &mut bus.host;
@@ -388,6 +393,17 @@ impl PlayerDuty {
 
     /// The duty's progress with the bus at `pos` (see [`PlayerDuty::update`]).
     pub(super) fn advance(&mut self, pos: glam::DVec3, day_time: f64) -> Option<(f64, f64)> {
+        self.advance_while_serving(pos, day_time, true)
+    }
+
+    /// As [`Self::advance`], but only permits recovery to a later stop if the bus is
+    /// actually serving passengers there.  Tests use this to cover overlapping stop circles.
+    pub(super) fn advance_while_serving(
+        &mut self,
+        pos: glam::DVec3,
+        day_time: f64,
+        serving_here: bool,
+    ) -> Option<(f64, f64)> {
         // the path the bus drove (a jump, e.g. a teleport, does not count)
         if let Some(last) = self.last_pos {
             let step = (pos - last).length();
@@ -440,7 +456,7 @@ impl PlayerDuty {
         let last = trip.stops.len().saturating_sub(1);
         // the bus reached a later stop of the trip (skipped stops); before it has left a
         // stop of the trip, not its last one (where the tour's previous trip may end)
-        if !self.at_stop {
+        if !self.at_stop && serving_here {
             self.catch_up(pos, forward_of(self.heading));
         }
         let trip = &self.trips[self.trip_index];

@@ -535,6 +535,59 @@ fn a_loop_does_not_jump_to_the_stop_over_the_road() {
 }
 
 #[test]
+fn passing_a_later_overlapping_stop_does_not_skip_the_trip() {
+    // Leaving a terminal stand can pass through the service circle of a later stop on the
+    // same route.  It is not a missed-stop recovery unless the bus has actually opened its
+    // doors there.
+    let trip = planned(
+        0.0,
+        &[
+            (0.0, 0.0, 0.0),
+            (100.0, 60.0, 60.0),
+            (200.0, 120.0, 120.0),
+            (300.0, 180.0, 180.0),
+            (400.0, 240.0, 240.0),
+        ],
+    );
+    let mut d = PlayerDuty {
+        line: "5".into(),
+        tour: "1".into(),
+        trips: vec![trip],
+        trip_index: 0,
+        first_trip: 0,
+        statistics: Default::default(),
+        completed_report: None,
+        next_stop: 1,
+        at_stop: false,
+        arrived_late: None,
+        done: false,
+        left_late: Some(0.0),
+        held_back: false,
+        odo: 200.0,
+        last_pos: Some(glam::DVec3::new(0.0, 0.0, 0.0)),
+        arrival_odo: 0.0,
+        left_odo: 0.0,
+        placed: true,
+        trip_changed: false,
+        picked: true,
+        first_update: None,
+        heading: 90.0,
+    };
+
+    d.advance_while_serving(glam::DVec3::new(300.0, 0.0, 0.0), 180.0, false);
+    assert_eq!(
+        d.next_stop, 1,
+        "passing the overlapping stop must not skip ahead"
+    );
+
+    d.advance_while_serving(glam::DVec3::new(300.0, 0.0, 0.0), 180.0, true);
+    assert_eq!(
+        d.next_stop, 3,
+        "serving the later stop may recover missed progress"
+    );
+}
+
+#[test]
 fn a_duty_starts_with_the_trip_that_fits_the_time() {
     // Spandau line 5, tour "Mo-Fr 3": a depot run 14:44-15:01, then 15:07 and 16:01
     let trips = vec![
