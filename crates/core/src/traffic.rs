@@ -7785,6 +7785,16 @@ impl Traffic {
                 };
                 let mut s = script.lock();
                 s.update(dt, &vars);
+                if near.is_none_or(|p| (lamp.pos - p).length() < 250.0) {
+                    let at = lamp.pos;
+                    crate::scene::draw_script_texts(
+                        renderer,
+                        scene,
+                        &mut s,
+                        &mut lamp.texts.lock(),
+                        || format!("lamp_{:.0}_{:.0}", at.x, at.y),
+                    );
+                }
                 // `OMSI_DEBUG_LAMPS`: where the moving lamps are (barriers) and how far their
                 // meshes are turned, each time the lamps are updated
                 if lamp.animated && debug_lamps {

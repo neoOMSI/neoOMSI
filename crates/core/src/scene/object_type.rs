@@ -297,6 +297,8 @@ pub struct LightObject {
     /// Shared by the copies of the lamp list (the loaded tiles' lists are copied into
     /// `World::light_objects` whenever a tile comes or goes), so that it keeps its state.
     pub script: Option<Arc<Mutex<::simulation::scenery::SceneryInstance>>>,
+    /// Texts the lamp's script writes; shared like `script`.
+    pub texts: Arc<Mutex<Vec<(TextureId, ::simulation::texttex::TextTextureState)>>>,
     /// `[light_enh_2]` coronas switched by a lamp variable, and that variable.
     pub coronas: Vec<(::render::Corona, String)>,
     /// Per corona the mesh its light belongs to and the light's place and direction in the
