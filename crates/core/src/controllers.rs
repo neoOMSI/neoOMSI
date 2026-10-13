@@ -844,55 +844,55 @@ impl Devices {
                     // DirectInput handles wheels on Windows; system-mapped gamepads
                     // such as Xbox controllers are listed through gilrs.
                     EventType::ButtonPressed(_, code) | EventType::ButtonReleased(_, code)
-                        if use_gilrs_buttons(di, is_system_gamepad(pad.name(), is_di(&pad))) =>
-                    {
-                        if let Some(n) = button_number(&pad, code) {
-                            out.push((
-                                pad.name().to_string(),
-                                n,
-                                matches!(ev.event, EventType::ButtonPressed(..)),
-                            ));
+                    if use_gilrs_buttons(di, is_system_gamepad(pad.name(), is_di(&pad))) =>
+                        {
+                            if let Some(n) = button_number(&pad, code) {
+                                out.push((
+                                    pad.name().to_string(),
+                                    n,
+                                    matches!(ev.event, EventType::ButtonPressed(..)),
+                                ));
+                            }
                         }
-                    }
                     #[cfg(target_os = "linux")]
                     EventType::AxisChanged(_, value, code)
-                        if code.into_u32() >> 16 == 3
-                            && (0x10..0x18).contains(&(code.into_u32() & 0xFFFF)) =>
-                    {
-                        let axis = (code.into_u32() & 0xFFFF) as usize - 0x10;
-                        let name = pad.name().to_string();
-                        let k = match self.hats.iter().position(|(n, _)| *n == name) {
-                            Some(k) => k,
-                            None => {
-                                self.hats.push((name.clone(), [0; 8]));
-                                self.hats.len() - 1
-                            }
-                        };
-                        let now = if value > 0.5 {
-                            1
-                        } else if value < -0.5 {
-                            -1
-                        } else {
-                            0
-                        };
-                        let was = std::mem::replace(&mut self.hats[k].1[axis], now);
-                        let (hat, y) = (axis / 2, axis % 2 == 1);
-                        let dir = |v: i8| match (y, v) {
-                            (true, -1) => Some(0),
-                            (false, 1) => Some(1),
-                            (true, 1) => Some(2),
-                            (false, -1) => Some(3),
-                            _ => None,
-                        };
-                        if was != now {
-                            if let Some(d) = dir(was) {
-                                out.push((name.clone(), HAT_BUTTONS + hat * 4 + d, false));
-                            }
-                            if let Some(d) = dir(now) {
-                                out.push((name, HAT_BUTTONS + hat * 4 + d, true));
+                    if code.into_u32() >> 16 == 3
+                        && (0x10..0x18).contains(&(code.into_u32() & 0xFFFF)) =>
+                        {
+                            let axis = (code.into_u32() & 0xFFFF) as usize - 0x10;
+                            let name = pad.name().to_string();
+                            let k = match self.hats.iter().position(|(n, _)| *n == name) {
+                                Some(k) => k,
+                                None => {
+                                    self.hats.push((name.clone(), [0; 8]));
+                                    self.hats.len() - 1
+                                }
+                            };
+                            let now = if value > 0.5 {
+                                1
+                            } else if value < -0.5 {
+                                -1
+                            } else {
+                                0
+                            };
+                            let was = std::mem::replace(&mut self.hats[k].1[axis], now);
+                            let (hat, y) = (axis / 2, axis % 2 == 1);
+                            let dir = |v: i8| match (y, v) {
+                                (true, -1) => Some(0),
+                                (false, 1) => Some(1),
+                                (true, 1) => Some(2),
+                                (false, -1) => Some(3),
+                                _ => None,
+                            };
+                            if was != now {
+                                if let Some(d) = dir(was) {
+                                    out.push((name.clone(), HAT_BUTTONS + hat * 4 + d, false));
+                                }
+                                if let Some(d) = dir(now) {
+                                    out.push((name, HAT_BUTTONS + hat * 4 + d, true));
+                                }
                             }
                         }
-                    }
                     _ => {}
                 }
             }
@@ -1953,13 +1953,13 @@ pub(crate) fn button_number(pad: &gilrs::Gamepad, code: gilrs::ev::Code) -> Opti
     if cfg!(windows) {
         return code_button(code.into_u32());
     }
+    // A code without a number of its own (macOS: a button outside the button page; elsewhere:
+    // a code the system gives no declared list for): a fixed number after the hat buttons,
+    // not the place among the buttons pressed so far - that changed with every press.
+    let _ = pad;
     Some(code_button(code.into_u32()).unwrap_or_else(|| {
-        let mut codes: Vec<u32> = pad.state().buttons().map(|(c, _)| c.into_u32()).collect();
-        codes.sort_unstable();
-        codes
-            .iter()
-            .position(|c| *c == code.into_u32())
-            .unwrap_or(usize::MAX)
+        let free = 512 - (HAT_BUTTONS + 16);
+        HAT_BUTTONS + 16 + (code.into_u32() & 0xFFFF) as usize % free
     }))
 }
 
@@ -2041,8 +2041,14 @@ fn key_bitmap_buttons(bitmap: &str) -> Vec<u32> {
 
 #[cfg(any(target_os = "linux", test))]
 fn button_index(declared: &[u32], code: u32) -> Option<usize> {
-    if declared.iter().all(|c| code_button(*c).is_some()) {
-        return None;
+    let mapped: Vec<Option<usize>> = declared.iter().map(|c| code_button(*c)).collect();
+    if mapped.iter().all(|m| m.is_some()) {
+        let mut seen: Vec<usize> = mapped.iter().flatten().copied().collect();
+        seen.sort_unstable();
+        seen.dedup();
+        if seen.len() == mapped.len() {
+            return None;
+        }
     }
     declared.iter().position(|c| *c == code)
 }
