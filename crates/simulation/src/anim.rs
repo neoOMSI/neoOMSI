@@ -43,7 +43,10 @@ pub fn origin_matrix(origins: &[AnimOrigin], pivot: Mat4) -> Mat4 {
             AnimOrigin::RotX(a) => Mat4::from_rotation_x(-a.to_radians()),
             AnimOrigin::RotY(a) => Mat4::from_rotation_y(-a.to_radians()),
             AnimOrigin::RotZ(a) => Mat4::from_rotation_z(-a.to_radians()),
-            AnimOrigin::FromMesh => pivot,
+            AnimOrigin::FromMesh => {
+                m = pivot;
+                continue;
+            }
         };
         m *= op;
     }
@@ -85,31 +88,26 @@ impl MeshAnimator {
     pub fn update(&mut self, dt: f32, vars: &[f32]) -> Mat4 {
         let mut m = Mat4::IDENTITY;
         for (a, origin, st) in &mut self.anims {
-            let target = st.var.map(|v| vars[v as usize]).unwrap_or(0.0) * a.factor + a.offset;
-            if !st.initialized {
-                st.value = target;
-                st.initialized = true;
-            } else {
-                let mut v = target;
-                if a.delay > 0.0 {
-                    // `delay` is a rate, not a time: the value closes the gap to its target
-                    // at `delay` per second (the SD200's handbrake lever says `delay 10`,
-                    // its doors 3 to 4). Read as a time constant it made the handbrake
-                    // crawl for ten seconds.
-                    let k = (dt * a.delay).min(1.0);
-                    v = st.value + (target - st.value) * k;
-                }
+            let raw = st.var.map(|v| vars[v as usize]).unwrap_or(0.0);
+            if dt > 0.0 {
+                let mut next = if a.delay > 0.0 {
+                    st.value + (raw - st.value) / (a.delay / dt + 1.0)
+                } else {
+                    raw
+                };
                 if a.max_speed > 0.0 {
                     let max_step = a.max_speed * dt;
-                    v = st.value + (v - st.value).clamp(-max_step, max_step);
+                    next = st.value + (next - st.value).clamp(-max_step, max_step);
                 }
-                st.value = v;
+                st.value = next;
+            } else {
+                st.value = raw;
             }
+            let value = (st.value + a.offset) * a.factor;
+            st.initialized = true;
             let local = match a.kind {
-                Some(AnimKind::Rot) => {
-                    Mat4::from_quat(Quat::from_rotation_x(-st.value.to_radians()))
-                }
-                Some(AnimKind::Trans) => Mat4::from_translation(Vec3::new(st.value, 0.0, 0.0)),
+                Some(AnimKind::Rot) => Mat4::from_quat(Quat::from_rotation_x(-value.to_radians())),
+                Some(AnimKind::Trans) => Mat4::from_translation(Vec3::new(value, 0.0, 0.0)),
                 None => Mat4::IDENTITY,
             };
             // The original multiplies its matrices the Direct3D way round (a row vector
@@ -248,6 +246,61 @@ pub fn apply_parents(animators: &[MeshAnimator], transforms: &mut [Mat4]) {
     }
 }
 
+pub fn round_visible(value: f32, expected: f32) -> bool {
+    value.is_finite()
+        && expected.is_finite()
+        && value.round_ties_even() == expected.round_ties_even()
+}
+
+pub fn apply_visibility_parents(animators: &[MeshAnimator], visible: &mut [bool]) {
+    let n = animators.len().min(visible.len());
+    if !animators[..n]
+        .iter()
+        .any(|a| a.parent.is_some_and(|parent| parent < n))
+    {
+        return;
+    }
+    let mut done = vec![false; n];
+    let mut in_chain = vec![false; n];
+    let mut chain = Vec::with_capacity(n);
+    for start in 0..n {
+        chain.clear();
+        let mut current = start;
+        while !done[current] {
+            if in_chain[current] {
+                let cycle_start = chain.iter().position(|&i| i == current).unwrap();
+                if !chain[cycle_start..].iter().all(|&i| visible[i]) {
+                    for &i in &chain[cycle_start..] {
+                        visible[i] = false;
+                    }
+                }
+                for &i in &chain[cycle_start..] {
+                    in_chain[i] = false;
+                    done[i] = true;
+                }
+                chain.truncate(cycle_start);
+                break;
+            }
+            in_chain[current] = true;
+            chain.push(current);
+            match animators[current].parent.filter(|&parent| parent < n) {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        }
+        for &i in chain.iter().rev() {
+            in_chain[i] = false;
+            if done[i] {
+                continue;
+            }
+            if let Some(parent) = animators[i].parent.filter(|&parent| parent < n) {
+                visible[i] &= visible[parent];
+            }
+            done[i] = true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +379,77 @@ mod tests {
             a.iter().map(|a| a.parent).collect::<Vec<_>>(),
             vec![None, Some(0), None, Some(2)]
         );
+    }
+
+    #[test]
+    fn animation_offset_is_scaled_after_raw_value_smoothing() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                kind: Some(AnimKind::Rot),
+                variable: "v".into(),
+                factor: 90.0,
+                offset: -0.5,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+
+        let level = a.update(0.0, &[0.5]);
+        assert!(level.abs_diff_eq(Mat4::IDENTITY, 1e-6));
+        let level = a.update(0.0, &[0.0]);
+        assert!((level.transform_point3(Vec3::Y).z - 0.70710677).abs() < 1e-5);
+    }
+
+    #[test]
+    fn max_speed_limits_the_unscaled_animation_variable() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                kind: Some(AnimKind::Rot),
+                variable: "v".into(),
+                factor: 100.0,
+                max_speed: 1.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+
+        let first = a.update(0.5, &[1.0]);
+        assert_eq!(a.anims[0].2.value, 0.5);
+        assert!((first.transform_point3(Vec3::Y).y - 50f32.to_radians().cos()).abs() < 1e-5);
+        let second = a.update(0.5, &[1.0]);
+        assert_eq!(a.anims[0].2.value, 1.0);
+        assert!((second.transform_point3(Vec3::Y).y - 100f32.to_radians().cos()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn origin_from_mesh_replaces_prior_origin_transforms() {
+        let pivot = Mat4::from_translation(Vec3::new(3.0, 4.0, 5.0));
+        assert_eq!(
+            origin_matrix(
+                &[AnimOrigin::Trans([1.0, 2.0, 3.0]), AnimOrigin::FromMesh],
+                pivot
+            ),
+            pivot
+        );
+    }
+
+    #[test]
+    fn visible_values_use_ties_to_even_and_inherit_parent_visibility() {
+        assert!(round_visible(0.5, 0.0));
+        assert!(round_visible(1.5, 2.0));
+        assert!(round_visible(2.5, 2.0));
+        assert!(!round_visible(f32::NAN, 0.0));
+
+        let animators = vec![animator(Some(1)), animator(Some(2)), animator(None)];
+        let mut visible = vec![true, true, false];
+        apply_visibility_parents(&animators, &mut visible);
+        assert_eq!(visible, [false, false, false]);
+
+        let cycle = vec![animator(Some(1)), animator(Some(0)), animator(Some(1))];
+        let mut visible = vec![false, true, true];
+        apply_visibility_parents(&cycle, &mut visible);
+        assert_eq!(visible, [false, false, false]);
     }
 }

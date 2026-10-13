@@ -238,10 +238,11 @@ impl SceneryInstance {
         crate::anim::apply_parents(&self.animators, &mut self.mesh_transforms);
         for (i, c) in self.visible_conds.iter().enumerate() {
             self.mesh_visible[i] = match c {
-                Some((id, x)) => (self.state.vars[*id as usize] - x).abs() < 0.5,
+                Some((id, x)) => crate::anim::round_visible(self.state.vars[*id as usize], *x),
                 None => true,
             };
         }
+        crate::anim::apply_visibility_parents(&self.animators, &mut self.mesh_visible);
     }
 
     pub fn var(&self, name: &str) -> Option<f32> {

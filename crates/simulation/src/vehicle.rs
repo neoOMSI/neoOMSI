@@ -111,6 +111,33 @@ pub struct SkinBone {
     pub weights: Vec<(u32, f32)>,
 }
 
+fn mesh_skin(mesh: &::legacy_o3d::Mesh, def: &::model::MeshDef, lod_start: usize) -> Vec<SkinBone> {
+    let skin: Vec<SkinBone> = if !def.bones.is_empty() {
+        mesh.bones
+            .iter()
+            .map(|b| {
+                let id = def
+                    .bones
+                    .iter()
+                    .find(|(n, _)| n.trim().eq_ignore_ascii_case(b.name.trim()))
+                    .map(|(_, id)| *id)
+                    .filter(|id| *id >= 0);
+                SkinBone {
+                    def_index: id.map(|id| lod_start + id as usize),
+                    weights: b.weights.iter().map(|w| (w.vertex, w.weight)).collect(),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if skin.iter().any(|b| b.def_index.is_some()) {
+        skin
+    } else {
+        Vec::new()
+    }
+}
+
 /// One mesh of the vehicle model ready for rendering.
 pub struct VehicleMesh {
     pub def_index: usize,
@@ -376,35 +403,7 @@ impl VehicleType {
                 let p = mesh_path(root, &dir, &model_dir, &md.file);
                 match ::legacy_o3d::load_mesh(&p) {
                     Ok(m) => {
-                        let skin: Vec<SkinBone> = if md.smooth_skin {
-                            m.bones
-                                .iter()
-                                .map(|b| {
-                                    let id = md
-                                        .bones
-                                        .iter()
-                                        .find(|(n, _)| n.trim().eq_ignore_ascii_case(b.name.trim()))
-                                        .map(|(_, id)| *id)
-                                        .filter(|id| *id >= 0);
-                                    SkinBone {
-                                        def_index: id.map(|id| start + id as usize),
-                                        weights: b
-                                            .weights
-                                            .iter()
-                                            .map(|w| (w.vertex, w.weight))
-                                            .collect(),
-                                    }
-                                })
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
-                        // (a mesh none of whose bones is bound moves as a rigid one)
-                        let skin = if skin.iter().any(|b| b.def_index.is_some()) {
-                            skin
-                        } else {
-                            Vec::new()
-                        };
+                        let skin = mesh_skin(&m, md, start);
                         match ::geometry::positive_det_faces_forward(&m) {
                             Some(true) => positive_forward += 1,
                             Some(false) => positive_backward += 1,
@@ -1095,6 +1094,32 @@ pub struct VehicleInstance {
     v_springfactor: Vec<[Option<::legacy_script::VarId>; 2]>,
 }
 
+pub(crate) fn selected_spotlight(selected: f32, spots: &[::model::Spotlight]) -> Option<usize> {
+    if !selected.is_finite() {
+        return None;
+    }
+    let index = selected.round_ties_even();
+    if index < 0.0 || index >= spots.len() as f32 {
+        return None;
+    }
+    let index = index as usize;
+    (spots[index].values[9].is_finite() && spots[index].values[9] > 0.0).then_some(index)
+}
+
+fn driver_seat_step(mut position: f32, mut velocity: f32, push: f32, dt: f32) -> (f32, f32) {
+    velocity += push + (-position * 100.0 - velocity * 7.0) * dt;
+    position += velocity * dt;
+    if position.abs() > 0.1 {
+        position = position.clamp(-0.1, 0.1);
+        velocity = 0.0;
+    }
+    (position, velocity)
+}
+
+fn skin_matrix(weighted_bones: Mat4, total_weight: f32) -> Mat4 {
+    weighted_bones + Mat4::IDENTITY * (1.0 - total_weight)
+}
+
 #[inline]
 fn lookup_var_index<'a>(
     var_index: &'a HashMap<String, ::legacy_script::VarId>,
@@ -1168,6 +1193,9 @@ impl VehicleInstance {
         }
         // no ticket printed yet
         if let Some(i) = var_index.get("giventicket") {
+            state.vars[*i as usize] = -1.0;
+        }
+        if let Some(i) = var_index.get("spot_select") {
             state.vars[*i as usize] = -1.0;
         }
         // `wearlifespan` (varlist_roadvehicle.txt, written by the engine from the
@@ -1421,7 +1449,7 @@ impl VehicleInstance {
 
     /// `Driver_Seat_VertTransl`: the sprung driver's seat, as OMSI moves it:
     /// the body's vertical acceleration and its roll and pitch at the seat's place (the
-    /// driver's camera) push a spring (3000) and damper (2000) on 150 kg; ±10 cm at most.
+    /// driver's camera) push a spring (100) and damper (7); ±10 cm at most.
     fn update_driver_seat(&mut self, dt: f32) {
         let Some(id) = self.ty.program.var("Driver_Seat_VertTransl") else {
             return;
@@ -1445,14 +1473,7 @@ impl VehicleInstance {
         // (the rolls' and pitches' change moves the seat by its lever: y forward rolls
         // about x, x across pitches about y)
         let push = -acc_z * dt + d_omega.y * seat[0] - d_omega.x * seat[1];
-        let k = (1000.0 / (15.0 * dt * 1000.0)).min(1.0);
-        let (mut x, mut v) = (self.seat.0, self.seat.1);
-        v += push + ((-x * 3000.0 - v * 2000.0) / 150.0) * k * dt;
-        x += v * dt;
-        if x.abs() > 0.1 {
-            x = x.clamp(-0.1, 0.1);
-            v = 0.0;
-        }
+        let (x, v) = driver_seat_step(self.seat.0, self.seat.1, push, dt);
         self.seat = (x, v, omega);
         self.state.vars[id as usize] = x;
     }
@@ -2230,6 +2251,11 @@ impl VehicleInstance {
 
     pub fn var(&self, name: &str) -> Option<f32> {
         lookup_var_index(&self.var_index, name).map(|&i| self.state.vars[i as usize])
+    }
+
+    /// The selected OMSI `[spotlight]`, if its rounded index names a usable light.
+    pub fn active_spotlight(&self) -> Option<usize> {
+        selected_spotlight(self.var("Spot_Select")?, &self.ty.model.spotlights)
     }
 
     /// Whether variable `name` was declared in the vehicle's script set (as opposed to built-in host variables).
@@ -3172,9 +3198,6 @@ impl VehicleInstance {
                 let mut vars = vec![0.0; self.state.vars.len()];
                 vars[id as usize] = 0.35;
                 let mut probe = a.clone();
-                for (_, _, st) in probe.anims.iter_mut() {
-                    st.initialized = false;
-                }
                 let t = probe.update(0.0, &vars);
                 let moved = t.transform_point3(c) - c;
                 let (axis, angle) = Quat::from_mat4(&t).to_axis_angle();
@@ -3221,7 +3244,8 @@ impl VehicleInstance {
 /// vehicles use the same rules through `PropsPlan`, resolved once; this is the plain
 /// statement of them (and what the plan is tested against).
 pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -> Vec<MeshProps> {
-    ty.meshes
+    let mut props: Vec<MeshProps> = ty
+        .meshes
         .iter()
         .map(|vm| {
             let def = &ty.model.meshes[vm.def_index];
@@ -3250,7 +3274,7 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
                             .parse::<f32>()
                             .ok()
                             .or_else(|| var(v))
-                            .unwrap_or(0.0);
+                            .unwrap_or(1.0);
                         let n = if x.is_finite() {
                             x.round_ties_even()
                         } else {
@@ -3282,7 +3306,7 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
             }
             if let Some((v, value)) = &def.visible {
                 if let Some(x) = var(v) {
-                    props.visible = (x - value).abs() < 0.5;
+                    props.visible = crate::anim::round_visible(x, *value);
                 }
             }
             // [illumination_interior] a b c d: the interior lights (by index) lighting this mesh
@@ -3298,7 +3322,7 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
                         .parse::<f32>()
                         .ok()
                         .or_else(|| var(&il.variable))
-                        .unwrap_or(0.0)
+                        .unwrap_or(1.0)
                         .clamp(0.0, 1.0);
                     interior = interior.max(b * il.range.clamp(0.0, 1.0));
                 }
@@ -3330,7 +3354,28 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
             }
             props
         })
-        .collect()
+        .collect::<Vec<_>>();
+    let mut animators: Vec<_> = ty
+        .meshes
+        .iter()
+        .map(|_| crate::anim::MeshAnimator {
+            anims: Vec::new(),
+            parent: None,
+        })
+        .collect();
+    crate::anim::link_parents(
+        &mut animators,
+        &ty.meshes
+            .iter()
+            .map(|m| &ty.model.meshes[m.def_index])
+            .collect::<Vec<_>>(),
+    );
+    let mut visible: Vec<bool> = props.iter().map(|p| p.visible).collect();
+    crate::anim::apply_visibility_parents(&animators, &mut visible);
+    for (props, visible) in props.iter_mut().zip(visible) {
+        props.visible = visible;
+    }
+    props
 }
 
 /// Where a mesh property takes its value from: a number written in model.cfg, a
@@ -3379,6 +3424,8 @@ struct MeshPlan {
 #[derive(Debug, Clone, Default)]
 struct PropsPlan {
     meshes: Vec<MeshPlan>,
+    parents: Vec<crate::anim::MeshAnimator>,
+    visible: Vec<bool>,
     /// Size of the variable table the plan was resolved against (engine variables such
     /// as `Dirt_Norm` join it later, and an `[alphascale]` on one must then find it).
     vars_seen: usize,
@@ -3448,12 +3495,28 @@ impl PropsPlan {
                 plan
             })
             .collect();
+        let mut animators: Vec<_> = ty
+            .meshes
+            .iter()
+            .map(|_| crate::anim::MeshAnimator {
+                anims: Vec::new(),
+                parent: None,
+            })
+            .collect();
+        crate::anim::link_parents(
+            &mut animators,
+            &ty.meshes
+                .iter()
+                .map(|m| &ty.model.meshes[m.def_index])
+                .collect::<Vec<_>>(),
+        );
+        self.parents = animators;
         self.vars_seen = var_index.len();
         self.built = true;
     }
 
     /// The mesh properties for the current variables, written into `out` in place.
-    fn apply(&self, vars: &[f32], out: &mut Vec<MeshProps>) {
+    fn apply(&mut self, vars: &[f32], out: &mut Vec<MeshProps>) {
         out.resize_with(self.meshes.len(), MeshProps::default);
         for (plan, props) in self.meshes.iter().zip(out.iter_mut()) {
             let n = plan.slots;
@@ -3492,7 +3555,7 @@ impl PropsPlan {
             }
             if let Some((i, value)) = plan.visible {
                 if let Some(x) = vars.get(i) {
-                    props.visible = (x - value).abs() < 0.5;
+                    props.visible = crate::anim::round_visible(*x, value);
                 }
             }
             let mut interior = 0.0f32;
@@ -3510,6 +3573,12 @@ impl PropsPlan {
             for &(slot, i) in &plan.uv_y {
                 props.slot_uv[slot][1] = vars.get(i).copied().unwrap_or(0.0);
             }
+        }
+        self.visible.clear();
+        self.visible.extend(out.iter().map(|p| p.visible));
+        crate::anim::apply_visibility_parents(&self.parents, &mut self.visible);
+        for (props, visible) in out.iter_mut().zip(self.visible.iter().copied()) {
+            props.visible = visible;
         }
     }
 }
@@ -4674,20 +4743,12 @@ fn skin_key(ty: &VehicleType, i: usize, transforms: &[Mat4]) -> Vec<Mat4> {
 fn rest_transforms(animators: &[MeshAnimator], n_vars: usize) -> Vec<Mat4> {
     let zeros = vec![0.0; n_vars];
     let mut probes = animators.to_vec();
-    let mut out: Vec<Mat4> = probes
-        .iter_mut()
-        .map(|a| {
-            for (_, _, st) in a.anims.iter_mut() {
-                st.initialized = false;
-            }
-            a.update(0.0, &zeros)
-        })
-        .collect();
+    let mut out: Vec<Mat4> = probes.iter_mut().map(|a| a.update(0.0, &zeros)).collect();
     crate::anim::apply_parents(&probes, &mut out);
     out
 }
 
-/// The vertices (positions, normals) of `[smoothskin]` mesh `i` with its bones where
+/// The vertices (positions, normals) of a mesh with `[setbone]` weights where
 /// `transforms` has them, in the mesh's own frame (the renderer puts `transforms[i]` on
 /// top); `rest` are the transforms of the modelled pose. None for a mesh without bones or
 /// vertices.
@@ -4751,9 +4812,13 @@ pub fn skin_vertices(
             nrm.push(q);
             continue;
         }
-        let m = own_rest_inv * (sum[v] * (1.0 / total[v]));
+        let m = own_rest_inv * skin_matrix(sum[v], total[v]);
         pos.push(m.transform_point3(p));
-        nrm.push(m.transform_vector3(q).normalize_or_zero());
+        nrm.push(if ty.model.meshes[vm.def_index].smooth_skin {
+            m.transform_vector3(q).normalize_or_zero()
+        } else {
+            q
+        });
     }
     Some((pos, nrm))
 }
@@ -5003,6 +5068,64 @@ mod tests {
         assert_eq!(script_speed(0.000251), 0.0);
         assert_eq!(script_speed(-0.000251), 0.0);
         assert_eq!(script_speed(0.02), 0.02);
+    }
+
+    #[test]
+    fn spotlight_selection_rounds_to_even_and_rejects_disabled_ranges() {
+        let spots = [
+            ::model::Spotlight {
+                values: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0],
+            },
+            ::model::Spotlight {
+                values: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0],
+            },
+        ];
+        assert_eq!(selected_spotlight(0.6, &spots), Some(1));
+        assert_eq!(selected_spotlight(-0.6, &spots), None);
+        assert_eq!(selected_spotlight(-0.4, &spots), Some(0));
+        assert_eq!(selected_spotlight(f32::NAN, &spots), None);
+        assert_eq!(
+            selected_spotlight(0.0, &[::model::Spotlight::default()]),
+            None
+        );
+    }
+
+    #[test]
+    fn driver_seat_spring_responds_and_stays_within_ten_centimetres() {
+        let (position, _) = driver_seat_step(0.0, 0.0, 0.2, 0.1);
+        assert!(position > 0.0);
+        let (position, velocity) = driver_seat_step(0.099, 1.0, 1.0, 0.1);
+        assert_eq!(position, 0.1);
+        assert_eq!(velocity, 0.0);
+    }
+
+    #[test]
+    fn partial_bone_weight_keeps_the_unweighted_bind_pose_contribution() {
+        let bone = Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0));
+        let blend = skin_matrix(bone * 0.25, 0.25);
+        assert_eq!(blend.transform_point3(Vec3::ZERO), Vec3::X);
+    }
+
+    #[test]
+    fn setbone_enables_position_skinning_without_smoothskin() {
+        let mesh = ::legacy_o3d::Mesh {
+            bones: vec![::legacy_o3d::Bone {
+                name: "joint".into(),
+                weights: vec![::legacy_o3d::BoneWeight {
+                    vertex: 0,
+                    weight: 1.0,
+                }],
+            }],
+            ..Default::default()
+        };
+        let def = ::model::MeshDef {
+            bones: vec![("JOINT".into(), 0)],
+            smooth_skin: false,
+            ..Default::default()
+        };
+        let skin = mesh_skin(&mesh, &def, 3);
+        assert_eq!(skin.len(), 1);
+        assert_eq!(skin[0].def_index, Some(3));
     }
 
     #[test]

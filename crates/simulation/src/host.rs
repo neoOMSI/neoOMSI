@@ -756,7 +756,7 @@ impl Host for VehicleHost {
                     .as_ref()
                     .and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?))
                     .map(|l| l.len() as f32)
-                    .unwrap_or(0.0);
+                    .unwrap_or(-1.0);
                 stacks.push(n);
             }
             "getroutebusstopident" => {
@@ -1066,6 +1066,22 @@ mod tests {
         stacks.push(1.0);
         host.callback("GetHumanCountOnSeat", 0, &mut stacks, &mut state);
         assert_eq!(stacks.pop(), 2.0);
+    }
+
+    #[test]
+    fn busstop_count_returns_minus_one_for_invalid_hof_or_route() {
+        let p = compile(&CompileInput::default());
+        let mut state = State::new(&p);
+        let mut host = VehicleHost::new(SimClock::default());
+        let mut stacks = Stacks::default();
+        stacks.push(0.0);
+        host.callback("GetBusstopCount", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop(), -1.0);
+
+        host.hof = Some(Arc::new(Hof::default()));
+        stacks.push(0.0);
+        host.callback("GetBusstopCount", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop(), -1.0);
     }
 
     #[test]
