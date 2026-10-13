@@ -846,7 +846,28 @@ impl Devices {
                     EventType::ButtonPressed(_, code) | EventType::ButtonReleased(_, code)
                     if use_gilrs_buttons(di, is_system_gamepad(pad.name(), is_di(&pad))) =>
                         {
-                            if let Some(n) = button_number(&pad, code) {
+                            let raw = code.into_u32();
+                            let hat_axis = raw >> 16 == 3 && (0x10..0x18).contains(&(raw & 0xFFFF));
+                            let dpad_btn = matches!(
+                                ev.event,
+                                EventType::ButtonPressed(b, _) | EventType::ButtonReleased(b, _)
+                                    if matches!(b, gilrs::Button::DPadUp | gilrs::Button::DPadDown | gilrs::Button::DPadLeft | gilrs::Button::DPadRight)
+                            );
+                            let mapped_n = if dpad_btn && (hat_axis || (raw & 0xFFFF) < 0x100) {
+                                match ev.event {
+                                    EventType::ButtonPressed(b, _) | EventType::ButtonReleased(b, _) => match b {
+                                        gilrs::Button::DPadUp => Some(HAT_BUTTONS),
+                                        gilrs::Button::DPadRight => Some(HAT_BUTTONS + 1),
+                                        gilrs::Button::DPadDown => Some(HAT_BUTTONS + 2),
+                                        gilrs::Button::DPadLeft => Some(HAT_BUTTONS + 3),
+                                        _ => None,
+                                    },
+                                    _ => None,
+                                }
+                            } else {
+                                button_number(&pad, code)
+                            };
+                            if let Some(n) = mapped_n {
                                 out.push((
                                     pad.name().to_string(),
                                     n,
@@ -2063,6 +2084,10 @@ fn code_button(code: u32) -> Option<usize> {
             0x2c0..=0x2e7 => Some(16 + lo - 0x2c0),
             0x130..=0x13e => Some(lo - 0x130),
             0x100..=0x109 => Some(lo - 0x100),
+            0x10a..=0x10f => Some(lo - 0x100),
+            0x150..=0x15f => Some(144 + lo - 0x150),
+            0x220..=0x223 => Some(HAT_BUTTONS + (lo - 0x220)),
+            0x2e8..=0x2ff => Some(16 + lo - 0x2c0),
             _ => None,
         }
     } else if cfg!(windows) {
