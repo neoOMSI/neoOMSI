@@ -1795,6 +1795,10 @@ pub struct LightStop {
 /// `[approachdist]` (m): about four seconds at town speed.
 pub const DEFAULT_APPROACH: f32 = 50.0;
 
+/// How far before a light without an `[approachdist]` of its own a train asks for it (m);
+/// OMSI asks for a level crossing as soon as the train is near.
+pub const RAIL_APPROACH: f32 = 600.0;
+
 /// Traffic light program of a crossing object instance (`TAmpelGroup`): its lights'
 /// phases and one cycle clock that runs on game time. The clock is state, not a function
 /// of the time of day, because the program may wait at a stop point or jump.
@@ -1901,9 +1905,14 @@ impl TrafficLightController {
     }
 
     /// Whether a vehicle `gap` metres before light `i` asks for it: within its request
-    /// distance or waiting at its line (a train at a level crossing, #294).
-    pub fn asked_from(&self, i: usize, gap: f32) -> bool {
-        gap <= self.approach_dist(i) + STOP_LINE_GAP + 0.5
+    /// distance (a train's `RAIL_APPROACH` by default, #294) or waiting at its line.
+    pub fn asked_from(&self, i: usize, gap: f32, rail: bool) -> bool {
+        let set = self.approach.get(i).copied().flatten().filter(|&d| d > 0.0);
+        let dist = match (rail, set) {
+            (true, None) => RAIL_APPROACH,
+            _ => self.approach_dist(i),
+        };
+        gap <= dist + STOP_LINE_GAP + 0.5
     }
 
     /// Run the cycle clock on by `dt` seconds of game time, honouring the stop and jump
@@ -3545,11 +3554,27 @@ mod tests {
             assert!(car.speed < 0.01, "stopped: {}", car.speed);
             let gap = line - (car.s + car.front);
             assert!(
-                c.asked_from(0, gap),
+                c.asked_from(0, gap, false),
                 "{gap} m before the line at {speed} m/s"
             );
-            assert!(!c.asked_from(0, gap + 2.0));
+            assert!(!c.asked_from(0, gap + 2.0, false));
         }
+    }
+
+    /// A train asks from `RAIL_APPROACH` unless the program sets a distance (#294).
+    #[test]
+    fn a_train_asks_for_a_level_crossing_from_afar() {
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0)), (vec![(0, 10.0)], Some(30.0))],
+            None,
+            &[],
+            &[],
+        );
+        assert!(c.asked_from(0, RAIL_APPROACH - 1.0, true));
+        assert!(!c.asked_from(0, RAIL_APPROACH + 2.0, true));
+        assert!(!c.asked_from(0, 100.0, false));
+        assert!(c.asked_from(1, 30.0, true));
+        assert!(!c.asked_from(1, 100.0, true));
     }
 
     #[test]

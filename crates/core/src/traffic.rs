@@ -18,7 +18,8 @@ use ::simulation::ai_motion::{
 };
 use ::simulation::collision::Obb;
 pub(crate) use ::simulation::traffic::{
-    AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, TrafficLightController, arrival_time,
+    AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, RAIL_APPROACH, TrafficLightController,
+    arrival_time,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -4637,6 +4638,20 @@ impl Traffic {
         }
     }
 
+    /// Like `way_lanes_into`, along the timetable route.
+    fn route_lanes_into(&self, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
+        out.clear();
+        out.push((st.lane, -st.s));
+        let mut d = self.net.lanes[st.lane].length() - st.s;
+        for &l in st.route.iter().skip(st.route_index + 1) {
+            if d > within {
+                break;
+            }
+            out.push((l, d));
+            d += self.net.lanes[l].length();
+        }
+    }
+
     fn way_lanes(&self, st: &AiState, within: f32) -> Vec<(usize, f32)> {
         let mut out = Vec::new();
         self.way_lanes_into(st, within, &mut out);
@@ -5688,12 +5703,17 @@ impl Traffic {
             c.request.iter_mut().for_each(|r| *r = false);
         }
         for c in &self.cars {
-            self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
+            let rail = self.net.lanes[c.state.lane].kind == LaneKind::Rail;
+            if rail && !c.state.route.is_empty() {
+                self.route_lanes_into(&c.state, RAIL_APPROACH + 10.0, &mut way_scratch);
+            } else {
+                self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
+            }
             for &(l, d) in &way_scratch {
                 if let Some((ci, li)) = self.net.lanes[l].traffic_light {
                     if let Some(ctl) = self.lights.get_mut(ci) {
                         let gap = d - c.state.front;
-                        if ctl.asked_from(li, gap) && d > -self.net.lanes[l].length() {
+                        if ctl.asked_from(li, gap, rail) && d > -self.net.lanes[l].length() {
                             if let Some(r) = ctl.request.get_mut(li) {
                                 *r = true;
                             }
