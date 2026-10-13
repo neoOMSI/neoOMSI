@@ -123,16 +123,6 @@ pub(super) fn ordered(m: f32) -> u64 {
     (m.max(0.0) * 1000.0) as u64
 }
 
-/// A flight path: aircraft are not tied to the ground under them.
-pub(super) fn track_is_air(traffic: &Traffic, lane: usize) -> bool {
-    traffic
-        .net
-        .lanes
-        .get(lane)
-        .map(|l| l.kind == ::simulation::traffic::LaneKind::Air)
-        .unwrap_or(false)
-}
-
 /// Where on its route a bus is: the step it is on and how far into it, from the leg it is on
 /// (`leg`, `frac` of the way along) and the estimated length of every step (`est`; an absent
 /// step has none, so the bus is on the next step there is). None when that is past the end.

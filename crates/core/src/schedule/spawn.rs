@@ -472,9 +472,9 @@ impl Schedule {
             }
         }
         let at_pos = traffic.net.lanes[section[start_index]].at(s).0;
-        // lanes stay in the network when their tile is unloaded: nothing is put on ground
-        // that is not there (the departure waits for its tile)
-        if !track_is_air(traffic, section[start_index]) && !world.has_ground(at_pos.x, at_pos.y) {
+        // Lanes stay in the network after unloading; departures wait for the path's source
+        // tile, even when the path extends over coordinates with no terrain tile.
+        if !world.traffic_path_loaded(&traffic.net.lanes[section[start_index]], at_pos) {
             log::debug!("trip {trip_name}: the bus would stand on an unloaded tile");
             return Placed::Wait;
         }

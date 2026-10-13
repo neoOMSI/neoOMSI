@@ -2028,17 +2028,14 @@ impl Traffic {
                 .lan_centers
                 .iter()
                 .fold((p - center).length(), |d, o| d.min((p - *o).length()));
-            // every car on the road or the rails whose ground has been unloaded goes: the
-            // lanes stay in the network when their tile goes, but nothing may drive over
-            // ground that is not there (tiles only go well beyond the view, timetable buses
-            // included; their trips come back with the tiles)
-            let flying = self
+            // Lanes stay in the network after unloading. Test their source tile: a loaded
+            // spline can cross a tile boundary where the map has no terrain at all.
+            let unloaded = !self
                 .net
                 .lanes
                 .get(c.state.lane)
-                .map(|l| l.kind == LaneKind::Air)
+                .map(|l| world.traffic_path_loaded(l, p))
                 .unwrap_or(false);
-            let unloaded = !flying && !world.has_ground(p.x, p.y);
             off_ground += unloaded as usize;
             let random = !c.is_bus() || c.gone;
             let r = (c.state.length as f64 * 0.5).max(2.0);
@@ -2593,8 +2590,8 @@ impl Traffic {
             {
                 continue;
             }
-            // only on loaded ground (a lane's tile may have gone again)
-            if kind != LaneKind::Air && !world.has_ground(p.x, p.y) {
+            // A lane's source tile may have gone again.
+            if !world.traffic_path_loaded(&self.net.lanes[lane], p) {
                 continue;
             }
             let heading = self.net.lanes[lane].at(s).1 as f64;
@@ -2756,7 +2753,7 @@ impl Traffic {
             // it - woken out of the picture 30-60 m from the bus, a car came into being in
             // the mirror or just round the corner)
             let ok = near
-                && world.has_ground(p.x, p.y)
+                && world.traffic_path_loaded(&self.net.lanes[self.dormant[i].lane], p)
                 && self.may_appear(world, p)
                 && !self
                 .cars

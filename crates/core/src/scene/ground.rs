@@ -460,4 +460,16 @@ impl World {
         );
         self.terrains.read().contains_key(&key)
     }
+
+    /// Whether an AI vehicle's path is loaded. Splines and object paths belong to their
+    /// source tile and may extend beyond it, even over coordinates with no map tile.
+    /// Timetable connectors without a map identity still use the ground at their position;
+    /// aircraft do not need loaded ground.
+    pub fn traffic_path_loaded(&self, lane: &Lane, pos: DVec3) -> bool {
+        lane.kind == LaneKind::Air
+            || match lane.key {
+                Some(key) => self.terrains.read().contains_key(&key.tile),
+                None => self.has_ground(pos.x, pos.y),
+            }
+    }
 }

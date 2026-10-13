@@ -110,6 +110,8 @@ mod parity_acceptance_tests;
 mod render_queue_tests;
 #[cfg(test)]
 mod terrain_mapping_tests;
+#[cfg(test)]
+mod traffic_path_tests;
 
 pub struct World {
     pub root: PathBuf,
