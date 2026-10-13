@@ -5693,7 +5693,7 @@ impl Traffic {
                 if let Some((ci, li)) = self.net.lanes[l].traffic_light {
                     if let Some(ctl) = self.lights.get_mut(ci) {
                         let gap = d - c.state.front;
-                        if gap <= ctl.approach_dist(li) && d > -self.net.lanes[l].length() {
+                        if ctl.asked_from(li, gap) && d > -self.net.lanes[l].length() {
                             if let Some(r) = ctl.request.get_mut(li) {
                                 *r = true;
                             }

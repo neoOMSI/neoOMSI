@@ -1900,6 +1900,12 @@ impl TrafficLightController {
             .unwrap_or(DEFAULT_APPROACH)
     }
 
+    /// Whether a vehicle `gap` metres before light `i` asks for it: within its request
+    /// distance or waiting at its line (a train at a level crossing, #294).
+    pub fn asked_from(&self, i: usize, gap: f32) -> bool {
+        gap <= self.approach_dist(i) + STOP_LINE_GAP + 0.5
+    }
+
     /// Run the cycle clock on by `dt` seconds of game time, honouring the stop and jump
     /// points with this frame's requests (`request`, set by the caller before).
     pub fn advance(&mut self, dt: f32) {
@@ -3514,6 +3520,36 @@ mod tests {
             "front at {front}, line at {line}"
         );
         assert!(hardest > -3.5, "braked at {hardest} m/s²");
+    }
+
+    /// A vehicle waiting at the line asks for a light with `[approachdist] 0` (#294).
+    #[test]
+    fn a_car_waiting_at_the_line_asks_for_its_light() {
+        let net = junction();
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0))],
+            None,
+            &[],
+            &[],
+        );
+        for (speed, decel) in [(3.0, 1.0), (13.9, 2.2), (22.0, 3.0)] {
+            let mut car = AiState::new(0, 0.0, 3);
+            car.speed = speed;
+            car.decel = decel;
+            car.plan_next(&net);
+            let line = 55.0;
+            for _ in 0..3600 {
+                let stop = line - car.s;
+                car.drive(&net, 1.0 / 60.0, None, Some(stop));
+            }
+            assert!(car.speed < 0.01, "stopped: {}", car.speed);
+            let gap = line - (car.s + car.front);
+            assert!(
+                c.asked_from(0, gap),
+                "{gap} m before the line at {speed} m/s"
+            );
+            assert!(!c.asked_from(0, gap + 2.0));
+        }
     }
 
     #[test]
