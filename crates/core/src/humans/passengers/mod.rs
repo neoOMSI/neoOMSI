@@ -20,6 +20,8 @@ pub(super) use stops::*;
 /// in to (+0x7a0), the stops within 60 m (+0x7a4), and whether it empties (+0x7c5).
 #[derive(Debug, Clone, Default)]
 pub(super) struct BusAtStops {
+    /// The nearest same-direction stop ahead within the passenger bell range.
+    pub approaching: Option<i64>,
     pub next: Option<i64>,
     /// The nearest stop whose service box actually contains the bus.
     pub at: Option<i64>,
@@ -32,7 +34,7 @@ const DOOR_GIVE_UP: f32 = 20.0;
 /// Returns the destination stop only while the bus is actually inside its service box.
 ///
 /// `BusAtStops::next` is deliberately predictive: it can name a stop up to 60 metres
-/// ahead.  Starting an alighting task from it lets a passenger leave at an intervening
+/// ahead. Starting an alighting task from it lets a passenger leave at an intervening
 /// stop whose doors open first.
 fn destination_in_service_box(
     stops: &HashMap<i64, PaxStop>,
@@ -50,7 +52,7 @@ fn destination_is_approaching(
     destination: &str,
 ) -> bool {
     at_stops
-        .next
+        .approaching
         .is_some_and(|id| stops.get(&id).is_some_and(|stop| stop.is_named(destination)))
 }
 
@@ -681,7 +683,7 @@ mod tests {
 
         // The school is the upcoming stop, but the bus is still inside the preceding stop.
         let before = BusAtStops {
-            next: Some(2),
+            approaching: Some(2),
             at: Some(1),
             ..Default::default()
         };
@@ -689,7 +691,7 @@ mod tests {
         assert_eq!(destination_in_service_box(&stops, &before, "QEHS"), None);
 
         let at_destination = BusAtStops {
-            next: Some(2),
+            approaching: Some(2),
             at: Some(2),
             ..Default::default()
         };
