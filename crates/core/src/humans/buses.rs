@@ -731,6 +731,7 @@ impl BusNow {
     pub(super) fn serves_terminus(&self, name: &str) -> bool {
         self.passenger_termini
             .iter()
+            .chain(self.terminus.iter())
             .any(|terminus| super::passengers::terminus_matches(terminus, name))
     }
 
