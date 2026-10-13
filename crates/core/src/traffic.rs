@@ -5737,22 +5737,12 @@ impl Traffic {
             // (off the lanes - a depot yard, a car park - a gate's lane that starts just
             // ahead, the way the bus is facing, is asked all the same: standing a few metres
             // beside every lane there, the bus never opened the barrier in front of it)
-            let h = heading.to_radians();
-            let fwd = glam::DVec2::new(h.sin(), h.cos());
             for l in self.net.lanes_starting_near(pos, 35.0) {
                 let lane = &self.net.lanes[l];
                 let Some((ci, li)) = lane.traffic_light else {
                     continue;
                 };
-                let (p0, h0) = lane.at(0.0);
-                let d = (p0 - pos).truncate();
-                let (along, across) = (d.dot(fwd), d.perp_dot(fwd).abs());
-                let turn = ((h0 as f64 - heading + 540.0).rem_euclid(360.0) - 180.0).abs();
-                if (-2.0..25.0).contains(&along)
-                    && across < 6.0
-                    && turn < 60.0
-                    && (p0.z - pos.z).abs() < 4.0
-                {
+                if gate_lane_ahead(lane, pos, heading) {
                     if let Some(r) = self.lights.get_mut(ci).and_then(|c| c.request.get_mut(li)) {
                         *r = true;
                     }
@@ -8078,6 +8068,23 @@ impl Traffic {
     }
 }
 
+/// Whether a street lane starts just ahead of a bus at `pos` facing `heading` (a depot
+/// gate's lane it asks for). Never a rail lane: a bus beside the track asked for the
+/// level crossing's rail light.
+fn gate_lane_ahead(lane: &::simulation::traffic::Lane, pos: DVec3, heading: f64) -> bool {
+    let h = heading.to_radians();
+    let fwd = glam::DVec2::new(h.sin(), h.cos());
+    let (p0, h0) = lane.at(0.0);
+    let d = (p0 - pos).truncate();
+    let (along, across) = (d.dot(fwd), d.perp_dot(fwd).abs());
+    let turn = ((h0 as f64 - heading + 540.0).rem_euclid(360.0) - 180.0).abs();
+    lane.kind == LaneKind::Street
+        && (-2.0..25.0).contains(&along)
+        && across < 6.0
+        && turn < 60.0
+        && (p0.z - pos.z).abs() < 4.0
+}
+
 /// What the tiles placed since the last call hand to the traffic: their lanes, their parked
 /// cars and which tiles they were (taken together, see `World::lane_tiles`).
 fn take_from_tiles(
@@ -8573,5 +8580,21 @@ mod bodies_moved_tests {
         assert!((m.center - glam::DVec2::new(94.0, 50.0)).length() < 1e-9);
         assert!((m.heading - want.heading).abs() < 1e-9);
         assert!((m.z0 - want.z0).abs() < 1e-9 && (m.z1 - want.z1).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod gate_lane_tests {
+    use super::gate_lane_ahead;
+    use ::simulation::traffic::{LaneBuilder, LaneKind};
+    use glam::DVec3;
+
+    /// A bus asks for the street lane starting ahead of it, not for a rail lane there.
+    #[test]
+    fn a_bus_asks_for_no_rail_lane() {
+        let lane =
+            |kind| LaneBuilder::arc(DVec3::new(3.0, 10.0, 0.0), 0.0, 20.0, 0.0, 0.0, kind, 3.0);
+        assert!(gate_lane_ahead(&lane(LaneKind::Street), DVec3::ZERO, 0.0));
+        assert!(!gate_lane_ahead(&lane(LaneKind::Rail), DVec3::ZERO, 0.0));
     }
 }
