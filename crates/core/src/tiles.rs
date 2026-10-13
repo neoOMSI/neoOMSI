@@ -723,7 +723,7 @@ fn row_start(
 ) -> Option<RowStart> {
     let interval = att.interval.max(0.0);
     let d = att.offset[2];
-    let Some((master_tile, first)) = att.repeater else {
+    let Some((master_tile, _)) = att.repeater else {
         // the start distance counts from the start of the chain
         let d0 = index.map(|ix| d - chain_offset(ix, spline.id)).unwrap_or(d);
         return Some(RowStart {
@@ -756,18 +756,9 @@ fn row_start(
             acc,
         });
     }
-    if interval > 0.0 && index.is_some() {
-        // the master is not in the map (a broken chain in a mod map): keep the row's
-        // spacing with its own count, starting at the interval's phase
-        let s = d % interval;
-        return Some(RowStart {
-            s,
-            j: first,
-            backwards: false,
-            d0: s - first as f64 * interval,
-            acc: 0.0,
-        });
-    }
+    // A repeater continues only the master named by (tile index, id). Stale copies can
+    // name a tile without that master alongside a valid repeater. Guessing a local phase
+    // for them creates a second, shifted row at the tile border
     None
 }
 
@@ -1984,6 +1975,48 @@ mod tests {
             "{:?}",
             objs[0].1.pose.pos
         );
+    }
+
+    #[test]
+    fn orphan_repeater_does_not_duplicate_a_valid_border_row() {
+        let master_spline = spline(1, 0, 2, 100.4);
+        let continuation = MapSpline {
+            pos: [0.0, 100.4, 10.0],
+            ..spline(2, 1, 0, 100.0)
+        };
+        let mut index = MapIndex::default();
+        for s in [&master_spline, &continuation] {
+            index.splines.insert(
+                s.id,
+                IndexedSpline {
+                    length: s.length,
+                    map_chain_offset: None,
+                    prev: s.prev_id,
+                    next: s.next_id,
+                },
+            );
+        }
+        index.masters.insert((0, 5), (1, 10.0));
+        let valid = row(30.0, 200.0, 10.0, Some((0, 4)));
+        // A stale copy names the receiving tile instead of the master's tile. The old
+        // phase fallback made a second row 0.4 m beside the valid one
+        let orphan = row(30.0, 200.0, 10.0, Some((1, 4)));
+        let splines = [continuation];
+        let expected = tile_row_objects(&valid, &splines, DVec2::ZERO, Some(&index));
+        assert_eq!(
+            expected.iter().map(|(_, o)| o.index).collect::<Vec<_>>(),
+            vec![4, 5, 6]
+        );
+        for ((_, object), y) in expected.iter().zip([130.0, 160.0, 190.0]) {
+            assert!((object.pose.pos.y - y).abs() < 1e-6);
+        }
+        assert!(tile_row_objects(&orphan, &splines, DVec2::ZERO, Some(&index)).is_empty());
+        assert!(tile_row_objects(&orphan, &splines, DVec2::ZERO, None).is_empty());
+        let single_orphan = SplineAttachment {
+            interval: 0.0,
+            ..orphan
+        };
+        assert!(tile_row_objects(&single_orphan, &splines, DVec2::ZERO, Some(&index)).is_empty());
     }
 
     #[test]
