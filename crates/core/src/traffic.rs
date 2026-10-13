@@ -642,6 +642,11 @@ pub struct Traffic {
     /// before each `tick`: the cars stop behind them and go round them as round the
     /// player's bus.
     pub others: Vec<(u32, PlayerBox)>,
+    /// Rail lanes ahead of the players' trams and trains (lane, distance, front, train),
+    /// set before each `tick`. A neoOMSI extension: OMSI requests no lights for them.
+    pub rail_ahead: Vec<(usize, f32, f32, bool)>,
+    /// The vehicle files of the map's `.zug` trains (see `train_cars`).
+    train_cars: hashbrown::HashSet<String>,
     /// The drivers at the wheel of the timetable buses near the camera, by car id (see
     /// `driver.rs`; made within `DRIVER_NEAR` m of the camera, let go beyond twice that).
     drivers: HashMap<u64, crate::driver::DriverFigure>,
@@ -904,7 +909,7 @@ fn open_trace() -> Option<std::io::BufWriter<std::fs::File>> {
 
 /// The vehicle's extent from its origin: (to the front bumper, to the rear bumper, half
 /// the width) from its `[boundingbox]`.
-fn extents(ty: &VehicleType, length: f32) -> (f32, f32, f32) {
+pub(crate) fn extents(ty: &VehicleType, length: f32) -> (f32, f32, f32) {
     match ty.def.bounding_box {
         Some(bb) if bb[1] > 1.0 => (
             bb[1] * 0.5 + bb[4],
@@ -1348,6 +1353,8 @@ impl Traffic {
             player: None,
             player_priority: false,
             others: Vec::new(),
+            rail_ahead: Vec::new(),
+            train_cars: train_cars(root, &world.ailists),
             drivers: HashMap::new(),
             driver_pool: Vec::new(),
             tick_split: [0.0; 3],
@@ -5706,17 +5713,12 @@ impl Traffic {
                 self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
             }
             for &(l, d) in &way_scratch {
-                if let Some((ci, li)) = self.net.lanes[l].traffic_light {
-                    if let Some(ctl) = self.lights.get_mut(ci) {
-                        let gap = d - c.state.front;
-                        if ctl.asked_from(li, gap, c.train) && d > -self.net.lanes[l].length() {
-                            if let Some(r) = ctl.request.get_mut(li) {
-                                *r = true;
-                            }
-                        }
-                    }
-                }
+                ask_light(&mut self.lights, &self.net, l, d, c.state.front, c.train);
             }
+        }
+        // the players' trams and trains
+        for &(l, d, front, train) in &self.rail_ahead {
+            ask_light(&mut self.lights, &self.net, l, d, front, train);
         }
         // the player's bus and the other players' vehicles ask too: a depot gate (Spandau's
         // `Omnibushof_S_1`, the exit arm on light 1) opens only for whoever asks, and the
@@ -7578,6 +7580,11 @@ impl Traffic {
         }
     }
 
+    /// Whether the vehicle file `path` is a car of one of the map's AI trains.
+    pub fn is_train(&self, path: &Path) -> bool {
+        self.train_cars.contains(&car_key(path))
+    }
+
     /// The street lanes a vehicle standing at `pos` facing `heading` is on and will drive
     /// onto within `reach` metres, each with the distance from the vehicle to its start
     /// (0 for the lane it is on): the way straight on and the gentle turns (within 60° of
@@ -8100,6 +8107,27 @@ fn route_lanes_into(net: &Network, st: &AiState, within: f32, out: &mut Vec<(usi
     }
 }
 
+/// Request lane `l`'s light for a vehicle `d` m before the lane, its front `front` m ahead.
+fn ask_light(
+    lights: &mut [TrafficLightController],
+    net: &Network,
+    l: usize,
+    d: f32,
+    front: f32,
+    train: bool,
+) {
+    let Some((ci, li)) = net.lanes.get(l).and_then(|x| x.traffic_light) else {
+        return;
+    };
+    if let Some(ctl) = lights.get_mut(ci) {
+        if ctl.asked_from(li, d - front, train) && d > -net.lanes[l].length() {
+            if let Some(r) = ctl.request.get_mut(li) {
+                *r = true;
+            }
+        }
+    }
+}
+
 /// Whether a street lane (a depot gate's) starts just ahead of a bus; never a rail lane.
 fn gate_lane_ahead(lane: &::simulation::traffic::Lane, pos: DVec3, heading: f64) -> bool {
     let h = heading.to_radians();
@@ -8113,6 +8141,54 @@ fn gate_lane_ahead(lane: &::simulation::traffic::Lane, pos: DVec3, heading: f64)
         && across < 6.0
         && turn < 60.0
         && (p0.z - pos.z).abs() < 4.0
+}
+
+/// A vehicle file from its `vehicles/` folder on, lower case: the same car in any root.
+fn car_key(path: &Path) -> String {
+    let p = path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('\\', "/");
+    match p.rfind("vehicles/") {
+        Some(k) => p[k..].to_string(),
+        None => p,
+    }
+}
+
+/// The vehicle files of the map's `.zug` trains (a car naming a group: all its vehicles).
+fn train_cars(root: &Path, lists: &::map::ailists::AiLists) -> hashbrown::HashSet<String> {
+    let mut out = hashbrown::HashSet::new();
+    for v in lists
+        .groups
+        .iter()
+        .filter(|g| !g.is_depot)
+        .flat_map(|g| &g.vehicles)
+    {
+        if !v.file.to_ascii_lowercase().ends_with(".zug") {
+            continue;
+        }
+        let Ok(train) =
+            ::legacy_vehicle::vehicle::Train::load(&::mods::resolve_path(root, &v.file))
+        else {
+            continue;
+        };
+        for (file, _) in &train.cars {
+            let p = ::mods::resolve_path(root, file);
+            let files: Vec<std::path::PathBuf> = if ::legacy_config::vfs::is_file(&p) {
+                vec![p]
+            } else {
+                lists
+                    .groups
+                    .iter()
+                    .filter(|g| g.name.eq_ignore_ascii_case(file.trim()))
+                    .flat_map(|g| &g.vehicles)
+                    .map(|v| ::mods::resolve_path(root, &v.file))
+                    .collect()
+            };
+            out.extend(files.iter().map(|f| car_key(f)));
+        }
+    }
+    out
 }
 
 /// What the tiles placed since the last call hand to the traffic: their lanes, their parked
@@ -8666,5 +8742,71 @@ mod route_lanes_tests {
             assert!((d - want).abs() < 0.01, "{out:?}");
         }
         assert!((out[1].1 - 30.0).abs() < 0.01, "{out:?}");
+    }
+}
+
+#[cfg(test)]
+mod train_car_tests {
+    use super::{car_key, train_cars};
+    use ::map::ailists::{AiGroup, AiLists, AiVehicleEntry};
+
+    fn entry(file: &str) -> AiVehicleEntry {
+        AiVehicleEntry {
+            file: file.into(),
+            weight: 1.0,
+            number: None,
+            registration: None,
+        }
+    }
+
+    /// A `.zug`'s cars, a group's among them, are trains; a tram is not.
+    #[test]
+    fn the_cars_of_the_maps_trains_are_trains() {
+        let root = std::env::temp_dir().join(format!("neoomsi_train_cars_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for f in [
+            "Vehicles/Zug/Kopf.ovh",
+            "Vehicles/Zug/Mitte.ovh",
+            "Vehicles/Tram/GT6.bus",
+        ] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "[friendlyname]\nx\n").unwrap();
+        }
+        std::fs::create_dir_all(root.join("Trains")).unwrap();
+        std::fs::write(
+            root.join("Trains/S5.zug"),
+            "Vehicles\\Zug\\Kopf.ovh\n0\nMitten\n1\n",
+        )
+        .unwrap();
+        let lists = AiLists {
+            groups: vec![
+                AiGroup {
+                    name: "S5".into(),
+                    vehicles: vec![entry("Trains\\S5.zug")],
+                    ..Default::default()
+                },
+                AiGroup {
+                    name: "Mitten".into(),
+                    vehicles: vec![entry("Vehicles\\Zug\\Mitte.ovh")],
+                    ..Default::default()
+                },
+                AiGroup {
+                    name: "Tram".into(),
+                    vehicles: vec![entry("Vehicles\\Tram\\GT6.bus")],
+                    ..Default::default()
+                },
+            ],
+        };
+        let cars = train_cars(&root, &lists);
+        assert!(cars.contains("vehicles/zug/kopf.ovh"), "{cars:?}");
+        assert!(cars.contains("vehicles/zug/mitte.ovh"), "{cars:?}");
+        assert!(!cars.contains("vehicles/tram/gt6.bus"));
+        // another content root holding the same car
+        assert_eq!(
+            car_key(std::path::Path::new("/mods/X/Vehicles/Zug/Kopf.ovh")),
+            "vehicles/zug/kopf.ovh"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

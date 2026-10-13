@@ -113,6 +113,10 @@ impl App {
                     .as_ref()
                     .and_then(|p| p.vehicle.var("TrafficPriority"))
                     .is_some_and(|v| v > 0.5);
+                t.rail_ahead = match self.world.as_ref() {
+                    Some(w) => rail_ahead(t, w, self.player.as_ref(), &self.remotes),
+                    None => Vec::new(),
+                };
                 t.tick(dt, self.player.as_ref().map(|p| player_outline(p)));
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());
