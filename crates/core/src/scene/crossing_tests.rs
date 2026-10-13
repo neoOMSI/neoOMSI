@@ -132,3 +132,67 @@ fn loading_deforms_all_lods_and_collision_once_before_placement() {
     assert!(actual.starts_with(&temp) && actual != temp);
     std::fs::remove_dir_all(actual).unwrap();
 }
+
+/// An `[onlyeditor]` lamp still reads its crossing light (#303).
+#[test]
+fn an_editor_only_lamp_follows_its_crossing_light() {
+    let root = std::env::temp_dir().join(format!(
+        "neoomsi-editor-lamp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("global.cfg"),
+        "[name]\nSynthetic crossing\n[map]\n0\n0\ntile_0_0.map\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("crossing.sco"),
+        "[traffic_lights_group]\n10\n\
+[traffic_light]\nroad\n[phase]\n6\n5\n[phase]\n2\n5\n[approachdist]\n0\n\
+[traffic_light]\nbell\n[phase]\n2\n5\n[phase]\n6\n5\n[approachdist]\n0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("gong.sco"),
+        "[trafficlight]\n[sound]\ngong.cfg\n[script]\n1\ngong.osc\n[onlyeditor]\n[mesh]\ngong.x\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("gong.osc"), "{init}\n{end}\n{frame}\n{end}\n").unwrap();
+    std::fs::write(
+        root.join("gong.x"),
+        "xof 0303txt 0032\nMesh gong {3;0;0;0;,1;0;0;,0;1;0;;1;3;0,1,2;;}",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tile_0_0.map"),
+        "[version]\n14\n\
+[object]\n0\ncrossing.sco\n1\n100\n100\n0\n0\n0\n0\n0\n\n\
+[object]\n0\ngong.sco\n2\n105\n100\n0\n0\n0\n0\n1\n1\n\n[varparent]\n1\n",
+    )
+    .unwrap();
+    let world = World::open(&root, &root.join("global.cfg"), 20261001).unwrap();
+    let (mut prepared, _) = world.prepare_tiles(&[(0, 0, root.join("tile_0_0.map"))]);
+    assert_eq!(prepared.len(), 1);
+    // (the upload adds the visible lamps to the editor-only ones)
+    world.commit_upload(
+        world.begin_upload(prepared.pop().unwrap()),
+        &mut LoadStats::default(),
+    );
+    {
+        let states = world.tile_state.lock();
+        let lamps = &states[&(0, 0)].light_objects;
+        assert_eq!(lamps.len(), 1);
+        let lamp = &lamps[0];
+        assert_eq!((lamp.parent, lamp.index, lamp.any_light), (1, 1, false));
+        assert!(lamp.script.is_some() && lamp.sound.is_some());
+    }
+    // (not also run as a sound object without the crossing light)
+    assert!(!world.scripted.lock().iter().any(|o| o.map_id == 2));
+    drop(world);
+    std::fs::remove_dir_all(&root).unwrap();
+}

@@ -250,9 +250,82 @@ impl World {
                     idx
                 }))
             };
+            // (OMSI hands `TrafficLightPhase` to any child of a crossing whose first string
+            // names one of its lights, `[trafficlight]` or not - see `names_traffic_light`;
+            // a mod lamp without the keyword sat at its "off" picture, blinking yellow.
+            // Objects with textures of their own to choose stay ordinary objects.)
+            let child_lamp = o
+                .lamp_parent
+                .is_some_and(|p| index.traffic_light_parents.contains(&p))
+                && crate::tiles::names_traffic_light(&o.extra)
+                && ot.dynamic_textures.is_empty()
+                && !ot
+                .meshes
+                .iter()
+                .any(|(_, _, ov)| ov.iter().any(|m| !m.item && m.freetex.is_some()));
+            let lamp = if ot.sco.is_traffic_light || child_lamp {
+                let named = o.extra.first().map(|s| s.trim()).filter(|s| !s.is_empty());
+                let index = named.map(|s| ::legacy_config::parse_f64(s) as usize).unwrap_or(0);
+                if ::legacy_config::env::var_os("OMSI_DEBUG_LAMPS").is_some() {
+                    match o.lamp_parent {
+                        None => log::info!(
+                            "traffic light {} (id {}) names no crossing ([varparent]); extra {:?}",
+                            ot.sco.path.display(),
+                            o.id,
+                            o.extra
+                        ),
+                        Some(p) => log::info!(
+                            "traffic light {} (id {}) at ({:.0}, {:.0}): crossing {p}, light {:?}",
+                            ot.sco.path.display(),
+                            o.id,
+                            pos.x,
+                            pos.y,
+                            o.extra
+                        ),
+                    }
+                }
+                o.lamp_parent.map(|p| (p, index, named.is_none()))
+            } else {
+                None
+            };
             if ot.sco.only_editor || ot.sco.is_help_arrow || ot.meshes.is_empty() {
-                // invisible sound sources (ambient sound objects) still run their script
-                if let (Some(program), true) = (&ot.program, ot.sco.sound.is_some()) {
+                // an invisible lamp's script still reads its crossing light (Gerolstein's
+                // `[onlyeditor]` crossing gong rang nonstop without it, #303)
+                if let (Some((parent, index, any_light)), Some(program)) = (lamp, &ot.program) {
+                    state.light_objects.push(LightObject {
+                        parent,
+                        index,
+                        any_light,
+                        instances: Vec::new(),
+                        slots: Vec::new(),
+                        variants: Vec::new(),
+                        pos,
+                        script: Some(Arc::new(Mutex::new(
+                            ::simulation::scenery::SceneryInstance::new(
+                                program.clone(),
+                                &ot.mesh_defs(),
+                                self.script_clock(),
+                                &o.extra,
+                            ),
+                        ))),
+                        coronas: Vec::new(),
+                        corona_mesh: Vec::new(),
+                        lit: Vec::new(),
+                        xf,
+                        animated: false,
+                        sound: ot.sco.sound.as_ref().map(|rel| {
+                            let dir = ot
+                                .sco
+                                .path
+                                .parent()
+                                .map(|p| p.to_path_buf())
+                                .unwrap_or_default();
+                            ::mods::resolve_path(&dir, rel)
+                        }),
+                        sounds: Default::default(),
+                    });
+                } else if let (Some(program), true) = (&ot.program, ot.sco.sound.is_some()) {
+                    // invisible sound sources (ambient sound objects) still run their script
                     let inst = ::simulation::scenery::SceneryInstance::new(
                         program.clone(),
                         &ot.mesh_defs(),
@@ -548,44 +621,6 @@ impl World {
                     radius: shape.radius(),
                 });
             }
-            // (OMSI hands `TrafficLightPhase` to any child of a crossing whose first string
-            // names one of its lights, `[trafficlight]` or not - see `names_traffic_light`;
-            // a mod lamp without the keyword sat at its "off" picture, blinking yellow.
-            // Objects with textures of their own to choose stay ordinary objects.)
-            let child_lamp = o
-                .lamp_parent
-                .is_some_and(|p| index.traffic_light_parents.contains(&p))
-                && crate::tiles::names_traffic_light(&o.extra)
-                && ot.dynamic_textures.is_empty()
-                && !ot
-                .meshes
-                .iter()
-                .any(|(_, _, ov)| ov.iter().any(|m| !m.item && m.freetex.is_some()));
-            let lamp = if ot.sco.is_traffic_light || child_lamp {
-                let named = o.extra.first().map(|s| s.trim()).filter(|s| !s.is_empty());
-                let index = named.map(|s| ::legacy_config::parse_f64(s) as usize).unwrap_or(0);
-                if ::legacy_config::env::var_os("OMSI_DEBUG_LAMPS").is_some() {
-                    match o.lamp_parent {
-                        None => log::info!(
-                            "traffic light {} (id {}) names no crossing ([varparent]); extra {:?}",
-                            ot.sco.path.display(),
-                            o.id,
-                            o.extra
-                        ),
-                        Some(p) => log::info!(
-                            "traffic light {} (id {}) at ({:.0}, {:.0}): crossing {p}, light {:?}",
-                            ot.sco.path.display(),
-                            o.id,
-                            pos.x,
-                            pos.y,
-                            o.extra
-                        ),
-                    }
-                }
-                o.lamp_parent.map(|p| (p, index, named.is_none()))
-            } else {
-                None
-            };
             // lights of the placed object
             {
                 let switches: Mutex<Vec<LightSwitch>> = Mutex::new(Vec::new());

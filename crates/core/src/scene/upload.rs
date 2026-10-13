@@ -779,7 +779,8 @@ impl World {
         state.gpu = tg;
         state.night_slots = placing.night_slots;
         state.night_modes = placing.night_modes;
-        state.light_objects = placing.light_objects;
+        // (keeps the invisible lamps `place_tile` added)
+        state.light_objects.extend(placing.light_objects);
         state.poles = placing.poles;
     }
 }
