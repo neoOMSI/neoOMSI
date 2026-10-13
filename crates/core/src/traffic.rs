@@ -5699,13 +5699,7 @@ impl Traffic {
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
         }
-        // (a set `[approachdist]` counts for trains as written, however far)
-        let rail_within = self
-            .lights
-            .iter()
-            .flat_map(|c| c.approach.iter().flatten())
-            .fold(RAIL_APPROACH, |m, &d| m.max(d))
-            + 10.0;
+        let rail_within = self.rail_reach();
         for c in &self.cars {
             if c.train && !c.state.route.is_empty() {
                 route_lanes_into(&self.net, &c.state, rail_within, &mut way_scratch);
@@ -7578,6 +7572,16 @@ impl Traffic {
                 b.hold(secs, in_doorway);
             }
         }
+    }
+
+    /// How far ahead a train looks for lights (m): a set `[approachdist]` counts for trains
+    /// as written, however far.
+    pub fn rail_reach(&self) -> f32 {
+        self.lights
+            .iter()
+            .flat_map(|c| c.approach.iter().flatten())
+            .fold(RAIL_APPROACH, |m, &d| m.max(d))
+            + 10.0
     }
 
     /// Whether the vehicle file `path` is a car of one of the map's AI trains.

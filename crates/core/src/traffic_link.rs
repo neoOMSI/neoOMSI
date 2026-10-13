@@ -83,7 +83,7 @@ pub(crate) fn rail_ahead(
 ) -> Vec<(usize, f32, f32, bool)> {
     let reach = |train: bool| {
         if train {
-            traffic::RAIL_APPROACH + 10.0
+            t.rail_reach()
         } else {
             160.0
         }
