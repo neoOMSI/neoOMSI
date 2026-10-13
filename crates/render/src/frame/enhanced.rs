@@ -48,11 +48,12 @@ impl Renderer {
         self.sky_state = Some(st);
     }
 
-    /// How much brighter the enhanced picture is than the plain shading under `lighting`:
-    /// a surface facing up, lit by the sky and the sun at the picture's exposure, over the
-    /// same surface in the plain light. The mirrors are drawn with the plain shading, and
-    /// their light times this is the window's beside them.
+    /// How much brighter the enhanced picture is than the plain shading under `lighting`,
+    /// for an upward surface at the picture's exposure (1 without enhanced graphics).
     pub fn enhanced_light_ratio(&self, lighting: &Lighting) -> f32 {
+        if self.hdr_pass.is_none() || ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_some() {
+            return 1.0;
+        }
         let computed;
         let st = match &self.sky_state {
             Some(st) => st,
@@ -67,8 +68,7 @@ impl Renderer {
         let enhanced = (st.sun * up + atmosphere::sh_irradiance(&st.sh, Vec3::Z))
             / std::f32::consts::PI
             * exposure;
-        // (the plain shading's sun, light from above and ambient light, the last two as
-        // render_inner hands them to a frame that is not enhanced)
+        // (as render_inner scales them for a plain frame)
         let plain = lighting.sun_color * lighting.sun_intensity * up
             + (lighting.secondary + lighting.ambient)
                 * night_scale(lighting.night, lighting.atmosphere_brightness);

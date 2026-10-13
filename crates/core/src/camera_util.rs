@@ -336,8 +336,7 @@ mod tests {
         assert!((projection.y_axis.y - 4.0).abs() < 1e-5);
     }
 
-    /// The light an enhanced mirror's plain shading is scaled by, at `hours` on 30 May in
-    /// Spandau with the stock envir.cfg.
+    /// The enhanced mirror light factor at `hours` on 30 May, stock envir.cfg.
     fn mirror_light_at(renderer: &::render::Renderer, hours: f64) -> f32 {
         let clock = ::simulation::clock::SimClock {
             day_of_year: 150,
@@ -362,9 +361,7 @@ mod tests {
             ::render::RenderOptions::default(),
         ))
         .unwrap();
-        // by day as bright as the plain light, at night a fifth of it (as measured in the
-        // window at 23:30), and at 03:30, the sun 3.6 degrees under the horizon, well above
-        // it: the enhanced exposure keeps the dusk bright, the mirrors went black (#432)
+        // 03:30 is 3.6 degrees before sunrise: the old ramp gave 0.36 there
         let day = mirror_light_at(&renderer, 9.0);
         let night = mirror_light_at(&renderer, 0.0);
         let dusk = mirror_light_at(&renderer, 3.5);
@@ -809,12 +806,9 @@ pub(crate) fn render_mirrors(
     lighting.min_obj_size = lighting.min_obj_size.max((12.0 / px).clamp(0.03, 0.09));
     lighting.shadows = false;
     // Enhanced graphics draw the mirrors with the plain shading (see Renderer::render_inner),
-    // whose light is OMSI's: a night that stays a blue dusk. The window's enhanced night is
-    // far darker, and the mirrors showed the street by daylight beside it. The plain light
-    // is brought to the enhanced picture's level (the lamps keep theirs). (Not by a ramp
-    // over the sun's altitude: the enhanced exposure keeps the dusk almost as bright as the
-    // day down to -6 degrees while envir.cfg's light falls from +6 on, and the mirrors went
-    // black around sunrise and sunset, #432.)
+    // so its light is brought to the enhanced picture's level (the lamps keep theirs). (Not
+    // by a ramp over the sun's altitude: the enhanced exposure keeps the dusk bright, and
+    // the mirrors went black around sunrise and sunset.)
     if lighting.enhanced && legacy_config::env::var_os("OMSI_MIRROR_ENHANCED").is_none() {
         let k = renderer.enhanced_light_ratio(&lighting);
         lighting.ambient *= k;
