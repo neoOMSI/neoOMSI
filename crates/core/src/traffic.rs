@@ -8068,9 +8068,7 @@ impl Traffic {
     }
 }
 
-/// Whether a street lane starts just ahead of a bus at `pos` facing `heading` (a depot
-/// gate's lane it asks for). Never a rail lane: a bus beside the track asked for the
-/// level crossing's rail light.
+/// Whether a street lane (a depot gate's) starts just ahead of a bus; never a rail lane.
 fn gate_lane_ahead(lane: &::simulation::traffic::Lane, pos: DVec3, heading: f64) -> bool {
     let h = heading.to_radians();
     let fwd = glam::DVec2::new(h.sin(), h.cos());

@@ -1795,8 +1795,8 @@ pub struct LightStop {
 /// `[approachdist]` (m): about four seconds at town speed.
 pub const DEFAULT_APPROACH: f32 = 50.0;
 
-/// How far before a light without an `[approachdist]` of its own a train asks for it (m);
-/// OMSI asks for a level crossing as soon as the train is near.
+/// How far before a light with `[approachdist]` 0 or none a train asks for it (m); OMSI
+/// asks for a level crossing as soon as the train is near.
 pub const RAIL_APPROACH: f32 = 600.0;
 
 /// Traffic light program of a crossing object instance (`TAmpelGroup`): its lights'
