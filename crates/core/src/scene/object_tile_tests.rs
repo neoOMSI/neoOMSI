@@ -25,8 +25,7 @@ fn an_id_used_on_two_tiles_is_found_on_the_tile_named() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A lane reaching over a tile the map does not have still has its ground (Gerolstein's
-/// railway north of the station): the train there was taken away as if unloaded.
+/// A lane reaching over a tile the map does not have keeps its ground.
 #[test]
 fn a_lane_over_a_missing_tile_keeps_its_ground() {
     let root = std::env::temp_dir().join(format!(

@@ -461,9 +461,8 @@ impl World {
         self.terrains.read().contains_key(&key)
     }
 
-    /// Whether a vehicle at world (x, y) on a lane of tile `lane_tile` has its ground: the
-    /// tile under it, or the lane's own. A spline may reach over a tile the map does not
-    /// have (Gerolstein's railway north of the station), and OMSI's trains drive over it.
+    /// Like [`Self::has_ground`], or the lane's own tile is loaded (a spline may reach over
+    /// a tile the map does not have).
     pub fn has_ground_on(&self, x: f64, y: f64, lane_tile: Option<(i32, i32)>) -> bool {
         self.has_ground(x, y) || lane_tile.is_some_and(|k| self.terrains.read().contains_key(&k))
     }
