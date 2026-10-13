@@ -1512,6 +1512,7 @@ fn bus(cabin: Arc<Cabin>) -> BusNow {
         accel: DVec2::ZERO,
         trailers: vec![],
         terminus: None,
+        passenger_termini: vec![],
         out_of_service: false,
     }
 }

@@ -1,4 +1,3 @@
-use super::passengers::terminus_matches;
 use super::*;
 
 /// Where one of the host's people is this frame, as a client draws them.
@@ -467,11 +466,10 @@ impl Humans {
         Some(
             !bus.out_of_service
                 && stop.buses.iter().any(|b| b.0 == BusId::Player && b.1)
-                && grant.allowed_termini.as_ref().is_none_or(|names| {
-                    bus.terminus
-                        .as_ref()
-                        .is_some_and(|t| names.iter().any(|n| terminus_matches(t, n)))
-                }),
+                && grant
+                    .allowed_termini
+                    .as_ref()
+                    .is_none_or(|names| names.iter().any(|name| bus.serves_terminus(name))),
         )
     }
 
@@ -552,6 +550,7 @@ impl Humans {
             let walk_open = Self::doors_open(v, cabin.entries.len(), cabin.exits.len());
             out.push(BusNow {
                 terminus: None,
+                passenger_termini: Vec::new(),
                 out_of_service: false,
                 id: BusId::Ai(remote_bus_id(player)),
                 entry_open: vec![false; cabin.entries.len()],

@@ -678,8 +678,7 @@ impl Humans {
                     if bn.cabin.entries.is_empty() {
                         continue;
                     }
-                    let Some(t) = &bn.terminus else { continue };
-                    if !termini.iter().any(|name| terminus_matches(t, name)) {
+                    if !termini.iter().any(|name| bn.serves_terminus(name)) {
                         continue;
                     }
                     let d = (bn.pos - self.people[i].position).length();
