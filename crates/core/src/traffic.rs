@@ -2032,13 +2032,10 @@ impl Traffic {
             // lanes stay in the network when their tile goes, but nothing may drive over
             // ground that is not there (tiles only go well beyond the view, timetable buses
             // included; their trips come back with the tiles)
-            let flying = self
-                .net
-                .lanes
-                .get(c.state.lane)
-                .map(|l| l.kind == LaneKind::Air)
-                .unwrap_or(false);
-            let unloaded = !flying && !world.has_ground(p.x, p.y);
+            let lane = self.net.lanes.get(c.state.lane);
+            let flying = lane.map(|l| l.kind == LaneKind::Air).unwrap_or(false);
+            let lane_tile = lane.and_then(|l| l.key).map(|k| k.tile);
+            let unloaded = !flying && !world.has_ground_on(p.x, p.y, lane_tile);
             off_ground += unloaded as usize;
             let random = !c.is_bus() || c.gone;
             let r = (c.state.length as f64 * 0.5).max(2.0);
