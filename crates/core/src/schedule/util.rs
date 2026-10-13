@@ -65,9 +65,8 @@ pub(super) fn norm_vehicle_path(p: &str) -> String {
     p.trim().replace('\\', "/").to_ascii_lowercase()
 }
 
-/// The tour mask bits `clock`'s date selects: (the weekday's or public holiday's, the school
-/// holidays' or school days'). the original: bit 8 = runs in the school holidays,
-/// bit 9 = runs on school days.
+/// The tour mask bits `clock`'s date selects: (weekday or public holiday, bit 8 school day
+/// or bit 9 school holidays).
 pub(super) fn day_bits(calendar: &::map::Calendar, clock: &::simulation::SimClock) -> (i32, i32) {
     let date = clock.date_code();
     let day_bit = if calendar.is_holiday(date) {
@@ -76,9 +75,9 @@ pub(super) fn day_bits(calendar: &::map::Calendar, clock: &::simulation::SimCloc
         1 << clock.weekday()
     };
     let school_bit = if calendar.in_holiday_range(date) {
-        1 << 8
-    } else {
         1 << 9
+    } else {
+        1 << 8
     };
     (day_bit, school_bit)
 }

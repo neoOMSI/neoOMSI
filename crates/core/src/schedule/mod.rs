@@ -21,7 +21,7 @@ struct Departure {
     ai_group: String,
     tour: String,
     /// The tour's validity mask (bits 0-6 Monday..Sunday, 7 public holiday, 8 school
-    /// holidays, 9 school days): every tour's departures are kept, and which run is decided
+    /// days, 9 school holidays): every tour's departures are kept, and which run is decided
     /// by the day (`Schedule::runs`), so a session carries on past midnight.
     mask: i32,
     spawned: bool,

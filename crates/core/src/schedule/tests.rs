@@ -779,3 +779,27 @@ fn a_service_trip_without_a_line_shows_none() {
     );
     assert_eq!(bus_line(&swim), "&");
 }
+
+#[test]
+fn school_days_select_bit_8_and_school_holidays_bit_9() {
+    let calendar = ::map::Calendar {
+        ranges: vec![::map::HolidayRange {
+            start: 20230622,
+            end: 20230804,
+            name: "Sommerferien".into(),
+        }],
+        holidays: vec![],
+    };
+    // Tuesdays 2023-06-20 and 2023-06-27.
+    let school_day = ::simulation::SimClock {
+        year: 2023,
+        day_of_year: 171,
+        ..Default::default()
+    };
+    let in_holidays = ::simulation::SimClock {
+        day_of_year: 178,
+        ..school_day.clone()
+    };
+    assert_eq!(day_bits(&calendar, &school_day), (1 << 1, 1 << 8));
+    assert_eq!(day_bits(&calendar, &in_holidays), (1 << 1, 1 << 9));
+}
