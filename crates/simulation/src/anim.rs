@@ -68,6 +68,7 @@ impl MeshAnimator {
                     origin_matrix(&a.origins, pivot),
                     AnimState {
                         var,
+                        // OMSI initializes anim_lastvalue to 0 before the first translation.
                         value: 0.0,
                         initialized: false,
                     },
@@ -89,20 +90,19 @@ impl MeshAnimator {
         let mut m = Mat4::IDENTITY;
         for (a, origin, st) in &mut self.anims {
             let raw = st.var.map(|v| vars[v as usize]).unwrap_or(0.0);
-            if dt > 0.0 {
-                let mut next = if a.delay > 0.0 {
-                    st.value + (raw - st.value) / (a.delay / dt + 1.0)
-                } else {
-                    raw
-                };
-                if a.max_speed > 0.0 {
-                    let max_step = a.max_speed * dt;
-                    next = st.value + (next - st.value).clamp(-max_step, max_step);
+            let mut next = raw;
+            if a.delay != 0.0 {
+                let amount = dt * a.delay;
+                // OMSI applies the proportional filter only through 0.5, then snaps to raw.
+                if amount <= 0.5 {
+                    next = st.value + (raw - st.value) * amount;
                 }
-                st.value = next;
-            } else {
-                st.value = raw;
             }
+            if a.max_speed != 0.0 {
+                let max_step = dt * a.max_speed;
+                next = next.clamp(st.value - max_step, st.value + max_step);
+            }
+            st.value = next;
             let value = (st.value + a.offset) * a.factor;
             st.initialized = true;
             let local = match a.kind {
@@ -421,6 +421,45 @@ mod tests {
         let second = a.update(0.5, &[1.0]);
         assert_eq!(a.anims[0].2.value, 1.0);
         assert!((second.transform_point3(Vec3::Y).y - 100f32.to_radians().cos()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn delay_uses_dt_times_delay_and_snaps_above_half() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                variable: "v".into(),
+                delay: 10.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.02, &[1.0]);
+        assert!((a.anims[0].2.value - 0.2).abs() < 1e-6);
+
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.06, &[1.0]);
+        assert_eq!(a.anims[0].2.value, 1.0);
+
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.0, &[1.0]);
+        assert_eq!(a.anims[0].2.value, 0.0);
+    }
+
+    #[test]
+    fn max_speed_clamps_after_delay_snap() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                variable: "v".into(),
+                delay: 10.0,
+                max_speed: 2.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.06, &[1.0]);
+        assert!((a.anims[0].2.value - 0.12).abs() < 1e-6);
     }
 
     #[test]
