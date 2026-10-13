@@ -1098,9 +1098,13 @@ fn to_client(c: &LanSession) -> SocketAddr {
 }
 
 fn welcome_msg(id: u32, nonce: u64) -> String {
+    welcome_msg_for(7, id, nonce)
+}
+
+fn welcome_msg_for(session: u64, id: u32, nonce: u64) -> String {
     format!(
         "WELCOME|{PROTOCOL}|{id}|{}|host|m|1989-05-30|32400|||1||{nonce:016X}",
-        session_hex(7),
+        session_hex(session),
     )
 }
 
@@ -1113,14 +1117,18 @@ fn state_of(id: u32, x: f64) -> Vec<u8> {
 #[test]
 fn a_welcome_must_match_the_join_attempt() {
     let host: SocketAddr = "127.0.0.1:27015".parse().unwrap();
+    let session = 0x1234;
     let mut client = LanSession::join_addr(vec![host], None, "client", world("m")).unwrap();
+    client.session = session;
+    client.session_required = true;
 
-    let wrong = welcome_msg(2, client.nonce ^ 1);
+    let wrong = welcome_msg_for(session ^ 1, 2, client.nonce ^ 1);
     let parts: Vec<&str> = wrong.split('|').collect();
     client.on_welcome(&parts, host);
     assert!(!client.connected);
+    assert!(client.rejected.is_none());
 
-    let right = welcome_msg(2, client.nonce);
+    let right = welcome_msg_for(session, 2, client.nonce);
     let parts: Vec<&str> = right.split('|').collect();
     client.on_welcome(&parts, host);
     assert!(client.connected);

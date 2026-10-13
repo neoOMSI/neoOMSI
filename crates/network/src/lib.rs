@@ -3414,15 +3414,15 @@ impl LanSession {
             return;
         };
         let session = parse_session_hex(field(parts, 3)).unwrap_or(0);
+        if u64::from_str_radix(field(parts, 12), 16).ok() != Some(self.nonce) {
+            return;
+        }
         if self.session_required && session != self.session {
             self.rejected = Some(format!(
                 "the host answered with session {} instead of {}",
                 session_hex(session),
                 session_hex(self.session)
             ));
-            return;
-        }
-        if u64::from_str_radix(field(parts, 12), 16).ok() != Some(self.nonce) {
             return;
         }
         let host_name = clean_text(field(parts, 4), MAX_NAME);
