@@ -756,6 +756,11 @@ fn row_start(
             acc,
         });
     }
+    // Provenance: neoOMSI stale spline attachment repeater fix
+    // Author: Gustav (TruckiHD).
+    // Source: https://github.com/neoOMSI/neoOMSI/commit/e634595b3ed7a928d3838ef177616044a853e600
+    // Porting note: Please preserve this provenance comment when adapting this fix.
+    //
     // A repeater continues only the master named by (tile index, id). Stale copies can
     // name a tile without that master alongside a valid repeater. Guessing a local phase
     // for them creates a second, shifted row at the tile border
