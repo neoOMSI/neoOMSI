@@ -1097,10 +1097,10 @@ fn to_client(c: &LanSession) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, c.local_addr().unwrap().port()))
 }
 
-fn welcome_msg(id: u32) -> String {
+fn welcome_msg(id: u32, nonce: u64) -> String {
     format!(
-        "WELCOME|{PROTOCOL}|{id}|{}|host|m|1989-05-30|32400|||1",
-        session_hex(7)
+        "WELCOME|{PROTOCOL}|{id}|{}|host|m|1989-05-30|32400|||1||{nonce:016X}",
+        session_hex(7),
     )
 }
 
@@ -1111,12 +1111,28 @@ fn state_of(id: u32, x: f64) -> Vec<u8> {
 }
 
 #[test]
+fn a_welcome_must_match_the_join_attempt() {
+    let host: SocketAddr = "127.0.0.1:27015".parse().unwrap();
+    let mut client = LanSession::join_addr(vec![host], None, "client", world("m")).unwrap();
+
+    let wrong = welcome_msg(2, client.nonce ^ 1);
+    let parts: Vec<&str> = wrong.split('|').collect();
+    client.on_welcome(&parts, host);
+    assert!(!client.connected);
+
+    let right = welcome_msg(2, client.nonce);
+    let parts: Vec<&str> = right.split('|').collect();
+    client.on_welcome(&parts, host);
+    assert!(client.connected);
+}
+
+#[test]
 fn a_client_listens_to_its_host_only() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
     let mine = pose(1.0);
-    host.send_to(welcome_msg(5).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(5, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     host.send_to(&state_of(1, 50.0), to_client(&c)).unwrap();
     for _ in 0..20 {
@@ -1136,7 +1152,7 @@ fn a_client_listens_to_its_host_only() {
     stranger
         .send_to(format!("REJECT|{PROTOCOL}|go away").as_bytes(), at)
         .unwrap();
-    stranger.send_to(welcome_msg(9).as_bytes(), at).unwrap();
+    stranger.send_to(welcome_msg(9, 0).as_bytes(), at).unwrap();
     stranger.send_to(b"BYE|1", at).unwrap();
     stranger.send_to(b"SAY|1|host|buy this", at).unwrap();
     stranger.send_to(b"CLOCK|m|1989-05-30|0|x|", at).unwrap();
@@ -1169,7 +1185,7 @@ fn a_client_takes_a_limited_number_of_players() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(2).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(2, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     for id in 3..(3 + 3 * MAX_PEERS as u32) {
         host.send_to(&state_of(id, id as f64), to_client(&c))
@@ -1188,7 +1204,7 @@ fn old_states_do_not_overtake_new_ones() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(2).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(2, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     let mut p = pose(10.0);
     p.id = 1;
@@ -1208,10 +1224,13 @@ fn old_states_do_not_overtake_new_ones() {
 fn a_full_session_turns_the_next_player_away() {
     let mut host = LanSession::host(27940, "host", world("m"), true).unwrap();
     let at = SocketAddr::from((Ipv4Addr::LOCALHOST, host.local_addr().unwrap().port()));
-    let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400||");
     let players: Vec<UdpSocket> = (0..MAX_PEERS).map(|_| raw()).collect();
     let mut buf = [0u8; 512];
     for (i, p) in players.iter().enumerate() {
+        let hello = format!(
+            "HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||{:016X}",
+            i + 1
+        );
         p.send_to(hello.as_bytes(), at).unwrap();
         host.tick(0.01, &pose(0.0));
         // everybody gets in only once the ones before them have loaded (a state arrived)
@@ -1236,6 +1255,7 @@ fn a_full_session_turns_the_next_player_away() {
     }
     assert_eq!(host.peer_count(), MAX_PEERS);
     let late = raw();
+    let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||FFFF");
     let mut answer = String::new();
     for _ in 0..40 {
         late.send_to(hello.as_bytes(), at).unwrap();
@@ -1258,9 +1278,12 @@ fn a_full_session_turns_the_next_player_away() {
 fn too_many_loading_players_wait() {
     let mut host = LanSession::host(27900, "host", world("m"), true).unwrap();
     let at = SocketAddr::from((Ipv4Addr::LOCALHOST, host.local_addr().unwrap().port()));
-    let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400||");
     let players: Vec<UdpSocket> = (0..MAX_JOINING + 1).map(|_| raw()).collect();
-    for p in &players {
+    for (i, p) in players.iter().enumerate() {
+        let hello = format!(
+            "HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||{:016X}",
+            i + 1
+        );
         p.send_to(hello.as_bytes(), at).unwrap();
     }
     for _ in 0..10 {
@@ -1340,7 +1363,7 @@ fn idle_buses_send_less() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(4).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(4, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     // (the simulated seconds pass quickly: the silent host must not time out meanwhile)
     host.set_nonblocking(true).unwrap();
@@ -1384,7 +1407,7 @@ fn a_player_without_a_bus_sends_a_heartbeat() {
         world("m"),
     )
     .unwrap();
-    host.send_to(welcome_msg(4).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(4, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     let none = Pose::default();
     let mut buf = [0u8; 1024];
