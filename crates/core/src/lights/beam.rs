@@ -305,8 +305,8 @@ pub(super) fn headlamps(
     let ty = &v.ty;
     let ai_on = v.ai_lights;
     // `-1` is OMSI's explicit "no road beam"; it must not turn into spotlight zero.
-    let selected = v.var("Spot_Select").filter(|s| *s >= 0.0);
-    let sel = selected.or(ai_on.then_some(0.0));
+    let selected = v.active_spotlight();
+    let sel = selected.map(|i| i as f32).or(ai_on.then_some(0.0));
 
     let lamp_sprites = || {
         ty.model.meshes.iter().flat_map(|m| {
@@ -372,6 +372,9 @@ pub(super) fn headlamps(
 
     let owner = super::owner_key(v);
     for (i, vals) in spots.iter().enumerate() {
+        if !vals[9].is_finite() || vals[9] <= 0.0 {
+            continue;
+        }
         let on = !visual_only
             && (lit == Some(i) || (main_lit && partner == Some(i)) || companion == Some(i));
         let level = faders.level(

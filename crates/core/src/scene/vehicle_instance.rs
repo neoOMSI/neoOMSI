@@ -1058,9 +1058,9 @@ impl World {
                         wants_upgrade: self.freetex_upgrades.clone(),
                     }).collect();
                     let multi_light = |base: MaterialId, item: MaterialId| -> Option<MultiLight> {
-                        let list = ov.iter().map(|o| &o.lightmaps).find(|l| !l.is_empty())?;
-                        let maps: Vec<(PathBuf, String)> = list
+                        let maps: Vec<(PathBuf, String)> = ov
                             .iter()
+                            .flat_map(|o| &o.lightmaps)
                             .filter_map(|(t, v)| ::texture::find_texture(t, &dirs_ref).map(|p| (p, v.clone())))
                             .collect();
                         (maps.len() >= 2 && maps.len() <= 8).then(|| MultiLight {

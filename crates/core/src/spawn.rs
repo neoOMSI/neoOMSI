@@ -812,7 +812,7 @@ fn headlights_off(p: &mut Player) {
         return;
     }
     for _ in 0..4 {
-        if !p.vehicle.var("Spot_Select").is_some_and(|s| s >= 0.0) {
+        if p.vehicle.active_spotlight().is_none() {
             break;
         }
         p.action("kw_scheinwerfer_toggle", true);

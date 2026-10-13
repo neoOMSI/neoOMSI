@@ -118,6 +118,7 @@ pub fn sync_vehicle_part(
         part.position,
         part.body_rotation(),
         |n| main.var(n),
+        |i| part.mesh_local_transform(i),
         render,
     );
     sync_materials(renderer, scene, main, render);
@@ -282,7 +283,7 @@ pub(super) fn sync_materials(
                     .parse::<f32>()
                     .ok()
                     .or_else(|| vehicle.var(var))
-                    .unwrap_or(0.0);
+                    .unwrap_or(1.0);
                 // (on at 0.5, as each map's texture stage is, 0x7fe51f: a variable a script
                 // dims through 0.1 lit the map at full)
                 if x >= 0.5 {
@@ -357,6 +358,7 @@ pub(super) fn sync_interior_lamps(
     position: DVec3,
     rotation: Mat4,
     var: impl Fn(&str) -> Option<f32>,
+    mesh_transform: impl Fn(usize) -> Mat4,
     render: &VehicleRender,
 ) {
     let n = ty.model.interior_lights.len();
@@ -368,7 +370,12 @@ pub(super) fn sync_interior_lamps(
         let mut sets: Vec<(usize, Vec<usize>)> = Vec::new();
         for (i, _) in render.instances.iter().enumerate() {
             let Some(vm) = ty.meshes.get(i) else { continue };
-            let set = lamp_set(&ty.model.meshes[vm.def_index].illumination_interior, n);
+            let def = &ty.model.meshes[vm.def_index];
+            let set = if def.illumination & 0x10 == 0 {
+                lamp_set(&def.illumination_interior, n)
+            } else {
+                Vec::new()
+            };
             if !set.is_empty() {
                 sets.push((i, set));
             }
@@ -426,12 +433,17 @@ pub(super) fn sync_interior_lamps(
                 .parse::<f32>()
                 .ok()
                 .or_else(|| var(&il.variable))
-                .unwrap_or(0.0)
+                .unwrap_or(1.0)
                 >= 0.5;
             let ic = crate::lights::interior_cfg(li);
             let on = on && !ic.off;
-            let at =
-                rotation.transform_vector3(glam::Vec3::from(il.pos) + glam::Vec3::from(ic.shift));
+            let local = glam::Vec3::from(il.pos) + glam::Vec3::from(ic.shift);
+            let transform = il
+                .mesh
+                .and_then(|m| ty.meshes.iter().position(|vm| vm.def_index == m))
+                .map(&mesh_transform)
+                .unwrap_or(rotation);
+            let at = transform.transform_point3(local);
             renderer.set_interior_light(
                 scene,
                 first + k as u32,
@@ -500,6 +512,7 @@ pub fn sync_vehicle_textures(
         vehicle.position,
         vehicle.body_rotation(),
         |n| vehicle.var(n),
+        |i| vehicle.mesh_local_transform(i),
         render,
     );
     for i in vehicle.update_text_textures() {

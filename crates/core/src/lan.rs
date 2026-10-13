@@ -1706,7 +1706,7 @@ pub fn my_pose(
         3
     } else if on("lights_abbl")
         || on("lights_main")
-        || v.var("Spot_Select").is_some_and(|s| s >= 0.0)
+        || v.active_spotlight().is_some()
     {
         // mod buses name their lamps their own way; the selected spotlight is the dipped
         // beam every script sets for the renderer
