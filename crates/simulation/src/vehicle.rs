@@ -99,7 +99,7 @@ pub fn builtin_str_vars(root: &Path) -> Vec<String> {
     }
 }
 
-/// A bone of a `[smoothskin]` mesh: the model mesh whose animation moves it (`[setbone]
+/// A bone of a skinned mesh: the model mesh whose animation moves it (`[setbone]
 /// name id`, the id counting the meshes of the model's first level of detail - the GN92's and
 /// the O530G's joint dummies `Gelenk_A`-`D` are its first four) and the weights of the o3d
 /// bone of that name. `None`: an o3d bone no `[setbone]` names, which keeps its weights and
@@ -150,7 +150,7 @@ pub struct VehicleMesh {
     pub overrides: Vec<MaterialDef>,
     pub pivot: Mat4,
     pub viewpoint: i32,
-    /// `[smoothskin]` bones (empty for a rigid mesh, and for an AI type).
+    /// `[setbone]` skinning bones (empty for an unskinned mesh).
     pub skin: Vec<SkinBone>,
     /// Per material slot: (triangles whose normals point against their drawn face,
     /// triangles counted).
@@ -551,7 +551,7 @@ impl VehicleType {
             }
         }
         if !keep_meshes {
-            // a `[smoothskin]` mesh (the bellows of an articulated bus, `[setbone]`-bound to
+            // a skinned mesh (the bellows of an articulated bus, `[setbone]`-bound to
             // the joint's dummies) keeps its vertices and its bones even for an AI copy: it
             // is reshaped as the joint turns (`scene::own_skinned_meshes`), which needs the
             // rest pose and the bone weights this would otherwise throw away - an AI-loaded
@@ -1012,8 +1012,6 @@ pub struct VehicleInstance {
     /// followed with the light's `timeconst` (63 % of the way in that time when switched on,
     /// down to 27 % when switched off, as the stock files document it).
     pub light_fade: Vec<f32>,
-    /// The meshes' transforms in the modelled pose, for `[smoothskin]` (made when needed).
-    skin_rest: Vec<Mat4>,
     /// Static obstacles; the vehicle's `[boundingbox]` is kept out of them.
     pub collision: Option<Arc<crate::collision::CollisionWorld>>,
     /// Moving obstacles (AI vehicles) for this frame, set by the app.
@@ -1374,7 +1372,6 @@ impl VehicleInstance {
             html_textures,
             ground: None,
             trailers: Vec::new(),
-            skin_rest: Vec::new(),
             collision: None,
             dynamic_boxes: Vec::new(),
             collided: false,
@@ -2762,7 +2759,7 @@ impl VehicleInstance {
         }
     }
 
-    /// The `[smoothskin]` meshes (the bellows of an articulated bus).
+    /// The meshes with `[setbone]` weights (the bellows of an articulated bus).
     pub fn skinned_meshes(&self) -> Vec<usize> {
         (0..self.ty.meshes.len())
             .filter(|&i| !self.ty.meshes[i].skin.is_empty())
@@ -2777,10 +2774,7 @@ impl VehicleInstance {
 
     /// Skinned mesh `i` as its bones hold it now (see [`skin_vertices`]).
     pub fn skinned(&mut self, i: usize) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
-        if self.skin_rest.len() != self.animators.len() {
-            self.skin_rest = rest_transforms(&self.animators, self.state.vars.len());
-        }
-        skin_vertices(&self.ty, i, &self.mesh_transforms, &self.skin_rest)
+        skin_vertices(&self.ty, i, &self.mesh_transforms)
     }
 
     /// Has the bus's script finished leaving its stop (doors shut, stop brake off)? True
@@ -3831,8 +3825,6 @@ pub struct TrailerPart {
     held: Option<DVec3>,
     /// Mesh property sources, resolved against the leading vehicle's variables.
     props_plan: PropsPlan,
-    /// The meshes' transforms in the modelled pose, for `[smoothskin]` (made when needed).
-    skin_rest: Vec<Mat4>,
     /// The part's own `[texttexture]`s, written from the leading vehicle's string
     /// variables (`[scriptshare]`: the rear section of an articulated bus shows the
     /// number and the destination the front's scripts set).
@@ -4092,12 +4084,11 @@ impl TrailerPart {
             odometer: 0.0,
             reversed,
             text_textures: Vec::new(),
-            skin_rest: Vec::new(),
             ty,
         }
     }
 
-    /// The `[smoothskin]` meshes of this part.
+    /// The meshes with `[setbone]` weights of this part.
     pub fn skinned_meshes(&self) -> Vec<usize> {
         (0..self.ty.meshes.len())
             .filter(|&i| !self.ty.meshes[i].skin.is_empty())
@@ -4111,11 +4102,8 @@ impl TrailerPart {
 
     /// Skinned mesh `i` as its bones hold it now; `n_vars`: the leading vehicle's variable
     /// count (this part animates from its variables).
-    pub fn skinned(&mut self, i: usize, n_vars: usize) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
-        if self.skin_rest.len() != self.animators.len() {
-            self.skin_rest = rest_transforms(&self.animators, n_vars);
-        }
-        skin_vertices(&self.ty, i, &self.mesh_transforms, &self.skin_rest)
+    pub fn skinned(&mut self, i: usize) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
+        skin_vertices(&self.ty, i, &self.mesh_transforms)
     }
 
     /// Prepare the part's text textures with fonts from `lib`.
@@ -4738,20 +4726,12 @@ fn skin_key(ty: &VehicleType, i: usize, transforms: &[Mat4]) -> Vec<Mat4> {
     key
 }
 
-/// The transforms of every mesh with all variables at 0: the pose the model was built in
-/// (what a skinned mesh's vertices are given in).
-fn rest_transforms(animators: &[MeshAnimator], n_vars: usize) -> Vec<Mat4> {
-    let zeros = vec![0.0; n_vars];
-    let mut probes = animators.to_vec();
-    let mut out: Vec<Mat4> = probes.iter_mut().map(|a| a.update(0.0, &zeros)).collect();
-    crate::anim::apply_parents(&probes, &mut out);
-    out
-}
-
 /// The vertices (positions, normals) of a mesh with `[setbone]` weights where
 /// `transforms` has them, in the mesh's own frame (the renderer puts `transforms[i]` on
-/// top); `rest` are the transforms of the modelled pose. None for a mesh without bones or
-/// vertices.
+/// top). As in OMSI 2, current submesh matrices deform the vertices directly, without
+/// dividing by the modelled pose. Without `[smoothskin]`, each vertex
+/// follows only its highest-weight bone; with it, all weights and the unweighted residual are
+/// blended. None for a mesh without bones or vertices.
 ///
 /// As in Omsi.exe, the bones move the vertices first and the mesh's own motion (its
 /// animations and its `[animparent]`) comes on top: the Agora L's rear half of the bellows
@@ -4768,57 +4748,73 @@ pub fn skin_vertices(
     ty: &VehicleType,
     i: usize,
     transforms: &[Mat4],
-    rest: &[Mat4],
 ) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
     let vm = ty.meshes.get(i)?;
     let n = vm.data.positions.len();
-    if vm.skin.is_empty()
-        || n == 0
-        || transforms.len() < ty.meshes.len()
-        || rest.len() < ty.meshes.len()
-    {
+    if vm.skin.is_empty() || n == 0 || transforms.len() < ty.meshes.len() {
         return None;
     }
-    let mut sum = vec![Mat4::ZERO; n];
-    let mut total = vec![0.0f32; n];
-    for b in &vm.skin {
-        let bone = match b.def_index {
-            None => Mat4::IDENTITY,
-            Some(d) => {
-                let Some(k) = ty.meshes.iter().position(|m| m.def_index == d) else {
-                    continue;
-                };
-                transforms[k] * rest[k].inverse()
-            }
-        };
-        for &(v, w) in &b.weights {
-            let v = v as usize;
-            if v < n && w.is_finite() && w > 0.0 {
-                sum[v] += bone * w;
-                total[v] += w;
-            }
-        }
-    }
-    // (the renderer puts the mesh's transform on top: in the modelled pose, the vertices
-    // are where the file has them)
-    let own_rest_inv = rest[i].inverse();
+    let bones: Vec<Mat4> = vm
+        .skin
+        .iter()
+        .map(|b| {
+            b.def_index
+                .and_then(|d| ty.meshes.iter().position(|m| m.def_index == d))
+                .map(|k| transforms[k])
+                .unwrap_or(Mat4::IDENTITY)
+        })
+        .collect();
+    let smooth = ty.model.meshes[vm.def_index].smooth_skin;
     let mut pos = Vec::with_capacity(n);
     let mut nrm = Vec::with_capacity(n);
-    for v in 0..n {
-        let p = vm.data.positions[v];
-        let q = vm.data.normals.get(v).copied().unwrap_or(Vec3::Z);
-        if total[v] < 1e-4 {
-            pos.push(p);
-            nrm.push(q);
-            continue;
+    if smooth {
+        let mut sum = vec![Mat4::ZERO; n];
+        let mut total = vec![0.0f32; n];
+        for (bone, b) in bones.iter().zip(&vm.skin) {
+            for &(v, w) in &b.weights {
+                let v = v as usize;
+                if v < n && w.is_finite() && w > 0.0 {
+                    sum[v] += *bone * w;
+                    total[v] += w;
+                }
+            }
         }
-        let m = own_rest_inv * skin_matrix(sum[v], total[v]);
-        pos.push(m.transform_point3(p));
-        nrm.push(if ty.model.meshes[vm.def_index].smooth_skin {
-            m.transform_vector3(q).normalize_or_zero()
-        } else {
-            q
-        });
+        for v in 0..n {
+            let p = vm.data.positions[v];
+            let q = vm.data.normals.get(v).copied().unwrap_or(Vec3::Z);
+            if total[v] == 0.0 {
+                pos.push(p);
+                nrm.push(q);
+                continue;
+            }
+            let m = skin_matrix(sum[v], total[v]);
+            pos.push(m.transform_point3(p));
+            nrm.push(m.transform_vector3(q).normalize_or_zero());
+        }
+    } else {
+        let mut dominant = vec![None; n];
+        let mut max_weight = vec![0.0f32; n];
+        for (bone, b) in vm.skin.iter().enumerate() {
+            for &(v, w) in &b.weights {
+                let v = v as usize;
+                if v < n && w.is_finite() && w > max_weight[v] {
+                    max_weight[v] = w;
+                    dominant[v] = Some(bone);
+                }
+            }
+        }
+        for (v, bone) in dominant.into_iter().enumerate() {
+            let p = vm.data.positions[v];
+            let q = vm.data.normals.get(v).copied().unwrap_or(Vec3::Z);
+            if let Some(bone) = bone {
+                let m = bones[bone];
+                pos.push(m.transform_point3(p));
+                nrm.push(m.transform_vector3(q));
+            } else {
+                pos.push(p);
+                nrm.push(q);
+            }
+        }
     }
     Some((pos, nrm))
 }
@@ -4931,6 +4927,70 @@ mod tests {
         assert_eq!(ai_indices, [0, 1, 2, 2, 1, 3]);
         assert!(!coach.keep_winding);
         assert_eq!(coach.winding_votes, (0, 1));
+    }
+
+    fn skin_test_vehicle(smooth_skin: bool) -> VehicleType {
+        let target = VehicleMesh {
+            def_index: 0,
+            data: MeshData {
+                positions: vec![Vec3::ZERO, Vec3::X, Vec3::X * 2.0],
+                normals: vec![Vec3::Y; 3],
+                ..Default::default()
+            },
+            file: PathBuf::new(),
+            materials: Vec::new(),
+            overrides: Vec::new(),
+            pivot: Mat4::IDENTITY,
+            viewpoint: 0,
+            skin: vec![
+                SkinBone {
+                    def_index: Some(1),
+                    weights: vec![(0, 0.7), (1, 0.4)],
+                },
+                SkinBone {
+                    def_index: Some(2),
+                    weights: vec![(0, 0.3)],
+                },
+            ],
+            normals_against: Vec::new(),
+        };
+        let bone = |def_index| VehicleMesh {
+            def_index,
+            data: MeshData::default(),
+            file: PathBuf::new(),
+            materials: Vec::new(),
+            overrides: Vec::new(),
+            pivot: Mat4::IDENTITY,
+            viewpoint: 0,
+            skin: Vec::new(),
+            normals_against: Vec::new(),
+        };
+        let mut model = Model::default();
+        model.meshes = vec![
+            ::model::MeshDef {
+                smooth_skin,
+                ..Default::default()
+            },
+            ::model::MeshDef::default(),
+            ::model::MeshDef::default(),
+        ];
+        VehicleType {
+            def: Vehicle::default(),
+            model,
+            model_dir: PathBuf::new(),
+            program: Arc::new(Program::default()),
+            meshes: vec![target, bone(1), bone(2)],
+            keep_winding: false,
+            winding_votes: (0, 0),
+            turned_meshes: Vec::new(),
+            paint_schemes: Vec::new(),
+            texchanges: Vec::new(),
+            wheel_meshes: Vec::new(),
+            suspension_axles: Vec::new(),
+            missing_packs: Vec::new(),
+            mesh_bounds: vec![(Vec3::ZERO, 0.0); 3],
+            mesh_boxes: vec![(Vec3::ZERO, Vec3::ZERO); 3],
+        }
     }
 
     /// A three-car train with its last car turned round, lamps as `BR243.osc` (#318).
@@ -5126,6 +5186,68 @@ mod tests {
         let skin = mesh_skin(&mesh, &def, 3);
         assert_eq!(skin.len(), 1);
         assert_eq!(skin[0].def_index, Some(3));
+    }
+
+    #[test]
+    fn rigid_skin_uses_the_dominant_bone_for_positions_and_normals() {
+        let ty = skin_test_vehicle(false);
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0))
+                * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Mat4::from_translation(Vec3::new(12.0, 0.0, 0.0)),
+        ];
+        let (positions, normals) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert_eq!(positions[0], Vec3::new(4.0, 0.0, 0.0));
+        assert_eq!(positions[1], Vec3::new(4.0, 1.0, 0.0));
+        assert_eq!(positions[2], Vec3::X * 2.0);
+        assert!((normals[0] - Vec3::NEG_X).length() < 1e-6);
+        assert_eq!(normals[2], Vec3::Y);
+    }
+
+    #[test]
+    fn smooth_skin_blends_weights_and_bind_pose_residual() {
+        let ty = skin_test_vehicle(true);
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0))
+                * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Mat4::from_translation(Vec3::new(12.0, 0.0, 0.0)),
+        ];
+        let (positions, normals) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert!((positions[0].x - 6.4).abs() < 1e-6);
+        assert!((positions[1] - Vec3::new(2.2, 0.4, 0.0)).length() < 1e-6);
+        assert_eq!(positions[2], Vec3::X * 2.0);
+        let expected = Vec3::new(-0.7, 0.3, 0.0).normalize();
+        assert!((normals[0] - expected).length() < 1e-6);
+    }
+
+    #[test]
+    fn smooth_skin_does_not_drop_small_nonzero_weights() {
+        let mut ty = skin_test_vehicle(true);
+        ty.meshes[0].skin = vec![SkinBone {
+            def_index: Some(1),
+            weights: vec![(0, 1e-5)],
+        }];
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0)),
+            Mat4::IDENTITY,
+        ];
+        let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert!((positions[0].x - 4e-5).abs() < 1e-8);
+    }
+
+    #[test]
+    fn skinning_uses_current_bone_matrix_without_rest_pose_cancellation() {
+        let ty = skin_test_vehicle(false);
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)),
+            Mat4::IDENTITY,
+        ];
+        let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert_eq!(positions[0], Vec3::new(5.0, 0.0, 0.0));
     }
 
     #[test]
@@ -5703,8 +5825,8 @@ mod tests {
     }
 
     /// A timetable duty and a random traffic car load their bus with `VehicleType::load_ai`,
-    /// which lets the vertices of every mesh go to save memory - except a `[smoothskin]`
-    /// mesh (the bellows) has to keep its own, or there is nothing left to bend it from and
+    /// which lets the vertices of every mesh go to save memory - except a skinned mesh
+    /// (the bellows) has to keep its own, or there is nothing left to bend it from and
     /// every AI articulated bus (and the rear-section trailer of a `.zug` train) drove with
     /// its bellows frozen in the rest pose through every corner.
     #[test]

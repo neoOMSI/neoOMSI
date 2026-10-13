@@ -74,14 +74,13 @@ pub fn sync_skinned(
         }
         *last = key;
     }
-    let n_vars = vehicle.state.vars.len();
     for (t, r) in vehicle.trailers.iter_mut().zip(parts.iter_mut()) {
         for (i, id, last) in r.skinned.iter_mut() {
             let key = t.skin_key(*i);
             if key == *last {
                 continue;
             }
-            if let Some((pos, nrm)) = t.skinned(*i, n_vars) {
+            if let Some((pos, nrm)) = t.skinned(*i) {
                 renderer.update_mesh(scene, *id, &pos, &nrm, &t.ty.meshes[*i].data.uvs);
             }
             *last = key;
@@ -368,6 +367,16 @@ pub(super) fn sync_interior_lamps(
     let blocks = render.interior_blocks.get_or_init(|| {
         let mut blocks: Vec<(u32, Vec<usize>)> = Vec::new();
         let mut sets: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (light, def) in ty.model.interior_lights.iter().enumerate() {
+            if let Some(owner) = def.mesh.filter(|owner| {
+                ty.meshes.iter().all(|mesh| mesh.def_index != *owner)
+            }) {
+                log::warn!(
+                    "{}: interior light {light} belongs to model mesh {owner}, which has no runtime mesh instance; disabling it",
+                    ty.def.path.display()
+                );
+            }
+        }
         for (i, _) in render.instances.iter().enumerate() {
             let Some(vm) = ty.meshes.get(i) else { continue };
             let def = &ty.model.meshes[vm.def_index];
@@ -436,19 +445,19 @@ pub(super) fn sync_interior_lamps(
                 .unwrap_or(1.0)
                 >= 0.5;
             let ic = crate::lights::interior_cfg(li);
-            let on = on && !ic.off;
-            let local = glam::Vec3::from(il.pos) + glam::Vec3::from(ic.shift);
-            let transform = il
-                .mesh
-                .and_then(|m| ty.meshes.iter().position(|vm| vm.def_index == m))
-                .map(&mesh_transform)
-                .unwrap_or(rotation);
-            let at = transform.transform_point3(local);
+            let at = interior_light_position(
+                il.mesh,
+                &ty.meshes,
+                glam::Vec3::from(il.pos) + glam::Vec3::from(ic.shift),
+                position,
+                rotation,
+                &mesh_transform,
+            );
             renderer.set_interior_light(
                 scene,
                 first + k as u32,
                 ::render::PointLight {
-                    position: position + at.as_dvec3(),
+                    position: at.unwrap_or(position),
                     // OMSI's Direct3D light: a point light of the
                     // colour / 255, Range 100 m, attenuation 1 / (d² / range²) - full
                     // light at `range` metres, stronger closer in, a quarter at twice
@@ -459,12 +468,34 @@ pub(super) fn sync_interior_lamps(
                         il.color[1] / 255.0 * ic.color[1],
                         il.color[2] / 255.0 * ic.color[2],
                     ],
-                    intensity: if on { ic.gain } else { 0.0 },
+                    intensity: if on && !ic.off && at.is_some() {
+                        ic.gain
+                    } else {
+                        0.0
+                    },
                     ..Default::default()
                 },
             );
         }
     }
+}
+
+/// `mesh_transform` is relative to the vehicle origin and includes body rotation plus the
+/// submesh's animated parent/local transform. Apply vehicle translation once after it. An
+/// absent owner uses the root transform; a declared owner without a runtime mesh is rejected.
+fn interior_light_position(
+    owner_mesh: Option<usize>,
+    meshes: &[::simulation::vehicle::VehicleMesh],
+    local: glam::Vec3,
+    vehicle_position: DVec3,
+    root_rotation: Mat4,
+    mesh_transform: impl Fn(usize) -> Mat4,
+) -> Option<DVec3> {
+    let transform = match owner_mesh {
+        None => root_rotation,
+        Some(owner) => mesh_transform(meshes.iter().position(|mesh| mesh.def_index == owner)?),
+    };
+    Some(vehicle_position + transform.transform_point3(local).as_dvec3())
 }
 
 /// The lamps (indices into the model's `[interiorlight]`s) a mesh's or a seat's
@@ -494,6 +525,57 @@ impl VehicleRender {
             .iter()
             .find(|b| b.1 == set)
             .map(|b| (b.0, set.len() as u32))
+    }
+}
+
+#[cfg(test)]
+mod interior_light_position_tests {
+    use super::*;
+
+    fn mesh(def_index: usize) -> ::simulation::vehicle::VehicleMesh {
+        ::simulation::vehicle::VehicleMesh {
+            def_index,
+            data: ::geometry::MeshData::default(),
+            file: std::path::PathBuf::new(),
+            materials: Vec::new(),
+            overrides: Vec::new(),
+            pivot: Mat4::IDENTITY,
+            viewpoint: 0,
+            skin: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn owner_world_transform_is_applied_before_vehicle_translation() {
+        let meshes = [mesh(8), mesh(4)];
+        let position = DVec3::new(10.0, 20.0, 30.0);
+        let root = Mat4::from_rotation_z(std::f32::consts::PI);
+        let animated_world = Mat4::from_translation(glam::Vec3::new(2.0, 3.0, 0.0))
+            * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
+
+        let world = interior_light_position(Some(4), &meshes, glam::Vec3::X, position, root, |i| {
+            assert_eq!(i, 1);
+            animated_world
+        });
+
+        assert!((world.unwrap() - DVec3::new(12.0, 24.0, 30.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn unattached_owner_uses_root_and_unresolved_owner_is_rejected() {
+        let meshes = [mesh(8), mesh(4)];
+        let position = DVec3::new(10.0, 20.0, 30.0);
+        let root = Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let world = interior_light_position(None, &meshes, glam::Vec3::X, position, root, |_| {
+            panic!("an unattached light must use the root transform")
+        });
+        assert!((world.unwrap() - DVec3::new(10.0, 21.0, 30.0)).length() < 1e-6);
+
+        let world =
+            interior_light_position(Some(9), &meshes, glam::Vec3::X, position, root, |_| {
+                panic!("an unresolved owner must use the root transform")
+            });
+        assert_eq!(world, None);
     }
 }
 
