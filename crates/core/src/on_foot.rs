@@ -244,6 +244,8 @@ impl App {
             KeyCode::Escape | KeyCode::F12 | KeyCode::KeyP | KeyCode::KeyV | KeyCode::Slash => {
                 false
             }
+            // the navigator's key (Shift+N) works on foot as in the bus :D
+            _ if self.bound_actions(code).iter().any(|a| a == "toggle_navigator") => false,
             KeyCode::F1 => {
                 if pressed && !repeat {
                     if let Some(f) = self.on_foot.as_mut() {
