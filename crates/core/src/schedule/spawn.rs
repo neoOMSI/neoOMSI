@@ -506,8 +506,13 @@ impl Schedule {
         }
         // nobody may see a bus appear (except while the map loads)
         // (the map-loading exemption holds only while the world is being built: a departure
-        // of that moment that had to wait popped up in plain view minutes later)
+        // of that moment that had to wait popped up in plain view minutes later); a train
+        // at the start of its track may, its cars come in one by one
+        let first = section[start_index];
+        let at_track_start =
+            rail && s < 1.0 && traffic.net.prev.get(first).is_some_and(|p| p.is_empty());
         if !(self.startup.contains(&i) && traffic.loading_phase())
+            && !at_track_start
             && !traffic.may_appear(world, at_pos)
         {
             log::debug!("trip {trip_name}: the bus would appear in view");

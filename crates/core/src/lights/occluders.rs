@@ -155,8 +155,10 @@ fn vehicle_bodies(f: &Frame, vehicles: &[&VehicleInstance]) -> Vec<(Obb, Occlude
                 .iter()
                 .map(|t| (body_box(&t.ty), t.body_rotation(), t.position)),
         );
-        for (bbox, rot, origin) in sections {
-            let Some(bbox) = bbox else { continue };
+        for (k, (bbox, rot, origin)) in sections.into_iter().enumerate() {
+            let Some(bbox) = bbox.filter(|_| !v.part_hidden(k)) else {
+                continue;
+            };
             let fwd = rot.transform_vector3(Vec3::Y);
             let heading = (fwd.x as f64).atan2(fwd.y as f64);
             let o = Obb::from_box(bbox, origin, heading.to_degrees());

@@ -1005,6 +1005,10 @@ pub struct VehicleInstance {
     pub ai_visuals: bool,
     ai_visuals_missed: f32,
     pub ai_lights: bool,
+    /// A train's hidden parts (see [`VehicleInstance::part_hidden`]): from the front, those
+    /// run off the end of its track; from the back, those not yet in over its start.
+    pub parts_gone: usize,
+    pub parts_waiting: usize,
     var_index: HashMap<String, ::legacy_script::VarId>,
     /// Where each mesh's material properties come from, resolved against `var_index`
     /// (rebuilt when the vehicle gains engine variables).
@@ -1298,6 +1302,8 @@ impl VehicleInstance {
             ai_visuals: true,
             ai_visuals_missed: 0.0,
             ai_lights: false,
+            parts_gone: 0,
+            parts_waiting: 0,
             var_index,
             props_plan: PropsPlan::default(),
         }
@@ -4270,6 +4276,12 @@ impl TrailerPart {
 }
 
 impl VehicleInstance {
+    /// Is part `k` (0 = the vehicle itself, `k` = trailer `k - 1`) off its track, past
+    /// its end or not yet over its start (see `parts_gone`)?
+    pub fn part_hidden(&self, k: usize) -> bool {
+        k < self.parts_gone || k + self.parts_waiting > self.trailers.len()
+    }
+
     /// Rotation of the vehicle body (model frame → world, without translation).
     pub fn body_rotation(&self) -> Mat4 {
         if let Some(rb) = &self.rigid {
@@ -5460,5 +5472,33 @@ mod grip_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod part_hidden_tests {
+    use super::*;
+
+    /// A locomotive and three coaches: the parts that ran off the end are hidden from the
+    /// front, those not yet in over the start from the back.
+    #[test]
+    fn hidden_parts_count_from_either_end() {
+        let dir = std::env::temp_dir().join(format!("neoomsi-parts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("test.bus"), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        let ty = Arc::new(VehicleType::load(&dir, &dir.join("test.bus")).unwrap());
+        let mut v = VehicleInstance::new(ty.clone(), VehicleHost::new(Default::default()));
+        for _ in 0..3 {
+            v.attach_trailer(ty.clone());
+        }
+        let hidden = |v: &VehicleInstance| (0..4).map(|k| v.part_hidden(k)).collect::<Vec<_>>();
+        assert_eq!(hidden(&v), [false; 4]);
+        v.parts_waiting = 2;
+        assert_eq!(hidden(&v), [false, false, true, true]);
+        v.parts_waiting = 0;
+        v.parts_gone = 1;
+        assert_eq!(hidden(&v), [true, false, false, false]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

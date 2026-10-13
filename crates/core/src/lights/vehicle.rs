@@ -67,9 +67,13 @@ pub(super) fn emit_all(
         cull_hidden(f, v, vi, hiding, &mut budget, &mut mine);
         scene.coronas.append(&mut mine);
 
-        particle_sprites(&v.particles, true, &mut scene.smoke, &mut scene.coronas);
-        for t in &v.trailers {
-            particle_sprites(&t.particles, true, &mut scene.smoke, &mut scene.coronas);
+        if !v.part_hidden(0) {
+            particle_sprites(&v.particles, true, &mut scene.smoke, &mut scene.coronas);
+        }
+        for (k, t) in v.trailers.iter().enumerate() {
+            if !v.part_hidden(k + 1) {
+                particle_sprites(&t.particles, true, &mut scene.smoke, &mut scene.coronas);
+            }
         }
     }
 }
@@ -170,7 +174,7 @@ fn road_and_lamp_lights(
         &v.light_fade,
     ) {
         let ec = exterior_cfg(owner);
-        if ec.off {
+        if ec.off || v.part_hidden(0) {
             continue;
         }
         c.brightness *= ec.gain;
@@ -185,7 +189,10 @@ fn road_and_lamp_lights(
         c.position += body_rot.transform_vector3(Vec3::from(ec.shift)).as_dvec3();
         coronas.push(c);
     }
-    for t in &v.trailers {
+    for (k, t) in v.trailers.iter().enumerate() {
+        if v.part_hidden(k + 1) {
+            continue;
+        }
         let part_xf = |def_index: usize| -> Mat4 {
             match t.ty.meshes.iter().position(|m| m.def_index == def_index) {
                 Some(i) => t.mesh_local_transform(i),
@@ -202,7 +209,9 @@ fn road_and_lamp_lights(
     }
 
     let night = f.night.max(fog_darkness() * cfg.weather_night);
-    headlamps(cfg, faders, v, night, lights, coronas);
+    if !v.part_hidden(0) {
+        headlamps(cfg, faders, v, night, lights, coronas);
+    }
     let mut sections = vec![Section {
         model: &ty.model,
         rot: body_rot,
@@ -215,8 +224,10 @@ fn road_and_lamp_lights(
         origin: t.position,
         owner: super::owner_key(t),
     }));
-    for s in &sections {
-        spotlights_2(cfg, faders, s, &value_of, night, lights);
+    for (k, s) in sections.iter().enumerate() {
+        if !v.part_hidden(k) {
+            spotlights_2(cfg, faders, s, &value_of, night, lights);
+        }
     }
     if spill && cfg.spill.on && night > 0.05 {
         interior_spill(cfg, faders, v, &value_of, night, lights);

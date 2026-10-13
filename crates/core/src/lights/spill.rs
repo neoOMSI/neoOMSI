@@ -48,7 +48,10 @@ pub(super) fn interior_spill(
     let strength = night.clamp(0.0, 1.0) * sp.gain;
     let sides = [Vec3::X, -Vec3::X];
 
-    for (model, bbox, rot, origin, owner) in sections {
+    for (k, (model, bbox, rot, origin, owner)) in sections.into_iter().enumerate() {
+        if v.part_hidden(k) {
+            continue;
+        }
         for (li, il) in model.interior_lights.iter().enumerate() {
             let ic = interior_cfg(li);
             if ic.off {

@@ -263,6 +263,12 @@ impl Lane {
     pub fn end_heading(&self) -> f32 {
         *self.headings.last().unwrap()
     }
+
+    /// Does `p` lie beyond the end of the lane (past the line across its end)?
+    pub fn past_end(&self, p: DVec3) -> bool {
+        let rel = p - self.end();
+        DVec2::new(rel.x, rel.y).dot(heading_dir(self.end_heading() as f64)) > 0.0
+    }
 }
 
 /// Speed limit of a flight path without a `[rule] speedlimit` (km/h): none, the aircraft
@@ -3085,8 +3091,9 @@ impl AiState {
             };
             let Some(next) = self.planned_next.or(fallback) else {
                 // the end of a flight path: the aircraft flies on straight (the way runs on
-                // along the end tangent) until the traffic takes it away out of sight
-                if l.kind == LaneKind::Air {
+                // along the end tangent) until the traffic takes it away out of sight; a
+                // train runs on too, its cars taken away one by one at the end
+                if matches!(l.kind, LaneKind::Air | LaneKind::Rail) {
                     break;
                 }
                 return false; // dead end: despawn
@@ -3802,6 +3809,30 @@ mod tests {
             car.plan_next(&net);
             assert_eq!(car.planned_next, Some(2), "seed {seed}");
         }
+    }
+
+    #[test]
+    fn a_train_runs_past_the_end_of_its_track() {
+        // at a dead end a car is taken off, a train runs on (its cars go one by one)
+        for (kind, runs_on) in [(LaneKind::Street, false), (LaneKind::Rail, true)] {
+            let lane = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, kind, 3.0);
+            let mut net = Network {
+                lanes: vec![lane],
+                ..Default::default()
+            };
+            net.link(1.5);
+            let mut car = AiState::new(0, 25.0, 1);
+            car.speed = 10.0;
+            let on = (0..50).all(|_| car.drive(&net, 0.1, None, None));
+            assert_eq!(on, runs_on, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_point_beyond_the_lane_end_is_past_it() {
+        let l = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, LaneKind::Rail, 3.0);
+        assert!(l.past_end(l.at_ext(31.0).0));
+        assert!(!l.past_end(l.at_ext(29.0).0));
     }
 
     #[test]
