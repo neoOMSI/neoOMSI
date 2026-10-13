@@ -9,6 +9,7 @@ use rayon::prelude::*;
 use ::map::{Terrain, tile_size};
 use ::simulation::traffic::{Lane, LaneKind};
 
+use super::cache::Deps;
 use super::raster::{self, CELL, MARGIN, Raster};
 use super::*;
 use crate::scene::{World, texture_dirs, tile_companion};
@@ -28,43 +29,90 @@ const LEVEL_GAP: f64 = 4.0;
 /// A face is a floor when its normal is at most this far off the vertical (cos).
 const UPRIGHT: f32 = 0.8;
 
+/// A texture a material is read from: its name as given, where to look for it, its `.cfg`
+/// and how many meshes name it so
+struct Source {
+    file: String,
+    dirs: Vec<std::path::PathBuf>,
+    cfg: ::texture::TextureCfg,
+    uses: u32,
+}
+
 #[derive(Default)]
 struct Materials {
     ids: HashMap<String, u32>,
     names: Vec<String>,
-    cfgs: Vec<::texture::TextureCfg>,
-    /// The texture as first named, and where to look for it.
-    sources: Vec<(String, Vec<std::path::PathBuf>)>,
+    /// Each material's sources by their hash: textures of one name in other folders may be
+    /// other pictures (see `settle`)
+    sources: Vec<HashMap<u64, Source>>,
 }
 
 impl Materials {
     /// The material of a texture as an asset names it: one per file name, whatever its
     /// folder or extension (a `.bmp` and a `.dds` of the same picture are one).
     fn id(this: &Mutex<Materials>, file: &str, dirs: &[std::path::PathBuf]) -> u32 {
+        use std::hash::{Hash, Hasher};
         let base = file.replace('\\', "/");
         let base = base.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
         let key = base
             .rsplit_once('.')
             .map(|(s, _)| s.to_string())
             .unwrap_or(base);
-        if let Some(&id) = this.lock().ids.get(&key) {
-            return id;
-        }
+        let print = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (file, dirs).hash(&mut h);
+            h.finish()
+        };
+        let id = {
+            let mut m = this.lock();
+            let id = match m.ids.get(&key) {
+                Some(&id) => id,
+                None => {
+                    let id = m.names.len() as u32;
+                    m.ids.insert(key.clone(), id);
+                    m.names.push(key);
+                    m.sources.push(HashMap::new());
+                    id
+                }
+            };
+            if let Some(s) = m.sources[id as usize].get_mut(&print) {
+                s.uses += 1;
+                return id;
+            }
+            id
+        };
         let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
         let cfg = ::texture::find_texture(file, &refs)
             .and_then(|p| ::texture::cfg_path(file, &p))
             .map(|c| ::texture::TextureCfg::load(&c))
             .unwrap_or_default();
-        let mut m = this.lock();
-        if let Some(&id) = m.ids.get(&key) {
-            return id;
-        }
-        let id = m.names.len() as u32;
-        m.ids.insert(key.clone(), id);
-        m.names.push(key);
-        m.cfgs.push(cfg);
-        m.sources.push((file.to_string(), dirs.to_vec()));
+        this.lock().sources[id as usize]
+            .entry(print)
+            .or_insert(Source {
+                file: file.to_string(),
+                dirs: dirs.to_vec(),
+                cfg,
+                uses: 0,
+            })
+            .uses += 1;
         id
+    }
+
+    fn settle(self) -> (Vec<String>, Vec<Source>) {
+        let sources = self
+            .sources
+            .into_iter()
+            .map(|all| {
+                all.into_values()
+                    .min_by(|a, b| {
+                        b.uses
+                            .cmp(&a.uses)
+                            .then_with(|| (&a.file, &a.dirs).cmp(&(&b.file, &b.dirs)))
+                    })
+                    .expect("a material has a source")
+            })
+            .collect();
+        (self.names, sources)
     }
 }
 
@@ -149,10 +197,14 @@ struct ObjectFloors {
     absolute: bool,
 }
 
-/// An object type's faces that can be ground: facing up, near the object's foot unless it
-/// carries a street (a bridge, a ramp).
-fn object_floors(world: &World, file: &str, materials: &Mutex<Materials>) -> Option<ObjectFloors> {
+fn object_floors(
+    world: &World,
+    file: &str,
+    materials: &Mutex<Materials>,
+    deps: &Deps,
+) -> Option<ObjectFloors> {
     let path = ::mods::resolve_path(&world.root, file);
+    deps.add(&path);
     let sco = ::scenery::SceneryObject::load(&path).ok()?;
     if sco.only_editor {
         return None;
@@ -161,6 +213,7 @@ fn object_floors(world: &World, file: &str, materials: &Mutex<Materials>) -> Opt
     let (model, model_dir) = match &sco.model_file {
         Some(m) => {
             let mp = ::mods::resolve_path(&sco_dir, m);
+            deps.add(&mp);
             (::model::Model::load(&mp).ok()?, mp.parent()?.to_path_buf())
         }
         None => (sco.model.clone(), sco_dir.clone()),
@@ -178,6 +231,7 @@ fn object_floors(world: &World, file: &str, materials: &Mutex<Materials>) -> Opt
         } else {
             ::mods::resolve_path(&model_dir, &md.file)
         };
+        deps.add(&mp);
         let Ok(m) = ::legacy_o3d::load_mesh(&mp) else {
             continue;
         };
@@ -252,6 +306,100 @@ impl Paint {
         let bottom = a(i0, j1) * (1.0 - tx) + a(i1, j1) * tx;
         top * (1.0 - ty) + bottom * ty
     }
+
+    /// `at(x, y) >= 0.5`, answered from the four texels where they agree: all below half
+    /// (128) or all above it
+    fn covers(&self, x: f64, y: f64) -> bool {
+        let ts = tile_size();
+        let fx = (x / ts * self.w as f64 - 0.5).clamp(0.0, self.w as f64 - 1.0);
+        let fy = (y / ts * self.h as f64 - 0.5).clamp(0.0, self.h as f64 - 1.0);
+        let (i0, j0) = (fx.floor() as usize, fy.floor() as usize);
+        let (i1, j1) = ((i0 + 1).min(self.w - 1), (j0 + 1).min(self.h - 1));
+        let t = [
+            self.alpha[j0 * self.w + i0],
+            self.alpha[j0 * self.w + i1],
+            self.alpha[j1 * self.w + i0],
+            self.alpha[j1 * self.w + i1],
+        ];
+        if t.iter().all(|&a| a < 128) {
+            return false;
+        }
+        if t.iter().all(|&a| a >= 128) {
+            return true;
+        }
+        self.at(x, y) >= 0.5
+    }
+
+    /// Whether any texel the mask is read from between (x0, y0) and (x1, y1) metres into
+    /// its tile is half painted or more: else `covers` is false all over there.
+    fn any_within(&self, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
+        let ts = tile_size();
+        let ix = |x: f64| (x / ts * self.w as f64 - 0.5).clamp(0.0, self.w as f64 - 1.0).floor() as usize;
+        let iy = |y: f64| (y / ts * self.h as f64 - 0.5).clamp(0.0, self.h as f64 - 1.0).floor() as usize;
+        // (a texel to spare on each side, against rounding)
+        let (i0, i1) = (ix(x0).saturating_sub(1), (ix(x1) + 2).min(self.w - 1));
+        let (j0, j1) = (iy(y0).saturating_sub(1), (iy(y1) + 2).min(self.h - 1));
+        (j0..=j1).any(|j| self.alpha[j * self.w + i0..=j * self.w + i1].iter().any(|&a| a >= 128))
+    }
+}
+
+/// The painted ground (`[groundtex]` layers) as a chunk's raster takes it: the tiles' layers
+/// and the class of each material
+struct PaintedGround<'a> {
+    paints: &'a HashMap<(i32, i32), Vec<Paint>>,
+    class: &'a [u8],
+    ground: &'a (dyn Fn(DVec3) -> f64 + Sync),
+}
+
+impl PaintedGround<'_> {
+    /// Each cell of chunk `key`'s raster that painted ground of a known class shows on top:
+    /// `put(cell, class, height)`
+    fn cells(&self, key: (i32, i32), mut put: impl FnMut(usize, u8, f32)) {
+        let ts = tile_size();
+        let o = SurfaceMap::chunk_origin(key);
+        let centre = |i: usize| (i as f64 - MARGIN as f64 + 0.5) * CELL;
+        let (lo, hi) = (o + DVec2::splat(centre(0)), o + DVec2::splat(centre(raster::W - 1)));
+        // the layers of the tiles under the chunk with paint anywhere near it, in order
+        let mut tiles: Vec<((i32, i32), Vec<&Paint>)> = Vec::new();
+        for ty in (lo.y / ts).floor() as i32..=(hi.y / ts).floor() as i32 {
+            for tx in (lo.x / ts).floor() as i32..=(hi.x / ts).floor() as i32 {
+                let Some(layers) = self.paints.get(&(tx, ty)) else {
+                    continue;
+                };
+                let (bx, by) = (tx as f64 * ts, ty as f64 * ts);
+                let (x0, y0) = ((lo.x - bx).max(0.0), (lo.y - by).max(0.0));
+                let (x1, y1) = ((hi.x - bx).min(ts), (hi.y - by).min(ts));
+                let near: Vec<&Paint> = layers.iter().filter(|l| l.any_within(x0, y0, x1, y1)).collect();
+                if !near.is_empty() {
+                    tiles.push(((tx, ty), near));
+                }
+            }
+        }
+        if tiles.is_empty() {
+            return;
+        }
+        for j in 0..raster::W {
+            for i in 0..raster::W {
+                let p = o + DVec2::new(
+                    (i as f64 - MARGIN as f64 + 0.5) * CELL,
+                    (j as f64 - MARGIN as f64 + 0.5) * CELL,
+                );
+                let (tx, ty) = ((p.x / ts).floor() as i32, (p.y / ts).floor() as i32);
+                let Some((_, layers)) = tiles.iter().find(|t| t.0 == (tx, ty)) else {
+                    continue;
+                };
+                let (lx, ly) = (p.x - tx as f64 * ts, p.y - ty as f64 * ts);
+                // the topmost layer painted here
+                let Some(top) = layers.iter().find(|l| l.covers(lx, ly)) else {
+                    continue;
+                };
+                let c = self.class.get(top.material as usize).copied().unwrap_or(0);
+                if c != 0 {
+                    put(j * raster::W + i, c, ((self.ground)(p.extend(0.0)) - 0.3) as f32);
+                }
+            }
+        }
+    }
 }
 
 struct Gathered {
@@ -261,7 +409,7 @@ struct Gathered {
 }
 
 impl Gathered {
-    /// Count a face for its material and file it under every chunk it reaches.
+    /// Count a face for its material and file it under every chunk it reaches
     fn add(&mut self, w: [DVec3; 3], uv: [[f32; 2]; 3], material: u32, ground: f64, ev: &Evidence) {
         let area = (w[1] - w[0]).truncate().perp_dot((w[2] - w[0]).truncate()).abs() * 0.5;
         if area < 1e-4 {
@@ -402,6 +550,8 @@ pub fn build_surface_stream(
     let t0 = std::time::Instant::now();
     let ts = tile_size();
     let tiles = world.map_tiles();
+    let deps = Deps::default();
+    deps.add(&world.map_dir.join("global.cfg"));
     let terrains: HashMap<(i32, i32), Terrain> = tiles
         .par_iter()
         .map(|(_, tx, ty, path)| {
@@ -426,15 +576,14 @@ pub fn build_surface_stream(
     };
     let ev = Evidence::new(lanes);
     let materials = Mutex::new(Materials::default());
-    let objects: Mutex<HashMap<String, Option<Arc<ObjectFloors>>>> = Mutex::new(HashMap::new());
+    // (each type read once: a thread wanting one being read waits for it)
+    type Floors = Arc<std::sync::OnceLock<Option<Arc<ObjectFloors>>>>;
+    let objects: Mutex<HashMap<String, Floors>> = Mutex::new(HashMap::new());
     let object_of = |file: &str| -> Option<Arc<ObjectFloors>> {
         let key = file.trim().to_ascii_lowercase().replace('\\', "/");
-        if let Some(v) = objects.lock().get(&key) {
-            return v.clone();
-        }
-        let v = object_floors(world, file, &materials).map(Arc::new);
-        objects.lock().insert(key, v.clone());
-        v
+        let cell = objects.lock().entry(key).or_default().clone();
+        cell.get_or_init(|| object_floors(world, file, &materials, &deps).map(Arc::new))
+            .clone()
     };
     let parts: Vec<Gathered> = tiles
         .par_iter()
@@ -444,6 +593,20 @@ pub fn build_surface_stream(
                 faces: HashMap::new(),
                 paints: Vec::new(),
             };
+            deps.add(path);
+            deps.add(&tile_companion(path, ".terrain"));
+            if let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_string()) {
+                for c in world.chrono_dirs.read().iter() {
+                    deps.add(&::mods::resolve_path(c, &name));
+                }
+                // (see `World::load_ground_paint`)
+                for layer in 1..world.global.ground_textures.len() {
+                    deps.add(&::mods::resolve_path(
+                        &world.map_dir,
+                        &format!("texture/map/{name}.{layer}.dds"),
+                    ));
+                }
+            }
             let Some(tile) =
                 crate::tiles::read_tile(path, &world.chrono_dirs.read(), world.map_detail())
             else {
@@ -497,6 +660,7 @@ pub fn build_surface_stream(
                 .iter()
                 .filter(|s| !s.deleted && !s.file.trim().is_empty())
             {
+                deps.add(&::mods::resolve_path(&world.root, &sp.file));
                 let Some(st) = world.spline_type(&sp.file) else {
                     continue;
                 };
@@ -609,12 +773,21 @@ pub fn build_surface_stream(
             faces.entry(k).or_default().append(&mut v);
         }
     }
-    let materials = materials.into_inner();
-    let mut infos = Vec::with_capacity(materials.names.len());
-    let mut class = Vec::with_capacity(materials.names.len());
-    for (i, name) in materials.names.iter().enumerate() {
+    let (names, sources) = materials.into_inner().settle();
+    for s in &sources {
+        let refs: Vec<&Path> = s.dirs.iter().map(|d| d.as_path()).collect();
+        if let Some(p) = ::texture::find_texture(&s.file, &refs) {
+            if let Some(c) = ::texture::cfg_path(&s.file, &p) {
+                deps.add(&c);
+            }
+            deps.add(&p);
+        }
+    }
+    let mut infos = Vec::with_capacity(names.len());
+    let mut class = Vec::with_capacity(names.len());
+    for (i, name) in names.iter().enumerate() {
         let st = stats.get(&(i as u32)).copied().unwrap_or([0.0; 4]);
-        let s = classify(name, &materials.cfgs[i], st);
+        let s = classify(name, &sources[i].cfg, st);
         class.push(s.map(|s| s as u8).unwrap_or(0));
         let a = st[0].max(1e-9);
         infos.push(MaterialInfo {
@@ -628,7 +801,7 @@ pub fn build_surface_stream(
     }
     let t_gather = t0.elapsed().as_secs_f64();
     // the paint on the carriageways' textures: lines, arrows, stop lines, crossings
-    let paint_masks: Vec<Option<raster::PaintMask>> = (0..materials.names.len())
+    let paint_masks: Vec<Option<raster::PaintMask>> = (0..names.len())
         .into_par_iter()
         .map(|i| {
             let s = Surface::from_u8(class[i])?;
@@ -642,7 +815,7 @@ pub fn build_surface_stream(
             {
                 return None;
             }
-            let (file, dirs) = &materials.sources[i];
+            let (file, dirs) = (&sources[i].file, &sources[i].dirs);
             let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
             let img = ::texture::decode_file(&::texture::find_texture(file, &refs)?).ok()?;
             raster::PaintMask::from_rgba(
@@ -670,14 +843,10 @@ pub fn build_surface_stream(
             }
         }
     }
-    let painted = |p: DVec2| -> Option<(u8, f64)> {
-        let (tx, ty) = ((p.x / ts).floor() as i32, (p.y / ts).floor() as i32);
-        let layers = paints.get(&(tx, ty))?;
-        let (lx, ly) = (p.x - tx as f64 * ts, p.y - ty as f64 * ts);
-        // the topmost layer painted here
-        let top = layers.iter().find(|l| l.at(lx, ly) >= 0.5)?;
-        let c = class.get(top.material as usize).copied().unwrap_or(0);
-        (c != 0).then(|| (c, ground(p.extend(0.0))))
+    let painted = PaintedGround {
+        paints: &paints,
+        class: &class,
+        ground: &ground,
     };
     let mut todo: Vec<((i32, i32), Vec<Face>)> = faces.into_iter().collect();
     let dist = |k: (i32, i32)| {
@@ -737,6 +906,7 @@ pub fn build_surface_stream(
     );
     SurfaceMap {
         chunks: HashMap::new(),
+        read: deps.into_vec(),
         rails,
         materials: infos,
     }
@@ -802,7 +972,7 @@ fn build_chunk(
     faces: &[Face],
     class: &[u8],
     paint: &[Option<raster::PaintMask>],
-    painted: &(dyn Fn(DVec2) -> Option<(u8, f64)> + Sync),
+    painted: &PaintedGround,
 ) -> Chunk {
     let mut chunk = Chunk::default();
     let to_cells = |v: [f32; 3]| {
@@ -824,19 +994,9 @@ fn build_chunk(
         }
         if level == 0 {
             // the painted ground, under anything laid on it
-            let o = SurfaceMap::chunk_origin(key);
-            for j in 0..raster::W {
-                for i in 0..raster::W {
-                    let p = o + DVec2::new(
-                        (i as f64 - MARGIN as f64 + 0.5) * CELL,
-                        (j as f64 - MARGIN as f64 + 0.5) * CELL,
-                    );
-                    if let Some((c, z)) = painted(p) {
-                        r.get_or_insert_with(|| Raster::new(raster::COARSE))
-                            .put(j * raster::W + i, c, (z - 0.3) as f32);
-                    }
-                }
-            }
+            painted.cells(key, |k, c, z| {
+                r.get_or_insert_with(|| Raster::new(raster::COARSE)).put(k, c, z);
+            });
         }
         let Some(r) = r else {
             continue;
@@ -857,25 +1017,13 @@ fn build_chunk(
             }
             let mask = raster::close(&mask, raster::COARSE, layer.closing());
             let snap = |p: [f32; 2]| edges.snap(p);
-            chunk.areas.extend(areas_of(
-                &mask,
-                raster::COARSE,
-                Some(&snap),
-                layer,
-                level,
-                layer.tolerance(),
-                layer.least(),
-            ));
+            // (traced once for the fine and the coarse outline)
+            let t = raster::traced(&mask, raster::COARSE, Some(&snap));
+            let rings = raster::rings_of(&t, raster::COARSE, layer.tolerance());
+            chunk.areas.extend(areas_of(rings, layer, level, layer.least()));
             if let Some((tol, least)) = layer.coarse() {
-                chunk.coarse.extend(areas_of(
-                    &mask,
-                    raster::COARSE,
-                    Some(&snap),
-                    layer,
-                    level,
-                    tol,
-                    least,
-                ));
+                let rings = raster::rings_of(&t, raster::COARSE, tol);
+                chunk.coarse.extend(areas_of(rings, layer, level, least));
             }
         }
         // the paint on the carriageway, read from the textures on the fine grid
@@ -900,30 +1048,30 @@ fn build_chunk(
         if let Some(pr) = paint_r {
             let (fw, cw) = (fine.w(), raster::W);
             let scale = fine.n / raster::N;
+            // (the fine grid's margin is the coarse one's, cell for cell: fine cell (i, j)
+            // lies in coarse cell (i, j) / scale)
+            const _: () = assert!(raster::FINE.margin == MARGIN * (raster::FINE.n / raster::N));
             // only where the carriageway is the topmost surface
-            let marks: Vec<bool> = (0..pr.mark.len())
-                .map(|k| {
-                    if !pr.mark[k] {
-                        return false;
-                    }
-                    let (i, j) = ((k % fw) as isize, (k / fw) as isize);
-                    let ci = (i - fine.margin as isize).div_euclid(scale as isize) + MARGIN as isize;
-                    let cj = (j - fine.margin as isize).div_euclid(scale as isize) + MARGIN as isize;
-                    if ci < 0 || cj < 0 || ci >= cw as isize || cj >= cw as isize {
-                        return false;
-                    }
-                    matches!(
-                        Surface::from_u8(r.class[cj as usize * cw + ci as usize]),
-                        Some(Surface::Road | Surface::Paved)
-                    )
-                })
+            let road: Vec<bool> = r
+                .class
+                .iter()
+                .map(|&c| matches!(Surface::from_u8(c), Some(Surface::Road | Surface::Paved)))
                 .collect();
+            let mut marks = vec![false; pr.mark.len()];
+            for j in 0..fw {
+                let row = &road[(j / scale) * cw..(j / scale + 1) * cw];
+                for (i, m) in pr.mark[j * fw..(j + 1) * fw].iter().enumerate() {
+                    if *m && row[i / scale] {
+                        marks[j * fw + i] = true;
+                    }
+                }
+            }
             if marks.iter().any(|&b| b) {
                 let l = Layer::Marking;
                 let marks = raster::close(&marks, fine, l.closing());
                 chunk
                     .areas
-                    .extend(areas_of(&marks, fine, None, l, level, l.tolerance(), l.least()));
+                    .extend(areas_of(raster::outlines(&marks, fine, l.tolerance(), None), l, level, l.least()));
             }
         }
     }
@@ -944,17 +1092,8 @@ fn point_in_ring(p: [f32; 2], ring: &[[f32; 2]]) -> bool {
     inside
 }
 
-/// The filled areas of a layer's mask: each outline with the holes in it, triangulated.
-fn areas_of(
-    mask: &[bool],
-    g: raster::Grid,
-    snap: Option<raster::Snap>,
-    layer: Layer,
-    level: i8,
-    tol: f32,
-    least: f32,
-) -> Vec<Area> {
-    let rings = raster::outlines(mask, g, tol, snap);
+/// The filled areas of a layer's outlines: each outline with the holes in it, triangulated.
+fn areas_of(rings: Vec<raster::Ring>, layer: Layer, level: i8, least: f32) -> Vec<Area> {
     let (outers, holes): (Vec<_>, Vec<_>) = rings.into_iter().partition(|r| r.outer);
     let outers: Vec<_> = outers.into_iter().filter(|r| r.area >= least).collect();
     let mut inner: Vec<Vec<raster::Ring>> = vec![Vec::new(); outers.len()];

@@ -37,14 +37,18 @@ impl Navigator {
                             .length()
                             < 700.0
                     });
+                    if self.surfaces_ready {
+                        self.chunks_waiting.extend(part);
+                        self.chunks_near |= near;
+                        continue;
+                    }
                     let map = std::sync::Arc::make_mut(
                         self.surfaces
                             .get_or_insert_with(|| std::sync::Arc::new(Default::default())),
                     );
                     map.chunks.extend(part);
-                    // (the parts come nearest first: one with nothing near the bus means
-                    // the ground around it is whole)
-                    if !near && !self.surfaces_ready {
+                    self.chunks_added = self.time;
+                    if !near {
                         self.surfaces_ready = true;
                         self.roads_stale();
                     }
@@ -59,6 +63,8 @@ impl Navigator {
                         self.surfaces
                             .get_or_insert_with(|| std::sync::Arc::new(Default::default())),
                     );
+                    map.chunks.extend(self.chunks_waiting.drain(..));
+                    self.chunks_near = false;
                     map.rails = meta.rails;
                     map.materials = meta.materials;
                     let chunks = map.chunks.len();
@@ -88,8 +94,29 @@ impl Navigator {
                     self.route_mesh = RouteMesh::default();
                     self.route_jam.clear();
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    if !self.chunks_waiting.is_empty() && self.time - self.chunks_added >= 2.0 {
+                        let map = std::sync::Arc::make_mut(
+                            self.surfaces
+                                .get_or_insert_with(|| std::sync::Arc::new(Default::default())),
+                        );
+                        map.chunks.extend(self.chunks_waiting.drain(..));
+                        self.chunks_added = self.time;
+                        if std::mem::take(&mut self.chunks_near) {
+                            self.roads_stale();
+                            self.city_roads_stale();
+                        }
+                    }
+                    break;
+                }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if !self.chunks_waiting.is_empty() {
+                        if let Some(map) = self.surfaces.as_mut() {
+                            std::sync::Arc::make_mut(map).chunks.extend(self.chunks_waiting.drain(..));
+                        }
+                        self.roads_stale();
+                        self.city_roads_stale();
+                    }
                     if self.global.is_none() || self.surfaces.is_none() {
                         log::warn!("navigator: the map build stopped before it was done");
                         self.build_failed = self.global.is_none();
@@ -407,6 +434,7 @@ impl Navigator {
                 let spawned = std::thread::Builder::new()
                     .name("navigator ground".into())
                     .spawn(move || {
+                        crate::threads::lower_thread_priority();
                         let mut p = Painter::new();
                         build_surfaces(&mut p, &sm, anchor, anchor, SURFACE_RADIUS, false, 1.0);
                         let _ = tx.send((anchor, lanes_now, p.verts));

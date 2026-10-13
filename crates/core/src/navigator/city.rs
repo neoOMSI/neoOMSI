@@ -102,6 +102,7 @@ impl Navigator {
                 let spawned = std::thread::Builder::new()
                     .name("navigator map ground".into())
                     .spawn(move || {
+                        crate::threads::lower_thread_priority();
                         let t0 = std::time::Instant::now();
                         let mut p = Painter::new();
                         build_surfaces(

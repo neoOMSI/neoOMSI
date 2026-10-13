@@ -47,6 +47,23 @@ fn surfaces_of_a_real_map() {
         surfaces.chunks.values().map(|c| c.areas.len()).sum::<usize>(),
         surfaces.chunks.values().flat_map(|c| &c.areas).map(|a| a.tris.len() / 3).sum::<usize>()
     );
+    {
+        // a fingerprint of everything built, to tell a faster build that changed nothing
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut keys: Vec<_> = surfaces.chunks.keys().copied().collect();
+        keys.sort();
+        for k in keys {
+            k.hash(&mut h);
+            let c = &surfaces.chunks[&k];
+            for a in c.areas.iter().chain(&c.coarse) {
+                (a.layer as u8, a.level, &a.tris).hash(&mut h);
+                a.verts.iter().flatten().for_each(|v| v.to_bits().hash(&mut h));
+                a.edges.iter().flatten().flatten().for_each(|v| v.to_bits().hash(&mut h));
+            }
+        }
+        eprintln!("surfaces fingerprint {:016x}", h.finish());
+    }
     for layer in Layer::ALL {
         let fine: usize = surfaces.chunks.values().flat_map(|c| &c.areas).filter(|a| a.layer == layer).map(|a| a.tris.len() / 3).sum();
         let coarse: usize = surfaces.chunks.values().flat_map(|c| &c.coarse).filter(|a| a.layer == layer).map(|a| a.tris.len() / 3).sum();

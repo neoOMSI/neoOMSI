@@ -3,7 +3,7 @@ use super::*;
 fn build_pool() -> Option<std::sync::Arc<rayon::ThreadPool>> {
     let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
     rayon::ThreadPoolBuilder::new()
-        .num_threads((cpus / 4).clamp(1, 3))
+        .num_threads((cpus / 8).clamp(1, 2))
         .thread_name(|i| format!("navigator map {i}"))
         // (minutes of work on a big map that the frame need not wait for, see `threads`)
         .start_handler(|_| crate::threads::lower_thread_priority())
@@ -64,6 +64,9 @@ impl Navigator {
             global_version: 0,
             roads: None,
             surfaces_ready: false,
+            chunks_waiting: Vec::new(),
+            chunks_near: false,
+            chunks_added: 0.0,
             roads_building: None,
             route: Route::default(),
             route_mesh: RouteMesh::default(),
@@ -100,8 +103,9 @@ impl Navigator {
                 crate::threads::lower_thread_priority();
                 let t0 = std::time::Instant::now();
                 let pool = build_pool();
-                let m = on_pool(&pool, || world.navigation_map());
-                let lanes_for_ground = m.lanes.clone();
+                // the ground: as the last session left it if the map is unchanged, else built
+                // from the map's paths (sent once read) and kept for the next one
+                let (tx_lanes, rx_lanes) = std::sync::mpsc::channel::<Vec<::simulation::traffic::Lane>>();
                 let tx_ground = tx.clone();
                 let world_ground = world.clone();
                 let pool_ground = pool.clone();
@@ -109,21 +113,34 @@ impl Navigator {
                     .name("navigator ground".into())
                     .spawn(move || {
                         crate::threads::lower_thread_priority();
+                        if let Some((chunks, meta)) = crate::navmap::load_cached(&world_ground) {
+                            let _ = tx_ground.send(MapPart::Chunks(chunks));
+                            let _ = tx_ground.send(MapPart::GroundDone(Box::new(meta)));
+                            return;
+                        }
+                        let Ok(lanes) = rx_lanes.recv() else {
+                            return;
+                        };
                         on_pool(&pool_ground, || {
-                            let tx_part = tx_ground.clone();
-                            let mut emit = |part| {
-                                let _ = tx_part.send(MapPart::Chunks(part));
+                            let mut all = Vec::new();
+                            let mut emit = |part: Vec<_>| {
+                                all.extend(part.iter().cloned());
+                                let _ = tx_ground.send(MapPart::Chunks(part));
                             };
-                            let meta = crate::navmap::build_surface_stream(
+                            let mut meta = crate::navmap::build_surface_stream(
                                 &world_ground,
-                                &lanes_for_ground,
+                                &lanes,
                                 centre,
                                 &mut emit,
                             );
-                            let _ = tx_ground.send(MapPart::GroundDone(Box::new(meta)));
+                            let read = std::mem::take(&mut meta.read);
+                            let _ = tx_ground.send(MapPart::GroundDone(Box::new(meta.clone())));
+                            crate::navmap::save_cached(&world_ground, &all, &meta, read);
                         });
                     })
                     .ok();
+                let m = on_pool(&pool, || world.navigation_map());
+                let _ = tx_lanes.send(m.lanes.clone());
                 let mut net = Network {
                     lanes: m.lanes,
                     ..Default::default()

@@ -12,6 +12,7 @@
 //! joints, traced into outlines and triangulated.
 
 mod build;
+mod cache;
 mod earcut;
 mod raster;
 #[cfg(test)]
@@ -170,6 +171,8 @@ pub struct SurfaceMap {
     /// Rails (centre lines of the tracks) outside tunnels.
     pub rails: Vec<Vec<glam::DVec3>>,
     pub materials: Vec<MaterialInfo>,
+    /// The files the build read (see `cache`)
+    pub read: Vec<std::path::PathBuf>,
 }
 
 impl SurfaceMap {
@@ -198,3 +201,4 @@ impl SurfaceMap {
 }
 
 pub use self::build::{build_surface_map, build_surface_stream};
+pub use self::cache::{load as load_cached, save as save_cached};

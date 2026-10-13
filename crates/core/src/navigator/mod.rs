@@ -161,6 +161,11 @@ pub struct Navigator {
     roads: Option<Roads>,
     /// The map's ground has arrived around the bus (see `frame`).
     surfaces_ready: bool,
+    /// Parts of the ground arrived and not yet added to `surfaces`, whether one lies near
+    /// the bus, and when parts were last added (`time`)
+    chunks_waiting: Vec<((i32, i32), std::sync::Arc<crate::navmap::Chunk>)>,
+    chunks_near: bool,
+    chunks_added: f32,
     /// The panel's ground being built on a thread of its own (anchor, lanes seen, vertices):
     /// the old ground is drawn meanwhile.
     roads_building: Option<std::sync::mpsc::Receiver<(DVec2, usize, Vec<::user_interface::paint::Vertex>)>>,

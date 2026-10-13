@@ -245,41 +245,97 @@ impl Raster {
     }
 }
 
-/// Grow (`grow`) or shrink a mask by `r` cells (a square), separably.
-fn morph(m: &[bool], g: Grid, r: usize, grow: bool) -> Vec<bool> {
-    let w = g.w();
-    let pass = |src: &[bool], horizontal: bool| -> Vec<bool> {
-        let mut out = vec![false; w * w];
-        for a in 0..w {
-            // running count of set cells in the window
-            let at = |b: usize| if horizontal { a * w + b } else { b * w + a };
-            let mut count = 0usize;
-            for b in 0..r.min(w) {
-                count += src[at(b)] as usize;
-            }
-            for b in 0..w {
-                if b + r < w {
-                    count += src[at(b + r)] as usize;
-                }
-                if b > r {
-                    count -= src[at(b - r - 1)] as usize;
-                }
-                let span = (b + r).min(w - 1) + 1 - b.saturating_sub(r);
-                out[at(b)] = if grow { count > 0 } else { count == span };
-            }
-        }
-        out
-    };
-    let h = pass(m, true);
-    pass(&h, false)
+/// The smallest rectangle `[x0, x1] x [y0, y1]` (cells, inclusive) holding every set cell of
+/// a mask `w` cells wide whose rows `rows` and columns `cols` are looked at
+fn bounds(
+    m: &[bool],
+    w: usize,
+    rows: std::ops::Range<usize>,
+    cols: std::ops::Range<usize>,
+) -> Option<(usize, usize, usize, usize)> {
+    let (mut x0, mut x1) = (usize::MAX, 0);
+    let (mut y0, mut y1) = (usize::MAX, 0);
+    for j in rows {
+        let row = &m[j * w + cols.start..j * w + cols.end];
+        let Some(first) = row.iter().position(|&b| b) else {
+            continue;
+        };
+        let last = row.iter().rposition(|&b| b).unwrap_or(first);
+        x0 = x0.min(cols.start + first);
+        x1 = x1.max(cols.start + last);
+        y0 = y0.min(j);
+        y1 = j;
+    }
+    (x0 != usize::MAX).then_some((x0, x1, y0, y1))
 }
 
-/// Close cracks narrower than about `2 r` cells: grow, then shrink.
 pub(crate) fn close(m: &[bool], g: Grid, r: usize) -> Vec<bool> {
     if r == 0 {
         return m.to_vec();
     }
-    morph(&morph(m, g, r, true), g, r, false)
+    let w = g.w();
+    if !m.iter().any(|&b| b) {
+        return vec![false; w * w];
+    }
+    // words to a row, and the bits of the last word beyond the row's end
+    let n = w.div_ceil(64);
+    let beyond: u64 = if w % 64 == 0 { 0 } else { !0u64 << (w % 64) };
+    let mut bits = vec![0u64; n * w];
+    for (row, out) in m.chunks_exact(w).zip(bits.chunks_exact_mut(n)) {
+        for (cells, word) in row.chunks(64).zip(out.iter_mut()) {
+            *word = cells.iter().rev().fold(0, |acc, &b| acc << 1 | b as u64);
+        }
+    }
+    let mut above = vec![0u64; n * w];
+    for grow in [true, false] {
+        let op = |a: u64, b: u64| if grow { a | b } else { a & b };
+        // (beyond the edge is clear for a grow, set for a shrink)
+        let edge: u64 = if grow { 0 } else { 1 };
+        for row in bits.chunks_exact_mut(n) {
+            for _ in 0..r {
+                if grow {
+                    row[n - 1] &= !beyond;
+                } else {
+                    row[n - 1] |= beyond;
+                }
+                let mut carry = edge;
+                for k in 0..n {
+                    let cur = row[k];
+                    let next = if k + 1 < n { row[k + 1] & 1 } else { edge };
+                    row[k] = op(op(cur, (cur << 1) | carry), (cur >> 1) | (next << 63));
+                    carry = cur >> 63;
+                }
+            }
+            row[n - 1] &= !beyond;
+        }
+        for _ in 0..r {
+            above.copy_from_slice(&bits);
+            for j in 0..w {
+                for k in 0..n {
+                    let mut v = above[j * n + k];
+                    if j > 0 {
+                        v = op(v, above[(j - 1) * n + k]);
+                    }
+                    if j + 1 < w {
+                        v = op(v, above[(j + 1) * n + k]);
+                    }
+                    bits[j * n + k] = v;
+                }
+            }
+        }
+    }
+    let mut out = vec![false; w * w];
+    for (row, words) in out.chunks_exact_mut(w).zip(bits.chunks_exact(n)) {
+        for (cells, &word) in row.chunks_mut(64).zip(words) {
+            if word == 0 {
+                continue;
+            }
+            for (i, c) in cells.iter_mut().enumerate() {
+                *c = word >> i & 1 != 0;
+            }
+        }
+    }
+    out
 }
 
 /// A closed outline in metres from the chunk's corner; `outer` rings run counter-clockwise
@@ -300,6 +356,15 @@ pub(crate) type Snap<'a> = &'a dyn Fn([f32; 2]) -> Option<[f32; 2]>;
 /// marching-squares outline), each point moved onto the true edge `snap` knows of, then
 /// simplified to `tol` metres: a straight kerb comes out as one straight line.
 pub(crate) fn outlines(m: &[bool], g: Grid, tol: f32, snap: Option<Snap>) -> Vec<Ring> {
+    rings_of(&traced(m, g, snap), g, tol)
+}
+
+pub(crate) struct Traced {
+    corners: Vec<Vec<[f32; 2]>>,
+    snapped: bool,
+}
+
+pub(crate) fn traced(m: &[bool], g: Grid, snap: Option<Snap>) -> Traced {
     let (w, n, margin) = (g.w(), g.n, g.margin);
     let inside = |i: isize, j: isize| -> bool {
         let lo = margin as isize;
@@ -308,13 +373,22 @@ pub(crate) fn outlines(m: &[bool], g: Grid, tol: f32, snap: Option<Snap>) -> Vec
     };
     #[allow(non_snake_case)]
     let V: usize = w + 1;
+    // (only the set cells' rectangle is walked, and only its corners get slots)
+    let Some((x0, x1, y0, y1)) = bounds(m, w, margin..margin + n, margin..margin + n) else {
+        return Traced {
+            corners: Vec::new(),
+            snapped: snap.is_some(),
+        };
+    };
+    let vw = x1 - x0 + 2;
+    let local = |v: usize| (v / V - y0) * vw + (v % V - x0);
     // up to two edges leave a corner (where two cells touch diagonally)
-    let mut out: Vec<[u32; 2]> = vec![[u32::MAX; 2]; V * V];
+    let mut out: Vec<[u32; 2]> = vec![[u32::MAX; 2]; vw * (y1 - y0 + 2)];
     let mut edges: Vec<(u32, u8)> = Vec::new();
     let push = |out: &mut Vec<[u32; 2]>, edges: &mut Vec<(u32, u8)>, from: usize, dir: u8| {
         let e = edges.len() as u32;
         edges.push((from as u32, dir));
-        let slot = &mut out[from];
+        let slot = &mut out[local(from)];
         if slot[0] == u32::MAX {
             slot[0] = e;
         } else {
@@ -322,8 +396,8 @@ pub(crate) fn outlines(m: &[bool], g: Grid, tol: f32, snap: Option<Snap>) -> Vec
         }
     };
     // directions: 0 +x, 1 +y, 2 -x, 3 -y
-    for j in margin..margin + n {
-        for i in margin..margin + n {
+    for j in y0..=y1 {
+        for i in x0..=x1 {
             if !m[j * w + i] {
                 continue;
             }
@@ -351,7 +425,7 @@ pub(crate) fn outlines(m: &[bool], g: Grid, tol: f32, snap: Option<Snap>) -> Vec
         }
     };
     let mut used = vec![false; edges.len()];
-    let mut rings = Vec::new();
+    let mut traced = Vec::new();
     let origin = margin as f32;
     for start in 0..edges.len() {
         if used[start] {
@@ -368,7 +442,7 @@ pub(crate) fn outlines(m: &[bool], g: Grid, tol: f32, snap: Option<Snap>) -> Vec
             let (tx, ty) = ((to % V) as f32, (to / V) as f32);
             corners.push([(fx + tx) * 0.5 - origin, (fy + ty) * 0.5 - origin]);
             // turn left where two ways leave a corner: cells touching at a corner stay apart
-            let slot = out[to];
+            let slot = out[local(to)];
             let left = (d + 1) % 4;
             let next = if slot[1] != u32::MAX {
                 if edges[slot[0] as usize].1 == left {
@@ -403,12 +477,25 @@ pub(crate) fn outlines(m: &[bool], g: Grid, tol: f32, snap: Option<Snap>) -> Vec
             }
             smooth_loose(&mut corners, &moved, edge);
         }
-        let pts: Vec<[f32; 2]> = simplify_ring(&corners, n as f32, tol / cell)
+        traced.push(corners);
+    }
+    Traced {
+        corners: traced,
+        snapped: snap.is_some(),
+    }
+}
+
+/// The traced outlines simplified to `tol` metres.
+pub(crate) fn rings_of(t: &Traced, g: Grid, tol: f32) -> Vec<Ring> {
+    let (n, cell) = (g.n, g.cell as f32);
+    let mut rings = Vec::new();
+    for corners in &t.corners {
+        let pts: Vec<[f32; 2]> = simplify_ring(corners, n as f32, tol / cell)
             .into_iter()
             .map(|p| [p[0] * cell, p[1] * cell])
             .collect();
         // (paint is thin: only outlines of surfaces lose their teeth)
-        let pts = if snap.is_some() {
+        let pts = if t.snapped {
             without_spikes(pts, n as f32 * cell)
         } else {
             pts
@@ -617,6 +704,39 @@ mod tests {
         square(&mut r, m + 31.0, m + 10.0, m + 50.0, m + 20.0, 0.0, 2);
         assert_eq!(outlines(&r.mask(2), COARSE, 0.05, None).len(), 2);
         assert_eq!(outlines(&close(&r.mask(2), COARSE, 1), COARSE, 0.05, None).len(), 1);
+    }
+
+    #[test]
+    fn closing_by_bits_is_closing_by_windows() {
+        // the window as it was: grown where any cell of the square is set, shrunk where all
+        // of it within the raster are
+        fn by_windows(m: &[bool], w: usize, r: usize) -> Vec<bool> {
+            let pass = |src: &[bool], grow: bool| -> Vec<bool> {
+                (0..w * w)
+                    .map(|k| {
+                        let (i, j) = (k % w, k / w);
+                        let mut cells = (j.saturating_sub(r)..=(j + r).min(w - 1)).flat_map(|y| {
+                            (i.saturating_sub(r)..=(i + r).min(w - 1)).map(move |x| src[y * w + x])
+                        });
+                        if grow { cells.any(|b| b) } else { cells.all(|b| b) }
+                    })
+                    .collect()
+            };
+            pass(&pass(m, true), false)
+        }
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let w = COARSE.w();
+        for (r, density) in [(1, 3), (2, 3), (1, 8), (2, 40)] {
+            // set cells scattered thinly or thickly, the edges of the raster among them
+            let m: Vec<bool> = (0..w * w).map(|_| next() % density == 0).collect();
+            assert!(close(&m, COARSE, r) == by_windows(&m, w, r), "r {r}, 1 in {density}");
+        }
     }
 
     #[test]
