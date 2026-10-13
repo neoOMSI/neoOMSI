@@ -218,6 +218,8 @@ pub struct AiCar {
     /// A train turned round as a whole (its last car leads now): what a trip's
     /// `[trainreverse]` is compared with (Omsi.exe's vehicle +0x4e1).
     pub consist_reversed: bool,
+    /// A `.zug` train (not a tram): asks for a level crossing from afar.
+    pub train: bool,
 }
 
 /// A free parking space beside a lane that a car means to park in: the space of parked car
@@ -1484,6 +1486,7 @@ impl Traffic {
         new.state.min_gap = old.state.min_gap;
         new.state.speed = 0.0;
         new.consist_reversed = reversed;
+        new.train = old.train;
         let old = std::mem::replace(&mut self.cars[ci], new);
         self.orphan_sounds.extend(old.sounds);
         for r in std::iter::once(old.render).chain(old.trailer_renders) {
@@ -3159,6 +3162,7 @@ impl Traffic {
             pull_out: 0.0,
             rail_trail: Default::default(),
             consist_reversed: false,
+            train: false,
             park: None,
             seed,
             scheme,
@@ -5703,8 +5707,7 @@ impl Traffic {
             c.request.iter_mut().for_each(|r| *r = false);
         }
         for c in &self.cars {
-            let rail = self.net.lanes[c.state.lane].kind == LaneKind::Rail;
-            if rail && !c.state.route.is_empty() {
+            if c.train && !c.state.route.is_empty() {
                 self.route_lanes_into(&c.state, RAIL_APPROACH + 10.0, &mut way_scratch);
             } else {
                 self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
@@ -5713,7 +5716,7 @@ impl Traffic {
                 if let Some((ci, li)) = self.net.lanes[l].traffic_light {
                     if let Some(ctl) = self.lights.get_mut(ci) {
                         let gap = d - c.state.front;
-                        if ctl.asked_from(li, gap, rail) && d > -self.net.lanes[l].length() {
+                        if ctl.asked_from(li, gap, c.train) && d > -self.net.lanes[l].length() {
                             if let Some(r) = ctl.request.get_mut(li) {
                                 *r = true;
                             }
@@ -8266,6 +8269,7 @@ impl Traffic {
             pull_out: 0.0,
             rail_trail: Default::default(),
             consist_reversed: false,
+            train: false,
             park: None,
         });
         self.cars.len() - 1

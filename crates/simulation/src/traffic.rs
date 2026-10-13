@@ -1906,9 +1906,9 @@ impl TrafficLightController {
 
     /// Whether a vehicle `gap` metres before light `i` asks for it: within its request
     /// distance (a train's `RAIL_APPROACH` by default, #294) or waiting at its line.
-    pub fn asked_from(&self, i: usize, gap: f32, rail: bool) -> bool {
+    pub fn asked_from(&self, i: usize, gap: f32, train: bool) -> bool {
         let set = self.approach.get(i).copied().flatten().filter(|&d| d > 0.0);
-        let dist = match (rail, set) {
+        let dist = match (train, set) {
             (true, None) => RAIL_APPROACH,
             _ => self.approach_dist(i),
         };
