@@ -1817,9 +1817,6 @@ pub struct TrafficLightController {
     /// A stop point the clock has just been let past without moving (it is not asked again
     /// at the same instant).
     passed: Option<usize>,
-    /// Backwards jumps already used in this cycle. They may extend a phase once, but must
-    /// not restart it again until the cycle wraps.
-    rewound: Vec<usize>,
     started: bool,
 }
 
@@ -1836,7 +1833,6 @@ impl TrafficLightController {
             request: vec![false; n],
             held: false,
             passed: None,
-            rewound: Vec::new(),
             started: false,
         }
     }
@@ -1910,19 +1906,10 @@ impl TrafficLightController {
         let cycle = self.cycle_len();
         let mut left = dt.max(0.0) as f64;
         self.held = false;
-        let advance_clock = |this: &mut Self, move_by: f64| {
-            if move_by > 0.0 && this.time + move_by >= cycle - 1e-6 {
-                this.rewound.clear();
-            }
-            this.time = (this.time + move_by).rem_euclid(cycle);
-        };
         // a handful of points per frame at most (a jump may land just before another one)
         for _ in 0..16 {
             let mut best: Option<(usize, f64)> = None;
             for (k, p) in self.stops.iter().enumerate() {
-                if self.rewound.contains(&k) {
-                    continue;
-                }
                 let d = (p.time as f64 - self.time).rem_euclid(cycle);
                 let d = if d > cycle - 1e-6 { 0.0 } else { d };
                 if d < 1e-6 && self.passed == Some(k) {
@@ -1936,13 +1923,13 @@ impl TrafficLightController {
                 if left > 0.0 {
                     self.passed = None;
                 }
-                advance_clock(self, left);
+                self.time = (self.time + left).rem_euclid(cycle);
                 return;
             };
             if d > 1e-6 {
                 self.passed = None;
             }
-            advance_clock(self, d);
+            self.time = (self.time + d).rem_euclid(cycle);
             left -= d;
             let p = self.stops[k];
             let asked = self.request.get(p.light).copied().unwrap_or(false);
@@ -1960,11 +1947,7 @@ impl TrafficLightController {
             match p.jump_to {
                 Some(to) => {
                     let target = (to as f64).rem_euclid(cycle);
-                    if to <= p.time + 1e-6 {
-                        if !self.rewound.contains(&k) {
-                            self.rewound.push(k);
-                        }
-                    }
+                    // A backwards jump may repeat as long as its request condition holds
                     self.time = target;
                     self.passed = Some(k);
                     if left <= 0.0 {
@@ -3413,9 +3396,62 @@ mod tests {
     }
 
     #[test]
-    fn a_backwards_jump_extends_green_once_per_cycle() {
-        // Bowdenham crossings use a rewind to time zero to extend a green. It must not
-        // restart the phase again when the replay reaches that source time.
+    fn a_backwards_jump_repeats_until_its_condition_changes() {
+        for if_request in [false, true] {
+            let mut c = TrafficLightController::from_program(
+                vec![(vec![(0, 3.0), (6, 7.0), (9, 3.0), (0, 7.0)], None)],
+                Some(20.0),
+                &[],
+                &[[0.0, 10.0, if_request as u8 as f32, 3.0]],
+            );
+            c.start(9.5);
+            c.request[0] = !if_request;
+            c.advance(0.5);
+            assert!((c.time - 3.0).abs() < 1e-6, "first rewind: {}", c.time);
+            for _ in 0..3 {
+                c.advance(7.0);
+                assert!((c.time - 3.0).abs() < 1e-6, "repeated rewind: {}", c.time);
+                assert_eq!(c.state(0), 6);
+            }
+            c.request[0] = if_request;
+            c.advance(8.0);
+            assert!((c.time - 11.0).abs() < 1e-6);
+            assert_eq!(c.state(0), 9, "the phase ends when the condition clears");
+        }
+    }
+
+    #[test]
+    fn backwards_jumps_use_the_remaining_frame_time() {
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(0, 3.0), (6, 7.0), (9, 3.0), (0, 7.0)], None)],
+            Some(20.0),
+            &[],
+            &[[0.0, 10.0, 1.0, 3.0]],
+        );
+        c.start(9.5);
+        c.advance(22.0);
+        assert!((c.time - 3.5).abs() < 1e-6, "{}", c.time);
+    }
+
+    #[test]
+    fn a_jump_to_itself_does_not_prevent_clock_progress() {
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(6, 20.0)], None)],
+            Some(20.0),
+            &[],
+            &[[0.0, 10.0, 1.0, 10.0]],
+        );
+        c.start(9.5);
+        c.advance(0.5);
+        assert!((c.time - 10.0).abs() < 1e-6);
+        c.advance(0.0);
+        c.advance(0.5);
+        assert!((c.time - 10.5).abs() < 1e-6, "{}", c.time);
+    }
+
+    #[test]
+    fn a_backwards_jump_to_zero_waits_for_a_request() {
+        // A rewnd to zero keeps the main road green until the side road asks
         let mut c = TrafficLightController::from_program(
             vec![
                 (vec![(6, 15.0), (9, 3.0), (0, 8.0), (8, 5.0)], None),
@@ -3426,18 +3462,13 @@ mod tests {
             &[[1.0, 15.0, 1.0, 0.0]],
         );
         c.time = 14.9;
-        let mut left_green = false;
         for _ in 0..500 {
             c.advance(0.1);
-            left_green |= matches!(
-                TrafficLightController::aspect(c.state(0)),
-                Aspect::Yellow | Aspect::Red
-            );
+            assert_eq!(c.state(0), 6, "main road stays green without a request");
         }
-        assert!(
-            left_green,
-            "the extended green still reached yellow and red"
-        );
+        c.request[1] = true;
+        c.advance(19.0 - c.time as f32);
+        assert_eq!(c.state(1), 6, "the side road receives green after requesting");
     }
 
     #[test]
