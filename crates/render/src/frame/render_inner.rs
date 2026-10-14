@@ -1178,12 +1178,21 @@ impl Renderer {
             );
         }
         let mut prepass_batches: Vec<Batch> = Vec::new();
-        let prepass_job = || -> (Vec<u32>, Vec<Batch>) {
+        // Batches from `prepass_split` on are vehicles drawn in model order, kept out of the
+        // main pass's depth: a wheel hidden by the shadow blob took the ground's place (#292).
+        let mut prepass_split = 0;
+        let prepass_job = || -> (Vec<u32>, Vec<Batch>, usize) {
             let mut items: Vec<DrawItem> = Vec::new();
+            let mut ordered_items: Vec<DrawItem> = Vec::new();
             let mut list: Vec<u32> = Vec::new();
             let mut batches: Vec<Batch> = Vec::new();
             for &(i, _, _) in &visible {
                 let inst = &scene.instances[i];
+                let target = if inst.ordered {
+                    &mut ordered_items
+                } else {
+                    &mut items
+                };
                 let cull = culls_back_faces(scene, inst);
                 for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
                     let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
@@ -1194,7 +1203,7 @@ impl Renderer {
                     }
                     if let Some(pre_kind) = depth_prepass_kind(kind, mat, inst.presurface) {
                         let (material, look) = depth_only_material(pre_kind, mat_id, mat.look);
-                        items.push(DrawItem {
+                        target.push(DrawItem {
                             pipe: pre_kind * 2 + cull as u8,
                             mesh: inst.mesh as u32,
                             range: ri as u32,
@@ -1206,7 +1215,9 @@ impl Renderer {
                 }
             }
             batch_items(scene, &mut items, true, &mut list, &mut batches);
-            (list, batches)
+            let split = batches.len();
+            batch_items(scene, &mut ordered_items, true, &mut list, &mut batches);
+            (list, batches, split)
         };
         let mut main_batches: Vec<Batch> = Vec::new();
         let mut late_batches: Vec<Batch> = Vec::new();
@@ -1214,7 +1225,7 @@ impl Renderer {
         let has_presurface = visible
             .iter()
             .any(|&(i, _, _)| scene.instances[i].presurface);
-        let mut prepass_found: Option<(Vec<u32>, Vec<Batch>)> = None;
+        let mut prepass_found: Option<(Vec<u32>, Vec<Batch>, usize)> = None;
         let pool = self.encoding_pool.as_deref();
         in_scope(pool, |scope| {
             if prepass_on {
@@ -1420,13 +1431,14 @@ impl Renderer {
                 batch_items(scene, &mut late_items, false, &mut list, &mut late_batches);
             }
         });
-        if let Some((pre_list, mut pre_batches)) = prepass_found {
+        if let Some((pre_list, mut pre_batches, split)) = prepass_found {
             let offset = list.len() as u32;
             for b in &mut pre_batches {
                 b.instances = b.instances.start + offset..b.instances.end + offset;
             }
             list.extend(pre_list);
             prepass_batches = pre_batches;
+            prepass_split = split;
         }
         // (the shadow casters' entries after the passes' own: the main pass's batches keep
         // their places in the list while only the shadows change, and its bundles are kept)
@@ -1676,8 +1688,12 @@ impl Renderer {
         }
         drop(spot_pass);
         let single = self.options.msaa <= 1;
-        let share_depth =
-            prepass_on && single && self.ao.is_some() && !has_presurface && !puddles_wanted;
+        let share_depth = prepass_on
+            && single
+            && self.ao.is_some()
+            && !has_presurface
+            && !puddles_wanted
+            && prepass_split == prepass_batches.len();
         // A shared depth gets glass drawn into it, so the glass snapshot reads a copy.
         if glass_on && share_depth {
             self.prepare_glass_depth(width, height);
@@ -1929,7 +1945,7 @@ impl Renderer {
                 encode_batches_filtered(
                     &mut pass,
                     scene,
-                    &prepass_batches,
+                    &prepass_batches[..prepass_split],
                     |batch| batch.pipe / 2 != PIPE_ALPHA_TEST,
                     |pipe| &pipes[pipe as usize],
                 );

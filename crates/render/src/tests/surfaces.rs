@@ -1380,3 +1380,120 @@ fn no_fog_down_the_saloon_of_an_articulated_bus() {
         "no fog under the ceiling: {clear} -> {low_boxes}"
     );
 }
+
+#[test]
+#[ignore = "requires a graphics adapter; run with --ignored on a GPU host"]
+fn an_ordered_vehicle_leaves_the_ground_behind_its_hidden_parts() {
+    ordered_vehicle_over_the_ground(4);
+}
+
+#[test]
+#[ignore = "requires a graphics adapter; run with --ignored on a GPU host"]
+fn an_ordered_vehicle_leaves_the_ground_behind_its_hidden_parts_without_msaa() {
+    ordered_vehicle_over_the_ground(1);
+}
+
+/// One renderer per test: the pipeline cache belongs to the first device.
+fn ordered_vehicle_over_the_ground(msaa: u32) {
+    // A shadow blob (blended, writing depth) drawn before a wheel behind it: the ground
+    // must still show through the blob (#292).
+    fn quad(renderer: &Renderer, scene: &mut Scene, y: f32, half: f32) -> MeshId {
+        renderer.add_mesh(
+            scene,
+            &MeshData {
+                positions: vec![
+                    Vec3::new(-half, y, -half),
+                    Vec3::new(half, y, -half),
+                    Vec3::new(half, y, half),
+                    Vec3::new(-half, y, half),
+                ],
+                normals: vec![-Vec3::Y; 4],
+                uvs: vec![glam::Vec2::ZERO; 4],
+                ranges: vec![(0, 6, 0)],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                one_sided: false,
+            },
+        )
+    }
+    let camera = Camera {
+        position: DVec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        roll: 0.0,
+        fov_deg: 90.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa,
+            ssao: true,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    let mut scene = renderer.new_scene();
+    let green = renderer.add_material(
+        &mut scene,
+        None,
+        AlphaMode::Opaque,
+        [0.0, 1.0, 0.0, 1.0],
+        true,
+    );
+    let red = renderer.add_material(
+        &mut scene,
+        None,
+        AlphaMode::Opaque,
+        [1.0, 0.0, 0.0, 1.0],
+        true,
+    );
+    let texture = renderer.add_texture(
+        &mut scene,
+        &::texture::Image {
+            width: 1,
+            height: 1,
+            rgba: vec![255, 255, 255, 0],
+            has_alpha: true,
+        },
+        false,
+    );
+    let blob_material =
+        renderer.add_material(&mut scene, Some(texture), AlphaMode::Blend, [1.0; 4], true);
+    let ground = quad(&renderer, &mut scene, 6.0, 10.0);
+    renderer.add_instance(&mut scene, ground, DVec3::ZERO, Mat4::IDENTITY, vec![green]);
+    let blob = quad(&renderer, &mut scene, 3.0, 1.5);
+    let blob = renderer.add_instance(
+        &mut scene,
+        blob,
+        DVec3::ZERO,
+        Mat4::IDENTITY,
+        vec![blob_material],
+    );
+    renderer.set_ordered(&mut scene, blob, 0);
+    let wheel = quad(&renderer, &mut scene, 4.0, 0.5);
+    let wheel = renderer.add_instance(&mut scene, wheel, DVec3::ZERO, Mat4::IDENTITY, vec![red]);
+    renderer.set_ordered(&mut scene, wheel, 1);
+    let lighting = Lighting {
+        enhanced: true,
+        shadows: false,
+        fog_density: 0.0,
+        ..Default::default()
+    };
+    let rgba = renderer
+        .render_to_image(&mut scene, 64, 64, &camera, &lighting)
+        .unwrap();
+    let centre: [u8; 3] = rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3]
+        .try_into()
+        .unwrap();
+    assert!(
+        centre[1] > centre[0] + 40 && centre[1] > centre[2] + 40,
+        "the ground shows behind the blob: {centre:?}; msaa {msaa}"
+    );
+}
