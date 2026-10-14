@@ -1102,6 +1102,24 @@ fn the_boards_show_when_a_bus_leaves() {
     assert_eq!(leaves(&s, 21.0 * 60.0, &standing), vec![21.0 * 60.0]);
 }
 
+/// #393: the boards' two hours count to when a bus leaves.
+#[test]
+fn the_boards_look_two_hours_ahead_by_departure() {
+    let mut s = saturday_after_midnight(&[(3.0 * 3600.0, SATURDAY)]);
+    // at stop 2 from 3:10:00 to 3:10:30
+    s.times[0][0].stations[1] = (600.0, 630.0);
+    let leaves = |now: f64| -> Vec<f64> {
+        s.stop_list(2, now, &HashMap::new(), None)
+            .iter()
+            .map(|v| v.0)
+            .collect()
+    };
+    let at_3_10_30 = 3.0 * 3600.0 + 10.0 * 60.0 + 30.0;
+    // it arrives within two hours, but leaves after
+    assert!(leaves(at_3_10_30 - BOARD_AHEAD - 15.0).is_empty());
+    assert_eq!(leaves(at_3_10_30 - BOARD_AHEAD), vec![at_3_10_30]);
+}
+
 #[test]
 fn the_day_before_new_year() {
     let mut c = ::simulation::SimClock {

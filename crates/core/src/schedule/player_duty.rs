@@ -471,8 +471,8 @@ impl Schedule {
                 for base in bases {
                     // on the board's clock
                     let start = base - self.day_base + d.time;
-                    let (arrive, leave) = (start + tt.stations[k].0, start + tt.stations[k].1);
-                    if arrive > now + BOARD_AHEAD || leave < now - BOARD_AHEAD {
+                    let leave = start + tt.stations[k].1;
+                    if leave > now + BOARD_AHEAD || leave < now - BOARD_AHEAD {
                         continue;
                     }
                     let leaves = match on_road.get(&i).filter(|_| base == d.base) {

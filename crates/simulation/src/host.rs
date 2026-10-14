@@ -165,7 +165,8 @@ pub struct Arrival {
 
 impl Arrival {
     /// `due` for a bus leaving at `at` (seconds of the day) as of `now`, plus 0.1 s: a display
-    /// adding it to the time of day in single precision shows 15:43 for 15:44:00 sharp.
+    /// adding it to the time of day in single precision shows 15:43 for 15:44:00 sharp. A
+    /// countdown comparing it with whole seconds (`< 30`) so crosses its mark 0.1 s late.
     pub fn due_at(at: f64, now: f64) -> f32 {
         (at - now + 0.1) as f32
     }
