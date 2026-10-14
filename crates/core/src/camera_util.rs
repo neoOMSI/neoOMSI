@@ -313,7 +313,24 @@ fn reverse_z_frustum(left: f32, right: f32, bottom: f32, top: f32, near: f32, fa
 
 #[cfg(test)]
 mod tests {
-    use super::{reverse_z_frustum, triple_screen_projection_for_view};
+    use super::{reflected_angles, reverse_z_frustum, triple_screen_projection_for_view};
+    use glam::Vec3;
+
+    #[test]
+    fn mirror_pitch_is_the_rise_over_the_level_length() {
+        // a face turned straight back at a level ray: the camera looks straight back
+        let (yaw, pitch) = reflected_angles(Vec3::Y, -Vec3::Y);
+        assert!((yaw.abs() - 180.0).abs() < 1e-3, "yaw {yaw}");
+        assert!(pitch.abs() < 1e-3, "pitch {pitch}");
+        // a reflection 30 degrees down: asin(tan 30) = 35.3 degrees, not 30
+        let (s, c) = 15f32.to_radians().sin_cos();
+        let (_, pitch) = reflected_angles(Vec3::Y, Vec3::new(0.0, -c, -s));
+        assert!((pitch + 35.26).abs() < 0.05, "pitch {pitch}");
+        // 45 degrees down and more: straight down
+        let (s, c) = 30f32.to_radians().sin_cos();
+        let (_, pitch) = reflected_angles(Vec3::Y, Vec3::new(0.0, -c, -s));
+        assert!((pitch + 90.0).abs() < 1e-3, "pitch {pitch}");
+    }
 
     #[test]
     fn triple_screen_projection_follows_the_active_camera_mode() {
@@ -536,11 +553,11 @@ fn mirror_in_view(eye: DVec3, radius: f32, view: &(Camera, f32)) -> bool {
 /// strip of the bus at its edge and hardly any of the lane beside it.
 const MIRROR_ASPECT: f32 = 1.6;
 
-/// A mirror's camera as Omsi.exe aims it, every frame (0x6f6468 -> 0x7ed0e8): the yaw and
+/// A mirror's camera as Omsi.exe aims it, every frame (0x6f697f -> 0x7ed3d4): the yaw and
 /// pitch of an `[add_camera_reflexion]` are not where it looks but which way the mirror's
 /// face is turned - (cos p sin y, cos p cos y, sin p) in the vehicle's frame (0x7edfd0); the
 /// ray from the eye of the view being drawn to the mirror is reflected in that face, and the
-/// camera looks along the reflection (yaw 90 - atan2(forward, right) and its elevation) from
+/// camera looks along the reflection (see `reflected_angles` for its yaw and pitch) from
 /// the mirror - what a mirror shows whoever looks into it. `off` is the player's own turn of
 /// the mirror (Ctrl+Alt+arrows), which turns the face. (The yaw was turned round instead,
 /// which happened to fit a mirror facing straight back at the driver and no other: the left
@@ -573,12 +590,23 @@ pub(crate) fn mirror_view(
         (c.pitch + off[1]).to_radians(),
     );
     let m = Vec3::new(p.cos() * y.sin(), p.cos() * y.cos(), p.sin());
-    let r = d - m * (2.0 * d.dot(m));
+    let (yaw, pitch) = reflected_angles(d, m);
     legacy_vehicle::Camera {
-        yaw: r.x.atan2(r.y).to_degrees(),
-        pitch: r.z.clamp(-1.0, 1.0).asin().to_degrees(),
+        yaw,
+        pitch,
         ..c.clone()
     }
+}
+
+fn reflected_angles(d: Vec3, m: Vec3) -> (f32, f32) {
+    let r = d - m * (2.0 * d.dot(m));
+    let level = r.x.hypot(r.y);
+    let rise = if level > 0.0 {
+        (r.z / level).clamp(-1.0, 1.0)
+    } else {
+        r.z.signum()
+    };
+    (r.x.atan2(r.y).to_degrees(), rise.asin().to_degrees())
 }
 
 pub(crate) fn publish_camera_info(p: &Player, view: Option<(Camera, f32)>) {
