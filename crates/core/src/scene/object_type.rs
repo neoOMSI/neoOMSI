@@ -270,7 +270,7 @@ pub struct StopBoards {
     /// the scenery scripts then keep their own).
     pub clock: Option<::simulation::SimClock>,
     /// Per bus stop (map object id): the buses due, soonest first, as (line, terminus,
-    /// expected arrival in seconds of the day).
+    /// expected departure in seconds of the day).
     pub by_stop: HashMap<i64, Vec<(String, String, f64)>>,
     /// The stops whose displays asked in the last scenery update.
     pub wanted: Vec<i64>,

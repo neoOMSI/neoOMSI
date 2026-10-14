@@ -1063,6 +1063,45 @@ fn the_boards_show_the_buses_of_the_night_after_midnight() {
     assert_eq!(at(3), vec![now, 42.0 * 60.0]);
 }
 
+/// #393: the boards show when a bus leaves, not when it arrives.
+#[test]
+fn the_boards_show_when_a_bus_leaves() {
+    let mut s = saturday_after_midnight(&[(10.0 * 60.0, SATURDAY)]);
+    // at stop 2 from 0:20:00 to 0:20:30
+    s.times[0][0].stations[1] = (600.0, 630.0);
+    let leaves = |s: &Schedule, now: f64, on_road: &HashMap<usize, OnRoad>| -> Vec<f64> {
+        s.stop_list(2, now, on_road, None)
+            .iter()
+            .map(|v| v.0)
+            .collect()
+    };
+    let at_20_30 = 20.0 * 60.0 + 30.0;
+    // not on the road yet
+    assert_eq!(leaves(&s, 12.0 * 60.0, &HashMap::new()), vec![at_20_30]);
+    // on its way, two minutes late
+    s.departures[0].spawned = true;
+    let late = HashMap::from([(
+        0,
+        OnRoad {
+            next: Some(at_20_30),
+            dwelling: false,
+            late: 120.0,
+        },
+    )]);
+    assert_eq!(leaves(&s, 12.0 * 60.0, &late), vec![at_20_30 + 120.0]);
+    // standing there
+    let standing = HashMap::from([(
+        0,
+        OnRoad {
+            next: Some(at_20_30),
+            dwelling: true,
+            late: 0.0,
+        },
+    )]);
+    assert_eq!(leaves(&s, 20.0 * 60.0 + 10.0, &standing), vec![at_20_30]);
+    assert_eq!(leaves(&s, 21.0 * 60.0, &standing), vec![21.0 * 60.0]);
+}
+
 #[test]
 fn the_day_before_new_year() {
     let mut c = ::simulation::SimClock {

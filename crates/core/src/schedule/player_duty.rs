@@ -445,7 +445,7 @@ impl Schedule {
     }
 
     /// The buses due at one bus stop (map object id) within the next two hours, unsorted, as
-    /// (expected arrival, line, terminus, time it stands at the stop), all in seconds of the day:
+    /// (expected departure, line, terminus), in seconds of the day:
     /// the timetable buses with the delay they run with, and the player's. The terminus is the
     /// trip's own, as OMSI hands it to the displays.
     pub(super) fn stop_list(
@@ -454,8 +454,8 @@ impl Schedule {
         now: f64,
         on_road: &HashMap<usize, OnRoad>,
         duty: Option<&PlayerDuty>,
-    ) -> Vec<(f64, String, String, f64)> {
-        let mut list: Vec<(f64, String, String, f64)> = Vec::new();
+    ) -> Vec<(f64, String, String)> {
+        let mut list: Vec<(f64, String, String)> = Vec::new();
         for &(trip, k) in self.visits.get(&stop).map(|v| v.as_slice()).unwrap_or(&[]) {
             for &i in &self.trip_departures[trip] {
                 let d = &self.departures[i];
@@ -475,13 +475,15 @@ impl Schedule {
                     if arrive > now + BOARD_AHEAD || leave < now - BOARD_AHEAD {
                         continue;
                     }
-                    let expected = match on_road.get(&i).filter(|_| base == d.base) {
+                    let leaves = match on_road.get(&i).filter(|_| base == d.base) {
                         Some(r) => match r.next {
                             // the stations before the bus's next stop are behind it
                             Some(next) if leave < next - 0.5 => continue,
                             None => continue,
                             // standing at this stop
-                            Some(next) if r.dwelling && (leave - next).abs() < 0.5 => now,
+                            Some(next) if r.dwelling && (leave - next).abs() < 0.5 => {
+                                leave.max(now)
+                            }
                             Some(next) => {
                                 // on its way: at least as late as it left its last stop, and
                                 // later still once its next stop is overdue
@@ -496,18 +498,17 @@ impl Schedule {
                                 } else {
                                     r.late.max(now - next_arrive)
                                 };
-                                (arrive + late).max(now)
+                                (leave + late).max(now)
                             }
                         },
                         // not on the road (still to come, or where no tiles are loaded): on time
                         None if leave < now => continue,
-                        None => arrive.max(now),
+                        None => leave,
                     };
                     list.push((
-                        expected,
+                        leaves,
                         bus_line(&self.data.trips[d.trip]),
                         self.data.trips[d.trip].terminus.clone(),
-                        (leave - arrive).max(0.0),
                     ));
                 }
             }
@@ -521,8 +522,9 @@ impl Schedule {
 
     /// Make the departure boards of the stops whose displays are near
     /// (`World::timetable_boards`), and hand the scenery the time of day. The boards are
-    /// made at most once a second: the buses due at each stop in the next two hours,
-    /// soonest first - the timetable buses with the delay they run with, and the player's.
+    /// made at most once a second: the buses due at each stop in the next two hours by
+    /// departure (as OMSI shows them; #393), soonest first - the timetable buses with the
+    /// delay they run with, and the player's.
     pub fn update_boards(
         &mut self,
         world: &World,
@@ -585,14 +587,11 @@ impl Schedule {
                     "board of stop {stop} at {:.0} s: {:?}",
                     now,
                     list.iter()
-                        .map(|(t, l, d, _)| format!("{l} {d} in {:.1} min", (t - now) / 60.0))
+                        .map(|(t, l, d)| format!("{l} {d} in {:.1} min", (t - now) / 60.0))
                         .collect::<Vec<_>>()
                 );
             }
-            made.insert(
-                stop,
-                list.into_iter().map(|(t, l, d, _)| (l, d, t)).collect(),
-            );
+            made.insert(stop, list.into_iter().map(|(t, l, d)| (l, d, t)).collect());
         }
         boards.by_stop = made;
         // the departures the pages asked for by stop name (`omsi.getDepartures`): the next two
@@ -610,8 +609,7 @@ impl Schedule {
             ids.dedup();
             let mut list: Vec<(f64, String, String)> = Vec::new();
             for id in ids {
-                for (expected, line, terminus, dwell) in self.stop_list(id, now, &on_road, duty) {
-                    let leaves = expected + dwell;
+                for (leaves, line, terminus) in self.stop_list(id, now, &on_road, duty) {
                     if leaves <= now + BOARD_AHEAD {
                         list.push((leaves, line, terminus));
                     }

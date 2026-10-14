@@ -289,16 +289,10 @@ impl PlayerDuty {
 
     /// The player's bus at one stop for `Schedule::stop_list`, in clock time: a trip at
     /// 24:22 is the board's 0:22.
-    pub(super) fn board_visits(&self, stop: i64, day_time: f64) -> Vec<(f64, String, String, f64)> {
+    pub(super) fn board_visits(&self, stop: i64, day_time: f64) -> Vec<(f64, String, String)> {
         let now = self.duty_time(day_time);
-        // a trip not begun leaves on time at the earliest (the bus waits at its
-        // first stop), one under way arrives as early or late as it runs
-        let delay = self.delay(day_time);
-        let lateness = if self.left_late.is_some() || self.at_stop {
-            delay
-        } else {
-            delay.max(0.0)
-        };
+        // it leaves on time at the earliest, or as late as it runs
+        let late = self.delay(day_time).max(0.0);
         let mut list = Vec::new();
         for (ti, trip) in self.trips.iter().enumerate().skip(self.trip_index) {
             if trip.departure > now + BOARD_AHEAD {
@@ -311,21 +305,18 @@ impl PlayerDuty {
                 .filter(|(_, s)| s.object_id == stop && s.stops)
             {
                 let current = ti == self.trip_index;
-                let expected =
+                let leaves =
                     if current && (k < self.next_stop || self.done && k + 1 < trip.stops.len()) {
                         continue;
                     } else if current && k == self.next_stop && self.at_stop {
-                        now
-                    } else if current {
-                        (s.arr + lateness).max(now)
+                        s.dep.max(now)
                     } else {
-                        (s.arr + delay.max(0.0)).max(now)
+                        (s.dep + late).max(now)
                     };
                 list.push((
-                    expected - now + day_time,
+                    leaves - now + day_time,
                     trip.line.trim().to_string(),
                     trip.terminus.clone(),
-                    (s.dep - s.arr).max(0.0),
                 ));
             }
         }

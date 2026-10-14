@@ -385,7 +385,7 @@ impl World {
                             .map(|(line, terminus, t)| ::simulation::host::Arrival {
                                 line: line.clone(),
                                 terminus: terminus.clone(),
-                                due: (t - now) as f32,
+                                due: ::simulation::host::Arrival::due_at(*t, now),
                             })
                             .collect()
                     })

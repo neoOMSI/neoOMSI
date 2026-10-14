@@ -158,9 +158,17 @@ pub struct VehicleHost {
 pub struct Arrival {
     pub line: String,
     pub terminus: String,
-    /// Seconds until it arrives: its timetable time plus its delay, less the time of day.
-    /// Negative once it is due and not there yet (the stock display shows 0 and blinks).
+    /// Seconds until it leaves (a departure, despite the name; #393). Negative once it is due
+    /// and not there yet (the stock display shows 0 and blinks).
     pub due: f32,
+}
+
+impl Arrival {
+    /// `due` for a bus leaving at `at` (seconds of the day) as of `now`, plus 0.1 s: a display
+    /// adding it to the time of day in single precision shows 15:43 for 15:44:00 sharp.
+    pub fn due_at(at: f64, now: f64) -> f32 {
+        (at - now + 0.1) as f32
+    }
 }
 
 /// `STLoadTex`: a destination display loads its bitmap every time it changes, in every bus
@@ -1247,6 +1255,64 @@ mod tests {
             read(&mut vm, &mut st, &mut host),
             (String::new(), String::new(), [0.0, 0.0, -1.0, -1.0, 0.0])
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// #393: a clock display (like Gerolstein's DFI) shows a departure on the full minute as
+    /// that minute, not the one before.
+    #[test]
+    fn a_clock_display_shows_a_departure_on_the_minute() {
+        let dir =
+            std::env::temp_dir().join(format!("omsi_host_arrival_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("dfi.osc");
+        std::fs::write(
+            &script,
+            concat!(
+                "{trigger:read}\n",
+                "(L.S.Time) 0 (M.V.GetArrBusTimeDiff) + 3600 / s0 trunc s1 \"02\" $IntToStrEnh ",
+                "l0 l1 - 60 * \"02\" $IntToStrEnh $+ (S.$.hhmm)\n",
+                "{end}\n",
+            ),
+        )
+        .unwrap();
+        let strings = dir.join("strings.txt");
+        std::fs::write(&strings, "hhmm\n").unwrap();
+        let p = compile(&CompileInput {
+            stringvarlists: vec![strings],
+            scripts: vec![script],
+            ..Default::default()
+        });
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut st = State::new(&p);
+        let mut vm = Vm::new();
+        let mut shown = |now: f64, at: f64| {
+            let mut host = VehicleHost::new(SimClock {
+                time: now,
+                ..Default::default()
+            });
+            host.arrivals = vec![Arrival {
+                due: Arrival::due_at(at, now),
+                ..Default::default()
+            }];
+            assert!(vm.run_trigger(&p, "read", &mut st, &mut host));
+            st.str_vars[p.str_var("hhmm").unwrap() as usize].clone()
+        };
+        let hm = |h: f64, m: f64| h * 3600.0 + m * 60.0;
+        for now in [
+            hm(15.0, 30.0),
+            hm(15.0, 30.0) + 17.3,
+            hm(15.0, 31.0) + 0.002,
+        ] {
+            assert_eq!(shown(now, hm(15.0, 44.0)), "1544");
+            assert_eq!(shown(now, hm(16.0, 17.0)), "1617");
+            assert_eq!(shown(now, hm(15.0, 34.0)), "1534");
+            assert_eq!(shown(now, hm(15.0, 43.0)), "1543");
+            // still this minute
+            assert_eq!(shown(now, hm(15.0, 43.0) + 59.5), "1543");
+        }
+        // single precision is coarsest late in the day
+        assert_eq!(shown(hm(23.0, 50.0) + 0.37, hm(23.0, 59.0)), "2359");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
