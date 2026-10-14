@@ -50,7 +50,7 @@ pub fn set_ai_destination(
     terminus: &str,
     stops: &[&str],
 ) {
-    set_destination(v, hof, line, terminus, stops, false)
+    set_destination(v, hof, line, terminus, stops)
 }
 
 /// The same for the player's bus, done the driver's way: a typing job
@@ -118,7 +118,7 @@ pub fn set_player_destination_directly(
     terminus: &str,
     stops: &[&str],
 ) {
-    set_destination(v, hof, line, terminus, stops, true)
+    set_destination(v, hof, line, terminus, stops)
 }
 
 /// What the IBIS shows once a driver has typed a trip's codes, standing at the timetable's
@@ -519,7 +519,6 @@ pub(super) fn set_destination(
     line: &str,
     terminus: &str,
     stops: &[&str],
-    direct_player: bool,
 ) {
     let Some(hof) = hof else { return };
     let terminus = terminus.trim();
@@ -556,18 +555,10 @@ pub(super) fn set_destination(
     } else {
         line_num
     };
-    // the original's way: SetLineTo + AI_target_index, then the ai_scheduled_settarget trigger
+    // The destination state must be complete before the scheduled-target callback runs.
+    // Matrix scripts (including Krueger++) use that callback to interpret the HOF's
+    // additional terminus strings, while other content reads the regular IBIS variables.
     set_line_to(v, line);
-    if !direct_player {
-        v.set_var("AI_target_index", ti as f32);
-        if v.trigger("ai_scheduled_settarget") {
-            v.set_var(
-                "IBIS_RouteIndex",
-                route_index.map(|r| r as f32).unwrap_or(-1.0),
-            );
-            return;
-        }
-    }
     v.set_var("IBIS_LinieKurs", line_num);
     v.set_var("IBIS_Linie_Complex", line_code as f32);
     v.set_var("IBIS_Linie_Suffix", line_suffix);
@@ -601,10 +592,8 @@ pub(super) fn set_destination(
         hof.termini[ti].texture_id.clone(),
     );
     // A destination picked from the player's menu is not typed through the vehicle's
-    // electronics, so complete the normal IBIS state first.  The scheduled-target script
-    // can then consume that state for content which uses the callback to update its display.
-    if direct_player {
-        v.set_var("AI_target_index", ti as f32);
-        v.trigger("ai_scheduled_settarget");
-    }
+    // electronics. Both it and an AI duty therefore notify scripts only after the normal
+    // IBIS state is ready, so the callback sees the same depot and display information.
+    v.set_var("AI_target_index", ti as f32);
+    v.trigger("ai_scheduled_settarget");
 }

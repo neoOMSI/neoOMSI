@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn direct_player_destination_runs_the_scheduled_target_trigger() {
+fn scheduled_target_trigger_sees_destination_state_for_ai_and_direct_player() {
     let dir = std::env::temp_dir().join(format!(
         "omsi-direct-destination-trigger-{}-{:?}",
         std::process::id(),
@@ -18,17 +18,16 @@ fn direct_player_destination_runs_the_scheduled_target_trigger() {
     std::fs::write(dir.join("model.cfg"), "").unwrap();
     std::fs::write(
         dir.join("vars.txt"),
-        "destination_triggered\nAI_target_index\nIBIS_LinieKurs\nIBIS_Linie_Complex\nIBIS_Linie_Suffix\nIBIS_TerminusIndex\nIBIS_TerminusCode\nIBIS_RouteIndex\nIBIS_mode\n",
+        "destination_triggered\nline_triggered\ndirective_triggered\nAI_target_index\nIBIS_LinieKurs\nIBIS_Linie_Complex\nIBIS_Linie_Suffix\nIBIS_TerminusIndex\nIBIS_TerminusCode\nIBIS_RouteIndex\nIBIS_mode\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("main.osc"),
-        "{trigger:ai_scheduled_settarget}\n(L.L.IBIS_TerminusCode) (S.L.destination_triggered)\n{end}\n",
+        "{trigger:ai_scheduled_settarget}\n(L.L.IBIS_TerminusCode) (S.L.destination_triggered)\n(L.L.IBIS_Linie_Complex) (S.L.line_triggered)\n(L.L.AI_target_index) 1 (M.V.GetTerminusString) \"Terminus*L[1]\" $= (S.L.directive_triggered)\n{end}\n",
     )
     .unwrap();
-    let ty = std::sync::Arc::new(
-        ::simulation::VehicleType::load(&dir, &dir.join("test.bus")).unwrap(),
-    );
+    let ty =
+        std::sync::Arc::new(::simulation::VehicleType::load(&dir, &dir.join("test.bus")).unwrap());
     let mut vehicle =
         ::simulation::VehicleInstance::new(ty, ::simulation::VehicleHost::new(Default::default()));
     let hof = ::legacy_vehicle::Hof {
@@ -38,27 +37,36 @@ fn direct_player_destination_runs_the_scheduled_target_trigger() {
                 texture_id: "Other".into(),
                 terminus_stop: Some("Other".into()),
                 all_exit: false,
-                strings: vec![],
+                strings: vec!["Other".into(), String::new()],
             },
             ::legacy_vehicle::hof::Terminus {
                 code: 2,
                 texture_id: "Terminus".into(),
                 terminus_stop: Some("Terminus".into()),
                 all_exit: false,
-                strings: vec![],
+                strings: vec!["Terminus".into(), "Terminus*L[1]".into()],
             },
         ],
         ..Default::default()
     };
 
-    set_player_destination_directly(&mut vehicle, Some(&hof), "1", "Terminus", &[]);
+    vehicle.host.hof = Some(std::sync::Arc::new(hof.clone()));
+    set_ai_destination(&mut vehicle, Some(&hof), "1", "Terminus", &[]);
 
-    // The trigger sees the state the normal direct-destination path writes, rather than
-    // replacing that path by returning early.
+    // The AI callback sees the complete state rather than returning before it is written.
     assert_eq!(vehicle.var("destination_triggered"), Some(2.0));
+    assert_eq!(vehicle.var("line_triggered"), Some(100.0));
+    assert_eq!(vehicle.var("directive_triggered"), Some(1.0));
     assert_eq!(vehicle.var("IBIS_TerminusIndex"), Some(1.0));
     assert_eq!(vehicle.var("IBIS_TerminusCode"), Some(2.0));
     assert_eq!(vehicle.var("IBIS_LinieKurs"), Some(1.0));
+
+    set_player_destination_directly(&mut vehicle, Some(&hof), "1", "Terminus", &[]);
+
+    // The direct-player fallback uses the same order.
+    assert_eq!(vehicle.var("destination_triggered"), Some(2.0));
+    assert_eq!(vehicle.var("line_triggered"), Some(100.0));
+    assert_eq!(vehicle.var("directive_triggered"), Some(1.0));
     std::fs::remove_dir_all(dir).ok();
 }
 
