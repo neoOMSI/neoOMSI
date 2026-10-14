@@ -148,6 +148,7 @@ impl App {
         let drop_dim = m.drop_dim(m.drop);
         let (weather_rows, custom_rows) = (m.weather_rows(), m.custom_rows());
         let icao_rows = m.icao_matches(5);
+        let icao_status = m.icao_status();
         let custom_fracs = m.custom_fracs();
         let line_rows: Vec<LineRow> = m
             .line_rows()
@@ -257,8 +258,10 @@ impl App {
             weather_top: m.weather_top,
             custom: &custom_rows,
             icao: &m.icao,
+            metar_live: m.metar_live,
             custom_fracs: &custom_fracs,
             icao_rows: &icao_rows,
+            icao_status: &icao_status,
             icao_top: m.icao_top,
         };
         let frame = ui::Frame::bare(

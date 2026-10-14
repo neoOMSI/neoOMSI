@@ -214,16 +214,20 @@ impl Ui {
         self.start.icao_field = fr;
         y += fh + 6.0 * u;
 
+        let sync = [a[0], y, a[2], y + fh];
+        self.start_toggle(r, scene, f, sync, "start.maps.icao_live", v.metar_live, u);
+        self.start.metar_sync = sync;
+        y += fh + 6.0 * u;
+
         if v.icao.is_empty() {
             let hl = self.text.label(r, scene, "start.maps.icao_auto", (13.0 * u) as u32, MUTED);
             hl.place(scene, a[0] + 6.0 * u, y);
-            y += hl.h as f32 + 8.0 * u;
-        } else {
-            y += 4.0 * u;
+            return;
         }
 
         if v.icao_rows.is_empty() {
-            let l = self.text.label(r, scene, "start.maps.noair", (14.0 * u) as u32, MUTED);
+            let status = if v.icao_status.is_empty() { "start.maps.noair" } else { v.icao_status };
+            let l = self.text.label(r, scene, status, (14.0 * u) as u32, MUTED);
             l.place(scene, a[0] + 6.0 * u, y + 4.0 * u);
             return;
         }

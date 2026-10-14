@@ -180,6 +180,7 @@ impl App {
                     WeatherMode(usize),
                     Slider(usize),
                     IcaoField,
+                    MetarSync,
                     IcaoPick(usize),
                     Arrow(usize),
                     Row(usize),
@@ -254,6 +255,8 @@ impl App {
                     Act::WeatherMode(k)
                 } else if hit(&[st.icao_field], cursor).is_some() {
                     Act::IcaoField
+                } else if hit(&[st.metar_sync], cursor).is_some() {
+                    Act::MetarSync
                 } else if let Some(k) = hit(&st.icao_picks, cursor) {
                     Act::IcaoPick(k)
                 } else if let Some(k) = hit(&st.weathers, cursor) {
@@ -380,6 +383,11 @@ impl App {
                         }
                     }
                     Act::IcaoField => {}
+                    Act::MetarSync => {
+                        if let Some(m) = self.menu.as_mut() {
+                            m.metar_live = !m.metar_live;
+                        }
+                    }
                     Act::Slider(k) => {
                         let rc = self.ui.as_ref().and_then(|u| u.start.sliders.get(k).copied());
                         if let (Some(rc), Some(m)) = (rc, self.menu.as_mut()) {

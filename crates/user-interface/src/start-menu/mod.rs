@@ -131,8 +131,10 @@ pub struct StartView<'a> {
     pub weather_top: usize,
     pub custom: &'a [(String, String)],
     pub icao: &'a str,
+    pub metar_live: bool,
     pub custom_fracs: &'a [f32],
     pub icao_rows: &'a [(String, String)],
+    pub icao_status: &'a str,
     pub icao_top: usize,
     pub free: bool,
     pub on_foot: bool,
@@ -214,6 +216,7 @@ pub struct StartUi {
     pub foot: [f32; 4],
     pub sliders: Vec<[f32; 4]>,
     pub icao_field: [f32; 4],
+    pub metar_sync: [f32; 4],
     pub icao_vis: usize,
     pub icao_picks: Vec<[f32; 4]>,
     pub go: [f32; 4],
@@ -291,6 +294,8 @@ impl StartUi {
         self.foot = [0.0; 4];
         self.sliders.clear();
         self.icao_field = [0.0; 4];
+        self.metar_sync = [0.0; 4];
+        self.icao_vis = 0;
         self.icao_picks.clear();
         self.go = [0.0; 4];
         self.field = [0.0; 4];
@@ -362,7 +367,7 @@ impl Ui {
                     || at(&self.start.weather_modes)
                     || at(&self.start.sliders)
                     || at(&self.start.icao_picks)
-                    || at(&[self.start.icao_field, self.start.foot])
+                    || at(&[self.start.icao_field, self.start.metar_sync, self.start.foot])
                     || at(&self.start.tabs) || at(&[self.start.go, self.start.quit, self.start.update_btn, self.start.profile_btn]);
             }
             StartPage::Multiplayer => {

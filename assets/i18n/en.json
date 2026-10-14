@@ -1629,6 +1629,8 @@
       "onfoot_short": "On foot",
       "icao_ph": "ICAO code, e.g. EDDB",
       "icao_auto": "Empty: nearest airport to the map",
+      "icao_live": "Live updates (every 10 minutes)",
+      "icao_lookup": "Looking up airport…",
       "noair": "No matching airport",
       "icao_checking": "Checking station..."
     },

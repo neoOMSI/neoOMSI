@@ -41,6 +41,11 @@ fn now_local() -> (i32, i32, i32, i32, i32) {
     (n.year(), n.month() as i32, n.day() as i32, n.hour() as i32, n.minute() as i32)
 }
 
+fn icao_code(text: &str) -> Option<String> {
+    let code = text.trim().to_ascii_uppercase();
+    (code.len() == 4 && code.chars().all(|c| c.is_ascii_alphanumeric())).then_some(code)
+}
+
 pub fn days_in_year(y: i32) -> i32 {
     if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
         366
@@ -104,6 +109,7 @@ pub struct Menu {
     pub time_buf: String,
     pub weather_top: usize,
     pub icao: String,
+    pub metar_live: bool,
     pub slider: Option<usize>,
     pub on_foot: bool,
     pub icao_check: Option<(String, Option<String>)>,
@@ -410,6 +416,7 @@ impl Menu {
             time_buf: String::new(),
             weather_top: 0,
             icao: String::new(),
+            metar_live: false,
             slider: None,
             on_foot: ::config::get_bool("gameplay", "start_on_foot").unwrap_or(false),
             icao_check: None,
@@ -1151,13 +1158,15 @@ impl Menu {
             });
             self.icao_all_job = Some(rx);
         }
-        let code = self.icao.trim().to_ascii_uppercase();
-        if !(3..=4).contains(&code.len()) || !code.chars().all(|c| c.is_ascii_alphanumeric()) {
+        let Some(code) = icao_code(&self.icao) else {
+            return;
+        };
+        if self.icao_check.as_ref().is_some_and(|c| c.0 == code)
+            || self.icao_job.as_ref().is_some_and(|(pending, _)| pending == &code)
+        {
             return;
         }
-        if self.icao_check.as_ref().is_some_and(|c| c.0 == code) || self.icao_job.is_some() {
-            return;
-        }
+        self.icao_job = None;
         let (tx, rx) = std::sync::mpsc::channel();
         let c = code.clone();
         std::thread::spawn(move || {
@@ -1185,11 +1194,21 @@ impl Menu {
     }
 
     pub fn icao_valid(&self) -> Option<String> {
-        let code = self.icao.trim().to_ascii_uppercase();
+        let code = icao_code(&self.icao)?;
         match &self.icao_check {
             Some((c, Some(_))) if *c == code => Some(code),
             _ if self.icao_all.iter().any(|r| r.0 == code) => Some(code),
             _ => None,
+        }
+    }
+
+    pub fn icao_status(&self) -> String {
+        let Some(code) = icao_code(&self.icao) else {
+            return String::new();
+        };
+        match &self.icao_check {
+            Some((checked, None)) if *checked == code => ::i18n::translate("start.maps.noair", &[]),
+            _ => String::new(),
         }
     }
 
@@ -1439,7 +1458,11 @@ impl Menu {
     pub fn weather_arg(&self) -> Option<String> {
         match self.weather {
             0 => None,
-            2 => Some(format!("metar-sync:{}", self.icao_valid().unwrap_or_default())),
+            2 => Some(format!(
+                "{}:{}",
+                if self.metar_live { "metar-sync" } else { "metar-once" },
+                self.icao_valid().unwrap_or_default()
+            )),
             3 => Some(self.custom.encode()),
             w => self.weathers.get(w).map(|x| x.1.clone()),
         }
@@ -1639,5 +1662,18 @@ impl Menu {
         if n > 0 {
             self.map = (self.map as i32 + dir).clamp(0, n - 1) as usize;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::icao_code;
+
+    #[test]
+    fn accepts_four_character_icao_codes_with_digits() {
+        assert_eq!(icao_code("koj4"), Some("KOJ4".into()));
+        assert_eq!(icao_code("KJFK"), Some("KJFK".into()));
+        assert_eq!(icao_code("KOJ"), None);
+        assert_eq!(icao_code("KOJ4!"), None);
     }
 }
