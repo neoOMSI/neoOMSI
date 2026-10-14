@@ -76,7 +76,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # the desktop's clipboard and file dialogs (a phone has neither in this form)
 [target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = { version = "3", default-features = false }
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 rfd = "0.17"
 
 [target.'cfg(unix)'.dependencies]
