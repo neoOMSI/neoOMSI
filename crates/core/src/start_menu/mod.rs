@@ -25,7 +25,7 @@ impl App {
     /// Ctrl, or Cmd on a Mac (the held keys too, for scripted input).
     fn start_ctrl(&self) -> bool {
         self.modifiers.control_key()
-            || self.modifiers.super_key()
+            || (cfg!(target_os = "macos") && self.modifiers.super_key())
             || self.keys.contains(&KeyCode::ControlLeft)
             || self.keys.contains(&KeyCode::ControlRight)
     }
