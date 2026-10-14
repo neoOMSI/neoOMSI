@@ -284,6 +284,28 @@ impl Renderer {
         self.lm_place.set((x, y, side));
     }
 
+    /// The roofs around the camera (`sheltered` in scene_base.wgsl): [`COVER_SIDE`]² cells
+    /// of `cell` m, south-west corner at world (`x`, `y`), each the roof's world height.
+    /// The cells wrap round: the corner cell is in slot `slot` (column, row). `roofs` only
+    /// when they changed.
+    pub fn set_cover_map(
+        &self,
+        x: f64,
+        y: f64,
+        cell: f32,
+        slot: (u32, u32),
+        roofs: Option<&[f32]>,
+    ) {
+        self.cover_place.set(Some((x, y, cell, slot)));
+        if let Some(r) = roofs.filter(|r| r.len() == (COVER_SIDE * COVER_SIDE) as usize) {
+            self.write_buffer(
+                &self.cover_buf,
+                COVER_HEADER as u64 * 4,
+                bytemuck::cast_slice(r),
+            );
+        }
+    }
+
     pub fn set_corona_texture(&mut self, id: u16, img: &::texture::Image) {
         let bg = self.picture_bind_group("corona picture", img);
         let i = id as usize;

@@ -241,6 +241,26 @@ fn ao_at(frag: vec2<f32>, world: vec3<f32>) -> f32 {
 // they lie: x, y the south-west corner (render-origin relative), z the side, w 1 when set
 @group(0) @binding(18) var t_lmap: texture_2d<f32>;
 @group(0) @binding(19) var<uniform> lmap: vec4<f32>;
+// The roofs around the camera (`Renderer::set_cover_map`): the `COVER_HEADER` floats, then
+// per cell the world height of its roof.
+@group(0) @binding(20) var<storage, read> roofs: array<f32>;
+
+// 1 under a roof, where neither rain nor snow reaches (#137); 0 elsewhere.
+fn sheltered(p: vec3<f32>) -> f32 {
+    if (roofs[7] < 0.5) {
+        return 0.0;
+    }
+    let n = roofs[3];
+    let rel = (p.xy - vec2<f32>(roofs[0], roofs[1])) / roofs[2];
+    if (any(rel < vec2<f32>(0.0)) || any(rel >= vec2<f32>(n))) {
+        return 0.0;
+    }
+    let ni = u32(n);
+    let cx = (u32(rel.x) + u32(roofs[4])) % ni;
+    let cy = (u32(rel.y) + u32(roofs[5])) % ni;
+    // (the roof's own top is under the sky)
+    return select(0.0, 1.0, p.z + roofs[6] < roofs[8u + cy * ni + cx] - 0.3);
+}
 
 // The sRGB curve both ways (the textures are sampled through it, the target writes through
 // it): the classic picture multiplies on the encoded values, as Omsi.exe does.
@@ -1985,7 +2005,9 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
     // wet road: a surface whose texture carries [moisture] darkens under rain and starts
     // to mirror the sky, strongest where you look along it (the Fresnel sheen that makes a
     // wet street read as wet)
-    let outside = weather_outside_n(in.world, n, material.extra.x > 0.5, in.params2.w);
+    // (not under a roof - Vanilla+ only: OMSI 2 wets [moisture] surfaces everywhere)
+    let unroofed = select(1.0 - sheltered(in.world), 1.0, camera.sky_color.w > 0.5);
+    let outside = weather_outside_n(in.world, n, material.extra.x > 0.5, in.params2.w) * unroofed;
     let wet = camera.shadow.w * material.params2.z * outside;
     if (wet > 0.0) {
         let vdir = normalize(in.world - camera.cam_pos.xyz);

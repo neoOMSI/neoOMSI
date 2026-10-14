@@ -193,6 +193,15 @@ impl ObjectType {
             .filter(|s| s.blocks)
     }
 
+    /// The type's solid shape when it keeps the weather off what is under it.
+    pub fn shelter_shape(&self) -> Option<&crate::camera_arm::BlockerShape> {
+        Some(
+            self.camera
+                .get_or_init(|| crate::camera_arm::classify(self)),
+        )
+            .filter(|s| s.shelters)
+    }
+
     /// (definition, pivot) per loaded mesh, for the scenery script runtime.
     pub fn mesh_defs(&self) -> Vec<(&MeshDef, Mat4)> {
         self.mesh_def_index

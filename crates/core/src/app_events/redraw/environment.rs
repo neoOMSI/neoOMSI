@@ -49,7 +49,12 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             p.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                apply_weather(&mut p.vehicle, w, self.wetness);
+                let sheltered = precip_of(w).0 != 0
+                    && self.world.as_ref().is_some_and(|world| {
+                        crate::shelter::windscreen_top(&p.vehicle)
+                            .is_some_and(|top| self.shelter.covers_anywhere(world, top))
+                    });
+                apply_weather(&mut p.vehicle, w, self.wetness, sheltered);
             }
         }
         for q in self.placed.iter_mut() {
@@ -61,7 +66,12 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             q.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                apply_weather(&mut q.vehicle, w, self.wetness);
+                let sheltered = precip_of(w).0 != 0
+                    && self.world.as_ref().is_some_and(|world| {
+                        crate::shelter::windscreen_top(&q.vehicle)
+                            .is_some_and(|top| self.shelter.covers_anywhere(world, top))
+                    });
+                apply_weather(&mut q.vehicle, w, self.wetness, sheltered);
             }
         }
         let __t = Instant::now();
@@ -78,6 +88,14 @@ impl App {
             self.camera.as_ref(),
         ) {
             w.update_light_map_atlas(r, cam.position);
+            // the roofs around the camera, while there is weather to keep off (#137)
+            if self.weather.as_ref().is_some_and(|wt| {
+                precip_of(wt).0 != 0 || wt.snow || wt.snow_on_road || self.wetness > 0.0
+            }) {
+                self.shelter
+                    .update(w, cam.position, Some(std::time::Duration::from_millis(2)));
+                self.shelter.upload(r);
+            }
         }
         *self.profile.entry("lights.atlas").or_default() += __ta.elapsed().as_secs_f64();
         if let (Some(w), Some(scene), Some(cam)) = (
@@ -170,6 +188,7 @@ impl App {
                     wind,
                     scene,
                     &buses,
+                    &self.shelter,
                 );
                 *self.profile.entry("lights.rain").or_default() += __tr.elapsed().as_secs_f64();
                 if kind == 1 || self.wetness > 0.1 {

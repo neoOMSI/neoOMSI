@@ -77,6 +77,7 @@ pub(crate) struct App {
     pub(crate) ui: Option<ui::Ui>,
     pub(crate) fps: f32,
     pub(crate) rain: rain::Rain,
+    pub(crate) shelter: shelter::Shelter,
     pub(crate) splashes: puddles::Splashes,
     pub(crate) lamps_on: Option<bool>,
     pub(crate) menu: Option<menu::Menu>,

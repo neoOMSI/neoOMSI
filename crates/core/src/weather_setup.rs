@@ -846,12 +846,15 @@ pub(crate) fn precip_of(w: &::content::weather::Weather) -> (i32, f32) {
     (kind, rate)
 }
 
+/// `sheltered`: the vehicle stands under a roof and nothing falls on its glass (#137).
 pub(crate) fn apply_weather(
     v: &mut ::simulation::VehicleInstance,
     w: &::content::weather::Weather,
     wetness: f32,
+    sheltered: bool,
 ) {
     let (kind, rate) = precip_of(w);
+    let rate = if sheltered { 0.0 } else { rate };
     v.host.precip_type = kind as f32;
     v.host.precip_rate = rate;
     v.host.wind = rain::weather_wind(w);

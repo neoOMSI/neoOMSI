@@ -82,6 +82,11 @@ pub struct SmokeParticle {
 
 pub const LM_ATLAS_TILES: u32 = 5;
 pub const LM_TILE_PX: u32 = 256;
+/// The cells per side of the cover map ([`crate::Renderer::set_cover_map`]).
+pub const COVER_SIDE: u32 = 192;
+/// The floats ahead of the cover map's cells: corner x, y (render-origin relative), cell
+/// size, cells per side, corner slot (column, row), render origin z, 1 once set.
+pub(crate) const COVER_HEADER: u32 = 8;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Corona {

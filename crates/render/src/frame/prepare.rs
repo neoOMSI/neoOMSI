@@ -400,6 +400,10 @@ impl Renderer {
                     binding: 19,
                     resource: self.lm_uniform.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: self.cover_buf.as_entire_binding(),
+                },
             ],
         });
         scene.camera_bind_group = Some(bg);

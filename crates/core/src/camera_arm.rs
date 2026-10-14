@@ -41,6 +41,8 @@ const MIN_WIDTH: f32 = 2.0;
 /// Opaque surface area over the area of the bounding shell below which a type is mostly
 /// air (a mast with a boom, a tree's trunk under its crown).
 const MIN_FILL: f32 = 0.25;
+/// Types narrower than this in either direction keep no weather off (m).
+const SHELTER_DEPTH: f32 = 1.0;
 
 /// `OMSI_DEBUG_CAMERA`: 1 logs the types and what stops the arm, 2 also every frame's arm.
 pub fn debug_level() -> u32 {
@@ -61,6 +63,9 @@ pub fn debug() -> bool {
 #[derive(Debug, Clone, Default)]
 pub struct BlockerShape {
     pub blocks: bool,
+    /// Whether it keeps the weather off (`shelter.rs`): a roof or a bridge, not a wall,
+    /// a lamp or a sign.
+    pub shelters: bool,
     /// Bounds of the solid triangles in the object's own frame.
     pub lo: Vec3,
     pub hi: Vec3,
@@ -271,15 +276,17 @@ pub fn classify(ot: &ObjectType) -> BlockerShape {
         && size.x.max(size.y) >= MIN_WIDTH
         && size.x.min(size.y) >= 0.1
         && fill >= MIN_FILL;
+    shape.shelters = shelters(size);
     if debug() {
         log::info!(
-            "camera: {} {} ({tris} solid triangles, {:.1} x {:.1} x {:.1} m, fill {fill:.2})",
+            "camera: {} {}{} ({tris} solid triangles, {:.1} x {:.1} x {:.1} m, fill {fill:.2})",
             ot.sco.path.display(),
             if shape.blocks {
                 "blocks"
             } else {
                 "lets through"
             },
+            if shape.shelters { ", shelters" } else { "" },
             size.x,
             size.y,
             size.z
@@ -288,7 +295,13 @@ pub fn classify(ot: &ObjectType) -> BlockerShape {
     shape
 }
 
-/// A placed object that stops the camera (kept per tile, see `TileState::blockers`).
+/// Whether solid triangles filling the box `size` keep the weather off.
+fn shelters(size: Vec3) -> bool {
+    size.x.min(size.y) >= SHELTER_DEPTH && size.x.max(size.y) >= MIN_WIDTH
+}
+
+/// A placed object that stops the camera or shelters (kept per tile, see
+/// `TileState::blockers`).
 #[derive(Clone)]
 pub struct Blocker {
     pub ty: std::sync::Weak<ObjectType>,
@@ -326,7 +339,7 @@ pub(crate) fn standing_space_blocked(world: &World, root: DVec3) -> bool {
 
 /// Where along the ray (origin, unit dir) up to `max` it first meets a solid triangle of
 /// the placed object, if it does.
-fn ray_object(
+pub(crate) fn ray_object(
     ot: &ObjectType,
     shape: &BlockerShape,
     pos: DVec3,
@@ -672,6 +685,19 @@ mod tests {
             arm.update(12.0, 12.0, DVec3::new(100.0, 0.0, 0.0), 1.0 / 60.0),
             12.0
         );
+    }
+
+    #[test]
+    fn roofs_shelter_but_walls_lamps_and_signs_do_not() {
+        // a bus shelter, a depot hall, a bridge
+        assert!(shelters(Vec3::new(4.0, 1.6, 2.6)));
+        assert!(shelters(Vec3::new(60.0, 25.0, 9.0)));
+        assert!(shelters(Vec3::new(12.0, 40.0, 7.0)));
+        // a wall, a street lamp's arm, a sign on a post, a bollard
+        assert!(!shelters(Vec3::new(20.0, 0.3, 2.5)));
+        assert!(!shelters(Vec3::new(2.2, 0.4, 9.0)));
+        assert!(!shelters(Vec3::new(0.8, 0.1, 2.8)));
+        assert!(!shelters(Vec3::new(0.2, 0.2, 1.0)));
     }
 
     #[test]

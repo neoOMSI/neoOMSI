@@ -109,6 +109,10 @@ pub struct Renderer {
     pub(crate) lm_atlas_view: wgpu::TextureView,
     pub(crate) lm_uniform: wgpu::Buffer,
     pub(crate) lm_place: std::cell::Cell<(f64, f64, f64)>,
+    /// The cover map (`set_cover_map`).
+    pub(crate) cover_buf: wgpu::Buffer,
+    /// Its corner (world x, y), cell size and corner slot.
+    pub(crate) cover_place: std::cell::Cell<Option<(f64, f64, f32, (u32, u32))>>,
     pub(crate) mip_pipeline: wgpu::RenderPipeline,
     pub(crate) mip_layout: wgpu::BindGroupLayout,
     pub(crate) mip_sampler: wgpu::Sampler,

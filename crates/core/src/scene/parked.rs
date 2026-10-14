@@ -489,7 +489,8 @@ impl World {
         }
     }
 
-    /// The placed objects that stop the outside camera and may reach into the rectangle
+    /// The placed objects that stop the outside camera or keep the weather off (see
+    /// `ObjectType::camera_shape` and `shelter_shape`) and may reach into the rectangle
     /// `lo`..`hi` of the ground plane (with their types, which are alive while a tile uses
     /// them).
     pub fn camera_blockers(

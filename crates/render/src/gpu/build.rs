@@ -879,6 +879,16 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let lm_atlas = device.create_texture(&wgpu::TextureDescriptor {
@@ -899,6 +909,13 @@ impl Renderer {
             label: Some("light map atlas place"),
             size: 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // (zeroed: no cover map set, nothing is sheltered)
+        let cover_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cover map"),
+            size: (COVER_HEADER + COVER_SIDE * COVER_SIDE) as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2708,6 +2725,8 @@ impl Renderer {
             lm_atlas,
             lm_uniform,
             lm_place: std::cell::Cell::new((0.0, 0.0, 0.0)),
+            cover_buf,
+            cover_place: std::cell::Cell::new(None),
             hdr_targets: HashMap::new(),
             puddles,
             reflection_pass,

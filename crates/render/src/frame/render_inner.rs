@@ -458,6 +458,19 @@ impl Renderer {
             ];
             self.write_buffer(&self.lm_uniform, 0, bytemuck::cast_slice(&v));
         }
+        if let Some((cx, cy, cell, slot)) = self.cover_place.get() {
+            let v: [f32; COVER_HEADER as usize] = [
+                (cx - ro.x) as f32,
+                (cy - ro.y) as f32,
+                cell,
+                COVER_SIDE as f32,
+                slot.0 as f32,
+                slot.1 as f32,
+                ro.z as f32,
+                1.0,
+            ];
+            self.write_buffer(&self.cover_buf, 0, bytemuck::cast_slice(&v));
+        }
         let (spot_vp, spot_info) = {
             let st = self.spot_state.borrow();
             let mut m = [[[0.0f32; 4]; 4]; SPOT_SLOTS];

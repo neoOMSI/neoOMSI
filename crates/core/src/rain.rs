@@ -105,7 +105,8 @@ impl Rain {
     /// `inside`: the buses near the camera as (origin, heading in degrees, `[boundingbox]`),
     /// the player's first; no drop or flake is drawn within any, so that it does not rain
     /// in a cab (only the player's own had been left dry: riding in another player's bus or
-    /// a timetable bus it snowed in the saloon).
+    /// a timetable bus it snowed in the saloon). Nor under a roof (`shelter`, #137) -
+    /// except in Vanilla: OMSI 2 lets it rain through bridges.
     pub fn tick(
         &mut self,
         dt: f32,
@@ -113,6 +114,7 @@ impl Rain {
         wind: Vec3,
         scene: &mut Scene,
         inside: &[(DVec3, f64, [f32; 6])],
+        shelter: &crate::shelter::Shelter,
     ) {
         if self.particles.is_empty() {
             self.camera = Some(camera);
@@ -149,6 +151,8 @@ impl Rain {
             t * t * (3.0 - 2.0 * t)
         };
         let mut excluded = 0usize;
+        let mut sheltered = 0usize;
+        let roofs = !crate::startup::CLASSIC.load(std::sync::atomic::Ordering::Relaxed);
         for (i, p) in self.particles.iter().enumerate() {
             // fade towards the edges of the box and at its top and bottom, so that no
             // wall of drops, no wrap-around and no pop-in is seen
@@ -168,6 +172,10 @@ impl Rain {
                 excluded += 1;
                 continue;
             }
+            if roofs && shelter.covers(w) {
+                sheltered += 1;
+                continue;
+            }
             scene.coronas.push(Corona {
                 position: w,
                 size: size * v,
@@ -180,7 +188,7 @@ impl Rain {
         }
         if ::legacy_config::env::var_os("OMSI_DEBUG_RAIN").is_some() {
             log::info!(
-                "rain: {} particles, {excluded} inside the buses (boxes {:?})",
+                "rain: {} particles, {excluded} inside the buses, {sheltered} under a roof (boxes {:?})",
                 self.particles.len(),
                 buses
                     .iter()
@@ -291,6 +299,34 @@ mod tests {
                 && p.z >= -2.0
                 && p.z < 20.0
         );
+    }
+
+    #[test]
+    fn no_drop_is_drawn_under_a_roof() {
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = wgpu::Backends::NOOP;
+        descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+        let renderer = pollster::block_on(::render::Renderer::new_with(
+            &wgpu::Instance::new(descriptor),
+            None,
+            Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            ::render::RenderOptions::default(),
+        ))
+        .unwrap();
+        let drawn = |shelter: &crate::shelter::Shelter| {
+            let mut rain = Rain::new();
+            rain.set(1, 1.0);
+            let mut scene = renderer.new_scene();
+            rain.tick(0.0, DVec3::ZERO, Vec3::ZERO, &mut scene, &[], shelter);
+            scene.coronas
+        };
+        let open = drawn(&crate::shelter::Shelter::new());
+        assert!(open.len() > 100);
+        // a hall's roof high over the whole box, a bridge deck 6 m up
+        assert!(drawn(&crate::shelter::roofed(30.0)).is_empty());
+        let under_deck = drawn(&crate::shelter::roofed(6.0));
+        assert!(!under_deck.is_empty() && under_deck.len() < open.len());
+        assert!(under_deck.iter().all(|c| c.position.z >= 6.0));
     }
 
     #[test]

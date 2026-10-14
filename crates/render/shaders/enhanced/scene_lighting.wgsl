@@ -572,8 +572,10 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         }
     }
     let dry_snow = 1.0 - clamp(enh.weather.y, 0.0, 1.0);
-    let wet_road = camera.shadow.w * material.params2.z * outside * dry_snow;
-    let wet_any = camera.shadow.w * outside * select(0.35, 0.0, glass || material.emissive.w < -1.5) * dry_snow;
+    // (neither wet nor snowed on under a roof)
+    let unroofed = 1.0 - sheltered(in.world);
+    let wet_road = camera.shadow.w * material.params2.z * outside * unroofed * dry_snow;
+    let wet_any = camera.shadow.w * outside * unroofed * select(0.35, 0.0, glass || material.emissive.w < -1.5) * dry_snow;
     var puddle = 0.0;
     if (wet_road > 0.0) {
         albedo = albedo * mix(1.0, 0.5, wet_road);
@@ -600,7 +602,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     } else if (wet_any > 0.0 && !terrain) {
         rough = mix(rough, rough * 0.6, wet_any);
     }
-    let snow = enh.weather.y * outside * select(1.0, 0.0, in.params2.w > 1.5 || material.ambient.w > 0.5);
+    let snow = enh.weather.y * outside * unroofed * select(1.0, 0.0, in.params2.w > 1.5 || material.ambient.w > 0.5);
     if (snow > 0.0) {
         let up = clamp(n.z, 0.0, 1.0);
         let ground = select(0.0, 1.0, terrain || material.params2.z > 0.0);
