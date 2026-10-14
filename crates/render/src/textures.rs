@@ -90,7 +90,7 @@ impl Renderer {
         mipmaps: bool,
     ) -> TextureId {
         let t = if mipmaps && img.width > 1 && img.height > 1 {
-            self.upload_texture_gpu_mips(img)
+            self.upload_texture_gpu_mips(img, false)
         } else {
             upload_texture(&self.device, &self.queue, img, false)
         };
@@ -168,14 +168,17 @@ impl Renderer {
                 ),
                 _ => vec![255; (w * h * 4) as usize],
             };
-            return self.upload_texture_gpu_mips(&::texture::Image {
-                width: w,
-                height: h,
-                rgba,
-                has_alpha: data.has_alpha,
-            });
+            return self.upload_texture_gpu_mips(
+                &::texture::Image {
+                    width: w,
+                    height: h,
+                    rgba,
+                    has_alpha: data.has_alpha,
+                },
+                false,
+            );
         }
-        self.upload_rgba_gpu_mips(w, h, &data.levels[0])
+        self.upload_rgba_gpu_mips(w, h, &data.levels[0], false)
     }
 
     pub fn texture_bytes(&self, scene: &Scene) -> u64 {
@@ -186,11 +189,19 @@ impl Renderer {
         scene.texture_bytes_of(id)
     }
 
-    fn upload_texture_gpu_mips(&self, img: &::texture::Image) -> GpuTexture {
-        self.upload_rgba_gpu_mips(img.width, img.height, &img.rgba)
+    fn upload_texture_gpu_mips(&self, img: &::texture::Image, plain: bool) -> GpuTexture {
+        self.upload_rgba_gpu_mips(img.width, img.height, &img.rgba, plain)
     }
 
-    fn upload_rgba_gpu_mips(&self, width: u32, height: u32, rgba: &[u8]) -> GpuTexture {
+    /// `plain`: the mip levels as Omsi.exe filters a texture the bus draws itself (see
+    /// [`generate_mip_chain`]).
+    fn upload_rgba_gpu_mips(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        plain: bool,
+    ) -> GpuTexture {
         let img = RgbaRef {
             width,
             height,
@@ -230,7 +241,7 @@ impl Renderer {
             },
             size,
         );
-        self.generate_mip_chain(&texture, mip_count);
+        self.generate_mip_chain(&texture, mip_count, plain);
         let view = texture.create_view(&Default::default());
         GpuTexture {
             texture,
@@ -248,7 +259,9 @@ impl Renderer {
 
     /// Build lower levels from the preceding level. The level-zero pixels are already
     /// uploaded, and [`upload_rgba_gpu_mips`] creates the texture with `RENDER_ATTACHMENT` usage.
-    fn generate_mip_chain(&self, texture: &wgpu::Texture, mip_count: u32) {
+    /// `plain` averages colour and alpha each on their own, as Omsi.exe's D3DXFilterTexture does
+    /// for its text and script textures; otherwise the colour is weighted by alpha (`mip.wgsl`).
+    fn generate_mip_chain(&self, texture: &wgpu::Texture, mip_count: u32, plain: bool) {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -295,7 +308,11 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.mip_pipeline);
+            pass.set_pipeline(if plain {
+                &self.mip_plain_pipeline
+            } else {
+                &self.mip_pipeline
+            });
             pass.set_bind_group(0, &bg, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -423,7 +440,7 @@ impl Renderer {
         };
         let levels = (32 - img.width.max(img.height).leading_zeros()).max(1);
         if old.size != (img.width, img.height) || old.texture.mip_level_count() != levels {
-            scene.textures[id] = self.upload_texture_gpu_mips(img);
+            scene.textures[id] = self.upload_texture_gpu_mips(img, true);
             Self::same_as_uploaded(scene, id, img);
             return true;
         }
@@ -432,7 +449,7 @@ impl Renderer {
         }
         self.update_texture(scene, id, img);
         if levels > 1 {
-            self.generate_mip_chain(&scene.textures[id].texture, levels);
+            self.generate_mip_chain(&scene.textures[id].texture, levels, true);
         }
         false
     }

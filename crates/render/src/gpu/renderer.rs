@@ -110,6 +110,8 @@ pub struct Renderer {
     pub(crate) lm_uniform: wgpu::Buffer,
     pub(crate) lm_place: std::cell::Cell<(f64, f64, f64)>,
     pub(crate) mip_pipeline: wgpu::RenderPipeline,
+    /// The mip levels of the bus's own text and script textures (`mip.wgsl` `fs_plain`).
+    pub(crate) mip_plain_pipeline: wgpu::RenderPipeline,
     pub(crate) mip_layout: wgpu::BindGroupLayout,
     pub(crate) mip_sampler: wgpu::Sampler,
     pub(crate) gpu_error: Arc<std::sync::atomic::AtomicBool>,
