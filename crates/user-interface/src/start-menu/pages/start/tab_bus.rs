@@ -107,6 +107,7 @@ impl Ui {
             self.start_drop_draw(r, scene, f, [p[0], p[3], p[2], 0.0], p[1], v, u);
         } else {
             self.start.drop_scroll_for = 0;
+            self.start.drop_last = [0.0; 4];
         }
     }
 
@@ -174,6 +175,7 @@ impl Ui {
             self.text.rounded(r, scene, [track[0], ty, track[2], ty + th], 3.0 * u, [255, 255, 255, 60]);
         }
         self.start.drop_box = bx;
+        self.start.drop_last = bx;
         self.start.drop_first = first;
         bx[3]
     }

@@ -232,6 +232,8 @@ impl App {
                     Act::DropItem(st.drop_first + k)
                 } else if let Some(k) = hit(&st.drops, cursor) {
                     Act::Drop(k)
+                } else if hit(&[st.drop_box], cursor).is_some() {
+                    Act::Nothing
                 } else if hit(&[st.foot], cursor).is_some() {
                     Act::Foot
                 } else if let Some(k) = hit(&st.sliders, cursor) {

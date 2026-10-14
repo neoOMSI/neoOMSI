@@ -64,12 +64,15 @@ impl Ui {
             self.text.alpha = alpha0 * seen.powi(3);
             let on = sel == Some(i);
             let hot = inside(rc, f.cursor);
-            let hv = self.ease((id, "item", i), if hot || on { 1.0 } else { 0.0 }, 10.0);
+            // a row partly under the open dropdown keeps its highlight from showing past its edge
+            let d = self.start.drop_last;
+            let hidden = rc[0] < d[2] && rc[2] > d[0] && rc[1] < d[3] && rc[3] > d[1];
+            let hv = self.ease((id, "item", i), if (hot || on) && !hidden { 1.0 } else { 0.0 }, 10.0);
             if hv > 0.0 {
                 let base = if on { OPT_GROUP_ON } else { OPT_GROUP_HOT };
                 self.text.rounded(r, scene, rc, ROW_R * u, fade(base, if on { 1.0 } else { hv }));
             }
-            let ov = self.ease((id, "itemon", i), if on && focus { 1.0 } else { 0.0 }, 10.0);
+            let ov = self.ease((id, "itemon", i), if on && focus && !hidden { 1.0 } else { 0.0 }, 10.0);
             if ov > 0.0 {
                 self.accent_bar(r, scene, rc, ov, false, u);
             }

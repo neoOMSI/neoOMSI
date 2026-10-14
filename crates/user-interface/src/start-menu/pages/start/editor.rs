@@ -2,7 +2,12 @@ use super::*;
 
 impl Ui {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn start_editor(&mut self, r: &Renderer, scene: &mut Scene, f: &Frame, card: [f32; 4], v: &StartView, u: f32, hits: &mut Hits) {
+    pub(super) fn start_editor(&mut self, r: &Renderer, scene: &mut Scene, real: &Frame, card: [f32; 4], v: &StartView, u: f32, hits: &mut Hits) {
+        // an open dropdown lies over the tab: nothing under it is hovered
+        let covered = v.drop != 0 && inside(self.start.drop_last, real.cursor);
+        let cursor = if covered { (-1.0e6, -1.0e6) } else { real.cursor };
+        let under = Frame::bare(real.scale, real.ui_scale, real.opacity, real.width, real.height, cursor);
+        let f = &under;
         let tab_a = if self.start.prev_sect == 0 { self.start.sect_e } else { self.start.page_e };
         self.text.alpha = self.start.page_e;
         let side = (36.0 * u).round();
@@ -72,7 +77,7 @@ impl Ui {
             self.start_button(r, scene, f, btn, "start.maps.drive", "play_arrow", 0, u);
             self.start.go = btn;
         }
-        self.start_drop_flush(r, scene, f, v, u);
+        self.start_drop_flush(r, scene, real, v, u);
     }
 
     #[allow(clippy::too_many_arguments)]
