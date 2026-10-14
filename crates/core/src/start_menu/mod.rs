@@ -21,6 +21,16 @@ fn clipboard_set(text: &str) {
     }
 }
 
+impl App {
+    /// Ctrl, or Cmd on a Mac (the held keys too, for scripted input).
+    fn start_ctrl(&self) -> bool {
+        self.modifiers.control_key()
+            || self.modifiers.super_key()
+            || self.keys.contains(&KeyCode::ControlLeft)
+            || self.keys.contains(&KeyCode::ControlRight)
+    }
+}
+
 fn hit(list: &[[f32; 4]], (x, y): (f32, f32)) -> Option<usize> {
     list.iter().position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3])
 }

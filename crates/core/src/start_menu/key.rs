@@ -9,7 +9,7 @@ impl App {
         if repeat && matches!(code, K::Escape | K::Enter | K::NumpadEnter | K::Space | K::Tab) {
             return;
         }
-        let ctrl = self.keys.contains(&K::ControlLeft) || self.keys.contains(&K::ControlRight);
+        let ctrl = self.start_ctrl();
         let enter = matches!(code, K::Enter | K::NumpadEnter);
         if self.drv_key(code) {
             return;

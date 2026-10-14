@@ -2,7 +2,7 @@ use super::*;
 
 impl App {
     pub(crate) fn start_text(&mut self, text: &str) {
-        let ctrl = self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
+        let ctrl = self.start_ctrl();
         if !ctrl && self.drv_text(text) {
             return;
         }

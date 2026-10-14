@@ -59,6 +59,7 @@ impl App {
         // (throttle in the wasd preset) was then read as Shift+W, OMSI's own wiper
         // key, toggling the wipers on every press instead of driving.
         self.keys.clear();
+        self.modifiers = Default::default();
         if let Some(p) = self.player.as_mut() {
             p.axes.release_all();
         }

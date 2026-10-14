@@ -64,6 +64,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => self.on_focus_lost(),
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => self.on_window_key(event_loop, event),
             WindowEvent::MouseInput {
                 state,

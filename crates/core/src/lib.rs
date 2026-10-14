@@ -561,6 +561,7 @@ pub(crate) fn make_app(
         vr_cursor_warp_pending: None,
         window_focused: false,
         keys: Default::default(),
+        modifiers: Default::default(),
         door_key_triggers: Default::default(),
         pad_doors: Default::default(),
         last: Instant::now(),
