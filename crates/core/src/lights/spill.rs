@@ -16,6 +16,11 @@ fn spill_cone(cfg: &LightSettings) -> [f32; 2] {
     ]
 }
 
+/// Starts the spill below the lamp, so a lamp at roof height can't light the roof.
+fn spill_origin(lamp: Vec3) -> Vec3 {
+    lamp - Vec3::Z * SPILL_DROP
+}
+
 pub(super) fn interior_spill(
     cfg: &LightSettings,
     faders: &mut Faders,
@@ -72,7 +77,7 @@ pub(super) fn interior_spill(
             if level < 0.01 {
                 continue;
             }
-            let at = Vec3::from(il.pos) + Vec3::from(ic.shift);
+            let at = spill_origin(Vec3::from(il.pos) + Vec3::from(ic.shift));
             if let Some(b) = bbox {
                 if (at.x - b[3]).abs() >= b[0] * 0.5 - 0.3
                     || (at.y - b[4]).abs() >= b[1] * 0.5 - 0.1
@@ -132,4 +137,18 @@ pub(super) fn spill_vehicles(
         ok[i] = true;
     }
     ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spill_starts_under_a_lamp_on_the_roof_skin() {
+        // #384: Crossway LE lamps at 3.29 m; 0.15 m lower cleared its roof
+        let lamp = Vec3::new(0.0, 3.16, 3.29);
+        let at = spill_origin(lamp);
+        assert_eq!((at.x, at.y), (lamp.x, lamp.y));
+        assert!(at.z < lamp.z - 0.15);
+    }
 }

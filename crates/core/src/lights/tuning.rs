@@ -13,6 +13,7 @@ pub(super) const SPILL_RADIUS: f32 = 12.0;
 pub(super) const SPILL_CORE: f32 = 2.0;
 pub(super) const SPILL_WHITE: f32 = 0.6;
 pub(super) const SPILL_TILT: f32 = 20.0;
+pub(super) const SPILL_DROP: f32 = 0.3;
 pub(super) const SPILL_INNER: f32 = 15.0;
 pub(super) const SPILL_OUTER: f32 = 45.0;
 pub(super) const SPILL_RANGE: f64 = 70.0;
