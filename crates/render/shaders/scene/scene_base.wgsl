@@ -1916,7 +1916,11 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
         // it glows whenever that is on, by day as well; the others fade in with the night
         let night = select(camera.sun_color.w, 1.0, material.extra.w > 1.5);
         let glow = night * select(clamp(in.params2.y, 0.0, 1.0), 1.0, material.extra.w > 1.5);
-        lit = lit + nm.rgb * glow * camera.tune.x;
+        if (material.extra.w > 1.5) {
+            lit = lit + nm.rgb * (vec3<f32>(1.0) - clamp(lit, vec3<f32>(0.0), vec3<f32>(1.0)));
+        } else {
+            lit = lit + nm.rgb * glow * camera.tune.x;
+        }
     }
     if (material.params2.y > 0.0 && !screen_unlit) {
         // [matl_envmap]: sphere map reflection, masked by the diffuse alpha like the original

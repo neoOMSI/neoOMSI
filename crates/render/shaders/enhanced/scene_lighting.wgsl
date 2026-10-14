@@ -710,8 +710,11 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         let nm = sample_nightmap(nuv).rgb * night * select(clamp(in.params2.y, 0.0, 1.0), 1.0, switched);
         if (terrain) {
             rgb = rgb + sf.albedo / PI * nm * enh.lights.y * 3.0 * pre;
+        } else if (switched) {
+            let shown = clamp(rgb / max(enh.exposure.y, 1e-3), vec3<f32>(0.0), vec3<f32>(1.0));
+            emit = emit + nm * (vec3<f32>(1.0) - shown) * enh.exposure.y;
         } else {
-            emit = emit + nm * camera.tune.x * select(enh.exposure.z, max(enh.exposure.z * 2.0, 0.8), switched);
+            emit = emit + nm * camera.tune.x * enh.exposure.z;
         }
     }
     if (material.params2.x > 0.5 && !terrain) {
