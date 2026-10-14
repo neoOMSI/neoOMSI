@@ -292,39 +292,16 @@ impl ObjectLampVis {
 
     pub(super) fn emit(&mut self, f: &Frame, world: &World, scene: &mut Scene) {
         self.new_epoch_if_moved(f);
-        let epoch = self.epoch;
         let mut rays = LAMP_RAYS_PER_FRAME;
         let mut with_light: Vec<Corona> = Vec::new();
         for lamp in world.light_objects.lock().iter() {
-            let dist = f.dist(lamp.pos);
-            if dist > f.visible_range {
-                continue;
-            }
-            if dist < OCC_CORONA_RANGE {
-                let entry = self
-                    .seen
-                    .entry(cell3(lamp.pos, 2.0))
-                    .or_insert((true, epoch.wrapping_sub(1)));
-                if entry.1 != epoch && rays > 0 {
-                    rays -= 1;
-                    *entry = (sees(&f.coll, f.camera, lamp.pos), epoch);
-                }
-                if !entry.0 {
-                    continue;
-                }
-            }
-            let first = scene.coronas.len();
-            for ((c, _), lit) in lamp.coronas.iter().zip(&lamp.lit) {
-                if *lit <= 0.0 {
-                    continue;
-                }
-                let mut corona = *c;
-                corona.brightness *= lit.min(1.0);
-                scene.coronas.push(corona);
-            }
-            if dist < SRC_RANGE {
-                with_light.extend_from_slice(&scene.coronas[first..]);
-            }
+            let lamp = (lamp.pos, &lamp.coronas[..], &lamp.lit[..]);
+            self.emit_object(f, lamp, &mut rays, scene, &mut with_light);
+        }
+        let scripted = world.scripted.lock();
+        for o in scripted.iter().filter(|o| !o.coronas.is_empty()) {
+            let lamp = (o.pos, &o.coronas[..], &o.lit[..]);
+            self.emit_object(f, lamp, &mut rays, scene, &mut with_light);
         }
         with_light.sort_by(|a, b| f.dist(a.position).total_cmp(&f.dist(b.position)));
         with_light.truncate(SRC_MAX_OBJECTS * 3);
@@ -335,5 +312,46 @@ impl ObjectLampVis {
             SRC_MAX_OBJECTS,
             &mut scene.lights,
         );
+    }
+
+    /// An object's lit coronas, unless it is out of sight.
+    fn emit_object(
+        &mut self,
+        f: &Frame,
+        (pos, coronas, lit): (DVec3, &[(Corona, String)], &[f32]),
+        rays: &mut usize,
+        scene: &mut Scene,
+        with_light: &mut Vec<Corona>,
+    ) {
+        let dist = f.dist(pos);
+        if dist > f.visible_range {
+            return;
+        }
+        if dist < OCC_CORONA_RANGE {
+            let epoch = self.epoch;
+            let entry = self
+                .seen
+                .entry(cell3(pos, 2.0))
+                .or_insert((true, epoch.wrapping_sub(1)));
+            if entry.1 != epoch && *rays > 0 {
+                *rays -= 1;
+                *entry = (sees(&f.coll, f.camera, pos), epoch);
+            }
+            if !entry.0 {
+                return;
+            }
+        }
+        let first = scene.coronas.len();
+        for ((c, _), lit) in coronas.iter().zip(lit) {
+            if *lit <= 0.0 {
+                continue;
+            }
+            let mut corona = *c;
+            corona.brightness *= lit.min(1.0);
+            scene.coronas.push(corona);
+        }
+        if dist < SRC_RANGE {
+            with_light.extend_from_slice(&scene.coronas[first..]);
+        }
     }
 }

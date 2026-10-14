@@ -853,3 +853,99 @@ fn drawn_ground_over_a_buried_road_face_carries_the_wheel() {
     let got = probe_over(0.0, 4.0, 1.5, false);
     assert!(near(got, 0.0), "{got:?}");
 }
+
+/// A departure display's lamps glow when its script says so, not all night (#372).
+#[test]
+fn a_scripted_objects_lamp_follows_its_variable() {
+    let root = std::env::temp_dir().join(format!(
+        "neoomsi-script-lamp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("global.cfg"),
+        "[name]\nSynthetic display\n[map]\n0\n0\ntile_0_0.map\n",
+    )
+    .unwrap();
+    // one lamp switched by the script's `Due`, one always on
+    std::fs::write(
+        root.join("display.sco"),
+        "[varnamelist]\n1\nvars.txt\n[script]\n1\ndisplay.osc\n[mesh]\ndisplay.x\n\
+[light_enh]\n0\n0\n1\n255\n128\n0\n0.1\nDue\n1\n1\n1\n1\n\
+[light_enh]\n1\n0\n1\n0\n255\n0\n0.1\n1\n1\n1\n1\n1\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("vars.txt"), "Due\n").unwrap();
+    std::fs::write(root.join("display.osc"), "{frame}\n1 (S.L.Due)\n{end}\n").unwrap();
+    std::fs::write(
+        root.join("display.x"),
+        r#"xof 0303txt 0032
+        Mesh display {
+            3; 0;0;0;, 1;0;0;, 0;0;1;;
+            1; 3;0,1,2;;
+        }
+    "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tile_0_0.map"),
+        "[version]\n14\n[object]\n0\ndisplay.sco\n1\n100\n100\n0\n0\n0\n0\n0\n",
+    )
+    .unwrap();
+    let world = World::open(&root, &root.join("global.cfg"), 20261014).unwrap();
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = wgpu::Backends::NOOP;
+    desc.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+    let renderer = pollster::block_on(Renderer::new_with(
+        &wgpu::Instance::new(desc),
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        ::render::RenderOptions {
+            msaa: 1,
+            ssao: false,
+            no_enhanced: true,
+            shadow_size: 512,
+            ..Default::default()
+        },
+    ))
+    .unwrap();
+    let mut scene = renderer.new_scene();
+    let (mut prepared, _) = world.prepare_tiles(&[(0, 0, root.join("tile_0_0.map"))]);
+    world.upload_tile(
+        &renderer,
+        &mut scene,
+        prepared.pop().unwrap(),
+        &mut LoadStats::default(),
+    );
+    {
+        let states = world.tile_state.lock();
+        let statics = &states[&(0, 0)].coronas;
+        assert_eq!(statics.len(), 1, "the night lights the constant lamp only");
+        assert_eq!(statics[0].switch, LightSwitch::Constant(1.0));
+    }
+    let lit = || {
+        let scripted = world.scripted.lock();
+        assert_eq!(scripted.len(), 1);
+        assert_eq!(scripted[0].coronas.len(), 1);
+        assert_eq!(scripted[0].coronas[0].1, "Due");
+        scripted[0].lit.clone()
+    };
+    assert_eq!(lit(), [0.0], "dark until the script switches it");
+    world.update_scripted(
+        &renderer,
+        &mut scene,
+        0.1,
+        DVec3::new(100.0, 100.0, 0.0),
+        0.0,
+        &|_, _| (-1.0, 0.0),
+        None,
+        false,
+    );
+    assert_eq!(lit(), [1.0]);
+    drop(world);
+    std::fs::remove_dir_all(&root).unwrap();
+}

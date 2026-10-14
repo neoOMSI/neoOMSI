@@ -430,6 +430,9 @@ impl World {
                 continue;
             };
             let dist = (o.pos - center).length();
+            for ((_, var), lit) in o.coronas.iter().zip(&mut o.lit) {
+                *lit = o.inst.var(var).unwrap_or(0.0);
+            }
             // text textures from the script's strings whenever they change (`update` leaves
             // an unchanged one alone): read only on `Refresh_Strings`, a board whose string
             // was still empty at its first frame stayed blank for good (#367)

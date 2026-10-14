@@ -352,6 +352,8 @@ impl World {
                         htmls: Vec::new(),
                         last_tex_selection: None,
                         dynamic_materials: HashMap::new(),
+                        coronas: Vec::new(),
+                        lit: Vec::new(),
                     });
                 }
                 // An editor-only object still lays its paths out: OMSI's invisible
@@ -645,6 +647,10 @@ impl World {
                     // a traffic lamp's red, yellow and green glow with its state
                     // (`LightObject::coronas`), not all at once by night
                     if lamp.is_some() && matches!(sw, LightSwitch::Variable(_)) {
+                        continue;
+                    }
+                    // nor those the object's script switches (#372)
+                    if sw.script_var(ot.program.as_deref()).is_some() {
                         continue;
                     }
                     state.coronas.push(StaticCorona {

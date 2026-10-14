@@ -1254,14 +1254,20 @@ impl World {
                                 }
                             }
                         }
+                        let coronas = script_coronas(&ot, xf, pos);
                         if inst.is_dynamic()
                             || !object_variants.is_empty()
                             || ot.sco.sound.is_some()
                             || !script_texts.is_empty()
                             || !html_pages.is_empty()
                             || !ot.dynamic_textures.is_empty()
+                            || !coronas.is_empty()
                         {
                             let arrivals = inst.wants_arrivals();
+                            let lit = coronas
+                                .iter()
+                                .map(|(_, v)| inst.var(v).unwrap_or(0.0))
+                                .collect();
                             // (a scripted object with [terrainmapping] slots had more instances
                             // than its script has meshes: "index out of bounds", #111)
                             all_instances.truncate(mesh_instances);
@@ -1283,6 +1289,8 @@ impl World {
                                 htmls: html_pages,
                                 last_tex_selection: None,
                                 dynamic_materials: HashMap::new(),
+                                coronas,
+                                lit,
                             });
                         }
                     }

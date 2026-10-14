@@ -233,6 +233,10 @@ pub struct ScriptedObject {
     pub last_tex_selection: Option<Vec<usize>>,
     /// Dynamic material overrides by (instance, slot) from dynamic_texture_variant.
     pub dynamic_materials: HashMap<(usize, usize), Vec<MaterialId>>,
+    /// Coronas switched by a script variable, and that variable.
+    pub coronas: Vec<(::render::Corona, String)>,
+    /// Current brightness of each corona.
+    pub lit: Vec<f32>,
 }
 
 /// Where a ray lands on a page (`[htmltexture]`) of a scenery object: see
