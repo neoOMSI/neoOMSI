@@ -14,6 +14,8 @@ const SIDE: usize = ::render::COVER_SIDE as usize;
 const CLEARANCE: f64 = 1.5;
 /// A cell without a roof (far below any ground, also for the shader).
 const NO_ROOF: f32 = -1.0e9;
+/// The cells of a row looked at between checks of the budget.
+const RUN: usize = 16;
 
 /// The middle of the cell `c` along one axis.
 fn centre(c: i64) -> f64 {
@@ -140,17 +142,16 @@ impl Shelter {
                 .map(|i| self.corner.0 + i)
                 .filter(|&cx| self.held[Self::slot((cx, cy))] != Some(((cx, cy), generation)))
                 .collect();
-            if stale.is_empty() {
-                continue;
-            }
-            for (cx, roof) in stale.iter().zip(roofs_of(cy, &stale)) {
-                let i = Self::slot((*cx, cy));
-                self.roofs[i] = roof.map_or(NO_ROOF, |h| h as f32);
-                self.held[i] = Some(((*cx, cy), generation));
-            }
-            self.changed = true;
-            if budget.is_some_and(|b| start.elapsed() > b) {
-                break;
+            for run in stale.chunks(RUN) {
+                for (cx, roof) in run.iter().zip(roofs_of(cy, run)) {
+                    let i = Self::slot((*cx, cy));
+                    self.roofs[i] = roof.map_or(NO_ROOF, |h| h as f32);
+                    self.held[i] = Some(((*cx, cy), generation));
+                }
+                self.changed = true;
+                if budget.is_some_and(|b| start.elapsed() > b) {
+                    return;
+                }
             }
         }
     }
@@ -278,8 +279,25 @@ mod tests {
                 bridge(cy, cxs)
             },
         );
-        assert_eq!(asked, SIDE);
+        assert_eq!(asked, RUN);
         assert!(s.covers(DVec3::new(30.0, 15.0, 3.0)));
+    }
+
+    #[test]
+    fn a_spent_budget_stops_within_a_row() {
+        let mut s = Shelter::new();
+        let mut asked = Vec::new();
+        for _ in 0..2 {
+            s.fill(DVec3::ZERO, 0, Some(Duration::ZERO), |cy, cxs| {
+                asked.push((cy, cxs.len()));
+                bridge(cy, cxs)
+            });
+        }
+        // one run per frame, each going on where the last stopped
+        assert_eq!(asked, vec![(0, RUN), (0, RUN)]);
+        let x = |i: usize| s.corner.0 as f64 + i as f64 + 0.5;
+        assert!(s.knows(x(2 * RUN - 1), 0.5));
+        assert!(!s.knows(x(2 * RUN), 0.5));
     }
 
     #[test]
