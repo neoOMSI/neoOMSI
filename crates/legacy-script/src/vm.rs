@@ -516,18 +516,24 @@ fn exec_cold(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut
             let v: String = src.chars().take(len.saturating_sub(n)).collect();
             s.push_str(v)
         }
+        // `$SetLength*` read their length and leave it on the stack: Omsi.exe's ops
+        // 0x25-0x27 are not in the executor's pop set (0x5d5c5c), unlike `$cutBegin`,
+        // `$cutEnd` and `$*`. The Krüger++ matrix counts on it - `Matrix_IsNextCmd` combines
+        // its matches with `$d 2 l7 + $SetLengthR && …` and clears the last length with
+        // `d - +` - and taking it off lost every `*L[…]`, `*C[…]` … command of a
+        // destination: they stood on the display as text (#391).
         Op::StrSetLengthL => {
-            let n = omsi_round(s.pop());
+            let n = omsi_round(s.top());
             let v = set_length(&s.pop_str(), n, Align::Left);
             s.push_str(v)
         }
         Op::StrSetLengthR => {
-            let n = omsi_round(s.pop());
+            let n = omsi_round(s.top());
             let v = set_length(&s.pop_str(), n, Align::Right);
             s.push_str(v)
         }
         Op::StrSetLengthC => {
-            let n = omsi_round(s.pop());
+            let n = omsi_round(s.top());
             let v = set_length(&s.pop_str(), n, Align::Center);
             s.push_str(v)
         }
@@ -795,6 +801,22 @@ mod tests {
         assert_eq!(st.get(p.var("result").unwrap()), 2.0);
         assert_eq!(vm.stacks.top_str(), "NORDSPITZE");
         assert_eq!(vm.stacks.top(), 10.0);
+    }
+
+    #[test]
+    fn set_length_keeps_its_length() {
+        let src = "{init}\n7 \"abcdef\" 3 $SetLengthR (S.L.a) 2 $cutEnd 9 \"xy\" 3 $* $+ \"ab\" 4 $SetLengthC 6 $SetLengthL (S.L.b)\n{end}\n";
+        let p = prog(src);
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut vm = Vm::new();
+        let mut st = State::new(&p);
+        vm.run_init(&p, &mut st, &mut NullHost);
+        assert_eq!(st.get(p.var("a").unwrap()), 3.0);
+        assert_eq!(st.get(p.var("b").unwrap()), 6.0);
+        assert_eq!(vm.stacks.top_str(), " ab   ");
+        assert_eq!(vm.stacks.sst[1], "dxyx");
+        // the 2 of `$cutEnd` and the 3 of `$*` are gone, every other number is still there
+        assert_eq!(&vm.stacks.st[..6], &[6.0, 4.0, 9.0, 3.0, 7.0, 0.0]);
     }
 
     #[test]
