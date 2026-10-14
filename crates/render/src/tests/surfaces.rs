@@ -1259,3 +1259,102 @@ fn opaque_and_transmapped_materials_ignore_dynamic_alpha() {
     );
     assert_eq!(Renderer::clamp_slot_alpha(0.0, AlphaMode::Test, true), 1.0);
 }
+
+#[test]
+#[ignore = "requires a graphics adapter; checks the fog along an articulated bus's saloon"]
+fn no_fog_down_the_saloon_of_an_articulated_bus() {
+    let adapter = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &adapter,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    let mut scene = renderer.new_scene();
+    let texture = renderer.add_texture(
+        &mut scene,
+        &::texture::Image::solid([40, 40, 40, 255]),
+        false,
+    );
+    let material =
+        renderer.add_material(&mut scene, Some(texture), AlphaMode::Opaque, [1.0; 4], false);
+    // the rear car's back wall, 16 m down the aisle
+    let mesh = renderer.add_mesh(
+        &mut scene,
+        &MeshData {
+            positions: vec![
+                Vec3::new(-1.0, 16.0, 0.5),
+                Vec3::new(1.0, 16.0, 0.5),
+                Vec3::new(1.0, 16.0, 2.5),
+                Vec3::new(-1.0, 16.0, 2.5),
+            ],
+            normals: vec![-Vec3::Y; 4],
+            uvs: vec![glam::Vec2::splat(0.5); 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            ranges: vec![(0, 6, 0)],
+            one_sided: false,
+        },
+    );
+    renderer.add_instance(
+        &mut scene,
+        mesh,
+        DVec3::ZERO,
+        Mat4::IDENTITY,
+        vec![material],
+    );
+    let camera = Camera {
+        position: DVec3::new(0.0, 0.0, 1.5),
+        yaw: 0.0,
+        pitch: 0.0,
+        roll: 0.0,
+        fov_deg: 30.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    let clear = Lighting {
+        sun_dir: Vec3::Z,
+        sun_intensity: 1.0,
+        shadows: false,
+        detail: false,
+        fog_density: 0.0,
+        ..Default::default()
+    };
+    // a 150 m fog; the front car's box spans y -6..6, the rear car's 6..18
+    let front_car = Lighting {
+        fog_color: Vec3::splat(0.8),
+        fog_density: 2.3 / 150.0,
+        inside: Some((DVec3::ZERO, 0.0, [2.5, 12.0, 3.0, 0.0, 0.0, 1.5])),
+        ..clear.clone()
+    };
+    let whole_bus = Lighting {
+        puddle_parts: vec![(
+            DVec3::new(0.0, 12.0, 0.0),
+            0.0,
+            [2.5, 12.0, 3.0, 0.0, 0.0, 1.5],
+        )],
+        ..front_car.clone()
+    };
+    let mut centre = |lighting: &Lighting| -> i32 {
+        let rgba = renderer
+            .render_to_image(&mut scene, 64, 64, &camera, lighting)
+            .unwrap();
+        rgba[(32 * 64 + 32) * 4] as i32
+    };
+    let (clear, front_car, whole_bus) = (centre(&clear), centre(&front_car), centre(&whole_bus));
+    assert!(
+        front_car - clear > 10,
+        "fog over the rear car's 10 m: {clear} -> {front_car}"
+    );
+    assert!(
+        (whole_bus - clear).abs() <= 2,
+        "no fog inside the bus: {clear} -> {whole_bus}"
+    );
+}

@@ -37,7 +37,11 @@ pub(crate) struct CameraUniform {
     pub(crate) spot_vp: [[[f32; 4]; 4]; SPOT_SLOTS],
     pub(crate) spot_info: [f32; 4],
     pub(crate) tune: [f32; 4],
+    pub(crate) trailers: [[f32; 4]; 3 * TRAILER_BOXES],
 }
+
+/// Trailer boxes (`Lighting::puddle_parts`) in the camera uniform, laid out as `inside_a`..`c`.
+pub(crate) const TRAILER_BOXES: usize = 3;
 
 pub(crate) const CLOUD_ORIGIN_PERIOD: f64 = 70000.0;
 
