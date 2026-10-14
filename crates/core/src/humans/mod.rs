@@ -192,6 +192,7 @@ pub struct Humans {
     time: f64,
     /// The bus stops as Omsi.exe keeps them for the people (see `passengers::stops`).
     stops: HashMap<i64, PaxStop>,
+    stop_load_queue: Vec<(i64, DVec3, f64, String)>,
     pub tickets: Option<Arc<::content::tickets::TicketPack>>,
     /// Current ticket request at the player's cash desk: (ticket name, value).
     pub request: Option<(String, f32)>,
@@ -500,6 +501,7 @@ impl Humans {
             tiles_seen: 0,
             lan_centers: Vec::new(),
             comfort: RideComfort::default(),
+            stop_load_queue: Vec::new(),
         }
     }
 
@@ -966,20 +968,37 @@ impl Humans {
         center: DVec3,
     ) {
         self.center = center;
-        let list: Vec<(i64, DVec3, f64, String)> = world
-            .bus_stops
-            .lock()
+        
+        let raw_stops = world.bus_stops.lock();
+        let local_density_count = raw_stops
             .iter()
-            .filter(|s| (s.1 - center).length() < STOP_RANGE + 100.0)
-            .map(|s| (s.0, s.1, s.2, s.3.clone()))
-            .collect();
+            .filter(|s| (s.1 - center).length() < 200.0)
+            .count();
+
+        let dynamic_range = if local_density_count > 10 {
+            150.0 + (450.0 - 150.0) / (local_density_count as f64).sqrt()
+        } else {
+            450.0 
+        };
+        let list: Vec<(i64, DVec3, f64, String)> = raw_stops
+        .iter()
+        .filter(|s| (s.1 - center).length() < STOP_RANGE + 100.0)
+        .map(|s| (s.0, s.1, s.2, s.3.clone()))
+        .collect();
+    drop(raw_stops); 
         for (id, pos, rot, name) in list {
-            // only once the ground under the stop is there
             if world.walk_height(pos.x, pos.y).is_none() || self.stops.contains_key(&id) {
                 continue;
+            }            
+            if !self.stop_load_queue.iter().any(|s| s.0 == id) {
+                self.stop_load_queue.push((id, pos, rot, name));
             }
-            let st = self.build_pax_stop(world, net, id, pos, rot, &name);
-            self.stops.insert(id, st);
+        }
+        if let Some((id, pos, rot, name)) = self.stop_load_queue.pop() {
+            if !self.stops.contains_key(&id) {
+                let st = self.build_pax_stop(world, net, id, pos, rot, &name);
+                self.stops.insert(id, st);
+            }
         }
         self.walking.started = true;
     }

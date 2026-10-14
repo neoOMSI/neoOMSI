@@ -538,7 +538,7 @@ fn polyline_crossing(a: &Lane, b: &Lane) -> Option<(f32, f32)> {
 }
 
 /// Grid cell size of `Network::grid` (m).
-pub const GRID_CELL: f64 = 50.0;
+pub const GRID_CELL: f64 = 25.0;
 
 impl Network {
     /// The sign of a lateral offset (positive to the right) towards the oncoming lane:
@@ -1580,9 +1580,18 @@ impl Network {
                     }
                     seen.push(i);
                     let l = &self.lanes[i];
+                    
                     if l.kind != kind {
                         continue;
                     }
+                   
+                    if kind == LaneKind::Street && (l.no_cars || l.invisible) {
+                        continue;
+                    }
+                    if l.length() < 0.5 {
+                        continue;
+                    }
+                    
                     if let Some((s, d)) = l.nearest_point(p) {
                         if best.map(|b| d < b.2).unwrap_or(true) {
                             best = Some((i, s, d));

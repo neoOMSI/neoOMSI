@@ -17,22 +17,27 @@ impl Schedule {
         let ready = self.fleet_ready.lock().pop();
         if let Some(key) = ready {
             if let Some(ty) = self.fleet_reading.remove(&key) {
-                let t = std::time::Instant::now();
-                let uploaded = world.precache_vehicle(renderer, scene, &ty, key.1);
-                if uploaded && ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
-                    log::info!(
-                        "timetable fleet: {} (scheme {:?}) uploaded ahead in {:.1} ms",
-                        ty.def
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy(),
-                        key.1,
-                        t.elapsed().as_secs_f64() * 1000.0
-                    );
-                }
-                // A finished worker may race a budget reduction. Drop its unused GPU
-                // copies too; retaining them outside Scene defeats the cache limit.
+                
+                let mesh_count = ty.meshes.len(); 
+                const MAX_PRECACHE_MESHES: usize = 40; 
+
+                let uploaded = if mesh_count > MAX_PRECACHE_MESHES {
+                    log::debug!("timetable fleet: skipping heavy vehicle precache for {} ({} meshes)", ty.def.path.display(), mesh_count);
+                    false 
+                } else {
+                    let t = std::time::Instant::now();
+                    let res = world.precache_vehicle(renderer, scene, &ty, key.1);
+                    if res && ::legacy_config::env::var_os("OMSI_PROFILE").is_some() {
+                        log::info!(
+                            "timetable fleet: {} (scheme {:?}) uploaded ahead in {:.1} ms",
+                            ty.def.path.file_name().unwrap_or_default().to_string_lossy(),
+                            key.1,
+                            t.elapsed().as_secs_f64() * 1000.0
+                        );
+                    }
+                    res
+                };
+
                 if !uploaded && self.fleet_reading.is_empty() {
                     world.forget_prefetched();
                 }

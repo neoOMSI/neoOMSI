@@ -73,7 +73,7 @@ impl App {
                 );
                 if let Some(s) = self.schedule.as_mut() {
                     let window = if self.first_populate {
-                        20.0 * 60.0
+                        5.0 * 60.0
                     } else {
                         2.5
                     };

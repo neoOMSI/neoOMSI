@@ -3,11 +3,41 @@
 use super::*;
 
 impl Schedule {
+
+    pub fn precompute_shared_stands(&mut self, world: &World) {
+        let positions = world.object_positions.lock();
+        
+        let mut first_stops = HashSet::new();
+        for d in &self.departures {
+            if let Some(first) = trip_stations(&self.data.trips[d.trip]).first().copied() {
+                first_stops.insert(first);
+            }
+        }
+
+        for first in first_stops {
+            if self.shared_stand.contains_key(&first) {
+                continue;
+            }
+            let Some(&(here, _)) = positions.get(&first) else {
+                continue;
+            };
+            let v = self.served.contains(&first)
+                || self.served.iter().any(|sid| {
+                    positions
+                        .get(sid)
+                        .map(|p| (p.0 - here).length() < 30.0)
+                        .unwrap_or(false)
+                });
+            self.shared_stand.insert(first, v);
+        }
+    }
+    
     /// The destinations for timetable calls due within `ahead` seconds of the traffic
     /// clock. Unlike a time of day, that clock counts through midnight.
     ///
     /// Passenger demand is keyed by a destination and the compatible terminus, not a
     /// specific departure. This lets either bus on the same service carry the passengers.
+    
     pub fn stop_targets_within(
         &self,
         now: f64,
@@ -172,12 +202,14 @@ impl Schedule {
             }
         }
         let loading = window > 60.0;
-        let due: Vec<usize> = self
-            .departures
-            .iter()
-            .enumerate()
-            .filter(|(i, d)| !d.spawned && d.time <= tod && d.time > tod - window && self.runs(*i))
-            .map(|(i, _)| i)
+        let end_idx = self.departures.partition_point(|d| d.time <= tod);
+        let start_idx = self.departures.partition_point(|d| d.time <= tod - window);
+        
+        let due: Vec<usize> = (start_idx..end_idx)
+            .filter(|&i| {
+                let d = &self.departures[i];
+                !d.spawned && self.runs(i)
+            })
             .collect();
         for i in due {
             self.departures[i].spawned = true;

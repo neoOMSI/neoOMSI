@@ -1032,6 +1032,7 @@ pub struct VehicleInstance {
     v_accel: [Option<::legacy_script::VarId>; 3],
     v_wheels: Vec<[[Option<::legacy_script::VarId>; 5]; 2]>,
     v_springfactor: Vec<[Option<::legacy_script::VarId>; 2]>,
+    obstacles: Vec<crate::collision::Obb>,
 }
 
 #[inline]
@@ -1309,6 +1310,7 @@ impl VehicleInstance {
             ai_frame: false,
             var_index,
             props_plan: PropsPlan::default(),
+            obstacles: Vec::new(),
         }
     }
 
@@ -1992,33 +1994,36 @@ impl VehicleInstance {
         // every frame of pushing counted as another crash.
         if let Some(bb) = self.ty.def.bounding_box {
             let me = rb.body_box(bb);
-            let mut obstacles: Vec<crate::collision::Obb> = Vec::new();
+            
+            
+            self.obstacles.clear();
+            
             if let Some(cw) = &self.collision {
                 let mut probe_box = me;
                 probe_box.half += glam::DVec2::splat(1.0);
-                // the faces of collision meshes only where they are in the body as it
-                // stands: pitched on a ramp, the plan-view box reaches down to its lowest
-                // corner all along its length and ran into the ramp it drove on
                 let solid = rb.body_solid(bb, 0.05);
-                obstacles.extend(cw.obstacles_near_solid(&probe_box, Some(&solid)));
+                self.obstacles.extend(cw.obstacles_near_solid(&probe_box, Some(&solid)));
             }
-            obstacles.extend(self.dynamic_boxes.iter().copied());
+            self.obstacles.extend(self.dynamic_boxes.iter().copied());
+            
             let knocked = self.knocked.clone();
             let impacts = rb.collide(
                 bb,
-                &obstacles,
-                &|i| obstacles[i].id >= 0 && knocked.contains(&obstacles[i].id),
+                &self.obstacles,
+                &|i| self.obstacles[i].id >= 0 && knocked.contains(&self.obstacles[i].id),
                 dt,
             );
+            
             let touching: Vec<i64> = impacts
                 .iter()
-                .map(|h| &obstacles[h.obstacle])
+                .map(|h| &self.obstacles[h.obstacle])
                 .filter(|o| o.mass > 0.0)
                 .map(|o| o.id)
                 .collect();
+                
             for hit in &impacts {
                 if hit.broke {
-                    let o = &obstacles[hit.obstacle];
+                    let o = &self.obstacles[hit.obstacle];
                     if o.id >= 0 && !self.knocked.contains(&o.id) {
                         self.knocked.push(o.id);
                         self.knocked_now.push((o.id, hit.push.as_dvec3()));
@@ -2026,7 +2031,7 @@ impl VehicleInstance {
                 }
                 // a brush that takes less than a kilojoule is no accident (a broken post is), and
                 // a car still inside the bus from the frame before is the same accident
-                let o = &obstacles[hit.obstacle];
+                let o = &self.obstacles[hit.obstacle];
                 if hit.speed >= crate::rigid::CRASH_SPEED
                     && ::legacy_config::env::var_os("OMSI_DEBUG_PHYSICS").is_some()
                 {

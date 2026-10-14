@@ -95,8 +95,8 @@ pub(crate) fn batch_items(
         let d = items[k];
         let start = list.len() as u32;
         while k < items.len()
-            && (items[k].pipe, items[k].mesh, items[k].range, items[k].look)
-                == (d.pipe, d.mesh, d.range, d.look)
+            && (items[k].pipe, items[k].look, items[k].mesh, items[k].range)
+                == (d.pipe, d.look, d.mesh, d.range)
         {
             list.push(items[k].entry);
             k += 1;
