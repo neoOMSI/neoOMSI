@@ -5,6 +5,7 @@
 
 use crate::scene::World;
 use glam::{DVec2, DVec3};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 /// The size of a cell (m).
@@ -69,10 +70,13 @@ pub struct Shelter {
     /// Per slot (column `x mod SIDE`, row `y mod SIDE` of the world cell): the height of
     /// the roof, or [`NO_ROOF`].
     roofs: Vec<f32>,
-    /// The world cell each slot holds and the tiles' generation it was found for.
-    held: Vec<Option<((i64, i64), u64)>>,
+    /// The world cell each slot holds.
+    held: Vec<Option<(i64, i64)>>,
     /// The world cell at the square's south-west corner.
     corner: (i64, i64),
+    /// The loaded tiles the cells were last checked against, at `World::tiles_generation`.
+    tiles: HashSet<(i32, i32)>,
+    generation: Option<u64>,
     changed: bool,
 }
 
@@ -88,6 +92,8 @@ impl Shelter {
             roofs: vec![NO_ROOF; SIDE * SIDE],
             held: vec![None; SIDE * SIDE],
             corner: (0, 0),
+            tiles: HashSet::new(),
+            generation: None,
             changed: false,
         }
     }
@@ -104,10 +110,8 @@ impl Shelter {
     /// Move the square to `eye` and find the roofs of new or outdated cells, the rows
     /// nearest the eye first, for at most `budget`.
     pub fn update(&mut self, world: &World, eye: DVec3, budget: Option<Duration>) {
-        let generation = world
-            .tiles_generation
-            .load(std::sync::atomic::Ordering::Relaxed);
-        self.fill(eye, generation, budget, |cy, cxs| {
+        self.retile(world);
+        self.fill(eye, budget, |cy, cxs| {
             let y = centre(cy);
             let blockers = world.camera_blockers(
                 DVec2::new(cxs[0] as f64 * CELL, y),
@@ -119,11 +123,56 @@ impl Shelter {
         });
     }
 
+    /// Forget the cells of the tiles loaded or unloaded since the last call.
+    pub fn retile(&mut self, world: &World) {
+        let generation = world
+            .tiles_generation
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if self.generation == Some(generation) {
+            return;
+        }
+        let tiles: HashSet<(i32, i32)> = world.loaded_tiles().into_iter().collect();
+        let changed: Vec<(i32, i32)> = tiles.symmetric_difference(&self.tiles).copied().collect();
+        self.forget(&changed, ::map::tile_size());
+        self.tiles = tiles;
+        self.generation = Some(generation);
+    }
+
+    /// Forget the cells whose roof the tiles `changed` (`tile` m wide) may have brought or
+    /// taken away: those of the tiles and of the tiles around, which their objects reach
+    /// into (see `World::camera_blockers`).
+    fn forget(&mut self, changed: &[(i32, i32)], tile: f64) {
+        let near: HashSet<(i32, i32)> = changed
+            .iter()
+            .flat_map(|&(tx, ty)| {
+                (-1..=1).flat_map(move |dy| (-1..=1).map(move |dx| (tx + dx, ty + dy)))
+            })
+            .collect();
+        if near.is_empty() {
+            return;
+        }
+        for i in 0..self.held.len() {
+            let Some((cx, cy)) = self.held[i] else {
+                continue;
+            };
+            let t = (
+                (centre(cx) / tile).floor() as i32,
+                (centre(cy) / tile).floor() as i32,
+            );
+            if near.contains(&t) {
+                self.held[i] = None;
+                if self.roofs[i] != NO_ROOF {
+                    self.roofs[i] = NO_ROOF;
+                    self.changed = true;
+                }
+            }
+        }
+    }
+
     /// [`Shelter::update`] with the roofs from `roofs_of(row, columns)`.
     fn fill(
         &mut self,
         eye: DVec3,
-        generation: u64,
         budget: Option<Duration>,
         mut roofs_of: impl FnMut(i64, &[i64]) -> Vec<Option<f64>>,
     ) {
@@ -137,8 +186,7 @@ impl Shelter {
             for cy in corner.1..corner.1 + SIDE as i64 {
                 for cx in corner.0..corner.0 + SIDE as i64 {
                     let i = Self::slot((cx, cy));
-                    if self.held[i].is_some_and(|(held, _)| held != (cx, cy))
-                        && self.roofs[i] != NO_ROOF
+                    if self.held[i].is_some_and(|held| held != (cx, cy)) && self.roofs[i] != NO_ROOF
                     {
                         self.roofs[i] = NO_ROOF;
                         self.changed = true;
@@ -155,13 +203,13 @@ impl Shelter {
             let cy = self.corner.1 + row as i64;
             let stale: Vec<i64> = (0..SIDE as i64)
                 .map(|i| self.corner.0 + i)
-                .filter(|&cx| self.held[Self::slot((cx, cy))] != Some(((cx, cy), generation)))
+                .filter(|&cx| self.held[Self::slot((cx, cy))] != Some((cx, cy)))
                 .collect();
             for run in stale.chunks(RUN) {
                 for (cx, roof) in run.iter().zip(roofs_of(cy, run)) {
                     let i = Self::slot((*cx, cy));
                     self.roofs[i] = roof.map_or(NO_ROOF, |h| h as f32);
-                    self.held[i] = Some(((*cx, cy), generation));
+                    self.held[i] = Some((*cx, cy));
                 }
                 self.changed = true;
                 if budget.is_some_and(|b| start.elapsed() > b) {
@@ -176,7 +224,7 @@ impl Shelter {
         let c = Self::cell_of(x, y);
         let i = Self::slot(c);
         match self.held[i] {
-            Some((held, _)) if held == c && self.roofs[i] > NO_ROOF => Some(self.roofs[i] as f64),
+            Some(held) if held == c && self.roofs[i] > NO_ROOF => Some(self.roofs[i] as f64),
             _ => None,
         }
     }
@@ -184,7 +232,7 @@ impl Shelter {
     /// Whether the cell of (x, y) is in the square and has been looked at.
     fn knows(&self, x: f64, y: f64) -> bool {
         let c = Self::cell_of(x, y);
-        self.held[Self::slot(c)].is_some_and(|(held, _)| held == c)
+        self.held[Self::slot(c)] == Some(c)
     }
 
     /// Whether a roof is over the point.
@@ -222,7 +270,7 @@ impl Shelter {
 #[cfg(test)]
 pub(crate) fn roofed(height: f64) -> Shelter {
     let mut s = Shelter::new();
-    s.fill(DVec3::ZERO, 0, None, |_, cxs| vec![Some(height); cxs.len()]);
+    s.fill(DVec3::ZERO, None, |_, cxs| vec![Some(height); cxs.len()]);
     s
 }
 
@@ -251,7 +299,7 @@ mod tests {
     #[test]
     fn a_roof_keeps_the_weather_off_what_is_under_it_only() {
         let mut s = Shelter::new();
-        s.fill(DVec3::ZERO, 0, None, bridge);
+        s.fill(DVec3::ZERO, None, bridge);
         // under the deck, on its top, beside it
         assert!(s.covers(DVec3::new(0.0, 15.0, 3.0)));
         assert!(s.covers(DVec3::new(-40.0, 10.2, 7.9)));
@@ -267,35 +315,52 @@ mod tests {
     fn the_square_follows_the_eye_and_finds_only_what_it_lacks() {
         let mut s = Shelter::new();
         let mut asked = 0;
-        s.fill(DVec3::ZERO, 0, None, |cy, cxs| {
+        s.fill(DVec3::ZERO, None, |cy, cxs| {
             asked += cxs.len();
             bridge(cy, cxs)
         });
         assert_eq!(asked, SIDE * SIDE);
         // 30 m on: 30 new columns in every row, the rest is kept
         let mut asked = 0;
-        s.fill(DVec3::new(30.0, 0.0, 0.0), 0, None, |cy, cxs| {
+        s.fill(DVec3::new(30.0, 0.0, 0.0), None, |cy, cxs| {
             asked += cxs.len();
             bridge(cy, cxs)
         });
         assert_eq!(asked, 30 * SIDE);
         assert!(s.covers(DVec3::new(100.0, 15.0, 3.0)));
         assert!(!s.covers(DVec3::new(-80.0, 15.0, 3.0)));
-        // tiles came or went: everything is looked at again, and meanwhile kept
+    }
+
+    #[test]
+    fn tiles_coming_or_going_clear_the_cells_they_reach() {
+        let mut s = roofed(8.0);
+        s.changed = false;
+        // tiles 100 m wide; one 300 m off reaches no cell of the square
+        s.forget(&[(3, 3)], 100.0);
+        assert!(!s.changed);
+        // the tile east of the eye's: it and the tiles around it, here every x >= 0
+        s.forget(&[(1, 0)], 100.0);
+        assert!(s.changed);
+        let gpu = |cx: i64, cy: i64| s.roofs[Shelter::slot((cx, cy))];
+        assert_eq!(gpu(0, 0), NO_ROOF);
+        assert_eq!(gpu(95, -96), NO_ROOF);
+        assert_eq!(gpu(-1, 0), 8.0);
+        assert!(!s.covers(DVec3::new(40.0, 15.0, 3.0)));
+        assert!(s.covers(DVec3::new(-40.0, 15.0, 3.0)));
+        // only the forgotten cells are looked at again, the eye's row first
+        let mut asked = Vec::new();
+        s.fill(DVec3::ZERO, Some(Duration::ZERO), |cy, cxs| {
+            asked.push((cy, cxs[0], cxs.len()));
+            vec![Some(8.0); cxs.len()]
+        });
+        assert_eq!(asked, vec![(0, 0, RUN)]);
         let mut asked = 0;
-        s.fill(
-            DVec3::new(30.0, 0.0, 0.0),
-            1,
-            Some(Duration::ZERO),
-            |cy, cxs| {
-                asked += cxs.len();
-                // the eye's row first
-                assert_eq!(cy, 0);
-                bridge(cy, cxs)
-            },
-        );
-        assert_eq!(asked, RUN);
-        assert!(s.covers(DVec3::new(30.0, 15.0, 3.0)));
+        s.fill(DVec3::ZERO, None, |_, cxs| {
+            asked += cxs.len();
+            vec![Some(8.0); cxs.len()]
+        });
+        assert_eq!(asked, SIDE * SIDE / 2 - RUN);
+        assert!(s.covers(DVec3::new(40.0, 15.0, 3.0)));
     }
 
     #[test]
@@ -303,7 +368,7 @@ mod tests {
         let mut s = Shelter::new();
         let mut asked = Vec::new();
         for _ in 0..2 {
-            s.fill(DVec3::ZERO, 0, Some(Duration::ZERO), |cy, cxs| {
+            s.fill(DVec3::ZERO, Some(Duration::ZERO), |cy, cxs| {
                 asked.push((cy, cxs.len()));
                 bridge(cy, cxs)
             });
@@ -322,7 +387,6 @@ mod tests {
         // 50 m on, one run only
         s.fill(
             DVec3::new(50.0, 0.0, 0.0),
-            0,
             Some(Duration::ZERO),
             |_, cxs| vec![Some(8.0); cxs.len()],
         );
@@ -341,10 +405,10 @@ mod tests {
     fn the_renderer_gets_the_cells_only_when_they_changed() {
         let mut s = Shelter::new();
         assert!(!s.changed);
-        s.fill(DVec3::ZERO, 0, None, bridge);
+        s.fill(DVec3::ZERO, None, bridge);
         assert!(s.changed);
         s.changed = false;
-        s.fill(DVec3::ZERO, 0, None, bridge);
+        s.fill(DVec3::ZERO, None, bridge);
         assert!(!s.changed);
     }
 }

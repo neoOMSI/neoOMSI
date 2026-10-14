@@ -95,6 +95,9 @@ impl App {
                 self.shelter
                     .update(w, cam.position, Some(std::time::Duration::from_millis(2)));
                 self.shelter.upload(r);
+            } else {
+                // the tiles that come and go while it is dry take their roofs along too
+                self.shelter.retile(w);
             }
         }
         *self.profile.entry("lights.atlas").or_default() += __ta.elapsed().as_secs_f64();
