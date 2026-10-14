@@ -36,6 +36,7 @@ pub const DEFAULTS: &[(&str, &str, Def)] = &[
     ("gameplay", "time_sync", Def::Bool(false)),
     ("gameplay", "metar_sync", Def::Bool(false)),
     ("gameplay", "metar_station", Def::Str("")),
+    ("gameplay", "start_on_foot", Def::Bool(false)),
     ("gameplay", "auto_clutch", Def::Bool(true)),
     ("gameplay", "momentary_gears", Def::Bool(false)),
     ("gameplay", "auto_ibis", Def::Bool(false)),

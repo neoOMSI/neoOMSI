@@ -71,7 +71,7 @@ pub(crate) fn button_label(n: usize, gamepad: bool) -> String {
     const PAD: [&str; 6] = ["X", "A", "B", "Y", "LB", "RB"];
     const DIRS: [&str; 4] = ["up", "right", "down", "left"];
     let hats = controllers::HAT_BUTTONS..controllers::HAT_BUTTONS + 16;
-    if cfg!(windows) && hats.contains(&n) {
+    if hats.contains(&n) {
         let (hat, dir) = ((n - hats.start) / 4, (n - hats.start) % 4);
         let dir = tl(&format!("pause.controls.hat.{}", DIRS[dir]));
         return if gamepad && hat == 0 {
@@ -226,14 +226,10 @@ pub(crate) fn rows(pads: Option<&Controllers>) -> Rows {
     let mut out: Rows = Vec::new();
     let mut tab = 2;
     for c in live.iter() {
-        if let Some(i) = devices
+        if devices
             .iter()
-            .position(|d| controllers::names_match(&d.name, &c.name))
+            .any(|d| controllers::names_match(&d.name, &c.name))
         {
-            out.push((
-                row(&c.name, 'o', "", "pause.controls.use.desc", None),
-                format!("pad_open {i}"),
-            ));
             tab += 1;
         } else {
             out.push((
@@ -340,7 +336,7 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
                 } else {
                     cal
                 }
-                .clamp(-1.0, 1.0)
+                    .clamp(-1.0, 1.0)
             };
             r = if pedal {
                 format!("{r}\u{1f}\u{1f}{:.3}\u{1f}u", (v + 1.0) * 0.5)
@@ -413,6 +409,15 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
         }
     }
     let n = shown_buttons(d, dev.map_or(0, |c| c.buttons));
+    let hat_rows: Vec<usize> = if cfg!(target_os = "linux") && dev.is_some() {
+        (controllers::HAT_BUTTONS..controllers::HAT_BUTTONS + 4)
+            .filter(|h| *h >= n)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let list: Vec<usize> = (0..n).chain(hat_rows).collect();
+    let n = list.len();
     if n > 0 {
         let names = names_of(root);
         let gamepad = dev.is_some_and(|c| c.gamepad);
@@ -440,7 +445,7 @@ fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &Key
             ));
         }
         let before = out.len();
-        for b in 0..n {
+        for b in list {
             let act = d.buttons.get(b).map(|x| x.0.trim()).unwrap_or("");
             let v = if act.is_empty() {
                 "-".to_string()

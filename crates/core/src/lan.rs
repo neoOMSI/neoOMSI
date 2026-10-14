@@ -579,18 +579,7 @@ pub fn player_name(args: &Args) -> String {
             return stem;
         }
     }
-    #[cfg(target_os = "macos")]
-    if let Ok(out) = std::process::Command::new("id").arg("-F").output() {
-        let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !full.is_empty() {
-            return full;
-        }
-    }
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .ok()
-        .filter(|u| !u.trim().is_empty())
-        .unwrap_or_else(|| "Driver".into())
+    "Driver".into()
 }
 
 pub fn world_info(args: &Args) -> ::network::WorldInfo {

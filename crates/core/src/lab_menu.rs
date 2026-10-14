@@ -693,7 +693,7 @@ impl App {
             }
             return;
         };
-        let look = crate::launcher::showroom::Look {
+        let look = crate::showcase::Look {
             root: self.args.root.clone(),
             map: self.args.map.clone(),
             bus,
@@ -703,7 +703,7 @@ impl App {
             date: String::new(),
         };
         let room = self.lab_room.get_or_insert_with(|| {
-            let mut room = crate::launcher::showroom::Showroom::new();
+            let mut room = crate::showcase::Showcase::new();
 
             room.zoom_by(1.3);
             room
@@ -722,10 +722,7 @@ impl App {
             return;
         }
         ui.place_status.clear();
-        if let Some((pw, ph, mut rgba)) = room.snapshot(r, w, h) {
-            for px in rgba.chunks_exact_mut(4) {
-                px[3] = 255;
-            }
+        if let Some((pw, ph, rgba)) = room.snapshot(r, w, h) {
             let id = match self.lab_pic {
                 Some((id, tw, th)) if (tw, th) == (pw, ph) => id,
                 old => {
@@ -737,7 +734,7 @@ impl App {
                     id
                 }
             };
-            r.update_texture(scene, id, &::texture::Image { width: pw, height: ph, rgba, has_alpha: false });
+            r.update_texture(scene, id, &::texture::Image { width: pw, height: ph, rgba, has_alpha: true });
         }
         ui.place_picture = self.lab_pic.map(|p| p.0);
     }
@@ -1351,9 +1348,13 @@ impl App {
         // a page
         let to = |p: usize| Some(PauseState { page: Some(p), ..st });
         match code {
+            KeyCode::Escape if self.menu.is_some() => self.start_options_close(),
             KeyCode::Escape if self.lab_map_direct => self.close_game_menu(),
             KeyCode::Escape => self.lab_menu = Some(PauseState { page: None, ..st }),
             KeyCode::Delete | KeyCode::Backspace => self.lab_key_clear_hovered(),
+            KeyCode::KeyQ if self.menu.is_some() => self.start_tab(-1),
+            KeyCode::KeyE if self.menu.is_some() => self.start_tab(1),
+            _ if self.menu.is_some() => {}
             KeyCode::ArrowLeft | KeyCode::KeyA | KeyCode::KeyQ => {
                 self.lab_menu = to((tab + n - 1) % n)
             }

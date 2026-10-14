@@ -728,6 +728,7 @@ pub(crate) fn run_offscreen(
                 .as_ref()
                 .and_then(|p| p.vehicle.var("TrafficPriority"))
                 .is_some_and(|v| v > 0.5);
+            t.rail_ahead = rail_ahead(t, &world, player.as_ref(), &remotes_off);
             t.tick(dt, player.as_ref().map(|p| player_outline(p)));
             world.set_switches(&t.switch_requests());
             world.set_signals(&t.signal_aspects(&world.signal_routes, None));

@@ -545,6 +545,7 @@ impl Schedule {
             traffic.attach_cars(world, renderer, scene, ci, rest);
         }
         if train.is_some() {
+            traffic.cars[ci].train = true;
             log::info!(
                 "train: {}",
                 std::iter::once(

@@ -7,6 +7,17 @@ const MAX_SUBSTEP: f64 = 0.12;
 const MAX_SEEN: f64 = 1.0;
 const TOUCH: f64 = 0.005;
 
+#[allow(dead_code)]
+#[derive(Default, Clone)]
+pub(crate) struct MoveDbg {
+    pub exempt: Option<DVec2>,
+    pub boxes: usize,
+    pub lost: DVec2,
+    pub step_wall: bool,
+    pub reset: bool,
+    pub floor: Option<f64>,
+}
+
 pub(super) fn probe_box(center: DVec2, half: f64, feet: f64) -> Obb {
     Obb {
         center,
@@ -114,7 +125,8 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
     let walkable = |q: DVec2| dir == DVec2::ZERO || !(high(q) && high(q + dir * (RADIUS + 0.5)));
 
     let full = slide(from, from + delta, &boxes);
-    let mut p = if walkable(full.pos) {
+    let step_wall = !walkable(full.pos);
+    let mut p = if !step_wall {
         full.pos
     } else {
         let mut q = from;
@@ -130,9 +142,13 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
         q
     };
 
+    let mut reset = false;
     p = match depenetrate(p, &boxes) {
         Some(q) => q,
-        None => f.safe.truncate(),
+        None => {
+            reset = true;
+            f.safe.truncate()
+        }
     };
 
     let lost = from + delta - p;
@@ -145,6 +161,11 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
     }
 
     let floor = (env.ground)(p, feet, STEP_UP).filter(|g| g - feet <= STEP_UP);
+    f.dbg.boxes = boxes.len();
+    f.dbg.lost = lost;
+    f.dbg.step_wall = step_wall;
+    f.dbg.reset = reset;
+    f.dbg.floor = floor;
     vertical(f, floor, dt);
     f.pos.x = p.x;
     f.pos.y = p.y;
@@ -217,7 +238,10 @@ impl App {
             let probe = probe_box(at2, radius, at.z);
             boxes.extend(w.collision.lock().obstacles_near(&probe));
         }
-        boxes.extend(self.vehicle_boxes(at2, radius + 20.0));
+        boxes.extend(self.vehicle_boxes(at2, radius + 20.0).into_iter().map(|mut o| {
+            o.id = -2;
+            o
+        }));
         boxes.retain(|o| (o.center - at2).length() <= radius + o.half.length());
         boxes.truncate(2000);
         boxes
@@ -228,9 +252,21 @@ impl App {
             return Vec::new();
         };
         let at = DVec2::new(f.pos.x, f.pos.y);
-        self.foot_solids(at, f.pos.z, exempt)
+        let veh = self.vehicle_boxes(at, 20.0);
+        let same = |a: &Obb, b: &Obb| {
+            (a.center - b.center).length() < 1e-9
+                && (a.half - b.half).length() < 1e-9
+                && (a.heading - b.heading).abs() < 1e-9
+        };
+        self.foot_solids(at, f.pos.z + f.lift, exempt)
             .into_iter()
             .filter(|o| (push_out(at, o, RADIUS + 0.3) - at).length() > 1e-6)
+            .map(|mut o| {
+                if veh.iter().any(|v| same(v, &o)) {
+                    o.id = -2;
+                }
+                o
+            })
             .collect()
     }
 }

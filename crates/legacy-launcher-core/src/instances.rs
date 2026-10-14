@@ -58,8 +58,6 @@ pub struct Instance {
     /// The last line of its log.
     #[serde(default)]
     pub last_line: String,
-    #[serde(skip)]
-    pub link: Option<launcher_protocol::api::GameLink>,
 }
 
 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -277,7 +275,6 @@ pub fn list() -> Vec<Instance> {
         inst.last_line = last_lines(Path::new(&inst.log), 1, 4096)
             .pop()
             .unwrap_or_default();
-        inst.link = if alive { launcher_protocol::link::state(&inst.id) } else { None };
         out.push(inst);
     }
     // LAN status files of games that are gone (the file names the game's process)
@@ -347,8 +344,7 @@ pub fn start(game: &Path, args: &[String], d: &crate::Duty, profile: &str) -> Re
     let mut command = std::process::Command::new(game);
     command
         .args(args)
-        .env("OMSI_INSTANCE", &id)
-        .envs(launcher_protocol::link::env());
+        .env("OMSI_INSTANCE", &id);
     if let Some(started) = d.discord_session_start {
         command.env("OMSI_DISCORD_SESSION_START", started.to_string());
     }
@@ -505,9 +501,6 @@ fn end_process(inst: &Instance, grace: std::time::Duration) -> Result<bool> {
 }
 
 fn ask_to_quit(inst: &Instance) -> Result<()> {
-    if launcher_protocol::link::request_quit(&inst.id) {
-        return Ok(());
-    }
     request_quit(inst.pid)
 }
 

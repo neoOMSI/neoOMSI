@@ -50,7 +50,7 @@ else
   echo "No Rust workspace test-relevant changes detected."
 fi
 
-# Combined bundle check: engine code, scripts (build, dev, ci, launcher-ref), packaging workflows
+# Combined bundle check: engine code, scripts (build, dev, ci), packaging workflows
 if printf '%s\n' "$changed" | grep -Eq \
   '^(crates/|tools/|scripts/|Cargo\.toml$|Cargo\.lock$|\.cargo/|rust-toolchain$|rust-toolchain\.toml$|\.github/workflows/(test|build|build-target|pr-build)\.yml$|\.github/actions/)'
 then

@@ -277,6 +277,7 @@ fn build(l: &Launcher) -> Vec<Group> {
     };
     let mut groups: Vec<Group> = options_groups(&host)
         .into_iter()
+        .filter(|(key, ..)| key != "pause.options.group.game")
         .map(|(key, rows, subs)| {
             let tab = crate::ui::OPTION_GROUPS
                 .iter()
@@ -808,6 +809,13 @@ fn act(l: &mut Launcher, a: Act) {
                         crate::startup::content_dir,
                         crate::pax_pack::PaxPack::start,
                     );
+                }
+                "mods_install" => crate::lab_options::mods_install(),
+                "mods_open" => {
+                    if let Some(d) = ::mods::mods_dir() {
+                        let _ = std::fs::create_dir_all(&d);
+                        crate::updater::open_folder(&d);
+                    }
                 }
                 "pax_restart" => l.state.restart_games(),
                 "gfxprofile_save" => msg = Some(save_profile(&mut l.settings.profile_name)),

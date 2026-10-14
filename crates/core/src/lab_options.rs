@@ -40,7 +40,9 @@ fn row_of(host: &Host, file: &std::sync::Arc<serde_json::Value>, r: &OptRow) -> 
         OptKind::Opens => Some(opens(r.name, r.desc, r.id)),
         OptKind::Button(text) => Some(button(r.name, text, r.desc, r.id)),
         OptKind::Mic => Some(mic_row(host.app, r)),
-        OptKind::Keybinds | OptKind::Pads | OptKind::VoicePlayers => None,
+        OptKind::GameRoot => Some(game_root_row(host, r)),
+        OptKind::UpdateNow => Some(update_now_row(host.app, r)),
+        OptKind::Keybinds | OptKind::Pads | OptKind::VoicePlayers | OptKind::Mods => None,
     }
 }
 
@@ -170,6 +172,7 @@ fn rows_of(host: &Host, file: &std::sync::Arc<serde_json::Value>, rows: &[OptRow
             OptKind::Keybinds => key_rows(host.root, &host.keys).into_iter().map(retag).collect(),
             OptKind::Pads => crate::lab_pads::rows(host.pads),
             OptKind::VoicePlayers => voice_player_rows(host.app, r),
+            OptKind::Mods => mod_rows(),
             _ if r.id == "pax_models" => row_of(host, file, r).into_iter().chain([pax_pack_row()]).collect(),
             _ => row_of(host, file, r).into_iter().collect(),
         })
@@ -203,4 +206,171 @@ pub(crate) fn options_groups(host: &Host) -> Vec<(String, Vec<(String, String)>,
         .map(|g| (g.title.to_string(), rows_of(host, &file, g.rows), subs_of(host, &file, g)))
         .filter(|g| !g.1.is_empty() || !g.2.is_empty())
         .collect()
+}
+static MOD_SCAN: ScanCache = std::sync::Mutex::new(None);
+
+fn mod_problem(m: &::mods::ModEntry) -> (Option<&'static str>, String) {
+    let root = match m.kind {
+        ::mods::ModKind::Folder => ::mods::folder_content_root(&m.path),
+        ::mods::ModKind::Zip => match ::legacy_config::vfs::mount_zip(&m.path) {
+            Ok(r) => r,
+            Err(_) => return (Some("zip_error"), String::new()),
+        },
+    };
+    let Some(entries) = ::legacy_config::vfs::list_dir(&root) else {
+        return (Some("unreadable"), String::new());
+    };
+    let found: Vec<String> = ::legacy_config::CONTENT_FOLDERS
+        .iter()
+        .filter(|f| entries.iter().any(|(n, d)| *d && n.to_string_lossy().eq_ignore_ascii_case(f)))
+        .map(|f| f.to_string())
+        .collect();
+    if found.is_empty() {
+        return (Some("empty"), String::new());
+    }
+    (None, found.join(", "))
+}
+
+fn mod_rows() -> Vec<(String, String)> {
+    let t = |k: &str| ::i18n::translate(&format!("pause.options.mods.{k}"), &[]);
+    let lines = scan_cached(&MOD_SCAN, || {
+        ::mods::list()
+            .iter()
+            .map(|m| {
+                let (problem, found) = mod_problem(m);
+                let kind = if m.kind == ::mods::ModKind::Zip { "zip" } else { "folder" };
+                format!("{}\u{1f}{kind}\u{1f}{}\u{1f}{found}", m.name, problem.unwrap_or(""))
+            })
+            .collect()
+    });
+    if lines.is_empty() {
+        return vec![(row(&t("none"), 'i', "", &t("none_desc"), None), "noop".to_string())];
+    }
+    lines
+        .iter()
+        .map(|l| {
+            let mut p = l.split('\u{1f}');
+            let (name, kind, problem, found) = (
+                p.next().unwrap_or(""),
+                p.next().unwrap_or(""),
+                p.next().unwrap_or(""),
+                p.next().unwrap_or(""),
+            );
+            let (value, desc) = if problem.is_empty() {
+                (t("status.ok"), format!("{} - {found}", t(kind)))
+            } else {
+                (t(&format!("status.{problem}")), format!("{} - {}", t(kind), t(&format!("status.{problem}_desc"))))
+            };
+            (row(name, 'i', &value, &desc, None), "noop".to_string())
+        })
+        .collect()
+}
+
+pub(crate) fn mods_install() {
+    let Some(dir) = ::mods::mods_dir() else { return };
+    let Some(files) = rfd::FileDialog::new()
+        .set_title(::i18n::translate("pause.options.mods.install.title", &[]))
+        .add_filter("ZIP", &["zip"])
+        .pick_files()
+    else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    for f in files {
+        let Some(name) = f.file_name() else { continue };
+        let to = dir.join(name);
+        if to != f {
+            if let Err(e) = std::fs::copy(&f, &to) {
+                log::warn!("mod install {}: {e}", f.display());
+            }
+        }
+    }
+    let _ = ::mods::init(&dir, ::mods::legacy_dir().as_deref());
+    *MOD_SCAN.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+static PENDING_ROOT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn game_root_row(host: &Host, r: &OptRow) -> (String, String) {
+    let t = |k: &str| ::i18n::translate(&format!("pause.options.game.{k}"), &[]);
+    let pending = PENDING_ROOT.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let shown = pending
+        .clone()
+        .unwrap_or_else(|| host.root.to_string_lossy().into_owned());
+    let desc = if shown.trim().is_empty() {
+        t("root_none")
+    } else if pending.is_some() {
+        format!("{shown} - {}", t("root_restart"))
+    } else {
+        shown
+    };
+    (row(r.name, 'a', "pause.options.game.root.button", &desc, None), r.id.to_string())
+}
+
+/// Let the player pick the OMSI 2 folder; it is kept for the next start.
+pub(crate) fn game_root_pick() {
+    #[cfg(not(target_os = "android"))]
+    {
+        let Some(p) = rfd::FileDialog::new()
+            .set_title(::i18n::translate("pause.options.game.root.title", &[]))
+            .pick_folder()
+        else {
+            return;
+        };
+        let root = p.to_string_lossy().to_string();
+        if let Some(memo) = crate::startup::root_memo() {
+            if let Err(e) = std::fs::write(&memo, root.as_bytes()) {
+                log::warn!("OMSI 2 folder not remembered: {e}");
+            }
+        }
+        let mut c = omsi_launcher_lib::load_config();
+        c.root = root.clone();
+        match omsi_launcher_lib::save_config(&c) {
+            Ok(()) => *PENDING_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(root),
+            Err(e) => log::warn!("OMSI 2 folder not saved: {e}"),
+        }
+    }
+}
+
+fn update_status(app: Option<&App>) -> crate::updater::Status {
+    match app.and_then(|a| a.menu.as_ref()) {
+        Some(m) => m.update.status(),
+        None => crate::updater::shared().lock().unwrap_or_else(|e| e.into_inner()).status(),
+    }
+}
+
+/// Ask GitHub for a newer version (in the background).
+pub(crate) fn update_check_now(app: &mut App) {
+    match app.menu.as_mut() {
+        Some(m) => m.update.check(),
+        None => crate::updater::shared().lock().unwrap_or_else(|e| e.into_inner()).check(),
+    }
+}
+
+fn update_now_row(app: Option<&App>, r: &OptRow) -> (String, String) {
+    use crate::updater::Status;
+    let status = update_status(app);
+    let busy = matches!(
+        status,
+        Status::Checking
+            | Status::Downloading { .. }
+            | Status::Installing(_)
+            | Status::WaitingForInstaller(_)
+            | Status::Restarting(_)
+    );
+    let v = crate::updater::current_version();
+    let key = match &status {
+        Status::UpToDate => "update_latest",
+        Status::Available(_) => "update_available",
+        Status::Failed(_) => "update_failed",
+        Status::Checking => "update_checking",
+        _ => "update_current",
+    };
+    let version = match &status {
+        Status::Available(rel) => rel.version.clone(),
+        _ => v.to_string(),
+    };
+    let desc = ::i18n::translate(&format!("pause.options.game.{key}"), &[("version", &version)]);
+    let button = if busy { "" } else { "pause.options.game.update_now.button" };
+    (row(r.name, 'a', button, &desc, None), r.id.to_string())
 }

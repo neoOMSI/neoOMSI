@@ -60,6 +60,9 @@ pub enum OptKind {
     Pads,
     Mic,
     VoicePlayers,
+    Mods,
+    GameRoot,
+    UpdateNow,
 }
 
 pub const VOICE_SUB: &str = "pause.options.group.voice";
@@ -907,6 +910,31 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
         }],
     },
     OptGroup {
+        title: "pause.options.group.mods",
+        tab: "",
+        rows: &[
+            row(
+                "mods_open",
+                "pause.options.mods.open.name",
+                "pause.options.mods.open.desc",
+                OptKind::Button("pause.options.mods.open.button"),
+            ),
+            row(
+                "mods_install",
+                "pause.options.mods.install.name",
+                "pause.options.mods.install.desc",
+                OptKind::Button("pause.options.mods.install.button"),
+            ),
+            row(
+                "mods_list",
+                "pause.options.mods.list.name",
+                "pause.options.mods.list.desc",
+                OptKind::Mods,
+            ),
+        ],
+        subs: &[],
+    },
+    OptGroup {
         title: "pause.options.group.vr",
         tab: "",
         rows: &[
@@ -1043,6 +1071,35 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                     OptKind::Button("pause.options.button.reset"),
                 ),
                 OptShow::VrBus,
+            ),
+        ],
+        subs: &[],
+    },
+    OptGroup {
+        title: "pause.options.group.game",
+        tab: "",
+        rows: &[
+            row(
+                "setup_root",
+                "pause.options.game.root.name",
+                "pause.options.game.root.desc",
+                OptKind::GameRoot,
+            ),
+            sw(
+                "update_check",
+                "pause.options.game.update_check.name",
+                "pause.options.game.update_check.desc",
+            ),
+            sw(
+                "update_auto",
+                "pause.options.game.update_auto.name",
+                "pause.options.game.update_auto.desc",
+            ),
+            row(
+                "update_now",
+                "pause.options.game.update_now.name",
+                "pause.options.game.update_now.desc",
+                OptKind::UpdateNow,
             ),
         ],
         subs: &[],

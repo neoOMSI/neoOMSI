@@ -185,7 +185,7 @@ impl App {
     pub(crate) fn mouse_steers_in_view(&self) -> bool {
         self.player.is_some()
             && (matches!(self.view.as_str(), "driver" | "outside" | "pax")
-                || (self.view == "free" && !self.ego))
+            || (self.view == "free" && !self.ego))
     }
 
     /// The raycast camera is steering: the mouse turns the view, the middle of the
@@ -883,11 +883,11 @@ impl App {
         #[cfg(windows)]
         if !self.mouse_drive
             && self.vr.as_ref().is_some_and(|vr| {
-                vr.needs_cursor_surface(
-                    self.cursor,
-                    self.game_menu.is_some() || self.chooser.is_some(),
-                )
-            })
+            vr.needs_cursor_surface(
+                self.cursor,
+                self.game_menu.is_some() || self.chooser.is_some(),
+            )
+        })
         {
             let surface = self
                 .player
@@ -916,21 +916,21 @@ impl App {
             if self.view != "free"
                 && (self.view != "foot" || self.foot_reaches_bus())
                 && !(self.vr_active()
-                    && self.mouse_drive
-                    && matches!(self.view.as_str(), "driver" | "pax")) =>
-            {
-                let (o, d, spread) =
-                    self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
-                let (part, hand) = p.hovered_part(o, d, spread);
-                let coin = !hand
-                    && self
+                && self.mouse_drive
+                && matches!(self.view.as_str(), "driver" | "pax")) =>
+                {
+                    let (o, d, spread) =
+                        self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
+                    let (part, hand) = p.hovered_part(o, d, spread);
+                    let coin = !hand
+                        && self
                         .humans
                         .as_ref()
                         .and_then(|h| h.money.as_ref())
                         .and_then(|m| m.change_under(o, d, spread, || p.body_hit(o, d)))
                         .is_some();
-                (part, hand || coin)
-            }
+                    (part, hand || coin)
+                }
             _ => (None, false),
         };
         let found = if found.0.is_none() && !found.1 && self.view != "free" {

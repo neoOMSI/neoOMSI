@@ -16,6 +16,13 @@ impl crate::App {
             attached: f.attached,
             seated: f.seat.is_some(),
             inside: f.inside.is_some(),
+            exempt: f.dbg.exempt.map(|e| [e.x, e.y]),
+            solids: f.dbg.boxes,
+            lost: [f.dbg.lost.x, f.dbg.lost.y],
+            step_wall: f.dbg.step_wall,
+            reset: f.dbg.reset,
+            floor: f.dbg.floor,
+            lift: f.lift,
         });
         let doors = match (self.on_foot.as_ref(), self.humans.as_ref()) {
             (Some(f), Some(hm)) if boxes_on || self.devtools.is_some() => {
@@ -61,11 +68,7 @@ impl crate::App {
             Vec::new()
         };
         let blockers = if boxes_on {
-            let exempt = doors
-                .iter()
-                .filter(|d| d.in_lane)
-                .min_by(|a, b| a.lateral.total_cmp(&b.lateral))
-                .map(|d| glam::DVec2::new(d.inside[0], d.inside[1]));
+            let exempt = self.on_foot.as_ref().and_then(|f| f.dbg.exempt);
             self.dev_blockers(exempt)
         } else {
             Vec::new()

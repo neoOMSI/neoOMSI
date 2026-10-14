@@ -1,0 +1,1 @@
+Trams and trains driven by the player or by LAN players now request the traffic lights on the track ahead, along the branch they will take. A vehicle the map also runs as an AI train requests a level crossing from as far away as an AI train does. This is a neoOMSI extension; in OMSI they request no lights.

@@ -6,6 +6,8 @@ pub(crate) struct DrawItem {
     pub(crate) mesh: u32,
     pub(crate) range: u32,
     pub(crate) material: u32,
+    /// The material's look: draws of materials that look alike are batched together.
+    pub(crate) look: u32,
     pub(crate) entry: u32,
 }
 
@@ -26,23 +28,11 @@ pub(crate) fn batch_items(
     list: &mut Vec<u32>,
     out: &mut Vec<Batch>,
 ) {
-    if sort {
-        items.sort_unstable_by_key(|d| (d.pipe, d.material, d.mesh, d.range));
-    }
-    let mut k = 0;
-    while k < items.len() {
-        let d = items[k];
-        let start = list.len() as u32;
-        while k < items.len()
-            && (
-                items[k].pipe,
-                items[k].mesh,
-                items[k].range,
-                items[k].material,
-            ) == (d.pipe, d.mesh, d.range, d.material)
-        {
-            list.push(items[k].entry);
-            k += 1;
+    // a batch keeps the material of the one before it when they look alike: no rebinding
+    let mut last = (u32::MAX, 0);
+    let mut push = |d: &DrawItem, start: u32, list: &Vec<u32>| {
+        if last.0 != d.look {
+            last = (d.look, d.material);
         }
         let (first, count, _) = scene.meshes[d.mesh as usize].ranges[d.range as usize];
         out.push(Batch {
@@ -50,14 +40,81 @@ pub(crate) fn batch_items(
             mesh: d.mesh,
             first,
             count,
-            material: d.material,
+            material: last.1,
             instances: start..list.len() as u32,
         });
+    };
+    if sort {
+        let bits = |n: u32| u32::BITS - n.leading_zeros();
+        let (mut look, mut mesh, mut range) = (0, 0, 0);
+        for d in items.iter() {
+            (look, mesh, range) = (look | d.look, mesh | d.mesh, range | d.range);
+        }
+        let mesh_shift = bits(range);
+        let look_shift = mesh_shift + bits(mesh);
+        let pipe_shift = look_shift + bits(look);
+        if pipe_shift + 8 <= 64 {
+            // one number a draw sorts twice as fast as comparing the four fields
+            let mut keys: Vec<(u64, u32, u32)> = items
+                .iter()
+                .map(|d| {
+                    let key = (d.pipe as u64) << pipe_shift
+                        | (d.look as u64) << look_shift
+                        | (d.mesh as u64) << mesh_shift
+                        | d.range as u64;
+                    (key, d.entry, d.material)
+                })
+                .collect();
+            keys.sort_unstable_by_key(|k| k.0);
+            let field =
+                |key: u64, from: u32, to: u32| ((key >> from) & ((1 << (to - from)) - 1)) as u32;
+            let mut k = 0;
+            while k < keys.len() {
+                let (key, _, material) = keys[k];
+                let start = list.len() as u32;
+                while k < keys.len() && keys[k].0 == key {
+                    list.push(keys[k].1);
+                    k += 1;
+                }
+                let d = DrawItem {
+                    pipe: (key >> pipe_shift) as u8,
+                    mesh: field(key, mesh_shift, look_shift),
+                    range: field(key, 0, mesh_shift),
+                    material,
+                    look: field(key, look_shift, pipe_shift),
+                    entry: 0,
+                };
+                push(&d, start, list);
+            }
+            return;
+        }
+        items.sort_unstable_by_key(|d| (d.pipe, d.look, d.mesh, d.range));
+    }
+    let mut k = 0;
+    while k < items.len() {
+        let d = items[k];
+        let start = list.len() as u32;
+        while k < items.len()
+            && (items[k].pipe, items[k].mesh, items[k].range, items[k].look)
+                == (d.pipe, d.mesh, d.range, d.look)
+        {
+            list.push(items[k].entry);
+            k += 1;
+        }
+        push(&d, start, list);
     }
 }
 
-pub(crate) fn depth_only_material(kind: u8, material: MaterialId) -> u32 {
-    if kind == 0 { 0 } else { material as u32 }
+/// The material and look a depth-only draw (shadow map, depth prepass) is batched with: an
+/// opaque surface writes its depth whatever its texture, so all of them share the first
+/// material and batch across materials; an alpha-tested one needs its own texture for the
+/// cut-out.
+pub(crate) fn depth_only_material(kind: u8, material: MaterialId, look: u32) -> (u32, u32) {
+    if kind == 0 {
+        (0, 0)
+    } else {
+        (material as u32, look)
+    }
 }
 
 pub(crate) fn encode_batches<'a, E: wgpu::util::RenderEncoder<'a>>(

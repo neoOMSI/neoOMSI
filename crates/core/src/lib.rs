@@ -29,6 +29,7 @@ mod lights;
 #[cfg(target_os = "macos")]
 mod mac_hid;
 mod menu;
+mod start_menu;
 mod money;
 mod navigator;
 pub mod navmap;
@@ -53,6 +54,7 @@ mod sampler;
 mod scene;
 mod schedule;
 mod schedule_paper;
+mod showcase;
 mod sound_events;
 mod threads;
 mod tiles;
@@ -68,7 +70,6 @@ mod bus_service;
 mod camera_tool;
 mod camera_util;
 mod cli;
-mod control;
 mod controllers;
 #[cfg(windows)]
 mod dinput;
@@ -78,7 +79,6 @@ mod editor_ctl;
 mod evdev_axes;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod evdev_ff;
-mod game_link;
 mod game_menu;
 mod lab_menu;
 mod lab_options;
@@ -151,17 +151,10 @@ pub fn run() -> Result<()> {
     }
     #[cfg(target_os = "macos")]
     restart_with_allocator_settings();
-    let protocol = std::env::args().any(|a| a == "--control-protocol");
-    // a console would take over the launcher's pipes
     #[cfg(windows)]
-    if !protocol {
-        attach_parent_console();
-    }
+    attach_parent_console();
     let args = Args::parse();
-    let bare = std::env::args().len() == 1;
-    logging::init(if protocol {
-        "control"
-    } else if args.launcher || (bare && !args.menu) {
+    logging::init(if args.launcher {
         "launcher"
     } else {
         "game"
@@ -180,16 +173,10 @@ pub fn run() -> Result<()> {
             ),
         );
         // (other threads' panics are often caught: a damaged tile, a plugin)
-        if std::thread::current().name() == Some("main") {
-            game_link::failed(&format!("the game stopped on an error: {info}"));
-        }
         default_hook(info);
     }));
     if let Err(e) = config::init(config::default_path()) {
         log::warn!("settings not loaded: {e}");
-    }
-    if protocol {
-        return control::run();
     }
     #[cfg(all(feature = "devtools", debug_assertions))]
     sampler::start();
@@ -201,10 +188,10 @@ pub fn run() -> Result<()> {
             ""
         }
     );
-    let Some((args, server_cfg)) = prepare(args, bare)? else {
+    let Some((args, server_cfg)) = prepare(args)? else {
         return Ok(());
     };
-    if args.launcher || (bare && !args.menu) {
+    if args.launcher {
         let exe = std::env::current_exe()?;
         match omsi_launcher_lib::start_external_launcher(&exe) {
             Ok(true) => return Ok(()),
@@ -219,9 +206,6 @@ pub fn run() -> Result<()> {
             }
             Err(e) => anyhow::bail!("Failed to start neoOMSI desktop launcher: {e:#}"),
         }
-    }
-    if server_cfg.is_none() {
-        game_link::connect();
     }
     let Some(app) = make_app(args, server_cfg)? else {
         return Ok(());
@@ -250,9 +234,37 @@ pub(crate) fn launcher_statics() {
     );
 }
 
+fn ask_for_root() -> Option<PathBuf> {
+    loop {
+        let exe = rfd::FileDialog::new()
+            .set_title(::i18n::translate("pause.options.game.root.exe_title", &[]))
+            .add_filter("Omsi.exe", &["exe"])
+            .pick_file()?;
+        let dir = exe.parent()?.to_path_buf();
+        if is_omsi_root(&dir) {
+            let mut c = omsi_launcher_lib::load_config();
+            c.root = dir.to_string_lossy().to_string();
+            if let Err(e) = omsi_launcher_lib::save_config(&c) {
+                log::warn!("OMSI 2 folder not saved: {e}");
+            }
+            if let Some(memo) = root_memo() {
+                let _ = std::fs::write(memo, dir.to_string_lossy().as_bytes());
+            }
+            return Some(dir);
+        }
+        let missing = legacy_config::missing_original_essentials(&dir);
+        fatal_dialog(
+            "neoOMSI",
+            &::i18n::translate(
+                "pause.options.game.root.incomplete",
+                &[("path", &dir.display()), ("missing", &missing.join(", "))],
+            ),
+        );
+    }
+}
+
 pub(crate) fn prepare(
     mut args: Args,
-    bare: bool,
 ) -> Result<Option<(Args, Option<server::ServerCfg>)>> {
     ui_language(&config::get_string("ui", "language").unwrap_or_else(|| "ENG".into()));
     let server_cfg = match args.server.clone() {
@@ -277,9 +289,16 @@ pub(crate) fn prepare(
         });
     legacy_script::set_session_seed(seed);
     log::info!("script random seed {seed} (OMSI_SEED={seed} repeats it)");
-    let launcher_mode = args.launcher || (bare && !args.menu);
+    let launcher_mode = args.launcher;
     if !is_omsi_root(&args.root) {
-        match find_root() {
+        let asked = || {
+            let silent = launcher_mode
+                || server_cfg.is_some()
+                || args.offscreen.is_some()
+                || legacy_config::env::var_os("OMSI_BACKGROUND").is_some();
+            if silent { None } else { ask_for_root() }
+        };
+        match find_root().or_else(asked) {
             Some(p) => {
                 log::info!("OMSI 2 found at {}", p.display());
                 args.root = p;
@@ -292,7 +311,7 @@ pub(crate) fn prepare(
                 let text = format!(
                     "The original OMSI 2 was not found.\n\n\
                      neoOMSI needs a complete installation of the original game (any version). \
-                     Choose its folder in the launcher (Setup), or start once with \
+                     Start neoOMSI again and select its Omsi.exe, or start once with \
                      --root \"/path/to/OMSI 2\", the folder with Omsi.exe, maps and Vehicles in it.\n\n\
                      Missing in {}: {}",
                     args.root.display(),
@@ -482,6 +501,7 @@ pub(crate) fn make_app(
         renderer: None,
         resize_pending: None,
         pending_triple_screen_span: None,
+        boot: None,
         #[cfg(windows)]
         vr: None,
         scene: None,

@@ -14,11 +14,13 @@ pub mod gpu;
 pub mod i18n;
 pub mod icons;
 pub mod ingame;
+pub mod loading_screen;
 pub mod paint;
 pub mod text;
 
 pub use atlas::{Atlas, Sprite};
 pub use gpu::{Draw, Gpu, Layer};
+pub use loading_screen::LoadingScreen;
 pub use i18n::tr;
 pub use paint::{Color, Painter, Rect, Vertex};
 pub use text::{Fonts, Weight};

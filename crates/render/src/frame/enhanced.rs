@@ -48,6 +48,33 @@ impl Renderer {
         self.sky_state = Some(st);
     }
 
+    /// How much brighter the enhanced picture is than the plain shading under `lighting`,
+    /// for an upward surface at the picture's exposure (1 without enhanced graphics).
+    pub fn enhanced_light_ratio(&self, lighting: &Lighting) -> f32 {
+        if self.hdr_pass.is_none() || ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_some() {
+            return 1.0;
+        }
+        let computed;
+        let st = match &self.sky_state {
+            Some(st) => st,
+            None => {
+                computed = atmosphere::SkyState::compute(&sky_input(lighting));
+                &computed
+            }
+        };
+        let exposure = self.exposure.map(f32::exp).unwrap_or(st.exposure);
+        let up = lighting.sun_dir.normalize_or_zero().z.max(0.0);
+        let lum = Vec3::new(0.2126, 0.7152, 0.0722);
+        let enhanced = (st.sun * up + atmosphere::sh_irradiance(&st.sh, Vec3::Z))
+            / std::f32::consts::PI
+            * exposure;
+        // (as render_inner scales them for a plain frame)
+        let plain = lighting.sun_color * lighting.sun_intensity * up
+            + (lighting.secondary + lighting.ambient)
+                * night_scale(lighting.night, lighting.atmosphere_brightness);
+        enhanced.dot(lum) / plain.dot(lum).max(1e-4)
+    }
+
     pub(crate) fn prepare_enhanced(
         &mut self,
         lighting: &Lighting,
@@ -55,21 +82,7 @@ impl Renderer {
         ro: DVec3,
         dt: f32,
     ) -> bool {
-        let s = lighting.sun_dir.normalize_or_zero();
-        let visibility = 2.3 / lighting.fog_density.max(1e-6);
-        let haze = (8000.0 / visibility).clamp(1.0, 6.0) + 2.0 * lighting.rain;
-        let wet_cover = (lighting.rain * 1.5).clamp(0.0, 1.0);
-        let sun_visibility = lighting.sun_intensity.clamp(0.0, 1.0) * (1.0 - wet_cover);
-        let input = atmosphere::SkyInput {
-            sun_dir: s,
-            sun_visibility,
-            overcast: lighting.overcast.clamp(0.0, 1.0).max(wet_cover),
-            haze,
-            rain: lighting.rain.clamp(0.0, 1.0),
-            ground_albedo: 0.2 + 0.45 * lighting.snow.clamp(0.0, 1.0),
-            tint: lighting.envir_tint,
-            night_light: lighting.atmosphere_brightness,
-        };
+        let input = sky_input(lighting);
         if let Some((_, rx)) = &self.sky_job {
             match rx.try_recv() {
                 Ok(st) => {
@@ -203,7 +216,7 @@ impl Renderer {
                 lighting.rain.clamp(0.0, 1.0),
                 input_overcast,
             ],
-            lights: [PROBE_MIPS as f32, LAMP_E, CABIN_E, sun_visibility],
+            lights: [PROBE_MIPS as f32, LAMP_E, CABIN_E, input.sun_visibility],
             sun_disc: st.sun_disc.extend(dt).to_array(),
             debug: [
                 debug_view(),
@@ -230,5 +243,23 @@ impl Renderer {
         };
         self.write_buffer(&self.enh_buf, 0, bytemuck::bytes_of(&u));
         redraw
+    }
+}
+
+/// The physical sky's input for `lighting`.
+fn sky_input(lighting: &Lighting) -> atmosphere::SkyInput {
+    let visibility = 2.3 / lighting.fog_density.max(1e-6);
+    let haze = (8000.0 / visibility).clamp(1.0, 6.0) + 2.0 * lighting.rain;
+    let wet_cover = (lighting.rain * 1.5).clamp(0.0, 1.0);
+    let sun_visibility = lighting.sun_intensity.clamp(0.0, 1.0) * (1.0 - wet_cover);
+    atmosphere::SkyInput {
+        sun_dir: lighting.sun_dir.normalize_or_zero(),
+        sun_visibility,
+        overcast: lighting.overcast.clamp(0.0, 1.0).max(wet_cover),
+        haze,
+        rain: lighting.rain.clamp(0.0, 1.0),
+        ground_albedo: 0.2 + 0.45 * lighting.snow.clamp(0.0, 1.0),
+        tint: lighting.envir_tint,
+        night_light: lighting.atmosphere_brightness,
     }
 }

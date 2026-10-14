@@ -18,7 +18,8 @@ use ::simulation::ai_motion::{
 };
 use ::simulation::collision::Obb;
 pub(crate) use ::simulation::traffic::{
-    AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, TrafficLightController, arrival_time,
+    AiState, Aspect, LaneKind, Lead, MAX_BRAKE, Network, RAIL_APPROACH, TrafficLightController,
+    arrival_time,
 };
 use ::simulation::vehicle::AiFrame;
 use ::simulation::{VehicleInstance, VehicleType};
@@ -217,6 +218,8 @@ pub struct AiCar {
     /// A train turned round as a whole (its last car leads now): what a trip's
     /// `[trainreverse]` is compared with (Omsi.exe's vehicle +0x4e1).
     pub consist_reversed: bool,
+    /// A `.zug` train (not a tram): asks for a level crossing from afar.
+    pub train: bool,
 }
 
 /// A free parking space beside a lane that a car means to park in: the space of parked car
@@ -639,6 +642,11 @@ pub struct Traffic {
     /// before each `tick`: the cars stop behind them and go round them as round the
     /// player's bus.
     pub others: Vec<(u32, PlayerBox)>,
+    /// Rail lanes ahead of the players' trams and trains (lane, distance, front, train),
+    /// set before each `tick`. A neoOMSI extension: OMSI requests no lights for them.
+    pub rail_ahead: Vec<(usize, f32, f32, bool)>,
+    /// The vehicle files of the map's `.zug` trains (see `train_cars`).
+    train_cars: hashbrown::HashSet<String>,
     /// The drivers at the wheel of the timetable buses near the camera, by car id (see
     /// `driver.rs`; made within `DRIVER_NEAR` m of the camera, let go beyond twice that).
     drivers: HashMap<u64, crate::driver::DriverFigure>,
@@ -901,7 +909,7 @@ fn open_trace() -> Option<std::io::BufWriter<std::fs::File>> {
 
 /// The vehicle's extent from its origin: (to the front bumper, to the rear bumper, half
 /// the width) from its `[boundingbox]`.
-fn extents(ty: &VehicleType, length: f32) -> (f32, f32, f32) {
+pub(crate) fn extents(ty: &VehicleType, length: f32) -> (f32, f32, f32) {
     match ty.def.bounding_box {
         Some(bb) if bb[1] > 1.0 => (
             bb[1] * 0.5 + bb[4],
@@ -1345,6 +1353,8 @@ impl Traffic {
             player: None,
             player_priority: false,
             others: Vec::new(),
+            rail_ahead: Vec::new(),
+            train_cars: train_cars(root, &world.ailists),
             drivers: HashMap::new(),
             driver_pool: Vec::new(),
             tick_split: [0.0; 3],
@@ -1483,6 +1493,7 @@ impl Traffic {
         new.state.min_gap = old.state.min_gap;
         new.state.speed = 0.0;
         new.consist_reversed = reversed;
+        new.train = old.train;
         let old = std::mem::replace(&mut self.cars[ci], new);
         self.orphan_sounds.extend(old.sounds);
         for r in std::iter::once(old.render).chain(old.trailer_renders) {
@@ -3158,6 +3169,7 @@ impl Traffic {
             pull_out: 0.0,
             rail_trail: Default::default(),
             consist_reversed: false,
+            train: false,
             park: None,
             seed,
             scheme,
@@ -5687,20 +5699,20 @@ impl Traffic {
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
         }
+        let rail_within = self.rail_reach();
         for c in &self.cars {
-            self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
-            for &(l, d) in &way_scratch {
-                if let Some((ci, li)) = self.net.lanes[l].traffic_light {
-                    if let Some(ctl) = self.lights.get_mut(ci) {
-                        let gap = d - c.state.front;
-                        if gap <= ctl.approach_dist(li) && d > -self.net.lanes[l].length() {
-                            if let Some(r) = ctl.request.get_mut(li) {
-                                *r = true;
-                            }
-                        }
-                    }
-                }
+            if c.train && !c.state.route.is_empty() {
+                route_lanes_into(&self.net, &c.state, rail_within, &mut way_scratch);
+            } else {
+                self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
             }
+            for &(l, d) in &way_scratch {
+                ask_light(&mut self.lights, &self.net, l, d, c.state.front, c.train);
+            }
+        }
+        // the players' trams and trains
+        for &(l, d, front, train) in &self.rail_ahead {
+            ask_light(&mut self.lights, &self.net, l, d, front, train);
         }
         // the player's bus and the other players' vehicles ask too: a depot gate (Spandau's
         // `Omnibushof_S_1`, the exit arm on light 1) opens only for whoever asks, and the
@@ -5714,22 +5726,12 @@ impl Traffic {
             // (off the lanes - a depot yard, a car park - a gate's lane that starts just
             // ahead, the way the bus is facing, is asked all the same: standing a few metres
             // beside every lane there, the bus never opened the barrier in front of it)
-            let h = heading.to_radians();
-            let fwd = glam::DVec2::new(h.sin(), h.cos());
             for l in self.net.lanes_starting_near(pos, 35.0) {
                 let lane = &self.net.lanes[l];
                 let Some((ci, li)) = lane.traffic_light else {
                     continue;
                 };
-                let (p0, h0) = lane.at(0.0);
-                let d = (p0 - pos).truncate();
-                let (along, across) = (d.dot(fwd), d.perp_dot(fwd).abs());
-                let turn = ((h0 as f64 - heading + 540.0).rem_euclid(360.0) - 180.0).abs();
-                if (-2.0..25.0).contains(&along)
-                    && across < 6.0
-                    && turn < 60.0
-                    && (p0.z - pos.z).abs() < 4.0
-                {
+                if gate_lane_ahead(lane, pos, heading) {
                     if let Some(r) = self.lights.get_mut(ci).and_then(|c| c.request.get_mut(li)) {
                         *r = true;
                     }
@@ -7572,6 +7574,21 @@ impl Traffic {
         }
     }
 
+    /// How far ahead a train looks for lights (m): a set `[approachdist]` counts for trains
+    /// as written, however far.
+    pub fn rail_reach(&self) -> f32 {
+        self.lights
+            .iter()
+            .flat_map(|c| c.approach.iter().flatten())
+            .fold(RAIL_APPROACH, |m, &d| m.max(d))
+            + 10.0
+    }
+
+    /// Whether the vehicle file `path` is a car of one of the map's AI trains.
+    pub fn is_train(&self, path: &Path) -> bool {
+        self.train_cars.contains(&car_key(path))
+    }
+
     /// The street lanes a vehicle standing at `pos` facing `heading` is on and will drive
     /// onto within `reach` metres, each with the distance from the vehicle to its start
     /// (0 for the lane it is on): the way straight on and the gentle turns (within 60° of
@@ -7785,6 +7802,16 @@ impl Traffic {
                 };
                 let mut s = script.lock();
                 s.update(dt, &vars);
+                if near.is_none_or(|p| (lamp.pos - p).length() < 250.0) {
+                    let at = lamp.pos;
+                    crate::scene::draw_script_texts(
+                        renderer,
+                        scene,
+                        &mut s,
+                        &mut lamp.texts.lock(),
+                        || format!("lamp_{:.0}_{:.0}", at.x, at.y),
+                    );
+                }
                 // `OMSI_DEBUG_LAMPS`: where the moving lamps are (barriers) and how far their
                 // meshes are turned, each time the lamps are updated
                 if lamp.animated && debug_lamps {
@@ -8070,6 +8097,114 @@ impl Traffic {
     }
 }
 
+/// Like `Traffic::way_lanes_into`, along the timetable route (as `AiState::route_distance`).
+fn route_lanes_into(net: &Network, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
+    out.clear();
+    let (mut k, mut l, mut d) = (st.route_index, st.lane, -st.s);
+    if let Some(c) = st.change {
+        if st.route.get(k + 1) == Some(&c.to) {
+            (k, l, d) = (k + 1, c.to, -c.s_to);
+        }
+    }
+    out.push((l, d));
+    while let Some(&next) = st.route.get(k + 1) {
+        if net.parallel(l, next) {
+            d -= net.beside_delta(l, next);
+        } else {
+            d += net.lanes[l].length();
+        }
+        if d > within {
+            break;
+        }
+        out.push((next, d));
+        (k, l) = (k + 1, next);
+    }
+}
+
+/// Request lane `l`'s light for a vehicle `d` m before the lane, its front `front` m ahead.
+fn ask_light(
+    lights: &mut [TrafficLightController],
+    net: &Network,
+    l: usize,
+    d: f32,
+    front: f32,
+    train: bool,
+) {
+    let Some((ci, li)) = net.lanes.get(l).and_then(|x| x.traffic_light) else {
+        return;
+    };
+    if let Some(ctl) = lights.get_mut(ci) {
+        if ctl.asked_from(li, d - front, train) && d > -net.lanes[l].length() {
+            if let Some(r) = ctl.request.get_mut(li) {
+                *r = true;
+            }
+        }
+    }
+}
+
+/// Whether a street lane (a depot gate's) starts just ahead of a bus; never a rail lane.
+fn gate_lane_ahead(lane: &::simulation::traffic::Lane, pos: DVec3, heading: f64) -> bool {
+    let h = heading.to_radians();
+    let fwd = glam::DVec2::new(h.sin(), h.cos());
+    let (p0, h0) = lane.at(0.0);
+    let d = (p0 - pos).truncate();
+    let (along, across) = (d.dot(fwd), d.perp_dot(fwd).abs());
+    let turn = ((h0 as f64 - heading + 540.0).rem_euclid(360.0) - 180.0).abs();
+    lane.kind == LaneKind::Street
+        && (-2.0..25.0).contains(&along)
+        && across < 6.0
+        && turn < 60.0
+        && (p0.z - pos.z).abs() < 4.0
+}
+
+/// A vehicle file from its `vehicles/` folder on, lower case: the same car in any root.
+fn car_key(path: &Path) -> String {
+    let p = path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('\\', "/");
+    match p.rfind("vehicles/") {
+        Some(k) => p[k..].to_string(),
+        None => p,
+    }
+}
+
+/// The vehicle files of the map's `.zug` trains (a car naming a group: all its vehicles).
+fn train_cars(root: &Path, lists: &::map::ailists::AiLists) -> hashbrown::HashSet<String> {
+    let mut out = hashbrown::HashSet::new();
+    for v in lists
+        .groups
+        .iter()
+        .filter(|g| !g.is_depot)
+        .flat_map(|g| &g.vehicles)
+    {
+        if !v.file.to_ascii_lowercase().ends_with(".zug") {
+            continue;
+        }
+        let Ok(train) =
+            ::legacy_vehicle::vehicle::Train::load(&::mods::resolve_path(root, &v.file))
+        else {
+            continue;
+        };
+        for (file, _) in &train.cars {
+            let p = ::mods::resolve_path(root, file);
+            let files: Vec<std::path::PathBuf> = if ::legacy_config::vfs::is_file(&p) {
+                vec![p]
+            } else {
+                lists
+                    .groups
+                    .iter()
+                    .filter(|g| g.name.eq_ignore_ascii_case(file.trim()))
+                    .flat_map(|g| &g.vehicles)
+                    .map(|v| ::mods::resolve_path(root, &v.file))
+                    .collect()
+            };
+            out.extend(files.iter().map(|f| car_key(f)));
+        }
+    }
+    out
+}
+
 /// What the tiles placed since the last call hand to the traffic: their lanes, their parked
 /// cars and which tiles they were (taken together, see `World::lane_tiles`).
 fn take_from_tiles(
@@ -8261,6 +8396,7 @@ impl Traffic {
             pull_out: 0.0,
             rail_trail: Default::default(),
             consist_reversed: false,
+            train: false,
             park: None,
         });
         self.cars.len() - 1
@@ -8564,5 +8700,127 @@ mod bodies_moved_tests {
         assert!((m.center - glam::DVec2::new(94.0, 50.0)).length() < 1e-9);
         assert!((m.heading - want.heading).abs() < 1e-9);
         assert!((m.z0 - want.z0).abs() < 1e-9 && (m.z1 - want.z1).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod gate_lane_tests {
+    use super::gate_lane_ahead;
+    use ::simulation::traffic::{LaneBuilder, LaneKind};
+    use glam::DVec3;
+
+    /// A bus asks for the street lane starting ahead of it, not for a rail lane there.
+    #[test]
+    fn a_bus_asks_for_no_rail_lane() {
+        let lane =
+            |kind| LaneBuilder::arc(DVec3::new(3.0, 10.0, 0.0), 0.0, 20.0, 0.0, 0.0, kind, 3.0);
+        assert!(gate_lane_ahead(&lane(LaneKind::Street), DVec3::ZERO, 0.0));
+        assert!(!gate_lane_ahead(&lane(LaneKind::Rail), DVec3::ZERO, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod route_lanes_tests {
+    use super::{AiState, LaneKind, Network, route_lanes_into};
+    use ::simulation::traffic::LaneBuilder;
+    use glam::DVec3;
+
+    /// A lane beside the one before it counts from where it lies beside it.
+    #[test]
+    fn a_lane_beside_counts_from_beside() {
+        let line = |a: [f64; 2], b: [f64; 2]| {
+            LaneBuilder::polyline(
+                vec![DVec3::new(a[0], a[1], 0.0), DVec3::new(b[0], b[1], 0.0)],
+                LaneKind::Rail,
+                3.0,
+            )
+        };
+        let mut net = Network {
+            lanes: vec![
+                line([0.0, 0.0], [0.0, 100.0]),
+                line([3.5, 40.0], [3.5, 140.0]),
+                line([3.5, 140.0], [3.5, 200.0]),
+            ],
+            ..Default::default()
+        };
+        net.link(1.5);
+        assert!(net.parallel(0, 1));
+        let mut st = AiState::new(0, 10.0, 1);
+        st.route = vec![0, 1, 2];
+        let mut out = Vec::new();
+        route_lanes_into(&net, &st, 1000.0, &mut out);
+        assert_eq!(out.len(), 3);
+        for (ri, &(l, d)) in out.iter().enumerate() {
+            assert_eq!(l, st.route[ri]);
+            let want = st.route_distance(&net, ri, 0.0);
+            assert!((d - want).abs() < 0.01, "{out:?}");
+        }
+        assert!((out[1].1 - 30.0).abs() < 0.01, "{out:?}");
+    }
+}
+
+#[cfg(test)]
+mod train_car_tests {
+    use super::{car_key, train_cars};
+    use ::map::ailists::{AiGroup, AiLists, AiVehicleEntry};
+
+    fn entry(file: &str) -> AiVehicleEntry {
+        AiVehicleEntry {
+            file: file.into(),
+            weight: 1.0,
+            number: None,
+            registration: None,
+        }
+    }
+
+    /// A `.zug`'s cars, a group's among them, are trains; a tram is not.
+    #[test]
+    fn the_cars_of_the_maps_trains_are_trains() {
+        let root = std::env::temp_dir().join(format!("neoomsi_train_cars_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for f in [
+            "Vehicles/Zug/Kopf.ovh",
+            "Vehicles/Zug/Mitte.ovh",
+            "Vehicles/Tram/GT6.bus",
+        ] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "[friendlyname]\nx\n").unwrap();
+        }
+        std::fs::create_dir_all(root.join("Trains")).unwrap();
+        std::fs::write(
+            root.join("Trains/S5.zug"),
+            "Vehicles\\Zug\\Kopf.ovh\n0\nMitten\n1\n",
+        )
+        .unwrap();
+        let lists = AiLists {
+            groups: vec![
+                AiGroup {
+                    name: "S5".into(),
+                    vehicles: vec![entry("Trains\\S5.zug")],
+                    ..Default::default()
+                },
+                AiGroup {
+                    name: "Mitten".into(),
+                    vehicles: vec![entry("Vehicles\\Zug\\Mitte.ovh")],
+                    ..Default::default()
+                },
+                AiGroup {
+                    name: "Tram".into(),
+                    vehicles: vec![entry("Vehicles\\Tram\\GT6.bus")],
+                    ..Default::default()
+                },
+            ],
+        };
+        let cars = train_cars(&root, &lists);
+        assert!(cars.contains("vehicles/zug/kopf.ovh"), "{cars:?}");
+        assert!(cars.contains("vehicles/zug/mitte.ovh"), "{cars:?}");
+        assert!(!cars.contains("vehicles/tram/gt6.bus"));
+        // another content root holding the same car
+        assert_eq!(
+            car_key(std::path::Path::new("/mods/X/Vehicles/Zug/Kopf.ovh")),
+            "vehicles/zug/kopf.ovh"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

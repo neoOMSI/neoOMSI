@@ -154,7 +154,7 @@ impl Pipelines {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: build::pcache(),
             })
         };
         let glass_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -192,7 +192,7 @@ impl Pipelines {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: build::pcache(),
             })
         });
         let vehicle_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -281,7 +281,7 @@ impl Pipelines {
                             },
                         }),
                         multiview_mask: None,
-                        cache: None,
+                        cache: build::pcache(),
                     }));
                     let mut primitive = one_sided_primitive(cull);
                     // Mirroring reverses winding. Keep authored one-sided geometry.
@@ -319,7 +319,7 @@ impl Pipelines {
                             compilation_options: Default::default(),
                         }),
                         multiview_mask: None,
-                        cache: None,
+                        cache: build::pcache(),
                     }));
                 }
             }
@@ -356,7 +356,7 @@ impl Pipelines {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: build::pcache(),
         });
         Self {
             trace: pipeline("fs_trace"),

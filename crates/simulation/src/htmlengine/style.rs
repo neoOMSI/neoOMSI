@@ -56,6 +56,18 @@ pub(crate) struct Style {
     pub(crate) bg_pos: [Len; 2],
     /// Height / width of an `<img>` whose width is a percentage (0: not used).
     pub(crate) aspect: f32,
+    pub(crate) underline: bool,
+    pub(crate) strike: bool,
+    pub(crate) pre: bool,
+    pub(crate) nowrap: bool,
+    pub(crate) transform: u8,
+    pub(crate) rise: f32,
+    pub(crate) valign: u8,
+    pub(crate) border: [f32; 4],
+    pub(crate) border_color: Option<[u8; 4]>,
+    pub(crate) spacing: f32,
+    pub(crate) collapse: bool,
+    pub(crate) list: u8,
     /// The element this style was computed for (what a text run belongs to when it is hit).
     pub(crate) node: usize,
 }
@@ -84,6 +96,18 @@ impl Default for Style {
             bg_repeat: (true, true),
             bg_pos: [Len::Pct(0.0), Len::Pct(0.0)],
             aspect: 0.0,
+            underline: false,
+            strike: false,
+            pre: false,
+            nowrap: false,
+            transform: 0,
+            rise: 0.0,
+            valign: 0,
+            border: [0.0; 4],
+            border_color: None,
+            spacing: 0.0,
+            collapse: false,
+            list: 0,
             node: 0,
         }
     }
@@ -98,6 +122,13 @@ impl Style {
             align: self.align,
             line_h: self.line_h,
             hidden: self.hidden,
+            underline: self.underline,
+            strike: self.strike,
+            pre: self.pre,
+            nowrap: self.nowrap,
+            transform: self.transform,
+            rise: self.rise,
+            list: self.list,
             ..Style::default()
         }
     }
@@ -298,6 +329,44 @@ pub(crate) fn parse_bg_pos(t: &[&str], u: &Units) -> Option<[Len; 2]> {
     }
 }
 
+pub(crate) fn list_kind(t: &str) -> Option<u8> {
+    Some(match t {
+        "none" => 0,
+        "disc" => 1,
+        "circle" => 2,
+        "square" => 3,
+        "decimal" | "decimal-leading-zero" => 4,
+        "lower-alpha" | "lower-latin" => 5,
+        "upper-alpha" | "upper-latin" => 6,
+        "lower-roman" => 7,
+        "upper-roman" => 8,
+        _ => return None,
+    })
+}
+
+pub(crate) fn parse_border(val: &str, u: &Units) -> (f32, Option<[u8; 4]>, bool) {
+    let (mut w, mut c, mut none, mut styled) = (None, None, false, false);
+    for t in split_top(val) {
+        match t.to_ascii_lowercase().as_str() {
+            "none" | "hidden" => none = true,
+            "solid" | "dashed" | "dotted" | "double" | "groove" | "ridge" | "inset" | "outset" => {
+                styled = true
+            }
+            "thin" => w = Some(1.0),
+            "medium" => w = Some(3.0),
+            "thick" => w = Some(5.0),
+            _ => {
+                if let Some(col) = parse_color(t) {
+                    c = Some(col);
+                } else if let Some(l) = parse_len(t, u) {
+                    w = Some(l.px(u.vw));
+                }
+            }
+        }
+    }
+    (w.unwrap_or(if styled { 3.0 } else { 0.0 }), c, none)
+}
+
 pub(crate) fn box_values(v: &str, u: &Units) -> ([f32; 4], bool) {
     let toks: Vec<&str> = v.split_whitespace().collect();
     let mut auto = false;
@@ -481,6 +550,121 @@ impl Style {
                 self.none = val == "none";
                 self.inline = val == "inline";
                 self.inline_block = val == "inline-block";
+            }
+            "text-decoration" | "text-decoration-line" => {
+                let v = val.to_ascii_lowercase();
+                if v.contains("none") {
+                    self.underline = false;
+                    self.strike = false;
+                } else {
+                    self.underline |= v.contains("underline");
+                    self.strike |= v.contains("line-through");
+                }
+            }
+            "white-space" => {
+                let (p, n) = match val {
+                    "nowrap" => (false, true),
+                    "pre" => (true, true),
+                    "pre-wrap" | "pre-line" | "break-spaces" => (true, false),
+                    _ => (false, false),
+                };
+                self.pre = p;
+                self.nowrap = n;
+            }
+            "text-transform" => {
+                self.transform = match val {
+                    "uppercase" => 1,
+                    "lowercase" => 2,
+                    "capitalize" => 3,
+                    _ => 0,
+                }
+            }
+            "vertical-align" => match val {
+                "super" => self.rise = 0.4,
+                "sub" => self.rise = -0.2,
+                "top" | "text-top" => {
+                    self.valign = 0;
+                    self.rise = 0.0;
+                }
+                "middle" => self.valign = 1,
+                "bottom" | "text-bottom" => self.valign = 2,
+                _ => self.rise = 0.0,
+            },
+            "list-style-type" | "list-style" => {
+                for t in split_top(val) {
+                    if let Some(l) = list_kind(t) {
+                        self.list = l;
+                    }
+                }
+            }
+            "border" => {
+                let (w, c, none) = parse_border(val, &own);
+                self.border = [if none { 0.0 } else { w }; 4];
+                if c.is_some() {
+                    self.border_color = c;
+                }
+            }
+            "border-top" | "border-right" | "border-bottom" | "border-left" => {
+                let i = match prop {
+                    "border-top" => 0,
+                    "border-right" => 1,
+                    "border-bottom" => 2,
+                    _ => 3,
+                };
+                let (w, c, none) = parse_border(val, &own);
+                self.border[i] = if none { 0.0 } else { w };
+                if c.is_some() {
+                    self.border_color = c;
+                }
+            }
+            "border-width" => self.border = box_values(val, &own).0,
+            "border-top-width" | "border-right-width" | "border-bottom-width"
+            | "border-left-width" => {
+                let i = match prop {
+                    "border-top-width" => 0,
+                    "border-right-width" => 1,
+                    "border-bottom-width" => 2,
+                    _ => 3,
+                };
+                self.border[i] = match val {
+                    "thin" => 1.0,
+                    "medium" => 3.0,
+                    "thick" => 5.0,
+                    _ => parse_len(val, &own).map_or(0.0, |l| l.px(vw)),
+                };
+            }
+            "border-color" | "border-top-color" | "border-right-color" | "border-bottom-color"
+            | "border-left-color" => {
+                if let Some(c) = split_top(val).into_iter().find_map(parse_color) {
+                    self.border_color = Some(c);
+                }
+            }
+            "border-style" => {
+                if val.contains("none") || val.contains("hidden") {
+                    self.border = [0.0; 4];
+                }
+            }
+            "border-top-style" | "border-right-style" | "border-bottom-style"
+            | "border-left-style" => {
+                if val == "none" || val == "hidden" {
+                    let i = match prop {
+                        "border-top-style" => 0,
+                        "border-right-style" => 1,
+                        "border-bottom-style" => 2,
+                        _ => 3,
+                    };
+                    self.border[i] = 0.0;
+                }
+            }
+            "border-collapse" => {
+                self.collapse = val == "collapse";
+                if self.collapse {
+                    self.spacing = 0.0;
+                }
+            }
+            "border-spacing" => {
+                self.spacing = parse_len(val.split_whitespace().next().unwrap_or(""), &own)
+                    .map_or(0.0, |l| l.px(vw));
             }
             "visibility" => self.hidden = val == "hidden",
             "border-radius" => self.radius = parse_len(val, &own).map_or(0.0, |l| l.px(vw)),

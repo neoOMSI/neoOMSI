@@ -193,45 +193,7 @@ impl App {
                     platform::exit(event_loop);
                 }
             }
-            let lines = m.lines();
-            if let (Some(hud), Some(s), Some(r), Some(scene), Some(win)) = (
-                self.hud.as_mut(),
-                self.surface.as_ref(),
-                self.renderer.as_mut(),
-                self.scene.as_mut(),
-                self.window.as_ref(),
-            ) {
-                hud.update(r, scene, &lines);
-                if let wgpu::CurrentSurfaceTexture::Success(frame)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) =
-                    s.surface.get_current_texture()
-                {
-                    let view = frame.texture.create_view(&Default::default());
-                    let cam = Camera {
-                        position: DVec3::ZERO,
-                        yaw: 0.0,
-                        pitch: 0.0,
-                        roll: 0.0,
-                        fov_deg: 60.0,
-                        near: 0.5,
-                        far: 100.0,
-                    };
-                    let lighting = ::render::Lighting {
-                        sky_color: Vec3::new(0.08, 0.10, 0.14),
-                        ..Default::default()
-                    };
-                    r.render(
-                        scene,
-                        &view,
-                        s.config.width,
-                        s.config.height,
-                        &cam,
-                        &lighting,
-                    );
-                    win.pre_present_notify();
-                    r.queue.present(frame);
-                }
-            }
+            self.start_frame(event_loop, dt);
             return None;
         }
         if !self.drive_start(event_loop) {

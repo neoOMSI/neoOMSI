@@ -67,7 +67,6 @@ if ! grep -q '[^[:space:]]' changes.md; then
 fi
 
 download_base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
-LAUNCHER_SHA="${LAUNCHER_SHA:-$(tr -d '[:space:]' < scripts/launcher-ref)}"
 CHANNEL="${CHANNEL:-$([ "$PRERELEASE" = "true" ] && echo "nightly" || echo "stable")}"
 
 # Generate build-manifest.json machine-readable metadata
@@ -76,7 +75,6 @@ cat > out/build-manifest.json <<MANIFEST
   "version": "$VERSION",
   "channel": "$CHANNEL",
   "engine": "$GITHUB_SHA",
-  "launcher": "$LAUNCHER_SHA",
   "buildNumber": "$GITHUB_RUN_NUMBER",
   "buildId": "$GITHUB_RUN_ID"
 }
@@ -85,7 +83,7 @@ MANIFEST
 cat > notes.md <<NOTES
 > **Early development build.** Expect bugs. An original OMSI 2 installation is required; neoOMSI does not include game content.
 
-**Source:** [\`${GITHUB_SHA:0:8}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) · **Launcher:** [\`${LAUNCHER_SHA:0:8}\`](https://github.com/neoOMSI/launcher/commit/$LAUNCHER_SHA) · **Build:** [#${GITHUB_RUN_NUMBER}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
+**Source:** [\`${GITHUB_SHA:0:8}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) · **Build:** [#${GITHUB_RUN_NUMBER}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
 
 ## What's changed
 
@@ -224,7 +222,6 @@ if release_json="$(gh release view "$TAG" --json isDraft,isPrerelease,targetComm
     rm -rf "$manifest_tmp"
 
     remote_engine="$(get_json_field "$remote_manifest" "engine")"
-    remote_launcher="$(get_json_field "$remote_manifest" "launcher")"
     remote_version="$(get_json_field "$remote_manifest" "version")"
     remote_channel="$(get_json_field "$remote_manifest" "channel")"
 
@@ -241,17 +238,9 @@ if release_json="$(gh release view "$TAG" --json isDraft,isPrerelease,targetComm
       echo "::error::Published immutable release $TAG manifest missing valid full engine commit SHA, found: '$remote_engine'."
       exit 1
     fi
-    if [ -z "$remote_launcher" ] || ! [[ "$remote_launcher" =~ ^[0-9a-f]{40}$ ]]; then
-      echo "::error::Published immutable release $TAG manifest missing valid full launcher commit SHA, found: '$remote_launcher'."
-      exit 1
-    fi
 
     if [ -n "$GITHUB_SHA" ] && [ "$remote_engine" != "$GITHUB_SHA" ]; then
       echo "::error::Published immutable release $TAG manifest records engine commit $remote_engine, but current commit is $GITHUB_SHA."
-      exit 1
-    fi
-    if [ -n "$LAUNCHER_SHA" ] && [ "$remote_launcher" != "$LAUNCHER_SHA" ]; then
-      echo "::error::Published immutable release $TAG manifest records launcher commit $remote_launcher, but current launcher is $LAUNCHER_SHA."
       exit 1
     fi
 

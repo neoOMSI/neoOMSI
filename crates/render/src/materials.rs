@@ -101,6 +101,8 @@ pub struct Material {
     pub(crate) buf: wgpu::Buffer,
     pub(crate) buf_offset: u64,
     pub(crate) bind_group: wgpu::BindGroup,
+    /// Materials that draw alike (same textures, sampler and values) share this number.
+    pub(crate) look: u32,
 }
 
 impl Material {
@@ -493,7 +495,7 @@ impl Renderer {
         if uniform.ambient[3] < 1.5 {
             uniform.ambient[3] = snow_texture_flag(scene, texture);
         }
-        let (bind_group, buf, buf_offset) = self.cached_bind_group(
+        let (bind_group, buf, buf_offset, look) = self.cached_bind_group(
             scene,
             MaterialMaps {
                 texture,
@@ -528,6 +530,7 @@ impl Renderer {
             buf,
             buf_offset,
             bind_group,
+            look,
         });
         Some(scene.materials.len() - 1)
     }
@@ -818,7 +821,7 @@ impl Renderer {
                 ]
             },
         };
-        let (bind_group, buf, buf_offset) = self.cached_bind_group(
+        let (bind_group, buf, buf_offset, look) = self.cached_bind_group(
             scene,
             MaterialMaps {
                 texture,
@@ -853,6 +856,7 @@ impl Renderer {
             buf,
             buf_offset,
             bind_group,
+            look,
         });
         scene.materials.len() - 1
     }
@@ -863,7 +867,7 @@ impl Renderer {
         maps: MaterialMaps,
         address: TexAddressing,
         uniform: MaterialUniform,
-    ) -> (wgpu::BindGroup, wgpu::Buffer, u64) {
+    ) -> (wgpu::BindGroup, wgpu::Buffer, u64, u32) {
         let slot = |t: Option<TextureId>| {
             t.and_then(|t| scene.textures.get(t).map(|g| (t, g.generation)))
                 .unwrap_or((usize::MAX, 0))
@@ -881,15 +885,16 @@ impl Renderer {
             address,
             uniform: bytemuck::cast(uniform),
         };
+        let look = scene.look(&key);
         if let Some((bg, b, offset)) = scene.bind_groups.get(&key) {
-            return (bg.clone(), b.clone(), *offset);
+            return (bg.clone(), b.clone(), *offset, look);
         }
         let (buf, buf_offset) = self.material_uniform(scene, &uniform);
         let bind_group = self.material_bind_group(&scene.textures, maps, address, &buf, buf_offset);
         scene
             .bind_groups
             .insert(key, (bind_group.clone(), buf.clone(), buf_offset));
-        (bind_group, buf, buf_offset)
+        (bind_group, buf, buf_offset, look)
     }
 
     /// Materials are immutable: append their uniforms to a page and bind a fixed range.

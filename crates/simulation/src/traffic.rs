@@ -1795,6 +1795,10 @@ pub struct LightStop {
 /// `[approachdist]` (m): about four seconds at town speed.
 pub const DEFAULT_APPROACH: f32 = 50.0;
 
+/// How far before a light with `[approachdist]` 0 or none a train asks for it (m); OMSI
+/// asks for a level crossing as soon as the train is near.
+pub const RAIL_APPROACH: f32 = 600.0;
+
 /// Traffic light program of a crossing object instance (`TAmpelGroup`): its lights'
 /// phases and one cycle clock that runs on game time. The clock is state, not a function
 /// of the time of day, because the program may wait at a stop point or jump.
@@ -1898,6 +1902,17 @@ impl TrafficLightController {
             .copied()
             .flatten()
             .unwrap_or(DEFAULT_APPROACH)
+    }
+
+    /// Whether a vehicle `gap` metres before light `i` asks for it: within its request
+    /// distance (a train's `RAIL_APPROACH` by default, #294) or waiting at its line.
+    pub fn asked_from(&self, i: usize, gap: f32, train: bool) -> bool {
+        let set = self.approach.get(i).copied().flatten().filter(|&d| d > 0.0);
+        let dist = match (train, set) {
+            (true, None) => RAIL_APPROACH,
+            _ => self.approach_dist(i),
+        };
+        gap <= dist + STOP_LINE_GAP + 0.5
     }
 
     /// Run the cycle clock on by `dt` seconds of game time, honouring the stop and jump
@@ -3514,6 +3529,52 @@ mod tests {
             "front at {front}, line at {line}"
         );
         assert!(hardest > -3.5, "braked at {hardest} m/s²");
+    }
+
+    /// A vehicle waiting at the line asks for a light with `[approachdist] 0` (#294).
+    #[test]
+    fn a_car_waiting_at_the_line_asks_for_its_light() {
+        let net = junction();
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0))],
+            None,
+            &[],
+            &[],
+        );
+        for (speed, decel) in [(3.0, 1.0), (13.9, 2.2), (22.0, 3.0)] {
+            let mut car = AiState::new(0, 0.0, 3);
+            car.speed = speed;
+            car.decel = decel;
+            car.plan_next(&net);
+            let line = 55.0;
+            for _ in 0..3600 {
+                let stop = line - car.s;
+                car.drive(&net, 1.0 / 60.0, None, Some(stop));
+            }
+            assert!(car.speed < 0.01, "stopped: {}", car.speed);
+            let gap = line - (car.s + car.front);
+            assert!(
+                c.asked_from(0, gap, false),
+                "{gap} m before the line at {speed} m/s"
+            );
+            assert!(!c.asked_from(0, gap + 2.0, false));
+        }
+    }
+
+    /// A train asks from `RAIL_APPROACH` unless the program sets a distance (#294).
+    #[test]
+    fn a_train_asks_for_a_level_crossing_from_afar() {
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0)), (vec![(0, 10.0)], Some(30.0))],
+            None,
+            &[],
+            &[],
+        );
+        assert!(c.asked_from(0, RAIL_APPROACH - 1.0, true));
+        assert!(!c.asked_from(0, RAIL_APPROACH + 2.0, true));
+        assert!(!c.asked_from(0, 100.0, false));
+        assert!(c.asked_from(1, 30.0, true));
+        assert!(!c.asked_from(1, 100.0, true));
     }
 
     #[test]

@@ -29,7 +29,6 @@ pub(super) const OCC_CORONA_RANGE: f64 = 300.0;
 pub(super) const OCC_RECHECK: f64 = 6.0;
 pub(super) const VIS_PER_FRAME: usize = 16;
 pub(super) const LAMP_RAYS_PER_FRAME: usize = 8;
-pub(super) const BUILD_BUDGET_US: u128 = 1500;
 
 pub(super) const ENCL_REACH: f64 = 12.0;
 pub(super) const ENCL_UP: f64 = 10.0;

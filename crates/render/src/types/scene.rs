@@ -210,6 +210,8 @@ pub struct Scene {
     pub(crate) bind_groups: HashMap<BindKey, (wgpu::BindGroup, wgpu::Buffer, u64)>,
     /// Append-only uniform page. Older pages live as long as their material bindings.
     pub(crate) material_uniform_page: Option<(wgpu::Buffer, u64)>,
+    /// The number of each material look seen so far, by its key's hash (see `Material::look`).
+    pub(crate) looks: HashMap<u64, u32>,
     pub pbr_maps: HashMap<TextureId, PbrMaps>,
     pub snow_textures: std::collections::HashSet<TextureId>,
 }
@@ -276,5 +278,21 @@ impl Scene {
         }
         let material_bytes: u64 = uniforms.into_iter().map(|b| b.size()).sum();
         (tex, mesh, other + material_bytes)
+    }
+}
+
+impl Scene {
+    /// The look number of a material bind group made of `key` (numbers start at 1; 0 is the
+    /// shared look of the opaque depth-only draws).
+    pub(crate) fn look(&mut self, key: &BindKey) -> u32 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        self.intern_look(h.finish())
+    }
+
+    pub(crate) fn intern_look(&mut self, hash: u64) -> u32 {
+        let next = self.looks.len() as u32 + 1;
+        *self.looks.entry(hash).or_insert(next)
     }
 }

@@ -677,7 +677,7 @@ impl Renderer {
             .unwrap_or(3.0);
         let casters = |span: std::ops::Range<usize>| -> [Vec<DrawItem>; SHADOW_SETS] {
             let mut out: [Vec<DrawItem>; SHADOW_SETS] = std::array::from_fn(|_| Vec::new());
-            let mut ranges: Vec<(u8, u32, u32, usize)> = Vec::new();
+            let mut ranges: Vec<(u8, u32, u32, usize, u32)> = Vec::new();
             for inst in &scene.instances[span] {
                 if !inst.visible
                     || !inst.casts_shadow
@@ -769,7 +769,7 @@ impl Renderer {
                     if cut_body {
                         kind = PIPE_ALPHA_TEST;
                     }
-                    ranges.push((kind, ri as u32, *slot, mat_id));
+                    ranges.push((kind, ri as u32, *slot, mat_id, mat.look));
                 }
                 if dbg_shadow && receives[0] && r >= dbg_r {
                     log::info!(
@@ -782,12 +782,14 @@ impl Renderer {
                     if !keep {
                         continue;
                     }
-                    for &(kind, ri, slot, mat_id) in &ranges {
+                    for &(kind, ri, slot, mat_id, look) in &ranges {
+                        let (material, look) = depth_only_material(kind, mat_id, look);
                         out[cascade].push(DrawItem {
                             pipe: kind,
                             mesh: inst.mesh as u32,
                             range: ri,
-                            material: depth_only_material(kind, mat_id),
+                            material,
+                            look,
                             entry: inst.base + slot,
                         });
                     }
@@ -1177,11 +1179,13 @@ impl Renderer {
                         continue;
                     }
                     if let Some(pre_kind) = depth_prepass_kind(kind, mat, inst.presurface) {
+                        let (material, look) = depth_only_material(pre_kind, mat_id, mat.look);
                         items.push(DrawItem {
                             pipe: pre_kind * 2 + cull as u8,
                             mesh: inst.mesh as u32,
                             range: ri as u32,
-                            material: depth_only_material(pre_kind, mat_id),
+                            material,
+                            look,
                             entry: inst.base + *slot,
                         });
                     }
@@ -1240,6 +1244,7 @@ impl Renderer {
                                 mesh: inst.mesh as u32,
                                 range: ri as u32,
                                 material: mat_id as u32,
+                                look: mat.look,
                                 entry: inst.base + *slot,
                             });
                         }
@@ -1273,6 +1278,7 @@ impl Renderer {
                             mesh: inst.mesh as u32,
                             range: ri as u32,
                             material: mat_id as u32,
+                            look: mat.look,
                             entry: inst.base + *slot,
                         });
                     }
@@ -1385,6 +1391,7 @@ impl Renderer {
                             mesh: inst.mesh as u32,
                             range: ri as u32,
                             material: mat_id as u32,
+                            look: mat.look,
                             entry: inst.base + *slot,
                         };
                         if after_rain && kind == PIPE_BLEND_NO_WRITE {

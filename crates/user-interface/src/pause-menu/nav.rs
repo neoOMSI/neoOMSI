@@ -26,6 +26,9 @@ impl Ui {
     ) -> f32 {
         let Metrics { w, u, mx, .. } = m;
         self.lab_tabs.clear();
+        if self.start.active {
+            return self.draw_start_bar(r, scene, f, m, 2);
+        }
         let bar_h = (56.0 * u).round();
         self.text.rounded(r, scene, [0.0, 0.0, w, bar_h], 0.0, SIDEBAR);
         self.ensure_logo();

@@ -179,3 +179,31 @@ pub(super) fn draw_doors(
         }
     }
 }
+
+pub(super) fn draw_foot(
+    ui: &imgui::Ui,
+    cam: &::render::Camera,
+    size: (u32, u32),
+    f: &FootInfo,
+) {
+    let vp = cam.view_proj(size.0 as f32 / size.1.max(1) as f32, cam.position);
+    let list = ui.get_background_draw_list();
+    let z = f.pos[2] + f.lift + 0.1;
+    let at = glam::DVec3::new(f.pos[0], f.pos[1], z);
+    let Some(pp) = project(&vp, cam.position, at, size) else {
+        return;
+    };
+    list.add_circle(pp, 6.0, [1.0, 1.0, 1.0, 1.0]).filled(true).build();
+    if let Some(e) = f.exempt {
+        if let Some(pe) = project(&vp, cam.position, glam::DVec3::new(e[0], e[1], z), size) {
+            list.add_line(pp, pe, [0.2, 0.9, 1.0, 1.0]).thickness(2.0).build();
+            list.add_circle(pe, 7.0, [0.2, 0.9, 1.0, 1.0]).thickness(2.0).build();
+        }
+    }
+    let l = glam::DVec3::new(f.lost[0], f.lost[1], 0.0);
+    if l.length() > 1e-6 {
+        if let Some(pl) = project(&vp, cam.position, at + l * 5.0, size) {
+            list.add_line(pp, pl, [1.0, 0.2, 1.0, 1.0]).thickness(3.0).build();
+        }
+    }
+}

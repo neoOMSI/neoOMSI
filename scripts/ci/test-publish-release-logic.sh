@@ -16,7 +16,6 @@ cd "$test_dir/repo"
 git init --quiet
 git config user.email "test@example.com"
 git config user.name "Test"
-echo "0e548aa77fea541b61e5f72e397473b1eef589af" > scripts/launcher-ref
 cat > scripts/render-changelog-fragments.sh <<'EOF'
 #!/usr/bin/env bash
 echo "- Changes." > "$1"
@@ -150,8 +149,7 @@ if [ "$1" = "release" ] && [ "$2" = "download" ]; then
 {
   "version": "${MOCK_MANIFEST_VERSION:-0.2.0-test}",
   "channel": "${MOCK_MANIFEST_CHANNEL:-nightly}",
-  "engine": "0123456789abcdef0123456789abcdef01234567",
-  "launcher": "0e548aa77fea541b61e5f72e397473b1eef589af"
+  "engine": "0123456789abcdef0123456789abcdef01234567"
 }
 MANIFEST
   exit 0
@@ -276,8 +274,7 @@ if [ "$1" = "release" ] && [ "$2" = "download" ]; then
 {
   "version": "0.2.0-test",
   "channel": "nightly",
-  "engine": "ffffffffffffffffffffffffffffffffffffffff",
-  "launcher": "0e548aa77fea541b61e5f72e397473b1eef589af"
+  "engine": "ffffffffffffffffffffffffffffffffffffffff"
 }
 MANIFEST
   exit 0
@@ -382,7 +379,7 @@ if bash "$publish_script" >/dev/null 2>&1; then
 fi
 echo "Test 9 passed: malformed manifest fails closed."
 
-# Test 10: Published immutable release where manifest is missing launcher SHA -> fails closed
+# Test 10: Published immutable release where manifest is missing engine SHA -> fails closed
 cat > "$test_dir/mock-bin/gh" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = "release" ] && [ "$2" = "view" ]; then
@@ -422,8 +419,7 @@ if [ "$1" = "release" ] && [ "$2" = "download" ]; then
   cat > "$target_dir/build-manifest.json" <<MANIFEST
 {
   "version": "0.2.0-test",
-  "channel": "nightly",
-  "engine": "0123456789abcdef0123456789abcdef01234567"
+  "channel": "nightly"
 }
 MANIFEST
   exit 0
@@ -432,10 +428,10 @@ exit 0
 EOF
 
 if bash "$publish_script" >/dev/null 2>&1; then
-  echo "Test 10 failed: expected failure when manifest is missing launcher SHA" >&2
+  echo "Test 10 failed: expected failure when manifest is missing engine SHA" >&2
   exit 1
 fi
-echo "Test 10 passed: incomplete manifest missing launcher SHA fails closed."
+echo "Test 10 passed: incomplete manifest missing engine SHA fails closed."
 
 # Test 11: Tag commit cannot be resolved -> fails closed
 cat > "$test_dir/mock-bin/gh" <<'EOF'

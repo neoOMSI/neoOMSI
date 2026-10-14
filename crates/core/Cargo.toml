@@ -50,6 +50,7 @@ winit.workspace = true
 glam.workspace = true
 pollster.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 log.workspace = true
 getrandom = "0.4"
@@ -57,7 +58,6 @@ rayon.workspace = true
 network = { path = "../network" }
 user-interface = { path = "../user-interface" }
 i18n = { path = "../i18n" }
-launcher-protocol = { path = "../launcher-protocol" }
 legacy-launcher-core = { path = "../legacy-launcher-core" }
 serde = { version = "1", features = ["derive"] }
 hashbrown.workspace = true

@@ -335,6 +335,40 @@ mod tests {
         assert!((projection.x_axis.x - 2.0).abs() < 1e-5);
         assert!((projection.y_axis.y - 4.0).abs() < 1e-5);
     }
+
+    /// The enhanced mirror light factor at `hours` on 30 May, stock envir.cfg.
+    fn mirror_light_at(renderer: &::render::Renderer, hours: f64) -> f32 {
+        let clock = ::simulation::clock::SimClock {
+            day_of_year: 150,
+            time: hours * 3600.0,
+            ..Default::default()
+        };
+        let daylight = ::simulation::Daylight::compute(&clock, None);
+        let lighting = crate::lights::lighting_from(&daylight, 50000.0);
+        renderer.enhanced_light_ratio(&lighting)
+    }
+
+    #[test]
+    fn enhanced_mirrors_keep_the_dusk_light() {
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = wgpu::Backends::NOOP;
+        descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+        let instance = wgpu::Instance::new(descriptor);
+        let renderer = pollster::block_on(::render::Renderer::new_with(
+            &instance,
+            None,
+            Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            ::render::RenderOptions::default(),
+        ))
+        .unwrap();
+        // 03:30 is 3.6 degrees before sunrise: the old ramp gave 0.36 there
+        let day = mirror_light_at(&renderer, 9.0);
+        let night = mirror_light_at(&renderer, 0.0);
+        let dusk = mirror_light_at(&renderer, 3.5);
+        assert!((0.8..1.25).contains(&day), "day {day}");
+        assert!((0.1..0.3).contains(&night), "night {night}");
+        assert!(dusk > 1.5, "dusk {dusk}");
+    }
 }
 
 /// The AI car to follow: an id, "auto" = the first overtaker, "moving" = the oldest car
@@ -469,12 +503,6 @@ pub(crate) fn follow_camera(traffic: Option<&traffic::Traffic>, id: u64) -> Opti
         far: 6000.0,
     })
 }
-
-/// How much of the plain light a mirror loses at full night in enhanced graphics (see
-/// `render_mirrors`): measured in the window at 23:30, the mirrors' street, the bus's own
-/// flank and the sky then match the enhanced picture beside them (0.45 left them 2-3 times
-/// as bright).
-const MIRROR_NIGHT_DIM: f32 = 0.8;
 
 /// The least radius a mirror's camera counts with in the visibility test (m). A mirror's
 /// camera sits in the middle of its glass; with the file's radius 0 (`[add_camera_reflexion]`)
@@ -778,16 +806,11 @@ pub(crate) fn render_mirrors(
     lighting.min_obj_size = lighting.min_obj_size.max((12.0 / px).clamp(0.03, 0.09));
     lighting.shadows = false;
     // Enhanced graphics draw the mirrors with the plain shading (see Renderer::render_inner),
-    // whose light is OMSI's: a night that stays a blue dusk. The window's enhanced night is
-    // far darker, and the mirrors showed the street by daylight beside it. The plain light
-    // is taken down with the night (the lamps keep theirs) to the enhanced picture's level.
-    // (By the sun's darkness, Envir_Brightness's ramp from +6 to -6 degrees: `night` is
-    // whole at sunset already, from +10 degrees on, and rain raises it by day, and the
-    // mirrors were a fifth of the window's light through the whole dusk, #432.)
+    // so its light is brought to the enhanced picture's level (the lamps keep theirs). (Not
+    // by a ramp over the sun's altitude: the enhanced exposure keeps the dusk bright, and
+    // the mirrors went black around sunrise and sunset.)
     if lighting.enhanced && legacy_config::env::var_os("OMSI_MIRROR_ENHANCED").is_none() {
-        let alt = lighting.sun_dir.z.clamp(-1.0, 1.0).asin().to_degrees();
-        let dark = 1.0 - ((alt + 6.0) / 12.0).clamp(0.0, 1.0);
-        let k = 1.0 - MIRROR_NIGHT_DIM * dark;
+        let k = renderer.enhanced_light_ratio(&lighting);
         lighting.ambient *= k;
         lighting.secondary *= k;
         lighting.sun_color *= k;

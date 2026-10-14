@@ -278,6 +278,7 @@ impl Renderer {
             let f = self.freed(scene);
             (f.bind_group.clone(), f.buf.clone(), f.buf_offset)
         };
+        let look = scene.intern_look(0);
         scene.materials[id] = Material {
             texture: None,
             alpha: AlphaMode::Opaque,
@@ -298,6 +299,7 @@ impl Renderer {
             buf,
             buf_offset,
             bind_group,
+            look,
         };
     }
 

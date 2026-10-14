@@ -305,41 +305,16 @@ impl App {
             }
         }
         let event_key = PhysicalKey::Code(code);
-        if let (Some(m), PhysicalKey::Code(code)) = (self.menu.as_mut(), event_key) {
+        if let (true, PhysicalKey::Code(code)) = (self.menu.is_some(), event_key) {
+            if matches!(code, KeyCode::ControlLeft | KeyCode::ControlRight) {
+                if pressed {
+                    self.keys.insert(code);
+                } else {
+                    self.keys.remove(&code);
+                }
+            }
             if pressed {
-                if self
-                    .game_keys
-                    .iter()
-                    .any(|b| b.action == "menu_exit" && Some(b.scan_code) == keys::dik_code(code))
-                {
-                    crate::platform::exit(event_loop);
-                }
-                m.key(code);
-                if m.start {
-                    self.args.map = m
-                        .maps
-                        .get(m.map)
-                        .map(|x| x.1.clone())
-                        .unwrap_or(self.args.map.clone());
-                    self.args.bus = m.vehicles.get(m.vehicle).map(|x| x.1.clone());
-                    self.args.time = format!("{:02}:00", m.hour);
-                    self.args.traffic = m.traffic;
-                    self.args.passengers = m.passengers;
-                    self.args.schedule = m.schedule;
-                    self.args.day_of_year = Some(m.day);
-                    if m.weather > 0 {
-                        self.args.weather = m.weathers.get(m.weather).map(|w| w.1.clone());
-                    }
-                    if m.situation > 0 {
-                        self.args.situation = m.situations.get(m.situation).map(|s| s.1.clone());
-                        if let Err(e) = apply_situation(&mut self.args) {
-                            log::error!("{e:#}");
-                        }
-                    }
-                    self.menu = None;
-                    self.hud = None;
-                    self.load_world_now(event_loop);
-                }
+                self.start_key(event_loop, code, repeat);
             }
             return;
         }

@@ -13,7 +13,6 @@ pub mod mobile;
 mod multiplayer;
 mod pages;
 pub mod phone;
-pub(crate) mod showroom;
 mod settings;
 mod state;
 #[cfg_attr(not(target_os = "android"), allow(unused_imports))]
@@ -97,7 +96,7 @@ pub struct Launcher {
     gpu: Option<::user_interface::Gpu>,
     ui: Ui,
     state: state::State,
-    showroom: showroom::Showroom,
+    showroom: crate::showcase::Showcase,
     page: Page,
     page_anim: f32,
     pub drive: drive::DriveView,
@@ -165,7 +164,7 @@ impl Launcher {
             gpu: None,
             ui: Ui::new(),
             state: state::State::new(),
-            showroom: showroom::Showroom::new(),
+            showroom: crate::showcase::Showcase::new(),
             page: Page::Drive,
             page_anim: 1.0,
             drive: drive::DriveView::default(),
@@ -275,7 +274,7 @@ impl Launcher {
         self.surface = None;
         self.gpu = None;
         self.preview_tex = None;
-        self.showroom = showroom::Showroom::new();
+        self.showroom = crate::showcase::Showcase::new();
         self.preview_gen = 0;
         self.renderer = None;
         self.ime = false;
@@ -465,7 +464,11 @@ impl ApplicationHandler for Launcher {
                 let p = Vec2::new(position.x as f32, position.y as f32) / scale;
                 if let Some(last) = self.dragging {
                     let d = p - last;
-                    self.showroom.orbit(d.x, d.y);
+                    if self.ui.input.right_down || self.modifiers.shift_key() {
+                        self.showroom.pan(d.x, d.y);
+                    } else {
+                        self.showroom.orbit(d.x, d.y);
+                    }
                     self.dragging = Some(p);
                 }
                 self.ui.input.mouse = p;
@@ -503,6 +506,16 @@ impl ApplicationHandler for Launcher {
                             }
                         } else {
                             self.dragging = None;
+                        }
+                    }
+                    MouseButton::Middle => {
+                        if down
+                            && self
+                            .preview_rect
+                            .map(|r| r.contains(self.ui.input.mouse))
+                            .unwrap_or(false)
+                        {
+                            self.showroom.reset_view();
                         }
                     }
                     _ => {}
@@ -693,7 +706,7 @@ impl Launcher {
         self.surface = None;
         self.gpu = None;
         self.preview_tex = None;
-        self.showroom = showroom::Showroom::new();
+        self.showroom = crate::showcase::Showcase::new();
         self.preview_gen = 0;
         self.renderer = None;
         self.make_surface();
@@ -838,7 +851,7 @@ impl Launcher {
             self.surface = None;
             self.gpu = None;
             self.preview_tex = None;
-            self.showroom = showroom::Showroom::new();
+            self.showroom = crate::showcase::Showcase::new();
             self.preview_gen = 0;
             self.renderer = None;
         }
@@ -873,7 +886,7 @@ impl Launcher {
         self.update_tick(event_loop);
         // the preview shows the chosen bus in the chosen light
         let c = &self.state.choice;
-        let look = showroom::Look {
+        let look = crate::showcase::Look {
             root: std::path::PathBuf::from(&self.state.config.root),
             map: c.map.clone(),
             bus: c.bus.clone(),

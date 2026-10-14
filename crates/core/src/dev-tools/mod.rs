@@ -24,7 +24,7 @@ use imgui::{BackendFlags, Condition, TextureId};
 use ::render::{Renderer, devtools as rdev};
 
 use gpu::Gpu;
-use overlays::{draw_beams, draw_boxes, draw_cameras, draw_doors};
+use overlays::{draw_beams, draw_boxes, draw_cameras, draw_doors, draw_foot};
 
 pub(crate) use types::*;
 pub(crate) use util::project;
@@ -200,6 +200,9 @@ impl DevTools {
                     draw_boxes(ui, cam, (w, h), &extra.boxes, None);
                     draw_boxes(ui, cam, (w, h), &extra.blockers, Some([1.0, 0.1, 0.1, 1.0]));
                     draw_doors(ui, cam, (w, h), &extra.doors);
+                    if let Some(f) = extra.foot.as_ref() {
+                        draw_foot(ui, cam, (w, h), f);
+                    }
                 }
             }
             vehicle_editor::draw_world(ui, editor, extra, (w, h));

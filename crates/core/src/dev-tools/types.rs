@@ -141,6 +141,13 @@ pub(crate) struct FootInfo {
     pub attached: bool,
     pub seated: bool,
     pub inside: bool,
+    pub exempt: Option<[f64; 2]>,
+    pub solids: usize,
+    pub lost: [f64; 2],
+    pub step_wall: bool,
+    pub reset: bool,
+    pub floor: Option<f64>,
+    pub lift: f64,
 }
 
 pub(crate) struct DoorDbg {

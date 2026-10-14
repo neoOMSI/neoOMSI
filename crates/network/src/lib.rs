@@ -27,7 +27,7 @@
 //! ```text
 //! HELLO|<proto>|<session or ->|<name>|<bus>|<map>|<date>|<time>|<weather>|<season>|<nonce>
 //!                                                client → host (every second until answered)
-//! WELCOME|<proto>|<id>|<session>|<host name>|<map>|<date>|<time>|<weather>|<season>|<players>
+//! WELCOME|<proto>|<id>|<session>|<host name>|<map>|<date>|<time>|<weather>|<season>|<players>|<voice>|<nonce>
 //!                                                host → client
 //! REJECT|<proto>|<reason>                        host → client
 //! DISCOVER|<proto>                               broadcast, client → any host
@@ -107,7 +107,9 @@ pub use wire::{
 /// passed on to the other players.
 /// 6: up to 63 sound and moving-part values in a state (a 6-bit count: the AA-FR Agora's
 /// sound variables alone filled the 31 there was room for).
-pub const PROTOCOL: u32 = 7;
+/// 7: session-scoped content transfer and the current wire format.
+/// 8: a welcome echoes the join attempt's nonce.
+pub const PROTOCOL: u32 = 8;
 pub const DEFAULT_PORT: u16 = 27015;
 /// Ports a host tries after the default one when that is taken (a second session on the
 /// same machine).
@@ -2435,9 +2437,9 @@ impl LanSession {
         }
     }
 
-    fn send_welcome(&self, id: u32, to: SocketAddr) {
+    fn send_welcome(&self, id: u32, to: SocketAddr, nonce: u64) {
         let msg = format!(
-            "WELCOME|{PROTOCOL}|{id}|{}|{}|{}|{}|{}",
+            "WELCOME|{PROTOCOL}|{id}|{}|{}|{}|{}|{}|{nonce:016X}",
             session_hex(self.session),
             self.my_name,
             self.world.fields(),
@@ -3260,10 +3262,13 @@ impl LanSession {
         }
         let bus = vehicle_path(field(parts, 4)).unwrap_or_default();
         let world = WorldInfo::from_fields(parts, 5);
-        let nonce = u64::from_str_radix(field(parts, 10), 16).ok();
+        let Some(nonce) = u64::from_str_radix(field(parts, 10), 16).ok() else {
+            self.reject(from, "the joining game did not identify this join attempt");
+            return;
+        };
         // a returning client keeps its id; so does one that tried several of our addresses
         // at once, and the address its latest hello came from is the one it has chosen
-        let same = |p: &Peer| p.addr == Some(from) || (nonce.is_some() && p.nonce == nonce);
+        let same = |p: &Peer| p.addr == Some(from) || p.nonce == Some(nonce);
         let (id, here) = match self.peers.iter().find(|(_, p)| same(p)) {
             Some((id, _)) => {
                 let id = *id;
@@ -3292,7 +3297,7 @@ impl LanSession {
                 );
                 return;
             }
-            None if nonce.is_some_and(|n| self.banned.contains(&n)) => {
+            None if self.banned.contains(&nonce) => {
                 self.reject(from, "the host has sent you away from this session");
                 return;
             }
@@ -3304,12 +3309,8 @@ impl LanSession {
                     .gone_lately
                     .iter()
                     // by the nonce only: a name is no proof (anybody may call themselves
-                    // so); a game without a nonce (none sends none now) by its name
-                    .position(|g| match (nonce, g.0) {
-                        (Some(a), Some(b)) => a == b,
-                        (None, None) => g.1 == name,
-                        _ => false,
-                    })
+                    // so).
+                    .position(|g| g.0 == Some(nonce))
                     .map(|k| self.gone_lately.remove(k));
                 let id = match back
                     .as_ref()
@@ -3348,7 +3349,7 @@ impl LanSession {
                 others.sort();
                 here.extend(others.into_iter().map(|(_, s)| s));
                 let mut peer = Peer::new(Some(from), Pose::placeholder(id, &name, &bus));
-                peer.nonce = nonce;
+                peer.nonce = Some(nonce);
                 self.peers.insert(id, peer);
                 log::info!(
                     "LAN: player {id} '{name}' joined from {from} with {} on {}",
@@ -3373,7 +3374,7 @@ impl LanSession {
             p.last_seen = Instant::now();
             p.voice = field(parts, 11) == VOICE_CAPABLE;
         }
-        self.send_welcome(id, from);
+        self.send_welcome(id, from, nonce);
         if let Some(here) = here {
             self.send(
                 format!("NOTE|In this session: {}", clean_text(&here, 200)).as_bytes(),
@@ -3413,6 +3414,9 @@ impl LanSession {
             return;
         };
         let session = parse_session_hex(field(parts, 3)).unwrap_or(0);
+        if u64::from_str_radix(field(parts, 12), 16).ok() != Some(self.nonce) {
+            return;
+        }
         if self.session_required && session != self.session {
             self.rejected = Some(format!(
                 "the host answered with session {} instead of {}",

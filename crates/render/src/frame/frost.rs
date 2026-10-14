@@ -64,7 +64,7 @@ impl Frost {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: build::pcache(),
             })
         };
         let premul = wgpu::BlendState {

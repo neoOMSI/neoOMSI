@@ -6,6 +6,10 @@ use hashbrown::{HashMap, HashSet};
 use ::render::{Renderer, Scene};
 use ::simulation::traffic::Network;
 
+/// Passengers give the driver adequate warning without changing the much shorter range
+/// used for stop service and alighting.
+const BELL_RANGE: f64 = 180.0;
+
 /// A waiting place of a stop (a `[passpos]` of an object near it, sub_620c0c).
 #[derive(Debug, Clone)]
 pub(in crate::humans) struct WaitSpot {
@@ -604,20 +608,34 @@ impl Humans {
             let mut reg = BusAtStops::default();
             let mut nearest = f64::INFINITY;
             let mut nearest_at = f64::INFINITY;
+            let mut nearest_approaching = f64::INFINITY;
             reg.all_exit = bn.out_of_service;
             for id in &ids {
                 let s = &self.stops[id];
                 let d = bn.pos - s.pos;
                 let dist = d.length();
+                let sh = s.heading.to_radians();
+                let s_fwd = DVec2::new(sh.sin(), sh.cos());
+                let same_way = bn.fwd().dot(s_fwd) > 0.0;
+                // `d` points from the stop to the bus, so its forward component is negative
+                // while that stop lies ahead. A small allowance keeps the request on while
+                // the front of the bus is passing the marker.
+                let ahead = -d.truncate().dot(bn.fwd());
+                if same_way
+                    && ahead >= -5.0
+                    && dist < BELL_RANGE
+                    && dist < nearest_approaching
+                {
+                    reg.approaching = Some(*id);
+                    nearest_approaching = dist;
+                }
                 if !(dist < 60.0) {
                     continue;
                 }
-                let sh = s.heading.to_radians();
                 let (s_fwd, s_right) = (
-                    DVec2::new(sh.sin(), sh.cos()),
+                    s_fwd,
                     DVec2::new(sh.cos(), -sh.sin()),
                 );
-                let same_way = bn.fwd().dot(s_fwd) > 0.0;
                 reg.near.push(*id);
                 if same_way && dist < nearest {
                     reg.next = Some(*id);

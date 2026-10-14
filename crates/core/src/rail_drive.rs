@@ -190,6 +190,7 @@ impl RailDrive {
                     true,
                     blinker,
                     facing,
+                    true,
                 ) {
                     Some(n) => {
                         d = t - len;
@@ -205,7 +206,7 @@ impl RailDrive {
                 }
             } else if t < 0.0 {
                 let prev = net.prev.get(self.lane).cloned().unwrap_or_default();
-                match self.pick(net, world, &prev, false, blinker, !self.along) {
+                match self.pick(net, world, &prev, false, blinker, !self.along, true) {
                     Some(n) => {
                         d = t;
                         self.lane = n;
@@ -226,7 +227,7 @@ impl RailDrive {
     }
 
     /// The next (or previous) rail lane among `candidates`: the indicator's branch, else
-    /// the one the switch is set to, else the straightest. The points it takes are thrown.
+    /// the one the switch is set to, else the straightest. Throws its points if `throw`.
     fn pick(
         &self,
         net: &Network,
@@ -235,6 +236,7 @@ impl RailDrive {
         forward: bool,
         blinker: u8,
         _facing: bool,
+        throw: bool,
     ) -> Option<usize> {
         let here = &net.lanes[self.lane];
         let h0 = if forward {
@@ -281,11 +283,89 @@ impl RailDrive {
                 .or_else(|| rails.iter().min_by(|a, b| a.1.abs().total_cmp(&b.1.abs())))
                 .map(|r| r.0),
         }?;
-        if let (Some(k), Some(w)) = (net.lanes[chosen].key, world) {
+        if let (Some(k), Some(w), true) = (net.lanes[chosen].key, world, throw) {
             w.set_switches(&[(k.id, k.path)]);
         }
         Some(chosen)
     }
+
+    /// The rail lanes on the branches it would take, out to `reach` m: (lane, distance to
+    /// its start). The blinker picks only the next fork. None against the lane's way.
+    pub(crate) fn lanes_ahead(
+        &self,
+        net: &Network,
+        world: Option<&World>,
+        reach: f32,
+        mut blinker: u8,
+    ) -> Vec<(usize, f32)> {
+        if !self.along {
+            return Vec::new();
+        }
+        let mut at = RailDrive {
+            lane: self.lane,
+            s: 0.0,
+            along: true,
+            trail: Default::default(),
+            u: 0.0,
+        };
+        let mut out = vec![(self.lane, -self.s)];
+        let mut d = net.lanes[self.lane].length() - self.s;
+        while d <= reach && out.len() < 64 {
+            let Some(n) = at.pick(
+                net,
+                world,
+                &net.lanes[at.lane].next,
+                true,
+                blinker,
+                true,
+                false,
+            ) else {
+                break;
+            };
+            if net.lanes[at.lane].next.len() > 1 {
+                blinker = 0;
+            }
+            out.push((n, d));
+            d += net.lanes[n].length();
+            at.lane = n;
+        }
+        out
+    }
+}
+
+/// `RailDrive::lanes_ahead` of the player's rail vehicle.
+pub(crate) fn lanes_ahead(
+    p: &Player,
+    net: &Network,
+    world: &World,
+    reach: f32,
+) -> Vec<(usize, f32)> {
+    let Some(r) = p.rail.as_ref().filter(|r| r.lane < net.lanes.len()) else {
+        return Vec::new();
+    };
+    r.lanes_ahead(net, Some(world), reach, blinker_of(&p.vehicle))
+}
+
+/// The same for a LAN player's rail vehicle, from the track under it.
+pub(crate) fn remote_lanes_ahead(
+    v: &::simulation::VehicleInstance,
+    blinker: u8,
+    net: &Network,
+    world: &World,
+    reach: f32,
+) -> Vec<(usize, f32)> {
+    let Some((lane, s, _)) = net.lane_along(v.position, v.heading, LaneKind::Rail, 2.0, 45.0)
+    else {
+        return Vec::new();
+    };
+    let r = RailDrive {
+        lane,
+        s,
+        along: true,
+        trail: Default::default(),
+        u: 0.0,
+    };
+    r.lanes_ahead(net, Some(world), reach, blinker)
 }
 
 /// The indicator the driver has set (1 left, 2 right, else 0), from the script's switch or
@@ -347,5 +427,66 @@ pub(crate) fn frame(p: &mut Player, net: Option<&Network>, world: &World, dt: f3
     if let Some(mut r) = p.rail.take() {
         r.advance(p, net, world, ds, blinker);
         p.rail = Some(r);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::simulation::traffic::LaneBuilder;
+
+    /// 100 m of track, a fork (straight on or right), 50 m on a fork (straight or left).
+    fn forks() -> Network {
+        let rail = |from: DVec3, len, radius| {
+            LaneBuilder::arc(from, 0.0, len, radius, 0.0, LaneKind::Rail, 2.0)
+        };
+        let a = rail(DVec3::ZERO, 100.0, 0.0);
+        let straight = rail(a.end(), 50.0, 0.0);
+        let right = rail(a.end(), 40.0, 25.0);
+        let on = rail(straight.end(), 50.0, 0.0);
+        let left = rail(straight.end(), 40.0, -25.0);
+        let mut net = Network {
+            lanes: vec![a, straight, right, on, left],
+            ..Default::default()
+        };
+        net.link(1.5);
+        net
+    }
+
+    fn on(lane: usize, s: f32, along: bool) -> RailDrive {
+        RailDrive {
+            lane,
+            s,
+            along,
+            trail: Default::default(),
+            u: 0.0,
+        }
+    }
+
+    /// The look-ahead follows the branch the vehicle will take.
+    #[test]
+    fn the_lanes_ahead_follow_the_branch_the_vehicle_takes() {
+        let net = forks();
+        let r = on(0, 30.0, true);
+        assert_eq!(
+            r.lanes_ahead(&net, None, 160.0, 0),
+            vec![(0, -30.0), (1, 70.0), (3, 120.0)]
+        );
+        assert_eq!(
+            r.lanes_ahead(&net, None, 160.0, 2),
+            vec![(0, -30.0), (2, 70.0)]
+        );
+        // the left blinker takes the next fork's left branch, not the one after
+        assert_eq!(
+            r.lanes_ahead(&net, None, 160.0, 1),
+            vec![(0, -30.0), (1, 70.0), (3, 120.0)]
+        );
+        // nothing beyond the reach, nothing against the lane's way
+        assert_eq!(r.lanes_ahead(&net, None, 60.0, 0), vec![(0, -30.0)]);
+        assert!(
+            on(0, 30.0, false)
+                .lanes_ahead(&net, None, 160.0, 0)
+                .is_empty()
+        );
     }
 }

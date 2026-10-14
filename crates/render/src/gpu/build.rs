@@ -9,6 +9,85 @@ const ALPHA_BLEND: wgpu::BlendState = wgpu::BlendState {
     alpha: wgpu::BlendComponent::REPLACE,
 };
 
+pub type DeviceHook = Arc<
+    dyn Fn(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>, wgpu::TextureFormat) + Send + Sync,
+>;
+
+static DEVICE_HOOK: std::sync::Mutex<Option<DeviceHook>> = std::sync::Mutex::new(None);
+
+pub fn set_device_hook(hook: Option<DeviceHook>) {
+    *DEVICE_HOOK.lock().unwrap_or_else(|e| e.into_inner()) = hook;
+}
+
+static PIPELINE_CACHE: std::sync::OnceLock<wgpu::PipelineCache> = std::sync::OnceLock::new();
+static PIPELINE_CACHE_FILE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub(crate) fn pcache() -> Option<&'static wgpu::PipelineCache> {
+    PIPELINE_CACHE.get()
+}
+
+fn open_pipeline_cache(device: &wgpu::Device, info: &wgpu::AdapterInfo) {
+    if !device.features().contains(wgpu::Features::PIPELINE_CACHE)
+        || ::legacy_config::env::var_os("OMSI_NO_PIPELINE_CACHE").is_some()
+    {
+        return;
+    }
+    let home = || std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(home)
+    } else if cfg!(target_os = "macos") {
+        home().join("Library/Application Support")
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home().join(".config"))
+    };
+    let key = wgpu::util::pipeline_cache_key(info).unwrap_or_else(|| {
+        format!("{}-{:04x}-{:04x}", info.name, info.vendor, info.device)
+    });
+    let key: String = key
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let dir = base
+        .join("neoOMSI")
+        .join("cache")
+        .join("pipelines");
+    let _ = std::fs::create_dir_all(&dir);
+    let file = dir.join(format!("{key}.bin"));
+    let data = std::fs::read(&file).ok();
+    log::info!(
+        "pipeline cache: {} ({})",
+        file.display(),
+        data.as_ref()
+            .map(|d| format!("{} KB loaded", d.len() / 1024))
+            .unwrap_or_else(|| "empty".into())
+    );
+    let cache = unsafe {
+        device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+            label: Some("omsi pipelines"),
+            data: data.as_deref(),
+            fallback: true,
+        })
+    };
+    let _ = PIPELINE_CACHE.set(cache);
+    let _ = PIPELINE_CACHE_FILE.set(file);
+}
+
+fn save_pipeline_cache() {
+    let (Some(cache), Some(file)) = (PIPELINE_CACHE.get(), PIPELINE_CACHE_FILE.get()) else {
+        return;
+    };
+    if let Some(data) = cache.get_data() {
+        let tmp = file.with_extension("tmp");
+        if std::fs::write(&tmp, &data).is_ok() {
+            let _ = std::fs::rename(&tmp, file);
+        }
+    }
+}
+
 fn linear_sampler(
     device: &wgpu::Device,
     mode: wgpu::AddressMode,
@@ -365,6 +444,7 @@ impl Renderer {
             required_features |= adapter.features() & wgpu::Features::POLYGON_MODE_LINE;
         }
         required_features |= adapter.features() & wgpu::Features::RG11B10UFLOAT_RENDERABLE;
+        required_features |= adapter.features() & wgpu::Features::PIPELINE_CACHE;
         if intel_vulkan_safe {
             required_features = wgpu::Features::empty();
         }
@@ -392,6 +472,13 @@ impl Renderer {
             })
             .await
             .context("request_device")?;
+        if let Some(surface) = surface {
+            let hook = DEVICE_HOOK.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if let Some(hook) = hook {
+                hook(&device, &queue, surface, format);
+            }
+        }
+        open_pipeline_cache(&device, &info);
         log::info!("graphics device opened; compiling renderer pipelines");
         let adapter_table = device
             .features()
@@ -481,7 +568,10 @@ impl Renderer {
         );
         renderer.mesh_pages = mesh_pages;
         match scope.pop().await {
-            None => Ok(renderer),
+            None => {
+                save_pipeline_cache();
+                Ok(renderer)
+            }
             Some(e) if options.msaa > 1 => {
                 log::error!(
                     "{}x MSAA failed on {}: {}; drawing without multisampling",
@@ -498,6 +588,7 @@ impl Renderer {
                     RenderOptions { msaa: 1, ..options },
                 );
                 renderer.mesh_pages = mesh_pages;
+                save_pipeline_cache();
                 Ok(renderer)
             }
             Some(e) => Err(anyhow!("renderer pipelines: {}", gpu_error_text(&e))),
@@ -1030,7 +1121,7 @@ impl Renderer {
                     },
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let bias: i32 = ::legacy_config::env::var("OMSI_SURFACE_BIAS")
@@ -1153,7 +1244,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let shadow_clear_pipeline = {
@@ -1194,7 +1285,7 @@ impl Renderer {
                 multisample: Default::default(),
                 fragment: None,
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let shadow_pipelines = [
@@ -1386,7 +1477,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         drop(corona_texture);
@@ -1527,7 +1618,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let wire_ok = cfg!(all(feature = "devtools", debug_assertions))
@@ -1753,7 +1844,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let ssao_pipeline = Some(make_ao("fs_ssao"));
@@ -1798,7 +1889,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let make_prepass = |kind: u8, cull: bool| make_prepass_samples(kind, cull, 1);
@@ -1879,7 +1970,7 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pcache(),
         });
         let mip_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -1976,7 +2067,7 @@ impl Renderer {
                     },
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let post = PostPipelines {
@@ -2268,7 +2359,7 @@ impl Renderer {
                         compilation_options: Default::default(),
                     }),
                     multiview_mask: None,
-                    cache: None,
+                    cache: pcache(),
                 })
             };
             let cube_faces: Vec<wgpu::TextureView> = (0..6)
@@ -2364,7 +2455,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             });
             Probe {
                 view,
@@ -2416,7 +2507,7 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pcache(),
         });
         log::info!("renderer: compiling the VR interface shaders");
         let xr_ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2451,7 +2542,7 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pcache(),
         });
         log::info!("renderer: compiling the upscaler shaders");
         let upscale_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2549,7 +2640,7 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pcache(),
         });
         let upscale_pipeline = upscale_pipeline_for("fs_main", format, &upscale_pl);
         let copy_pipeline = upscale_pipeline_for("fs_copy", format, &upscale_pl);

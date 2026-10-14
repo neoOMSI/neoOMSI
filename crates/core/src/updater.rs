@@ -972,6 +972,11 @@ pub fn just_updated() -> Option<String> {
     None
 }
 
+pub(crate) fn shared() -> &'static Mutex<Updater> {
+    static U: std::sync::OnceLock<Mutex<Updater>> = std::sync::OnceLock::new();
+    U.get_or_init(|| Mutex::new(Updater::default()))
+}
+
 /// Open a web page in the system's browser.
 pub fn open_url(url: &str) {
     #[cfg(target_os = "android")]
@@ -985,6 +990,16 @@ pub fn open_url(url: &str) {
         .spawn();
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
+/// Open a folder in the system's file manager.
+pub fn open_folder(path: &std::path::Path) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(path).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(path).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
 }
 
 #[cfg(test)]

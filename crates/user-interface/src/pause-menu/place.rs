@@ -38,6 +38,7 @@ impl Ui {
         // the picture of the vehicle
         let pr = [x + pad, y + nav_h + pad, x + bw - pad, y + nav_h + pad + prev_h];
         self.text.rounded(r, scene, pr, ROW_R * u, OPT_TRACK);
+        self.place_preview_rect = pr;
         self.place_preview_size = ((pr[2] - pr[0]).round() as u32, (pr[3] - pr[1]).round() as u32);
         let first = preview.first().cloned().unwrap_or_default();
         if let Some(tex) = self.place_picture {

@@ -836,8 +836,8 @@ impl World {
                                     // a script's string variable (the stock bus stop display's
                                     // departures): a texture of the object's own, drawn by
                                     // `update_scripted` whenever the script refreshes it
-                                    let scripted_text = lamp.is_none()
-                                        && tt.variable.trim().parse::<usize>().is_err()
+                                    // (a lamp's by `Traffic::sync`)
+                                    let scripted_text = tt.variable.trim().parse::<usize>().is_err()
                                         && ot
                                         .program
                                         .as_ref()
@@ -1205,6 +1205,7 @@ impl World {
                             variants: object_variants,
                             pos,
                             script,
+                            texts: Arc::new(Mutex::new(script_texts)),
                             coronas,
                             corona_mesh,
                             lit,

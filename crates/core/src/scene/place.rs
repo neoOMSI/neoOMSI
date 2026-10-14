@@ -308,6 +308,7 @@ impl World {
                                 &o.extra,
                             ),
                         ))),
+                        texts: Default::default(),
                         coronas: Vec::new(),
                         corona_mesh: Vec::new(),
                         lit: Vec::new(),

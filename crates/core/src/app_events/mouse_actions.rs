@@ -39,6 +39,10 @@ impl App {
     }
 
     pub(crate) fn wheel(&mut self, amount: f32) {
+        if self.menu.is_some() && self.lab_menu.is_none() {
+            self.start_wheel(amount);
+            return;
+        }
         if self.lab_dialog_wheel(amount) {
             return;
         }
@@ -130,6 +134,10 @@ impl App {
             if state == ElementState::Pressed {
                 self.placing_click();
             }
+            return;
+        }
+        if self.menu.is_some() {
+            self.start_mouse(event_loop, pressed);
             return;
         }
         if self.lab_menu.is_some() {

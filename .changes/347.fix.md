@@ -1,0 +1,1 @@
+Enhanced graphics: the mirrors no longer turn dark around sunrise and sunset. Their light follows the picture outside the window through the whole dusk instead of dimming to its night level while the street is still in twilight.

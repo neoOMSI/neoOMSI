@@ -74,6 +74,11 @@ impl App {
                 self.key_search_text(text);
             }
         }
+        if event.state == ElementState::Pressed && self.menu.is_some() {
+            if let Some(text) = event.text.as_deref() {
+                self.start_text(text);
+            }
+        }
         if event.state == ElementState::Pressed && self.dropdown.is_some() {
             if let Some(text) = event.text.as_deref() {
                 self.dropdown_text(text);
@@ -144,6 +149,9 @@ impl App {
     /// In VR right-click zooms; with mouse steering it first releases the steering.
     /// On the desktop a right-drag zooms, as in OMSI (`on_right`).
     pub(super) fn on_mouse_right(&mut self, state: ElementState) {
+        if self.showcase_button(winit::event::MouseButton::Right, state == ElementState::Pressed) {
+            return;
+        }
         if let Some(edit) = self.vr_nav_edit.as_mut() {
             edit.rotating = state == ElementState::Pressed;
             return;
@@ -174,6 +182,9 @@ impl App {
 
     /// (the middle button - the wheel pressed - turns the view as well: OMSI's pan)
     pub(super) fn on_mouse_middle(&mut self, state: ElementState) {
+        if self.showcase_button(winit::event::MouseButton::Middle, state == ElementState::Pressed) {
+            return;
+        }
         if self.vr_nav_edit.is_some() {
             return;
         }
@@ -194,6 +205,9 @@ impl App {
             winit::event::MouseScrollDelta::LineDelta(_, y) => y,
             winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
         };
+        if self.showcase_wheel(amount) {
+            return;
+        }
         self.wheel(amount);
     }
 
@@ -212,6 +226,7 @@ impl App {
                 }
             }
         }
+        self.showcase_moved(position.x as f32, position.y as f32);
         if self.touch.enabled {
             self.finger_move(0, glam::Vec2::new(position.x as f32, position.y as f32));
         }
@@ -239,6 +254,9 @@ impl App {
             }
         } else {
             let pressed = state == ElementState::Pressed;
+            if self.showcase_button(winit::event::MouseButton::Left, pressed) {
+                return;
+            }
             self.buttons_held.0 = pressed;
             if pressed && self.buttons_held.1 && self.start_both_drag() {
                 return;

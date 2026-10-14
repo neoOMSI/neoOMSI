@@ -188,6 +188,45 @@ pub struct Frame<'a> {
     pub vehicle_menu: &'a [VehicleGroup],
 }
 
+impl<'a> Frame<'a> {
+    pub fn bare(scale: f32, ui_scale: f32, opacity: f32, width: f32, height: f32, cursor: (f32, f32)) -> Frame<'a> {
+        Frame {
+            scale,
+            ui_scale,
+            opacity,
+            width,
+            height,
+            cursor,
+            vr: false,
+            crosshair: false,
+            tooltip: None,
+            chat: None,
+            notes: &[],
+            fps: None,
+            paused: false,
+            menu: None,
+            menu_top: None,
+            timetable: None,
+            info: None,
+            tutorial: None,
+            tags: Vec::new(),
+            menu_kind: MenuKind::Game,
+            report: None,
+            touch: false,
+            build: "",
+            report_status: "",
+            menu_head: None,
+            menu_preview: None,
+            pane_first: None,
+            menu_tabs: None,
+            menu_kbd: false,
+            dropdown: None,
+            lab: None,
+            vehicle_menu: &[],
+        }
+    }
+}
+
 /// One action of the vehicle page: only its id and kind, the texts come from the i18n keys
 /// `pause.page.vehicle.action.<id>.*`.
 pub struct VehicleAction {

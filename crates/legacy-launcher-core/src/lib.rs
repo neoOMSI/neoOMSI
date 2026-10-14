@@ -11,7 +11,6 @@ pub mod index;
 pub mod install;
 pub mod instances;
 pub mod servers;
-pub mod wire;
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
