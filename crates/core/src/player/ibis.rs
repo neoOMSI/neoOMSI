@@ -316,7 +316,7 @@ impl Player {
     }
 }
 
-pub(super) fn route_line(t: &::legacy_vehicle::hof::InfoTrip) -> String {
+pub(crate) fn route_line(t: &::legacy_vehicle::hof::InfoTrip) -> String {
     let raw = t.line.trim();
     let code = ::legacy_config::parse_i32(&t.code);
     if (raw.is_empty() || raw.chars().all(|c| c == 'x' || c == 'X')) && code >= 100 {

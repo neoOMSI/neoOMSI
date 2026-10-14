@@ -827,7 +827,7 @@ fn passenger_termini(
     if selected_route.route.trim().parse::<i32>().ok() != Some(selected_target.code) {
         return termini;
     }
-    let line = selected_route.line.trim();
+    let line = crate::player::route_line(selected_route);
     let Some(last_stop) = hof
         .info_busstop_lists
         .get(route_index)
@@ -837,7 +837,7 @@ fn passenger_termini(
     };
 
     for (index, route) in hof.info_trips.iter().enumerate() {
-        if route.line.trim() != line {
+        if !crate::player::route_line(route).eq_ignore_ascii_case(&line) {
             continue;
         }
         let matches_last_stop = hof
@@ -880,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_circular_route_keeps_passengers_on_its_line() {
+    fn selected_circular_route_normalises_placeholder_lines() {
         let hof = Hof {
             termini: vec![
                 terminus(1037, "B2 Apsley Circular"),
@@ -890,17 +890,20 @@ mod tests {
             info_trips: vec![
                 InfoTrip {
                     route: "1037".into(),
-                    line: "2".into(),
+                    line: "XXX".into(),
+                    code: "200".into(),
                     ..Default::default()
                 },
                 InfoTrip {
                     route: "1048".into(),
-                    line: "2".into(),
+                    line: "XXX".into(),
+                    code: "200".into(),
                     ..Default::default()
                 },
                 InfoTrip {
                     route: "1049".into(),
-                    line: "3".into(),
+                    line: "XXX".into(),
+                    code: "300".into(),
                     ..Default::default()
                 },
             ],
