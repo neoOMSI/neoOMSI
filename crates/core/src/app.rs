@@ -1062,6 +1062,7 @@ impl App {
                             self.traffic.as_mut(),
                             parse_time(&self.args.time),
                         );
+                        sch.precompute_shared_stands(&w);
                         if let (Some(line), Some(p)) = (&self.args.line, self.player.as_mut()) {
                             self.duty = match sch.player_duty(
                                 &w,
