@@ -130,7 +130,22 @@ impl Shelter {
         let start = Instant::now();
         let c = Self::cell_of(eye.x, eye.y);
         let half = (SIDE / 2) as i64;
-        self.corner = (c.0 - half, c.1 - half);
+        let corner = (c.0 - half, c.1 - half);
+        if corner != self.corner {
+            self.corner = corner;
+            // a slot's old roof would show in the shader until its new cell is looked at
+            for cy in corner.1..corner.1 + SIDE as i64 {
+                for cx in corner.0..corner.0 + SIDE as i64 {
+                    let i = Self::slot((cx, cy));
+                    if self.held[i].is_some_and(|(held, _)| held != (cx, cy))
+                        && self.roofs[i] != NO_ROOF
+                    {
+                        self.roofs[i] = NO_ROOF;
+                        self.changed = true;
+                    }
+                }
+            }
+        }
         for d in 0..SIDE {
             let row = if d % 2 == 0 {
                 SIDE / 2 + d / 2
@@ -298,6 +313,28 @@ mod tests {
         let x = |i: usize| s.corner.0 as f64 + i as f64 + 0.5;
         assert!(s.knows(x(2 * RUN - 1), 0.5));
         assert!(!s.knows(x(2 * RUN), 0.5));
+    }
+
+    #[test]
+    fn moving_on_clears_the_slots_not_yet_looked_at() {
+        let mut s = roofed(8.0);
+        s.changed = false;
+        // 50 m on, one run only
+        s.fill(
+            DVec3::new(50.0, 0.0, 0.0),
+            0,
+            Some(Duration::ZERO),
+            |_, cxs| vec![Some(8.0); cxs.len()],
+        );
+        assert!(s.changed);
+        let gpu = |cx: i64, cy: i64| s.roofs[Shelter::slot((cx, cy))];
+        assert_eq!(gpu(96, 0), 8.0);
+        assert_eq!(gpu(96 + RUN as i64, 0), NO_ROOF);
+        assert_eq!(gpu(130, 5), NO_ROOF);
+        assert_eq!(gpu(130, -90), NO_ROOF);
+        // kept cells
+        assert_eq!(gpu(0, 5), 8.0);
+        assert_eq!(gpu(-46, -96), 8.0);
     }
 
     #[test]
