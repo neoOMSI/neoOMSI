@@ -287,6 +287,51 @@ impl PlayerDuty {
         self.left_late.map(|l| l.max(due)).unwrap_or(due)
     }
 
+    /// The player's bus at one stop for `Schedule::stop_list`, in clock time: a trip at
+    /// 24:22 is the board's 0:22.
+    pub(super) fn board_visits(&self, stop: i64, day_time: f64) -> Vec<(f64, String, String, f64)> {
+        let now = self.duty_time(day_time);
+        // a trip not begun leaves on time at the earliest (the bus waits at its
+        // first stop), one under way arrives as early or late as it runs
+        let delay = self.delay(day_time);
+        let lateness = if self.left_late.is_some() || self.at_stop {
+            delay
+        } else {
+            delay.max(0.0)
+        };
+        let mut list = Vec::new();
+        for (ti, trip) in self.trips.iter().enumerate().skip(self.trip_index) {
+            if trip.departure > now + BOARD_AHEAD {
+                break;
+            }
+            for (k, s) in trip
+                .stops
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.object_id == stop && s.stops)
+            {
+                let current = ti == self.trip_index;
+                let expected =
+                    if current && (k < self.next_stop || self.done && k + 1 < trip.stops.len()) {
+                        continue;
+                    } else if current && k == self.next_stop && self.at_stop {
+                        now
+                    } else if current {
+                        (s.arr + lateness).max(now)
+                    } else {
+                        (s.arr + delay.max(0.0)).max(now)
+                    };
+                list.push((
+                    expected - now + day_time,
+                    trip.line.trim().to_string(),
+                    trip.terminus.clone(),
+                    (s.dep - s.arr).max(0.0),
+                ));
+            }
+        }
+        list
+    }
+
     /// The clock's time of day as the duty counts it: the day before or after when that is
     /// nearer the trip under way, so a duty across midnight (picked at 23:00 for trips from
     /// 0:49, or running from 23:40 into the night) is neither 22 hours late nor early.

@@ -511,44 +511,7 @@ impl Schedule {
         }
         // the player's bus
         if let Some(duty) = duty {
-            // a trip not begun leaves on time at the earliest (the bus waits at its
-            // first stop), one under way arrives as early or late as it runs
-            let delay = duty.delay(now);
-            let lateness = if duty.left_late.is_some() || duty.at_stop {
-                delay
-            } else {
-                delay.max(0.0)
-            };
-            for (ti, trip) in duty.trips.iter().enumerate().skip(duty.trip_index) {
-                if trip.departure > now + BOARD_AHEAD {
-                    break;
-                }
-                for (k, s) in trip
-                    .stops
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| s.object_id == stop && s.stops)
-                {
-                    let current = ti == duty.trip_index;
-                    let expected = if current
-                        && (k < duty.next_stop || duty.done && k + 1 < trip.stops.len())
-                    {
-                        continue;
-                    } else if current && k == duty.next_stop && duty.at_stop {
-                        now
-                    } else if current {
-                        (s.arr + lateness).max(now)
-                    } else {
-                        (s.arr + delay.max(0.0)).max(now)
-                    };
-                    list.push((
-                        expected,
-                        trip.line.trim().to_string(),
-                        trip.terminus.clone(),
-                        (s.dep - s.arr).max(0.0),
-                    ));
-                }
-            }
+            list.extend(duty.board_visits(stop, now));
         }
         list
     }

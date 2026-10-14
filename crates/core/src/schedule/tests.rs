@@ -501,6 +501,55 @@ fn a_page_can_go_back_to_an_earlier_stop() {
 }
 
 #[test]
+fn the_players_trip_after_midnight_is_on_the_board() {
+    // #299: trip ended at stop 11 at 24:12, the next leaves there at 24:22, clock 0:14:11
+    let h = |m: f64| 24.0 * 3600.0 + m * 60.0;
+    let mut ended = planned(
+        h(-4.0),
+        &[(0.0, h(-4.0), h(-4.0)), (500.0, h(12.0), h(12.0))],
+    );
+    let mut next = planned(
+        h(22.0),
+        &[(500.0, h(22.0), h(22.0)), (0.0, h(30.0), h(30.0))],
+    );
+    ended.stops[0].object_id = 10;
+    ended.stops[1].object_id = 11;
+    next.stops[0].object_id = 11;
+    next.stops[1].object_id = 10;
+    let d = PlayerDuty {
+        line: "5".into(),
+        tour: "1".into(),
+        trips: vec![ended, next],
+        trip_index: 0,
+        first_trip: 0,
+        statistics: Default::default(),
+        completed_report: None,
+        next_stop: 1,
+        at_stop: true,
+        arrived_late: None,
+        done: true,
+        left_late: None,
+        held_back: false,
+        odo: 0.0,
+        last_pos: None,
+        arrival_odo: 0.0,
+        left_odo: 0.0,
+        placed: true,
+        trip_changed: false,
+        picked: false,
+        first_update: None,
+        heading: 0.0,
+    };
+    let now = 14.0 * 60.0 + 11.0;
+    let at_11: Vec<f64> = d.board_visits(11, now).into_iter().map(|v| v.0).collect();
+    // standing there, and leaving at 0:22
+    assert_eq!(at_11, vec![now, 22.0 * 60.0]);
+    // late: due now
+    let late = 25.0 * 60.0;
+    assert_eq!(d.board_visits(11, late)[1].0, late);
+}
+
+#[test]
 fn a_loop_does_not_jump_to_the_stop_over_the_road() {
     // out along y = 0 to x = 1000, back along y = 12: stop 1 at x = 100 going out, stop 5
     // at x = 100 coming back, 12 m apart (#254)
