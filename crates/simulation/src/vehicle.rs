@@ -2780,26 +2780,48 @@ impl VehicleInstance {
         self.trailers = trailers;
     }
 
+    /// How far behind the vehicle's origin each coupled part's coupling lies with the train
+    /// laid out straight (m; negative ahead of it).
+    fn couplings_behind(&self) -> Vec<f64> {
+        // the origin of the part in front (forward positive) and which way its body faces
+        let (mut y, mut sign) = (0.0f64, 1.0f64);
+        self.trailers
+            .iter()
+            .map(|t| {
+                let (back, front) = t.couplings();
+                let at_coupling = y + sign * back.y as f64;
+                sign = if t.reversed { -1.0 } else { 1.0 };
+                y = at_coupling - sign * front.y as f64;
+                -at_coupling
+            })
+            .collect()
+    }
+
+    /// Put the coupled parts' couplings over a track (`at_behind` as for `retrail`) rather
+    /// than where the part in front puts them.
+    pub fn couple_on_track(&mut self, at_behind: &dyn Fn(f64) -> Option<DVec3>) {
+        let behind = self.couplings_behind();
+        for (t, d) in self.trailers.iter_mut().zip(behind) {
+            if let Some(p) = at_behind(d) {
+                t.place_coupling_on_track(p);
+            }
+        }
+    }
+
     /// Put the coupled parts on a track: `at_behind(d)` is the point of the track `d` metres
     /// behind the vehicle's origin (None: not known, the part follows as it does on a road).
-    /// Each part's turning axle is placed there, and the part follows its coupling.
+    /// Each part's turning axle is placed there and the part follows its coupling (see
+    /// `couple_on_track`). The track is asked once per part, front to back.
     pub fn retrail(&mut self, dt: f32, at_behind: &dyn Fn(f64) -> Option<DVec3>) {
+        let behind = self.couplings_behind();
         let mut trailers = std::mem::take(&mut self.trailers);
         let mut lead: Option<(DVec3, Mat4, f64)> = None;
-        let (mut prev_c, mut b_prev) = (self.position, 0.0f64);
-        for t in &mut trailers {
-            let (lp, lr) = lead
-                .map(|(p, r, _)| (p, r))
-                .unwrap_or((self.position, self.body_rotation()));
-            let c = t.coupling_point(lp, lr);
-            let b_c = b_prev + (c - prev_c).truncate().length();
-            if let Some(p) = at_behind(b_c + t.pivot_length() as f64) {
+        for (t, b_c) in trailers.iter_mut().zip(behind) {
+            if let Some(p) = at_behind(b_c + t.pivot_reach() as f64) {
                 t.place_on_track(p);
             }
             t.update(self, dt, lead);
             lead = Some((t.position, t.body_rotation(), t.heading));
-            prev_c = c;
-            b_prev = b_c;
         }
         self.trailers = trailers;
     }
@@ -3513,6 +3535,9 @@ pub struct TrailerPart {
     pivot: Option<DVec3>,
     /// Coupling → rear axle distance.
     length: f32,
+    /// How far the coupling lies ahead of that axle as the part travels (m): negative for
+    /// the BR 481's bogies, coupled behind the car body they run under (#342).
+    reach: f32,
     coupling_front: Vec3,
     coupling_back: Vec3,
     axle_long: f32,
@@ -3554,6 +3579,8 @@ pub struct TrailerPart {
     /// The track under its turning axle, when it runs on rails (`VehicleInstance::retrail`):
     /// it stands at the track's height, not on whatever the ground probe finds there.
     track: Option<DVec3>,
+    /// The track point under its coupling (`VehicleInstance::couple_on_track`).
+    track_coupling: Option<DVec3>,
     held: Option<DVec3>,
     /// Mesh property sources, resolved against the leading vehicle's variables.
     props_plan: PropsPlan,
@@ -3611,6 +3638,10 @@ impl OmsiFrames {
 fn scripts_acceleration(accel_body: Vec3, orientation: Quat) -> Vec3 {
     accel_body - orientation.inverse().mul_vec3(Vec3::new(0.0, 0.0, 9.81))
 }
+
+/// How near the track point must be to where the part in front has the coupling (m): a
+/// stale one is ignored.
+const TRACK_COUPLING_REACH: f64 = 5.0;
 
 impl TrailerPart {
     /// Pitch (degrees, nose up), eased axle height and the track point it stands on (for
@@ -3785,6 +3816,7 @@ impl TrailerPart {
             frame_brakes: Vec::new(),
             joint_angles: None,
             track: None,
+            track_coupling: None,
             held: None,
             v_alpha: program.var(&format!("articulation_{joint}_alpha")),
             v_beta: program.var(&format!("articulation_{joint}_beta")),
@@ -3796,6 +3828,11 @@ impl TrailerPart {
             heading: 0.0,
             pivot: None,
             length: (coupling_front.y - axle_long).abs(),
+            reach: if reversed {
+                axle_long - coupling_front.y
+            } else {
+                coupling_front.y - axle_long
+            },
             coupling_front,
             coupling_back,
             axle_long,
@@ -3918,7 +3955,7 @@ impl TrailerPart {
         let c = position + rot.transform_point3(self.coupling_front).as_dvec3();
         let h = heading.to_radians();
         let ahead = DVec3::new(h.sin(), h.cos(), 0.0);
-        let pivot = c - ahead * self.length as f64;
+        let pivot = c - ahead * self.reach as f64;
         // (the follow step after this one sees the pivot standing still: the wheels roll
         // as far as the pose moved)
         if let Some(d) = self.pivot.map(|p| pivot - p).filter(|d| d.length() < 25.0) {
@@ -3946,6 +3983,7 @@ impl TrailerPart {
         self.held = None;
         self.axle_z = None;
         self.track = None;
+        self.track_coupling = None;
         self.rigid = None;
         self.joint_angles = None;
     }
@@ -3962,6 +4000,12 @@ impl TrailerPart {
         self.length
     }
 
+    /// How far behind the coupling the axle the part turns about lies along the way
+    /// (negative: ahead of it).
+    pub fn pivot_reach(&self) -> f32 {
+        self.reach
+    }
+
     /// Put the part's turning axle at `pivot` (a point on the road behind the coupling):
     /// a bus placed on a bend stands with its rear section following the bend rather than
     /// straight behind it.
@@ -3976,11 +4020,23 @@ impl TrailerPart {
         self.track = Some(p);
     }
 
+    /// Put the part's coupling over the track at `p` (keeping its height).
+    pub fn place_coupling_on_track(&mut self, p: DVec3) {
+        self.track_coupling = Some(p);
+    }
+
     fn update(&mut self, main: &mut VehicleInstance, dt: f32, lead: Option<(DVec3, Mat4, f64)>) {
         // coupling point in the world: on the leading part (the vehicle or the previous trailer)
         let (lead_pos, lead_rot, lead_heading) =
             lead.unwrap_or((main.position, main.body_rotation(), main.heading));
         let c = lead_pos + lead_rot.transform_point3(self.coupling_back).as_dvec3();
+        // (kept, not taken: `update_trailers` steps the part again in the same frame)
+        let c = match self.track_coupling {
+            Some(p) if (p - c).truncate().length() < TRACK_COUPLING_REACH => {
+                DVec3::new(p.x, p.y, c.z)
+            }
+            _ => c,
+        };
         // the height its axle had (the new one eases from it; nothing after a move)
         let (lift, sag, ground_z) = if let Some(rb) = &self.rigid {
             self.position = rb.origin();
@@ -4006,10 +4062,12 @@ impl TrailerPart {
                 None => {
                     // start straight behind the leading vehicle
                     let h = main.heading.to_radians();
-                    c - DVec3::new(h.sin(), h.cos(), 0.0) * self.length as f64
+                    c - DVec3::new(h.sin(), h.cos(), 0.0) * self.reach as f64
                 }
             };
-            let mut dir = (c - pivot).truncate();
+            // (forward: from the axle to the coupling, the other way where the axle leads)
+            let ahead = if self.reach < 0.0 { -1.0 } else { 1.0 };
+            let mut dir = (c - pivot).truncate() * ahead;
             if dir.length() < 1e-3 {
                 let h = main.heading.to_radians();
                 dir = glam::DVec2::new(h.sin(), h.cos());
@@ -4031,7 +4089,7 @@ impl TrailerPart {
                 }
             }
             self.heading = heading;
-            let new_pivot = c - DVec3::new(dir.x, dir.y, 0.0) * self.length as f64;
+            let new_pivot = c - DVec3::new(dir.x, dir.y, 0.0) * self.reach as f64;
             let ds = (new_pivot - pivot).truncate().length() as f32;
             self.odometer +=
                 ds * (main.physics.velocity_kmh().signum().max(0.0) * 2.0 - 1.0).max(-1.0);
@@ -4156,8 +4214,9 @@ impl TrailerPart {
             // a crest the joint came apart by a hand's breadth or more). It leans as the vehicle
             // it is coupled to does.
             let rise = c.z - (axle_z + self.coupling_front.z as f64);
-            self.pitch =
-                (rise.atan2(self.length.max(0.5) as f64).to_degrees() as f32).clamp(-15.0, 15.0);
+            // (with the axle ahead, a raised coupling tips the nose down)
+            let run = self.length.max(0.5).copysign(self.reach) as f64;
+            self.pitch = ((rise / run).atan().to_degrees() as f32).clamp(-15.0, 15.0);
             self.bank = main.bank;
             // the trailer origin: coupling_front sits at c
             let rot = self.body_rotation();
@@ -5273,6 +5332,69 @@ mod tests {
         let full = report(VehicleType::load(&root, &bus).expect("F90"));
         assert!(!full.is_empty(), "the F90 has no animated wheels");
         assert_eq!(report(ai), full);
+    }
+
+    /// Parts coupled on ahead of their own axle, each ahead of the one before (the BR 481's
+    /// bogies, #342), stand on the track in a bend.
+    #[test]
+    fn parts_coupled_ahead_of_their_axle_stand_on_the_track_in_a_bend() {
+        let dir = std::env::temp_dir().join(format!("omsi-retrail-ahead-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        let part = |name: &str, front: f32, back: f32| {
+            std::fs::write(
+                dir.join(name),
+                format!(
+                    "[model]\nmodel.cfg\n[coupling_front]\n0\n{front}\n1\n[coupling_back]\n0\n{back}\n1\n"
+                ),
+            )
+            .unwrap();
+            Arc::new(VehicleType::load(&dir, &dir.join(name)).unwrap())
+        };
+        let lead = part("lead.ovh", 5.0, -30.0);
+        // origin 10 m behind the lead's, its axle (none given) 0.5 m behind that
+        let a = part("a.ovh", -20.0, -3.0);
+        // origin 5 m behind the lead's: ahead of the part it hangs on
+        let b = part("b.ovh", -8.0, -1.0);
+        let mut v = VehicleInstance::new(lead, VehicleHost::new(crate::SimClock::default()));
+        v.attach_trailer_ex(a, false);
+        v.attach_trailer_ex(b, false);
+        // a bend of 150 m radius, the lead's origin on it heading north (+y)
+        let r = 150.0f64;
+        let on_track = |d: f64| {
+            let t = d / r;
+            Some(DVec3::new(r - r * t.cos(), -r * t.sin(), 0.0))
+        };
+        v.position = DVec3::ZERO;
+        v.heading = 0.0;
+        for _ in 0..3 {
+            v.couple_on_track(&on_track);
+            v.retrail(0.0, &on_track);
+        }
+        // (once per part: the traffic counts the queries)
+        let asked = std::cell::Cell::new(0);
+        v.retrail(0.0, &|d| {
+            asked.set(asked.get() + 1);
+            on_track(d)
+        });
+        assert_eq!(asked.get(), v.trailers.len());
+        for (k, (t, behind)) in v.trailers.iter().zip([10.5, 5.5]).enumerate() {
+            let axle = t
+                .world_transform()
+                .transform_point3(Vec3::new(0.0, -0.5, 0.0))
+                .as_dvec3();
+            let off = ((axle - DVec3::new(r, 0.0, 0.0)).truncate().length() - r).abs();
+            assert!(
+                off < 0.05,
+                "part {k}: axle {axle:?} {off:.2} m off the track"
+            );
+            let want = on_track(behind).unwrap();
+            assert!(
+                (axle - want).truncate().length() < 0.1,
+                "part {k}: axle {axle:?}, the track {behind} m behind the lead is at {want:?}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 

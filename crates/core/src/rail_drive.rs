@@ -167,6 +167,7 @@ impl RailDrive {
         if !v.trailers.is_empty() {
             let trail = &self.trail;
             let u = self.u;
+            v.couple_on_track(&|d| point_at(trail, u - d));
             v.retrail(0.0, &|d| point_at(trail, u - d));
         }
     }

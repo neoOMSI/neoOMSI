@@ -1535,6 +1535,8 @@ impl Traffic {
         let trail = &c.rail_trail;
         let (state, net) = (&c.state, &self.net);
         c.vehicle
+            .couple_on_track(&|d| Some(rail_behind(trail, state, net, d)));
+        c.vehicle
             .retrail(0.0, &|d| Some(rail_behind(trail, state, net, d)));
         let after: Vec<DVec3> = std::iter::once(c.vehicle.position)
             .chain(c.vehicle.trailers.iter().map(|t| t.position))
@@ -6789,6 +6791,9 @@ impl Traffic {
                         contact.as_deref(),
                     );
                     body.apply(vehicle);
+                    if rail {
+                        vehicle.couple_on_track(&|d| Some(behind(d)));
+                    }
                     if rail && !vehicle.trailers.is_empty() {
                         // the coupled cars (a train's, a tram's sections) on the track it
                         // came along, not dragged round the bends like a road trailer
