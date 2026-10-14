@@ -20,7 +20,7 @@ impl Ui {
         scene.overlays.push((black, [0.0, 0.0, width, height]));
         if self.loading_art.is_none() {
             static ART: &[u8] =
-                include_bytes!("../../../../assets/backgrounds/loading-screen/image1.png");
+                include_bytes!("../../../../assets/backgrounds/loading-screen/comp1.png");
             self.loading_art = Some(image::load_from_memory(ART).ok().map(|i| {
                 let i = i.into_rgba8();
                 let (iw, ih) = i.dimensions();
