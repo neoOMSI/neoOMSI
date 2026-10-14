@@ -25,6 +25,9 @@ struct Departure {
     /// by the day (`Schedule::runs`), so a session carries on past midnight.
     mask: i32,
     spawned: bool,
+    /// The traffic clock's midnight of the day it runs on (`Schedule::day_base`, or the day
+    /// before's), set when queued: a bus under way at midnight keeps its times.
+    base: f64,
 }
 
 /// A currently relevant passenger destination at a stop.
@@ -380,6 +383,7 @@ fn project_stop(
     net.project_stop_on_route(route, pos, reach, from)
 }
 
+#[cfg_attr(test, derive(Default))]
 pub struct Schedule {
     pub data: TimetableData,
     departures: Vec<Departure>,
@@ -472,11 +476,13 @@ pub struct Schedule {
     /// school); `set_day` moves them on at midnight.
     day: i32,
     day_bits: (i32, i32),
+    /// The day before's `day_bits`: its tours' trips after 24:00 run in today's small hours.
+    eve_bits: (i32, i32),
     /// The weekday bit of the next day (night tours run on into it).
     next_day_bit: i32,
     /// Where today's midnight lies on the traffic's clock (`Traffic::day_time` counts on past
-    /// 24:00): a departure leaves at `day_base + time` (`dep_time`), and the date moves on
-    /// when the clock passes the next midnight.
+    /// 24:00): a departure of today leaves at `day_base + time` (`dep_time`), and the date
+    /// moves on when the clock passes the next midnight.
     day_base: f64,
     /// The current date (its time of day is not used).
     date_clock: ::simulation::SimClock,
@@ -679,7 +685,7 @@ pub struct PlayerDuty {
 
 /// Where a timetable bus on the road is in its trip, for the departure boards.
 struct OnRoad {
-    /// Timetable departure time of its next stop (None: it has served its last).
+    /// Timetable departure time of its next stop, board clock (None: it has served its last).
     next: Option<f64>,
     /// Standing at that stop.
     dwelling: bool,

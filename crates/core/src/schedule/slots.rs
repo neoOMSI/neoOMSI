@@ -346,14 +346,20 @@ impl Schedule {
     ) -> Vec<(Arc<VehicleType>, Option<usize>)> {
         let mut out = Vec::new();
         let mut seen: HashSet<crate::scene::VehicleKey> = HashSet::new();
-        let end = self
-            .departures
-            .partition_point(|d| d.time <= day_time - self.day_base + fleet_ahead());
-        for i in 0..end {
-            if self.is_player_tour(i) || !self.runs(i) {
+        // today's departures, and the day before's after 24:00
+        let (day_base, tod) = (self.day_base, day_time - self.day_base);
+        let departures = &self.departures;
+        let upto = |shift: f64| {
+            let start = departures.partition_point(|d| d.time < shift);
+            let end = departures.partition_point(|d| d.time - shift <= tod + fleet_ahead());
+            (start..end).map(move |i| (i, day_base - shift))
+        };
+        let upcoming: Vec<(usize, f64)> = upto(0.0).chain(upto(DAY)).collect();
+        for (i, base) in upcoming {
+            if self.is_player_tour(i) || !self.runs_on(i, base) {
                 continue;
             }
-            if self.dep_time(i) + self.times_of(i).duration < day_time {
+            if base + self.departures[i].time + self.times_of(i).duration < day_time {
                 continue;
             }
             let Some(c) = self.choose(i, world) else {

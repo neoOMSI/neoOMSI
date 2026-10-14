@@ -19,10 +19,11 @@ impl Schedule {
         // binary search, rather than scanning every call for every eligible departure stop.
         // An empty line uses the trip as its service identity, matching the old comparison.
         let mut calls: HashMap<(i64, Option<&str>, usize), Vec<f64>> = HashMap::new();
-        for (departure, entry) in self.departures.iter().enumerate() {
-            if !self.runs(departure) {
-                continue;
-            }
+        let runs: Vec<(usize, f64)> = (0..self.departures.len())
+            .flat_map(|i| self.run_bases(i).map(move |base| (i, base)))
+            .collect();
+        for &(departure, base) in &runs {
+            let entry = &self.departures[departure];
             let (line, trip) = if entry.line.trim().is_empty() {
                 (None, entry.trip)
             } else {
@@ -38,7 +39,7 @@ impl Schedule {
                         calls
                             .entry((stop, line, trip))
                             .or_default()
-                            .push(self.dep_time(departure) + offset);
+                            .push(base + entry.time + offset);
                     }
                 }
             }
@@ -47,16 +48,14 @@ impl Schedule {
             times.sort_by(|a, b| a.total_cmp(b));
         }
         let mut targets: HashMap<i64, Vec<PassengerTarget>> = HashMap::new();
-        for (departure, entry) in self.departures.iter().enumerate() {
-            if !self.runs(departure) {
-                continue;
-            }
+        for &(departure, base) in &runs {
+            let entry = &self.departures[departure];
             let times = self.times_of(departure);
             let stations = trip_stations(&self.data.trips[entry.trip]);
             let terminus = self.data.trips[entry.trip].terminus.trim().to_string();
             for from in 0..stations.len() {
                 let Some((_, offset)) = times.stations.get(from) else { continue };
-                let call = self.dep_time(departure) + offset;
+                let call = base + entry.time + offset;
                 if !times.stops.get(from).copied().unwrap_or(true)
                     || !(now..=now + ahead).contains(&call)
                 {
@@ -137,6 +136,20 @@ impl Schedule {
         self.pending.len()
     }
 
+    /// The runs not yet `taken` due in the `window` up to `tod`, as (departure, its day's
+    /// `base`): today's, and the day before's trips after 24:00.
+    pub(super) fn due(&self, tod: f64, window: f64) -> Vec<(usize, f64)> {
+        self.departures
+            .iter()
+            .enumerate()
+            .flat_map(|(i, d)| [0.0, DAY].map(|shift| (i, d.time - shift, self.day_base - shift)))
+            .filter(|&(i, t, base)| {
+                t <= tod && t > tod - window && !self.taken(i, base) && self.runs_on(i, base)
+            })
+            .map(|(i, _, base)| (i, base))
+            .collect()
+    }
+
     /// Spawn buses whose departure time has come (or passed within `window` seconds), and
     /// the layover buses of the next quarter of an hour.
     pub fn tick(
@@ -172,15 +185,9 @@ impl Schedule {
             }
         }
         let loading = window > 60.0;
-        let due: Vec<usize> = self
-            .departures
-            .iter()
-            .enumerate()
-            .filter(|(i, d)| !d.spawned && d.time <= tod && d.time > tod - window && self.runs(*i))
-            .map(|(i, _)| i)
-            .collect();
-        for i in due {
+        for (i, base) in self.due(tod, window) {
             self.departures[i].spawned = true;
+            self.departures[i].base = base;
             // the tour's bus is still on its way here: it takes the trip on when it arrives
             if self.tour_prev[i]
                 .and_then(|k| self.tour_bus(k, traffic))
@@ -198,15 +205,21 @@ impl Schedule {
         // whose tour's previous trip is already over, stands at its first stop with the
         // doors shut until its departure. Without this a map with one bus per line
         // showed no bus at all for most of the hour - it only existed while driving.
-        let mut early: Vec<usize> = Vec::new();
-        // departures are sorted by time: only the ones in the next quarter of an hour
-        let start = self.departures.partition_point(|d| d.time <= tod);
-        for i in start..self.departures.len() {
+        let mut early: Vec<(usize, f64)> = Vec::new();
+        // sorted by time: the next quarter of an hour's, today's and the day before's
+        let soon = |shift: f64| {
+            let start = self.departures.partition_point(|d| d.time - shift <= tod);
+            let end = self
+                .departures
+                .partition_point(|d| d.time - shift <= tod + LAYOVER);
+            (start..end).map(move |i| (i, shift))
+        };
+        let soon: Vec<(usize, f64)> = soon(0.0).chain(soon(DAY)).collect();
+        for (i, shift) in soon {
+            let base = self.day_base - shift;
             let d = &self.departures[i];
-            if d.time > tod + LAYOVER {
-                break;
-            }
-            if d.spawned || self.later_layover.contains(&i) || !self.runs(i) {
+            let t = d.time - shift;
+            if self.taken(i, base) || self.later_layover.contains(&i) || !self.runs_on(i, base) {
                 continue;
             }
             // only a trip with stops has a first stop to wait at: a flight (TXL.ttl, every
@@ -214,7 +227,7 @@ impl Schedule {
             let Some(first) = trip_stations(&self.data.trips[d.trip]).first().copied() else {
                 continue;
             };
-            if d.time > tod + LAYOVER_SHARED {
+            if t > tod + LAYOVER_SHARED {
                 let shared = match self.shared_stand.get(&first) {
                     Some(&v) => v,
                     None => {
@@ -254,18 +267,20 @@ impl Schedule {
                     continue;
                 }
             }
+            // (its previous trip runs on the same day)
             let prev_running = self.tour_prev[i]
                 .map(|k| {
-                    self.dep_time(k) + self.times_of(k).duration >= day_time
+                    base + self.departures[k].time + self.times_of(k).duration >= day_time
                         || self.tour_bus(k, traffic).is_some()
                 })
                 .unwrap_or(false);
             if !prev_running {
-                early.push(i);
+                early.push((i, base));
             }
         }
-        for i in early {
+        for (i, base) in early {
             self.departures[i].spawned = true;
+            self.departures[i].base = base;
             self.pending.push_back(i);
             if loading {
                 self.startup.insert(i);

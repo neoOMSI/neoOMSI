@@ -82,6 +82,18 @@ pub(crate) fn day_bits(calendar: &::map::Calendar, clock: &::simulation::SimCloc
     (day_bit, school_bit)
 }
 
+/// `clock`'s date a day earlier (its time of day is kept).
+pub(super) fn day_before(clock: &::simulation::SimClock) -> ::simulation::SimClock {
+    let mut c = clock.clone();
+    if c.day_of_year > 1 {
+        c.day_of_year -= 1;
+    } else {
+        c.year -= 1;
+        c.day_of_year = ::simulation::clock::days_in_year(c.year);
+    }
+    c
+}
+
 /// `tour_available` for a day's `day_bits` and the next weekday's bit.
 pub(crate) fn tour_runs(tour: &::timetable::Tour, (day_bit, school_bit): (i32, i32), next_day_bit: i32) -> bool {
     let m = tour.extra.trim().parse::<i32>().unwrap_or(1023);

@@ -902,3 +902,127 @@ fn a_tour_runs_on_its_days_and_a_night_tour_on_the_eve() {
     // school days only, in the holidays
     assert!(!tour_runs(&tour(1 << 1 | 1 << 8, 6.0 * 60.0), (1 << 1, 1 << 9), 1 << 2));
 }
+
+/// A Saturday after one midnight on the traffic's clock: departures of one trip over stops
+/// 1, 2, 3 (ten minutes apart), as (time, tour mask).
+fn saturday_after_midnight(departures: &[(f64, i32)]) -> Schedule {
+    let trip = ::timetable::Trip {
+        line: "N1".into(),
+        terminus: "T".into(),
+        stations: vec![1, 2, 3],
+        ..Default::default()
+    };
+    let times = TripTimes {
+        stations: vec![(0.0, 0.0), (600.0, 600.0), (1200.0, 1200.0)],
+        stops: vec![true; 3],
+        kinds: vec![0; 3],
+        duration: 1200.0,
+    };
+    let departures: Vec<Departure> = departures
+        .iter()
+        .map(|&(time, mask)| Departure {
+            time,
+            trip: 0,
+            profile: 0,
+            line: "N1".into(),
+            ai_group: String::new(),
+            tour: "1".into(),
+            mask,
+            spawned: false,
+            base: DAY,
+        })
+        .collect();
+    Schedule {
+        data: ::timetable::TimetableData {
+            trips: vec![trip],
+            ..Default::default()
+        },
+        trip_departures: vec![(0..departures.len()).collect()],
+        departures,
+        times: vec![vec![times]],
+        visits: HashMap::from([(1, vec![(0, 0)]), (2, vec![(0, 1)]), (3, vec![(0, 2)])]),
+        day_bits: (1 << 5, 1 << 8),
+        eve_bits: (1 << 4, 1 << 8),
+        day_base: DAY,
+        ..Default::default()
+    }
+}
+
+const FRIDAY: i32 = 1 << 4 | 1 << 8;
+const SATURDAY: i32 = 1 << 5 | 1 << 8;
+
+#[test]
+fn the_day_befores_night_trips_run_after_midnight() {
+    let s = saturday_after_midnight(&[
+        (10.0 * 60.0, SATURDAY),
+        (DAY + 22.0 * 60.0, FRIDAY),
+        (DAY + 22.0 * 60.0, SATURDAY),
+    ]);
+    // at 0:25: Saturday's 0:10, and Friday's tour's 24:22 - Saturday's 24:22 runs tonight
+    assert_eq!(s.due(25.0 * 60.0, 20.0 * 60.0), vec![(0, DAY), (1, 0.0)]);
+}
+
+#[test]
+fn a_run_of_the_day_before_does_not_take_todays() {
+    let mut s = saturday_after_midnight(&[
+        (23.0 * 3600.0 + 50.0 * 60.0, FRIDAY | SATURDAY),
+        (DAY + 5.0 * 60.0, FRIDAY | SATURDAY),
+    ]);
+    // Friday's 23:50 is still on the road at midnight; Friday's 24:05 ran this morning
+    for d in &mut s.departures {
+        d.spawned = true;
+        d.base = 0.0;
+    }
+    // Saturday's 23:50 runs all the same, Friday's 24:05 not twice
+    assert_eq!(s.due(23.0 * 3600.0 + 55.0 * 60.0, 600.0), vec![(0, DAY)]);
+    assert!(s.due(10.0 * 60.0, 600.0).is_empty());
+    // the player's tour is no one else's, whatever day it was taken on
+    s.player_tour = Some(("N1".into(), "1".into()));
+    assert!(s.due(23.0 * 3600.0 + 55.0 * 60.0, 600.0).is_empty());
+}
+
+#[test]
+fn the_boards_show_the_buses_of_the_night_after_midnight() {
+    let mut s = saturday_after_midnight(&[
+        (23.0 * 3600.0 + 50.0 * 60.0, FRIDAY),
+        (DAY + 22.0 * 60.0, FRIDAY),
+        (DAY + 22.0 * 60.0, SATURDAY),
+    ]);
+    // Friday's 23:50 is on the road, due at stop 3 at 0:10
+    s.departures[0].spawned = true;
+    s.departures[0].base = 0.0;
+    let on_road = HashMap::from([(
+        0,
+        OnRoad {
+            next: Some(10.0 * 60.0),
+            dwelling: false,
+            late: 0.0,
+        },
+    )]);
+    let now = 14.0 * 60.0;
+    let at = |stop: i64| -> Vec<f64> {
+        let mut l: Vec<f64> = s
+            .stop_list(stop, now, &on_road, None)
+            .iter()
+            .map(|v| v.0)
+            .collect();
+        l.sort_by(f64::total_cmp);
+        l
+    };
+    // the 23:50 is past stop 2 and overdue at stop 3; Friday's 24:22 comes at 0:32
+    assert_eq!(at(2), vec![32.0 * 60.0]);
+    assert_eq!(at(3), vec![now, 42.0 * 60.0]);
+}
+
+#[test]
+fn the_day_before_new_year() {
+    let mut c = ::simulation::SimClock {
+        year: 2027,
+        day_of_year: 1,
+        ..Default::default()
+    };
+    let d = day_before(&c);
+    assert_eq!((d.year, d.day_of_year), (2026, 365));
+    c.day_of_year = 60;
+    assert_eq!(day_before(&c).day_of_year, 59);
+}

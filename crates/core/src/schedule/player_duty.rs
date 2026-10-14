@@ -458,55 +458,58 @@ impl Schedule {
         let mut list: Vec<(f64, String, String, f64)> = Vec::new();
         for &(trip, k) in self.visits.get(&stop).map(|v| v.as_slice()).unwrap_or(&[]) {
             for &i in &self.trip_departures[trip] {
-                if !self.runs(i) {
-                    continue;
-                }
                 let d = &self.departures[i];
                 let tt = &self.times[d.trip][d.profile];
-                if !tt.stops[k] {
+                if !tt.stops[k] || self.is_player_tour(i) {
                     continue;
                 }
-                let (arrive, leave) = (d.time + tt.stations[k].0, d.time + tt.stations[k].1);
-                if arrive > now + BOARD_AHEAD || leave < now - BOARD_AHEAD {
-                    continue;
+                // today's runs, and the one on the road from the day before
+                let mut bases: Vec<f64> = self.run_bases(i).collect();
+                if on_road.contains_key(&i) && !bases.contains(&d.base) {
+                    bases.push(d.base);
                 }
-                if self.is_player_tour(i) {
-                    continue;
+                for base in bases {
+                    // on the board's clock
+                    let start = base - self.day_base + d.time;
+                    let (arrive, leave) = (start + tt.stations[k].0, start + tt.stations[k].1);
+                    if arrive > now + BOARD_AHEAD || leave < now - BOARD_AHEAD {
+                        continue;
+                    }
+                    let expected = match on_road.get(&i).filter(|_| base == d.base) {
+                        Some(r) => match r.next {
+                            // the stations before the bus's next stop are behind it
+                            Some(next) if leave < next - 0.5 => continue,
+                            None => continue,
+                            // standing at this stop
+                            Some(next) if r.dwelling && (leave - next).abs() < 0.5 => now,
+                            Some(next) => {
+                                // on its way: at least as late as it left its last stop, and
+                                // later still once its next stop is overdue
+                                let next_arrive = tt
+                                    .stations
+                                    .iter()
+                                    .find(|s| (start + s.1 - next).abs() < 0.5)
+                                    .map(|s| start + s.0)
+                                    .unwrap_or(next);
+                                let late = if r.dwelling {
+                                    r.late
+                                } else {
+                                    r.late.max(now - next_arrive)
+                                };
+                                (arrive + late).max(now)
+                            }
+                        },
+                        // not on the road (still to come, or where no tiles are loaded): on time
+                        None if leave < now => continue,
+                        None => arrive.max(now),
+                    };
+                    list.push((
+                        expected,
+                        bus_line(&self.data.trips[d.trip]),
+                        self.data.trips[d.trip].terminus.clone(),
+                        (leave - arrive).max(0.0),
+                    ));
                 }
-                let expected = match on_road.get(&i) {
-                    Some(r) => match r.next {
-                        // the stations before the bus's next stop are behind it
-                        Some(next) if leave < next - 0.5 => continue,
-                        None => continue,
-                        // standing at this stop
-                        Some(next) if r.dwelling && (leave - next).abs() < 0.5 => now,
-                        Some(next) => {
-                            // on its way: at least as late as it left its last stop, and
-                            // later still once its next stop is overdue
-                            let next_arrive = tt
-                                .stations
-                                .iter()
-                                .find(|s| (d.time + s.1 - next).abs() < 0.5)
-                                .map(|s| d.time + s.0)
-                                .unwrap_or(next);
-                            let late = if r.dwelling {
-                                r.late
-                            } else {
-                                r.late.max(now - next_arrive)
-                            };
-                            (arrive + late).max(now)
-                        }
-                    },
-                    // not on the road (still to come, or where no tiles are loaded): on time
-                    None if leave < now => continue,
-                    None => arrive.max(now),
-                };
-                list.push((
-                    expected,
-                    bus_line(&self.data.trips[d.trip]),
-                    self.data.trips[d.trip].terminus.clone(),
-                    (leave - arrive).max(0.0),
-                ));
             }
         }
         // the player's bus
@@ -601,7 +604,7 @@ impl Schedule {
                 on_road.insert(
                     i,
                     OnRoad {
-                        next,
+                        next: next.map(|t| t - self.day_base),
                         dwelling: car.at_stop(),
                         late: car.bus.as_ref().map(|b| b.delay).unwrap_or(0.0).max(0.0),
                     },
