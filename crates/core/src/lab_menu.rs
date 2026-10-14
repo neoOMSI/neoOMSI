@@ -1002,6 +1002,20 @@ impl App {
         }
     }
 
+    /// Rebuilds the open list's lines, keeping the selection.
+    pub(crate) fn lab_list_refresh(&mut self) {
+        let Some(kind) = self.lab_list.as_ref().map(|l| l.1.clone()) else {
+            return;
+        };
+        let list = crate::game_lists::items(self, &kind);
+        let idx: Vec<usize> = (0..list.len()).filter(|&k| list[k].1 != crate::game_lists::HEADING).collect();
+        let opts = idx.iter().map(|&k| list[k].0.clone()).collect();
+        self.lab_list = Some((list, kind, idx));
+        if let Some(Dialog::Select { options, .. }) = self.ui.as_mut().and_then(|u| u.dialog.as_mut()) {
+            *options = opts;
+        }
+    }
+
     pub(crate) fn lab_dialog_text(&mut self, text: &str) {
         if let Some(mut q) = self.lab_search() {
             q.extend(text.chars().filter(|c| !c.is_control()));
@@ -1279,6 +1293,14 @@ impl App {
             } else {
                 self.time_edit_key(code);
             }
+            return;
+        }
+        if self.route_editing() && self.lab_list.is_some() {
+            if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) {
+                self.lab_dialog_close();
+            }
+            self.route_edit_key(code);
+            self.lab_list_refresh();
             return;
         }
         if self.lab_place.is_some() && self.lab_list.is_none() {

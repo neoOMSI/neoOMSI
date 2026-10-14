@@ -21,13 +21,14 @@ pub(crate) fn chase_orbit_step(yaw: f32, pitch: f32, dx_px: f32, dy_px: f32) -> 
 #[cfg(test)]
 mod look_tests {
     #[test]
-    fn a_route_number_takes_digits_and_letters() {
-        use winit::keyboard::KeyCode;
-        assert_eq!(crate::game_menu::route_char(KeyCode::Digit5), Some('5'));
-        assert_eq!(crate::game_menu::route_char(KeyCode::Numpad0), Some('0'));
-        assert_eq!(crate::game_menu::route_char(KeyCode::KeyE), Some('E'));
-        assert_eq!(crate::game_menu::route_char(KeyCode::NumpadAdd), None);
-        assert_eq!(crate::game_menu::route_char(KeyCode::Space), None);
+    fn a_route_number_takes_any_text_at_any_length() {
+        let mut t = String::new();
+        for typed in ["N", "4", "1", "/", "2", " ", "ä", "+", "\u{8}", "\r"] {
+            crate::game_menu::push_route_text(&mut t, typed);
+        }
+        assert_eq!(t, "N41/2 ä+");
+        crate::game_menu::push_route_text(&mut t, "-Schienenersatzverkehr");
+        assert_eq!(t, "N41/2 ä+-Schienenersatzverkehr");
     }
 
     #[test]

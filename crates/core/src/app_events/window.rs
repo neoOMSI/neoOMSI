@@ -89,7 +89,12 @@ impl App {
                 self.lab_world_drop_text(text);
             }
         }
-        if event.state == ElementState::Pressed && self.lab_list.is_some() {
+        if event.state == ElementState::Pressed && self.route_editing() {
+            if let Some(text) = event.text.as_deref() {
+                self.route_edit_text(text);
+                self.lab_list_refresh();
+            }
+        } else if event.state == ElementState::Pressed && self.lab_list.is_some() {
             if let Some(text) = event.text.as_deref() {
                 self.lab_dialog_text(text);
             }
