@@ -947,6 +947,27 @@ fn personality(state: &mut AiState, seed: u64, heavy: bool) {
     state.reaction = 0.4 + 0.8 * r(51);
 }
 
+/// How far a coupled consist laid out straight reaches behind its leading vehicle's
+/// origin (m); `rear` is the leading vehicle's own.
+pub(crate) fn consist_rear(vehicle: &VehicleInstance, rear: f32) -> f32 {
+    // the origin of the part in front along the way, and which way its body faces
+    let (mut y, mut sign) = (0.0f32, 1.0f32);
+    let mut tail = -rear;
+    for t in &vehicle.trailers {
+        let (back, front) = t.couplings();
+        let c = y + sign * back.y;
+        sign = if t.reversed { -1.0 } else { 1.0 };
+        y = c - sign * front.y;
+        let (f, r, _) = extents(&t.ty, 4.5);
+        tail = tail.min(if t.reversed { y - f } else { y - r });
+    }
+    -tail
+}
+
+/// How much farther a vehicle on rails looks for the one ahead: a long train is found at
+/// its front, that far beyond its tail.
+const RAIL_CONSIST_REACH: f32 = 250.0;
+
 /// Where a vehicle meets a crossing lane on its way: its lane in the sequence, the distance
 /// from its origin to that lane's start.
 #[derive(Debug, Clone)]
@@ -1428,6 +1449,14 @@ impl Traffic {
     /// in the opposite order, each turned round. `behind`: the lanes the train has behind
     /// it now, nearest last, for the track its cars stand on. The car keeps its id and its
     /// service.
+    /// A train's extent behind its leading vehicle and its length: its whole consist's.
+    pub(crate) fn fit_consist(&mut self, ci: usize) {
+        let c = &mut self.cars[ci];
+        let (_, rear, _) = extents(&c.vehicle.ty, 4.5);
+        c.state.rear = consist_rear(&c.vehicle, rear);
+        c.state.length = c.state.front + c.state.rear;
+    }
+
     pub(crate) fn turn_train(
         &mut self,
         world: &World,
@@ -1500,6 +1529,7 @@ impl Traffic {
             world.release_vehicle(renderer, scene, r);
         }
         self.set_trailers(world, renderer, scene, ci, &cars[1..]);
+        self.fit_consist(ci);
         self.seed_rail_trail(ci, behind);
         let c = &mut self.cars[ci];
         let trail = &c.rail_trail;
@@ -3364,7 +3394,12 @@ impl Traffic {
             }
             let l = &self.net.lanes[lane];
             offset += l.length() - s_from;
-            if offset > look || best.is_some() {
+            let reach = if l.kind == LaneKind::Rail {
+                look + RAIL_CONSIST_REACH
+            } else {
+                look
+            };
+            if offset > reach || best.is_some() {
                 break;
             }
             let next = match upcoming.as_mut() {
@@ -8490,6 +8525,48 @@ fn unsched_share(factor: f32) -> f32 {
         factor.clamp(0.0, 3.0)
     } else {
         1.0
+    }
+}
+
+#[cfg(test)]
+mod consist_rear_tests {
+    use super::consist_rear;
+    use ::simulation::{SimClock, VehicleHost, VehicleInstance, VehicleType};
+    use std::sync::Arc;
+
+    /// A train reaches back to its last car, a turned one included; a part coupled on
+    /// ahead (the BR 481's bogies) does not make it longer (#342).
+    #[test]
+    fn a_train_reaches_back_to_its_last_car() {
+        let dir = std::env::temp_dir().join(format!("omsi-consist-rear-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        // (no box of their own: 4.5 m long, their origin in the middle)
+        let part = |name: &str, front: f32, back: f32| {
+            std::fs::write(
+                dir.join(name),
+                format!(
+                    "[model]\nmodel.cfg\n[coupling_front]\n0\n{front}\n1\n[coupling_back]\n0\n{back}\n1\n"
+                ),
+            )
+            .unwrap();
+            Arc::new(VehicleType::load(&dir, &dir.join(name)).unwrap())
+        };
+        let car = part("car.ovh", 5.0, -5.0);
+        let bogie = part("bogie.ovh", -20.0, -3.0);
+        let new = || VehicleInstance::new(car.clone(), VehicleHost::new(SimClock::default()));
+        let alone = new();
+        assert_eq!(consist_rear(&alone, 2.25), 2.25);
+        // a car 10 m behind the first (tail at 12.25 m), a turned one 10 m behind that
+        let mut train = new();
+        train.attach_trailer_ex(car.clone(), false);
+        train.attach_trailer_ex(car.clone(), true);
+        assert!((consist_rear(&train, 2.25) - 22.25).abs() < 1e-4);
+        // a bogie coupled on behind the first car whose origin lies 15 m ahead of it
+        let mut ahead = new();
+        ahead.attach_trailer_ex(bogie, false);
+        assert_eq!(consist_rear(&ahead, 2.25), 2.25);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 

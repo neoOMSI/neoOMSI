@@ -2,6 +2,12 @@
 
 use super::*;
 
+/// Whether a trip's vehicle comes only at its departure time (no layover at its first
+/// stop): a trip on a track of its own that does not begin at a stop.
+pub(super) fn comes_at_departure(track: bool, times: &TripTimes) -> bool {
+    track && !times.stations.first().is_some_and(|s| s.0 <= 0.0)
+}
+
 impl Schedule {
     /// Put departure `i` on the road where its bus is at `day_time`: on the part of the route
     /// the loaded tiles have, which is carried on as more tiles come.
@@ -36,6 +42,11 @@ impl Schedule {
         let arrive: Vec<f64> = tt.stations.iter().map(|s| departure + s.0).collect();
         let leave: Vec<f64> = tt.stations.iter().map(|s| departure + s.1).collect();
         let (steps, track) = self.steps_of(&trip_name, &stations);
+        // (put out early, three tours' trains stood on one spot at the map's edge, #342)
+        if onto.is_none() && departure > day_time && comes_at_departure(track, &tt) {
+            self.retry_at.insert(i, departure);
+            return Placed::Wait;
+        }
         Self::add_twins(traffic, &steps);
         let slots = self.slots(world, traffic, &steps, None);
         if !slots.iter().any(|s| matches!(s, Slot::Lane(_))) && !slots.contains(&Slot::Waiting) {
@@ -268,6 +279,13 @@ impl Schedule {
             let (lane0, s0) = (traffic.cars[ci].state.lane, traffic.cars[ci].state.s);
             let net = &traffic.net;
             let (prefix, from) = match section.iter().position(|&l| l == lane0) {
+                // a track trip starts where its track begins, not at the far end of it
+                Some(r) if track && r >= 4 => {
+                    log::debug!(
+                        "trip {trip_name}: the tour's train stands at the end of its track"
+                    );
+                    return Placed::Drop;
+                }
                 Some(r) => (Vec::new(), r),
                 None => {
                     let mut best: Option<(f32, Vec<usize>, usize)> = None;
@@ -358,6 +376,7 @@ impl Schedule {
             set_ai_destination(&mut car.vehicle, hof.as_deref(), &line, &terminus, &names);
             if let Some(b) = car.bus.as_mut() {
                 b.route_open = end < slots.len();
+                b.to_track_end = track && rail;
                 b.terminus = terminus.clone();
                 b.last_stop = last_stop;
                 b.always = always;
@@ -574,8 +593,7 @@ impl Schedule {
                 .join(" + ")
             );
             traffic.cars[ci].state.max_speed_kmh = 90.0;
-            traffic.cars[ci].state.length =
-                20.0 * (1 + traffic.cars[ci].vehicle.trailers.len()) as f32;
+            traffic.fit_consist(ci);
         }
         let names = self.trip_stop_names(self.departures[i].trip);
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -593,6 +611,7 @@ impl Schedule {
                 .map(|st| st.ri == 0 && (st.s - s).abs() < 2.0)
                 .unwrap_or(false);
             b.route_open = end < slots.len();
+            b.to_track_end = track && rail;
             b.terminus = terminus.clone();
             b.last_stop = last_stop;
             b.always = always;

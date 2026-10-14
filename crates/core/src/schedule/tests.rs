@@ -382,6 +382,31 @@ fn trip_times_from_the_profile() {
     );
 }
 
+/// An X10 Berlin S-Bahn trip (S7_Tgn_Sav: from the map's edge, Zoo at 1.5 min) comes at
+/// its departure time; a bus or a track beginning at a stop has its layover (#342).
+#[test]
+fn a_train_from_the_maps_edge_comes_at_its_departure() {
+    let s7 = ::timetable::TripProfile {
+        name: "hvz".into(),
+        factor: 3.5,
+        man_arr_time: vec![(0, 1.5)],
+        man_dep_time: vec![(0, 2.0)],
+        ..Default::default()
+    };
+    let t = TripTimes::new(&[10654593], Some(&s7), &link);
+    assert_eq!(t.stations[0], (90.0, 120.0));
+    assert!(spawn::comes_at_departure(true, &t));
+    assert!(!spawn::comes_at_departure(false, &t));
+    let plain = ::timetable::TripProfile {
+        name: "p".into(),
+        factor: 3.5,
+        ..Default::default()
+    };
+    let from_stop = TripTimes::new(&[1, 2], Some(&plain), &link);
+    assert_eq!(from_stop.stations[0].0, 0.0);
+    assert!(!spawn::comes_at_departure(true, &from_stop));
+}
+
 fn planned(departure: f64, stops: &[(f64, f64, f64)]) -> PlannedTrip {
     let stops: Vec<PlannedStop> = stops
         .iter()
