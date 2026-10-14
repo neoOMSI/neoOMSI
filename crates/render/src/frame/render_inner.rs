@@ -602,18 +602,7 @@ impl Renderer {
             spot_vp,
             spot_info,
             tune: [lighting.nightmap_gain, lighting.lightmap_gain, 0.0, 0.0],
-            trailers: {
-                let mut t = [[0.0; 4]; 3 * TRAILER_BOXES];
-                for (k, (o, h, bb)) in lighting.puddle_parts.iter().take(TRAILER_BOXES).enumerate()
-                {
-                    let r = (*o - ro).as_vec3();
-                    let h = (*h as f32).to_radians();
-                    t[3 * k] = [r.x, r.y, r.z, h.sin()];
-                    t[3 * k + 1] = [h.cos(), bb[0] * 0.5, bb[1] * 0.5, bb[2] * 0.5];
-                    t[3 * k + 2] = [bb[3], bb[4], bb[5], 1.0];
-                }
-                t
-            },
+            trailers: trailer_fog_boxes(lighting.inside, &lighting.puddle_parts, ro),
         };
         self.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cu));
         let probe_redraw = enhanced

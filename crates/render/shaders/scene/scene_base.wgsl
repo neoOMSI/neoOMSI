@@ -106,12 +106,17 @@ fn fog_distance(world: vec3<f32>) -> f32 {
     return max(full * (1.0 - inside), 0.0);
 }
 
+// How far the fog's box reaches above a `[boundingbox]`: the O530 G's ends 2.38 m up, below
+// its ceiling, and the ceiling took the fog of the way above it.
+const FOG_ROOF: f32 = 0.6;
+
 // The share (0..1) of the way from the camera to `world` inside a box laid out as
-// `inside_a`..`inside_c` (slab test).
+// `inside_a`..`inside_c`, FOG_ROOF taller (slab test).
 fn segment_in_box(world: vec3<f32>, a: vec4<f32>, b: vec4<f32>, c: vec4<f32>) -> f32 {
-    let o = box_local(camera.cam_pos.xyz, a, b, c);
-    let d = box_local(world, a, b, c) - o;
-    let h = b.yzw;
+    let up = vec3<f32>(0.0, 0.0, FOG_ROOF * 0.5);
+    let o = box_local(camera.cam_pos.xyz, a, b, c) - up;
+    let d = box_local(world, a, b, c) - up - o;
+    let h = b.yzw + up;
     var t0 = 0.0;
     var t1 = 1.0;
     for (var k = 0; k < 3; k = k + 1) {

@@ -1284,19 +1284,24 @@ fn no_fog_down_the_saloon_of_an_articulated_bus() {
         &::texture::Image::solid([40, 40, 40, 255]),
         false,
     );
-    let material =
-        renderer.add_material(&mut scene, Some(texture), AlphaMode::Opaque, [1.0; 4], false);
+    let material = renderer.add_material(
+        &mut scene,
+        Some(texture),
+        AlphaMode::Opaque,
+        [1.0; 4],
+        false,
+    );
     // the rear car's back wall, 16 m down the aisle
     let mesh = renderer.add_mesh(
         &mut scene,
         &MeshData {
             positions: vec![
-                Vec3::new(-1.0, 16.0, 0.5),
-                Vec3::new(1.0, 16.0, 0.5),
-                Vec3::new(1.0, 16.0, 2.5),
-                Vec3::new(-1.0, 16.0, 2.5),
+                Vec3::new(-1.0, -16.0, 0.5),
+                Vec3::new(1.0, -16.0, 0.5),
+                Vec3::new(1.0, -16.0, 2.5),
+                Vec3::new(-1.0, -16.0, 2.5),
             ],
-            normals: vec![-Vec3::Y; 4],
+            normals: vec![Vec3::Y; 4],
             uvs: vec![glam::Vec2::splat(0.5); 4],
             indices: vec![0, 1, 2, 0, 2, 3],
             ranges: vec![(0, 6, 0)],
@@ -1312,7 +1317,7 @@ fn no_fog_down_the_saloon_of_an_articulated_bus() {
     );
     let camera = Camera {
         position: DVec3::new(0.0, 0.0, 1.5),
-        yaw: 0.0,
+        yaw: 180.0,
         pitch: 0.0,
         roll: 0.0,
         fov_deg: 30.0,
@@ -1327,7 +1332,8 @@ fn no_fog_down_the_saloon_of_an_articulated_bus() {
         fog_density: 0.0,
         ..Default::default()
     };
-    // a 150 m fog; the front car's box spans y -6..6, the rear car's 6..18
+    // a 150 m fog; the front car's box spans y -6..6, the rear car's -19.5..-7.5 (the joint
+    // between them is 1.5 m long)
     let front_car = Lighting {
         fog_color: Vec3::splat(0.8),
         fog_density: 2.3 / 150.0,
@@ -1336,10 +1342,17 @@ fn no_fog_down_the_saloon_of_an_articulated_bus() {
     };
     let whole_bus = Lighting {
         puddle_parts: vec![(
-            DVec3::new(0.0, 12.0, 0.0),
+            DVec3::new(0.0, -13.5, 0.0),
             0.0,
             [2.5, 12.0, 3.0, 0.0, 0.0, 1.5],
         )],
+        ..front_car.clone()
+    };
+    // a [boundingbox] that ends 0.15 m below the line of sight, as one under the ceiling
+    let low = [2.5, 12.0, 2.0, 0.0, 0.0, 0.35];
+    let low_boxes = Lighting {
+        inside: Some((DVec3::ZERO, 0.0, low)),
+        puddle_parts: vec![(DVec3::new(0.0, -13.5, 0.0), 0.0, low)],
         ..front_car.clone()
     };
     let mut centre = |lighting: &Lighting| -> i32 {
@@ -1348,7 +1361,12 @@ fn no_fog_down_the_saloon_of_an_articulated_bus() {
             .unwrap();
         rgba[(32 * 64 + 32) * 4] as i32
     };
-    let (clear, front_car, whole_bus) = (centre(&clear), centre(&front_car), centre(&whole_bus));
+    let (clear, front_car, whole_bus, low_boxes) = (
+        centre(&clear),
+        centre(&front_car),
+        centre(&whole_bus),
+        centre(&low_boxes),
+    );
     assert!(
         front_car - clear > 10,
         "fog over the rear car's 10 m: {clear} -> {front_car}"
@@ -1356,5 +1374,9 @@ fn no_fog_down_the_saloon_of_an_articulated_bus() {
     assert!(
         (whole_bus - clear).abs() <= 2,
         "no fog inside the bus: {clear} -> {whole_bus}"
+    );
+    assert!(
+        (low_boxes - clear).abs() <= 2,
+        "no fog under the ceiling: {clear} -> {low_boxes}"
     );
 }

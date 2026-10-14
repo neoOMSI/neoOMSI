@@ -43,6 +43,41 @@ pub(crate) struct CameraUniform {
 /// Trailer boxes (`Lighting::puddle_parts`) in the camera uniform, laid out as `inside_a`..`c`.
 pub(crate) const TRAILER_BOXES: usize = 3;
 
+/// The trailer boxes for the fog, relative to the render origin `ro`. Each box is stretched
+/// forward to the box ahead of it (up to 2.5 m): the joint between them (an articulated bus's
+/// bellows, 1.5 m on the O530 G) is cabin as well.
+pub(crate) fn trailer_fog_boxes(
+    inside: Option<(DVec3, f64, [f32; 6])>,
+    parts: &[(DVec3, f64, [f32; 6])],
+    ro: DVec3,
+) -> [[f32; 4]; 3 * TRAILER_BOXES] {
+    let mut t = [[0.0; 4]; 3 * TRAILER_BOXES];
+    let mut ahead = inside;
+    for (k, &(o, h, mut bb)) in parts.iter().take(TRAILER_BOXES).enumerate() {
+        let (sh, ch) = h.to_radians().sin_cos();
+        if let Some((po, ph, pb)) = ahead {
+            // the rear face of the box ahead, along this one's axis
+            let (psh, pch) = ph.to_radians().sin_cos();
+            let back = f64::from(pb[4] - pb[1] * 0.5);
+            let rear = po
+                + DVec3::new(psh, pch, 0.0) * back
+                + DVec3::new(pch, -psh, 0.0) * f64::from(pb[3]);
+            let gap =
+                ((rear - o).dot(DVec3::new(sh, ch, 0.0)) - f64::from(bb[4] + bb[1] * 0.5)) as f32;
+            if gap > 0.0 && gap < 2.5 {
+                bb[1] += gap;
+                bb[4] += gap * 0.5;
+            }
+        }
+        ahead = Some((o, h, bb));
+        let r = (o - ro).as_vec3();
+        t[3 * k] = [r.x, r.y, r.z, sh as f32];
+        t[3 * k + 1] = [ch as f32, bb[0] * 0.5, bb[1] * 0.5, bb[2] * 0.5];
+        t[3 * k + 2] = [bb[3], bb[4], bb[5], 1.0];
+    }
+    t
+}
+
 pub(crate) const CLOUD_ORIGIN_PERIOD: f64 = 70000.0;
 
 #[repr(C)]
