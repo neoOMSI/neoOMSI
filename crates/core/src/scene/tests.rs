@@ -740,6 +740,21 @@ fn lights_of_lower_lods_count() {
     );
 }
 
+/// A light's star (effect bit 1) is three times the glow's size, as in OMSI (#324).
+#[test]
+fn a_light_star_reaches_past_its_glow() {
+    let text = "[mesh]\nsignal.o3d\n[light_enh_2]\n0\n0.136\n0.3\n0\n1\n0\n0\n0\n1\n0\n0\n255\n0\n0\n0.25\n20\n50\n1\n1\n0.1\n1\n0\n0\n";
+    let model = Model::parse(&::legacy_config::CfgFile::from_str("signal.sco", text));
+    let coronas = model_lights_faded(&model, &|_| Mat4::IDENTITY, DVec3::ZERO, &|_| 1.0, &[]);
+    let glow = coronas
+        .iter()
+        .find(|c| !c.halo && c.flags & 8 == 0)
+        .unwrap();
+    let star = coronas.iter().find(|c| c.flags & 8 != 0).unwrap();
+    assert!((glow.size - 0.125).abs() < 1e-6);
+    assert!((star.size - 0.375).abs() < 1e-6);
+}
+
 #[test]
 fn small_instrument_lights_keep_their_small_size() {
     let text = "[mesh]\ndash.o3d\n[light_enh]\n0\n0\n0\n255\n0\n0\n0.01\nspeedo_warn\n0\n";

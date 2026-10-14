@@ -256,8 +256,9 @@ pub fn model_lights_owned(
                 out.push(glow);
             }
             if flags & 1 != 0 {
+                // rays reach about three lens radii, as measured against OMSI 2.2.032 (#324)
                 out.push(::render::Corona {
-                    size: l.size * 0.5,
+                    size: l.size * 1.5,
                     rotating: 2,
                     flags: 8,
                     texture: crate::lights::star_texture_id(),
