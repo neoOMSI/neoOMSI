@@ -30,6 +30,14 @@ pub(super) struct TexEntry {
     pub(super) dropped: u32,
 }
 
+impl TexEntry {
+    /// Approximate growth in the current format; mip rounding can underestimate
+    /// it. The budget reserves a separate 10% margin.
+    pub(super) fn estimated_restore_growth(&self) -> u64 {
+        (self.bytes << (2 * self.dropped.min(8))) - self.bytes
+    }
+}
+
 /// An object type on the GPU.
 pub(super) struct TypeGpu {
     /// Keeps the type (and so the pointer that keys this entry) alive while cached.
