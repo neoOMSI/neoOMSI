@@ -1,6 +1,6 @@
 use crate::*;
 
-fn noop_renderer() -> Renderer {
+pub(super) fn noop_renderer() -> Renderer {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::NOOP;
     descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();

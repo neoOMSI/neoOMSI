@@ -241,7 +241,7 @@ impl Renderer {
         stage(self, "setup", "mirror.setup");
         let grid = self.prepare_lights(scene, cam_rel, enhanced_frame, spot_plan);
         stage(self, "setup.lights", "mirror.setup.lights");
-        self.prepare_coronas(scene, lighting.night);
+        self.prepare_coronas(scene, lighting.night, enhanced);
         self.prepare_smoke(scene, camera.position);
         stage(self, "setup.coronas", "mirror.setup.coronas");
         let ao_on = with_overlays

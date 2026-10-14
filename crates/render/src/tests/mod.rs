@@ -1,3 +1,4 @@
+mod coronas;
 mod fit;
 mod instances;
 mod shaders;
