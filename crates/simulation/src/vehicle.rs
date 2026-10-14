@@ -4556,7 +4556,9 @@ impl VehicleInstance {
     /// A camera fixed to the body as OMSI keeps one (`[add_camera_reflexion]`: Omsi.exe
     /// 0x7edfd0 puts it in the vehicle's own matrix): its eye, and yaw, pitch and roll (deg)
     /// of its view with the body's pitch and bank in them - a mirror leans with the bus. A
-    /// `dist` above zero puts the eye that far behind the point along the view.
+    /// `dist` above zero puts the eye that far behind the point along the view, one below
+    /// zero that far ahead of it (Omsi.exe 0x7ed8c3 takes the eye to (0, 0, -dist) in the
+    /// camera's frame as it is: the stock MAN NL and Lion's City drivers sit at -0.06).
     pub fn camera_world_full(&self, cam: &::legacy_vehicle::Camera) -> (DVec3, f32, f32, f32) {
         camera_in_body(self.position, self.body_rotation(), cam)
     }
@@ -4579,7 +4581,7 @@ fn camera_in_body(
         .normalize_or(Vec3::Z);
     let local = Vec3::new(cam.pos[0], cam.pos[1], cam.pos[2]);
     let eye =
-        position + rot.transform_point3(local).as_dvec3() - (f * cam.dist.max(0.0)).as_dvec3();
+        position + rot.transform_point3(local).as_dvec3() - (f * cam.dist).as_dvec3();
     let yaw = f.x.atan2(f.y).to_degrees();
     let pitch = f.z.clamp(-1.0, 1.0).asin().to_degrees();
     // (the roll the renderer's `Camera::up` turns back into this up)
@@ -4718,6 +4720,20 @@ pub fn door_release_trigger(has: impl Fn(&str) -> bool, switch_on: bool) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_camera_dist_below_zero_puts_the_eye_ahead_of_the_point() {
+        let cam = ::legacy_vehicle::Camera {
+            pos: [-0.72, 4.49, 1.78],
+            dist: -0.06,
+            ..Default::default()
+        };
+        let (eye, ..) = camera_in_body(DVec3::ZERO, Mat4::IDENTITY, &cam);
+        assert!((eye - DVec3::new(-0.72, 4.55, 1.78)).length() < 1e-5, "{eye}");
+        let back = ::legacy_vehicle::Camera { dist: 0.5, ..cam };
+        let (eye, ..) = camera_in_body(DVec3::ZERO, Mat4::IDENTITY, &back);
+        assert!((eye - DVec3::new(-0.72, 3.99, 1.78)).length() < 1e-5, "{eye}");
+    }
 
     /// A three-car train with its last car turned round, lamps as `BR243.osc` (#318).
     #[test]

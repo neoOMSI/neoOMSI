@@ -178,6 +178,7 @@ impl App {
             self.camera.as_mut(),
             self.view == "free" || (self.player.is_none() && self.on_foot.is_none()),
         ) {
+            cam.roll = 0.0;
             let mut v = Vec3::ZERO;
             let f = cam.forward();
             let r = cam.right();
