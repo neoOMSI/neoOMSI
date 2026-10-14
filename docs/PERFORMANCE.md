@@ -36,6 +36,15 @@ The renderer keeps these costs bounded without changing graphics settings:
   buffers of its own. Meshes larger than a quarter of a page, meshes made on other threads
   and adapters without base-vertex draws keep buffers of their own
   (`OMSI_NO_MESH_PAGES=1` forces that).
+- A spline's mesh draws one range per texture, not one per `[profile]`: a road of ten
+  profiles over three textures took ten draws. A profile keeps its place when it would
+  otherwise be drawn before a profile whose face it shares (at one depth the face drawn
+  last shows); blended textures keep their order. Static spline segments share a mesh
+  within 150 m cells (48 m before). At a crossing built of hundreds of short splines
+  (Städtedreieck, Kreuzung Sprackel) the main pass went from 5,900 batches to 3,500 by
+  day and from 6,800 to 3,500 at night, and the depth prepass from 5,800 to 3,000; the
+  picture is unchanged. Their graphics card was idle while slower computers lost frames
+  there: the cost was the draws, not the triangles (2 % more drawn).
 - Pending animated meshes are indexed by mesh ID. Updating all `N` meshes previously
   performed roughly `N * (N - 1) / 2` ID comparisons. The indexed queue replaces the
   last pending pose and retains its table capacity after submission.

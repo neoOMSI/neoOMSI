@@ -637,6 +637,96 @@ pub fn build_spline_mesh(
     mesh
 }
 
+pub fn group_spline_ranges(def: &Spline, mesh: &MeshData) -> Option<MeshData> {
+    let drawn: Vec<&::scenery::sli::SplineProfile> = def
+        .profiles
+        .iter()
+        .filter(|p| p.points.len() >= 2 && mesh.ranges.iter().any(|r| r.2 as usize == p.texture))
+        .collect();
+    if drawn.len() < 2
+        || drawn.len() != mesh.ranges.len()
+        || drawn
+            .iter()
+            .zip(&mesh.ranges)
+            .any(|(p, r)| p.texture != r.2 as usize)
+        || drawn
+            .iter()
+            .any(|p| def.textures.get(p.texture).is_some_and(|t| t.alpha >= 2))
+    {
+        return None;
+    }
+    // (the profiles of each range to be, in drawing order)
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (j, profile) in drawn.iter().enumerate() {
+        let joins = groups
+            .iter()
+            .rposition(|g| drawn[g[0]].texture == profile.texture)
+            .filter(|&g| {
+                groups[g + 1..]
+                    .iter()
+                    .flatten()
+                    .all(|&i| !profiles_share_face(drawn[i], profile))
+            });
+        match joins {
+            Some(g) => groups[g].push(j),
+            None => groups.push(vec![j]),
+        }
+    }
+    if groups.len() == drawn.len() {
+        return None;
+    }
+    let mut out = MeshData {
+        positions: mesh.positions.clone(),
+        normals: mesh.normals.clone(),
+        uvs: mesh.uvs.clone(),
+        indices: Vec::with_capacity(mesh.indices.len()),
+        ranges: Vec::with_capacity(groups.len()),
+        one_sided: mesh.one_sided,
+    };
+    for group in &groups {
+        let start = out.indices.len() as u32;
+        for &j in group {
+            let (first, count, _) = mesh.ranges[j];
+            out.indices
+                .extend_from_slice(&mesh.indices[first as usize..(first + count) as usize]);
+        }
+        let count = out.indices.len() as u32 - start;
+        out.ranges.push((start, count, mesh.ranges[group[0]].2));
+    }
+    Some(out)
+}
+
+/// Whether two profiles of a spline have faces at (nearly) one place: a stretch of one lies
+/// within 10 cm of a stretch of the other, along more than a centimetre
+fn profiles_share_face(
+    a: &::scenery::sli::SplineProfile,
+    b: &::scenery::sli::SplineProfile,
+) -> bool {
+    const NEAR: f32 = 0.1;
+    let stretches = |p: &::scenery::sli::SplineProfile| {
+        p.points
+            .windows(2)
+            .map(|w| (Vec2::new(w[0].x, w[0].z), Vec2::new(w[1].x, w[1].z)))
+            .collect::<Vec<_>>()
+    };
+    let along = |(a0, a1): (Vec2, Vec2), (b0, b1): (Vec2, Vec2)| {
+        let length = (a1 - a0).length();
+        if length < 1e-4 {
+            return false;
+        }
+        let dir = (a1 - a0) / length;
+        let across = dir.perp();
+        if across.dot(b0 - a0).abs() > NEAR || across.dot(b1 - a0).abs() > NEAR {
+            return false;
+        }
+        let (t0, t1) = (dir.dot(b0 - a0), dir.dot(b1 - a0));
+        t0.max(t1).min(length) - t0.min(t1).max(0.0) > 0.01
+    };
+    let (sa, sb) = (stretches(a), stretches(b));
+    sa.iter()
+        .any(|&x| sb.iter().any(|&y| along(x, y) || along(y, x)))
+}
+
 /// The profiles of the hole a spline laid with `[spline_terrain_align]` cuts into the ground,
 /// as points (x across, height, how far that end of the hole stands off the spline's end):
 /// the `.sli`'s own `[terrainholeprofile]`s, or else those Omsi.exe makes from the drawn
@@ -1904,6 +1994,132 @@ mod tests {
         // straight and level: one every 10 m
         assert_eq!(spline_station_count(&def, &plain_curve(95.0, 0.0)), 9);
         assert_eq!(spline_station_count(&def, &plain_curve(4.0, 0.0)), 1);
+    }
+
+    /// A spline whose profiles are (texture, x from, x to, height)
+    fn profiled(profiles: &[(usize, f32, f32, f32)]) -> Spline {
+        let mut def = Spline::default();
+        let textures = profiles.iter().map(|p| p.0).max().unwrap_or(0) + 1;
+        def.textures.resize(textures, Default::default());
+        for &(texture, x0, x1, z) in profiles {
+            def.profiles.push(::scenery::sli::SplineProfile {
+                texture,
+                points: [x0, x1]
+                    .map(|x| ::scenery::sli::SplineProfilePoint {
+                        x,
+                        z,
+                        v_scale: 0.1,
+                        ..Default::default()
+                    })
+                    .to_vec(),
+            });
+        }
+        def
+    }
+
+    /// The triangles of each texture slot, whatever order the ranges draw them in.
+    fn triangles_by_slot(m: &MeshData) -> Vec<(u32, Vec<[u32; 3]>)> {
+        let mut slots: Vec<(u32, Vec<[u32; 3]>)> = Vec::new();
+        for &(first, count, slot) in &m.ranges {
+            let tris = m.indices[first as usize..(first + count) as usize]
+                .chunks_exact(3)
+                .map(|t| [t[0], t[1], t[2]]);
+            match slots.iter_mut().find(|s| s.0 == slot) {
+                Some(s) => s.1.extend(tris),
+                None => slots.push((slot, tris.collect())),
+            }
+        }
+        for s in &mut slots {
+            s.1.sort_unstable();
+        }
+        slots.sort_unstable_by_key(|s| s.0);
+        slots
+    }
+
+    /// A road of lanes, gutters and verges side by side draws one range per texture, with
+    /// the same triangles as one range per profile
+    #[test]
+    fn spline_ranges_group_by_texture() {
+        // (RQ_10,5_2spur_7,5m_Oneway.sli: ten profiles over three textures)
+        let def = profiled(&[
+            (0, -4.15, -4.05, 0.1),
+            (0, -4.05, -3.95, 0.1),
+            (1, -3.95, -3.85, 0.1),
+            (1, -3.85, -3.75, 0.1),
+            (2, -3.75, 0.0, 0.1),
+            (2, 0.0, 3.75, 0.1),
+            (1, 3.75, 3.85, 0.1),
+            (1, 3.85, 3.95, 0.1),
+            (0, 3.95, 4.05, 0.1),
+            (0, 4.05, 4.15, 0.1),
+        ]);
+        let mesh = build_spline_mesh(&def, &plain_curve(30.0, 0.0), false, DVec3::ZERO);
+        assert_eq!(mesh.ranges.len(), 10);
+        let grouped = group_spline_ranges(&def, &mesh).unwrap();
+        assert_eq!(
+            grouped.ranges.iter().map(|r| r.2).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(grouped.indices.len(), mesh.indices.len());
+        assert_eq!(grouped.positions, mesh.positions);
+        assert_eq!(grouped.uvs, mesh.uvs);
+        assert!(grouped.one_sided);
+        assert_eq!(triangles_by_slot(&grouped), triangles_by_slot(&mesh));
+        // one range already per texture: nothing to do
+        let single = build_spline_mesh(
+            &strip(2.0, 0.1),
+            &plain_curve(30.0, 0.0),
+            false,
+            DVec3::ZERO,
+        );
+        assert!(group_spline_ranges(&strip(2.0, 0.1), &single).is_none());
+    }
+
+    #[test]
+    fn spline_ranges_keep_faces_drawn_over_others() {
+        let beside = profiled(&[
+            (0, -2.0, 2.0, 0.0),
+            (1, -1.0, 1.0, 0.01),
+            (0, 2.0, 3.0, 0.0),
+        ]);
+        let mesh = build_spline_mesh(&beside, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        let grouped = group_spline_ranges(&beside, &mesh).unwrap();
+        assert_eq!(
+            grouped.ranges.iter().map(|r| r.2).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let under = profiled(&[
+            (0, -2.0, 2.0, 0.0),
+            (1, -1.0, 1.0, 0.01),
+            (0, -0.5, 0.5, 0.0),
+        ]);
+        let mesh = build_spline_mesh(&under, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        assert!(group_spline_ranges(&under, &mesh).is_none());
+        // a wall (a vertical face) on the road's edge only meets it at a line
+        let wall = profiled(&[(0, -2.0, 2.0, 0.0), (1, 2.0, 2.0, 0.0), (0, 2.0, 3.0, 0.0)]);
+        let mut def = wall.clone();
+        def.profiles[1].points[1].z = 1.0;
+        let mesh = build_spline_mesh(&def, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        assert_eq!(group_spline_ranges(&def, &mesh).unwrap().ranges.len(), 2);
+    }
+
+    /// Blended textures keep their profiles' order, and ranges that are not the profiles'
+    /// (a slot taken out) are left alone unless whole textures are missing
+    #[test]
+    fn spline_ranges_leave_blends_and_foreign_ranges() {
+        let mut def = profiled(&[(0, -2.0, 0.0, 0.0), (1, 0.0, 1.0, 0.0), (0, 1.0, 2.0, 0.0)]);
+        let mesh = build_spline_mesh(&def, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        assert!(group_spline_ranges(&def, &mesh).is_some());
+        // without texture 1 (a [terrainmapping] slot drawn with the ground)
+        let mut rest = mesh.clone();
+        rest.ranges.retain(|r| r.2 != 1);
+        assert_eq!(group_spline_ranges(&def, &rest).unwrap().ranges.len(), 1);
+        // one range missing that the profiles have
+        let mut torn = mesh.clone();
+        torn.ranges.remove(2);
+        assert!(group_spline_ranges(&def, &torn).is_none());
+        def.textures[0].alpha = 2;
+        assert!(group_spline_ranges(&def, &mesh).is_none());
     }
 
     /// The skew shifts every cross-section, running from its start value to its end value.
