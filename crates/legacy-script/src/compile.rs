@@ -606,7 +606,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_file(&mut self, f: &CfgFile) {
-        let mut cur: Option<(Vec<BlockKind>, Block, Vec<(usize, bool)>)> = None; // kinds (aliases), block, if-stack: (jump op index, has_else)
+        let mut cur: Option<(Vec<BlockKind>, Block, Vec<(Vec<usize>, bool)>)> = None; // kinds (aliases), block, if-stack: (jump op indices the {endif} patches, has_else)
         // `{else}` without an open `{if}` (a stray `{endif}` closed it early): in OMSI a
         // reached `{else}` skips to the next `{endif}`, so it jumps there here too - the
         // Procity's dashboard blanked its odometer every frame through such an `{else}`
@@ -691,14 +691,16 @@ impl<'a> Compiler<'a> {
                                     for idx in orphan_elses.drain(..) {
                                         patch(&mut block.ops[idx], end);
                                     }
-                                    for (idx, _) in ifs {
+                                    for (jumps, _) in ifs {
                                         log::debug!(
                                             "{}:{}: {{end}} with open {{if}}",
                                             f.path.display(),
                                             line_no
                                         );
                                         let end = block.ops.len() as u32;
-                                        patch(&mut block.ops[idx], end);
+                                        for idx in jumps {
+                                            patch(&mut block.ops[idx], end);
+                                        }
                                     }
                                     self.finish_block(kinds, block);
                                 } else {
@@ -712,7 +714,7 @@ impl<'a> Compiler<'a> {
                             }
                             "if" => {
                                 if let Some((_, block, ifs)) = cur.as_mut() {
-                                    ifs.push((block.ops.len(), false));
+                                    ifs.push((vec![block.ops.len()], false));
                                     block.ops.push(Op::JumpIfZero(u32::MAX));
                                 } else {
                                     // (code between blocks is never run - Omsi.exe reads only
@@ -727,21 +729,28 @@ impl<'a> Compiler<'a> {
                             }
                             "else" => {
                                 if let Some((_, block, ifs)) = cur.as_mut() {
-                                    if let Some((idx, has_else)) = ifs.last_mut() {
+                                    if let Some((jumps, has_else)) = ifs.last_mut() {
+                                        // a reached {else} skips to the {endif}
+                                        let jmp = block.ops.len();
+                                        block.ops.push(Op::Jump(u32::MAX));
                                         if *has_else {
+                                            // a second one too, so what follows it never runs:
+                                            // the DBC Chicago Citybus's cashdesk.osc has one
+                                            // that blanks its farebox, which OMSI shows
                                             log::debug!(
                                                 "{}:{}: double {{else}}",
                                                 f.path.display(),
                                                 line_no
                                             );
+                                        } else {
+                                            // a failed {if} goes on after the {else}
+                                            let target = block.ops.len() as u32;
+                                            for idx in jumps.drain(..) {
+                                                patch(&mut block.ops[idx], target);
+                                            }
+                                            *has_else = true;
                                         }
-                                        // jump over the else branch from the end of the if branch
-                                        let jmp = block.ops.len();
-                                        block.ops.push(Op::Jump(u32::MAX));
-                                        let target = block.ops.len() as u32;
-                                        patch(&mut block.ops[*idx], target);
-                                        *idx = jmp;
-                                        *has_else = true;
+                                        jumps.push(jmp);
                                     } else {
                                         log::debug!(
                                             "{}:{}: {{else}} without {{if}}",
@@ -761,9 +770,11 @@ impl<'a> Compiler<'a> {
                             }
                             "endif" => {
                                 if let Some((_, block, ifs)) = cur.as_mut() {
-                                    if let Some((idx, _)) = ifs.pop() {
+                                    if let Some((jumps, _)) = ifs.pop() {
                                         let target = block.ops.len() as u32;
-                                        patch(&mut block.ops[idx], target);
+                                        for idx in jumps {
+                                            patch(&mut block.ops[idx], target);
+                                        }
                                     } else {
                                         log::debug!(
                                             "{}:{}: {{endif}} without {{if}}",

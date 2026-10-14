@@ -946,6 +946,24 @@ mod tests {
         vm.run_init(&p, &mut st, &mut NullHost);
         assert_eq!(st.vars[p.var("a").unwrap() as usize], 2.0);
     }
+
+    /// An `{if}` with a second `{else}` (the DBC Chicago Citybus's cashdesk.osc): a reached
+    /// `{else}` skips to the `{endif}`, so what follows the second one never runs - there it
+    /// blanks the bus's farebox every frame, which OMSI shows.
+    #[test]
+    fn second_else_skips_to_the_endif() {
+        let run = |cond: &str| {
+            let p = prog(&format!(
+                "{{init}}\n{cond} {{if}} 1 (S.L.a) {{else}} 2 (S.L.a) {{else}} 3 (S.L.b) {{endif}}\n{{end}}\n"
+            ));
+            let mut st = State::new(&p);
+            Vm::new().run_init(&p, &mut st, &mut NullHost);
+            let v = |k: &str| st.vars[p.var(k).unwrap() as usize];
+            (v("a"), v("b"))
+        };
+        assert_eq!(run("1"), (1.0, 0.0));
+        assert_eq!(run("0"), (2.0, 0.0));
+    }
 }
 
 /// A line number as a display of three digit cells and a letter cell shows it: the digits
