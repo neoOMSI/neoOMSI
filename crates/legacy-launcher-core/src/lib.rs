@@ -724,6 +724,9 @@ pub struct MapInfo {
     /// Installed as a mod (in the content folder).
     #[serde(default)]
     pub installed: bool,
+    /// `[years]`: first and last year, if given.
+    #[serde(default)]
+    pub years: Option<(i32, i32)>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -848,7 +851,13 @@ fn read_map(d: &Path, folder: &str, lang: &str) -> Option<MapInfo> {
         entry_points: entry_list(&g),
         hof,
         installed: in_content(d),
+        years: map_years(g.years),
     })
+}
+
+/// `[years]` in order; `None` when absent (0 0).
+fn map_years((a, b): (i32, i32)) -> Option<(i32, i32)> {
+    (a > 0 && b > 0).then(|| (a.min(b), a.max(b)))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2856,6 +2865,17 @@ impl Duty {
             Some(a) => Ok(a.clone()),
             None => duty_args(self),
         }
+    }
+}
+
+#[cfg(test)]
+mod map_years_tests {
+    #[test]
+    fn a_maps_years_are_ordered_and_absent_without_the_entry() {
+        assert_eq!(super::map_years((2012, 2025)), Some((2012, 2025)));
+        assert_eq!(super::map_years((2025, 2012)), Some((2012, 2025)));
+        assert_eq!(super::map_years((2005, 2005)), Some((2005, 2005)));
+        assert_eq!(super::map_years((0, 0)), None);
     }
 }
 

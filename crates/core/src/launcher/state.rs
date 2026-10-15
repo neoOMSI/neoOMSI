@@ -434,7 +434,15 @@ impl State {
             {
                 self.choice.map = m.file.clone();
                 self.choice.entry = -1;
+                self.roll_date();
             }
+        }
+    }
+
+    /// A new map starts on a random day of its `[years]`, like OMSI (#210).
+    fn roll_date(&mut self) {
+        if let Some(years) = self.map().and_then(|m| m.years) {
+            self.choice.date = date_in_years(years, random_u64());
         }
     }
 
@@ -1373,6 +1381,7 @@ impl State {
         self.choice.entry = -1;
         self.choice.line = None;
         self.choice.tour = None;
+        self.roll_date();
         self.choice.hof = self.default_hof();
         self.lines.clear();
         self.load_lines();
@@ -1670,6 +1679,53 @@ mod crash_tests {
         std::fs::write(&p, "[t ERROR ::render] a part of the picture could not be recorded (left out)\n[t INFO x] starting the game: omsi\n[t INFO ::render] renderer: compiling the sky and clouds shaders\n").unwrap();
         assert!(super::crash_of(&p).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// The day `roll` picks from the years `first..=last`, as `YYYY-MM-DD`.
+fn date_in_years((first, last): (i32, i32), roll: u64) -> String {
+    let (first, last) = (first.min(last), first.max(last));
+    let leap = |y: i32| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let mut day = roll % (first..=last).map(|y| 365 + leap(y) as u64).sum::<u64>();
+    let mut year = first;
+    while day >= 365 + leap(year) as u64 {
+        day -= 365 + leap(year) as u64;
+        year += 1;
+    }
+    let mut month = 1;
+    while day >= super::ui::days_in_month(year, month) as u64 {
+        day -= super::ui::days_in_month(year, month) as u64;
+        month += 1;
+    }
+    format!("{year:04}-{month:02}-{:02}", day + 1)
+}
+
+fn random_u64() -> u64 {
+    let mut bytes = [0; 8];
+    if let Err(e) = getrandom::fill(&mut bytes) {
+        log::warn!("no random number for the map's date: {e}");
+    }
+    u64::from_le_bytes(bytes)
+}
+
+#[cfg(test)]
+mod date_tests {
+    #[test]
+    fn a_rolled_date_is_a_day_of_the_maps_years() {
+        assert_eq!(super::date_in_years((2005, 2005), 0), "2005-01-01");
+        assert_eq!(super::date_in_years((2005, 2005), 364), "2005-12-31");
+        assert_eq!(super::date_in_years((2005, 2005), 365), "2005-01-01");
+        assert_eq!(super::date_in_years((2025, 2012), 0), "2012-01-01");
+        // (2012 is a leap year)
+        assert_eq!(super::date_in_years((2012, 2025), 59), "2012-02-29");
+        assert_eq!(super::date_in_years((2012, 2025), 366), "2013-01-01");
+        assert_eq!(super::date_in_years((2012, 2025), 5113), "2025-12-31");
+        for roll in (0..100_000u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15)) {
+            let date = super::date_in_years((2012, 2025), roll);
+            let (y, m, d) = super::super::ui::parse_date(&date);
+            assert!((2012..=2025).contains(&y), "{date}");
+            assert!(d <= super::super::ui::days_in_month(y, m), "{date}");
+        }
     }
 }
 
