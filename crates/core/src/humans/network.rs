@@ -552,6 +552,7 @@ impl Humans {
                 terminus: None,
                 passenger_termini: Vec::new(),
                 out_of_service: false,
+                final_stop: None,
                 id: BusId::Ai(remote_bus_id(player)),
                 entry_open: vec![false; cabin.entries.len()],
                 exit_open: vec![false; cabin.exits.len()],

@@ -617,6 +617,8 @@ pub(super) struct BusNow {
     pub(super) passenger_termini: Vec<String>,
     /// Explicit `$allexit$` service; a missing/unknown target is not out of service.
     pub(super) out_of_service: bool,
+    /// The last stop of its selected IBIS route, where everybody leaves (#206).
+    pub(super) final_stop: Option<String>,
 }
 
 /// What passengers feel stepping into a bus (OMSI reads the same fields: the vehicle's
@@ -728,6 +730,15 @@ pub(super) fn train_heading(heading: f64, trailers: &[PartFrame], local: Vec3) -
 }
 
 impl BusNow {
+    /// Whether the bus empties at `stop`: named exactly as its route's last stop, as in
+    /// OMSI; without a route, its terminus.
+    pub(super) fn ends_at(&self, stop: &super::passengers::PaxStop) -> bool {
+        match &self.final_stop {
+            Some(last) => stop.name.trim() == last.trim(),
+            None => self.terminus.as_ref().is_some_and(|t| stop.is_named(t)),
+        }
+    }
+
     pub(super) fn serves_terminus(&self, name: &str) -> bool {
         self.passenger_termini
             .iter()
@@ -866,6 +877,18 @@ fn passenger_termini(
     termini
 }
 
+/// The last stop that IBIS route `route` lists.
+fn route_final_stop(hof: &::legacy_vehicle::hof::Hof, route: Option<f32>) -> Option<String> {
+    let route = route.filter(|r| r.is_finite() && *r >= 0.0)?.round() as usize;
+    hof.info_busstop_lists
+        .get(route)?
+        .iter()
+        .rev()
+        .map(|stop| stop.trim())
+        .find(|stop| !stop.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -923,6 +946,29 @@ mod tests {
             passenger_termini(&hof, 0, Some(3), "B2 Apsley Circular"),
             ["B2 Apsley Circular"]
         );
+    }
+
+    #[test]
+    fn the_final_stop_is_the_last_named_stop_of_the_selected_route() {
+        let hof = Hof {
+            info_busstop_lists: vec![
+                vec![
+                    "016 jardim gramacho final".into(),
+                    "016 hospital duque final ".into(),
+                    " ".into(),
+                ],
+                vec![],
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            route_final_stop(&hof, Some(0.0)).as_deref(),
+            Some("016 hospital duque final")
+        );
+        assert_eq!(route_final_stop(&hof, Some(1.0)), None, "no stops");
+        assert_eq!(route_final_stop(&hof, Some(-1.0)), None, "no route");
+        assert_eq!(route_final_stop(&hof, Some(7.0)), None);
+        assert_eq!(route_final_stop(&hof, None), None);
     }
 }
 
@@ -1136,10 +1182,16 @@ impl Humans {
                 ),
                 _ => Vec::new(),
             };
+            let final_stop = b
+                .host
+                .hof
+                .as_ref()
+                .and_then(|hof| route_final_stop(hof, b.var("IBIS_RouteIndex")));
             out.push(BusNow {
                 terminus,
                 passenger_termini,
                 out_of_service,
+                final_stop,
                 id: BusId::Player,
                 walk_open: None,
                 cabin,
@@ -1231,10 +1283,17 @@ impl Humans {
                     .as_ref()
                     .map(|b| b.terminus.trim().to_string())
                     .filter(|t| !t.is_empty());
+                let final_stop = c
+                    .vehicle
+                    .host
+                    .hof
+                    .as_ref()
+                    .and_then(|hof| route_final_stop(hof, c.vehicle.var("IBIS_RouteIndex")));
                 out.push(BusNow {
                     passenger_termini: terminus.iter().cloned().collect(),
                     terminus,
                     out_of_service: false,
+                    final_stop,
                     id: BusId::Ai(c.id),
                     walk_open: None,
                     cabin,
@@ -1301,6 +1360,7 @@ impl Humans {
             terminus: None,
             passenger_termini: Vec::new(),
             out_of_service: false,
+            final_stop: None,
             id,
             entry_open: vec![false; cabin.entries.len()],
             exit_open: vec![false; cabin.exits.len()],

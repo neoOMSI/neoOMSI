@@ -1514,6 +1514,7 @@ fn bus(cabin: Arc<Cabin>) -> BusNow {
         terminus: None,
         passenger_termini: vec![],
         out_of_service: false,
+        final_stop: None,
     }
 }
 
@@ -2713,6 +2714,35 @@ fn a_hof_line_prefix_is_not_part_of_the_terminus_stop_name() {
     b.terminus = Some("402 Apsley Bus Station".into());
     let regs = h.register_buses(&[b], 0.05);
     assert!(!regs[&BusId::Player].all_exit, "similar names remain distinct");
+}
+
+#[test]
+fn the_ibis_routes_last_stop_empties_the_bus_whatever_the_terminus_is_called() {
+    // Caxias City (#206): the next trip's first stop is 1.1 m past the last one
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    h.stops
+        .insert(1, stop(DVec3::ZERO, 0.0, "016 hospital duque final"));
+    h.stops
+        .insert(2, stop(DVec3::Y * 1.1, 0.0, "016 hospital duque inicio"));
+    let mut b = bus(cabin());
+    b.pos = DVec3::Y * 3.0;
+    b.terminus = Some("016HOSPITALDUQUE".into());
+    let regs = h.register_buses(std::slice::from_ref(&b), 0.05);
+    assert_eq!(regs[&b.id].at, Some(2));
+    assert!(!regs[&b.id].all_exit, "the terminus ident is no stop name");
+
+    b.final_stop = Some("016 hospital duque final".into());
+    let regs = h.register_buses(std::slice::from_ref(&b), 0.05);
+    assert_eq!(regs[&b.id].at, Some(2));
+    assert!(regs[&b.id].all_exit);
+    assert!(h.stops[&1].buses.is_empty());
+    assert_eq!(h.stops[&2].buses, vec![(b.id, true)]);
+
+    // another spelling keeps people on board
+    b.final_stop = Some("016 Hospital Duque".into());
+    b.terminus = Some("016 hospital duque final".into());
+    let regs = h.register_buses(&[b], 0.05);
+    assert!(!regs[&BusId::Player].all_exit);
 }
 
 #[test]

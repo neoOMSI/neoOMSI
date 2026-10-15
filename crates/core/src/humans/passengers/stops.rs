@@ -652,17 +652,15 @@ impl Humans {
                         nearest_at = dist;
                         reg.at = Some(*id);
                     }
-                    if !bn.out_of_service && !bn.terminus.as_ref().is_some_and(|t| s.is_named(t)) {
+                    let ends_here = bn.ends_at(s);
+                    // any box it stands in: another stop may be nearer (#206)
+                    if in_box && ends_here {
+                        reg.all_exit = true;
+                    }
+                    if !bn.out_of_service && !ends_here {
                         self.stops.get_mut(id).unwrap().buses.push((bn.id, in_box));
                     }
                 }
-            }
-            if reg.at.is_some_and(|s| {
-                bn.terminus
-                    .as_ref()
-                    .is_some_and(|t| self.stops[&s].is_named(t))
-            }) {
-                reg.all_exit = true;
             }
             out.insert(bn.id, reg);
         }
