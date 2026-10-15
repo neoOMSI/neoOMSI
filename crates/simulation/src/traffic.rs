@@ -1824,9 +1824,9 @@ pub struct TrafficLightController {
     pub request: Vec<bool>,
     /// The clock waits at a stop point.
     pub held: bool,
-    /// A stop point the clock has just been let past without moving (it is not asked again
-    /// at the same instant).
-    passed: Option<usize>,
+    /// The stop points the clock has just been let past without moving (they are not asked
+    /// again at the same instant; several may share one, #101).
+    passed: Vec<usize>,
     started: bool,
 }
 
@@ -1842,7 +1842,7 @@ impl TrafficLightController {
             time: 0.0,
             request: vec![false; n],
             held: false,
-            passed: None,
+            passed: Vec::new(),
             started: false,
         }
     }
@@ -1933,7 +1933,7 @@ impl TrafficLightController {
             for (k, p) in self.stops.iter().enumerate() {
                 let d = (p.time as f64 - self.time).rem_euclid(cycle);
                 let d = if d > cycle - 1e-6 { 0.0 } else { d };
-                if d < 1e-6 && self.passed == Some(k) {
+                if d < 1e-6 && self.passed.contains(&k) {
                     continue;
                 }
                 if d <= left && best.map(|b| d < b.1).unwrap_or(true) {
@@ -1942,13 +1942,13 @@ impl TrafficLightController {
             }
             let Some((k, d)) = best else {
                 if left > 0.0 {
-                    self.passed = None;
+                    self.passed.clear();
                 }
                 self.time = (self.time + left).rem_euclid(cycle);
                 return;
             };
             if d > 1e-6 {
-                self.passed = None;
+                self.passed.clear();
             }
             self.time = (self.time + d).rem_euclid(cycle);
             left -= d;
@@ -1962,15 +1962,22 @@ impl TrafficLightController {
                 active = false;
             }
             if !active {
-                self.passed = Some(k);
+                self.passed.push(k);
                 continue;
             }
             match p.jump_to {
                 Some(to) => {
-                    let target = (to as f64).rem_euclid(cycle);
+                    // a target past the cycle's end starts the next one (#101)
+                    let to = to as f64;
+                    let target = if to >= cycle {
+                        0.0
+                    } else {
+                        to.rem_euclid(cycle)
+                    };
                     // A backwards jump may repeat as long as its request condition holds
                     self.time = target;
-                    self.passed = Some(k);
+                    self.passed.clear();
+                    self.passed.push(k);
                     if left <= 0.0 {
                         return;
                     }
@@ -1978,7 +1985,7 @@ impl TrafficLightController {
                 None => {
                     self.time = p.time as f64;
                     self.held = true;
-                    self.passed = None;
+                    self.passed.clear();
                     return;
                 }
             }
@@ -3491,6 +3498,55 @@ mod tests {
         c.request[1] = true;
         c.advance(19.0 - c.time as f32);
         assert_eq!(c.state(1), 6, "the side road receives green after requesting");
+    }
+
+    #[test]
+    fn a_jump_past_the_cycle_end_restarts_the_cycle() {
+        // Städtedreieck's Bergerplatz (#101): flashing at 0..12 only with light 1 asked
+        let mut c = TrafficLightController::from_program(
+            vec![
+                (
+                    vec![
+                        (9, 5.0),
+                        (12, 2.0),
+                        (9, 5.0),
+                        (0, 3.0),
+                        (3, 1.0),
+                        (6, 29.0),
+                        (9, 3.0),
+                        (0, 39.0),
+                    ],
+                    None,
+                ),
+                (vec![(6, 1.0)], Some(30.0)),
+                (vec![(6, 1.0)], Some(30.0)),
+            ],
+            Some(127.0),
+            &[],
+            &[
+                [1.0, 0.0, 1.0, 15.0],
+                [1.0, 7.0, 0.0, 6.0],
+                [2.0, 87.0, 1.0, 130.0],
+                [2.0, 0.0, 0.0, 87.0],
+            ],
+        );
+        c.time = 20.0;
+        for _ in 0..3000 {
+            c.advance(0.1);
+            assert!(
+                !matches!(c.state(0), 9 | 12) || (45.0..48.0).contains(&c.time),
+                "flashing at {}",
+                c.time
+            );
+        }
+        // by night both jumps at 0 let the clock past
+        c.request[1] = true;
+        c.time = 80.0;
+        c.advance(60.0);
+        for _ in 0..600 {
+            c.advance(0.1);
+            assert!((6.0..=7.0).contains(&c.time), "night at {}", c.time);
+        }
     }
 
     #[test]
