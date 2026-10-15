@@ -1140,6 +1140,25 @@ pub fn build_terrain_mesh(t: &Terrain) -> MeshData {
     mesh
 }
 
+pub fn build_water_mesh(heights: [f32; 4]) -> MeshData {
+    let size = tile_size() as f32;
+    let mut mesh = MeshData::default();
+    for (i, (x, y)) in [(0.0, 0.0), (size, 0.0), (0.0, size), (size, size)]
+        .into_iter()
+        .enumerate()
+    {
+        mesh.positions.push(Vec3::new(x, y, heights[i]));
+        mesh.normals.push(Vec3::Z);
+        mesh.uvs.push(Vec2::new(x / 40.0, y / 40.0));
+    }
+    // OMSI's water index buffer (007ac044, stores at 007ac0d2..007ac260) joins
+    // corners 0 and 3. The other diagonal raises the middle of Tettau's sloping
+    // water surface into the road even though all four corner heights are correct.
+    mesh.indices.extend_from_slice(&[0, 3, 2, 0, 1, 3]);
+    mesh.ranges.push((0, 6, 0));
+    mesh
+}
+
 /// Height of the terrain *as drawn* at tile-local metres: the two triangles of each cell
 /// that [`build_terrain_mesh`] makes (diagonal from the cell's (i, j) corner to its
 /// (i+1, j+1) corner, as OMSI splits it), not the bilinear patch `Terrain::sample`
@@ -1375,6 +1394,60 @@ pub fn reverse_winding(data: &mut MeshData) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn water_interpolates_across_the_authored_diagonal() {
+        // A non-planar surface distinguishes the two diagonals. The old split
+        // put its centre at 30 m instead of 5 m; flat water hides the error.
+        let mesh = build_water_mesh([0.0, 20.0, 40.0, 10.0]);
+        let size = tile_size() as f32;
+        for (u, v, expected) in [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 20.0),
+            (0.0, 1.0, 40.0),
+            (1.0, 1.0, 10.0),
+            (0.5, 0.5, 5.0),
+            (0.75, 0.25, 12.5),
+            (0.25, 0.75, 22.5),
+        ] {
+            let hit = ray_mesh(
+                Vec3::new(u * size, v * size, 100.0),
+                -Vec3::Z,
+                &mesh,
+                &Mat4::IDENTITY,
+            )
+            .expect("water covers the tile");
+            assert!((100.0 - hit - expected).abs() < 1e-4, "at ({u}, {v})");
+        }
+        for triangle in mesh.indices.chunks_exact(3) {
+            let [a, b, c] =
+                [triangle[0], triangle[1], triangle[2]].map(|i| mesh.positions[i as usize]);
+            assert!((b - a).cross(c - a).z > 0.0);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OMSI_ROOT with the Tettau map"]
+    fn tettau_water_stays_below_the_road_to_neuenbau() {
+        let root = std::path::PathBuf::from(std::env::var_os("OMSI_ROOT").expect("OMSI_ROOT"));
+        let path = root.join("maps/Tettau/tile_-18_10.map");
+        let tile = ::map::Tile::load(&path).expect("Tettau tile");
+        assert!(tile.has_water);
+        let water = ::map::terrain::Water::parse(
+            &std::fs::read(path.with_extension("map.water")).expect("Tettau water"),
+        );
+        assert_eq!(water.count, 1);
+        let heights = water.values[..4].try_into().unwrap();
+        let mesh = build_water_mesh(heights);
+        let spline = tile.splines.iter().find(|s| s.id == 4421461).expect("road");
+        let curve = SplineCurve::from_map(spline, DVec2::ZERO);
+        for along in [64.0, 70.0, 78.0] {
+            let road = curve.point_at(along).as_vec3();
+            let hit =
+                ray_mesh(road, -Vec3::Z, &mesh, &Mat4::IDENTITY).expect("water is below the road");
+            assert!(hit > 1.0, "road clearance at {along} m: {hit}");
+        }
+    }
 
     #[test]
     fn a_point_the_probes_take_on_a_triangle_is_inside_its_reach() {

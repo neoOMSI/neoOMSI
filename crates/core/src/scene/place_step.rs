@@ -207,18 +207,7 @@ impl World {
                         // the tile's water surface: one quad at the four corner heights, drawn over the
                         // riverbed. OMSI keeps it in `tile.map.water`, one height per corner.
                         if let Some(h) = p.water {
-                            let t = tile_size() as f32;
-                            let mut wm = MeshData::default();
-                            for (i, (x, y)) in [(0.0, 0.0), (t, 0.0), (0.0, t), (t, t)]
-                                .into_iter()
-                                .enumerate()
-                            {
-                                wm.positions.push(glam::Vec3::new(x, y, h[i]));
-                                wm.normals.push(glam::Vec3::Z);
-                                wm.uvs.push(glam::Vec2::new(x / 40.0, y / 40.0));
-                            }
-                            wm.indices.extend_from_slice(&[0, 1, 2, 2, 1, 3]);
-                            wm.ranges.push((0, 6, 0));
+                            let wm = ::geometry::build_water_mesh(h);
                             let wid = gpu.add_mesh(renderer, scene, &wm);
                             tg.meshes.push(wid);
                             if ::legacy_config::env::var_os("OMSI_DEBUG_SURFACES").is_some() {
