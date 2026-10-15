@@ -24,6 +24,8 @@ pub struct GpuMesh {
     /// Per material slot: (mean facing direction, centroid) of its triangles in mesh space;
     /// a zero direction when the slot has no triangles.
     pub slot_faces: Vec<(Vec3, Vec3)>,
+    /// Per material slot: `slot_wall_heights`.
+    pub(crate) slot_walls: Vec<f32>,
 }
 
 #[derive(Clone, Copy, Default)]

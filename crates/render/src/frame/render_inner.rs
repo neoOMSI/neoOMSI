@@ -1239,16 +1239,13 @@ impl Renderer {
                 let phase = effective_render_phase(&scene.instances[entry.0]);
                 by_phase[phase as usize].push(entry);
             }
-            for phase in RenderPhase::DRAW_ORDER {
-                if phase == RenderPhase::BeforeNormal {
-                    items.clear();
-                    for &(i, _, _) in by_phase[..RenderPhase::BeforeNormal as usize]
-                        .iter()
-                        .flatten()
-                    {
+            // Depth of the fully opaque pixels of ground-phase blends (or only of the walls).
+            let surface_depth_items =
+                |items: &mut Vec<DrawItem>, phases: &[Vec<(usize, f32, bool)>], walls_only: bool| {
+                    for &(i, _, _) in phases.iter().flatten() {
                         let inst = &scene.instances[i];
-                        for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate()
-                        {
+                        let mesh = &scene.meshes[inst.mesh];
+                        for (ri, (_, _, slot)) in mesh.ranges.iter().enumerate() {
                             let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
                             let mat = &scene.materials[mat_id];
                             if !surface_depth_coverage(
@@ -1257,6 +1254,12 @@ impl Renderer {
                                 mat.transmap.is_some(),
                                 mat.no_z_check,
                             ) || exclude_texture.is_some_and(|t| mat.uses_texture(t))
+                                || (walls_only
+                                    && !surface_wall(
+                                        &mesh.slot_walls,
+                                        inst.transform,
+                                        *slot as usize,
+                                    ))
                             {
                                 continue;
                             }
@@ -1274,6 +1277,15 @@ impl Renderer {
                             });
                         }
                     }
+                };
+            for phase in RenderPhase::DRAW_ORDER {
+                if phase == RenderPhase::BeforeNormal {
+                    items.clear();
+                    surface_depth_items(
+                        &mut items,
+                        &by_phase[..RenderPhase::BeforeNormal as usize],
+                        false,
+                    );
                     batch_items(scene, &mut items, true, &mut list, &mut main_batches);
                 }
                 let visible = &by_phase[phase as usize];
@@ -1429,6 +1441,11 @@ impl Renderer {
                 main_draws[1] += items.len() + late_items.len();
                 batch_items(scene, &mut items, false, &mut list, &mut main_batches);
                 batch_items(scene, &mut late_items, false, &mut list, &mut late_batches);
+                if world_surface_phase(phase) {
+                    items.clear();
+                    surface_depth_items(&mut items, std::slice::from_ref(visible), true);
+                    batch_items(scene, &mut items, true, &mut list, &mut main_batches);
+                }
             }
         });
         if let Some((pre_list, mut pre_batches, split)) = prepass_found {

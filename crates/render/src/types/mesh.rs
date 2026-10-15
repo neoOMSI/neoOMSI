@@ -248,6 +248,12 @@ fn mesh_with_buffers(
             })
             .collect()
     };
+    // (terrain is never drawn in a ground phase)
+    let slot_walls = if data.one_sided {
+        slot_wall_heights(data)
+    } else {
+        Vec::new()
+    };
     GpuMesh {
         vertex_buf,
         index_buf,
@@ -263,7 +269,33 @@ fn mesh_with_buffers(
         one_sided: data.one_sided,
         source: None,
         slot_faces,
+        slot_walls,
     }
+}
+
+/// Per material slot: the height of its tallest steep (over 45°) triangle - a facade's
+/// height, but next to nothing for roads and kerbs, also on a slope.
+pub(crate) fn slot_wall_heights(data: &MeshData) -> Vec<f32> {
+    let mut out: Vec<f32> = Vec::new();
+    for &(first, count, slot) in &data.ranges {
+        let slot = slot as usize;
+        if out.len() <= slot {
+            out.resize(slot + 1, 0.0);
+        }
+        let end = ((first + count) as usize).min(data.indices.len());
+        for tri in data.indices.get(first as usize..end).unwrap_or(&[]).chunks_exact(3) {
+            let p = |i: u32| data.positions.get(i as usize).copied();
+            let (Some(a), Some(b), Some(c)) = (p(tri[0]), p(tri[1]), p(tri[2])) else {
+                continue;
+            };
+            let n = (b - a).cross(c - a).normalize_or_zero();
+            if n != Vec3::ZERO && n.z.abs() < std::f32::consts::FRAC_1_SQRT_2 {
+                let h = a.z.max(b.z).max(c.z) - a.z.min(b.z).min(c.z);
+                out[slot] = out[slot].max(h);
+            }
+        }
+    }
+    out
 }
 
 pub struct PreparedMesh(pub(crate) GpuMesh);

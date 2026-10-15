@@ -1507,3 +1507,40 @@ fn ordered_vehicle_over_the_ground(msaa: u32) {
         "the ground shows behind the blob: {centre:?}; msaa {msaa}"
     );
 }
+
+#[test]
+fn surface_wall_takes_buildings_but_not_sloped_ground() {
+    // slot 0: a road climbing 5 m with a kerb at each end; slot 1: a 30 m facade
+    let mesh = MeshData {
+        positions: vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(0.0, 50.0, 5.0),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.15),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(0.0, 50.0, 5.0),
+            Vec3::new(0.0, 50.0, 5.15),
+            Vec3::new(10.0, 50.0, 5.0),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 30.0),
+            Vec3::new(10.0, 0.0, 0.0),
+        ],
+        normals: vec![Vec3::Z; 12],
+        uvs: vec![glam::Vec2::ZERO; 12],
+        ranges: vec![(0, 9, 0), (9, 3, 1)],
+        indices: (0..12).collect(),
+        one_sided: true,
+    };
+    let walls = slot_wall_heights(&mesh);
+    assert_eq!(walls.len(), 2);
+    assert!((walls[0] - 0.15).abs() < 1e-4, "{walls:?}");
+    assert_eq!(walls[1], 30.0);
+    for t in [Mat4::IDENTITY, Mat4::from_rotation_z(1.0)] {
+        assert!(!surface_wall(&walls, t, 0));
+        assert!(surface_wall(&walls, t, 1));
+    }
+    // a facade scaled down to 1.5 m, and a slot the mesh does not have
+    assert!(!surface_wall(&walls, Mat4::from_scale(Vec3::splat(0.05)), 1));
+    assert!(!surface_wall(&walls, Mat4::IDENTITY, 2));
+}
