@@ -1467,7 +1467,7 @@
       "now": "(nyní)",
       "speed": "Rychlost času: {speed}x{mark}",
       "next_weather": "Další počasí",
-      "weather_cycle": "Cyklus počasí: {state}",
+      "weather_cycle": "Cy klus počasí: {state}",
       "on": "zapnuto",
       "off": "vypnuto",
       "weather": "Počasí: {name}{mark}",
