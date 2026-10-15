@@ -113,6 +113,9 @@ fn key_text(v: &str) -> String {
         "press a key..." => return tk("pause.keybinds.press", v),
         _ => {}
     }
+    if v.contains(" | ") {
+        return v.split(" | ").map(key_text).collect::<Vec<_>>().join(" | ");
+    }
     let mut rest = v;
     let mut out: Vec<String> = Vec::new();
     loop {
@@ -392,4 +395,17 @@ fn update_now_row(app: Option<&App>, r: &OptRow) -> (String, String) {
     let desc = ::i18n::translate(&format!("pause.options.game.{key}"), &[("version", &version)]);
     let button = if busy { "" } else { "pause.options.game.update_now.button" };
     (row(r.name, 'a', button, &desc, None), r.id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_text;
+
+    #[test]
+    fn a_key_and_its_buttons_are_named_each_on_its_own() {
+        assert_eq!(
+            key_text("Numpad / | LB"),
+            format!("{} | {}", key_text("Numpad /"), key_text("LB"))
+        );
+    }
 }

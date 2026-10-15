@@ -118,6 +118,9 @@ impl App {
             ctl.set_focus(focused);
             let _ = ctl.poll();
             ctl.actions.clear();
+            if let Some((device, n)) = ctl.pressed.take().filter(|_| self.key_capture.is_some()) {
+                self.capture_button(&device, n);
+            }
         }
         self.start_update_tick();
         self.start_bus_preview(dt);

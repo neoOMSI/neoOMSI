@@ -251,3 +251,53 @@ pub(super) fn find_device_cfg<'a>(cfg: &'a [DeviceCfg], name: &str) -> Option<&'
         .find(|d| !exact.is_empty() && normalized_device_name(&d.name) == exact)
         .or_else(|| cfg.iter().find(|d| names_match(&d.name, name)))
 }
+
+/// Button `n` of `name` does `action`, instead of any other button of that device (#407). A
+/// device not set up yet is added; a non-gamepad keeps steering with its X axis.
+pub(crate) fn bind_button(
+    devices: &mut Vec<DeviceCfg>,
+    name: &str,
+    gamepad: bool,
+    n: usize,
+    action: &str,
+) {
+    let exact = normalized_device_name(name);
+    let at = devices
+        .iter()
+        .position(|d| !exact.is_empty() && normalized_device_name(&d.name) == exact)
+        .or_else(|| devices.iter().position(|d| names_match(&d.name, name)));
+    let i = at.unwrap_or_else(|| {
+        let mut d = DeviceCfg {
+            name: name.to_string(),
+            second: "0".into(),
+            ..Default::default()
+        };
+        if !gamepad {
+            d.axes[0] = Some((Func::Steering, false));
+        }
+        devices.push(d);
+        devices.len() - 1
+    });
+    let d = &mut devices[i];
+    for (a, _) in d.buttons.iter_mut() {
+        if a.trim().eq_ignore_ascii_case(action) {
+            a.clear();
+        }
+    }
+    if d.buttons.len() <= n {
+        d.buttons.resize(n + 1, (String::new(), "0".into()));
+    }
+    d.buttons[n].0 = action.to_string();
+}
+
+/// Unbinds `action` from every button; whether any had it.
+pub(crate) fn unbind_action(devices: &mut [DeviceCfg], action: &str) -> bool {
+    let mut any = false;
+    for (a, _) in devices.iter_mut().flat_map(|d| d.buttons.iter_mut()) {
+        if a.trim().eq_ignore_ascii_case(action) {
+            a.clear();
+            any = true;
+        }
+    }
+    any
+}

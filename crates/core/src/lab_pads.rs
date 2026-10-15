@@ -144,6 +144,78 @@ pub(crate) fn save(pads: Option<&mut Controllers>, devices: &[DeviceCfg]) {
     }
 }
 
+pub(crate) fn bind_pressed(pads: Option<&mut Controllers>, device: &str, n: usize, action: &str) {
+    let gamepad = pads.as_deref().is_some_and(|c| {
+        c.connected_devices()
+            .iter()
+            .any(|d| d.gamepad && controllers::names_match(&d.name, device))
+    });
+    let mut devices = controllers::read_cfg();
+    controllers::bind_button(&mut devices, device, gamepad, n, action);
+    log::info!(
+        "key binding: {device} button {n} ({}, gamepad: {gamepad}) does {action}",
+        button_label(n, gamepad)
+    );
+    save(pads, &devices);
+}
+
+pub(crate) fn unbind(pads: Option<&mut Controllers>, action: &str) -> bool {
+    let mut devices = controllers::read_cfg();
+    let any = controllers::unbind_action(&mut devices, action);
+    if any {
+        save(pads, &devices);
+    }
+    any
+}
+
+/// Bound buttons of enabled devices: (action in lower case, button name).
+pub(crate) fn bound_buttons(pads: Option<&Controllers>) -> Vec<(String, String)> {
+    let live = connected(pads);
+    button_names(&controllers::read_cfg(), |name| {
+        live.iter()
+            .any(|c| c.gamepad && controllers::names_match(name, &c.name))
+    })
+}
+
+/// With several devices bound, each name gets the device's shortest distinct name (2+ words).
+fn button_names(devices: &[DeviceCfg], gamepad: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+    let bound = |d: &DeviceCfg| d.buttons.iter().any(|(a, _)| !a.trim().is_empty());
+    let devices: Vec<&DeviceCfg> = devices.iter().filter(|d| d.enabled && bound(d)).collect();
+    let several = devices.len() > 1;
+    let mut out = Vec::new();
+    let words = |name: &str, n: usize| {
+        name.split_whitespace()
+            .take(n)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    for d in devices.iter() {
+        let gamepad = gamepad(&d.name);
+        let long = d.name.split_whitespace().count();
+        let n = (2..long)
+            .find(|n| {
+                devices
+                    .iter()
+                    .filter(|o| o.name != d.name)
+                    .all(|o| words(&o.name, *n) != words(&d.name, *n))
+            })
+            .unwrap_or(long);
+        let short = words(&d.name, n);
+        for (b, (a, _)) in d.buttons.iter().enumerate() {
+            if !a.trim().is_empty() {
+                let label = button_label(b, gamepad);
+                let label = if several {
+                    format!("{label} ({short})")
+                } else {
+                    label
+                };
+                out.push((a.trim().to_lowercase(), label));
+            }
+        }
+    }
+    out
+}
+
 fn names_of(root: &Path) -> &'static crate::describe::ControlNames {
     crate::describe::names(
         root,
@@ -822,7 +894,53 @@ fn click_inner(pads: Option<&mut Controllers>, verb: &str, arg: &str) -> Option<
 
 #[cfg(test)]
 mod tests {
-    use super::button_label;
+    use super::{button_label, button_names};
+    use crate::controllers::DeviceCfg;
+
+    #[test]
+    fn buttons_say_their_device_only_when_several_have_buttons_bound() {
+        let pad = |name: &str, buttons: &[&str]| DeviceCfg {
+            name: name.into(),
+            buttons: buttons
+                .iter()
+                .map(|a| (a.to_string(), "0".into()))
+                .collect(),
+            ..Default::default()
+        };
+        let mut devices = vec![
+            pad("Xbox Wireless Controller", &["", "Horn"]),
+            pad("Logitech G29 Driving Force Racing Wheel", &[]),
+        ];
+        assert_eq!(
+            button_names(&devices, |_| false),
+            [("horn".to_string(), "Button 2".to_string())]
+        );
+        devices[1].buttons.push(("horn".into(), "0".into()));
+        assert_eq!(
+            button_names(&devices, |_| false),
+            [
+                ("horn".to_string(), "Button 2 (Xbox Wireless)".to_string()),
+                ("horn".to_string(), "Button 1 (Logitech G29)".to_string()),
+            ]
+        );
+        let both = [
+            pad("Microsoft X-Box 360 pad", &["horn"]),
+            pad("Microsoft X-Box One pad", &["bell"]),
+        ];
+        assert_eq!(
+            button_names(&both, |_| false)
+                .into_iter()
+                .map(|b| b.1)
+                .collect::<Vec<_>>(),
+            [
+                "Button 1 (Microsoft X-Box 360)",
+                "Button 1 (Microsoft X-Box One)"
+            ]
+        );
+        // (disabled devices don't count)
+        devices[1].enabled = false;
+        assert_eq!(button_names(&devices, |_| false).len(), 1);
+    }
 
     #[cfg(windows)]
     #[test]

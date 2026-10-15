@@ -86,6 +86,7 @@ impl App {
         }
         let analog = ctl.poll();
         let actions = std::mem::take(&mut ctl.actions);
+        let pressed = ctl.pressed.take();
         let moved = match (analog.steering, self.last_ctl_steer) {
             (Some(x), Some(x0)) => (x - x0).abs() > 0.02,
             _ => false,
@@ -158,6 +159,9 @@ impl App {
                 .unwrap_or(0.0),
             dt,
         });
+        if let Some((device, n)) = pressed.filter(|_| self.key_capture.is_some()) {
+            self.capture_button(&device, n);
+        }
         // Steering as Omsi.exe has it (0x6f4284..0x6f447b): the whole width of the
         // window is the full lock from left to right, divided by the speed in tens
         // of km/h above 10 km/h - at 50 km/h the same hand movement turns the wheel a

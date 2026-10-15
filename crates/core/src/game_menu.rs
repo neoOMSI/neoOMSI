@@ -475,6 +475,17 @@ impl App {
         }
     }
 
+    /// Binds a controller button pressed while a binding waits for a key (#407).
+    pub(crate) fn capture_button(&mut self, device: &str, n: usize) {
+        let Some((sec, idx)) = self.key_capture.take() else {
+            return;
+        };
+        if let Some(name) = self.keybind_name(sec, idx) {
+            crate::lab_pads::bind_pressed(self.controllers.as_mut(), device, n, &name);
+        }
+        self.reopen_keys(sec, idx);
+    }
+
     /// The action name of the list row that is entry `idx` of section `sec`.
     fn keybind_name(&self, sec: usize, idx: usize) -> Option<String> {
         if sec == 2 {
@@ -528,6 +539,14 @@ impl App {
     }
 
     pub(crate) fn keybind_edit(&mut self, sec: usize, idx: usize, name: &str, edit: KeyEdit) {
+        // (clearing also unbinds its controller buttons)
+        if matches!(edit, KeyEdit::Clear)
+            && crate::lab_pads::unbind(self.controllers.as_mut(), name)
+            && sec == 2
+        {
+            self.reopen_keys(sec, idx);
+            return;
+        }
         let section = ["vehicles", "game", "vehicles"][sec.min(2)];
         let mut v = match omsi_launcher_lib::get_keybindings() {
             Ok(v) => v,

@@ -290,3 +290,41 @@ fn a_reversed_steering_axis_reverses_its_motor_force_too() {
     assert!(!super::force_axis_reversed(Some(&wheel), Some(1)));
     assert!(!super::force_axis_reversed(Some(&wheel), None));
 }
+
+#[test]
+fn a_button_pressed_for_a_key_binding_takes_the_action_over() {
+    use super::{DeviceCfg, Func, bind_button, unbind_action};
+    let mut devices = vec![DeviceCfg {
+        name: "Xbox Wireless Controller".into(),
+        buttons: vec![("Indicator_Left".into(), "0".into())],
+        ..Default::default()
+    }];
+    bind_button(
+        &mut devices,
+        "Xbox Wireless Controller",
+        true,
+        4,
+        "indicator_left",
+    );
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].buttons[0].0, "");
+    assert_eq!(devices[0].buttons[4].0, "indicator_left");
+    assert_eq!(devices[0].buttons[2].1, "0");
+
+    // an unknown pad is added, its sticks untouched
+    bind_button(&mut devices, "Wireless Gamepad", true, 1, "horn");
+    assert_eq!(devices[1].name, "Wireless Gamepad");
+    assert_eq!(devices[1].buttons[1].0, "horn");
+    assert_eq!(devices[1].axes, [None; 8]);
+    // a wheel keeps steering with its X axis
+    bind_button(&mut devices, "Wheel", false, 0, "horn");
+    assert_eq!(devices[2].axes[0], Some((Func::Steering, false)));
+
+    assert!(unbind_action(&mut devices, "Horn"));
+    assert!(
+        devices
+            .iter()
+            .all(|d| d.buttons.iter().all(|b| b.0 != "horn"))
+    );
+    assert!(!unbind_action(&mut devices, "horn"));
+}

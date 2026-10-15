@@ -15,6 +15,9 @@ impl Controllers {
             if self.off(&name) {
                 continue;
             }
+            if down {
+                self.pressed = Some((name.clone(), n));
+            }
             if let Some(action) = find_device_cfg(&self.cfg, &name)
                 .and_then(|d| d.buttons.get(n))
                 .filter(|a| !a.0.is_empty())

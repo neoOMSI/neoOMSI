@@ -1067,8 +1067,8 @@
         "group_driving": "Driving and the bus",
         "group_vr": "Headset (VR)",
         "group_scripted": "Scripted (this vehicle)",
-        "press_key": "press a key...",
-        "press_key_desc": "Press Escape to keep the current key",
+        "press_key": "press a key or button...",
+        "press_key_desc": "Press a key or a controller button, or Escape to keep the current binding",
         "not_set": "Not set",
         "no_match": "No matches",
         "no_match_desc": "Try another name or key"

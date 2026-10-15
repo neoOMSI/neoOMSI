@@ -47,6 +47,8 @@ pub struct Controllers {
     pub steer_gain: f32,
     /// Key actions of buttons pressed (true) and released (false) since the last poll.
     pub actions: Vec<(String, bool)>,
+    /// The last button pressed since the last poll (for the Key bindings page, #407).
+    pub pressed: Option<(String, usize)>,
     /// Devices told about in the log (and on the screen) as not set up.
     announced: Vec<String>,
     /// A message for the screen: a wheel that is not set up.
@@ -95,6 +97,7 @@ impl Controllers {
         if !focused {
             self.steer = None;
             self.actions.clear();
+            self.pressed = None;
             self.ff_source_logged = None;
         }
     }
@@ -129,6 +132,7 @@ impl Controllers {
             steer_gain: 1.0,
             enabled: true,
             actions: Vec::new(),
+            pressed: None,
             announced: Vec::new(),
             notice: None,
             steer: None,

@@ -7,6 +7,8 @@ pub(crate) struct KeyView<'a> {
     pub searching: bool,
     pub capture: Option<(usize, usize)>,
     pub scripted: Vec<String>,
+    /// Bound controller buttons: (action in lower case, button name).
+    pub pads: Vec<(String, String)>,
 }
 
 impl KeyView<'_> {
@@ -16,7 +18,31 @@ impl KeyView<'_> {
             searching: app.key_search,
             capture: app.key_capture,
             scripted: app.scripted_names(),
+            pads: crate::lab_pads::bound_buttons(app.controllers.as_ref()),
         }
+    }
+
+    fn pad(&self, action: &str) -> Vec<&str> {
+        let action = action.to_lowercase();
+        self.pads
+            .iter()
+            .filter(|(a, _)| *a == action)
+            .map(|(_, b)| b.as_str())
+            .collect()
+    }
+}
+
+/// A binding's key and buttons (" | ": key names can contain " / ").
+fn bound(key: Option<String>, pad: &[&str]) -> String {
+    let all: Vec<&str> = key
+        .as_deref()
+        .into_iter()
+        .chain(pad.iter().copied())
+        .collect();
+    if all.is_empty() {
+        tx("pause.page.keys.not_set")
+    } else {
+        all.join(" | ")
     }
 }
 
@@ -95,6 +121,7 @@ pub(crate) fn key_rows(root: &std::path::Path, view: &KeyView) -> Vec<(String, S
                 || view.capture.is_some_and(|c| c.0 == 2)
                 || names.key_label(n).to_lowercase().contains(&q)
                 || n.to_lowercase().contains(&q)
+                || view.pad(n).iter().any(|b| b.to_lowercase().contains(&q))
         })
         .collect();
     if !scripted.is_empty() {
@@ -116,7 +143,7 @@ pub(crate) fn key_rows(root: &std::path::Path, view: &KeyView) -> Vec<(String, S
                 ));
             } else {
                 out.push((
-                    row(&label, 'k', &tx("pause.page.keys.not_set"), "", None),
+                    row(&label, 'k', &bound(None, &view.pad(&action)), "", None),
                     id,
                 ));
             }
@@ -132,6 +159,7 @@ pub(crate) fn key_rows(root: &std::path::Path, view: &KeyView) -> Vec<(String, S
                     || names.key_label(&b.2).to_lowercase().contains(&q)
                     || b.2.to_lowercase().contains(&q)
                     || crate::keys::key_name(b.3, b.4).to_lowercase().contains(&q)
+                    || view.pad(&b.2).iter().any(|p| p.to_lowercase().contains(&q))
             })
             .collect();
         if members.is_empty() {
@@ -166,11 +194,10 @@ pub(crate) fn key_rows(root: &std::path::Path, view: &KeyView) -> Vec<(String, S
                 ));
                 continue;
             }
-            let value = if scan == 0 {
-                tx("pause.page.keys.not_set")
-            } else {
-                crate::keys::key_name(scan, m)
-            };
+            let value = bound(
+                (scan != 0).then(|| crate::keys::key_name(scan, m)),
+                &view.pad(action),
+            );
             let desc = if clash.is_empty() {
                 String::new()
             } else {
@@ -195,4 +222,19 @@ pub(crate) fn key_rows(root: &std::path::Path, view: &KeyView) -> Vec<(String, S
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bound;
+
+    #[test]
+    fn a_binding_shows_its_key_and_its_buttons() {
+        assert_eq!(
+            bound(Some("Ctrl+K".into()), &["LB", "Button 9"]),
+            "Ctrl+K | LB | Button 9"
+        );
+        assert_eq!(bound(None, &["D-pad up"]), "D-pad up");
+        assert_eq!(bound(Some("K".into()), &[]), "K");
+    }
 }

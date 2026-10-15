@@ -84,6 +84,7 @@ pub fn page(l: &mut Launcher, area: Rect) {
     keep_pads(l);
     watch_pax(l);
     take_key(l);
+    take_button(l);
     if l.settings.built.is_none_or(|t| t.elapsed() > REBUILD) {
         l.settings.groups = build(l);
         l.settings.built = Some(Instant::now());
@@ -246,7 +247,22 @@ fn take_key(l: &mut Launcher) {
     );
 }
 
+/// Binds a controller button pressed while a binding waits for a key (#407).
+fn take_button(l: &mut Launcher) {
+    let Some((device, n)) = l.settings.pads.as_mut().and_then(|p| p.pressed.take()) else {
+        return;
+    };
+    let Some((_, _, name)) = l.settings.capture.take() else {
+        return;
+    };
+    crate::lab_pads::bind_pressed(l.settings.pads.as_mut(), &device, n, &name);
+    l.settings.built = None;
+}
+
 fn edit_key(l: &mut Launcher, sec: usize, idx: usize, name: &str, edit: crate::game_menu::KeyEdit) {
+    if matches!(edit, crate::game_menu::KeyEdit::Clear) {
+        crate::lab_pads::unbind(l.settings.pads.as_mut(), name);
+    }
     let section = ["vehicles", "game"][sec.min(1)];
     let saved = core::get_keybindings().and_then(|mut v| {
         if !crate::game_menu::edit_binding(&mut v, section, idx, name, edit) {
@@ -273,6 +289,7 @@ fn build(l: &Launcher) -> Vec<Group> {
             searching: false,
             capture: v.capture.as_ref().map(|c| (c.0, c.1)),
             scripted: Vec::new(),
+            pads: crate::lab_pads::bound_buttons(v.pads.as_ref()),
         },
     };
     let mut groups: Vec<Group> = options_groups(&host)
