@@ -83,3 +83,78 @@ fn chat_filter_stars_out_swearing() {
         "next stop Rathaus Spandau"
     );
 }
+
+/// #141: the timetable and the info bar fade with the opacity setting, their texts outlined.
+#[test]
+fn timetable_and_info_bar_follow_the_opacity_setting() {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = wgpu::Backends::NOOP;
+    desc.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+    let r = pollster::block_on(Renderer::new_with(
+        &wgpu::Instance::new(desc),
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        ::render::RenderOptions {
+            msaa: 1,
+            ssao: false,
+            no_enhanced: true,
+            shadow_size: 512,
+            ..Default::default()
+        },
+    ))
+    .unwrap();
+    let cards = |setting: f32| {
+        let mut ui = Ui::new().unwrap();
+        let mut scene = r.new_scene();
+        let mut f = Frame::bare(1.0, 1.0, backdrop(setting), 1920.0, 1080.0, (0.0, 0.0));
+        f.timetable = Some((
+            "2 > 2 SALERIN".into(),
+            (0..6)
+                .map(|k| (format!("Stop {k}"), format!("11:4{k}"), (k == 1) as u8))
+                .collect(),
+        ));
+        f.info = Some("12:00:53\u{1f}0 km/h\u{1f}Next stop: Beaulieu".into());
+        ui.draw(&r, &mut scene, &f, 0.016);
+        let keys = ui.text.labels.keys();
+        let card = keys
+            .clone()
+            .filter(|k| k.0.starts_with('\0') && k.2[..3] == OPT_CARD[..3])
+            .map(|k| k.2[3])
+            .collect::<Vec<u8>>();
+        let outline = keys.filter(|k| k.0 == "Stop 2").map(|k| k.2[3]).collect::<Vec<u8>>();
+        (card, outline)
+    };
+    let (thin, outline) = cards(0.2);
+    assert!(!thin.is_empty());
+    assert!(thin.iter().all(|&a| a < 100), "{thin:?}");
+    assert!(outline.len() == 1 && outline[0] > 100, "{outline:?}");
+    let (full, outline) = cards(1.0);
+    assert!(!full.is_empty() && full.iter().all(|&a| a == 255), "{full:?}");
+    assert_eq!(outline, [0]);
+}
+
+/// A stripe on a see-through card lightens it as on the solid one, not darker.
+#[test]
+fn stripes_on_a_see_through_card_lighten_it() {
+    assert_eq!(on_card(OPT_ROW, 1.0), OPT_ROW);
+    for c in [OPT_ROW, OPT_GROUP_ON, OPT_LINE] {
+        let v = on_card(c, 0.3);
+        assert_eq!(v[..3], [255, 255, 255]);
+        let over = mix(OPT_CARD, [255, 255, 255, 255], v[3] as f32 / 255.0);
+        for i in 0..3 {
+            assert!((over[i] as i32 - c[i] as i32).abs() <= 2, "{c:?}: {over:?}");
+        }
+    }
+}
+
+/// A card: border at the edge, fill inside, empty corners.
+#[test]
+fn a_card_is_its_fill_inside_a_one_pixel_border() {
+    let (fill, border) = ([18, 18, 20, 77], [40, 40, 44, 77]);
+    let px = super::shapes::card_pixels(40, 30, 8.0, fill, border);
+    let at = |x: usize, y: usize| &px[(y * 40 + x) * 4..(y * 40 + x) * 4 + 4];
+    assert_eq!(at(20, 15), fill);
+    assert_eq!(at(20, 0), border);
+    assert_eq!(at(0, 15), border);
+    assert_eq!(at(0, 0)[3], 0);
+}

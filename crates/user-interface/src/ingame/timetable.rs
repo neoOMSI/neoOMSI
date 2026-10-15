@@ -32,17 +32,12 @@ impl Ui {
         };
         let x = (f.width - w - 16.0 * s - beside).max(16.0 * s);
         let y = top;
-        self.text.flat = true;
+        // outlined texts when see-through
+        self.text.flat = self.text.backdrop >= 1.0;
         let radius = CARD_R * s;
-        self.text.rounded(
-            r,
-            scene,
-            [x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0],
-            radius + 1.0,
-            OPT_LINE,
-        );
         self.text
-            .rounded(r, scene, [x, y, x + w, y + h], radius, OPT_CARD);
+            .card(r, scene, [x, y, x + w, y + h], radius, OPT_CARD, OPT_LINE);
+        let bg = self.text.backdrop;
         let tpx = (17.0 * s) as u32;
         let t = self.text.label(
             r,
@@ -58,7 +53,7 @@ impl Ui {
             scene,
             [x, hair, x + w, hair + 1.0_f32.max(s).round()],
             0.0,
-            OPT_LINE,
+            on_card(OPT_LINE, bg),
         );
         let time_w = rows
             .iter()
@@ -71,11 +66,11 @@ impl Ui {
             let ry = (hair + 4.0 * s + rh * k as f32).round();
             let rc = [x, ry, x + w, ry + rh];
             if *state == 1 {
-                self.text.rounded(r, scene, rc, 0.0, OPT_GROUP_ON);
+                self.text.rounded(r, scene, rc, 0.0, on_card(OPT_GROUP_ON, bg));
                 self.text
                     .rounded(r, scene, [x, ry, x + 4.0 * s, ry + rh], 0.0, ACCENT);
             } else if k % 2 == 1 {
-                self.text.rounded(r, scene, rc, 0.0, OPT_ROW);
+                self.text.rounded(r, scene, rc, 0.0, on_card(OPT_ROW, bg));
             }
             let (tc, nc) = match state {
                 0 => (MUTED, MUTED),
@@ -98,7 +93,7 @@ impl Ui {
                     scene,
                     [x + 16.0 * s, ry + rh - line, x + w - 16.0 * s, ry + rh],
                     0.0,
-                    OPT_LINE,
+                    on_card(OPT_LINE, bg),
                 );
             }
         }

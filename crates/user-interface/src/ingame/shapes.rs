@@ -338,6 +338,43 @@ impl TextCache {
         ));
     }
 
+    /// A card of `fill` in a one-pixel `border` around `rect`, faded by `backdrop`. See-through,
+    /// it is one texture, so the border does not show through the card.
+    pub(super) fn card(
+        &mut self,
+        r: &Renderer,
+        scene: &mut Scene,
+        rect: [f32; 4],
+        radius: f32,
+        fill: [u8; 4],
+        border: [u8; 4],
+    ) {
+        let outer = [rect[0] - 1.0, rect[1] - 1.0, rect[2] + 1.0, rect[3] + 1.0];
+        let (fill, border) = (fade(fill, self.backdrop), fade(border, self.backdrop));
+        let [x0, y0, x1, y1] = outer.map(f32::round);
+        let (w, h) = (x1 - x0, y1 - y0);
+        if self.backdrop >= 1.0 || w.min(h) < 12.0 || w * h > 4_000_000.0 {
+            self.rounded(r, scene, outer, radius + 1.0, border);
+            self.rounded(r, scene, rect, radius, fill);
+            return;
+        }
+        let rad = (radius + 1.0)
+            .round()
+            .min((w * 0.5).floor())
+            .min((h * 0.5).floor())
+            .max(0.0);
+        let (wi, hi) = (w as u32, h as u32);
+        let key = (
+            format!("\u{0}card{wi}x{hi}r{}b{border:?}", rad as u32),
+            0,
+            fill,
+        );
+        let tex = self.cached(r, scene, key, (wi, hi), || {
+            card_pixels(wi, hi, rad, fill, border)
+        });
+        scene.overlays.push((tex, [x0, y0, x1, y1]));
+    }
+
     pub(super) fn rounded(
         &mut self,
         r: &Renderer,
@@ -393,4 +430,29 @@ impl TextCache {
         scene.overlays.push((bl, [x0, y1 - rad, x0 + rad, y1]));
         scene.overlays.push((br, [x1 - rad, y1 - rad, x1, y1]));
     }
+}
+
+/// The pixels of a `TextCache::card`.
+pub(super) fn card_pixels(w: u32, h: u32, rad: f32, fill: [u8; 4], border: [u8; 4]) -> Vec<u8> {
+    let mut data = vec![0u8; (w * h * 4) as usize];
+    for py in 0..h {
+        for px in 0..w {
+            let d = rr_dist(
+                px as f32 + 0.5,
+                py as f32 + 0.5,
+                0.0,
+                0.0,
+                w as f32,
+                h as f32,
+                rad,
+            );
+            let outer = (0.5 - d).clamp(0.0, 1.0);
+            let inner = (-0.5 - d).clamp(0.0, 1.0);
+            let c = mix(border, fill, inner);
+            let o = ((py * w + px) * 4) as usize;
+            data[o..o + 3].copy_from_slice(&c[..3]);
+            data[o + 3] = (c[3] as f32 * outer).round() as u8;
+        }
+    }
+    data
 }

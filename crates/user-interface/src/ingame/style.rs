@@ -64,6 +64,19 @@ pub(super) fn fade(c: [u8; 4], k: f32) -> [u8; 4] {
     ]
 }
 
+/// `c` over an `OPT_CARD` card faded by `k`: on a see-through card a white veil lightening it
+/// as much, since a faded `c` would darken the picture behind a second time.
+pub(super) fn on_card(c: [u8; 4], k: f32) -> [u8; 4] {
+    if k >= 1.0 {
+        return c;
+    }
+    let lift = (0..3)
+        .map(|i| (c[i] as f32 - OPT_CARD[i] as f32) / (255.0 - OPT_CARD[i] as f32))
+        .sum::<f32>()
+        / 3.0;
+    [255, 255, 255, (lift.clamp(0.0, 1.0) * 255.0).round() as u8]
+}
+
 /// `c` as a text colour (no outline).
 pub(super) fn txt(c: [u8; 4]) -> [u8; 4] {
     [c[0], c[1], c[2], 0]

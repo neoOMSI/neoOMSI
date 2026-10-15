@@ -27,7 +27,8 @@ impl Ui {
         if cells.is_empty() {
             return;
         }
-        self.text.flat = true;
+        // outlined texts when see-through
+        self.text.flat = self.text.backdrop >= 1.0;
         let px = (15.0 * s) as u32;
         let pad = 14.0 * s;
         let h = (34.0 * s).round();
@@ -53,15 +54,9 @@ impl Ui {
         let x = ((f.width - w) * 0.5).round();
         let y = (8.0 * s).round();
         let radius = CARD_R * s;
-        self.text.rounded(
-            r,
-            scene,
-            [x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0],
-            radius + 1.0,
-            OPT_LINE,
-        );
         self.text
-            .rounded(r, scene, [x, y, x + w, y + h], radius, OPT_CARD);
+            .card(r, scene, [x, y, x + w, y + h], radius, OPT_CARD, OPT_LINE);
+        let bg = self.text.backdrop;
         let line = 1.0_f32.max(s).round();
         let mut cx = x;
         for (i, ((cell, tone), cw)) in cells.iter().zip(widths.iter()).enumerate() {
@@ -71,7 +66,7 @@ impl Ui {
                     scene,
                     [cx, y + 8.0 * s, cx + line, y + h - 8.0 * s],
                     0.0,
-                    OPT_LINE,
+                    on_card(OPT_LINE, bg),
                 );
             }
             let color = tone.unwrap_or(if i == 0 { txt(ACCENT) } else { WHITE });
