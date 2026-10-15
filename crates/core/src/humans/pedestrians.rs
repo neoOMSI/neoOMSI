@@ -51,6 +51,9 @@ impl Leg {
     }
 }
 
+/// Pavement (m) a walk from a stop needs around its end to go on strolling.
+const ROAM_REACH: f32 = 60.0;
+
 /// A walk along the pavement network.
 #[derive(Debug, Clone)]
 pub(super) struct PedWalk {
@@ -164,8 +167,7 @@ impl PedNet {
         self.lengths.get(&lane).copied()
     }
 
-    /// Leave the stop along a finite, non-repeating route. A dead end is a place to
-    /// stop, rather than an instruction to shuttle back through the arriving crowd.
+    /// Leave the stop along a finite, non-repeating route (a dead end, or 30 m).
     pub(super) fn departure_route(&self, net: &Network, first: Leg, mut pick: u64) -> Vec<Leg> {
         let mut legs = vec![first];
         let mut lanes: HashSet<usize> = [first.lane].into_iter().collect();
@@ -210,6 +212,42 @@ impl PedNet {
             legs.push(next);
         }
         legs
+    }
+
+    /// Whether the paths joined to `node` add up to `metres`, a lane each way counted once.
+    pub(super) fn reaches(&self, net: &Network, node: usize, metres: f32) -> bool {
+        let mut seen = HashSet::new();
+        let mut paths: Vec<(usize, usize, f32)> = Vec::new();
+        let mut todo = vec![node];
+        let mut nodes: HashSet<usize> = [node].into_iter().collect();
+        let mut total = 0.0;
+        while let Some(n) = todo.pop() {
+            for &(lane, forward) in self.out.get(n).map(|v| v.as_slice()).unwrap_or(&[]) {
+                if !seen.insert(lane) {
+                    continue;
+                }
+                let Some(&(a, b)) = self.ends.get(&lane) else {
+                    continue;
+                };
+                let length = net.lanes[lane].length();
+                let key = (a.min(b), a.max(b));
+                if !paths
+                    .iter()
+                    .any(|&(x, y, l)| (x, y) == key && (l - length).abs() < 1.0)
+                {
+                    paths.push((key.0, key.1, length));
+                    total += length;
+                    if total >= metres {
+                        return true;
+                    }
+                }
+                let other = if forward { b } else { a };
+                if nodes.insert(other) {
+                    todo.push(other);
+                }
+            }
+        }
+        false
     }
 
     /// The junction at `p`, a new one when there is none within a metre.
@@ -507,22 +545,30 @@ impl Humans {
         match (lane, self.walking.ped.as_ref(), net) {
             (Some((l, s)), Some(pn), Some(net)) if pn.lane_length(l).is_some() => {
                 let len = pn.lane_length(l).unwrap();
-                let fwd = if s <= 1.0 {
-                    true
+                let route_to = |fwd: bool| {
+                    let leg = Leg {
+                        lane: l,
+                        a: s,
+                        b: if fwd { len } else { 0.0 },
+                    };
+                    pn.departure_route(net, leg, r1)
+                };
+                let walked = |r: &[Leg]| r.iter().map(Leg::len).sum::<f32>();
+                let route = if s <= 1.0 {
+                    route_to(true)
                 } else if s >= len - 1.0 {
-                    false
+                    route_to(false)
                 } else {
-                    (r1 & 1) == 0
+                    // away from a dead end close by, not back through the alighting crowd
+                    let (a, b) = (route_to((r1 & 1) == 0), route_to((r1 & 1) != 0));
+                    if walked(&a) < 30.0 && walked(&b) > walked(&a) {
+                        b
+                    } else {
+                        a
+                    }
                 };
-                let target_b = if fwd { len } else { 0.0 };
                 let side = ((r2 % 7) as f32 - 3.0) * 0.12;
-                let leg = Leg {
-                    lane: l,
-                    a: s,
-                    b: target_b,
-                };
-                p.state =
-                    State::Strolling(PedWalk::new(pn.departure_route(net, leg, r1), false, side));
+                p.state = State::Strolling(PedWalk::new(route, false, side));
                 p.activity = Activity::Walk;
             }
             _ => {
@@ -635,9 +681,18 @@ impl Humans {
         if walk.s >= leg.len() - 0.35 || walk.held > 0.0 {
             // at the end of the leg: which way on
             if walk.leg + 1 >= walk.legs.len() {
+                // the way from the stop is walked: stroll on (#432), unless the paths
+                // there are too short to do more than pace up and down
                 if !walk.roam {
-                    walk.leg += 1;
-                    return Want::stand(None, Activity::Stand);
+                    let roomy = ped.as_ref().is_some_and(|p| {
+                        p.end_node(net, &leg)
+                            .is_some_and(|n| p.reaches(net, n, ROAM_REACH))
+                    });
+                    if !roomy {
+                        walk.leg += 1;
+                        return Want::stand(None, Activity::Stand);
+                    }
+                    walk.roam = true;
                 }
                 let pick = self.rand();
                 let next = ped

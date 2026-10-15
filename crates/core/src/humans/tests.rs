@@ -574,6 +574,96 @@ fn pavement_corners_are_joined_and_routed() {
     assert!(turn.a > turn.b);
 }
 
+/// A dead end 20 m up from a junction, and 60 m of path down from it.
+fn dead_end_pavement() -> Network {
+    let mut net = Network::default();
+    net.lanes.push(lane(
+        vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 20.0, 0.0)],
+        LaneKind::Sidewalk,
+    ));
+    net.lanes.push(lane(
+        vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, -60.0, 0.0)],
+        LaneKind::Sidewalk,
+    ));
+    net.link(1.5);
+    net
+}
+
+/// #432: people off a bus turn round at a dead end instead of standing there.
+#[test]
+fn a_walk_from_the_stop_turns_round_at_a_dead_end() {
+    let (root, ty) = reset_test_human();
+    let net = dead_end_pavement();
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    h.walking.ped = Some(PedNet::build(&net));
+    let mut walk = PedWalk::new(
+        vec![Leg {
+            lane: 0,
+            a: 12.0,
+            b: 20.0,
+        }],
+        false,
+        0.0,
+    );
+    walk.s = 8.0;
+    let mut person = reset_test_person(1, &ty, State::Standing, Place::Ground);
+    person.position = DVec3::new(0.0, 20.0, 0.0);
+    h.people.push(person);
+    let want = h.walk_want(0, &mut walk, &net, None, &[], 0.1);
+    assert!(walk.roam);
+    assert_eq!(walk.leg, 1);
+    let back = walk.legs[1];
+    assert_eq!(back.lane, 0);
+    assert!(back.a > back.b, "{back:?}");
+    assert!(want.vel.y < 0.0, "walks back: {:?}", want.vel);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_path_with_a_lane_each_way_is_counted_once() {
+    let mut net = Network::default();
+    let (a, b) = (DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 35.0, 0.0));
+    net.lanes.push(lane(vec![a, b], LaneKind::Sidewalk));
+    net.lanes.push(lane(vec![b, a], LaneKind::Sidewalk));
+    net.link(1.5);
+    let ped = PedNet::build(&net);
+    let end = ped.ends[&0].1;
+    assert!(ped.reaches(&net, end, 30.0));
+    assert!(!ped.reaches(&net, end, 60.0));
+    net.lanes.push(lane(
+        vec![a, DVec3::new(-30.0, 0.0, 0.0)],
+        LaneKind::Sidewalk,
+    ));
+    let ped = PedNet::build(&net);
+    assert!(ped.reaches(&net, end, 60.0));
+}
+
+/// #432: people off a bus leave away from a dead end 8 m away.
+#[test]
+fn people_off_a_bus_walk_away_from_a_dead_end_close_by() {
+    let (root, ty) = reset_test_human();
+    let net = dead_end_pavement();
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    h.walking.ped = Some(PedNet::build(&net));
+    for id in 0..8 {
+        h.people
+            .push(reset_test_person(id, &ty, State::Standing, Place::Ground));
+        let i = h.people.len() - 1;
+        h.walk_street(i, DVec3::new(0.5, 12.0, 0.0), 0.0, None, Some(&net));
+        let State::Strolling(walk) = &h.people[i].state else {
+            panic!("not walking: {:?}", h.people[i].state);
+        };
+        let first = walk.legs[0];
+        assert_eq!(first.lane, 0);
+        assert!(
+            first.b < first.a,
+            "person {id} heads for the dead end: {first:?}"
+        );
+        assert_eq!(walk.legs.last().unwrap().lane, 1);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn crossings_of_a_pavement_path_are_found() {
     let mut net = Network::default();
