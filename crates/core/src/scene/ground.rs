@@ -305,6 +305,19 @@ impl World {
         Some(terrain.sample(lx, ly) as f64)
     }
 
+    /// Whether a terrain cut took the ground away at world (x, y).
+    pub fn ground_cut_away(&self, x: f64, y: f64) -> bool {
+        let tx = (x / tile_size()).floor() as i32;
+        let ty = (y / tile_size()).floor() as i32;
+        let lx = (x - tx as f64 * tile_size()) as f32;
+        let ly = (y - ty as f64 * tile_size()) as f32;
+        self.surfaces
+            .read()
+            .get(&(tx, ty))
+            .and_then(|s| s.terrain_cut.as_ref().and_then(|c| c.height(lx, ly)))
+            .is_some_and(|h| h.is_none())
+    }
+
     /// The wetness a puddle would use at world (x, y): `wetness` where a road surface is
     /// under the point (the same `[moisture]` ground `enhanced.wgsl`'s reflective puddle
     /// patches sit on), 0 on bare terrain or where no surface is loaded there yet. Approximate

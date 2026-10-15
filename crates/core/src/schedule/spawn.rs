@@ -8,7 +8,34 @@ pub(super) fn comes_at_departure(track: bool, times: &TripTimes) -> bool {
     track && !times.stations.first().is_some_and(|s| s.0 <= 0.0)
 }
 
+/// How far along its track (0..1) a track trip's bus is `elapsed` seconds after its
+/// departure, not counting the time it stands at stations (#101).
+pub(super) fn track_progress(times: &TripTimes, elapsed: f64) -> f64 {
+    let duration = times.duration;
+    let standing = |until: f64| -> f64 {
+        times
+            .stations
+            .iter()
+            .map(|&(a, d)| (d.min(until).min(duration) - a.max(0.0)).max(0.0))
+            .sum()
+    };
+    let moving = duration - standing(duration);
+    if moving <= 1e-3 {
+        return 0.0;
+    }
+    let elapsed = elapsed.clamp(0.0, duration);
+    ((elapsed - standing(elapsed)) / moving).clamp(0.0, 1.0)
+}
+
 impl Schedule {
+    /// Whether the profile has departure `i`'s bus leave its last station after arriving.
+    pub(super) fn stands_at_end(&self, i: usize) -> bool {
+        self.times_of(i)
+            .stations
+            .last()
+            .is_some_and(|&(arrive, depart)| depart > arrive)
+    }
+
     /// Put departure `i` on the road where its bus is at `day_time`: on the part of the route
     /// the loaded tiles have, which is carried on as more tiles come.
     ///
@@ -78,6 +105,8 @@ impl Schedule {
         let (t0, t1) = leg_time(leg);
         let frac = if day_time <= departure || onto.is_some() {
             0.0
+        } else if track {
+            track_progress(&tt, day_time - departure)
         } else {
             ((day_time - t0) / (t1 - t0).max(1e-3)).clamp(0.0, 1.0)
         };
@@ -367,6 +396,7 @@ impl Schedule {
                 .last()
                 .copied();
             let (always, early) = self.special_stops(i);
+            let stand_at_end = self.stands_at_end(i);
             let car = &mut traffic.cars[ci];
             if let Some(k) = car.vehicle.ty.program.str_var("Linie") {
                 car.vehicle.state.str_vars[k as usize] = line.clone();
@@ -381,6 +411,7 @@ impl Schedule {
                 b.last_stop = last_stop;
                 b.always = always;
                 b.serve_early = early;
+                b.stand_at_end = stand_at_end;
             }
             let id = car.id;
             self.car_departure.insert(id, i);
@@ -606,6 +637,7 @@ impl Schedule {
             .last()
             .copied();
         let (always, early) = self.special_stops(i);
+        let stand_at_end = self.stands_at_end(i);
         let car = &mut traffic.cars[ci];
         // on its layover only when it stands at its first stop now (the trip's first station
         // may lie on a part of the track that is not loaded): it waits there for its departure
@@ -621,6 +653,7 @@ impl Schedule {
             b.last_stop = last_stop;
             b.always = always;
             b.serve_early = early;
+            b.stand_at_end = stand_at_end;
         }
         // the bus scripts read the line/terminus for their displays
         if let Some(i) = ty.program.str_var("Linie") {

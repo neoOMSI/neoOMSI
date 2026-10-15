@@ -1132,3 +1132,53 @@ fn the_day_before_new_year() {
     c.day_of_year = 60;
     assert_eq!(day_before(&c).day_of_year, 59);
 }
+
+/// #101: a detector bus standing at its stop from 20:00 to 24:00 is due at a 23:30 load.
+#[test]
+fn a_long_trip_under_way_is_put_on_the_road_when_the_map_loads() {
+    let mut s = saturday_after_midnight(&[(20.0 * 3600.0, SATURDAY)]);
+    s.times[0][0] = TripTimes {
+        stations: vec![(0.0, 4.0 * 3600.0)],
+        stops: vec![true],
+        kinds: vec![0],
+        duration: 4.0 * 3600.0,
+    };
+    let tod = 23.5 * 3600.0;
+    assert_eq!(s.due(tod, 20.0 * 60.0), vec![(0, DAY)]);
+    assert!(s.due(tod, 2.5).is_empty());
+    assert!(s.due(24.5 * 3600.0, 20.0 * 60.0).is_empty());
+}
+
+#[test]
+fn a_track_trips_bus_does_not_move_while_it_stands_at_a_stop() {
+    let detector = TripTimes {
+        stations: vec![(0.0, 4.0 * 3600.0)],
+        stops: vec![true],
+        kinds: vec![0],
+        duration: 4.0 * 3600.0,
+    };
+    assert_eq!(spawn::track_progress(&detector, 3.5 * 3600.0), 0.0);
+    // 10 min driving, 2 min at a stop, 10 min driving
+    let train = TripTimes {
+        stations: vec![(0.0, 0.0), (600.0, 720.0), (1320.0, 1320.0)],
+        stops: vec![true; 3],
+        kinds: vec![0; 3],
+        duration: 1320.0,
+    };
+    assert!((spawn::track_progress(&train, 300.0) - 0.25).abs() < 1e-9);
+    assert!((spawn::track_progress(&train, 660.0) - 0.5).abs() < 1e-9);
+    assert!((spawn::track_progress(&train, 1020.0) - 0.75).abs() < 1e-9);
+    assert_eq!(spawn::track_progress(&train, 2000.0), 1.0);
+}
+
+#[test]
+fn a_trip_of_the_day_before_still_under_way_is_put_on_the_road_when_the_map_loads() {
+    let mut s = saturday_after_midnight(&[(23.0 * 3600.0, FRIDAY), (23.0 * 3600.0, SATURDAY)]);
+    for t in &mut s.times[0] {
+        t.duration = 5400.0;
+    }
+    // at 0:10 Friday's 23:00 (90 min) still runs; Saturday's tour did not run Friday
+    assert_eq!(s.due(10.0 * 60.0, 20.0 * 60.0), vec![(0, 0.0)]);
+    assert!(s.due(10.0 * 60.0, 2.5).is_empty());
+    assert!(s.due(40.0 * 60.0, 20.0 * 60.0).is_empty());
+}

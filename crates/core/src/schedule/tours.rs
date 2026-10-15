@@ -10,8 +10,13 @@ impl Schedule {
 
     /// Whether departure `i` is a trip after 24:00 of a tour that ran the day before.
     pub(super) fn runs_eve(&self, i: usize) -> bool {
-        let d = &self.departures[i];
-        d.time >= DAY && d.mask & self.eve_bits.0 != 0 && d.mask & self.eve_bits.1 != 0
+        self.departures[i].time >= DAY && self.ran_day_before(i)
+    }
+
+    /// Whether departure `i`'s tour ran the day before.
+    pub(super) fn ran_day_before(&self, i: usize) -> bool {
+        let m = self.departures[i].mask;
+        m & self.eve_bits.0 != 0 && m & self.eve_bits.1 != 0
     }
 
     /// The days (`Departure::base`) departure `i` runs on now: today and/or the day before.

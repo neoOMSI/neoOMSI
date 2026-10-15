@@ -95,6 +95,8 @@ pub struct BusService {
     /// more than `EARLY_STOP_SHORT` early (`schedule::TripTimes::kinds`).
     pub always: Vec<i64>,
     pub serve_early: Vec<i64>,
+    /// It waits at its last station for the profile's departure there, however long (#101).
+    pub stand_at_end: bool,
 }
 
 /// The side the bus pulls out towards: left (1) from a bay on the right, else right (2).
@@ -172,6 +174,7 @@ impl BusService {
             last_stop: None,
             always: Vec::new(),
             serve_early: Vec::new(),
+            stand_at_end: false,
         }
     }
 
@@ -243,12 +246,16 @@ impl BusService {
     /// ones its timetable says it always serves, and any stop it would reach more than
     /// `EARLY_STOP` early (`EARLY_STOP_SHORT` at a stop marked for it).
     fn must_serve(&self, stop: &Stop, day_time: f64) -> bool {
-        let last = (self.stops.len() == 1 && !self.route_open) || self.last_stop == Some(stop.id);
+        let last = self.is_last(stop);
         let early = stop.depart - day_time;
         last || self.layover
             || early > EARLY_STOP
             || self.always.contains(&stop.id)
             || (early > EARLY_STOP_SHORT && self.serve_early.contains(&stop.id))
+    }
+
+    fn is_last(&self, stop: &Stop) -> bool {
+        (self.stops.len() == 1 && !self.route_open) || self.last_stop == Some(stop.id)
     }
 
     /// Arrived at the front stop: what now.
@@ -262,7 +269,15 @@ impl BusService {
             );
         }
         let layover = std::mem::take(&mut self.layover);
-        let limit = if layover { LAYOVER_WAIT } else { EARLY_WAIT };
+        // (a loop line's first stop has the last one's id)
+        let stand = self.stand_at_end && self.stops.len() == 1 && self.is_last(&self.stops[0]);
+        let limit = if stand {
+            f64::INFINITY
+        } else if layover {
+            LAYOVER_WAIT
+        } else {
+            EARLY_WAIT
+        };
         let wait = (depart - ctx.day_time).clamp(0.0, limit);
         self.leave_at = ctx.day_time + wait;
         self.boarding = boarding_time(ctx.id);
@@ -571,6 +586,45 @@ mod tests {
         s.serve_early = vec![2];
         assert!(!s.must_serve(&stop(2, 200.0), 190.0));
         assert!(s.must_serve(&stop(2, 200.0), 170.0));
+    }
+
+    /// #101: Städtedreieck's light detector buses stand at their last stop for hours.
+    #[test]
+    fn a_bus_stands_at_its_last_stop_until_its_departure_there() {
+        let net = Network::default();
+        let ctx = Ctx {
+            net: &net,
+            way: &[],
+            day_time: 1000.0,
+            dt: 0.1,
+            id: 1,
+            stopped: 0.0,
+            passing: false,
+            kerb_swerve: None,
+            wanted: None,
+            debug: false,
+        };
+        let stop = |id: i64, depart: f64| Stop::from_tuple((0, 0.0, 0.0, depart, id, 0.0));
+        for stand_at_end in [false, true] {
+            let mut s = BusService::new(vec![stop(1, 15_400.0)]);
+            s.last_stop = Some(1);
+            s.stand_at_end = stand_at_end;
+            s.arrive(&ctx, 15_400.0, (0, 0.0));
+            let leave = if stand_at_end {
+                15_400.0
+            } else {
+                1000.0 + EARLY_WAIT
+            };
+            assert_eq!(s.leave_at, leave, "stand_at_end {stand_at_end}");
+        }
+        // not before the last stop, nor at a loop line's first
+        for last in [2, 1] {
+            let mut s = BusService::new(vec![stop(1, 15_400.0), stop(2, 16_000.0)]);
+            s.last_stop = Some(last);
+            s.stand_at_end = true;
+            s.arrive(&ctx, 15_400.0, (0, 0.0));
+            assert_eq!(s.leave_at, 1000.0 + EARLY_WAIT, "last stop {last}");
+        }
     }
 
     fn boarding_until_closed(in_doorway: impl Fn(f32) -> bool) -> f32 {

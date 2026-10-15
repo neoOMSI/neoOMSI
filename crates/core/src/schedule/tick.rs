@@ -137,14 +137,27 @@ impl Schedule {
     }
 
     /// The runs not yet `taken` due in the `window` up to `tod`, as (departure, its day's
-    /// `base`): today's, and the day before's trips after 24:00.
+    /// `base`): today's, and the day before's trips after 24:00. While the map loads (a
+    /// window over a minute) every trip still under way counts (#101).
     pub(super) fn due(&self, tod: f64, window: f64) -> Vec<(usize, f64)> {
+        let loading = window > 60.0;
         self.departures
             .iter()
             .enumerate()
             .flat_map(|(i, d)| [0.0, DAY].map(|shift| (i, d.time - shift, self.day_base - shift)))
             .filter(|&(i, t, base)| {
-                t <= tod && t > tod - window && !self.taken(i, base) && self.runs_on(i, base)
+                let reach = if loading {
+                    window.max(self.times_of(i).duration)
+                } else {
+                    window
+                };
+                // (the day before's trip from before 24:00)
+                let runs = if loading && base < self.day_base && self.departures[i].time < DAY {
+                    self.ran_day_before(i)
+                } else {
+                    self.runs_on(i, base)
+                };
+                t <= tod && t > tod - reach && !self.taken(i, base) && runs
             })
             .map(|(i, _, base)| (i, base))
             .collect()
