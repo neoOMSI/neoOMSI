@@ -146,7 +146,8 @@ pub struct MeshDef {
     pub anim_parent: Option<String>,
     pub animations: Vec<Animation>,
     pub visible: Option<(String, f32)>,
-    /// `[illumination]`'s five-bit disable mask (bits 0..4 map OMSI light slots).
+    /// `[illumination]`'s five-bit disable mask (bits 0..4 map OMSI light slots; `0x10`
+    /// disables the mesh's `[illumination_interior]` lighting).
     pub illumination: u8,
     pub illumination_interior: Vec<i32>,
     pub materials: Vec<MaterialDef>,
@@ -157,6 +158,13 @@ pub struct MeshDef {
     /// Compatibility mirror of the last `[terrainhole]` after this mesh. Use
     /// [`Model::terrain_hole_meshes`] to include model-wide and repeated declarations.
     pub terrain_hole: Option<String>,
+}
+
+impl MeshDef {
+    /// Whether this mesh receives the interior lights listed by `[illumination_interior]`.
+    pub fn interior_lights_enabled(&self) -> bool {
+        self.illumination & 0x10 == 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1461,6 +1469,15 @@ mod tests {
         assert_eq!(anims[1].origins, vec![AnimOrigin::RotZ(90.0)]);
         assert_eq!(anims[1].max_speed, 30.0);
         assert_eq!(m.meshes[0].materials[0].texture, "key.bmp");
+    }
+
+    #[test]
+    fn negative_animation_maxspeed_is_parsed() {
+        let model = Model::parse(&CfgFile::from_str(
+            "model.cfg",
+            "[mesh]\na.o3d\n[newanim]\nanim_trans\nspeed\n1\nmaxspeed\n-2.5\n",
+        ));
+        assert_eq!(model.meshes[0].animations[0].max_speed, -2.5);
     }
 
     #[test]

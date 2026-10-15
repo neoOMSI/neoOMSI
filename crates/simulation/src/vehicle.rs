@@ -3268,7 +3268,7 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
                             .parse::<f32>()
                             .ok()
                             .or_else(|| var(v))
-                            .unwrap_or(1.0);
+                            .unwrap_or(0.0);
                         let n = if x.is_finite() {
                             x.round_ties_even()
                         } else {
@@ -3303,22 +3303,25 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
                     props.visible = crate::anim::round_visible(x, *value);
                 }
             }
-            // [illumination_interior] a b c d: the interior lights (by index) lighting this mesh
+            // [illumination_interior] a b c d: the interior lights (by index) lighting this mesh.
+            // [illumination] bit 0x10 disables both their point lights and fallback brightness.
             let mut interior = 0.0f32;
-            for idx in &def.illumination_interior {
-                if let Some(il) = usize::try_from(*idx)
-                    .ok()
-                    .and_then(|i| ty.model.interior_lights.get(i))
-                {
-                    let b = il
-                        .variable
-                        .trim()
-                        .parse::<f32>()
+            if def.interior_lights_enabled() {
+                for idx in &def.illumination_interior {
+                    if let Some(il) = usize::try_from(*idx)
                         .ok()
-                        .or_else(|| var(&il.variable))
-                        .unwrap_or(1.0)
-                        .clamp(0.0, 1.0);
-                    interior = interior.max(b * il.range.clamp(0.0, 1.0));
+                        .and_then(|i| ty.model.interior_lights.get(i))
+                    {
+                        let b = il
+                            .variable
+                            .trim()
+                            .parse::<f32>()
+                            .ok()
+                            .or_else(|| var(&il.variable))
+                            .unwrap_or(1.0)
+                            .clamp(0.0, 1.0);
+                        interior = interior.max(b * il.range.clamp(0.0, 1.0));
+                    }
                 }
             }
             props.interior = interior * 0.5;
@@ -3395,8 +3398,9 @@ impl PropSource {
 #[derive(Debug, Clone, Default)]
 struct MeshPlan {
     slots: usize,
-    /// `[matl_change]` (default 1) and `[matl_lightmap]` (default 1: a variable the bus does not have is on) per slot.
+    /// `[matl_change]` (default 0) per slot.
     night: Vec<(usize, PropSource)>,
+    /// `[matl_lightmap]` (default 1: OMSI leaves an unresolved light-map variable on) per slot.
     light: Vec<(usize, PropSource)>,
     /// `[visible]` variable and value.
     visible: Option<(usize, f32)>,
@@ -3420,6 +3424,7 @@ struct PropsPlan {
     meshes: Vec<MeshPlan>,
     parents: Vec<crate::anim::MeshAnimator>,
     visible: Vec<bool>,
+    visibility_scratch: crate::anim::VisibilityParentsScratch,
     /// Size of the variable table the plan was resolved against (engine variables such
     /// as `Dirt_Norm` join it later, and an `[alphascale]` on one must then find it).
     vars_seen: usize,
@@ -3477,13 +3482,15 @@ impl PropsPlan {
                     .visible
                     .as_ref()
                     .and_then(|(v, value)| var(v).map(|i| (i, *value)));
-                for idx in &def.illumination_interior {
-                    if let Some(il) = usize::try_from(*idx)
-                        .ok()
-                        .and_then(|i| ty.model.interior_lights.get(i))
-                    {
-                        plan.interior
-                            .push((source(&il.variable), il.range.clamp(0.0, 1.0)));
+                if def.interior_lights_enabled() {
+                    for idx in &def.illumination_interior {
+                        if let Some(il) = usize::try_from(*idx)
+                            .ok()
+                            .and_then(|i| ty.model.interior_lights.get(i))
+                        {
+                            plan.interior
+                                .push((source(&il.variable), il.range.clamp(0.0, 1.0)));
+                        }
                     }
                 }
                 plan
@@ -3554,7 +3561,7 @@ impl PropsPlan {
             }
             let mut interior = 0.0f32;
             for &(src, range) in &plan.interior {
-                interior = interior.max(src.value(vars, 0.0).clamp(0.0, 1.0) * range);
+                interior = interior.max(src.value(vars, 1.0).clamp(0.0, 1.0) * range);
             }
             props.interior = interior * 0.5;
             for &(slot, i, boost) in &plan.alpha {
@@ -3570,7 +3577,11 @@ impl PropsPlan {
         }
         self.visible.clear();
         self.visible.extend(out.iter().map(|p| p.visible));
-        crate::anim::apply_visibility_parents(&self.parents, &mut self.visible);
+        crate::anim::apply_visibility_parents_with_scratch(
+            &self.parents,
+            &mut self.visible,
+            &mut self.visibility_scratch,
+        );
         for (props, visible) in out.iter_mut().zip(self.visible.iter().copied()) {
             props.visible = visible;
         }
@@ -4993,6 +5004,30 @@ mod tests {
         }
     }
 
+    fn props_test_vehicle() -> VehicleType {
+        let mut ty = skin_test_vehicle(false);
+        ty.meshes.truncate(1);
+        ty.meshes[0].skin.clear();
+        ty.meshes[0].materials.push(::legacy_o3d::Material {
+            texture: "body.bmp".into(),
+            ..Default::default()
+        });
+        ty.model.meshes.truncate(1);
+        ty.model.meshes[0].materials.push(MaterialDef {
+            texture: "body.bmp".into(),
+            change: Some(("body.bmp".into(), 0, "missing_change".into())),
+            lightmaps: vec![("body.bmp".into(), "missing_lightmap".into())],
+            ..Default::default()
+        });
+        ty.model.meshes[0].illumination_interior.push(0);
+        ty.model.interior_lights.push(::model::InteriorLight {
+            variable: "missing_interior".into(),
+            range: 0.8,
+            ..Default::default()
+        });
+        ty
+    }
+
     /// A three-car train with its last car turned round, lamps as `BR243.osc` (#318).
     #[test]
     fn each_car_of_a_train_sees_how_it_stands_in_the_train() {
@@ -5236,6 +5271,42 @@ mod tests {
         ];
         let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
         assert!((positions[0].x - 4e-5).abs() < 1e-8);
+    }
+
+    #[test]
+    fn unresolved_material_and_interior_variables_use_omsi_defaults() {
+        let ty = props_test_vehicle();
+        let expected = compute_mesh_props(&ty, &|_| None);
+        let mut plan = PropsPlan::default();
+        plan.refresh(&ty, &HashMap::new());
+        let mut actual = Vec::new();
+        plan.apply(&[], &mut actual);
+
+        // OMSI's loader leaves a missing [matl_change] variable at 0 (plain material), but
+        // a missing [matl_lightmap] variable remains on and a missing interior-light index
+        // starts with ison=true.
+        assert_eq!(expected[0].slot_night[0], 0.0);
+        assert_eq!(actual[0].slot_night[0], 0.0);
+        assert_eq!(expected[0].slot_light[0], 1.0);
+        assert_eq!(actual[0].slot_light[0], 1.0);
+        assert!((expected[0].interior - 0.4).abs() < 1e-6);
+        assert!((actual[0].interior - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn illumination_bit_0x10_disables_interior_fallback_brightness() {
+        let mut ty = props_test_vehicle();
+        ty.model.meshes[0].illumination = 0x10;
+
+        let expected = compute_mesh_props(&ty, &|_| None);
+        let mut plan = PropsPlan::default();
+        plan.refresh(&ty, &HashMap::new());
+        let mut actual = Vec::new();
+        plan.apply(&[], &mut actual);
+
+        assert!(!ty.model.meshes[0].interior_lights_enabled());
+        assert_eq!(expected[0].interior, 0.0);
+        assert_eq!(actual[0].interior, 0.0);
     }
 
     #[test]

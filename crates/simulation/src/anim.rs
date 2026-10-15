@@ -100,7 +100,13 @@ impl MeshAnimator {
             }
             if a.max_speed != 0.0 {
                 let max_step = dt * a.max_speed;
-                next = next.clamp(st.value - max_step, st.value + max_step);
+                // Keep OMSI's ordered comparisons instead of `clamp`: the parser accepts
+                // negative maxspeed values, and the original applies the signed bounds in
+                // this order rather than panicking when min > max.
+                let step = next - st.value;
+                let step = if step <= max_step { step } else { max_step };
+                let step = if step >= -max_step { step } else { -max_step };
+                next = st.value + step;
             }
             st.value = next;
             let value = (st.value + a.offset) * a.factor;
@@ -253,6 +259,26 @@ pub fn round_visible(value: f32, expected: f32) -> bool {
 }
 
 pub fn apply_visibility_parents(animators: &[MeshAnimator], visible: &mut [bool]) {
+    apply_visibility_parents_with_scratch(
+        animators,
+        visible,
+        &mut VisibilityParentsScratch::default(),
+    );
+}
+
+/// Reusable storage for parent visibility propagation in the vehicle update path.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct VisibilityParentsScratch {
+    done: Vec<bool>,
+    in_chain: Vec<bool>,
+    chain: Vec<usize>,
+}
+
+pub(crate) fn apply_visibility_parents_with_scratch(
+    animators: &[MeshAnimator],
+    visible: &mut [bool],
+    scratch: &mut VisibilityParentsScratch,
+) {
     let n = animators.len().min(visible.len());
     if !animators[..n]
         .iter()
@@ -260,43 +286,45 @@ pub fn apply_visibility_parents(animators: &[MeshAnimator], visible: &mut [bool]
     {
         return;
     }
-    let mut done = vec![false; n];
-    let mut in_chain = vec![false; n];
-    let mut chain = Vec::with_capacity(n);
+    scratch.done.clear();
+    scratch.done.resize(n, false);
+    scratch.in_chain.clear();
+    scratch.in_chain.resize(n, false);
+    scratch.chain.clear();
     for start in 0..n {
-        chain.clear();
+        scratch.chain.clear();
         let mut current = start;
-        while !done[current] {
-            if in_chain[current] {
-                let cycle_start = chain.iter().position(|&i| i == current).unwrap();
-                if !chain[cycle_start..].iter().all(|&i| visible[i]) {
-                    for &i in &chain[cycle_start..] {
+        while !scratch.done[current] {
+            if scratch.in_chain[current] {
+                let cycle_start = scratch.chain.iter().position(|&i| i == current).unwrap();
+                if !scratch.chain[cycle_start..].iter().all(|&i| visible[i]) {
+                    for &i in &scratch.chain[cycle_start..] {
                         visible[i] = false;
                     }
                 }
-                for &i in &chain[cycle_start..] {
-                    in_chain[i] = false;
-                    done[i] = true;
+                for &i in &scratch.chain[cycle_start..] {
+                    scratch.in_chain[i] = false;
+                    scratch.done[i] = true;
                 }
-                chain.truncate(cycle_start);
+                scratch.chain.truncate(cycle_start);
                 break;
             }
-            in_chain[current] = true;
-            chain.push(current);
+            scratch.in_chain[current] = true;
+            scratch.chain.push(current);
             match animators[current].parent.filter(|&parent| parent < n) {
                 Some(parent) => current = parent,
                 None => break,
             }
         }
-        for &i in chain.iter().rev() {
-            in_chain[i] = false;
-            if done[i] {
+        for &i in scratch.chain.iter().rev() {
+            scratch.in_chain[i] = false;
+            if scratch.done[i] {
                 continue;
             }
             if let Some(parent) = animators[i].parent.filter(|&parent| parent < n) {
                 visible[i] &= visible[parent];
             }
-            done[i] = true;
+            scratch.done[i] = true;
         }
     }
 }
@@ -424,6 +452,27 @@ mod tests {
     }
 
     #[test]
+    fn negative_max_speed_uses_omsi_signed_bounds_without_panicking() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                variable: "v".into(),
+                max_speed: -1.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut animator = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+
+        animator.update(0.5, &[1.0]);
+        assert_eq!(animator.anims[0].2.value, 0.5);
+
+        // OMSI applies the signed upper bound first and the lower bound second. With a
+        // negative bound the latter wins, so the stored value advances by |dt * maxspeed|.
+        animator.update(0.1, &[0.0]);
+        assert!((animator.anims[0].2.value - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
     fn delay_uses_dt_times_delay_and_snaps_above_half() {
         let def = MeshDef {
             animations: vec![Animation {
@@ -490,5 +539,31 @@ mod tests {
         let mut visible = vec![false, true, true];
         apply_visibility_parents(&cycle, &mut visible);
         assert_eq!(visible, [false, false, false]);
+    }
+
+    #[test]
+    fn visibility_parent_scratch_reuses_its_allocated_buffers() {
+        let animators = vec![animator(Some(1)), animator(None), animator(Some(1))];
+        let mut scratch = VisibilityParentsScratch::default();
+        let mut visible = [true, false, true];
+        apply_visibility_parents_with_scratch(&animators, &mut visible, &mut scratch);
+        assert_eq!(visible, [false, false, false]);
+        let capacity = (
+            scratch.done.capacity(),
+            scratch.in_chain.capacity(),
+            scratch.chain.capacity(),
+        );
+
+        let mut visible = [true, true, true];
+        apply_visibility_parents_with_scratch(&animators, &mut visible, &mut scratch);
+        assert_eq!(visible, [true, true, true]);
+        assert_eq!(
+            (
+                scratch.done.capacity(),
+                scratch.in_chain.capacity(),
+                scratch.chain.capacity(),
+            ),
+            capacity
+        );
     }
 }

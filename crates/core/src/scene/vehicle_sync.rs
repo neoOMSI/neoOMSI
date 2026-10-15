@@ -380,11 +380,7 @@ pub(super) fn sync_interior_lamps(
         for (i, _) in render.instances.iter().enumerate() {
             let Some(vm) = ty.meshes.get(i) else { continue };
             let def = &ty.model.meshes[vm.def_index];
-            let set = if def.illumination & 0x10 == 0 {
-                lamp_set(&def.illumination_interior, n)
-            } else {
-                Vec::new()
-            };
+            let set = mesh_interior_lamp_set(def, n);
             if !set.is_empty() {
                 sets.push((i, set));
             }
@@ -434,16 +430,7 @@ pub(super) fn sync_interior_lamps(
     for (first, set) in blocks {
         for (k, &li) in set.iter().enumerate() {
             let il = &ty.model.interior_lights[li];
-            // on or off: OMSI enables the lamp when its variable is 0.5 or more
-            //, there is no dimming
-            let on = il
-                .variable
-                .trim()
-                .parse::<f32>()
-                .ok()
-                .or_else(|| var(&il.variable))
-                .unwrap_or(1.0)
-                >= 0.5;
+            let on = interior_light_on(&il.variable, &var);
             let ic = crate::lights::interior_cfg(li);
             let at = interior_light_position(
                 il.mesh,
@@ -514,6 +501,25 @@ pub(super) fn lamp_set(indices: &[i32], n: usize) -> Vec<usize> {
     set
 }
 
+fn mesh_interior_lamp_set(def: &::model::MeshDef, n: usize) -> Vec<usize> {
+    if def.interior_lights_enabled() {
+        lamp_set(&def.illumination_interior, n)
+    } else {
+        Vec::new()
+    }
+}
+
+fn interior_light_on(variable: &str, var: &impl Fn(&str) -> Option<f32>) -> bool {
+    // OMSI starts ison=true and only changes it when the model resolved a variable index.
+    variable
+        .trim()
+        .parse::<f32>()
+        .ok()
+        .or_else(|| var(variable))
+        .unwrap_or(1.0)
+        >= 0.5
+}
+
 impl VehicleRender {
     /// The lamp slots (first, count) for `set_interior_lamps` that light a person on a seat
     /// with these four lamps (`PassPos::illumination`) in a vehicle of `n` lamps; None
@@ -542,6 +548,7 @@ mod interior_light_position_tests {
             pivot: Mat4::IDENTITY,
             viewpoint: 0,
             skin: Vec::new(),
+            normals_against: Vec::new(),
         }
     }
 
@@ -576,6 +583,25 @@ mod interior_light_position_tests {
                 panic!("an unresolved owner must use the root transform")
             });
         assert_eq!(world, None);
+    }
+
+    #[test]
+    fn illumination_bit_0x10_suppresses_mesh_lamp_slots() {
+        let mut mesh = ::model::MeshDef {
+            illumination_interior: vec![0],
+            ..Default::default()
+        };
+        assert_eq!(mesh_interior_lamp_set(&mesh, 1), [0]);
+
+        mesh.illumination = 0x10;
+        assert!(mesh_interior_lamp_set(&mesh, 1).is_empty());
+    }
+
+    #[test]
+    fn unresolved_interior_light_variable_starts_on() {
+        assert!(interior_light_on("missing_light", &|_| None));
+        assert!(!interior_light_on("light", &|_| Some(0.49)));
+        assert!(interior_light_on("light", &|_| Some(0.5)));
     }
 }
 
