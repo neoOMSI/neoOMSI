@@ -34,7 +34,7 @@ pub(crate) fn batch_items(
         if last.0 != d.look {
             last = (d.look, d.material);
         }
-        let (first, count, _) = scene.meshes[d.mesh as usize].ranges[d.range as usize];
+        let (first, count) = scene.meshes[d.mesh as usize].index_range(d.range);
         out.push(Batch {
             pipe: d.pipe,
             mesh: d.mesh,
@@ -188,15 +188,15 @@ pub(crate) fn world_surface_phase(phase: RenderPhase) -> bool {
 }
 
 /// Height (m) of a steep face that makes a blended ground-phase slot a wall.
-const SURFACE_WALL_HEIGHT: f32 = 2.0;
+pub(crate) const SURFACE_WALL_HEIGHT: f32 = 2.0;
 
-/// Whether a slot is a wall, such as a building carried by a `[rendertype] surface` object
-/// (#444): its depth is written right after its phase, so later ground phases (rails) stay
-/// behind it. `walls`: the mesh's `slot_walls`.
-pub(crate) fn surface_wall(walls: &[f32], transform: Mat4, slot: usize) -> bool {
+/// Whether a range has walls, such as a building carried by a `[rendertype] surface` object
+/// (#444): their depth is written right after its phase, so later ground phases (rails)
+/// stay behind them. `walls`: the mesh's `walls`.
+pub(crate) fn surface_wall(walls: &[WallRange], transform: Mat4, range: usize) -> bool {
     walls
-        .get(slot)
-        .is_some_and(|h| h * transform.z_axis.z.abs() > SURFACE_WALL_HEIGHT)
+        .get(range)
+        .is_some_and(|w| w.count > 0 && w.height * transform.z_axis.z.abs() > SURFACE_WALL_HEIGHT)
 }
 
 pub(crate) fn surface_depth_coverage(

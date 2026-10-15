@@ -1239,7 +1239,7 @@ impl Renderer {
                 let phase = effective_render_phase(&scene.instances[entry.0]);
                 by_phase[phase as usize].push(entry);
             }
-            // Depth of the fully opaque pixels of ground-phase blends (or only of the walls).
+            // Depth of the fully opaque pixels of ground-phase blends (or only of their walls).
             let surface_depth_items =
                 |items: &mut Vec<DrawItem>, phases: &[Vec<(usize, f32, bool)>], walls_only: bool| {
                     for &(i, _, _) in phases.iter().flatten() {
@@ -1254,12 +1254,7 @@ impl Renderer {
                                 mat.transmap.is_some(),
                                 mat.no_z_check,
                             ) || exclude_texture.is_some_and(|t| mat.uses_texture(t))
-                                || (walls_only
-                                    && !surface_wall(
-                                        &mesh.slot_walls,
-                                        inst.transform,
-                                        *slot as usize,
-                                    ))
+                                || (walls_only && !surface_wall(&mesh.walls, inst.transform, ri))
                             {
                                 continue;
                             }
@@ -1270,7 +1265,8 @@ impl Renderer {
                                     instance_depth_bias(inst, mat),
                                 ),
                                 mesh: inst.mesh as u32,
-                                range: ri as u32,
+                                range: (ri + if walls_only { mesh.ranges.len() } else { 0 })
+                                    as u32,
                                 material: mat_id as u32,
                                 look: mat.look,
                                 entry: inst.base + *slot,

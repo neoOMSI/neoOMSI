@@ -184,15 +184,29 @@ pub(crate) fn make_mesh(device: &wgpu::Device, queue: &wgpu::Queue, data: &MeshD
         bytemuck::cast_slice(&vertices),
         wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     );
+    let (indices, walls) = upload_indices(data);
     let index_buf = buffer_init(
         device,
         queue,
         None,
-        bytemuck::cast_slice(&data.indices),
+        bytemuck::cast_slice(&indices),
         wgpu::BufferUsages::INDEX,
     );
     let (vertex_bytes, index_bytes) = (vertex_buf.size(), index_buf.size());
-    mesh_with_buffers(data, vertex_buf, index_buf, NO_PAGE, 0, 0, vertex_bytes, index_bytes)
+    mesh_with_buffers(data, walls, vertex_buf, index_buf, NO_PAGE, 0, 0, vertex_bytes, index_bytes)
+}
+
+/// The indices to upload: the mesh's own, then (content meshes; terrain is never drawn in a
+/// ground phase) the copies of its wall triangles.
+pub(crate) fn upload_indices(data: &MeshData) -> (std::borrow::Cow<'_, [u32]>, Vec<WallRange>) {
+    if !data.one_sided {
+        return (data.indices.as_slice().into(), Vec::new());
+    }
+    let (copies, walls) = wall_triangles(data);
+    if copies.is_empty() {
+        return (data.indices.as_slice().into(), Vec::new());
+    }
+    ([data.indices.as_slice(), &copies].concat().into(), walls)
 }
 
 /// The mesh of `data` drawn from these buffers, at `vertex_offset` (bytes) and
@@ -200,6 +214,7 @@ pub(crate) fn make_mesh(device: &wgpu::Device, queue: &wgpu::Queue, data: &MeshD
 #[allow(clippy::too_many_arguments)]
 fn mesh_with_buffers(
     data: &MeshData,
+    walls: Vec<WallRange>,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     page: u32,
@@ -248,12 +263,6 @@ fn mesh_with_buffers(
             })
             .collect()
     };
-    // (terrain is never drawn in a ground phase)
-    let slot_walls = if data.one_sided {
-        slot_wall_heights(data)
-    } else {
-        Vec::new()
-    };
     GpuMesh {
         vertex_buf,
         index_buf,
@@ -269,19 +278,21 @@ fn mesh_with_buffers(
         one_sided: data.one_sided,
         source: None,
         slot_faces,
-        slot_walls,
+        walls,
     }
 }
 
-/// Per material slot: the height of its tallest steep (over 45°) triangle - a facade's
-/// height, but next to nothing for roads and kerbs, also on a slope.
-pub(crate) fn slot_wall_heights(data: &MeshData) -> Vec<f32> {
-    let mut out: Vec<f32> = Vec::new();
-    for &(first, count, slot) in &data.ranges {
-        let slot = slot as usize;
-        if out.len() <= slot {
-            out.resize(slot + 1, 0.0);
-        }
+/// Per range: copies of its wall triangles - steep (over 45°) ones taller than
+/// `SURFACE_WALL_HEIGHT`, so facades but not roads or kerbs, also on a slope - to go after
+/// the mesh's own indices, and where they lie there.
+pub(crate) fn wall_triangles(data: &MeshData) -> (Vec<u32>, Vec<WallRange>) {
+    let mut copies = Vec::new();
+    let mut walls = Vec::with_capacity(data.ranges.len());
+    for &(first, count, _) in &data.ranges {
+        let mut wall = WallRange {
+            first: (data.indices.len() + copies.len()) as u32,
+            ..Default::default()
+        };
         let end = ((first + count) as usize).min(data.indices.len());
         for tri in data.indices.get(first as usize..end).unwrap_or(&[]).chunks_exact(3) {
             let p = |i: u32| data.positions.get(i as usize).copied();
@@ -289,13 +300,19 @@ pub(crate) fn slot_wall_heights(data: &MeshData) -> Vec<f32> {
                 continue;
             };
             let n = (b - a).cross(c - a).normalize_or_zero();
-            if n != Vec3::ZERO && n.z.abs() < std::f32::consts::FRAC_1_SQRT_2 {
-                let h = a.z.max(b.z).max(c.z) - a.z.min(b.z).min(c.z);
-                out[slot] = out[slot].max(h);
+            let h = a.z.max(b.z).max(c.z) - a.z.min(b.z).min(c.z);
+            if n != Vec3::ZERO
+                && n.z.abs() < std::f32::consts::FRAC_1_SQRT_2
+                && h > SURFACE_WALL_HEIGHT
+            {
+                copies.extend_from_slice(tri);
+                wall.count += 3;
+                wall.height = wall.height.max(h);
             }
         }
+        walls.push(wall);
     }
-    out
+    (copies, walls)
 }
 
 pub struct PreparedMesh(pub(crate) GpuMesh);
@@ -443,9 +460,10 @@ impl Renderer {
             return None;
         }
         let vertices = mesh_vertices(data);
+        let (indices, walls) = upload_indices(data);
         let (vb, ib) = (
             (vertices.len() * std::mem::size_of::<Vertex>()) as u64,
-            (data.indices.len() * 4) as u64,
+            (indices.len() * 4) as u64,
         );
         if vb == 0 || ib == 0 || vb > MESH_PAGE_VERTEX_BYTES / 4 || ib > MESH_PAGE_INDEX_BYTES / 4 {
             return None;
@@ -466,9 +484,10 @@ impl Renderer {
         };
         let page = &scene.mesh_pages[k];
         self.queue.write_buffer(&page.vertex, v_at, bytemuck::cast_slice(&vertices));
-        self.queue.write_buffer(&page.index, i_at, bytemuck::cast_slice(&data.indices));
+        self.queue.write_buffer(&page.index, i_at, bytemuck::cast_slice(&indices));
         Some(mesh_with_buffers(
             data,
+            walls,
             page.vertex.clone(),
             page.index.clone(),
             k as u32,

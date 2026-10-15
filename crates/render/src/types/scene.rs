@@ -24,8 +24,31 @@ pub struct GpuMesh {
     /// Per material slot: (mean facing direction, centroid) of its triangles in mesh space;
     /// a zero direction when the slot has no triangles.
     pub slot_faces: Vec<(Vec3, Vec3)>,
-    /// Per material slot: `slot_wall_heights`.
-    pub(crate) slot_walls: Vec<f32>,
+    /// Per range: its wall triangles (`wall_triangles`); empty when the mesh has none.
+    pub(crate) walls: Vec<WallRange>,
+}
+
+/// Where the copies of a range's wall triangles lie in the mesh's indices, and the height
+/// of the tallest one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct WallRange {
+    pub(crate) first: u32,
+    pub(crate) count: u32,
+    pub(crate) height: f32,
+}
+
+impl GpuMesh {
+    /// (first index, count) of a draw's range: `ranges[r]`, or from `ranges.len()` on the
+    /// wall triangles of `ranges[r - ranges.len()]`.
+    pub(crate) fn index_range(&self, r: u32) -> (u32, u32) {
+        match self.ranges.get(r as usize) {
+            Some(&(first, count, _)) => (first, count),
+            None => self
+                .walls
+                .get(r as usize - self.ranges.len())
+                .map_or((0, 0), |w| (w.first, w.count)),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]

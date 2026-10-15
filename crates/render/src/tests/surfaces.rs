@@ -1509,9 +1509,9 @@ fn ordered_vehicle_over_the_ground(msaa: u32) {
 }
 
 #[test]
-fn surface_wall_takes_buildings_but_not_sloped_ground() {
-    // slot 0: a road climbing 5 m with a kerb at each end; slot 1: a 30 m facade
-    let mesh = MeshData {
+fn only_wall_triangles_go_into_the_early_depth_pass() {
+    // one slot holding a road climbing 5 m, a kerb at each end of it and a 30 m facade
+    let data = MeshData {
         positions: vec![
             Vec3::new(0.0, 0.0, 0.0),
             Vec3::new(10.0, 0.0, 0.0),
@@ -1528,19 +1528,39 @@ fn surface_wall_takes_buildings_but_not_sloped_ground() {
         ],
         normals: vec![Vec3::Z; 12],
         uvs: vec![glam::Vec2::ZERO; 12],
-        ranges: vec![(0, 9, 0), (9, 3, 1)],
+        ranges: vec![(0, 12, 0)],
         indices: (0..12).collect(),
         one_sided: true,
     };
-    let walls = slot_wall_heights(&mesh);
-    assert_eq!(walls.len(), 2);
-    assert!((walls[0] - 0.15).abs() < 1e-4, "{walls:?}");
-    assert_eq!(walls[1], 30.0);
+    let (indices, walls) = upload_indices(&data);
+    assert_eq!(&indices[..12], &data.indices[..]);
+    assert_eq!(walls.len(), 1);
+    let w = walls[0];
+    assert_eq!(&indices[w.first as usize..(w.first + w.count) as usize], &[9, 10, 11]);
+    assert_eq!(w.height, 30.0);
     for t in [Mat4::IDENTITY, Mat4::from_rotation_z(1.0)] {
-        assert!(!surface_wall(&walls, t, 0));
-        assert!(surface_wall(&walls, t, 1));
+        assert!(surface_wall(&walls, t, 0));
     }
-    // a facade scaled down to 1.5 m, and a slot the mesh does not have
-    assert!(!surface_wall(&walls, Mat4::from_scale(Vec3::splat(0.05)), 1));
-    assert!(!surface_wall(&walls, Mat4::IDENTITY, 2));
+    // a facade scaled down to 1.5 m, and a range the mesh does not have
+    assert!(!surface_wall(&walls, Mat4::from_scale(Vec3::splat(0.05)), 0));
+    assert!(!surface_wall(&walls, Mat4::IDENTITY, 1));
+
+    // the slot's own draw keeps all of it; the wall draw (ranges.len() + 0) only the facade
+    let renderer = super::instances::noop_renderer();
+    let mut scene = renderer.new_scene();
+    let id = renderer.add_mesh(&mut scene, &data);
+    let mesh = &scene.meshes[id];
+    assert_eq!(mesh.index_range(0), (0, 12));
+    assert_eq!(mesh.index_range(1), (12, 3));
+
+    // without walls: nothing extra
+    let road = MeshData {
+        ranges: vec![(0, 9, 0)],
+        indices: (0..9).collect(),
+        ..data
+    };
+    let (indices, walls) = upload_indices(&road);
+    assert_eq!(indices.len(), 9);
+    assert!(walls.is_empty());
+    assert!(!surface_wall(&walls, Mat4::IDENTITY, 0));
 }

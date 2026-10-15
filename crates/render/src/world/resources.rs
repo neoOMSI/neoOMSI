@@ -242,6 +242,7 @@ impl Renderer {
         m.vertex_bytes = vertex_bytes;
         m.index_bytes = index_bytes;
         m.ranges.clear();
+        m.walls.clear();
         m.bounds_center = Vec3::ZERO;
         m.bounds_radius = 0.0;
         Self::mesh_bounds_changed(scene, id);
