@@ -123,14 +123,15 @@ pub(super) fn floating_apex(
 
 /// Where a dipped beam's glare sprite goes: on the nearest lit lamp sprite near the beam
 /// source; none lit there means the lamp is dark, and with no sprite near it goes on `fallback`.
-pub(super) fn glare_spot(lamps: &[(Vec3, bool)], at: Vec3, fallback: Vec3) -> Option<Vec3> {
-    let near = || lamps.iter().filter(|(p, _)| (*p - at).length() < 0.6);
-    if near().next().is_none() {
+/// Sprites under a quarter of the biggest one there are LED dots (Crossway DRL), not the lamp.
+pub(super) fn glare_spot(lamps: &[(Vec3, f32, bool)], at: Vec3, fallback: Vec3) -> Option<Vec3> {
+    let near = || lamps.iter().filter(|(p, ..)| (*p - at).length() < 0.6);
+    let Some(biggest) = near().map(|(_, size, _)| *size).reduce(f32::max) else {
         return Some(fallback);
-    }
+    };
     near()
-        .filter(|(_, lit)| *lit)
-        .map(|(p, _)| *p)
+        .filter(|(_, size, lit)| *lit && *size >= biggest * 0.25)
+        .map(|(p, ..)| *p)
         .min_by(|a, b| (*a - at).length().total_cmp(&(*b - at).length()))
 }
 
@@ -280,6 +281,7 @@ struct Headlamp<'a> {
     body: Mat4,
     origin: DVec3,
     lamps: &'a [[f32; 3]],
+    sizes: &'a [f32],
     lit: &'a [bool],
     sources: &'a [[f32; 3]],
     bounding_box: Option<[f32; 6]>,
@@ -312,13 +314,18 @@ pub(super) fn headlamps(
         ty.model.meshes.iter().flat_map(|m| {
             m.light_enh
                 .iter()
-                .map(|l| (l.pos, l.variable.as_str()))
-                .chain(m.light_enh_2.iter().map(|l| (l.pos, l.variable.as_str())))
+                .map(|l| (l.pos, l.variable.as_str(), l.size))
+                .chain(
+                    m.light_enh_2
+                        .iter()
+                        .map(|l| (l.pos, l.variable.as_str(), l.size)),
+                )
         })
     };
-    let lamps: Vec<[f32; 3]> = lamp_sprites().map(|(p, _)| p).collect();
+    let lamps: Vec<[f32; 3]> = lamp_sprites().map(|(p, ..)| p).collect();
+    let sprite_size: Vec<f32> = lamp_sprites().map(|(.., size)| size).collect();
     let sprite_lit: Vec<bool> = lamp_sprites()
-        .map(|(_, var)| {
+        .map(|(_, var, _)| {
             let t = var.trim();
             if t.to_ascii_lowercase().contains("blink") {
                 return false;
@@ -348,7 +355,7 @@ pub(super) fn headlamps(
     });
     let ranges: Vec<f32> = spots.iter().map(|s| s[9]).collect();
     let profile = Profile::of_model(&v.ty.def.path.to_string_lossy(), spots.len(), &|name| {
-        lamp_sprites().any(|(_, var)| var.eq_ignore_ascii_case(name))
+        lamp_sprites().any(|(_, var, _)| var.eq_ignore_ascii_case(name))
     });
     let kinds: Vec<BeamKind> = (0..spots.len())
         .map(|i| profile.map_or_else(|| classify(&ranges, i), |p| p.kind(i)))
@@ -397,9 +404,9 @@ pub(super) fn headlamps(
         let side = profile.and_then(|p| p.side(i));
         let vars = profile.map_or(&[][..], |p| p.lamp_variables(i));
         let sources: Vec<[f32; 3]> = lamp_sprites()
-            .filter(|(_, v)| vars.iter().any(|n| v.eq_ignore_ascii_case(n)))
-            .filter(|(p, _)| side.map_or(true, |s| p[0] * s > 0.0))
-            .map(|(p, _)| p)
+            .filter(|(_, v, _)| vars.iter().any(|n| v.eq_ignore_ascii_case(n)))
+            .filter(|(p, ..)| side.map_or(true, |s| p[0] * s > 0.0))
+            .map(|(p, ..)| p)
             .collect();
         emit_headlamp(
             cfg,
@@ -409,6 +416,7 @@ pub(super) fn headlamps(
                 body: v.body_rotation(),
                 origin: v.position,
                 lamps: &lamps,
+                sizes: &sprite_size,
                 lit: &sprite_lit,
                 sources: &sources,
                 bounding_box: ty.def.bounding_box,
@@ -549,11 +557,12 @@ fn emit_headlamp(
         };
         if h.kind == BeamKind::Dipped && h.role == LampRole::Beam && h.sources.is_empty() {
             // glare sprite on the nearest lamp sprite
-            let near: Vec<(Vec3, bool)> = h
+            let near: Vec<(Vec3, f32, bool)> = h
                 .lamps
                 .iter()
+                .zip(h.sizes)
                 .zip(h.lit)
-                .map(|(l, lit)| (h.body.transform_point3(Vec3::from(*l)), *lit))
+                .map(|((l, size), lit)| (h.body.transform_point3(Vec3::from(*l)), *size, *lit))
                 .collect();
             // (the glare looks for its sprite on the lamps' face, not out at the source)
             let face = at - h.body.transform_vector3(Vec3::Y) * dir_y * ahead_of_lamps;
@@ -682,6 +691,7 @@ mod tests {
             [-0.639, -1.813, 0.863],
         ];
         let lit = [true; 6];
+        let sizes = [0.1; 6];
         let (mut lights, mut coronas) = (Vec::new(), Vec::new());
         emit_headlamp(
             &super::super::config::settings(),
@@ -691,6 +701,7 @@ mod tests {
                 body: Mat4::IDENTITY,
                 origin: DVec3::ZERO,
                 lamps: &lamps,
+                sizes: &sizes,
                 lit: &lit,
                 sources: &[],
                 bounding_box: Some([1.8, 4.55, 1.2, 0.0, 0.0, 0.8]),
@@ -716,14 +727,40 @@ mod tests {
         let lamp = Vec3::new(1.04, 5.64, 0.76);
         let at = Vec3::new(1.0, 5.72, 0.76);
         let fallback = Vec3::ZERO;
-        assert_eq!(glare_spot(&[(lamp, true)], at, fallback), Some(lamp));
-        assert_eq!(glare_spot(&[(lamp, false)], at, fallback), None);
+        assert_eq!(glare_spot(&[(lamp, 0.15, true)], at, fallback), Some(lamp));
+        assert_eq!(glare_spot(&[(lamp, 0.15, false)], at, fallback), None);
         // BRT C2: two sprites in one headlamp, one of them lit
-        assert_eq!(glare_spot(&[(lamp, false), (lamp, true)], at, fallback), Some(lamp));
+        assert_eq!(
+            glare_spot(&[(lamp, 0.15, false), (lamp, 0.15, true)], at, fallback),
+            Some(lamp)
+        );
         // the dark high-beam sprite is nearest, the lit dipped one sits beside it
         let dipped = lamp + Vec3::new(0.15, 0.0, 0.0);
-        assert_eq!(glare_spot(&[(at, false), (dipped, true)], at, fallback), Some(dipped));
+        assert_eq!(
+            glare_spot(&[(at, 0.3, false), (dipped, 0.1, true)], at, fallback),
+            Some(dipped)
+        );
         assert_eq!(glare_spot(&[], at, fallback), Some(fallback));
+    }
+
+    #[test]
+    fn no_glare_on_the_drl_dots_of_a_dark_headlamp() {
+        // Crossway LE (Pablo): only the DRL dots are lit
+        let dipped = Vec3::new(1.039, 6.065, 0.783);
+        let high = Vec3::new(0.891, 6.070, 0.786);
+        let drl = Vec3::new(1.146, 6.027, 0.828);
+        let at = Vec3::new(1.0, 6.1, 0.8);
+        let lamps = [
+            (dipped, 0.15, false),
+            (high, 0.2, false),
+            (drl, 0.035, true),
+        ];
+        assert_eq!(glare_spot(&lamps, at, Vec3::ZERO), None);
+        // dipped beam on: the glare skips the nearer LED dot
+        let lamps = [(dipped, 0.15, true), (high, 0.2, false), (drl, 0.035, true)];
+        assert_eq!(glare_spot(&lamps, drl, Vec3::ZERO), Some(dipped));
+        // a headlamp made only of LED dots keeps its glare
+        assert_eq!(glare_spot(&[(drl, 0.05, true)], at, Vec3::ZERO), Some(drl));
     }
 
     #[test]
