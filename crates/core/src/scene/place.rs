@@ -84,6 +84,11 @@ pub(super) fn mesh_bounds(m: &MeshData, xf: &Mat4, origin: DVec3) -> [f64; 4] {
     b
 }
 
+fn on_own_tile(pos: DVec3, origin: DVec3) -> bool {
+    let (x, y) = (pos.x - origin.x, pos.y - origin.y);
+    (0.0..=tile_size()).contains(&x) && (0.0..=tile_size()).contains(&y)
+}
+
 impl World {
     /// Stand the objects of a staged tile on its final ground, hang the attached ones on
     /// their parents, and register what the traffic, the passengers, the collisions and the
@@ -198,6 +203,10 @@ impl World {
                 }
             }
             if let Some((tex, min_h, max_h, min_r, max_r)) = &ot.sco.tree {
+                // OMSI does not draw a tree record past its tile's edge (#421)
+                if o.map_object && !on_own_tile(pos, st.origin) {
+                    continue;
+                }
                 // Trees are billboards: the map stores texture, height and the ratio of the
                 // width to the height chosen by the editor; a row of trees along a spline
                 // takes the middle of the type's ranges. OMSI scales its tree by (height x
