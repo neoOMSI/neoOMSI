@@ -231,6 +231,16 @@ impl Profile {
         }
     }
 
+    /// The dipped entry that keeps burning beside a fog or cornering entry while its lamps
+    /// are lit. OMSI's single spotlight takes the selected entry as a full road beam
+    pub(super) fn companion(self, entry: usize) -> Option<usize> {
+        match (self, entry) {
+            (Self::LedHalo, 1 | 2 | 3) => Some(4),
+            (Self::LedHalo, 7 | 8 | 9) => Some(10),
+            _ => None,
+        }
+    }
+
     pub(super) fn visual_only(self, entry: usize) -> bool {
         self == Self::Enviro400Mmc && entry == 3
     }
@@ -357,10 +367,16 @@ pub(super) fn headlamps(
     };
     let main_lit = lit.is_some_and(|i| i < spots.len() && kinds[i] == BeamKind::Main);
     let visual_only = matches!((profile, lit), (Some(p), Some(i)) if p.visual_only(i));
+    let companion = profile.zip(lit).and_then(|(p, i)| {
+        p.companion(i).filter(|&c| {
+            c < spots.len() && p.lamp_variables(c).iter().any(|n| v.var(n).unwrap_or(0.0) > 0.01)
+        })
+    });
 
     let owner = super::owner_key(v);
     for (i, vals) in spots.iter().enumerate() {
-        let on = !visual_only && (lit == Some(i) || (main_lit && partner == Some(i)));
+        let on = !visual_only
+            && (lit == Some(i) || (main_lit && partner == Some(i)) || companion == Some(i));
         let level = faders.level(
             owner,
             i as u32,
@@ -626,6 +642,14 @@ mod tests {
         assert_eq!(p.role(2), LampRole::Cornering);
         assert_eq!(p.side(3), Some(-1.0));
         assert_eq!(p.partner(6), Some(10));
+
+        assert_eq!(p.companion(1), Some(4));
+        assert_eq!(p.companion(2), Some(4));
+        assert_eq!(p.companion(3), Some(4));
+        assert_eq!(p.companion(9), Some(10));
+        assert_eq!(p.companion(4), None);
+        assert_eq!(p.companion(5), None);
+        assert_eq!(Profile::Renown.companion(1), None);
     }
 
     #[test]
