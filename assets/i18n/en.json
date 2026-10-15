@@ -101,9 +101,9 @@
           "name": "Reset head pitch"
         },
         "headtrack": {
-          "desc": "Head tracking with opentrack (UDP port 4242)",
+          "desc": "Head tracking with TrackIR or opentrack (UDP port 4242)",
           "name": "Head tracking",
-          "desc_port": "Head tracking with opentrack (UDP port {port})"
+          "desc_port": "Head tracking with TrackIR or opentrack (UDP port {port})"
         },
         "look_sens": {
           "desc": "How fast the view turns when you look around with the mouse (100% is the speed of OMSI)",

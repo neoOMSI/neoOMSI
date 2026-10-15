@@ -486,6 +486,7 @@ impl App {
                             ::config::get_int("camera", "head_tracking_port")
                                 .and_then(|v| u16::try_from(v).ok())
                                 .unwrap_or(4242),
+                            self.window.as_deref().and_then(controllers::window_handle),
                         );
                         self.headtrack_failed = self.headtrack.is_none().then(Instant::now);
                     }

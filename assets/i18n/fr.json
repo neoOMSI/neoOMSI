@@ -95,9 +95,9 @@
           "name": "Réinitialiser l'inclinaison de la tête"
         },
         "headtrack": {
-          "desc": "Suivi de la tête avec opentrack (port UDP 4242)",
+          "desc": "Suivi de la tête avec TrackIR ou opentrack (port UDP 4242)",
           "name": "Suivi de la tête",
-          "desc_port": "Suivi de la tête avec opentrack (port UDP {port})"
+          "desc_port": "Suivi de la tête avec TrackIR ou opentrack (port UDP {port})"
         },
         "look_sens": {
           "desc": "Vitesse de rotation de la caméra à la souris (100 % = vitesse d’OMSI)",
