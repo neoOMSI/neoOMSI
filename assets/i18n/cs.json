@@ -95,9 +95,9 @@
           "name": "Obnovit náklon hlavy"
         },
         "headtrack": {
-          "desc": "Sledování hlavy pomocí TrackIR nebo opentrack (UDP port 4242)",
+          "desc": "Sledování hlavy pomocí opentrack (UDP port 4242)",
           "name": "Sledování hlavy",
-          "desc_port": "Sledování hlavy pomocí TrackIR nebo opentrack (UDP port {port})"
+          "desc_port": "Sledování hlavy pomocí opentrack (UDP port {port})"
         },
         "look_sens": {
           "desc": "Jak rychle se pohled otočí, když se rozhlédnete myší (100% je rychlost OMSI)",

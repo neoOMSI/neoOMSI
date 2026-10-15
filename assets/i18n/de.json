@@ -101,9 +101,9 @@
           "name": "Kopfneigung zurücksetzen"
         },
         "headtrack": {
-          "desc": "Head-Tracking mit TrackIR oder opentrack (UDP-Port 4242)",
+          "desc": "Head-Tracking mit opentrack (UDP-Port 4242)",
           "name": "Head-Tracking",
-          "desc_port": "Head-Tracking mit TrackIR oder opentrack (UDP-Port {port})"
+          "desc_port": "Head-Tracking mit opentrack (UDP-Port {port})"
         },
         "look_sens": {
           "desc": "Wie schnell sich die Ansicht dreht, wenn du dich mit der Maus umsiehst (100% entspricht der Geschwindigkeit von OMSI)",
