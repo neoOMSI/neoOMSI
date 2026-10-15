@@ -21,11 +21,11 @@ fn sort_blended_keys(keys: &mut [(u8, f32, [u64; 3], bool, u32, usize)]) {
     });
 }
 
-/// Whether one of the instance's materials is a rain layer (drawn after the scene).
-fn has_rain_layer(scene: &Scene, inst: &Instance) -> bool {
+/// The instance's first slot that is a rain layer (drawn after the scene).
+fn rain_slot(scene: &Scene, inst: &Instance) -> Option<usize> {
     inst.materials
         .iter()
-        .any(|&m| scene.materials[m].uniform.emissive[3] > 1.5)
+        .position(|&m| scene.materials[m].uniform.emissive[3] > 1.5)
 }
 
 fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u32, u32, u32)>) {
@@ -1382,9 +1382,10 @@ impl Renderer {
                 for (_, _, _, _, _, i) in keyed {
                     let inst = &scene.instances[i];
                     let cull = culls_back_faces(scene, inst);
-                    let after_rain = glass_on
-                        && player == Some(inst.origin)
-                        && follows_rain(&mut rain_seen, has_rain_layer(scene, inst));
+                    let in_cab = glass_on && player == Some(inst.origin);
+                    let own_rain = in_cab.then(|| rain_slot(scene, inst)).flatten();
+                    let after_rain =
+                        in_cab && follows_rain(&mut rain_seen, own_rain.is_some());
                     for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
                         let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
                         let mat = &scene.materials[mat_id];
@@ -1419,7 +1420,10 @@ impl Renderer {
                             look: mat.look,
                             entry: inst.base + *slot,
                         };
-                        if after_rain && kind == PIPE_BLEND_NO_WRITE {
+                        // (OMSI draws a mesh's slots in order: the NLC's sticker backs follow
+                        // their pane's rain, #289)
+                        let late = after_rain || own_rain.is_some_and(|r| *slot as usize > r);
+                        if late && kind == PIPE_BLEND_NO_WRITE {
                             late_items.push(item);
                         } else {
                             items.push(item);

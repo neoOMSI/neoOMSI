@@ -912,7 +912,7 @@ fn sticker_on_wet_glass_from_the_cab(msaa: u32) {
             rain: 0.8,
             shadows: false,
             fog_density: 0.0,
-            inside: Some((DVec3::ZERO, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 2.0])),
+            inside: Some((DVec3::ZERO, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 1.0])),
             ..Default::default()
         };
         let (dry, wet) = (render(false, &lighting), render(true, &lighting));
@@ -924,6 +924,163 @@ fn sticker_on_wet_glass_from_the_cab(msaa: u32) {
         assert!(
             worst(&dry, &wet, 4..30) > 20,
             "no drops on the pane beside the sticker (msaa {msaa}, enhanced {enhanced}, classic {classic})"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a graphics adapter; renders a door pane whose sticker back follows its rain"]
+fn rain_film_stays_under_the_slots_drawn_after_it_from_the_cab() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    const SIZE: usize = 512;
+    let mut render = |wet: bool, lighting: &Lighting| -> Vec<u8> {
+        let renderer = &mut renderer;
+        let mut scene = renderer.new_scene();
+        let dark = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.05; 4], true);
+        let light = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.9; 4], true);
+        let film = renderer.add_material_extra(
+            &mut scene,
+            None,
+            AlphaMode::Blend,
+            [1.0; 4],
+            false,
+            None,
+            None,
+            None,
+            None,
+            [0.0; 3],
+            MaterialExtra {
+                rain_film: true,
+                no_z_write: true,
+                ..Default::default()
+            },
+        );
+        let back = renderer.add_material_extra(
+            &mut scene,
+            None,
+            AlphaMode::Blend,
+            [0.25, 0.25, 0.25, 1.0],
+            true,
+            None,
+            None,
+            None,
+            None,
+            [0.0; 3],
+            MaterialExtra {
+                no_z_write: true,
+                ..Default::default()
+            },
+        );
+        let rect = |y: f32, (x0, x1): (f32, f32), half: f32| {
+            [
+                Vec3::new(x0, y, -half),
+                Vec3::new(x1, y, -half),
+                Vec3::new(x1, y, half),
+                Vec3::new(x0, y, half),
+            ]
+        };
+        let uvs = vec![
+            glam::Vec2::new(0.0, 1.0),
+            glam::Vec2::new(1.0, 1.0),
+            glam::Vec2::new(1.0, 0.0),
+            glam::Vec2::new(0.0, 0.0),
+        ];
+        for i in -40..40 {
+            let x = i as f32 * 0.5;
+            let stripe = if i % 2 == 0 { dark } else { light };
+            let mesh = renderer.add_mesh(
+                &mut scene,
+                &MeshData {
+                    positions: rect(10.0, (x, x + 0.5), 40.0).to_vec(),
+                    normals: vec![-Vec3::Y; 4],
+                    uvs: uvs.clone(),
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ranges: vec![(0, 6, 0)],
+                    one_sided: false,
+                },
+            );
+            renderer.add_instance(&mut scene, mesh, DVec3::ZERO, Mat4::IDENTITY, vec![stripe]);
+        }
+        // the NLC's door pane: rain in slot 0, the sticker's back on the same plane in slot 1
+        let mut positions = rect(0.5, (-3.0, 3.0), 3.0).to_vec();
+        positions.extend(rect(0.5, (-0.1, 0.1), 0.1));
+        let pane = renderer.add_mesh(
+            &mut scene,
+            &MeshData {
+                positions,
+                normals: vec![-Vec3::Y; 8],
+                uvs: [uvs.clone(), uvs.clone()].concat(),
+                indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+                ranges: vec![(0, 6, 0), (6, 6, 1)],
+                one_sided: false,
+            },
+        );
+        let pane = renderer.add_instance(
+            &mut scene,
+            pane,
+            DVec3::ZERO,
+            Mat4::IDENTITY,
+            vec![film, back],
+        );
+        // (dry: the rain's slot left out)
+        let rain = if wet { 1.0 } else { 0.0 };
+        renderer.set_params(&mut scene, pane, &[rain, 1.0], true, &[]);
+        let camera = Camera {
+            position: DVec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.0,
+            fov_deg: 70.0,
+            near: 0.1,
+            far: 100.0,
+        };
+        renderer
+            .render_to_image(&mut scene, SIZE as u32, SIZE as u32, &camera, lighting)
+            .unwrap()
+    };
+    let worst = |dry: &[u8], wet: &[u8], xs: std::ops::Range<usize>| -> u8 {
+        xs.clone()
+            .flat_map(|y| xs.clone().map(move |x| (y * SIZE + x) * 4))
+            .flat_map(|i| (i..i + 3).map(|k| dry[k].abs_diff(wet[k])))
+            .max()
+            .unwrap()
+    };
+    let back = SIZE / 2 - 48..SIZE / 2 + 48;
+    for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+        // the eye in the cab
+        let lighting = Lighting {
+            enhanced,
+            classic,
+            wetness: 1.0,
+            rain: 0.8,
+            shadows: false,
+            fog_density: 0.0,
+            inside: Some((DVec3::ZERO, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 1.0])),
+            ..Default::default()
+        };
+        let (dry, wet) = (render(false, &lighting), render(true, &lighting));
+        let on_back = worst(&dry, &wet, back.clone());
+        assert!(
+            on_back <= 3,
+            "the drops cover the sticker's back drawn after them (enhanced {enhanced}, classic {classic}): {on_back}"
+        );
+        assert!(
+            worst(&dry, &wet, 4..30) > 20,
+            "no drops on the pane beside the sticker (enhanced {enhanced}, classic {classic})"
         );
     }
 }
