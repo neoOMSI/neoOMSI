@@ -726,6 +726,9 @@ fn row_start(
     let Some((master_tile, _)) = att.repeater else {
         // the start distance counts from the start of the chain
         let d0 = index.map(|ix| d - chain_offset(ix, spline.id)).unwrap_or(d);
+        if d0 < -1e-6 {
+            return None;
+        }
         return Some(RowStart {
             s: d0,
             j: 0,
@@ -1643,6 +1646,26 @@ mod tests {
         assert_eq!(one.len(), 1);
         assert!((one[0].pose.pos.y - 100.0).abs() < 1e-6);
         assert!(row_objects(&row(0.0, 0.0, 102.0, None), &dead_end, DVec2::ZERO, None).is_empty());
+    }
+
+    /// Omsi.exe drops the whole row when its first object lies before the start of the
+    /// row's own spline, not just that object (Gerolstein's Schullandheim delineators:
+    /// d = -1.37 m, 2 m apart, 30 m range - none of the 16 is placed).
+    #[test]
+    fn row_starting_before_its_spline_is_left_out() {
+        let s = spline(1, 0, 2, 100.0);
+        assert!(row_objects(&row(2.0, 30.0, -1.37, None), &s, DVec2::ZERO, None).is_empty());
+        assert!(row_objects(&row(0.0, 0.0, -1.37, None), &s, DVec2::ZERO, None).is_empty());
+        // the start counts from the chain's start: 595 m lies on spline 10/11, before 12
+        let ix = buffer_stop_chain();
+        let track = spline(12, 11, 0, 250.0);
+        assert!(
+            row_objects(&row(10.0, 100.0, 595.0, None), &track, DVec2::ZERO, Some(&ix)).is_empty()
+        );
+        assert_eq!(
+            row_objects(&row(10.0, 100.0, 600.0, None), &track, DVec2::ZERO, Some(&ix)).len(),
+            11
+        );
     }
 
     #[test]
