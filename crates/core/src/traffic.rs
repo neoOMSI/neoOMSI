@@ -509,32 +509,22 @@ fn street_lane_weight(l: &::simulation::traffic::Lane) -> Option<f64> {
 }
 
 /// A lane's spawn density: each group's density there (its own rule or the one it inherits,
-/// see `pool_density`) times its `uvg_share` (at most 1). Unweighed, BRT Berlin's
-/// Kurfürstendamm bus lanes (Ambulance 3.0, factor 0.0002) spawned queues of ambulances
-/// (#411). Open lanes stay above 0.
+/// see `pool_density`) times its `uvg_share` (at most 1; 0 for a group not loaded).
+/// Unweighed, BRT Berlin's Kurfürstendamm bus lanes (Ambulance 3.0, factor 0.0002) spawned
+/// queues of ambulances (#411). Open lanes stay above 0.
 fn weigh_lane_density(
     l: &mut ::simulation::traffic::Lane,
     uvg_defaults: &[i32],
     uvg_share: &[f32],
 ) {
-    if l.group_density.is_empty() || l.density <= 0.0 {
+    if uvg_share.is_empty() || l.group_density.is_empty() || l.density <= 0.0 {
         return;
     }
-    let share = |u: usize| uvg_share.get(u).copied().unwrap_or(1.0).min(1.0);
-    let first = l
-        .group_density
+    l.density = uvg_share
         .iter()
-        .find(|(u, _)| *u == 0)
-        .map(|e| e.1)
-        .unwrap_or(1.0);
-    let groups = l
-        .group_density
-        .iter()
-        .map(|e| e.0 as usize + 1)
-        .fold(uvg_defaults.len(), usize::max);
-    l.density = (0..groups)
-        .map(|u| l.pool_density(uvg_defaults, u) * share(u))
-        .fold(first, f32::max)
+        .enumerate()
+        .map(|(u, share)| l.pool_density(uvg_defaults, u) * share.min(1.0))
+        .fold(0.0, f32::max)
         .max(1e-4);
 }
 
@@ -1434,7 +1424,8 @@ impl Traffic {
         let uvg_share: Vec<f32> = (0..uvg_defaults.len())
             .map(|u| match (uvg_factor(u), uvg_factor(0)) {
                 (Some(f), Some(first)) if group_curves && first > 0.0 => f / first,
-                _ => 1.0,
+                (Some(_), _) => 1.0,
+                (None, _) => 0.0,
             })
             .collect();
         for l in &mut net.lanes {
@@ -9275,7 +9266,12 @@ mod lane_density_tests {
     use ::simulation::traffic::LaneBuilder;
     use glam::DVec3;
 
-    fn lane(density: f32, group_density: Vec<(u16, f32)>) -> ::simulation::traffic::Lane {
+    fn weighed(
+        density: f32,
+        group_density: Vec<(u16, f32)>,
+        defaults: &[i32],
+        share: &[f32],
+    ) -> f32 {
         let mut l = LaneBuilder::polyline(
             vec![DVec3::ZERO, DVec3::new(0.0, 50.0, 0.0)],
             LaneKind::Street,
@@ -9283,44 +9279,48 @@ mod lane_density_tests {
         );
         l.density = density;
         l.group_density = group_density;
-        l
+        weigh_lane_density(&mut l, defaults, share);
+        l.density
     }
 
     /// BRT Berlin's Kurfürstendamm bus lanes (#411) make next to no traffic, but stay open.
     #[test]
     fn a_rare_group_brings_its_rarity_to_the_lane() {
+        let defaults = [1, 0, 1, 1, 0, 0, 1];
         let share = [1.0, 0.05, 0.1, 0.0001, 1.0, 1.0, 0.05];
-        let mut l = lane(3.0, vec![(0, 0.0), (3, 3.0)]);
-        weigh_lane_density(&mut l, &[], &share);
-        assert!(l.density > 0.0 && l.density < 0.001, "{}", l.density);
+        let d = weighed(3.0, vec![(0, 0.0), (3, 3.0)], &defaults, &share);
+        assert!(d > 0.0 && d < 0.001, "{d}");
         // as busy as the first group: unchanged; busier: not raised
-        let mut l = lane(2.0, vec![(0, 0.0), (4, 2.0)]);
-        weigh_lane_density(&mut l, &[], &share);
-        assert_eq!(l.density, 2.0);
-        let mut l = lane(1.0, vec![(0, 0.0), (1, 1.0)]);
-        weigh_lane_density(&mut l, &[], &[1.0, 4.2]);
-        assert_eq!(l.density, 1.0);
-        let mut l = lane(1.0, vec![(0, 1.0), (3, 1.0)]);
-        weigh_lane_density(&mut l, &[], &share);
-        assert_eq!(l.density, 1.0);
+        assert_eq!(
+            weighed(2.0, vec![(0, 0.0), (4, 2.0)], &defaults, &share),
+            2.0
+        );
+        assert_eq!(
+            weighed(1.0, vec![(0, 0.0), (1, 1.0)], &[1, 0], &[1.0, 4.2]),
+            1.0
+        );
+        assert_eq!(
+            weighed(1.0, vec![(0, 1.0), (3, 1.0)], &defaults, &share),
+            1.0
+        );
         // no rule for the first group: its medium density
-        let mut l = lane(3.0, vec![(3, 3.0)]);
-        weigh_lane_density(&mut l, &[], &share);
-        assert_eq!(l.density, 1.0);
-        // closed and rule-less lanes unchanged
-        let mut l = lane(0.0, vec![(0, 0.0)]);
-        weigh_lane_density(&mut l, &[], &share);
-        assert_eq!(l.density, 0.0);
-        let mut l = lane(0.5, Vec::new());
-        weigh_lane_density(&mut l, &[], &share);
-        assert_eq!(l.density, 0.5);
+        assert_eq!(weighed(3.0, vec![(3, 3.0)], &defaults, &share), 1.0);
+        // closed and rule-less lanes, and maps without groups, unchanged
+        assert_eq!(weighed(0.0, vec![(0, 0.0)], &defaults, &share), 0.0);
+        assert_eq!(weighed(0.5, Vec::new(), &defaults, &share), 0.5);
+        assert_eq!(weighed(3.0, vec![(0, 0.0), (3, 3.0)], &[], &[]), 3.0);
     }
 
-    /// A busy group inheriting a rare group's rule keeps the lane busy.
+    /// A busy group inheriting a rare group's rule keeps the lane busy, unless it is not
+    /// loaded.
     #[test]
     fn an_inherited_density_counts_with_its_own_group() {
-        let mut l = lane(3.0, vec![(0, 0.0), (1, 3.0)]);
-        weigh_lane_density(&mut l, &[1, 0, 2], &[1.0, 0.001, 1.0]);
-        assert_eq!(l.density, 3.0);
+        let rules = vec![(0, 0.0), (1, 3.0)];
+        assert_eq!(
+            weighed(3.0, rules.clone(), &[1, 0, 2], &[1.0, 0.001, 1.0]),
+            3.0
+        );
+        let d = weighed(3.0, rules, &[1, 0, 2], &[1.0, 0.001, 0.0]);
+        assert!((d - 0.003).abs() < 1e-6, "{d}");
     }
 }
