@@ -772,6 +772,163 @@ fn rain_film_drops_do_not_take_the_colour_of_a_frame_beside_the_pane() {
 }
 
 #[test]
+#[ignore = "requires a graphics adapter; renders a sticker on a wet pane from the cab"]
+fn rain_film_leaves_a_sticker_on_the_glass_clear_from_the_cab() {
+    sticker_on_wet_glass_from_the_cab(1);
+}
+
+// (a test of its own: a second renderer in one process trips wgpu's pipeline cache)
+#[test]
+#[ignore = "requires a graphics adapter; renders a sticker on a wet pane from the cab"]
+fn rain_film_leaves_a_sticker_on_the_glass_clear_from_the_cab_with_msaa() {
+    sticker_on_wet_glass_from_the_cab(4);
+}
+
+fn sticker_on_wet_glass_from_the_cab(msaa: u32) {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    const SIZE: usize = 512;
+    let mut render = |wet: bool, lighting: &Lighting| -> Vec<u8> {
+        let renderer = &mut renderer;
+        let mut scene = renderer.new_scene();
+        let dark = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.05; 4], true);
+        let light = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.9; 4], true);
+        let sticker = renderer.add_material(
+            &mut scene,
+            None,
+            AlphaMode::Opaque,
+            [0.05, 0.4, 0.1, 1.0],
+            true,
+        );
+        let letters = renderer.add_material(
+            &mut scene,
+            None,
+            AlphaMode::Opaque,
+            [0.7, 0.9, 0.7, 1.0],
+            true,
+        );
+        let film = renderer.add_material_extra(
+            &mut scene,
+            None,
+            AlphaMode::Blend,
+            [1.0; 4],
+            false,
+            None,
+            None,
+            None,
+            None,
+            [0.0; 3],
+            MaterialExtra {
+                rain_film: true,
+                no_z_write: true,
+                ..Default::default()
+            },
+        );
+        let mut quad = |y: f32, (x0, x1): (f32, f32), half: f32, material| {
+            let mesh = renderer.add_mesh(
+                &mut scene,
+                &MeshData {
+                    positions: vec![
+                        Vec3::new(x0, y, -half),
+                        Vec3::new(x1, y, -half),
+                        Vec3::new(x1, y, half),
+                        Vec3::new(x0, y, half),
+                    ],
+                    normals: vec![-Vec3::Y; 4],
+                    uvs: vec![
+                        glam::Vec2::new(0.0, 1.0),
+                        glam::Vec2::new(1.0, 1.0),
+                        glam::Vec2::new(1.0, 0.0),
+                        glam::Vec2::new(0.0, 0.0),
+                    ],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                    ranges: vec![(0, 6, 0)],
+                    one_sided: false,
+                },
+            );
+            renderer.add_instance(
+                &mut scene,
+                mesh,
+                DVec3::ZERO,
+                Mat4::IDENTITY,
+                vec![material],
+            )
+        };
+        // (striped, so that the drops show)
+        for i in -40..40 {
+            let x = i as f32 * 0.5;
+            let stripe = if i % 2 == 0 { dark } else { light };
+            quad(10.0, (x, x + 0.5), 40.0, stripe);
+        }
+        // a sticker with fine lettering 1.5 mm behind the film, as on a Citaro
+        quad(0.5015, (-0.1, 0.1), 0.1, sticker);
+        for i in 0..33 {
+            let x = -0.1 + i as f32 * 0.006;
+            quad(0.5014, (x, x + 0.003), 0.1, letters);
+        }
+        // (dry: the film's slot left out)
+        let film = quad(0.5, (-3.0, 3.0), 3.0, film);
+        renderer.set_params(&mut scene, film, &[if wet { 1.0 } else { 0.0 }], true, &[]);
+        let camera = Camera {
+            position: DVec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.0,
+            fov_deg: 70.0,
+            near: 0.1,
+            far: 100.0,
+        };
+        renderer
+            .render_to_image(&mut scene, SIZE as u32, SIZE as u32, &camera, lighting)
+            .unwrap()
+    };
+    let worst = |dry: &[u8], wet: &[u8], xs: std::ops::Range<usize>| -> u8 {
+        xs.clone()
+            .flat_map(|y| xs.clone().map(move |x| (y * SIZE + x) * 4))
+            .flat_map(|i| (i..i + 3).map(|k| dry[k].abs_diff(wet[k])))
+            .max()
+            .unwrap()
+    };
+    let sticker = SIZE / 2 - 48..SIZE / 2 + 48;
+    for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+        // the eye in the cab
+        let lighting = Lighting {
+            enhanced,
+            classic,
+            wetness: 1.0,
+            rain: 0.8,
+            shadows: false,
+            fog_density: 0.0,
+            inside: Some((DVec3::ZERO, 0.0, [4.0, 4.0, 4.0, 0.0, 0.0, 2.0])),
+            ..Default::default()
+        };
+        let (dry, wet) = (render(false, &lighting), render(true, &lighting));
+        let on_sticker = worst(&dry, &wet, sticker.clone());
+        assert!(
+            on_sticker <= 3,
+            "the film blurs the sticker on the glass or covers it with drops (msaa {msaa}, enhanced {enhanced}, classic {classic}): {on_sticker}"
+        );
+        assert!(
+            worst(&dry, &wet, 4..30) > 20,
+            "no drops on the pane beside the sticker (msaa {msaa}, enhanced {enhanced}, classic {classic})"
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; renders wet glass that writes depth"]
 fn rain_film_drops_bend_the_view_through_glass_that_writes_depth() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());

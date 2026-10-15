@@ -536,9 +536,18 @@ fn vs_main(in: VsIn) -> VsOut {
         let pull = min(0.02 + 0.002 * d + decal, d * 0.3);
         cp = wp.xyz - to / max(d, 1e-3) * pull;
     }
+    out.normal = safe_normal((m * vec4<f32>(in.normal, 0.0)).xyz);
+    // From the cab, a pane's film of water is depth-tested 4 mm further out (along the line
+    // of sight, so it stays put on screen): a sticker 1-2 mm behind the film covers the
+    // drops instead of being blurred by them (#289).
+    if (material.emissive.w > 1.5 && inside_vehicle(camera.cam_pos.xyz) > 0.5) {
+        let to = cp - camera.cam_pos.xyz;
+        let d = max(length(to), 1e-3);
+        let facing = max(abs(dot(out.normal, to / d)), 0.2);
+        cp = cp + to / d * (0.004 / facing);
+    }
     out.clip = camera.view_proj * vec4<f32>(cp, 1.0);
     out.world = wp.xyz;
-    out.normal = safe_normal((m * vec4<f32>(in.normal, 0.0)).xyz);
     let sp = vertex_specular(wp.xyz, out.normal);
     out.spec_sun = sp[0];
     out.spec_sky = sp[1];
