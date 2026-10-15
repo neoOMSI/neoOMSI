@@ -408,6 +408,27 @@ const NEAR_HIDE: f64 = 350.0;
 /// How deep under the ground (m) a vehicle is out of sight, its roof included.
 const BURIED_DEPTH: f64 = 6.0;
 
+/// Is a vehicle (radius `r`) at `p` deep under the ground, with the viewer above ground?
+/// Then nobody sees it however near (#101: detector buses 10 m underground). `ground(x, y)`
+/// is the terrain's height, None where it is cut away (a tunnel portal) or not loaded.
+fn buried(ground: impl Fn(f64, f64) -> Option<f64>, viewer: DVec3, p: DVec3, r: f64) -> bool {
+    let above = |q: DVec3, depth: f64| ground(q.x, q.y).is_some_and(|g| g > q.z + depth);
+    // (not for a viewer in a tunnel)
+    if above(viewer, 0.5) {
+        return false;
+    }
+    let reach = r.max(2.0);
+    [
+        DVec3::ZERO,
+        DVec3::X * reach,
+        -DVec3::X * reach,
+        DVec3::Y * reach,
+        -DVec3::Y * reach,
+    ]
+    .into_iter()
+    .all(|o| above(p + o, BURIED_DEPTH))
+}
+
 /// Within this distance of the camera an AI vehicle is animated and drawn even out of the
 /// view (m): the mirrors look behind, and a car beside the view throws its shadow into it.
 const UNSEEN_NEAR: f64 = 80.0;
@@ -2099,29 +2120,6 @@ impl Traffic {
         false
     }
 
-    /// Is a vehicle (radius `r`) at `p` deep under uncut ground, with the viewer above
-    /// ground? Then nobody sees it however near (#101: detector buses 10 m underground).
-    fn buried(&self, world: &World, v: &Viewer, p: DVec3, r: f64) -> bool {
-        let above = |q: DVec3, depth: f64| {
-            !world.ground_cut_away(q.x, q.y)
-                && terrain_height(world, q.x, q.y).is_some_and(|g| g > q.z + depth)
-        };
-        // (not for a viewer in a tunnel)
-        if above(v.pos, 0.5) {
-            return false;
-        }
-        let reach = r.max(2.0);
-        [
-            DVec3::ZERO,
-            DVec3::X * reach,
-            -DVec3::X * reach,
-            DVec3::Y * reach,
-            -DVec3::Y * reach,
-        ]
-        .into_iter()
-        .all(|o| above(p + o, BURIED_DEPTH))
-    }
-
     /// May a vehicle be put on the road at `p` without the player seeing it appear? A
     /// timetable bus asks this before it spawns mid-route.
     pub fn may_appear(&self, world: &World, p: DVec3) -> bool {
@@ -2159,7 +2157,14 @@ impl Traffic {
         let Some(v) = self.viewer else { return true };
         let d = (p - v.pos).length();
         if d < NEVER_VANISH_WITHIN {
-            return self.buried(world, &v, p, r);
+            let ground = |x, y| {
+                if world.ground_cut_away(x, y) {
+                    None
+                } else {
+                    terrain_height(world, x, y)
+                }
+            };
+            return buried(ground, v.pos, p, r);
         }
         if !v.draws(d, r) {
             return true;
@@ -9309,6 +9314,42 @@ mod rail_trail_tests {
         }
         let span = trail.back().unwrap().0 - trail.front().unwrap().0;
         assert!((span - 600.0).abs() <= 1.0, "{span}");
+    }
+}
+
+#[cfg(test)]
+mod buried_tests {
+    use super::buried;
+    use glam::DVec3;
+
+    /// Flat ground at 0 with the ground cut away from x = `hole` on (a tunnel portal).
+    fn ground(hole: f64) -> impl Fn(f64, f64) -> Option<f64> {
+        move |x, _| (x < hole).then_some(0.0)
+    }
+
+    const VIEWER: DVec3 = DVec3::new(0.0, -50.0, 1.7);
+    const DEEP: DVec3 = DVec3::new(0.0, 0.0, -10.0);
+
+    #[test]
+    fn a_vehicle_deep_under_the_ground_is_out_of_sight() {
+        assert!(buried(ground(f64::MAX), VIEWER, DEEP, 8.0));
+    }
+
+    /// Everything else keeps the usual rules (#101 review): near the player it may not
+    /// appear, behind a building or not.
+    #[test]
+    fn a_vehicle_not_wholly_under_the_ground_is_not() {
+        let flat = ground(f64::MAX);
+        // on the street, behind a building or not
+        assert!(!buried(&flat, VIEWER, DVec3::ZERO, 8.0));
+        // in a shallow underpass: its roof shows
+        assert!(!buried(&flat, VIEWER, DVec3::new(0.0, 0.0, -4.0), 8.0));
+        // in a tunnel whose portal is within its length
+        assert!(!buried(ground(5.0), VIEWER, DEEP, 8.0));
+        // seen from a tunnel
+        assert!(!buried(&flat, DVec3::new(0.0, -50.0, -10.0), DEEP, 8.0));
+        // where no terrain is loaded
+        assert!(!buried(|_, _| None, VIEWER, DEEP, 8.0));
     }
 }
 
