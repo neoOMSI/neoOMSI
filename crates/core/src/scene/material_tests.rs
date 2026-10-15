@@ -490,3 +490,22 @@ fn dynamic_scenery_material_transitions_and_retention_lifecycle() {
         "variant evaluation must switch back to second dynamic base material"
     );
 }
+
+#[test]
+fn a_matl_item_keeps_its_base_slots_inward_normals() {
+    let base = MaterialExtra {
+        normals_inward: true,
+        glass: true,
+        ..Default::default()
+    };
+    let mut item = material_extra(&[], None, None, [0.0; 4]);
+    inherit_base_extra(&mut item, &base);
+    assert!(item.normals_inward);
+    assert!(item.glass);
+    let mut item = MaterialExtra {
+        normals_inward: true,
+        ..Default::default()
+    };
+    inherit_base_extra(&mut item, &MaterialExtra::default());
+    assert!(!item.normals_inward);
+}

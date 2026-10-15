@@ -991,9 +991,7 @@ impl World {
                         // an LED panel: see `MaterialExtra::led`)
                         it_extra.led = (it_script_trans.is_some() || script_item.is_some()) && !html_page(it_script_trans) && !html_page(script_item) && if ov_item.iter().any(|o| o.lightmap.is_some()) { lm_white(ov_item) } else { lm_white(&ov) };
                         it_extra.html = !it_extra.led && (html_page(script_item) || html_page(it_script_trans));
-                        it_extra.no_z_write |= extra.no_z_write;
-                        it_extra.no_z_check |= extra.no_z_check;
-                        it_extra.glass |= extra.glass;
+                        inherit_base_extra(&mut it_extra, &extra);
                         if repair_body_depth {
                             it_extra.no_z_check = false;
                         }
