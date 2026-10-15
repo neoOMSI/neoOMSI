@@ -39,6 +39,12 @@ pub(crate) struct PassengerTarget {
     pub(crate) deadline: f64,
 }
 
+/// Calls still ahead of an actual bus, on that run's service day.
+struct PassengerRun {
+    base: f64,
+    pending: HashSet<usize>,
+}
+
 /// One step of a trip's route: a lane in map terms (None when the tile index is not in the
 /// map's list) and the leg between two stations it belongs to (0 for a track).
 #[derive(Debug, Clone, Copy)]

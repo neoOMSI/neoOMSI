@@ -213,7 +213,12 @@ pub(crate) fn run_offscreen(
         if let Some(schedule) = schedule.as_ref() {
             h.set_timetable_targets(
                 &world,
-                schedule.stop_targets_within(parse_time(&args.time), 5.0 * 60.0),
+                schedule.stop_targets_within(
+                    parse_time(&args.time),
+                    5.0 * 60.0,
+                    traffic.as_ref(),
+                    duty.as_ref(),
+                ),
                 schedule.stop_names(),
             );
         }
@@ -1170,13 +1175,26 @@ pub(crate) fn run_offscreen(
                 .global
                 .passenger_density((run_clock.time / 3600.0) as f32)
                 * ::config::get_float("passengers", "density").unwrap_or(1.0) as f32;
-            h.time_of_day = run_clock.time;
+            let service_time = traffic.as_ref().map(|t| t.day_time).unwrap_or(run_clock.time);
+            h.time_of_day = service_time;
             // populate stops near every LAN player every 2 seconds, as app_events.rs
             // does every 2 s near the local player.  At startup `center` is ZERO (no
             // player bus on a headless server), so stops on the actual map – which can
             // be thousands of metres away – fall outside the 600 m filter in
             // `populate_with` and are never seeded without this loop.
             if i % 60 == 0 {
+                if let Some(schedule) = schedule.as_ref() {
+                    h.set_timetable_targets(
+                        &world,
+                        schedule.stop_targets_within(
+                            service_time,
+                            5.0 * 60.0,
+                            traffic.as_ref(),
+                            duty.as_ref(),
+                        ),
+                        schedule.stop_names(),
+                    );
+                }
                 let player_centers: Vec<glam::DVec3> = remotes_off
                     .remotes
                     .values()

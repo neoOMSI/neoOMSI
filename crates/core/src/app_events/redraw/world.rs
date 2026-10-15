@@ -55,7 +55,12 @@ impl App {
                 if let Some(schedule) = self.schedule.as_ref() {
                     h.set_timetable_targets(
                         w,
-                        schedule.stop_targets_within(service_time, 5.0 * 60.0),
+                        schedule.stop_targets_within(
+                            service_time,
+                            5.0 * 60.0,
+                            self.traffic.as_ref(),
+                            self.duty.as_ref(),
+                        ),
                         schedule.stop_names(),
                     );
                 }

@@ -1686,6 +1686,105 @@ fn timetable_gate_applies_to_stops_missing_from_busstops_cfg() {
 }
 
 #[test]
+fn a_newly_loaded_stop_spawns_passengers_for_a_late_bus_until_the_deadline() {
+    let f = Fixture::new();
+    let tt = f.root.join("TTData");
+    std::fs::create_dir_all(&tt).unwrap();
+    std::fs::write(
+        tt.join("1.ttl"),
+        "[newtour]\n1\nTest\n1023\n[addtrip]\nTrip\n0\n480\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tt.join("Trip.ttp"),
+        "[trip]\n\nTerminus\n1\n[station_typ2]\n1\n[station_typ2]\n2\n[station_typ2]\n3\n[profile]\nstandard\n20\n",
+    ).unwrap();
+    let clock = ::simulation::SimClock::default();
+    let mut schedule = crate::schedule::Schedule::new(&f.root, &f.world, &clock);
+    let mut duty = schedule
+        .player_duty(&f.world, "1", "1", 8.0 * 3600.0, Some("1"), false)
+        .unwrap();
+    duty.start_at(0, 1);
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mut h = Humans::new(&f.root);
+    h.ik = true;
+    set_population(&mut h, [f.human.clone()]);
+    // The middle stop only enters the loaded area at 08:15, five minutes late.
+    let mut s = stop(DVec3::ZERO, 0.0, "Middle");
+    s.enter_min = 2.0;
+    s.enter_max = 2.0;
+    s.spots = (0..3)
+        .map(|i| pax::WaitSpot {
+            pos: DVec3::new(i as f64, 0.0, 0.0),
+            face: 0.0,
+            height: 0.0,
+        })
+        .collect();
+    s.taken = vec![false; 3];
+    h.stops.insert(2, s);
+    h.time_of_day = 8.0 * 3600.0 + 15.0 * 60.0;
+    h.set_timetable_targets(
+        &f.world,
+        schedule.stop_targets_within(h.time_of_day, 300.0, None, Some(&duty)),
+        schedule.stop_names(),
+    );
+    h.stops_tick(0.05, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 2);
+    assert_eq!(h.people.len(), 2);
+    for i in 0..2 {
+        let p = h.pax(i).unwrap();
+        assert_eq!(p.journey.dest.as_deref(), Some("3"));
+        assert!(
+            p.journey
+                .allowed_termini
+                .as_ref()
+                .unwrap()
+                .contains("Terminus")
+        );
+        assert_eq!(p.journey.service_deadline, Some(9.0 * 3600.0 + 10.0 * 60.0));
+    }
+    for _ in 0..5 {
+        h.stops_tick(15.0, &f.world, &renderer, &mut scene);
+        assert_eq!(
+            h.people.len(),
+            2,
+            "repeated updates must not multiply demand"
+        );
+    }
+    // The existing hourly density still controls how many wait.
+    h.density = 0.0;
+    h.stops_tick(0.05, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 0);
+    // The player has served this stop; freeing a place must not refill it for that bus.
+    h.density = 1.0;
+    duty.start_at(0, 2);
+    h.release(0);
+    let boarded = h.people.swap_remove(0);
+    h.retire(&boarded);
+    h.set_timetable_targets(
+        &f.world,
+        schedule.stop_targets_within(h.time_of_day, 300.0, None, Some(&duty)),
+        schedule.stop_names(),
+    );
+    h.stops_tick(15.0, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 0);
+    assert_eq!(h.people.len(), 1, "no new passenger after the bus passed");
+    // At the deadline they give up, and stale service cannot create replacements.
+    h.density = 1.0;
+    h.time_of_day = 9.0 * 3600.0 + 10.0 * 60.0;
+    h.set_timetable_targets(
+        &f.world,
+        schedule.stop_targets_within(h.time_of_day, 300.0, None, Some(&duty)),
+        schedule.stop_names(),
+    );
+    h.stops_tick(15.0, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 0);
+    assert!(h.people.is_empty());
+    assert!(h.stops[&2].taken.iter().all(|taken| !taken));
+}
+
+#[test]
 fn reachable_seats_are_preferred_and_reservations_are_unique() {
     let mut h = Humans::new(Path::new("/nonexistent"));
     h.prefer_seats = true;

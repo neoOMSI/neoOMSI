@@ -1000,6 +1000,349 @@ fn saturday_after_midnight(departures: &[(f64, i32)]) -> Schedule {
 const FRIDAY: i32 = 1 << 4 | 1 << 8;
 const SATURDAY: i32 = 1 << 5 | 1 << 8;
 
+fn passenger_service(
+    s: &Schedule,
+    departure: usize,
+    from: usize,
+) -> crate::bus_service::BusService {
+    let entry = &s.departures[departure];
+    let times = s.times_of(departure);
+    crate::bus_service::BusService::new(
+        trip_stations(&s.data.trips[entry.trip])
+            .into_iter()
+            .enumerate()
+            .skip(from)
+            .filter(|(index, _)| times.stops[*index])
+            .map(|(index, id)| crate::bus_service::Stop {
+                ri: index,
+                s: 0.0,
+                bay: 0.0,
+                side: 0.0,
+                id,
+                depart: entry.base + entry.time + times.stations[index].1,
+            })
+            .collect(),
+    )
+}
+
+fn passenger_duty(s: &Schedule, departure: usize, next_stop: usize) -> PlayerDuty {
+    let entry = &s.departures[departure];
+    let times = s.times_of(departure);
+    let trip = &s.data.trips[entry.trip];
+    let stops = trip_stations(trip)
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| PlannedStop {
+            object_id: id,
+            name: id.to_string(),
+            arr: entry.time + times.stations[index].0,
+            dep: entry.time + times.stations[index].1,
+            position: None,
+            dir: StopDir::default(),
+            stops: times.stops[index],
+        })
+        .collect();
+    PlayerDuty {
+        line: entry.line.clone(),
+        tour: entry.tour.clone(),
+        trips: vec![PlannedTrip {
+            name: trip.name.clone(),
+            line: trip.line.clone(),
+            terminus: trip.terminus.clone(),
+            departure: entry.time,
+            end: entry.time + times.duration,
+            stops,
+        }],
+        trip_index: 0,
+        first_trip: 0,
+        next_stop,
+        statistics: Default::default(),
+        completed_report: None,
+        at_stop: false,
+        arrived_late: None,
+        done: false,
+        left_late: None,
+        held_back: false,
+        odo: 0.0,
+        last_pos: None,
+        arrival_odo: 0.0,
+        left_odo: 0.0,
+        placed: true,
+        trip_changed: false,
+        picked: true,
+        first_update: None,
+        heading: 0.0,
+    }
+}
+
+#[test]
+fn passenger_targets_keep_a_pre_midnight_trip_on_the_previous_days_mask() {
+    let s = saturday_after_midnight(&[
+        (23.0 * 3600.0 + 55.0 * 60.0, FRIDAY),
+        (23.0 * 3600.0 + 55.0 * 60.0, SATURDAY),
+    ]);
+    let targets = s.stop_targets_within(DAY + 4.0 * 60.0, 300.0, None, None);
+    let target = &targets.get(&2).expect("Friday's bus calls at 00:05")[0];
+    assert_eq!(target.destination, "3");
+    assert!(target.termini.contains("T"));
+    assert!(target.deadline > DAY + 5.0 * 60.0);
+    assert!(
+        targets.get(&3).is_none_or(Vec::is_empty),
+        "no boarding at the terminus"
+    );
+
+    let saturday_only = saturday_after_midnight(&[(23.0 * 3600.0 + 55.0 * 60.0, SATURDAY)]);
+    assert!(
+        saturday_only
+            .stop_targets_within(DAY + 4.0 * 60.0, 300.0, None, None)
+            .is_empty()
+    );
+}
+
+#[test]
+fn passenger_targets_keep_previous_days_departures_after_24_hours() {
+    let s = saturday_after_midnight(&[(DAY + 22.0 * 60.0, FRIDAY)]);
+    let targets = s.stop_targets_within(DAY + 31.0 * 60.0, 300.0, None, None);
+    assert_eq!(targets[&2][0].destination, "3");
+}
+
+#[test]
+fn passenger_targets_remain_available_at_later_stops_of_a_delayed_trip() {
+    let mut s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY)]);
+    s.data.trips[0].stations = (1..=10).collect();
+    s.times[0][0] = TripTimes {
+        stations: (0..10)
+            .map(|i| (i as f64 * 600.0, i as f64 * 600.0))
+            .collect(),
+        stops: vec![true; 10],
+        kinds: vec![0; 10],
+        duration: 5400.0,
+    };
+    for stop in 1..10 {
+        let call = DAY + 8.0 * 3600.0 + (stop - 1) as f64 * 600.0;
+        // The bus reaches each new streaming region five minutes behind schedule.
+        let service = passenger_service(&s, 0, (stop - 1) as usize);
+        let active = HashMap::from([(0, s.passenger_run(0, Some(&service), None))]);
+        let targets = s.stop_targets_for_runs(call + 300.0, 300.0, &active);
+        let target = &targets
+            .get(&stop)
+            .expect("late service still has waiting demand")[0];
+        assert!(target.termini.contains("T"));
+        assert_eq!(target.deadline, call + 3600.0);
+        let expired = s.stop_targets_for_runs(call + 3600.0, 300.0, &active);
+        assert!(expired.get(&stop).is_none_or(Vec::is_empty));
+    }
+    s.times[0][0].stops[4] = false;
+    let service = passenger_service(&s, 0, 0);
+    let active = HashMap::from([(0, s.passenger_run(0, Some(&service), None))]);
+    let targets = s.stop_targets_for_runs(DAY + 8.0 * 3600.0 + 2400.0, 300.0, &active);
+    assert!(targets.get(&5).is_none_or(Vec::is_empty));
+    assert!(
+        targets
+            .values()
+            .flatten()
+            .all(|target| target.destination != "5")
+    );
+}
+
+#[test]
+fn passenger_targets_use_the_next_call_deadline_for_overdue_demand() {
+    let s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY), (8.0 * 3600.0 + 1200.0, SATURDAY)]);
+    let call = DAY + 8.0 * 3600.0;
+    let service = passenger_service(&s, 0, 0);
+    let active = HashMap::from([(0, s.passenger_run(0, Some(&service), None))]);
+    let targets = s.stop_targets_for_runs(call + 300.0, 300.0, &active);
+    assert_eq!(targets[&1][0].deadline, call + 1500.0);
+    assert!(
+        s.stop_targets_within(call - 301.0, 300.0, None, None)
+            .is_empty()
+    );
+}
+
+#[test]
+fn passenger_targets_do_not_invent_an_overdue_bus() {
+    let s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY)]);
+    let call = DAY + 8.0 * 3600.0;
+    assert!(!s.stop_targets_within(call - 300.0, 300.0, None, None)[&1].is_empty());
+    assert!(
+        s.stop_targets_within(call - 301.0, 300.0, None, None)
+            .is_empty()
+    );
+    assert!(
+        s.stop_targets_within(call + 1.0, 300.0, None, None)
+            .get(&1)
+            .is_none_or(Vec::is_empty)
+    );
+    assert!(
+        s.stop_targets_within(call + 1800.0, 300.0, None, None)
+            .is_empty()
+    );
+}
+
+#[test]
+fn passenger_targets_stop_refilling_after_the_actual_bus_passes() {
+    let s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY)]);
+    let now = DAY + 8.0 * 3600.0 + 900.0;
+    let mut service = passenger_service(&s, 0, 0);
+    let active = |service: &crate::bus_service::BusService| {
+        HashMap::from([(0, s.passenger_run(0, Some(service), None))])
+    };
+    assert!(!s.stop_targets_for_runs(now, 300.0, &active(&service))[&1].is_empty());
+    service.stops.pop_front();
+    let targets = s.stop_targets_for_runs(now, 300.0, &active(&service));
+    assert!(targets.get(&1).is_none_or(Vec::is_empty));
+    assert!(
+        !targets[&2].is_empty(),
+        "the later stop still needs the late bus"
+    );
+    service.stops.clear();
+    assert!(
+        s.stop_targets_for_runs(now, 300.0, &active(&service))
+            .is_empty()
+    );
+}
+
+#[test]
+fn passenger_targets_do_not_refill_a_stop_served_early() {
+    let s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY)]);
+    let service = passenger_service(&s, 0, 1);
+    let active = HashMap::from([(0, s.passenger_run(0, Some(&service), None))]);
+    let targets = s.stop_targets_for_runs(DAY + 8.0 * 3600.0 - 60.0, 300.0, &active);
+    assert!(targets.get(&1).is_none_or(Vec::is_empty));
+}
+
+#[test]
+fn passenger_targets_distinguish_equal_time_stops_and_unloaded_calls() {
+    let mut s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY)]);
+    s.times[0][0].stations[1] = (0.0, 0.0);
+    let mut service = passenger_service(&s, 0, 1);
+    let tail = service.stops.pop_back().unwrap();
+    let unloaded = RunningTrip {
+        car: 10,
+        steps: vec![],
+        next: 0,
+        stations: vec![(tail.id, tail.depart)],
+        served: vec![false],
+    };
+    let run = s.passenger_run(0, Some(&service), Some(&unloaded));
+    assert_eq!(run.pending, HashSet::from_iter([1, 2]));
+    let targets =
+        s.stop_targets_for_runs(DAY + 8.0 * 3600.0 + 60.0, 300.0, &HashMap::from([(0, run)]));
+    assert!(targets.get(&1).is_none_or(Vec::is_empty));
+    assert_eq!(targets[&2][0].destination, "3");
+}
+
+#[test]
+fn passenger_targets_do_not_apply_yesterdays_progress_to_todays_run() {
+    let mut s = saturday_after_midnight(&[(8.0 * 3600.0, FRIDAY | SATURDAY)]);
+    s.departures[0].base = 0.0;
+    let finished = passenger_service(&s, 0, 3);
+    let active = HashMap::from([(0, s.passenger_run(0, Some(&finished), None))]);
+    let targets = s.stop_targets_for_runs(DAY + 8.0 * 3600.0 - 60.0, 300.0, &active);
+    assert!(!targets[&1].is_empty());
+}
+
+#[test]
+fn passenger_targets_follow_an_actual_bus_delayed_across_midnight() {
+    let mut s = saturday_after_midnight(&[(23.0 * 3600.0 + 30.0 * 60.0, FRIDAY)]);
+    s.departures[0].base = 0.0; // Scheduled end 23:50, still at stop 2 after midnight.
+    let service = passenger_service(&s, 0, 1);
+    let active = HashMap::from([(0, s.passenger_run(0, Some(&service), None))]);
+    let targets = s.stop_targets_for_runs(DAY + 60.0, 300.0, &active);
+    assert_eq!(targets[&2][0].destination, "3");
+    assert!(targets.get(&1).is_none_or(Vec::is_empty));
+}
+
+#[test]
+fn passenger_targets_follow_player_progress_and_stop_after_trip_completion() {
+    let s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY)]);
+    let now = DAY + 8.0 * 3600.0 + 900.0;
+    let mut duty = passenger_duty(&s, 0, 1);
+    let targets = s.stop_targets_within(now, 300.0, None, Some(&duty));
+    assert!(targets.get(&1).is_none_or(Vec::is_empty));
+    assert_eq!(targets[&2][0].destination, "3");
+    duty.done = true;
+    assert!(
+        s.stop_targets_within(now, 300.0, None, Some(&duty))
+            .is_empty()
+    );
+}
+
+#[test]
+fn passenger_targets_keep_the_next_departure_after_the_player_passes() {
+    let s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY), (8.0 * 3600.0 + 1200.0, SATURDAY)]);
+    let duty = passenger_duty(&s, 0, 2);
+    let call = DAY + 8.0 * 3600.0;
+    assert!(
+        s.stop_targets_within(call + 300.0, 300.0, None, Some(&duty))
+            .get(&1)
+            .is_none_or(Vec::is_empty)
+    );
+    let targets = s.stop_targets_within(call + 900.0, 300.0, None, Some(&duty));
+    assert_eq!(
+        targets[&1].len(),
+        2,
+        "one target per destination, not per bus"
+    );
+    assert_eq!(targets[&1][0].deadline, call + 1200.0 + 3600.0);
+}
+
+#[test]
+fn passenger_targets_follow_the_players_previous_day_trip_after_midnight() {
+    let s = saturday_after_midnight(&[(23.0 * 3600.0 + 55.0 * 60.0, FRIDAY)]);
+    let mut duty = passenger_duty(&s, 0, 1);
+    let now = DAY + 10.0 * 60.0;
+    let targets = s.stop_targets_within(now, 300.0, None, Some(&duty));
+    assert_eq!(targets[&2][0].destination, "3");
+    duty.next_stop = 2;
+    assert!(
+        s.stop_targets_within(now, 300.0, None, Some(&duty))
+            .get(&2)
+            .is_none_or(Vec::is_empty)
+    );
+}
+
+#[test]
+#[ignore = "requires OMSI_ROOT with Tettau installed; reads timetable data only"]
+fn installed_tettau_keeps_passenger_targets_along_a_delayed_countryside_trip() {
+    let root = std::path::PathBuf::from(std::env::var_os("OMSI_ROOT").expect("OMSI_ROOT"));
+    let data = TimetableData::load(&root.join("maps/Tettau"));
+    assert!(data.errors.is_empty(), "{:?}", data.errors);
+    let trip = data
+        .trips
+        .iter()
+        .find(|trip| trip.name == "8342_Kronach")
+        .unwrap()
+        .clone();
+    let stations = trip_stations(&trip);
+    assert!(stations.len() > 20);
+    let times = TripTimes::new(&stations, trip.profiles.first(), &|from, to| {
+        data.stn_links
+            .iter()
+            .find(|link| link.from_id == from && link.to_id == to)
+            .map(|link| link.length)
+    });
+    let mut s = saturday_after_midnight(&[(8.0 * 3600.0, SATURDAY)]);
+    s.data.trips = vec![trip];
+    s.data.bus_stops = data.bus_stops;
+    s.times = vec![vec![times]];
+    let names = s.stop_names();
+    for (index, stop) in stations.iter().enumerate().take(stations.len() - 1) {
+        if !s.times[0][0].stops[index] {
+            continue;
+        }
+        let now = DAY + 8.0 * 3600.0 + s.times[0][0].stations[index].1 + 300.0;
+        let service = passenger_service(&s, 0, index);
+        let active = HashMap::from([(0, s.passenger_run(0, Some(&service), None))]);
+        let targets = s.stop_targets_for_runs(now, 300.0, &active);
+        assert!(
+            targets.get(stop).is_some_and(|targets| !targets.is_empty()),
+            "no demand at stop {index}: {:?}",
+            names.get(stop)
+        );
+    }
+}
+
 #[test]
 fn the_day_befores_night_trips_run_after_midnight() {
     let s = saturday_after_midnight(&[
