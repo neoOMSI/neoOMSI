@@ -970,7 +970,26 @@ fn rain_film_does_not_bend_a_sticker_on_its_pane() {
                 },
             )
         };
-        let sticker = decal(renderer, &mut scene, [0.05, 0.4, 0.1, 1.0]);
+        // (the sticker's ground is the paint's layer on the pane, as on the NLC: marked as
+        // glass, masked by the paint's transmap)
+        let mask = renderer.add_texture(&mut scene, &::texture::Image::solid([255; 4]), true);
+        let sticker = renderer.add_material_extra(
+            &mut scene,
+            None,
+            AlphaMode::Blend,
+            [0.05, 0.4, 0.1, 1.0],
+            true,
+            Some((mask, true)),
+            None,
+            None,
+            None,
+            [0.0; 3],
+            MaterialExtra {
+                glass: true,
+                no_z_write: true,
+                ..Default::default()
+            },
+        );
         let letters = decal(renderer, &mut scene, [0.7, 0.9, 0.7, 1.0]);
         let film = renderer.add_material_extra(
             &mut scene,

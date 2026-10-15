@@ -1721,24 +1721,27 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     if (camera.flags.z > -0.5 || dot(through, through) < 1e-4) {
         return fallback;
     }
-    let c = camera.view_proj * vec4<f32>(world + normalize(through) * 6.0, 1.0);
-    if (c.w <= 0.05) {
-        return fallback;
-    }
     let o = camera.view_proj * vec4<f32>(world, 1.0);
-    let ndc = c.xy / c.w;
-    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     let own = vec2<f32>(o.x / o.w * 0.5 + 0.5, 0.5 - o.y / o.w * 0.5);
-    let inside = smoothstep(0.0, 0.06, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
     // metres the picture lies behind the pane (reversed depth: ~1 / distance); frames and
     // paint sit within centimetres of the film
     let pane = o.z / o.w;
-    let there = textureSampleLevel(t_env, s_diffuse, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
     let here = textureSampleLevel(t_env, s_diffuse, clamp(own, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
+    // (a drop on a sticker is a lens right on it: it shows the sticker a little shifted,
+    // not the street metres on, #289)
+    let off_glass = smoothstep(0.05, 0.2, o.w * (pane / max(here, 1e-7) - 1.0));
+    let c = camera.view_proj * vec4<f32>(world + normalize(through) * mix(0.15, 6.0, off_glass), 1.0);
+    if (c.w <= 0.05) {
+        return fallback;
+    }
+    let ndc = c.xy / c.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let inside = smoothstep(0.0, 0.06, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
+    let there = textureSampleLevel(t_env, s_diffuse, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
     let gap = o.w * (pane / max(max(there, here), 1e-7) - 1.0);
     let behind = smoothstep(0.05, 0.2, gap);
-    let at = mix(own, uv, inside * behind);
-    // (nor does the water soften a sticker on the glass, #289)
+    let at = mix(own, uv, inside * max(behind, 1.0 - off_glass));
+    // (nor does the water soften a sticker on the glass)
     let offset = vec2<f32>(1.0, 0.6) * scatter * behind * 4.0 / (vec2<f32>(textureDimensions(t_env)) * 2.0);
     let a = textureSampleLevel(t_env, s_diffuse, clamp(at - offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
     let b = textureSampleLevel(t_env, s_diffuse, clamp(at + offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
