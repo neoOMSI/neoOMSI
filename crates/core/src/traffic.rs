@@ -5899,32 +5899,10 @@ impl Traffic {
             .map(|p| (p.0, p.1))
             .chain(self.others.iter().map(|(_, b)| (b.0, b.1)))
             .collect();
-        for &(pos, heading) in &askers {
-            // (off the lanes - a depot yard, a car park - a gate's lane that starts just
-            // ahead, the way the bus is facing, is asked all the same: standing a few metres
-            // beside every lane there, the bus never opened the barrier in front of it)
-            for l in self.net.lanes_starting_near(pos, 35.0) {
-                let lane = &self.net.lanes[l];
-                let Some((ci, li)) = lane.traffic_light else {
-                    continue;
-                };
-                if gate_lane_ahead(lane, pos, heading) {
-                    if let Some(r) = self.lights.get_mut(ci).and_then(|c| c.request.get_mut(li)) {
-                        *r = true;
-                    }
-                }
-            }
-        }
         for (pos, heading) in askers {
-            for (l, d) in self.lanes_ahead_of(pos, heading, 160.0) {
-                if let Some((ci, li)) = self.net.lanes[l].traffic_light {
-                    if let Some(ctl) = self.lights.get_mut(ci) {
-                        if d <= ctl.approach_dist(li) {
-                            if let Some(r) = ctl.request.get_mut(li) {
-                                *r = true;
-                            }
-                        }
-                    }
+            for (ci, li) in lights_asked_by(&self.net, &self.lights, pos, heading) {
+                if let Some(r) = self.lights.get_mut(ci).and_then(|c| c.request.get_mut(li)) {
+                    *r = true;
                 }
             }
         }
@@ -7818,41 +7796,6 @@ impl Traffic {
         self.train_cars.contains(&car_key(path))
     }
 
-    /// The street lanes a vehicle standing at `pos` facing `heading` is on and will drive
-    /// onto within `reach` metres, each with the distance from the vehicle to its start
-    /// (0 for the lane it is on): the way straight on and the gentle turns (within 60° of
-    /// the lane before), not every branch of a junction.
-    fn lanes_ahead_of(&self, pos: DVec3, heading: f64, reach: f32) -> Vec<(usize, f32)> {
-        let Some((lane, s, _)) = self
-            .net
-            .lane_along(pos, heading, LaneKind::Street, 4.0, 45.0)
-        else {
-            return Vec::new();
-        };
-        let mut out = vec![(lane, 0.0f32)];
-        let mut open = vec![(lane, self.net.lanes[lane].length() - s)];
-        while let Some((l, to_end)) = open.pop() {
-            if to_end > reach || out.len() > 64 {
-                continue;
-            }
-            let end_heading = self.net.lanes[l].headings.last().copied().unwrap_or(0.0);
-            for &n in &self.net.lanes[l].next {
-                let nl = &self.net.lanes[n];
-                if nl.kind != LaneKind::Street || out.iter().any(|o| o.0 == n) {
-                    continue;
-                }
-                let start = nl.headings.first().copied().unwrap_or(end_heading);
-                let turn = ((start - end_heading) as f64 + 540.0).rem_euclid(360.0) - 180.0;
-                if turn.abs() > 60.0 {
-                    continue;
-                }
-                out.push((n, to_end));
-                open.push((n, to_end + nl.length()));
-            }
-        }
-        out
-    }
-
     /// The drivers of the timetable buses near the camera: made when a bus comes within
     /// `DRIVER_NEAR`, posed every sync, let go when it is twice that far or gone.
     fn sync_drivers(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
@@ -8374,6 +8317,79 @@ fn ask_light(
             }
         }
     }
+}
+
+/// The lights a bus (the player's, another player's) at `pos` facing `heading` asks for:
+/// those of the lanes it is on and may drive onto, each within its `[approachdist]`.
+fn lights_asked_by(
+    net: &::simulation::traffic::Network,
+    lights: &[TrafficLightController],
+    pos: DVec3,
+    heading: f64,
+) -> Vec<(usize, usize)> {
+    let Some((lane, s, _)) = net.lane_along(pos, heading, LaneKind::Street, 4.0, 45.0) else {
+        // (off the lanes - a depot yard - a gate's lane just ahead is asked all the same;
+        // on a lane this asked for the bus lane's signal beside it, #394)
+        return net
+            .lanes_starting_near(pos, 35.0)
+            .into_iter()
+            .filter_map(|l| {
+                let lane = &net.lanes[l];
+                lane.traffic_light
+                    .filter(|_| gate_lane_ahead(lane, pos, heading))
+            })
+            .collect();
+    };
+    street_lanes_ahead(net, lane, s, 160.0)
+        .into_iter()
+        .filter_map(|(l, d)| {
+            net.lanes[l]
+                .traffic_light
+                .filter(|&(ci, li)| lights.get(ci).is_some_and(|c| d <= c.approach_dist(li)))
+        })
+        .collect()
+}
+
+/// The street lanes a vehicle `s` metres along `lane` may drive onto within `reach`
+/// metres, with the distance to their starts (0 for its own): turns of up to 60°. At a
+/// fork only the straightest branch is followed further (#394).
+fn street_lanes_ahead(
+    net: &::simulation::traffic::Network,
+    lane: usize,
+    s: f32,
+    reach: f32,
+) -> Vec<(usize, f32)> {
+    let mut out = vec![(lane, 0.0f32)];
+    // (the lanes followed, each once)
+    let mut way = vec![lane];
+    let (mut l, mut to_end) = (lane, net.lanes[lane].length() - s);
+    let mut branches: Vec<(usize, f64)> = Vec::new();
+    while to_end <= reach && out.len() <= 64 {
+        let end_heading = net.lanes[l].headings.last().copied().unwrap_or(0.0);
+        branches.clear();
+        for &n in &net.lanes[l].next {
+            let nl = &net.lanes[n];
+            if nl.kind != LaneKind::Street || way.contains(&n) {
+                continue;
+            }
+            let start = nl.headings.first().copied().unwrap_or(end_heading);
+            let turn = ((start - end_heading) as f64 + 540.0).rem_euclid(360.0) - 180.0;
+            if turn.abs() > 60.0 {
+                continue;
+            }
+            if !out.iter().any(|o| o.0 == n) {
+                out.push((n, to_end));
+            }
+            branches.push((n, turn.abs()));
+        }
+        let Some(&(n, _)) = branches.iter().min_by(|a, b| a.1.total_cmp(&b.1)) else {
+            break;
+        };
+        way.push(n);
+        l = n;
+        to_end += net.lanes[n].length();
+    }
+    out
 }
 
 /// Whether a street lane (a depot gate's) starts just ahead of a bus; never a rail lane.
@@ -8982,8 +8998,8 @@ mod bodies_moved_tests {
 
 #[cfg(test)]
 mod gate_lane_tests {
-    use super::gate_lane_ahead;
-    use ::simulation::traffic::{LaneBuilder, LaneKind};
+    use super::{gate_lane_ahead, lights_asked_by, street_lanes_ahead};
+    use ::simulation::traffic::{LaneBuilder, LaneKind, Network, TrafficLightController};
     use glam::DVec3;
 
     /// A bus asks for the street lane starting ahead of it, not for a rail lane there.
@@ -8993,6 +9009,63 @@ mod gate_lane_tests {
             |kind| LaneBuilder::arc(DVec3::new(3.0, 10.0, 0.0), 0.0, 20.0, 0.0, 0.0, kind, 3.0);
         assert!(gate_lane_ahead(&lane(LaneKind::Street), DVec3::ZERO, 0.0));
         assert!(!gate_lane_ahead(&lane(LaneKind::Rail), DVec3::ZERO, 0.0));
+    }
+
+    /// A road forking into a straight lane and a bus lane 3.3 m to its right with a light
+    /// (1, `[approachdist]` 40) at y = 50, as at Menzinger Höhe (#394), and a gate (2).
+    fn split() -> (Network, Vec<TrafficLightController>) {
+        let line = |a: [f64; 2], b: [f64; 2]| {
+            LaneBuilder::polyline(
+                vec![DVec3::new(a[0], a[1], 0.0), DVec3::new(b[0], b[1], 0.0)],
+                LaneKind::Street,
+                3.0,
+            )
+        };
+        let mut bus = line([3.3, 50.0], [3.3, 90.0]);
+        bus.traffic_light = Some((0, 1));
+        let mut gate = line([100.0, 10.0], [100.0, 30.0]);
+        gate.traffic_light = Some((0, 2));
+        let mut net = Network {
+            lanes: vec![
+                line([0.0, 0.0], [0.0, 20.0]),
+                line([0.0, 20.0], [0.0, 90.0]),
+                line([0.0, 20.0], [3.3, 50.0]),
+                bus,
+                gate,
+            ],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let mut ctl = TrafficLightController::new(vec![vec![(0, 10.0)]; 3], 0.0);
+        ctl.approach = vec![None, Some(40.0), None];
+        (net, vec![ctl])
+    }
+
+    /// A bus staying in the straight lane does not ask for the bus lane's light: neither
+    /// beside it nor from before the fork (#394).
+    #[test]
+    fn a_bus_in_the_straight_lane_asks_for_no_bus_lane_light() {
+        let (net, lights) = split();
+        for y in [15.0, 35.0, 45.0] {
+            let asked = lights_asked_by(&net, &lights, DVec3::new(0.0, y, 0.0), 0.0);
+            assert!(!asked.contains(&(0, 1)), "asked from y = {y}: {asked:?}");
+        }
+        let ahead: Vec<usize> = street_lanes_ahead(&net, 0, 15.0, 160.0)
+            .into_iter()
+            .map(|a| a.0)
+            .collect();
+        assert_eq!(ahead, vec![0, 1, 2]);
+    }
+
+    /// A bus that has turned into the bus lane asks for its light, and one off the lanes
+    /// still asks for the gate in front of it.
+    #[test]
+    fn a_bus_in_the_bus_lane_or_off_the_lanes_asks() {
+        let (net, lights) = split();
+        let on_branch = lights_asked_by(&net, &lights, DVec3::new(2.0, 38.0, 0.0), 6.0);
+        assert!(on_branch.contains(&(0, 1)), "{on_branch:?}");
+        let in_yard = lights_asked_by(&net, &lights, DVec3::new(100.0, 0.0, 0.0), 0.0);
+        assert_eq!(in_yard, vec![(0, 2)]);
     }
 }
 
