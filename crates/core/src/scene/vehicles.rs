@@ -340,11 +340,11 @@ impl World {
                 }
             }
             for v in render.variants {
+                for ((b, it), _) in v.free_cache.into_values() {
+                    own_materials.push(b);
+                    own_materials.push(it);
+                }
                 for f in v.free {
-                    for (b, it) in f.cache.into_values() {
-                        own_materials.push(b);
-                        own_materials.push(it);
-                    }
                     // the pictures it showed: shared, gone with their last holder
                     let mut shared = f.shared.lock();
                     for p in f.held {

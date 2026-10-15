@@ -269,6 +269,49 @@ fn item_only_freetex_overrides_a_matching_base_freetex() {
 }
 
 #[test]
+fn item_freetex_keeps_the_plain_slots_free_picture() {
+    // #114: the Wayfarer's picture is a free texture of the plain slot, its night map one of
+    // the item's; the powered item needs both, else it shows the green placeholder.
+    let model = ::model::Model::parse(&::legacy_config::CfgFile::from_str(
+        "model.cfg",
+        concat!(
+            "[mesh]\nWay150_Misc.o3d\n[matl]\nWay150_Misc.dds\n0\n",
+            "[matl_change]\nWay150_Misc.dds\n0\nWayfarer_Lightmap\n",
+            "[matl_freetex]\nWay150_Misc.dds\nWay150_Misc\n[matl_item]\n",
+            "[matl_nightmap]\nWay150_Misc_LM.dds\n",
+            "[matl_freetex]\nWay150_Misc_LM.dds\nWay150_MiscLM\n",
+        ),
+    ));
+    let defs: Vec<&MaterialDef> = model.meshes[0].materials.iter().collect();
+    assert_eq!(
+        free_texture_defs(&defs),
+        vec![
+            (false, "Way150_Misc.dds".into(), "Way150_Misc".into()),
+            (true, "Way150_Misc_LM.dds".into(), "Way150_MiscLM".into()),
+        ]
+    );
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    let mut item = base.clone();
+    item.night = Some(11);
+    let spec = SlotSpec {
+        base,
+        item: Some(item.clone()),
+        more: vec![item],
+    };
+    let changed =
+        spec.with_free_textures([(Some(10), 20, true, false), (Some(11), 21, false, true)]);
+
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.base.night, None);
+    let item = changed.item.as_ref().unwrap();
+    assert_eq!(item.diffuse, Some(20));
+    assert_eq!(item.night, Some(21));
+    assert_eq!(changed.more[0].diffuse, Some(20));
+    assert_eq!(changed.more[0].night, Some(21));
+}
+
+#[test]
 fn inactive_dynamic_lightmap_keeps_the_original_lightmap() {
     let mut base = freetex_test_look();
     base.diffuse = Some(10);

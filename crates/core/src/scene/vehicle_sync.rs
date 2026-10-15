@@ -198,6 +198,14 @@ fn resolve_freetex_texture(
     })
 }
 
+/// The free textures that show a picture now.
+fn live_free_textures(
+    free: &[FreeTex],
+) -> impl Iterator<Item = (Option<TextureId>, TextureId, bool, bool)> + '_ {
+    free.iter()
+        .filter_map(|f| f.texture.map(|tex| (f.key, tex, f.diffuse, f.item_only)))
+}
+
 pub(super) fn sync_materials(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -205,7 +213,6 @@ pub(super) fn sync_materials(
     render: &mut VehicleRender,
 ) {
     for v in &mut render.variants {
-        let item_has_freetex = v.free.iter().any(|f| f.item_only);
         let has_dynamic_lightmap = v.lights.is_some();
         let mut freetex_changed = false;
         for f in &mut v.free {
@@ -220,46 +227,38 @@ pub(super) fn sync_materials(
             let name = trimmed.to_string();
             let key = name.to_ascii_lowercase();
             f.current = Some(key.clone());
-            if has_dynamic_lightmap {
-                // This material is built below with both changing stages. Retain only the
-                // resolved texture here: a free-texture-only material is never displayed.
-                f.texture = match f.texture_cache.get(&key) {
-                    Some(texture) => *texture,
-                    None => {
-                        let texture = resolve_freetex_texture(renderer, scene, f, &name);
-                        f.texture_cache.insert(key, texture);
-                        texture
-                    }
-                };
-                freetex_changed = true;
-                continue;
-            }
-            let pair = match f.cache.get(&key) {
-                Some(p) => *p,
+            // An empty string or a file not found leaves the slot its own texture from the
+            // mesh, rather than covering the display with a white plane.
+            f.texture = match f.texture_cache.get(&key) {
+                Some(texture) => *texture,
                 None => {
-                    let found = resolve_freetex_texture(renderer, scene, f, &name);
-                    // An empty string or a file not found leaves the slot its own texture
-                    // from the mesh, rather than covering the display with a white plane.
-                    let spec = match found {
-                        Some(tex) => v.spec.with_freetex(f.key, tex, f.diffuse, f.item_only),
-                        None => v.spec.clone(),
-                    };
-                    let p = spec.build(renderer, scene, v.base_tex);
-                    let more = spec.build_more(renderer, scene, v.base_tex, |_, material| material);
-                    f.more_cache.insert(key.clone(), more);
-                    f.cache.insert(key.clone(), p);
-                    p
+                    let texture = resolve_freetex_texture(renderer, scene, f, &name);
+                    f.texture_cache.insert(key, texture);
+                    texture
                 }
             };
-            if !f.item_only {
+            freetex_changed = true;
+        }
+        if freetex_changed && !has_dynamic_lightmap {
+            // all free textures together, so the item keeps the plain slot's picture (#114);
+            // with dynamic light maps this is done below
+            let free_state: Vec<Option<TextureId>> = v.free.iter().map(|f| f.texture).collect();
+            let (pair, more) = match v.free_cache.get(&free_state) {
+                Some(built) => built.clone(),
+                None => {
+                    let spec = v.spec.with_free_textures(live_free_textures(&v.free));
+                    let p = spec.build(renderer, scene, v.base_tex);
+                    let more = spec.build_more(renderer, scene, v.base_tex, |_, material| material);
+                    v.free_cache.insert(free_state, (p, more.clone()));
+                    (p, more)
+                }
+            };
+            // (item-only free textures leave the plain material shared)
+            if v.free.iter().any(|f| !f.item_only) {
                 v.base = pair.0;
             }
-            if f.item_only || !item_has_freetex {
-                v.item = pair.1;
-                if let Some(more) = f.more_cache.get(&key) {
-                    v.more = more.clone();
-                }
-            }
+            v.item = pair.1;
+            v.more = more;
         }
         if freetex_changed {
             if let Some(l) = &mut v.lights {
@@ -296,18 +295,7 @@ pub(super) fn sync_materials(
                     let tex = (mask != 0)
                         .then(|| l.composite(renderer, scene, mask))
                         .flatten();
-                    let mut spec = v.spec.clone();
-                    for f in &v.free {
-                        if let Some(tex) = f.texture {
-                            spec = spec.with_freetex_from(
-                                &v.spec,
-                                f.key,
-                                tex,
-                                f.diffuse,
-                                f.item_only,
-                            );
-                        }
-                    }
+                    let mut spec = v.spec.with_free_textures(live_free_textures(&v.free));
                     spec.set_lightmap(tex);
                     let p = spec.build(renderer, scene, v.base_tex);
                     let more = spec.build_more(renderer, scene, v.base_tex, |_, material| material);

@@ -95,6 +95,9 @@ pub(crate) fn apply_scenery_variants(
     }
 }
 
+/// (plain, item) and items 2, 3, ... built for one set of free textures.
+pub type FreeBuilt = ((MaterialId, MaterialId), Vec<MaterialId>);
+
 /// A material variant switched by a variable.
 #[derive(Clone)]
 pub struct VariantSlot {
@@ -114,8 +117,10 @@ pub struct VariantSlot {
     pub entries: Vec<(MaterialId, MaterialId)>,
     /// `[texchanges]` variable: its integer value picks the entry.
     pub tex_var: String,
-    /// Free textures for the plain material and, independently, its switched item.
+    /// Free textures of the plain material (shown in its item too) and of the item alone.
     pub free: Vec<FreeTex>,
+    /// Materials built per set of `free` textures.
+    pub free_cache: HashMap<Vec<Option<TextureId>>, FreeBuilt>,
     /// How to build a material of this slot for a texture loaded later.
     pub spec: SlotSpec,
     /// The textures `base`/`item` and each entry were made with (made again per vehicle
@@ -237,12 +242,6 @@ pub struct FreeTex {
     /// Where the file name is looked up (the vehicle's texture folders).
     pub dirs: Vec<PathBuf>,
     pub textures: Arc<::texture::TextureCache>,
-    /// File name (lower case) → the materials already built for it.
-    pub cache: HashMap<String, (MaterialId, MaterialId)>,
-    /// File name (lower case) → the rebuilt items 2, 3, ... of a `[matl_change]`.
-    /// A roller blind can be a free texture in every light state, not only the first
-    /// powered item.
-    pub more_cache: HashMap<String, Vec<MaterialId>>,
     /// File name (lower case) → its resolved GPU texture, including failed lookups.
     pub texture_cache: HashMap<String, Option<TextureId>>,
     /// The name currently applied.
@@ -419,6 +418,7 @@ impl Look {
 }
 
 impl SlotSpec {
+    #[cfg(test)]
     pub(super) fn with_freetex(
         &self,
         key: Option<TextureId>,
@@ -489,6 +489,18 @@ impl SlotSpec {
             replace(more, source_more);
         }
         spec
+    }
+
+    /// The slot with all live free textures `(key, texture, diffuse, item_only)`, the plain
+    /// slot's first: they show in its item as well (#114).
+    pub(super) fn with_free_textures(
+        &self,
+        free: impl IntoIterator<Item = (Option<TextureId>, TextureId, bool, bool)>,
+    ) -> Self {
+        free.into_iter()
+            .fold(self.clone(), |spec, (key, tex, diffuse, item_only)| {
+                spec.with_freetex_from(self, key, tex, diffuse, item_only)
+            })
     }
 
     /// (plain material, `[matl_item]` material) for one diffuse texture; without a
