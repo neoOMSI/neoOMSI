@@ -177,6 +177,43 @@ pub(crate) fn effective_render_phase(instance: &Instance) -> RenderPhase {
     }
 }
 
+/// Drawn after every phase: the vehicle the camera sits in, so its windows tint all scenery
+/// behind them (#231).
+pub(crate) const OWN_VEHICLE_BUCKET: usize = RenderPhase::COUNT;
+
+/// Origins of the vehicle the camera sits in and its trailers; empty when the camera is outside.
+pub(crate) fn own_vehicle_origins(
+    camera: DVec3,
+    inside: Option<(DVec3, f64, [f32; 6])>,
+    trailers: &[(DVec3, f64, [f32; 6])],
+) -> Vec<DVec3> {
+    let Some(vehicle) = inside else {
+        return Vec::new();
+    };
+    let parts = || std::iter::once(&vehicle).chain(trailers);
+    if parts().any(|v| point_in_vehicle_box(camera, v)) {
+        parts().map(|v| v.0).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// The main pass's buckets in drawing order, with the phase each is drawn as.
+pub(crate) fn main_pass_buckets() -> impl Iterator<Item = (RenderPhase, usize)> {
+    RenderPhase::DRAW_ORDER
+        .map(|phase| (phase, phase as usize))
+        .into_iter()
+        .chain([(RenderPhase::Normal, OWN_VEHICLE_BUCKET)])
+}
+
+pub(crate) fn draw_bucket(phase: RenderPhase, origin: DVec3, own_vehicle: &[DVec3]) -> usize {
+    if own_vehicle.contains(&origin) {
+        OWN_VEHICLE_BUCKET
+    } else {
+        phase as usize
+    }
+}
+
 pub(crate) fn world_surface_phase(phase: RenderPhase) -> bool {
     matches!(
         phase,

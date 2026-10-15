@@ -1247,11 +1247,14 @@ impl Renderer {
                 let slot = &mut prepass_found;
                 scope.spawn(move |_| *slot = Some(job()));
             }
-            let mut by_phase: [Vec<(usize, f32, bool)>; RenderPhase::COUNT] =
+            let own_vehicle =
+                own_vehicle_origins(camera.position, lighting.inside, &lighting.puddle_parts);
+            let mut by_phase: [Vec<(usize, f32, bool)>; OWN_VEHICLE_BUCKET + 1] =
                 std::array::from_fn(|_| Vec::new());
             for &entry in &visible {
-                let phase = effective_render_phase(&scene.instances[entry.0]);
-                by_phase[phase as usize].push(entry);
+                let inst = &scene.instances[entry.0];
+                let bucket = draw_bucket(effective_render_phase(inst), inst.origin, &own_vehicle);
+                by_phase[bucket].push(entry);
             }
             // Depth of the fully opaque pixels of ground-phase blends (or only of their walls).
             let surface_depth_items =
@@ -1288,7 +1291,7 @@ impl Renderer {
                         }
                     }
                 };
-            for phase in RenderPhase::DRAW_ORDER {
+            for (phase, bucket) in main_pass_buckets() {
                 if phase == RenderPhase::BeforeNormal {
                     items.clear();
                     surface_depth_items(
@@ -1298,7 +1301,7 @@ impl Renderer {
                     );
                     batch_items(scene, &mut items, true, &mut list, &mut main_batches);
                 }
-                let visible = &by_phase[phase as usize];
+                let visible = &by_phase[bucket];
                 items.clear();
                 let mut blended: Vec<usize> = Vec::new();
                 for &(i, _, _) in visible {

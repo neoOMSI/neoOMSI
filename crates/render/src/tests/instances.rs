@@ -487,6 +487,51 @@ fn render_phases_are_monotonic_and_complete() {
 }
 
 #[test]
+fn own_vehicle_is_drawn_after_every_scenery_queue() {
+    let bus = DVec3::new(100.0, 200.0, 10.0);
+    let parked_car = DVec3::new(120.0, 230.0, 10.0);
+    let own = [bus];
+    for phase in RenderPhase::DRAW_ORDER {
+        assert_eq!(draw_bucket(phase, parked_car, &own), phase as usize);
+    }
+    assert_eq!(
+        draw_bucket(RenderPhase::Normal, bus, &own),
+        OWN_VEHICLE_BUCKET
+    );
+    assert_eq!(
+        draw_bucket(RenderPhase::Normal, bus, &[]),
+        RenderPhase::Normal as usize
+    );
+    let buckets: Vec<_> = main_pass_buckets().collect();
+    assert_eq!(
+        buckets.iter().map(|b| b.1).collect::<Vec<_>>(),
+        (0..=OWN_VEHICLE_BUCKET).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        buckets.last(),
+        Some(&(RenderPhase::Normal, OWN_VEHICLE_BUCKET))
+    );
+}
+
+#[test]
+fn own_vehicle_needs_the_camera_inside_it_or_a_trailer() {
+    let box_of = |origin: DVec3| (origin, 0.0, [2.5, 12.0, 3.2, 0.0, 0.0, 1.6]);
+    let front = box_of(DVec3::new(0.0, 0.0, 0.0));
+    let trailer = box_of(DVec3::new(0.0, -10.0, 0.0));
+    let both = vec![front.0, trailer.0];
+    assert_eq!(
+        own_vehicle_origins(DVec3::new(0.5, 4.0, 2.0), Some(front), &[trailer]),
+        both
+    );
+    assert_eq!(
+        own_vehicle_origins(DVec3::new(0.0, -12.0, 2.0), Some(front), &[trailer]),
+        both
+    );
+    assert!(own_vehicle_origins(DVec3::new(8.0, 0.0, 2.0), Some(front), &[trailer]).is_empty());
+    assert!(own_vehicle_origins(DVec3::ZERO, None, &[]).is_empty());
+}
+
+#[test]
 fn metric_lifted_surfaces_keep_shading_class_without_view_space_pull() {
     assert_eq!(surface_instance_code(false, false, false, true, false), 0.9);
     assert_eq!(surface_instance_code(false, false, false, true, true), 1.0);
