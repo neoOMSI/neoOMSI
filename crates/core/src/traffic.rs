@@ -8719,12 +8719,12 @@ fn unsched_share(factor: f32) -> f32 {
     }
 }
 
-/// Coupled parts by file and by the winding votes of the vehicle they hang on.
-type TrailerTypes = HashMap<(std::path::PathBuf, (usize, usize)), Option<Arc<VehicleType>>>;
+/// Coupled parts by file and by the winding votes the vehicle they hang on passes on.
+type TrailerTypes = HashMap<(std::path::PathBuf, Option<(usize, usize)>), Option<Arc<VehicleType>>>;
 
-/// The part at `path` coupled to `lead`, loaded once per file and lead's votes: its winding
-/// follows the lead's (`VehicleType::follow_winding_of`), so one rear section behind two
-/// fronts that decide differently is two types (#117).
+/// The part at `path` coupled to `lead`, loaded once per file and the votes `lead` passes
+/// on to it (`VehicleType::winding_votes_for`): one rear section behind two fronts that
+/// decide differently is two types (#117).
 fn coupled_type(
     cache: &mut TrailerTypes,
     root: &Path,
@@ -8732,7 +8732,7 @@ fn coupled_type(
     lead: &VehicleType,
 ) -> Option<Arc<VehicleType>> {
     cache
-        .entry((path.to_path_buf(), lead.winding_votes))
+        .entry((path.to_path_buf(), lead.winding_votes_for(path)))
         .or_insert_with(|| match VehicleType::load_ai(root, path) {
             Ok(mut t) => {
                 t.follow_winding_of(lead);
@@ -8762,15 +8762,25 @@ mod coupled_type_tests {
         keep.winding_votes = (2, 0);
         let mut turn = VehicleType::load_ai(&dir, &dir.join("part.bus")).unwrap();
         turn.winding_votes = (0, 2);
+        // the same votes from another folder (another pack) pass nothing on
+        let other = dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("part.bus"), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(other.join("model.cfg"), "").unwrap();
+        let mut foreign = VehicleType::load_ai(&other, &other.join("part.bus")).unwrap();
+        foreign.winding_votes = (2, 0);
         let rear = dir.join("part.bus");
         let mut cache = TrailerTypes::new();
         let behind_keep = coupled_type(&mut cache, &dir, &rear, &keep).unwrap();
         let behind_turn = coupled_type(&mut cache, &dir, &rear, &turn).unwrap();
         let again = coupled_type(&mut cache, &dir, &rear, &keep).unwrap();
+        let behind_foreign = coupled_type(&mut cache, &dir, &rear, &foreign).unwrap();
         std::fs::remove_dir_all(&dir).ok();
         assert!(behind_keep.keep_winding);
         assert!(!behind_turn.keep_winding);
         assert!(Arc::ptr_eq(&behind_keep, &again));
+        assert!(!behind_foreign.keep_winding);
+        assert!(!Arc::ptr_eq(&behind_keep, &behind_foreign));
     }
 }
 

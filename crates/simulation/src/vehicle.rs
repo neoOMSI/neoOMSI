@@ -580,23 +580,24 @@ impl VehicleType {
         })
     }
 
-    /// Decide the winding together with `lead` when both lie in one folder (one pack, one
-    /// exporter). Alone, the Caio Millennium BRT's rear section turned its roof inside
-    /// out (#117).
-    pub fn follow_winding_of(&mut self, lead: &VehicleType) {
-        if !self
-            .def
-            .dir()
+    /// The winding votes this vehicle passes on to the part at `part` coupled to it: only
+    /// to one in its own folder (one pack, one exporter).
+    pub fn winding_votes_for(&self, part: &Path) -> Option<(usize, usize)> {
+        let folder = part.parent().unwrap_or(Path::new(""));
+        folder
             .to_string_lossy()
-            .eq_ignore_ascii_case(&lead.def.dir().to_string_lossy())
-        {
+            .eq_ignore_ascii_case(&self.def.dir().to_string_lossy())
+            .then_some(self.winding_votes)
+    }
+
+    /// Decide the winding together with `lead` (see [`VehicleType::winding_votes_for`]).
+    /// Alone, the Caio Millennium BRT's rear section turned its roof inside out (#117).
+    pub fn follow_winding_of(&mut self, lead: &VehicleType) {
+        let Some((lead_fwd, lead_back)) = lead.winding_votes_for(&self.def.path) else {
             return;
-        }
+        };
         let (own_fwd, own_back) = self.winding_votes;
-        self.winding_votes = (
-            own_fwd + lead.winding_votes.0,
-            own_back + lead.winding_votes.1,
-        );
+        self.winding_votes = (own_fwd + lead_fwd, own_back + lead_back);
         let keep = self.winding_votes.0 > self.winding_votes.1;
         if keep != self.keep_winding {
             for &i in &self.turned_meshes {
