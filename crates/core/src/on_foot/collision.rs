@@ -1,6 +1,6 @@
 use super::{BODY_HEIGHT, CLIMB_RATE, GRAVITY, OnFoot, RADIUS, SNAP_DOWN, STEP_UP};
 use crate::App;
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use ::simulation::collision::Obb;
 
 const MAX_SUBSTEP: f64 = 0.12;
@@ -10,8 +10,8 @@ const TOUCH: f64 = 0.005;
 const MIN_FLOOR_NZ: f32 = 0.643;
 /// Rounding margin for a too steep face over the feet (m).
 const STEEP_RISE: f64 = 1e-4;
-/// Radius in which [`OnFoot::flat`] counts (m).
-const FLAT_NEAR: f64 = 1.0;
+/// Farther from [`OnFoot::flat`] than this, the walker was put there, not walked (m).
+const PUT_THERE: f64 = 1.0;
 
 /// Ground height and face normal (none from the raster).
 pub(super) type Floor = (f64, Option<glam::Vec3>);
@@ -134,9 +134,9 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
     let delta = f.vel * dt;
     let boxes = (env.solids)(from + delta, feet);
     let dir = delta.normalize_or_zero();
-    // from the feet, a steep face was climbed a little every frame
-    let base = if (f.flat.truncate() - from).length() < FLAT_NEAR {
-        f.flat.z.min(feet)
+    // never follows the feet up a steep face: it was climbed a little every frame
+    let base = if (f.flat.truncate() - from).length() < PUT_THERE {
+        f.flat.z
     } else {
         feet
     };
@@ -195,9 +195,9 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
     vertical(f, floor.map(|(g, _)| g), dt);
     f.pos.x = p.x;
     f.pos.y = p.y;
-    if f.grounded() && floor.is_some_and(|(_, n)| !steep(n)) {
-        f.flat = f.pos;
-    }
+    let flat = f.grounded() && floor.is_some_and(|(_, n)| !steep(n));
+    let feet = f.pos.z + f.lift;
+    f.flat = DVec3::new(p.x, p.y, if flat { feet } else { base.min(feet) });
 
     if f.grounded() && !penetrates(p, &boxes) {
         f.safe = f.pos;
@@ -303,7 +303,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::{DVec3, Vec3};
+    use glam::Vec3;
 
     /// Height and normal `d` m along a `deg` slope.
     fn slope(deg: f64, d: f64) -> (f64, Vec3) {
@@ -311,9 +311,15 @@ mod tests {
         (d * t.tan(), Vec3::new(-t.sin() as f32, 0.0, t.cos() as f32))
     }
 
-    /// Walks east from flat ground onto `profile(x - 1)` past x = 1; returns the feet.
-    fn walk_east(secs: f64, hz: f64, profile: impl Fn(f64) -> (f64, Vec3)) -> DVec3 {
-        let mut f = OnFoot::new(DVec3::ZERO, 90.0);
+    /// Walks `f` at `vx` m/s east for `secs` over flat ground that past x = 1 is
+    /// `profile(x - 1)`; returns the feet.
+    fn walk(
+        f: &mut OnFoot,
+        vx: f64,
+        secs: f64,
+        hz: f64,
+        profile: impl Fn(f64) -> (f64, Vec3),
+    ) -> DVec3 {
         let solids = |_: DVec2, _: f64| Vec::new();
         let ground = |p: DVec2, feet: f64, reach: f64| {
             let (h, n) = profile(p.x - 1.0);
@@ -329,10 +335,15 @@ mod tests {
         };
         let dt = 1.0 / hz;
         for _ in 0..(secs * hz) as usize {
-            f.vel = DVec2::new(1.45, 0.0);
-            move_body(&mut f, dt, &env);
+            f.vel = DVec2::new(vx, 0.0);
+            move_body(f, dt, &env);
         }
         f.pos
+    }
+
+    /// Walks east from x = 0 for `secs`.
+    fn walk_east(secs: f64, hz: f64, profile: impl Fn(f64) -> (f64, Vec3)) -> DVec3 {
+        walk(&mut OnFoot::new(DVec3::ZERO, 90.0), 1.45, secs, hz, profile)
     }
 
     #[test]
@@ -365,5 +376,33 @@ mod tests {
         };
         let p = walk_east(2.0, 60.0, bevel);
         assert!(p.x > 2.5 && (p.z - 0.15).abs() < 1e-6, "bevelled kerb: {p}");
+    }
+
+    #[test]
+    fn a_walker_put_on_a_steep_slope_climbs_a_step_at_most() {
+        // a transit leaves the walker on the slope, far from where it last walked
+        for hz in [30.0, 60.0, 240.0] {
+            let z = slope(60.0, 1.0).0;
+            let mut f = OnFoot::new(DVec3::new(2.0, 0.0, z), 90.0);
+            f.flat = DVec3::new(-20.0, 0.0, 0.0);
+            let p = walk(&mut f, 1.45, 4.0, hz, |d| slope(60.0, d));
+            assert!(
+                p.z <= z + STEP_UP + 1e-6,
+                "{hz} Hz: climbed from {z} to {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_walker_down_a_steep_slope_does_not_climb_back() {
+        let z = slope(60.0, 2.0).0;
+        let mut f = OnFoot::new(DVec3::new(3.0, 0.0, z), 90.0);
+        let low = walk(&mut f, -1.45, 0.5, 60.0, |d| slope(60.0, d));
+        assert!(low.z < z - 0.5, "did not get down: {low}");
+        let p = walk(&mut f, 1.45, 4.0, 60.0, |d| slope(60.0, d));
+        assert!(
+            p.z <= low.z + STEP_UP + 1e-6,
+            "climbed back from {low} to {p}"
+        );
     }
 }
