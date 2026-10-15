@@ -1461,7 +1461,7 @@
       "clock_noon": "Hodiny: poledne (12:00)",
       "clock_evening": "Hodiny: večer (18:00)",
       "clock_night": "Hodiny: noc (23:00)",
-      "traffic": "Doprava: {value}",
+      "traffic": "Doprava: { value}",
       "hour_plus": "Hodiny: o 1 hodinu později",
       "hour_minus": "Hodiny: o 1 hodinu dříve",
       "now": "(nyní)",
