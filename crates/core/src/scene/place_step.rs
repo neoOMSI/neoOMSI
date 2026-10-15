@@ -1063,6 +1063,23 @@ impl World {
                             scene.instances[*inst].presurface =
                                 ot.sco.render_type == ::scenery::sco::RenderType::PreSurface;
                             renderer.set_object_culling(scene, *inst, radius, detail, any_distance);
+                            let near_only = near_only.or_else(|| {
+                                let i = &scene.instances[*inst];
+                                let m = scene.meshes.get(i.mesh)?;
+                                if m.bounds_radius <= 0.0 {
+                                    return None;
+                                }
+                                let t = i.transform;
+                                let scale = t
+                                    .x_axis
+                                    .truncate()
+                                    .length()
+                                    .max(t.y_axis.truncate().length())
+                                    .max(t.z_axis.truncate().length());
+                                let centre =
+                                    i.origin + t.transform_point3(m.bounds_center).as_dvec3();
+                                beyond_loaded_area(centre, (m.bounds_radius * scale) as f64, (p.tx, p.ty))
+                            });
                             renderer.set_near_only(scene, *inst, near_only);
                         }
                     }

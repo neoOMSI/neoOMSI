@@ -699,6 +699,13 @@ impl Renderer {
                 {
                     continue;
                 }
+                // (a stand-in for far tiles casts no shadow where it is not drawn either)
+                if let Some([x0, y0, x1, y1]) = inst.near_only {
+                    let c = camera.position;
+                    if c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1 {
+                        continue;
+                    }
+                }
                 let m = &scene.meshes[inst.mesh];
                 if m.ranges.is_empty() {
                     continue;

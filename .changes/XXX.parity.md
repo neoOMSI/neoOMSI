@@ -1,0 +1,1 @@
+A distant-view model that a map places far from its own object, such as the copy of the Elephant & Castle buildings on London's Walworth Road junction, is drawn only while the camera is near that object, as in OMSI 2, so it no longer stands across London Road at the line 45 terminus with a long view distance.

@@ -65,3 +65,14 @@ fn a_tree_past_its_tiles_edge_is_left_out() {
     assert!((trees[0].0 - 218.5).abs() < 1e-6 && (trees[0].1 - 0.85).abs() < 1e-6);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_backdrop_modelled_beyond_its_tiles_neighbours_is_drawn_only_near_them() {
+    let ts = tile_size();
+    // London's Walworth Road backdrop: its object on tile (4, 1), the mesh 1.2 km north
+    let area = beyond_loaded_area(DVec3::new(700.0, 1850.0, 0.0), 300.0, (4, 1));
+    assert_eq!(area, Some([3.0 * ts, 0.0, 6.0 * ts, 3.0 * ts]));
+    // a mesh reaching into the tiles loaded with its own keeps the whole view distance
+    assert_eq!(beyond_loaded_area(DVec3::new(850.0, 1000.0, 0.0), 300.0, (4, 1)), None);
+    assert_eq!(beyond_loaded_area(DVec3::new(1350.0, 450.0, 0.0), 50.0, (4, 1)), None);
+}
