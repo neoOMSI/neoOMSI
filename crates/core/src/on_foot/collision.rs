@@ -6,6 +6,19 @@ use ::simulation::collision::Obb;
 const MAX_SUBSTEP: f64 = 0.12;
 const MAX_SEEN: f64 = 1.0;
 const TOUCH: f64 = 0.005;
+/// Cos of the steepest slope (50°) climbed more than [`STEP_UP`] over [`OnFoot::flat`] (#331).
+const MIN_FLOOR_NZ: f32 = 0.643;
+/// Rounding margin for a too steep face over the feet (m).
+const STEEP_RISE: f64 = 1e-4;
+/// Radius in which [`OnFoot::flat`] counts (m).
+const FLAT_NEAR: f64 = 1.0;
+
+/// Ground height and face normal (none from the raster).
+pub(super) type Floor = (f64, Option<glam::Vec3>);
+
+fn steep(n: Option<glam::Vec3>) -> bool {
+    n.is_some_and(|n| n.z < MIN_FLOOR_NZ * n.length())
+}
 
 #[allow(dead_code)]
 #[derive(Default, Clone)]
@@ -112,7 +125,7 @@ pub(super) fn slide(from: DVec2, to: DVec2, boxes: &[Obb]) -> Slide {
 
 pub(super) struct MoveEnv<'a> {
     pub solids: &'a dyn Fn(DVec2, f64) -> Vec<Obb>,
-    pub ground: &'a dyn Fn(DVec2, f64, f64) -> Option<f64>,
+    pub ground: &'a dyn Fn(DVec2, f64, f64) -> Option<Floor>,
 }
 
 pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
@@ -121,8 +134,21 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
     let delta = f.vel * dt;
     let boxes = (env.solids)(from + delta, feet);
     let dir = delta.normalize_or_zero();
-    let high = |q: DVec2| (env.ground)(q, feet, MAX_SEEN).is_some_and(|g| g - feet > STEP_UP);
-    let walkable = |q: DVec2| dir == DVec2::ZERO || !(high(q) && high(q + dir * (RADIUS + 0.5)));
+    // from the feet, a steep face was climbed a little every frame
+    let base = if (f.flat.truncate() - from).length() < FLAT_NEAR {
+        f.flat.z.min(feet)
+    } else {
+        feet
+    };
+    let steep_wall = |(g, n): Floor| steep(n) && g - feet > STEEP_RISE && g - base > STEP_UP;
+    let high = |fl: Floor| fl.0 - feet > STEP_UP || steep_wall(fl);
+    let seen = |q: DVec2| (env.ground)(q, feet, MAX_SEEN);
+    let walkable = |q: DVec2| {
+        let here = seen(q);
+        dir == DVec2::ZERO
+            || !(here.is_some_and(steep_wall)
+                || (here.is_some_and(high) && seen(q + dir * (RADIUS + 0.5)).is_some_and(high)))
+    };
 
     let full = slide(from, from + delta, &boxes);
     let step_wall = !walkable(full.pos);
@@ -160,15 +186,18 @@ pub(super) fn move_body(f: &mut OnFoot, dt: f64, env: &MoveEnv) {
         }
     }
 
-    let floor = (env.ground)(p, feet, STEP_UP).filter(|g| g - feet <= STEP_UP);
+    let floor = (env.ground)(p, feet, STEP_UP).filter(|fl| !high(*fl));
     f.dbg.boxes = boxes.len();
     f.dbg.lost = lost;
     f.dbg.step_wall = step_wall;
     f.dbg.reset = reset;
-    f.dbg.floor = floor;
-    vertical(f, floor, dt);
+    f.dbg.floor = floor.map(|(g, _)| g);
+    vertical(f, floor.map(|(g, _)| g), dt);
     f.pos.x = p.x;
     f.pos.y = p.y;
+    if f.grounded() && floor.is_some_and(|(_, n)| !steep(n)) {
+        f.flat = f.pos;
+    }
 
     if f.grounded() && !penetrates(p, &boxes) {
         f.safe = f.pos;
@@ -222,10 +251,10 @@ impl App {
         boxes
     }
 
-    pub(super) fn foot_ground(&self, p: DVec2, feet: f64, reach: f64) -> Option<f64> {
+    pub(super) fn foot_ground(&self, p: DVec2, feet: f64, reach: f64) -> Option<Floor> {
         self.world
             .as_ref()
-            .and_then(|w| w.walk_height_reach(p.x, p.y, feet, reach))
+            .and_then(|w| w.walk_floor_reach(p.x, p.y, feet, reach))
     }
 }
 
@@ -268,5 +297,73 @@ impl App {
                 o
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::{DVec3, Vec3};
+
+    /// Height and normal `d` m along a `deg` slope.
+    fn slope(deg: f64, d: f64) -> (f64, Vec3) {
+        let t = deg.to_radians();
+        (d * t.tan(), Vec3::new(-t.sin() as f32, 0.0, t.cos() as f32))
+    }
+
+    /// Walks east from flat ground onto `profile(x - 1)` past x = 1; returns the feet.
+    fn walk_east(secs: f64, hz: f64, profile: impl Fn(f64) -> (f64, Vec3)) -> DVec3 {
+        let mut f = OnFoot::new(DVec3::ZERO, 90.0);
+        let solids = |_: DVec2, _: f64| Vec::new();
+        let ground = |p: DVec2, feet: f64, reach: f64| {
+            let (h, n) = profile(p.x - 1.0);
+            Some(if p.x > 1.0 && h > 0.0 && h <= feet + reach {
+                (h, Some(n))
+            } else {
+                (0.0, Some(Vec3::Z))
+            })
+        };
+        let env = MoveEnv {
+            solids: &solids,
+            ground: &ground,
+        };
+        let dt = 1.0 / hz;
+        for _ in 0..(secs * hz) as usize {
+            f.vel = DVec2::new(1.45, 0.0);
+            move_body(&mut f, dt, &env);
+        }
+        f.pos
+    }
+
+    #[test]
+    fn a_walker_does_not_climb_a_steep_slope() {
+        // #331: terrain rising to a covered station's deck
+        for hz in [30.0, 60.0, 240.0] {
+            let p = walk_east(4.0, hz, |d| slope(60.0, d));
+            assert!(p.z <= STEP_UP + 1e-6, "{hz} Hz: climbed the wall to {p}");
+            assert!(p.x < 1.3, "{hz} Hz: walked into the wall to {p}");
+        }
+    }
+
+    #[test]
+    fn a_walker_goes_up_a_ramp() {
+        let p = walk_east(3.0, 60.0, |d| slope(20.0, d));
+        assert!(p.x > 4.0 && p.z > 1.0, "stopped on the ramp at {p}");
+    }
+
+    #[test]
+    fn a_walker_steps_up_a_kerb() {
+        let p = walk_east(2.0, 60.0, |_| (0.15, Vec3::Z));
+        assert!(p.x > 2.5 && (p.z - 0.15).abs() < 1e-6, "kerb: {p}");
+    }
+
+    #[test]
+    fn a_walker_steps_up_a_bevelled_kerb() {
+        let bevel = |d: f64| match slope(70.0, d) {
+            (h, n) if h < 0.15 => (h, n),
+            _ => (0.15, Vec3::Z),
+        };
+        let p = walk_east(2.0, 60.0, bevel);
+        assert!(p.x > 2.5 && (p.z - 0.15).abs() < 1e-6, "bevelled kerb: {p}");
     }
 }

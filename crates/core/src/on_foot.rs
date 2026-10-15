@@ -66,6 +66,8 @@ pub(crate) struct OnFoot {
     pub transit: Option<Transit>,
     pub arrive: Option<Then>,
     pub safe: DVec3,
+    /// Last spot on ground that isn't too steep.
+    pub flat: DVec3,
     pub on_lane: bool,
     pub door_grace: f32,
     pub attached: bool,
@@ -144,6 +146,7 @@ impl OnFoot {
             transit: None,
             arrive: None,
             safe: pos,
+            flat: pos,
             on_lane: false,
             door_grace: 0.0,
             attached: false,

@@ -443,12 +443,24 @@ impl World {
     /// on foot looks a metre up to stop at a face too high to step onto (a platform's edge)
     /// instead of walking under it.
     pub fn walk_height_reach(&self, x: f64, y: f64, near: f64, reach: f64) -> Option<f64> {
+        self.walk_floor_reach(x, y, near, reach).map(|(z, _)| z)
+    }
+
+    /// [`World::walk_height_reach`] plus the face normal (none from the raster).
+    pub fn walk_floor_reach(
+        &self,
+        x: f64,
+        y: f64,
+        near: f64,
+        reach: f64,
+    ) -> Option<(f64, Option<glam::Vec3>)> {
         let probe = drive_probe(&self.terrains, &self.surfaces, x, y, near + reach);
         match probe.below {
-            Some(b) if near - b < 3.0 => Some(b),
+            Some(b) if near - b < 3.0 => Some((b, probe.normal)),
             _ => self
                 .walk_height(x, y)
-                .filter(|z| *z < near + reach.max(0.5)),
+                .filter(|z| *z < near + reach.max(0.5))
+                .map(|z| (z, None)),
         }
     }
 
