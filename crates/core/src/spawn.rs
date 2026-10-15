@@ -80,7 +80,8 @@ pub(crate) fn load_coupled_parts(
             break;
         };
         match ::simulation::VehicleType::load(root, &path) {
-            Ok(t) => {
+            Ok(mut t) => {
+                t.follow_winding_of(&lead);
                 let t = Arc::new(t);
                 log::info!(
                     "coupled behind {}: {} ({} meshes{})",

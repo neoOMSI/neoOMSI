@@ -2366,7 +2366,8 @@ fn new_remote(
             break;
         };
         match ::simulation::VehicleType::load(&args.root, &path) {
-            Ok(t) => {
+            Ok(mut t) => {
+                t.follow_winding_of(&lead);
                 let t = Arc::new(t);
                 trailer_renders.push(world.add_vehicle_shared(
                     r,

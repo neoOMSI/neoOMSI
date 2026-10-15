@@ -173,6 +173,7 @@ pub(super) fn material_extra(
             .filter(|o| o.tex_address == ::model::TexAddress::Border)
             .map(|o| o.border_color.map(|c| (c / 255.0).clamp(0.0, 1.0))),
         metal_ok: false,
+        normals_inward: false,
     }
 }
 

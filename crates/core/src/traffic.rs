@@ -1747,7 +1747,10 @@ impl Traffic {
             let t =
                 self.trailer_types.entry(path.clone()).or_insert_with(
                     || match VehicleType::load_ai(&root, &path) {
-                        Ok(t) => Some(Arc::new(t)),
+                        Ok(mut t) => {
+                            t.follow_winding_of(&lead);
+                            Some(Arc::new(t))
+                        }
                         Err(e) => {
                             log::warn!("trailer {}: {e}", path.display());
                             None

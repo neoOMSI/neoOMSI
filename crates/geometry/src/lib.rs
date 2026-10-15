@@ -1326,6 +1326,46 @@ pub fn positive_det_faces_forward(m: &::legacy_o3d::Mesh) -> Option<bool> {
     }
 }
 
+/// Per material slot: (triangles whose normals point against their drawn face, triangles
+/// counted).
+pub fn slot_normals_against(data: &MeshData) -> Vec<(usize, usize)> {
+    let slots = data
+        .ranges
+        .iter()
+        .map(|r| r.2 as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut out = vec![(0usize, 0usize); slots];
+    for &(first, count, slot) in &data.ranges {
+        let start = first as usize;
+        let end = start.saturating_add(count as usize).min(data.indices.len());
+        for t in data.indices[start.min(end)..end].chunks_exact(3) {
+            let (Some(a), Some(b), Some(c)) = (
+                data.positions.get(t[0] as usize),
+                data.positions.get(t[1] as usize),
+                data.positions.get(t[2] as usize),
+            ) else {
+                continue;
+            };
+            let g = (*b - *a).cross(*c - *a);
+            let n = t
+                .iter()
+                .filter_map(|&i| data.normals.get(i as usize))
+                .copied()
+                .sum::<Vec3>();
+            if g.length_squared() > 1e-12 && n.length_squared() > 1e-12 {
+                let e = &mut out[slot as usize];
+                e.1 += 1;
+                // (with y and z swapped, a drawn front's normal is against `g`)
+                if g.dot(n) > 0.0 {
+                    e.0 += 1;
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn reverse_winding(data: &mut MeshData) {
     for t in data.indices.chunks_exact_mut(3) {
         t.swap(1, 2);
@@ -2267,6 +2307,41 @@ mod tests {
         // a plain spline keeps its gradient parabola
         let p = SplineCurve { delta_h: None, ..c };
         assert!((p.height_at(p.length) - (-5.79 + 73.86 * 0.0619 / 2.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn normals_against_the_drawn_faces_are_counted_per_slot() {
+        let quad = |nz: f32| {
+            let v = |x: f32, y: f32| ::legacy_o3d::Vertex {
+                position: Vec3::new(x, y, 1.0),
+                normal: Vec3::new(0.0, 0.0, nz),
+                uv: Vec2::ZERO,
+            };
+            ::legacy_o3d::Mesh {
+                vertices: vec![v(0.0, 0.0), v(1.0, 0.0), v(0.0, 1.0), v(1.0, 1.0)],
+                triangles: vec![
+                    ::legacy_o3d::Triangle {
+                        indices: [0, 1, 2],
+                        material: 0,
+                    },
+                    ::legacy_o3d::Triangle {
+                        indices: [2, 1, 3],
+                        material: 1,
+                    },
+                ],
+                materials: vec![::legacy_o3d::Material::default(); 2],
+                ..Default::default()
+            }
+        };
+        // drawn as wound: normals along the faces, then against them (#117)
+        assert_eq!(
+            slot_normals_against(&mesh_from_o3d(&quad(1.0))),
+            [(0, 1), (0, 1)]
+        );
+        assert_eq!(
+            slot_normals_against(&mesh_from_o3d(&quad(-1.0))),
+            [(1, 1), (1, 1)]
+        );
     }
 
     #[test]

@@ -207,6 +207,9 @@ pub struct MaterialExtra {
     /// factor alone, as the vanilla one shows the sphere map on it - chrome read as a
     /// faint clear coat there. A body needs a mask of its own for that (a Golf's bonnet).
     pub metal_ok: bool,
+    /// The normals point against the faces (`VehicleMesh::normals_inward`): the enhanced
+    /// picture flips them.
+    pub normals_inward: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -751,14 +754,15 @@ impl Renderer {
                 envmap.map(|e| e.1).unwrap_or(0.0),
                 moisture,
                 // bit 1: a [matl_envmap_mask]; bit 2: a [matl_transmap]; bit 4: a vehicle's
-                // part that may be metal (see the shaders)
+                // part that may be metal; bit 8: normals turned inwards (see the shaders)
                 (if env_mask.is_some() { 1.0 } else { 0.0 })
                     + if extra.transmap_declared || transmap.is_some() {
                         2.0
                     } else {
                         0.0
                     }
-                    + if extra.metal_ok { 4.0 } else { 0.0 },
+                    + if extra.metal_ok { 4.0 } else { 0.0 }
+                    + if extra.normals_inward { 8.0 } else { 0.0 },
             ],
             emissive: [
                 emissive[0],

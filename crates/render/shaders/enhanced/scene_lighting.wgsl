@@ -489,8 +489,11 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         let c = (tk + 0.04 * smoothstep(vec3<f32>(0.0), vec3<f32>(0.08), tk)) * lift * screen_dim;
         return vec4<f32>(c * aer.a + aer.rgb * pre, alpha);
     }
-    let outside = weather_outside_n(in.world, safe_normal(in.normal), terrain, in.params2.w);
-    var n = safe_normal(in.normal);
+    // normals pointing into the mesh: light the side that is seen (#117)
+    let inward = !terrain && (u32(material.params2.w + 0.5) & 8u) != 0u;
+    let in_n = select(1.0, -1.0, inward) * safe_normal(in.normal);
+    let outside = weather_outside_n(in.world, in_n, terrain, in.params2.w);
+    var n = in_n;
     let is_water = material.ambient.w > 1.5;
     if (is_water) {
         n = normalize(n + vec3<f32>(water_ripple(world_pattern_xy(in.world), camera.post.y) * clamp(1.0 - dist / 250.0, 0.2, 1.0), 0.0));

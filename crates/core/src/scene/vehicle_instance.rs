@@ -902,6 +902,7 @@ impl World {
                     // (chrome: a small opaque part with a sphere map, not the body - see
                     // `MaterialExtra::metal_ok`)
                     extra.metal_ok = envmap.is_some() && alpha == AlphaMode::Opaque && !named_body && !material_has_vehicle_volume(&vm.data, slot);
+                    extra.normals_inward = vm.normals_inward(slot);
                     // A few stock vehicles leave noZwrite off on window/dirt materials even
                     // though their alpha mode is Blend. They are transparent colour layers,
                     // not solid shadow casters; letting them into the shadow map paints the

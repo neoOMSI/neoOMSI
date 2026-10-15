@@ -125,6 +125,19 @@ pub struct VehicleMesh {
     pub viewpoint: i32,
     /// `[smoothskin]` bones (empty for a rigid mesh, and for an AI type).
     pub skin: Vec<SkinBone>,
+    /// Per material slot: (triangles whose normals point against their drawn face,
+    /// triangles counted).
+    pub normals_against: Vec<(usize, usize)>,
+}
+
+impl VehicleMesh {
+    /// Whether the normals of `slot` point against its faces nearly everywhere. Vanilla
+    /// lights them as they are, as Omsi.exe does; the enhanced picture flips them.
+    pub fn normals_inward(&self, slot: usize) -> bool {
+        self.normals_against
+            .get(slot)
+            .is_some_and(|&(against, counted)| counted >= 2 && against * 10 >= counted * 9)
+    }
 }
 
 pub struct VehicleType {
@@ -134,6 +147,11 @@ pub struct VehicleType {
     pub program: Arc<Program>,
     pub meshes: Vec<VehicleMesh>,
     pub keep_winding: bool,
+    /// Positive-determinant meshes facing along / against their normals, summed over the
+    /// parts it is coupled behind: what `keep_winding` is decided by.
+    pub winding_votes: (usize, usize),
+    /// The meshes [`::geometry::turns_round`] turns unless `keep_winding`.
+    turned_meshes: Vec<usize>,
     /// Paint schemes / adverts from the `[CTC]` folders' `.cti` files.
     pub paint_schemes: Vec<PaintScheme>,
     /// `[texchanges]`: material textures a script variable swaps (roller blinds, trim).
@@ -401,6 +419,7 @@ impl VehicleType {
                             pivot: pivot_from_mesh(&m),
                             viewpoint: md.viewpoint,
                             skin,
+                            normals_against: Vec::new(),
                         })
                     }
                     Err(e) => match ::mods::missing_vehicle_pack(&p) {
@@ -426,6 +445,9 @@ impl VehicleType {
                 bus_file.display(),
                 turned.len()
             );
+        }
+        for m in &mut meshes {
+            m.normals_against = ::geometry::slot_normals_against(&m.data);
         }
         for (pack, n) in &missing_packs {
             log::warn!(
@@ -553,7 +575,39 @@ impl VehicleType {
             mesh_bounds,
             mesh_boxes,
             keep_winding,
+            winding_votes: (positive_forward, positive_backward),
+            turned_meshes: turned,
         })
+    }
+
+    /// Decide the winding together with `lead` when both lie in one folder (one pack, one
+    /// exporter). Alone, the Caio Millennium BRT's rear section turned its roof inside
+    /// out (#117).
+    pub fn follow_winding_of(&mut self, lead: &VehicleType) {
+        if !self
+            .def
+            .dir()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&lead.def.dir().to_string_lossy())
+        {
+            return;
+        }
+        let (own_fwd, own_back) = self.winding_votes;
+        self.winding_votes = (
+            own_fwd + lead.winding_votes.0,
+            own_back + lead.winding_votes.1,
+        );
+        let keep = self.winding_votes.0 > self.winding_votes.1;
+        if keep != self.keep_winding {
+            for &i in &self.turned_meshes {
+                let m = &mut self.meshes[i];
+                ::geometry::reverse_winding(&mut m.data);
+                for (against, counted) in &mut m.normals_against {
+                    *against = *counted - *against;
+                }
+            }
+            self.keep_winding = keep;
+        }
     }
 
     /// Per axle of the `.bus` (whose first axle is number `first_axle` of the whole train):
@@ -4733,6 +4787,78 @@ mod tests {
         let back = ::legacy_vehicle::Camera { dist: 0.5, ..cam };
         let (eye, ..) = camera_in_body(DVec3::ZERO, Mat4::IDENTITY, &back);
         assert!((eye - DVec3::new(-0.72, 3.99, 1.78)).length() < 1e-5, "{eye}");
+    }
+
+    /// A quad with a mirrored (positive determinant) matrix, normals along or against
+    /// its faces.
+    fn mirrored_o3d(along: bool) -> Vec<u8> {
+        let mut bytes = vec![0x84, 0x19, 3, 0, 0x17, 4, 0, 0, 0];
+        let ny = if along { -1.0f32 } else { 1.0 };
+        for (x, z) in [(0.0f32, 0.0f32), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+            for value in [x, 0.0, z, 0.0, ny, 0.0, 0.0, 0.0] {
+                bytes.extend(value.to_le_bytes());
+            }
+        }
+        bytes.extend([
+            0x49, 2, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 0, 2, 0, 1, 0, 3, 0, 0, 0,
+        ]);
+        bytes.extend([0x26, 1, 0]);
+        for value in [1.0f32, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes.push(0);
+        bytes.push(0x79);
+        for value in Mat4::from_scale(Vec3::new(-1.0, 1.0, -1.0)).to_cols_array() {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// #117
+    #[test]
+    fn a_coupled_part_keeps_the_winding_its_lead_keeps() {
+        let dir = std::env::temp_dir().join(format!("omsi-coupled-winding-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("along.o3d"), mirrored_o3d(true)).unwrap();
+        std::fs::write(dir.join("against.o3d"), mirrored_o3d(false)).unwrap();
+        std::fs::write(dir.join("front.bus"), "[model]\nfront.cfg\n").unwrap();
+        std::fs::write(
+            dir.join("front.cfg"),
+            "[mesh]\nalong.o3d\n\n[mesh]\nalong.o3d\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("rear.bus"), "[model]\nrear.cfg\n").unwrap();
+        std::fs::write(dir.join("rear.cfg"), "[mesh]\nagainst.o3d\n").unwrap();
+        let front = VehicleType::load(&dir, &dir.join("front.bus")).unwrap();
+        let mut rear = VehicleType::load(&dir, &dir.join("rear.bus")).unwrap();
+        let mut ai_rear = VehicleType::load_ai(&dir, &dir.join("rear.bus")).unwrap();
+        assert!(front.keep_winding);
+        // alone, the rear section turns its mesh round
+        assert!(!rear.keep_winding);
+        assert_eq!(rear.meshes[0].data.indices, [0, 2, 1, 2, 3, 1]);
+        assert!(!rear.meshes[0].normals_inward(0));
+        rear.follow_winding_of(&front);
+        assert!(rear.keep_winding);
+        assert_eq!(rear.winding_votes, (2, 1));
+        assert_eq!(rear.meshes[0].data.indices, [0, 1, 2, 2, 1, 3]);
+        // kept as wound: normals inward
+        assert!(rear.meshes[0].normals_inward(0));
+        assert!(!front.meshes[0].normals_inward(0));
+        // an AI type re-reads its mesh with the new winding
+        ai_rear.follow_winding_of(&front);
+        let ai_indices = ai_rear.mesh_data(0).unwrap().indices.clone();
+        // another folder: decides alone
+        let other = dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("against.o3d"), mirrored_o3d(false)).unwrap();
+        std::fs::write(other.join("rear.bus"), "[model]\nrear.cfg\n").unwrap();
+        std::fs::write(other.join("rear.cfg"), "[mesh]\nagainst.o3d\n").unwrap();
+        let mut coach = VehicleType::load(&other, &other.join("rear.bus")).unwrap();
+        coach.follow_winding_of(&front);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(ai_indices, [0, 1, 2, 2, 1, 3]);
+        assert!(!coach.keep_winding);
+        assert_eq!(coach.winding_votes, (0, 1));
     }
 
     /// A three-car train with its last car turned round, lamps as `BR243.osc` (#318).

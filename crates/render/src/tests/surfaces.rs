@@ -1145,6 +1145,16 @@ fn declared_transmap_ignores_slot_alpha() {
     );
     let plain = blended(&mut scene, None, MaterialExtra::default());
     assert_eq!(scene.materials[metal].uniform.params2[3], 4.0);
+    let inward = blended(
+        &mut scene,
+        None,
+        MaterialExtra {
+            normals_inward: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(scene.materials[inward].uniform.params2[3], 8.0);
+    assert!(!scene.materials[inward].transmap_declared());
     let flags: Vec<bool> = [declared, bound, metal, plain]
         .iter()
         .map(|&m| scene.materials[m].transmap_declared())
