@@ -454,12 +454,7 @@ impl World {
                             tg.trees.push(tkey.clone());
                         }
                         let mat = tr.material;
-                        let xf = Mat4::from_rotation_z((-heading).to_radians() as f32)
-                            * Mat4::from_scale(glam::Vec3::new(
-                            *width as f32,
-                            *width as f32,
-                            *height as f32,
-                        ));
+                        let xf = tree_transform(*heading, *width, *height);
                         let _ =
                             instance!(renderer.add_instance(scene, tree_mesh, *pos, xf, vec![mat]));
                         pl.trees += 1;

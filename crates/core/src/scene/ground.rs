@@ -74,8 +74,12 @@ pub(super) fn probe_tile(
     // (an embankment the road runs under, ground poking through the asphalt) is no
     // ground and no wall there. Taken with the road, a terrain face over the carriageway was
     // an invisible wall under bridges, and one through it a bump that threw the bus.
-    let ground = terrain.map(|t| {
-        let h = ::geometry::terrain_height(t, lx, ly);
+    let cut_ground = surface.and_then(|s| s.terrain_cut.as_ref());
+    let height = match cut_ground.and_then(|c| c.height(lx, ly)) {
+        Some(h) => h,
+        None => terrain.map(|t| ::geometry::terrain_height(t, lx, ly)),
+    };
+    let ground = height.map(|h| {
         let cut = surface
             .map(|s| s.cut_at(lx, ly, h, surface_flush()))
             .unwrap_or(false);
@@ -105,7 +109,9 @@ pub(super) fn probe_tile(
         // vehicle drop out of the world
         if !cut || (probe.below.is_none() && h <= top as f32) {
             if h <= top as f32 && probe.below.is_none_or(|z| h > z) {
-                normal = Some(::geometry::terrain_normal(terrain.unwrap(), lx, ly));
+                normal = cut_ground
+                    .and_then(|c| c.normal(lx, ly))
+                    .or_else(|| terrain.map(|t| ::geometry::terrain_normal(t, lx, ly)));
             }
             probe = probe.merge(::geometry::Probe::of(h, top as f32));
         }
@@ -290,6 +296,9 @@ impl World {
             if let Some(h) = s.sample_road(lx, ly).or_else(|| s.sample(lx, ly)) {
                 return Some(h as f64);
             }
+            if let Some(h) = s.terrain_cut.as_ref().and_then(|c| c.height(lx, ly)) {
+                return h.map(f64::from);
+            }
         }
         let t = self.terrains.read();
         let terrain = t.get(&(tx, ty))?;
@@ -399,17 +408,21 @@ impl World {
         let ty = (y / tile_size()).floor() as i32;
         let lx = (x - tx as f64 * tile_size()) as f32;
         let ly = (y - ty as f64 * tile_size()) as f32;
-        let surface = self
-            .surfaces
-            .read()
-            .get(&(tx, ty))
-            .and_then(|s| s.sample(lx, ly))
-            .map(|h| h as f64);
-        let terrain = self
-            .terrains
-            .read()
-            .get(&(tx, ty))
-            .map(|t| t.sample(lx, ly) as f64);
+        let surfaces = self.surfaces.read();
+        let tile_surface = surfaces.get(&(tx, ty));
+        let surface = tile_surface.and_then(|s| s.sample(lx, ly)).map(f64::from);
+        let terrain = match tile_surface
+            .and_then(|s| s.terrain_cut.as_ref())
+            .and_then(|c| c.height(lx, ly))
+        {
+            Some(h) => h.map(f64::from),
+            None => self
+                .terrains
+                .read()
+                .get(&(tx, ty))
+                .map(|t| t.sample(lx, ly) as f64),
+        };
+        drop(surfaces);
         let rough = match (surface, terrain) {
             (Some(s), Some(t)) => Some(s.max(t)),
             (s, t) => s.or(t),

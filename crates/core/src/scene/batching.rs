@@ -220,6 +220,12 @@ pub(super) fn terrain_ground(
     ground
 }
 
+/// Trees use positive heading on fixed crossed cards, opposite to scenery objects.
+pub(super) fn tree_transform(heading: f64, width: f64, height: f64) -> Mat4 {
+    Mat4::from_rotation_z(heading.to_radians() as f32)
+        * Mat4::from_scale(glam::Vec3::new(width as f32, width as f32, height as f32))
+}
+
 /// Two crossed unit quads (1 m wide, 1 m tall, centred at x=0, standing on z=0).
 pub(super) fn tree_quad_mesh() -> MeshData {
     let mut m = MeshData::default();

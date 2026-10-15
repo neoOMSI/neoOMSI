@@ -27,6 +27,7 @@ pub(super) struct StagedObject {
     pub(super) id: i64,
     pub(super) place: Placement,
     pub(super) rules: Vec<::map::MapRule>,
+    pub(super) terrain_align_flag: bool,
     /// The record's trailing lines: text strings, tree parameters, a lamp's light index,
     /// a bus stop's name.
     pub(super) extra: Vec<String>,
@@ -132,7 +133,7 @@ pub struct StagedTile {
     pub(super) align: Vec<(usize, f32)>,
     /// The outlines (world x, y) those splines cut out of the ground (see
     /// `::geometry::spline_hole_outlines`).
-    pub(super) hole_outlines: Vec<Vec<DVec2>>,
+    pub(super) hole_outlines: Vec<Vec<DVec3>>,
     pub(super) water: Option<[f32; 4]>,
     pub(super) splines: Vec<StagedSpline>,
     /// The whole spline meshes, in the order of `splines`, until the tile is placed.

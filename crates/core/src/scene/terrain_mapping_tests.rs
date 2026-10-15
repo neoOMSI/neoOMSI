@@ -312,3 +312,70 @@ fn surf_height_map_is_loaded_from_a_mounted_zip_sidecar() {
         .expect("the sidecar in the mounted content archive must load");
     assert!((map.sample(glam::Vec2::ZERO) - 0.02).abs() < 1e-6);
 }
+
+#[test]
+fn flagged_terrain_cutters_share_the_drawn_ground_with_wheels_and_walkers() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "global.cfg",
+        "[name]\nCut terrain regression\n[map]\n0\n0\ntile_0_0.map\n",
+    );
+    fixture.write(
+        "portal.sco",
+        "[absheight]\n[surface]\n[mesh]\nfloor.x\n[terrainhole]\nhole.x\n",
+    );
+    let floor = "xof 0303txt 0032\nMesh floor {4;101;7;101;,109;7;101;,109;7;109;,101;7;109;;2;3;0,2,1;,3;0,3,2;;}";
+    fixture.write("floor.x", floor);
+    fixture.write("hole.x", floor);
+    fixture.write("tile_0_0.map", "[version]\n14\n[terrain]\n\n[object]\n0\nportal.sco\n1\n0\n0\n0\n0\n0\n0\n0\n[spline_terrain_align]\n\n[object]\n0\nportal.sco\n2\n30\n0\n0\n0\n0\n0\n0\n");
+    let mut terrain = Terrain::flat();
+    terrain.heights.fill(10.0);
+    std::fs::write(fixture.0.join("tile_0_0.map.terrain"), terrain.to_bytes()).unwrap();
+    let world = World::open(&fixture.0, &fixture.0.join("global.cfg"), 20261001).unwrap();
+    let (prepared, _) = world.prepare_tiles(&[(0, 0, fixture.0.join("tile_0_0.map"))]);
+    let mesh = prepared[0].terrain.as_ref().unwrap();
+    let cast = |x: f32, y: f32| {
+        ::geometry::ray_mesh(
+            glam::Vec3::new(x, y, 20.0),
+            -glam::Vec3::Z,
+            mesh,
+            &Mat4::IDENTITY,
+        )
+        .map(|d| 20.0 - d)
+    };
+    assert!(cast(103.0, 103.0).is_none(), "flagged portal cuts");
+    assert_eq!(
+        cast(133.0, 103.0),
+        Some(10.0),
+        "unflagged portal keeps the hill"
+    );
+    assert!((world.walk_height(103.0, 103.0).unwrap() - 7.0).abs() < 1e-4);
+    assert!((world.walk_height(133.0, 103.0).unwrap() - 10.0).abs() < 1e-4);
+    let h = cast(100.5, 103.0).unwrap() as f64;
+    assert!(h > 7.0 && h < 10.0);
+    let probe = drive_probe(&world.terrains, &world.surfaces, 100.5, 103.0, 20.0);
+    assert!(
+        (probe.below.unwrap() - h).abs() < 1e-4,
+        "wheel: {probe:?}, rendered: {h}"
+    );
+    assert!((world.walk_height(100.5, 103.0).unwrap() - h).abs() < 1e-4);
+    let empty = drive_probe(&world.terrains, &world.surfaces, 104.0, 104.0, 6.0);
+    assert!(
+        empty.below.is_none(),
+        "the original hill must not reappear inside the cut: {empty:?}"
+    );
+}
+
+#[test]
+fn tree_cards_keep_their_uvs_at_zero_and_turn_with_positive_heading() {
+    let mesh = tree_quad_mesh();
+    for heading in [0.0_f64, 86.4, 90.0] {
+        let xf = tree_transform(heading, 2.0, 3.0);
+        let p = xf.transform_point3(mesh.positions[1]);
+        let angle = heading.to_radians();
+        assert!(p.distance(glam::Vec3::new(angle.cos() as f32, angle.sin() as f32, 0.0)) < 1e-5);
+        assert_eq!(mesh.uvs[0], glam::Vec2::new(0.0, 1.0));
+        assert_eq!(mesh.uvs[1], glam::Vec2::new(1.0, 1.0));
+        assert!(xf.transform_point3(mesh.positions[2]).z == 3.0);
+    }
+}
