@@ -5,7 +5,8 @@
 //! On Windows the pose is also read as Omsi.exe reads it: from TrackIR's own software
 //! through NaturalPoint's NPClient (the DLL the TrackIR software registers, opentrack's
 //! stand-in for it alike), and from opentrack's default output there, "freetrack 2.0
-//! Enhanced" (the `FT_SharedMem` mapping). A UDP pose wins over both, TrackIR over freetrack.
+//! Enhanced" (the `FT_SharedMem` mapping). A UDP pose wins over both, freetrack over TrackIR
+//! (opentrack's NPClient hands on the freetrack poses, but not in TrackIR's axes).
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -62,6 +63,8 @@ impl HeadTracker {
                 let mut freetrack = freetrack::Reader::default();
                 #[cfg(windows)]
                 let mut last_udp: Option<Instant> = None;
+                #[cfg(windows)]
+                let mut last_freetrack: Option<Instant> = None;
                 loop {
                     // (the game's end takes the thread with it)
                     if Arc::strong_count(&out) == 1 {
@@ -77,10 +80,20 @@ impl HeadTracker {
                     let Ok(n) = got else {
                         #[cfg(windows)]
                         if last_udp.is_none_or(|t| t.elapsed() >= Duration::from_millis(500)) {
-                            let pose = trackir
-                                .as_mut()
-                                .and_then(npclient::Reader::poll)
-                                .or_else(|| freetrack.poll());
+                            let pose = match freetrack.poll() {
+                                Some(pose) => {
+                                    last_freetrack = Some(Instant::now());
+                                    Some(pose)
+                                }
+                                // (while opentrack writes the mapping, its NPClient only
+                                // hands on the same poses: they come from the mapping)
+                                None if last_freetrack
+                                    .is_some_and(|t| t.elapsed() < Duration::from_millis(500)) =>
+                                {
+                                    None
+                                }
+                                None => trackir.as_mut().and_then(npclient::Reader::poll),
+                            };
                             if let Some(pose) = pose {
                                 *out.lock().unwrap() = Some((pose, Instant::now()));
                             }
@@ -140,6 +153,9 @@ fn freetrack_pose(yaw: f32, pitch: f32, roll: f32, x: f32, y: f32, z: f32) -> He
     }
 }
 
+/// A TrackIR pose as NPClient hands it out (`TRACKIRDATA`'s roll, pitch, yaw, x, y, z,
+/// +-16383 for +-180 degrees and +-50 cm), in the UDP output's terms. None for what no
+/// tracker sends (encrypted data reads as such).
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn npclient_pose(roll: f32, pitch: f32, yaw: f32, x: f32, y: f32, z: f32) -> Option<HeadPose> {
     const MAX: f32 = 16383.0;
@@ -150,11 +166,13 @@ fn npclient_pose(roll: f32, pitch: f32, yaw: f32, x: f32, y: f32, z: f32) -> Opt
         return None;
     }
     let (rad, mm) = (std::f32::consts::PI / MAX, 500.0 / MAX);
+    // (TrackIR's sideways lean and roll run the other way to the freetrack mapping's, as
+    // driving with a TrackIR showed; opentrack's NPClient does not turn them round)
     Some(freetrack_pose(
         yaw * rad,
         pitch * rad,
-        roll * rad,
-        x * mm,
+        -roll * rad,
+        -x * mm,
         y * mm,
         z * mm,
     ))
@@ -499,13 +517,14 @@ mod tests {
         // (TrackIR's +-16383: half of it is 90 degrees, 25 cm)
         let half = 16383.0 / 2.0;
         let p = npclient_pose(half / 9.0, -half / 9.0, half / 3.0, half, -half / 5.0, 0.0).unwrap();
-        // (yaw and pitch the other way round, as from the freetrack mapping)
-        let want = [-30.0, 10.0, 10.0];
+        // (yaw and pitch the other way round, as from the freetrack mapping; TrackIR's roll
+        // and sideways lean too)
+        let want = [-30.0, 10.0, -10.0];
         assert!(
             p.rot.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-3),
             "{p:?}"
         );
-        let want = [25.0, -5.0, 0.0];
+        let want = [-25.0, -5.0, 0.0];
         assert!(
             p.pos.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4),
             "{p:?}"
@@ -579,7 +598,9 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let p = got.expect("no pose through NPClient");
-        let want = freetrack_pose(pose[0], pose[1], pose[2], pose[3], pose[4], pose[5]);
+        // (opentrack hands roll and x on as they are, so they come out the other way round to
+        // the freetrack mapping's: why the mapping wins while opentrack writes it)
+        let want = freetrack_pose(pose[0], pose[1], -pose[2], -pose[3], pose[4], pose[5]);
         // (NPClient's +-16383 steps lose a little)
         assert!(
             p.rot
@@ -604,7 +625,7 @@ mod tests {
         }
         let next = next.expect("no second pose");
         assert!(
-            (next.pos[0] - 5.0).abs() < 0.01 && next.rot[0].abs() < 0.05,
+            (next.pos[0] + 5.0).abs() < 0.01 && next.rot[0].abs() < 0.05,
             "{next:?}"
         );
         drop(reader);
