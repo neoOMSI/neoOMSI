@@ -505,6 +505,7 @@ impl World {
                 map_object: true,
                 instance: 0,
                 key: o.id,
+                terrain_align: o.terrain_align,
             });
         }
         // [attachObj]
@@ -532,6 +533,7 @@ impl World {
                 map_object: false,
                 instance: 0,
                 key: o.id,
+                terrain_align: o.terrain_align,
             });
         }
         // [splineAttachement] rows and their repeaters
@@ -580,6 +582,7 @@ impl World {
                     map_object: false,
                     instance: ro.index,
                     key,
+                    terrain_align: a.terrain_align,
                 });
             }
         }

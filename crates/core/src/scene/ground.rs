@@ -74,12 +74,20 @@ pub(super) fn probe_tile(
     // (an embankment the road runs under, ground poking through the asphalt) is no
     // ground and no wall there. Taken with the road, a terrain face over the carriageway was
     // an invisible wall under bridges, and one through it a bump that threw the bus.
-    let ground = terrain.map(|t| {
-        let h = ::geometry::terrain_height(t, lx, ly);
-        let cut = surface
-            .map(|s| s.cut_at(lx, ly, h, surface_flush()))
-            .unwrap_or(false);
-        (h, cut)
+    // (in cut cells, the ground as the cut leaves it: #241's mound was a wall to the wheels)
+    let cut_ground = surface
+        .and_then(|s| s.terrain_cut.as_ref())
+        .and_then(|c| c.height(lx, ly));
+    let ground = terrain.map(|t| match cut_ground {
+        Some(Some(h)) => (h, false),
+        Some(None) => (::geometry::terrain_height(t, lx, ly), true),
+        None => {
+            let h = ::geometry::terrain_height(t, lx, ly);
+            let cut = surface
+                .map(|s| s.cut_at(lx, ly, h, surface_flush()))
+                .unwrap_or(false);
+            (h, cut)
+        }
     });
     // ... unless that face lies buried under ground that is drawn here and is under the
     // wheel, not over it. Omsi.exe takes the highest face there, the ground; taken as the
@@ -105,7 +113,12 @@ pub(super) fn probe_tile(
         // vehicle drop out of the world
         if !cut || (probe.below.is_none() && h <= top as f32) {
             if h <= top as f32 && probe.below.is_none_or(|z| h > z) {
-                normal = Some(::geometry::terrain_normal(terrain.unwrap(), lx, ly));
+                normal = Some(
+                    surface
+                        .and_then(|s| s.terrain_cut.as_ref())
+                        .and_then(|c| c.normal(lx, ly))
+                        .unwrap_or_else(|| ::geometry::terrain_normal(terrain.unwrap(), lx, ly)),
+                );
             }
             probe = probe.merge(::geometry::Probe::of(h, top as f32));
         }

@@ -465,7 +465,9 @@ impl World {
                             tg.trees.push(tkey.clone());
                         }
                         let mat = tr.material;
-                        let xf = Mat4::from_rotation_z((-heading).to_radians() as f32)
+                        // (a tree turns the other way round from an object: checked in
+                        // OMSI on a tree beside the Kaiserberg tunnel, #241)
+                        let xf = Mat4::from_rotation_z(heading.to_radians() as f32)
                             * Mat4::from_scale(glam::Vec3::new(
                             *width as f32,
                             *width as f32,

@@ -7,6 +7,9 @@ use ::map::{MapSpline, Terrain, tile_size};
 use ::scenery::Spline;
 use std::sync::Arc;
 
+mod terrain_clip;
+pub use terrain_clip::TerrainCut;
+
 /// A texture's OMSI `.surf` height map. Its red channel is centred at 128 and displaces
 /// the wheel's contact height by at most two centimetres in either direction.
 #[derive(Debug, Clone)]
@@ -801,6 +804,14 @@ pub fn terrain_hole_profiles(def: &Spline) -> Vec<Vec<[f32; 3]>> {
         } else {
             (xr - xl) * 3.0 / 4.0 + xl
         };
+        // A trough whose bottom is not between its edges cuts nothing in OMSI (a tunnel
+        // tube's, #241; Köln's footways, Ahlheim's half motorway).
+        if !(xl - 0.01 <= bottom_left
+            && bottom_left <= bottom_right + 0.01
+            && bottom_right <= xr + 0.01)
+        {
+            continue;
+        }
         let low = low - 0.1;
         out.push(vec![
             [xl + 0.03, zl - 0.003, 0.0],
@@ -899,6 +910,14 @@ pub fn outline_crosses_itself(ring: &[DVec2]) -> bool {
 /// ring.
 /// Positions are the mesh's after `transform`, relative to `origin`.
 pub fn hole_mesh_outlines(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> Vec<Vec<DVec2>> {
+    hole_mesh_rims(mesh, transform, origin)
+        .into_iter()
+        .map(|r| r.into_iter().map(|p| p.truncate()).collect())
+        .collect()
+}
+
+/// The rings of [`hole_mesh_outlines`] with their heights, for [`TerrainCut`].
+pub fn hole_mesh_rims(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> Vec<Vec<DVec3>> {
     use std::collections::HashMap;
     // (a model repeats a vertex for every face and UV seam: the corners by place, to the mm)
     let key = |v: Vec3| {
@@ -908,15 +927,15 @@ pub fn hole_mesh_outlines(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> V
             (v.z * 1000.0).round() as i64,
         )
     };
-    let mut place: HashMap<(i64, i64, i64), DVec2> = HashMap::new();
+    let mut place: HashMap<(i64, i64, i64), DVec3> = HashMap::new();
     let mut edges: HashMap<((i64, i64, i64), (i64, i64, i64)), u32> = HashMap::new();
     for t in mesh.indices.chunks_exact(3) {
         let k = [0, 1, 2].map(|i| {
             let v = mesh.positions[t[i] as usize];
             let kv = key(v);
-            place.entry(kv).or_insert_with(|| {
-                origin.truncate() + transform.transform_point3(v).truncate().as_dvec2()
-            });
+            place
+                .entry(kv)
+                .or_insert_with(|| origin + transform.transform_point3(v).as_dvec3());
             kv
         });
         if k[0] == k[1] || k[1] == k[2] || k[2] == k[0] {
@@ -1618,6 +1637,56 @@ mod tests {
         assert!(normal.distance(Vec3::new(-0.1, 0.05, 1.0).normalize()) < 1e-5);
         assert!(grid.surface_below(4.0, 5.0, 11.0).is_none());
         assert!(grid.surface_below(290.0, 290.0, 30.0).is_none());
+    }
+
+    /// A road's profiles make a trough; a tunnel tube's ring of profiles makes none (#241).
+    #[test]
+    fn a_trough_with_its_bottom_outside_its_edges_cuts_nothing() {
+        let profile = |pts: &[(f32, f32)]| ::scenery::sli::SplineProfile {
+            texture: 0,
+            points: pts
+                .iter()
+                .map(|&(x, z)| ::scenery::sli::SplineProfilePoint {
+                    x,
+                    z,
+                    ..Default::default()
+                })
+                .collect(),
+        };
+        let road = Spline {
+            profiles: vec![
+                profile(&[(-5.0, 0.15), (-3.5, 0.15)]),
+                profile(&[(-3.5, 0.15), (-3.5, 0.0), (3.5, 0.0), (3.5, 0.15)]),
+                profile(&[(3.5, 0.15), (5.0, 0.15)]),
+            ],
+            ..Default::default()
+        };
+        let holes = terrain_hole_profiles(&road);
+        assert_eq!(holes.len(), 1);
+        assert!((holes[0][0][0] + 4.97).abs() < 1e-4 && (holes[0][3][0] - 4.97).abs() < 1e-4);
+        let tube = Spline {
+            profiles: vec![
+                profile(&[
+                    (0.0, 5.3),
+                    (-3.766, 5.179),
+                    (-4.5, 4.342),
+                    (-5.119, 2.231),
+                    (-4.5, 0.3),
+                ]),
+                profile(&[(-4.5, 0.3), (-4.0, 0.3)]),
+                profile(&[(-4.0, 0.3), (-4.0, 0.1), (4.0, 0.1), (4.0, 0.3)]),
+                profile(&[(4.0, 0.3), (4.5, 0.3)]),
+                profile(&[
+                    (4.5, 0.3),
+                    (5.119, 2.231),
+                    (4.5, 4.342),
+                    (3.766, 5.179),
+                    (0.0, 5.3),
+                ]),
+            ],
+            ..Default::default()
+        };
+        assert!(terrain_hole_profiles(&tube).is_empty());
     }
 
     #[test]
@@ -3022,6 +3091,8 @@ pub struct TileSurface {
     /// a texel of the raster is most of a metre wide and holds one height, which put a wheel
     /// next to a kerb on top of the pavement or into the road's camber.
     pub drive: DriveGrid,
+    /// The ground as terrain-aligned objects' cutters leave it, for the wheels.
+    pub terrain_cut: Option<TerrainCut>,
 }
 
 /// Edge of a [`TileSurface`] block (texels).
@@ -3072,6 +3143,7 @@ impl TileSurface {
             hole_cover: (0..blocks * blocks).map(|_| None).collect(),
             outlines: Vec::new(),
             drive: DriveGrid::default(),
+            terrain_cut: None,
         }
     }
 

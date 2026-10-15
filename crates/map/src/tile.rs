@@ -30,6 +30,9 @@ pub struct MapObject {
     pub var_parent: Option<i64>,
     /// `[rule]` / `[kill_rule]` lines that follow the object: they apply to its `[path]`s.
     pub rules: Vec<MapRule>,
+    /// `[spline_terrain_align]` (or `_2`) after the object: only then does OMSI cut its
+    /// `[terrainhole]`.
+    pub terrain_align: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -123,6 +126,8 @@ pub struct SplineAttachment {
     pub repeater: Option<(usize, usize)>,
     pub var_parent: Option<i64>,
     pub rules: Vec<MapRule>,
+    /// `[spline_terrain_align]` after the row, as on an [`MapObject`].
+    pub terrain_align: bool,
 }
 
 /// Chrono patch: `[selobject]` / `[selspline]` name an object or spline **by id** (838 of
@@ -384,6 +389,7 @@ impl Tile {
                         attach_index,
                         var_parent: None,
                         rules: Vec::new(),
+                        terrain_align: false,
                     };
                     if attach {
                         t.attach_objects.push(o);
@@ -544,6 +550,7 @@ impl Tile {
                         repeater,
                         var_parent: None,
                         rules: Vec::new(),
+                        terrain_align: false,
                     });
                     last = Last::SplineAttach;
                 }
@@ -574,15 +581,35 @@ impl Tile {
                         _ => {}
                     }
                 }
-                "spline_terrain_align" => {
-                    if let Some(s) = t.splines.last_mut() {
-                        s.terrain_align_flag = true;
-                    }
-                }
-                "spline_terrain_align_2" => {
-                    let v = r.f64();
-                    if let Some(s) = t.splines.last_mut() {
-                        s.terrain_align = Some(v);
+                "spline_terrain_align" | "spline_terrain_align_2" => {
+                    // Like a rule, the flag belongs to the record before it - objects too
+                    // (#241).
+                    let v = (k == "spline_terrain_align_2").then(|| r.f64());
+                    match last {
+                        Last::Object => {
+                            if let Some(o) = t.objects.last_mut() {
+                                o.terrain_align = true;
+                            }
+                        }
+                        Last::Attach => {
+                            if let Some(o) = t.attach_objects.last_mut() {
+                                o.terrain_align = true;
+                            }
+                        }
+                        Last::SplineAttach => {
+                            if let Some(o) = t.spline_attachments.last_mut() {
+                                o.terrain_align = true;
+                            }
+                        }
+                        Last::Spline => {
+                            if let Some(s) = t.splines.last_mut() {
+                                match v {
+                                    Some(v) => s.terrain_align = Some(v),
+                                    None => s.terrain_align_flag = true,
+                                }
+                            }
+                        }
+                        Last::None | Last::Chrono => {}
                     }
                 }
                 "rule" | "kill_rule" => {
@@ -867,6 +894,29 @@ Object Nr. 3\n[splineAttachement_repeater]\n0\n12\n5\nSceneryobjects\\lamp.sco\n
             ]
         );
         assert!(t.unknown_keywords.is_empty());
+    }
+
+    /// `[spline_terrain_align]` belongs to the record it follows, an object too (#241).
+    #[test]
+    fn terrain_align_belongs_to_the_record_before_it() {
+        let t = tile(&format!(
+            "{BASE}\n[spline_terrain_align]\n\n\
+Object Nr. 4\n[object]\n0\nSceneryobjects\\portal.sco\n10\n1\n2\n0\n0\n0\n0\n0\n\n[spline_terrain_align]\n\n\
+[rule]\n0\ntrafficdensity\n0.500\n0\n\n\
+[spline]\n0\nSplines\\road.sli\n102\n0\n0\n10\n0\n90\n0\n30\n0\n0\n0\n0\n0\n0\n0\n0\n\n[spline_terrain_align_2]\n3\n"
+        ));
+        // after the repeater row of BASE
+        assert!(t.spline_attachments[1].terrain_align);
+        assert!(!t.spline_attachments[0].terrain_align);
+        assert!(!t.objects[0].terrain_align);
+        assert!(t.objects[1].terrain_align);
+        assert_eq!(t.objects[1].rules.len(), 1);
+        let s: Vec<_> = t
+            .splines
+            .iter()
+            .map(|s| (s.terrain_align_flag, s.terrain_align))
+            .collect();
+        assert_eq!(s, vec![(false, None), (false, None), (false, Some(3.0))]);
     }
 
     /// An `[attachObj]` on a later object of a spline attachment row, or on an object

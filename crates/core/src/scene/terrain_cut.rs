@@ -31,6 +31,8 @@ impl World {
                 let mut order: Vec<&Arc<StagedTile>> = src.values().collect();
                 order.sort_by_key(|q| (q.tx, q.ty));
                 let mut ts = TileSurface::new(SURFACE_RASTER);
+                // the cutters' rims, in tile metres
+                let mut rims: Vec<Vec<glam::Vec3>> = Vec::new();
                 // meshes the wheels stand on, and of them low objects they climb
                 let mut wheel_meshes = 0usize;
                 let report = |mesh: &MeshData,
@@ -135,18 +137,33 @@ impl World {
                         if ot.sco.tree.is_some() || ot.sco.only_editor || ot.sco.is_help_arrow {
                             continue;
                         }
-                        for h in &ot.holes {
+                        // Only with `[spline_terrain_align]` does a `[terrainhole]` cut, as
+                        // in OMSI (#241).
+                        let holes = if o.terrain_align { &ot.holes[..] } else { &[] };
+                        for h in holes {
                             if !outside(&mesh_bounds(h, &pose.rot, pose.pos)) {
                                 ts.rasterize_hole(h, &pose.rot, pose.pos, tx, ty);
                                 // and cut exactly along its rim, as along a spline's outline:
                                 // by texel alone the ground stood a metre into the road at
                                 // the edges of a junction (Spandau, Bahnstr./Hansastr.)
-                                for ring in
-                                    ::geometry::hole_mesh_outlines(h, &pose.rot, pose.pos)
-                                {
-                                    if !::geometry::outline_crosses_itself(&ring) {
-                                        ts.add_outline(&ring, tx, ty);
+                                for ring in ::geometry::hole_mesh_rims(h, &pose.rot, pose.pos) {
+                                    let flat: Vec<DVec2> =
+                                        ring.iter().map(|p| p.truncate()).collect();
+                                    if ::geometry::outline_crosses_itself(&flat) {
+                                        continue;
                                     }
+                                    ts.add_outline(&flat, tx, ty);
+                                    rims.push(
+                                        ring.iter()
+                                            .map(|p| {
+                                                glam::Vec3::new(
+                                                    (p.x - x0) as f32,
+                                                    (p.y - y0) as f32,
+                                                    p.z as f32,
+                                                )
+                                            })
+                                            .collect(),
+                                    );
                                 }
                             }
                         }
@@ -207,6 +224,37 @@ impl World {
                 }
                 ts.finish();
                 let tile_terrain = self.terrains.read().get(&key).cloned();
+                if let Some(t) = tile_terrain.as_ref()
+                    && let Some(cut) = ::geometry::TerrainCut::new(t, &rims)
+                {
+                    if debug {
+                        log::info!(
+                            "tile ({tx}, {ty}): {} terrain cells cut along {} cutter rims",
+                            cut.cells_cut(),
+                            rims.len()
+                        );
+                    }
+                    let mesh = cut.mesh(t);
+                    // OMSI_DUMP_TERRAIN_CUT=<dir>: the corners added (`x y z`) and the mesh
+                    if let Some(dir) = ::legacy_config::env::var("OMSI_DUMP_TERRAIN_CUT").ok() {
+                        let n = t.samples() * t.samples();
+                        let text: String = mesh.positions[n..]
+                            .iter()
+                            .map(|p| format!("{} {} {}\n", p.x, p.y, p.z))
+                            .collect();
+                        let _ = std::fs::write(format!("{dir}/cut_{tx}_{ty}.txt"), text);
+                        let mut obj = String::new();
+                        for p in &mesh.positions {
+                            obj += &format!("v {} {} {}\n", p.x, p.y, p.z);
+                        }
+                        for f in mesh.indices.chunks_exact(3) {
+                            obj += &format!("f {} {} {}\n", f[0] + 1, f[1] + 1, f[2] + 1);
+                        }
+                        let _ = std::fs::write(format!("{dir}/cut_{tx}_{ty}.obj"), obj);
+                    }
+                    p.terrain = Some(mesh);
+                    ts.terrain_cut = Some(cut);
+                }
                 // How much of the ground the old cut rule ("anything below the terrain takes
                 // it away") would have removed with nothing to put in its place: a hole in
                 // the world you can see the sky through.

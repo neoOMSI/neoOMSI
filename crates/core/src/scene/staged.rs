@@ -42,6 +42,8 @@ pub(super) struct StagedObject {
     /// attachment row (which all share the row's id) a key of its own, so that one post of
     /// a row of `[crashmode_pole]` bollards falls alone.
     pub(super) key: i64,
+    /// `[spline_terrain_align]` after the record: only then does its `[terrainhole]` cut.
+    pub(super) terrain_align: bool,
 }
 
 /// The collision key of object `index` of spline attachment row `row` in tile (tx, ty):
