@@ -727,6 +727,10 @@ pub(crate) fn run_offscreen(
             }
             t.others = lan_outlines(&remotes_off);
             t.others.extend(own_outlines(player.as_ref(), &[]));
+            t.blinkers = lan_blinkers(&remotes_off);
+            t.player_blinker = player
+                .as_ref()
+                .map_or(0, |p| rail_drive::blinker_of(&p.vehicle));
             t.player_priority = player
                 .as_ref()
                 .and_then(|p| p.vehicle.var("TrafficPriority"))

@@ -107,6 +107,11 @@ impl App {
             t.others = lan_outlines(&self.remotes);
             t.others
                 .extend(own_outlines(self.player.as_ref(), &self.placed));
+            t.blinkers = lan_blinkers(&self.remotes);
+            t.player_blinker = self
+                .player
+                .as_ref()
+                .map_or(0, |p| rail_drive::blinker_of(&p.vehicle));
             if !self.paused {
                 t.player_priority = self
                     .player

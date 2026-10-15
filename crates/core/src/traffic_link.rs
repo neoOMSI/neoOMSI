@@ -73,6 +73,14 @@ pub(crate) fn lan_outlines(game: &lan::LanGame) -> Vec<(u32, traffic::PlayerBox)
         .collect()
 }
 
+/// The LAN players' indicators by session id (`Traffic::blinkers`).
+pub(crate) fn lan_blinkers(game: &lan::LanGame) -> hashbrown::HashMap<u32, u8> {
+    game.remotes
+        .iter()
+        .map(|(id, r)| (*id, r.last.blinker))
+        .collect()
+}
+
 /// `Traffic::rail_ahead` of the player and the LAN players. A train looks as far ahead as
 /// an AI train; one backing up asks for nothing.
 pub(crate) fn rail_ahead(

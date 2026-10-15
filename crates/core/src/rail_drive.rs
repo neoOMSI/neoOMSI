@@ -371,7 +371,7 @@ pub(crate) fn remote_lanes_ahead(
 
 /// The indicator the driver has set (1 left, 2 right, else 0), from the script's switch or
 /// its lamps.
-fn blinker_of(v: &::simulation::VehicleInstance) -> u8 {
+pub(crate) fn blinker_of(v: &::simulation::VehicleInstance) -> u8 {
     let on = |n: &str| v.var(n).map(|x| x > 0.5).unwrap_or(false);
     match v.var("lights_sw_blinker") {
         Some(s) if (0.5..2.5).contains(&s) => s.round() as u8,
