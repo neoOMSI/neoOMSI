@@ -69,19 +69,20 @@ impl Fixture {
             .update_texture_budget(&self.renderer, &mut self.scene, &[center], true)
     }
 
-    fn apply_one_restore(&mut self) {
+    fn apply_restores(&mut self, expected: usize) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut swapped = 0;
         loop {
             assert_eq!(self.check(DVec3::ZERO), 0);
-            let swapped = self.world.apply_texture_upgrades(
+            swapped += self.world.apply_texture_upgrades(
                 &self.renderer,
                 &mut self.scene,
                 Some(std::time::Instant::now() + std::time::Duration::from_millis(2)),
             );
             assert!(self.world.gpu.lock().wants_restore.is_empty());
-            assert!(self.world.upgrades_pending.lock().len() <= 1);
-            if swapped > 0 {
-                assert_eq!(swapped, 1);
+            assert!(self.world.upgrades_pending.lock().len() <= expected);
+            assert!(swapped <= expected);
+            if swapped == expected {
                 break;
             }
             assert!(
@@ -298,7 +299,25 @@ fn nearby_restores_reclaim_distant_mips_before_loading() {
 }
 
 #[test]
-fn oversubscribed_nearby_quality_recovers_one_worker_at_a_time() {
+fn oversized_nearby_restore_waits_for_headroom() {
+    let mut f = Fixture::new("near-too-large");
+    let path = PathBuf::from("near.dds");
+    let data = mip_data(::texture::PixelFormat::Rgba8, 256, 256).without_top_levels(1);
+    let id = f.scenery(path.clone(), &data, 1);
+    f.world
+        .set_texture_budget(f.renderer.texture_bytes(&f.scene));
+    for _ in 0..3 {
+        assert_eq!(f.check(DVec3::ZERO), 0);
+        assert!(f.world.gpu.lock().wants_restore.is_empty());
+        assert_eq!(f.world.gpu.lock().textures[&path].dropped, 1);
+        assert_eq!(f.renderer.texture_levels(&f.scene, id), Some((128, 128, 8)));
+    }
+    f.world.set_texture_budget(2_000_000);
+    assert_eq!(f.check(DVec3::ZERO), 1);
+}
+
+#[test]
+fn nearby_quality_overage_is_bounded_across_completed_restores() {
     let mut f = Fixture::new("near-oversubscribed");
     let mut textures = Vec::new();
     for i in 0..3 {
@@ -314,19 +333,62 @@ fn oversubscribed_nearby_quality_recovers_one_worker_at_a_time() {
         e.dropped = 1;
         textures.push((path, id, full));
     }
-    f.world
-        .set_texture_budget(f.renderer.texture_bytes(&f.scene));
-    for _ in &textures {
-        assert_eq!(f.check(DVec3::ZERO), 1);
-        assert_eq!(f.world.gpu.lock().wants_restore.len(), 1);
-        f.apply_one_restore();
+    let growth = f.world.gpu.lock().textures[&textures[0].0].estimated_restore_growth();
+    let usage = f.renderer.texture_bytes(&f.scene);
+    // Size the background so the pressure margin fits one restore, but not two.
+    let background = (growth * 48).saturating_sub(usage);
+    f.renderer
+        .add_blank_texture(&mut f.scene, 1024, background.div_ceil(4096) as u32);
+    let limit = f.renderer.texture_bytes(&f.scene);
+    let ceiling = limit + limit / 32;
+    f.world.set_texture_budget(limit);
+    assert_eq!(f.check(DVec3::ZERO), 1);
+    assert_eq!(f.world.gpu.lock().wants_restore.len(), 1);
+    f.apply_restores(1);
+    assert!(f.renderer.texture_bytes(&f.scene) > limit);
+    assert!(f.renderer.texture_bytes(&f.scene) <= ceiling);
+    for _ in 0..3 {
+        assert_eq!(f.check(DVec3::ZERO), 0);
+        assert!(f.world.gpu.lock().wants_restore.is_empty());
     }
+    assert_eq!(
+        textures
+            .iter()
+            .filter(|(p, _, _)| f.world.gpu.lock().textures[p].dropped > 0)
+            .count(),
+        2
+    );
+    f.world.set_texture_budget((limit + growth * 3) * 10 / 9);
+    assert_eq!(f.check(DVec3::ZERO), 2);
+    f.apply_restores(2);
     for (path, id, full) in textures {
         assert_eq!(f.world.gpu.lock().textures[&path].dropped, 0);
         assert_eq!(f.renderer.texture_levels(&f.scene, id), Some(full));
     }
-    assert!(f.renderer.texture_bytes(&f.scene) > f.world.texture_budget_bytes());
+    assert!(f.renderer.texture_bytes(&f.scene) <= f.world.texture_budget_bytes());
     assert_eq!(f.check(DVec3::ZERO), 0);
+}
+
+#[test]
+fn oversized_nearby_restore_does_not_block_smaller_one() {
+    let mut f = Fixture::new("near-mixed-sizes");
+    let large = PathBuf::from("a-large.dds");
+    let small = PathBuf::from("b-small.dds");
+    f.scenery(
+        large.clone(),
+        &mip_data(::texture::PixelFormat::Rgba8, 2048, 1024).without_top_levels(1),
+        1,
+    );
+    f.scenery(
+        small.clone(),
+        &mip_data(::texture::PixelFormat::Rgba8, 128, 128).without_top_levels(1),
+        1,
+    );
+    f.world
+        .set_texture_budget(f.renderer.texture_bytes(&f.scene));
+    assert_eq!(f.check(DVec3::ZERO), 1);
+    assert_eq!(f.world.gpu.lock().wants_restore, vec![small]);
+    assert_eq!(f.world.gpu.lock().textures[&large].dropped, 1);
 }
 
 #[test]
@@ -359,8 +421,9 @@ fn block_alignment_does_not_starve_nearby_restores() {
             .shared_textures
             .push(far_path.clone());
     }
-    f.world
-        .set_texture_budget(f.renderer.texture_bytes(&f.scene));
+    let growth = f.world.gpu.lock().textures[&near_path].estimated_restore_growth();
+    let restored = f.renderer.texture_bytes(&f.scene) + growth;
+    f.world.set_texture_budget(restored - restored / 64);
     assert_eq!(f.check(DVec3::ZERO), 1);
     assert_eq!(f.world.gpu.lock().wants_restore, vec![near_path]);
     assert_eq!(f.world.gpu.lock().textures[&far_path].dropped, 0);
@@ -443,7 +506,7 @@ fn nearby_texture_restores_through_the_background_worker() {
     }
     f.world.set_texture_budget(2_000_000);
     assert_eq!(f.check(DVec3::ZERO), 1);
-    f.apply_one_restore();
+    f.apply_restores(1);
     assert_eq!(f.renderer.texture_levels(&f.scene, id), Some(full));
     assert_eq!(f.world.gpu.lock().textures[&path].dropped, 0);
     assert_eq!(f.check(DVec3::ZERO), 0);

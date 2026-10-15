@@ -155,7 +155,7 @@ impl World {
     /// Check the texture budget once a second (`force`: now). Reduce distant scenery
     /// mips to at least 64 texels, never within 150 m of `centers`. Reserve space for
     /// restores within 400 m, reclaiming distant mips for nearby restores first.
-    /// If nothing can give way, restore one nearby texture per check to preserve quality.
+    /// If nothing can give way, admit one nearby restore within the pressure margin.
     /// Vehicle textures keep their levels. Returns reductions, restores and evicted sets.
     pub fn update_texture_budget(
         &self,
@@ -310,6 +310,7 @@ impl World {
             .sum();
         let mut projected = usage + reserved;
         let target = limit - limit / 10;
+        let pressure_limit = limit + limit / 32;
         let nearby_growth = entries
             .iter()
             .filter_map(|(d, p)| {
@@ -323,7 +324,7 @@ impl World {
             .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(b.1)))
             .map(|(_, _, extra)| extra)
             .unwrap_or(0);
-        let mut over = if projected > limit + limit / 32 {
+        let mut over = if projected > pressure_limit {
             projected.saturating_sub(target)
         } else {
             nearby_growth.saturating_sub(target.saturating_sub(projected))
@@ -388,6 +389,9 @@ impl World {
                 if *d >= NEAR || restoring > 0 || reserved > 0 {
                     break;
                 }
+                if extra > pressure_limit.saturating_sub(projected) {
+                    continue;
+                }
                 let reclaimable = entries.iter().any(|(distance, path)| {
                     *distance >= NEAR
                         && !spline_textures.contains(path)
@@ -403,7 +407,7 @@ impl World {
                 if reclaimable {
                     break;
                 }
-                // If nothing can give way, restore one nearby texture to avoid permanent blur.
+                // Use the pressure margin only when nothing else can give way.
                 gpu.wants_restore.push(p.clone());
                 restoring += 1;
                 break;
