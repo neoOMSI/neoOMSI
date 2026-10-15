@@ -1221,6 +1221,19 @@ impl Renderer {
         };
         let mut main_batches: Vec<Batch> = Vec::new();
         let mut late_batches: Vec<Batch> = Vec::new();
+        let mut decal_batches: Vec<Batch> = Vec::new();
+        // the vehicles with a film of rain on their panes: their stickers go into the depth
+        // the film reads its picture behind the glass by
+        let rain_origins: std::collections::HashSet<[u64; 3]> = if glass_on {
+            visible
+                .iter()
+                .map(|&(i, _, _)| &scene.instances[i])
+                .filter(|inst| rain_slot(scene, inst).is_some())
+                .map(|inst| origin_key(inst.origin))
+                .collect()
+        } else {
+            Default::default()
+        };
         let mut main_draws = [0usize; 2];
         let has_presurface = visible
             .iter()
@@ -1378,11 +1391,13 @@ impl Renderer {
                 sort_blended_keys(&mut keyed);
                 items.clear();
                 let mut late_items = Vec::new();
+                let mut decal_items = Vec::new();
                 let mut rain_seen = false;
                 for (_, _, _, _, _, i) in keyed {
                     let inst = &scene.instances[i];
                     let cull = culls_back_faces(scene, inst);
                     let in_cab = glass_on && player == Some(inst.origin);
+                    let wet = rain_origins.contains(&origin_key(inst.origin));
                     let own_rain = in_cab.then(|| rain_slot(scene, inst)).flatten();
                     let after_rain =
                         in_cab && follows_rain(&mut rain_seen, own_rain.is_some());
@@ -1422,6 +1437,13 @@ impl Renderer {
                         };
                         // (OMSI draws a mesh's slots in order: the NLC's sticker backs follow
                         // their pane's rain, #289)
+                        if wet
+                            && kind == PIPE_BLEND_NO_WRITE
+                            && mat.alpha == AlphaMode::Blend
+                            && mat.uniform.emissive[3] == 0.0
+                        {
+                            decal_items.push(DrawItem { pipe: cull as u8, ..item });
+                        }
                         let late = after_rain || own_rain.is_some_and(|r| *slot as usize > r);
                         if late && kind == PIPE_BLEND_NO_WRITE {
                             late_items.push(item);
@@ -1433,6 +1455,7 @@ impl Renderer {
                 main_draws[1] += items.len() + late_items.len();
                 batch_items(scene, &mut items, false, &mut list, &mut main_batches);
                 batch_items(scene, &mut late_items, false, &mut list, &mut late_batches);
+                batch_items(scene, &mut decal_items, false, &mut list, &mut decal_batches);
             }
         });
         if let Some((pre_list, mut pre_batches, split)) = prepass_found {
@@ -1699,7 +1722,7 @@ impl Renderer {
             && !puddles_wanted
             && prepass_split == prepass_batches.len();
         // A shared depth gets glass drawn into it, so the glass snapshot reads a copy.
-        if glass_on && share_depth {
+        if glass_on {
             self.prepare_glass_depth(width, height);
         }
         if prepass_on {
@@ -2215,12 +2238,36 @@ impl Renderer {
                     .filter(|_| puddles_on)
                     .map_or(&h.view, |p| &p.view)
             });
-            let ao_depth = &self.ao.as_ref().unwrap().depth_view;
-            let depth = self
-                .glass_depth
-                .as_ref()
-                .filter(|_| share_depth)
-                .unwrap_or(ao_depth);
+            let depth = self.glass_depth.as_ref().unwrap();
+            if !share_depth {
+                let ao_depth = self.ao.as_ref().unwrap().depth_view.texture();
+                encoder.copy_texture_to_texture(
+                    ao_depth.as_image_copy(),
+                    depth.texture().as_image_copy(),
+                    depth.texture().size(),
+                );
+            }
+            if !decal_batches.is_empty() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("stickers' depth behind glass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
+                encode_batches(&mut pass, scene, &decal_batches, |pipe| {
+                    &self.decal_depth_pipelines[pipe as usize]
+                });
+            }
             if self
                 .glass_snapshot_source
                 .as_ref()

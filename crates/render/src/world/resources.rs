@@ -71,7 +71,8 @@ impl Renderer {
         self.texture_aspect = None;
     }
 
-    /// Holds the depth prepass for the glass snapshot when the main pass draws into it.
+    /// The depth the glass snapshot reads: the prepass's (or the main pass's) with the
+    /// vehicles' stickers added.
     pub(crate) fn prepare_glass_depth(&mut self, width: u32, height: u32) {
         if self
             .glass_depth
@@ -79,7 +80,7 @@ impl Renderer {
             .is_none_or(|v| v.texture().width() != width || v.texture().height() != height)
         {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("depth prepass behind glass"),
+                label: Some("depth behind glass"),
                 size: wgpu::Extent3d {
                     width,
                     height,
@@ -89,7 +90,9 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
             self.glass_depth = Some(texture.create_view(&Default::default()));

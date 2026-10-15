@@ -1876,6 +1876,7 @@ impl Renderer {
                 0 => "fs_shadow",
                 1 => "fs_shadow_test",
                 2 => "fs_transmap_depth",
+                3 => "fs_decal_depth",
                 _ => unreachable!(),
             };
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1918,6 +1919,7 @@ impl Renderer {
             make_prepass(2, false),
             make_prepass(2, true),
         ];
+        let decal_depth_pipelines = [make_prepass(3, false), make_prepass(3, true)];
         let prepass_msaa_pipelines = (msaa > 1 && !cfg!(target_vendor = "apple")).then(|| {
             [
                 (0, false),
@@ -2764,6 +2766,7 @@ impl Renderer {
             ao_layout,
             ao_buf,
             prepass_pipelines,
+            decal_depth_pipelines,
             prepass_msaa_pipelines,
             ssao_pipeline,
             blur_pipeline,

@@ -768,6 +768,22 @@ fn fs_transmap_depth(in: FsIn) {
     }
 }
 
+// A blended layer without depth writes on a vehicle (a sticker on its pane), into the
+// depth the rain film reads its picture behind the glass by: where it covers, the film
+// knows the sticker sits on the glass and does not bend it like the street (#289).
+@fragment
+fn fs_decal_depth(in: FsIn) {
+    let duv = tex_address(in.uv);
+    var a = diffuse_border(textureSample(t_diffuse, s_diffuse, duv), duv).a;
+    if (material.params.z > 0.5) {
+        let tm = sample_transmap_at(in.uv - in.params.zw);
+        a = select(1.0, tm.a, material.params.w > 0.5);
+    }
+    if (a * material.color.a * in.params.x < 0.5) {
+        discard;
+    }
+}
+
 // 1 = lit by the sun, 0 = in shadow. Two cascades: the near one (sharp, around the camera)
 // and the far one covering the rest of the visible street.
 const SHADOW_OFFSETS: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
@@ -1720,8 +1736,10 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     let there = textureSampleLevel(t_env, s_diffuse, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
     let here = textureSampleLevel(t_env, s_diffuse, clamp(own, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
     let gap = o.w * (pane / max(max(there, here), 1e-7) - 1.0);
-    let at = mix(own, uv, inside * smoothstep(0.05, 0.2, gap));
-    let offset = vec2<f32>(1.0, 0.6) * scatter * 4.0 / (vec2<f32>(textureDimensions(t_env)) * 2.0);
+    let behind = smoothstep(0.05, 0.2, gap);
+    let at = mix(own, uv, inside * behind);
+    // (nor does the water soften a sticker on the glass, #289)
+    let offset = vec2<f32>(1.0, 0.6) * scatter * behind * 4.0 / (vec2<f32>(textureDimensions(t_env)) * 2.0);
     let a = textureSampleLevel(t_env, s_diffuse, clamp(at - offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
     let b = textureSampleLevel(t_env, s_diffuse, clamp(at + offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
     return finite_or((a + b) * (0.5 * scale), fallback);

@@ -929,6 +929,174 @@ fn sticker_on_wet_glass_from_the_cab(msaa: u32) {
 }
 
 #[test]
+#[ignore = "requires a graphics adapter; renders a sticker under a pane's rain from outside"]
+fn rain_film_does_not_bend_a_sticker_on_its_pane() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    const SIZE: usize = 512;
+    let mut render = |wet: bool, lighting: &Lighting| -> Vec<u8> {
+        let renderer = &mut renderer;
+        let mut scene = renderer.new_scene();
+        let dark = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.05; 4], true);
+        let light = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.9; 4], true);
+        let decal = |renderer: &mut Renderer, scene: &mut Scene, colour| {
+            renderer.add_material_extra(
+                scene,
+                None,
+                AlphaMode::Blend,
+                colour,
+                true,
+                None,
+                None,
+                None,
+                None,
+                [0.0; 3],
+                MaterialExtra {
+                    no_z_write: true,
+                    ..Default::default()
+                },
+            )
+        };
+        let sticker = decal(renderer, &mut scene, [0.05, 0.4, 0.1, 1.0]);
+        let letters = decal(renderer, &mut scene, [0.7, 0.9, 0.7, 1.0]);
+        let film = renderer.add_material_extra(
+            &mut scene,
+            None,
+            AlphaMode::Blend,
+            [1.0; 4],
+            false,
+            None,
+            None,
+            None,
+            None,
+            [0.0; 3],
+            MaterialExtra {
+                rain_film: true,
+                no_z_write: true,
+                ..Default::default()
+            },
+        );
+        let rect = |y: f32, (x0, x1): (f32, f32), half: f32| {
+            [
+                Vec3::new(x0, y, -half),
+                Vec3::new(x1, y, -half),
+                Vec3::new(x1, y, half),
+                Vec3::new(x0, y, half),
+            ]
+        };
+        // quads on one instance, one range each in the given slot
+        let place = |renderer: &mut Renderer,
+                     scene: &mut Scene,
+                     rects: &[[Vec3; 4]],
+                     slots: &[u32],
+                     materials: Vec<MaterialId>| {
+            let n = rects.len();
+            let mesh = renderer.add_mesh(
+                scene,
+                &MeshData {
+                    positions: rects.concat(),
+                    normals: vec![-Vec3::Y; 4 * n],
+                    uvs: (0..n)
+                        .flat_map(|_| {
+                            [
+                                glam::Vec2::new(0.0, 1.0),
+                                glam::Vec2::new(1.0, 1.0),
+                                glam::Vec2::new(1.0, 0.0),
+                                glam::Vec2::new(0.0, 0.0),
+                            ]
+                        })
+                        .collect(),
+                    indices: (0..n as u32)
+                        .flat_map(|q| [0, 1, 2, 0, 2, 3].map(|k| q * 4 + k))
+                        .collect(),
+                    ranges: slots
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &slot)| (k as u32 * 6, 6, slot))
+                        .collect(),
+                    one_sided: false,
+                },
+            );
+            renderer.add_instance(scene, mesh, DVec3::ZERO, Mat4::IDENTITY, materials)
+        };
+        // a striped street behind the glass
+        for i in -40..40 {
+            let x = i as f32 * 0.5;
+            let stripe = if i % 2 == 0 { dark } else { light };
+            let street = [rect(10.0, (x, x + 0.5), 40.0)];
+            place(renderer, &mut scene, &street, &[0], vec![stripe]);
+        }
+        // the NLC's outer door pane: a repaint's sticker with fine lettering, then the rain
+        // on the same plane
+        let mut rects = vec![rect(0.5, (-0.1, 0.1), 0.1)];
+        let mut slots = vec![0];
+        for i in 0..8 {
+            let x = -0.1 + i as f32 * 0.025;
+            rects.push(rect(0.5, (x, x + 0.012), 0.1));
+            slots.push(1);
+        }
+        rects.push(rect(0.5, (-3.0, 3.0), 3.0));
+        slots.push(2);
+        let materials = vec![sticker, letters, film];
+        let pane = place(renderer, &mut scene, &rects, &slots, materials);
+        // (dry: the rain's slot left out)
+        let rain = if wet { 1.0 } else { 0.0 };
+        renderer.set_params(&mut scene, pane, &[1.0, 1.0, rain], true, &[]);
+        let camera = Camera {
+            position: DVec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.0,
+            fov_deg: 70.0,
+            near: 0.1,
+            far: 100.0,
+        };
+        renderer
+            .render_to_image(&mut scene, SIZE as u32, SIZE as u32, &camera, lighting)
+            .unwrap()
+    };
+    let sticker = SIZE / 2 - 48..SIZE / 2 + 48;
+    for (enhanced, classic) in [(false, true), (false, false), (true, false)] {
+        // the eye outside the bus
+        let lighting = Lighting {
+            enhanced,
+            classic,
+            wetness: 1.0,
+            rain: 0.8,
+            shadows: false,
+            fog_density: 0.0,
+            ..Default::default()
+        };
+        let (dry, wet) = (render(false, &lighting), render(true, &lighting));
+        // (drops sit on the sticker here: the middle change tells a bent picture from them)
+        let mut change: Vec<u8> = sticker
+            .clone()
+            .flat_map(|y| sticker.clone().map(move |x| (y * SIZE + x) * 4))
+            .map(|i| (i..i + 3).map(|k| dry[k].abs_diff(wet[k])).max().unwrap())
+            .collect();
+        change.sort_unstable();
+        let middle = change[change.len() / 2];
+        assert!(
+            middle <= 8,
+            "the film bends the sticker on its pane like the street (enhanced {enhanced}, classic {classic}): {middle}"
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; renders a door pane whose sticker back follows its rain"]
 fn rain_film_stays_under_the_slots_drawn_after_it_from_the_cab() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());

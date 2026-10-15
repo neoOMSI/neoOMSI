@@ -58,6 +58,8 @@ pub struct Renderer {
     pub(crate) ao_layout: wgpu::BindGroupLayout,
     pub(crate) ao_buf: wgpu::Buffer,
     pub(crate) prepass_pipelines: [wgpu::RenderPipeline; 6],
+    /// Stickers' depth for the glass snapshot (`fs_decal_depth`), by cull.
+    pub(crate) decal_depth_pipelines: [wgpu::RenderPipeline; 2],
     pub(crate) prepass_msaa_pipelines: Option<[wgpu::RenderPipeline; 6]>,
     pub(crate) ssao_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) blur_pipeline: Option<wgpu::RenderPipeline>,
