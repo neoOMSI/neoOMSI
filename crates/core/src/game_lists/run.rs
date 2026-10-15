@@ -305,6 +305,10 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             None
         }
         ListKind::Destinations if verb == "routes" => Some(ListKind::RouteNumbers),
+        ListKind::Destinations if verb == "dest_sort" => {
+            app.dest_sort = app.dest_sort.next();
+            Some(ListKind::Destinations)
+        }
         ListKind::RouteNumbers if verb == "route_type" => match app.menu_edit.take() {
             Some(t) => {
                 set_route_by_hand(app, &t);

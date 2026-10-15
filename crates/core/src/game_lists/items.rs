@@ -51,6 +51,48 @@ pub(super) fn terminus_target(t: &::legacy_vehicle::hof::Terminus) -> String {
         .unwrap_or_else(|| t.code.to_string())
 }
 
+/// Destination list order; OMSI keeps the HOF's (#447).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum DestSort {
+    #[default]
+    File,
+    Name,
+    Code,
+}
+
+impl DestSort {
+    pub(crate) fn next(self) -> Self {
+        match self {
+            DestSort::File => DestSort::Name,
+            DestSort::Name => DestSort::Code,
+            DestSort::Code => DestSort::File,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            DestSort::File => "pause.list.dest_sort_file",
+            DestSort::Name => "pause.list.dest_sort_name",
+            DestSort::Code => "pause.list.dest_sort_code",
+        }
+    }
+}
+
+/// The HOF termini in list order: (target, code).
+pub(super) fn ordered_termini(
+    termini: &[::legacy_vehicle::hof::Terminus],
+    sort: DestSort,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(i32, String)> = termini.iter().map(|t| (t.code, terminus_target(t))).collect();
+    // (stable: ties keep file order)
+    match sort {
+        DestSort::File => {}
+        DestSort::Name => out.sort_by(|a, b| natural(a.1.trim(), b.1.trim())),
+        DestSort::Code => out.sort_by_key(|t| t.0),
+    }
+    out.into_iter().map(|(code, name)| (name, code.to_string())).collect()
+}
+
 pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
     let line = line.trim();
     if line.is_empty() {
@@ -302,13 +344,14 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 out.push((::i18n::translate("pause.list.route_now", &[("value", &now)]), "routes".into()));
             }
             if let Some(hof) = app.player.as_ref().and_then(|p| p.vehicle.host.hof.clone()) {
-                let mut termini: Vec<(String, String)> = hof
-                    .termini
-                    .iter()
-                    .map(|t| (terminus_target(t), t.code.to_string()))
-                    .collect();
-                termini.sort_by_key(|(name, _)| name.trim().to_lowercase());
-                for (name, code) in termini {
+                if !hof.termini.is_empty() {
+                    let mode = ::i18n::translate(app.dest_sort.label(), &[]);
+                    out.push((
+                        ::i18n::translate("pause.list.dest_sort", &[("mode", &mode)]),
+                        "dest_sort".into(),
+                    ));
+                }
+                for (name, code) in ordered_termini(&hof.termini, app.dest_sort) {
                     out.push((
                         format!("{:>3}  {}", code, name.trim()),
                         format!("dest {code}"),
@@ -539,6 +582,39 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(terminus_target(&term), "Apsley Station");
+    }
+
+    fn hof_termini() -> Vec<::legacy_vehicle::hof::Terminus> {
+        [(532, "430 Herberhausen"), (11, "518 Fürstenau"), (530, "430 Herberhausen"), (12, "51 Bahnhof")]
+            .into_iter()
+            .map(|(code, ident)| ::legacy_vehicle::hof::Terminus {
+                code,
+                texture_id: ident.into(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn destination_list_keeps_the_hof_order_by_default() {
+        let codes: Vec<String> =
+            ordered_termini(&hof_termini(), DestSort::default()).into_iter().map(|t| t.1).collect();
+        assert_eq!(codes, ["532", "11", "530", "12"]);
+    }
+
+    #[test]
+    fn destination_list_sorts_by_name_or_code_on_request() {
+        let by_name: Vec<String> =
+            ordered_termini(&hof_termini(), DestSort::Name).into_iter().map(|t| t.1).collect();
+        assert_eq!(by_name, ["12", "532", "530", "11"]);
+        let by_code: Vec<String> =
+            ordered_termini(&hof_termini(), DestSort::Code).into_iter().map(|t| t.1).collect();
+        assert_eq!(by_code, ["11", "12", "530", "532"]);
+    }
+
+    #[test]
+    fn destination_sort_cycles_back_to_the_hof_order() {
+        assert_eq!(DestSort::File.next().next().next(), DestSort::File);
     }
 }
 

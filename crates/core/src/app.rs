@@ -157,6 +157,8 @@ pub(crate) struct App {
     pub(crate) menu_edit: Option<String>,
     pub(crate) menu_edit_icao: bool,
     pub(crate) menu_edit_date: bool,
+    /// Destination list order (#447).
+    pub(crate) dest_sort: game_lists::DestSort,
     pub(crate) swap_pending: bool,
     pub(crate) menu_drag: Option<usize>,
     pub(crate) menu_kbd: bool,

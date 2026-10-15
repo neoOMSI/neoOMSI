@@ -910,7 +910,9 @@ impl App {
         let (Some(list), Some(kind)) = (self.admin_list.take(), self.list_kind.take()) else {
             return;
         };
-        self.chooser = None;
+        let at = self.chooser.take();
+        // destinations open with search, like OMSI's box (#447)
+        let dest = kind == crate::game_lists::ListKind::Destinations;
         let no_back = matches!(kind, crate::game_lists::ListKind::Lines | crate::game_lists::ListKind::Tours(..));
         let last = list.len().saturating_sub(1);
         let idx: Vec<usize> = (0..list.len())
@@ -926,9 +928,12 @@ impl App {
                 .find(|e| e.0 == id)
                 .map_or_else(|| id.to_string(), |e| e.1);
         }
+        // (keeps the sort line chosen)
+        let sel = if dest { at.and_then(|a| idx.iter().position(|&k| k == a)).unwrap_or(0) } else { 0 };
         self.lab_list = Some((list, kind, idx));
+        let search = dest.then(String::new);
         if let Some(u) = self.ui.as_mut() {
-            u.dialog = Some(Dialog::Select { title, options, sel: 0, scroll: 0, search: None, drop: None });
+            u.dialog = Some(Dialog::Select { title, options, sel, scroll: 0, search, drop: None });
         }
     }
 
@@ -1127,6 +1132,7 @@ impl App {
         if self.lab_menu.is_some() && self.admin_list.is_some() {
             let id = match self.list_kind {
                 Some(crate::game_lists::ListKind::Lines | crate::game_lists::ListKind::Tours(..)) => "duty",
+                Some(crate::game_lists::ListKind::Destinations) => "dest",
                 _ => "place",
             };
             self.lab_list_dialog(id);
@@ -1340,10 +1346,15 @@ impl App {
             };
             let ctrl = self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
             let searching = self.lab_search();
+            // (destinations: Escape clears the search, then closes)
+            let dest = matches!(self.lab_list.as_ref().map(|l| &l.1), Some(crate::game_lists::ListKind::Destinations));
             match code {
                 KeyCode::Slash | KeyCode::NumpadDivide if searching.is_none() => self.lab_refilter(Some(String::new())),
                 KeyCode::KeyF if ctrl && searching.is_none() => self.lab_refilter(Some(String::new())),
-                KeyCode::Escape if searching.is_some() => self.lab_refilter(None),
+                KeyCode::Escape if dest && searching.as_deref().is_some_and(|q| !q.is_empty()) => {
+                    self.lab_refilter(Some(String::new()))
+                }
+                KeyCode::Escape if !dest && searching.is_some() => self.lab_refilter(None),
                 KeyCode::Escape => self.lab_dialog_close(),
                 KeyCode::Backspace => {
                     if let Some(mut q) = searching {
