@@ -231,13 +231,10 @@ impl Profile {
         }
     }
 
-    /// The dipped entry that keeps burning beside a fog or cornering entry while its lamps
-    /// are lit. OMSI's single spotlight takes the selected entry as a full road beam
-    pub(super) fn companion(self, entry: usize) -> Option<usize> {
+    pub(super) fn companions(self, entry: usize) -> &'static [usize] {
         match (self, entry) {
-            (Self::LedHalo, 1 | 2 | 3) => Some(4),
-            (Self::LedHalo, 7 | 8 | 9) => Some(10),
-            _ => None,
+            (Self::LedHalo, 1 | 2 | 3 | 7 | 8 | 9) => &[4, 10],
+            _ => &[],
         }
     }
 
@@ -368,7 +365,7 @@ pub(super) fn headlamps(
     let main_lit = lit.is_some_and(|i| i < spots.len() && kinds[i] == BeamKind::Main);
     let visual_only = matches!((profile, lit), (Some(p), Some(i)) if p.visual_only(i));
     let companion = profile.zip(lit).and_then(|(p, i)| {
-        p.companion(i).filter(|&c| {
+        p.companions(i).iter().copied().find(|&c| {
             c < spots.len() && p.lamp_variables(c).iter().any(|n| v.var(n).unwrap_or(0.0) > 0.01)
         })
     });
@@ -643,13 +640,13 @@ mod tests {
         assert_eq!(p.side(3), Some(-1.0));
         assert_eq!(p.partner(6), Some(10));
 
-        assert_eq!(p.companion(1), Some(4));
-        assert_eq!(p.companion(2), Some(4));
-        assert_eq!(p.companion(3), Some(4));
-        assert_eq!(p.companion(9), Some(10));
-        assert_eq!(p.companion(4), None);
-        assert_eq!(p.companion(5), None);
-        assert_eq!(Profile::Renown.companion(1), None);
+        assert_eq!(p.companions(1), [4, 10]);
+        assert_eq!(p.companions(2), [4, 10]);
+        assert_eq!(p.companions(3), [4, 10]);
+        assert_eq!(p.companions(9), [4, 10]);
+        assert!(p.companions(4).is_empty());
+        assert!(p.companions(5).is_empty());
+        assert!(Profile::Renown.companions(1).is_empty());
     }
 
     #[test]
