@@ -1729,7 +1729,7 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     let here = textureSampleLevel(t_env, s_diffuse, clamp(own, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
     // (a drop on a sticker is a lens right on it: it shows the sticker a little shifted,
     // not the street metres on, #289)
-    let off_glass = smoothstep(0.05, 0.2, o.w * (pane / max(here, 1e-7) - 1.0));
+    let off_glass = rain_off_glass_at(o, here);
     let c = camera.view_proj * vec4<f32>(world + normalize(through) * mix(0.15, 6.0, off_glass), 1.0);
     if (c.w <= 0.05) {
         return fallback;
@@ -1741,7 +1741,7 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     let gap = o.w * (pane / max(max(there, here), 1e-7) - 1.0);
     let behind = smoothstep(0.05, 0.2, gap);
     let at = mix(own, uv, inside * max(behind, 1.0 - off_glass));
-    // (nor does the water soften a sticker on the glass)
+    // (and the water does not soften a sticker on the glass)
     let offset = vec2<f32>(1.0, 0.6) * scatter * behind * 4.0 / (vec2<f32>(textureDimensions(t_env)) * 2.0);
     let a = textureSampleLevel(t_env, s_diffuse, clamp(at - offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
     let b = textureSampleLevel(t_env, s_diffuse, clamp(at + offset, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
@@ -1758,6 +1758,11 @@ fn rain_off_glass(world: vec3<f32>) -> f32 {
     let o = camera.view_proj * vec4<f32>(world, 1.0);
     let own = vec2<f32>(o.x / o.w * 0.5 + 0.5, 0.5 - o.y / o.w * 0.5);
     let here = textureSampleLevel(t_env, s_diffuse, clamp(own, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
+    return rain_off_glass_at(o, here);
+}
+
+// The same for the film's point `o` (clip space) and the snapshot's depth `here` there.
+fn rain_off_glass_at(o: vec4<f32>, here: f32) -> f32 {
     return smoothstep(0.05, 0.2, o.w * (o.z / o.w / max(here, 1e-7) - 1.0));
 }
 

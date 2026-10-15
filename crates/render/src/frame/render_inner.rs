@@ -1435,8 +1435,8 @@ impl Renderer {
                             look: mat.look,
                             entry: inst.base + *slot,
                         };
-                        // (OMSI draws a mesh's slots in order: the NLC's sticker backs follow
-                        // their pane's rain, #289)
+                        // (stickers: plain blended layers, or a paint's on the glass by its
+                        // transmap)
                         if wet
                             && kind == PIPE_BLEND_NO_WRITE
                             && mat.alpha == AlphaMode::Blend
@@ -1445,6 +1445,8 @@ impl Renderer {
                         {
                             decal_items.push(DrawItem { pipe: cull as u8, ..item });
                         }
+                        // (OMSI draws a mesh's slots in order: the NLC's sticker backs follow
+                        // their pane's rain, #289)
                         let late = after_rain || own_rain.is_some_and(|r| *slot as usize > r);
                         if late && kind == PIPE_BLEND_NO_WRITE {
                             late_items.push(item);

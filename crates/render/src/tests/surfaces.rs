@@ -1112,6 +1112,12 @@ fn rain_film_does_not_bend_a_sticker_on_its_pane() {
             middle <= 8,
             "the film bends the sticker on its pane like the street (enhanced {enhanced}, classic {classic}): {middle}"
         );
+        // (but the drops on it show: lenses that shift it a little, not only their glints)
+        let shown = change.iter().filter(|&&c| c > 20).count() as f32 / change.len() as f32;
+        assert!(
+            shown > 0.05,
+            "the drops on the sticker hardly show (enhanced {enhanced}, classic {classic}): {shown}"
+        );
     }
 }
 
