@@ -1440,7 +1440,8 @@ impl Renderer {
                         if wet
                             && kind == PIPE_BLEND_NO_WRITE
                             && mat.alpha == AlphaMode::Blend
-                            && mat.uniform.emissive[3] == 0.0
+                            && (mat.uniform.emissive[3] == 0.0
+                                || (mat.uniform.emissive[3] == 1.0 && mat.transmap.is_some()))
                         {
                             decal_items.push(DrawItem { pipe: cull as u8, ..item });
                         }

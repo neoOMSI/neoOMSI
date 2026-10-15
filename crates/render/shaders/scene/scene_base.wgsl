@@ -1745,6 +1745,19 @@ fn rain_behind(world: vec3<f32>, through: vec3<f32>, fallback: vec3<f32>, scale:
     return finite_or((a + b) * (0.5 * scale), fallback);
 }
 
+// 0 where what lies behind the film is on the glass itself (a sticker drawn into the
+// snapshot's depth, see `fs_decal_depth`), else 1: the film of water over a sticker does
+// not veil it in a picture of itself (half the resolution, softened), #289.
+fn rain_off_glass(world: vec3<f32>) -> f32 {
+    if (camera.flags.z > -0.5) {
+        return 1.0;
+    }
+    let o = camera.view_proj * vec4<f32>(world, 1.0);
+    let own = vec2<f32>(o.x / o.w * 0.5 + 0.5, 0.5 - o.y / o.w * 0.5);
+    let here = textureSampleLevel(t_env, s_diffuse, clamp(own, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).a;
+    return smoothstep(0.05, 0.2, o.w * (o.z / o.w / max(here, 1e-7) - 1.0));
+}
+
 // A drop lit: `refl` what the dome mirrors, `thru` what is seen through it (both
 // radiance), `mist_col` the light the mist scatters, `sun` the sun's strength for the
 // sparkles, `d_thru` the way through (from `rain_through`). Colour and cover.
@@ -1789,7 +1802,8 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
         // a pane's film of water: drops, not the sliding texture
         let v = normalize(camera.cam_pos.xyz - in.world);
         let in_cab = inside_vehicle(camera.cam_pos.xyz) * near_player_vehicle(in.world) > 0.5;
-        let g = rain_glass(in.world, in.uv - in.params.zw, in.normal, window_wetness(in), camera.post.y, in_cab, in.wipe_uv);
+        var g = rain_glass(in.world, in.uv - in.params.zw, in.normal, window_wetness(in), camera.post.y, in_cab, in.wipe_uv);
+        g.mist = g.mist * rain_off_glass(in.world);
         if (g.cover <= 0.001 && g.mist <= 0.001) { return vec4<f32>(0.0); }
         let through = rain_through(g, v);
         let seen = select(rain_behind(in.world, through, rain_env_vanilla(normalize(through)), 1.0, g.mist), vec3<f32>(0.0), dot(through, through) < 1e-4);
