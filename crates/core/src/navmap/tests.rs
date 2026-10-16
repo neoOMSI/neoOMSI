@@ -287,7 +287,7 @@ fn a_deck_and_the_ground_of_one_object_keep_their_own_levels() {
 
 #[test]
 fn a_raised_floor_is_kept_where_paths_run_over_it_and_a_roof_is_not() {
-    use ::simulation::traffic::{LaneBuilder, LaneKind};
+    use ::traffic::{LaneBuilder, LaneKind};
     // a street across a bridge object 4 m over the ground, at z 4
     let road = LaneBuilder::polyline(
         vec![DVec3::new(-10.0, 5.0, 4.0), DVec3::new(30.0, 5.0, 4.0)],
