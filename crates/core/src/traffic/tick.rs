@@ -432,10 +432,11 @@ impl Traffic {
         let debug_doors = ::legacy_config::env::var_os("OMSI_DEBUG_DOORS").is_some();
         // (in the coordinator's order, by stable id: what one vehicle is granted holds back
         // those planned after it, so the container order must not decide)
+        let bodies_ahead = self.bodies_in_way(&occupancy, &external_ids);
         for i in self.junctions.plan_order(&junction_actors[..self.cars.len()]) {
             self.cars[i].state.emergency_drive = junction_actors[i].emergency;
             let ahead = self.obstacle_ahead(i, look_ahead(self.cars[i].state.speed), &by_lane);
-            let body_ahead = self.body_in_way(i, &occupancy, &external_ids);
+            let body_ahead = self.body_lead(i, bodies_ahead[i]);
             if debug && self.cars[i].stopped >= 0.5 && self.cars[i].stopped < 0.5 + dt {
                 let id = self.cars[i].id;
                 let indexed = ahead.map(|(l, j)| (self.cars[j].id, l.gap));

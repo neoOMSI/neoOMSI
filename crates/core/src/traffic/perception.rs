@@ -671,87 +671,52 @@ impl Traffic {
     }
 
 
-    /// Another AI vehicle's body in car `i`'s way where the lanes do not show it: a bus
+    /// Another AI vehicle's body in each car's way where the lanes do not show it: a bus
     /// standing in its bay across a turning path, a car stopped half inside a junction, the
     /// rear section of an articulated bus still swinging round, a car cutting in. The way
     /// ahead is swept with the car's width against every footprint near it (the lanes alone
     /// let a car turn right into the side of a bus that stood 1.7 m out in its bay).
     /// Two vehicles that each stand in the other's way are sorted out by `geo_prev`: the one
     /// with the higher id goes, the other waits.
-    pub(crate) fn body_in_way(
+    ///
+    /// Per car (by index): the body met and the way's direction there (see `body_lead`). It
+    /// reads only what the tick froze - the occupancy, `geo_prev`, each car's own way, which
+    /// nothing but its own planning changes - so it is found for every car at once, on the
+    /// workers, before the planning loop, and finds what the loop would.
+    pub(crate) fn bodies_in_way(
         &self,
-        i: usize,
         occupancy: &Occupancy,
         ignore_external: &[VehicleId],
-    ) -> Option<(Lead, usize)> {
-        let car = &self.cars[i];
-        let st = &car.state;
-        if self.net.lanes[st.lane].kind == LaneKind::Air {
-            return None;
-        }
-        let z = car.vehicle.position.z;
-        let look = (st.speed * st.speed / (2.0 * st.decel.max(1.0)) + st.speed * 2.0 + 12.0)
-            .clamp(12.0, LOOK_AHEAD);
-        let reach = st.front + look;
-        let me = car.id;
-        // What the car is pulling out round does not stop it.
-        let mut ignore: Vec<VehicleId> = ignore_external.to_vec();
-        // Own primary body and articulated sections are never a leader/obstacle.
-        ignore.push(me);
-        if car.maneuver.passing.map(|p| !p.aborted).unwrap_or(false)
-            || st.change.map(|c| c.bypass).unwrap_or(false)
-        {
-            for iv in occupancy.intervals(LaneId(st.lane)) {
-                if iv.speed < 0.5 {
-                    ignore.push(iv.owner);
-                }
-            }
-        }
-        // A body that already waits for this car is not in its way - unless it is within
-        // reach of the bumper, where the car would be driven into it.
-        let h = car.vehicle.heading.to_radians();
-        let fwd = DVec2::new(h.sin(), h.cos());
-        let center = car.vehicle.position.truncate() + fwd * ((st.front - st.rear) * 0.5) as f64;
-        let mut probe = BodyFootprint::new(
-            me,
-            center,
-            fwd,
-            ((st.front + st.rear) * 0.5) as f64,
-            car.half_width as f64,
-            z,
-            z + 3.0,
-            st.speed,
-        );
-        probe.front = st.front;
-        probe.rear = st.rear;
-        for f in occupancy.feet() {
-            if f.owner == me || self.geo_prev.get(&f.owner).copied().flatten() != Some(me) {
-                continue;
-            }
-            if me > f.owner && !f.overlaps(&probe, 1.5) {
-                ignore.push(f.owner);
-            }
-        }
-        // Sweep the corridor along the car's own way with its width.
-        let mut samples: Vec<SweepSample> = Vec::new();
-        let way = st.way_fn(&self.net);
-        let mut d = st.front + 0.2;
-        let mut p = way(d);
-        while d <= reach {
-            let step = if d < st.front + 20.0 { 0.75 } else { 1.5 };
-            let q = way(d + step);
-            let dir = (q - p).truncate().normalize_or_zero();
-            samples.push(SweepSample { p, d, dir });
-            p = q;
-            d += step;
-        }
-        let hit = occupancy.swept_clearance(&samples, car.half_width as f64, &ignore)?;
-        let j = *self.index_of.get(&hit.owner)?;
-        let dir = samples
+    ) -> Vec<Option<(::traffic::Sweep, DVec2)>> {
+        use rayon::prelude::*;
+        let waiting = waiting_feet(occupancy.feet(), &self.geo_prev);
+        let net = &self.net;
+        let probes: Vec<WayProbe> = self
+            .cars
             .iter()
-            .find(|s| s.d == hit.d)
-            .map(|s| s.dir)
-            .unwrap_or(DVec2::ZERO);
+            .map(|c| WayProbe {
+                id: c.id,
+                state: &c.state,
+                position: c.vehicle.position,
+                heading: c.vehicle.heading,
+                half_width: c.half_width,
+                going_round: c.maneuver.passing.map(|p| !p.aborted).unwrap_or(false)
+                    || c.state.change.map(|c| c.bypass).unwrap_or(false),
+            })
+            .collect();
+        probes
+            .par_iter()
+            .with_min_len(4)
+            .map(|p| swept_body(net, occupancy, &waiting, ignore_external, p))
+            .collect()
+    }
+
+    /// Car `i`'s lead from the body its way meets (`bodies_in_way`): the gap, and how fast
+    /// that body moves along the way and speeds up, as of now.
+    pub(crate) fn body_lead(&self, i: usize, hit: Option<(::traffic::Sweep, DVec2)>) -> Option<(Lead, usize)> {
+        let (hit, dir) = hit?;
+        let st = &self.cars[i].state;
+        let j = *self.index_of.get(&hit.owner)?;
         let oh = self.cars[j].vehicle.heading.to_radians();
         let ofwd = DVec2::new(oh.sin(), oh.cos());
         let along = (ofwd.dot(dir) as f32 * hit.speed).max(0.0);
@@ -836,9 +801,165 @@ impl Traffic {
 
 }
 
+
+/// What `bodies_in_way` needs of a car, gathered on the main thread.
+struct WayProbe<'a> {
+    id: VehicleId,
+    state: &'a AiState,
+    position: DVec3,
+    heading: f64,
+    half_width: f32,
+    /// Pulling out round something (passing, a bypass): what stands on its lane does not
+    /// stop it.
+    going_round: bool,
+}
+
+/// The footprints by the car they wait for (`geo_prev`): who waits for whom by geometry,
+/// looked up per car instead of asking every footprint for every car.
+fn waiting_feet(
+    feet: &[BodyFootprint],
+    geo_prev: &HashMap<VehicleId, Option<VehicleId>>,
+) -> HashMap<VehicleId, Vec<usize>> {
+    let mut waiting: HashMap<VehicleId, Vec<usize>> = HashMap::new();
+    for (k, f) in feet.iter().enumerate() {
+        if let Some(&Some(target)) = geo_prev.get(&f.owner) {
+            waiting.entry(target).or_default().push(k);
+        }
+    }
+    waiting
+}
+
+/// The first body the car's swept way meets (see `Traffic::bodies_in_way`).
+fn swept_body(
+    net: &Network,
+    occupancy: &Occupancy,
+    waiting: &HashMap<VehicleId, Vec<usize>>,
+    ignore_external: &[VehicleId],
+    car: &WayProbe,
+) -> Option<(::traffic::Sweep, DVec2)> {
+    let st = car.state;
+    if net.lanes[st.lane].kind == LaneKind::Air {
+        return None;
+    }
+    let z = car.position.z;
+    let look = (st.speed * st.speed / (2.0 * st.decel.max(1.0)) + st.speed * 2.0 + 12.0)
+        .clamp(12.0, LOOK_AHEAD);
+    let reach = st.front + look;
+    let me = car.id;
+    // What the car is pulling out round does not stop it.
+    let mut ignore: Vec<VehicleId> = ignore_external.to_vec();
+    // Own primary body and articulated sections are never a leader/obstacle.
+    ignore.push(me);
+    if car.going_round {
+        for iv in occupancy.intervals(LaneId(st.lane)) {
+            if iv.speed < 0.5 {
+                ignore.push(iv.owner);
+            }
+        }
+    }
+    // A body that already waits for this car is not in its way - unless it is within
+    // reach of the bumper, where the car would be driven into it.
+    let h = car.heading.to_radians();
+    let fwd = DVec2::new(h.sin(), h.cos());
+    let center = car.position.truncate() + fwd * ((st.front - st.rear) * 0.5) as f64;
+    let mut probe = BodyFootprint::new(
+        me,
+        center,
+        fwd,
+        ((st.front + st.rear) * 0.5) as f64,
+        car.half_width as f64,
+        z,
+        z + 3.0,
+        st.speed,
+    );
+    probe.front = st.front;
+    probe.rear = st.rear;
+    for &k in waiting.get(&me).map(|v| v.as_slice()).unwrap_or(&[]) {
+        let f = &occupancy.feet()[k];
+        if f.owner == me {
+            continue;
+        }
+        if me > f.owner && !f.overlaps(&probe, 1.5) {
+            ignore.push(f.owner);
+        }
+    }
+    // Sweep the corridor along the car's own way with its width.
+    let mut samples: Vec<SweepSample> = Vec::new();
+    let way = st.way_fn(net);
+    let mut d = st.front + 0.2;
+    let mut p = way(d);
+    while d <= reach {
+        let step = if d < st.front + 20.0 { 0.75 } else { 1.5 };
+        let q = way(d + step);
+        let dir = (q - p).truncate().normalize_or_zero();
+        samples.push(SweepSample { p, d, dir });
+        p = q;
+        d += step;
+    }
+    let hit = occupancy.swept_clearance(&samples, car.half_width as f64, &ignore)?;
+    let dir = samples
+        .iter()
+        .find(|s| s.d == hit.d)
+        .map(|s| s.dir)
+        .unwrap_or(DVec2::ZERO);
+    Some((hit, dir))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_footprints_are_found_by_the_car_they_wait_for() {
+        let foot = |owner: u64| BodyFootprint::new(VehicleId(owner), DVec2::ZERO, DVec2::Y, 2.0, 1.0, 0.0, 3.0, 0.0);
+        // car 1 has two parts; 1 and 3 wait for 5, 2 for nobody, 4 (no footprint) for 1
+        let feet = [foot(1), foot(1), foot(2), foot(3)];
+        let geo_prev: HashMap<VehicleId, Option<VehicleId>> = [
+            (VehicleId(1), Some(VehicleId(5))),
+            (VehicleId(2), None),
+            (VehicleId(3), Some(VehicleId(5))),
+            (VehicleId(4), Some(VehicleId(1))),
+        ]
+        .into_iter()
+        .collect();
+        let waiting = waiting_feet(&feet, &geo_prev);
+        assert_eq!(waiting.get(&VehicleId(5)), Some(&vec![0, 1, 3]));
+        assert_eq!(waiting.len(), 1, "{waiting:?}");
+    }
+
+    /// A body standing in the car's way stops it - unless it waits for this car itself (by
+    /// `geo_prev`) and has the lower id, and is not right at the bumper: then this car goes.
+    #[test]
+    fn a_body_in_the_way_that_waits_for_the_car_lets_it_go() {
+        let lane = ::traffic::LaneBuilder::polyline(
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 200.0, 0.0)],
+            LaneKind::Street,
+            3.0,
+        );
+        let mut net = Network { lanes: vec![lane], ..Default::default() };
+        net.link(1.5);
+        let mut state = AiState::new(0, 20.0, 1);
+        (state.front, state.rear, state.length, state.speed) = (2.25, 2.25, 4.5, 8.0);
+        state.plan_next(&net);
+        let car = WayProbe {
+            id: VehicleId(10),
+            state: &state,
+            position: DVec3::new(0.0, 20.0, 0.0),
+            heading: 0.0,
+            half_width: 1.0,
+            going_round: false,
+        };
+        let other = BodyFootprint::new(VehicleId(3), DVec2::new(0.0, 40.0), DVec2::Y, 2.25, 1.0, 0.0, 3.0, 0.0);
+        let occupancy = Occupancy::build(net.version(), 0, vec![other]);
+        let none = HashMap::new();
+        let (hit, _) = swept_body(&net, &occupancy, &none, &[], &car).expect("the body is in the way");
+        assert_eq!(hit.owner, VehicleId(3));
+        assert!((hit.d - 17.75).abs() < 0.8, "met at {}", hit.d);
+        let geo_prev: HashMap<VehicleId, Option<VehicleId>> =
+            [(VehicleId(3), Some(VehicleId(10)))].into_iter().collect();
+        let waiting = waiting_feet(occupancy.feet(), &geo_prev);
+        assert_eq!(swept_body(&net, &occupancy, &waiting, &[], &car), None, "it waits for this car");
+    }
 
     #[test]
     fn articulated_bus_boxes_follow_the_real_heading_and_leave_the_adjacent_lane_free() {

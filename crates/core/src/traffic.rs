@@ -225,7 +225,7 @@ pub struct AiCar {
     /// Something made it wait this frame: a stop point, or a car or an obstacle close ahead.
     pub(crate) held: bool,
     /// The vehicle (by id) whose body stands in this car's way off its lanes this frame
-    /// (`Traffic::body_in_way`).
+    /// (`Traffic::bodies_in_way`).
     pub(crate) geo_block: Option<VehicleId>,
     /// What it keeps behind (by id) and the gap to it, as of its last step.
     pub(crate) lead_info: Option<(VehicleId, f32)>,
