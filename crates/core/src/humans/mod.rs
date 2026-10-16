@@ -431,6 +431,7 @@ impl Humans {
                 gpu_textures: HashMap::new(),
                 gpu_materials: HashMap::new(),
                 spare: HashMap::new(),
+                texture_dirs: HashMap::new(),
                 sync_frame: 0,
             },
             types,
@@ -791,7 +792,15 @@ impl Humans {
                 continue;
             }
             if !self.render.gpu_materials.contains_key(&key) {
-                let dirs = ty.texture_dirs(&world.root);
+                let generation = ::legacy_config::content_generation();
+                let dirs = match self.render.texture_dirs.get(&tkey) {
+                    Some((g, dirs)) if *g == generation => dirs.clone(),
+                    _ => {
+                        let dirs = Arc::new(ty.texture_dirs(&world.root));
+                        self.render.texture_dirs.insert(tkey, (generation, dirs.clone()));
+                        dirs
+                    }
+                };
                 let mut mats = Vec::new();
                 for (k, m) in hm.materials.iter().enumerate() {
                     // the variant's texture from its own folder first, else the default
@@ -992,6 +1001,26 @@ impl Humans {
             return;
         }
         self.map_humans_done = true;
+        self.pick_map_humans(world);
+        // the textures of the figures that may now appear, looked up and read ahead
+        let mut types: Vec<Arc<HumanType>> = Vec::new();
+        let mut slots = HashSet::new();
+        for &index in &self.population {
+            let ty = &self.types[index];
+            if !types.iter().any(|t| Arc::ptr_eq(t, ty)) {
+                types.push(ty.clone());
+            }
+            let slot = slot_key(&ty.def.path);
+            if let Some(alts) = self.alternates.get(&slot) {
+                if slots.insert(slot) {
+                    types.extend(alts.iter().cloned());
+                }
+            }
+        }
+        figures::prefetch_textures(types, world.root.clone());
+    }
+
+    fn pick_map_humans(&mut self, world: &World) {
         let path = ::mods::resolve_path(&world.map_dir, "humans.txt");
         let list = ::map::ailists::load_list(&path);
         if list.is_empty() {

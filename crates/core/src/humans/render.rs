@@ -407,6 +407,7 @@ pub(in crate::humans) struct RenderResources {
     /// people who have gone, kept for the next person dressed alike.
     pub(in crate::humans) gpu_materials: HashMap<(usize, usize, usize), Vec<MaterialId>>,
     pub(in crate::humans) spare: HashMap<(usize, usize, usize), Vec<(MeshId, usize)>>,
+    pub(in crate::humans) texture_dirs: HashMap<usize, (u64, Arc<Vec<PathBuf>>)>,
     pub(in crate::humans) sync_frame: u32,
 }
 
