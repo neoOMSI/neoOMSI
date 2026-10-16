@@ -1687,6 +1687,9 @@ impl Traffic {
                         }
                     }
                     body.apply(vehicle);
+                    if rail {
+                        vehicle.couple_on_track(&|d| Some(behind(d)));
+                    }
                     if body.kind == MotionKind::Road {
                         frame.odometer = *previous + body.realized_speed(dt) * dt;
                     }

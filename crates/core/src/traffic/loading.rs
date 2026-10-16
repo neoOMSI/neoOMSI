@@ -538,6 +538,8 @@ impl Traffic {
         let trail = &c.rail_trail;
         let (state, net) = (&c.state, &self.net);
         c.vehicle
+            .couple_on_track(&|d| Some(rail_behind(trail, state, net, d)));
+        c.vehicle
             .retrail(0.0, &|d| Some(rail_behind(trail, state, net, d)));
         let after: Vec<DVec3> = std::iter::once(c.vehicle.position)
             .chain(c.vehicle.trailers.iter().map(|t| t.position))
