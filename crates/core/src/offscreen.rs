@@ -760,7 +760,7 @@ pub(crate) fn run_offscreen(
             t.set_player_emergency(player.as_ref().is_some_and(|p|
                 traffic::emergency_drive(&p.vehicle, p.vehicle.ty.def.ai_veh_type == 2)));
             t.set_rail_ahead(rail_ahead(t, &world, player.as_ref(), &remotes_off));
-            let steps = ::traffic::advance_fixed_clock(
+            let (steps, step) = ::traffic::advance_fixed_clock(
                 &mut sim_accum,
                 dt,
                 ::traffic::SIM_DT,
@@ -769,7 +769,7 @@ pub(crate) fn run_offscreen(
             for _ in 0..steps {
                 let started = profile_traffic.then(std::time::Instant::now);
                 t.tick(
-                    ::traffic::SIM_DT,
+                    step,
                     player.as_ref().map(|p| player_outline(p)),
                 );
                 if let Some(started) = started {

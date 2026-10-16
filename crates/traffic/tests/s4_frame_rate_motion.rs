@@ -5,7 +5,7 @@
 //! the engine uses. No renderer or OMSI assets.
 
 use glam::DVec3;
-use traffic::scenario::advance_fixed_clock;
+use traffic::scenario::{advance_fixed_clock, MAX_SIM_STEPS};
 use traffic::{AiState, LaneBuilder, LaneKind, Network, RealizedMotion};
 
 const DT: f32 = 1.0 / 50.0;
@@ -89,9 +89,9 @@ fn run_partitioned(fps: f32, seconds: f32) -> Vec<f32> {
     let mut odometers = Vec::new();
     let frames = (seconds * fps).round() as u32;
     for _ in 0..frames {
-        let n = advance_fixed_clock(&mut accum, 1.0 / fps, DT, 8);
+        let (n, dt) = advance_fixed_clock(&mut accum, 1.0 / fps, DT, MAX_SIM_STEPS);
         for _ in 0..n {
-            step(&net, &mut car, &mut body, DT);
+            step(&net, &mut car, &mut body, dt);
             odometers.push(car.odometer);
         }
     }
@@ -101,7 +101,7 @@ fn run_partitioned(fps: f32, seconds: f32) -> Vec<f32> {
 #[test]
 fn the_same_fixed_ticks_give_the_same_motion_at_any_frame_rate() {
     let baseline = run_partitioned(60.0, 8.0);
-    for fps in [15.0f32, 30.0, 60.0, 144.0] {
+    for fps in [25.0f32, 30.0, 60.0, 144.0] {
         let run = run_partitioned(fps, 8.0);
         // A partition may land one tick short at an exact boundary; every tick it did run
         // must be decision-for-decision identical to the baseline.
@@ -116,6 +116,20 @@ fn the_same_fixed_ticks_give_the_same_motion_at_any_frame_rate() {
             &run[..common],
             &baseline[..common],
             "the committed motion diverged at {fps} fps"
+        );
+    }
+}
+
+#[test]
+fn slow_frames_drive_as_far_in_their_longer_steps() {
+    // Below 25 fps a frame's time is shared out over at most `MAX_SIM_STEPS` longer steps:
+    // not the fixed sequence any more, but the same motion over the same time.
+    let baseline = *run_partitioned(60.0, 8.0).last().unwrap();
+    for fps in [10.0f32, 15.0, 20.0] {
+        let run = *run_partitioned(fps, 8.0).last().unwrap();
+        assert!(
+            (run - baseline).abs() < 1.5,
+            "{fps} fps drove {run:.2} m in 8 s, 60 fps {baseline:.2} m"
         );
     }
 }

@@ -5,8 +5,8 @@ use super::*;
 /// Fixed simulation step for the traffic domain: decisions run at a stable rate,
 /// independent of the render frame rate. Rendering may run at any rate on top.
 pub(super) const SIM_DT: f32 = ::traffic::SIM_DT;
-/// Most fixed steps to run in one frame; a long stall is bounded and the rest of the
-/// debt is kept (capped) rather than silently lost or turned into one huge step.
+/// Most steps to run in one frame: a longer frame shares its time out over this many
+/// longer steps (see `traffic::advance_fixed_clock`), so none of it is lost.
 pub(super) const MAX_SIM_STEPS: u32 = ::traffic::MAX_SIM_STEPS;
 
 impl App {
@@ -135,14 +135,14 @@ impl App {
                     Some(w) => rail_ahead(t, w, self.player.as_ref(), &self.remotes),
                     None => Vec::new(),
                 });
-                let steps = ::traffic::advance_fixed_clock(
+                let (steps, step) = ::traffic::advance_fixed_clock(
                     &mut self.sim_accum,
                     dt,
                     SIM_DT,
                     MAX_SIM_STEPS,
                 );
                 for _ in 0..steps {
-                    t.tick(SIM_DT, self.player.as_ref().map(|p| player_outline(p)));
+                    t.tick(step, self.player.as_ref().map(|p| player_outline(p)));
                 }
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());

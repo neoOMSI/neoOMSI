@@ -10,9 +10,11 @@ use crate::diagnostics::{Capture, TraceHeader};
 /// Fixed simulation step for the traffic domain (s): decisions run at a stable rate,
 /// independent of the render frame rate. Rendering may run at any rate on top.
 pub const SIM_DT: f32 = 0.02;
-/// Most fixed steps to run in one frame; a long stall is bounded and the rest of the debt
-/// is kept (capped) rather than silently lost or turned into one huge step.
-pub const MAX_SIM_STEPS: u32 = 8;
+/// Most steps to run in one frame. Frames of up to this many fixed steps (25 fps and
+/// faster) run every step at `SIM_DT`; a longer frame is shared out evenly over this many
+/// steps. A slow frame then costs no more steps than a fast one, so the traffic cannot
+/// make the frame rate spiral down, and no traffic time is dropped.
+pub const MAX_SIM_STEPS: u32 = 2;
 
 /// A fixed-step headless scenario description.
 #[derive(Debug, Clone)]
@@ -58,25 +60,33 @@ where
 
 /// Advance a fixed-step accumulator by one render frame.
 ///
-/// Returns how many fixed `dt` steps to run this frame. The debt is capped at `max_steps`
-/// frames' worth, so a long stall is bounded rather than turned into one huge step. The
-/// sequence of fixed steps depends only on the elapsed time, not on how it was partitioned
-/// into render frames (below the cap), which is what makes replays frame-rate independent.
-pub fn advance_fixed_clock(accum: &mut f32, frame_dt: f32, dt: f32, max_steps: u32) -> u32 {
-    if dt <= 0.0 {
-        return 0;
+/// Returns how many steps to run this frame and how long each is. While the frame's time
+/// (with what is left over from the frames before) is at most `max_steps` steps of `dt`,
+/// they are fixed `dt` steps and the remainder waits for the next frame: the sequence of
+/// steps depends only on the elapsed time, not on how it was partitioned into render
+/// frames, which is what makes replays frame-rate independent. A longer frame runs
+/// `max_steps` equal, longer steps that take all of its time. Either way the steps add up to
+/// the time that came in, so the traffic keeps time with the clock, and a frame never runs
+/// more than `max_steps` of them.
+pub fn advance_fixed_clock(accum: &mut f32, frame_dt: f32, dt: f32, max_steps: u32) -> (u32, f32) {
+    if dt <= 0.0 || max_steps == 0 {
+        return (0, dt);
     }
-    // Cap the debt at one step more than a frame may catch up, so a long stall is bounded
-    // yet a little debt survives for the next frame instead of being silently dropped.
-    *accum = (*accum + frame_dt).min(dt * (max_steps + 1) as f32);
+    *accum += frame_dt.max(0.0);
     // A single division avoids the rounding drift of repeated subtraction, which otherwise
     // drops a decision tick over a long run at high frame rates and makes replays diverge.
-    let steps = (*accum / dt).floor().min(max_steps as f32) as u32;
-    *accum -= dt * steps as f32;
-    if *accum < 0.0 {
-        *accum = 0.0;
+    let due = (*accum / dt).floor();
+    if due <= max_steps as f32 {
+        let steps = due as u32;
+        *accum -= dt * steps as f32;
+        if *accum < 0.0 {
+            *accum = 0.0;
+        }
+        return (steps, dt);
     }
-    steps
+    let step = *accum / max_steps as f32;
+    *accum = 0.0;
+    (max_steps, step)
 }
 
 #[cfg(test)]
@@ -141,12 +151,16 @@ mod tests {
         let mut a = 0.0f32;
         let mut steps_a = 0u32;
         for _ in 0..30 {
-            steps_a += advance_fixed_clock(&mut a, 1.0 / 30.0, dt, 8);
+            let (n, step) = advance_fixed_clock(&mut a, 1.0 / 30.0, dt, MAX_SIM_STEPS);
+            assert_eq!(step, dt, "30 fps keeps the fixed step");
+            steps_a += n;
         }
         let mut b = 0.0f32;
         let mut steps_b = 0u32;
         for _ in 0..60 {
-            steps_b += advance_fixed_clock(&mut b, 1.0 / 60.0, dt, 8);
+            let (n, step) = advance_fixed_clock(&mut b, 1.0 / 60.0, dt, MAX_SIM_STEPS);
+            assert_eq!(step, dt, "60 fps keeps the fixed step");
+            steps_b += n;
         }
         assert_eq!(steps_a, steps_b, "frame partition changed the tick count");
         assert_eq!(steps_a, 50);
@@ -154,12 +168,52 @@ mod tests {
     }
 
     #[test]
-    fn a_long_stall_is_bounded_and_keeps_debt() {
+    fn frames_down_to_25_fps_run_only_fixed_steps() {
+        for fps in [25.0f32, 26.0, 30.0, 40.0, 50.0, 60.0, 144.0] {
+            let mut accum = 0.0f32;
+            for _ in 0..(fps as usize * 10) {
+                let (n, step) = advance_fixed_clock(&mut accum, 1.0 / fps, SIM_DT, MAX_SIM_STEPS);
+                assert!(n <= MAX_SIM_STEPS);
+                assert_eq!(step, SIM_DT, "{fps} fps left the fixed step");
+                assert!(accum < SIM_DT + 1e-6, "{fps} fps kept {accum} s of debt");
+            }
+        }
+    }
+
+    #[test]
+    fn a_slow_frame_runs_no_more_steps_than_the_cap_and_keeps_its_time() {
         let dt = 0.02f32;
+        for frame in [0.07f32, 0.1, 0.16, 0.5, 10.0] {
+            let mut accum = 0.004f32;
+            let (n, step) = advance_fixed_clock(&mut accum, frame, dt, MAX_SIM_STEPS);
+            assert_eq!(n, MAX_SIM_STEPS, "a {frame} s frame must be capped");
+            assert_eq!(accum, 0.0, "a capped frame leaves no debt behind");
+            assert!(
+                (n as f32 * step - (frame + 0.004)).abs() < 1e-5,
+                "a {frame} s frame ran {n} x {step} s"
+            );
+        }
+    }
+
+    #[test]
+    fn the_traffic_time_keeps_up_with_the_frames_at_any_frame_rate() {
+        // A jittery 10-90 fps run: every second the steps taken plus what is left over in the
+        // accumulator are exactly the frames' time (to f32 rounding), however slow the frames.
         let mut accum = 0.0f32;
-        let steps = advance_fixed_clock(&mut accum, 10.0, dt, 8);
-        assert_eq!(steps, 8, "catch-up must be bounded");
-        assert!(accum > 0.0, "remaining debt is kept, not lost");
-        assert!(accum <= dt * 8.0);
+        let (mut stepped, mut elapsed) = (0.0f64, 0.0f64);
+        let mut steps_max = 0;
+        for k in 0..20_000u32 {
+            let frame = 1.0 / (10.0 + (k * 7919 % 81) as f32);
+            let (n, step) = advance_fixed_clock(&mut accum, frame, SIM_DT, MAX_SIM_STEPS);
+            steps_max = steps_max.max(n);
+            stepped += n as f64 * step as f64;
+            elapsed += frame as f64;
+            let drift = elapsed - (stepped + accum as f64);
+            assert!(
+                drift.abs() < 1e-3,
+                "after {elapsed:.1} s the traffic lost {drift} s"
+            );
+        }
+        assert_eq!(steps_max, MAX_SIM_STEPS);
     }
 }

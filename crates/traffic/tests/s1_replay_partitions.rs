@@ -1,9 +1,11 @@
 //! Stage 1 exit gate — fixed-tick replays match across render-frame partitions.
 //!
 //! The S1 world (a queue at a red signal) is stepped with the same fixed `SIM_DT` the
-//! window and offscreen paths use, but the elapsed time is partitioned into 15/30/60/144
+//! window and offscreen paths use, but the elapsed time is partitioned into 25/30/60/144
 //! FPS frames through [`advance_fixed_clock`]. The sequence of decision ticks, and the
 //! rolling decision hash, must be identical regardless of how the time was partitioned.
+//! Slower frames are shared out over at most `MAX_SIM_STEPS` longer steps: they cannot
+//! repeat the fixed sequence, but they must keep the simulated time.
 
 use traffic::scenario::{advance_fixed_clock, MAX_SIM_STEPS, SIM_DT};
 use traffic::{
@@ -39,6 +41,7 @@ struct S1 {
     line: f32,
     cars: Vec<AiState>,
     tick: u64,
+    time: f32,
 }
 
 impl S1 {
@@ -66,11 +69,12 @@ impl S1 {
             line,
             cars,
             tick: 0,
+            time: 0.0,
         }
     }
 
-    fn step(&mut self, cap: &mut Capture) {
-        let t = self.tick as f32 * SIM_DT;
+    fn step(&mut self, dt: f32, cap: &mut Capture) {
+        let t = self.time;
         let red = t < RED_SECONDS;
         let order = {
             let mut o: Vec<usize> = (0..self.cars.len()).collect();
@@ -90,7 +94,7 @@ impl S1 {
             } else {
                 None
             };
-            self.cars[i].advance(&self.net, SIM_DT, obstacle, stop_at);
+            self.cars[i].advance(&self.net, dt, obstacle, stop_at);
         }
 
         let vehicles = self
@@ -127,6 +131,7 @@ impl S1 {
             vehicles,
         });
         self.tick += 1;
+        self.time += dt;
     }
 }
 
@@ -145,18 +150,25 @@ fn header() -> TraceHeader {
 /// Run the S1 world with `frame_dt` frames for `TOTAL_SECONDS`, returning the sequence of
 /// frozen decision ticks.
 fn run_partition(fps: u32) -> Vec<TickSnapshot> {
+    run_partition_timed(fps).0
+}
+
+/// As `run_partition`, with the simulated time at the end and the most steps of a frame.
+fn run_partition_timed(fps: u32) -> (Vec<TickSnapshot>, f32, u32) {
     let mut sim = S1::new();
     let mut cap = Capture::new(header(), 8192);
     let frame_dt = 1.0f32 / fps as f32;
     let frames = fps * TOTAL_SECONDS;
     let mut accum = 0.0f32;
+    let mut most = 0;
     for _ in 0..frames {
-        let steps = advance_fixed_clock(&mut accum, frame_dt, SIM_DT, MAX_SIM_STEPS);
+        let (steps, step) = advance_fixed_clock(&mut accum, frame_dt, SIM_DT, MAX_SIM_STEPS);
+        most = most.max(steps);
         for _ in 0..steps {
-            sim.step(&mut cap);
+            sim.step(step, &mut cap);
         }
     }
-    cap.ticks.into_iter().collect()
+    (cap.ticks.into_iter().collect(), sim.time + accum, most)
 }
 
 #[test]
@@ -168,7 +180,7 @@ fn the_same_world_decides_the_same_at_every_frame_rate() {
         expected,
         "60 fps did not run the expected number of fixed ticks"
     );
-    for fps in [15, 30, 60, 144] {
+    for fps in [25, 30, 60, 144] {
         let ticks = run_partition(fps);
         // A partition may land one tick short at an exact tick boundary, but every tick it
         // did run must be decision-for-decision identical to the baseline.
@@ -184,5 +196,20 @@ fn the_same_world_decides_the_same_at_every_frame_rate() {
             &baseline[..common],
             "{fps} fps produced a different decision sequence"
         );
+    }
+}
+
+#[test]
+fn slow_frames_keep_the_time_in_a_bounded_number_of_steps() {
+    for fps in [5, 10, 15, 20] {
+        let (ticks, time, most) = run_partition_timed(fps);
+        assert!(most <= MAX_SIM_STEPS, "{fps} fps ran {most} steps in a frame");
+        assert!(
+            (time - TOTAL_SECONDS as f32).abs() < 1e-3,
+            "{fps} fps simulated {time} s of {TOTAL_SECONDS} s"
+        );
+        // the queue still waits at the red line and leaves on green
+        let last = ticks.last().expect("ticks ran");
+        assert!(last.vehicles.iter().any(|v| v.speed > 1.0), "{fps} fps: nobody left on green");
     }
 }
