@@ -1,6 +1,7 @@
 //! `passengercabin.cfg` (unit `mc_passcabin`).
 
 use ::legacy_config::CfgFile;
+use ::legacy_config::Entry::{Keyword, Token};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -65,27 +66,25 @@ impl PassengerCabin {
         // the seat written last (driver's or not, and which): Omsi.exe keeps both kinds in
         // one list, in the order of the file
         let mut last: Option<(bool, usize)> = None;
-        while let Some(k) = r.next_keyword() {
-            match k.as_str() {
-                "entry" => {
-                    let mut e = Entry {
-                        path_point: r.i32(),
-                        ..Default::default()
-                    };
-                    loop {
-                        let save = r.pos();
-                        let w = r.word().to_ascii_lowercase();
-                        match w.as_str() {
-                            "{noticketsale}" => e.no_ticket_sale = true,
-                            "{withbutton}" => e.with_button = true,
-                            _ => {
-                                r.seek(save);
-                                break;
-                            }
+        while let Some(e) = r.next_entry(&["{noticketsale}", "{withbutton}"]) {
+            let k = match e {
+                Keyword(k) => k,
+                Token(t) => {
+                    if let Some(e) = c.entries.last_mut() {
+                        if t == "{noticketsale}" {
+                            e.no_ticket_sale = true;
+                        } else {
+                            e.with_button = true;
                         }
                     }
-                    c.entries.push(e);
+                    continue;
                 }
+            };
+            match k.as_str() {
+                "entry" => c.entries.push(Entry {
+                    path_point: r.i32(),
+                    ..Default::default()
+                }),
                 "exit" => c.exits.push(r.i32()),
                 "linktonextveh" => c.link_to_next_veh = Some(r.i32()),
                 "linktoprevveh" => c.link_to_prev_veh = Some(r.i32()),
@@ -178,6 +177,21 @@ mod tests {
             "[passpos]\n0\n0\n1\n0.5\n0\n",
         ));
         assert_eq!(c.pass_positions[0].illumination, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn entry_flags_are_lines_of_their_own() {
+        // (the SD200's: a blank line between the point and its flag)
+        let text = "[entry]\r\n0\r\n\r\n[entry]\r\n4\r\n\r\n{noticketsale}\r\n\r\n[exit]\r\n20\r\n\
+                    {withbutton}\r\n[entry]\r\n7\r\n{noticketsale}\r\n{withbutton}\r\n";
+        let c = PassengerCabin::parse(&CfgFile::from_str("passengercabin.cfg", text));
+        let flags: Vec<(i32, bool, bool)> = c
+            .entries
+            .iter()
+            .map(|e| (e.path_point, e.no_ticket_sale, e.with_button))
+            .collect();
+        assert_eq!(flags, [(0, false, false), (4, true, true), (7, true, true)]);
+        assert_eq!(c.exits, [20]);
     }
 
     #[test]
