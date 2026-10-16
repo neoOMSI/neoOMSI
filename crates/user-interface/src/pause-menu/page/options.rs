@@ -23,6 +23,8 @@ pub enum Fmt {
     Lock,
     /// 0.25 -> "250 ms"
     Ms,
+    /// 690 -> "690 mm"
+    Mm,
     /// 6 -> "6/15"
     Of15,
     /// 1.3 -> "1.30"
@@ -41,6 +43,7 @@ impl Fmt {
             Fmt::Lock if v < 45.0 => "OMSI".to_string(),
             Fmt::Lock => format!("{v:.0}°"),
             Fmt::Ms => format!("{:.0} ms", v * 1000.0),
+            Fmt::Mm => format!("{v:.0} mm"),
             Fmt::Of15 => format!("{}/15", v as i64),
             Fmt::Dec2 => format!("{v:.2}"),
         }
@@ -645,6 +648,57 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "pause.options.display.window_mode.desc",
             ),
             sw(
+                "triple_screen",
+                "pause.options.display.triple_screen.name",
+                "pause.options.display.triple_screen.desc",
+            ),
+            sw(
+                "triple_screen_span",
+                "pause.options.display.triple_screen_span.name",
+                "pause.options.display.triple_screen_span.desc",
+            ),
+            sw(
+                "triple_screen_hud",
+                "pause.options.display.triple_screen_hud.name",
+                "pause.options.display.triple_screen_hud.desc",
+            ),
+            sl(
+                "triple_screen_width_mm",
+                "pause.options.display.triple_screen_width_mm.name",
+                "pause.options.display.triple_screen_width_mm.desc",
+                Fmt::Mm,
+            ),
+            sl(
+                "triple_screen_distance_mm",
+                "pause.options.display.triple_screen_distance_mm.name",
+                "pause.options.display.triple_screen_distance_mm.desc",
+                Fmt::Mm,
+            ),
+            sl(
+                "triple_screen_bezel_mm",
+                "pause.options.display.triple_screen_bezel_mm.name",
+                "pause.options.display.triple_screen_bezel_mm.desc",
+                Fmt::Mm,
+            ),
+            sl(
+                "triple_screen_left_angle",
+                "pause.options.display.triple_screen_left_angle.name",
+                "pause.options.display.triple_screen_left_angle.desc",
+                Fmt::Deg,
+            ),
+            sl(
+                "triple_screen_right_angle",
+                "pause.options.display.triple_screen_right_angle.name",
+                "pause.options.display.triple_screen_right_angle.desc",
+                Fmt::Deg,
+            ),
+            sl(
+                "triple_screen_eye_height_mm",
+                "pause.options.display.triple_screen_eye_height_mm.name",
+                "pause.options.display.triple_screen_eye_height_mm.desc",
+                Fmt::Mm,
+            ),
+            sw(
                 "vsync",
                 "pause.options.display.vsync.name",
                 "pause.options.display.vsync.desc",
@@ -1163,6 +1217,7 @@ mod tests {
     #[test]
     fn fmt_misc() {
         assert_eq!(Fmt::Ms.apply(0.25), "250 ms");
+        assert_eq!(Fmt::Mm.apply(690.0), "690 mm");
         assert_eq!(Fmt::Of15.apply(6.0), "6/15");
         assert_eq!(Fmt::Of15.apply(6.9), "6/15");
         assert_eq!(Fmt::Dec2.apply(1.3), "1.30");
@@ -1218,6 +1273,30 @@ mod tests {
             .expect("window mode selector");
         assert_eq!(window_mode.kind, OptKind::Select);
         assert_eq!(window_mode.name, "pause.options.display.window_mode.name");
+    }
+
+    #[test]
+    fn display_options_include_triple_screen_controls() {
+        let display = OPTION_GROUPS
+            .iter()
+            .find(|group| group.title == "pause.options.group.display")
+            .expect("display options group");
+        let rows: Vec<_> = display.rows.iter().map(|row| (row.id, row.kind)).collect();
+
+        assert!(rows.contains(&("triple_screen", OptKind::Switch)));
+        assert!(rows.contains(&("triple_screen_span", OptKind::Switch)));
+        assert!(rows.contains(&("triple_screen_hud", OptKind::Switch)));
+        for id in [
+            "triple_screen_width_mm",
+            "triple_screen_distance_mm",
+            "triple_screen_bezel_mm",
+            "triple_screen_eye_height_mm",
+        ] {
+            assert!(rows.contains(&(id, OptKind::Slider(Fmt::Mm))), "{id}");
+        }
+        for id in ["triple_screen_left_angle", "triple_screen_right_angle"] {
+            assert!(rows.contains(&(id, OptKind::Slider(Fmt::Deg))), "{id}");
+        }
     }
 
     #[test]
