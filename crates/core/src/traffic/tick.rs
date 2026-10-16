@@ -1989,7 +1989,7 @@ impl Traffic {
 /// last finding along. A vehicle in trouble with scenery (a refused move, pinned) or without
 /// a finding yet looks every step.
 fn scenery_sweep_due(step: u64, id: VehicleId, trouble: bool, swept: bool) -> bool {
-    trouble || !swept || (step + id.get()) % 2 == 0
+    trouble || !swept || step.wrapping_add(id.get()).is_multiple_of(2)
 }
 
 /// The look-ahead's finding `found` at odometer `at`, carried to odometer `now`: the room to
@@ -2341,6 +2341,11 @@ mod scenery_sweep_tests {
         let id = VehicleId(7);
         let pattern: Vec<bool> = (0..4).map(|s| scenery_sweep_due(s, id, false, true)).collect();
         assert_eq!(pattern, [false, true, false, true]);
+        // (the parity wraps: ids may come from anywhere, a LAN host's included)
+        assert_ne!(
+            scenery_sweep_due(1, VehicleId(u64::MAX), false, true),
+            scenery_sweep_due(2, VehicleId(u64::MAX), false, true)
+        );
         // trouble with scenery, or nothing found yet: every step
         assert!((0..4).all(|s| scenery_sweep_due(s, id, true, true)));
         assert!((0..4).all(|s| scenery_sweep_due(s, id, false, false)));
