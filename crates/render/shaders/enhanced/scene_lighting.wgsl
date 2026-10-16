@@ -510,17 +510,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         geo_n = n;
     }
     if (reflective_env && material.bump.y > 0.5) {
-        let slope = bump_offset(duv);
-        let dp1 = dpdx(in.world);
-        let dp2 = dpdy(in.world);
-        let du1 = dpdx(duv);
-        let du2 = dpdy(duv);
-        let dp2p = cross(dp2, n);
-        let dp1p = cross(n, dp1);
-        let t = dp2p * du1.x + dp1p * du2.x;
-        let b = dp2p * du1.y + dp1p * du2.y;
-        let inv = inverseSqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
-        n = normalize(n - (t * inv * slope.x + b * inv * slope.y) * 0.6);
+        n = bump_normal(n, in.world, duv);
     }
     var albedo = tex.rgb * material.color.rgb;
     var detail_factor = 1.0;
@@ -682,22 +672,6 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     let cabin_reflection = select(0.85, 0.0, glass);
     env = mix(env, cab_e * 0.35 / PI, cabin_reflection * cab_view);
     let own_pane = select(0.0, near_player_vehicle(in.world) * inside_vehicle(camera.cam_pos.xyz), glass);
-    if (reflective_env) {
-        let az = atan2(r.y, r.x);
-        var env_uv = vec2<f32>(0.5 + 0.3 * sin(az), 0.5 + 0.45 * clamp(r.z, -1.0, 1.0));
-        if (material.bump.y > 0.5) {
-            env_uv = env_uv + bump_offset(duv);
-        }
-        let photo = textureSampleBias(t_env, s_diffuse, env_uv, max(rough * 16.0, select(2.0, 0.0, glass))).rgb;
-        let photo_avg = textureSampleLevel(t_env, s_diffuse, vec2<f32>(0.5, 0.5), 12.0).rgb;
-        let lum_avg = max(dot(photo_avg, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.02);
-        let ratio = clamp(photo / lum_avg, vec3<f32>(0.35), vec3<f32>(2.0));
-        let band = 1.0 - smoothstep(0.25, 0.7, abs(r.z));
-        let sharpness = 1.0 - smoothstep(0.05, 0.25, rough);
-        let outside_env = 1.0 - cab_view;
-        let clear_air = exp(-enh.fog.x * 150.0);
-        env = env * mix(vec3<f32>(1.0), ratio, band * 0.65 * mix(0.25, 1.0, sharpness) * outside_env * clear_air * enh.debug.z);
-    }
     let spec_occ = clamp(pow(nv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
     let pbr_reflects = material.pbr.z > 0.5 || material.pbr.w > 0.5;
     let reflects = reflective_env || pbr_reflects || is_water || wet_road > 0.0;

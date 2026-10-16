@@ -226,10 +226,7 @@ impl Renderer {
                     .filter(|v| v.is_finite())
                     .unwrap_or(0.08)
                     .clamp(0.02, 0.2),
-                ::legacy_config::env::var("OMSI_ENV_PHOTO")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(1.0),
+                0.0,
                 0.0,
             ],
             eye: eye_off.extend(0.0).to_array(),

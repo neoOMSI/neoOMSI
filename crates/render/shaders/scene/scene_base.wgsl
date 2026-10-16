@@ -449,6 +449,21 @@ fn bump_offset(uv: vec2<f32>) -> vec2<f32> {
     return clamp(vec2<f32>(h - hx, h - hy) * 2.0, vec2<f32>(-1.0), vec2<f32>(1.0)) * material.bump.x;
 }
 
+// Apply the legacy height-map slope in world space for weather-based reflections.
+fn bump_normal(n: vec3<f32>, world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    let slope = bump_offset(uv);
+    let dp1 = dpdx(world);
+    let dp2 = dpdy(world);
+    let du1 = dpdx(uv);
+    let du2 = dpdy(uv);
+    let dp2p = cross(dp2, n);
+    let dp1p = cross(n, dp1);
+    let t = dp2p * du1.x + dp1p * du2.x;
+    let b = dp2p * du1.y + dp1p * du2.y;
+    let inv = inverseSqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
+    return normalize(n - (t * inv * slope.x + b * inv * slope.y) * 0.6);
+}
+
 struct VsIn {
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -1746,9 +1761,9 @@ fn rain_light(g: RainGlass, v: vec3<f32>, d_thru: vec3<f32>, refl: vec3<f32>, th
     return vec4<f32>(col, a);
 }
 
-// What a drop shows in the classic picture: the sky from the weather's colours, the
-// horizon in the fog's, the ground darker.
-fn rain_env_vanilla(d: vec3<f32>) -> vec3<f32> {
+// Low-cost environment for Vanilla+ materials and classic rain: weather-coloured sky,
+// fog at the horizon and darker ground. No baked scenery or scene capture.
+fn weather_environment(d: vec3<f32>) -> vec3<f32> {
     let zenith = camera.sky_color.rgb + camera.ambient.rgb * 0.5;
     let horizon = max(camera.fog.rgb, camera.ambient.rgb);
     let ground = camera.ambient.rgb * 0.4 + camera.sun_color.rgb * camera.sun_dir.w * 0.06;
@@ -1765,8 +1780,8 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
         let g = rain_glass(in.world, in.uv - in.params.zw, in.normal, window_wetness(in), camera.post.y, in_cab, in.wipe_uv);
         if (g.cover <= 0.001 && g.mist <= 0.001) { return vec4<f32>(0.0); }
         let through = rain_through(g, v);
-        let seen = select(rain_behind(in.world, through, rain_env_vanilla(normalize(through)), 1.0, g.mist), vec3<f32>(0.0), dot(through, through) < 1e-4);
-        let d = rain_light(g, v, through, rain_env_vanilla(reflect(-v, g.n)), seen, rain_env_vanilla(vec3<f32>(0.0, 0.0, 0.5)) * 0.9, camera.sun_color.rgb * camera.sun_dir.w);
+        let seen = select(rain_behind(in.world, through, weather_environment(normalize(through)), 1.0, g.mist), vec3<f32>(0.0), dot(through, through) < 1e-4);
+        let d = rain_light(g, v, through, weather_environment(reflect(-v, g.n)), seen, weather_environment(vec3<f32>(0.0, 0.0, 0.5)) * 0.9, camera.sun_color.rgb * camera.sun_dir.w);
         // (fading out with the distance: see enhanced.wgsl)
         let near = 1.0 - smoothstep(5.0, 15.0, distance(in.world, camera.cam_pos.xyz));
         return vec4<f32>(min(d.rgb, vec3<f32>(1.5)), d.a * near);
@@ -1954,18 +1969,27 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
     if (material.params2.y > 0.0 && !screen_unlit) {
         // [matl_envmap]: sphere map reflection, masked by the diffuse alpha like the original
         let vdir = normalize(in.world - camera.cam_pos.xyz);
-        let r = reflect(vdir, n);
-        // (the headset: laid out by the bus's heading, level, not by each eye's view)
-        let vr_env = camera.cam_up.w > 0.5;
-        let env_right = select(camera.cam_right.xyz, vec3<f32>(cos(camera.cam_right.w), -sin(camera.cam_right.w), 0.0), vr_env);
-        let env_up = select(camera.cam_up.xyz, vec3<f32>(0.0, 0.0, 1.0), vr_env);
-        let rx = dot(r, env_right);
-        let ry = dot(r, env_up);
-        var env_uv = vec2<f32>(rx * 0.5 + 0.5, 0.5 + ry * 0.5);
-        if (material.bump.y > 0.5) {
-            env_uv = env_uv + bump_offset(duv);
+        // Vanilla keeps the content's sphere map for OMSI parity. Vanilla+ uses the
+        // current weather colours, without a baked street or an extra scene capture.
+        var env: vec3<f32>;
+        var env_n = n;
+        if (classic) {
+            let r = reflect(vdir, n);
+            // Headset sphere maps follow the bus heading, level, rather than each eye.
+            let vr_env = camera.cam_up.w > 0.5;
+            let env_right = select(camera.cam_right.xyz, vec3<f32>(cos(camera.cam_right.w), -sin(camera.cam_right.w), 0.0), vr_env);
+            let env_up = select(camera.cam_up.xyz, vec3<f32>(0.0, 0.0, 1.0), vr_env);
+            var env_uv = vec2<f32>(dot(r, env_right) * 0.5 + 0.5, 0.5 + dot(r, env_up) * 0.5);
+            if (material.bump.y > 0.5) {
+                env_uv = env_uv + bump_offset(duv);
+            }
+            env = textureSample(t_env, s_diffuse, env_uv).rgb;
+        } else {
+            if (material.bump.y > 0.5) {
+                env_n = bump_normal(n, in.world, duv);
+            }
+            env = weather_environment(reflect(vdir, env_n));
         }
-        let env = textureSample(t_env, s_diffuse, env_uv);
         let diffuse_a = diffuse_border(textureSample(t_diffuse, s_diffuse, duv), duv).a;
         if (material.params.x < 1.5) {
             // rain: a painted body goes darker and glossier when it is wet, so the bus
@@ -1999,21 +2023,39 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
         // `g` (0x861ca0, set per vehicle at 0x7d8735): the mean of the light the tile's
         // light map throws on it plus the day's light A (weather +0xac = the mean of
         // lightcolor A, 0x75333f - by it the stars fade), at most 1
-        let g = clamp(dot(lamp_light, vec3<f32>(1.0 / 3.0)) + dot(camera.sun_color.rgb, vec3<f32>(1.0 / 3.0)), 0.0, 1.0);
         var kk = vec3<f32>(0.0);
-        if (has_transmap_declared() || has_env_mask()) {
-            let a = select(diffuse_a, textureSample(t_envmask, s_diffuse, duv).a, has_env_mask());
-            kk = vec3<f32>(a * g);
+        if (classic) {
+            let g = clamp(dot(lamp_light, vec3<f32>(1.0 / 3.0)) + dot(camera.sun_color.rgb, vec3<f32>(1.0 / 3.0)), 0.0, 1.0);
+            if (has_transmap_declared() || has_env_mask()) {
+                let a = select(diffuse_a, textureSample(t_envmask, s_diffuse, duv).a, has_env_mask());
+                kk = vec3<f32>(a * g);
+            } else {
+                kk = omsi_texture_factor(material.params2.y, camera.ambient.rgb + vec3<f32>(g));
+            }
         } else {
-            kk = omsi_texture_factor(material.params2.y, camera.ambient.rgb + vec3<f32>(g));
+            // The weather environment already carries its lighting. Reusing OMSI's
+            // stage weight here replaced glass and dark paint with a bright grey veil.
+            // Dielectrics reflect weakly face-on; grazing reflections approach the
+            // authored strength. Explicit chrome parts keep their full reflectivity.
+            let factor = clamp(material.params2.y, 0.0, 1.0);
+            let metal = (u32(material.params2.w + 0.5) & 4u) != 0u;
+            let f0 = select(min(factor, 0.04), factor, metal);
+            let facing = clamp(abs(dot(vdir, env_n)), 0.0, 1.0);
+            var mask = 1.0;
+            if (has_env_mask()) {
+                mask = textureSample(t_envmask, s_diffuse, duv).a;
+            } else if (has_transmap_declared() || material.bump.z > 0.5) {
+                mask = diffuse_a;
+            }
+            kk = vec3<f32>(mask * mix(f0, factor, pow(1.0 - facing, 5.0)));
         }
         // In the vanilla picture the lerp is made on the encoded values, as the stage makes
         // it, like the texture x light product above: made on linear ones it showed the
         // reflection about twice as bright over a dark surface - since the nights got dark
         // (#300) the instrument glass of the MAN NL/NG (Fenster.tga, factor 0.5, the sky
-        // at the sphere map's bottom) lay milky white over the unlit gauges. Vanilla+ too:
-        // there the BHD A20's red paint went pink (#151).
-        lit = srgb_decode(mix(srgb_encode(lit), srgb_encode(env.rgb), kk));
+        // at the sphere map's bottom) lay milky white over the unlit gauges. Keep this
+        // blend in Vanilla+ too so dark paint does not turn pale.
+        lit = srgb_decode(mix(srgb_encode(lit), srgb_encode(env), kk));
     }
     // wet road: a surface whose texture carries [moisture] darkens under rain and starts
     // to mirror the sky, strongest where you look along it (the Fresnel sheen that makes a

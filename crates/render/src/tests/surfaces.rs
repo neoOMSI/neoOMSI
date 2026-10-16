@@ -424,8 +424,8 @@ fn transmap_reads_the_border_outside_the_texture() {
 }
 
 #[test]
-#[ignore = "requires a graphics adapter; renders a sphere-mapped dark body in both vanilla pictures"]
-fn envmap_lerp_over_dark_paint_is_the_same_in_vanilla_plus() {
+#[ignore = "requires a graphics adapter; checks static envmaps across graphics modes"]
+fn static_envmap_image_is_only_visible_in_vanilla() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let mut renderer = pollster::block_on(Renderer::new_with(
         &instance,
@@ -478,7 +478,16 @@ fn envmap_lerp_over_dark_paint_is_the_same_in_vanilla_plus() {
             one_sided: false,
         },
     );
-    renderer.add_instance(&mut scene, mesh, DVec3::ZERO, Mat4::IDENTITY, vec![body]);
+    let object = renderer.add_instance(&mut scene, mesh, DVec3::ZERO, Mat4::IDENTITY, vec![body]);
+    let backdrop =
+        renderer.add_material(&mut scene, Some(black), AlphaMode::Opaque, [1.0; 4], true);
+    renderer.add_instance(
+        &mut scene,
+        mesh,
+        DVec3::new(0.0, 0.0, -1.0),
+        Mat4::IDENTITY,
+        vec![backdrop],
+    );
     let camera = Camera {
         position: DVec3::new(0.0, -0.105, 6.0),
         yaw: 0.0,
@@ -488,28 +497,140 @@ fn envmap_lerp_over_dark_paint_is_the_same_in_vanilla_plus() {
         near: 0.1,
         far: 100.0,
     };
-    let mut centre = |classic: bool| -> [u8; 3] {
-        let lighting = Lighting {
-            classic,
-            shadows: false,
-            fog_density: 0.0,
+    let mask = renderer.add_texture(&mut scene, &::texture::Image::solid([0, 0, 0, 128]), false);
+    let pane = renderer.add_material_extra(
+        &mut scene,
+        Some(black),
+        AlphaMode::Blend,
+        [1.0, 1.0, 1.0, 0.3],
+        false,
+        None,
+        None,
+        None,
+        Some((sky, 0.18)),
+        [0.0; 3],
+        MaterialExtra {
+            glass: true,
+            env_mask: Some(mask),
             ..Default::default()
-        };
-        let rgba = renderer
-            .render_to_image(&mut scene, 64, 64, &camera, &lighting)
-            .unwrap();
-        rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3]
-            .try_into()
-            .unwrap()
-    };
-    let (vanilla, plus) = (centre(true), centre(false));
-    assert!(
-        vanilla[0] > 10,
-        "the sphere map must show over the dark paint: {vanilla:?}"
+        },
     );
+    for material in [body, pane] {
+        renderer.set_material(&mut scene, object, 0, material);
+        for (classic, enhanced) in [(true, false), (false, false), (false, true)] {
+            let lighting = Lighting {
+                classic,
+                enhanced,
+                shadows: false,
+                fog_density: 0.0,
+                animation_time: Some(0.0),
+                ..Default::default()
+            };
+            let mut centre = |color| -> [u8; 3] {
+                renderer.update_texture(&scene, sky, &::texture::Image::solid(color));
+                let rgba = renderer
+                    .render_to_image(&mut scene, 64, 64, &camera, &lighting)
+                    .unwrap();
+                rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3]
+                    .try_into()
+                    .unwrap()
+            };
+            let red = centre([255, 0, 0, 255]);
+            let cyan = centre([0, 255, 255, 255]);
+            if classic {
+                assert!(
+                    red[0] > cyan[0] + 5 && cyan[1] > red[1] + 5,
+                    "Vanilla must preserve the authored sphere map: {red:?}, {cyan:?}"
+                );
+            } else {
+                assert!(
+                    red.iter().zip(cyan).all(|(r, c)| r.abs_diff(c) <= 1),
+                    "static scenery must not affect reflections (enhanced {enhanced}, material {material:?}): {red:?}, {cyan:?}"
+                );
+                if !enhanced {
+                    assert!(
+                        red.iter().all(|c| *c <= 10),
+                        "face-on weather reflections must not wash out dark paint or glass: {red:?}"
+                    );
+                }
+                if material == body && !enhanced {
+                    assert!(
+                        red.iter().any(|c| *c > 5),
+                        "weather reflections must remain visible: {red:?}"
+                    );
+                    let dark = Lighting {
+                        secondary: Vec3::ZERO,
+                        ambient: Vec3::ZERO,
+                        fog_color: Vec3::ZERO,
+                        ..lighting.clone()
+                    };
+                    let rgba = renderer
+                        .render_to_image(&mut scene, 64, 64, &camera, &dark)
+                        .unwrap();
+                    let pixel = &rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3];
+                    assert!(
+                        pixel.iter().all(|c| *c <= 1),
+                        "a dark environment must not leave a bright reflection: {pixel:?}"
+                    );
+                    renderer.set_transform(
+                        &mut scene,
+                        object,
+                        DVec3::ZERO,
+                        Mat4::from_rotation_y(80.0_f32.to_radians()),
+                    );
+                    let rgba = renderer
+                        .render_to_image(&mut scene, 64, 64, &camera, &lighting)
+                        .unwrap();
+                    let grazing = &rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3];
+                    assert!(
+                        grazing[0] > red[0] + 2,
+                        "grazing reflections must remain stronger than face-on ones: {red:?}, {grazing:?}"
+                    );
+                    renderer.set_transform(&mut scene, object, DVec3::ZERO, Mat4::IDENTITY);
+                }
+            }
+        }
+    }
+    let lighting = Lighting {
+        shadows: false,
+        fog_density: 0.0,
+        animation_time: Some(0.0),
+        ..Default::default()
+    };
+    renderer.update_texture(&scene, mask, &::texture::Image::solid([0, 0, 0, 0]));
+    renderer.set_material(&mut scene, object, 0, pane);
+    let rgba = renderer
+        .render_to_image(&mut scene, 64, 64, &camera, &lighting)
+        .unwrap();
+    let masked = &rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3];
     assert!(
-        vanilla.iter().zip(plus).all(|(v, p)| v.abs_diff(p) <= 3),
-        "Vanilla+ must reflect as strongly as Vanilla: vanilla {vanilla:?}, plus {plus:?}"
+        masked.iter().all(|c| *c <= 1),
+        "a zero reflection mask must suppress the reflection: {masked:?}"
+    );
+    let chrome = renderer.add_material_extra(
+        &mut scene,
+        Some(black),
+        AlphaMode::Opaque,
+        [1.0; 4],
+        false,
+        None,
+        None,
+        None,
+        Some((sky, 0.18)),
+        [0.0; 3],
+        MaterialExtra {
+            metal_ok: true,
+            ..Default::default()
+        },
+    );
+    renderer.set_material(&mut scene, object, 0, chrome);
+    let rgba = renderer
+        .render_to_image(&mut scene, 64, 64, &camera, &lighting)
+        .unwrap();
+    let metal = &rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 3];
+    assert!(
+        metal[0] > 20,
+        "chrome must retain its authored face-on reflectivity: {metal:?}"
     );
 }
 
