@@ -34,7 +34,7 @@ use crate::ids::VehicleId;
 use crate::network::{LaneKind, Network};
 use crate::perception::Occupancy;
 use glam::DVec2;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use std::collections::VecDeque;
 
 // ---- named policy (units in the name) -------------------------------------------------
@@ -43,15 +43,16 @@ use std::collections::VecDeque;
 pub const ADMIT_PER_PASS: usize = 64;
 /// Hard bound on the pending request queue: a busy entrance cannot grow it without bound.
 pub const QUEUE_MAX: usize = 256;
-/// A physically blocked entrance is not asked again for this long (s).
-pub const ENTRANCE_BACKOFF: f32 = 3.0;
-/// Shortest and longest retry delay for a queued request (s).
+/// Shortest and longest retry delay for a queued request (s): an entrance that turned a
+/// request away is not asked again before the delay, which doubles with every refusal in a
+/// row.
 pub const RETRY_MIN: f32 = 0.5;
 pub const RETRY_MAX: f32 = 6.0;
 /// No body may lie within this distance of a candidate (m).
 pub const GAP_MARGIN: f64 = 14.0;
-/// Attempts on one lane before it is treated as a busy entrance.
-pub const ENTRANCE_LIMIT: u32 = 3;
+/// An entrance: this long a stretch of one lane (m). Requests in it share their backoff; a
+/// blocked spot says nothing about the rest of a long lane.
+pub const ENTRANCE_LENGTH: f32 = GAP_MARGIN as f32;
 /// The whole-map dormant population is capped at this multiple of the street target.
 pub const DORMANT_CAP_FACTOR: f32 = 8.0;
 /// A dormant actor is woken only up to this multiple of the target around the centre.
@@ -251,8 +252,15 @@ fn request_point(net: &Network, req: &SpawnRequest) -> Option<DVec2> {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Entrance {
+    /// Refusals in a row.
     denied: u32,
+    /// The coordinator time (s) before which the entrance is not asked again.
     retry_at: f32,
+}
+
+/// The entrance a request asks at: its lane and stretch of it.
+fn entrance_of(req: &SpawnRequest) -> (usize, i32) {
+    (req.lane, (req.s / ENTRANCE_LENGTH).floor() as i32)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -270,7 +278,7 @@ pub struct PopulationCoordinator {
     next_id: u64,
     time: f32,
     tick: u64,
-    entrance: HashMap<usize, Entrance>,
+    entrance: HashMap<(usize, i32), Entrance>,
     dormant: HashMap<VehicleId, DormantRecord>,
     /// Insertion order of the dormant registry, for deterministic wake order.
     dormant_order: Vec<VehicleId>,
@@ -284,7 +292,7 @@ impl PopulationCoordinator {
         PopulationCoordinator::default()
     }
 
-    /// Begin a pass at `tick`/`time`; clears the per-pass retry clock.
+    /// Begin a pass at `tick`/`time` (s, the clock the entrance backoff runs on).
     pub fn begin_tick(&mut self, tick: u64, time: f32) {
         self.tick = tick;
         self.time = time;
@@ -384,6 +392,16 @@ impl PopulationCoordinator {
                 kept.push_back(req);
                 continue;
             };
+            // An entrance that turned a request away waits out its backoff: the request
+            // keeps its place and is not examined.
+            if self
+                .entrance
+                .get(&entrance_of(&req))
+                .is_some_and(|e| self.time < e.retry_at)
+            {
+                kept.push_back(req);
+                continue;
+            }
             attempts += 1;
             if !self.budget_ok(req.class, &scene.demand, admitted_random) {
                 self.capacity_denied += 1;
@@ -402,18 +420,18 @@ impl PopulationCoordinator {
                 continue;
             }
             if !scene.initial && !f.visible {
-                let after = self.note_denied(req.lane, scene);
+                let after = self.note_denied(&req);
                 out.push(SpawnDecision::new(req, SpawnOutcome::Retry { after }));
                 kept.push_back(req);
                 continue;
             }
             if !self.gap_open(scene, &req, &pass_spots) {
-                let after = self.note_denied(req.lane, scene);
+                let after = self.note_denied(&req);
                 out.push(SpawnDecision::new(req, SpawnOutcome::Retry { after }));
                 kept.push_back(req);
                 continue;
             }
-            self.entrance.remove(&req.lane);
+            self.entrance.remove(&entrance_of(&req));
             self.admitted_total += 1;
             if req.class.is_random() {
                 admitted_random += 1;
@@ -424,6 +442,9 @@ impl PopulationCoordinator {
             out.push(SpawnDecision::new(req, SpawnOutcome::Admit));
         }
         self.queue = kept;
+        // An entrance nobody asks at any more is forgotten.
+        let asked: HashSet<(usize, i32)> = self.queue.iter().map(entrance_of).collect();
+        self.entrance.retain(|k, _| asked.contains(k));
         out
     }
 
@@ -448,18 +469,14 @@ impl PopulationCoordinator {
         !blocked
     }
 
-    /// Record a denial at an entrance and return the retry delay. Repeated denials at one
-    /// lane back off instead of retrying every pass.
-    fn note_denied(&mut self, lane: usize, scene: &PopulationScene) -> f32 {
-        let e = self.entrance.entry(lane).or_default();
+    /// Record a refusal at the request's entrance and return the retry delay: `RETRY_MIN`,
+    /// doubled with every refusal in a row there, up to `RETRY_MAX`.
+    fn note_denied(&mut self, req: &SpawnRequest) -> f32 {
+        let time = self.time;
+        let e = self.entrance.entry(entrance_of(req)).or_default();
         e.denied = e.denied.saturating_add(1);
-        let delay = if e.denied >= ENTRANCE_LIMIT {
-            ENTRANCE_BACKOFF
-        } else {
-            RETRY_MIN
-        }
-        .min(RETRY_MAX);
-        e.retry_at = scene.tick as f32 * 0.02 + delay;
+        let delay = (RETRY_MIN * 2f32.powi(e.denied.min(16) as i32 - 1)).min(RETRY_MAX);
+        e.retry_at = time + delay;
         delay
     }
 

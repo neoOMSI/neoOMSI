@@ -171,7 +171,10 @@ impl ManeuverWorld {
     }
 
     pub fn car(&self, id: u64) -> &Car {
-        self.cars.iter().find(|c| c.id == VehicleId(id)).expect("car")
+        self.cars
+            .iter()
+            .find(|c| c.id == VehicleId(id))
+            .expect("car")
     }
 
     pub fn car_mut(&mut self, id: u64) -> &mut Car {
@@ -206,7 +209,7 @@ impl ManeuverWorld {
         self.coord.begin_tick(&intents, self.tick);
         let decisions: Vec<ManeuverDecision> = {
             let scene = ManeuverScene {
-                        static_clearance: None,
+                static_clearance: None,
                 net: &self.net,
                 occupancy: &occ,
                 actors: &actors,

@@ -1,7 +1,8 @@
 //! Stage 8 exit gate — overload, bounded admission and backpressure.
 //!
 //! Excess demand must become *diagnosed capacity-limited* demand: the queue is bounded, a
-//! busy entrance retries instead of stacking vehicles, and admitted placements never overlap.
+//! busy entrance retries after a growing backoff instead of stacking vehicles, and admitted
+//! placements never overlap.
 
 mod common;
 
@@ -49,6 +50,82 @@ fn a_busy_entrance_is_backpressured_not_stacked() {
         "a blocked entrance must retry, not deny or stack"
     );
     assert!(w.coord.queue_len() <= 20);
+}
+
+#[test]
+fn a_refused_entrance_is_not_asked_again_before_its_backoff() {
+    let mut w = PopWorld::new(1);
+    w.occupy(1000, 0, 10.0);
+    let req = w
+        .coord
+        .request(SpawnClass::Unscheduled, 0, 10.0)
+        .expect("queued");
+    // (time, the retry delay a refusal gives then): doubling up to RETRY_MAX
+    let mut refusals: Vec<(f32, f32)> = Vec::new();
+    while w.time < 20.0 {
+        let time = w.time;
+        for d in w.step(false, demand(5, 0), true) {
+            assert_eq!(d.request.id, req.id);
+            match d.outcome {
+                SpawnOutcome::Retry { after } => refusals.push((time, after)),
+                other => panic!("the blocked entrance gave {other:?}"),
+            }
+        }
+    }
+    let delays: Vec<f32> = refusals.iter().map(|r| r.1).collect();
+    assert_eq!(
+        &delays[..5],
+        &[0.5, 1.0, 2.0, 4.0, 6.0],
+        "refusals {refusals:?}"
+    );
+    assert!(
+        delays[5..].iter().all(|&d| d == RETRY_MAX),
+        "refusals {refusals:?}"
+    );
+    for pair in refusals.windows(2) {
+        let waited = pair[1].0 - pair[0].0;
+        assert!(
+            waited >= pair[0].1 - 0.001 && waited < pair[0].1 + 0.05,
+            "asked again after {waited} s instead of {} s: {refusals:?}",
+            pair[0].1
+        );
+    }
+    assert_eq!(w.coord.queue_len(), 1, "the refused request lost its place");
+
+    // the way clears: the request is admitted once its backoff is over, not before
+    w.bodies.clear();
+    let last = *refusals.last().unwrap();
+    let mut admitted_at = None;
+    while admitted_at.is_none() && w.time < 40.0 {
+        let time = w.time;
+        if PopWorld::admitted(&w.step(false, demand(5, 0), true)) == 1 {
+            admitted_at = Some(time);
+        }
+    }
+    let at = admitted_at.expect("never admitted after the way cleared");
+    assert!(
+        at >= last.0 + last.1 - 0.001,
+        "admitted at {at} s inside the backoff {last:?}"
+    );
+}
+
+#[test]
+fn a_blocked_spot_does_not_hold_back_the_rest_of_its_lane() {
+    let mut w = PopWorld::new(1);
+    w.occupy(1000, 0, 10.0);
+    w.coord.request(SpawnClass::Unscheduled, 0, 10.0);
+    let first = w.step(false, demand(5, 0), true);
+    assert!(matches!(first[0].outcome, SpawnOutcome::Retry { .. }));
+    // further along the same lane, while the blocked spot waits out its backoff
+    w.coord.request(SpawnClass::Unscheduled, 0, 200.0);
+    let next = w.step(false, demand(5, 0), true);
+    assert_eq!(
+        next.len(),
+        1,
+        "the backing-off spot was examined again: {next:?}"
+    );
+    assert_eq!(next[0].request.s, 200.0);
+    assert_eq!(next[0].outcome, SpawnOutcome::Admit);
 }
 
 #[test]

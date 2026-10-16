@@ -119,7 +119,10 @@ impl ServiceWorld {
     pub fn new() -> ServiceWorld {
         let mut net = Network {
             lanes: vec![LaneBuilder::polyline(
-                vec![glam::DVec3::new(0.0, 0.0, 0.0), glam::DVec3::new(0.0, 400.0, 0.0)],
+                vec![
+                    glam::DVec3::new(0.0, 0.0, 0.0),
+                    glam::DVec3::new(0.0, 400.0, 0.0),
+                ],
                 LaneKind::Street,
                 3.0,
             )],
@@ -144,11 +147,17 @@ impl ServiceWorld {
     }
 
     pub fn bus(&self, id: u64) -> &Bus {
-        self.buses.iter().find(|b| b.id == VehicleId(id)).expect("bus")
+        self.buses
+            .iter()
+            .find(|b| b.id == VehicleId(id))
+            .expect("bus")
     }
 
     pub fn bus_mut(&mut self, id: u64) -> &mut Bus {
-        self.buses.iter_mut().find(|b| b.id == VehicleId(id)).expect("bus")
+        self.buses
+            .iter_mut()
+            .find(|b| b.id == VehicleId(id))
+            .expect("bus")
     }
 
     fn occupancy(&self) -> Occupancy {
@@ -190,7 +199,13 @@ impl ServiceWorld {
                 let bus = &self.buses[k];
                 let berth = bus.front_berth();
                 let distance = berth.map(|b| b.s - bus.s).unwrap_or(f32::MAX);
-                (berth, distance, bus.policy.clone(), bus.demand, bus.feedback)
+                (
+                    berth,
+                    distance,
+                    bus.policy.clone(),
+                    bus.demand,
+                    bus.feedback,
+                )
             };
             let inputs = ServiceInputs {
                 actor: k,

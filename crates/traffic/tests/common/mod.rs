@@ -6,8 +6,8 @@
 #![allow(dead_code)]
 
 pub mod maneuver;
-pub mod service;
 pub mod population;
+pub mod service;
 
 use glam::DVec3;
 use hashbrown::HashMap;
@@ -205,7 +205,10 @@ impl Harness {
 
     /// Put an actor's body on `lane` at `s` (realized occupancy).
     pub fn place(&mut self, idx: usize, lane: usize, s: f32) {
-        self.on_lane.entry(lane).or_default().push((idx, s, 0.0, false));
+        self.on_lane
+            .entry(lane)
+            .or_default()
+            .push((idx, s, 0.0, false));
     }
 
     /// Register an approaching vehicle on `lane` (not physically there yet).
@@ -245,7 +248,12 @@ impl Harness {
         out
     }
 
-    pub fn plan(&self, coord: &mut JunctionCoordinator, i: usize, lead: Option<Lead>) -> JunctionDecision {
+    pub fn plan(
+        &self,
+        coord: &mut JunctionCoordinator,
+        i: usize,
+        lead: Option<Lead>,
+    ) -> JunctionDecision {
         let way = self.way(i);
         let movement = junction_ahead(&self.net, &way);
         let scene = self.scene();
