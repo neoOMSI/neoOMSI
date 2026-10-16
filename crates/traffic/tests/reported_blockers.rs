@@ -381,6 +381,7 @@ fn both_lanes_yield_and_the_response_uses_the_gap_between_them() {
         way: vec![(0, -50.0)],
         front: 2.0,
         speed: 8.0,
+        ..Default::default()
     };
     for lane in [0, 1] {
         let state = AiState::new(lane, 70.0, 1);

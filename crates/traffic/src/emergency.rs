@@ -2,13 +2,58 @@
 //! not a radius around a siren (a parallel road is not affected).
 use crate::{VehicleId, following::AiState, network::Network};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EmergencyDrive {
     pub vehicle: VehicleId,
     /// Directed route occurrences and distances from the emergency vehicle's origin.
     pub way: Vec<(usize, f32)>,
     pub front: f32,
     pub speed: f32,
+    /// Held up behind slow or standing traffic, or passing it on the oncoming lane: the
+    /// stretch of the oncoming lane `pass_reach` metres ahead of its front is kept free.
+    pub held: bool,
+    pub pass_reach: f32,
+}
+
+/// The stretch (m) of the oncoming lane an emergency vehicle held up in a queue may pass
+/// along (as far as it passes a queue, `EMERGENCY_QUEUE_MAX` and a little).
+pub const EMERGENCY_PASS_ZONE: f32 = 150.0;
+/// How far beyond that stretch (m) oncoming traffic stops for it.
+pub const EMERGENCY_ONCOMING_HOLD: f32 = 100.0;
+
+/// Where a vehicle coming the other way on a road with one lane each way stops for an
+/// emergency vehicle held up in a queue on the other side (m ahead of its front): before
+/// the stretch the emergency vehicle passes along, as drivers stop for a siren coming
+/// towards them. `None`: none of them, or it is inside that stretch already and drives on
+/// to clear it (#462: the ambulance otherwise waited for a gap in the oncoming traffic).
+pub fn oncoming_emergency(
+    net: &Network,
+    ego: VehicleId,
+    state: &AiState,
+    drives: &[EmergencyDrive],
+) -> Option<f32> {
+    let lane = net.lanes.get(state.lane)?;
+    if lane.left.is_some() || lane.right.is_some() {
+        return None;
+    }
+    let (opp, os, side) = net.opposite(state.lane, state.s.clamp(0.0, lane.length()))?;
+    if !(2.3..=5.5).contains(&side) {
+        return None;
+    }
+    let mut best: Option<f32> = None;
+    for drive in drives.iter().filter(|d| d.vehicle != ego && d.held) {
+        let Some(&(_, offset)) = drive.way.iter().find(|w| w.0 == opp) else {
+            continue;
+        };
+        // how far ahead of the emergency vehicle's front this one's front is
+        let ahead = offset + os - state.front - drive.front;
+        let left = ahead - drive.pass_reach;
+        if left <= 0.0 || left > EMERGENCY_ONCOMING_HOLD {
+            continue;
+        }
+        best = Some(best.map_or(left, |b| b.min(left)));
+    }
+    best
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

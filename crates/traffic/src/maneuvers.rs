@@ -35,6 +35,7 @@ use crate::diagnostics::{ManeuverPhase, Reason};
 use crate::following::{arrival_time, ramp_progress_for, smooth01};
 use crate::ids::{LaneId, VehicleId};
 use crate::network::{LaneKind, Network};
+use crate::wrap_deg;
 use crate::perception::{Occupancy, SweepSample};
 use glam::{DVec2, DVec3};
 use hashbrown::HashMap;
@@ -355,6 +356,9 @@ pub struct ManeuverScene<'a> {
 pub struct ManeuverInputs {
     pub emergency: Option<crate::emergency::EmergencyApproach>,
     pub priority_pass: bool,
+    /// The emergency vehicle holds the reservation of the junction ahead: passing a queue
+    /// that stands up to it, it may go on across it on the oncoming side.
+    pub emergency_through: bool,
     /// A scheduled bus queues for its own occupied stop instead of passing that queue.
     pub queue_for_stop: bool,
     /// Index into `ManeuverScene::actors`.
@@ -385,6 +389,7 @@ impl ManeuverInputs {
         ManeuverInputs {
             emergency: None,
             priority_pass: false,
+            emergency_through: false,
             queue_for_stop: false,
             actor,
             service_lateral: None,
@@ -1029,6 +1034,21 @@ impl ManeuverCoordinator {
             return None;
         }
         let real = gap + if input.parked { 2.0 } else { 0.0 };
+        // An emergency vehicle passes the whole queue in front of it, up to the first gap
+        // it fits into, or - the queue standing up to the junction it has reserved - across
+        // the junction on the oncoming side (#462: on a road with one lane each way the
+        // ambulance otherwise waited at the end of every queue).
+        let queue = input
+            .priority_pass
+            .then(|| self.emergency_queue(scene, actor, real))
+            .flatten();
+        let through = match queue {
+            Some((_, QueueEnd::Junction(Some(exit)))) if input.emergency_through => Some(exit),
+            _ => None,
+        };
+        if matches!(queue, Some((_, QueueEnd::Junction(_)))) && through.is_none() {
+            return None;
+        }
         let reach = if rolling {
             (actor.speed * actor.speed / (2.0 * actor.decel) + 12.0).clamp(15.0, 40.0)
         } else {
@@ -1038,7 +1058,15 @@ impl ManeuverCoordinator {
         if real > reach || real < 0.3 || outward < -0.5 || outward > 1.6 {
             return None;
         }
-        let way = way_of(net, actor, 60.0);
+        let way = way_of(
+            net,
+            actor,
+            if input.priority_pass {
+                EMERGENCY_QUEUE_LOOK
+            } else {
+                60.0
+            },
+        );
         let Some((opp, os, side)) = net.opposite(actor.lane, actor.s) else {
             return None;
         };
@@ -1054,9 +1082,16 @@ impl ManeuverCoordinator {
         // passed: the pass is longer by the distance it covers in that time
         let v_lead = if input.priority_pass { input.lead_speed.max(0.0) } else { 0.0 };
         let v_pass = ((lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6).clamp(4.0, 14.0);
-        let base_len = real + input.obstacle_len + actor.front + actor.rear + 6.0;
+        // (passing across the junction, it merges back beyond its exit)
+        let queue_len = match (queue, through) {
+            (_, Some(exit)) => exit + 2.0 - actor.front - real,
+            (Some((len, _)), None) => len,
+            _ => 0.0,
+        };
+        let input_len = input.obstacle_len.max(queue_len);
+        let base_len = real + input_len + actor.front + actor.rear + 6.0;
         let stretch = if v_lead > 0.3 { v_lead * base_len / (v_pass - v_lead).max(1.0) } else { 0.0 };
-        let obstacle_len = input.obstacle_len + stretch;
+        let obstacle_len = input_len + stretch;
         let pass_len = real + obstacle_len + actor.front + actor.rear + 6.0;
         // The maneuver must fit before a junction and not run off the end of the road.
         let junction = way
@@ -1070,7 +1105,9 @@ impl ManeuverCoordinator {
             .take_while(|w| net.crossings[w.0].is_empty())
             .map(|w| w.1 + net.lanes[w.0].length())
             .fold(0.0, f32::max);
-        if open_road.min(junction) < pass_len - if input.parked { 6.0 } else { -8.0 } {
+        if through.is_none()
+            && open_road.min(junction) < pass_len - if input.parked { 6.0 } else { -8.0 }
+        {
             return None;
         }
         if let Some(&(last, d)) = way.last() {
@@ -1085,18 +1122,43 @@ impl ManeuverCoordinator {
         let merge_at = actor.front + real + obstacle_len;
         let v_cap =
             ((lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6).clamp(4.0, 14.0);
-        let v_back = (actor.speed * actor.speed + 2.0 * actor.accel * 0.85 * until_d)
+        let mut v_back = (actor.speed * actor.speed + 2.0 * actor.accel * 0.85 * until_d)
             .sqrt()
             .min(v_cap);
         let back_min = back_in_ramp(side, 0.0, BACK_IN_LAT_ACCEL);
-        let need_room =
+        let mut need_room =
             (actor.length + 4.0 + v_back * v_back / (2.0 * actor.decel.max(1.0))).max(back_min + 2.0);
-        let merge_room = self.merge_room(scene, actor, &way, merge_at, need_room);
+        // (an emergency vehicle slows down to get back into the gap in a queue: it only needs
+        // the gap itself, and comes back in at the speed that stops it short of the car in
+        // front of it)
+        if queue.is_some() {
+            need_room = (actor.length + EMERGENCY_MERGE_MARGIN).max(back_min + 2.0);
+        }
+        // (looking far enough beyond the gap to see the car its curve back must stop short of)
+        let look_room = if queue.is_some() {
+            need_room + EMERGENCY_QUEUE_LOOK * 0.25
+        } else {
+            need_room
+        };
+        let merge_room = self.merge_room(scene, actor, &way, merge_at, look_room);
         if merge_room < need_room {
             return None;
         }
+        if queue.is_some() && merge_room < f32::MAX {
+            let stop_in = (merge_room - actor.length - 2.0).max(1.0);
+            v_back = v_back.min((2.0 * actor.decel.max(1.0) * stop_in).sqrt()).max(3.0);
+        }
+        // (back into a gap in a queue, the curve back ends before the car beyond it: it
+        // starts only once the whole vehicle is past the last car of the queue)
+        let room_back = merge_room
+            - 2.0
+            - if queue.is_some() {
+                actor.front + actor.rear + 2.0 + EMERGENCY_MERGE_MARGIN * 0.5
+            } else {
+                0.0
+            };
         let back = back_in_ramp(side, v_back, actor.lat_accel.min(BACK_IN_LAT_ACCEL))
-            .min((merge_room - 2.0).max(back_min));
+            .min(room_back.max(back_min));
         let probe = Passing {
             lane: opp,
             side,
@@ -1111,7 +1173,7 @@ impl ManeuverCoordinator {
         let clear_d = probe.clear_at(actor.half_width);
         // The oncoming lane has to lie right beside this one for as long as the car is out
         // there: an island or hatched area that starts after the pull-out is no road either.
-        if !passing_corridor(net, &way, clear_d + actor.front) {
+        if !passing_corridor(net, &way, clear_d + actor.front, through.is_some()) {
             // (the road does not change: a car stuck in a queue need not look again at once)
             state.pass_retry = scene.time + 1.0;
             return None;
@@ -1147,6 +1209,83 @@ impl ManeuverCoordinator {
             ..probe
         });
         Some(d)
+    }
+
+    /// The queue an emergency vehicle has in front of it on its way: its length from the
+    /// leader's rear (m), and how it ends - at a gap the vehicle fits into, or at the
+    /// junction it stands up to (with the distance from the vehicle origin to the end of
+    /// the junction when the way goes straight across it). `None`: nothing standing or
+    /// slow right in front of it.
+    fn emergency_queue(
+        &self,
+        scene: &ManeuverScene,
+        actor: &ManeuverActor,
+        real: f32,
+    ) -> Option<(f32, QueueEnd)> {
+        let net = scene.net;
+        let way = way_of(net, actor, EMERGENCY_QUEUE_LOOK);
+        let need = actor.length + EMERGENCY_MERGE_MARGIN;
+        let mut bodies: Vec<(f32, f32, f32)> = way
+            .iter()
+            .flat_map(|&(lane, off)| {
+                scene.occupancy.intervals(LaneId(lane)).iter().filter_map(move |iv| {
+                    (iv.owner != actor.id && !iv.foreign)
+                        .then_some((off + iv.rear, off + iv.front, iv.speed))
+                })
+            })
+            .filter(|b| b.1 > actor.front)
+            .collect();
+        bodies.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let start = actor.front + real;
+        let mut end: Option<f32> = None;
+        for (rear, front, speed) in bodies {
+            match end {
+                None => {
+                    if rear > start + 1.0 || speed > EMERGENCY_QUEUE_SPEED {
+                        return None;
+                    }
+                    end = Some(front);
+                }
+                Some(e) => {
+                    if rear - e >= need || speed > EMERGENCY_QUEUE_SPEED {
+                        break;
+                    }
+                    end = Some(e.max(front));
+                }
+            }
+        }
+        let end = end?;
+        if end - start > EMERGENCY_QUEUE_MAX {
+            return None;
+        }
+        let len = end - start;
+        let Some(k) = way
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, w)| !net.crossings[w.0].is_empty())
+            .map(|(k, _)| k)
+        else {
+            return Some((len, QueueEnd::Gap));
+        };
+        if end + need <= way[k].1 {
+            return Some((len, QueueEnd::Gap));
+        }
+        // the junction it stands up to: straight across it, and where it ends
+        let mut turn = 0.0f32;
+        let mut heading = net.lanes[way[k - 1].0].end_heading();
+        for &(lane, d) in &way[k..] {
+            let l = &net.lanes[lane];
+            if net.crossings[lane].is_empty() {
+                turn += wrap_deg(l.start_heading() - heading).abs();
+                let straight = turn <= EMERGENCY_THROUGH_TURN;
+                return Some((len, QueueEnd::Junction(straight.then_some(d))));
+            }
+            turn += wrap_deg(l.start_heading() - heading).abs()
+                + wrap_deg(l.end_heading() - l.start_heading()).abs();
+            heading = l.end_heading();
+        }
+        Some((len, QueueEnd::Junction(None)))
     }
 
     /// Finish or abort a pass already underway. `None` means none is active.
@@ -1821,6 +1960,28 @@ fn emergency_can_pass_here(net: &Network, actor: &ManeuverActor) -> bool {
     })
 }
 
+/// How a queue in front of an emergency vehicle ends (`emergency_queue`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum QueueEnd {
+    /// At a gap the vehicle fits into before the next junction.
+    Gap,
+    /// At the junction it stands up to; the distance to the junction's end when the way
+    /// goes straight across it.
+    Junction(Option<f32>),
+}
+
+/// How far ahead (m) an emergency vehicle looks at the queue in front of it, ...
+const EMERGENCY_QUEUE_LOOK: f32 = 220.0;
+/// ... the longest queue (m) it passes, ...
+const EMERGENCY_QUEUE_MAX: f32 = 180.0;
+/// ... what still counts as part of it (m/s: standing or rolling at a crawl), ...
+const EMERGENCY_QUEUE_SPEED: f32 = 4.2;
+/// ... the room (m) beyond its own length it needs to merge back into a gap, ...
+const EMERGENCY_MERGE_MARGIN: f32 = 6.0;
+/// ... and the most its way may turn across a junction it passes over on the oncoming
+/// side (deg).
+const EMERGENCY_THROUGH_TURN: f32 = 25.0;
+
 /// Is there a strip (an island, a median) between two opposing lanes whose centres lie
 /// `side` metres apart? Paths are often authored narrower than the lane painted on the road
 /// (2 m paths 3.2 m apart on an ordinary two-lane street), so a lane counts at least
@@ -1835,11 +1996,20 @@ const MIN_LANE_WIDTH: f32 = 3.0;
 /// Is the road a single lane each way with the oncoming lane directly beside it, from the
 /// actor origin to `distance` metres along `way`? Separate carriageways (an island, a median,
 /// a hatched area between the lanes) are no passing room (#126).
-fn passing_corridor(net: &Network, way: &[WayStep], distance: f32) -> bool {
+fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_junction: bool) -> bool {
     let mut d = 0.0f32;
     loop {
         let Some((lane, u)) = way_locate(net, way, d.min(distance)) else { return false };
         let l = &net.lanes[lane];
+        // (an emergency vehicle crossing a reserved junction on the oncoming side: the
+        // junction itself is no carriageway, the roads on both sides of it are)
+        if across_junction && !net.crossings[lane].is_empty() {
+            if d >= distance {
+                return true;
+            }
+            d += 2.0;
+            continue;
+        }
         if l.left.is_some() || l.right.is_some() {
             return false;
         }

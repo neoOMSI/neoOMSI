@@ -10,6 +10,7 @@ fn cars_on_the_emergency_route_react_but_parallel_roads_do_not() {
         way: vec![(0, -20.0)],
         front: 2.5,
         speed: 12.0,
+        ..Default::default()
     };
     let own = AiState::new(0, 60.0, 1);
     assert!(approaching_emergency(&net, VehicleId(1), &own, 2.0, &[drive.clone()]).is_some());

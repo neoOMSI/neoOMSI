@@ -144,14 +144,16 @@ const PLAYER_BOX_MARGIN: f32 = 0.5;
 const EMERGENCY_PASS_LEAD_SPEED: f32 = 4.2;
 /// An emergency vehicle that has stood this long (s) holding a junction reservation, which
 /// keeps everybody else out, drives by the ordinary rules for `EMERGENCY_PAUSE`, so a
-/// deadlock round it resolves (its exit full, say). Standing in a queue or waiting for its
-/// junction to clear it holds nobody up and keeps its rights: having lost them after 8 s
-/// anywhere, an ambulance behind a red light waited out the whole cycle like a car (#462).
+/// deadlock round it resolves (its exit full, say). Waiting for its junction to clear it
+/// keeps its rights longer: having lost them after 8 s anywhere, an ambulance behind a red
+/// light waited out the whole cycle like a car (#462).
 const EMERGENCY_STUCK_AFTER: f32 = 8.0;
-/// ... and this long (s) when it stands behind the vehicles that lead it through: they
-/// move off once the junction is clear, it only has to wait its turn behind them.
+/// ... and this long (s) when it stands behind the vehicles in front of it: they lead it
+/// through a reserved junction or pull over for it, and the oncoming traffic stops for
+/// it; when it still cannot get past them (an oncoming queue standing in its way), they
+/// all go on for a while instead of waiting for each other for good.
 const EMERGENCY_STUCK_BEHIND: f32 = 25.0;
-const EMERGENCY_PAUSE: f32 = 20.0;
+const EMERGENCY_PAUSE: f32 = 10.0;
 
 /// What makes a new car a timetable bus (`Traffic::create_car`).
 pub struct BusSetup {
