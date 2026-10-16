@@ -715,7 +715,7 @@ impl Network {
     /// the same distance on lanes that start together, else the point of `b` beside it.
     pub fn beside_s(&self, a: usize, b: usize, s: f32) -> f32 {
         let (la, lb) = (&self.lanes[a], &self.lanes[b]);
-        if (lb.start() - la.start()).truncate().length() < 8.0 {
+        if self.same_piece(a, b) {
             let frac = if la.length() > 0.0 {
                 s / la.length()
             } else {
@@ -724,6 +724,18 @@ impl Network {
             return frac * lb.length();
         }
         (s + self.beside_delta(a, b)).clamp(0.0, lb.length())
+    }
+
+    /// Do lanes `a` and `b` run beside each other over one road piece, starting and ending
+    /// together (the inner and outer lane of a curve: their lengths differ, a point beside
+    /// both lies at the same share of each)? A lane beside the start of a longer one that
+    /// ends half way along it is not: at the same share of it, the point "beside" a car 41 m
+    /// along a 75 m lane lay 16 m along a 30 m one, 25 m behind the car, and a car changing
+    /// onto it turned round after it (DBC_Map's lower road, #311).
+    pub fn same_piece(&self, a: usize, b: usize) -> bool {
+        let (la, lb) = (&self.lanes[a], &self.lanes[b]);
+        (lb.start() - la.start()).truncate().length() < 8.0
+            && (lb.end() - la.end()).truncate().length() < 8.0
     }
 
     /// How much further along `b` than along `a` a point beside both lies (see `parallel`):

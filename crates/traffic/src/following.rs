@@ -1149,7 +1149,7 @@ impl AiState {
             // longitudinal fractions aligned, just as realization feedback does.
             let from = &net.lanes[self.lane];
             let target = &net.lanes[c.to];
-            let scale = if (target.start() - from.start()).truncate().length() < 8.0 {
+            let scale = if net.same_piece(self.lane, c.to) {
                 target.length() / from.length().max(0.01)
             } else { 1.0 };
             c.s_to += ds * scale;
@@ -1165,6 +1165,24 @@ impl AiState {
                 for _ in 0..PLAN_LANES {
                     let from_len = net.lanes[self.lane].length();
                     let to_len = net.lanes[c.to].length();
+                    // The lane moved onto ends at a joint beside this one: the change goes on
+                    // onto the lane after it (it is not over half way across, and the car is
+                    // not put back to where that lane ended).
+                    if self.s < from_len && c.s_to >= to_len {
+                        let next = self.change_plan.first().copied().filter(|&n| {
+                            net.lanes[c.to].next.contains(&n) && net.lanes[n].kind == net.lanes[c.to].kind
+                        });
+                        if let Some(n) = next {
+                            c.s_to -= to_len;
+                            c.to = n;
+                            let mut plan = std::mem::take(&mut self.change_plan);
+                            plan.remove(0);
+                            let rest = net.lanes[n].length() - c.s_to;
+                            self.extend_plan(net, n, rest, &mut plan);
+                            self.change_plan = plan;
+                            continue;
+                        }
+                    }
                     if self.s < from_len && c.s_to < to_len { break; }
                     let Some((from, to)) = net.parallel_continuation(self.lane, c.to) else { break };
                     if self.planned_next != Some(from) || self.change_plan.first() != Some(&to) { break; }
@@ -1543,6 +1561,43 @@ mod tests {
         c.drive(&net, 0.5, None, None);
         assert!(c.change.is_some(), "the change is under way");
         same(&c, "changing lanes");
+    }
+
+    /// #311: a change onto a lane beside that starts with this one but ends half way along
+    /// it (a 30 m lane, then the next, beside a 75 m one - DBC_Map's lower road) keeps the
+    /// point it moves towards beside the car, and goes on across that lane's joint.
+    #[test]
+    fn a_change_onto_a_shorter_lane_beside_keeps_level_with_the_car() {
+        let mk = |x: f64, a: f64, b: f64| {
+            LaneBuilder::polyline(vec![DVec3::new(x, a, 0.0), DVec3::new(x, b, 0.0)], LaneKind::Street, 3.0)
+        };
+        // 0: 75 m, then 1; beside it on the left 2 (30 m, from 1.5 m behind), then 3
+        let mut net = Network {
+            lanes: vec![mk(0.0, 0.0, 75.0), mk(0.0, 75.0, 84.0), mk(-4.9, -1.5, 28.5), mk(-4.9, 28.5, 73.5)],
+            ..Default::default()
+        };
+        net.link(1.5);
+        assert_eq!((net.lanes[0].next.as_slice(), net.lanes[2].next.as_slice()), (&[1][..], &[3][..]));
+        assert!((net.beside_s(0, 2, 20.0) - 20.0).abs() < 0.01, "{}", net.beside_s(0, 2, 20.0));
+        let mut c = AiState::new(0, 18.0, 5);
+        c.speed = 12.0;
+        c.desire = 1.0;
+        c.plan_next(&net);
+        c.start_change(&net, 2, 1);
+        let mut last = c.way_point(&net, 0.0);
+        for tick in 0..200 {
+            assert!(c.drive(&net, 0.02, None, None));
+            let p = c.way_point(&net, 0.0);
+            assert!(p.y >= last.y - 1e-6, "tick {tick}: the way went back from {last} to {p}");
+            assert!((p - last).length() < 0.5, "tick {tick}: the way jumped from {last} to {p}");
+            last = p;
+            if c.change.is_none() {
+                break;
+            }
+        }
+        assert!(c.change.is_none(), "the change never ended: {:?}", c.change);
+        assert_eq!(c.lane, 3, "not on the lane after the short one");
+        assert!((last.x + 4.9).abs() < 0.05, "not over on the left lane: {last}");
     }
 
     #[test]
