@@ -122,9 +122,15 @@ fn mesh_skin(mesh: &::legacy_o3d::Mesh, def: &::model::MeshDef, lod_start: usize
                     .find(|(n, _)| n.trim().eq_ignore_ascii_case(b.name.trim()))
                     .map(|(_, id)| *id)
                     .filter(|id| *id >= 0);
+                let mut seen = std::collections::HashSet::new();
                 SkinBone {
                     def_index: id.map(|id| lod_start + id as usize),
-                    weights: b.weights.iter().map(|w| (w.vertex, w.weight)).collect(),
+                    weights: b
+                        .weights
+                        .iter()
+                        .filter(|w| seen.insert(w.vertex))
+                        .map(|w| (w.vertex, w.weight))
+                        .collect(),
                 }
             })
             .collect()
@@ -1112,10 +1118,6 @@ fn driver_seat_step(mut position: f32, mut velocity: f32, push: f32, dt: f32) ->
         velocity = 0.0;
     }
     (position, velocity)
-}
-
-fn skin_matrix(weighted_bones: Mat4, total_weight: f32) -> Mat4 {
-    weighted_bones + Mat4::IDENTITY * (1.0 - total_weight)
 }
 
 #[inline]
@@ -4741,8 +4743,12 @@ fn skin_key(ty: &VehicleType, i: usize, transforms: &[Mat4]) -> Vec<Mat4> {
 /// `transforms` has them, in the mesh's own frame (the renderer puts `transforms[i]` on
 /// top). As in OMSI 2, current submesh matrices deform the vertices directly, without
 /// dividing by the modelled pose. Without `[smoothskin]`, each vertex
-/// follows only its highest-weight bone; with it, all weights and the unweighted residual are
-/// blended. None for a mesh without bones or vertices.
+/// follows only its highest-weight bone; with it, its bones are blended by their weights
+/// divided by the vertex's total, as Omsi.exe's loader normalizes them (0x7c69f0); no
+/// share of a vertex is left on the mesh beyond what an unbound bone holds. (With the rest
+/// of 1 left on the mesh, a total above 1 - the Lion's City 18C's bellows, before their
+/// repeated weights were dropped, added up to 2 to 8 - threw the vertices apart by a
+/// negative multiple of their own position.) None for a mesh without bones or vertices.
 ///
 /// As in Omsi.exe, the bones move the vertices first and the mesh's own motion (its
 /// animations and its `[animparent]`) comes on top: the Agora L's rear half of the bellows
@@ -4798,7 +4804,7 @@ pub fn skin_vertices(
                 nrm.push(q);
                 continue;
             }
-            let m = skin_matrix(sum[v], total[v]);
+            let m = sum[v] * (1.0 / total[v]);
             pos.push(m.transform_point3(p));
             nrm.push(m.transform_vector3(q).normalize_or_zero());
         }
@@ -5195,10 +5201,42 @@ mod tests {
     }
 
     #[test]
-    fn partial_bone_weight_keeps_the_unweighted_bind_pose_contribution() {
-        let bone = Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0));
-        let blend = skin_matrix(bone * 0.25, 0.25);
-        assert_eq!(blend.transform_point3(Vec3::ZERO), Vec3::X);
+    fn repeated_bone_weights_keep_the_first_and_blend_to_one() {
+        let mesh = ::legacy_o3d::Mesh {
+            bones: vec![
+                ::legacy_o3d::Bone {
+                    name: "a".into(),
+                    weights: [(0, 0.5), (0, 0.5), (0, 0.9)]
+                        .map(|(vertex, weight)| ::legacy_o3d::BoneWeight { vertex, weight })
+                        .to_vec(),
+                },
+                ::legacy_o3d::Bone {
+                    name: "b".into(),
+                    weights: [(0, 0.5), (0, 0.5)]
+                        .map(|(vertex, weight)| ::legacy_o3d::BoneWeight { vertex, weight })
+                        .to_vec(),
+                },
+            ],
+            ..Default::default()
+        };
+        let def = ::model::MeshDef {
+            bones: vec![("a".into(), 1), ("b".into(), 2)],
+            smooth_skin: true,
+            ..Default::default()
+        };
+        let skin = mesh_skin(&mesh, &def, 0);
+        assert_eq!(skin[0].weights, [(0, 0.5)]);
+        assert_eq!(skin[1].weights, [(0, 0.5)]);
+
+        let mut ty = skin_test_vehicle(true);
+        ty.meshes[0].skin = skin;
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0)),
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0)),
+        ];
+        let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert!((positions[0] - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-6);
     }
 
     #[test]
@@ -5241,7 +5279,7 @@ mod tests {
     }
 
     #[test]
-    fn smooth_skin_blends_weights_and_bind_pose_residual() {
+    fn smooth_skin_blends_normalized_weights() {
         let ty = skin_test_vehicle(true);
         let transforms = [
             Mat4::IDENTITY,
@@ -5251,7 +5289,8 @@ mod tests {
         ];
         let (positions, normals) = skin_vertices(&ty, 0, &transforms).unwrap();
         assert!((positions[0].x - 6.4).abs() < 1e-6);
-        assert!((positions[1] - Vec3::new(2.2, 0.4, 0.0)).length() < 1e-6);
+        // (its one weight of 0.4 is all the vertex has: it follows that bone entirely)
+        assert!((positions[1] - Vec3::new(4.0, 1.0, 0.0)).length() < 1e-6);
         assert_eq!(positions[2], Vec3::X * 2.0);
         let expected = Vec3::new(-0.7, 0.3, 0.0).normalize();
         assert!((normals[0] - expected).length() < 1e-6);
@@ -5270,7 +5309,7 @@ mod tests {
             Mat4::IDENTITY,
         ];
         let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
-        assert!((positions[0].x - 4e-5).abs() < 1e-8);
+        assert!((positions[0].x - 4.0).abs() < 1e-5);
     }
 
     #[test]
