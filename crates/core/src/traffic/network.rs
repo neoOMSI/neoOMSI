@@ -154,8 +154,8 @@ impl Traffic {
         report_network_defects(&self.net);
         // The network only grew: every lane index stays valid, and the meeting places of the
         // lanes there already are as they were (the new tiles bring their own junctions), so
-        // the junction claims, exit storage and gridlock clocks stand.
-        self.maneuvers.invalidate_network();
+        // the junction claims, exit storage and gridlock clocks stand. The lane-change
+        // approvals are this tick's only (`begin_tick` makes them anew).
         // queued demand and entrance backpressure are stale; the dormant registry (identity
         // and duty) survives because lane indices are stable
         self.population.invalidate_network();

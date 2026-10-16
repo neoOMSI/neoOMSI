@@ -536,7 +536,8 @@ impl ManeuverCoordinator {
         }
     }
 
-    /// Network invalidation: every commitment made against the old version is released.
+    /// Drop this tick's lane-change approvals and claims (a full reset); the next
+    /// `begin_tick` makes them anew. The vehicles' own maneuver states are not touched.
     pub fn invalidate_network(&mut self) {
         self.approved.clear();
         self.claimants.clear();
