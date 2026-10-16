@@ -162,7 +162,14 @@ impl Renderer {
         let cam_w = ro + cam_rel.as_dvec3();
         let eye_off = match self.probe.as_mut() {
             Some(p) => {
-                let to_clouds = (1400.0 - cam_rel.z as f64).max(120.0);
+                // (from the real height to the lowest layer's base)
+                let base = lighting
+                    .cloud_layers
+                    .iter()
+                    .find(|l| l[2] > 0.01)
+                    .map(|l| l[0] as f64)
+                    .unwrap_or(1400.0);
+                let to_clouds = (base - cam_w.z).abs().max(120.0);
                 let far = match p.cube_eye {
                     Some(e) if p.cube_filled => {
                         let m = cam_w - e;

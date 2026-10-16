@@ -502,7 +502,9 @@ impl Renderer {
                     / self.options.shadow_size.max(1) as f32,
             ],
             view_proj: vp_mat.to_cols_array_2d(),
-            cam_pos: cam_rel.extend(1.0).to_array(),
+            // w: the render origin's height, so that the sky knows how high the camera
+            // really is (the origin moves up and down with it)
+            cam_pos: cam_rel.extend(ro.z as f32).to_array(),
             world_origin: [
                 ro.x.rem_euclid(1000.0) as f32,
                 ro.y.rem_euclid(1000.0) as f32,

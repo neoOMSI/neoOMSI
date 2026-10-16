@@ -73,6 +73,10 @@ const CLOUD_FIELD_TILE: f32 = 14000.0; // 70000 (CLOUD_ORIGIN_PERIOD) is a whole
 // while it is drawn; 0 everywhere else).
 var<private> eye_off: vec3<f32> = vec3<f32>(0.0);
 
+fn cloud_eye_z() -> f32 {
+    return camera.cam_pos.z + camera.cam_pos.w + eye_off.z;
+}
+
 fn cloud_ground(d: vec3<f32>, t: f32) -> vec2<f32> {
     return camera.cam_pos.xy + eye_off.xy + camera.world_origin.zw + d.xy * t;
 }
@@ -98,7 +102,7 @@ fn cloud_cover_at(p: vec2<f32>, lod: f32) -> vec3<f32> {
 }
 
 fn cloud_layer_basic(d: vec3<f32>, below: vec3<f32>, pix: f32, jitter: f32) -> vec4<f32> {
-    if (camera.clouds.x <= 0.001 || d.z <= -0.01 || camera.cam_pos.z + eye_off.z > CLOUD_BOTTOM) {
+    if (camera.clouds.x <= 0.001 || d.z <= -0.01 || cloud_eye_z() > CLOUD_BOTTOM) {
         return vec4<f32>(below, 0.0);
     }
     let t0 = cloud_shell(d, CLOUD_BOTTOM);

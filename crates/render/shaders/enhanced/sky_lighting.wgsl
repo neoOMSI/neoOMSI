@@ -9,14 +9,6 @@
 //   the heaps stand and how much cover each needs to appear; its blue channel and a height
 //   gradient round their tops and flatten their bases; the weather's cover (Cumulus 1-3,
 //   Overcast) and the weather's own cloud picture nudge how much of it appears;
-// * the detail volume (3-D Worley billows, repeating every 420 m) eats the edges, most at
-//   the thin rims and least in the dense cores;
-// * light: the sun through the cloud towards it (six steps growing 1.7 times, 1.4 km in
-//   all) with Hillaire's approximation of multiple scattering (three octaves of weaker
-//   extinction and a flatter phase), a two-lobe Henyey-Greenstein phase (a silver lining
-//   towards the sun, a little back-scatter away from it), the sky's light from above and
-//   the ground's from below by height, integrated per step the energy-conserving
-//   Frostbite way; far clouds take on the air's colour.
 // The sky cube keeps the result in a fixed world frame (lib.rs `SKY_CUBE_SIZE`): each
 // redraw starts the steps at another random point and is blended into what is there, so
 // the grain of a few dozen steps averages out over the frames.
@@ -48,7 +40,7 @@ fn linearstep(a: f32, b: f32, v: f32) -> f32 {
 }
 
 fn cloud_height(d: vec3<f32>, t: f32) -> f32 {
-    return camera.cam_pos.z + eye_off.z + d.z * t + t * t * (1.0 - d.z * d.z) / (2.0 * EARTH_R);
+    return cloud_eye_z() + d.z * t + t * t * (1.0 - d.z * d.z) / (2.0 * EARTH_R);
 }
 
 // Distance along d at which the ray reaches height h over the curved ground (the far root
@@ -56,7 +48,7 @@ fn cloud_height(d: vec3<f32>, t: f32) -> f32 {
 fn cloud_shell(d: vec3<f32>, h: f32) -> f32 {
     let a = (1.0 - d.z * d.z) / (2.0 * EARTH_R);
     let b = d.z;
-    let c = camera.cam_pos.z + eye_off.z - h;
+    let c = cloud_eye_z() - h;
     if (a < 1e-12) {
         return select(-1.0, -c / b, abs(b) > 1e-6 && -c / b > 0.0);
     }
@@ -128,9 +120,17 @@ fn layer_coverage(p: vec2<f32>, cover: f32, li: f32) -> f32 {
     return clamp(0.15 + cover * 0.75 + (field - 0.5) * 0.2, 0.0, 1.0);
 }
 
-fn layer_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool, li: f32, shape: f32) -> f32 {
+const LAYER_SIGMA: f32 = 0.07;
+const LAYER_EDGE_SOFTNESS: f32 = 0.16;
+const CLOUD_BILLOW_PERIOD: f32 = 1750.0;
+const LAYER_BILLOW_STRENGTH: f32 = 0.45;
+const LAYER_FINE_STRENGTH: f32 = 0.3;
+
+// x extinction (1/m) at p, y how deep in its billow p lies (0 at the rim .. 1 inside).
+// `detail`: 0 the heap alone, 1 with the lumps, 2 with the fine billows as well
+fn layer_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: i32, li: f32, shape: f32) -> vec2<f32> {
     if (h <= 0.0 || h >= 1.0) {
-        return 0.0;
+        return vec2<f32>(0.0);
     }
     let off = vec2<f32>(5300.0, 2900.0) * li;
     let drift = camera.clouds.yz * CLOUD_DRIFT_UNIT * (1.0 + li);
@@ -140,18 +140,35 @@ fn layer_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool, li: 
     let n = mix(0.3 * stack, stack, shape) + pow(1.0 - h, 16.0);
     var m = (s.r - n - lo) / (1.0 - lo);
     m = m * (linearstep(0.0, 0.1, h) - linearstep(0.6, 1.0, h));
-    if (m + coverage - 1.0 <= 0.0) {
-        return 0.0;
+    // the heap above the weather's cut (the billows only take away)
+    var c = m + coverage - 1.0;
+    if (c <= 0.0) {
+        return vec2<f32>(0.0);
     }
-    if (detail) {
-        let q = vec3<f32>(p.xy + drift * 1.3 + off, p.z) / CLOUD_DETAIL_PERIOD;
-        let dl = textureSampleLevel(t_cloud_detail, s_cloud, q, max(lod - 2.0, 0.0)).r;
-        m = m - dl * smoothstep(1.0, 0.5, m) * CLOUD_DETAIL_STRENGTH * mix(0.5, 1.0, shape);
+    // a thin heap is a translucent wisp, a deep one dense (sharp-rimmed scraps of thin heaps
+    // looked cut out of paper)
+    let body = mix(0.12, 1.0, smoothstep(0.0, 0.3, c));
+    if (detail > 0) {
+        let q = vec3<f32>(p.xy + drift * 1.3 + off, p.z);
+        let lumps = textureSampleLevel(t_cloud_detail, s_cloud, q / CLOUD_BILLOW_PERIOD, max(lod - 0.5, 0.0)).r;
+        var e = lumps * LAYER_BILLOW_STRENGTH;
+        if (detail > 1) {
+            let fine = textureSampleLevel(t_cloud_detail, s_cloud, q / CLOUD_DETAIL_PERIOD, max(lod - 2.0, 0.0)).r;
+            // (the volume is high between its cells: taken away it leaves round billows,
+            // inverted thin wisps)
+            e = e + mix(1.0 - fine, fine, linearstep(0.05, 0.3, h)) * LAYER_FINE_STRENGTH;
+        }
+        // a flat deck is eaten less
+        e = e * mix(0.45, 1.0, shape) * coverage;
+        c = (c - e) / max(1.0 - e, 0.05);
+        if (c <= 0.0) {
+            return vec2<f32>(0.0);
+        }
     }
-    m = smoothstep(0.0, mix(0.45, CLOUD_EDGE_SOFTNESS, shape), m + coverage - 1.0);
-    m = m * min(h / CLOUD_BOTTOM_SOFTNESS, 1.0);
+    var d = smoothstep(0.0, mix(0.4, LAYER_EDGE_SOFTNESS, shape), c);
+    d = d * min(h / CLOUD_BOTTOM_SOFTNESS, 1.0) * body;
     // the higher the layer, the thinner its cloud
-    return m * CLOUD_SIGMA / (1.0 + 0.5 * li * li);
+    return vec2<f32>(d * LAYER_SIGMA / (1.0 + 0.6 * li * li), clamp(c * 3.0, 0.0, 1.0));
 }
 
 struct LayerOut {
@@ -168,7 +185,7 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
     let top = lay.y;
     let shape = lay.w;
     let fl = f32(li);
-    if (lay.z <= 0.01 || top <= base || camera.cam_pos.z + eye_off.z > base) {
+    if (lay.z <= 0.01 || top <= base || cloud_eye_z() > base) {
         return o;
     }
     let t0 = cloud_shell(d, base);
@@ -177,31 +194,67 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
     }
     let sd = normalize(camera.sun_dir.xyz);
     let t1 = min(cloud_shell(d, top), min(t0 + 12000.0, CLOUD_MAX_DIST + 6000.0));
-    let ds = (t1 - t0) / f32(steps);
+    // steps finer than the span over the budget inside the cloud, two and a half times
+    // that through clear air (the empty steps cost a lookup of the heap alone)
+    let ds = (t1 - t0) / f32(steps) * 0.8;
     let lod = log2(max(t0 * pix * f32(textureDimensions(t_cloud_shape).x) / CLOUD_SHAPE_PERIOD, 1.0));
     let cos_sun = dot(d, sd);
     let k = select(0.0, closed, li == 0);
     let coverage = mix(layer_coverage(cloud_ground(d, t0), lay.z, fl), 1.0, k);
     let span = top - base;
+    // looking away from the sun the rims and the gaps between the billows scatter little
+    // light towards the eye (dark edges, bright cores); towards it the light shining
+    // through them wins; a closed grey deck has none of it
+    let rims = (1.0 - smoothstep(0.2, 0.9, cos_sun)) * (1.0 - k);
     var t = t0 + ds * cloud_jitter;
+    var big = true;
+    var empty = 0;
     for (var i = 0; i < steps; i = i + 1) {
+        if (t > t1) {
+            break;
+        }
         let p = vec3<f32>(cloud_ground(d, t), cloud_height(d, t));
         let h = (p.z - base) / span;
-        let sigma = layer_sigma(p, h, coverage, lod, true, fl, shape);
-        if (sigma > 1e-6) {
-            // the sunlight reaching p through the cloud towards the sun
+        let sd2 = layer_sigma(p, h, coverage, lod, 2, fl, shape);
+        let sigma = sd2.x;
+        if (sigma <= 1e-6) {
+            t = t + select(ds, ds * 2.5, big);
+            // two fine steps of clear air: back to the big ones
+            empty = empty + 1;
+            big = big || empty >= 2;
+            continue;
+        }
+        empty = 0;
+        if (big) {
+            big = false;
+            // a cloud starts within the last big step: back half of it, so that its rim is
+            // marched with the fine steps
+            if (i > 0) {
+                t = t - ds * 1.25;
+                continue;
+            }
+        }
+        {
+            // the sunlight reaching p through the cloud towards the sun: five steps, the
+            // first through the fine billows, the first four (~900 m) through the lumps so
+            // that they shade each other, and one far one for the towers kilometres off
             var od = 0.0;
             var ls = 40.0 * (1.0 + 0.5 * fl);
             var lt = ls * 0.5;
-            for (var j = 0; j < 6; j = j + 1) {
+            for (var j = 0; j < 5; j = j + 1) {
                 let q = p + sd * lt;
                 let hq = (q.z - base) / span;
                 if (hq >= 1.0) {
                     break;
                 }
-                od = od + layer_sigma(q, hq, coverage, lod + 1.0, j < 2, fl, shape) * ls;
-                ls = ls * 1.7;
+                od = od + layer_sigma(q, hq, coverage, lod + 1.0, select(select(0, 1, j < 4), 2, j == 0), fl, shape).x * ls;
+                ls = ls * 1.8;
                 lt = lt + ls;
+            }
+            let qf = p + sd * (lt + 900.0);
+            let hf = (qf.z - base) / span;
+            if (hf < 1.0) {
+                od = od + layer_sigma(qf, hf, coverage, lod + 2.0, 0, fl, shape).x * 1200.0;
             }
             var direct = vec3<f32>(0.0);
             var a = 1.0;
@@ -215,8 +268,10 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
                 c = c * 0.5;
             }
             let amb = mix(ground * 0.45 + sky_top * 0.55, sky_top * 1.1, clamp(h * 1.4, 0.0, 1.0));
-            let powder = mix(1.0, 1.0 - exp(-sigma * 600.0), 0.5);
-            let light = (direct * powder * CLOUD_MS_GAIN + amb * 1.6 * mix(0.55, 1.0, smoothstep(0.0, 0.55, h))) * (1.0 - 0.35 * k - 0.3 * enh.weather.z);
+            let depth_p = 0.05 + pow(sd2.y, mix(0.5, 2.0, linearstep(0.3, 0.85, h)));
+            let vert_p = pow(mix(0.1, 1.0, linearstep(0.07, 0.14, h)), 0.8);
+            let inscatter = mix(1.0, mix(0.3, 1.15, clamp(depth_p * vert_p, 0.0, 1.0)), rims);
+            let light = (direct * inscatter * CLOUD_MS_GAIN + amb * 1.6 * mix(0.5, 1.0, smoothstep(0.0, 0.55, h)) * mix(1.0, inscatter, 0.5)) * (1.0 - 0.35 * k - 0.3 * enh.weather.z);
             let dt = exp(-sigma * ds);
             o.acc = o.acc + o.trans * light * (1.0 - dt);
             o.hit = o.hit + t * o.trans * (1.0 - dt);
@@ -304,7 +359,7 @@ fn fs_enhanced(in: VsOut) -> @location(0) vec4<f32> {
     var ld = d;
     let ref_base = cloud_ref_base();
     let tb = cloud_shell(d, ref_base);
-    if (tb > 0.0 && camera.cam_pos.z < ref_base) {
+    if (tb > 0.0 && cloud_eye_z() < ref_base) {
         ld = normalize(d * min(tb, CLOUD_MAX_DIST) - enh.eye.xyz);
     }
     let cube = textureSampleLevel(t_sky_cube, s_lin, vec3<f32>(ld.x, ld.z, ld.y), 0.0);
