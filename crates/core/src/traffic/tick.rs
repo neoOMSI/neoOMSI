@@ -26,6 +26,7 @@ impl Traffic {
             self.tick_plan(dt, player, &others, player_standing, walkers, debug);
         // 4/5. Realize bodies/scripts, then commit realized feedback.
         let t_par = std::time::Instant::now();
+        self.keep_poses_before_step();
         self.tick_realize(dt, &mut frame.frames, &frame.previous_odometer);
         self.tick_commit_feedback(dt, &frame.previous_odometer);
         self.tick_split = [

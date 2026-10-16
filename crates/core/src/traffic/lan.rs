@@ -209,6 +209,7 @@ impl Traffic {
             track_start: None,
             consist_reversed: false,
             train: false,
+            drawn_from: Vec::new(),
         });
         self.cars.len() - 1
     }

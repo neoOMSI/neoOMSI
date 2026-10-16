@@ -396,6 +396,68 @@ impl Traffic {
     }
 
 
+    /// How far the frame being drawn is between the last step and the next (the steps'
+    /// accumulator over the step, 0..1). Left at 1, `sync` draws the simulated poses.
+    pub fn set_tick_fraction(&mut self, alpha: f32) {
+        self.drawn_alpha = alpha.clamp(0.0, 1.0);
+    }
+
+    /// Draw every vehicle `drawn_alpha` of the way from its pose before the last step to its
+    /// pose now, keeping the simulated poses in `sim_poses` for `draw_simulated`. The steps
+    /// come at 50 Hz: drawn where the simulation has them, the vehicles stood still on one
+    /// frame in six at 60 fps, and on two in three at 144 fps.
+    fn draw_between_steps(&mut self) {
+        self.sim_poses.clear();
+        if self.drawn_alpha >= 1.0 || self.mirror {
+            return;
+        }
+        let alpha = self.drawn_alpha;
+        for c in &mut self.cars {
+            if c.drawn_from.len() != 1 + c.vehicle.trailers.len() {
+                continue;
+            }
+            let start = self.sim_poses.len();
+            push_part_poses(&c.vehicle, &mut self.sim_poses);
+            let drawn = c.drawn_from.iter().zip(&self.sim_poses[start..])
+                .map(|(&from, &to)| pose_between(from, to, alpha));
+            set_part_poses(&mut c.vehicle, drawn);
+        }
+    }
+
+    /// Put the vehicles back where the simulation has them after `draw_between_steps`
+    /// (the cars are the same and in the same order in between).
+    fn draw_simulated(&mut self) {
+        if self.sim_poses.is_empty() {
+            return;
+        }
+        let mut poses = self.sim_poses.iter().copied();
+        for c in &mut self.cars {
+            if c.drawn_from.len() != 1 + c.vehicle.trailers.len() {
+                continue;
+            }
+            let n = c.drawn_from.len();
+            set_part_poses(&mut c.vehicle, poses.by_ref().take(n));
+        }
+        self.sim_poses.clear();
+    }
+
+    /// Run `f` on the traffic with the vehicles where `sync` draws them, for what else is
+    /// drawn on them after `sync` (their lights' coronas and spots).
+    pub(crate) fn with_drawn_poses<R>(&mut self, f: impl FnOnce(&Self) -> R) -> R {
+        self.draw_between_steps();
+        let r = f(self);
+        self.draw_simulated();
+        r
+    }
+
+    /// Remember every vehicle's pose before a step moves it (see `draw_between_steps`).
+    pub(crate) fn keep_poses_before_step(&mut self) {
+        for c in &mut self.cars {
+            c.drawn_from.clear();
+            push_part_poses(&c.vehicle, &mut c.drawn_from);
+        }
+    }
+
     /// How long the frame being drawn is (s), for the drivers' animations.
     pub fn set_frame_dt(&mut self, dt: f32) {
         self.frame_dt = dt;
@@ -511,6 +573,8 @@ impl Traffic {
         for r in std::mem::take(&mut self.released) {
             world.release_vehicle(renderer, scene, r);
         }
+        // (drawn between the last two steps from here on, simulated again at the end)
+        self.draw_between_steps();
         self.sync_drivers(world, renderer, scene);
         // traffic light lamps: the lamp's script (or the stock rules) turns the state of its
         // light into the `[visible] red|yellow|green 1` meshes and the coronas, and moves
@@ -844,6 +908,7 @@ impl Traffic {
                 }
             }
         }
+        self.draw_simulated();
     }
 
 
@@ -890,10 +955,48 @@ impl Traffic {
 
 }
 
+/// The poses of a vehicle and its coupled parts, in order.
+fn push_part_poses(v: &VehicleInstance, out: &mut Vec<PartPose>) {
+    out.push((v.position, v.heading, v.pitch, v.bank));
+    out.extend(v.trailers.iter().map(|t| t.drawn_pose()));
+}
+
+/// Draw a vehicle and its coupled parts at `poses`, in the order of `push_part_poses`.
+fn set_part_poses(v: &mut VehicleInstance, mut poses: impl Iterator<Item = PartPose>) {
+    if let Some((position, heading, pitch, bank)) = poses.next() {
+        v.position = position;
+        v.heading = heading;
+        v.pitch = pitch;
+        v.bank = bank;
+    }
+    for (t, pose) in v.trailers.iter_mut().zip(poses) {
+        t.set_drawn_pose(pose);
+    }
+}
+
+/// Further than this (m) between two steps a part was put somewhere else, not driven
+/// there: it is drawn where it is now rather than sliding across.
+const DRAWN_JUMP: f64 = 5.0;
+
+/// The pose `alpha` (0..1) of the way from `from` to `to`, the heading the short way round.
+fn pose_between(from: PartPose, to: PartPose, alpha: f32) -> PartPose {
+    if (to.0 - from.0).length() > DRAWN_JUMP {
+        return to;
+    }
+    let a = alpha as f64;
+    let turn = (to.1 - from.1 + 180.0).rem_euclid(360.0) - 180.0;
+    (
+        from.0.lerp(to.0, a),
+        (from.1 + turn * a).rem_euclid(360.0),
+        from.2 + (to.2 - from.2) * alpha,
+        from.3 + (to.3 - from.3) * alpha,
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Traffic;
-    use ::traffic::{Network, SIM_DT};
+    use super::*;
+    use ::traffic::SIM_DT;
 
     /// The traffic steps at 50 Hz whatever the frame rate; the drivers are drawn every
     /// frame and must move on by the frame's time. On the last step's 20 ms they moved
@@ -910,6 +1013,74 @@ mod tests {
             }
             t.set_frame_dt(frame);
             assert!((t.driver_dt() - frame).abs() < 1e-7, "drivers moved {} s", t.driver_dt());
+        }
+    }
+
+    #[test]
+    fn a_pose_between_steps_goes_the_short_way_round() {
+        let from = (DVec3::new(0.0, 0.0, 1.0), 350.0, 1.0, -2.0);
+        let to = (DVec3::new(0.2, 0.4, 1.0), 10.0, 3.0, 2.0);
+        assert_eq!(pose_between(from, to, 0.0), from);
+        let half = pose_between(from, to, 0.5);
+        assert!((half.0 - DVec3::new(0.1, 0.2, 1.0)).length() < 1e-12);
+        assert!(half.1.min(360.0 - half.1) < 1e-9, "heading {}", half.1);
+        assert_eq!((half.2, half.3), (2.0, 0.0));
+        let end = pose_between(from, to, 1.0);
+        assert!((end.0 - to.0).length() < 1e-12 && (end.1 - to.1).abs() < 1e-9);
+        // put somewhere else between the steps: no slide across
+        let far = (DVec3::new(30.0, 0.0, 1.0), 90.0, 0.0, 0.0);
+        assert_eq!(pose_between(from, far, 0.3), far);
+    }
+
+    #[test]
+    fn a_vehicle_drawn_between_steps_gets_its_simulated_pose_back_exactly() {
+        let ty = std::sync::Arc::new(::simulation::VehicleType::of_definition(Default::default()));
+        let host = ::simulation::VehicleHost::new(::simulation::SimClock::default());
+        let mut v = VehicleInstance::new(ty, host);
+        (v.position, v.heading, v.pitch, v.bank) = (DVec3::new(10.0, 20.0, 3.0), 359.5, 0.5, 0.25);
+        let mut before = Vec::new();
+        push_part_poses(&v, &mut before);
+        (v.position, v.heading, v.pitch, v.bank) = (DVec3::new(10.1, 20.3, 3.01), 0.7, 0.4, 0.3);
+        let mut simulated = Vec::new();
+        push_part_poses(&v, &mut simulated);
+        set_part_poses(&mut v, before.iter().zip(&simulated).map(|(&a, &b)| pose_between(a, b, 0.25)));
+        assert!((v.position - DVec3::new(10.025, 20.075, 3.0025)).length() < 1e-9);
+        assert!((v.heading - 359.8).abs() < 1e-9, "heading {}", v.heading);
+        set_part_poses(&mut v, simulated.iter().copied());
+        assert_eq!((v.position, v.heading, v.pitch, v.bank), simulated[0], "the simulation's pose is untouched");
+    }
+
+    /// A car at a steady 50 km/h, stepped at 50 Hz and drawn at 60 and 144 fps: drawn at its
+    /// simulated pose, it stood still on every frame without a step; drawn between its last
+    /// two poses, it moves on by the frame's time on every frame.
+    #[test]
+    fn drawn_between_steps_a_steady_car_moves_on_every_frame() {
+        let v = 50.0 / 3.6;
+        for fps in [60.0f32, 144.0] {
+            let frame = 1.0 / fps;
+            let (mut accum, mut t) = (0.0f32, 0.0f64);
+            let (mut from, mut to) = (0.0f64, 0.0f64);
+            let mut last: Option<f64> = None;
+            let (mut least, mut most) = (f64::MAX, 0.0f64);
+            for k in 0..(fps as usize * 4) {
+                let (steps, step) = ::traffic::advance_fixed_clock(&mut accum, frame, SIM_DT, 2);
+                for _ in 0..steps {
+                    t += step as f64;
+                    from = to;
+                    to = v * t;
+                }
+                let alpha = (accum / SIM_DT).clamp(0.0, 1.0) as f64;
+                let drawn = from + (to - from) * alpha;
+                // (from the second step on: before it there is no pose to come from)
+                if let Some(l) = last.filter(|_| k > 4) {
+                    least = least.min(drawn - l);
+                    most = most.max(drawn - l);
+                }
+                last = Some(drawn);
+            }
+            let even = v * frame as f64;
+            assert!(least > 0.9 * even && most < 1.1 * even,
+                "{fps} fps: moved {least:.4}..{most:.4} m a frame, {even:.4} m expected");
         }
     }
 }

@@ -250,7 +250,13 @@ pub struct AiCar {
     pub(crate) consist_reversed: bool,
     /// A `.zug` train (not a tram): asks for a level crossing from afar.
     pub(crate) train: bool,
+    /// Its pose and its coupled parts' before the last step: it is drawn between that and
+    /// where the step put it (see `Traffic::draw_between_steps`).
+    pub(crate) drawn_from: Vec<PartPose>,
 }
+
+/// Where a vehicle part is drawn: position, heading, pitch and bank.
+pub(crate) type PartPose = (DVec3, f64, f32, f32);
 
 /// Where a vehicle's body stands, for the checks that go by geometry rather than by lanes:
 /// the car it belongs to (a trailer or rear section counts as its own footprint), centre,
@@ -468,6 +474,12 @@ pub struct Traffic {
     /// Seconds of the frame being drawn (set before `sync`): the drivers' animations run
     /// on it, not on the traffic's steps, which a frame may have none or two of.
     frame_dt: f32,
+    /// How far the frame being drawn is from the last step to the next (0..1, set before
+    /// `sync`): the vehicles are drawn that far from their pose before the last step to
+    /// their pose now. 1 draws them where the simulation has them.
+    drawn_alpha: f32,
+    /// The simulated poses of the vehicles while `sync` draws them between steps.
+    sim_poses: Vec<PartPose>,
     /// Game time since the lamps' scripts last ran (see `sync`).
     lamp_dt: f32,
     /// `OMSI_TRACE_AI=<file.csv>`: every car's pose, steering and speed, every frame.

@@ -106,17 +106,24 @@ impl App {
             self.scene.as_mut(),
             self.camera.as_ref(),
         ) {
-            let mut vehicles: Vec<&::simulation::VehicleInstance> = Vec::new();
-            if let Some(p) = self.player.as_ref() {
-                vehicles.push(&p.vehicle);
-            }
-            vehicles.extend(self.placed.iter().map(|q| &q.vehicle));
-            if let Some(t) = self.traffic.as_ref() {
-                vehicles.extend(t.cars().iter().map(|c| &c.vehicle));
-            }
-            vehicles.extend(self.remotes.remotes.values().map(|r| r.vehicle()));
             let __tc = Instant::now();
-            lights::collect(w, scene, &daylight, cam.position, &vehicles);
+            // (the AI vehicles' lights where their bodies are drawn, between two steps)
+            let mut collect = |traffic: Option<&traffic::Traffic>| {
+                let mut vehicles: Vec<&::simulation::VehicleInstance> = Vec::new();
+                if let Some(p) = self.player.as_ref() {
+                    vehicles.push(&p.vehicle);
+                }
+                vehicles.extend(self.placed.iter().map(|q| &q.vehicle));
+                if let Some(t) = traffic {
+                    vehicles.extend(t.cars().iter().map(|c| &c.vehicle));
+                }
+                vehicles.extend(self.remotes.remotes.values().map(|r| r.vehicle()));
+                lights::collect(w, scene, &daylight, cam.position, &vehicles);
+            };
+            match self.traffic.as_mut() {
+                Some(t) => t.with_drawn_poses(|t| collect(Some(t))),
+                None => collect(None),
+            }
             *self.profile.entry("lights.collect").or_default() += __tc.elapsed().as_secs_f64();
             {
                 let t = *lights::TIMES.lock().unwrap_or_else(|e| e.into_inner());

@@ -4183,6 +4183,20 @@ impl TrailerPart {
         changed
     }
 
+    /// Where the part is drawn: position, heading, pitch and bank.
+    pub fn drawn_pose(&self) -> (DVec3, f64, f32, f32) {
+        (self.position, self.heading, self.pitch, self.bank)
+    }
+
+    /// Draw the part at another pose (between two simulation steps) without moving what it
+    /// follows by (its pivot, its axles); the caller puts the `drawn_pose` it saved back.
+    pub fn set_drawn_pose(&mut self, (position, heading, pitch, bank): (DVec3, f64, f32, f32)) {
+        self.position = position;
+        self.heading = heading;
+        self.pitch = pitch;
+        self.bank = bank;
+    }
+
     /// A trailer follows its tractor's heading; it pitches between the coupling and the
     /// ground under its axle, and leans as the vehicle does.
     pub fn body_rotation(&self) -> Mat4 {

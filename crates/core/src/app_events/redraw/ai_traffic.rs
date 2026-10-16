@@ -144,6 +144,8 @@ impl App {
                 for _ in 0..steps {
                     t.tick(step, self.player.as_ref().map(|p| player_outline(p)));
                 }
+                // (drawn between the last step and the next, see `Traffic::sync`)
+                t.set_tick_fraction(self.sim_accum / SIM_DT);
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());
                     let rail = self

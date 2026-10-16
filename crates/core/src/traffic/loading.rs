@@ -363,6 +363,8 @@ impl Traffic {
             people_grid: HashMap::new(),
             initial: true,
             frame_dt: 0.0,
+            drawn_alpha: 1.0,
+            sim_poses: Vec::new(),
             lamp_dt: 0.0,
             trace: open_trace(),
             logged_hard: Default::default(),
@@ -464,6 +466,8 @@ impl Traffic {
             people_grid: HashMap::new(),
             initial: true,
             frame_dt: 0.0,
+            drawn_alpha: 1.0,
+            sim_poses: Vec::new(),
             lamp_dt: 0.0,
             trace: Default::default(),
             logged_hard: Default::default(),
@@ -1113,6 +1117,7 @@ impl Traffic {
             train: false,
             seed,
             scheme,
+            drawn_from: Vec::new(),
         });
         id
     }
