@@ -1288,13 +1288,21 @@ impl Network {
     /// clockwise on a left-hand-traffic map). Where the map sets no priorities, traffic on
     /// the ring goes before traffic entering it (`must_yield`), not "from the right".
     pub fn compute_rings(&mut self) {
-        let n = self.lanes.len();
-        let mut ring = vec![false; n];
+        self.ring = vec![false; self.lanes.len()];
+        self.mark_rings(0..self.lanes.len());
+        let count = self.ring.iter().filter(|&&r| r).count();
+        if count > 0 {
+            log::info!("path network: {count} lanes run round roundabouts");
+        }
+    }
+
+    /// Mark the roundabouts that run through any of `starts` (see `compute_rings`).
+    fn mark_rings(&mut self, starts: std::ops::Range<usize>) {
         let short = |l: &Lane| l.kind == LaneKind::Street && l.length() <= RING_LANE_MAX;
         // circulating anticlockwise, the compass heading falls by a full turn
         let turn = if self.left_hand { 360.0 } else { -360.0 };
-        for start in 0..n {
-            if ring[start] || !short(&self.lanes[start]) {
+        for start in starts {
+            if self.ring[start] || !short(&self.lanes[start]) {
                 continue;
             }
             // depth-first along `next`: (lane, path so far, length so far, heading change)
@@ -1332,14 +1340,9 @@ impl Network {
                 }
             }
             for i in found.unwrap_or_default() {
-                ring[i] = true;
+                self.ring[i] = true;
             }
         }
-        let count = ring.iter().filter(|&&r| r).count();
-        if count > 0 {
-            log::info!("path network: {count} lanes run round roundabouts");
-        }
-        self.ring = ring;
     }
 
     /// Does `lane` run round a roundabout?
@@ -1668,6 +1671,12 @@ impl Network {
         // every lane now leads (a dead end may go on into the new tiles)
         self.conflicts_from(first);
         self.update_reach_from(first);
+        // A roundabout that is new runs through a new lane: one wholly on the old tiles was
+        // found already, and one across the tile edge was not closed before. So only the
+        // new lanes are searched from (`compute_rings` over the whole network on every tile
+        // would cost what loading the map does).
+        self.ring.resize(end, false);
+        self.mark_rings(first..end);
         self.bump_version();
         first..end
     }
@@ -1902,6 +1911,48 @@ mod extend_tests {
         assert_eq!(grown.lanes[2].next, vec![5]);
         assert!(grown.prev[1].is_empty() && grown.prev[3].is_empty());
         assert_eq!(grown.prev[4], vec![0]);
+    }
+
+    /// The four quarters of a roundabout of 15 m radius, circulating anticlockwise.
+    fn roundabout() -> Vec<Lane> {
+        let quarter = std::f64::consts::FRAC_PI_2 * 15.0;
+        let mut out: Vec<Lane> = Vec::new();
+        let (mut at, mut heading) = (DVec3::new(15.0, 0.0, 0.0), 0.0);
+        for _ in 0..4 {
+            let l = LaneBuilder::arc(at, heading, quarter, -15.0, 0.0, LaneKind::Street, 3.0);
+            (at, heading) = (l.end(), l.end_heading() as f64);
+            out.push(l);
+        }
+        out
+    }
+
+    #[test]
+    fn a_roundabout_on_a_streamed_tile_is_a_ring() {
+        let ring = roundabout();
+        let mut whole = Network {
+            lanes: ring.clone(),
+            ..Default::default()
+        };
+        whole.link(1.5);
+        assert!((0..4).all(|i| whole.is_ring(i)), "{:?}", whole.ring);
+        // half of it with the first tile, the rest with the next
+        let mut grown = Network {
+            lanes: ring[..2].to_vec(),
+            ..Default::default()
+        };
+        grown.link(1.5);
+        assert!(!grown.is_ring(0));
+        grown.extend(ring[2..].to_vec(), 1.5);
+        assert!((0..4).all(|i| grown.is_ring(i)), "across the tile edge: {:?}", grown.ring);
+        // all of it with a later tile
+        let mut later = Network {
+            lanes: vec![straight(500.0, 0.0, 100.0, 1, (5, 0))],
+            ..Default::default()
+        };
+        later.link(1.5);
+        later.extend(ring, 1.5);
+        assert!(!later.is_ring(0));
+        assert!((1..5).all(|i| later.is_ring(i)), "on the new tile: {:?}", later.ring);
     }
 
     #[test]
