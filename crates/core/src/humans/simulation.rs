@@ -289,6 +289,8 @@ impl Humans {
             }
             blocks.extend(pb.blocks());
         }
+        // somebody waiting for a bus steps aside for a vehicle edging up to them
+        self.make_room(dt, &blocks);
         let mut wants: Vec<Want> = Vec::with_capacity(self.people.len());
         for i in 0..self.people.len() {
             self.people[i].t_state += dt;
@@ -416,3 +418,76 @@ impl Humans {
         taken_ticket
     }
 }
+
+/// How far (m) round a moving vehicle, and how far in front of it, somebody waiting for a
+/// bus steps out of its way, and how fast (m/s).
+const MAKE_ROOM_MARGIN: f64 = 0.5;
+const MAKE_ROOM_AHEAD: f64 = 1.5;
+const MAKE_ROOM_SPEED: f64 = 1.4;
+
+impl Humans {
+    /// Passengers waiting at a stop step sideways out of the way of a vehicle that edges up
+    /// to them, as people at a kerb do for a bus swinging out of its bay. They stand still
+    /// otherwise (they wait where their stop puts them), and the AI bus that had to stop for
+    /// one who stood in its sweep waited for good, the passenger waiting for it (#338).
+    pub(super) fn make_room(&mut self, dt: f32, blocks: &[Block]) {
+        for i in 0..self.people.len() {
+            let p = &self.people[i];
+            if p.puppet.is_some() || p.remote || p.place != Place::Ground {
+                continue;
+            }
+            let State::Pax(x) = &p.state else { continue };
+            // (not one dealing with a bus - walking to its door, waiting for it to open)
+            if x.inside.is_some() || x.bus.is_some() || p.vel.length() > 0.3 {
+                continue;
+            }
+            let at = p.position.truncate();
+            let Some(step) = make_room_step(at, blocks, dt as f64) else {
+                continue;
+            };
+            let person = &mut self.people[i];
+            person.position.x += step.x;
+            person.position.y += step.y;
+            if let Some(x) = self.pax_mut(i) {
+                x.pos.x += step.x;
+                x.pos.y += step.y;
+            }
+        }
+    }
+}
+
+/// The step (m) somebody standing at `at` takes this frame out of the way of the moving
+/// vehicles `blocks`: sideways, away from the vehicle's middle, until they are
+/// `MAKE_ROOM_MARGIN` clear of its side. `None`: no moving vehicle near enough.
+pub(super) fn make_room_step(at: DVec2, blocks: &[Block], dt: f64) -> Option<DVec2> {
+    let mut step: Option<DVec2> = None;
+    for b in blocks {
+        let speed = b.vel.length();
+        if speed < 0.2 {
+            continue;
+        }
+        let fwd = DVec2::new(b.heading.sin(), b.heading.cos());
+        let right = DVec2::new(b.heading.cos(), -b.heading.sin());
+        let rel = at - b.center;
+        let (along, across) = (rel.dot(fwd), rel.dot(right));
+        // (the end it moves towards reaches further)
+        let forward = b.vel.dot(fwd) >= 0.0;
+        let ahead = if forward { MAKE_ROOM_AHEAD } else { 0.0 };
+        let behind = if forward { 0.0 } else { MAKE_ROOM_AHEAD };
+        let clear = b.half.x + MAKE_ROOM_MARGIN;
+        if along > b.half.y + MAKE_ROOM_MARGIN + ahead
+            || along < -(b.half.y + MAKE_ROOM_MARGIN + behind)
+            || across.abs() >= clear
+        {
+            continue;
+        }
+        let side = if across >= 0.0 { 1.0 } else { -1.0 };
+        let need = side * clear - across;
+        let s = right * need.clamp(-MAKE_ROOM_SPEED * dt, MAKE_ROOM_SPEED * dt);
+        if step.is_none_or(|o| s.length() > o.length()) {
+            step = Some(s);
+        }
+    }
+    step
+}
+

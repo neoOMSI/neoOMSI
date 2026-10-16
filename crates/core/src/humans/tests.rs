@@ -1147,3 +1147,76 @@ fn a_ticket_sale_point_on_the_floor_is_the_money_tray() {
         }
     }
 }
+
+/// A bus 12 m long and 2.5 m wide heading north with its middle at (0, `y`), crawling on.
+fn crawling_bus(y: f64, speed: f64) -> Block {
+    Block {
+        center: DVec2::new(0.0, y),
+        half: DVec2::new(1.25, 6.0),
+        heading: 0.0,
+        vel: DVec2::new(0.0, speed),
+    }
+}
+
+/// #338: somebody waiting at the kerb steps sideways out of the way of a bus edging up to
+/// them - beside it or just in front of it - and no further than its side and a margin;
+/// a bus standing still moves nobody.
+#[test]
+fn a_waiting_passenger_steps_aside_for_a_bus_edging_up_to_them() {
+    use super::simulation::make_room_step;
+    let walk_off = |mut at: DVec2, bus: Block| {
+        for _ in 0..100 {
+            match make_room_step(at, std::slice::from_ref(&bus), 0.05) {
+                Some(step) => {
+                    assert!(step.length() <= 1.4 * 0.05 + 1e-9, "jumped {step}");
+                    at += step;
+                }
+                None => break,
+            }
+        }
+        at
+    };
+    // beside the bus, 1 m right of its middle: out to 1.75 m, its side and the margin
+    let at = walk_off(DVec2::new(1.0, 8.0), crawling_bus(8.0, 1.5));
+    assert!((at.x - 1.75).abs() < 1e-6 && at.y == 8.0, "{at}");
+    // on its left, the other way
+    let at = walk_off(DVec2::new(-0.4, 8.0), crawling_bus(8.0, 1.5));
+    assert!((at.x + 1.75).abs() < 1e-6, "{at}");
+    // a metre in front of its bumper
+    let at = walk_off(DVec2::new(0.8, 15.0), crawling_bus(8.0, 1.5));
+    assert!((at.x - 1.75).abs() < 1e-6, "{at}");
+    // behind it, or with the bus standing: nobody moves
+    assert!(make_room_step(DVec2::new(0.8, 0.0), &[crawling_bus(8.0, 1.5)], 0.05).is_none());
+    assert!(make_room_step(DVec2::new(0.8, 8.0), &[crawling_bus(8.0, 0.0)], 0.05).is_none());
+}
+
+/// ... a passenger waiting at a stop is moved (feet and drawn position), not one dealing
+/// with a bus or riding in one.
+#[test]
+fn only_passengers_waiting_for_no_bus_in_particular_make_room() {
+    let (root, ty) = reset_test_human();
+    let place = |pax: Pax, place: Place| {
+        let mut h = Humans::new(Path::new("/nonexistent"));
+        let mut person = reset_test_person(1, &ty, State::Pax(Box::new(pax)), place);
+        person.position = DVec3::new(1.0, 8.0, 0.0);
+        h.people.push(person);
+        h.make_room(0.05, &[crawling_bus(8.0, 1.5)]);
+        let p = &h.people[0];
+        let State::Pax(x) = &p.state else { unreachable!() };
+        (p.position.x, x.pos.x)
+    };
+    let waiting = || {
+        let mut pax = Pax::new(1.1);
+        pax.pos = DVec3::new(1.0, 8.0, 0.0);
+        pax
+    };
+    let (drawn, feet) = place(waiting(), Place::Ground);
+    assert!(drawn > 1.0 && (drawn - feet).abs() < 1e-9, "drawn {drawn}, feet {feet}");
+    let mut boarding = waiting();
+    boarding.bus = Some(BusId::Ai(7));
+    assert_eq!(place(boarding, Place::Ground).0, 1.0, "pushed off the bus it boards");
+    let mut riding = waiting();
+    riding.inside = Some(BusId::Ai(7));
+    assert_eq!(place(riding, Place::Ground).0, 1.0, "a rider was moved");
+    let _ = std::fs::remove_dir_all(root);
+}

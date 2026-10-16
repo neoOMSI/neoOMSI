@@ -920,6 +920,12 @@ impl Traffic {
                     let cap = ((v - car.state.speed) / 0.5).clamp(-car.state.decel, car.state.accel);
                     car.state.accel_cap = Some(car.state.accel_cap.map_or(cap, |a| a.min(cap)));
                 }
+                // edging past people standing in its way (`PEOPLE_PATIENCE`)
+                if car.state.odometer < car.people_past_until {
+                    let cap = ((PEOPLE_CREEP - car.state.speed) / 0.5)
+                        .clamp(-car.state.decel, car.state.accel);
+                    car.state.accel_cap = Some(car.state.accel_cap.map_or(cap, |a| a.min(cap)));
+                }
             }
             // The coordinator decides the signal hold and the right of way from the frozen
             // view; it is the only writer of junction claims.
@@ -995,12 +1001,24 @@ impl Traffic {
                     self.first_yield = Some((car.id, self.time));
                 }
             }
+            let past_standing = self.cars[i].state.odometer < self.cars[i].people_past_until;
             let for_people = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                self.people_stop(i, way)
+                self.people_stop(i, way, past_standing)
             };
-            if let Some((at, who)) = for_people {
+            // stood long enough for somebody who does not move: edge past them
+            {
+                let car = &mut self.cars[i];
+                let held = for_people.is_some_and(|p| p.2) && car.state.speed.abs() < 0.3;
+                let (wait, edge_past) = people_wait_step(car.people_wait, held, dt);
+                car.people_wait = wait;
+                if edge_past {
+                    car.people_past_until =
+                        car.state.odometer + car.state.length + PEOPLE_PAST_MARGIN;
+                }
+            }
+            if let Some((at, who, _)) = for_people {
                 let car = &self.cars[i];
                 if debug && car.state.speed > 0.5 {
                     log::info!(
@@ -2064,6 +2082,20 @@ fn emergency_pass_zone(c: &AiCar) -> (bool, f32) {
     (held, reach)
 }
 
+/// One tick of a car's wait for somebody standing still in its way: `held` while it stands
+/// for such a person. Returns the new clock and whether it edges past them now.
+fn people_wait_step(wait: f32, held: bool, dt: f32) -> (f32, bool) {
+    if !held {
+        return (0.0, false);
+    }
+    let wait = wait + dt;
+    if wait >= PEOPLE_PATIENCE {
+        (0.0, true)
+    } else {
+        (wait, false)
+    }
+}
+
 /// One tick of an emergency vehicle's hold clock: `holding` while it stands holding a
 /// junction reservation, `behind` when what holds it is a vehicle in front of it. Returns
 /// the new clock and whether it gives up its rights for `EMERGENCY_PAUSE` now.
@@ -2513,5 +2545,28 @@ mod presence_tests {
             (behind - super::EMERGENCY_STUCK_BEHIND).abs() < 0.05,
             "{behind}"
         );
+    }
+
+    /// #338: a car that stands for somebody standing still in its way edges past them after
+    /// `PEOPLE_PATIENCE`; anybody walking, or nobody, resets the wait.
+    #[test]
+    fn a_car_edges_past_somebody_standing_still_only_after_waiting_for_them() {
+        let mut wait = 0.0;
+        let mut t = 0.0;
+        let mut edged = None;
+        while t < 10.0 {
+            let (w, edge) = super::people_wait_step(wait, true, 0.02);
+            wait = w;
+            t += 0.02;
+            if edge && edged.is_none() {
+                edged = Some(t);
+            }
+        }
+        let at = edged.expect("never edged past");
+        assert!((at - super::PEOPLE_PATIENCE).abs() < 0.03, "{at}");
+        // moved on (or the person walked off) in between: the wait starts again
+        let (w, _) = super::people_wait_step(2.9, false, 0.02);
+        assert_eq!(w, 0.0);
+        assert!(!super::people_wait_step(0.0, true, 0.02).1);
     }
 }

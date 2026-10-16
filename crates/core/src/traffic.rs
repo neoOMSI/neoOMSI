@@ -130,6 +130,16 @@ const SCENERY_PINNED_GONE: f32 = 25.0;
 /// round. Driving through it along the path beats holding the line, and the stop for it
 /// before contact keeps the clipping to the cases that cannot be avoided.
 const SCENERY_GHOST_AFTER: f32 = 3.0;
+/// A car that has stood this long (s) for a passenger waiting at a stop who stands in its
+/// way - at the kerb where a bus swings out of its bay - edges past at `PEOPLE_CREEP` for
+/// its length and `PEOPLE_PAST_MARGIN` more; the passengers step aside for a vehicle
+/// edging up to them (`Humans::make_room`). Anybody walking, or not waiting at a stop,
+/// still stops it. Waiting for each other, bus and passenger stood there for good (#338).
+const PEOPLE_PATIENCE: f32 = 3.0;
+const PEOPLE_CREEP: f32 = 1.5;
+const PEOPLE_PAST_MARGIN: f32 = 6.0;
+/// Below this speed (m/s) somebody on foot stands still.
+pub(crate) const PEOPLE_STANDING_SPEED: f64 = 0.3;
 /// How far beyond its own length (m) a vehicle that gave up on scenery ignores it.
 const SCENERY_GHOST_MARGIN: f32 = 10.0;
 
@@ -177,6 +187,10 @@ pub struct AiCar {
     /// long (`EMERGENCY_STUCK_AFTER`).
     pub(crate) emergency_hold: f32,
     pub(crate) emergency_pause_until: f32,
+    /// How long (s) it has stood for somebody standing still in its way, and the odometer
+    /// reading up to which it edges past people standing still (`PEOPLE_PATIENCE`).
+    pub(crate) people_wait: f32,
+    pub(crate) people_past_until: f32,
     /// Metres its body can still travel along its way before touching scenery, from the
     /// realization of the last tick; the planner stops short of it and looks for a way round.
     pub(crate) scenery_ahead: Option<f32>,

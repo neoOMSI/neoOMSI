@@ -313,7 +313,16 @@ impl Traffic {
     /// somebody leaving a stop, or through anybody standing in the carriageway. A
     /// timetable bus ignores the people waiting at the kerb for it unless they stand well
     /// inside its path (it pulls up right beside them).
-    pub(crate) fn people_stop(&self, i: usize, way: &[(usize, f32)]) -> Option<(f32, DVec2)> {
+    /// `past_standing`: the car is edging past passengers waiting at a stop who stand still
+    /// (`PEOPLE_PATIENCE`); they step aside for it (`Humans::make_room`), anybody else
+    /// still stops it. The third value says whether the person stopping it is such a
+    /// passenger.
+    pub(crate) fn people_stop(
+        &self,
+        i: usize,
+        way: &[(usize, f32)],
+        past_standing: bool,
+    ) -> Option<(f32, DVec2, bool)> {
         if self.people.is_empty() {
             return None;
         }
@@ -384,6 +393,10 @@ impl Traffic {
                 let t = (((d - st.front).max(0.0)) / v.max(1.0)).min(2.0) as f64;
                 for &idx in near {
                     let (p, pv, waiting) = &self.people[idx];
+                    let standing = *waiting && pv.length() < PEOPLE_STANDING_SPEED;
+                    if past_standing && standing {
+                        continue;
+                    }
                     let half = if *waiting && car.is_bus() {
                         car.half_width as f64 - 0.3
                     } else {
@@ -392,7 +405,7 @@ impl Traffic {
                     for at in [*p, *p + *pv * t] {
                         let rel = at - c;
                         if rel.dot(fwd).abs() <= 0.55 && rel.dot(right).abs() < half {
-                            return Some((d - 1.5, *p));
+                            return Some((d - 1.5, *p, standing));
                         }
                     }
                 }
