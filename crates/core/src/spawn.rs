@@ -510,6 +510,7 @@ pub(crate) fn spawn_player(
         rail_bound,
         rail: None,
         head: Vec3::ZERO,
+        head_sim: Vec3::ZERO,
         head_vel: Vec3::ZERO,
         head_omega: Vec3::ZERO,
         steer_look: 0.0,

@@ -92,6 +92,22 @@
           "desc": "The view moves with the acceleration of the vehicle",
           "name": "Head movement"
         },
+        "head_strength": {
+          "desc": "How strongly the view moves with the vehicle (100% is the movement of OMSI)",
+          "name": "Head movement strength"
+        },
+        "head_vertical": {
+          "desc": "The view moves up and down over bumps and dips",
+          "name": "Head movement up and down"
+        },
+        "head_longitudinal": {
+          "desc": "The view moves forward and back when accelerating and braking",
+          "name": "Head movement forward and back"
+        },
+        "head_lateral": {
+          "desc": "The view moves sideways in curves",
+          "name": "Head movement sideways"
+        },
         "head_pitch": {
           "desc": "Adjusts the driver's default viewing angle up or down",
           "name": "Head pitch"

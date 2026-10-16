@@ -351,6 +351,27 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "pause.options.camera.head.name",
                 "pause.options.camera.head.desc",
             ),
+            sl(
+                "head_strength",
+                "pause.options.camera.head_strength.name",
+                "pause.options.camera.head_strength.desc",
+                Fmt::Pct,
+            ),
+            sw(
+                "head_vertical",
+                "pause.options.camera.head_vertical.name",
+                "pause.options.camera.head_vertical.desc",
+            ),
+            sw(
+                "head_longitudinal",
+                "pause.options.camera.head_longitudinal.name",
+                "pause.options.camera.head_longitudinal.desc",
+            ),
+            sw(
+                "head_lateral",
+                "pause.options.camera.head_lateral.name",
+                "pause.options.camera.head_lateral.desc",
+            ),
             sw(
                 "cam_smooth",
                 "pause.options.camera.cam_smooth.name",

@@ -59,6 +59,7 @@ pub(crate) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "mouse_sens" => (10..=300).map(|v| v as f32 / 100.0).collect(),
         "stick_sens" => (2..=40).map(|v| v as f32 * 0.05).collect(),
         "look_sens" => (2..=40).map(|v| v as f32 * 0.05).collect(),
+        "head_strength" => (0..=40).map(|v| v as f32 * 0.05).collect(),
         "seat" => (-50..=50).map(|v| v as f32 / 100.0).collect(),
         "head_pitch" => (-45..=45).map(|v| v as f32).collect(),
         "hour" => (0..24).map(|v| v as f32).collect(),
@@ -201,6 +202,9 @@ pub(crate) fn option_now(app: Option<&App>, verb: &str, arg: &str) -> Option<f32
         "mouse_sens" => ::config::get_float("controls", "mouse_sens").unwrap_or(1.0) as f32,
         "stick_sens" => ::config::get_float("controls", "stick_sens").unwrap_or(1.0) as f32,
         "look_sens" => ::config::get_float("camera", "look_sens").unwrap_or(1.0) as f32,
+        "head_strength" => {
+            ::config::get_float("camera", "head_movement_strength").unwrap_or(1.0) as f32
+        }
         "ui_scale" => ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
         "ui_opacity" => ::config::get_float("ui", "opacity")
             .unwrap_or(0.85)
@@ -335,6 +339,15 @@ pub(crate) fn option_set(
         }
         "look_sens" => {
             ::config::set_setting("camera", "look_sens", ((v * 100.0).round() / 100.0) as f64);
+            let _ = ::config::save();
+            None
+        }
+        "head_strength" => {
+            ::config::set_setting(
+                "camera",
+                "head_movement_strength",
+                ((v * 100.0).round() / 100.0).clamp(0.0, 2.0) as f64,
+            );
             let _ = ::config::save();
             None
         }
@@ -567,6 +580,11 @@ pub(crate) fn toggle_now(app: Option<&App>, id: &str) -> Option<bool> {
         "nav_stops_ext" => nav.map_or(::config::get_bool("navigator", "stops_ext").unwrap_or(false), |n| n.schedule),
         "shadows" => ::config::get_bool("graphics", "shadows").unwrap_or(true),
         "head" => ::config::get_bool("camera", "head_movement").unwrap_or(true),
+        "head_vertical" => ::config::get_bool("camera", "head_movement_vertical").unwrap_or(true),
+        "head_longitudinal" => {
+            ::config::get_bool("camera", "head_movement_longitudinal").unwrap_or(true)
+        }
+        "head_lateral" => ::config::get_bool("camera", "head_movement_lateral").unwrap_or(true),
         "cam_smooth" => ::config::get_bool("camera", "smooth").unwrap_or(true),
         "coll_objects" => ::config::get_bool("gameplay", "collision_objects").unwrap_or(true),
         "coll_vehicles" => ::config::get_bool("gameplay", "collision_vehicles").unwrap_or(true),
@@ -762,6 +780,16 @@ fn toggle_set_inner(mut app: Option<&mut App>, id: &str, on: bool) -> Option<(&'
         }
         "head" => {
             ::config::set_setting("camera", "head_movement", on);
+            let _ = ::config::save();
+            None
+        }
+        "head_vertical" | "head_longitudinal" | "head_lateral" => {
+            let key = match id {
+                "head_vertical" => "head_movement_vertical",
+                "head_longitudinal" => "head_movement_longitudinal",
+                _ => "head_movement_lateral",
+            };
+            ::config::set_setting("camera", key, on);
             let _ = ::config::save();
             None
         }

@@ -22,53 +22,66 @@ impl Player {
             .get((def.camera_std + self.cam_choice.0) % n)
             .map(|c| Vec3::new(c.pos[0], c.pos[1], c.pos[2]))
             .unwrap_or(Vec3::ZERO);
-        let stab = (1.0 / (15.0 * dt)).min(1.0);
-        let spring = |p: f32, v: f32, kick: f32, k: f32, c: f32| -> (f32, f32) {
-            let v = v + kick + (-k * p - c * v) * stab * dt;
-            (p + v * dt, v)
-        };
-        let kick = -(a.z - 9.81) * dt + dw.y * eye.x + dw.x * eye.y;
-        let (mut p, mut v) = spring(
-            self.head.z,
-            self.head_vel.z,
-            kick,
+        let (p, v) = neck(
+            (self.head_sim.z, self.head_vel.z),
+            -(a.z - 9.81),
+            dw.y * eye.x + dw.x * eye.y,
             3000.0 / 150.0,
             2000.0 / 150.0,
+            dt,
+            true,
         );
-        if p.abs() > 0.1 {
-            p = p.clamp(-0.1, 0.1);
-            v = 0.0;
-        }
-        self.head.z = p;
+        self.head_sim.z = p;
         self.head_vel.z = v;
         if enabled {
             let moving = self.vehicle.physics.speed.abs().min(1.0);
-            let kx = (-a.x * dt + dw.y * eye.z - dw.z * eye.y) * moving;
-            let ky = (-a.y * dt - dw.x * eye.z + dw.z * eye.x) * moving;
-            let (px, vx) = spring(
-                self.head.x,
-                self.head_vel.x,
-                kx,
+            let (px, vx) = neck(
+                (self.head_sim.x, self.head_vel.x),
+                -a.x * moving,
+                (dw.y * eye.z - dw.z * eye.y) * moving,
                 3000.0 / 100.0,
                 2000.0 / 100.0,
+                dt,
+                false,
             );
-            let (py, vy) = spring(
-                self.head.y,
-                self.head_vel.y,
-                ky,
+            let (py, vy) = neck(
+                (self.head_sim.y, self.head_vel.y),
+                -a.y * moving,
+                (-dw.x * eye.z + dw.z * eye.x) * moving,
                 3000.0 / 100.0,
                 2000.0 / 100.0,
+                dt,
+                false,
             );
-            self.head.x = px;
+            self.head_sim.x = px;
             self.head_vel.x = vx;
-            self.head.y = py;
+            self.head_sim.y = py;
             self.head_vel.y = vy;
         } else {
-            self.head.x = 0.0;
-            self.head.y = 0.0;
+            self.head_sim.x = 0.0;
+            self.head_sim.y = 0.0;
             self.head_vel.x = 0.0;
             self.head_vel.y = 0.0;
         }
+        // (the neck itself stays as Omsi.exe swings it; what reaches the eye is scaled
+        // and, axis by axis, can be held still - many want only up/down and fore/aft,
+        // as in other driving games)
+        let strength = (::config::get_float("camera", "head_movement_strength").unwrap_or(1.0)
+            as f32)
+            .clamp(0.0, 2.0);
+        let axis = |k: &str| {
+            if ::config::get_bool("camera", k).unwrap_or(true) {
+                strength
+            } else {
+                0.0
+            }
+        };
+        self.head = self.head_sim
+            * Vec3::new(
+                axis("head_movement_lateral"),
+                axis("head_movement_longitudinal"),
+                axis("head_movement_vertical"),
+            );
     }
 
     pub(crate) fn auto_clutch_bite(&mut self, throttle: f32) {
@@ -262,6 +275,43 @@ pub(crate) fn mouse_steering(cursor_x: f32, width: f32, kmh: f32) -> f32 {
     x / (kmh / 10.0).max(1.0)
 }
 
+/// The frame rate Omsi.exe's neck is matched to (see [`neck`]).
+const NECK_REFERENCE_FPS: f32 = 60.0;
+/// The neck's own fixed step (s): fine enough to follow the spring at any frame rate.
+const NECK_STEP: f32 = 1.0 / 600.0;
+
+/// One axis of the driver's head on its neck over `dt`: position and velocity, pushed by
+/// the body's acceleration `push` (m/s²) and by `spin` (m/s), what the change of the body's
+/// turn rate this frame throws the eye about
+///
+/// Omsi.exe (sub_7e23fc) steps `v += kick + (-k·p - c·v) · min(1, 1/(15·dt)) · dt` once a
+/// frame, so the spring pulls the same amount every frame whatever its length: at 200 fps
+/// it is more than three times as stiff as at 60, and the head barely moves. Here it is
+/// the spring that Omsi.exe's frame gives at 60 fps (k and c times 60/15), stepped at a
+/// fixed rate, so it swings the same at 30, 60 or 200 fps
+pub(crate) fn neck(
+    (mut p, mut v): (f32, f32),
+    push: f32,
+    spin: f32,
+    k: f32,
+    c: f32,
+    dt: f32,
+    stop: bool,
+) -> (f32, f32) {
+    let n = (dt / NECK_STEP).ceil().max(1.0);
+    let h = dt / n;
+    let (k, c) = (k * NECK_REFERENCE_FPS / 15.0, c * NECK_REFERENCE_FPS / 15.0);
+    for _ in 0..n as usize {
+        v += push * h + spin / n + (-k * p - c * v) * h;
+        p += v * h;
+        if stop && p.abs() > 0.1 {
+            p = p.clamp(-0.1, 0.1);
+            v = 0.0;
+        }
+    }
+    (p, v)
+}
+
 pub(crate) fn mouse_pedal(current: f32, target: f32, k: f32) -> f32 {
     let v = target + (current - target) * k;
     if (v - target).abs() < 1e-4 { target } else { v }
@@ -335,6 +385,50 @@ pub(crate) fn auto_shift_gear(
         cur - 1
     } else {
         cur
+    }
+}
+
+#[cfg(test)]
+mod neck_tests {
+    use super::neck;
+
+    /// The head after `secs` of braking at 3 m/s² and a jolt at the start, at `fps`
+    fn braking(fps: f32, secs: f32) -> (f32, f32) {
+        let dt = 1.0 / fps;
+        let mut s = (0.0, 0.0);
+        for i in 0..(secs * fps) as usize {
+            let jolt = if i == 0 { 0.05 } else { 0.0 };
+            s = neck(s, 3.0, jolt, 30.0, 20.0, dt, false);
+        }
+        s
+    }
+
+    #[test]
+    fn the_head_swings_the_same_at_any_frame_rate() {
+        let at60 = braking(60.0, 0.25).0;
+        for fps in [30.0, 144.0, 200.0] {
+            let p = braking(fps, 0.25).0;
+            assert!((p - at60).abs() < 1e-3, "{fps} fps: {p} against {at60}");
+        }
+    }
+
+    #[test]
+    fn steady_braking_leans_the_head_as_omsi_does_at_60_fps() {
+        // Omsi.exe at 60 fps settles at 15·a·dt/k = 3 / (30·4) = 2.5 cm
+        let p = braking(144.0, 5.0).0;
+        assert!((p - 0.025).abs() < 1e-3, "{p}");
+    }
+
+    #[test]
+    fn the_vertical_stop_holds_the_head_within_10_cm() {
+        // (a jolt that would throw it some 19 cm up)
+        let mut s = neck((0.0, 0.0), 0.0, 10.0, 20.0, 13.3, 1.0 / 60.0, true);
+        let mut top = s.0;
+        for _ in 0..30 {
+            s = neck(s, 0.0, 0.0, 20.0, 13.3, 1.0 / 60.0, true);
+            top = top.max(s.0);
+        }
+        assert!((0.099..=0.1).contains(&top), "{top}");
     }
 }
 

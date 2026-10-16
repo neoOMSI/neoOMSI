@@ -40,6 +40,7 @@ pub(crate) struct Player {
     pub(crate) cam_before_special: Option<usize>,
     pub(crate) held_keys: hashbrown::HashMap<i32, Vec<String>>,
     pub(crate) head: Vec3,
+    pub(crate) head_sim: Vec3,
     pub(crate) head_vel: Vec3,
     pub(crate) head_omega: Vec3,
     pub(crate) steer_look: f32,

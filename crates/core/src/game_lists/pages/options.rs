@@ -308,6 +308,31 @@ pub(crate) fn options_pages(app: &App) -> Vec<Page> {
             &tx("pause.options.camera.head.name"),
             &tx("pause.options.camera.head.desc"),
         ),
+        slider_row(
+            Some(app),
+            "head_strength",
+            &tx("pause.options.camera.head_strength.name"),
+            &tx("pause.options.camera.head_strength.desc"),
+            &pct,
+        ),
+        switch_row(
+            Some(app),
+            "head_vertical",
+            &tx("pause.options.camera.head_vertical.name"),
+            &tx("pause.options.camera.head_vertical.desc"),
+        ),
+        switch_row(
+            Some(app),
+            "head_longitudinal",
+            &tx("pause.options.camera.head_longitudinal.name"),
+            &tx("pause.options.camera.head_longitudinal.desc"),
+        ),
+        switch_row(
+            Some(app),
+            "head_lateral",
+            &tx("pause.options.camera.head_lateral.name"),
+            &tx("pause.options.camera.head_lateral.desc"),
+        ),
         switch_row(
             Some(app),
             "cam_smooth",
