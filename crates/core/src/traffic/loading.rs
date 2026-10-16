@@ -282,6 +282,28 @@ impl Traffic {
         let light_log = ::legacy_config::env::var("OMSI_DEBUG_LIGHTS").ok();
         let light_prev = lights.iter().map(|c| vec![-100; c.lights.len()]).collect();
         let lanes = 0..net.lanes.len();
+        let uvg_factor = |u: usize| {
+            group_uvg
+                .iter()
+                .zip(&groups)
+                .find(|(g, _)| **g == Some(u))
+                .map(|(_, g)| g.factor)
+        };
+        let uvg_share: Vec<f32> = (0..uvg_defaults.len())
+            .map(|u| match (uvg_factor(u), uvg_factor(0)) {
+                (Some(f), Some(first)) if group_curves && first > 0.0 => f / first,
+                (Some(_), _) => 1.0,
+                (None, _) => 0.0,
+            })
+            .collect();
+        for l in &mut net.lanes {
+            l.density = ::traffic::weigh_lane_density(
+                l.density,
+                &l.group_density,
+                &uvg_defaults,
+                &uvg_share,
+            );
+        }
         let street_weight = net.lanes.iter().filter_map(street_lane_weight).sum();
         let mut t = Traffic {
             net,
@@ -297,6 +319,7 @@ impl Traffic {
             group_curves,
             group_uvg,
             uvg_defaults: Arc::new(uvg_defaults),
+            uvg_share,
             cars: Vec::new(),
             dormant: Vec::new(),
             dormant_time: 0.0,

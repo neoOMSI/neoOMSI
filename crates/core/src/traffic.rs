@@ -379,6 +379,8 @@ pub struct Traffic {
     /// for the first entry its medium density, for any other that of the first entry, 2 of
     /// the second, and so on. It applies on the paths without a rule for the group.
     uvg_defaults: Arc<Vec<i32>>,
+    /// Per `unsched_vehgroups.txt` entry, its traffic factor over the first entry's.
+    uvg_share: Vec<f32>,
     cars: Vec<AiCar>,
     /// The random cars out of range (see `DormantCar`).
     dormant: Vec<DormantCar>,

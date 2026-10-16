@@ -74,7 +74,7 @@ pub struct Lane {
     /// Spline/object file the lane came from (debugging).
     pub name: String,
     /// `[rule] trafficdensity`: how much of the road traffic uses this lane (0 = none), of
-    /// any random traffic group.
+    /// any random traffic group, each weighed by its group's traffic factor.
     pub density: f32,
     /// `[rule] trafficdensity <value> <group>` of the path, the last per group: the group
     /// is the random traffic group's place in the map's `unsched_vehgroups.txt`. A group

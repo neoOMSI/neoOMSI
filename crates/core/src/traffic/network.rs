@@ -121,6 +121,14 @@ impl Traffic {
         let mut added = self.net.lanes.len()..self.net.lanes.len();
         if n > 0 {
             added = self.net.extend(new, 1.5);
+            for l in &mut self.net.lanes[added.clone()] {
+                l.density = ::traffic::weigh_lane_density(
+                    l.density,
+                    &l.group_density,
+                    &self.uvg_defaults,
+                    &self.uvg_share,
+                );
+            }
             report_network_defects(&self.net);
             // a grown/changed network invalidates every junction claim made against the old one
             self.junctions.invalidate_network();
