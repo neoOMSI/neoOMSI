@@ -243,6 +243,8 @@ pub struct AiCar {
     /// A rail vehicle: the track it has come along, (odometer, point), oldest first -
     /// where its rear bogie and its coupled cars and sections run (see `rail_behind`).
     pub(crate) rail_trail: std::collections::VecDeque<(f64, DVec3)>,
+    /// A train set down on a track nothing leads into: the odometer at that track's start.
+    pub(crate) track_start: Option<f64>,
     /// A train turned round as a whole (its last car leads now): what a trip's
     /// `[trainreverse]` is compared with (Omsi.exe's vehicle +0x4e1).
     pub(crate) consist_reversed: bool,
@@ -741,15 +743,27 @@ fn player_reach_ahead(half_len: f32, speed: f32, horizon: f32, fwd: DVec2, way_d
     }
 }
 
-/// How much track an AI rail vehicle keeps behind it (m): a long train's length.
+/// Least track an AI rail vehicle keeps behind it (m).
 const RAIL_TRAIL: f64 = 400.0;
 
-/// Note where an AI rail vehicle is: `odometer` (m) and the point of its way there. A jump
-/// (put somewhere else, turned round at a terminus) starts the trail afresh.
+/// How much track rail vehicle `v` keeps behind it (m): longer trains keep their length.
+fn rail_trail_length(v: &VehicleInstance) -> f64 {
+    let length = |ty: &VehicleType| {
+        let (front, rear, _) = extents(ty, 4.5);
+        (front + rear) as f64
+    };
+    let train = length(&v.ty) + v.trailers.iter().map(|t| length(&t.ty)).sum::<f64>();
+    RAIL_TRAIL.max(train + 50.0)
+}
+
+/// Note where an AI rail vehicle is: `odometer` (m) and the point of its way there, kept
+/// for `keep` metres. A jump (put somewhere else, turned round at a terminus) starts the
+/// trail afresh.
 fn record_rail_trail(
     trail: &mut std::collections::VecDeque<(f64, DVec3)>,
     odometer: f64,
     here: DVec3,
+    keep: f64,
 ) {
     if let Some(&(u, p)) = trail.back() {
         if (here - p).truncate().length() > (odometer - u).abs() + 2.0 {
@@ -763,7 +777,7 @@ fn record_rail_trail(
         trail.pop_back();
     }
     trail.push_back((odometer, here));
-    while trail.front().is_some_and(|f| odometer - f.0 > RAIL_TRAIL) {
+    while trail.front().is_some_and(|f| odometer - f.0 > keep) {
         trail.pop_front();
     }
 }
@@ -840,6 +854,11 @@ pub(crate) fn extents(ty: &VehicleType, length: f32) -> (f32, f32, f32) {
             _ => (length * 0.5, length * 0.5, 0.9),
         },
     }
+}
+
+/// Is any part of a vehicle or train (`(origin, radius)`) near or in the view?
+fn any_part_seen(v: &Viewer, mut parts: impl Iterator<Item = (DVec3, f64)>) -> bool {
+    parts.any(|(p, r)| (p - v.pos).length() < UNSEEN_NEAR || v.frames(p, r))
 }
 
 /// The driver of a random car: how fast, how close, how patient (see `AiState`).
@@ -1410,5 +1429,64 @@ mod coupled_type_tests {
         assert!(Arc::ptr_eq(&behind_keep, &again));
         assert!(!behind_foreign.keep_winding);
         assert!(!Arc::ptr_eq(&behind_keep, &behind_foreign));
+    }
+}
+
+#[cfg(test)]
+mod rail_trail_tests {
+    use super::record_rail_trail;
+    use glam::DVec3;
+
+    /// A train longer than the usual 400 m keeps its own length of track behind it.
+    #[test]
+    fn a_long_train_keeps_its_length_of_track() {
+        let mut trail = std::collections::VecDeque::new();
+        for i in 0..=1200 {
+            let u = i as f64;
+            record_rail_trail(&mut trail, u, DVec3::new(0.0, u, 0.0), 600.0);
+        }
+        let span = trail.back().unwrap().0 - trail.front().unwrap().0;
+        assert!((span - 600.0).abs() <= 1.0, "{span}");
+    }
+}
+
+#[cfg(test)]
+mod part_seen_tests {
+    use super::{Viewer, any_part_seen};
+    use glam::DVec3;
+
+    /// A camera at the origin looking north, 60 degrees wide.
+    fn viewer() -> Viewer {
+        let tan = 30f64.to_radians().tan();
+        Viewer {
+            pos: DVec3::ZERO,
+            forward: DVec3::Y,
+            tan_x: tan,
+            tan_y: tan,
+            range: 2000.0,
+            min_size: 0.0,
+            max_dist: 0.0,
+            fov: 60f64.to_radians(),
+        }
+    }
+
+    /// Locomotive behind the camera, a coach still in view (#336).
+    #[test]
+    fn a_train_is_seen_while_a_coach_is_in_view() {
+        let v = viewer();
+        let loco = (DVec3::new(0.0, -200.0, 0.0), 22.0);
+        let coach = (DVec3::new(0.0, 150.0, 0.0), 28.0);
+        assert!(!any_part_seen(&v, std::iter::once(loco)));
+        assert!(any_part_seen(&v, [loco, coach].into_iter()));
+    }
+
+    #[test]
+    fn a_train_wholly_behind_is_not_seen() {
+        let v = viewer();
+        let parts = [
+            (DVec3::new(0.0, -200.0, 0.0), 22.0),
+            (DVec3::new(0.0, -226.0, 0.0), 28.0),
+        ];
+        assert!(!any_part_seen(&v, parts.into_iter()));
     }
 }

@@ -574,11 +574,12 @@ impl Traffic {
         let c = &mut self.cars[ci];
         let net = &self.net;
         let odo = c.state.odometer as f64;
+        let keep = rail_trail_length(&c.vehicle);
         let mut pts: Vec<(f64, DVec3)> = Vec::new();
         let (mut lane, mut s) = (c.state.lane, c.state.s);
         let mut back = behind.iter().rev();
         let mut d = 0.0f64;
-        while d <= RAIL_TRAIL {
+        while d <= keep {
             pts.push((odo - d, net.lanes[lane].at(s.max(0.0)).0));
             s -= 1.0;
             if s < 0.0 {
@@ -956,6 +957,9 @@ impl Traffic {
                 if self.initial { " (initial)" } else { "" }
             );
         }
+        let at_track_start = self.net.lanes[lane].kind == LaneKind::Rail
+            && self.net.prev.get(lane).is_some_and(|p| p.is_empty());
+        let track_start = at_track_start.then(|| state.odometer as f64 - state.s as f64);
         self.cars.push(AiCar {
             id,
             caps,
@@ -995,6 +999,7 @@ impl Traffic {
             horn_cooldown: 0.0,
             light_at: None,
             rail_trail: Default::default(),
+            track_start,
             consist_reversed: false,
             train: false,
             seed,

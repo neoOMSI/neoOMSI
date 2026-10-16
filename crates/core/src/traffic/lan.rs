@@ -207,6 +207,7 @@ impl Traffic {
             horn_cooldown: 0.0,
             light_at: None,
             rail_trail: Default::default(),
+            track_start: None,
             consist_reversed: false,
             train: false,
         });

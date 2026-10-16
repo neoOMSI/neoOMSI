@@ -1227,8 +1227,9 @@ impl AiState {
             };
             let Some(next) = self.planned_next.or(fallback) else {
                 // the end of a flight path: the aircraft flies on straight (the way runs on
-                // along the end tangent) until the traffic takes it away out of sight
-                if l.kind == LaneKind::Air {
+                // along the end tangent) until the traffic takes it away out of sight; a
+                // train runs on too, its cars taken away one by one at the end
+                if matches!(l.kind, LaneKind::Air | LaneKind::Rail) {
                     break;
                 }
                 return false; // dead end: despawn

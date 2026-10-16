@@ -797,13 +797,14 @@ impl Traffic {
                         }
                     }
                 }
-                renderer.set_params(scene, *inst, &alpha, p.visible && vp_ok, &p.slot_uv);
+                let shown = p.visible && vp_ok && !c.vehicle.part_hidden(0);
+                renderer.set_params(scene, *inst, &alpha, shown, &p.slot_uv);
                 renderer.set_slot_light(scene, *inst, &p.slot_light);
                 renderer.set_slot_night(scene, *inst, &p.slot_night);
                 renderer.set_interior(scene, *inst, p.interior);
                 renderer.set_cabin(scene, *inst, !def.illumination_interior.is_empty());
             }
-            for (t, r) in c.vehicle.trailers.iter().zip(&c.trailer_renders) {
+            for (k, (t, r)) in c.vehicle.trailers.iter().zip(&c.trailer_renders).enumerate() {
                 for (i, inst) in r.instances.iter().enumerate() {
                     renderer.set_transform(scene, *inst, t.position, t.mesh_local_transform(i));
                     let p = &t.mesh_props[i];
@@ -822,7 +823,8 @@ impl Traffic {
                             }
                         }
                     }
-                    renderer.set_params(scene, *inst, &alpha, p.visible && vp_ok, &p.slot_uv);
+                    let shown = p.visible && vp_ok && !c.vehicle.part_hidden(k + 1);
+                    renderer.set_params(scene, *inst, &alpha, shown, &p.slot_uv);
                     renderer.set_slot_light(scene, *inst, &p.slot_light);
                     renderer.set_slot_night(scene, *inst, &p.slot_night);
                     renderer.set_interior(scene, *inst, p.interior);

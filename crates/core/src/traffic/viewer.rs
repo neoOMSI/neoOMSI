@@ -209,4 +209,17 @@ impl Traffic {
         !v.frames(p, r) || self.occluded(world, &v, p, r)
     }
 
+
+    /// `hidden` for every part of `c` on the track: a train went with its locomotive behind
+    /// a building, its coaches in plain view.
+    pub(crate) fn consist_hidden(&self, world: &World, c: &AiCar, r: f64) -> bool {
+        let v = &c.vehicle;
+        (v.part_hidden(0) || self.hidden(world, v.position, r))
+            && v.trailers.iter().enumerate().all(|(k, t)| {
+                let (front, rear, _) = extents(&t.ty, 4.5);
+                let r = ((front + rear) * 0.5).max(2.0) as f64;
+                v.part_hidden(k + 1) || self.hidden(world, t.position, r)
+            })
+    }
+
 }

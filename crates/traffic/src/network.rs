@@ -249,6 +249,12 @@ impl Lane {
     pub fn end_heading(&self) -> f32 {
         *self.headings.last().unwrap()
     }
+
+    /// Does `p` lie beyond the end of the lane (past the line across its end)?
+    pub fn past_end(&self, p: DVec3) -> bool {
+        let rel = p - self.end();
+        DVec2::new(rel.x, rel.y).dot(heading_dir(self.end_heading() as f64)) > 0.0
+    }
 }
 
 /// Speed limit of a flight path without a `[rule] speedlimit` (km/h): none, the aircraft

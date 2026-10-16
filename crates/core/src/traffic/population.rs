@@ -340,14 +340,14 @@ impl Traffic {
             } else if at_edge {
                 // (its trip comes back with the tiles; kept until nobody saw it, a bus stood
                 // with its passengers at the far end of a straight road for good)
-                self.hidden(world, p, r)
+                self.consist_hidden(world, c, r)
                     || (c.stopped > 8.0 && from_eye > 180.0)
                     || c.stopped > 150.0
             } else if !random {
                 false
             } else if at_end
                 && (!c.is_bus()
-                || self.hidden(world, p, r)
+                || self.consist_hidden(world, c, r)
                 || (c.stopped > 8.0 && from_eye > 180.0)
                 || c.stopped > 150.0
                 || (c.stopped > 25.0 && queued.contains(&c.id) && from_eye > 25.0))
@@ -366,7 +366,7 @@ impl Traffic {
                 // unless right beside the viewer: kept until nobody saw it, a jam at a
                 // junction the player watched never cleared)
                 (dist > VISIBLE_RANGE * 1.3 && from_eye > NEAR_HIDE)
-                    || self.hidden(world, p, r)
+                    || self.consist_hidden(world, c, r)
                     || (c.gone && c.stopped > 240.0 && from_eye > 40.0)
             } else {
                 false

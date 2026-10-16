@@ -1469,6 +1469,28 @@ impl Traffic {
                 remove.push(i);
                 continue;
             }
+            // Omsi.exe takes a train away whole once its first car reaches the end of the
+            // track; here each car goes as it reaches the end, the train with its last one
+            let l = &self.net.lanes[car.state.lane];
+            if l.kind == LaneKind::Rail && l.next.is_empty() && car.state.s > l.length() {
+                let v = &mut car.vehicle;
+                let past = v.trailers.iter().take_while(|t| l.past_end(t.position));
+                v.parts_gone = 1 + past.count();
+                if v.parts_gone > v.trailers.len() {
+                    if debug {
+                        let end = l.end();
+                        log::info!(
+                            "t={:.1}: train {} ran off the end of its track at ({:.0}, {:.0})",
+                            self.time,
+                            car.id,
+                            end.x,
+                            end.y
+                        );
+                    }
+                    remove.push(i);
+                    continue;
+                }
+            }
             if debug && car.state.acc < -4.5 {
                 // hard braking is for emergencies: say what asked for it
                 let who = match lead.and_then(|l| l.1) {
@@ -1557,11 +1579,22 @@ impl Traffic {
         }
         // Who can be seen: a car out of the view (and farther than the mirrors and the
         // shadows reach) leaves its animations as they are and is not drawn at all.
+        // Every part on the track counts: a long train vanished with its locomotive (#336).
         if let Some(v) = self.viewer {
+            let radius = |front: f32, rear: f32| (front + rear).abs().max(4.0) as f64 + 2.0;
             for c in &mut self.cars {
-                let p = c.vehicle.position;
-                let r = (c.state.front + c.state.rear).abs().max(4.0) as f64 + 2.0;
-                c.vehicle.ai_visuals = (p - v.pos).length() < UNSEEN_NEAR || v.frames(p, r);
+                let lead = (c.vehicle.position, radius(c.state.front, c.state.rear));
+                let coupled = c.vehicle.trailers.iter().map(|t| {
+                    let (front, rear, _) = extents(&t.ty, 4.5);
+                    (t.position, radius(front, rear))
+                });
+                let parts = std::iter::once(lead)
+                    .chain(coupled)
+                    .enumerate()
+                    .filter(|(k, _)| !c.vehicle.part_hidden(*k))
+                    .map(|(_, p)| p);
+                let seen = any_part_seen(&v, parts);
+                c.vehicle.ai_visuals = seen;
             }
         }
         TickFrame { by_lane, coming, walkers, aspects, junction_actors, frames, remove, previous_odometer }
@@ -1590,6 +1623,7 @@ impl Traffic {
                 &'a VehicleCapabilities,
                 &'a mut Option<f32>,
                 bool,
+                &'a mut Option<f64>,
             );
             let mut work: Vec<Work> = self
                 .cars
@@ -1598,7 +1632,7 @@ impl Traffic {
                 .enumerate()
                 .filter_map(|(i, (c, f))| {
                     let f = f.as_mut()?;
-                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps, &mut c.scenery_ahead, c.state.odometer < c.scenery_ghost))
+                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps, &mut c.scenery_ahead, c.state.odometer < c.scenery_ghost, &mut c.track_start))
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
@@ -1606,13 +1640,15 @@ impl Traffic {
             // the main thread more than a car's work)
             work.par_iter_mut()
                 .with_min_len(4)
-                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead, ghost)| {
+                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead, ghost, track_start)| {
                     let t0 = std::time::Instant::now();
                     let ground = vehicle.ground.clone();
                     let contact = vehicle.contact.clone();
                     let rail = body.kind == MotionKind::Rail;
                     if rail {
-                        record_rail_trail(trail, state.odometer as f64, state.way_point(net, 0.0));
+                        let keep = rail_trail_length(vehicle);
+                        let here = state.way_point(net, 0.0);
+                        record_rail_trail(trail, state.odometer as f64, here, keep);
                     }
                     let trail = &**trail;
                     let behind = |d: f64| rail_behind(trail, state, net, d);
@@ -1696,7 +1732,19 @@ impl Traffic {
                     if rail && !vehicle.trailers.is_empty() {
                         // the coupled cars (a train's, a tram's sections) on the track it
                         // came along, not dragged round the bends like a road trailer
-                        vehicle.retrail(0.0, &|d| Some(behind(d)));
+                        // (cars still before the start of their track are not shown yet)
+                        let waiting = std::cell::Cell::new(0);
+                        let odo = state.odometer as f64;
+                        vehicle.retrail(0.0, &|d| {
+                            if track_start.is_some_and(|s0| odo - d < s0) {
+                                waiting.set(waiting.get() + 1);
+                            }
+                            Some(behind(d))
+                        });
+                        vehicle.parts_waiting = waiting.get();
+                        if vehicle.parts_waiting == 0 {
+                            **track_start = None;
+                        }
                     }
                     frame.steer_deg = body.steer;
                     let t1 = std::time::Instant::now();
