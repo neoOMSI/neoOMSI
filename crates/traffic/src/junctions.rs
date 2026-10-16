@@ -652,9 +652,9 @@ impl JunctionCoordinator {
             if actor.emergency && stop_aspect && self.emergency_owns(actor.id, way[k].0) {
                 self.mark_against_signal(actor.id, way[k].0);
             }
-            if actor.emergency && gap < 15.0 && actor.speed <= emergency::EMERGENCY_CROSSING_SPEED
-                && self.emergency_owns(actor.id, way[k].0)
-            {
+            let for_emergency = (actor.emergency && self.emergency_owns(actor.id, way[k].0))
+                || self.emergency_leads(actor.id, way[k].0);
+            if for_emergency && gap < 15.0 && actor.speed <= emergency::EMERGENCY_CROSSING_SPEED {
                 // Only the reserved movement gets a red-light exception. Admission still
                 // checks actual occupants, pedestrians and full downstream exits.
                 continue;
@@ -735,12 +735,19 @@ impl JunctionCoordinator {
         };
         // a junction beyond a red light's line is not decided yet
         // (on the ring of a roundabout a car drives on and out of the way; in front of the
-        // emergency vehicle on its way, it leads it through)
+        // emergency vehicle on its way, it leads it through. One admitted already stops too
+        // while it still can before the junction: admitted on green far up the road, the
+        // cross traffic kept coming, and the ambulance waited at its red for the flow to
+        // end until it gave up its rights, Velbert #462.)
+        let can_stop_before = jn.lanes[0].1 - actor.front >= firm_stop(actor);
+        let my_lanes: Vec<usize> = jn.lanes.iter().map(|&(l, _)| l).collect();
         if !jn.inside && !scene.net.is_ring(actor.lane) && self.emergency_reservations.iter().any(|r|
             r.owner != actor.id && !r.ahead.contains(&actor.id)
-                && jn.lanes.iter().any(|(l, _)| r.lanes.contains(l)))
-            && self.claims_of(actor.id).is_empty()
+                && jn.lanes.iter().any(|(l, _)| r.lanes.contains(l))
+                && Self::meets_emergency(scene.net, r, &my_lanes))
+            && (self.claims_of(actor.id).is_empty() || can_stop_before)
         {
+            self.drop_claims(actor.id);
             let mut d = JunctionDecision::none();
             d.light = light;
             d.yield_at = Some(jn.lanes[0].1);

@@ -142,9 +142,16 @@ const BERTH_HELD_LONG: f32 = 90.0;
 const PLAYER_BOX_MARGIN: f32 = 0.5;
 /// An emergency vehicle passes a leader slower than this (m/s) on a free oncoming lane.
 const EMERGENCY_PASS_LEAD_SPEED: f32 = 4.2;
-/// An emergency vehicle standing longer than this (s) drives by the ordinary rules until it
-/// moves again, so a deadlock round it resolves.
+/// An emergency vehicle that has stood this long (s) holding a junction reservation, which
+/// keeps everybody else out, drives by the ordinary rules for `EMERGENCY_PAUSE`, so a
+/// deadlock round it resolves (its exit full, say). Standing in a queue or waiting for its
+/// junction to clear it holds nobody up and keeps its rights: having lost them after 8 s
+/// anywhere, an ambulance behind a red light waited out the whole cycle like a car (#462).
 const EMERGENCY_STUCK_AFTER: f32 = 8.0;
+/// ... and this long (s) when it stands behind the vehicles that lead it through: they
+/// move off once the junction is clear, it only has to wait its turn behind them.
+const EMERGENCY_STUCK_BEHIND: f32 = 25.0;
+const EMERGENCY_PAUSE: f32 = 20.0;
 
 /// What makes a new car a timetable bus (`Traffic::create_car`).
 pub struct BusSetup {
@@ -163,6 +170,11 @@ pub struct AiCar {
     pub(crate) caps: VehicleCapabilities,
     pub(crate) motion_fault: Option<Reason>,
     pub(crate) scenery_streak: f32,
+    /// How long (s) this emergency vehicle has stood holding a junction reservation, and
+    /// the traffic time until which it drives by the ordinary rules after holding one too
+    /// long (`EMERGENCY_STUCK_AFTER`).
+    pub(crate) emergency_hold: f32,
+    pub(crate) emergency_pause_until: f32,
     /// Metres its body can still travel along its way before touching scenery, from the
     /// realization of the last tick; the planner stops short of it and looks for a way round.
     pub(crate) scenery_ahead: Option<f32>,

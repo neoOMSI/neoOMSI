@@ -1080,6 +1080,8 @@ impl Traffic {
             caps,
             motion_fault: None,
             scenery_streak: 0.0,
+            emergency_hold: 0.0,
+            emergency_pause_until: 0.0,
             scenery_ahead: None,
             scenery_swept: None,
             scenery_wait: 0.0,

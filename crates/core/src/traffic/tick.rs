@@ -238,10 +238,10 @@ impl Traffic {
             .cars
             .iter()
             .map(|c| JunctionActor {
-                // (an emergency vehicle that has stood for a while gives up its rights until
-                // it moves again: its reservation and everybody making way for it otherwise
-                // held the whole junction, and nothing could resolve what held it)
-                emergency: emergency_drive(&c.vehicle, c.is_bus()) && c.stopped < EMERGENCY_STUCK_AFTER,
+                // (an emergency vehicle that stood too long holding a reservation gives up
+                // its rights for a while: its reservation and everybody making way for it
+                // otherwise held the whole junction, and nothing could resolve what held it)
+                emergency: emergency_drive(&c.vehicle, c.is_bus()) && self.time >= c.emergency_pause_until,
                 id: c.id,
                 lane: c.state.lane,
                 s: c.state.s,
@@ -306,6 +306,19 @@ impl Traffic {
         }
         if prepare_emergency {
             self.junctions.prepare_emergencies(&self.net, &junction_actors, &emergency_ways, &junction_on_lane);
+        }
+        // the time an emergency vehicle stands holding a reservation (see
+        // `EMERGENCY_STUCK_AFTER`)
+        for (car, actor) in self.cars.iter_mut().zip(&junction_actors) {
+            let holding = actor.emergency
+                && car.state.speed.abs() < 0.3
+                && self.junctions.owns_emergency_reservation(car.id);
+            let (hold, give_up) =
+                emergency_hold_step(car.emergency_hold, holding, car.why.0 == Reason::Leader, dt);
+            car.emergency_hold = hold;
+            if give_up {
+                car.emergency_pause_until = self.time + EMERGENCY_PAUSE;
+            }
         }
         let emergency_drives: Vec<_> = junction_actors.iter().zip(&emergency_ways)
             .filter(|(a, _)| a.emergency).map(|(a, way)| ::traffic::EmergencyDrive {
@@ -2003,6 +2016,26 @@ fn carried_scenery_ahead(at: f32, found: Option<f32>, now: f32) -> Option<f32> {
     found.map(|d| (d - (now - at)).max(0.0))
 }
 
+/// One tick of an emergency vehicle's hold clock: `holding` while it stands holding a
+/// junction reservation, `behind` when what holds it is a vehicle in front of it. Returns
+/// the new clock and whether it gives up its rights for `EMERGENCY_PAUSE` now.
+fn emergency_hold_step(hold: f32, holding: bool, behind: bool, dt: f32) -> (f32, bool) {
+    if !holding {
+        return (0.0, false);
+    }
+    let hold = hold + dt;
+    let limit = if behind {
+        EMERGENCY_STUCK_BEHIND
+    } else {
+        EMERGENCY_STUCK_AFTER
+    };
+    if hold > limit {
+        (0.0, true)
+    } else {
+        (hold, false)
+    }
+}
+
 /// The frozen per-tick data the planning phase hands to realization and finish. Every buffer
 /// is owned (no borrow of `Traffic`), so the phases can be separate methods.
 struct TickFrame {
@@ -2404,5 +2437,33 @@ mod presence_tests {
         }
         let behind = 8.0 * 3600.0 + elapsed - (t.day_time() + accum as f64);
         assert!(behind.abs() < 0.05, "the traffic clock is {behind:.3} s behind after {elapsed:.0} s");
+    }
+
+    /// #462: an emergency vehicle gives up its rights only after standing too long with a
+    /// junction reserved - at its line after `EMERGENCY_STUCK_AFTER`, behind the vehicles
+    /// leading it through after `EMERGENCY_STUCK_BEHIND` - and never without one.
+    #[test]
+    fn an_emergency_gives_up_its_rights_only_after_holding_a_junction_too_long() {
+        let run = |holding: bool, behind: bool, seconds: f32| {
+            let (mut hold, mut gave_up) = (0.0, None);
+            let mut t = 0.0;
+            while t < seconds {
+                let (h, give_up) = super::emergency_hold_step(hold, holding, behind, 0.02);
+                hold = h;
+                t += 0.02;
+                if give_up && gave_up.is_none() {
+                    gave_up = Some(t);
+                }
+            }
+            gave_up
+        };
+        assert!(run(false, false, 600.0).is_none(), "gave up its rights without a reservation");
+        let at_line = run(true, false, 60.0).expect("never gave up at its line");
+        assert!((at_line - super::EMERGENCY_STUCK_AFTER).abs() < 0.05, "{at_line}");
+        let behind = run(true, true, 60.0).expect("never gave up behind its queue");
+        assert!(
+            (behind - super::EMERGENCY_STUCK_BEHIND).abs() < 0.05,
+            "{behind}"
+        );
     }
 }

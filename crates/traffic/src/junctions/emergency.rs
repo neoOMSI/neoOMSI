@@ -6,6 +6,9 @@ use super::*;
 pub(super) struct EmergencyReservation {
     pub owner: VehicleId,
     pub lanes: Vec<usize>,
+    /// The owner's own way through the junction and the lane after it: what has to stay
+    /// clear of the traffic that makes way for it.
+    pub movement: Vec<usize>,
     exit: Option<usize>,
     /// The reserved movement shows the owner a stop aspect: it crosses against it, slowly.
     /// Sticky for the reservation's life, so the owner does not speed up once past the line.
@@ -44,7 +47,8 @@ impl JunctionCoordinator {
                         || (r.exit == Some(a.lane) && a.s < a.rear + 1.0)
                         || (a.emergency
                             && junction_ahead(net, w).is_some_and(|m| {
-                                m.lanes[0].1 - a.front < 45.0 && r.lanes.contains(&m.lanes[0].0)
+                                in_reach(a, w, &m, actors, on_lane)
+                                    && r.lanes.contains(&m.lanes[0].0)
                             }))
                 })
         });
@@ -56,7 +60,7 @@ impl JunctionCoordinator {
                     return None;
                 }
                 let m = junction_ahead(net, w)?;
-                (m.inside || m.lanes[0].1 - a.front < 45.0).then_some((a, m))
+                (m.inside || in_reach(a, w, &m, actors, on_lane)).then_some((a, m))
             })
             .collect();
         requests.sort_by_key(|(a, m)| (!m.inside, a.id));
@@ -69,9 +73,16 @@ impl JunctionCoordinator {
             {
                 continue;
             }
+            let way_through = movement
+                .lanes
+                .iter()
+                .map(|&(l, _)| l)
+                .chain(movement.exit.map(|x| x.0))
+                .collect();
             self.emergency_reservations.push(EmergencyReservation {
                 owner: actor.id,
                 lanes,
+                movement: way_through,
                 exit: movement.exit.map(|x| x.0),
                 against_signal: false,
                 ahead: Vec::new(),
@@ -106,13 +117,43 @@ impl JunctionCoordinator {
             .any(|r| r.owner == id && r.lanes.contains(&lane))
     }
 
+    /// Does `id` hold a reservation for an emergency drive anywhere?
+    pub fn owns_emergency_reservation(&self, id: VehicleId) -> bool {
+        self.emergency_reservations.iter().any(|r| r.owner == id)
+    }
+
+    /// Is `id` in front of an emergency vehicle on its way through a junction reserved for
+    /// it, the junction including `lane`? It leads the emergency through: at a red light it
+    /// rolls carefully over the line to make room, as drivers do for a siren behind them.
+    pub fn emergency_leads(&self, id: VehicleId, lane: usize) -> bool {
+        self.emergency_reservations
+            .iter()
+            .any(|r| r.ahead.contains(&id) && r.lanes.contains(&lane))
+    }
+
     /// The crawl speed for an emergency crossing its reserved junction against the signal.
     /// A green or unsignalled reserved movement is driven at the normal speed.
     pub fn emergency_speed_cap(&self, id: VehicleId) -> Option<f32> {
         self.emergency_reservations
             .iter()
-            .any(|r| r.owner == id && r.against_signal)
+            .any(|r| (r.owner == id || r.ahead.contains(&id)) && r.against_signal)
             .then_some(EMERGENCY_CROSSING_SPEED)
+    }
+
+    /// Does a movement through `lanes` cross, join or share the way an emergency vehicle
+    /// reserved (`r.movement`)? Only that traffic stops for it: one junction object can
+    /// hold a whole square, and a car on the far side of it, whose way never meets the
+    /// ambulance's, stood for minutes for one 100 m off (#462).
+    pub(super) fn meets_emergency(
+        net: &Network,
+        r: &EmergencyReservation,
+        lanes: &[usize],
+    ) -> bool {
+        lanes.iter().any(|&l| {
+            r.movement.contains(&l)
+                || net.crossings[l].iter().any(|c| r.movement.contains(&c.other))
+                || net.lanes[l].next.iter().any(|n| r.movement.contains(n))
+        })
     }
 
     pub(super) fn mark_against_signal(&mut self, id: VehicleId, lane: usize) {
@@ -126,6 +167,57 @@ impl JunctionCoordinator {
 
 /// How fast (m/s) an emergency crosses its reserved junction against a red light.
 pub const EMERGENCY_CROSSING_SPEED: f32 = 5.0;
+/// An emergency vehicle reserves the junction ahead this far (m) before it ...
+const EMERGENCY_RESERVE_REACH: f32 = 45.0;
+/// ... or at the end of a queue standing up to it, this long at most (m), with no gap
+/// wider than `EMERGENCY_QUEUE_GAP` (m) in it: the queue then drains through the junction
+/// in front of it (at a red light, carefully over the line) instead of the ambulance
+/// waiting out the cycle at its end (#462).
+const EMERGENCY_QUEUE_REACH: f32 = 150.0;
+const EMERGENCY_QUEUE_GAP: f32 = 15.0;
+
+/// Is the junction `m` on `a`'s way `way` close enough for `a` to reserve it: near, or at
+/// the head of the queue `a` stands at the end of?
+fn in_reach(
+    a: &JunctionActor,
+    way: &[(usize, f32)],
+    m: &Movement,
+    actors: &[JunctionActor],
+    on_lane: &HashMap<usize, Vec<(usize, f32, f32, bool)>>,
+) -> bool {
+    let entry = m.lanes[0].1;
+    if entry - a.front < EMERGENCY_RESERVE_REACH {
+        return true;
+    }
+    if entry - a.front > EMERGENCY_QUEUE_REACH {
+        return false;
+    }
+    // (distance along the way to its origin, its front and rear extents, its speed)
+    let mut queue: Vec<(f32, f32, f32, f32)> = way
+        .iter()
+        .filter(|&&(_, d)| d < entry)
+        .flat_map(|&(lane, d)| {
+            on_lane.get(&lane).into_iter().flatten().filter_map(move |&(j, s, _, foreign)| {
+                let o = actors.get(j)?;
+                let along = d + s;
+                (!foreign && o.id != a.id && along > a.front && along - o.rear < entry)
+                    .then_some((along, o.front, o.rear, o.speed))
+            })
+        })
+        .collect();
+    if queue.is_empty() {
+        return false;
+    }
+    queue.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut reached = a.front;
+    for (along, front, rear, speed) in queue {
+        if along - rear - reached > EMERGENCY_QUEUE_GAP || speed > 2.0 {
+            return false;
+        }
+        reached = reached.max(along + front);
+    }
+    entry - reached <= EMERGENCY_QUEUE_GAP
+}
 
 fn junction_group(net: &Network, first: usize) -> Vec<usize> {
     let mut group = vec![first];

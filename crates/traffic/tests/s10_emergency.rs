@@ -231,3 +231,160 @@ fn a_car_in_front_of_the_emergency_on_its_way_leads_it_through_the_junction() {
     prepare(&w, &mut c);
     assert_eq!(w.plan(&mut c, cross, None).binding, Some(Reason::EmergencyYield));
 }
+
+/// #462: cross traffic admitted on green far up the road stops for the ambulance while it
+/// still can, instead of keeping the flow going in front of it; one too close to stop
+/// drives on.
+#[test]
+fn admitted_cross_traffic_still_stops_for_an_emergency_while_it_can() {
+    let mut w = Harness::new(four_way());
+    let mut cross = JunctionActor::new(VehicleId(2), 4, 85.0);
+    cross.speed = 8.0;
+    let cross = w.add(cross);
+    w.place(cross, 4, 85.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    w.plan(&mut c, cross, None);
+    assert!(
+        !c.claims_of(VehicleId(2)).is_empty(),
+        "the cross traffic was not admitted"
+    );
+    let amb = w.add(emergency(1, 0));
+    w.place(amb, 0, 94.0);
+    prepare(&w, &mut c);
+    assert_eq!(
+        w.plan(&mut c, cross, None).binding,
+        Some(Reason::EmergencyYield)
+    );
+    assert!(
+        c.claims_of(VehicleId(2)).is_empty(),
+        "it kept its claim on the junction"
+    );
+    // admitted right at the line at a speed it cannot stop from: it goes, and the
+    // ambulance waits for it
+    let mut w = Harness::new(four_way());
+    let mut late = JunctionActor::new(VehicleId(2), 4, 97.5);
+    late.speed = 12.0;
+    let late = w.add(late);
+    w.place(late, 4, 97.5);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    w.plan(&mut c, late, None);
+    assert!(!c.claims_of(VehicleId(2)).is_empty());
+    let amb = w.add(emergency(1, 0));
+    w.place(amb, 0, 94.0);
+    prepare(&w, &mut c);
+    assert_ne!(
+        w.plan(&mut c, late, None).binding,
+        Some(Reason::EmergencyYield)
+    );
+}
+
+/// #462: an ambulance at the end of a queue standing up to a junction reserves it from
+/// there, so the queue drains through in front of it; a gap in the queue ends that.
+#[test]
+fn an_emergency_at_the_end_of_a_queue_to_the_junction_reserves_it() {
+    let queue = |gap: f32| {
+        let mut w = Harness::new(four_way());
+        let mut amb = emergency(1, 0);
+        amb.s = 10.0;
+        let a = w.add(amb);
+        w.place(a, 0, 10.0);
+        let mut s = 98.0;
+        let mut id = 10;
+        while s > 20.0 {
+            let car = w.add(JunctionActor::new(VehicleId(id), 0, s));
+            w.place(car, 0, s);
+            id += 1;
+            s -= if s < 60.0 { gap } else { 7.0 };
+        }
+        let mut c = JunctionCoordinator::new();
+        prepare(&w, &mut c);
+        c.emergency_owns(VehicleId(1), 1)
+    };
+    assert!(
+        queue(7.0),
+        "no reservation from the end of a standing queue 90 m long"
+    );
+    assert!(!queue(25.0), "a reservation across a gap in the queue");
+}
+
+/// #462: at a red light the car at the head of the queue in front of the ambulance rolls
+/// carefully over the line once the junction is reserved, instead of holding it up.
+#[test]
+fn the_head_of_the_queue_crosses_the_red_line_for_the_emergency() {
+    let mut net = four_way();
+    net.lanes[1].traffic_light = Some((0, 0));
+    let mut w = Harness::new(net);
+    w.aspects.insert((0, 0), Aspect::Red);
+    let mut amb = emergency(1, 0);
+    amb.s = 85.0;
+    let a = w.add(amb);
+    w.place(a, 0, 85.0);
+    let head = w.add(JunctionActor::new(VehicleId(2), 0, 96.0));
+    w.place(head, 0, 96.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 1));
+    w.plan(&mut c, a, None);
+    let d = w.plan(&mut c, head, None);
+    assert!(
+        d.light.is_none(),
+        "the head of the queue kept its red for the ambulance"
+    );
+    assert!(
+        c.emergency_speed_cap(VehicleId(2)).is_some(),
+        "it did not cross at a crawl"
+    );
+    // without the ambulance it keeps its red
+    let mut c = JunctionCoordinator::new();
+    w.actors[a].emergency = false;
+    prepare(&w, &mut c);
+    assert!(w.plan(&mut c, head, None).light.is_some());
+}
+
+/// #462: one junction object can hold a whole square; traffic on a way through it that
+/// never meets the ambulance's does not stop for it.
+#[test]
+fn traffic_whose_way_never_meets_the_emergency_does_not_stop_for_it() {
+    let mut net = four_way();
+    // a path of the same object 60 m east of the crossing, with its own approach
+    net.lanes.push(common::object_lane(
+        glam::DVec3::new(60.0, -10.0, 0.0),
+        glam::DVec3::new(60.0, 10.0, 0.0),
+        4,
+    ));
+    net.lanes.push(LaneBuilder::polyline(
+        vec![
+            glam::DVec3::new(60.0, -110.0, 0.0),
+            glam::DVec3::new(60.0, -10.0, 0.0),
+        ],
+        LaneKind::Street,
+        3.0,
+    ));
+    net.lanes[9].next = vec![8];
+    // ... crossed there by another path of the object: a junction of its own
+    net.lanes.push(common::object_lane(
+        glam::DVec3::new(50.0, 0.0, 0.0),
+        glam::DVec3::new(70.0, 0.0, 0.0),
+        5,
+    ));
+    net.compute_conflicts();
+    let mut w = Harness::new(net);
+    let amb = w.add(emergency(1, 0));
+    w.place(amb, 0, 94.0);
+    let far = w.add(JunctionActor::new(VehicleId(2), 9, 94.0));
+    w.place(far, 9, 94.0);
+    let cross = w.add(JunctionActor::new(VehicleId(3), 4, 94.0));
+    w.place(cross, 4, 94.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert_ne!(
+        w.plan(&mut c, far, None).binding,
+        Some(Reason::EmergencyYield)
+    );
+    assert_eq!(
+        w.plan(&mut c, cross, None).binding,
+        Some(Reason::EmergencyYield)
+    );
+}
