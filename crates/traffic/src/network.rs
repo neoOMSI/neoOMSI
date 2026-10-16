@@ -123,6 +123,15 @@ impl Lane {
         }
     }
 
+    /// May `[ai_veh_type]` `veh_type` drive on into this lane: its rules allow it
+    /// ([`Lane::allows`]) and, for the random traffic, the lane carries some. A lane whose
+    /// `[rule] trafficdensity` is 0 for every group is closed to all but the timetable (the
+    /// editor's "no non-timetable traffic", the bus lanes at Städtedreieck's
+    /// Magdalenenkrankenhaus, #125). The timetable's vehicles (-1) go anywhere.
+    pub fn open_to(&self, veh_type: i32) -> bool {
+        self.allows(veh_type) && (veh_type < 0 || self.density > 0.0)
+    }
+
     /// How much of `unsched_vehgroups.txt` group `pool`'s traffic the lane carries (see
     /// [`pool_density`]).
     pub fn pool_density(&self, defaults: &[i32], pool: usize) -> f32 {
@@ -1362,8 +1371,8 @@ impl Network {
     /// end.
     fn update_reach(&mut self) -> usize {
         let n = self.lanes.len();
-        // a lane closed to cars is no way on for one that is open
-        let counts = |i: usize, j: usize| !self.lanes[j].no_cars || self.lanes[i].no_cars;
+        // a lane closed to cars, or without random traffic, is no way on for one that is open
+        let counts = |i: usize, j: usize| self.lanes[j].open_to(0) || !self.lanes[i].open_to(0);
         let mut waiting: Vec<usize> = (0..n)
             .map(|i| self.lanes[i].next.iter().filter(|&&j| counts(i, j)).count())
             .collect();
@@ -1705,7 +1714,7 @@ impl Network {
             }
         }
         self.reach.resize(self.lanes.len(), REACH_MAX);
-        let counts = |i: usize, j: usize| !self.lanes[j].no_cars || self.lanes[i].no_cars;
+        let counts = |i: usize, j: usize| self.lanes[j].open_to(0) || !self.lanes[i].open_to(0);
         let mut waiting: HashMap<usize, usize> = affected
             .iter()
             .map(|&i| {

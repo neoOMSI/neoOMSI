@@ -102,3 +102,95 @@ fn a_car_does_not_keep_right_into_a_lane_that_closes() {
     let intent = coord.intent(&scene, &actors[0], &ManeuverState::default());
     assert_eq!(intent.target, None, "wished into the lane that becomes a bus lane");
 }
+
+/// The same road where the bus lane is closed by its traffic density instead: `[rule]
+/// trafficdensity 0` for every group, the editor's "no non-timetable traffic" (#125,
+/// Städtedreieck's Magdalenenkrankenhaus has no `no_cars` at all).
+fn no_random_traffic_ahead() -> Network {
+    let mut net = bus_lane_ahead();
+    net.lanes[4].no_cars = false;
+    net.lanes[4].density = 0.0;
+    net
+}
+
+#[test]
+fn a_lane_without_random_traffic_ahead_requires_a_change_to_the_open_lane() {
+    let net = no_random_traffic_ahead();
+    let mut actor = ManeuverActor::new(VehicleId(1), 0, 10.0);
+    actor.planned_next = Some(2);
+    assert_eq!(closed_ahead(&net, 0, 10.0, 0, Some(2)), Some(90.0));
+    assert_eq!(required_target(&net, &actor), Some(1));
+    assert_eq!(closed_ahead(&net, 1, 10.0, 0, None), None);
+    // the timetable's buses are what the lane is for
+    assert_eq!(closed_ahead(&net, 0, 10.0, -1, Some(2)), None);
+    actor.veh_type = -1;
+    assert_eq!(required_target(&net, &actor), None);
+}
+
+#[test]
+fn a_car_waits_for_a_gap_before_a_lane_without_random_traffic() {
+    let net = no_random_traffic_ahead();
+    let mut actor = ManeuverActor::new(VehicleId(1), 0, 10.0);
+    actor.planned_next = Some(2);
+    let actors = [actor];
+    let occupancy = Occupancy::default();
+    let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+        people: &[], static_clearance: None, time: 0.0, dt: 0.02, tick: 1 };
+    let mut coord = ManeuverCoordinator::new();
+    let decision = coord.plan(&scene, &mut ManeuverState::default(), &ManeuverInputs::new(0));
+    assert_eq!(decision.target_lane, Some(LaneId(1)));
+    let stop = decision.stop_at.expect("no wait before the bus lane");
+    assert!((stop - 89.0).abs() < 0.01, "stops at {stop}");
+}
+
+#[test]
+fn a_car_does_not_keep_right_into_a_lane_without_random_traffic() {
+    let net = no_random_traffic_ahead();
+    let mut actor = ManeuverActor::new(VehicleId(1), 1, 10.0);
+    actor.planned_next = Some(3);
+    actor.speed = 12.0;
+    let actors = [actor];
+    let occupancy = Occupancy::default();
+    let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,
+        people: &[], static_clearance: None, time: 0.0, dt: 0.02, tick: 1 };
+    let coord = ManeuverCoordinator::new();
+    let intent = coord.intent(&scene, &actors[0], &ManeuverState::default());
+    assert_eq!(intent.target, None, "wished into the lane that becomes a bus lane");
+}
+
+#[test]
+fn a_car_already_on_a_lane_without_random_traffic_is_not_held_there() {
+    let net = no_random_traffic_ahead();
+    // on the bus lane itself: nothing ahead closes, it just drives on
+    assert_eq!(closed_ahead(&net, 4, 10.0, 0, None), None);
+    let actor = ManeuverActor::new(VehicleId(1), 4, 10.0);
+    assert_eq!(required_target(&net, &actor), None);
+}
+
+#[test]
+fn a_road_without_a_lane_to_move_to_is_driven_on_as_before() {
+    // one lane only, the last piece without random traffic (a depot road): there is no
+    // open lane to move to, so the car is neither held nor taken off but drives on
+    let mut net = Network::default();
+    for (from, to) in [(0.0, 60.0), (60.0, 200.0)] {
+        let mut l = LaneBuilder::polyline(
+            vec![DVec3::new(0.0, from, 0.0), DVec3::new(0.0, to, 0.0)],
+            LaneKind::Street,
+            3.5,
+        );
+        l.density = 1.0;
+        net.lanes.push(l);
+    }
+    net.lanes[1].density = 0.0;
+    net.link(1.5);
+    let mut actor = ManeuverActor::new(VehicleId(1), 0, 10.0);
+    actor.planned_next = Some(1);
+    assert_eq!(required_target(&net, &actor), None);
+    let mut car = AiState::new(0, 55.0, 7);
+    car.speed = 10.0;
+    car.plan_next(&net);
+    for _ in 0..100 {
+        assert!(car.drive(&net, 0.02, None, None), "the car was taken off");
+    }
+    assert_eq!(car.lane, 1);
+}

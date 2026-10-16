@@ -1706,10 +1706,11 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
 
 /// How far ahead (from distance `s` along `lane`, within `TURN_LANE_LOOKAHEAD`) the way
 /// runs into a joint where every way on is closed to `[ai_veh_type]` `veh_type` (see
-/// `Lane::allows`): a lane that goes on as a bus lane, a junction path only the timetable
+/// `Lane::open_to`): a lane that goes on as a bus lane, a junction path only the timetable
 /// may drive. The way is `first` (the planned next lane) where it is open, then the one
 /// open way on at each joint; where there is a choice of open ways, it does not close.
-/// The end of the network (no way on at all) is not a closure.
+/// The end of the network (no way on at all) is not a closure, nor is the way on from a
+/// lane already closed to the vehicle.
 pub fn closed_ahead(
     net: &Network,
     lane: usize,
@@ -1717,6 +1718,9 @@ pub fn closed_ahead(
     veh_type: i32,
     first: Option<usize>,
 ) -> Option<f32> {
+    if !net.lanes.get(lane)?.open_to(veh_type) {
+        return None;
+    }
     let mut cur = lane;
     let mut d = net.lanes.get(lane)?.length() - s;
     let mut first = first;
@@ -1728,10 +1732,10 @@ pub fn closed_ahead(
         if l.next.is_empty() {
             return None;
         }
-        let next = match first.take().filter(|n| l.next.contains(n) && net.lanes[*n].allows(veh_type)) {
+        let next = match first.take().filter(|n| l.next.contains(n) && net.lanes[*n].open_to(veh_type)) {
             Some(n) => n,
             None => {
-                let mut open = l.next.iter().copied().filter(|&n| net.lanes[n].allows(veh_type));
+                let mut open = l.next.iter().copied().filter(|&n| net.lanes[n].open_to(veh_type));
                 match (open.next(), open.next()) {
                     (None, _) => return Some(d.max(0.0)),
                     (Some(n), None) => n,

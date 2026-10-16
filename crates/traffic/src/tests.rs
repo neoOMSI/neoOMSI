@@ -831,6 +831,42 @@ use crate::following::smooth01;
     }
 
     #[test]
+    fn a_driver_with_a_choice_keeps_off_a_road_that_goes_on_without_random_traffic() {
+        // a lane that forks: one way goes on after 40 m as a long road without random
+        // traffic (`[rule] trafficdensity 0`, the bus road at Städtedreieck's
+        // Magdalenenkrankenhaus, #125), the other runs round a long loop
+        let a = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, LaneKind::Street, 3.0);
+        let fork = DVec3::new(0.0, 30.0, 0.0);
+        let to_bus_road = LaneBuilder::arc(fork, 10.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
+        let mut bus_road = LaneBuilder::arc(
+            to_bus_road.end(),
+            10.0,
+            700.0,
+            0.0,
+            0.0,
+            LaneKind::Street,
+            3.0,
+        );
+        bus_road.density = 0.0;
+        let on = LaneBuilder::arc(fork, 350.0, 700.0, 0.0, 0.0, LaneKind::Street, 3.0);
+        let mut net = Network {
+            lanes: vec![a, to_bus_road, bus_road, on],
+            ..Default::default()
+        };
+        net.link(1.5);
+        assert_eq!(net.lanes[0].next.len(), 2);
+        assert_eq!(net.lanes[1].next, vec![2]);
+        assert!(net.reach[1] < DEAD_END, "reach {}", net.reach[1]);
+        // the road itself is no dead end for the timetable driving on it
+        assert!(net.reach[2] >= DEAD_END && net.reach[0] >= DEAD_END);
+        for seed in 1..40 {
+            let mut car = AiState::new(0, 0.0, seed);
+            car.plan_next(&net);
+            assert_eq!(car.planned_next, Some(3), "seed {seed}");
+        }
+    }
+
+    #[test]
     fn a_train_runs_past_the_end_of_its_track() {
         // at a dead end a car is taken off, a train runs on (its cars go one by one)
         for (kind, runs_on) in [(LaneKind::Street, false), (LaneKind::Rail, true)] {
