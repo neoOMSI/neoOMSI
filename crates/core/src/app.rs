@@ -1343,10 +1343,6 @@ impl App {
         {
             centers.extend(self.remotes.remotes.values().map(|r| r.vehicle().position));
         }
-        // Route frontiers: keep the tiles a scheduled bus needs next loaded where feasible.
-        if let Some(t) = self.traffic.as_ref() {
-            centers.extend(t.topology_centers());
-        }
         let (Some(streamer), Some(w), Some(r), Some(scene)) = (
             self.streamer.as_mut(),
             self.world.as_ref(),

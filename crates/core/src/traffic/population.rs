@@ -11,24 +11,6 @@ impl Traffic {
     }
 
 
-    /// Ask for a loaded tile ahead of a route frontier, so a bus reaches loaded ground where
-    /// feasible instead of stopping at the edge. Bounded and de-duplicated by the owner.
-    pub fn request_topology_tile(&mut self, tile: (i32, i32)) {
-        self.population.request_topology(tile);
-    }
-
-
-    /// World positions of the wanted route-frontier tiles, for the streamer's centres.
-    pub fn topology_centers(&self) -> Vec<DVec3> {
-        let ts = ::map::tile_size();
-        self.population
-            .topology_demand()
-            .iter()
-            .map(|&(tx, ty)| DVec3::new((tx as f64 + 0.5) * ts, (ty as f64 + 0.5) * ts, 0.0))
-            .collect()
-    }
-
-
     /// How much traffic group `g` makes now: its `unsched_trafficdens.txt` factor times its
     /// curve for this day of the week (+1 Monday to Friday, +2 Saturday, +4 Sunday, 0 every
     /// day).

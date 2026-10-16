@@ -542,8 +542,8 @@ pub struct Traffic {
     services: ServiceCoordinator,
     /// The maneuver coordinator: the single owner of every lateral maneuver on the road.
     maneuvers: ManeuverCoordinator,
-    /// The population coordinator: the single owner of demand, admission, the dormant
-    /// lifecycle and topology demand (`traffic::population`).
+    /// The population coordinator: the single owner of demand, admission and the dormant
+    /// lifecycle (`traffic::population`).
     population: PopulationCoordinator,
     /// `pull_out_room` by vehicle file.
     pull_out_rooms: HashMap<std::path::PathBuf, f32>,

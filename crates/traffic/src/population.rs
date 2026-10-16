@@ -56,8 +56,6 @@ pub const ENTRANCE_LIMIT: u32 = 3;
 pub const DORMANT_CAP_FACTOR: f32 = 8.0;
 /// A dormant actor is woken only up to this multiple of the target around the centre.
 pub const WAKE_BUDGET_FACTOR: f32 = 1.25;
-/// Most tiles recorded as wanted ahead of a route frontier.
-pub const TOPOLOGY_MAX: usize = 32;
 
 // ---- input and output types -----------------------------------------------------------
 
@@ -265,7 +263,7 @@ struct DormantRecord {
     s: f32,
 }
 
-/// The single owner of demand, admission, the dormant registry and topology demand.
+/// The single owner of demand, admission and the dormant registry.
 #[derive(Debug, Clone, Default)]
 pub struct PopulationCoordinator {
     queue: VecDeque<SpawnRequest>,
@@ -276,7 +274,6 @@ pub struct PopulationCoordinator {
     dormant: HashMap<VehicleId, DormantRecord>,
     /// Insertion order of the dormant registry, for deterministic wake order.
     dormant_order: Vec<VehicleId>,
-    topology: Vec<(i32, i32)>,
     /// Requests denied for capacity, so the adapter can report diagnosed overload.
     capacity_denied: u64,
     admitted_total: u64,
@@ -299,11 +296,6 @@ impl PopulationCoordinator {
 
     pub fn queue_len(&self) -> usize {
         self.queue.len()
-    }
-
-    /// How many tiles are wanted ahead of a route frontier.
-    pub fn topology_len(&self) -> usize {
-        self.topology.len()
     }
 
     /// Whether another request fits in the bounded queue.
@@ -600,21 +592,6 @@ impl PopulationCoordinator {
         self.dormant.len() < capacity
     }
 
-    /// Record a wanted tile ahead of a route frontier (bounded, de-duplicated, nearest kept).
-    pub fn request_topology(&mut self, tile: (i32, i32)) {
-        if self.topology.contains(&tile) {
-            return;
-        }
-        if self.topology.len() >= TOPOLOGY_MAX {
-            self.topology.remove(0);
-        }
-        self.topology.push(tile);
-    }
-
-    pub fn topology_demand(&self) -> &[(i32, i32)] {
-        &self.topology
-    }
-
     /// Release a vehicle. Returns true exactly once, when the vehicle was a known dormant
     /// actor, so the adapter can notify schedule/passengers and release resources once.
     pub fn release(&mut self, id: VehicleId, _cause: RemovalCause) -> bool {
@@ -643,7 +620,6 @@ impl PopulationCoordinator {
     pub fn invalidate_network(&mut self) {
         self.queue.clear();
         self.entrance.clear();
-        self.topology.clear();
     }
 
     /// Remove every dormant registration (population reset).
@@ -652,7 +628,6 @@ impl PopulationCoordinator {
         self.entrance.clear();
         self.dormant.clear();
         self.dormant_order.clear();
-        self.topology.clear();
     }
 
     /// Forward a spawn decision's typed events to a caller-supplied sink.
@@ -870,17 +845,5 @@ mod tests {
         let out = c.plan_dormant(&scene(&net, &occ, true), &[view]);
         assert_eq!(out[0].outcome, SpawnOutcome::Deny(Reason::NoGround));
         assert!(c.contains_dormant(id));
-    }
-
-    #[test]
-    fn topology_demand_is_bounded_and_deduplicated() {
-        let mut c = PopulationCoordinator::new();
-        c.request_topology((1, 1));
-        c.request_topology((1, 1));
-        assert_eq!(c.topology_demand().len(), 1);
-        for i in 0..(TOPOLOGY_MAX as i32 + 5) {
-            c.request_topology((i, 0));
-        }
-        assert_eq!(c.topology_demand().len(), TOPOLOGY_MAX);
     }
 }

@@ -19,7 +19,7 @@ fn tile_and_camera_changes_preserve_identity_and_duty_counts() {
         .enter_dormant(VehicleId(3), SpawnClass::Scheduled, true, 0, 90.0);
     let ids_before: Vec<VehicleId> = w.coord.dormant_ids().to_vec();
     for _ in 0..5 {
-        // a tile load/unload rebuilds topology demand but keeps the logical lifecycle
+        // a tile load/unload drops queued demand but keeps the logical lifecycle
         w.coord.invalidate_network();
         assert_eq!(w.coord.dormant_len(), 3);
         assert_eq!(w.coord.dormant_duty_count(), 2);

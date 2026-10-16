@@ -160,10 +160,6 @@ impl Schedule {
                 "trip {trip_name}: the bus is on a tile that is not loaded (again at {:.2} min)",
                 retry / 60.0
             );
-            // Ask for the tile the bus needs next, so it reaches loaded ground where feasible.
-            if let Some(key) = steps[at].key {
-                traffic.request_topology_tile(key.tile);
-            }
             self.retry_at.insert(i, retry);
             return Placed::Wait;
         }
