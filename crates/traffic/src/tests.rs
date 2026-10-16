@@ -368,6 +368,55 @@ use crate::following::smooth01;
     }
 
     #[test]
+    fn a_jump_past_the_cycle_end_restarts_the_cycle() {
+        // Städtedreieck's Bergerplatz (#101): flashing at 0..12 only with light 1 asked
+        let mut c = TrafficLightController::from_program(
+            vec![
+                (
+                    vec![
+                        (9, 5.0),
+                        (12, 2.0),
+                        (9, 5.0),
+                        (0, 3.0),
+                        (3, 1.0),
+                        (6, 29.0),
+                        (9, 3.0),
+                        (0, 39.0),
+                    ],
+                    None,
+                ),
+                (vec![(6, 1.0)], Some(30.0)),
+                (vec![(6, 1.0)], Some(30.0)),
+            ],
+            Some(127.0),
+            &[],
+            &[
+                [1.0, 0.0, 1.0, 15.0],
+                [1.0, 7.0, 0.0, 6.0],
+                [2.0, 87.0, 1.0, 130.0],
+                [2.0, 0.0, 0.0, 87.0],
+            ],
+        );
+        c.time = 20.0;
+        for _ in 0..3000 {
+            c.advance(0.1);
+            assert!(
+                !matches!(c.state(0), 9 | 12) || (45.0..48.0).contains(&c.time),
+                "flashing at {}",
+                c.time
+            );
+        }
+        // by night both jumps at 0 let the clock past
+        c.request[1] = true;
+        c.time = 80.0;
+        c.advance(60.0);
+        for _ in 0..600 {
+            c.advance(0.1);
+            assert!((6.0..=7.0).contains(&c.time), "night at {}", c.time);
+        }
+    }
+
+    #[test]
     fn a_stop_does_not_hold_a_red_and_yellow_changeover() {
         // Add-On London's Brixton Road lights have a demand stop one second into their
         // red-and-yellow phase.  A queued vehicle must not be able to hold that transition

@@ -41,9 +41,9 @@ pub struct TrafficLightController {
     pub request: Vec<bool>,
     /// The clock waits at a stop point.
     pub held: bool,
-    /// A stop point the clock has just been let past without moving (it is not asked again
-    /// at the same instant).
-    passed: Option<usize>,
+    /// The stop points the clock has just been let past without moving (they are not asked
+    /// again at the same instant; several may share one, #101).
+    passed: Vec<usize>,
     started: bool,
 }
 
@@ -59,7 +59,7 @@ impl TrafficLightController {
             time: 0.0,
             request: vec![false; n],
             held: false,
-            passed: None,
+            passed: Vec::new(),
             started: false,
         }
     }
@@ -150,7 +150,7 @@ impl TrafficLightController {
             for (k, p) in self.stops.iter().enumerate() {
                 let d = (p.time as f64 - self.time).rem_euclid(cycle);
                 let d = if d > cycle - 1e-6 { 0.0 } else { d };
-                if d < 1e-6 && self.passed == Some(k) {
+                if d < 1e-6 && self.passed.contains(&k) {
                     continue;
                 }
                 if d <= left && best.map(|b| d < b.1).unwrap_or(true) {
@@ -159,13 +159,13 @@ impl TrafficLightController {
             }
             let Some((k, d)) = best else {
                 if left > 0.0 {
-                    self.passed = None;
+                    self.passed.clear();
                 }
                 self.time = (self.time + left).rem_euclid(cycle);
                 return;
             };
             if d > 1e-6 {
-                self.passed = None;
+                self.passed.clear();
             }
             self.time = (self.time + d).rem_euclid(cycle);
             left -= d;
@@ -179,15 +179,22 @@ impl TrafficLightController {
                 active = false;
             }
             if !active {
-                self.passed = Some(k);
+                self.passed.push(k);
                 continue;
             }
             match p.jump_to {
                 Some(to) => {
-                    let target = (to as f64).rem_euclid(cycle);
+                    // a target past the cycle's end starts the next one (#101)
+                    let to = to as f64;
+                    let target = if to >= cycle {
+                        0.0
+                    } else {
+                        to.rem_euclid(cycle)
+                    };
                     // A backwards jump may repeat as long as its request condition holds
                     self.time = target;
-                    self.passed = Some(k);
+                    self.passed.clear();
+                    self.passed.push(k);
                     if left <= 0.0 {
                         return;
                     }
@@ -195,7 +202,7 @@ impl TrafficLightController {
                 None => {
                     self.time = p.time as f64;
                     self.held = true;
-                    self.passed = None;
+                    self.passed.clear();
                     return;
                 }
             }
