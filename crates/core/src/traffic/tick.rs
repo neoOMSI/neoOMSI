@@ -42,6 +42,7 @@ impl Traffic {
     fn tick_clock_and_index(&mut self, dt: f32, player: Option<PlayerBox>) {
         self.time += dt;
         self.day_time += dt as f64 * self.time_scale;
+        self.step_count += 1;
         self.held_at_red = 0;
         self.player = player;
         self.geo_prev = self
@@ -1603,6 +1604,7 @@ impl Traffic {
             use rayon::prelude::*;
             let net = &self.net;
             let road_collision = &self.road_collision;
+            let step = self.step_count;
             type Work<'a> = (
                 &'a AiState,
                 &'a mut AiBody,
@@ -1616,6 +1618,8 @@ impl Traffic {
                 &'a mut Option<f32>,
                 bool,
                 &'a mut Option<f64>,
+                VehicleId,
+                &'a mut Option<(f32, Option<f32>)>,
             );
             let mut work: Vec<Work> = self
                 .cars
@@ -1624,7 +1628,7 @@ impl Traffic {
                 .enumerate()
                 .filter_map(|(i, (c, f))| {
                     let f = f.as_mut()?;
-                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps, &mut c.scenery_ahead, c.state.odometer < c.scenery_ghost, &mut c.track_start))
+                    Some((&c.state, &mut c.body, &mut c.vehicle, f, &mut c.rail_trail, &mut c.motion_fault, &mut c.scenery_streak, previous_odometer[i], &c.caps, &mut c.scenery_ahead, c.state.odometer < c.scenery_ghost, &mut c.track_start, c.id, &mut c.scenery_swept))
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
@@ -1632,7 +1636,7 @@ impl Traffic {
             // the main thread more than a car's work)
             work.par_iter_mut()
                 .with_min_len(4)
-                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead, ghost, track_start)| {
+                .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead, ghost, track_start, id, swept)| {
                     let t0 = std::time::Instant::now();
                     let ground = vehicle.ground.clone();
                     let contact = vehicle.contact.clone();
@@ -1648,6 +1652,7 @@ impl Traffic {
                     // (given up on scenery: it follows its way through it, see SCENERY_GHOST_AFTER)
                     if *ghost {
                         **ahead = None;
+                        **swept = None;
                         **fault = None;
                         **streak = 0.0;
                     }
@@ -1656,14 +1661,21 @@ impl Traffic {
                     // brakes for it next tick (and looks for a way round); a refused move is
                     // only the last resort, with the bumper already against the thing.
                     if before.is_some() && body.ground_supported {
-                        if state.speed > 0.05 || ahead.is_some() || **streak > 0.0 || fault.is_some() {
-                            let reach = (state.speed * state.speed / 6.0 + 4.0).clamp(4.0, 16.0);
-                            let veh: &VehicleInstance = vehicle;
-                            let cp: &VehicleCapabilities = caps;
-                            let touches = |b: &AiBody| road_collision.hit(&safety::road_body_box(veh, b, cp)).is_some();
-                            **ahead = body.distance_to_contact(&way, state.speed, reach, &touches);
+                        let trouble = **streak > 0.0 || fault.is_some();
+                        if state.speed > 0.05 || ahead.is_some() || trouble {
+                            if scenery_sweep_due(step, *id, trouble, swept.is_some()) {
+                                let reach = (state.speed * state.speed / 6.0 + 4.0).clamp(4.0, 16.0);
+                                let veh: &VehicleInstance = vehicle;
+                                let cp: &VehicleCapabilities = caps;
+                                let touches = |b: &AiBody| road_collision.hit(&safety::road_body_box(veh, b, cp)).is_some();
+                                **ahead = body.distance_to_contact(&way, state.speed, reach, &touches);
+                                **swept = Some((*previous, **ahead));
+                            } else if let Some((at, found)) = **swept {
+                                **ahead = carried_scenery_ahead(at, found, *previous);
+                            }
                         } else {
                             **ahead = None;
+                            **swept = None;
                         }
                     }
                     body.step(
@@ -1959,6 +1971,24 @@ impl Traffic {
             self.sample_capture();
         }
     }
+}
+
+/// Is the scenery look-ahead (a probe body driven along the way, most of the vehicles'
+/// realization time) to run for vehicle `id` at step `step`? Every other step, half the
+/// vehicles on one and half on the next; in between, `carried_scenery_ahead` carries its
+/// last finding along. A vehicle in trouble with scenery (a refused move, pinned) or without
+/// a finding yet looks every step.
+fn scenery_sweep_due(step: u64, id: VehicleId, trouble: bool, swept: bool) -> bool {
+    trouble || !swept || (step + id.get()) % 2 == 0
+}
+
+/// The look-ahead's finding `found` at odometer `at`, carried to odometer `now`: the room to
+/// the contact shrinks by what the body has driven since. The look-ahead samples every half
+/// metre, about what a body at 50 km/h drives between two looks, so the carried value is
+/// nearly as good as a new look; what comes into reach is seen a step later, well inside
+/// the 4 m beyond the braking distance the look-ahead reaches.
+fn carried_scenery_ahead(at: f32, found: Option<f32>, now: f32) -> Option<f32> {
+    found.map(|d| (d - (now - at)).max(0.0))
 }
 
 /// The frozen per-tick data the planning phase hands to realization and finish. Every buffer
@@ -2283,6 +2313,36 @@ mod tests {
         assert!(closest >= room - 0.3, "lost steering room: {closest}");
         assert!(car.speed < 0.1);
         assert!((rear - car.s - car.front - room).abs() < 0.3);
+    }
+}
+
+#[cfg(test)]
+mod scenery_sweep_tests {
+    use super::*;
+
+    #[test]
+    fn the_scenery_look_ahead_runs_every_other_step_for_half_the_vehicles_each() {
+        for step in 0..10u64 {
+            let due = (1..=100u64)
+                .filter(|&id| scenery_sweep_due(step, VehicleId(id), false, true))
+                .count();
+            assert_eq!(due, 50, "step {step}: {due} of 100 looked ahead");
+        }
+        let id = VehicleId(7);
+        let pattern: Vec<bool> = (0..4).map(|s| scenery_sweep_due(s, id, false, true)).collect();
+        assert_eq!(pattern, [false, true, false, true]);
+        // trouble with scenery, or nothing found yet: every step
+        assert!((0..4).all(|s| scenery_sweep_due(s, id, true, true)));
+        assert!((0..4).all(|s| scenery_sweep_due(s, id, false, false)));
+    }
+
+    #[test]
+    fn a_carried_finding_shrinks_by_what_the_body_drove() {
+        assert_eq!(carried_scenery_ahead(100.0, None, 100.3), None);
+        assert_eq!(carried_scenery_ahead(100.0, Some(5.0), 100.0), Some(5.0));
+        assert!((carried_scenery_ahead(100.0, Some(5.0), 100.25).unwrap() - 4.75).abs() < 1e-5);
+        // driven up to it (or past, on a refused move put back): no room left
+        assert_eq!(carried_scenery_ahead(100.0, Some(0.5), 101.0), Some(0.0));
     }
 }
 

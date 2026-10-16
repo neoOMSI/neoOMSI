@@ -166,6 +166,9 @@ pub struct AiCar {
     /// Metres its body can still travel along its way before touching scenery, from the
     /// realization of the last tick; the planner stops short of it and looks for a way round.
     pub(crate) scenery_ahead: Option<f32>,
+    /// Where the scenery look-ahead last ran (the realized odometer, m) and what it found
+    /// (see `scenery_sweep_due`).
+    pub(crate) scenery_swept: Option<(f32, Option<f32>)>,
     /// Seconds it has stood held by scenery (the look-ahead hold or a refused move).
     pub(crate) scenery_wait: f32,
     /// Odometer (m) up to which it ignores scenery after being held too long
@@ -474,6 +477,8 @@ pub struct Traffic {
     /// Seconds of the frame being drawn (set before `sync`): the drivers' animations run
     /// on it, not on the traffic's steps, which a frame may have none or two of.
     frame_dt: f32,
+    /// Steps the traffic has run (for the work a vehicle does only every so many of them).
+    step_count: u64,
     /// How far the frame being drawn is from the last step to the next (0..1, set before
     /// `sync`): the vehicles are drawn that far from their pose before the last step to
     /// their pose now. 1 draws them where the simulation has them.
