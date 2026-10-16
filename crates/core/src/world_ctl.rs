@@ -15,7 +15,7 @@ impl App {
             q.vehicle.host.clock.sync_game_time_from(&clock);
         }
         if let Some(t) = self.traffic.as_mut() {
-            for car in &mut t.cars {
+            for car in t.cars_mut() {
                 car.vehicle.host.clock.sync_game_time_from(&clock);
             }
         }
@@ -867,8 +867,9 @@ impl App {
                 self.clock.day_of_year = real.day_of_year;
                 self.clock.time = real.time;
                 if let Some(tr) = self.traffic.as_mut() {
-                    tr.day_time += gap;
+                    tr.advance_day_time(gap);
                 }
+                self.sim_accum = 0.0;
             }
         }
         self.sync_vehicle_game_times();
@@ -878,19 +879,11 @@ impl App {
         let days = |y: i32, doy: i32| -> i64 {
             (1..y).map(|i| ::simulation::clock::days_in_year(i) as i64).sum::<i64>() + doy as i64
         };
-        let gap = crate::real_time::gap(&self.clock, &real);
-        if gap.abs() < 0.25 {
-            return;
-        }
-        self.clock.year = real.year;
-        self.clock.day_of_year = real.day_of_year;
-        self.clock.time = real.time;
-        if let Some(tr) = self.traffic.as_mut() {
-            tr.advance_day_time(gap);
-        }
-        self.sim_accum = 0.0;
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
+        let mut c = self.clock.clone();
+        c.set_date(year, month, day);
+        let diff = days(c.year, c.day_of_year) - days(self.clock.year, self.clock.day_of_year);
+        if diff != 0 {
+            self.shift_clock(diff as f64 * 86400.0);
         }
     }
 

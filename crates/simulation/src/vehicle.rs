@@ -332,6 +332,28 @@ fn mesh_path(root: &Path, dir: &Path, model_dir: &Path, file: &str) -> PathBuf {
 }
 
 impl VehicleType {
+    /// A type of only its definition: no model, script or meshes (for tests).
+    #[doc(hidden)]
+    pub fn of_definition(def: Vehicle) -> VehicleType {
+        VehicleType {
+            def,
+            model: Default::default(),
+            model_dir: Default::default(),
+            program: Default::default(),
+            meshes: Vec::new(),
+            keep_winding: false,
+            winding_votes: (0, 0),
+            turned_meshes: Vec::new(),
+            paint_schemes: Vec::new(),
+            texchanges: Vec::new(),
+            wheel_meshes: Vec::new(),
+            suspension_axles: Vec::new(),
+            missing_packs: Vec::new(),
+            mesh_bounds: Vec::new(),
+            mesh_boxes: Vec::new(),
+        }
+    }
+
     pub fn load(root: &Path, bus_file: &Path) -> Result<VehicleType> {
         Self::load_with(root, bus_file, true)
     }

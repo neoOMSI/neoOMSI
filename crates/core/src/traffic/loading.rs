@@ -104,7 +104,7 @@ impl Traffic {
                     {
                         continue;
                     }
-                    let path = ::legacy_config::resolve_path(root, &v.file);
+                    let path = ::mods::resolve_path(root, &v.file);
                     match VehicleType::load_ai(root, &path) {
                         Ok(t) => {
                             // `[type]` 2 = rail (only as scheduled trains), 3 = aircraft on flight paths
@@ -337,6 +337,7 @@ impl Traffic {
             road_collision: world.collision.lock().clone(),
             walkers: Vec::new(),
             people: Vec::new(),
+            people_grid: HashMap::new(),
             initial: true,
             last_dt: 0.0,
             lamp_dt: 0.0,
@@ -351,6 +352,8 @@ impl Traffic {
             player_emergency: false,
             external_emergencies: Vec::new(),
             others: Vec::new(),
+            rail_ahead: Vec::new(),
+            train_cars: train_cars(root, &world.ailists),
             drivers: HashMap::new(),
             driver_pool: Vec::new(),
             tick_split: [0.0; 3],
@@ -500,6 +503,7 @@ impl Traffic {
         new.state.min_gap = old.state.min_gap;
         new.state.speed = 0.0;
         new.consist_reversed = reversed;
+        new.train = old.train;
         let old = std::mem::replace(&mut self.cars[ci], new);
         self.orphan_sounds.extend(old.sounds);
         for r in std::iter::once(old.render).chain(old.trailer_renders) {
@@ -976,6 +980,7 @@ impl Traffic {
             light_at: None,
             rail_trail: Default::default(),
             consist_reversed: false,
+            train: false,
             seed,
             scheme,
         });
@@ -1009,10 +1014,14 @@ impl Traffic {
     pub fn precache_random(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
         let t0 = std::time::Instant::now();
         let sets = self.random_sets();
+        let mut uploaded = 0;
         for chunk in sets.chunks(3) {
+            if !world.can_precache_vehicle(renderer, scene) {
+                break;
+            }
             world.prefetch_vehicle_sets(renderer, chunk);
             for (ty, scheme) in chunk {
-                world.precache_vehicle(renderer, scene, ty, *scheme);
+                uploaded += usize::from(world.precache_vehicle(renderer, scene, ty, *scheme));
             }
         }
         world.forget_prefetched();
@@ -1020,7 +1029,7 @@ impl Traffic {
             self.prime_pull_out_room(ty, false);
         }
         log::info!(
-            "traffic: {} vehicle/paint sets of the random traffic read and uploaded in {:.1} s",
+            "traffic: {uploaded}/{} vehicle/paint sets of the random traffic read and uploaded in {:.1} s (remaining sets load on demand)",
             sets.len(),
             t0.elapsed().as_secs_f32()
         );
@@ -1071,5 +1080,119 @@ impl Traffic {
             }
         }
         best
+    }
+}
+
+/// A vehicle file from its `vehicles/` folder on, lower case: the same car in any root.
+pub(crate) fn car_key(path: &Path) -> String {
+    let p = path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('\\', "/");
+    match p.rfind("vehicles/") {
+        Some(k) => p[k..].to_string(),
+        None => p,
+    }
+}
+
+/// The vehicle files of the map's `.zug` trains (a car naming a group: all its vehicles).
+fn train_cars(root: &Path, lists: &::map::ailists::AiLists) -> hashbrown::HashSet<String> {
+    let mut out = hashbrown::HashSet::new();
+    for v in lists
+        .groups
+        .iter()
+        .filter(|g| !g.is_depot)
+        .flat_map(|g| &g.vehicles)
+    {
+        if !v.file.to_ascii_lowercase().ends_with(".zug") {
+            continue;
+        }
+        let Ok(train) =
+            ::legacy_vehicle::vehicle::Train::load(&::mods::resolve_path(root, &v.file))
+        else {
+            continue;
+        };
+        for (file, _) in &train.cars {
+            let p = ::mods::resolve_path(root, file);
+            let files: Vec<std::path::PathBuf> = if ::legacy_config::vfs::is_file(&p) {
+                vec![p]
+            } else {
+                lists
+                    .groups
+                    .iter()
+                    .filter(|g| g.name.eq_ignore_ascii_case(file.trim()))
+                    .flat_map(|g| &g.vehicles)
+                    .map(|v| ::mods::resolve_path(root, &v.file))
+                    .collect()
+            };
+            out.extend(files.iter().map(|f| car_key(f)));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod train_car_tests {
+    use super::{car_key, train_cars};
+    use ::map::ailists::{AiGroup, AiLists, AiVehicleEntry};
+
+    fn entry(file: &str) -> AiVehicleEntry {
+        AiVehicleEntry {
+            file: file.into(),
+            weight: 1.0,
+            number: None,
+            registration: None,
+        }
+    }
+
+    /// A `.zug`'s cars, a group's among them, are trains; a tram is not.
+    #[test]
+    fn the_cars_of_the_maps_trains_are_trains() {
+        let root = std::env::temp_dir().join(format!("neoomsi_train_cars_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for f in [
+            "Vehicles/Zug/Kopf.ovh",
+            "Vehicles/Zug/Mitte.ovh",
+            "Vehicles/Tram/GT6.bus",
+        ] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "[friendlyname]\nx\n").unwrap();
+        }
+        std::fs::create_dir_all(root.join("Trains")).unwrap();
+        std::fs::write(
+            root.join("Trains/S5.zug"),
+            "Vehicles\\Zug\\Kopf.ovh\n0\nMitten\n1\n",
+        )
+        .unwrap();
+        let lists = AiLists {
+            groups: vec![
+                AiGroup {
+                    name: "S5".into(),
+                    vehicles: vec![entry("Trains\\S5.zug")],
+                    ..Default::default()
+                },
+                AiGroup {
+                    name: "Mitten".into(),
+                    vehicles: vec![entry("Vehicles\\Zug\\Mitte.ovh")],
+                    ..Default::default()
+                },
+                AiGroup {
+                    name: "Tram".into(),
+                    vehicles: vec![entry("Vehicles\\Tram\\GT6.bus")],
+                    ..Default::default()
+                },
+            ],
+        };
+        let cars = train_cars(&root, &lists);
+        assert!(cars.contains("vehicles/zug/kopf.ovh"), "{cars:?}");
+        assert!(cars.contains("vehicles/zug/mitte.ovh"), "{cars:?}");
+        assert!(!cars.contains("vehicles/tram/gt6.bus"));
+        // another content root holding the same car
+        assert_eq!(
+            car_key(std::path::Path::new("/mods/X/Vehicles/Zug/Kopf.ovh")),
+            "vehicles/zug/kopf.ovh"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

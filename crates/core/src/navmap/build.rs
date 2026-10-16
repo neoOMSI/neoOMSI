@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 use rayon::prelude::*;
 
 use ::map::{Terrain, tile_size};
-use ::simulation::traffic::{Lane, LaneKind};
+use ::traffic::{Lane, LaneKind};
 
 use super::cache::Deps;
 use super::raster::{self, CELL, MARGIN, Raster};

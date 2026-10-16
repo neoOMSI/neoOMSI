@@ -18,6 +18,10 @@ pub struct LightStop {
 /// `[approachdist]` (m): about four seconds at town speed.
 pub const DEFAULT_APPROACH: f32 = 50.0;
 
+/// How far before a light with `[approachdist]` 0 or none a train asks for it (m); OMSI
+/// asks for a level crossing as soon as the train is near.
+pub const RAIL_APPROACH: f32 = 600.0;
+
 /// Traffic light program of a crossing object instance (`TAmpelGroup`): its lights'
 /// phases and one cycle clock that runs on game time. The clock is state, not a function
 /// of the time of day, because the program may wait at a stop point or jump.
@@ -40,9 +44,6 @@ pub struct TrafficLightController {
     /// A stop point the clock has just been let past without moving (it is not asked again
     /// at the same instant).
     passed: Option<usize>,
-    /// Backwards jumps already used in this cycle. They may extend a phase once, but must
-    /// not restart it again until the cycle wraps.
-    rewound: Vec<usize>,
     started: bool,
 }
 
@@ -59,7 +60,6 @@ impl TrafficLightController {
             request: vec![false; n],
             held: false,
             passed: None,
-            rewound: Vec::new(),
             started: false,
         }
     }
@@ -127,25 +127,27 @@ impl TrafficLightController {
             .unwrap_or(DEFAULT_APPROACH)
     }
 
+    /// Whether a vehicle `gap` metres before light `i` asks for it: within its request
+    /// distance (a train's `RAIL_APPROACH` by default, #294) or waiting at its line.
+    pub fn asked_from(&self, i: usize, gap: f32, train: bool) -> bool {
+        let set = self.approach.get(i).copied().flatten().filter(|&d| d > 0.0);
+        let dist = match (train, set) {
+            (true, None) => RAIL_APPROACH,
+            _ => self.approach_dist(i),
+        };
+        gap <= dist + crate::STOP_LINE_GAP + 0.5
+    }
+
     /// Run the cycle clock on by `dt` seconds of game time, honouring the stop and jump
     /// points with this frame's requests (`request`, set by the caller before).
     pub fn advance(&mut self, dt: f32) {
         let cycle = self.cycle_len();
         let mut left = dt.max(0.0) as f64;
         self.held = false;
-        let advance_clock = |this: &mut Self, move_by: f64| {
-            if move_by > 0.0 && this.time + move_by >= cycle - 1e-6 {
-                this.rewound.clear();
-            }
-            this.time = (this.time + move_by).rem_euclid(cycle);
-        };
         // a handful of points per frame at most (a jump may land just before another one)
         for _ in 0..16 {
             let mut best: Option<(usize, f64)> = None;
             for (k, p) in self.stops.iter().enumerate() {
-                if self.rewound.contains(&k) {
-                    continue;
-                }
                 let d = (p.time as f64 - self.time).rem_euclid(cycle);
                 let d = if d > cycle - 1e-6 { 0.0 } else { d };
                 if d < 1e-6 && self.passed == Some(k) {
@@ -159,17 +161,23 @@ impl TrafficLightController {
                 if left > 0.0 {
                     self.passed = None;
                 }
-                advance_clock(self, left);
+                self.time = (self.time + left).rem_euclid(cycle);
                 return;
             };
             if d > 1e-6 {
                 self.passed = None;
             }
-            advance_clock(self, d);
+            self.time = (self.time + d).rem_euclid(cycle);
             left -= d;
             let p = self.stops[k];
             let asked = self.request.get(p.light).copied().unwrap_or(false);
-            let active = if p.if_request { !asked } else { asked };
+            let mut active = if p.if_request { !asked } else { asked };
+            // A stop prolongs a usable phase while traffic is waiting.  It must not hold a
+            // changeover aspect: several UK programs place their stop marker during
+            // red-and-yellow, where holding it leaves the junction permanently in transition.
+            if p.jump_to.is_none() && Self::aspect(self.state(p.light)) == Aspect::RedYellow {
+                active = false;
+            }
             if !active {
                 self.passed = Some(k);
                 continue;
@@ -177,11 +185,7 @@ impl TrafficLightController {
             match p.jump_to {
                 Some(to) => {
                     let target = (to as f64).rem_euclid(cycle);
-                    if to <= p.time + 1e-6 {
-                        if !self.rewound.contains(&k) {
-                            self.rewound.push(k);
-                        }
-                    }
+                    // A backwards jump may repeat as long as its request condition holds
                     self.time = target;
                     self.passed = Some(k);
                     if left <= 0.0 {

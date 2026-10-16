@@ -97,12 +97,7 @@ pub(crate) fn items(app: &App) -> Vec<(String, String)> {
     }
     if let Some(t) = app.traffic.as_ref() {
         out.push((
-            format!(
-                "{}: {} ({})",
-                ::user_interface::tr(                "Traffic"),
-                t.target(),
-                ::user_interface::tr("more / less")
-            ),
+            ::i18n::translate("pause.admin.traffic", &[("value", &t.target())]),
             "traffic next".into(),
         ));
     }
@@ -366,7 +361,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                 let next = crate::game_lists::next_step(&crate::game_lists::TRAFFIC, t.target());
                 t.set_target(next);
                 app.args.traffic = t.target();
-                app.service_msg = Some((format!("Traffic: {}", t.target()), 3.0));
+                app.service_msg = Some((::i18n::translate("pause.admin.traffic_msg", &[("value", &t.target())]), 3.0));
             }
         }
         _ => log::info!("admin: unknown action '{action}'"),

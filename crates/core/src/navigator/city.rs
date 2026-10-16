@@ -40,7 +40,7 @@ impl Navigator {
         }
         let s = (h / 760.0).clamp(0.95, 2.0) * f.ui_scale;
         let global = self.global.clone();
-        let net = global.as_deref().or(f.traffic.map(|t| &t.net));
+        let net = global.as_deref().or(f.traffic.map(|t| t.net()));
         let mut roads_verts = None;
         let surfaces = self.surfaces.clone();
         if let Some(sm) = surfaces.as_ref() {
@@ -318,7 +318,7 @@ impl Navigator {
             );
             if self.city.mpp > 1.1 {
                 // from far a bus is a few pixels: a badge says what it is
-                for c in t.cars.iter().filter(|c| c.is_bus()) {
+                for c in t.cars().iter().filter(|c| c.is_bus()) {
                     let p = to_screen(c.vehicle.position);
                     if win.contains(p) {
                         ui.circle(p, 7.5 * s, marks::RIM);

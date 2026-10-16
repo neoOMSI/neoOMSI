@@ -101,7 +101,7 @@ fn area_of(poly: &[DVec3]) -> f64 {
 /// end, as wide as the paths. Skipped where its middle is on none of the paths (a roundabout's
 /// island, a depot's yard) or it would cover far more than the paths do.
 fn junction_areas(net: &Network) -> Vec<Vec<DVec3>> {
-    let mut objects: std::collections::BTreeMap<((i32, i32), i64), Vec<&::simulation::traffic::Lane>> =
+    let mut objects: std::collections::BTreeMap<((i32, i32), i64), Vec<&::traffic::Lane>> =
         Default::default();
     for l in net.lanes.iter().filter(|l| {
         l.kind == LaneKind::Street && l.source == 2 && !l.invisible && l.points.len() >= 2

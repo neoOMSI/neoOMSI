@@ -450,8 +450,15 @@ impl MeshShape {
             {
                 for &i in self.grid.get(&(x, y)).map(|v| v.as_slice()).unwrap_or(&[]) {
                     let p = &self.parts[i as usize];
-                    if p.z1 > z0 && p.z0 < z1
-                        && (p.center - c).length() <= r + p.radius() && !out.contains(&i) {
+                    if p.z1 <= z0 || p.z0 >= z1 || (p.center - c).length() > r + p.radius() {
+                        continue;
+                    }
+                    if taken.is_empty() {
+                        taken = vec![0; self.parts.len().div_ceil(64)];
+                    }
+                    let (word, bit) = (i as usize / 64, 1u64 << (i % 64));
+                    if taken[word] & bit == 0 {
+                        taken[word] |= bit;
                         out.push(i);
                     }
                 }

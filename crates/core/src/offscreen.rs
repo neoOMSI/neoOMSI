@@ -473,6 +473,9 @@ pub(crate) fn run_offscreen(
     let mut sim_accum = 0.0f32;
     let profile_traffic = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
     let mut traffic_timings = Vec::<[f64; 4]>::new();
+    if let (true, Some(v), Some(l)) = (server, server::SERVER_VOICE.get(), lan_off.as_mut()) {
+        l.voice = *v;
+    }
     for i in 0..total_frames {
         let t_s = i as f32 * dt;
         if server {
@@ -750,6 +753,7 @@ pub(crate) fn run_offscreen(
             );
             t.set_player_emergency(player.as_ref().is_some_and(|p|
                 traffic::emergency_drive(&p.vehicle, p.vehicle.ty.def.ai_veh_type == 2)));
+            t.set_rail_ahead(rail_ahead(t, &world, player.as_ref(), &remotes_off));
             let steps = ::traffic::advance_fixed_clock(
                 &mut sim_accum,
                 dt,
@@ -1243,7 +1247,7 @@ pub(crate) fn run_offscreen(
                 .global
                 .passenger_density((run_clock.time / 3600.0) as f32)
                 * ::config::get_float("passengers", "density").unwrap_or(1.0) as f32;
-            let service_time = traffic.as_ref().map(|t| t.day_time).unwrap_or(run_clock.time);
+            let service_time = traffic.as_ref().map(|t| t.day_time()).unwrap_or(run_clock.time);
             h.time_of_day = service_time;
             // populate stops near every LAN player every 2 seconds, as app_events.rs
             // does every 2 s near the local player.  At startup `center` is ZERO (no
@@ -1329,8 +1333,8 @@ pub(crate) fn run_offscreen(
             if let Some(t) = traffic.as_mut() {
                 let (alighting, waiting) = h.stop_wishes();
                 t.set_stop_wishes(alighting, waiting);
-                for (id, secs) in h.take_holds() {
-                    t.hold_boarding(crate::traffic::VehicleId(id), secs);
+                for (id, secs, in_doorway) in h.take_holds() {
+                    t.hold_boarding(crate::traffic::VehicleId(id), secs, in_doorway);
                 }
                 for (id, entry, exit) in h.take_ai_requests() {
                     t.set_pax_requests(crate::traffic::VehicleId(id), &entry, &exit);

@@ -180,10 +180,10 @@ impl Traffic {
     }
 
 
-    pub fn hold_boarding(&mut self, id: VehicleId, secs: f32) {
+    pub fn hold_boarding(&mut self, id: VehicleId, secs: f32, in_doorway: bool) {
         if let Some(c) = self.cars.iter_mut().find(|c| c.id == id) {
             if let Some(b) = c.bus.as_mut() {
-                b.hold(secs);
+                b.hold(secs, in_doorway);
             }
         }
     }

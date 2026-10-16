@@ -208,6 +208,7 @@ impl Traffic {
             light_at: None,
             rail_trail: Default::default(),
             consist_reversed: false,
+            train: false,
         });
         self.cars.len() - 1
     }

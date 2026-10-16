@@ -13,6 +13,10 @@
 use ::traffic::{ServicePhase, ServiceState, StopTarget};
 use std::collections::VecDeque;
 
+/// A passenger merely queuing at the doors (not physically in a doorway) may hold the bus
+/// open no longer than this (s): a passenger who never gets on must not strand the bus.
+const MAX_DWELL: f32 = 90.0;
+
 /// The engine-side half of a scheduled bus: the content the domain does not own.
 #[derive(Debug, Clone)]
 pub struct BusService {
@@ -90,9 +94,13 @@ impl BusService {
         }
     }
 
-    /// Somebody is still at the doors: keep them open for `secs` more.
-    pub fn hold(&mut self, secs: f32) {
-        if self.state.phase == ServicePhase::Boarding {
+    /// Somebody is still at the doors: keep them open for `secs` more. Somebody physically
+    /// in a doorway holds the bus however long; someone merely queuing holds it only up to
+    /// `MAX_DWELL` (a passenger who never gets on must not strand the bus for good).
+    pub fn hold(&mut self, secs: f32, in_doorway: bool) {
+        if self.state.phase == ServicePhase::Boarding
+            && (in_doorway || self.state.phase_t < MAX_DWELL)
+        {
             self.state.boarding_t = self.state.boarding_t.max(secs);
         }
     }
@@ -181,25 +189,11 @@ mod tests {
 
     #[test]
     fn road_stop_alignment_uses_the_front_extent_with_an_offset_origin() {
-        let mut ty = ::simulation::VehicleType {
-            def: ::legacy_vehicle::Vehicle {
-                bounding_box: Some([2.5, 12.0, 3.0, 0.0, 2.0, 1.5]),
-                ai_brake_performance: Some([0.0, 0.0, 0.0, 0.0, 0.4]),
-                ..Default::default()
-            },
-            model: Default::default(),
-            model_dir: Default::default(),
-            program: Default::default(),
-            meshes: Vec::new(),
-            keep_winding: false,
-            paint_schemes: Vec::new(),
-            texchanges: Vec::new(),
-            wheel_meshes: Vec::new(),
-            suspension_axles: Vec::new(),
-            missing_packs: Vec::new(),
-            mesh_bounds: Vec::new(),
-            mesh_boxes: Vec::new(),
-        };
+        let mut ty = ::simulation::VehicleType::of_definition(::legacy_vehicle::Vehicle {
+            bounding_box: Some([2.5, 12.0, 3.0, 0.0, 2.0, 1.5]),
+            ai_brake_performance: Some([0.0, 0.0, 0.0, 0.0, 0.4]),
+            ..Default::default()
+        });
         assert!((stop_shift(&ty, false) - 7.6).abs() < 1e-5);
         assert!((stop_shift(&ty, true) - 5.6).abs() < 1e-5);
         ty.def.bounding_box = None;
@@ -220,6 +214,32 @@ mod tests {
         assert!((s.standing_for(40.0) - 62.0).abs() < 1e-3);
         s.state.phase = ServicePhase::NextTrip;
         assert!(s.standing_for(0.0) > 100.0);
+    }
+
+    #[test]
+    fn somebody_who_never_gets_on_holds_the_bus_only_up_to_the_max_dwell() {
+        assert!(MAX_DWELL > 10.0);
+        let mut s = BusService::new(vec![]);
+        s.state.phase = ServicePhase::Boarding;
+        s.state.boarding_t = 1.0;
+        s.state.phase_t = MAX_DWELL - 1.0;
+        s.hold(30.0, false);
+        assert_eq!(s.state.boarding_t, 30.0);
+        // past the cap a mere queuer no longer holds it
+        s.state.boarding_t = 1.0;
+        s.state.phase_t = MAX_DWELL + 1.0;
+        s.hold(30.0, false);
+        assert_eq!(s.state.boarding_t, 1.0);
+    }
+
+    #[test]
+    fn the_max_dwell_does_not_close_the_doors_on_somebody_in_a_doorway() {
+        let mut s = BusService::new(vec![]);
+        s.state.phase = ServicePhase::Boarding;
+        s.state.phase_t = MAX_DWELL + 10.0;
+        s.state.boarding_t = 1.0;
+        s.hold(30.0, true);
+        assert_eq!(s.state.boarding_t, 30.0);
     }
 
     #[test]

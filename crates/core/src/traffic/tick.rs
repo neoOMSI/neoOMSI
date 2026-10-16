@@ -69,19 +69,21 @@ impl Traffic {
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
         }
+        let mut way_scratch: Vec<(usize, f32)> = Vec::new();
+        let rail_within = self.rail_reach();
         for c in &self.cars {
-            for (l, d) in self.way_lanes(&c.state, 160.0) {
-                if let Some((ci, li)) = self.net.lanes[l].traffic_light {
-                    if let Some(ctl) = self.lights.get_mut(ci) {
-                        let gap = d - c.state.front;
-                        if gap <= ctl.approach_dist(li) && d > -self.net.lanes[l].length() {
-                            if let Some(r) = ctl.request.get_mut(li) {
-                                *r = true;
-                            }
-                        }
-                    }
-                }
+            if c.train && !c.state.route.is_empty() {
+                route_lanes_into(&self.net, &c.state, rail_within, &mut way_scratch);
+            } else {
+                self.way_lanes_into(&c.state, 160.0, &mut way_scratch);
             }
+            for &(l, d) in &way_scratch {
+                ask_light(&mut self.lights, &self.net, l, d, c.state.front, c.train);
+            }
+        }
+        // the players' trams and trains
+        for &(l, d, front, train) in &self.rail_ahead {
+            ask_light(&mut self.lights, &self.net, l, d, front, train);
         }
         // the player's bus and the other players' vehicles ask too: a depot gate (Spandau's
         // `Omnibushof_S_1`, the exit arm on light 1) opens only for whoever asks, and the
@@ -95,22 +97,12 @@ impl Traffic {
             // (off the lanes - a depot yard, a car park - a gate's lane that starts just
             // ahead, the way the bus is facing, is asked all the same: standing a few metres
             // beside every lane there, the bus never opened the barrier in front of it)
-            let h = heading.to_radians();
-            let fwd = glam::DVec2::new(h.sin(), h.cos());
-            for l in 0..self.net.lanes.len() {
+            for l in self.net.lanes_starting_near(pos, 35.0) {
                 let lane = &self.net.lanes[l];
                 let Some((ci, li)) = lane.traffic_light else {
                     continue;
                 };
-                let (p0, h0) = lane.at(0.0);
-                let d = (p0 - pos).truncate();
-                let (along, across) = (d.dot(fwd), d.perp_dot(fwd).abs());
-                let turn = ((h0 as f64 - heading + 540.0).rem_euclid(360.0) - 180.0).abs();
-                if (-2.0..25.0).contains(&along)
-                    && across < 6.0
-                    && turn < 60.0
-                    && (p0.z - pos.z).abs() < 4.0
-                {
+                if gate_lane_ahead(lane, pos, heading) {
                     if let Some(r) = self.lights.get_mut(ci).and_then(|c| c.request.get_mut(li)) {
                         *r = true;
                     }
@@ -242,12 +234,10 @@ impl Traffic {
         );
         // cars coming to a junction lane: (car, distance from its origin to the lane start)
         let mut coming: HashMap<usize, Vec<(usize, f32)>> = HashMap::new();
+        let mut way_scratch: Vec<(usize, f32)> = Vec::new();
         for (i, c) in self.cars.iter().enumerate() {
-            for (l, d) in self
-                .way_lanes(&c.state, LOOK_AHEAD + 30.0)
-                .into_iter()
-                .skip(1)
-            {
+            self.way_lanes_into(&c.state, LOOK_AHEAD + 30.0, &mut way_scratch);
+            for &(l, d) in way_scratch.iter().skip(1) {
                 if !self.net.crossings[l].is_empty() {
                     coming.entry(l).or_default().push((i, d));
                 }
@@ -537,10 +527,13 @@ impl Traffic {
             let mut parked_ahead = false;
             let kerb_swerve: Option<f32>;
             let mut squeeze: Option<VehicleId> = None;
+            // (the car's state does not change before the maneuver block below: one lookahead
+            // serves both the parked-car check and the plans)
+            self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
             {
                 let car = &self.cars[i];
                 let st = &car.state;
-                let near_way = self.way_lanes(st, 100.0);
+                let near_way = Self::way_prefix(&way_scratch, 100.0);
                 let passing = car.maneuver.passing.map(|p| !p.aborted).unwrap_or(false);
                 let mut swerve: Option<f32> = None;
                 let mut stand: Option<(f32, usize, f32, f32)> = None;
@@ -592,7 +585,7 @@ impl Traffic {
                     .change
                     .filter(|c| c.t > 0.4 || (c.bypass && c.wait <= 0.0))
                     .map(|_| st.lane);
-                for &(l, d) in &near_way {
+                for &(l, d) in near_way {
                     if Some(l) == leaving {
                         continue;
                     }
@@ -629,7 +622,7 @@ impl Traffic {
                 // steered the car into the bus)
                 if !passing {
                     let swerving = st.lateral_target.abs() > 0.1;
-                    for &(l, d) in &near_way {
+                    for &(l, d) in near_way {
                         for &(j, os, lat, foreign) in
                             by_lane.get(&l).map(|v| v.as_slice()).unwrap_or(&[])
                         {
@@ -787,7 +780,7 @@ impl Traffic {
             // The maneuver owner decides every lateral intent from the frozen scene: passing,
             // lane changes, bypass, route changes and the kerb swerve round a parked car. No
             // other function writes `lateral_target`.
-            let way = self.way_lanes(&self.cars[i].state, 200.0);
+            let way = &way_scratch[..];
             let merge_wait: Option<f32>;
             let mut maneuver_why: Option<(Reason, f32)> = None;
             {
@@ -904,7 +897,7 @@ impl Traffic {
             // view; it is the only writer of junction claims.
             let decision = self.junction_plan(
                 i,
-                &way,
+                way,
                 lead.map(|l| l.0),
                 &junction_on_lane,
                 &junction_coming,
@@ -932,7 +925,7 @@ impl Traffic {
             let junction = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                junction_ahead(&self.net, &way).filter(|jn| {
+                junction_ahead(&self.net, way).filter(|jn| {
                     light
                         .map(|l| jn.inside || jn.lanes[0].1 < l - 0.5)
                         .unwrap_or(true)
@@ -977,7 +970,7 @@ impl Traffic {
             let for_people = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
-                self.people_stop(i, &way)
+                self.people_stop(i, way)
             };
             if let Some((at, who)) = for_people {
                 let car = &self.cars[i];
@@ -1940,6 +1933,122 @@ struct TickFrame {
 fn pull_out_following_lead(mut lead: Lead, min_gap: f32, room: f32) -> Lead {
     lead.gap = (lead.gap - (room - min_gap).max(0.0)).max(0.05);
     lead
+}
+
+/// Like `Traffic::way_lanes_into`, along the timetable route (as `AiState::route_distance`).
+fn route_lanes_into(net: &Network, st: &AiState, within: f32, out: &mut Vec<(usize, f32)>) {
+    out.clear();
+    let (mut k, mut l, mut d) = (st.route_index, st.lane, -st.s);
+    if let Some(c) = st.change {
+        if st.route.get(k + 1) == Some(&c.to) {
+            (k, l, d) = (k + 1, c.to, -c.s_to);
+        }
+    }
+    out.push((l, d));
+    while let Some(&next) = st.route.get(k + 1) {
+        if net.parallel(l, next) {
+            d -= net.beside_delta(l, next);
+        } else {
+            d += net.lanes[l].length();
+        }
+        if d > within {
+            break;
+        }
+        out.push((next, d));
+        (k, l) = (k + 1, next);
+    }
+}
+
+/// Request lane `l`'s light for a vehicle `d` m before the lane, its front `front` m ahead.
+fn ask_light(
+    lights: &mut [TrafficLightController],
+    net: &Network,
+    l: usize,
+    d: f32,
+    front: f32,
+    train: bool,
+) {
+    let Some((ci, li)) = net.lanes.get(l).and_then(|x| x.traffic_light) else {
+        return;
+    };
+    if let Some(ctl) = lights.get_mut(ci) {
+        if ctl.asked_from(li, d - front, train) && d > -net.lanes[l].length() {
+            if let Some(r) = ctl.request.get_mut(li) {
+                *r = true;
+            }
+        }
+    }
+}
+
+/// Whether a street lane (a depot gate's) starts just ahead of a bus; never a rail lane.
+fn gate_lane_ahead(lane: &::traffic::Lane, pos: DVec3, heading: f64) -> bool {
+    let h = heading.to_radians();
+    let fwd = glam::DVec2::new(h.sin(), h.cos());
+    let (p0, h0) = lane.at(0.0);
+    let d = (p0 - pos).truncate();
+    let (along, across) = (d.dot(fwd), d.perp_dot(fwd).abs());
+    let turn = ((h0 as f64 - heading + 540.0).rem_euclid(360.0) - 180.0).abs();
+    lane.kind == LaneKind::Street
+        && (-2.0..25.0).contains(&along)
+        && across < 6.0
+        && turn < 60.0
+        && (p0.z - pos.z).abs() < 4.0
+}
+
+#[cfg(test)]
+mod gate_lane_tests {
+    use super::gate_lane_ahead;
+    use ::traffic::{LaneBuilder, LaneKind};
+    use glam::DVec3;
+
+    /// A bus asks for the street lane starting ahead of it, not for a rail lane there.
+    #[test]
+    fn a_bus_asks_for_no_rail_lane() {
+        let lane =
+            |kind| LaneBuilder::arc(DVec3::new(3.0, 10.0, 0.0), 0.0, 20.0, 0.0, 0.0, kind, 3.0);
+        assert!(gate_lane_ahead(&lane(LaneKind::Street), DVec3::ZERO, 0.0));
+        assert!(!gate_lane_ahead(&lane(LaneKind::Rail), DVec3::ZERO, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod route_lanes_tests {
+    use super::route_lanes_into;
+    use ::traffic::{AiState, LaneBuilder, LaneKind, Network};
+    use glam::DVec3;
+
+    /// A lane beside the one before it counts from where it lies beside it.
+    #[test]
+    fn a_lane_beside_counts_from_beside() {
+        let line = |a: [f64; 2], b: [f64; 2]| {
+            LaneBuilder::polyline(
+                vec![DVec3::new(a[0], a[1], 0.0), DVec3::new(b[0], b[1], 0.0)],
+                LaneKind::Rail,
+                3.0,
+            )
+        };
+        let mut net = Network {
+            lanes: vec![
+                line([0.0, 0.0], [0.0, 100.0]),
+                line([3.5, 40.0], [3.5, 140.0]),
+                line([3.5, 140.0], [3.5, 200.0]),
+            ],
+            ..Default::default()
+        };
+        net.link(1.5);
+        assert!(net.parallel(0, 1));
+        let mut st = AiState::new(0, 10.0, 1);
+        st.route = vec![0, 1, 2];
+        let mut out = Vec::new();
+        route_lanes_into(&net, &st, 1000.0, &mut out);
+        assert_eq!(out.len(), 3);
+        for (ri, &(l, d)) in out.iter().enumerate() {
+            assert_eq!(l, st.route[ri]);
+            let want = st.route_distance(&net, ri, 0.0);
+            assert!((d - want).abs() < 0.01, "{out:?}");
+        }
+        assert!((out[1].1 - 30.0).abs() < 0.01, "{out:?}");
+    }
 }
 
 #[cfg(test)]

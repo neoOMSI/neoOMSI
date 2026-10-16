@@ -14,66 +14,31 @@ impl Schedule {
         steps: &[Step],
         prev: Option<usize>,
     ) -> Vec<Slot> {
-        let net = &traffic.net;
-        // every step's candidate lanes (both directions of a two-way path)
-        let cands: Vec<Result<&Vec<usize>, Slot>> = steps
-            .iter()
-            .map(|st| {
-                let Some(key) = st.key else {
-                    return Err(Slot::Absent);
-                };
-                match net.by_key.get(&key) {
-                    Some(c) if !c.is_empty() => Ok(c),
-                    _ if !traffic.lane_tiles.contains(&key.tile) && world.has_tile(key.tile) => {
-                        Err(Slot::Waiting)
-                    }
-                    _ => Err(Slot::Absent),
+        let net = traffic.net();
+        let keys: Vec<Option<LaneKey>> = steps.iter().map(|st| st.key).collect();
+        let compiled = compile_route(
+            net,
+            &keys,
+            |tile| {
+                if traffic.has_lane_tile(tile) {
+                    TileState::Loaded
+                } else if world.has_tile(tile) {
+                    TileState::InMap
+                } else {
+                    TileState::Unknown
                 }
+            },
+            prev.map(LaneId),
+        );
+        let out: Vec<Slot> = compiled
+            .steps
+            .iter()
+            .map(|s| match s {
+                RouteStepState::Lane(l) => Slot::Lane(l.index()),
+                RouteStepState::PendingTiles => Slot::Waiting,
+                RouteStepState::Missing => Slot::Absent,
             })
             .collect();
-        let mut out = Vec::with_capacity(steps.len());
-        let mut last = prev;
-        for (i, c) in cands.iter().enumerate() {
-            let c = match c {
-                Ok(c) => *c,
-                Err(slot) => {
-                    if *slot == Slot::Waiting {
-                        last = None;
-                    }
-                    out.push(*slot);
-                    continue;
-                }
-            };
-            // the next lanes the route has (not across a gap)
-            let next = cands[i + 1..].iter().find_map(|x| match x {
-                Ok(n) => Some(Some(*n)),
-                Err(Slot::Waiting) => Some(None),
-                Err(_) => None,
-            });
-            let next = next.flatten();
-            let score = |l: usize| -> f64 {
-                let mut s = 0.0;
-                if let Some(prev) = last {
-                    s += (net.lanes[l].start() - net.lanes[prev].end()).length();
-                }
-                if let Some(next) = next {
-                    let end = net.lanes[l].end();
-                    s += next
-                        .iter()
-                        .map(|&n| (net.lanes[n].start() - end).length())
-                        .fold(f64::MAX, f64::min);
-                }
-                s
-            };
-            let best = c
-                .iter()
-                .copied()
-                .min_by(|a, b| score(*a).total_cmp(&score(*b)))
-                .unwrap();
-            out.push(Slot::Lane(best));
-            last = Some(best);
-        }
-        skip_detours(net, &mut out);
         if ::legacy_config::env::var_os("OMSI_DEBUG_ROUTES").is_some() {
             // where consecutive lanes of the route do not join (a gap, or a change within the
             // same spline, which is a lane change)

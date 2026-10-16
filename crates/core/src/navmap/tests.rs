@@ -124,7 +124,7 @@ fn surfaces_of_a_real_map() {
     }
 }
 
-fn draw(map: &SurfaceMap, lanes: &[::simulation::traffic::Lane], c: DVec2, radius: f64, path: &str) {
+fn draw(map: &SurfaceMap, lanes: &[::traffic::Lane], c: DVec2, radius: f64, path: &str) {
     let size = 1200u32;
     let scale = size as f64 / (2.0 * radius);
     let mut img = image::RgbImage::from_pixel(size, size, image::Rgb([24, 26, 30]));
@@ -212,7 +212,7 @@ fn draw(map: &SurfaceMap, lanes: &[::simulation::traffic::Lane], c: DVec2, radiu
         }
     }
     if std::env::var_os("NAVMAP_LANES").is_some() {
-        for l in lanes.iter().filter(|l| l.kind == ::simulation::traffic::LaneKind::Street) {
+        for l in lanes.iter().filter(|l| l.kind == ::traffic::LaneKind::Street) {
             let col = if l.invisible { [200, 80, 200] } else { [60, 140, 255] };
             for ab in l.points.windows(2) {
                 line(&mut img, to_px(ab[0].truncate()), to_px(ab[1].truncate()), col);

@@ -111,7 +111,7 @@ impl Schedule {
             ((day_time - t0) / (t1 - t0).max(1e-3)).clamp(0.0, 1.0)
         };
         // lengths of the steps: a step still to come counts as long as an average one
-        let net = &traffic.net;
+        let net = traffic.net();
         let known: Vec<f64> = slots
             .iter()
             .filter_map(|s| {
@@ -160,6 +160,10 @@ impl Schedule {
                 "trip {trip_name}: the bus is on a tile that is not loaded (again at {:.2} min)",
                 retry / 60.0
             );
+            // Ask for the tile the bus needs next, so it reaches loaded ground where feasible.
+            if let Some(key) = steps[at].key {
+                traffic.request_topology_tile(key.tile);
+            }
             self.retry_at.insert(i, retry);
             return Placed::Wait;
         }
@@ -176,7 +180,7 @@ impl Schedule {
         let section: Vec<usize> = slots[start..end].iter().filter_map(lane_of).collect();
         let start_index = slots[start..at].iter().filter_map(lane_of).count();
         Self::add_connectors(traffic, &section);
-        let net = &traffic.net;
+        let net = traffic.net();
         let (section, index) = bridge_gaps(net, &section);
         let start_index = index[start_index.min(index.len() - 1)];
         let mut s = offset.min(net.lanes[section[start_index]].length() as f64) as f32;
@@ -237,15 +241,15 @@ impl Schedule {
             // along the siding instead - past the end of the track - and another train
             // appeared for the trip.)
             let reverse = self.data.trips[self.departures[i].trip].train_reverse;
-            if traffic.cars[ci].is_rail() && traffic.cars[ci].consist_reversed != reverse {
-                let c = &traffic.cars[ci];
+            if traffic.car(ci).is_rail() && traffic.car(ci).consist_reversed != reverse {
+                let c = traffic.car(ci);
                 let tail = c
                     .vehicle
                     .trailers
                     .last()
                     .map(|t| t.position)
                     .unwrap_or(c.vehicle.position);
-                let net = &traffic.net;
+                let net = traffic.net();
                 let found = section
                     .iter()
                     .enumerate()
@@ -298,15 +302,15 @@ impl Schedule {
                 }
             }
             let (ty, rail) = (
-                traffic.cars[ci].vehicle.ty.clone(),
-                traffic.cars[ci].is_rail(),
+                traffic.car(ci).vehicle.ty.clone(),
+                traffic.car(ci).is_rail(),
             );
-            place_stops(&traffic.net, &section, 0, &mut stops, &ty, rail);
+            place_stops(traffic.net(), &section, 0, &mut stops, &ty, rail);
             // the tour's bus that has just finished its trip takes this one on from where
             // it stands: the section itself when it stands on it, else the shortest way
             // from its lane onto one of the section's first lanes (round a terminal loop)
-            let (lane0, s0) = (traffic.cars[ci].state.lane, traffic.cars[ci].state.s);
-            let net = &traffic.net;
+            let (lane0, s0) = (traffic.car(ci).state.lane, traffic.car(ci).state.s);
+            let net = traffic.net();
             let (prefix, from) = match section.iter().position(|&l| l == lane0) {
                 // a track trip starts where its track begins, not at the far end of it
                 Some(r) if track && r >= 4 => {
@@ -403,8 +407,7 @@ impl Schedule {
                 .last()
                 .copied();
             let (always, early) = self.special_stops(i);
-            let stand_at_end = self.stands_at_end(i);
-            let car = &mut traffic.cars[ci];
+            let car = traffic.car_mut(ci);
             if let Some(k) = car.vehicle.ty.program.str_var("Linie") {
                 car.vehicle.state.str_vars[k as usize] = line.clone();
             }
@@ -414,19 +417,17 @@ impl Schedule {
             if let Some(b) = car.bus.as_mut() {
                 b.hold_until = stand_hold;
                 b.route_open = end < slots.len();
-                b.to_track_end = track && rail;
                 b.terminus = terminus.clone();
                 b.last_stop = last_stop;
                 b.always = always;
                 b.serve_early = early;
-                b.stand_at_end = stand_at_end;
             }
             let id = car.id;
-            self.car_departure.insert(id, i);
-            self.running.retain(|r| r.car != id);
+            self.car_departure.insert(id.get(), i);
+            self.running.retain(|r| r.car != id.get());
             if end < slots.len() {
                 self.running.push(RunningTrip {
-                    car: id,
+                    car: id.get(),
                     steps,
                     next: end,
                     stations: stations
@@ -467,7 +468,7 @@ impl Schedule {
         };
         self.next_number += 1;
         let rail =
-            traffic.net.lanes[section[start_index]].kind == ::simulation::traffic::LaneKind::Rail;
+            traffic.net().lanes[section[start_index]].kind == ::traffic::LaneKind::Rail;
         // every further car of the train with the cars of its unit, as Omsi.exe creates
         // each car of a `.zug` (the first has its own with `create_car`): the ones before it
         // (towards the front of the train), the car, the ones behind it
@@ -495,7 +496,7 @@ impl Schedule {
             .as_ref()
             .map(|t| t[0].0.clone())
             .unwrap_or_else(|| ty.clone());
-        place_stops(&traffic.net, &section, 0, &mut stops, &lead_ty, rail);
+        place_stops(traffic.net(), &section, 0, &mut stops, &lead_ty, rail);
         log::debug!(
             "spawn trip {trip_name}: departure {:.2} min, now {:.2} min, leg {leg} at {:.0} %, step {at} of {}, start {s:.0} m into its lane",
             departure / 60.0,
@@ -506,9 +507,9 @@ impl Schedule {
         // the bus starts on its step's lane; the stops behind it are dropped
         let mut start_index = start_index;
         while start_index + 1 < section.len()
-            && s > traffic.net.lanes[section[start_index]].length()
+            && s > traffic.net().lanes[section[start_index]].length()
         {
-            s -= traffic.net.lanes[section[start_index]].length();
+            s -= traffic.net().lanes[section[start_index]].length();
             start_index += 1;
         }
         // a bus that would start a few metres short of its next stop stands at it (half a
@@ -520,8 +521,8 @@ impl Schedule {
         {
             let mut d = ss - s;
             for k in start_index..ri {
-                if !traffic.net.parallel(section[k], section[k + 1]) {
-                    d += traffic.net.lanes[section[k]].length();
+                if !traffic.net().parallel(section[k], section[k + 1]) {
+                    d += traffic.net().lanes[section[k]].length();
                 }
             }
             if d < 25.0 {
@@ -529,16 +530,16 @@ impl Schedule {
                 s = (ss - 0.5).max(0.0);
             }
         }
-        let at_pos = traffic.net.lanes[section[start_index]].at(s).0;
+        let at_pos = traffic.net().lanes[section[start_index]].at(s).0;
         // Lanes stay in the network after unloading; departures wait for the path's source
         // tile, even when the path extends over coordinates with no terrain tile.
-        if !world.traffic_path_loaded(&traffic.net.lanes[section[start_index]], at_pos) {
+        if !world.traffic_path_loaded(&traffic.net().lanes[section[start_index]], at_pos) {
             log::debug!("trip {trip_name}: the bus would stand on an unloaded tile");
             return Placed::Wait;
         }
         // not into a vehicle that happens to be there (the player's bus at its stop, a car),
         // nor just in front of one driving up to that place: try again in a moment
-        let at_heading = traffic.net.lanes[section[start_index]].at(s).1 as f64;
+        let at_heading = traffic.net().lanes[section[start_index]].at(s).1 as f64;
         if traffic.blocked(&ty, at_pos, at_heading) || !traffic.spawn_clear(&ty, at_pos, at_heading)
         {
             log::debug!("trip {trip_name}: a vehicle stands where the bus would appear");
@@ -550,7 +551,7 @@ impl Schedule {
         // serving the stop and every car behind them waiting as well.)
         if departure > day_time + 30.0
             && traffic
-            .cars
+            .cars()
             .iter()
             .any(|c| c.is_bus() && !c.gone && (c.vehicle.position - at_pos).length() < 50.0)
         {
@@ -568,7 +569,7 @@ impl Schedule {
         // at the start of its track may, its cars come in one by one
         let first = section[start_index];
         let at_track_start =
-            rail && s < 1.0 && traffic.net.prev.get(first).is_some_and(|p| p.is_empty());
+            rail && s < 1.0 && traffic.net().prev.get(first).is_some_and(|p| p.is_empty());
         if !(self.startup.contains(&i) && traffic.loading_phase())
             && !at_track_start
             && !traffic.may_appear(world, at_pos)
@@ -590,20 +591,10 @@ impl Schedule {
             .filter(|&&(ri, ss, ..)| track && departure > day_time && (ri > 0 || ss - s >= 2.0))
             .map(|&(ri, ss, _, t, ..)| routing::stand_leave(traffic.net(), &route, s, (ri, ss), t))
             .filter(|&t| t > day_time);
-        // the trip's own line (" 5"), which is what the displays show; the timetable line's
-        // name ("5 & 5N") only groups the tours
-        let trip_line = self.data.trips[self.departures[i].trip]
-            .line
-            .trim()
-            .to_string();
-        let line = if trip_line.is_empty() {
-            self.departures[i].line.clone()
-        } else {
-            trip_line
-        };
+        let line = bus_line(&self.data.trips[self.departures[i].trip]);
         let tour = self.departures[i].tour.clone();
         let terminus = self.data.trips[self.departures[i].trip].terminus.clone();
-        let Some(ci) = traffic.spawn_bus(
+        let ci = match traffic.spawn_bus(
             world,
             renderer,
             scene,
@@ -614,22 +605,27 @@ impl Schedule {
             number.clone(),
             hof.clone(),
             Some(scheme),
-        ) else {
-            return Placed::Drop;
+        ) {
+            Ok(ci) => ci,
+            // A full scheduled budget or a busy entrance is a real, diagnosed wait: the duty
+            // keeps its place and is retried, it is never silently dropped.
+            Err(Reason::AtCapacity) | Err(Reason::EntranceBusy) => return Placed::Busy,
+            // No usable path at all is a content/duty fault, not a capacity wait.
+            Err(_) => return Placed::Drop,
         };
-        self.car_departure.insert(traffic.cars[ci].id, i);
+        self.car_departure.insert(traffic.car(ci).id.get(), i);
         if let Some(t) = &turned {
             traffic.set_trailers(world, renderer, scene, ci, &t[1..]);
-            traffic.cars[ci].consist_reversed = true;
+            traffic.car_mut(ci).consist_reversed = true;
         } else if let Some(rest) = &rest {
             traffic.attach_cars(world, renderer, scene, ci, rest);
         }
         if train.is_some() {
-            traffic.cars[ci].train = true;
+            traffic.car_mut(ci).train = true;
             log::info!(
                 "train: {}",
                 std::iter::once(
-                    traffic.cars[ci]
+                    traffic.car(ci)
                         .vehicle
                         .ty
                         .def
@@ -639,7 +635,7 @@ impl Schedule {
                         .to_string_lossy()
                         .to_string()
                 )
-                .chain(traffic.cars[ci].vehicle.trailers.iter().map(|t| {
+                .chain(traffic.car(ci).vehicle.trailers.iter().map(|t| {
                     format!(
                         "{}{}",
                         t.ty.def
@@ -653,8 +649,10 @@ impl Schedule {
                 .collect::<Vec<_>>()
                 .join(" + ")
             );
-            traffic.cars[ci].state.max_speed_kmh = 90.0;
-            traffic.fit_consist(ci);
+            let length = 20.0 * (1 + traffic.car(ci).vehicle.trailers.len()) as f32;
+            let car = traffic.car_mut(ci);
+            car.state.max_speed_kmh = 90.0;
+            car.state.length = length;
         }
         let names = self.trip_stop_names(self.departures[i].trip);
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -662,15 +660,14 @@ impl Schedule {
             .last()
             .copied();
         let (always, early) = self.special_stops(i);
-        let stand_at_end = self.stands_at_end(i);
-        let car = &mut traffic.cars[ci];
+        let car = traffic.car_mut(ci);
         // on its layover only when it stands at its first stop now (the trip's first station
         // may lie on a part of the track that is not loaded): it waits there for its departure
         if let Some(b) = car.bus.as_mut() {
-            b.layover = departure > day_time
+            b.state.layover = departure > day_time
                 && b.stops
                 .front()
-                .map(|st| st.ri == 0 && (st.s - s).abs() < 2.0)
+                .map(|st| st.route_index == 0 && (st.s - s).abs() < 2.0)
                 .unwrap_or(false);
             // (or at the stand short of it: then it waits at the stop for its departure too)
             if stand_hold.is_some() {
@@ -678,12 +675,10 @@ impl Schedule {
                 b.state.layover = true;
             }
             b.route_open = end < slots.len();
-            b.to_track_end = track && rail;
             b.terminus = terminus.clone();
             b.last_stop = last_stop;
             b.always = always;
             b.serve_early = early;
-            b.stand_at_end = stand_at_end;
         }
         // the bus scripts read the line/terminus for their displays
         if let Some(i) = ty.program.str_var("Linie") {
@@ -714,7 +709,7 @@ impl Schedule {
         );
         if end < slots.len() {
             self.running.push(RunningTrip {
-                car: car.id,
+                car: car.id.get(),
                 steps,
                 next: end,
                 stations: stations

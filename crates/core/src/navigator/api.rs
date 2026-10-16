@@ -105,7 +105,7 @@ impl Navigator {
                 let pool = build_pool();
                 // the ground: as the last session left it if the map is unchanged, else built
                 // from the map's paths (sent once read) and kept for the next one
-                let (tx_lanes, rx_lanes) = std::sync::mpsc::channel::<Vec<::simulation::traffic::Lane>>();
+                let (tx_lanes, rx_lanes) = std::sync::mpsc::channel::<Vec<::traffic::Lane>>();
                 let tx_ground = tx.clone();
                 let world_ground = world.clone();
                 let pool_ground = pool.clone();
@@ -204,7 +204,7 @@ impl Navigator {
         self.global.clone()
     }
 
-    pub fn add_lanes(&mut self, lanes: Vec<::simulation::traffic::Lane>) {
+    pub fn add_lanes(&mut self, lanes: Vec<::traffic::Lane>) {
         if lanes.is_empty() {
             return;
         }

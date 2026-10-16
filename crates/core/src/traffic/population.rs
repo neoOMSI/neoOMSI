@@ -59,7 +59,7 @@ impl Traffic {
     /// The street traffic density now, 1 = the map's normal level, times the options' share
     /// of random traffic.
     pub(crate) fn street_density(&self) -> f32 {
-        self.street_density_map() * self.unsched_factor
+        self.street_density_map() * unsched_share(self.unsched_factor)
     }
 
 
@@ -299,17 +299,14 @@ impl Traffic {
                 .lan_centers
                 .iter()
                 .fold((p - center).length(), |d, o| d.min((p - *o).length()));
-            // every car on the road or the rails whose ground has been unloaded goes: the
-            // lanes stay in the network when their tile goes, but nothing may drive over
-            // ground that is not there (tiles only go well beyond the view, timetable buses
-            // included; their trips come back with the tiles)
-            let flying = self
+            // Lanes stay in the network after unloading. Test their source tile: a loaded
+            // spline can cross a tile boundary where the map has no terrain at all.
+            let unloaded = !self
                 .net
                 .lanes
                 .get(c.state.lane)
-                .map(|l| l.kind == LaneKind::Air)
+                .map(|l| world.traffic_path_loaded(l, p))
                 .unwrap_or(false);
-            let unloaded = !flying && !world.has_ground(p.x, p.y);
             off_ground += unloaded as usize;
             let random = !c.is_bus() || c.gone;
             let r = (c.state.length as f64 * 0.5).max(2.0);
@@ -944,7 +941,8 @@ impl Traffic {
             }
             let s = req.s.clamp(0.0, (l.length() - 0.1).max(0.0));
             let (p, _) = l.at(s);
-            let ground = kind == LaneKind::Air || world.has_ground(p.x, p.y);
+            // A lane's source tile may have gone again.
+            let ground = world.traffic_path_loaded(l, p);
             let path_valid = kind == LaneKind::Air
                 || !l.next.is_empty()
                 || self
@@ -1151,7 +1149,7 @@ impl Traffic {
                     duty: false,
                     lane: d.lane,
                     s: d.s,
-                    ground: world.has_ground(p.x, p.y),
+                    ground: world.traffic_path_loaded(l, p),
                     visible: self.initial || self.may_appear(world, p),
                 })
             })
@@ -1510,6 +1508,12 @@ impl Traffic {
             )));
             lead = t;
         }
+        self.occupied(&bodies, pos)
+    }
+
+    /// Do `bodies` (a vehicle's, placed with its origin at `pos`) touch one that is already
+    /// there - an AI vehicle, or one of `keep_clear`?
+    pub fn occupied(&self, bodies: &[::simulation::collision::Obb], pos: DVec3) -> bool {
         let reach = bodies
             .iter()
             .map(|b| (b.center - pos.truncate()).length() + b.half.length())
@@ -1524,4 +1528,26 @@ impl Traffic {
             .any(|c| vehicle_bodies(&c.vehicle).iter().any(|o| touches(o)))
     }
 
+}
+
+/// The options' share of random traffic, kept to the 0-300 % the options offer.
+fn unsched_share(factor: f32) -> f32 {
+    if factor.is_finite() {
+        factor.clamp(0.0, 3.0)
+    } else {
+        1.0
+    }
+}
+
+#[cfg(test)]
+mod unsched_share_tests {
+    use super::unsched_share;
+
+    #[test]
+    fn the_share_stays_within_the_options_range() {
+        assert_eq!(unsched_share(1.5), 1.5);
+        assert_eq!(unsched_share(100.0), 3.0);
+        assert_eq!(unsched_share(-1.0), 0.0);
+        assert_eq!(unsched_share(f32::NAN), 1.0);
+    }
 }

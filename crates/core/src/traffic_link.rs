@@ -105,6 +105,52 @@ pub(crate) fn lan_emergencies(game: &lan::LanGame) -> Vec<u32> {
     out
 }
 
+/// The LAN players' indicators by session id (`Traffic::blinkers`).
+pub(crate) fn lan_blinkers(game: &lan::LanGame) -> hashbrown::HashMap<u32, u8> {
+    game.remotes
+        .iter()
+        .map(|(id, r)| (*id, r.last.blinker))
+        .collect()
+}
+
+/// `Traffic::rail_ahead` of the player and the LAN players. A train looks as far ahead as
+/// an AI train; one backing up asks for nothing.
+pub(crate) fn rail_ahead(
+    t: &traffic::Traffic,
+    world: &World,
+    player: Option<&Player>,
+    lan: &lan::LanGame,
+) -> Vec<(usize, f32, f32, bool)> {
+    let reach = |train: bool| {
+        if train {
+            t.rail_reach()
+        } else {
+            160.0
+        }
+    };
+    let mut out = Vec::new();
+    if let Some(p) = player.filter(|p| p.rail_bound && p.vehicle.physics.speed > -0.5) {
+        let v = &p.vehicle;
+        let (train, front) = (t.is_train(&v.ty.def.path), traffic::extents(&v.ty, 12.0).0);
+        let ahead = rail_drive::lanes_ahead(p, t.net(), world, reach(train));
+        out.extend(ahead.into_iter().map(|(l, d)| (l, d, front, train)));
+    }
+    for r in lan
+        .remotes
+        .values()
+        .filter(|r| !r.stand_in && r.last.speed_kmh > -2.0)
+    {
+        let v = r.vehicle();
+        if !rail_drive::is_rail(&v.ty.def) {
+            continue;
+        }
+        let (train, front) = (t.is_train(&v.ty.def.path), traffic::extents(&v.ty, 12.0).0);
+        let ahead = rail_drive::remote_lanes_ahead(v, r.last.blinker, t.net(), world, reach(train));
+        out.extend(ahead.into_iter().map(|(l, d)| (l, d, front, train)));
+    }
+    out
+}
+
 /// What the traffic needs to know every frame besides the time: where the player looks
 /// from, the day of the week, who walks the footpaths, what hides what.
 pub(crate) fn traffic_inputs(

@@ -125,6 +125,10 @@ impl App {
                         .and_then(|p| p.vehicle.var("TrafficPriority"))
                         .is_some_and(|v| v > 0.5),
                 );
+                t.set_rail_ahead(match self.world.as_ref() {
+                    Some(w) => rail_ahead(t, w, self.player.as_ref(), &self.remotes),
+                    None => Vec::new(),
+                });
                 let steps = ::traffic::advance_fixed_clock(
                     &mut self.sim_accum,
                     dt,

@@ -246,7 +246,7 @@ impl Traffic {
                 let Some(rel) = def.sound_ai.clone().or_else(|| def.sound.clone()) else {
                     continue;
                 };
-                let path = ::legacy_config::resolve_path(def.dir(), &rel);
+                let path = ::mods::resolve_path(def.dir(), &rel);
                 let cfg = self
                     .sound_cfgs
                     .entry(path.clone())
@@ -266,7 +266,7 @@ impl Traffic {
                         let Some(rel) = def.sound_ai.clone().or_else(|| def.sound.clone()) else {
                             continue;
                         };
-                        let path = ::legacy_config::resolve_path(def.dir(), &rel);
+                        let path = ::mods::resolve_path(def.dir(), &rel);
                         let part = self
                             .sound_cfgs
                             .entry(path.clone())
@@ -577,6 +577,16 @@ impl Traffic {
                 };
                 let mut s = script.lock();
                 s.update(dt, &vars);
+                if near.is_none_or(|p| (lamp.pos - p).length() < 250.0) {
+                    let at = lamp.pos;
+                    crate::scene::draw_script_texts(
+                        renderer,
+                        scene,
+                        &mut s,
+                        &mut lamp.texts.lock(),
+                        || format!("lamp_{:.0}_{:.0}", at.x, at.y),
+                    );
+                }
                 // `OMSI_DEBUG_LAMPS`: where the moving lamps are (barriers) and how far their
                 // meshes are turned, each time the lamps are updated
                 if lamp.animated && debug_lamps {
@@ -616,18 +626,29 @@ impl Traffic {
                     }
                 }
             }
+            if !lamp.animated {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                (state, request).hash(&mut h);
+                if let Some(script) = lamp.script.as_ref() {
+                    for v in &script.lock().state.vars {
+                        v.to_bits().hash(&mut h);
+                    }
+                }
+                let sig = h.finish();
+                if lamp.shown == Some(sig) {
+                    continue;
+                }
+                lamp.shown = Some(sig);
+            }
             // Traffic lamps do not enter World's ordinary scripted-object update path.
             // Switch their materials here too, so [matl_item] nightmaps light the LEDs.
-            for (inst, slot, base, item, var) in &lamp.variants {
+            for (inst, slot, base, item, var, more) in &lamp.variants {
                 renderer.set_material(
                     scene,
                     *inst,
                     *slot,
-                    if crate::scene::change_picks_item(value(lamp, var)) {
-                        *item
-                    } else {
-                        *base
-                    },
+                    crate::scene::pick_variant(value(lamp, var), *base, *item, more),
                 );
             }
             for k in 0..lamp.coronas.len() {

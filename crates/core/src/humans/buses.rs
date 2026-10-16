@@ -1293,6 +1293,7 @@ impl Humans {
                     passenger_termini: terminus.iter().cloned().collect(),
                     terminus,
                     out_of_service: false,
+                    final_stop,
                     id: BusId::Ai(c.id.get()),
                     walk_open: None,
                     cabin,

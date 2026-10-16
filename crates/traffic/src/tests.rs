@@ -292,9 +292,62 @@ use crate::following::smooth01;
     }
 
     #[test]
-    fn a_backwards_jump_extends_green_once_per_cycle() {
-        // Bowdenham crossings use a rewind to time zero to extend a green. It must not
-        // restart the phase again when the replay reaches that source time.
+    fn a_backwards_jump_repeats_until_its_condition_changes() {
+        for if_request in [false, true] {
+            let mut c = TrafficLightController::from_program(
+                vec![(vec![(0, 3.0), (6, 7.0), (9, 3.0), (0, 7.0)], None)],
+                Some(20.0),
+                &[],
+                &[[0.0, 10.0, if_request as u8 as f32, 3.0]],
+            );
+            c.start(9.5);
+            c.request[0] = !if_request;
+            c.advance(0.5);
+            assert!((c.time - 3.0).abs() < 1e-6, "first rewind: {}", c.time);
+            for _ in 0..3 {
+                c.advance(7.0);
+                assert!((c.time - 3.0).abs() < 1e-6, "repeated rewind: {}", c.time);
+                assert_eq!(c.state(0), 6);
+            }
+            c.request[0] = if_request;
+            c.advance(8.0);
+            assert!((c.time - 11.0).abs() < 1e-6);
+            assert_eq!(c.state(0), 9, "the phase ends when the condition clears");
+        }
+    }
+
+    #[test]
+    fn backwards_jumps_use_the_remaining_frame_time() {
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(0, 3.0), (6, 7.0), (9, 3.0), (0, 7.0)], None)],
+            Some(20.0),
+            &[],
+            &[[0.0, 10.0, 1.0, 3.0]],
+        );
+        c.start(9.5);
+        c.advance(22.0);
+        assert!((c.time - 3.5).abs() < 1e-6, "{}", c.time);
+    }
+
+    #[test]
+    fn a_jump_to_itself_does_not_prevent_clock_progress() {
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(6, 20.0)], None)],
+            Some(20.0),
+            &[],
+            &[[0.0, 10.0, 1.0, 10.0]],
+        );
+        c.start(9.5);
+        c.advance(0.5);
+        assert!((c.time - 10.0).abs() < 1e-6);
+        c.advance(0.0);
+        c.advance(0.5);
+        assert!((c.time - 10.5).abs() < 1e-6, "{}", c.time);
+    }
+
+    #[test]
+    fn a_backwards_jump_to_zero_waits_for_a_request() {
+        // A rewnd to zero keeps the main road green until the side road asks
         let mut c = TrafficLightController::from_program(
             vec![
                 (vec![(6, 15.0), (9, 3.0), (0, 8.0), (8, 5.0)], None),
@@ -305,18 +358,33 @@ use crate::following::smooth01;
             &[[1.0, 15.0, 1.0, 0.0]],
         );
         c.time = 14.9;
-        let mut left_green = false;
         for _ in 0..500 {
             c.advance(0.1);
-            left_green |= matches!(
-                TrafficLightController::aspect(c.state(0)),
-                Aspect::Yellow | Aspect::Red
-            );
+            assert_eq!(c.state(0), 6, "main road stays green without a request");
         }
-        assert!(
-            left_green,
-            "the extended green still reached yellow and red"
+        c.request[1] = true;
+        c.advance(19.0 - c.time as f32);
+        assert_eq!(c.state(1), 6, "the side road receives green after requesting");
+    }
+
+    #[test]
+    fn a_stop_does_not_hold_a_red_and_yellow_changeover() {
+        // Add-On London's Brixton Road lights have a demand stop one second into their
+        // red-and-yellow phase.  A queued vehicle must not be able to hold that transition
+        // forever: it still needs to receive the following green.
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(3, 3.0), (6, 33.0), (9, 2.0), (0, 1.0)], Some(0.0))],
+            Some(50.0),
+            &[[0.0, 1.0, 0.0]],
+            &[],
         );
+        c.time = 0.9;
+        c.request[0] = true;
+
+        c.advance(0.2);
+        assert!(!c.held, "red-and-yellow changeover was held");
+        c.advance(2.0);
+        assert_eq!(c.state(0), 6, "the queued vehicle receives green");
     }
 
     #[test]
@@ -342,6 +410,52 @@ use crate::following::smooth01;
             "front at {front}, line at {line}"
         );
         assert!(hardest > -3.5, "braked at {hardest} m/s²");
+    }
+
+    /// A vehicle waiting at the line asks for a light with `[approachdist] 0` (#294).
+    #[test]
+    fn a_car_waiting_at_the_line_asks_for_its_light() {
+        let net = junction();
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0))],
+            None,
+            &[],
+            &[],
+        );
+        for (speed, decel) in [(3.0, 1.0), (13.9, 2.2), (22.0, 3.0)] {
+            let mut car = AiState::new(0, 0.0, 3);
+            car.speed = speed;
+            car.decel = decel;
+            car.plan_next(&net);
+            let line = 55.0;
+            for _ in 0..3600 {
+                let stop = line - car.s;
+                car.drive(&net, 1.0 / 60.0, None, Some(stop));
+            }
+            assert!(car.speed < 0.01, "stopped: {}", car.speed);
+            let gap = line - (car.s + car.front);
+            assert!(
+                c.asked_from(0, gap, false),
+                "{gap} m before the line at {speed} m/s"
+            );
+            assert!(!c.asked_from(0, gap + 2.0, false));
+        }
+    }
+
+    /// A train asks from `RAIL_APPROACH` unless the program sets a distance (#294).
+    #[test]
+    fn a_train_asks_for_a_level_crossing_from_afar() {
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0)), (vec![(0, 10.0)], Some(30.0))],
+            None,
+            &[],
+            &[],
+        );
+        assert!(c.asked_from(0, RAIL_APPROACH - 1.0, true));
+        assert!(!c.asked_from(0, RAIL_APPROACH + 2.0, true));
+        assert!(!c.asked_from(0, 100.0, false));
+        assert!(c.asked_from(1, 30.0, true));
+        assert!(!c.asked_from(1, 100.0, true));
     }
 
     #[test]

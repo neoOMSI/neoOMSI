@@ -1013,13 +1013,15 @@ fn passenger_service(
             .enumerate()
             .skip(from)
             .filter(|(index, _)| times.stops[*index])
-            .map(|(index, id)| crate::bus_service::Stop {
-                ri: index,
-                s: 0.0,
-                bay: 0.0,
-                side: 0.0,
-                id,
-                depart: entry.base + entry.time + times.stations[index].1,
+            .map(|(index, id)| {
+                ::traffic::StopTarget::from_tuple((
+                    index,
+                    0.0,
+                    0.0,
+                    entry.base + entry.time + times.stations[index].1,
+                    id,
+                    0.0,
+                ))
             })
             .collect(),
     )
@@ -1221,7 +1223,7 @@ fn passenger_targets_distinguish_equal_time_stops_and_unloaded_calls() {
         car: 10,
         steps: vec![],
         next: 0,
-        stations: vec![(tail.id, tail.depart)],
+        stations: vec![(tail.stop.get(), tail.depart)],
         served: vec![false],
     };
     let run = s.passenger_run(0, Some(&service), Some(&unloaded));

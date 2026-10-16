@@ -62,6 +62,7 @@ pub(super) fn spline_lanes(
             .filter(|r| {
                 r.path_index == pi as i32
                     && r.kind.eq_ignore_ascii_case("speedlimit")
+                    && !r.kill
                     && r.value > 0.0
             })
             .map(|r| r.value as f32)
@@ -225,10 +226,18 @@ pub(super) fn object_lanes(
                 .map(|b| {
                     b.iter()
                         .filter(|(n, _)| *n >= 0)
-                        .map(|(n, _)| *n as u16)
+                        .map(|(n, mode)| BlockRule {
+                            path: *n as u16,
+                            mode: *mode as u16,
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
+            l.crossing_problem = sco
+                .path_crossing_problem
+                .get(pi)
+                .copied()
+                .unwrap_or(false);
             l.reversed = reverse;
             // Build locally, deform locally, then place. Hidden and visible junctions use
             // the same operation; refresh only after all spatial changes are complete.

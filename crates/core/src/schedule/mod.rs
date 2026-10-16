@@ -6,7 +6,10 @@ use crate::traffic::Traffic;
 use hashbrown::{HashMap, HashSet};
 use ::render::{Renderer, Scene};
 use ::simulation::VehicleType;
-use ::simulation::traffic::{LaneKey, Network};
+use ::traffic::{
+    LaneId, LaneKey, Network, Reason, RouteStatus, RouteStepState, TileState, bridge_gaps,
+    compile_route, joins, way_between,
+};
 use std::path::Path;
 use std::sync::Arc;
 use ::timetable::TimetableData;
@@ -107,7 +110,7 @@ pub struct TripTimes {
     pub stops: Vec<bool>,
     /// `[profile_otherstopping]` per station (0 when not given): 1 and 4 stop whoever
     /// wants to get on or off, 2 is passed, 3 is served when the bus would be more than 20 s
-    /// early (Omsi.exe 0x7da6f0 .. 0x7da8bf; see `bus_service::BusService::must_serve`).
+    /// early (Omsi.exe 0x7da6f0 .. 0x7da8bf; see `traffic::service::ServiceCoordinator`).
     pub kinds: Vec<u8>,
     /// Seconds from the departure to the arrival at the last station.
     pub duration: f64,

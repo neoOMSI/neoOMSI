@@ -19,7 +19,7 @@ impl App {
         let service_time = self
             .traffic
             .as_ref()
-            .map(|traffic| traffic.day_time)
+            .map(|traffic| traffic.day_time())
             .unwrap_or(self.clock.time);
         if let (Some(h), Some(w), Some(r), Some(scene)) = (
             self.humans.as_mut(),
@@ -112,8 +112,8 @@ impl App {
             if let Some(t) = self.traffic.as_mut() {
                 let (alighting, waiting) = h.stop_wishes();
                 t.set_stop_wishes(alighting, waiting);
-                for (id, secs) in h.take_holds() {
-                    t.hold_boarding(crate::traffic::VehicleId(id), secs);
+                for (id, secs, in_doorway) in h.take_holds() {
+                    t.hold_boarding(crate::traffic::VehicleId(id), secs, in_doorway);
                 }
                 for (id, entry, exit) in h.take_ai_requests() {
                     t.set_pax_requests(crate::traffic::VehicleId(id), &entry, &exit);
