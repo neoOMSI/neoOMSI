@@ -4,11 +4,13 @@
 //! in different orders (representing an entity-container reorder) and in different
 //! scheduling partitions. Decisions keyed by stable `VehicleId` must be identical.
 
+mod common;
+
 use traffic::perception::{
     BodyFootprint, Occupancy, Placement, SweepSample,
 };
 use traffic::world::Arbiter;
-use traffic::{LaneId, NetworkVersion, VehicleId};
+use traffic::{JunctionActor, JunctionCoordinator, LaneId, NetworkVersion, VehicleId};
 use glam::{DVec2, DVec3};
 
 /// A straight road, bodies nose-to-tail on it. The container order is the only thing that
@@ -133,5 +135,60 @@ fn a_swept_clearance_does_not_depend_on_body_order() {
             .swept_clearance(&samples, 1.25, &[])
             .map(|s| s.owner);
         assert_eq!(hit, base, "body order changed the swept clearance");
+    }
+}
+
+/// The junction scene of `junction_planning_does_not_depend_on_container_order`, its cars
+/// stored in `order`: a queue stands on the exit of `blocked_exit` with room for one car
+/// behind it, and three cars come up to the junction (two of them side by side - an
+/// abstraction - and both at the line).
+fn junction_scene(order: &[u64]) -> common::Harness {
+    let mut h = common::Harness::new(common::blocked_exit());
+    for &id in order {
+        let (lane, s, speed) = match id {
+            99 => (2, 10.25, 0.0),
+            4 => (0, 95.0, 0.0),
+            7 => (0, 95.0, 0.0),
+            2 => (0, 85.0, 6.0),
+            _ => unreachable!(),
+        };
+        let mut a = JunctionActor::new(VehicleId(id), lane, s);
+        a.speed = speed;
+        let i = h.add(a);
+        h.place(i, lane, s);
+    }
+    h
+}
+
+#[test]
+fn junction_planning_does_not_depend_on_container_order() {
+    // what each car was told and holds, by id, over a few ticks
+    let run = |order: &[u64]| {
+        let h = junction_scene(order);
+        let mut coord = JunctionCoordinator::new();
+        let mut out = Vec::new();
+        for tick in 0..3 {
+            coord.begin_tick(tick);
+            let mut decided: Vec<_> = coord
+                .plan_order(&h.actors)
+                .into_iter()
+                .map(|i| (h.actors[i].id, h.plan(&mut coord, i, None)))
+                .collect();
+            decided.sort_by_key(|d| d.0);
+            for (id, d) in decided {
+                out.push((tick, id, d.yield_at, d.state, d.reasons, coord.claims_of(id).to_vec()));
+            }
+        }
+        out
+    };
+    let base = run(&[99, 2, 4, 7]);
+    // one of them gets the exit's room, the others wait for it
+    let admitted = base
+        .iter()
+        .filter(|d| d.0 == 0 && d.1 != VehicleId(99) && d.2.is_none())
+        .count();
+    assert_eq!(admitted, 1, "{base:?}");
+    for order in [[7, 4, 2, 99], [4, 99, 7, 2], [2, 7, 99, 4]] {
+        assert_eq!(run(&order), base, "the container order {order:?} changed the decisions");
     }
 }

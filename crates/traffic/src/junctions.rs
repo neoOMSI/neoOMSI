@@ -491,6 +491,16 @@ impl JunctionCoordinator {
         c.state = JunctionState::Inside;
     }
 
+    /// The order to plan a tick's vehicles in: those holding a claim first (what they were
+    /// granted stands, whatever the others ask for), then by stable id. A claim or exit room
+    /// granted during a tick holds back the vehicles planned after it, so planning in
+    /// container order made the outcome depend on where a vehicle happened to be stored.
+    pub fn plan_order(&self, actors: &[JunctionActor]) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..actors.len()).collect();
+        order.sort_unstable_by_key(|&i| (self.claims_of(actors[i].id).is_empty(), actors[i].id));
+        order
+    }
+
     /// Who this vehicle is currently waiting behind at a junction, if anyone.
     pub fn blocked_by(&self, id: VehicleId) -> Option<VehicleId> {
         self.wait_for.get(&id).copied()

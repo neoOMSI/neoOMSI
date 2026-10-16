@@ -429,7 +429,9 @@ impl Traffic {
             .ok()
             .and_then(|v| v.parse::<u64>().ok());
         let debug_doors = ::legacy_config::env::var_os("OMSI_DEBUG_DOORS").is_some();
-        for i in 0..self.cars.len() {
+        // (in the coordinator's order, by stable id: what one vehicle is granted holds back
+        // those planned after it, so the container order must not decide)
+        for i in self.junctions.plan_order(&junction_actors[..self.cars.len()]) {
             self.cars[i].state.emergency_drive = junction_actors[i].emergency;
             let ahead = self.obstacle_ahead(i, look_ahead(self.cars[i].state.speed), &by_lane);
             let body_ahead = self.body_in_way(i, &occupancy, &external_ids);
@@ -1565,6 +1567,8 @@ impl Traffic {
                 priority_warning,
             });
         }
+        // (`tick_finish` swap-removes from the back)
+        remove.sort_unstable();
         // Who can be seen: a car out of the view (and farther than the mirrors and the
         // shadows reach) leaves its animations as they are and is not drawn at all.
         // Every part on the track counts: a long train vanished with its locomotive (#336).
