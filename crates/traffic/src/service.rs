@@ -332,9 +332,9 @@ pub struct StopPolicy {
     pub is_last: bool,
     /// The loaded tiles still carry the route on beyond this stop.
     pub route_open: bool,
-    /// The trip ends where its route ends, not at its last stop: a timetable track runs on
-    /// past the terminus stop to the stand where the bus waits for its next trip (the
-    /// engine ends the trip there, see `traffic::tick`).
+    /// The trip ends where its route ends, not at its last stop: a train on a track of its
+    /// own runs on past its last station to the end of its track (the engine ends the trip
+    /// there, see `traffic::tick`).
     pub ends_at_route_end: bool,
 }
 

@@ -34,6 +34,9 @@ pub struct BusService {
     pub serve_early: Vec<i64>,
     /// The timetable still carries the route on as tiles bring their lanes.
     pub route_open: bool,
+    /// A train on a track of its own: its trip ends at the track's end, not at its last
+    /// station (#342).
+    pub to_track_end: bool,
     /// On its layover at the stand, where its timetable track begins short of the first
     /// stop: it stands there until this day time (s), then drives to the stop.
     pub hold_until: Option<f64>,
@@ -49,6 +52,7 @@ impl BusService {
             always: Vec::new(),
             serve_early: Vec::new(),
             route_open: false,
+            to_track_end: false,
             hold_until: None,
         }
     }
@@ -121,15 +125,16 @@ impl BusService {
         Some(::traffic::BerthGeometry::from_target(target, lane))
     }
 
-    /// The content-derived stop policy for the front stop.
-    pub fn policy(&self) -> ::traffic::StopPolicy {
+    /// The content-derived stop policy for the front stop. A bus's trip ends at its last
+    /// stop; a train on a track of its own and an aircraft (`air`) drive on (#342).
+    pub fn policy(&self, air: bool) -> ::traffic::StopPolicy {
         ::traffic::StopPolicy {
             always: self.always.clone(),
             serve_early: self.serve_early.clone(),
             last_stop: self.last_stop,
             is_last: self.stops.len() <= 1 && !self.route_open,
             route_open: self.route_open,
-            ends_at_route_end: true,
+            ends_at_route_end: self.to_track_end || air,
         }
     }
 }
@@ -264,11 +269,58 @@ mod tests {
     #[test]
     fn policy_marks_the_last_loaded_stop() {
         let mut s = BusService::new(vec![stop(1, 100.0), stop(2, 200.0)]);
-        assert!(!s.policy().is_last);
+        assert!(!s.policy(false).is_last);
         s.stops = vec![stop(2, 200.0)].into();
-        assert!(s.policy().is_last);
+        assert!(s.policy(false).is_last);
         s.route_open = true;
-        assert!(!s.policy().is_last, "an open route is not at its last stop yet");
+        assert!(!s.policy(false).is_last, "an open route is not at its last stop yet");
+    }
+
+    /// A bus's trip ends at its last stop; a train on a track of its own drives on (#342).
+    #[test]
+    fn a_train_drives_on_past_its_last_stop_to_the_end_of_its_track() {
+        let mut net = ::traffic::Network::default();
+        net.lanes.push(::traffic::LaneBuilder::polyline(
+            vec![
+                glam::DVec3::new(0.0, 0.0, 0.0),
+                glam::DVec3::new(0.0, 300.0, 0.0),
+            ],
+            ::traffic::LaneKind::Rail,
+            2.5,
+        ));
+        let occupancy = ::traffic::Occupancy::default();
+        // its rear clear of the berth at 150 m: the doors have closed and it pulls out
+        let actors = [::traffic::ServiceActor::new(::traffic::VehicleId(1), 0, 160.0)];
+        let scene = ::traffic::ServiceScene {
+            net: &net,
+            occupancy: &occupancy,
+            actors: &actors,
+            day_time: 0.0,
+            dt: 0.1,
+            tick: 0,
+        };
+        for to_track_end in [false, true] {
+            let mut s = BusService::new(vec![StopTarget::from_tuple((0, 150.0, 0.0, 0.0, 1, 0.0))]);
+            s.to_track_end = to_track_end;
+            s.state.phase = ServicePhase::Departing;
+            s.state.berth = s.front_berth(&[0]);
+            let inputs = ::traffic::ServiceInputs {
+                actor: 0,
+                berth: s.front_berth(&[0]),
+                distance: -10.0,
+                policy: s.policy(false),
+                demand: ::traffic::StopDemand { wanted: None, rail: true },
+                feedback: ::traffic::ScriptFeedback::Idle,
+                passing: false,
+                kerb_swerve: None,
+                junction_first: false,
+                berth_held_long: false,
+            };
+            let d = ::traffic::ServiceCoordinator::new().plan(&scene, &mut s.state, &inputs);
+            assert!(d.consume_stop, "to_track_end {to_track_end}");
+            assert_eq!(s.trip_done(), !to_track_end, "to_track_end {to_track_end}");
+            assert_eq!(s.state.phase == ServicePhase::EnRoute, to_track_end);
+        }
     }
 
     #[test]

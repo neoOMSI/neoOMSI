@@ -1134,6 +1134,11 @@ impl Traffic {
                         .lanes
                         .get(car.state.lane)
                         .is_some_and(|l| l.kind == LaneKind::Rail);
+                    let air = self
+                        .net
+                        .lanes
+                        .get(car.state.lane)
+                        .is_some_and(|l| l.kind == LaneKind::Air);
                     let feedback = crate::bus_service::script_feedback(&car.vehicle, service.state.phase);
                     let junction_first = berth
                         .map(|b| {
@@ -1150,7 +1155,7 @@ impl Traffic {
                         actor: i,
                         berth,
                         distance,
-                        policy: service.policy(),
+                        policy: service.policy(air),
                         demand: StopDemand { wanted, rail },
                         feedback,
                         passing: car.maneuver.passing.is_some(),

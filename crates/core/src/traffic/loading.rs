@@ -454,6 +454,15 @@ impl Traffic {
     }
 
 
+    /// A train's extent behind its leading vehicle and its length: its whole consist's.
+    pub(crate) fn fit_consist(&mut self, ci: usize) {
+        let c = &mut self.cars[ci];
+        let (_, rear, _) = extents(&c.vehicle.ty, 4.5);
+        c.state.rear = consist_rear(&c.vehicle, rear);
+        c.state.length = c.state.front + c.state.rear;
+    }
+
+
     /// Turn train `ci` round as Omsi.exe does for a trip whose `[trainreverse]` differs from
     /// how the train stands (0x613a98): the whole consist the other way, its last car
     /// leading - here the vehicle that drives is made anew as that car, standing where it
@@ -533,6 +542,7 @@ impl Traffic {
             world.release_vehicle(renderer, scene, r);
         }
         self.set_trailers(world, renderer, scene, ci, &cars[1..]);
+        self.fit_consist(ci);
         self.seed_rail_trail(ci, behind);
         let c = &mut self.cars[ci];
         let trail = &c.rail_trail;

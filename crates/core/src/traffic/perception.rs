@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// How much farther a vehicle on rails looks for the one ahead: a long train is found at
+/// its front, that far beyond its tail.
+const RAIL_CONSIST_REACH: f32 = 250.0;
+
 fn body_part_from_obb(parent: &BodyFootprint, part: u16, box_: &Obb) -> BodyFootprint {
     // Obb::from_box has already converted the vehicle's degrees to radians.
     let heading = box_.heading;
@@ -79,7 +83,12 @@ impl Traffic {
             }
             let l = &self.net.lanes[lane];
             offset += l.length() - s_from;
-            if offset > look || best.is_some() {
+            let reach = if l.kind == LaneKind::Rail {
+                look + RAIL_CONSIST_REACH
+            } else {
+                look
+            };
+            if offset > reach || best.is_some() {
                 break;
             }
             let next = match upcoming.as_mut() {

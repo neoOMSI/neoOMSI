@@ -417,6 +417,7 @@ impl Schedule {
             if let Some(b) = car.bus.as_mut() {
                 b.hold_until = stand_hold;
                 b.route_open = end < slots.len();
+                b.to_track_end = track && rail;
                 b.terminus = terminus.clone();
                 b.last_stop = last_stop;
                 b.always = always;
@@ -649,10 +650,8 @@ impl Schedule {
                 .collect::<Vec<_>>()
                 .join(" + ")
             );
-            let length = 20.0 * (1 + traffic.car(ci).vehicle.trailers.len()) as f32;
-            let car = traffic.car_mut(ci);
-            car.state.max_speed_kmh = 90.0;
-            car.state.length = length;
+            traffic.car_mut(ci).state.max_speed_kmh = 90.0;
+            traffic.fit_consist(ci);
         }
         let names = self.trip_stop_names(self.departures[i].trip);
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -675,6 +674,7 @@ impl Schedule {
                 b.state.layover = true;
             }
             b.route_open = end < slots.len();
+            b.to_track_end = track && rail;
             b.terminus = terminus.clone();
             b.last_stop = last_stop;
             b.always = always;
