@@ -419,10 +419,19 @@ impl Traffic {
                 }
             })
             .collect();
-        let intent_scene = ManeuverScene { static_clearance: None, net: &self.net, occupancy: &occupancy,
-            actors: &maneuver_actors, people: &[], time: self.time, dt, tick: (self.time * 1000.0).max(0.0) as u64 };
-        let maneuver_intents: Vec<ManeuverIntent> = maneuver_actors.iter().zip(&self.cars)
-            .map(|(a, c)| self.maneuvers.intent(&intent_scene, a, &c.maneuver)).collect();
+        // (each vehicle's wish only reads the frozen scene: they are found on the workers, in
+        // the vehicles' order, and the coordinator orders them by stable id below)
+        let maneuver_intents: Vec<ManeuverIntent> = {
+            use rayon::prelude::*;
+            let (net, coordinator, actors) = (&self.net, &self.maneuvers, &maneuver_actors[..]);
+            let (time, tick) = (self.time, (self.time * 1000.0).max(0.0) as u64);
+            let states: Vec<&ManeuverState> = self.cars.iter().map(|c| &c.maneuver).collect();
+            actors.par_iter().zip(states.par_iter()).with_min_len(8).map(|(a, state)| {
+                let intent_scene = ManeuverScene { static_clearance: None, net, occupancy: &occupancy,
+                    actors, people: &[], time, dt, tick };
+                coordinator.intent(&intent_scene, a, state)
+            }).collect()
+        };
         self.maneuvers
             .begin_tick(&maneuver_intents, (self.time * 1000.0).max(0.0) as u64);
         // (the debug switches are asked once a tick, not once a car)
