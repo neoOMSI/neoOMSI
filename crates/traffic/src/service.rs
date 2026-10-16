@@ -336,6 +336,9 @@ pub struct StopPolicy {
     /// own runs on past its last station to the end of its track (the engine ends the trip
     /// there, see `traffic::tick`).
     pub ends_at_route_end: bool,
+    /// At its last station it waits for the profile's departure there, however long (#101:
+    /// Städtedreieck's light detector buses stand at their last stop for hours).
+    pub stands_at_last: bool,
 }
 
 /// How a supported/unsupported door handshake stands, typed at the adapter boundary.
@@ -1010,7 +1013,9 @@ impl ServiceCoordinator {
     ) {
         let layover = state.layover;
         state.layover = false;
-        let limit = if layover {
+        let limit = if policy.stands_at_last {
+            f64::INFINITY
+        } else if layover {
             LAYOVER_WAIT
         } else if policy.always.contains(&berth.stop.get()) {
             EARLY_WAIT

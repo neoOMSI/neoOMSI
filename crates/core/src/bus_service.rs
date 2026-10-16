@@ -37,6 +37,8 @@ pub struct BusService {
     /// A train on a track of its own: its trip ends at the track's end, not at its last
     /// station (#342).
     pub to_track_end: bool,
+    /// It waits at its last station for the profile's departure there, however long (#101).
+    pub stand_at_end: bool,
     /// On its layover at the stand, where its timetable track begins short of the first
     /// stop: it stands there until this day time (s), then drives to the stop.
     pub hold_until: Option<f64>,
@@ -53,6 +55,7 @@ impl BusService {
             serve_early: Vec::new(),
             route_open: false,
             to_track_end: false,
+            stand_at_end: false,
             hold_until: None,
         }
     }
@@ -128,6 +131,9 @@ impl BusService {
     /// The content-derived stop policy for the front stop. A bus's trip ends at its last
     /// stop; a train on a track of its own and an aircraft (`air`) drive on (#342).
     pub fn policy(&self, air: bool) -> ::traffic::StopPolicy {
+        // (a loop line's first stop has the last one's id)
+        let at_last = self.stops.len() == 1
+            && (!self.route_open || self.last_stop == self.stops.front().map(|s| s.stop.get()));
         ::traffic::StopPolicy {
             always: self.always.clone(),
             serve_early: self.serve_early.clone(),
@@ -135,6 +141,7 @@ impl BusService {
             is_last: self.stops.len() <= 1 && !self.route_open,
             route_open: self.route_open,
             ends_at_route_end: self.to_track_end || air,
+            stands_at_last: self.stand_at_end && at_last,
         }
     }
 }
@@ -320,6 +327,65 @@ mod tests {
             assert!(d.consume_stop, "to_track_end {to_track_end}");
             assert_eq!(s.trip_done(), !to_track_end, "to_track_end {to_track_end}");
             assert_eq!(s.state.phase == ServicePhase::EnRoute, to_track_end);
+        }
+    }
+
+    /// #101: Städtedreieck's light detector buses stand at their last stop for hours.
+    #[test]
+    fn a_bus_stands_at_its_last_stop_until_its_departure_there() {
+        let mut net = ::traffic::Network::default();
+        net.lanes.push(::traffic::LaneBuilder::polyline(
+            vec![
+                glam::DVec3::new(0.0, 0.0, 0.0),
+                glam::DVec3::new(0.0, 300.0, 0.0),
+            ],
+            ::traffic::LaneKind::Street,
+            3.0,
+        ));
+        let occupancy = ::traffic::Occupancy::default();
+        let actors = [::traffic::ServiceActor::new(::traffic::VehicleId(1), 0, 150.0)];
+        let scene = ::traffic::ServiceScene {
+            net: &net,
+            occupancy: &occupancy,
+            actors: &actors,
+            day_time: 1000.0,
+            dt: 0.1,
+            tick: 0,
+        };
+        // docked at its front stop: the doors open and it waits until `leave_at`
+        let leave_at = |s: &mut BusService| {
+            s.state.phase = ServicePhase::Docking;
+            s.state.berth = s.front_berth(&[0]);
+            let inputs = ::traffic::ServiceInputs {
+                actor: 0,
+                berth: s.front_berth(&[0]),
+                distance: 0.0,
+                policy: s.policy(false),
+                demand: ::traffic::StopDemand { wanted: Some(true), rail: false },
+                feedback: ::traffic::ScriptFeedback::Idle,
+                passing: false,
+                kerb_swerve: None,
+                junction_first: false,
+                berth_held_long: false,
+            };
+            ::traffic::ServiceCoordinator::new().plan(&scene, &mut s.state, &inputs);
+            assert_eq!(s.state.phase, ServicePhase::Boarding);
+            s.state.leave_at
+        };
+        let stop = |id: i64, depart: f64| StopTarget::from_tuple((0, 150.0, 0.0, depart, id, 0.0));
+        for stand_at_end in [false, true] {
+            let mut s = BusService::new(vec![stop(1, 15_400.0)]);
+            s.last_stop = Some(1);
+            s.stand_at_end = stand_at_end;
+            let leave = if stand_at_end { 15_400.0 } else { 1000.0 };
+            assert_eq!(leave_at(&mut s), leave, "stand_at_end {stand_at_end}");
+        }
+        // not before the last stop, nor at a loop line's first
+        for last in [2, 1] {
+            let mut s = BusService::new(vec![stop(1, 15_400.0), stop(2, 16_000.0)]);
+            s.last_stop = Some(last);
+            s.stand_at_end = true;
+            assert_eq!(leave_at(&mut s), 1000.0, "last stop {last}");
         }
     }
 

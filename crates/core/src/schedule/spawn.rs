@@ -407,6 +407,7 @@ impl Schedule {
                 .last()
                 .copied();
             let (always, early) = self.special_stops(i);
+            let stand_at_end = self.stands_at_end(i);
             let car = traffic.car_mut(ci);
             if let Some(k) = car.vehicle.ty.program.str_var("Linie") {
                 car.vehicle.state.str_vars[k as usize] = line.clone();
@@ -422,6 +423,7 @@ impl Schedule {
                 b.last_stop = last_stop;
                 b.always = always;
                 b.serve_early = early;
+                b.stand_at_end = stand_at_end;
             }
             let id = car.id;
             self.car_departure.insert(id.get(), i);
@@ -659,6 +661,7 @@ impl Schedule {
             .last()
             .copied();
         let (always, early) = self.special_stops(i);
+        let stand_at_end = self.stands_at_end(i);
         let car = traffic.car_mut(ci);
         // on its layover only when it stands at its first stop now (the trip's first station
         // may lie on a part of the track that is not loaded): it waits there for its departure
@@ -679,6 +682,7 @@ impl Schedule {
             b.last_stop = last_stop;
             b.always = always;
             b.serve_early = early;
+            b.stand_at_end = stand_at_end;
         }
         // the bus scripts read the line/terminus for their displays
         if let Some(i) = ty.program.str_var("Linie") {
