@@ -342,6 +342,37 @@ fn unavailable_ground_stops_motion_without_dropping_the_body() {
 }
 
 #[test]
+fn ground_that_never_comes_back_is_waited_out_then_the_path_carries_the_car() {
+    let mut body = AiBody::new(&super::tests::golf(), MotionKind::Road);
+    let way_at = |y: f64| DVec3::new(0.0, y, 0.05 * y);
+    let start = body.position.y;
+    body.place(&|d| way_at(start + d as f64), None, Some(&flat(0.0)), 0.0);
+    let absent = |_: f64, _: f64, _: f64| GroundProbe::default();
+    let mut t = 0.0;
+    while t < 12.0 {
+        let y = body.position.y;
+        body.step(0.02, 5.0, &|d| way_at(y + d as f64), None, Some(&absent));
+        t += 0.02;
+        // (the first step still stands on the support it was placed on)
+        if t > 0.03 && t < AI_GROUND_PATIENCE - 0.1 {
+            assert!(body.ground_held());
+            assert_eq!(body.realized_speed(0.02), 0.0);
+        }
+    }
+    assert!(
+        !body.ground_held(),
+        "the car still waits for ground after {t:.0} s"
+    );
+    assert!(body.position.y > 20.0, "the car did not drive on: y {}", body.position.y);
+    assert!(
+        (body.position.z - 0.05 * body.position.y).abs() < 0.15,
+        "the car is not on its path: z {} at y {}",
+        body.position.z,
+        body.position.y
+    );
+}
+
+#[test]
 #[ignore = "requires installed OMSI content through OMSI_ROOT"]
 fn installed_car_and_bus_apply_their_static_model_offset_exactly_once() {
     let root = std::path::PathBuf::from(std::env::var_os("OMSI_ROOT").expect("OMSI_ROOT"));

@@ -989,7 +989,9 @@ impl Traffic {
                 }
             }
             let people = for_people.map(|x| x.0);
-            let ground_hold = (!self.cars[i].body.ground_supported)
+            let ground_hold = self.cars[i]
+                .body
+                .ground_held()
                 .then_some(self.cars[i].state.front + 0.1);
             let motion_hold = self.cars[i].motion_fault.map(|_| self.cars[i].state.front + 0.1);
             // scenery the body would touch ahead on its own way: stop short of it, as for

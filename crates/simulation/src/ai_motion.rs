@@ -176,6 +176,11 @@ const AI_CONTACT_REACQUIRE: f64 = 3.0;
 /// Reject isolated level changes larger than a curb when other tyres still confirm the
 /// previous road plane. This is a continuity filter, not a limit on the road's total grade.
 const AI_CONTACT_DISCONTINUITY: f64 = 0.35;
+/// How long (s) a car that has lost all support stands and waits for it: long enough for a
+/// tile streaming in under it, not for ground that never comes (a car past the loaded
+/// area, a way over an object without a surface). After that it drives on at its way's
+/// height, as it did before the support search.
+const AI_GROUND_PATIENCE: f32 = 5.0;
 
 #[derive(Debug, Clone)]
 pub struct AiBody {
@@ -247,8 +252,11 @@ pub struct AiBody {
     contact_z: Vec<f64>,
     contact_path_z: Vec<f64>,
     /// At least one axle has valid support. Missing contacts extend that road plane;
-    /// complete loss of support is reported instead of substituting authored path height.
+    /// complete loss of support holds the car for `AI_GROUND_PATIENCE`, then the authored
+    /// path height carries it.
     pub ground_supported: bool,
+    /// How long (s) the body has been without any support.
+    unsupported_for: f32,
 }
 
 impl AiBody {
@@ -397,6 +405,7 @@ impl AiBody {
             contact_z: Vec::new(),
             contact_path_z: Vec::new(),
             ground_supported: true,
+            unsupported_for: 0.0,
         }
     }
 
@@ -413,6 +422,7 @@ impl AiBody {
         self.ground = None;
         self.contact_z.clear();
         self.contact_path_z.clear();
+        self.unsupported_for = 0.0;
         self.last_speed = speed;
         self.step(0.0, speed, way, ground, contact);
     }
@@ -436,16 +446,38 @@ impl AiBody {
         self.last_speed = speed;
         match self.kind {
             MotionKind::Road => {
-                if self.ground_supported || dt == 0.0 {
+                if !self.ground_held() || dt == 0.0 {
                     self.drive(dt, speed, way);
                 } else {
                     self.travelled = 0.0;
                 }
                 self.settle(dt, way, ground, contact);
+                let was_held = self.ground_held();
+                self.unsupported_for = if self.ground_supported {
+                    0.0
+                } else {
+                    self.unsupported_for + dt
+                };
+                if was_held
+                    && !self.ground_supported
+                    && !self.ground_held()
+                    && std::env::var_os("OMSI_DEBUG_AI_GROUND").is_some()
+                {
+                    log::warn!(
+                        "AI ground waited out at ({:.3}, {:.3}): driving on at path height",
+                        self.position.x,
+                        self.position.y
+                    );
+                }
             }
             MotionKind::Rail => self.ride(way),
             MotionKind::Air => self.fly(dt, speed, way),
         }
+    }
+
+    /// The body has lost all support and is still waiting for it to stream in: it stands.
+    pub fn ground_held(&self) -> bool {
+        !self.ground_supported && self.unsupported_for < AI_GROUND_PATIENCE
     }
 
     /// The speed the body actually realized over `dt` (m/s), from the distance it moved in
@@ -839,10 +871,12 @@ impl AiBody {
             .enumerate()
             .map(|(wi, &(lat, long, a, path_z, _, drawn))| {
                 // A missing wheel does not veto the other wheel's real axle support.
-                // With no support at all, preserve the last contact through streaming gaps.
+                // With no support at all, preserve the last contact through streaming gaps,
+                // and once those are waited out, follow the path.
+                let waiting = self.unsupported_for < AI_GROUND_PATIENCE;
                 let h = drawn.or(axle_support[a])
                     .or_else(|| supported_plane.map(|z| z + grade * long as f64 + crossfall * lat as f64))
-                    .or_else(|| self.contact_z.get(wi).copied().filter(|z| z.is_finite()))
+                    .or_else(|| self.contact_z.get(wi).copied().filter(|z| waiting && z.is_finite()))
                     .unwrap_or(path_z);
                 (lat, long, h)
             })
