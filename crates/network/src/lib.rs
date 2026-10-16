@@ -109,7 +109,8 @@ pub use wire::{
 /// sound variables alone filled the 31 there was room for).
 /// 7: session-scoped content transfer and the current wire format.
 /// 8: a welcome echoes the join attempt's nonce.
-pub const PROTOCOL: u32 = 8;
+/// 9: an emergency flag in a state's flags (`FLAG_EMERGENCY`, 11 flag bits).
+pub const PROTOCOL: u32 = 9;
 pub const DEFAULT_PORT: u16 = 27015;
 /// Ports a host tries after the default one when that is taken (a second session on the
 /// same machine).
