@@ -1219,38 +1219,88 @@ impl Traffic {
                     .collect();
             }
             let lists = &world.ailists;
-            for g in lists.groups.iter().filter(|g| {
-                !g.is_depot
-                    && g.hof.is_none()
-                    && !g
-                    .vehicles
+            // (ailists group, unsched_vehgroups.txt entry, name) of each random traffic group
+            let picks: Vec<(usize, Option<usize>, String)> = if !lists.legacy {
+                lists
+                    .groups
                     .iter()
-                    .any(|v| v.file.to_ascii_lowercase().ends_with(".zug"))
-            }) {
-                let lname = g.name.trim().to_ascii_lowercase();
-                let uvg = match &unscheduled {
-                    Some(names) => match names.iter().position(|n| n.0 == lname) {
-                        None => continue,
-                        Some(u) => {
-                            if uvg_defaults.get(u).copied().unwrap_or(0) <= 0 {
-                                log::info!(
-                                    "random traffic group {} drives only where its paths ask for it (unsched_vehgroups.txt)",
-                                    g.name
-                                );
+                    .enumerate()
+                    .filter(|(_, g)| {
+                        !g.is_depot
+                            && g.hof.is_none()
+                            && !g
+                            .vehicles
+                            .iter()
+                            .any(|v| v.file.to_ascii_lowercase().ends_with(".zug"))
+                    })
+                    .filter_map(|(ai, g)| {
+                        let lname = g.name.trim().to_ascii_lowercase();
+                        let uvg = match &unscheduled {
+                            Some(names) => {
+                                let u = names.iter().position(|n| n.0 == lname)?;
+                                if uvg_defaults.get(u).copied().unwrap_or(0) <= 0 {
+                                    log::info!(
+                                        "random traffic group {} drives only where its paths ask for it (unsched_vehgroups.txt)",
+                                        g.name
+                                    );
+                                }
+                                Some(u)
                             }
-                            Some(u)
+                            None => None,
+                        };
+                        Some((ai, uvg, g.name.clone()))
+                    })
+                    .collect()
+            } else {
+                // An OMSI 1 list (`[ailist]`), as OMSI 2 reads one: each random traffic
+                // group drives the `ailists.cfg` group of its name, else the first (the
+                // original leaves the index at 0 when no name matches); a map without
+                // `unsched_vehgroups.txt` has a single group, the default one of `[ailist]`
+                // (or "NotInGroup"). Velbert, whose `unsched_vehgroups.txt` names OMSI 2
+                // groups its old `ailists.cfg` does not have, had no random traffic (#468).
+                match &unscheduled {
+                Some(names) => names
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(u, (n, _))| {
+                        let gi = lists.random_group((!n.is_empty()).then_some(n.as_str()))?;
+                        if !n.is_empty() && !lists.groups[gi].name.trim().eq_ignore_ascii_case(n)
+                        {
+                            log::info!(
+                                "random traffic group {n} is not in ailists.cfg: it drives group {} instead, as OMSI",
+                                lists.groups[gi].name
+                            );
                         }
-                    },
-                    None => None,
-                };
+                        if uvg_defaults.get(u).copied().unwrap_or(0) <= 0 {
+                            log::info!(
+                                "random traffic group {n} drives only where its paths ask for it (unsched_vehgroups.txt)"
+                            );
+                        }
+                        let name = if n.is_empty() { &lists.groups[gi].name } else { n };
+                        Some((gi, Some(u), name.clone()))
+                    })
+                    .collect(),
+                None => lists
+                    .random_group(None)
+                    .map(|gi| (gi, None, lists.groups[gi].name.clone()))
+                    .into_iter()
+                    .collect(),
+                }
+            };
+            // (on an OMSI 1 list several groups may drive the same vehicles: each file is
+            // read once)
+            let mut loaded: HashMap<String, Option<(Arc<VehicleType>, LaneKind)>> =
+                HashMap::new();
+            for (ai, uvg, name) in picks {
+                let g = &lists.groups[ai];
                 let gi = groups.len();
                 group_uvg.push(uvg);
                 groups.push(
                     dens.iter()
-                        .find(|d| d.name.trim().eq_ignore_ascii_case(g.name.trim()))
+                        .find(|d| d.name.trim().eq_ignore_ascii_case(name.trim()))
                         .cloned()
                         .unwrap_or(::map::ailists::UnschedGroup {
-                            name: g.name.clone(),
+                            name,
                             factor: if group_curves { 0.0 } else { 1.0 },
                             densities: Vec::new(),
                         }),
@@ -1263,31 +1313,44 @@ impl Traffic {
                     {
                         continue;
                     }
-                    let path = ::mods::resolve_path(root, &v.file);
-                    match VehicleType::load_ai(root, &path) {
-                        Ok(t) => {
-                            // `[type]` 2 = rail (only as scheduled trains), 3 = aircraft on flight paths
-                            let rail =
-                                matches!(t.def.kind, ::legacy_vehicle::vehicle::VehicleKind::Other(2))
-                                    || t.def.rail_body_osc.is_some()
+                    let load = || {
+                        let path = ::mods::resolve_path(root, &v.file);
+                        match VehicleType::load_ai(root, &path) {
+                            Ok(t) => {
+                                // `[type]` 2 = rail (only as scheduled trains), 3 = aircraft on flight paths
+                                let rail = matches!(
+                                    t.def.kind,
+                                    ::legacy_vehicle::vehicle::VehicleKind::Other(2)
+                                ) || t.def.rail_body_osc.is_some()
                                     || !t.def.contact_shoes.is_empty();
-                            let air =
-                                matches!(t.def.kind, ::legacy_vehicle::vehicle::VehicleKind::Other(3));
-                            if rail {
-                                log::debug!(
-                                    "AI vehicle {} is rail-bound, not street traffic",
-                                    v.file
+                                let air = matches!(
+                                    t.def.kind,
+                                    ::legacy_vehicle::vehicle::VehicleKind::Other(3)
                                 );
-                            } else {
-                                types.push((
-                                    Arc::new(t),
-                                    v.weight.max(0.0),
-                                    if air { LaneKind::Air } else { LaneKind::Street },
-                                    gi,
-                                ));
+                                if rail {
+                                    log::debug!(
+                                        "AI vehicle {} is rail-bound, not street traffic",
+                                        v.file
+                                    );
+                                    None
+                                } else {
+                                    let kind = if air { LaneKind::Air } else { LaneKind::Street };
+                                    Some((Arc::new(t), kind))
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("AI vehicle {}: {e}", v.file);
+                                None
                             }
                         }
-                        Err(e) => log::warn!("AI vehicle {}: {e}", v.file),
+                    };
+                    let ty = if lists.legacy {
+                        loaded.entry(lower).or_insert_with(load).clone()
+                    } else {
+                        load()
+                    };
+                    if let Some((t, kind)) = ty {
+                        types.push((t, v.weight.max(0.0), kind, gi));
                     }
                 }
             }
@@ -9285,6 +9348,7 @@ mod train_car_tests {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         };
         let cars = train_cars(&root, &lists);
         assert!(cars.contains("vehicles/zug/kopf.ovh"), "{cars:?}");
