@@ -303,6 +303,8 @@ const NEVER_VANISH_WITHIN: f64 = 150.0;
 /// Within this distance a vehicle appears or vanishes only behind something, wherever the
 /// player looks (see `Traffic::hidden`).
 const NEAR_HIDE: f64 = 350.0;
+/// How deep under the ground (m) a vehicle is out of sight, its roof included.
+const BURIED_DEPTH: f64 = 6.0;
 
 /// Within this distance of the camera an AI vehicle is animated and drawn even out of the
 /// view (m): the mirrors look behind, and a car beside the view throws its shadow into it.
