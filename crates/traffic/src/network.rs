@@ -555,7 +555,55 @@ fn polyline_crossing(a: &Lane, b: &Lane) -> Option<(f32, f32)> {
 /// Grid cell size of `Network::grid` (m).
 pub const GRID_CELL: f64 = 50.0;
 
+/// A path end and a path start this close (m, in space) are joined: Omsi.exe's
+/// `TTrafficPathManager.PathSegmentPostCalc` compares every pair of path ends
+/// against 0.2 and nothing farther.
+pub const JOIN_DIST: f64 = 0.2;
+/// The sharpest bend at such a joint (deg): the same routine wants the two ends' inward
+/// directions at least 1.152 rad (66°) apart, a bend of up to 114°.
+const JOIN_BEND: f32 = 114.0;
+const LOOSE_BEND: f32 = 40.0;
+
 impl Network {
+    fn joins_of(
+        &self,
+        i: usize,
+        candidates: impl IntoIterator<Item = usize>,
+        tol: f64,
+    ) -> Vec<usize> {
+        let a = &self.lanes[i];
+        let (e, eh) = (a.end(), a.end_heading());
+        let mut exact = Vec::new();
+        let mut loose: Vec<(usize, f64)> = Vec::new();
+        for j in candidates {
+            let b = &self.lanes[j];
+            if j == i || b.kind != a.kind {
+                continue;
+            }
+            let s = b.start();
+            let gap = (s - e).length();
+            let bend = wrap_deg(b.start_heading() - eh).abs();
+            if gap <= JOIN_DIST && bend <= JOIN_BEND {
+                exact.push(j);
+            } else if exact.is_empty()
+                && (s - e).truncate().length() <= tol
+                && bend < LOOSE_BEND
+                && (s.z - e.z).abs() < 3.0
+            {
+                loose.push((j, gap));
+            }
+        }
+        if !exact.is_empty() {
+            return exact;
+        }
+        let nearest = loose.iter().map(|c| c.1).fold(f64::INFINITY, f64::min);
+        loose
+            .into_iter()
+            .filter(|c| c.1 <= nearest + JOIN_DIST)
+            .map(|c| c.0)
+            .collect()
+    }
+
     /// The sign of a lateral offset (positive to the right) towards the oncoming lane:
     /// -1 on the right-hand side of the road, +1 on a left-hand-traffic map.
     pub fn oncoming_sign(&self) -> f32 {
@@ -1181,27 +1229,12 @@ impl Network {
             let kind = self.lanes[i].kind;
             let cx = (e.x / cell).floor() as i64;
             let cy = (e.y / cell).floor() as i64;
-            let mut found = Vec::new();
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    if let Some(list) = grid.get(&(cx + dx, cy + dy)) {
-                        for &j in list {
-                            if j == i {
-                                continue;
-                            }
-                            let l = &self.lanes[j];
-                            if l.kind != kind {
-                                continue;
-                            }
-                            let d = (l.start() - e).truncate().length();
-                            let dh = wrap_deg(l.start_heading() - eh).abs();
-                            if d <= tol && dh < 40.0 && (l.start().z - e.z).abs() < 3.0 {
-                                found.push(j);
-                            }
-                        }
-                    }
-                }
-            }
+            let candidates = (-1..=1)
+                .flat_map(|dx| (-1..=1).map(move |dy| (cx + dx, cy + dy)))
+                .filter_map(|c| grid.get(&c))
+                .flatten()
+                .copied();
+            let found = self.joins_of(i, candidates, tol);
             if found.is_empty() && std::env::var_os("OMSI_DEBUG_UNLINKED").is_some() {
                 // a lane end with a start of its kind near it that was not taken
                 for dx in -1..=1 {
@@ -1586,16 +1619,8 @@ impl Network {
                 }
             }
         }
-        // links: ends of new lanes to any start, ends of old lanes to new starts
-        let joins = |net: &Network, from: usize, to: usize| -> bool {
-            let (a, b) = (&net.lanes[from], &net.lanes[to]);
-            if from == to || a.kind != b.kind {
-                return false;
-            }
-            let (e, s) = (a.end(), b.start());
-            let dh = ((b.start_heading() - a.end_heading() + 540.0) % 360.0 - 180.0).abs();
-            (s - e).truncate().length() <= tol && dh < 40.0 && (s.z - e.z).abs() < 3.0
-        };
+        // links: ends of new lanes to any start; the ends of old lanes near a new start choose
+        // again (a nearer start may have come, see `joins_of`)
         let near = |net: &Network, p: DVec3| -> Vec<usize> {
             let c = (
                 (p.x / GRID_CELL).floor() as i32,
@@ -1613,30 +1638,31 @@ impl Network {
             out.dedup();
             out
         };
-        let mut added: Vec<(usize, usize)> = Vec::new();
+        let mut relink: Vec<usize> = (first..end).collect();
         for i in first..end {
-            let e = self.lanes[i].end();
-            let found: Vec<usize> = near(self, e)
-                .into_iter()
-                .filter(|&j| joins(self, i, j))
-                .collect();
-            for &j in &found {
-                added.push((i, j));
-            }
-            self.lanes[i].next = found;
             let s = self.lanes[i].start();
-            for j in near(self, s) {
-                if j < first && joins(self, j, i) && !self.lanes[j].next.contains(&i) {
-                    self.lanes[j].next.push(i);
-                    added.push((j, i));
+            relink.extend(
+                near(self, s)
+                    .into_iter()
+                    .filter(|&j| j < first && (self.lanes[j].end() - s).truncate().length() <= tol),
+            );
+        }
+        relink.sort_unstable();
+        relink.dedup();
+        self.prev.resize(end, Vec::new());
+        for i in relink {
+            let found = self.joins_of(i, near(self, self.lanes[i].end()), tol);
+            for &j in &self.lanes[i].next {
+                if !found.contains(&j) {
+                    self.prev[j].retain(|&p| p != i);
                 }
             }
-        }
-        self.prev.resize(end, Vec::new());
-        for (from, to) in added {
-            if !self.prev[to].contains(&from) {
-                self.prev[to].push(from);
+            for &j in &found {
+                if !self.prev[j].contains(&i) {
+                    self.prev[j].push(i);
+                }
             }
+            self.lanes[i].next = found;
         }
         // meeting places and footpath crossings inside the new junction objects, and how far
         // every lane now leads (a dead end may go on into the new tiles)
@@ -1838,6 +1864,44 @@ mod extend_tests {
         l.key = Some(LaneKey { tile, id, path: 0 });
         l.source = 1;
         l
+    }
+
+    #[test]
+    fn a_lane_end_joins_the_nearest_start_only() {
+        // two lanes of a road run into a junction whose paths start right at the first lane
+        // and 1.3 m beside it (the second lane's); a second road ends 0.8 m short of a path
+        let lanes = vec![
+            straight(0.0, 0.0, 100.0, 1, (0, 0)),
+            straight(0.0, 100.0, 120.0, 2, (0, 0)),
+            straight(1.3, 100.0, 120.0, 3, (0, 0)),
+            straight(50.0, 0.0, 99.2, 4, (0, 0)),
+            straight(50.0, 100.0, 120.0, 5, (0, 0)),
+            straight(51.3, 100.0, 120.0, 6, (0, 0)),
+        ];
+        let mut net = Network {
+            lanes: lanes.clone(),
+            ..Default::default()
+        };
+        net.link(1.5);
+        assert_eq!(net.lanes[0].next, vec![1]);
+        assert_eq!(net.lanes[3].next, vec![4]);
+        // the same when the junction comes with a later tile
+        let mut grown = Network {
+            lanes: vec![
+                lanes[0].clone(),
+                lanes[2].clone(),
+                lanes[3].clone(),
+                lanes[5].clone(),
+            ],
+            ..Default::default()
+        };
+        grown.link(1.5);
+        assert_eq!(grown.lanes[0].next, vec![1]);
+        grown.extend(vec![lanes[1].clone(), lanes[4].clone()], 1.5);
+        assert_eq!(grown.lanes[0].next, vec![4]);
+        assert_eq!(grown.lanes[2].next, vec![5]);
+        assert!(grown.prev[1].is_empty() && grown.prev[3].is_empty());
+        assert_eq!(grown.prev[4], vec![0]);
     }
 
     #[test]
