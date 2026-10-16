@@ -57,6 +57,9 @@ const WALK_HALF_WIDTH: f32 = 2.0;
 /// Seconds a cycle of standing vehicles that only give way to each other by the rules
 /// persists before the one waiting longest is let go (nobody else would end it).
 const GRIDLOCK_AFTER: f32 = 8.0;
+/// A vehicle standing this close (m) behind a standing one waits for it to move: the link
+/// of a queue in the wait-for graph.
+const QUEUE_GAP: f32 = 8.0;
 /// Seconds that permission lasts: enough to set off and get into the junction.
 const GRIDLOCK_PASS: f32 = 12.0;
 /// A turn across the oncoming traffic at a signal pulls into the junction to wait at the
@@ -393,8 +396,9 @@ pub enum Recovery {
     RequestRouteRecovery { vehicle: VehicleId },
     /// The hold is legal (a red signal or a physically full road): wait, do not force.
     WaitLegal { vehicle: VehicleId },
-    /// A cycle of vehicles that only give way to each other by the rules has stood too
-    /// long: this one is let go (it still waits for bodies, people, signals and a full exit).
+    /// A cycle of vehicles that only wait for each other by the rules has stood too long:
+    /// this one is let go (it still waits for moving vehicles, bodies, people and signals,
+    /// but drives into a full exit up to the queue's tail).
     GridlockPass { vehicle: VehicleId },
 }
 
@@ -405,11 +409,13 @@ pub enum WaitDiagnosis {
     StaleClaimCycle { cycle: Vec<VehicleId> },
     /// Legal congestion: at least one member waits on a red signal.
     LegalCongestion { cycle: Vec<VehicleId> },
-    /// A physically full downstream/closed loop: capacity, not a bug.
+    /// A cycle held by bodies in the way (or with a member still moving): capacity, not a bug.
     FullCapacity { cycle: Vec<VehicleId> },
-    /// Standing vehicles that each give way to the next by the right of way alone (four
-    /// cars at a right-before-left crossing that each see one coming from the right): no
-    /// rule ends it, so the coordinator lets one go after a while.
+    /// Standing vehicles that each wait for the next by the rules alone: the right of way
+    /// (four cars at a right-before-left crossing that each see one coming from the right),
+    /// a full exit or the box rule (a ring of queues round a block, each waiting for the next
+    /// junction's exit), with the queues behind such holds. No rule ends it, so the
+    /// coordinator lets one go after a while.
     YieldCycle { cycle: Vec<VehicleId> },
     /// A member's route changed or was removed.
     RouteRecovery { vehicle: VehicleId },
@@ -431,6 +437,9 @@ pub struct JunctionCoordinator {
     wait_edges: HashMap<VehicleId, Vec<VehicleId>>,
     /// Vehicles held this tick only by the right of way (no body, signal or full exit).
     rule_waiters: HashSet<VehicleId>,
+    /// Vehicles held this tick by a full exit or the box rule (and perhaps the right of
+    /// way), but by no body, person or signal.
+    exit_waiters: HashSet<VehicleId>,
     /// Since when (s) a vehicle stands in a cycle of rule waiters.
     gridlock_since: HashMap<VehicleId, f32>,
     /// Vehicles let go out of such a cycle, and until when (s).
@@ -506,6 +515,7 @@ impl JunctionCoordinator {
         self.wait_for.clear();
         self.wait_edges.clear();
         self.rule_waiters.clear();
+        self.exit_waiters.clear();
     }
 
     /// Record that `me` waits for `other` this tick.
@@ -563,6 +573,7 @@ impl JunctionCoordinator {
         self.wait_for.clear();
         self.wait_edges.clear();
         self.rule_waiters.clear();
+        self.exit_waiters.clear();
         self.gridlock_since.clear();
         self.gridlock_pass.clear();
         self.waiting_since.clear();
@@ -1021,10 +1032,15 @@ impl JunctionCoordinator {
                 }
             }
         }
+        // Let go out of a gridlock of vehicles that only wait for each other by the rules (see
+        // `classify_waits`): the right of way to the standing ones, a full exit and the box
+        // rule no longer hold it; moving vehicles, bodies, people and signals still do (it
+        // drives into the junction up to the queue's tail, as drivers do).
+        let pass = self.gridlock_pass.get(&me_id).is_some_and(|&until| scene.time < until);
         let mut exit_full = false;
         // (the exit storage this vehicle takes if it is admitted)
         let mut storage: Option<(usize, f32)> = None;
-        if !jn.inside {
+        if !jn.inside && !pass {
             if let Some((e, de)) = jn.exit {
                 let room = scene
                     .on_lane
@@ -1033,15 +1049,15 @@ impl JunctionCoordinator {
                     .unwrap_or(&[])
                     .iter()
                     .filter(|x| !x.3 && x.0 != i)
-                    .map(|&(j, sj, _, _)| (sj - scene.actors[j].rear, scene.actors[j].speed))
-                    .fold(None::<(f32, f32)>, |acc, x| {
+                    .map(|&(j, sj, _, _)| (sj - scene.actors[j].rear, scene.actors[j].speed, j))
+                    .fold(None::<(f32, f32, usize)>, |acc, x| {
                         if acc.map(|a| x.0 < a.0).unwrap_or(true) {
                             Some(x)
                         } else {
                             acc
                         }
                     });
-                if let Some((space, speed)) = room {
+                if let Some((space, speed, tail)) = room {
                     if speed < 1.5 && de < 40.0 {
                         self.claims.set_storage_capacity(LaneId(e), space);
                         let need = actor.length + actor.min_gap;
@@ -1056,6 +1072,17 @@ impl JunctionCoordinator {
                             ruled = true;
                             exit_full = true;
                             reasons.push(Reason::OccupiedExit);
+                            // it waits for the queue's tail to move on, and for those that
+                            // were given the room before it to get there
+                            let holders: Vec<VehicleId> = self
+                                .claims
+                                .storage_holders(LaneId(e))
+                                .filter(|&x| x != me_id && !arrived.contains(&x))
+                                .collect();
+                            self.wait_on(me_id, scene.actors[tail].id);
+                            for x in holders {
+                                self.wait_on(me_id, x);
+                            }
                         } else {
                             storage = Some((e, need));
                         }
@@ -1067,7 +1094,7 @@ impl JunctionCoordinator {
         // the junction, a vehicle waits at the line unless there is room for all of it beyond
         // the movement's last conflict - a queue reaching back into the junction otherwise
         // filled it and held the crossing traffic through its own green.
-        if !jn.inside && !exit_full {
+        if !jn.inside && !exit_full && !pass {
             if let Some(l) = lead {
                 let lead_rear = actor.front + l.gap;
                 let clear_at = movement_clear_at(scene.net, jn);
@@ -1079,6 +1106,9 @@ impl JunctionCoordinator {
                     ruled = true;
                     exit_full = true;
                     reasons.push(Reason::OccupiedExit);
+                    if let Some((ahead, _)) = actor.lead_info {
+                        self.wait_on(me_id, ahead);
+                    }
                 }
             }
         }
@@ -1096,10 +1126,6 @@ impl JunctionCoordinator {
                 reasons.push(Reason::OccupiedExit);
             }
         }
-        // Let go out of a gridlock of vehicles that all only give way to each other (see
-        // `classify_waits`): the right of way to the standing ones no longer holds it, moving
-        // vehicles, bodies, people, signals and a full exit still do.
-        let pass = self.gridlock_pass.get(&me_id).is_some_and(|&until| scene.time < until);
         if pass {
             yields = yields_moving;
             soft.clear();
@@ -1136,6 +1162,8 @@ impl JunctionCoordinator {
             self.drop_claims(me_id);
             if !hard && !ruled && !exit_full {
                 self.rule_waiters.insert(me_id);
+            } else if !hard {
+                self.exit_waiters.insert(me_id);
             }
             // A turn across the oncoming traffic at a signal does not wait at the line for
             // a gap that may never come in its green: it pulls into the junction up to where
@@ -1245,16 +1273,18 @@ impl JunctionCoordinator {
 
     /// Classify persistent holds. A cyclic set of vehicles each waiting on the next, all
     /// stationary and holding speculative claims but none physically in a conflict, is a
-    /// stale-claim deadlock; one that only gives way to each other by the rules is a yield
-    /// cycle; a cycle that includes a red signal or a physically full downstream is legal and
-    /// must not be forced. Every hold of a vehicle counts (it may wait for several), so a
-    /// cycle through any of them is found.
+    /// stale-claim deadlock; one that only waits for each other by the rules (the right of
+    /// way, a full exit, the box rule, and the queues behind such holds) is a yield cycle; a
+    /// cycle that includes a red signal or a body in the way is legal and must not be forced.
+    /// Every hold of a vehicle counts (it may wait for several), and a vehicle standing
+    /// close behind a standing one waits for it, so a cycle through any of them - a ring of
+    /// queues round a block, each waiting for the next junction's exit - is found.
     pub fn classify_waits(
         &mut self,
         scene: &JunctionScene,
     ) -> (Vec<WaitDiagnosis>, Vec<Recovery>) {
         let mut out = Vec::new();
-        for mut cycle in self.wait_cycles() {
+        for mut cycle in self.wait_cycles(scene) {
             // (deterministic: the same set is reported in the same order every tick)
             cycle.sort_unstable();
             out.push(self.classify_cycle(scene, &cycle));
@@ -1338,10 +1368,16 @@ impl JunctionCoordinator {
     }
 
     /// The cycles of the wait-for graph: its strongly connected sets of two or more vehicles
-    /// (Tarjan), from every hold recorded this tick and the single ones put in directly.
-    fn wait_cycles(&self) -> Vec<Vec<VehicleId>> {
+    /// (Tarjan), from every hold recorded this tick, the single ones put in directly and the
+    /// queues: a standing vehicle close behind a standing one waits for it.
+    fn wait_cycles(&self, scene: &JunctionScene) -> Vec<Vec<VehicleId>> {
         let mut edges: HashMap<VehicleId, Vec<VehicleId>> = self.wait_edges.clone();
-        for (&a, &b) in &self.wait_for {
+        let queued = scene.actors.iter().filter_map(|a| {
+            let (ahead, gap) = a.lead_info?;
+            let lead = &scene.actors[*scene.index_of.get(&ahead)?];
+            (a.speed < 0.3 && gap < QUEUE_GAP && lead.speed < 0.3).then_some((a.id, ahead))
+        });
+        for (a, b) in self.wait_for.iter().map(|(&a, &b)| (a, b)).chain(queued) {
             let e = edges.entry(a).or_default();
             if !e.contains(&b) {
                 e.push(b);
@@ -1435,13 +1471,19 @@ impl JunctionCoordinator {
                 cycle: cycle.to_vec(),
             };
         }
-        let standing_by_rule = cycle.iter().all(|id| {
-            self.rule_waiters.contains(id)
-                && scene
-                    .index_of
-                    .get(id)
-                    .is_some_and(|&i| scene.actors[i].speed < 0.3)
-        });
+        // (every member stands, held by the rules alone or queued behind such a hold - one
+        // with no junction hold of its own - and one at least is held at a junction)
+        let by_rule = |id: &VehicleId| {
+            self.rule_waiters.contains(id) || self.exit_waiters.contains(id)
+        };
+        let standing_by_rule = cycle.iter().any(by_rule)
+            && cycle.iter().all(|id| {
+                (by_rule(id) || !self.wait_edges.contains_key(id))
+                    && scene
+                        .index_of
+                        .get(id)
+                        .is_some_and(|&i| scene.actors[i].speed < 0.3)
+            });
         if standing_by_rule {
             return WaitDiagnosis::YieldCycle {
                 cycle: cycle.to_vec(),

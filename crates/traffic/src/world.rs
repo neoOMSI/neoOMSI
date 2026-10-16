@@ -157,6 +157,14 @@ impl Arbiter {
             .unwrap_or(false)
     }
 
+    /// The vehicles holding a slot of `lane`'s exit storage, in id order.
+    pub fn storage_holders(&self, lane: LaneId) -> impl Iterator<Item = VehicleId> + '_ {
+        self.storage
+            .get(&lane)
+            .into_iter()
+            .flat_map(|s| s.slots.iter().map(|(x, _)| *x))
+    }
+
     pub fn release_storage(&mut self, lane: LaneId, id: VehicleId) {
         if let Some(s) = self.storage.get_mut(&lane) {
             s.slots.retain(|(x, _)| *x != id);
