@@ -423,7 +423,7 @@ impl Menu {
             time_buf: String::new(),
             weather_top: 0,
             icao: String::new(),
-            metar_live: false,
+            metar_live: true,
             slider: None,
             on_foot: ::config::get_bool("gameplay", "start_on_foot").unwrap_or(false),
             icao_check: None,
@@ -694,6 +694,16 @@ impl Menu {
             self.veh_open = self.maker_key(i);
             self.want_bus = Some((get("bus"), get("livery"), get("depot"), get("fleet_number"), get("plate")));
         }
+        if let Some(w) = ::config::get_string("start_menu", "weather") {
+            if let Some(i) = self.weathers.iter().position(|x| x.1.eq_ignore_ascii_case(&w)) {
+                self.weather = i;
+            }
+        }
+        self.metar_live = ::config::get_bool("start_menu", "metar_live").unwrap_or(true);
+        self.icao = get("icao");
+        if let Some(c) = crate::weather_setup::custom_weather(Some(&get("custom_weather"))) {
+            self.custom = c;
+        }
     }
 
     pub fn remember(&self) {
@@ -712,6 +722,10 @@ impl Menu {
             set("fleet_number", self.number.checked_sub(1).and_then(|i| self.numbers.get(i)).cloned().unwrap_or_default());
             set("plate", self.plate.trim().to_string());
         }
+        set("weather", self.weathers.get(self.weather).map(|w| w.1.clone()).unwrap_or_default());
+        ::config::set_setting("start_menu", "metar_live", self.metar_live);
+        set("icao", self.icao.trim().to_string());
+        set("custom_weather", self.custom.encode());
         if let Err(e) = ::config::save() {
             log::warn!("settings: cannot save: {e}");
         }
