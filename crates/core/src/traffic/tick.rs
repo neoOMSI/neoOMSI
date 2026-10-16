@@ -1644,6 +1644,7 @@ impl Traffic {
                     }
                     let trail = &**trail;
                     let behind = |d: f64| rail_behind(trail, state, net, d);
+                    let way = state.way_fn(net);
                     // (given up on scenery: it follows its way through it, see SCENERY_GHOST_AFTER)
                     if *ghost {
                         **ahead = None;
@@ -1660,7 +1661,7 @@ impl Traffic {
                             let veh: &VehicleInstance = vehicle;
                             let cp: &VehicleCapabilities = caps;
                             let touches = |b: &AiBody| road_collision.hit(&safety::road_body_box(veh, b, cp)).is_some();
-                            **ahead = body.distance_to_contact(&|d| state.way_point(net, d), state.speed, reach, &touches);
+                            **ahead = body.distance_to_contact(&way, state.speed, reach, &touches);
                         } else {
                             **ahead = None;
                         }
@@ -1672,7 +1673,7 @@ impl Traffic {
                             if rail && d < 0.0 {
                                 behind(-d as f64)
                             } else {
-                                state.way_point(net, d)
+                                way(d)
                             }
                         },
                         ground
@@ -1693,7 +1694,7 @@ impl Traffic {
                             // between attempts these come about once a second, and choosing
                             // the way out only every half second *of them* left a bus
                             // pinned for a quarter of a minute with its wheels as they were)
-                            body.recover_corner(&|d| state.way_point(net, d),
+                            body.recover_corner(&way,
                                 (caps.front, caps.rear, caps.half_width), &obstruction.unwrap());
                             frame.speed = 0.0;
                             frame.brake = true;

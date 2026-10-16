@@ -734,11 +734,12 @@ impl Traffic {
         }
         // Sweep the corridor along the car's own way with its width.
         let mut samples: Vec<SweepSample> = Vec::new();
+        let way = st.way_fn(&self.net);
         let mut d = st.front + 0.2;
-        let mut p = st.way_point(&self.net, d);
+        let mut p = way(d);
         while d <= reach {
             let step = if d < st.front + 20.0 { 0.75 } else { 1.5 };
-            let q = st.way_point(&self.net, d + step);
+            let q = way(d + step);
             let dir = (q - p).truncate().normalize_or_zero();
             samples.push(SweepSample { p, d, dir });
             p = q;

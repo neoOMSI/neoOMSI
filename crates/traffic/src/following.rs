@@ -799,16 +799,28 @@ impl AiState {
     /// out to the side where it pulls into a bay or round a parked car. The steering
     /// follows this curve; it has no steps, so neither does the car.
     pub fn way_point(&self, net: &Network, d: f32) -> DVec3 {
-        let (mut p, mut h) = self.seq(net).point(net, self.s, d);
-        if let Some(c) = self.change {
-            if c.to < net.lanes.len() {
-                let (pt, ht) = self.change_seq(c.to).point(net, c.s_to, d);
-                // how far the change will have got by the time the car is `d` metres on
-                let tau = (d - c.wait * self.speed.max(2.0)) / c.length;
-                let k = smooth01(c.t + tau);
-                p = p.lerp(pt, k as f64);
-                h += wrap_deg(ht - h) * k;
-            }
+        let change = self.change.filter(|c| c.to < net.lanes.len()).map(|c| self.change_seq(c.to));
+        self.way_point_on(net, &self.seq(net), change.as_ref(), d)
+    }
+
+    /// [`Self::way_point`] for many points of one unchanged state: the lane sequences are
+    /// built once instead of once per point. A body step or the scenery look-ahead asks
+    /// for hundreds of points of the same way.
+    pub fn way_fn<'a>(&'a self, net: &'a Network) -> impl Fn(f32) -> DVec3 + 'a {
+        let seq = self.seq(net);
+        let change = self.change.filter(|c| c.to < net.lanes.len()).map(|c| self.change_seq(c.to));
+        move |d| self.way_point_on(net, &seq, change.as_ref(), d)
+    }
+
+    fn way_point_on(&self, net: &Network, seq: &LaneSeq, change_seq: Option<&LaneSeq>, d: f32) -> DVec3 {
+        let (mut p, mut h) = seq.point(net, self.s, d);
+        if let (Some(c), Some(q)) = (self.change, change_seq) {
+            let (pt, ht) = q.point(net, c.s_to, d);
+            // how far the change will have got by the time the car is `d` metres on
+            let tau = (d - c.wait * self.speed.max(2.0)) / c.length;
+            let k = smooth01(c.t + tau);
+            p = p.lerp(pt, k as f64);
+            h += wrap_deg(ht - h) * k;
         }
         let lat = self.lateral_at(self.odometer + d);
         if lat.abs() > 1e-3 {
@@ -1497,6 +1509,40 @@ mod tests {
         for d in [0.0, 1.0, 2.0, 5.0] {
             assert!(c.way_point(&net, d).x.abs() < 0.05, "the way bent over {d} m on");
         }
+    }
+
+    #[test]
+    fn the_way_built_once_is_the_way_point_by_point() {
+        // lanes 0 -> 1 along x = 0, lanes 2 -> 3 beside them
+        let mk = |x: f64, a: f64, b: f64| {
+            LaneBuilder::polyline(vec![DVec3::new(x, a, 0.0), DVec3::new(x, b, 0.0)], LaneKind::Street, 3.0)
+        };
+        let mut net = Network {
+            lanes: vec![mk(0.0, 0.0, 20.0), mk(0.0, 20.0, 60.0), mk(2.75, 0.0, 20.0), mk(2.75, 20.0, 60.0)],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let same = |c: &AiState, what: &str| {
+            let way = c.way_fn(&net);
+            for k in -40..=120 {
+                let d = k as f32 * 0.37;
+                assert_eq!(way(d), c.way_point(&net, d), "{what}: {d} m on");
+            }
+        };
+        let mut c = car(&net, 12.0, 8.0);
+        same(&c, "on its lane");
+        // a route change still to be made, and a pull to the side
+        c.route = vec![0, 2, 3];
+        c.plan_next(&net);
+        c.lateral_ramp = (0.0, 0.8, c.odometer + 3.0, 6.0);
+        same(&c, "route change ahead, pulling over");
+        // in the middle of a lane change
+        c.route.clear();
+        c.plan_next(&net);
+        c.start_change(&net, 2, 2);
+        c.drive(&net, 0.5, None, None);
+        assert!(c.change.is_some(), "the change is under way");
+        same(&c, "changing lanes");
     }
 
     #[test]
