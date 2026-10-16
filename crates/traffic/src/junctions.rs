@@ -60,6 +60,9 @@ const GRIDLOCK_AFTER: f32 = 8.0;
 /// A vehicle standing this close (m) behind a standing one waits for it to move: the link
 /// of a queue in the wait-for graph.
 const QUEUE_GAP: f32 = 8.0;
+/// Seconds a vehicle waits at the line before it makes itself seen: it keeps a claim on its
+/// way through while still waiting (see `admit`).
+const LONG_WAIT_CLAIM: f32 = 45.0;
 /// Seconds that permission lasts: enough to set off and get into the junction.
 const GRIDLOCK_PASS: f32 = 12.0;
 /// A turn across the oncoming traffic at a signal pulls into the junction to wait at the
@@ -847,7 +850,13 @@ impl JunctionCoordinator {
                         + if v < 0.5 { actor.reaction } else { 0.0 };
                     let t_mine = time_to(point - c.before - actor.front, v, a_me)
                         + if v < 0.1 { actor.reaction } else { 0.0 };
-                    if !jn.inside && point - c.before - actor.front > INSIDE_MEETING {
+                    // (one that has waited long at its line for a gap is standing there on
+                    // purpose: its claim stands, and is weighed from as far as the junction is)
+                    let seen = self
+                        .commitments
+                        .get(&o.id)
+                        .is_some_and(|c| c.state == JunctionState::Waiting);
+                    if !jn.inside && point - c.before - actor.front > INSIDE_MEETING && !seen {
                         continue;
                     }
                     let stalled = (o.stopped > 4.0 && o.speed < 0.1)
@@ -884,7 +893,9 @@ impl JunctionCoordinator {
                     let they_give_way = signed && scene.net.must_yield(m, l)
                         && !same_object(scene.net, o.lane, m);
                     let claims_block = mode != Some(BlockMode::Occupy);
-                    let claimed = self.claims.holds(LaneId(m), o.id) && !stalled && claims_block;
+                    let claimed = self.claims.holds(LaneId(m), o.id)
+                        && (!stalled || seen)
+                        && claims_block;
                     let theirs = dj - c.other_before - o.front;
                     let waits_short = o.light_hold
                         || (o.yielding
@@ -1159,7 +1170,31 @@ impl JunctionCoordinator {
             JunctionState::Admitted
         };
         if blocked && !jn.inside {
-            self.drop_claims(me_id);
+            // A driver who has waited long at the line makes himself seen: he keeps a claim
+            // on his way through while still waiting, so the vehicles not yet committed to
+            // the junction hold back for him (those that can still stop) and he goes once
+            // those already on their way are through. Without it a side road's car at a main
+            // road whose traffic never left the gap it wants - `patience` shortens that by a
+            // third at most - waited for good. (Not into a full exit.)
+            if !exit_full && !queued && wait > LONG_WAIT_CLAIM {
+                for &l in &lanes {
+                    self.claims.grant(LaneId(l), me_id);
+                }
+                let c = self.commitments.entry(me_id).or_default();
+                for &l in &lanes {
+                    if !c.lanes.contains(&l) {
+                        c.lanes.push(l);
+                    }
+                }
+                c.lanes.sort_unstable();
+                c.state = JunctionState::Waiting;
+                // (the exit room is only for the admitted)
+                if let Some((e, _)) = c.storage.take() {
+                    self.claims.release_storage(LaneId(e), me_id);
+                }
+            } else {
+                self.drop_claims(me_id);
+            }
             if !hard && !ruled && !exit_full {
                 self.rule_waiters.insert(me_id);
             } else if !hard {
