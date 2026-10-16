@@ -568,11 +568,13 @@ impl JunctionCoordinator {
         }
     }
 
-    /// Network invalidation: every claim made against the old version is released.
+    /// Network invalidation (a rebuilt network, not one that only grew: its lane indices and
+    /// meeting places stand): every claim made against the old version is released.
     pub fn invalidate_network(&mut self) {
         self.emergency_reservations.clear();
         self.claims = Arbiter::new();
         self.commitments.clear();
+        self.amber.clear();
         self.wait_for.clear();
         self.wait_edges.clear();
         self.rule_waiters.clear();
@@ -1742,9 +1744,11 @@ mod tests {
         let mut c = JunctionCoordinator::new();
         c.restore_claim(VehicleId(10), &[0, 1]);
         assert!(c.holds(VehicleId(10), 0));
+        c.amber.insert(VehicleId(10), (0, 0));
         c.invalidate_network();
         assert!(!c.holds(VehicleId(10), 0));
         assert_eq!(c.claims_of(VehicleId(10)).len(), 0);
+        assert!(c.amber.is_empty(), "a light gone through on amber outlived the network");
     }
 
     #[test]

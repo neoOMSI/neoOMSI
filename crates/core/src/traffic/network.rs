@@ -118,34 +118,7 @@ impl Traffic {
         self.refresh_parked_geometry(world);
         let (new, parked_cars, tiles) = take_from_tiles(world);
         let n = new.len();
-        let mut added = self.net.lanes.len()..self.net.lanes.len();
-        if n > 0 {
-            added = self.net.extend(new, 1.5);
-            for l in &mut self.net.lanes[added.clone()] {
-                l.density = ::traffic::weigh_lane_density(
-                    l.density,
-                    &l.group_density,
-                    &self.uvg_defaults,
-                    &self.uvg_share,
-                );
-            }
-            report_network_defects(&self.net);
-            // a grown/changed network invalidates every junction claim made against the old one
-            self.junctions.invalidate_network();
-            self.maneuvers.invalidate_network();
-            // queued demand and entrance backpressure are stale; the dormant registry (identity
-            // and duty) survives because lane indices are stable
-            self.population.invalidate_network();
-            self.street_weight += self.net.lanes[added.clone()]
-                .iter()
-                .filter_map(street_lane_weight)
-                .sum::<f64>();
-            log::debug!(
-                "traffic: {} lanes added ({} in all)",
-                added.len(),
-                self.net.lanes.len()
-            );
-        }
+        let added = self.take_lanes(new);
         if !tiles.is_empty() {
             self.lane_tiles.extend(tiles);
             self.lanes_generation += 1;
@@ -164,4 +137,66 @@ impl Traffic {
         n
     }
 
+    /// Link streamed lanes into the network. Returns the range of their indices.
+    fn take_lanes(&mut self, new: Vec<::traffic::Lane>) -> std::ops::Range<usize> {
+        if new.is_empty() {
+            return self.net.lanes.len()..self.net.lanes.len();
+        }
+        let added = self.net.extend(new, 1.5);
+        for l in &mut self.net.lanes[added.clone()] {
+            l.density = ::traffic::weigh_lane_density(
+                l.density,
+                &l.group_density,
+                &self.uvg_defaults,
+                &self.uvg_share,
+            );
+        }
+        report_network_defects(&self.net);
+        // The network only grew: every lane index stays valid, and the meeting places of the
+        // lanes there already are as they were (the new tiles bring their own junctions), so
+        // the junction claims, exit storage and gridlock clocks stand.
+        self.maneuvers.invalidate_network();
+        // queued demand and entrance backpressure are stale; the dormant registry (identity
+        // and duty) survives because lane indices are stable
+        self.population.invalidate_network();
+        self.street_weight += self.net.lanes[added.clone()]
+            .iter()
+            .filter_map(street_lane_weight)
+            .sum::<f64>();
+        log::debug!(
+            "traffic: {} lanes added ({} in all)",
+            added.len(),
+            self.net.lanes.len()
+        );
+        added
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Traffic;
+    use ::traffic::{LaneBuilder, LaneKind, Network, VehicleId};
+    use glam::DVec3;
+
+    /// A streamed tile only adds lanes: what a car has claimed at a junction stands.
+    #[test]
+    fn a_streamed_tile_keeps_the_junction_claims() {
+        let lane = |x: f64| {
+            LaneBuilder::polyline(
+                vec![DVec3::new(x, 0.0, 0.0), DVec3::new(x, 100.0, 0.0)],
+                LaneKind::Street,
+                3.0,
+            )
+        };
+        let mut net = Network {
+            lanes: vec![lane(0.0)],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let mut t = Traffic::for_tests(net);
+        t.junctions.restore_claim(VehicleId(5), &[0]);
+        let added = t.take_lanes(vec![lane(500.0)]);
+        assert_eq!(added, 1..2);
+        assert!(t.junctions.holds(VehicleId(5), 0), "the claim was dropped");
+    }
 }
