@@ -833,42 +833,6 @@ impl Traffic {
         None
     }
 
-
-    /// The street lanes a vehicle standing at `pos` facing `heading` is on and will drive
-    /// onto within `reach` metres, each with the distance from the vehicle to its start
-    /// (0 for the lane it is on): the way straight on and the gentle turns (within 60° of
-    /// the lane before), not every branch of a junction.
-    pub(crate) fn lanes_ahead_of(&self, pos: DVec3, heading: f64, reach: f32) -> Vec<(usize, f32)> {
-        let Some((lane, s, _)) = self
-            .net
-            .lane_along(pos, heading, LaneKind::Street, 4.0, 45.0)
-        else {
-            return Vec::new();
-        };
-        let mut out = vec![(lane, 0.0f32)];
-        let mut open = vec![(lane, self.net.lanes[lane].length() - s)];
-        while let Some((l, to_end)) = open.pop() {
-            if to_end > reach || out.len() > 64 {
-                continue;
-            }
-            let end_heading = self.net.lanes[l].headings.last().copied().unwrap_or(0.0);
-            for &n in &self.net.lanes[l].next {
-                let nl = &self.net.lanes[n];
-                if nl.kind != LaneKind::Street || out.iter().any(|o| o.0 == n) {
-                    continue;
-                }
-                let start = nl.headings.first().copied().unwrap_or(end_heading);
-                let turn = ((start - end_heading) as f64 + 540.0).rem_euclid(360.0) - 180.0;
-                if turn.abs() > 60.0 {
-                    continue;
-                }
-                out.push((n, to_end));
-                open.push((n, to_end + nl.length()));
-            }
-        }
-        out
-    }
-
 }
 
 #[cfg(test)]
