@@ -304,6 +304,15 @@ mod tests {
         assert!(s.policy(false).is_last);
         s.route_open = true;
         assert!(!s.policy(false).is_last, "an open route is not at its last stop yet");
+        // the trip's terminus and the timetable's marked stops reach the service
+        s.last_stop = Some(3);
+        s.always = vec![1];
+        s.serve_early = vec![2];
+        let p = s.policy(false);
+        assert_eq!(
+            (p.last_stop, p.always, p.serve_early),
+            (Some(3), vec![1], vec![2])
+        );
     }
 
     /// A bus's trip ends at its last stop; a train on a track of its own drives on (#342).

@@ -1235,12 +1235,19 @@ mod tests {
         let mut body = AiBody::new(&def, MotionKind::Road);
         let speed = 6.0f32;
         let dt = 1.0 / 30.0;
-        let mut s = 20.0f64;
+        let rot = def.rot_pnt_long as f64;
+        let start = 20.0f64;
+        let mut s = start;
         body.place(&|d| bend(12.0, s + d as f64), None, None, speed);
+        // where along the way the rear axle is (m): the route progress the traffic takes
+        // from the realized body every tick (`AiState::commit_feedback`)
+        let mut rear_s = start + rot;
         let mut last_yaw: Option<f32> = None;
         let mut worst_jump = 0.0f32;
-        let mut worst_off = 0.0f64;
-        for _ in 0..(12.0 / dt) as usize {
+        let mut worst_lat = 0.0f64;
+        let mut worst_lat_straight = 0.0f64;
+        let frames = (12.0 / dt) as usize;
+        for _ in 0..frames {
             s += (speed * dt) as f64;
             let at = s;
             body.step(dt, speed, &|d| bend(12.0, at + d as f64), None, None);
@@ -1248,16 +1255,27 @@ mod tests {
                 worst_jump = worst_jump.max((body.yaw_rate - y).abs().to_degrees());
             }
             last_yaw = Some(body.yaw_rate);
-            // the rear axle stays by the way (a circle has no steady error; entering it costs
-            // a little, and it aims a little inside to centre the sweep, see `sweep_shift`)
-            let rear = body.rear;
-            let off = (0..400)
-                .map(|k| (rear - bend(12.0, at - 20.0 + k as f64 * 0.1).truncate()).length())
-                .fold(f64::MAX, f64::min);
-            worst_off = worst_off.max(off);
+            rear_s = (0..=500)
+                .map(|k| rear_s - 2.0 + k as f64 * 0.01)
+                .min_by(|a, b| {
+                    let da = (body.rear - bend(12.0, *a).truncate()).length();
+                    let db = (body.rear - bend(12.0, *b).truncate()).length();
+                    da.total_cmp(&db)
+                })
+                .unwrap();
+            // sideways off the way at that point: it aims a little inside to centre the
+            // sweep (`sweep_shift`), and entering the circle costs a little
+            let lat = (body.rear - bend(12.0, rear_s).truncate()).length();
+            worst_lat = worst_lat.max(lat);
+            if rear_s < 45.0 {
+                worst_lat_straight = worst_lat_straight.max(lat);
+            }
+            s = rear_s - rot;
         }
         // a quarter turn done at 6 m/s: the heading has turned right, the yaw rate never
-        // jumps by more than a few degrees per second between frames, the car keeps to its lane
+        // jumps by more than a few degrees per second between frames, the car keeps to its
+        // lane and covers the way at the speed it is given, neither lagging nor running ahead
+        // (on the inside line the circle it drives is a little shorter)
         assert!(
             body.heading > 60.0 && body.heading < 300.0,
             "heading {}",
@@ -1267,7 +1285,17 @@ mod tests {
             worst_jump < 3.0,
             "yaw rate jumps by {worst_jump} deg/s in one frame"
         );
-        assert!(worst_off < 0.6, "rear axle {worst_off} m off the way");
+        assert!(worst_lat < 0.6, "rear axle {worst_lat} m off the way");
+        assert!(
+            worst_lat_straight < 0.15,
+            "rear axle {worst_lat_straight} m off the straight way"
+        );
+        let covered = rear_s - (start + rot);
+        let commanded = speed as f64 * dt as f64 * frames as f64;
+        assert!(
+            (covered - commanded).abs() < 0.02 * commanded,
+            "covered {covered:.2} m of the way for {commanded:.2} m commanded"
+        );
     }
 
     #[test]

@@ -1456,6 +1456,85 @@ mod tests {
         assert!(dec.events.iter().any(|e| matches!(e, TraceEvent::Fault { .. })));
     }
 
+    /// Which stops a bus serves for nobody: the ends of its trip, a layover, the stops its
+    /// timetable marks, and any it reaches early.
+    #[test]
+    fn only_the_ends_of_the_trip_and_an_early_bus_stop_for_nobody() {
+        let net = north_lane();
+        let occ = Occupancy::default();
+        let actors = vec![ServiceActor::new(VehicleId(1), 0, 60.0)];
+        let sc = scene(&net, &occ, &actors);
+        let stop = 7001;
+        // (served, docking) for nobody aboard and nobody waiting, `early` s before the
+        // departure there
+        let serves = |policy: StopPolicy, layover: bool, early: f64| {
+            let mut coord = ServiceCoordinator::new();
+            let mut st = ServiceState::new();
+            st.phase = ServicePhase::Approach;
+            st.layover = layover;
+            let b = BerthGeometry {
+                depart: sc.day_time + early,
+                ..berth(70.0)
+            };
+            let mut inp = inputs(0, Some(b), 10.0);
+            inp.demand.wanted = Some(false);
+            inp.policy = policy;
+            let dec = coord.plan(&sc, &mut st, &inp);
+            assert_eq!(
+                dec.consume_stop,
+                st.phase == ServicePhase::EnRoute,
+                "a stop is either passed or served"
+            );
+            !dec.consume_stop
+        };
+        let middle = || StopPolicy {
+            last_stop: Some(9999),
+            route_open: true,
+            ..Default::default()
+        };
+        // on time at a stop in the middle: only if somebody wants it
+        assert!(!serves(middle(), false, 30.0));
+        // over two minutes early: it stops and waits
+        assert!(serves(middle(), false, EARLY_STOP + 10.0));
+        assert!(!serves(middle(), false, EARLY_STOP - 10.0));
+        // the trip's terminus
+        let terminus = StopPolicy {
+            last_stop: Some(stop),
+            ..middle()
+        };
+        assert!(serves(terminus, false, 0.0));
+        // the last stop it knows of, with the rest of the route loaded ...
+        let last_known = StopPolicy {
+            is_last: true,
+            route_open: false,
+            ..middle()
+        };
+        assert!(serves(last_known, false, 0.0));
+        // ... but not with the route going on beyond the loaded tiles
+        assert!(!serves(middle(), false, 0.0));
+        // its first stop, where it stands out its layover
+        assert!(serves(middle(), true, 0.0));
+        // `[profile_otherstopping]` 1/4 (always) and 3 (when early)
+        let always = StopPolicy {
+            always: vec![stop],
+            ..middle()
+        };
+        assert!(serves(always, false, 0.0));
+        let when_early = || StopPolicy {
+            serve_early: vec![stop],
+            ..middle()
+        };
+        assert!(!serves(when_early(), false, EARLY_STOP_SHORT - 10.0));
+        assert!(serves(when_early(), false, EARLY_STOP_SHORT + 10.0));
+        // a stop marked for somebody else is not this one's
+        let elsewhere = StopPolicy {
+            always: vec![stop + 1],
+            serve_early: vec![stop + 1],
+            ..middle()
+        };
+        assert!(!serves(elsewhere, false, EARLY_STOP_SHORT + 10.0));
+    }
+
     #[test]
     fn an_early_bus_waits_and_a_marked_stop_always_serves() {
         let net = north_lane();
