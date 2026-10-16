@@ -382,6 +382,32 @@ fn trip_times_from_the_profile() {
     );
 }
 
+/// `[profile_otherstopping]` per station: 1 and 4 are served in any case, 3 when early, and
+/// at 3 and 4 the bus waits for its departure (#298: Städtedreieck's NE76 stands at
+/// Hauptbahnhof from minute 21 to minute 26, marked 4).
+#[test]
+fn the_stations_that_wait_for_their_departure() {
+    let ne76 = ::timetable::TripProfile {
+        name: "p".into(),
+        factor: 40.0,
+        man_arr_time: vec![(4, 21.0)],
+        man_dep_time: vec![(4, 26.0)],
+        other_stopping: vec![(1, 1), (2, 2), (3, 3), (4, 4)],
+    };
+    let stations = [1, 2, 3, 4, 5];
+    let t = TripTimes::new(&stations, Some(&ne76), &link);
+    assert_eq!(t.kinds, vec![0, 1, 2, 3, 4]);
+    assert_eq!(t.stations[4], (1260.0, 1560.0));
+    assert_eq!(t.stops, vec![true, true, false, true, true]);
+    let mut s = saturday_after_midnight(&[(60.0, SATURDAY)]);
+    s.data.trips[0].stations = stations.to_vec();
+    s.times[0][0] = t;
+    let (always, early, wait) = s.special_stops(0);
+    assert_eq!(always, vec![2, 5]);
+    assert_eq!(early, vec![4]);
+    assert_eq!(wait, vec![4, 5], "the stations marked to wait for the departure");
+}
+
 /// An X10 Berlin S-Bahn trip (S7_Tgn_Sav: from the map's edge, Zoo at 1.5 min) comes at
 /// its departure time; a bus or a track beginning at a stop has its layover (#342).
 #[test]

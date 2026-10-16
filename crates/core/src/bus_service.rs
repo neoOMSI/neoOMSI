@@ -32,6 +32,8 @@ pub struct BusService {
     /// more than `EARLY_STOP_SHORT` early (`schedule::TripTimes::kinds`).
     pub always: Vec<i64>,
     pub serve_early: Vec<i64>,
+    /// Stops where it waits for its departure if it is early (3 and 4, #298).
+    pub wait_departure: Vec<i64>,
     /// The timetable still carries the route on as tiles bring their lanes.
     pub route_open: bool,
     /// A train on a track of its own: its trip ends at the track's end, not at its last
@@ -53,6 +55,7 @@ impl BusService {
             last_stop: None,
             always: Vec::new(),
             serve_early: Vec::new(),
+            wait_departure: Vec::new(),
             route_open: false,
             to_track_end: false,
             stand_at_end: false,
@@ -137,6 +140,7 @@ impl BusService {
         ::traffic::StopPolicy {
             always: self.always.clone(),
             serve_early: self.serve_early.clone(),
+            wait_departure: self.wait_departure.clone(),
             last_stop: self.last_stop,
             is_last: self.stops.len() <= 1 && !self.route_open,
             route_open: self.route_open,
@@ -231,6 +235,20 @@ mod tests {
         assert!((s.standing_for(40.0) - 62.0).abs() < 1e-3);
         s.state.phase = ServicePhase::NextTrip;
         assert!(s.standing_for(0.0) > 100.0);
+    }
+
+    /// #298: the stops marked "wait dep. time" reach the service, and a bus waiting there for
+    /// its departure stands at its stop (the stood-too-long and crawl timers of the traffic
+    /// leave it alone) and is gone round by the traffic behind it.
+    #[test]
+    fn a_bus_waiting_for_its_departure_stands_at_its_stop() {
+        let mut s = BusService::new(vec![stop(1, 1300.0), stop(2, 2000.0)]);
+        s.wait_departure = vec![1];
+        assert_eq!(s.policy(false).wait_departure, vec![1]);
+        s.state.phase = ServicePhase::Layover;
+        s.state.leave_at = 1300.0;
+        assert!(s.at_stop());
+        assert!(s.standing_for(1000.0) > 300.0);
     }
 
     #[test]

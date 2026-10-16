@@ -1,9 +1,9 @@
 //! Stage 6 exit gate — optional/request stops, timing points, early/late and layovers.
 //!
 //! Dwell and skip policy follow explicit service semantics: an unwanted mid-route stop is
-//! skipped, a wanted or marked stop is served, a bus early for its departure waits with the
-//! doors open at a timing point only (elsewhere it leaves once the exchange is over), a late
-//! bus goes at once, and a layover waits its departure out of the lane.
+//! skipped, a wanted or marked stop is served, a bus early for its departure waits for it
+//! only at a stop its timetable marks "wait dep. time" (elsewhere it leaves once the exchange
+//! is over), a late bus goes at once, and a layover waits its departure out of the lane.
 
 mod common;
 
@@ -58,21 +58,110 @@ fn a_timing_point_is_served_even_without_demand() {
     assert!(reached_boarding(&mut w, 3000), "a timing point was skipped");
 }
 
-#[test]
-fn an_early_bus_waits_for_its_departure_at_a_timing_point() {
-    // Departing 100 s from now: the bus is early and must wait with the doors open.
-    let mut w = single(36000.0 + 100.0);
-    w.bus_mut(1).policy.always = vec![STOP];
-    assert!(reached_boarding(&mut w, 3000));
-    let leave = w.bus(1).state.leave_at;
-    assert!(leave > 36000.0 + 30.0, "the early bus did not wait for its departure");
-    // It is still boarding well after the passenger exchange would have ended.
-    for _ in 0..1500 {
+/// Runs the bus until it pulls out of its stop and returns the day time it did, or `None`
+/// when it still stood there after `ticks`. Until then it keeps its berth.
+fn left_at(w: &mut ServiceWorld, ticks: u32) -> Option<f64> {
+    for _ in 0..ticks {
         w.step();
-        if w.bus(1).served.is_empty() {
-            assert_eq!(w.bus(1).phase(), ServicePhase::Boarding, "the early bus left early");
+        if !matches!(
+            w.bus(1).phase(),
+            ServicePhase::Docking | ServicePhase::Boarding | ServicePhase::Layover
+        ) {
+            return Some(w.day_time);
         }
+        assert!(w.bus(1).state.berth.is_some(), "the bus let go of its berth while waiting");
     }
+    None
+}
+
+#[test]
+fn an_early_bus_waits_for_its_departure_at_a_stop_marked_to_wait() {
+    // "always + wait dep. time" (4): served without demand, and it stands until its departure,
+    // five minutes from now (#298, Städtedreieck's NE buses at Hauptbahnhof)
+    let depart = 36000.0 + 300.0;
+    let mut w = single(depart);
+    w.bus_mut(1).demand.wanted = Some(false);
+    w.bus_mut(1).policy.always = vec![STOP];
+    w.bus_mut(1).policy.wait_departure = vec![STOP];
+    assert!(reached_boarding(&mut w, 3000), "the marked stop was skipped");
+    assert!((w.bus(1).state.leave_at - depart).abs() < 1e-6, "it did not wait for its departure");
+    let mut doors_shut = false;
+    let mut doors_again = false;
+    let left = (0..20_000)
+        .find_map(|_| {
+            w.step();
+            match w.bus(1).phase() {
+                ServicePhase::Layover => doors_shut = true,
+                ServicePhase::Boarding if doors_shut => doors_again = true,
+                _ => {}
+            }
+            (!matches!(
+                w.bus(1).phase(),
+                ServicePhase::Boarding | ServicePhase::Layover
+            ))
+            .then_some(w.day_time)
+        })
+        .expect("it never left");
+    assert!(left >= depart, "it left {:.0} s before its departure", depart - left);
+    assert!(left < depart + 5.0, "it stood on {:.0} s after its departure", left - depart);
+    // the exchange over, it waits with the doors shut, as on a layover, and opens them again
+    // shortly before it leaves
+    assert!(doors_shut && doors_again);
+}
+
+#[test]
+fn a_stop_marked_to_wait_holds_the_bus_however_long() {
+    // a quarter of an hour early: no cap on the wait
+    let depart = 36000.0 + 900.0;
+    let mut w = single(depart);
+    w.bus_mut(1).policy.wait_departure = vec![STOP];
+    assert!(reached_boarding(&mut w, 3000));
+    let left = left_at(&mut w, 60_000).expect("it never left");
+    assert!(left >= depart, "it left {:.0} s before its departure", depart - left);
+}
+
+#[test]
+fn wait_dep_time_waits_only_where_the_bus_stops() {
+    // "wait dep. time" (3): on time and unwanted it passes ...
+    let mut w = single(36000.0 + 10.0);
+    w.bus_mut(1).demand.wanted = Some(false);
+    w.bus_mut(1).policy.serve_early = vec![STOP];
+    w.bus_mut(1).policy.wait_departure = vec![STOP];
+    assert!(!reached_boarding(&mut w, 3000), "an unwanted stop marked 3 was served on time");
+    assert_eq!(w.bus(1).served, vec![StopId(STOP)], "the stop was not passed");
+    // ... wanted, it stops and waits for its departure
+    let depart = 36000.0 + 100.0;
+    let mut w = single(depart);
+    w.bus_mut(1).policy.serve_early = vec![STOP];
+    w.bus_mut(1).policy.wait_departure = vec![STOP];
+    assert!(reached_boarding(&mut w, 3000));
+    let left = left_at(&mut w, 20_000).expect("it never left");
+    assert!(left >= depart, "it left {:.0} s before its departure", depart - left);
+}
+
+#[test]
+fn an_always_stop_without_the_wait_option_is_left_after_the_exchange() {
+    // "always" (1): served, but an early bus does not wait for its departure there
+    let depart = 36000.0 + 300.0;
+    let mut w = single(depart);
+    w.bus_mut(1).demand.wanted = Some(false);
+    w.bus_mut(1).policy.always = vec![STOP];
+    assert!(reached_boarding(&mut w, 3000), "a timing point was skipped");
+    assert!(w.bus(1).state.leave_at <= w.day_time, "it waited for the timetable");
+    let left = left_at(&mut w, 1000).expect("it stood on after the exchange");
+    assert!(left < depart - 200.0);
+}
+
+#[test]
+fn a_bus_behind_one_waiting_for_its_departure_queues_for_the_berth() {
+    let mut w = single(36000.0 + 300.0);
+    w.bus_mut(1).policy.wait_departure = vec![STOP];
+    w.add(Bus::new(2, 40.0, vec![berth(STOP, BERTH_S, 36000.0 + 400.0)]));
+    w.run(3000);
+    assert_eq!(w.bus(1).phase(), ServicePhase::Layover, "the first bus does not wait");
+    assert_eq!(w.bus(2).phase(), ServicePhase::WaitingForBerth);
+    assert!(w.bus(2).state.berth.is_none(), "the follower took the held berth");
+    assert!(w.bus(2).s < w.bus(1).s - 2.0 * common::service::HALF as f32);
 }
 
 #[test]

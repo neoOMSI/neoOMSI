@@ -406,7 +406,7 @@ impl Schedule {
             let last_stop = trip_stations(&self.data.trips[self.departures[i].trip])
                 .last()
                 .copied();
-            let (always, early) = self.special_stops(i);
+            let (always, early, wait) = self.special_stops(i);
             let stand_at_end = self.stands_at_end(i);
             let car = traffic.car_mut(ci);
             if let Some(k) = car.vehicle.ty.program.str_var("Linie") {
@@ -423,6 +423,7 @@ impl Schedule {
                 b.last_stop = last_stop;
                 b.always = always;
                 b.serve_early = early;
+                b.wait_departure = wait;
                 b.stand_at_end = stand_at_end;
             }
             let id = car.id;
@@ -660,7 +661,7 @@ impl Schedule {
         let last_stop = trip_stations(&self.data.trips[self.departures[i].trip])
             .last()
             .copied();
-        let (always, early) = self.special_stops(i);
+        let (always, early, wait) = self.special_stops(i);
         let stand_at_end = self.stands_at_end(i);
         let car = traffic.car_mut(ci);
         // on its layover only when it stands at its first stop now (the trip's first station
@@ -682,6 +683,7 @@ impl Schedule {
             b.last_stop = last_stop;
             b.always = always;
             b.serve_early = early;
+            b.wait_departure = wait;
             b.stand_at_end = stand_at_end;
         }
         // the bus scripts read the line/terminus for their displays

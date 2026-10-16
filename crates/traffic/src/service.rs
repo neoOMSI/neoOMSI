@@ -216,10 +216,6 @@ pub const MIN_SERVICE: f32 = 5.0;
 pub const CLOSE_MIN: f32 = 1.5;
 /// ... at most this long waiting for a supported script to answer.
 pub const CLOSE_MAX: f32 = 12.0;
-/// An early bus waits for its departure at a timing point (a stop the timetable marks
-/// `always`), but not for more than this (s). At any other stop it leaves once the passenger
-/// exchange is over: doors held open with nobody boarding read as a stuck bus.
-pub const EARLY_WAIT: f64 = 40.0;
 /// A layover waits for its departure however long (s).
 pub const LAYOVER_WAIT: f64 = 1800.0;
 /// On a layover, the doors open this long before the departure (s).
@@ -327,6 +323,10 @@ pub struct StopDemand {
 pub struct StopPolicy {
     pub always: Vec<i64>,
     pub serve_early: Vec<i64>,
+    /// Stops where an early bus waits for its departure, however long (`[profile_otherstopping]`
+    /// 3 "wait dep. time" and 4 "always + wait dep. time"). At any other stop it leaves once
+    /// the passenger exchange is over (#298).
+    pub wait_departure: Vec<i64>,
     pub last_stop: Option<i64>,
     /// This is the last stop of the loaded route (with the route closed).
     pub is_last: bool,
@@ -821,6 +821,15 @@ impl ServiceCoordinator {
                     state.phase = ServicePhase::ClosingDoors;
                     state.phase_t = 0.0;
                     d.events.push(TraceEvent::CloseRequest { vehicle: id });
+                } else if state.boarding_t <= 0.0
+                    && state.leave_at - scene.day_time > LAYOVER_BOARDING + 10.0
+                    && input.policy.wait_departure.contains(&berth.stop.get())
+                {
+                    // the exchange is over and its departure is far off: it waits for it as on
+                    // a layover, the doors shut until shortly before it leaves
+                    state.phase = ServicePhase::Layover;
+                    state.phase_t = 0.0;
+                    d.boarding = false;
                 }
             }
             ServicePhase::Layover
@@ -1017,8 +1026,8 @@ impl ServiceCoordinator {
             f64::INFINITY
         } else if layover {
             LAYOVER_WAIT
-        } else if policy.always.contains(&berth.stop.get()) {
-            EARLY_WAIT
+        } else if policy.wait_departure.contains(&berth.stop.get()) {
+            f64::INFINITY
         } else {
             0.0
         };

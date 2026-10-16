@@ -152,8 +152,9 @@ impl Schedule {
 
     /// When departure `i`'s bus is at its trip's stations.
     /// The stations departure `i` serves whoever wants them or not (`[profile_otherstopping]`
-    /// 1 or 4), and those it serves when it would be early (3), by object id.
-    pub(super) fn special_stops(&self, i: usize) -> (Vec<i64>, Vec<i64>) {
+    /// 1 or 4), those it serves when it would be early (3), and those it waits at for its
+    /// departure (3 "wait dep. time" and 4 "always + wait dep. time"), by object id.
+    pub(super) fn special_stops(&self, i: usize) -> (Vec<i64>, Vec<i64>, Vec<i64>) {
         let stations = trip_stations(&self.data.trips[self.departures[i].trip]);
         let kinds = &self.times_of(i).kinds;
         let of = |want: &[u8]| -> Vec<i64> {
@@ -164,7 +165,7 @@ impl Schedule {
                 .map(|(id, _)| *id)
                 .collect()
         };
-        (of(&[1, 4]), of(&[3]))
+        (of(&[1, 4]), of(&[3]), of(&[3, 4]))
     }
 
     pub(super) fn times_of(&self, i: usize) -> &TripTimes {
