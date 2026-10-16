@@ -472,7 +472,7 @@ pub(crate) fn run_offscreen(
     // depends on elapsed time rather than on the frame partition.
     let mut sim_accum = 0.0f32;
     let profile_traffic = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
-    let mut traffic_timings = Vec::<[f64; 4]>::new();
+    let mut traffic_timings = TickTimings::default();
     if let (true, Some(v), Some(l)) = (server, server::SERVER_VOICE.get(), lan_off.as_mut()) {
         l.voice = *v;
     }
@@ -1586,9 +1586,12 @@ pub(crate) fn run_offscreen(
             }
         }
     }
-    if !traffic_timings.is_empty() {
+    if !traffic_timings.recent.is_empty() {
+        if traffic_timings.total > traffic_timings.recent.len() as u64 {
+            log::info!("traffic profile: the last {} of {} ticks", traffic_timings.recent.len(), traffic_timings.total);
+        }
         for (column, name) in ["presence", "plan", "bodies/scripts", "total"].into_iter().enumerate() {
-            let mut values: Vec<f64> = traffic_timings.iter().map(|t| t[column] * 1000.0).collect();
+            let mut values: Vec<f64> = traffic_timings.recent.iter().map(|t| t[column] * 1000.0).collect();
             values.sort_by(f64::total_cmp);
             let percentile = |p: f64| values[((values.len() - 1) as f64 * p) as usize];
             log::info!("traffic profile {name}: mean {:.3} ms, p50 {:.3}, p95 {:.3}, p99 {:.3} ({} ticks)",
@@ -3712,6 +3715,29 @@ pub(crate) fn run_offscreen(
     Ok(())
 }
 
+/// How many traffic steps `OMSI_PROFILE` keeps the timings of (about 22 minutes at 50 Hz).
+const TICK_TIMINGS_KEPT: usize = 1 << 16;
+
+/// The traffic's step timings of an `OMSI_PROFILE` run (presence, plan, bodies/scripts and
+/// total, s): only the most recent `TICK_TIMINGS_KEPT`, so a dedicated server profiled for
+/// days does not keep every step it ran.
+#[derive(Default)]
+struct TickTimings {
+    recent: std::collections::VecDeque<[f64; 4]>,
+    /// Steps timed in all.
+    total: u64,
+}
+
+impl TickTimings {
+    fn push(&mut self, timing: [f64; 4]) {
+        if self.recent.len() == TICK_TIMINGS_KEPT {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(timing);
+        self.total += 1;
+    }
+}
+
 /// The tyres as they are drawn: the lowest point of each wheel mesh and how far it is over
 /// the road under it (negative: in the asphalt).
 fn tyre_lows(v: &::simulation::VehicleInstance, world: &World) -> Vec<(DVec3, f64)> {
@@ -3774,5 +3800,21 @@ fn vehicle_camera(player: &Player, camera: &mut Camera) {
         if let Some(f) = v.get(5) {
             camera.fov_deg = *f;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_traffic_profile_keeps_only_the_recent_steps() {
+        let mut timings = TickTimings::default();
+        for k in 0..TICK_TIMINGS_KEPT + 1000 {
+            timings.push([k as f64; 4]);
+        }
+        assert_eq!(timings.recent.len(), TICK_TIMINGS_KEPT);
+        assert_eq!(timings.total, (TICK_TIMINGS_KEPT + 1000) as u64);
+        assert_eq!(timings.recent.front().unwrap()[0], 1000.0, "the oldest steps went first");
     }
 }
