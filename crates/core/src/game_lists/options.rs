@@ -57,7 +57,7 @@ pub(crate) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "steer_look_response" => (1..=20).map(|v| v as f32 * 0.05).collect(),
         "pedal_t" | "pedal_b" => PEDAL.to_vec(),
         "mouse_sens" => (10..=300).map(|v| v as f32 / 100.0).collect(),
-        "stick_sens" => (2..=40).map(|v| v as f32 * 0.05).collect(),
+        "stick_sens" => (10..=200).map(|v| v as f32 / 100.0).collect(),
         "look_sens" => (2..=40).map(|v| v as f32 * 0.05).collect(),
         "seat" => (-50..=50).map(|v| v as f32 / 100.0).collect(),
         "head_pitch" => (-45..=45).map(|v| v as f32).collect(),
@@ -116,6 +116,16 @@ mod tests {
         assert_eq!(steps.first(), Some(&-45.0));
         assert_eq!(steps.last(), Some(&45.0));
         assert!(steps.windows(2).all(|w| w[1] - w[0] == 1.0));
+    }
+
+    #[test]
+    fn stick_sensitivity_slider_moves_in_one_percent_steps() {
+        let steps = steps_of("stick_sens").unwrap();
+        assert_eq!(steps.len(), 191);
+        assert_eq!(steps.first(), Some(&0.1));
+        assert_eq!(steps.last(), Some(&2.0));
+        assert!(steps.contains(&1.0));
+        assert!(steps.contains(&0.37));
     }
 }
 
