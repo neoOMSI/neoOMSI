@@ -488,6 +488,10 @@ pub struct Traffic {
     /// OMSI: priority 1000 over the types' own): cars keep out of the way it is about
     /// to take for longer.
     player_priority: bool,
+    /// The indicators (1 left, 2 right) of the player's bus and of the `others` by id, set
+    /// before each `tick`: they pick the branch at the next fork when asking for lights.
+    player_blinker: u8,
+    blinkers: HashMap<u32, u8>,
     player_emergency: bool,
     external_emergencies: Vec<u32>,
     /// The LAN players' vehicles (their session ids and boxes as for the player), set
@@ -1003,6 +1007,13 @@ impl Traffic {
     /// Whether the player's vehicle has traffic priority (opens depot gates on request).
     pub fn set_player_priority(&mut self, priority: bool) {
         self.player_priority = priority;
+    }
+
+    /// The indicators of the player's bus and of the external road users by id (see
+    /// `traffic_link::lan_blinkers`).
+    pub fn set_blinkers(&mut self, player: u8, others: HashMap<u32, u8>) {
+        self.player_blinker = player;
+        self.blinkers = others;
     }
 
     /// The rail lanes ahead of the players' trams and trains (see `traffic_link::rail_ahead`).

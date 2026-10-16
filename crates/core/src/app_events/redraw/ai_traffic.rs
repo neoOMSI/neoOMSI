@@ -115,6 +115,12 @@ impl App {
             let mut others = lan_outlines(&self.remotes);
             others.extend(own_outlines(self.player.as_ref(), &self.placed));
             t.set_external_actors(others);
+            t.set_blinkers(
+                self.player
+                    .as_ref()
+                    .map_or(0, |p| rail_drive::blinker_of(&p.vehicle)),
+                lan_blinkers(&self.remotes),
+            );
             t.set_external_emergencies(lan_emergencies(&self.remotes));
             if !self.paused {
                 t.set_player_emergency(self.player.as_ref().is_some_and(|p|

@@ -372,6 +372,8 @@ impl Traffic {
             framed_spawns: Vec::new(),
             player: None,
             player_priority: false,
+            player_blinker: 0,
+            blinkers: HashMap::new(),
             player_emergency: false,
             external_emergencies: Vec::new(),
             others: Vec::new(),

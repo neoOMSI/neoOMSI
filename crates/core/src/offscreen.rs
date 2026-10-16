@@ -743,6 +743,12 @@ pub(crate) fn run_offscreen(
             let mut others = lan_outlines(&remotes_off);
             others.extend(own_outlines(player.as_ref(), &[]));
             t.set_external_actors(others);
+            t.set_blinkers(
+                player
+                    .as_ref()
+                    .map_or(0, |p| rail_drive::blinker_of(&p.vehicle)),
+                lan_blinkers(&remotes_off),
+            );
             t.set_external_emergencies(lan_emergencies(&remotes_off));
             t.set_player_priority(
                 // General priority alone is insufficient for a scheduled/player bus.
