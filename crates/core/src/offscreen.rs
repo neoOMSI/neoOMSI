@@ -777,6 +777,7 @@ pub(crate) fn run_offscreen(
                     traffic_timings.push([presence, plan, bodies, started.elapsed().as_secs_f64()]);
                 }
             }
+            t.set_frame_dt(dt);
             world.set_switches(&t.switch_requests());
             world.set_signals(&t.signal_aspects(&world.signal_routes, None));
             if let Some(p) = player.as_mut() {

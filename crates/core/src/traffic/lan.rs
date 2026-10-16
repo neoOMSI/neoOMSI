@@ -114,7 +114,6 @@ impl Traffic {
     pub(crate) fn mirror_tick(&mut self, dt: f32) {
         self.time += dt;
         self.day_time += dt as f64 * self.time_scale;
-        self.last_dt = dt;
         let day_time = self.day_time;
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);

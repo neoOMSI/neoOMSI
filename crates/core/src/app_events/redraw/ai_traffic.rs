@@ -184,6 +184,7 @@ impl App {
             *self.profile.entry("traffic.audio").or_default() += __t3.elapsed().as_secs_f64();
             let __t4 = Instant::now();
             t.set_camera(self.camera.as_ref().map(|c| c.position));
+            t.set_frame_dt(dt);
             t.sync(w, r, scene);
             *self.profile.entry("traffic.sync").or_default() += __t4.elapsed().as_secs_f64();
         }

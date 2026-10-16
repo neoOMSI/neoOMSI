@@ -465,8 +465,9 @@ pub struct Traffic {
     people_grid: HashMap<(i32, i32), Vec<usize>>,
     /// No car has been placed yet: the first population may fill the view.
     initial: bool,
-    /// Seconds of the last tick (the lamp scripts run in `sync`).
-    last_dt: f32,
+    /// Seconds of the frame being drawn (set before `sync`): the drivers' animations run
+    /// on it, not on the traffic's steps, which a frame may have none or two of.
+    frame_dt: f32,
     /// Game time since the lamps' scripts last ran (see `sync`).
     lamp_dt: f32,
     /// `OMSI_TRACE_AI=<file.csv>`: every car's pose, steering and speed, every frame.

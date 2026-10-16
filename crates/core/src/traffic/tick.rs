@@ -41,7 +41,6 @@ impl Traffic {
     fn tick_clock_and_index(&mut self, dt: f32, player: Option<PlayerBox>) {
         self.time += dt;
         self.day_time += dt as f64 * self.time_scale;
-        self.last_dt = dt;
         self.held_at_red = 0;
         self.player = player;
         self.geo_prev = self

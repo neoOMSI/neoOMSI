@@ -396,13 +396,25 @@ impl Traffic {
     }
 
 
+    /// How long the frame being drawn is (s), for the drivers' animations.
+    pub fn set_frame_dt(&mut self, dt: f32) {
+        self.frame_dt = dt;
+    }
+
+    /// The time the drivers' animations move on by this `sync` (a short step before the
+    /// first frame has been timed).
+    fn driver_dt(&self) -> f32 {
+        if self.frame_dt > 0.0 { self.frame_dt } else { 1.0 / 120.0 }
+    }
+
+
     /// The drivers of the timetable buses near the camera: made when a bus comes within
     /// `DRIVER_NEAR`, posed every sync, let go when it is twice that far or gone.
     pub(crate) fn sync_drivers(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
         let Some(eye) = self.viewer.map(|v| v.pos) else {
             return;
         };
-        let dt = self.last_dt.max(1.0 / 120.0);
+        let dt = self.driver_dt();
         let mut keep: Vec<VehicleId> = Vec::new();
         for c in &self.cars {
             if !c.is_bus() || c.gone {
@@ -876,4 +888,28 @@ impl Traffic {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Traffic;
+    use ::traffic::{Network, SIM_DT};
+
+    /// The traffic steps at 50 Hz whatever the frame rate; the drivers are drawn every
+    /// frame and must move on by the frame's time. On the last step's 20 ms they moved
+    /// nearly three times too fast at 144 fps (and on frames without a step as well).
+    #[test]
+    fn the_drivers_move_on_by_the_frame_not_by_the_last_step() {
+        let mut t = Traffic::for_tests(Network::default());
+        let mut accum = 0.0f32;
+        for k in 0..400 {
+            let frame = if k < 200 { 1.0 / 144.0 } else { 1.0 / 240.0 };
+            let (steps, step) = ::traffic::advance_fixed_clock(&mut accum, frame, SIM_DT, 2);
+            for _ in 0..steps {
+                t.tick(step, None);
+            }
+            t.set_frame_dt(frame);
+            assert!((t.driver_dt() - frame).abs() < 1e-7, "drivers moved {} s", t.driver_dt());
+        }
+    }
 }
