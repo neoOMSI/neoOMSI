@@ -150,6 +150,8 @@ pub struct Passing {
     pub hold: f32,
     /// Started from a standstill: it edges out at `PULL_OUT_ACCEL`.
     pub creep: bool,
+    /// The lateral offset the return S-curve starts from, once the car is past.
+    pub back_from: Option<f32>,
 }
 
 impl Passing {
@@ -1104,6 +1106,7 @@ impl ManeuverCoordinator {
             aborted: false,
             hold: 0.0,
             creep: !rolling,
+            back_from: None,
         };
         let clear_d = probe.clear_at(actor.half_width);
         // The oncoming lane has to lie right beside this one for as long as the car is out
@@ -1175,10 +1178,14 @@ impl ManeuverCoordinator {
             return Some(d);
         }
         if odo >= p.until {
-            // Past the obstacle: move back into the lane along the return S-curve.
+            // Past the obstacle: move back into the lane along the return S-curve. It is laid
+            // once, from where the car was when it got past: laid afresh from where it is on
+            // every tick, the curve never got beyond its first metres, and a car drove on the
+            // wrong side of the road for hundreds of metres (Cayuga, #311).
+            let from = *p.back_from.get_or_insert(actor.lateral);
             let mut d = ManeuverDecision::new(ManeuverPhase::Passing);
             d.lateral_target = Some(0.0);
-            d.lateral_ramp = Some((actor.lateral, 0.0, odo, p.back));
+            d.lateral_ramp = Some((from, 0.0, p.until, p.back));
             if actor.lateral.abs() < 0.05 {
                 state.passing = None;
             } else {
@@ -1939,6 +1946,54 @@ mod tests {
         assert_eq!(coord.approved(VehicleId(2)), Some(LaneId(3)));
         assert_eq!(coord.approved(VehicleId(7)), None);
         assert_eq!(coord.approved(VehicleId(5)), None);
+    }
+
+    /// #311: past the obstacle, the way back into the lane is one S-curve, not one laid
+    /// afresh from wherever the car is on every tick (that never got the car back).
+    #[test]
+    fn a_pass_returns_along_one_s_curve() {
+        let net = straight_lane();
+        let occ = Occupancy::default();
+        let mut coord = ManeuverCoordinator::new();
+        let mut state = ManeuverState {
+            passing: Some(Passing {
+                lane: 0,
+                side: 3.5,
+                until: 110.0,
+                block: 100.0,
+                back: 20.0,
+                aborted: false,
+                hold: 0.0,
+                creep: false,
+                back_from: None,
+            }),
+            ..Default::default()
+        };
+        let mut ramps = Vec::new();
+        for (odo, lateral) in [(110.4, -3.5), (113.0, -3.2), (121.0, -1.6)] {
+            let actors = vec![{
+                let mut a = ManeuverActor::new(VehicleId(1), 0, 100.0);
+                a.speed = 8.0;
+                a.odometer = odo;
+                a.lateral = lateral;
+                a
+            }];
+            let scene = ManeuverScene {
+                static_clearance: None,
+                net: &net,
+                occupancy: &occ,
+                actors: &actors,
+                people: &[],
+                time: 0.0,
+                dt: 0.02,
+                tick: 0,
+            };
+            let d = coord.plan(&scene, &mut state, &ManeuverInputs::new(0));
+            assert_eq!(d.phase, ManeuverPhase::Passing, "at {odo}");
+            ramps.push(d.lateral_ramp.expect("no way back"));
+        }
+        assert_eq!(ramps[0], (-3.5, 0.0, 110.0, 20.0));
+        assert!(ramps.iter().all(|r| *r == ramps[0]), "the way back was laid again: {ramps:?}");
     }
 
     #[test]
