@@ -363,8 +363,8 @@ impl JunctionDecision {
 struct Commitment {
     /// Lanes whose entry the vehicle has claimed.
     lanes: Vec<usize>,
-    /// The exit lane whose storage it reserved (m).
-    storage: Option<usize>,
+    /// The exit lane whose storage it reserved, and how much of it (m).
+    storage: Option<(usize, f32)>,
     state: JunctionState,
 }
 
@@ -489,13 +489,18 @@ impl JunctionCoordinator {
         self.commitments.len()
     }
 
-    /// Begin a tick: refresh the arbiter from committed claims and clear the ephemeral exit
-    /// storage (it is recomputed against this tick's realized occupancy).
+    /// Begin a tick: refresh the arbiter from committed claims and exit storage. The free
+    /// storage of an exit is measured again this tick against the realized occupancy; the
+    /// slots of the vehicles admitted on earlier ticks count against it until they are on
+    /// the exit (or not admitted any more).
     pub fn begin_tick(&mut self, _tick: u64) {
         self.claims = Arbiter::new();
         for (id, c) in &self.commitments {
             for &l in &c.lanes {
                 self.claims.grant(LaneId(l), *id);
+            }
+            if let Some((e, need)) = c.storage {
+                self.claims.hold_storage(LaneId(e), *id, need);
             }
         }
         self.wait_for.clear();
@@ -519,7 +524,7 @@ impl JunctionCoordinator {
             for l in c.lanes {
                 self.claims.release(LaneId(l), id);
             }
-            if let Some(e) = c.storage {
+            if let Some((e, _)) = c.storage {
                 self.claims.release_storage(LaneId(e), id);
             }
         }
@@ -693,6 +698,7 @@ impl JunctionCoordinator {
         movement: Option<Movement>,
     ) -> JunctionDecision {
         let actor = &scene.actors[i];
+        self.release_passed_storage(actor.id, way);
         let light = self.signal_stop(scene, i, way);
         let Some(jn) = movement else {
             // no junction: any claim is behind the vehicle now
@@ -1016,6 +1022,8 @@ impl JunctionCoordinator {
             }
         }
         let mut exit_full = false;
+        // (the exit storage this vehicle takes if it is admitted)
+        let mut storage: Option<(usize, f32)> = None;
         if !jn.inside {
             if let Some((e, de)) = jn.exit {
                 let room = scene
@@ -1037,12 +1045,19 @@ impl JunctionCoordinator {
                     if speed < 1.5 && de < 40.0 {
                         self.claims.set_storage_capacity(LaneId(e), space);
                         let need = actor.length + actor.min_gap;
-                        if space < need || !self.claims.reserve_storage(LaneId(e), me_id, need) {
+                        let arrived: Vec<VehicleId> = scene.on_lane[&e]
+                            .iter()
+                            .filter(|x| !x.3)
+                            .map(|x| scene.actors[x.0].id)
+                            .collect();
+                        if space < need
+                            || !self.claims.storage_fits(LaneId(e), me_id, need, &arrived)
+                        {
                             ruled = true;
                             exit_full = true;
                             reasons.push(Reason::OccupiedExit);
-                        } else if let Some(c) = self.commitments.get_mut(&me_id) {
-                            c.storage = Some(e);
+                        } else {
+                            storage = Some((e, need));
                         }
                     }
                 }
@@ -1118,10 +1133,7 @@ impl JunctionCoordinator {
             JunctionState::Admitted
         };
         if blocked && !jn.inside {
-            let old = self.commitments.remove(&me_id).map(|c| c.lanes).unwrap_or_default();
-            for l in old {
-                self.claims.release(LaneId(l), me_id);
-            }
+            self.drop_claims(me_id);
             if !hard && !ruled && !exit_full {
                 self.rule_waiters.insert(me_id);
             }
@@ -1164,17 +1176,21 @@ impl JunctionCoordinator {
             return (stop_at, reasons, JunctionState::Inside);
         }
         if queued && !jn.inside {
-            let old = self.commitments.remove(&me_id).map(|c| c.lanes).unwrap_or_default();
-            for l in old {
-                self.claims.release(LaneId(l), me_id);
-            }
+            self.drop_claims(me_id);
             return (None, reasons, JunctionState::Approaching);
         }
-        // claim the way through
+        // claim the way through, and the room it needs at the exit
         for &l in &lanes {
             self.claims.grant(LaneId(l), me_id);
         }
         let c = self.commitments.entry(me_id).or_default();
+        if let Some((e, need)) = storage {
+            if let Some((old, _)) = c.storage.filter(|s| s.0 != e) {
+                self.claims.release_storage(LaneId(old), me_id);
+            }
+            self.claims.hold_storage(LaneId(e), me_id, need);
+            c.storage = Some((e, need));
+        }
         for &l in &lanes {
             if !c.lanes.contains(&l) {
                 c.lanes.push(l);
@@ -1196,9 +1212,28 @@ impl JunctionCoordinator {
             for l in c.lanes {
                 self.claims.release(LaneId(l), id);
             }
-            if let Some(e) = c.storage {
+            if let Some((e, _)) = c.storage {
                 self.claims.release_storage(LaneId(e), id);
             }
+        }
+    }
+
+    /// Exit storage is held until the vehicle is on that exit (its body counts there from
+    /// then on) or the exit is no longer ahead on its way.
+    fn release_passed_storage(&mut self, id: VehicleId, way: &[(usize, f32)]) {
+        let Some(c) = self.commitments.get_mut(&id) else {
+            return;
+        };
+        let Some((e, _)) = c.storage else {
+            return;
+        };
+        if way.iter().skip(1).any(|w| w.0 == e) {
+            return;
+        }
+        c.storage = None;
+        self.claims.release_storage(LaneId(e), id);
+        if c.lanes.is_empty() {
+            self.commitments.remove(&id);
         }
     }
 
@@ -1243,6 +1278,9 @@ impl JunctionCoordinator {
                         }
                         if let Some(c) = self.commitments.get_mut(&id) {
                             c.lanes.clear();
+                            if let Some((e, _)) = c.storage.take() {
+                                self.claims.release_storage(LaneId(e), id);
+                            }
                         }
                         recoveries.push(Recovery::CancelStaleClaim { vehicle: id, lanes });
                     }

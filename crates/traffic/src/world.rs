@@ -117,18 +117,37 @@ impl Arbiter {
     /// Try to reserve `need` metres of `lane`'s exit storage for `id`. Every admitted slot
     /// counts against the same capacity, so the exit is not promised twice.
     pub fn reserve_storage(&mut self, lane: LaneId, id: VehicleId, need: f32) -> bool {
+        if !self.storage_fits(lane, id, need, &[]) {
+            return false;
+        }
+        self.hold_storage(lane, id, need);
+        true
+    }
+
+    /// Whether `reserve_storage` would grant `id` its `need` metres, without reserving them
+    /// (a slot `id` holds already is always kept). The slots of `arrived` - vehicles whose
+    /// bodies are on the exit already, and so taken off its free distance - do not count.
+    pub fn storage_fits(&self, lane: LaneId, id: VehicleId, need: f32, arrived: &[VehicleId]) -> bool {
+        let Some(s) = self.storage.get(&lane) else {
+            return need <= 0.0;
+        };
+        if s.slots.iter().any(|(x, _)| *x == id) {
+            return true;
+        }
+        let used: f32 = s.slots.iter().filter(|(x, _)| !arrived.contains(x)).map(|(_, n)| *n).sum();
+        used + need.max(0.0) <= s.capacity
+    }
+
+    /// Put back a slot granted on an earlier tick (the arbiter is rebuilt every tick from the
+    /// committed state), whatever this tick's capacity is.
+    pub fn hold_storage(&mut self, lane: LaneId, id: VehicleId, need: f32) {
         let s = self.storage.entry(lane).or_default();
         if let Some(slot) = s.slots.iter_mut().find(|(x, _)| *x == id) {
             slot.1 = need.max(0.0);
-            return true;
-        }
-        let used: f32 = s.slots.iter().map(|(_, n)| *n).sum();
-        if used + need.max(0.0) > s.capacity {
-            return false;
+            return;
         }
         s.slots.push((id, need.max(0.0)));
         s.slots.sort_by_key(|(x, _)| *x);
-        true
     }
 
     pub fn storage_reserved(&self, lane: LaneId, id: VehicleId) -> bool {
