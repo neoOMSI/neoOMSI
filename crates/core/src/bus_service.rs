@@ -184,6 +184,11 @@ fn doors_known_open(vehicle: &::simulation::VehicleInstance) -> bool {
 /// Origin rest position before the pole: the road vehicle's actual front bumper,
 /// retaining the content's holding correction. Rail vehicles retain their platform
 /// alignment convention (half the leading car length).
+///
+/// A deliberate departure from Omsi.exe for road vehicles: it measures the way to the stop
+/// from the vehicle's origin (0x7da4e3), so an OMSI bus comes to rest with its origin at
+/// the stop point and its front several metres past the pole. Here the front stops at the
+/// pole. Trains keep OMSI's rule: their front at the station.
 pub fn stop_shift(ty: &::simulation::VehicleType, rail: bool) -> f32 {
     let hold = ty.def.ai_brake_performance.map(|b| b[4]).unwrap_or(0.0);
     let front = if rail {
