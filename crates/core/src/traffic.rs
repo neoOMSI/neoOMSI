@@ -403,8 +403,8 @@ pub struct Traffic {
     orphan_sounds: Vec<::audio::SoundSet>,
     lights: Vec<TrafficLightController>,
     controller_of_object: HashMap<i64, usize>,
-    /// Coupled vehicle types by file.
-    trailer_types: HashMap<std::path::PathBuf, Option<Arc<VehicleType>>>,
+    /// Coupled vehicle types (see [`coupled_type`]).
+    trailer_types: TrailerTypes,
     /// `[sound_ai]` configurations by file.
     sound_cfgs: HashMap<std::path::PathBuf, Option<Arc<::legacy_vehicle::SoundCfg>>>,
     root: std::path::PathBuf,
@@ -1152,6 +1152,33 @@ fn in_player_box(
     x.abs() <= wide && y <= ahead && y >= -behind && (p.z - centre.z).abs() < 4.0
 }
 
+/// Coupled parts by file and by the winding votes the vehicle they hang on passes on.
+type TrailerTypes = HashMap<(std::path::PathBuf, Option<(usize, usize)>), Option<Arc<VehicleType>>>;
+
+/// The part at `path` coupled to `lead`, loaded once per file and the votes `lead` passes
+/// on to it (`VehicleType::winding_votes_for`): one rear section behind two fronts that
+/// decide differently is two types (#117).
+fn coupled_type(
+    cache: &mut TrailerTypes,
+    root: &Path,
+    path: &Path,
+    lead: &VehicleType,
+) -> Option<Arc<VehicleType>> {
+    cache
+        .entry((path.to_path_buf(), lead.winding_votes_for(path)))
+        .or_insert_with(|| match VehicleType::load_ai(root, path) {
+            Ok(mut t) => {
+                t.follow_winding_of(lead);
+                Some(Arc::new(t))
+            }
+            Err(e) => {
+                log::warn!("trailer {}: {e}", path.display());
+                None
+            }
+        })
+        .clone()
+}
+
 #[cfg(test)]
 mod road_scale_tests {
     use super::road_scale;
@@ -1345,5 +1372,43 @@ mod bodies_moved_tests {
         assert!((m.center - glam::DVec2::new(94.0, 50.0)).length() < 1e-9);
         assert!((m.heading - want.heading).abs() < 1e-9);
         assert!((m.z0 - want.z0).abs() < 1e-9 && (m.z1 - want.z1).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod coupled_type_tests {
+    use super::{TrailerTypes, coupled_type};
+    use ::simulation::VehicleType;
+    use std::sync::Arc;
+
+    #[test]
+    fn a_rear_section_behind_differently_wound_fronts_is_loaded_for_each() {
+        let dir = std::env::temp_dir().join(format!("omsi-coupled-type-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("part.bus"), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        let mut keep = VehicleType::load_ai(&dir, &dir.join("part.bus")).unwrap();
+        keep.winding_votes = (2, 0);
+        let mut turn = VehicleType::load_ai(&dir, &dir.join("part.bus")).unwrap();
+        turn.winding_votes = (0, 2);
+        // the same votes from another folder (another pack) pass nothing on
+        let other = dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("part.bus"), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(other.join("model.cfg"), "").unwrap();
+        let mut foreign = VehicleType::load_ai(&other, &other.join("part.bus")).unwrap();
+        foreign.winding_votes = (2, 0);
+        let rear = dir.join("part.bus");
+        let mut cache = TrailerTypes::new();
+        let behind_keep = coupled_type(&mut cache, &dir, &rear, &keep).unwrap();
+        let behind_turn = coupled_type(&mut cache, &dir, &rear, &turn).unwrap();
+        let again = coupled_type(&mut cache, &dir, &rear, &keep).unwrap();
+        let behind_foreign = coupled_type(&mut cache, &dir, &rear, &foreign).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(behind_keep.keep_winding);
+        assert!(!behind_turn.keep_winding);
+        assert!(Arc::ptr_eq(&behind_keep, &again));
+        assert!(!behind_foreign.keep_winding);
+        assert!(!Arc::ptr_eq(&behind_keep, &behind_foreign));
     }
 }

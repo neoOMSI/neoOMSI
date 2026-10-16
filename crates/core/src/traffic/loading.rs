@@ -623,18 +623,9 @@ impl Traffic {
             else {
                 break;
             };
-            let root = self.root.clone();
-            let t =
-                self.trailer_types.entry(path.clone()).or_insert_with(
-                    || match VehicleType::load_ai(&root, &path) {
-                        Ok(t) => Some(Arc::new(t)),
-                        Err(e) => {
-                            log::warn!("trailer {}: {e}", path.display());
-                            None
-                        }
-                    },
-                );
-            let Some(t) = t.clone() else { break };
+            let Some(t) = coupled_type(&mut self.trailer_types, &self.root, &path, &lead) else {
+                break;
+            };
             out.push((t.clone(), r));
             lead = t;
             lead_rev = r;
