@@ -143,6 +143,7 @@ impl App {
         ) else {
             return;
         };
+        ui.tab_keys = crate::keys::tab_keys();
         let scale = win.scale_factor() as f32;
         let (w, h) = (s.config.width as f32, s.config.height as f32);
         let names = m.map_names();

@@ -23,6 +23,7 @@ impl Ui {
             menu_scroll_thumb: None,
             lab_tabs: Vec::new(),
             admin_visible: false,
+            tab_keys: ["Q".into(), "E".into()],
             pause_items: Vec::new(),
             lab_groups: Vec::new(),
             lab_actions: Vec::new(),

@@ -77,6 +77,9 @@ pub struct Ui {
     pub menu_scroll_thumb: Option<[f32; 4]>,
     pub lab_tabs: Vec<[f32; 4]>,
     pub admin_visible: bool,
+    /// The labels of the keys that switch the menu tabs (Q and E on QWERTY, A and E on
+    /// AZERTY, ...), left and right, as the player's keyboard layout has them.
+    pub tab_keys: [String; 2],
     pub pause_items: Vec<[f32; 4]>,
     pub lab_groups: Vec<[f32; 4]>,
     pub lab_actions: Vec<[f32; 4]>,

@@ -21,6 +21,7 @@ mod game_lists;
 mod headtrack;
 mod hud;
 mod humans;
+mod keyboard_layout;
 mod keys;
 mod lan;
 mod lan_world;

@@ -81,6 +81,12 @@ impl App {
             }
             return;
         }
+        // what the key types on this layout, for the menus' key hints (#379)
+        if event.state == ElementState::Pressed && !self.modifiers.control_key() && !self.modifiers.alt_key() {
+            if let (PhysicalKey::Code(code), Some(text)) = (event.physical_key, event.text.as_deref()) {
+                crate::keys::note_typed(code, text);
+            }
+        }
         if event.state == ElementState::Pressed && self.key_search {
             if let Some(text) = event.text.as_deref() {
                 self.key_search_text(text);

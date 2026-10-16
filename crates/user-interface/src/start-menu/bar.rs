@@ -66,8 +66,9 @@ impl Ui {
         let widths: Vec<f32> = TABS.iter().map(|t| self.text.width(t, tpx as f32) + 40.0 * u).collect();
         let total = widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32;
         let x = ((w - total) * 0.5).round();
-        for (label, bx) in [("Q", x - 40.0 * u), ("E", x + total + 12.0 * u)] {
-            let l = self.text.label(r, scene, label, (13.0 * u) as u32, WHITE);
+        let [left, right] = self.tab_keys.clone();
+        for (label, bx) in [(left, x - 40.0 * u), (right, x + total + 12.0 * u)] {
+            let l = self.text.label(r, scene, &label, (13.0 * u) as u32, WHITE);
             let (bw, bh) = (28.0 * u, 24.0 * u);
             let by = (bar_h - bh) * 0.5;
             self.text.rounded(r, scene, [bx, by, bx + bw, by + bh], 4.0 * u, [255, 255, 255, 56]);

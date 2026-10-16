@@ -556,6 +556,7 @@ impl App {
         }
         if let Some(u) = self.ui.as_mut() {
             u.admin_visible = admin;
+            u.tab_keys = crate::keys::tab_keys();
         }
         if self.lab_sync_due() {
             self.lab_world_sync();
