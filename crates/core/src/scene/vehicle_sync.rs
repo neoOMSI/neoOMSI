@@ -207,9 +207,9 @@ fn resolve_freetex_texture(
 /// The free textures that show a picture now.
 fn live_free_textures(
     free: &[FreeTex],
-) -> impl Iterator<Item = (Option<TextureId>, TextureId, bool, bool)> + '_ {
+) -> impl Iterator<Item = (Option<TextureId>, TextureId, bool, Option<usize>)> + '_ {
     free.iter()
-        .filter_map(|f| f.texture.map(|tex| (f.key, tex, f.diffuse, f.item_only)))
+        .filter_map(|f| f.texture.map(|tex| (f.key, tex, f.diffuse, f.item)))
 }
 
 pub(super) fn sync_materials(
@@ -260,7 +260,7 @@ pub(super) fn sync_materials(
                 }
             };
             // (item-only free textures leave the plain material shared)
-            if v.free.iter().any(|f| !f.item_only) {
+            if v.free.iter().any(|f| f.item.is_none()) {
                 v.base = pair.0;
             }
             v.item = pair.1;
