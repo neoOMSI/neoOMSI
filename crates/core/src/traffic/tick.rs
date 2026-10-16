@@ -138,8 +138,9 @@ impl Traffic {
         walkers
     }
 
-    /// 3a. Player/other-player standing times for the tick. Takes the external actors out of
-    /// `self` for the tick; they are put back by the adapter after the tick.
+    /// 3a. Player/other-player standing times for the tick, and this tick's copy of the
+    /// external actors. They stay in `self`: one `set_external_actors` per frame serves
+    /// every fixed tick of that frame.
     fn tick_presence(
         &mut self,
         dt: f32,
@@ -150,7 +151,7 @@ impl Traffic {
             _ => 0.0,
         };
         let player_standing = self.player_still;
-        let others = std::mem::take(&mut self.others);
+        let others = self.others.clone();
         let mut others_still: HashMap<u32, f32> = HashMap::new();
         for (id, b) in &others {
             let before = self.others_still.get(id).copied().unwrap_or(0.0);
@@ -2277,5 +2278,25 @@ mod tests {
         assert!(closest >= room - 0.3, "lost steering room: {closest}");
         assert!(car.speed < 0.1);
         assert!((rear - car.s - car.front - room).abs() < 0.3);
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::Traffic;
+    use ::traffic::Network;
+
+    /// The external actors are set once per frame and must be seen by every fixed tick of
+    /// it: a LAN bus standing at a stop keeps counting its standing time.
+    #[test]
+    fn external_actors_last_for_every_tick_of_a_frame() {
+        let mut t = Traffic::for_tests(Network::default());
+        let standing = (glam::DVec3::ZERO, 0.0, 12.0, 2.5, 0.0);
+        t.set_external_actors(vec![(7, standing)]);
+        for _ in 0..3 {
+            let (_, others) = t.tick_presence(0.02, None);
+            assert_eq!(others.len(), 1);
+        }
+        assert!((t.others_still[&7] - 0.06).abs() < 1e-6);
     }
 }
