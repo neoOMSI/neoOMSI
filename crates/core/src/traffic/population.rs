@@ -294,11 +294,32 @@ impl Traffic {
         while i < self.cars.len() {
             let c = &self.cars[i];
             let p = c.vehicle.position;
+            // a train is as near as its nearest car on the track (#336)
+            let mut parts = vec![p];
+            if c.is_rail() {
+                let v = &c.vehicle;
+                let coupled = v.trailers.iter().map(|t| t.position);
+                parts = std::iter::once(p)
+                    .chain(coupled)
+                    .enumerate()
+                    .filter(|(k, _)| !v.part_hidden(*k))
+                    .map(|(_, q)| q)
+                    .collect();
+                if parts.is_empty() {
+                    parts.push(p);
+                }
+            }
+            let nearest = |o: DVec3| {
+                parts
+                    .iter()
+                    .map(|q| (*q - o).length())
+                    .fold(f64::INFINITY, f64::min)
+            };
             // (the nearest player: a LAN host keeps the traffic around the others too)
             let dist = self
                 .lan_centers
                 .iter()
-                .fold((p - center).length(), |d, o| d.min((p - *o).length()));
+                .fold(nearest(center), |d, o| d.min(nearest(*o)));
             // Lanes stay in the network after unloading. Test their source tile: a loaded
             // spline can cross a tile boundary where the map has no terrain at all.
             let unloaded = !self
@@ -318,7 +339,7 @@ impl Traffic {
                 && c.stopped > if c.is_bus() { 20.0 } else { 0.5 }
                 && c.state.route.is_empty()
                 && self.net.lanes[c.state.lane].next.is_empty();
-            let from_eye = self.viewer.map(|v| (p - v.pos).length()).unwrap_or(dist);
+            let from_eye = self.viewer.map(|v| nearest(v.pos)).unwrap_or(dist);
             // a timetable bus waiting where the loaded part of its route ends
             let at_edge = c.route_open()
                 && c.state.speed < 0.1
@@ -335,42 +356,21 @@ impl Traffic {
                 .get(c.state.lane)
                 .map(|l| l.kind == LaneKind::Street)
                 .unwrap_or(false);
-            let remove = if unloaded {
-                true
-            } else if at_edge {
-                // (its trip comes back with the tiles; kept until nobody saw it, a bus stood
-                // with its passengers at the far end of a straight road for good)
-                self.consist_hidden(world, c, r)
-                    || (c.stopped > 8.0 && from_eye > 180.0)
-                    || c.stopped > 150.0
-            } else if !random {
-                false
-            } else if at_end
-                && (!c.is_bus()
-                || self.consist_hidden(world, c, r)
-                || (c.stopped > 8.0 && from_eye > 180.0)
-                || c.stopped > 150.0
-                || (c.stopped > 25.0 && queued.contains(&c.id) && from_eye > 25.0))
-            {
-                // (and in view too once others wait behind it: a fire engine at the end of a
-                // dead-end street held a queue of fourteen cars for two and a half minutes)
-                // (taken at once it vanished in plain view 300 m ahead; but a car kept
-                // until nobody could see it stood for good at the end of a long straight
-                // road in view, and the queue behind it - timetable buses with their
-                // passengers among them - never moved again)
-                true
-            } else if c.gone || dist > far {
-                // in plain view a car stays until the renderer leaves it out anyway, and
-                // close by (the mirrors, a turn of the head) it stays in any case
-                // (one that gave up in a gridlock goes after four minutes even in view,
-                // unless right beside the viewer: kept until nobody saw it, a jam at a
-                // junction the player watched never cleared)
-                (dist > VISIBLE_RANGE * 1.3 && from_eye > NEAR_HIDE)
-                    || self.consist_hidden(world, c, r)
-                    || (c.gone && c.stopped > 240.0 && from_eye > 40.0)
-            } else {
-                false
-            };
+            let remove = Departure {
+                unloaded,
+                at_edge,
+                random,
+                at_end,
+                bus: c.is_bus(),
+                gone: c.gone,
+                rail: c.is_rail(),
+                queued: queued.contains(&c.id),
+                stopped: c.stopped,
+                dist,
+                from_eye,
+                far,
+            }
+            .remove(|| self.consist_hidden(world, c, r));
             if remove && sleeps_instead && !at_end {
                 let c = self.cars.swap_remove(i);
                 asleep += 1;
@@ -1539,6 +1539,70 @@ fn unsched_share(factor: f32) -> f32 {
     }
 }
 
+/// What `Traffic::populate_seen` weighs to take a vehicle away. A train's distances are
+/// to its nearest car.
+struct Departure {
+    unloaded: bool,
+    /// A timetable vehicle waiting where the loaded part of its route ends.
+    at_edge: bool,
+    random: bool,
+    /// Standing at the end of the network (the map's edge).
+    at_end: bool,
+    bus: bool,
+    gone: bool,
+    rail: bool,
+    queued: bool,
+    stopped: f32,
+    dist: f64,
+    from_eye: f64,
+    far: f64,
+}
+
+impl Departure {
+    /// Is the vehicle taken away? `hidden` casts rays, so it is asked only when needed.
+    fn remove(&self, mut hidden: impl FnMut() -> bool) -> bool {
+        // a train goes only once none of its cars can be seen (#336)
+        let in_view = !self.rail;
+        let stopped = self.stopped;
+        if self.unloaded {
+            true
+        } else if self.at_edge {
+            // (its trip comes back with the tiles; kept until nobody saw it, a bus stood
+            // with its passengers at the far end of a straight road for good)
+            hidden()
+                || (in_view && ((stopped > 8.0 && self.from_eye > 180.0) || stopped > 150.0))
+        } else if !self.random {
+            false
+        } else if self.at_end
+            && ((in_view && !self.bus)
+                || hidden()
+                || (in_view
+                    && ((stopped > 8.0 && self.from_eye > 180.0)
+                        || stopped > 150.0
+                        || (stopped > 25.0 && self.queued && self.from_eye > 25.0))))
+        {
+            // (and in view too once others wait behind it: a fire engine at the end of a
+            // dead-end street held a queue of fourteen cars for two and a half minutes)
+            // (taken at once it vanished in plain view 300 m ahead; but a car kept
+            // until nobody could see it stood for good at the end of a long straight
+            // road in view, and the queue behind it - timetable buses with their
+            // passengers among them - never moved again)
+            true
+        } else if self.gone || self.dist > self.far {
+            // in plain view a car stays until the renderer leaves it out anyway, and
+            // close by (the mirrors, a turn of the head) it stays in any case
+            // (one that gave up in a gridlock goes after four minutes even in view,
+            // unless right beside the viewer: kept until nobody saw it, a jam at a
+            // junction the player watched never cleared)
+            (self.dist > VISIBLE_RANGE * 1.3 && self.from_eye > NEAR_HIDE)
+                || hidden()
+                || (in_view && self.gone && stopped > 240.0 && self.from_eye > 40.0)
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod unsched_share_tests {
     use super::unsched_share;
@@ -1549,5 +1613,104 @@ mod unsched_share_tests {
         assert_eq!(unsched_share(100.0), 3.0);
         assert_eq!(unsched_share(-1.0), 0.0);
         assert_eq!(unsched_share(f32::NAN), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod departure_tests {
+    use super::{Departure, NEAR_HIDE, VISIBLE_RANGE};
+
+    /// A vehicle in view, near the player, that has stood a long time.
+    fn standing(rail: bool) -> Departure {
+        Departure {
+            unloaded: false,
+            at_edge: false,
+            random: true,
+            at_end: false,
+            bus: false,
+            gone: true,
+            rail,
+            queued: true,
+            stopped: 300.0,
+            dist: 200.0,
+            from_eye: 200.0,
+            far: 1000.0,
+        }
+    }
+
+    /// At the edge of the loaded route a bus goes in view after a wait, a train only
+    /// unseen (#336).
+    #[test]
+    fn a_train_at_the_edge_goes_only_unseen() {
+        for rail in [false, true] {
+            let d = Departure {
+                at_edge: true,
+                random: false,
+                bus: true,
+                gone: false,
+                ..standing(rail)
+            };
+            assert_eq!(d.remove(|| false), !rail, "rail {rail}");
+            assert!(d.remove(|| true), "rail {rail}");
+        }
+    }
+
+    /// At the end of the network: a random car goes at once, a train only unseen.
+    #[test]
+    fn a_train_at_the_end_goes_only_unseen() {
+        for (bus, rail) in [(false, false), (true, false), (false, true), (true, true)] {
+            let d = Departure {
+                at_end: true,
+                bus,
+                ..standing(rail)
+            };
+            assert_eq!(d.remove(|| false), !rail, "bus {bus} rail {rail}");
+            assert!(d.remove(|| true), "bus {bus} rail {rail}");
+        }
+    }
+
+    /// Given up in a gridlock four minutes ago: a car goes in view, a train does not.
+    #[test]
+    fn a_stuck_train_stays_in_view() {
+        for rail in [false, true] {
+            let d = Departure {
+                queued: false,
+                ..standing(rail)
+            };
+            assert_eq!(d.remove(|| false), !rail, "rail {rail}");
+        }
+    }
+
+    /// Far off or on unloaded tiles, either goes.
+    #[test]
+    fn far_off_or_unloaded_goes() {
+        for rail in [false, true] {
+            let far = Departure {
+                stopped: 0.0,
+                dist: VISIBLE_RANGE * 1.5,
+                from_eye: NEAR_HIDE + 1.0,
+                ..standing(rail)
+            };
+            assert!(far.remove(|| false), "rail {rail}");
+            let unloaded = Departure {
+                unloaded: true,
+                ..standing(rail)
+            };
+            assert!(unloaded.remove(|| false), "rail {rail}");
+        }
+    }
+
+    /// A timetable vehicle in service near the player is never taken away here.
+    #[test]
+    fn a_timetable_vehicle_on_its_way_stays() {
+        for rail in [false, true] {
+            let d = Departure {
+                random: false,
+                bus: true,
+                gone: false,
+                ..standing(rail)
+            };
+            assert!(!d.remove(|| true), "rail {rail}");
+        }
     }
 }
