@@ -2304,4 +2304,28 @@ mod presence_tests {
         }
         assert!((t.others_still[&7] - 0.06).abs() < 1e-6);
     }
+
+    /// The traffic's time of day (light programs, timetable) runs on its own steps; it must
+    /// keep up with the frames' time at any frame rate, slow frames included. With the old
+    /// cap on the steps' debt every frame over 160 ms lost the rest for good, and the
+    /// timetable buses fell behind the game clock.
+    #[test]
+    fn the_traffic_clock_keeps_the_frames_time() {
+        let mut t = Traffic::for_tests(Network::default());
+        t.set_day_time(8.0 * 3600.0);
+        let mut accum = 0.0f32;
+        let mut elapsed = 0.0f64;
+        for k in 0..3000u32 {
+            // 3 to 120 fps, now and then a stall of a quarter of a second
+            let frame = if k % 97 == 0 { 0.25 } else { 1.0 / (3.0 + (k * 7919 % 118) as f32) };
+            let (steps, step) = ::traffic::advance_fixed_clock(
+                &mut accum, frame, ::traffic::SIM_DT, ::traffic::MAX_SIM_STEPS);
+            for _ in 0..steps {
+                t.tick(step, None);
+            }
+            elapsed += frame as f64;
+        }
+        let behind = 8.0 * 3600.0 + elapsed - (t.day_time() + accum as f64);
+        assert!(behind.abs() < 0.05, "the traffic clock is {behind:.3} s behind after {elapsed:.0} s");
+    }
 }
