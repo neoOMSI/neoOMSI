@@ -2,7 +2,7 @@
 //!
 //! Acknowledged, unsupported and stuck feedback are distinct: an unsupported script uses the
 //! documented fixed-close fallback, a stuck script is waited on up to the timeout, and a
-//! script that reports its doors open is never driven off.
+//! script that reports its doors open is waited on longer, but not forever.
 
 mod common;
 
@@ -137,7 +137,7 @@ fn a_stuck_script_is_waited_on_then_times_out_with_a_fault() {
 }
 
 #[test]
-fn a_script_reporting_open_doors_is_never_driven_off() {
+fn a_script_reporting_open_doors_is_waited_on_longer() {
     let mut f = Fixture::new();
     let (_, dec) = f.plan(
         ServicePhase::ClosingDoors,
@@ -150,6 +150,21 @@ fn a_script_reporting_open_doors_is_never_driven_off() {
         .events
         .iter()
         .any(|e| matches!(e, TraceEvent::Fault { reason: Reason::StationRelease, .. })));
+}
+
+#[test]
+fn doors_that_never_shut_do_not_hold_the_bus_forever() {
+    let mut f = Fixture::new();
+    let (_, dec) = f.plan(
+        ServicePhase::ClosingDoors,
+        CLOSE_STUCK_OPEN_MAX,
+        0.0,
+        ScriptFeedback::StuckDoorsOpen,
+    );
+    assert!(
+        matches!(dec.phase, ServicePhase::Departing | ServicePhase::WaitingToMerge),
+        "the doors reported open held the bus at its stop past the limit"
+    );
 }
 
 #[test]

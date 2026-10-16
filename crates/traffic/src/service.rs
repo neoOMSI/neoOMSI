@@ -216,6 +216,10 @@ pub const MIN_SERVICE: f32 = 5.0;
 pub const CLOSE_MIN: f32 = 1.5;
 /// ... at most this long waiting for a supported script to answer.
 pub const CLOSE_MAX: f32 = 12.0;
+/// ... and at most this long for one whose doors are reported open: a door that can never
+/// shut (a held light barrier, a script that answers only once its doors are closed) must
+/// not keep the bus at its stop for the rest of the session.
+pub const CLOSE_STUCK_OPEN_MAX: f32 = 120.0;
 /// A layover waits for its departure however long (s).
 pub const LAYOVER_WAIT: f64 = 1800.0;
 /// On a layover, the doors open this long before the departure (s).
@@ -352,7 +356,7 @@ pub enum ScriptFeedback {
     /// the documented fixed close interval is the safe fallback.
     Unsupported,
     /// The script exposes the handshake but has not answered, and its doors are known open:
-    /// departure must not happen.
+    /// the bus waits for them up to `CLOSE_STUCK_OPEN_MAX`.
     StuckDoorsOpen,
     /// The script exposes the handshake but has not answered, and its door state is unknown.
     StuckUnknown,
@@ -880,7 +884,9 @@ impl ServiceCoordinator {
                         (state.phase_t >= CLOSE_MIN, false)
                     }
                     ScriptFeedback::StuckUnknown => (state.phase_t >= CLOSE_MAX, true),
-                    ScriptFeedback::StuckDoorsOpen => (false, true),
+                    ScriptFeedback::StuckDoorsOpen => {
+                        (state.phase_t >= CLOSE_STUCK_OPEN_MAX, true)
+                    }
                     ScriptFeedback::Idle => (false, false),
                 };
                 if fault && state.phase_t >= CLOSE_MAX && state.fault.is_none() {
@@ -1438,7 +1444,7 @@ mod tests {
         inp.feedback = ScriptFeedback::Unsupported;
         let dec = coord.plan(&sc, &mut st, &inp);
         assert!(matches!(dec.phase, ServicePhase::Departing | ServicePhase::WaitingToMerge));
-        // Stuck with known-open doors: never depart.
+        // Stuck with known-open doors: still waiting past the ordinary timeout.
         let mut st = ServiceState::new();
         st.phase = ServicePhase::ClosingDoors;
         st.berth = Some(berth(70.0));

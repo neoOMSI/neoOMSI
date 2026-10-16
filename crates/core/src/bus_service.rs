@@ -164,8 +164,8 @@ pub fn script_feedback(
                 None => ScriptFeedback::Unsupported,
                 // The script wrote 0: doors shut, the stop brake is off.
                 Some(v) if v.abs() < 0.5 => ScriptFeedback::Released,
-                // The script has not answered. If its doors are reported open, driving off
-                // would be provably unsafe; otherwise the state is unknown.
+                // The script has not answered. If its doors are reported open, the bus waits
+                // longer for them; otherwise the state is unknown.
                 Some(_) if doors_known_open(vehicle) => ScriptFeedback::StuckDoorsOpen,
                 Some(_) => ScriptFeedback::StuckUnknown,
             }
