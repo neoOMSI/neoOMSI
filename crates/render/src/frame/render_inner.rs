@@ -1,7 +1,6 @@
 use crate::*;
 
-/// An ordered vehicle's meshes share an origin and must retain their authored order. A
-/// recycled scene-instance id is not that order, so use it only for all other ties.
+/// Preserve authored mesh order for vehicles; use instance IDs for other ties.
 const MAIN_PASS_PARTS: usize = 4;
 
 fn sort_blended_keys(keys: &mut [(u8, f32, [u64; 3], bool, u32, usize)]) {
@@ -35,20 +34,14 @@ fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u
     }
 }
 
-/// How far (on any axis) the window's camera goes from the render origin before the origin
-/// follows it. Every move rewrites the models of the whole scene; at 400 m a coordinate
-/// still has a step of 0.03 mm in 32 bits.
+/// Rebase the window origin after 400 m, where f32 precision is still 0.03 mm.
 const ORIGIN_KEEP: f64 = 400.0;
-/// The same for mirrors, stereo eyes and side panels, which share the scene buffers with
-/// the window's view: they keep its origin while they are anywhere near its camera.
+/// Nearby mirrors, stereo eyes and side panels share the window's origin and scene buffers.
 const SHARED_ORIGIN_KEEP: f64 = ORIGIN_KEEP + 200.0;
 
-/// The render origin a view draws with: `current` while the camera is within `keep` of it,
-/// else the 100 m cell the camera is in (the shaders' patterns take the origin modulo
-/// 1000 m, a whole number of cells).
+/// Keep the current origin within `keep`; otherwise rebase to the camera's 100 m cell.
 fn view_render_origin(position: DVec3, current: DVec3, keep: f64) -> DVec3 {
-    // Crossing a cell boundary must not re-upload every static instance; a distant texture
-    // camera still rebases to keep its relative coordinates precise.
+    // Avoid re-uploading static instances at cell boundaries; distant cameras still rebase.
     if (position - current).abs().max_element() <= keep {
         current
     } else {
@@ -112,12 +105,10 @@ impl Renderer {
                 view_formats: &[],
             });
         }
-        // (the last picture's commands go first: everything below writes to its buffers)
+        // Wait for the previous picture before writing its buffers.
         self.wait_submitted();
-        // Left for `present` (see gpu/submit.rs): the window picture drawn with
-        // `render_deferred`, and the mirrors drawn before it. Everything this call writes to a
-        // buffer is copied by its own first command buffer, so the pictures queued before it
-        // keep what they wrote.
+        // Queue the deferred window and mirrors for `present`; each copies its buffer writes
+        // in its first command buffer, preserving earlier queued pictures.
         let defer = self.submitter.is_some()
             && if with_overlays {
                 std::mem::take(&mut *self.defer_next.get_mut())
@@ -127,14 +118,14 @@ impl Renderer {
                 projection.is_none() && self.defer_views.get()
             };
         if !defer {
-            // (what is queued is drawn before this: the panels it shows, the mirrors)
+            // Draw queued panels and mirrors first.
             self.flush_deferred();
         }
         if self.gpu_error.load(std::sync::atomic::Ordering::Relaxed) {
             self.fall_back_to_single_sample(scene);
         }
         self.open_uploads();
-        // (a queued picture's timers are read once it is submitted)
+        // Read queued picture timers after submission.
         if !self.has_queued() {
             self.collect_gpu_timers();
         }
@@ -630,7 +621,7 @@ impl Renderer {
         let debug_draws = ::legacy_config::env::var_os("OMSI_DEBUG_DRAWS").is_some();
         let debug_cull = ::legacy_config::env::var_os("OMSI_DEBUG_CULL").is_some();
         let mut list: Vec<u32> = Vec::new();
-        // (the shadow casters' entries go after the passes' own, see below)
+        // Shadow-caster entries follow the pass entries.
         let mut shadow_list: Vec<u32> = Vec::new();
         let mut items: Vec<DrawItem> = Vec::new();
         let mut shadow_batches: [Vec<Batch>; SHADOW_SETS] = std::array::from_fn(|_| Vec::new());
@@ -704,7 +695,7 @@ impl Renderer {
                 {
                     continue;
                 }
-                // (a stand-in for far tiles casts no shadow where it is not drawn either)
+                // Far-tile stand-ins cast shadows only where drawn.
                 if let Some([x0, y0, x1, y1]) = inst.near_only {
                     let c = camera.position;
                     if c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1 {
@@ -772,8 +763,7 @@ impl Renderer {
                     }
                     receives[3 + k] = true;
                 }
-                // Most of a large map is outside all shadow cameras. Inspect its materials
-                // only after the unchanged geometric tests find a pass that needs it.
+                // Test shadow geometry before inspecting materials.
                 if !receives.iter().any(|&keep| keep) {
                     continue;
                 }
@@ -827,9 +817,7 @@ impl Renderer {
             let n = scene.instances.len();
             let (parts, chunk) = split_parts(self.encoding_pool.as_deref(), n);
             let chunk = chunk.div_ceil(CULL_BLOCK) * CULL_BLOCK;
-            // (blocks outside every sun box are passed by - the boxes are parallel
-            // projections, so a block's sphere outside them holds no caster; with a
-            // spotlight's map to draw every block is looked through)
+            // Skip blocks outside all sun boxes, unless drawing a spotlight map.
             let blocks = Self::cull_blocks(scene).filter(|_| spot_cull.is_empty());
             let lit = |b: usize| {
                 let Some(bl) = blocks.as_ref() else {
@@ -969,8 +957,7 @@ impl Renderer {
         };
         let cull_one = |i: usize, sizes: &mut Vec<([u64; 4], f32)>| -> Option<(usize, f32, bool)> {
             let inst = &scene.instances[i];
-            // (the mesh only for what passes the view: looked up first, for every one of
-            // the scene's objects, it was much of the culling's time)
+            // Look up meshes only after the view test passes.
             if !inst.visible || (inst.mirror_only && main_view) {
                 return None;
             }
@@ -1078,8 +1065,7 @@ impl Renderer {
         };
         let n = scene.instances.len();
         let (parts, chunk) = split_parts(self.encoding_pool.as_deref(), n);
-        // (whole blocks of instances out of the view are passed by: a block's sphere holds
-        // its instances' spheres, so none of them would pass the tests of `cull_one`)
+        // Cull whole blocks whose bounding sphere is outside the view.
         let chunk = chunk.div_ceil(CULL_BLOCK) * CULL_BLOCK;
         let blocks = Self::cull_blocks(scene);
         let block_seen = |b: usize| {
@@ -1190,10 +1176,9 @@ impl Renderer {
             );
         }
         let mut prepass_batches: Vec<Batch> = Vec::new();
-        // Batches from `prepass_split` on are vehicles drawn in model order, kept out of the
-        // main pass's depth: a wheel hidden by the shadow blob took the ground's place (#292).
+        // Keep model-ordered vehicle batches out of main-pass depth (#292).
         let mut prepass_split = 0;
-        // (but the vehicle the camera is in: without it the world behind the cabin was shaded)
+        // Include the camera's vehicle to avoid shading the world behind its cabin.
         let camera_vehicle = lighting
             .inside
             .filter(|v| point_in_vehicle_box(camera.position, v))
@@ -1252,6 +1237,7 @@ impl Renderer {
                 let slot = &mut prepass_found;
                 scope.spawn(move |_| *slot = Some(job()));
             }
+            let _ = env!("neoomsi_RENDER_PROFILE", "Render profile is missing from the build configuration");
             let own_vehicle =
                 own_vehicle_origins(lighting.inside, &lighting.puddle_parts);
             let outside_own_vehicle = !own_vehicle.is_empty()
@@ -1492,8 +1478,7 @@ impl Renderer {
             prepass_batches = pre_batches;
             prepass_split = split;
         }
-        // (the shadow casters' entries after the passes' own: the main pass's batches keep
-        // their places in the list while only the shadows change, and its bundles are kept)
+        // Put shadow casters last so changing shadows doesn't invalidate main-pass bundles.
         let offset = list.len() as u32;
         for b in shadow_batches.iter_mut().flatten() {
             b.instances = b.instances.start + offset..b.instances.end + offset;
@@ -1686,9 +1671,7 @@ impl Renderer {
                 });
             }
         }
-        // (all of the frame's spotlight maps in one pass, each in its own tile: a pass of its
-        // own for each - up to 16 a frame, each loading and storing the whole far map - cost
-        // the card more than drawing them)
+        // Draw spotlight maps in one pass, each in its own tile, to avoid repeated map loads.
         let mut spot_pass = spot_draws
             .iter()
             .any(|&(k, _)| scene.spot_bind_groups.get(k).is_some())
@@ -2065,7 +2048,7 @@ impl Renderer {
                     },
                 },
             });
-            // (part g draws bundles part_start(g)..part_start(g + 1), as evenly as they go)
+            // Distribute bundle ranges evenly across parts.
             let part_start = |g: usize| g * main_bundles.len() / parts.max(1);
             let sky_clear = wgpu::LoadOp::Clear(wgpu::Color {
                 r: sky.x as f64,
@@ -2320,8 +2303,7 @@ impl Renderer {
                     },
                 }),
             ];
-            // The prepass depth lacks the blended surfaces that write depth (a shared depth
-            // has them): add them, or the rain draws over a blended dashboard in front of it.
+            // Add depth-writing blends to prepass depth so rain stays behind dashboards.
             if !share_depth && (!rain_batches.is_empty() || !late_batches.is_empty()) {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("blended depth before rain"),
@@ -2578,8 +2560,7 @@ impl Renderer {
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
         }
-        // the overlays, last over the finished picture: those that are frosted over a blurred
-        // copy of what lies beneath them
+        // Draw overlays last; frost uses a blurred copy of the underlying picture.
         if !overlays.is_empty() {
             let under =
                 self.frost_backdrops(&mut encoder, scene, target, &overlays, (full_w, full_h), output_viewport);
@@ -2610,7 +2591,7 @@ impl Renderer {
             }
         }
         stage(self, "encode", "mirror.encode");
-        // this picture's writes, copied before its commands
+        // Copy this picture's writes before its commands.
         let mut upload_encoder =
             self.device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -2845,8 +2826,7 @@ mod tests {
 
     #[test]
     fn mixed_ordered_and_unordered_ties_sort_consistently() {
-        // Ordered meshes whose recycled ids run against their authored order, tied with
-        // unordered instances in between, once formed a cycle that made the sort panic.
+        // Mixed ordered and unordered meshes once formed a sort cycle with recycled IDs.
         let origin = [1, 2, 3];
         let mut keys: Vec<(u8, f32, [u64; 3], bool, u32, usize)> = Vec::new();
         for i in 0..40u32 {
