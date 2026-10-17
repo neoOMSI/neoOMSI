@@ -452,13 +452,21 @@ fn oncoming_traffic_is_asked_to_wait_only_where_the_ambulance_can_pass() {
     assert!(state.pass_open, "the oncoming car was not asked to wait");
 }
 
-/// ... but not across a junction where its way turns off.
+/// ... and up to the line of a junction where its way turns off: it comes back to its way
+/// just inside the junction it holds, and turns from there.
 #[test]
-fn an_ambulance_does_not_pass_a_queue_across_a_junction_where_it_turns() {
+fn an_ambulance_passes_a_queue_up_to_a_junction_where_it_turns() {
     let net = through_junction(true);
-    let feet = (0..6).map(|k| queued(10 + k, 0, 0.0, 65.0 + k as f32 * 6.5, 0.0)).collect::<Vec<_>>();
-    let (d, _) = plan_behind_queue(&net, ambulance(45.0), feet, 65.0 - 2.1 - 45.0 - 3.5, true);
-    assert_ne!(d.phase, ManeuverPhase::Passing);
+    let feet = || (0..6).map(|k| queued(10 + k, 0, 0.0, 65.0 + k as f32 * 6.5, 0.0)).collect::<Vec<_>>();
+    let gap = 65.0 - 2.1 - 45.0 - 3.5;
+    let (d, state) = plan_behind_queue(&net, ambulance(45.0), feet(), gap, true);
+    assert_eq!(d.phase, ManeuverPhase::Passing, "{d:?}");
+    let p = state.passing.expect("no pass");
+    // back past the queue's head at the line (y 100), before the turn is through (y 120)
+    let back_in = p.until - 45.0;
+    assert!(back_in > 100.0 - 45.0 && back_in < 120.0 - 45.0, "back in at {back_in} m");
+    let (d, _) = plan_behind_queue(&net, ambulance(45.0), feet(), gap, false);
+    assert_ne!(d.phase, ManeuverPhase::Passing, "pulled out without the junction reserved");
 }
 
 /// #462: an oncoming car stops before the stretch a held-up ambulance passes along; one

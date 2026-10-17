@@ -1031,7 +1031,7 @@ impl ManeuverCoordinator {
             .then(|| self.emergency_queue(scene, actor, real))
             .flatten();
         let through = match queue {
-            Some((_, QueueEnd::Junction(Some(exit)))) if input.emergency_through => Some(exit),
+            Some((_, QueueEnd::Junction(Some(back)))) if input.emergency_through => Some(back),
             _ => None,
         };
         if matches!(queue, Some((_, QueueEnd::Junction(_)))) && through.is_none() {
@@ -1068,9 +1068,10 @@ impl ManeuverCoordinator {
         // (a rolling leader, passed only by an emergency vehicle, lengthens the pass)
         let v_lead = if input.priority_pass { input.lead_speed.max(0.0) } else { 0.0 };
         let v_pass = ((lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6).clamp(4.0, 14.0);
-        // (passing across the junction, it merges back beyond its exit)
+        // (passing across the junction, it merges back beyond its exit, or just past the
+        // line where it turns off)
         let queue_len = match (queue, through) {
-            (_, Some(exit)) => exit + 2.0 - actor.front - real,
+            (_, Some((back, _))) => back + 2.0 - actor.front - real,
             (Some((len, _)), None) => len,
             _ => 0.0,
         };
@@ -1156,7 +1157,12 @@ impl ManeuverCoordinator {
         let clear_d = probe.clear_at(actor.half_width);
         // The oncoming lane must stay right beside this one while the car is out there (no
         // island or hatched area starting later).
-        if !passing_corridor(net, &way, clear_d + actor.front, through.is_some(), input.priority_pass) {
+        // (turning off, it is back on its way in the junction it holds)
+        let corridor = match through {
+            Some((back, true)) => (clear_d + actor.front).min(back),
+            _ => clear_d + actor.front,
+        };
+        if !passing_corridor(net, &way, corridor, through.is_some(), input.priority_pass) {
             // (the road does not change: a car stuck in a queue need not look again at once)
             state.pass_retry = scene.time + 1.0;
             return None;
@@ -1259,8 +1265,14 @@ impl ManeuverCoordinator {
             let l = &net.lanes[lane];
             if net.crossings[lane].is_empty() {
                 turn += wrap_deg(l.start_heading() - heading).abs();
-                let straight = turn <= EMERGENCY_THROUGH_TURN;
-                return Some((len, QueueEnd::Junction(straight.then_some(d))));
+                // (turning off, it comes back to its way just past the line, in the junction
+                // it holds, and turns from there)
+                let back = if turn <= EMERGENCY_THROUGH_TURN {
+                    (d, false)
+                } else {
+                    (way[k].1 + EMERGENCY_TURN_BACK, true)
+                };
+                return Some((len, QueueEnd::Junction(Some(back))));
             }
             turn += wrap_deg(l.start_heading() - heading).abs()
                 + wrap_deg(l.end_heading() - l.start_heading()).abs();
@@ -1958,8 +1970,9 @@ fn emergency_can_pass_here(net: &Network, actor: &ManeuverActor) -> bool {
 enum QueueEnd {
     /// At a gap the vehicle fits into before the next junction.
     Gap,
-    /// At the junction; the distance to its end when the way goes straight across.
-    Junction(Option<f32>),
+    /// At the junction; where the vehicle may be back on its way: the junction's end when
+    /// the way goes straight across, just past the line when it turns off (`true`).
+    Junction(Option<(f32, bool)>),
 }
 
 /// A car that has pulled over and stood this long (s) with the emergency vehicle standing
@@ -1976,8 +1989,10 @@ const EMERGENCY_QUEUE_MAX: f32 = 180.0;
 const EMERGENCY_QUEUE_SPEED: f32 = 4.2;
 /// ... the room (m) beyond its own length it needs to merge back into a gap, ...
 const EMERGENCY_MERGE_MARGIN: f32 = 6.0;
-/// ... and the most its way may turn across a junction it passes on the oncoming side (deg).
+/// ... and the most its way may turn across a junction it passes on the oncoming side (deg);
+/// turning more, it comes back this far (m) past the line.
 const EMERGENCY_THROUGH_TURN: f32 = 25.0;
+const EMERGENCY_TURN_BACK: f32 = 2.0;
 
 /// Is there an island or median between two opposing lanes `side` m apart? Paths are often
 /// narrower than the painted lane, so a lane counts at least `MIN_LANE_WIDTH`; the tolerance
