@@ -283,7 +283,7 @@ fn fs_main(in: CoronaOut) -> @location(0) vec4<f32> {
 }
 
 fn corona_scatter() -> f32 {
-    return clamp(max(enh.fog.x / 2.3e-3, enh.weather.z * 0.4), 0.0, 1.0);
+    return clamp(max(enh.fog.x / 2.3e-3, enh.weather.z * 0.4), 0.0, 1.0) * 0.0625;
 }
 
 // Enhanced graphics: the corona in the pre-exposed high-range picture - the glare of a
@@ -323,8 +323,8 @@ fn glare_enhanced(in: CoronaOut) -> vec3<f32> {
     let edge = (1.0 - r * r) * (1.0 - r * r) * select(0.0, 1.0, r < 1.0);
     let r0 = max(core * 0.35, 0.01);
     let veil = 0.06 * in.cone.y * r0 * r0 / (r * r + r0 * r0);
-    let a0 = mix(r0, 0.35, scatter);
-    let aureole = 0.5 * scatter * sqrt(in.cone.y) * a0 * a0 / (r * r + a0 * a0);
+    let a0 = mix(r0, 0.18, scatter);
+    let aureole = 0.25 * scatter * sqrt(in.cone.y) * a0 * a0 / (r * r + a0 * a0);
     return glow + tint * (veil + aureole) * edge;
 }
 
