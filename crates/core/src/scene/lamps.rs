@@ -221,8 +221,7 @@ pub fn model_lights_owned(
             seq += 1;
             // after the variable: factor, z offset, effect bits, time constant
             let factor = l.values.first().copied().unwrap_or(0.0);
-            let b =
-                (value_of(&l.variable) * if factor > 0.0 { factor } else { 1.0 }).clamp(0.0, 2.0);
+            let b = value_of(&l.variable) * if factor > 0.0 { factor } else { 1.0 };
             if !(b > 0.0) || !b.is_finite() {
                 continue;
             }
@@ -249,8 +248,7 @@ pub fn model_lights_owned(
             seq += 1;
             let b = match fades.get(first_li + k) {
                 Some(f) => *f,
-                None => (value_of(&l.variable) * if l.factor > 0.0 { l.factor } else { 1.0 })
-                    .clamp(0.0, 2.0),
+                None => value_of(&l.variable) * if l.factor > 0.0 { l.factor } else { 1.0 },
             };
             if !(b > 0.0) || !b.is_finite() {
                 continue;
@@ -283,14 +281,17 @@ pub fn model_lights_owned(
     out.into_iter().zip(owners).collect()
 }
 
+/// `strength`: the light's variable times its factor, as Omsi.exe keeps it - the star grows
+/// with it unclamped, the sprites' brightness stops at 2.
 fn push_light_sprites(
     out: &mut Vec<::render::Corona>,
     l: &EnhLight,
-    b: f32,
+    strength: f32,
     xf: &Mat4,
     pos: DVec3,
     model_dir: &std::path::Path,
 ) {
+    let b = strength.clamp(0.0, 2.0);
     let p = xf.transform_point3(glam::Vec3::from(l.pos)).as_dvec3() + pos;
     let dir = if l.omni {
         glam::Vec3::ZERO
@@ -345,7 +346,11 @@ fn push_light_sprites(
     }
     if flags & 1 != 0 {
         out.push(::render::Corona {
-            size: l.size * 1.5,
+            // Omsi.exe sizes it 2.5 x size x 0.6 x strength x (0.8 + night^2) (FUN_005a0118):
+            // with a factor of 4 a C2's 5 cm headlamp throws a half-metre star. The night's
+            // share is taken by `prepare_coronas`; 1.5 is the size measured at a strength of
+            // 1 by night (#324).
+            size: l.size * 1.5 * strength,
             rotating: 2,
             flags: 8 | 32,
             texture: crate::lights::star_texture_id(),

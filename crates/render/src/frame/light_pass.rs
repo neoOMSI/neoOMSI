@@ -377,9 +377,16 @@ impl Renderer {
             } else {
                 c.brightness * (night * night + 0.8) * 0.6
             };
+            // a star's size takes the night's share of Omsi.exe's 0.6 x (0.8 + night^2), as
+            // its glow's brightness does: full by night (FUN_005a0118)
+            let size = if c.flags & 8 != 0 && !c.beam && !c.halo {
+                c.size * (night * night + 0.8) / 1.8
+            } else {
+                c.size
+            };
             data.push(GpuCorona {
                 pos: p.to_array(),
-                size: c.size,
+                size,
                 color: [c.color[0], c.color[1], c.color[2], b],
                 dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
                 up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],

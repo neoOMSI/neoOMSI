@@ -891,6 +891,24 @@ fn an_old_light_follows_its_effect_bits() {
 }
 
 #[test]
+fn a_light_star_grows_with_its_factor() {
+    let sprites = |factor: u32| {
+        let text = format!(
+            "[mesh]\nbus.o3d\n[light_enh_2]\n-1.06\n5.86\n0.71\n0\n1\n0\n0\n0\n1\n0\n0\n205\n255\n255\n0.05\n90\n180\nabblendlicht_an\n{factor}\n0.1\n1\n0\n0\n"
+        );
+        let model = Model::parse(&::legacy_config::CfgFile::from_str("bus.cfg", &text));
+        model_lights_faded(&model, &|_| Mat4::IDENTITY, DVec3::ZERO, &|_| 1.0, &[])
+    };
+    let (one, four) = (sprites(1), sprites(4));
+    let star = |c: &[::render::Corona]| c.iter().find(|c| c.flags & 8 != 0).unwrap().size;
+    let glow =
+        |c: &[::render::Corona]| c.iter().find(|c| c.flags & 8 == 0 && !c.halo).unwrap().size;
+    assert!((star(&one) - 0.075).abs() < 1e-6);
+    assert!((star(&four) - 0.3).abs() < 1e-6);
+    assert!((glow(&four) - 0.025).abs() < 1e-6);
+}
+
+#[test]
 fn small_instrument_lights_keep_their_small_size() {
     let text = "[mesh]\ndash.o3d\n[light_enh]\n0\n0\n0\n255\n0\n0\n0.01\nspeedo_warn\n0\n";
     let model = Model::parse(&::legacy_config::CfgFile::from_str("bus.cfg", text));
