@@ -8,7 +8,7 @@ use super::sources::corona_lights;
 use super::spill::{interior_spill, spill_vehicles};
 use super::spot2::{Section, spotlights_2};
 use super::tuning::*;
-use super::weather::fog_darkness;
+use super::weather::{brightness_darkness, fog_darkness};
 use glam::{Mat4, Vec3};
 use ::render::{Corona, PointLight, Scene};
 use ::simulation::VehicleInstance;
@@ -216,7 +216,11 @@ fn road_and_lamp_lights(
         ));
     }
 
-    let night = f.night.max(fog_darkness() * cfg.weather_night);
+    let night = f
+        .night
+        .max(fog_darkness() * cfg.weather_night)
+        .max(brightness_darkness())
+        .max(0.3);
     if !v.part_hidden(0) {
         headlamps(cfg, faders, v, night, lights, coronas);
         let section = Section {
@@ -239,7 +243,7 @@ fn road_and_lamp_lights(
         };
         spotlights_2(cfg, faders, &section, &|n| t.value(v, n), night, lights);
     }
-    if spill && cfg.spill.on && night > 0.05 {
+    if spill && cfg.spill.on && night > 0.35 {
         interior_spill(cfg, faders, v, &value_of, night, lights);
     }
 }

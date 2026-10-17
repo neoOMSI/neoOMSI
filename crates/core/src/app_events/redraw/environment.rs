@@ -77,6 +77,7 @@ impl App {
         let __t = Instant::now();
         if let Some(wt) = &self.weather {
             lights::set_cone_strength(self.weather_local.visibility_m, self.weather_local.precip_rate, daylight.night);
+            lights::set_brightness(wt.brightness);
         }
         if let Some(r) = self.renderer.as_mut() {
             lights::upload_corona_textures(r);

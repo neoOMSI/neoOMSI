@@ -124,7 +124,8 @@ impl Renderer {
         self.exposure = Some(log_exposure);
         let bright = lighting.brightness.clamp(0.02, 4.0);
         let pre = log_exposure.exp() * bright;
-        let lamp_k = (st.exposure_clear / st.exposure.max(1e-6)).clamp(0.05, 1.0);
+        let lamp_day = (st.exposure_clear / st.exposure.max(1e-6)).clamp(0.25, 1.0);
+        let lamp_k = lamp_day + (1.0 - lamp_day) * (1.0 - lighting.brightness.clamp(0.0, 1.0));
         let axes = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z];
         let avg = axes
             .iter()

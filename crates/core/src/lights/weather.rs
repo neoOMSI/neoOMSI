@@ -6,6 +6,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static FOG_VISIBILITY: AtomicU32 = AtomicU32::new(0);
 static FOG_NIGHT: AtomicU32 = AtomicU32::new(0);
+static WEATHER_BRIGHTNESS: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+pub fn set_brightness(b: f32) {
+    WEATHER_BRIGHTNESS.store(b.clamp(0.0, 1.5).to_bits(), Ordering::Relaxed);
+}
+
+pub(super) fn brightness_darkness() -> f32 {
+    (1.0 - f32::from_bits(WEATHER_BRIGHTNESS.load(Ordering::Relaxed))).clamp(0.0, 1.0)
+}
 
 pub fn set_cone_strength(fog_visibility_m: f32, _precip: f32, night: f32) {
     FOG_VISIBILITY.store(fog_visibility_m.to_bits(), Ordering::Relaxed);
