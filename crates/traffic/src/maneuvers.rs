@@ -623,7 +623,7 @@ impl ManeuverCoordinator {
         }
 
         // A pass already underway: finish or abort it (never snap laterally).
-        if let Some(d) = self.plan_passing_active(scene, actor, state) {
+        if let Some(d) = self.plan_passing_active(scene, actor, state, input.priority_pass) {
             return d;
         }
 
@@ -1225,7 +1225,7 @@ impl ManeuverCoordinator {
         ) + 1.5;
         let from = os - actor.front - clear_d - 2.0;
         let to = os + actor.rear + 8.0;
-        if self.oncoming_soon(scene, actor.id, opp, from, to, t_need) {
+        if self.oncoming_soon(scene, actor.id, opp, from, to, t_need, input.priority_pass) {
             return None;
         }
         // The whole trajectory (out and back) must clear every body and pedestrian.
@@ -1327,6 +1327,7 @@ impl ManeuverCoordinator {
         scene: &ManeuverScene,
         actor: &ManeuverActor,
         state: &mut ManeuverState,
+        priority: bool,
     ) -> Option<ManeuverDecision> {
         let mut p = state.passing?;
         let net = scene.net;
@@ -1379,7 +1380,7 @@ impl ManeuverCoordinator {
                 let t_me = pass_time(r, creep, actor.speed, actor.reaction, actor.accel, v_cap);
                 let from = os - actor.front - r - 1.0;
                 let to = os + actor.rear;
-                if self.oncoming_soon(scene, actor.id, opp, from, to, t_me + 0.5) {
+                if self.oncoming_soon(scene, actor.id, opp, from, to, t_me + 0.5, priority) {
                     let stop_d = actor.speed * actor.speed / (2.0 * 3.5);
                     let shallow =
                         actor.lateral * net.oncoming_sign() < p.side - actor.half_width - 1.45;
@@ -1518,6 +1519,9 @@ impl ManeuverCoordinator {
     }
 
     /// Who on the oncoming side reaches the stretch `from..to` of `opp` before `t_need`.
+    /// `priority`: an emergency vehicle, for which the oncoming traffic standing before
+    /// that stretch waits (`oncoming_emergency`).
+    #[allow(clippy::too_many_arguments)]
     fn oncoming_soon(
         &self,
         scene: &ManeuverScene,
@@ -1526,6 +1530,7 @@ impl ManeuverCoordinator {
         from: f32,
         to: f32,
         t_need: f32,
+        priority: bool,
     ) -> bool {
         let net = scene.net;
         let limit = net.lanes[opp].speed_limit_kmh / 3.6;
@@ -1555,6 +1560,9 @@ impl ManeuverCoordinator {
                     continue;
                 }
                 let v = iv.speed;
+                if priority && v < 0.3 {
+                    continue;
+                }
                 let v_max = (net.lanes[lane].speed_limit_kmh / 3.6).max(v);
                 let t = if v < 0.3 {
                     0.7 + arrival_time(dist, 0.0, 1.5, v_max)

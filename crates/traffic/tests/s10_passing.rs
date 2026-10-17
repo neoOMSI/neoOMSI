@@ -307,6 +307,23 @@ fn an_ambulance_passes_a_whole_queue_up_to_the_first_gap_it_fits_into() {
     assert!(back_in < 150.0 - 2.1 - s, "back in behind the car beyond the gap: {back_in}");
 }
 
+/// An ambulance passes a queue though an oncoming car stands before the stretch it passes
+/// along: that car waits for it (`oncoming_emergency`), it does not count as coming (both
+/// waited for each other, Ahlheim). One driving towards it still holds it back.
+#[test]
+fn an_ambulance_passes_while_the_oncoming_traffic_waits_for_it() {
+    let net = two_way();
+    let oncoming = |speed: f32| {
+        let mut feet: Vec<_> = (0..8).map(|k| queued(10 + k, 0, 0.0, 60.0 + k as f32 * 6.5, 0.0)).collect();
+        // southbound on lane 1 (s = 400 - y), its front at y 188
+        feet.push(queued(30, 1, -3.5, 210.0, speed));
+        let s = 60.0 - 2.1 - 6.0 - 3.5;
+        plan_behind_queue(&net, ambulance(s), feet, 6.0, false).0.phase
+    };
+    assert_eq!(oncoming(0.0), ManeuverPhase::Passing);
+    assert_ne!(oncoming(12.0), ManeuverPhase::Passing);
+}
+
 /// A road north through a crossing object (y 100..120, crossed at y 110 by a path of the
 /// same object), one lane each way; `exit_east`: the way across turns east instead.
 /// Lanes: 0 approach, 1 junction, 2 exit; 3/4/5 the oncoming lanes; 6 the crossing path.
