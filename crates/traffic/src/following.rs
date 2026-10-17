@@ -1165,9 +1165,8 @@ impl AiState {
                 for _ in 0..PLAN_LANES {
                     let from_len = net.lanes[self.lane].length();
                     let to_len = net.lanes[c.to].length();
-                    // The lane moved onto ends at a joint beside this one: the change goes on
-                    // onto the lane after it (it is not over half way across, and the car is
-                    // not put back to where that lane ended).
+                    // The lane moved onto ends beside this one: the change goes on onto the
+                    // lane after it.
                     if self.s < from_len && c.s_to >= to_len {
                         let next = self.change_plan.first().copied().filter(|&n| {
                             net.lanes[c.to].next.contains(&n) && net.lanes[n].kind == net.lanes[c.to].kind
@@ -1563,9 +1562,8 @@ mod tests {
         same(&c, "changing lanes");
     }
 
-    /// #311: a change onto a lane beside that starts with this one but ends half way along
-    /// it (a 30 m lane, then the next, beside a 75 m one - DBC_Map's lower road) keeps the
-    /// point it moves towards beside the car, and goes on across that lane's joint.
+    /// #311: a change onto a shorter lane beside keeps its target beside the car and goes on
+    /// across that lane's joint.
     #[test]
     fn a_change_onto_a_shorter_lane_beside_keeps_level_with_the_car() {
         let mk = |x: f64, a: f64, b: f64| {

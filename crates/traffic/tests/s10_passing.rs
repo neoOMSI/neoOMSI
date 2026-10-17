@@ -287,9 +287,8 @@ fn plan_behind_queue(
     (d, state)
 }
 
-/// #462: on a road with one lane each way an ambulance passes the whole queue in front of
-/// it on the free oncoming lane, up to the first gap it fits into - not just the first car,
-/// behind which there was no room to get back in, so it never pulled out at all.
+/// #462: on a road with one lane each way an ambulance passes the whole queue up to the
+/// first gap it fits into.
 #[test]
 fn an_ambulance_passes_a_whole_queue_up_to_the_first_gap_it_fits_into() {
     let net = two_way();
@@ -340,9 +339,8 @@ fn through_junction(exit_east: bool) -> Network {
     net
 }
 
-/// #462: a queue standing up to the junction the ambulance has reserved is passed on the
-/// oncoming side across the junction, back in beyond it; without the reservation the
-/// ambulance does not pull out at all (there is nowhere to get back in before it).
+/// #462: a queue up to the reserved junction is passed across it; without the reservation
+/// the ambulance does not pull out.
 #[test]
 fn an_ambulance_passes_a_queue_across_the_junction_it_has_reserved() {
     let net = through_junction(false);
@@ -368,10 +366,8 @@ fn an_ambulance_does_not_pass_a_queue_across_a_junction_where_it_turns() {
     assert_ne!(d.phase, ManeuverPhase::Passing);
 }
 
-/// #462: coming the other way on a road with one lane each way, a car stops for an
-/// ambulance held up in a queue before the stretch the ambulance passes along; one already
-/// inside it drives on and clears it, one far off is not bothered yet, and nobody stops for
-/// an ambulance that is not held up.
+/// #462: an oncoming car stops before the stretch a held-up ambulance passes along; one
+/// inside it clears it, and nobody stops for an ambulance that is not held up.
 #[test]
 fn oncoming_traffic_stops_before_the_stretch_a_held_up_ambulance_passes_along() {
     let net = two_way();

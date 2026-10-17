@@ -389,8 +389,7 @@ impl Schedule {
                 .collect();
             let layover = departure > day_time;
             // its track begins at the stand it has just pulled onto, short of the first stop:
-            // it waits there, not at the stop - unless it stands across a lane forking off
-            // behind it (the stop pulled up into its bay, `fit_bays`): then it moves up now
+            // it waits there, not at the stop - unless it stands in the road's way (`fit_bays`)
             let half_width = crate::traffic::extents(&ty, 12.0).2;
             let stand_hold = stops
                 .first()

@@ -426,10 +426,8 @@ const MAKE_ROOM_AHEAD: f64 = 1.5;
 const MAKE_ROOM_SPEED: f64 = 1.4;
 
 impl Humans {
-    /// Passengers waiting at a stop step sideways out of the way of a vehicle that edges up
-    /// to them, as people at a kerb do for a bus swinging out of its bay. They stand still
-    /// otherwise (they wait where their stop puts them), and the AI bus that had to stop for
-    /// one who stood in its sweep waited for good, the passenger waiting for it (#338).
+    /// Passengers waiting at a stop step sideways out of the way of a vehicle edging up to
+    /// them (#338).
     pub(super) fn make_room(&mut self, dt: f32, blocks: &[Block]) {
         for i in 0..self.people.len() {
             let p = &self.people[i];

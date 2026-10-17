@@ -1616,8 +1616,7 @@ fn a_trip_that_begins_in_the_bay_pulls_up_too() {
 
 #[test]
 fn a_bus_on_the_road_past_a_fork_keeps_its_stop_at_the_pole() {
-    // the same fork, but the bus stops on the road (#182: front at the pole), its rear
-    // across the place where the bay leaves it: not a bay of its own to pull up into
+    // the bus stops on the road with its rear across the fork: no bay to pull up into
     let net = bay_network();
     let mut st = [(1usize, 5.5f32, 0.0f32, 0.0f64, 1i64, 0.0f32)];
     fit_bays(&net, &[0, 1, 5], 0, &mut st, 4.5, 13.5, 1.25);
@@ -1635,8 +1634,8 @@ fn a_bus_across_the_fork_is_in_the_way_of_the_road() {
 
 #[test]
 fn the_fork_counts_where_the_bay_leaves_the_road_over_two_lanes() {
-    // the bay's way out of the road in two pieces (Gerolstein station): the rear stands on
-    // the second, only 1.75 m off the road, with the fork a lane further back
+    // the bay leaves the road in two pieces (Gerolstein station); the rear stands on the
+    // second, 1.75 m off the road
     let mut net = Network::default();
     let p = |x: f64, y: f64| glam::DVec3::new(x, y, 0.0);
     for pts in [

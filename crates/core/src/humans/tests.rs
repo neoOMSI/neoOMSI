@@ -1158,9 +1158,8 @@ fn crawling_bus(y: f64, speed: f64) -> Block {
     }
 }
 
-/// #338: somebody waiting at the kerb steps sideways out of the way of a bus edging up to
-/// them - beside it or just in front of it - and no further than its side and a margin;
-/// a bus standing still moves nobody.
+/// #338: somebody waiting at the kerb steps sideways out of a crawling bus's way, just past
+/// its side; a standing bus moves nobody.
 #[test]
 fn a_waiting_passenger_steps_aside_for_a_bus_edging_up_to_them() {
     use super::simulation::make_room_step;

@@ -247,9 +247,7 @@ fn object_ring() -> (Harness, f32) {
 
 #[test]
 fn an_entering_car_with_its_nose_in_the_ring_does_not_wait_for_the_ring_car_behind_it() {
-    // it had nosed into the ring when a bus came round behind it; the bus stopped behind
-    // it, and the car must not now wait for the standing bus to go first (each waited for
-    // the other for good, Gerolstein)
+    // nosed into the ring, it does not wait for the bus that stopped behind it
     let (mut w, meet) = object_ring();
     let entrant = add(&mut w, 20, 16, meet + 3.0 - FRONT, 0.0);
     w.actors[entrant].stopped = 5.0;

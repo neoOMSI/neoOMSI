@@ -308,8 +308,7 @@ fn host_id_collisions_cannot_consume_a_local_fare_owner_or_alias_an_avatar() {
     assert_eq!(ids.len(), h.people.len());
 }
 
-/// #338: a car edges past only the passengers who step aside for it (`make_room`), not
-/// one at a bus's door or from the LAN, whom it would drive through.
+/// #338: a car edges past only passengers who step aside (not at a bus door, not LAN).
 #[test]
 fn only_waiting_passengers_who_step_aside_let_a_car_edge_past() {
     let f = Fixture::new();

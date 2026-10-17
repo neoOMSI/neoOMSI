@@ -1,6 +1,5 @@
-//! Regressions for the on-ramp queue (Gerolstein's motorway, 2026-10): cars of the
-//! motorway kept right onto the acceleration lane, drove it to its end and waited there to
-//! merge back, and the cars from the ramp queued behind them.
+//! Regressions for the on-ramp queue on Gerolstein's motorway: cars kept right onto the
+//! acceleration lane and queued at its end.
 use glam::DVec3;
 use traffic::*;
 
@@ -25,10 +24,8 @@ fn lane(net: &mut Network, pts: &[(f64, f64)]) -> usize {
     net.lanes.len() - 1
 }
 
-/// A two-lane motorway northwards (right lane x = 0, left lane x = -3.5) with an
-/// acceleration lane (x = 3.5, y 0..100) that tapers into the right lane by y = 125. The
-/// acceleration lane comes off a ramp from another road (`bay`: it forks off the right lane
-/// just before instead, a bus bay running back into the road).
+/// A two-lane motorway northwards (x = 0 and -3.5) with an acceleration lane (x = 3.5,
+/// y 0..100) tapering into it by y = 125, off a ramp (`bay`: forking off the road instead).
 fn motorway(bay: bool) -> Network {
     motorway_with(bay, 3.5)
 }
@@ -65,8 +62,7 @@ fn the_acceleration_lane_ends_into_the_motorway_and_the_motorway_does_not() {
     assert_eq!(net.prev[M2].len(), 2, "the taper and the right lane meet");
     let (d, beside) = net.merges_into(ACCEL, 10.0, 400.0).expect("no end seen");
     assert_eq!(beside, M0);
-    // (for the cars on it it ends where the taper comes within 3.2 m of the right lane,
-    // 2.15 m into it, found to the metre; the taper meets that lane 25 m later)
+    // (it ends 2.15 m into the taper, within `MERGE_CLEAR` of the right lane)
     assert!((d - 93.0).abs() < 0.01, "ends {d} m ahead");
     assert_eq!(net.merges_into(M0, 10.0, 400.0), None);
     assert_eq!(net.merges_into(L0, 10.0, 400.0), None);
@@ -76,8 +72,7 @@ fn the_acceleration_lane_ends_into_the_motorway_and_the_motorway_does_not() {
 
 #[test]
 fn an_acceleration_lane_drawn_close_to_the_road_ends_in_its_taper() {
-    // 3 m from the right lane, closer than `MERGE_CLEAR` all along: it does not end right
-    // where the car is, so that it never moved over early, but where its taper comes in
+    // 3 m from the right lane, closer than `MERGE_CLEAR`: it still ends in its taper
     let net = motorway_with(false, 3.0);
     let (d, beside) = net.merges_into(ACCEL, 10.0, 400.0).expect("no end seen");
     assert_eq!(beside, M0);
@@ -111,7 +106,7 @@ fn the_taper_gives_way_to_the_motorway() {
 
 #[test]
 fn a_bus_pulling_out_of_its_bay_keeps_its_way() {
-    // the same lanes, but the "acceleration lane" left the road just before: a bus bay
+    // the "acceleration lane" left the road just before: a bus bay
     let net = motorway(true);
     assert!(net.lanes[MBACK].next.contains(&RAMP));
     assert!(!net.must_yield(TAPER, M1));
@@ -158,9 +153,7 @@ fn a_car_waiting_for_a_gap_waits_at_the_end_of_the_acceleration_lane() {
     );
     assert_eq!(decision.target_lane, Some(LaneId(M0)));
     let stop = decision.stop_at.expect("no wait before the end");
-    // it waits at the end of the lane beside the road, its front (2.25 m ahead of its
-    // origin) not yet in the taper where it would stand in the way of the cars going past
-    // (waiting at the merge, 114 m ahead, the cars on the road slowed for it)
+    // it waits with its front (2.25 m ahead) before the taper, out of the road's way
     assert!((stop - 89.75).abs() < 0.01, "stops at {stop}");
     let front = net.lanes[TAPER].at(10.0 + stop + 2.25 - 100.0).0;
     let beside = [M1, M2]
@@ -175,9 +168,7 @@ fn a_car_waiting_for_a_gap_waits_at_the_end_of_the_acceleration_lane() {
 
 #[test]
 fn a_car_already_in_the_taper_is_not_held_there() {
-    // it came too far to wait beside the road, its front (4 m ahead) in the taper already:
-    // it is not stopped where it stands, in the way of the cars going past, but merges
-    // where the two ways meet (giving way there)
+    // its front (4 m ahead) already in the taper: it merges instead of stopping there
     let net = motorway(false);
     let mut actor = ManeuverActor::new(VehicleId(1), ACCEL, 100.0);
     actor.front = 4.0;

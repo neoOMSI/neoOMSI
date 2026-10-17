@@ -125,11 +125,8 @@ impl Lane {
         }
     }
 
-    /// May `[ai_veh_type]` `veh_type` drive on into this lane: its rules allow it
-    /// ([`Lane::allows`]) and, for the random traffic, the lane carries some. A lane whose
-    /// `[rule] trafficdensity` is 0 for every group is closed to all but the timetable (the
-    /// editor's "no non-timetable traffic", the bus lanes at Städtedreieck's
-    /// Magdalenenkrankenhaus, #125). The timetable's vehicles (-1) go anywhere.
+    /// May `[ai_veh_type]` `veh_type` drive into this lane: its rules allow it and, for the
+    /// random traffic, it carries some (density 0 = "no non-timetable traffic", #125).
     pub fn open_to(&self, veh_type: i32) -> bool {
         self.allows(veh_type) && (veh_type < 0 || self.density > 0.0)
     }
@@ -462,13 +459,12 @@ pub struct Network {
     /// Bumped whenever lanes or links change, so callers can invalidate cached route and
     /// conflict work. Starts at a nonzero value so a default-built network is versioned.
     pub version: NetworkVersion,
-    /// Per-lane geometry the planners ask about for every vehicle every tick, worked out
-    /// once (dropped with every new `version`).
+    /// Per-lane geometry worked out once per `version`.
     pub cache: NetworkCache,
 }
 
-/// Per-lane answers of `Network` worked out when first asked, for the lanes there were at
-/// the last `bump_version` (a lane added since is worked out every time).
+/// Per-lane answers worked out when first asked (lanes added since `bump_version` are not
+/// cached).
 #[derive(Default)]
 pub struct NetworkCache {
     merge_ends: Vec<OnceLock<Option<MergeEnd>>>,
@@ -484,11 +480,10 @@ impl NetworkCache {
     }
 }
 
-/// Where the way on along a lane ends into the way of the lane beside it
-/// (`Network::merges_into`), measured from the lane's start (m).
+/// Where a lane ends into the lane beside it (`Network::merges_into`), from its start (m).
 #[derive(Debug, Clone, Copy)]
 struct MergeEnd {
-    /// Where it comes too close to the lane beside to go on beside it.
+    /// Where it comes too close to the lane beside.
     clear: f32,
     /// Where the two ways become one.
     meet: f32,
@@ -543,16 +538,13 @@ pub struct Crossing {
 /// How far before two ways meet `Network::merge_offset` measures which of them comes in
 /// from the side (m).
 pub const MERGE_BACK: f32 = 25.0;
-/// How much further off the line of the lane they become the way that ends lies (m).
+/// How much further off the line of the joint lane the ending way lies (m).
 pub const MERGE_SIDE_MIN: f32 = 0.8;
-/// A lane that ends ends, for the vehicles on it, where its middle comes closer than this
-/// to the middle of the lane beside (m): two cars side by side with some air between them.
+/// A lane that ends ends where its middle comes closer than this to the lane beside (m)...
 pub const MERGE_CLEAR: f32 = 3.2;
-/// ... or, for lanes drawn closer together than that, this much closer than they run
-/// beside each other where it starts (m).
+/// ... or this much closer than at its start, for lanes drawn closer than that (m).
 pub const MERGE_NARROWING: f32 = 0.3;
-/// How far back two ways that meet are looked at for a common start (m): a bus bay is a
-/// few dozen metres long, an acceleration lane comes from another road.
+/// How far back two ways that meet are searched for a common start (m, a bus bay).
 pub const SPLIT_BACK: f32 = 120.0;
 
 /// Two vehicles whose centre lines come closer than this (m) touch: the half widths of two
@@ -776,11 +768,7 @@ impl Network {
     }
 
     /// Do lanes `a` and `b` run beside each other over one road piece, starting and ending
-    /// together (the inner and outer lane of a curve: their lengths differ, a point beside
-    /// both lies at the same share of each)? A lane beside the start of a longer one that
-    /// ends half way along it is not: at the same share of it, the point "beside" a car 41 m
-    /// along a 75 m lane lay 16 m along a 30 m one, 25 m behind the car, and a car changing
-    /// onto it turned round after it (DBC_Map's lower road, #311).
+    /// together? Only then is a point beside both at the same share of each (#311).
     pub fn same_piece(&self, a: usize, b: usize) -> bool {
         let (la, lb) = (&self.lanes[a], &self.lanes[b]);
         (lb.start() - la.start()).truncate().length() < 8.0
@@ -1089,10 +1077,8 @@ impl Network {
         if la.turn != lb.turn {
             return la.turn != 0 && lb.turn == 0;
         }
-        // where two ways become one, the one that comes in from the side (an acceleration
-        // lane, a lane that drops out) gives way to the one that goes straight on
-        // (not a bus bay running back into the road it left just before: there the bus
-        // pulling out keeps the way it had)
+        // where two ways become one, the one from the side gives way (not a bus bay running
+        // back into the road it left)
         match la.next.iter().find(|n| lb.next.contains(n)) {
             Some(&m) => {
                 self.merge_offset(a, m) > self.merge_offset(b, m) + MERGE_SIDE_MIN
@@ -1102,8 +1088,7 @@ impl Network {
         }
     }
 
-    /// Did the ways into lanes `a` and `b` part within `SPLIT_BACK` m before them (a bay
-    /// that left the road and runs back into it)?
+    /// Did the ways into lanes `a` and `b` part within `SPLIT_BACK` m before them?
     pub fn split_before(&self, a: usize, b: usize) -> bool {
         let (wa, wb) = (self.way_back(a), self.way_back(b));
         let (mut i, mut j) = (0, 0);
@@ -1117,8 +1102,7 @@ impl Network {
         false
     }
 
-    /// Lane `from` and the lanes the ways into it come by within `SPLIT_BACK` (at most 64,
-    /// sorted).
+    /// Lane `from` and the lanes leading into it within `SPLIT_BACK` (at most 64, sorted).
     fn way_back(&self, from: usize) -> Cow<'_, [usize]> {
         let work = || {
             let mut seen: Vec<usize> = vec![from];
@@ -1143,12 +1127,10 @@ impl Network {
         }
     }
 
-    /// Does the way on from `s` along `lane` end by running into the way of a lane beside
-    /// it within `look` m: an acceleration lane, or a lane that drops out of the road? Then
-    /// (the distance to where it comes too close to the lane beside to go on beside it,
-    /// `MERGE_CLEAR`, the lane beside it at `s`). Which of two
-    /// ways that meet is the one that ends: the one that comes in from the side of the lane
-    /// they become (`merge_offset`), not the one it continues straight on.
+    /// Does the way on from `s` along `lane` run into the lane beside it within `look` m (an
+    /// acceleration lane, a lane that drops out)? Then (the distance to where it comes
+    /// within `MERGE_CLEAR` of it, that lane). The way that ends is the one coming in from
+    /// the side (`merge_offset`).
     pub fn merges_into(&self, lane: usize, s: f32, look: f32) -> Option<(f32, usize)> {
         let end = match self.cache.merge_ends.get(lane) {
             Some(cell) => *cell.get_or_init(|| self.merge_end(lane)),
@@ -1157,14 +1139,13 @@ impl Network {
         (end.meet - s <= look).then(|| ((end.clear - s).max(0.0), end.beside))
     }
 
-    /// Where the way on along `lane` ends into the way of a lane beside it, from its start
-    /// (`merges_into`).
+    /// `merges_into` from the start of `lane`.
     fn merge_end(&self, lane: usize) -> Option<MergeEnd> {
         let l = self.lanes.get(lane)?;
         if l.kind != LaneKind::Street {
             return None;
         }
-        // (lane, distance from `s` to its start) along the one way on
+        // (lane, distance to its start) along the one way on
         let way = |from: usize, s: f32| {
             let mut out = Vec::new();
             let (mut cur, mut d) = (from, self.lanes[from].length() - s);
@@ -1182,7 +1163,6 @@ impl Network {
             out
         };
         let ours = way(lane, 0.0);
-        // (the paths of its own road beside it: an acceleration lane is one of them)
         for b in [l.left, l.right].into_iter().flatten() {
             let theirs = way(b, self.beside_s(lane, b, 0.0));
             let Some(k) = ours
@@ -1202,10 +1182,7 @@ impl Network {
                 continue;
             }
             if self.merge_offset(mine, m) > self.merge_offset(other, m) + MERGE_SIDE_MIN {
-                // where it comes too close to the lane beside to drive on beside it: a car
-                // waiting at the lane's very end already stood in the way of the road
-                // (lanes drawn closer together than `MERGE_CLEAR`: closer than where it
-                // starts, else it ended right away)
+                // (a car waiting at the lane's very end already stood in the way)
                 let theirs: Vec<usize> = std::iter::once(b)
                     .chain(theirs.iter().map(|&(y, _)| y))
                     .collect();
@@ -1235,9 +1212,8 @@ impl Network {
         None
     }
 
-    /// How far off the line of lane `m`, drawn back from its start, lane `a` that runs into
-    /// it lies `MERGE_BACK` m before it (following the one way back): about nothing for the
-    /// lane `m` goes straight on from, a lane's width for one that comes in beside it.
+    /// How far lane `a`, running into `m`, lies off `m`'s line `MERGE_BACK` m before it:
+    /// about nothing for the lane `m` continues, a lane's width for one from the side.
     pub fn merge_offset(&self, a: usize, m: usize) -> f32 {
         let (start, h) = (self.lanes[m].start(), self.lanes[m].start_heading());
         let hr = (h as f64).to_radians();

@@ -693,9 +693,8 @@ impl Humans {
     /// for them.
     /// Everybody on foot on the ground, for the traffic to stop for: position, velocity
     /// and whether they wait at a stop (a bus pulls up right beside those).
-    /// Everybody on the ground: position, velocity, whether they wait at a stop and
-    /// whether, standing, they step aside for a vehicle edging past (`make_room`: not
-    /// somebody dealing with a bus at its door, from the LAN or played).
+    /// Everybody on the ground: position, velocity, whether they wait at a stop and whether
+    /// they step aside for a vehicle edging past (`make_room`).
     pub fn on_foot(&self) -> Vec<(DVec2, DVec2, bool, bool)> {
         self.people
             .iter()

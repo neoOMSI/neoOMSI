@@ -45,9 +45,7 @@ impl JunctionCoordinator {
                         })
                     }) || r.lanes.contains(&a.lane)
                         || (r.exit == Some(a.lane) && a.s < a.rear + 1.0)
-                        // (once made, it stays while the queue in front moves on: dropped
-                        // and made again as the queue's speed crossed the rule's, it cost
-                        // the cars admitted on the way their claims each time)
+                        // (it stays while the queue moves on, not flickering with its speed)
                         || (a.emergency
                             && junction_ahead(net, w).is_some_and(|m| {
                                 m.lanes[0].1 - a.front <= EMERGENCY_QUEUE_REACH
@@ -125,9 +123,8 @@ impl JunctionCoordinator {
         self.emergency_reservations.iter().any(|r| r.owner == id)
     }
 
-    /// Is `id` in front of an emergency vehicle on its way through a junction reserved for
-    /// it, the junction including `lane`? It leads the emergency through: at a red light it
-    /// rolls carefully over the line to make room, as drivers do for a siren behind them.
+    /// Is `id` in front of an emergency vehicle on its way through the reserved junction of
+    /// `lane`? It leads it through, at a red light carefully over the line.
     pub fn emergency_leads(&self, id: VehicleId, lane: usize) -> bool {
         self.emergency_reservations
             .iter()
@@ -145,8 +142,7 @@ impl JunctionCoordinator {
 
     /// Does a movement through `lanes` cross, join or share the way an emergency vehicle
     /// reserved (`r.movement`)? Only that traffic stops for it: one junction object can
-    /// hold a whole square, and a car on the far side of it, whose way never meets the
-    /// ambulance's, stood for minutes for one 100 m off (#462).
+    /// hold a whole square (#462).
     pub(super) fn meets_emergency(
         net: &Network,
         r: &EmergencyReservation,
@@ -172,10 +168,8 @@ impl JunctionCoordinator {
 pub const EMERGENCY_CROSSING_SPEED: f32 = 5.0;
 /// An emergency vehicle reserves the junction ahead this far (m) before it ...
 const EMERGENCY_RESERVE_REACH: f32 = 45.0;
-/// ... or at the end of a queue standing up to it, this long at most (m), with no gap
-/// wider than `EMERGENCY_QUEUE_GAP` (m) in it: the queue then drains through the junction
-/// in front of it (at a red light, carefully over the line) instead of the ambulance
-/// waiting out the cycle at its end (#462).
+/// ... or at the end of a queue standing up to it, at most this long (m) and with no gap
+/// wider than `EMERGENCY_QUEUE_GAP` (m), so the queue drains through in front of it (#462).
 const EMERGENCY_QUEUE_REACH: f32 = 150.0;
 const EMERGENCY_QUEUE_GAP: f32 = 15.0;
 

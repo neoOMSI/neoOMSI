@@ -170,22 +170,18 @@ const SNAP_DISTANCE: f64 = 8.0;
 const SNAP_PATIENCE: f32 = 0.6;
 /// The furthest (m) the rotation point aims inside a bend to centre the body's sweep.
 const SWEEP_SHIFT_MAX: f64 = 2.0;
-/// The largest front wheel angle (deg) an AI vehicle turns to keep to its way, whatever its
-/// file's `[inv_min_turnradius]`: OMSI's AI ignores that value and follows its path
-/// however tight the map lays it (#495).
+/// The largest front wheel angle (deg) an AI vehicle turns to keep to its way: OMSI's AI
+/// ignores `[inv_min_turnradius]` (#495).
 const AI_MAX_LOCK: f32 = 60.0;
-/// How the rotation point is held on its way (`AiBody::track`): the distance (m) either
-/// side of a point the way's bend is measured over, how far ahead (s at the speed driven)
-/// the wheels turn for it, and how hard a lateral (1/m²) and a heading (1/m) error are
-/// corrected - about critically damped, settling over a few metres.
+/// `AiBody::track`: the half window (m) the way's bend is measured over, its preview (s),
+/// and the gains on the lateral (1/m²) and heading (1/m) error, about critically damped.
 const TRACK_STEP: f32 = 3.0;
 const TRACK_PREVIEW: f32 = 0.35;
 const TRACK_LATERAL: f64 = 0.12;
 const TRACK_HEADING: f64 = 0.7;
 /// The most (1/m) the correction of a tracking error adds to the way's own bend.
 const TRACK_CORRECTION_MAX: f64 = 0.2;
-/// How many times a driver's steering pace (`steer_rate`) the wheel turns at to keep to
-/// the way.
+/// The steering pace while keeping to the way, in multiples of `steer_rate`.
 const TRACK_RATE: f32 = 4.0;
 /// A wider search is needed only when no wheel has found the current road level at all.
 /// It corrects displaced path Z without lowering a single unsupported axle onto terrain.
@@ -216,9 +212,8 @@ pub struct AiBody {
     sweep_reach: f32,
     front_long: f32,
     rear_long: f32,
-    /// The model's largest front wheel angle (deg; only for getting a corner clear and
-    /// `OMSI_AI_MODEL_LOCK`, see `AI_MAX_LOCK`) and how fast the driver turns towards it
-    /// (deg/s).
+    /// The model's largest front wheel angle (deg, see `AI_MAX_LOCK`) and how fast the
+    /// driver turns towards it (deg/s).
     max_steer: f32,
     steer_rate: f32,
     wheels: Vec<Wheel>,
@@ -660,12 +655,9 @@ impl AiBody {
         DVec2::new(-t.y, t.x) * shift
     }
 
-    /// The front wheel angle (deg, + right) that keeps the rotation point on its way (aimed
-    /// inside a bend by `sweep_shift`): the way's own bend a moment ahead, as the wheels
-    /// take that long to turn, and a correction of how far beside it and how askew to it the
-    /// body is. A pure pursuit of a point ahead cut inside a tight turn and ran out wide
-    /// after it, a bus leaving its depot over the far kerb (#495); OMSI's AI keeps to its
-    /// path.
+    /// The front wheel angle (deg, + right) that keeps the rotation point on its way, shifted
+    /// by `sweep_shift`: the way's bend a moment ahead plus a correction of the lateral and
+    /// heading error. (A pure pursuit ran out wide after tight turns, #495.)
     fn track(&self, way: &dyn Fn(f32) -> DVec3, v: f32) -> f32 {
         // (point, direction and bend, + to the left, of the way `d` from the origin)
         let frame = |d: f32| {
@@ -683,8 +675,7 @@ impl AiBody {
             };
             (b, (c - a).normalize_or_zero(), k)
         };
-        // (where along the way the rotation point is: the way's distances need not be the
-        // body's own, on the inside of a bend it is ahead of them)
+        // (project the rotation point onto the way: inside a bend it runs ahead of it)
         let mut at = self.rot_long;
         for _ in 0..3 {
             let (p, t, _) = frame(at);
@@ -699,13 +690,13 @@ impl AiBody {
         let askew = (t.x * fwd.y - t.y * fwd.x).atan2(t.dot(fwd));
         let correction = (-TRACK_LATERAL * beside - TRACK_HEADING * askew)
             .clamp(-TRACK_CORRECTION_MAX, TRACK_CORRECTION_MAX);
-        // (the line beside the way bends tighter on the inside of the bend)
+        // (the shifted line bends tighter)
         let bend = bend / (1.0 - bend * shift).max(0.5);
         -((bend + correction) * self.wheelbase as f64).atan().to_degrees() as f32
     }
 
-    /// Bicycle model: the rotation point follows the way (`track`; the front wheels steer
-    /// towards a point further along it while getting a corner clear, `recover_corner`).
+    /// Bicycle model: the rotation point follows the way (`track`, or a pure pursuit while
+    /// getting a corner clear).
     fn drive(&mut self, dt: f32, speed: f32, way: &dyn Fn(f32) -> DVec3) {
         let target = way(self.rot_long).truncate();
         let off_way = (target - self.rear).length();
@@ -760,12 +751,8 @@ impl AiBody {
             .atan2(g.dot(fwd) as f32)
             .clamp(-FRAC_PI_2, FRAC_PI_2);
         let reach = (g.length() as f32).max(1.0);
-        // The way itself says how tight it bends here (for `OMSI_DEBUG_AI_WIDE`): a
-        // junction's turn laid tighter than the model's `[inv_min_turnradius]` still has to
-        // be followed - capped at the model's lock the car ran wide of it, through the kerb,
-        // the corner house and the people on the pavement (#249). OMSI's AI ignores that
-        // value altogether and keeps to its path (#495): `AI_MAX_LOCK`, unless
-        // `OMSI_AI_MODEL_LOCK` holds it to the model's for comparison.
+        // The lock the bend needs (for `OMSI_DEBUG_AI_WIDE`); `OMSI_AI_MODEL_LOCK` holds the
+        // vehicle to its model's lock for comparison.
         let (a, b, c) = (
             way(self.rot_long).truncate(),
             way(self.rot_long + 0.5 * look).truncate(),
@@ -797,7 +784,6 @@ impl AiBody {
                 }
             }
         }
-        // (the pure pursuit only to get a corner clear of what it touched, `recover_corner`)
         let pursuit = if self.steering_recovery > 0.0 {
             (2.0 * self.wheelbase * alpha.sin() / reach).atan().to_degrees()
         } else {
@@ -806,9 +792,7 @@ impl AiBody {
         .clamp(-limit, limit);
         let want = self.recovery_steer.map(|r| r.0).unwrap_or(pursuit);
         if dt > 0.0 {
-            // (keeping to its way the wheel turns as fast as the way asks: at a driver's
-            // pace it lagged the bend, the body ran out wide after it and the correction
-            // swung it to and fro)
+            // (at a driver's pace the wheel lagged the bend and the body ran wide)
             let rate = self.steer_rate * dt * if self.steering_recovery > 0.0 { 1.0 } else { TRACK_RATE };
             self.steer_cmd += (want - self.steer_cmd).clamp(-rate, rate);
             self.steer += (self.steer_cmd - self.steer) * (dt / 0.08).min(1.0);
@@ -1658,9 +1642,7 @@ mod sweep_measure {
         }
     }
 
-    /// How far the rotation point gets beside the way `path` driven at `v` (m, + right,
-    /// the deepest to the left and the furthest to the right), the way's distances read
-    /// back from the body as the traffic does every tick.
+    /// The furthest the rotation point gets left (-) and right (+) of `path` driven at `v`.
     fn rotation_point_beside(def: &Vehicle, path: &dyn Fn(f64) -> DVec3, length: f64, v: f32) -> (f64, f64) {
         let mut body = AiBody::new(def, MotionKind::Road);
         let dt = 1.0 / 60.0;
@@ -1700,10 +1682,8 @@ mod sweep_measure {
         def
     }
 
-    /// #495: a bus leaving Gerolstein's depot turns 135 degrees onto the road on a tight
-    /// path. Its rotation point aims inside the bend to centre the sweep (`sweep_shift`) and
-    /// never runs out wide of the way: steering after a point ahead it cut 3 m inside and
-    /// then ran 1.4-1.8 m out over the far kerb.
+    /// #495: a bus leaving Gerolstein's depot on a tight 135-degree turn aims inside it
+    /// (`sweep_shift`) and never runs out wide.
     #[test]
     fn a_bus_keeps_to_a_tight_turn_out_of_its_depot() {
         let def = lions_city();
@@ -1716,8 +1696,7 @@ mod sweep_measure {
         }
     }
 
-    /// #495: OMSI's AI ignores `[inv_min_turnradius]` and keeps to its path however tight:
-    /// a model that would turn its wheels no more than 15 degrees follows the same turn.
+    /// #495: a model with a 15-degree lock follows the same turn.
     #[test]
     fn the_models_turning_radius_does_not_hold_an_ai_vehicle_off_its_way() {
         let mut def = lions_city();

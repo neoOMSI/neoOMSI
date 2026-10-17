@@ -232,9 +232,7 @@ fn a_car_in_front_of_the_emergency_on_its_way_leads_it_through_the_junction() {
     assert_eq!(w.plan(&mut c, cross, None).binding, Some(Reason::EmergencyYield));
 }
 
-/// #462: cross traffic admitted on green far up the road stops for the ambulance while it
-/// still can, instead of keeping the flow going in front of it; one too close to stop
-/// drives on.
+/// #462: admitted cross traffic stops for the ambulance while it still can.
 #[test]
 fn admitted_cross_traffic_still_stops_for_an_emergency_while_it_can() {
     let mut w = Harness::new(four_way());
@@ -280,8 +278,7 @@ fn admitted_cross_traffic_still_stops_for_an_emergency_while_it_can() {
     );
 }
 
-/// #462: an ambulance at the end of a queue standing up to a junction reserves it from
-/// there, so the queue drains through in front of it; a gap in the queue ends that.
+/// #462: an ambulance at the end of a queue up to a junction reserves it; a gap ends that.
 #[test]
 fn an_emergency_at_the_end_of_a_queue_to_the_junction_reserves_it() {
     let queue = |gap: f32| {
@@ -309,9 +306,7 @@ fn an_emergency_at_the_end_of_a_queue_to_the_junction_reserves_it() {
     assert!(!queue(25.0), "a reservation across a gap in the queue");
 }
 
-/// #462: the reservation made from the end of a queue stays while the queue moves on in
-/// front of the ambulance (it flickered as the queue's speed crossed the rule's, and the
-/// cars admitted on the way lost their claims each time).
+/// #462: a reservation made from the end of a queue stays while the queue moves on.
 #[test]
 fn a_reservation_from_the_end_of_a_queue_stays_while_the_queue_moves_on() {
     let mut w = Harness::new(four_way());
@@ -341,8 +336,8 @@ fn a_reservation_from_the_end_of_a_queue_stays_while_the_queue_moves_on() {
     assert!(!fresh.emergency_owns(VehicleId(1), 1));
 }
 
-/// #462: at a red light the car at the head of the queue in front of the ambulance rolls
-/// carefully over the line once the junction is reserved, instead of holding it up.
+/// #462: at a red light the head of the queue rolls carefully over the line for the
+/// ambulance.
 #[test]
 fn the_head_of_the_queue_crosses_the_red_line_for_the_emergency() {
     let mut net = four_way();

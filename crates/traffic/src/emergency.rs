@@ -15,17 +15,14 @@ pub struct EmergencyDrive {
     pub pass_reach: f32,
 }
 
-/// The stretch (m) of the oncoming lane an emergency vehicle held up in a queue may pass
-/// along (as far as it passes a queue, `EMERGENCY_QUEUE_MAX` and a little).
+/// The stretch (m) of the oncoming lane an emergency vehicle held up in a queue may use.
 pub const EMERGENCY_PASS_ZONE: f32 = 150.0;
 /// How far beyond that stretch (m) oncoming traffic stops for it.
 pub const EMERGENCY_ONCOMING_HOLD: f32 = 100.0;
 
-/// Where a vehicle coming the other way on a road with one lane each way stops for an
-/// emergency vehicle held up in a queue on the other side (m ahead of its front): before
-/// the stretch the emergency vehicle passes along, as drivers stop for a siren coming
-/// towards them. `None`: none of them, or it is inside that stretch already and drives on
-/// to clear it (#462: the ambulance otherwise waited for a gap in the oncoming traffic).
+/// Where an oncoming vehicle stops (m ahead of its front) for an emergency vehicle passing
+/// a queue on a road with one lane each way: before the stretch it passes along (#462).
+/// `None`: none, or it is inside that stretch already and drives on to clear it.
 pub fn oncoming_emergency(
     net: &Network,
     ego: VehicleId,

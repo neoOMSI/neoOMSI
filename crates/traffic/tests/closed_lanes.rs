@@ -103,9 +103,7 @@ fn a_car_does_not_keep_right_into_a_lane_that_closes() {
     assert_eq!(intent.target, None, "wished into the lane that becomes a bus lane");
 }
 
-/// The same road where the bus lane is closed by its traffic density instead: `[rule]
-/// trafficdensity 0` for every group, the editor's "no non-timetable traffic" (#125,
-/// Städtedreieck's Magdalenenkrankenhaus has no `no_cars` at all).
+/// The same road with the bus lane closed by `[rule] trafficdensity 0` instead (#125).
 fn no_random_traffic_ahead() -> Network {
     let mut net = bus_lane_ahead();
     net.lanes[4].no_cars = false;
@@ -169,8 +167,7 @@ fn a_car_already_on_a_lane_without_random_traffic_is_not_held_there() {
 
 #[test]
 fn a_road_without_a_lane_to_move_to_is_driven_on_as_before() {
-    // one lane only, the last piece without random traffic (a depot road): there is no
-    // open lane to move to, so the car is neither held nor taken off but drives on
+    // one lane only, the last piece without random traffic: with nowhere to go it drives on
     let mut net = Network::default();
     for (from, to) in [(0.0, 60.0), (60.0, 200.0)] {
         let mut l = LaneBuilder::polyline(

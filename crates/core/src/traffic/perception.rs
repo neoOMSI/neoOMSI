@@ -313,10 +313,8 @@ impl Traffic {
     /// somebody leaving a stop, or through anybody standing in the carriageway. A
     /// timetable bus ignores the people waiting at the kerb for it unless they stand well
     /// inside its path (it pulls up right beside them).
-    /// `past_standing`: the car is edging past passengers waiting at a stop who stand still
-    /// (`PEOPLE_PATIENCE`); they step aside for it (`Humans::make_room`), anybody else
-    /// still stops it. The third value says whether the person stopping it is such a
-    /// passenger.
+    /// `past_standing`: the car edges past standing passengers who step aside
+    /// (`PEOPLE_PATIENCE`); the third value says whether the person stopping it is one.
     pub(crate) fn people_stop(
         &self,
         i: usize,
@@ -393,7 +391,6 @@ impl Traffic {
                 let t = (((d - st.front).max(0.0)) / v.max(1.0)).min(2.0) as f64;
                 for &idx in near {
                     let (p, pv, waiting, steps_aside) = &self.people[idx];
-                    // (only those who do step aside: the car would drive through the rest)
                     let standing = *steps_aside && pv.length() < PEOPLE_STANDING_SPEED;
                     if past_standing && standing {
                         continue;

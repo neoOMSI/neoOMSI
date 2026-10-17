@@ -358,10 +358,8 @@ fn bay_for(lat: f32, ty: &::simulation::VehicleType, rail: bool, left_hand: bool
 }
 
 /// The stops' raw box offsets (see `bay_offset`) made the vehicle's bay offsets, and the
-/// stops moved to where its origin comes to rest (`shift_stops`); a road vehicle then
-/// pulls up into its bay as far as it must to stand clear of the lane it left
-/// (`fit_bays`). `rear`: how far its whole consist reaches behind its origin
-/// (`Traffic::coupled_rear`).
+/// stops moved to where its origin comes to rest (`shift_stops`) and, for a road vehicle,
+/// pulled up into its bay (`fit_bays`). `rear`: its consist's reach behind its origin.
 fn place_stops(
     net: &Network,
     route: &[usize],
@@ -387,26 +385,20 @@ fn place_stops(
     }
 }
 
-/// Room a vehicle at a stop leaves beside it to the lane its bay forked off: half a bus
-/// passing there and a little air (m).
+/// Room (m) a vehicle at a stop leaves to the lane its bay forked off.
 const BAY_CLEARANCE: f32 = 1.6;
-/// The furthest a vehicle pulls up past its stop point to fit into its bay (m).
+/// The furthest (m) it pulls up past its stop point.
 const BAY_PULL_UP_MAX: f32 = 15.0;
-/// What it keeps clear of the place where its bay runs back into the road (m).
+/// What it keeps clear (m) of where its bay runs back into the road.
 const BAY_EXIT_MARGIN: f32 = 1.0;
-/// How far behind its rear a vehicle at a stop looks for the place its bay forked off (m).
+/// How far behind its rear (m) it looks for the fork.
 const BAY_FORK_LOOK: f32 = 20.0;
-/// How far past a fork the two ways are compared to tell the bay from the road (m).
+/// How far past a fork (m) the two ways are compared to tell the bay from the road.
 const BAY_SIDE_AT: f32 = 10.0;
 
-/// A bus whose front comes to rest at the pole of a short bay can leave its rear - an
-/// articulated bus its whole rear section - standing across the lane the bay forked off,
-/// so that everything behind it waits there for as long as it stands (a layover at
-/// Gerolstein's station). A driver pulls up into the bay instead, as far as the bay
-/// allows: the stop point moves on until the consist's rear stands clear of every lane
-/// that forked off its way just behind it, by at most `BAY_PULL_UP_MAX`, and not into the
-/// place where the bay runs back into the road or another lane crosses it. Where it does
-/// not fit even then the stop stays where it was.
+/// A bus at the pole of a short bay can leave its rear across the road the bay forked off
+/// (Gerolstein station). Move the stop point on until the consist's rear is clear, by at
+/// most `BAY_PULL_UP_MAX` and not past the bay's exit; where it does not fit, keep it.
 fn fit_bays(
     net: &Network,
     route: &[usize],
@@ -425,8 +417,7 @@ fn fit_bays(
         if !blocks_fork(net, route, k, st.1, rear, half_width) {
             continue;
         }
-        // the room ahead: on to where a lane joins the way (the bay's exit), another
-        // crosses it (where two vehicles on them would touch) or it ends
+        // the room ahead: to the bay's exit, a crossing lane or the end
         let (mut room, mut margin) = (0.0, BAY_EXIT_MARGIN);
         for (m, &l) in route[k..].iter().enumerate() {
             let from = if m == 0 { st.1 } else { 0.0 };
@@ -442,7 +433,6 @@ fn fit_bays(
                 .filter(|&a| a > from)
                 .fold(f32::INFINITY, f32::min);
             if meet.is_finite() {
-                // (where they would touch: no more margin needed)
                 room += meet - from;
                 margin = 0.0;
                 break;
@@ -466,9 +456,8 @@ fn fit_bays(
     }
 }
 
-/// `route` led in by the way to it, when it begins in a bay (a trip taken on where the
-/// last one ended): the lanes that alone lead into it, `back` metres back; and how many
-/// lanes that put in front.
+/// `route` with the lanes that alone lead into it prepended, `back` metres back (a trip that
+/// begins in a bay), and how many were prepended.
 fn way_back(net: &Network, route: &[usize], back: f32) -> (Vec<usize>, usize) {
     let mut behind = Vec::new();
     let (mut first, mut len) = (route.first().copied(), 0.0);
@@ -493,8 +482,7 @@ fn way_back(net: &Network, route: &[usize], back: f32) -> (Vec<usize>, usize) {
     )
 }
 
-/// Does a consist standing at `s` on `route[k]` stand in the way of a lane forking off
-/// behind it (`blocks_fork`), the way it came by included?
+/// `blocks_fork`, the way it came by included.
 pub(super) fn in_the_way(
     net: &Network,
     route: &[usize],
@@ -517,10 +505,8 @@ fn along_route(net: &Network, route: &[usize], mut k: usize, mut s: f32) -> (usi
     (k, s)
 }
 
-/// Does a consist standing with its origin at `s` on `route[k]` stand in the way of a lane
-/// that forks off its route there: across the fork itself, or with its rear nearer than
-/// `BAY_CLEARANCE` beyond its own half width to a lane forking off up to `BAY_FORK_LOOK`
-/// behind it?
+/// Does a consist with its origin at `s` on `route[k]` stand across a fork its bay left the
+/// road at, or with its rear within `BAY_CLEARANCE` of the road beyond its half width?
 fn blocks_fork(
     net: &Network,
     route: &[usize],
@@ -535,7 +521,7 @@ fn blocks_fork(
         sr += net.lanes[route[kr]].length();
     }
     let p = net.lanes[route[kr]].at(sr.max(0.0)).0;
-    // a bay leaves the road slowly: the forks a little behind its rear count too
+    // (a bay leaves the road slowly: forks a little behind the rear count too)
     let (mut j0, mut back) = (kr, sr);
     while j0 > 0 && back < BAY_FORK_LOOK {
         j0 -= 1;
@@ -547,15 +533,13 @@ fn blocks_fork(
             .iter()
             .filter(|&&o| o != route[j]);
         for &o in siblings {
-            // (only a bay: a bus on the road just past a turn pocket keeps its stop point
-            // at the pole)
+            // (not a bus on the road just past a turn pocket)
             if !leaves_road(net, route, j, o) {
                 continue;
             }
             if j > kr {
                 return true;
             }
-            // the forked-off lane and the ones it runs on into, the length of a bus
             let mut chain = vec![o];
             let mut len = net.lanes[o].length();
             while len < BAY_FORK_LOOK * 2.0 {
@@ -581,8 +565,8 @@ fn blocks_fork(
     false
 }
 
-/// Does `route` leave the road at the fork before `route[j]`, where `other` goes on: is it
-/// the further of the two off the line the road came in on, `BAY_SIDE_AT` past the fork?
+/// Is `route` the branch at the fork before `route[j]` that leaves the road (further off
+/// the incoming line than `other`, `BAY_SIDE_AT` past the fork)?
 fn leaves_road(net: &Network, route: &[usize], j: usize, other: usize) -> bool {
     let into = &net.lanes[route[j - 1]];
     let (q, h) = (into.end(), (into.end_heading() as f64).to_radians());

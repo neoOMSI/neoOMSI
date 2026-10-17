@@ -68,8 +68,7 @@ pub const DISCRETIONARY_DWELL: f32 = 0.6;
 pub const OSCILLATION_WINDOW: f32 = 8.0;
 /// How far ahead a turn lane is entered (m).
 pub const TURN_LANE_LOOKAHEAD: f32 = 150.0;
-/// How far ahead a lane that ends (an acceleration lane, a lane that drops out) makes the
-/// vehicle on it move over (m): an acceleration lane is 100-250 m long.
+/// How far ahead (m) a lane that ends (`Network::merges_into`) makes its vehicles move over.
 pub const MERGE_LOOKAHEAD: f32 = 400.0;
 /// A vehicle does not change onto a lane that ends within this (m).
 pub const KEEP_OFF_ENDING: f32 = 400.0;
@@ -361,9 +360,8 @@ pub struct ManeuverScene<'a> {
 pub struct ManeuverInputs {
     pub emergency: Option<crate::emergency::EmergencyApproach>,
     pub priority_pass: bool,
-    /// The emergency vehicle holds the reservation of the junction ahead (the first on its
-    /// way): passing a queue that stands up to it, it may go on across it on the oncoming
-    /// side.
+    /// The emergency vehicle holds the reservation of the first junction ahead: it may pass
+    /// a queue across it on the oncoming side.
     pub emergency_through: bool,
     /// A scheduled bus queues for its own occupied stop instead of passing that queue.
     pub queue_for_stop: bool,
@@ -784,10 +782,8 @@ impl ManeuverCoordinator {
         let dir = side_of(net, actor.lane, to);
         // (waiting for a gap, the car stops before the lane the map closes to it, which may
         // lie a spline joint or two ahead, else before the end of its lane)
-        // (on a lane that ends, its front before the end of it: the acceleration lane goes
-        // on to where it comes too close to the road, not only to the end of its first
-        // piece; a car already in the taper is not held there in the way of the road, it
-        // merges where the two ways meet, giving way there)
+        // (on a lane that ends, before it comes too close to the road; a car already in the
+        // taper merges where the ways meet instead of stopping there)
         let closed = closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next)
             .filter(|_| actor.lane_kind == LaneKind::Street);
         let ending = net
@@ -1060,10 +1056,8 @@ impl ManeuverCoordinator {
             return None;
         }
         let real = gap + if input.parked { 2.0 } else { 0.0 };
-        // An emergency vehicle passes the whole queue in front of it, up to the first gap
-        // it fits into, or - the queue standing up to the junction it has reserved - across
-        // the junction on the oncoming side (#462: on a road with one lane each way the
-        // ambulance otherwise waited at the end of every queue).
+        // An emergency vehicle passes the whole queue up to the first gap it fits into, or
+        // across the junction it has reserved (#462).
         let queue = input
             .priority_pass
             .then(|| self.emergency_queue(scene, actor, real))
@@ -1154,13 +1148,11 @@ impl ManeuverCoordinator {
         let back_min = back_in_ramp(side, 0.0, BACK_IN_LAT_ACCEL);
         let mut need_room =
             (actor.length + 4.0 + v_back * v_back / (2.0 * actor.decel.max(1.0))).max(back_min + 2.0);
-        // (an emergency vehicle slows down to get back into the gap in a queue: it only needs
-        // the gap itself, and comes back in at the speed that stops it short of the car in
-        // front of it)
+        // (into a gap in a queue it needs only the gap, coming back in slowly enough to stop)
         if queue.is_some() {
             need_room = (actor.length + EMERGENCY_MERGE_MARGIN).max(back_min + 2.0);
         }
-        // (looking far enough beyond the gap to see the car its curve back must stop short of)
+        // (far enough to see the car beyond the gap)
         let look_room = if queue.is_some() {
             need_room + EMERGENCY_QUEUE_LOOK * 0.25
         } else {
@@ -1174,8 +1166,7 @@ impl ManeuverCoordinator {
             let stop_in = (merge_room - actor.length - 2.0).max(1.0);
             v_back = v_back.min((2.0 * actor.decel.max(1.0) * stop_in).sqrt()).max(3.0);
         }
-        // (back into a gap in a queue, the curve back ends before the car beyond it: it
-        // starts only once the whole vehicle is past the last car of the queue)
+        // (into a gap: the curve back starts once the whole vehicle is past the queue)
         let room_back = merge_room
             - 2.0
             - if queue.is_some() {
@@ -1237,11 +1228,8 @@ impl ManeuverCoordinator {
         Some(d)
     }
 
-    /// The queue an emergency vehicle has in front of it on its way: its length from the
-    /// leader's rear (m), and how it ends - at a gap the vehicle fits into, or at the
-    /// junction it stands up to (with the distance from the vehicle origin to the end of
-    /// the junction when the way goes straight across it). `None`: nothing standing or
-    /// slow right in front of it.
+    /// The queue in front of an emergency vehicle: its length from the leader's rear (m) and
+    /// how it ends. `None`: nothing standing or slow right in front of it.
     fn emergency_queue(
         &self,
         scene: &ManeuverScene,
@@ -1343,10 +1331,8 @@ impl ManeuverCoordinator {
             return Some(d);
         }
         if odo >= p.until {
-            // Past the obstacle: move back into the lane along the return S-curve. It is laid
-            // once, from where the car was when it got past: laid afresh from where it is on
-            // every tick, the curve never got beyond its first metres, and a car drove on the
-            // wrong side of the road for hundreds of metres (Cayuga, #311).
+            // Past the obstacle: back into the lane along one S-curve, laid once from where
+            // the car got past (laid afresh every tick it never got back, #311).
             let from = *p.back_from.get_or_insert(actor.lateral);
             let mut d = ManeuverDecision::new(ManeuverPhase::Passing);
             d.lateral_target = Some(0.0);
@@ -1850,9 +1836,7 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
                     .is_none()
         });
     }
-    // The lane ends, running into the way of the lane beside it (an acceleration lane, a
-    // lane that drops out): move over onto that one in good time, as soon as there is a
-    // gap, not at the end of it.
+    // A lane that ends (an acceleration lane): move over as soon as there is a gap.
     if let Some(b) = ending_lane(net, actor) {
         return Some(b);
     }
@@ -2014,8 +1998,7 @@ fn emergency_can_pass_here(net: &Network, actor: &ManeuverActor) -> bool {
 enum QueueEnd {
     /// At a gap the vehicle fits into before the next junction.
     Gap,
-    /// At the junction it stands up to; the distance to the junction's end when the way
-    /// goes straight across it.
+    /// At the junction; the distance to its end when the way goes straight across.
     Junction(Option<f32>),
 }
 
@@ -2050,8 +2033,7 @@ fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_juncti
     loop {
         let Some((lane, u)) = way_locate(net, way, d.min(distance)) else { return false };
         let l = &net.lanes[lane];
-        // (an emergency vehicle crossing a reserved junction on the oncoming side: the
-        // junction itself is no carriageway, the roads on both sides of it are)
+        // (across a reserved junction only the roads on both sides count)
         if across_junction && !net.crossings[lane].is_empty() {
             if d >= distance {
                 return true;
@@ -2167,8 +2149,7 @@ mod tests {
         assert_eq!(coord.approved(VehicleId(5)), None);
     }
 
-    /// #311: past the obstacle, the way back into the lane is one S-curve, not one laid
-    /// afresh from wherever the car is on every tick (that never got the car back).
+    /// #311: past the obstacle, the way back into the lane is one S-curve.
     #[test]
     fn a_pass_returns_along_one_s_curve() {
         let net = straight_lane();

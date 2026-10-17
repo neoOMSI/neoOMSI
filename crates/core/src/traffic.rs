@@ -130,11 +130,9 @@ const SCENERY_PINNED_GONE: f32 = 25.0;
 /// round. Driving through it along the path beats holding the line, and the stop for it
 /// before contact keeps the clipping to the cases that cannot be avoided.
 const SCENERY_GHOST_AFTER: f32 = 3.0;
-/// A car that has stood this long (s) for a passenger waiting at a stop who stands in its
-/// way - at the kerb where a bus swings out of its bay - edges past at `PEOPLE_CREEP` for
-/// its length and `PEOPLE_PAST_MARGIN` more; the passengers step aside for a vehicle
-/// edging up to them (`Humans::make_room`). Anybody walking, or not waiting at a stop,
-/// still stops it. Waiting for each other, bus and passenger stood there for good (#338).
+/// A car that has stood this long (s) for a waiting passenger in its way edges past at
+/// `PEOPLE_CREEP` (m/s) for its length plus `PEOPLE_PAST_MARGIN` (m); they step aside
+/// (`Humans::make_room`, #338).
 const PEOPLE_PATIENCE: f32 = 3.0;
 const PEOPLE_CREEP: f32 = 1.5;
 const PEOPLE_PAST_MARGIN: f32 = 6.0;
@@ -152,16 +150,10 @@ const BERTH_HELD_LONG: f32 = 90.0;
 const PLAYER_BOX_MARGIN: f32 = 0.5;
 /// An emergency vehicle passes a leader slower than this (m/s) on a free oncoming lane.
 const EMERGENCY_PASS_LEAD_SPEED: f32 = 4.2;
-/// An emergency vehicle that has stood this long (s) holding a junction reservation, which
-/// keeps everybody else out, drives by the ordinary rules for `EMERGENCY_PAUSE`, so a
-/// deadlock round it resolves (its exit full, say). Waiting for its junction to clear it
-/// keeps its rights longer: having lost them after 8 s anywhere, an ambulance behind a red
-/// light waited out the whole cycle like a car (#462).
+/// An emergency vehicle that has stood this long (s) at the line of its reserved junction
+/// drives by the ordinary rules for `EMERGENCY_PAUSE` (s), so a deadlock round it resolves.
 const EMERGENCY_STUCK_AFTER: f32 = 8.0;
-/// ... and this long (s) when it stands behind the vehicles in front of it: they lead it
-/// through a reserved junction or pull over for it, and the oncoming traffic stops for
-/// it; when it still cannot get past them (an oncoming queue standing in its way), they
-/// all go on for a while instead of waiting for each other for good.
+/// ... and this long (s) when held anywhere else (behind a queue, #462).
 const EMERGENCY_STUCK_BEHIND: f32 = 25.0;
 const EMERGENCY_PAUSE: f32 = 10.0;
 
@@ -182,13 +174,12 @@ pub struct AiCar {
     pub(crate) caps: VehicleCapabilities,
     pub(crate) motion_fault: Option<Reason>,
     pub(crate) scenery_streak: f32,
-    /// How long (s) this emergency vehicle has stood holding others up, and the traffic
-    /// time until which it drives by the ordinary rules after standing too long
-    /// (`EMERGENCY_STUCK_AFTER`).
+    /// How long (s) this emergency vehicle has stood, and until when it drives by the
+    /// ordinary rules (`EMERGENCY_STUCK_AFTER`).
     pub(crate) emergency_hold: f32,
     pub(crate) emergency_pause_until: f32,
-    /// How long (s) it has stood for somebody standing still in its way, and the odometer
-    /// reading up to which it edges past people standing still (`PEOPLE_PATIENCE`).
+    /// How long (s) it has stood for people in its way, and the odometer reading up to
+    /// which it edges past them (`PEOPLE_PATIENCE`).
     pub(crate) people_wait: f32,
     pub(crate) people_past_until: f32,
     /// Metres its body can still travel along its way before touching scenery, from the
@@ -493,9 +484,7 @@ pub struct Traffic {
     /// Pedestrians on the footpaths: (lane, distance along it), for giving way at crossings
     /// and for the pedestrian lights' request buttons.
     walkers: Vec<(usize, f32)>,
-    /// Everybody on foot on the ground: position, velocity, whether they are waiting
-    /// at a stop and whether they step aside (`Humans::on_foot`, set every frame) - the
-    /// cars stop for anybody in their way, not only on a crossing.
+    /// Everybody on foot on the ground (`Humans::on_foot`, set every frame).
     people: Vec<(DVec2, DVec2, bool, bool)>,
     /// Spatial broadphase grid over `people` (cells of [`PEOPLE_GRID_CELL`] metres),
     /// rebuilt with them for the corridor queries in `people_stop`.

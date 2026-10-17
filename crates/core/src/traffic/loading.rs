@@ -726,9 +726,8 @@ impl Traffic {
     }
 
 
-    /// How far the rear of `ty`'s whole consist - its rear sections and trailers hung on
-    /// its couplings (`trailer_chain`), standing in line - reaches behind its origin (m),
-    /// before the vehicle is made (`consist_rear` measures one that has been).
+    /// How far (m) `ty`'s whole consist, standing in line, reaches behind its origin, before
+    /// the vehicle is made (`consist_rear` measures one that has been).
     pub(crate) fn coupled_rear(&mut self, ty: &Arc<VehicleType>) -> f32 {
         coupled_rear_of(ty, &self.trailer_chain(ty))
     }
@@ -1248,8 +1247,7 @@ pub(crate) fn car_key(path: &Path) -> String {
 /// See [`Traffic::coupled_rear`]: `ty` with `chain` coupled behind it.
 fn coupled_rear_of(ty: &VehicleType, chain: &[(Arc<VehicleType>, bool)]) -> f32 {
     let (_, rear, _) = extents(ty, 12.0);
-    // (front coupling, back coupling): how far ahead of the origin along the way; a part
-    // turned round has them the other way round
+    // (front coupling, back coupling) ahead of the origin; swapped for a part turned round
     let couplings = |def: &::legacy_vehicle::Vehicle, rev: bool| {
         let front = def.coupling_front.as_ref().map_or(4.0, |c| c.pos[1]);
         let back = def.coupling_back.as_ref().map_or(-4.0, |c| c.pos[1]);

@@ -739,9 +739,7 @@ impl JunctionCoordinator {
         // a junction beyond a red light's line is not decided yet
         // (on the ring of a roundabout a car drives on and out of the way; in front of the
         // emergency vehicle on its way, it leads it through. One admitted already stops too
-        // while it still can before the junction: admitted on green far up the road, the
-        // cross traffic kept coming, and the ambulance waited at its red for the flow to
-        // end until it gave up its rights, Velbert #462.)
+        // while it still can, #462.)
         let can_stop_before = jn.lanes[0].1 - actor.front >= firm_stop(actor);
         let my_lanes: Vec<usize> = jn.lanes.iter().map(|&(l, _)| l).collect();
         if !jn.inside && !scene.net.is_ring(actor.lane) && self.emergency_reservations.iter().any(|r|
@@ -980,9 +978,8 @@ impl JunctionCoordinator {
                     // before its entry too: it does not cut in while the ring queues (a
                     // standing ring car counted as never arriving, the entries filled the
                     // ring and the cars on it then had to wait for them).
-                    // (not once its front is well into the meeting place: the ring car
-                    // standing behind it there stands for it, and each waited for the other
-                    // for good - a player's bus come up from behind on the ring)
+                    // (not once its front is well into the meeting place: the ring car behind
+                    // it waits for it, a deadlock)
                     let nosed_in = mine_ahead < -NOSED_IN;
                     let entering_ring = scene.net.is_ring(m) && !scene.net.is_ring(l)
                         && scene.net.must_yield(l, m);
@@ -1004,10 +1001,8 @@ impl JunctionCoordinator {
                     {
                         continue;
                     }
-                    // Well into the meeting place already, a vehicle that has to give way
-                    // clears it rather than stopping there in the other's way, while the
-                    // other can still stop before it (it stopped with its nose in the ring,
-                    // and the bus coming round behind could not get past it).
+                    // Well into the meeting place, a vehicle that has to give way clears it
+                    // while the other can still stop.
                     if nosed_in && !o.emergency && mode.is_none() && theirs > stopping_distance(o) {
                         continue;
                     }

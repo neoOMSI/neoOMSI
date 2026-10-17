@@ -832,9 +832,7 @@ use crate::following::smooth01;
 
     #[test]
     fn a_driver_with_a_choice_keeps_off_a_road_that_goes_on_without_random_traffic() {
-        // a lane that forks: one way goes on after 40 m as a long road without random
-        // traffic (`[rule] trafficdensity 0`, the bus road at Städtedreieck's
-        // Magdalenenkrankenhaus, #125), the other runs round a long loop
+        // a fork: one way goes on as a road without random traffic (#125), the other loops
         let a = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, LaneKind::Street, 3.0);
         let fork = DVec3::new(0.0, 30.0, 0.0);
         let to_bus_road = LaneBuilder::arc(fork, 10.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
