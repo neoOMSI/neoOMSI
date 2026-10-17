@@ -19,7 +19,15 @@ impl App {
         } else if self.weather_blend.is_some() {
             self.tick_weather(dt);
         }
-        let daylight = ::simulation::Daylight::compute(&self.clock, self.envir.as_ref());
+        let mut daylight = ::simulation::Daylight::compute(&self.clock, self.envir.as_ref());
+        // Enable night maps and street lamps when brightness is below 0.05
+        if let Some(w) = self.weather.as_ref() {
+            let clarity = ((self.weather_local.visibility_m.max(50.0) / 50.0).ln() / 1000.0f32.ln())
+                .clamp(0.0, 1.0);
+            if clarity <= 0.05 || w.brightness * w.brightness <= 0.05 {
+                daylight.lamps_on = true;
+            }
+        }
         if self.lamps_on != Some(daylight.lamps_on) {
             self.lamps_on = Some(daylight.lamps_on);
             if let (Some(w), Some(r), Some(scene)) = (
@@ -49,6 +57,7 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             p.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
+                // the weather and the road's wetness where this vehicle stands
                 let (x, y) = (p.vehicle.position.x, p.vehicle.position.y);
                 let local = self.sky.sample(w, [x, y], weather::enhanced_sky());
                 let wetness = self.wet_grid.at(x, y);
