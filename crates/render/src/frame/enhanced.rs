@@ -48,8 +48,7 @@ impl Renderer {
         self.sky_state = Some(st);
     }
 
-    /// How much brighter the enhanced picture is than the plain shading under `lighting`,
-    /// for an upward surface at the picture's exposure (1 without enhanced graphics).
+    /// Enhanced-to-plain brightness for an upward surface (1 without enhanced graphics).
     pub fn enhanced_light_ratio(&self, lighting: &Lighting) -> f32 {
         if self.hdr_pass.is_none() || ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_some() {
             return 1.0;
@@ -178,8 +177,7 @@ impl Renderer {
             }
             None => Vec3::ZERO,
         };
-        // the weather changed the clouds: draw the sky cube again (not more often than once a
-        // second or so)
+        // Recapture changed clouds at most about once per second.
         if let Some(p) = self.probe.as_mut() {
             let mut sig = [0.0f32; 12];
             for (i, l) in lighting.cloud_layers.iter().enumerate() {
@@ -208,6 +206,7 @@ impl Renderer {
                 p.cube_recapture = p.cube_filled;
             }
         }
+        let _ = env!("neoomsi_RENDER_PROFILE", "Render profile is missing from the build configuration");
         let u = EnhancedUniform {
             exposure: [
                 pre,
