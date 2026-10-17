@@ -49,12 +49,15 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             p.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                let sheltered = self.weather_local.precip_kind != 0
+                let (x, y) = (p.vehicle.position.x, p.vehicle.position.y);
+                let local = self.sky.sample(w, [x, y], weather::enhanced_sky());
+                let wetness = self.wet_grid.at(x, y);
+                let sheltered = local.precip_kind != 0
                     && self.world.as_ref().is_some_and(|world| {
                     crate::shelter::windscreen_top(&p.vehicle)
                         .is_some_and(|top| self.shelter.covers_anywhere(world, top))
                 });
-                weather::apply_to_vehicle(&mut p.vehicle, w, &self.weather_local, self.wetness, sheltered);
+                weather::apply_to_vehicle(&mut p.vehicle, w, &local, wetness, sheltered);
             }
         }
         for q in self.placed.iter_mut() {
@@ -66,12 +69,16 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             q.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                let sheltered = self.weather_local.precip_kind != 0
+                // the weather and the road's wetness where this vehicle stands
+                let (x, y) = (q.vehicle.position.x, q.vehicle.position.y);
+                let local = self.sky.sample(w, [x, y], weather::enhanced_sky());
+                let wetness = self.wet_grid.at(x, y);
+                let sheltered = local.precip_kind != 0
                     && self.world.as_ref().is_some_and(|world| {
                     crate::shelter::windscreen_top(&q.vehicle)
                         .is_some_and(|top| self.shelter.covers_anywhere(world, top))
                 });
-                weather::apply_to_vehicle(&mut q.vehicle, w, &self.weather_local, self.wetness, sheltered);
+                weather::apply_to_vehicle(&mut q.vehicle, w, &local, wetness, sheltered);
             }
         }
         let __t = Instant::now();
