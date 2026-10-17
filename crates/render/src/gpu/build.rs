@@ -31,6 +31,9 @@ pub(crate) fn pcache() -> Option<&'static wgpu::PipelineCache> {
 }
 
 fn open_pipeline_cache(device: &wgpu::Device, info: &wgpu::AdapterInfo) {
+    if info.backend == wgpu::Backend::Noop {
+        return;
+    }
     if !device.features().contains(wgpu::Features::PIPELINE_CACHE)
         || ::legacy_config::env::var_os("OMSI_NO_PIPELINE_CACHE").is_some()
     {
