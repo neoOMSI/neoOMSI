@@ -628,7 +628,7 @@ pub(super) fn in_front_of(other: f32, control: f32) -> bool {
 /// `[viewpoint]` is drawn in the current view (no bits, or the view's bit: 2 inside, 1
 /// outside). An outside-only shell or an AI-only interior (`[viewpoint] 4`, the HHA
 /// eCitaro's `19_AI_int.o3d` over its Almex touch screen) must not swallow a click on a
-/// switch it is not even drawn over.‌‍⁠‍‌​⁠⁠​​​⁠⁠⁠‌​‍⁠​⁠‌​‌‍⁠​‍‍⁠​‍⁠‌⁠‌⁠‌​⁠​⁠‍​⁠⁠‍​‌
+/// switch it is not even drawn over.
 pub(super) fn in_view(ty: &::simulation::VehicleType, i: usize, inside: bool) -> bool {
     viewpoint_in_view(ty.model.meshes[ty.meshes[i].def_index].viewpoint, inside)
 }
