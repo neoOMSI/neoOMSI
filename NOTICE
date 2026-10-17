@@ -1,0 +1,42 @@
+neoOMSI
+Copyright (c) 2026 neoOMSI contributors
+
+This product includes software developed by the neoOMSI project
+(https://github.com/neoOMSI/neoOMSI).
+
+--------------------------------------------------------------------------------
+Origin and Upstream Attribution:
+
+neoOMSI was originally forked from openOMSI by usonskyyyy.
+Portions of this software are Copyright (c) 2026 usonskyyyy
+and licensed under the MIT License.
+See LICENSES/MIT-openOMSI.txt for the full license text.
+
+--------------------------------------------------------------------------------
+Community Add-on & Content Clarification:
+
+neoOMSI is an independent game engine designed to simulate and run content
+created for OMSI 2. Loading, mounting, executing, or distributing third-party
+OMSI content (such as maps, vehicles, meshes, textures, audio files, scripts,
+or DLL plugins through public interfaces) does not subject those third-party
+works to the terms of the GNU General Public License.
+
+--------------------------------------------------------------------------------
+Optional Realistic Passengers (tools/realistic-pax):
+
+The scripts in tools/realistic-pax build a passenger pack from third-party
+assets. The pack is not part of the neoOMSI repository or the program's release
+files: the launcher downloads it on request from a release of its own.
+
+- Microsoft Rocketbox avatars, Copyright (c) Microsoft Corporation, MIT License
+  (https://github.com/microsoft/Microsoft-Rocketbox). The built pack carries
+  the license as LICENSE-Rocketbox.md.
+- MakeHuman base mesh, targets and system assets, released under CC0 1.0
+  Universal by Data Collection AB, Joel Palmius and Jonas Hauquier
+  (http://www.makehumancommunity.org). The built pack carries the notice as
+  LICENSE-MakeHuman.txt.
+- MPFB, the MakeHuman add-on for Blender (GPL-3.0-or-later), runs only inside
+  Blender during the build; none of it is included in the pack.
+
+The pack's .hum files are written by the scripts and hold none of OMSI 2's
+files, only a few of their numbers (seat height, step, voice, age).

@@ -1,0 +1,65 @@
+name: Bug report
+description: A neoOMSI defect, crash, or regression that does not require an OMSI comparison
+labels: ["bug", "status: untriaged"]
+type: Bug
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for something that is broken in neoOMSI itself.
+
+        If the same map, vehicle, mod, or scenario works in **OMSI 2.2.032** but behaves differently in neoOMSI, use the **OMSI compatibility issue** form instead.
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe one observable problem. Include the exact error message, screenshot, video, or relevant log excerpt here when useful. Avoid guessing at the cause unless you verified it.
+      placeholder: Describe what you saw and when it happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Give the smallest reliable sequence. Name the map, vehicle, add-on, settings, or input only when they matter. If the problem is intermittent, describe the conditions and approximate frequency.
+      placeholder: |
+        1. Start ...
+        2. Open / load ...
+        3. Do ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen instead?
+      description: Describe the expected observable result, not a proposed implementation.
+      placeholder: Describe the result you expected.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: neoOMSI version
+      description: Use the exact version shown by neoOMSI, a nightly identifier, or a commit SHA. Avoid values such as "latest".
+      placeholder: 0.2.0-nightly.g8742a619
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Android
+        - Other / compatibility layer
+    validations:
+      required: true

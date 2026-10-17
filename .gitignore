@@ -1,0 +1,39 @@
+# Rust & Build Outputs
+/target/
+/dist/
+/out/
+/_site/
+/site/dist/
+/site/dist-server/
+.wrangler/
+**/*.rs.bk
+*.pdb
+
+# Logs & Diagnostics
+*.log
+crash.log
+
+# Operating System Files
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+# IDEs & Editors
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+.vs/
+
+# Web & Node dependencies
+node_modules/
+.npm/
+
+# Android Build & Keys
+/android/debug.keystore
+/android/build/
+.gradle/
+local.properties
+*.apk
+*.aab
