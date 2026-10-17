@@ -206,7 +206,11 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
     for (var i = 0; i < steps; i = i + 1) {
         let p = vec3<f32>(cloud_ground(d, t), cloud_height(d, t));
         let h = (p.z - base) / span;
-        let sigma = layer_sigma(p, h, coverage, lod, true, fl, shape) * select(1.0, mix(0.35, 1.0, rain_mask(p.xy)), cells_only);
+        var rm = 0.0;
+        if (enh.debug.w > 0.0) {
+            rm = rain_mask(p.xy);
+        }
+        let sigma = layer_sigma(p, h, coverage, lod, true, fl, shape) * select(1.0, mix(0.35, 1.0, rm), cells_only);
         if (sigma > 1e-6) {
             // the sunlight reaching p through the cloud towards the sun
             var od = 0.0;
@@ -235,7 +239,7 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
             }
             let amb = mix(ground * 0.45 + sky_top * 0.55, sky_top * 1.1, clamp(h * 1.4, 0.0, 1.0));
             let powder = mix(1.0, 1.0 - exp(-sigma * 600.0), 0.5);
-            let light = (direct * powder * CLOUD_MS_GAIN + amb * 1.6 * mix(0.55, 1.0, smoothstep(0.0, 0.55, h))) * (1.0 - 0.35 * k - 0.55 * rain_mask(p.xy) * enh.debug.w);
+            let light = (direct * powder * CLOUD_MS_GAIN + amb * 1.6 * mix(0.55, 1.0, smoothstep(0.0, 0.55, h))) * (1.0 - 0.35 * k - 0.55 * rm * enh.debug.w);
             let dt = exp(-sigma * ds);
             o.acc = o.acc + o.trans * light * (1.0 - dt);
             o.hit = o.hit + t * o.trans * (1.0 - dt);
