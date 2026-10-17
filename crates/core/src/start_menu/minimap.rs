@@ -4,23 +4,23 @@ use anyhow::{Context, Result};
 use glam::{DVec3, Vec3};
 use omsi_launcher_lib as lib;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MinimapRoad {
     pub main: bool,
     pub width: f64,
     pub points: Vec<Point>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MinimapStop {
     pub id: i64,
     pub name: String,
@@ -29,7 +29,7 @@ pub struct MinimapStop {
     pub spawn: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MinimapEntry {
     pub index: u32,
     pub name: String,
@@ -38,17 +38,17 @@ pub struct MinimapEntry {
     pub spawn: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MinimapLane {
     pub points: Vec<Point>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MinimapTrip {
     pub lanes: Vec<u32>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Minimap {
     pub map: String,
     pub roads: Vec<MinimapRoad>,
@@ -62,6 +62,8 @@ const DEFAULT_DATE: &str = "2026-10-01";
 const TOLERANCE: f32 = 0.75;
 const BEFORE_STOP: f64 = 12.0;
 const KEPT: usize = 4;
+const CACHE_VERSION: u32 = 1;
+const CACHE_FILES: usize = 32;
 
 static BUILT: Mutex<Vec<(String, Minimap)>> = Mutex::new(Vec::new());
 static BUILDING: Mutex<()> = Mutex::new(());
@@ -73,7 +75,14 @@ fn kept(key: &str) -> Option<Minimap> {
 
 pub(crate) fn minimap(map: &str, date: &str) -> Result<Minimap> {
     let date = if date.trim().is_empty() { DEFAULT_DATE } else { date.trim() };
-    let key = format!("{map}|{date}");
+    let root = PathBuf::from(lib::load_config().root);
+    let _ = lib::register_content();
+    let cfg = ::mods::resolve_path(&root, map);
+    let code = ::map::date_code(date).with_context(|| format!("'{date}' is not a date (YYYY-MM-DD)"))?;
+    let map_dir = cfg.parent().map(Path::to_path_buf).unwrap_or_default();
+    // the date only changes the preview through the chrono folders active on it
+    let chrono = ::map::active_chrono_dirs(&map_dir, code);
+    let key = format!("{map}|{chrono:?}");
     if let Some(v) = kept(&key) {
         return Ok(v);
     }
@@ -81,13 +90,83 @@ pub(crate) fn minimap(map: &str, date: &str) -> Result<Minimap> {
     if let Some(v) = kept(&key) {
         return Ok(v);
     }
-    let v = build(map, date)?;
+    let file = cache_file(map, &map_dir, &chrono);
+    let v = match file.as_deref().and_then(read_cached) {
+        Some(v) => v,
+        None => {
+            let v = build(map, date, &root, &cfg, code)?;
+            if let Some(f) = &file {
+                write_cached(f, &v);
+            }
+            v
+        }
+    };
     let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
     if built.len() >= KEPT {
         built.remove(0);
     }
     built.push((key, v.clone()));
     Ok(v)
+}
+
+/// The cached preview's file, named by the map, its active chrono folders and the size and
+/// time of every file in its folder: a changed or added tile or timetable builds it anew.
+fn cache_file(map: &str, map_dir: &Path, chrono: &[PathBuf]) -> Option<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (CACHE_VERSION, map, chrono).hash(&mut h);
+    let mut dirs = vec![map_dir.to_path_buf()];
+    let mut any = false;
+    while let Some(d) = dirs.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        let mut entries: Vec<(PathBuf, std::fs::Metadata)> =
+            rd.flatten().filter_map(|e| Some((e.path(), e.metadata().ok()?))).collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (p, m) in entries {
+            if m.is_dir() {
+                dirs.push(p);
+            } else {
+                (&p, m.len(), m.modified().ok()).hash(&mut h);
+                any = true;
+            }
+        }
+    }
+    any.then(|| lib::data_dir().join("cache").join("minimap").join(format!("{:016x}.json", h.finish())))
+}
+
+fn read_cached(path: &Path) -> Option<Minimap> {
+    let t0 = std::time::Instant::now();
+    let v: Minimap = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    log::info!("minimap of {} from the cache in {:.2} s", v.map, t0.elapsed().as_secs_f64());
+    Some(v)
+}
+
+fn write_cached(path: &Path, v: &Minimap) {
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    let tmp = path.with_extension("tmp");
+    let saved = std::fs::create_dir_all(dir)
+        .and_then(|_| std::fs::write(&tmp, serde_json::to_vec(v).unwrap_or_default()))
+        .and_then(|_| std::fs::rename(&tmp, path));
+    if let Err(e) = saved {
+        log::warn!("minimap cache {}: {e}", path.display());
+        let _ = std::fs::remove_file(&tmp);
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut old: Vec<(std::time::SystemTime, PathBuf)> = rd
+        .flatten()
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    old.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, p) in old.into_iter().skip(CACHE_FILES) {
+        let _ = std::fs::remove_file(p);
+    }
 }
 
 fn round(v: f64) -> f64 {
@@ -127,7 +206,7 @@ fn trip_routes(
     if let [y, m, d] = ymd[..] {
         clock.set_date(y, m, d);
     }
-    let schedule = crate::schedule::Schedule::new(root, world, &clock);
+    let schedule = crate::schedule::Schedule::timetable_only(root, world, &clock);
     let mut lanes = Vec::new();
     let mut placed: HashMap<usize, u32> = HashMap::new();
     let mut trips = HashMap::new();
@@ -156,13 +235,9 @@ fn trip_routes(
     (lanes, trips, placed.into_keys().collect(), trains)
 }
 
-fn build(map: &str, date: &str) -> Result<Minimap> {
+fn build(map: &str, date: &str, root: &Path, cfg: &Path, code: i32) -> Result<Minimap> {
     let t0 = std::time::Instant::now();
-    let root = PathBuf::from(lib::load_config().root);
-    let _ = lib::register_content();
-    let cfg = ::mods::resolve_path(&root, map);
-    let code = ::map::date_code(date).with_context(|| format!("'{date}' is not a date (YYYY-MM-DD)"))?;
-    let world = World::open(&root, &cfg, code)?;
+    let world = World::open(root, cfg, code)?;
     world.index();
 
     let nav = world.navigation_map();
@@ -172,7 +247,7 @@ fn build(map: &str, date: &str) -> Result<Minimap> {
     };
     net.link(1.5);
     confirm_road_surfaces(&mut net, &nav.road_surfaces);
-    let (lanes, trips, driven, trains) = trip_routes(&root, &world, &net, date);
+    let (lanes, trips, driven, trains) = trip_routes(root, &world, &net, date);
     for l in driven {
         net.lanes[l].invisible = false;
     }

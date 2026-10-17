@@ -46,7 +46,7 @@ impl App {
                 }
                 1 if hit(&[pic], cursor).is_some() => {
                     let old = m.zoom;
-                    m.zoom = (m.zoom * 1.25f32.powf(amount)).clamp(1.0, 80.0);
+                    m.zoom = (m.zoom * 1.25f32.powf(amount)).clamp(0.1, 80.0);
                     let f = m.zoom / old;
                     m.pan = (m.pan.0 * f, m.pan.1 * f);
                 }

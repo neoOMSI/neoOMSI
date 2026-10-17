@@ -11,7 +11,12 @@ impl App {
             let map = m.maps.get(m.map).map(|x| x.1.clone()).unwrap_or_else(|| self.args.map.clone());
             Some((bus, paint, map, m.weather_file(), m.hour * 60 + m.minute))
         });
-        let size = self.ui.as_ref().map(|u| u.start.pic_size).filter(|s| s.0 > 0 && s.1 > 0);
+        // (drawn twice and read back for its matte: past ~1.3 MP a slow card lagged the menu,
+        // and the picture is scaled up to its place)
+        let size = self.ui.as_ref().map(|u| u.start.pic_size).filter(|s| s.0 > 0 && s.1 > 0).map(|(w, h)| {
+            let k = (1_300_000.0 / (w as f32 * h as f32)).sqrt().min(1.0);
+            (((w as f32 * k) as u32).max(16), ((h as f32 * k) as u32).max(16))
+        });
         let (Some((bus, paint, map, weather, time)), Some((w, h))) = (want, size) else {
             if self.menu.as_ref().is_none_or(|m| m.page != StartPage::Start) {
                 self.lab_room = None;
@@ -35,7 +40,7 @@ impl App {
         };
         let room = self.lab_room.get_or_insert_with(|| {
             let mut room = crate::showcase::Showcase::new();
-            room.zoom_by(1.15);
+            room.zoom_now(1.15);
             room
         });
         room.want(look);
