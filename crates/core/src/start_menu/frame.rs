@@ -287,7 +287,7 @@ impl App {
         );
         scene.overlays.clear();
         ui.draw_start(r, scene, &frame, dt, &view);
-        let hand = u8::from(ui.start.hand);
+        let hand = if ui.start.typing { 5 } else { u8::from(ui.start.hand) };
         if let wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) =
             s.surface.get_current_texture()
         {

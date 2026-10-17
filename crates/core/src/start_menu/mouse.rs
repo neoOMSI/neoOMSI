@@ -15,6 +15,9 @@ impl App {
             m.address.push_str(&clean);
             m.address = m.address.chars().take(200).collect();
         }
+        if let Some(m) = self.menu.as_mut().filter(|m| m.page == StartPage::Start && m.edit == 0 && m.drop != 0 && !ctrl) {
+            m.drop_type(text);
+        }
         if let Some(m) = self.menu.as_mut().filter(|m| m.page == StartPage::Start && m.edit != 0 && !ctrl) {
             let clean: String = text.chars().filter(|c| !c.is_control()).collect();
             let (buf, max) = m.edit_buf();
