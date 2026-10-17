@@ -64,6 +64,12 @@ impl DepotEntry {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AiLists {
     pub groups: Vec<AiGroup>,
+    /// An OMSI 1 list (it has `[ailist]`): its random traffic is chosen as OMSI 2 does for
+    /// such a file, see `random_group`.
+    pub legacy: bool,
+    /// The group the random traffic takes when `unsched_vehgroups.txt` does not name one
+    /// (`[ailist]`'s second number, else "NotInGroup"; 0 for a file without `[ailist]`).
+    pub default_group: i32,
 }
 
 impl AiLists {
@@ -78,6 +84,11 @@ impl AiLists {
         let mut r = f.reader().with_rule(::legacy_config::KeywordRule::AnyCase);
         // the old format's list (`[ailist]`): (default group, vehicles)
         let mut legacy: Option<(i32, Vec<String>)> = None;
+        // the old format names its vehicles by their index in `[ailist]`: (group, vehicle
+        // indices) of each `[aigroup]` and (group, type group, index) of each
+        // `[aigroup_depot_typgroup]`, made file names once the whole file is read
+        let mut legacy_groups: Vec<(usize, Vec<i32>)> = Vec::new();
+        let mut legacy_typgroups: Vec<(usize, usize, i32)> = Vec::new();
         while let Some(k) = r.next_keyword() {
             match k.as_str() {
                 // the original: a line it passes over, the default group's index, a
@@ -92,7 +103,34 @@ impl AiLists {
                         .collect();
                     legacy = Some((default, files));
                 }
-                "aigroup" | "aigroup_2" => {
+                // the OMSI 1 group: its name, a count, that many indices into
+                // `[ailist]` (weight 1) and the depot (hof) line - no `[end]`. A group of a
+                // name already read gets the new vehicles and depot in its place.
+                "aigroup" => {
+                    let name = r.str().to_string();
+                    let n = r.word().parse::<usize>().unwrap_or(0).min(10_000);
+                    let indices: Vec<i32> = (0..n).map(|_| r.i32()).collect();
+                    let hof = r.str().trim().to_string();
+                    let hof = (!hof.is_empty()).then_some(hof);
+                    let gi = match a.groups.iter().position(|g| !g.is_depot && g.name == name) {
+                        Some(gi) => {
+                            a.groups[gi].vehicles.clear();
+                            a.groups[gi].hof = hof;
+                            legacy_groups.retain(|(g, _)| *g != gi);
+                            gi
+                        }
+                        None => {
+                            a.groups.push(AiGroup {
+                                name,
+                                hof,
+                                ..Default::default()
+                            });
+                            a.groups.len() - 1
+                        }
+                    };
+                    legacy_groups.push((gi, indices));
+                }
+                "aigroup_2" => {
                     let name = r.str().to_string();
                     // second header line: the depot (hof) name, empty for plain car groups
                     let hof = r.str().trim().to_string();
@@ -150,26 +188,40 @@ impl AiLists {
                         ..Default::default()
                     });
                 }
-                "aigroup_depot_typgroup" | "aigroup_depot_typgroup_2" => {
+                // the OMSI 1 type group: the vehicle's index in `[ailist]`, then
+                // up to `[end]` two lines per vehicle, its number and its repaint
+                "aigroup_depot_typgroup" => {
+                    let index = r.i32();
+                    let lines = r.until("[end]");
+                    let entries = lines
+                        .chunks(2)
+                        .filter(|p| !p[0].trim().is_empty())
+                        .map(|p| DepotEntry {
+                            number: p[0].trim().to_string(),
+                            paint: p.get(1).map(|s| s.trim().to_string()).unwrap_or_default(),
+                            ..Default::default()
+                        })
+                        .collect();
+                    if let Some(gi) = a.groups.len().checked_sub(1) {
+                        let g = &mut a.groups[gi];
+                        legacy_typgroups.push((gi, g.typgroups.len(), index));
+                        g.typgroups.push(AiTypGroup {
+                            file: String::new(),
+                            entries,
+                        });
+                    }
+                }
+                "aigroup_depot_typgroup_2" => {
                     let file = r.str().to_string();
                     let mut tg = AiTypGroup {
                         file,
                         entries: Vec::new(),
                     };
-                    let v2 = k == "aigroup_depot_typgroup_2";
                     for l in r.until("[end]") {
                         if l.trim().is_empty() {
                             continue;
                         }
-                        tg.entries.push(if v2 {
-                            DepotEntry::parse(l)
-                        } else {
-                            DepotEntry {
-                                number: l.trim().to_string(),
-                                paint: l.trim().to_string(),
-                                ..Default::default()
-                            }
-                        });
+                        tg.entries.push(DepotEntry::parse(l));
                     }
                     if let Some(g) = a.groups.last_mut() {
                         g.typgroups.push(tg);
@@ -178,9 +230,29 @@ impl AiLists {
                 _ => {}
             }
         }
+        let listed = legacy.as_ref().map(|(_, f)| f.as_slice()).unwrap_or_default();
+        let file_at = |i: i32| usize::try_from(i).ok().and_then(|i| listed.get(i)).cloned();
+        for (gi, indices) in legacy_groups {
+            a.groups[gi].vehicles = indices
+                .into_iter()
+                .filter_map(file_at)
+                .map(|file| AiVehicleEntry {
+                    file,
+                    weight: 1.0,
+                    number: None,
+                    registration: None,
+                })
+                .collect();
+        }
+        for (gi, ti, index) in legacy_typgroups {
+            a.groups[gi].typgroups[ti].file = file_at(index).unwrap_or_default();
+        }
         // no default group given: every listed vehicle that is in no group makes the group
-        // "NotInGroup" (weight 1), as OMSI does after reading the file
+        // "NotInGroup" (weight 1), as OMSI does after reading the file, and that group is
+        // the default
         if let Some((default, files)) = legacy {
+            a.legacy = true;
+            a.default_group = default;
             if default < 0 || default as usize >= a.groups.len() {
                 let grouped: std::collections::HashSet<String> = a
                     .groups
@@ -198,6 +270,7 @@ impl AiLists {
                     })
                     .collect();
                 if !vehicles.is_empty() {
+                    a.default_group = a.groups.len() as i32;
                     a.groups.push(AiGroup {
                         name: "NotInGroup".into(),
                         vehicles,
@@ -207,6 +280,21 @@ impl AiLists {
             }
         }
         a
+    }
+
+    /// The group a random traffic group of `unsched_vehgroups.txt` drives (`name`, the
+    /// default group for none): the group of that name, else the first - the original
+    /// leaves the index at 0 when no name matches.
+    pub fn random_group(&self, name: Option<&str>) -> Option<usize> {
+        let i = match name {
+            None => usize::try_from(self.default_group).ok()?,
+            Some(n) => self
+                .groups
+                .iter()
+                .position(|g| g.name.trim().eq_ignore_ascii_case(n.trim()))
+                .unwrap_or(0),
+        };
+        (i < self.groups.len()).then_some(i)
     }
 }
 
@@ -566,6 +654,56 @@ mod legacy_tests {
         assert_eq!(a.groups.len(), 1);
         assert_eq!(a.groups[0].name, "NotInGroup");
         assert_eq!(a.groups[0].vehicles.len(), 2);
+    }
+
+    /// OMSI 1's Velbert (#468): `[aigroup]` names its vehicles by their `[ailist]` index and
+    /// has no `[end]`; read as `[aigroup_2]` it swallowed the rest of the file, the train
+    /// fell into "NotInGroup" and that group (with every car) was no street traffic.
+    #[test]
+    fn omsi1_groups_name_ailist_indices() {
+        let f = ::legacy_config::CfgFile::from_str(
+            "ailists.cfg",
+            "[ailist]\n0\n-1\n4\nvehicles\\Bus\\a.bus\nvehicles\\Golf\\golf.bus\n\
+             vehicles\\BX\\BX.ovh\ntrains\\br275.zug\n\n***\n\n\
+             [aigroup]\nBusses\n1\n0\nVelbert\n\n***\n\n\
+             [aigroup]\nBahn\n1\n3\n\n***\n\n\
+             [aigroup_depot]\nVGV\nVelbert\n\n\
+             [aigroup_depot_typgroup]\n0\n3501\nSchiwy \"Umzüge\"\n3502\nSchiwy\n[end]\n",
+        );
+        let a = super::AiLists::parse(&f);
+        let names: Vec<&str> = a.groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["Busses", "Bahn", "VGV", "NotInGroup"]);
+        assert_eq!(a.groups[0].vehicles[0].file, "vehicles\\Bus\\a.bus");
+        assert_eq!(a.groups[0].hof.as_deref(), Some("Velbert"));
+        assert_eq!(a.groups[1].vehicles[0].file, "trains\\br275.zug");
+        assert_eq!(a.groups[1].hof, None);
+        let tg = &a.groups[2].typgroups[0];
+        assert_eq!(tg.file, "vehicles\\Bus\\a.bus");
+        assert_eq!(tg.entries.len(), 2);
+        assert_eq!(tg.entries[0].number, "3501");
+        assert_eq!(tg.entries[0].paint, "Schiwy \"Umzüge\"");
+        let cars: Vec<&str> = a.groups[3].vehicles.iter().map(|v| v.file.as_str()).collect();
+        assert_eq!(cars, ["vehicles\\Golf\\golf.bus", "vehicles\\BX\\BX.ovh"]);
+        // without unsched_vehgroups.txt the cars drive; a group of it that is not in the
+        // file drives the first group, as OMSI
+        assert!(a.legacy);
+        assert_eq!(a.random_group(None), Some(3));
+        assert_eq!(a.random_group(Some("bahn")), Some(1));
+        assert_eq!(a.random_group(Some("NormalCars")), Some(0));
+    }
+
+    /// A file without `[ailist]` has group 0 as its default and no "NotInGroup".
+    #[test]
+    fn the_default_group_without_ailist_is_the_first() {
+        let f = ::legacy_config::CfgFile::from_str(
+            "ailists.cfg",
+            "[aigroup_2]\nCars\n\nvehicles\\A\\a.bus\t2\n[end]\n",
+        );
+        let a = super::AiLists::parse(&f);
+        assert_eq!(a.groups.len(), 1);
+        assert!(!a.legacy);
+        assert_eq!(a.random_group(None), Some(0));
+        assert_eq!(super::AiLists::default().random_group(Some("Cars")), None);
     }
 }
 
