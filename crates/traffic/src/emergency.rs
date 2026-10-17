@@ -29,6 +29,10 @@ pub fn oncoming_emergency(
     state: &AiState,
     drives: &[EmergencyDrive],
 ) -> Option<f32> {
+    // (most of the time no emergency vehicle is held up anywhere)
+    if !drives.iter().any(|d| d.vehicle != ego && d.held) {
+        return None;
+    }
     let lane = net.lanes.get(state.lane)?;
     if lane.left.is_some() || lane.right.is_some() {
         return None;

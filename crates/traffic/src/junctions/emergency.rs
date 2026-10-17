@@ -280,20 +280,19 @@ fn in_reach(
 
 fn junction_group(net: &Network, first: usize) -> Vec<usize> {
     let mut group = vec![first];
+    let mut member: hashbrown::HashSet<usize> = [first].into_iter().collect();
+    let mut expanded: hashbrown::HashSet<usize> = hashbrown::HashSet::new();
     let mut i = 0;
     while i < group.len() {
         let lane = group[i];
-        let object = net.lanes[lane].key.filter(|_| net.lanes[lane].source == 2);
-        for other in net.crossings[lane].iter().map(|c| c.other).chain(
-            net.lanes.iter().enumerate().filter_map(|(n, l)| {
-                object
-                    .filter(|k| {
-                        l.source == 2 && l.key.is_some_and(|o| o.tile == k.tile && o.id == k.id)
-                    })
-                    .map(|_| n)
-            }),
-        ) {
-            if !group.contains(&other) {
+        // (an object's lanes come in once, with the first of them reached)
+        let object = net.object_lanes(lane);
+        let object = match object.first() {
+            Some(&head) if expanded.insert(head) => object,
+            _ => &[],
+        };
+        for &other in net.crossings[lane].iter().map(|c| &c.other).chain(object) {
+            if member.insert(other) {
                 group.push(other);
             }
         }

@@ -469,6 +469,9 @@ pub struct Network {
 pub struct NetworkCache {
     merge_ends: Vec<OnceLock<Option<MergeEnd>>>,
     ways_back: Vec<OnceLock<Vec<usize>>>,
+    near: Vec<OnceLock<Vec<usize>>>,
+    bounds: Vec<OnceLock<[f64; 4]>>,
+    objects: OnceLock<HashMap<((i32, i32), i64), Vec<usize>>>,
 }
 
 impl NetworkCache {
@@ -476,6 +479,9 @@ impl NetworkCache {
         Self {
             merge_ends: (0..lanes).map(|_| OnceLock::new()).collect(),
             ways_back: (0..lanes).map(|_| OnceLock::new()).collect(),
+            near: (0..lanes).map(|_| OnceLock::new()).collect(),
+            bounds: (0..lanes).map(|_| OnceLock::new()).collect(),
+            objects: OnceLock::new(),
         }
     }
 }
@@ -596,6 +602,60 @@ fn head_on(a: &Lane, b: &Lane, i: usize, j: usize) -> Option<(Crossing, Crossing
         other_after: other_half,
     };
     Some((seen(j, at, half, other_at, other_half), seen(i, other_at, other_half, at, half)))
+}
+
+/// `Network::near_lanes`: lanes whose polylines come this close (m). The furthest
+/// `opposite` looks is 7 m from a point of the lane's curve, which lies off its polyline
+/// by far less than the margin.
+const NEAR_LANES: f64 = 10.0;
+
+/// The shortest distance between the polylines of `a` and `b` (m, in space).
+fn polyline_distance(a: &Lane, b: &Lane) -> f64 {
+    let mut best = f64::MAX;
+    for sa in a.points.windows(2) {
+        for sb in b.points.windows(2) {
+            best = best.min(segment_distance(sa[0], sa[1], sb[0], sb[1]));
+        }
+    }
+    if a.points.len() == 1 || b.points.len() == 1 {
+        for &p in a.points.iter().take(1) {
+            best = best.min(b.nearest_point(p).map_or(f64::MAX, |n| n.1));
+        }
+        for &p in b.points.iter().take(1) {
+            best = best.min(a.nearest_point(p).map_or(f64::MAX, |n| n.1));
+        }
+    }
+    best
+}
+
+/// The shortest distance between segments `p0`-`p1` and `q0`-`q1` (m).
+fn segment_distance(p0: DVec3, p1: DVec3, q0: DVec3, q1: DVec3) -> f64 {
+    let (d1, d2, r) = (p1 - p0, q1 - q0, p0 - q0);
+    let (a, e, f) = (d1.length_squared(), d2.length_squared(), d2.dot(r));
+    let (s, t) = if a <= 1e-12 && e <= 1e-12 {
+        (0.0, 0.0)
+    } else if a <= 1e-12 {
+        (0.0, (f / e).clamp(0.0, 1.0))
+    } else {
+        let c = d1.dot(r);
+        if e <= 1e-12 {
+            ((-c / a).clamp(0.0, 1.0), 0.0)
+        } else {
+            let b = d1.dot(d2);
+            let denom = a * e - b * b;
+            let mut s = if denom > 1e-12 { ((b * f - c * e) / denom).clamp(0.0, 1.0) } else { 0.0 };
+            let mut t = (b * s + f) / e;
+            if t < 0.0 {
+                t = 0.0;
+                s = (-c / a).clamp(0.0, 1.0);
+            } else if t > 1.0 {
+                t = 1.0;
+                s = ((b - c) / a).clamp(0.0, 1.0);
+            }
+            (s, t)
+        }
+    };
+    ((p0 + d1 * s) - (q0 + d2 * t)).length()
 }
 
 /// How far before and after distance `at` of lane `a` its centre line stays within
@@ -843,8 +903,21 @@ impl Network {
     /// Like `project_on_route`, plus the lateral offset of `p` from the lane (m, right of
     /// the driving direction positive).
     pub fn project_on_route_lateral(&self, route: &[usize], p: DVec3) -> Option<(usize, f32, f32)> {
+        self.project_near_route(route, p, f64::MAX)
+    }
+
+    /// [`Network::project_on_route_lateral`] where only a place within `reach` (m, in plan)
+    /// counts: lanes whose box lies further away are not measured. `None` when none
+    /// comes that close; otherwise the same answer.
+    pub fn project_near_route(&self, route: &[usize], p: DVec3, reach: f64) -> Option<(usize, f32, f32)> {
         let mut best: Option<(usize, f32, f64, f32)> = None;
         for (ri, &li) in route.iter().enumerate() {
+            if reach < f64::MAX {
+                let b = self.lane_bounds(li);
+                if p.x < b[0] - reach || p.y < b[1] - reach || p.x > b[2] + reach || p.y > b[3] + reach {
+                    continue;
+                }
+            }
             let l = &self.lanes[li];
             for k in 0..l.points.len().saturating_sub(1) {
                 let a = l.points[k];
@@ -1295,44 +1368,94 @@ impl Network {
         let hr = (h as f64).to_radians();
         let left = DVec3::new(-hr.cos(), hr.sin(), 0.0);
         let left = if self.left_hand { -left } else { left };
-        let cx = (p.x / GRID_CELL).floor() as i32;
-        let cy = (p.y / GRID_CELL).floor() as i32;
         let mut best: Option<(usize, f32, f32)> = None;
-        let mut seen: Vec<usize> = Vec::new();
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for &i in self
-                    .grid
-                    .get(&(cx + dx, cy + dy))
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[])
-                {
-                    if i == lane || seen.contains(&i) {
-                        continue;
-                    }
-                    seen.push(i);
-                    let o = &self.lanes[i];
-                    if o.kind != LaneKind::Street || o.no_cars {
-                        continue;
-                    }
-                    let Some((os, d)) = o.nearest_point(p) else {
-                        continue;
-                    };
-                    if d > 7.0 || d < 1.5 {
-                        continue;
-                    }
-                    let (q, oh) = o.at(os);
-                    let side = (q - p).dot(left) as f32;
-                    if side < 1.5 || wrap_deg(oh - h).abs() < 150.0 {
-                        continue;
-                    }
-                    if best.map(|b| side < b.2).unwrap_or(true) {
-                        best = Some((i, os, side));
-                    }
-                }
+        for &i in self.near_lanes(lane).iter() {
+            let o = &self.lanes[i];
+            if o.kind != LaneKind::Street || o.no_cars {
+                continue;
+            }
+            let Some((os, d)) = o.nearest_point(p) else {
+                continue;
+            };
+            if d > 7.0 || d < 1.5 {
+                continue;
+            }
+            let (q, oh) = o.at(os);
+            let side = (q - p).dot(left) as f32;
+            if side < 1.5 || wrap_deg(oh - h).abs() < 150.0 {
+                continue;
+            }
+            if best.map(|b| side < b.2).unwrap_or(true) {
+                best = Some((i, os, side));
             }
         }
         best
+    }
+
+    /// The lanes that come within `NEAR_LANES` of `lane` anywhere (sorted): all that
+    /// `opposite` and `beside_lane` can find beside it. They looked through every lane of
+    /// the cells round the place on every call, for every car on every tick.
+    fn near_lanes(&self, lane: usize) -> Cow<'_, [usize]> {
+        let work = || {
+            let l = &self.lanes[lane];
+            let mut cells: Vec<(i32, i32)> = Vec::new();
+            for w in l.points.windows(2) {
+                let n = ((w[1] - w[0]).truncate().length() / (GRID_CELL * 0.5)).ceil().max(1.0) as usize;
+                for k in 0..=n {
+                    let (cx, cy) = Self::grid_cell(w[0].lerp(w[1], k as f64 / n as f64));
+                    for c in (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (cx + dx, cy + dy))) {
+                        if !cells.contains(&c) {
+                            cells.push(c);
+                        }
+                    }
+                }
+            }
+            let mut out: Vec<usize> = cells
+                .iter()
+                .flat_map(|c| self.grid.get(c).map(|v| v.as_slice()).unwrap_or(&[]))
+                .copied()
+                .filter(|&i| i != lane)
+                .collect();
+            out.sort_unstable();
+            out.dedup();
+            out.retain(|&i| polyline_distance(l, &self.lanes[i]) < NEAR_LANES);
+            out
+        };
+        match self.cache.near.get(lane) {
+            Some(cell) => Cow::Borrowed(cell.get_or_init(work).as_slice()),
+            None => Cow::Owned(work()),
+        }
+    }
+
+    /// The lanes of the junction object (`source == 2`) `lane` belongs to, `lane` among them;
+    /// empty for a lane of no object.
+    pub fn object_lanes(&self, lane: usize) -> &[usize] {
+        let key = |l: &Lane| l.key.filter(|_| l.source == 2).map(|k| (k.tile, k.id));
+        let Some(k) = self.lanes.get(lane).and_then(key) else { return &[] };
+        let index = self.cache.objects.get_or_init(|| {
+            let mut index: HashMap<((i32, i32), i64), Vec<usize>> = HashMap::new();
+            for (i, l) in self.lanes.iter().enumerate() {
+                if let Some(k) = key(l) {
+                    index.entry(k).or_default().push(i);
+                }
+            }
+            index
+        });
+        index.get(&k).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// The plan-view box round `lane`'s points (min x, min y, max x, max y).
+    pub fn lane_bounds(&self, lane: usize) -> [f64; 4] {
+        let work = || {
+            self.lanes[lane].points.iter().fold(
+                [f64::MAX, f64::MAX, f64::MIN, f64::MIN],
+                |b, p| [b[0].min(p.x), b[1].min(p.y), b[2].max(p.x), b[3].max(p.y)],
+            )
+        };
+        match self.cache.bounds.get(lane) {
+            Some(cell) => *cell.get_or_init(work),
+            None => work(),
+        }
     }
 
     pub fn beside_lane(&self, lane: usize, s: f32, dir: i32) -> Option<usize> {
@@ -1344,36 +1467,26 @@ impl Network {
         let (p, h) = l.at(s);
         let hr = (h as f64).to_radians();
         let right = DVec3::new(hr.cos(), -hr.sin(), 0.0);
-        let (cx, cy) = Self::grid_cell(p);
         let mut best: Option<(usize, f32)> = None;
-        let mut seen: Vec<usize> = Vec::new();
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for &i in self.grid.get(&(cx + dx, cy + dy)).map(|v| v.as_slice()).unwrap_or(&[]) {
-                    if i == lane || seen.contains(&i) {
-                        continue;
-                    }
-                    seen.push(i);
-                    let o = &self.lanes[i];
-                    if o.kind != LaneKind::Street || o.no_cars {
-                        continue;
-                    }
-                    let Some((os, d)) = o.nearest_point(p) else { continue };
-                    if !(1.5..6.0).contains(&d) {
-                        continue;
-                    }
-                    let (q, oh) = o.at(os);
-                    let side = (q - p).dot(right) as f32;
-                    if (side > 0.0) != (dir == 2) || wrap_deg(oh - h).abs() > 20.0 {
-                        continue;
-                    }
-                    if !self.parallel(lane, i) {
-                        continue;
-                    }
-                    if best.is_none_or(|b| side.abs() < b.1) {
-                        best = Some((i, side.abs()));
-                    }
-                }
+        for &i in self.near_lanes(lane).iter() {
+            let o = &self.lanes[i];
+            if o.kind != LaneKind::Street || o.no_cars {
+                continue;
+            }
+            let Some((os, d)) = o.nearest_point(p) else { continue };
+            if !(1.5..6.0).contains(&d) {
+                continue;
+            }
+            let (q, oh) = o.at(os);
+            let side = (q - p).dot(right) as f32;
+            if (side > 0.0) != (dir == 2) || wrap_deg(oh - h).abs() > 20.0 {
+                continue;
+            }
+            if !self.parallel(lane, i) {
+                continue;
+            }
+            if best.is_none_or(|b| side.abs() < b.1) {
+                best = Some((i, side.abs()));
             }
         }
         best.map(|b| b.0)

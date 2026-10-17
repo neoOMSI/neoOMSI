@@ -627,7 +627,8 @@ impl Traffic {
                     for j in self.parked_collision.near(&probe) {
                         let parked = &self.parked_collision.boxes[j];
                         let p = parked.center.extend(parked.z0);
-                        let Some((ri, at, lat)) = self.net.project_on_route_lateral(&route, p) else { continue };
+                        // (one further than 6 m is turned away below)
+                        let Some((ri, at, lat)) = self.net.project_near_route(&route, p, PARKED_ON_ROUTE) else { continue };
                         let (lane, d) = near_way[ri];
                         let (q, heading) = self.net.lanes[lane].at(at);
                         if (p.z - q.z).abs() > 2.0 || (p - q).truncate().length() > 6.0 { continue; }
@@ -2054,6 +2055,10 @@ impl Traffic {
         }
     }
 }
+
+/// A parked car further than this (m) from a car's way is not looked at on it: only one
+/// within 6 m of the lane's curve counts, and the curve keeps well within 2 m of its points.
+const PARKED_ON_ROUTE: f64 = 8.0;
 
 /// Is the scenery look-ahead (a probe body driven along the way, most of the vehicles'
 /// realization time) to run for vehicle `id` at step `step`? Every other step, half the

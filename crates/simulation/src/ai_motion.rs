@@ -168,6 +168,8 @@ const AI_CONTACT_RANGE: f64 = 1.5;
 const SNAP_DISTANCE: f64 = 8.0;
 /// How long (s) a way that far off is waited out before the body is put back on it.
 const SNAP_PATIENCE: f32 = 0.6;
+/// `AiBody::distance_to_contact`: the shortest step (m) of its probe body.
+const PROBE_STEP: f32 = 0.25;
 /// The furthest (m) the rotation point aims inside a bend to centre the body's sweep.
 const SWEEP_SHIFT_MAX: f64 = 2.0;
 /// The largest front wheel angle (deg) an AI vehicle turns to keep to its way: OMSI's AI
@@ -563,7 +565,8 @@ impl AiBody {
     /// through a bend are where the real body will be, not where the lane centre line is.
     /// `None`: it stays clear for `reach` metres, or already touches (a contact that exists is
     /// not one it is about to make). The body is sampled every 0.5 m: a vehicle's box is far
-    /// longer than that, so nothing it would pass over is missed.
+    /// longer than that, so nothing it would pass over is missed. It moves on in steps of
+    /// `PROBE_STEP` at least (at a crawl a step of 0.05 s was 5 cm, most of the traffic's time).
     pub fn distance_to_contact(
         &self,
         way: &dyn Fn(f32) -> DVec3,
@@ -576,7 +579,7 @@ impl AiBody {
         }
         let mut probe = self.clone();
         let v = speed.max(1.0);
-        let dt = 0.05;
+        let dt = (PROBE_STEP / v).clamp(0.05, PROBE_STEP);
         let (z0, z_body) = (way(0.0).z, self.position.z);
         let (mut x, mut checked) = (0.0f32, 0.0f32);
         while x < reach {
@@ -682,7 +685,12 @@ impl AiBody {
         let mut at = self.rot_long;
         for _ in 0..3 {
             let (p, t, _) = frame(at);
-            at += (self.rear - p).dot(t).clamp(-2.0, 2.0) as f32;
+            let step = (self.rear - p).dot(t).clamp(-2.0, 2.0) as f32;
+            at += step;
+            // (on its way it is there after one)
+            if step.abs() < 1e-3 {
+                break;
+            }
         }
         let (p, t, _) = frame(at);
         let (_, _, bend) = frame(at + v * TRACK_PREVIEW);
@@ -1277,6 +1285,9 @@ mod tests {
         let post = Obb::vehicle(DVec2::new(0.0, 20.0), 0.0, 0.3, 0.3, 0.3);
         let d = body.distance_to_contact(&way, 5.0, 40.0, &touches(post)).expect("in the way");
         assert!((d - 14.2).abs() < 0.6, "contact after {d} m");
+        // crawling, in steps of `PROBE_STEP`, it finds it in the same place
+        let d = body.distance_to_contact(&way, 0.3, 40.0, &touches(post)).expect("in the way");
+        assert!((d - 14.2).abs() < 0.6, "contact after {d} m at a crawl");
         // the same post two metres to the side of the bus's flank is not in the way
         let beside = Obb::vehicle(DVec2::new(2.4, 20.0), 0.0, 0.3, 0.3, 0.3);
         assert_eq!(body.distance_to_contact(&way, 5.0, 40.0, &touches(beside)), None);
