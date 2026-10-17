@@ -40,7 +40,7 @@ impl Ui {
         let card = [0.0, bar_h + rise, w, h + rise];
         self.text.alpha = ep;
         self.text.rounded(r, scene, card, 0.0, OPT_CARD);
-        self.text.rounded(r, scene, [0.0, bar_h, w, bar_h + 1.0], 0.0, [255, 255, 255, 14]);
+        self.text.rounded(r, scene, [0.0, bar_h, w, bar_h + 1.0], 0.0, DIVIDER);
 
         let colw = (960.0 * u).min(w - 96.0 * u);
         let x0 = ((w - colw) * 0.5).round();

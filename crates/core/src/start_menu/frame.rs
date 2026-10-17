@@ -35,7 +35,7 @@ impl App {
         };
         let room = self.lab_room.get_or_insert_with(|| {
             let mut room = crate::showcase::Showcase::new();
-            room.zoom_by(1.15);
+            room.zoom_now(1.15);
             room
         });
         room.want(look);
@@ -287,7 +287,7 @@ impl App {
         );
         scene.overlays.clear();
         ui.draw_start(r, scene, &frame, dt, &view);
-        let hand = u8::from(ui.start.hand);
+        let hand = if ui.start.typing { 5 } else { u8::from(ui.start.hand) };
         if let wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) =
             s.surface.get_current_texture()
         {

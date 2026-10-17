@@ -21,7 +21,7 @@ pub(super) struct Model {
     pub centre: Vec3,
     pub radius: f32,
     pub lighting: Lighting,
-    _world: Arc<World>,
+    pub world: Arc<World>,
 }
 
 pub(super) type Job = Receiver<Result<Ready, String>>;
@@ -32,15 +32,15 @@ pub(super) fn spawn(renderer: &Renderer, look: &Look) -> Result<Job, String> {
     }
     let args = look.args();
     let root = look.root.clone();
-    let map_cfg = ::mods::resolve_path(&root, &look.map);
-    let world = World::open(&root, &map_cfg, start_clock(&args).date_code())
-        .map(Arc::new)
-        .map_err(|e| format!("{e:#}"))?;
-    let prefetch = world.vehicle_prefetch(renderer);
+    let gpu = (renderer.device.clone(), renderer.queue.clone());
     let look = look.clone();
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         let r = (|| -> Result<Ready> {
+            let t0 = std::time::Instant::now();
+            let map_cfg = ::mods::resolve_path(&root, &look.map);
+            let world = Arc::new(World::open(&root, &map_cfg, start_clock(&args).date_code())?);
+            let prefetch = world.vehicle_prefetch_on(gpu);
             let path = player_bus_path(&root, &look.bus)?;
             let vt = Arc::new(::simulation::VehicleType::load(&root, &path)?);
             let paint = Some(look.paint.as_str()).filter(|p| !p.is_empty());
@@ -60,6 +60,7 @@ pub(super) fn spawn(renderer: &Renderer, look: &Look) -> Result<Job, String> {
             for t in &vehicle.trailers {
                 prefetch.prefetch(&t.ty, scheme.filter(|i| *i < t.ty.paint_schemes.len()));
             }
+            log::info!("showroom {}: read in {:.2} s", look.bus, t0.elapsed().as_secs_f64());
             Ok(Ready { look, world, vt, vehicle, scheme })
         })();
         let _ = tx.send(r.map_err(|e| format!("{e:#}")));
@@ -68,6 +69,7 @@ pub(super) fn spawn(renderer: &Renderer, look: &Look) -> Result<Job, String> {
 }
 
 pub(super) fn place(renderer: &Renderer, r: Ready) -> Model {
+    let t0 = std::time::Instant::now();
     let mut scene = renderer.new_scene();
     let args = r.look.args();
     let world = r.world;
@@ -109,6 +111,7 @@ pub(super) fn place(renderer: &Renderer, r: Ready) -> Model {
 
     let weather = crate::weather::spec::load(&args);
     let lighting = light::lighting(&args, &weather);
+    log::info!("showroom {}: placed in {:.2} s", r.look.bus, t0.elapsed().as_secs_f64());
     Model {
         look: r.look,
         scene,
@@ -118,6 +121,6 @@ pub(super) fn place(renderer: &Renderer, r: Ready) -> Model {
         centre,
         radius,
         lighting,
-        _world: world,
+        world,
     }
 }

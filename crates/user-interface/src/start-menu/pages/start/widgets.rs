@@ -149,16 +149,16 @@ impl Ui {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn start_button(&mut self, r: &Renderer, scene: &mut Scene, f: &Frame, rc: [f32; 4], label: &str, icon: &str, id: usize, u: f32) {
+    pub(super) fn start_button(&mut self, r: &Renderer, scene: &mut Scene, f: &Frame, rc: [f32; 4], label: &str, icon: Option<&str>, px: f32, id: usize, u: f32) {
         let bh = rc[3] - rc[1];
         let hv = self.ease((215, "go", id), if inside(rc, f.cursor) { 1.0 } else { 0.0 }, 10.0);
         self.text.rounded(r, scene, rc, bh * 0.5, mix(ACCENT, ACCENT_HOT, hv));
-        let gl = self.text.label(r, scene, label, (18.0 * u) as u32, ON_ACCENT);
+        let gl = self.text.label(r, scene, label, (px * u) as u32, ON_ACCENT);
         let gi = (22.0 * u).round();
-        let total = gl.w as f32 + gi + 8.0 * u;
+        let total = gl.w as f32 + icon.map_or(0.0, |_| gi + 8.0 * u);
         let gx = rc[0] + ((rc[2] - rc[0]) - total) * 0.5;
         gl.place(scene, gx, rc[1] + (bh - gl.h as f32) * 0.5);
-        if let Some(ic) = self.text.icon(r, scene, icon, gi as u32, ON_ACCENT) {
+        if let Some(ic) = icon.and_then(|i| self.text.icon(r, scene, i, gi as u32, ON_ACCENT)) {
             ic.place(scene, gx + gl.w as f32 + 8.0 * u, rc[1] + (bh - gi) * 0.5);
         }
     }

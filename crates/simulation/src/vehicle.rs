@@ -405,10 +405,21 @@ impl VehicleType {
                 .get(1)
                 .map(|l| l.first_mesh)
                 .unwrap_or(model.meshes.len());
-            for (i, md) in model.meshes[start..end].iter().enumerate() {
-                let p = mesh_path(root, &dir, &model_dir, &md.file);
-                match ::legacy_o3d::load_mesh(&p) {
-                    Ok(m) => {
+            use rayon::prelude::*;
+            let loaded: Vec<_> = model.meshes[start..end]
+                .par_iter()
+                .map(|md| {
+                    let p = mesh_path(root, &dir, &model_dir, &md.file);
+                    let m = ::legacy_o3d::load_mesh(&p).map(|m| {
+                        let data = mesh_from_o3d(&m);
+                        (m, data)
+                    });
+                    (p, m)
+                })
+                .collect();
+            for (i, (md, (p, loaded))) in model.meshes[start..end].iter().zip(loaded).enumerate() {
+                match loaded {
+                    Ok((m, data)) => {
                         let skin = mesh_skin(&m, md, start);
                         match ::geometry::positive_det_faces_forward(&m) {
                             Some(true) => positive_forward += 1,
@@ -420,7 +431,7 @@ impl VehicleType {
                         }
                         meshes.push(VehicleMesh {
                             def_index: start + i,
-                            data: mesh_from_o3d(&m),
+                            data,
                             file: p,
                             materials: m.materials.clone(),
                             overrides: md.materials.clone(),
@@ -457,8 +468,11 @@ impl VehicleType {
                 turned.len()
             );
         }
-        for m in &mut meshes {
-            m.normals_against = ::geometry::slot_normals_against(&m.data);
+        {
+            use rayon::prelude::*;
+            meshes
+                .par_iter_mut()
+                .for_each(|m| m.normals_against = ::geometry::slot_normals_against(&m.data));
         }
         for (pack, n) in &missing_packs {
             log::warn!(

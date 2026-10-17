@@ -153,6 +153,9 @@ pub struct Menu {
     pub veh_open: Option<String>,
     pub drop: usize,
     pub drop_top: usize,
+    drop_typed: String,
+    drop_typed_in: usize,
+    drop_typed_at: Option<std::time::Instant>,
     pub edit: u8,
     pub details: bool,
     pub liveries: Vec<String>,
@@ -448,6 +451,9 @@ impl Menu {
             veh_open: None,
             drop: 0,
             drop_top: 0,
+            drop_typed: String::new(),
+            drop_typed_in: 0,
+            drop_typed_at: None,
             edit: 0,
             details: false,
             liveries: Vec::new(),
@@ -798,7 +804,60 @@ impl Menu {
         self.drop = 0;
     }
 
+    /// The same letter typed again cycles through the entries starting with it.
+    pub fn drop_type(&mut self, text: &str) {
+        let kind = self.drop;
+        let typed: String = text.chars().filter(|c| !c.is_control()).flat_map(char::to_lowercase).collect();
+        if kind == 0 || typed.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.drop_typed_in != kind || self.drop_typed_at.is_none_or(|t| now.duration_since(t).as_millis() > 900) {
+            self.drop_typed.clear();
+        }
+        self.drop_typed_at = Some(now);
+        self.drop_typed_in = kind;
+        self.drop_typed.push_str(&typed);
+        let items = self.drop_items(kind);
+        let n = items.len();
+        if n == 0 {
+            return;
+        }
+        let mut chars = self.drop_typed.chars();
+        let first = chars.next();
+        let (needle, from) = if chars.all(|c| Some(c) == first) {
+            (first.map(String::from).unwrap_or_default(), self.drop_sel(kind) + 1)
+        } else {
+            (self.drop_typed.clone(), self.drop_sel(kind))
+        };
+        let hit = (0..n)
+            .map(|k| (from + k) % n)
+            .find(|&i| items[i].trim().to_lowercase().starts_with(&needle));
+        if let Some(i) = hit {
+            self.drop_pick(kind, i);
+            self.drop = kind;
+            self.drop_top = i.saturating_sub(2);
+        }
+    }
+
+    pub fn drop_step(&mut self, d: i32) {
+        let kind = self.drop;
+        let n = self.drop_items(kind).len() as i32;
+        if kind == 0 || n == 0 {
+            return;
+        }
+        let i = (self.drop_sel(kind) as i32 + d).clamp(0, n - 1) as usize;
+        self.drop_pick(kind, i);
+        self.drop = kind;
+        if i < self.drop_top {
+            self.drop_top = i;
+        } else if i >= self.drop_top + 6 {
+            self.drop_top = i - 5;
+        }
+    }
+
     pub fn drop_toggle(&mut self, kind: usize) {
+        self.drop_typed.clear();
         self.drop = if self.drop == kind { 0 } else { kind };
         self.drop_top = self.drop_sel(kind).saturating_sub(2);
     }

@@ -990,6 +990,7 @@ impl App {
             self.cursor_kind = kind;
             if let Some(w) = self.window.as_ref() {
                 w.set_cursor(match kind {
+                    5 => winit::window::CursorIcon::Text,
                     4 => winit::window::CursorIcon::NsResize,
                     3 => winit::window::CursorIcon::Move,
                     2 => winit::window::CursorIcon::Crosshair,

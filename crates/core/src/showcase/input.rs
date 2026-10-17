@@ -9,6 +9,8 @@ impl App {
         let u = self.ui.as_ref()?;
         let r = if self.lab_place.is_some() {
             u.place_preview_rect
+        } else if u.start.hand {
+            return None;
         } else {
             u.start.pic_rect
         };

@@ -15,6 +15,9 @@ impl App {
             m.address.push_str(&clean);
             m.address = m.address.chars().take(200).collect();
         }
+        if let Some(m) = self.menu.as_mut().filter(|m| m.page == StartPage::Start && m.edit == 0 && m.drop != 0 && !ctrl) {
+            m.drop_type(text);
+        }
         if let Some(m) = self.menu.as_mut().filter(|m| m.page == StartPage::Start && m.edit != 0 && !ctrl) {
             let clean: String = text.chars().filter(|c| !c.is_control()).collect();
             let (buf, max) = m.edit_buf();
@@ -43,7 +46,7 @@ impl App {
                 }
                 1 if hit(&[pic], cursor).is_some() => {
                     let old = m.zoom;
-                    m.zoom = (m.zoom * 1.25f32.powf(amount)).clamp(1.0, 80.0);
+                    m.zoom = (m.zoom * 1.25f32.powf(amount)).clamp(0.1, 80.0);
                     let f = m.zoom / old;
                     m.pan = (m.pan.0 * f, m.pan.1 * f);
                 }
