@@ -50,14 +50,14 @@ impl App {
         self.lab_place_preview(dt);
         self.lab_map_sync();
         self.lab_entries_sync();
-        let vehicle_menu: Vec<crate::ui::VehicleGroup> = match self.lab_menu {
-            Some(st) if st.page == Some(crate::ui::VEHICLE_PAGE) => game_lists::vehicle_menu(self)
+        let vehicle_menu: Vec<ui::VehicleGroup> = match self.lab_menu {
+            Some(st) if st.page == Some(ui::VEHICLE_PAGE) => game_lists::vehicle_menu(self)
                 .into_iter()
-                .map(|(id, acts)| crate::ui::VehicleGroup {
+                .map(|(id, acts)| ui::VehicleGroup {
                     id,
                     actions: acts
                         .into_iter()
-                        .map(|(id, opens)| crate::ui::VehicleAction { id, opens })
+                        .map(|(id, opens)| ui::VehicleAction { id, opens })
                         .collect(),
                 })
                 .collect(),
@@ -514,7 +514,8 @@ impl App {
                     self.sky_anchored = true;
                 }
                 self.weather_local = self.sky.sample(w, observer, enhanced);
-                self.wet_grid.update(dt as f64, w, &self.sky, observer, enhanced);
+                let wet_dt = if self.paused { 0.0 } else { dt as f64 * self.time_speed() };
+                self.wet_grid.update(wet_dt, w, &self.sky, observer, enhanced);
                 self.wetness = self.wet_grid.at(observer[0], observer[1]);
                 let mut l = weather::lighting(
                     &daylight,
