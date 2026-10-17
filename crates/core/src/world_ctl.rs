@@ -795,10 +795,18 @@ impl App {
         }
         self.weather_cycle = None;
         let observer = self.weather_observer();
-        self.sky.anchor(&to, observer, weather::enhanced_sky());
         self.wetness = self.wetness.max(weather::initial_wetness(&to));
-        self.weather_blend = None;
-        self.weather = Some(to);
+        match self.weather.clone().filter(|_| self.sky_anchored) {
+            Some(from) => {
+                self.sky.retarget(&to, observer, weather::enhanced_sky(), 60.0);
+                self.weather_blend = Some(weather::Blend::new(from, to, 60.0));
+            }
+            None => {
+                self.sky.anchor(&to, observer, weather::enhanced_sky());
+                self.weather_blend = None;
+                self.weather = Some(to);
+            }
+        }
         if let Some(l) = self.lan.as_mut().filter(|l| l.role == ::network::Role::Host) {
             l.set_weather(&wire);
         }
