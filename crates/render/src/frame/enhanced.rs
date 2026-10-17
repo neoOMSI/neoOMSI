@@ -48,8 +48,7 @@ impl Renderer {
         self.sky_state = Some(st);
     }
 
-    /// How much brighter the enhanced picture is than the plain shading under `lighting`,
-    /// for an upward surface at the picture's exposure (1 without enhanced graphics).
+    /// Enhanced-to-plain brightness for an upward surface (1 without enhanced graphics).
     pub fn enhanced_light_ratio(&self, lighting: &Lighting) -> f32 {
         if self.hdr_pass.is_none() || ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_some() {
             return 1.0;
@@ -71,7 +70,7 @@ impl Renderer {
         // (as render_inner scales them for a plain frame)
         let plain = lighting.sun_color * lighting.sun_intensity * up
             + (lighting.secondary + lighting.ambient)
-                * night_scale(lighting.night, lighting.atmosphere_brightness);
+            * night_scale(lighting.night, lighting.atmosphere_brightness);
         enhanced.dot(lum) / plain.dot(lum).max(1e-4)
     }
 
@@ -123,7 +122,11 @@ impl Renderer {
             _ => target,
         };
         self.exposure = Some(log_exposure);
-        let pre = log_exposure.exp();
+        let bright = lighting.brightness.clamp(0.02, 4.0);
+        let pre = log_exposure.exp() * bright;
+        let lamp_day = (st.exposure_clear / st.exposure.max(1e-6)).clamp(0.25, 1.0);
+        let lamp_k = lamp_day + (1.0 - lamp_day) * (1.0 - lighting.brightness.clamp(0.0, 1.0));
+        let lamp_day_boost = (atmosphere::exposure_for(0.0015) / st.exposure.max(1e-6)).clamp(1.0, 400.0);
         let axes = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z];
         let avg = axes
             .iter()
@@ -178,13 +181,16 @@ impl Renderer {
             }
             None => Vec3::ZERO,
         };
-        // the weather changed the clouds: draw the sky cube again (not more often than once a
-        // second or so)
+        // Recapture changed clouds at most about once per second.
         if let Some(p) = self.probe.as_mut() {
-            let mut sig = [0.0f32; 12];
+            let mut sig = [0.0f32; 16];
             for (i, l) in lighting.cloud_layers.iter().enumerate() {
                 sig[i * 4..i * 4 + 4].copy_from_slice(&[l[0] / 1000.0, l[1] / 1000.0, l[2], l[3]]);
             }
+            sig[12] = lighting.sun_intensity;
+            sig[13] = lighting.fog_density * 1.0e4;
+            sig[14] = lighting.rain;
+            sig[15] = lighting.overcast + lighting.rain_area + lighting.rain_far;
             p.cloud_age += 1;
             let diff = sig
                 .iter()
@@ -202,24 +208,33 @@ impl Renderer {
                     (d - d.round()).abs() * 70000.0
                 })
                 .fold(0.0f32, f32::max);
-            if moved > 6.0 && p.cloud_age >= 8 {
+            if moved > 6.0 && p.cloud_age >= 30 {
                 p.cloud_offset = lighting.cloud_offset;
-                p.cloud_age = p.cloud_age.min(8);
+                p.cloud_age = p.cloud_age.min(30);
                 p.cube_recapture = p.cube_filled;
             }
         }
+        let mut rain = [[0.0f32; 4]; 64];
+        for (i, v) in lighting.rain_grid.iter().enumerate() {
+            rain[i / 4][i % 4] = *v;
+        }
+        let mut wet = [[0.0f32; 4]; 64];
+        for (i, v) in lighting.wet_grid.iter().enumerate() {
+            wet[i / 4][i % 4] = *v;
+        }
+        let _ = env!("neoomsi_RENDER_PROFILE", "Render profile is missing from the build configuration");
         let u = EnhancedUniform {
             exposure: [
                 pre,
                 2f32.powf(-self.exposure_log.as_ref().map(|l| l.ev).unwrap_or(0.0))
                     .clamp(0.7, 1.6),
-                pre * WINDOW_RADIANCE,
+                pre / bright * lamp_k * WINDOW_RADIANCE,
                 1.6,
             ],
             sun: st.sun.extend(SUN_RADIUS).to_array(),
             sh,
             ground: st.ground.extend(st.lut_scale).to_array(),
-            fog: [weather_fog, 1.0 / 300.0, base, clear_air],
+            fog: [weather_fog, 1.0 / (2.3 / weather_fog.max(1e-6) * 0.25).clamp(250.0, 1800.0), base, clear_air],
             fog_color: fog_rgb.extend(probe_scale).to_array(),
             weather: [
                 lighting.wetness.clamp(0.0, 1.0),
@@ -227,7 +242,7 @@ impl Renderer {
                 lighting.rain.clamp(0.0, 1.0),
                 input_overcast,
             ],
-            lights: [PROBE_MIPS as f32, LAMP_E, CABIN_E, input.sun_visibility],
+            lights: [PROBE_MIPS as f32, LAMP_E * lamp_day_boost / bright, CABIN_E, input.sun_visibility],
             sun_disc: st.sun_disc.extend(dt).to_array(),
             debug: [
                 debug_view(),
@@ -237,10 +252,10 @@ impl Renderer {
                     .filter(|v| v.is_finite())
                     .unwrap_or(0.08)
                     .clamp(0.02, 0.2),
-                0.0,
-                0.0,
+                lighting.rain_area.clamp(0.0, 1.0),
+                lighting.rain_far.clamp(0.0, 1.0),
             ],
-            eye: eye_off.extend(0.0).to_array(),
+            eye: eye_off.extend(lighting.lightning.clamp(0.0, 1.0)).to_array(),
             led: [
                 lighting.led_glow,
                 lighting.led_mips,
@@ -248,6 +263,14 @@ impl Renderer {
                 lighting.script_glow,
             ],
             layers: lighting.cloud_layers,
+            rain,
+            wet_info: [
+                if lighting.wet_cell > 0.0 { 1.0 } else { 0.0 },
+                lighting.wet_origin[0],
+                lighting.wet_origin[1],
+                lighting.wet_cell,
+            ],
+            wet,
         };
         self.write_buffer(&self.enh_buf, 0, bytemuck::bytes_of(&u));
         redraw
@@ -260,10 +283,19 @@ fn sky_input(lighting: &Lighting) -> atmosphere::SkyInput {
     let haze = (8000.0 / visibility).clamp(1.0, 6.0) + 2.0 * lighting.rain;
     let wet_cover = (lighting.rain * 1.5).clamp(0.0, 1.0);
     let sun_visibility = lighting.sun_intensity.clamp(0.0, 1.0) * (1.0 - wet_cover);
+    let widespread = {
+        let t = ((lighting.rain_area - 0.3) / 0.2).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let wet_cover = wet_cover * widespread;
     atmosphere::SkyInput {
         sun_dir: lighting.sun_dir.normalize_or_zero(),
         sun_visibility,
-        overcast: lighting.overcast.clamp(0.0, 1.0).max(wet_cover),
+        overcast: if lighting.rain > 0.0 {
+            lighting.overcast.clamp(0.0, 1.0).min(1.0 - 0.65 * (1.0 - widespread)).max(wet_cover)
+        } else {
+            lighting.overcast.clamp(0.0, 1.0)
+        },
         haze,
         rain: lighting.rain.clamp(0.0, 1.0),
         ground_albedo: 0.2 + 0.45 * lighting.snow.clamp(0.0, 1.0),

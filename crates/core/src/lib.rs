@@ -47,6 +47,7 @@ mod vr_navigator;
 
 mod puddles;
 mod quit;
+mod lightning;
 mod rain;
 mod real_time;
 mod run_statistics;
@@ -106,8 +107,11 @@ mod startup;
 mod stock_keys;
 mod traffic_link;
 mod tutorial;
-mod weather_cycle;
-mod weather_setup;
+mod weather;
+mod weather_setup {
+    pub(crate) use crate::weather::editor::{CUSTOM_PRECIP, CustomWeather, custom_weather};
+    pub(crate) use crate::weather::model::dew_point_c;
+}
 mod world_ctl;
 mod world_load;
 
@@ -138,7 +142,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use traffic_link::*;
-use weather_setup::*;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -661,7 +664,9 @@ pub(crate) fn make_app(
         plugins: None,
         career: Default::default(),
         wetness: 0.0,
-        cloud_drift: [0.0; 2],
+        wet_grid: Default::default(),
+        rain_cache: None,
+        lightning: Default::default(),
         menu_edit: None,
         menu_edit_icao: false,
         menu_edit_date: false,
@@ -671,6 +676,9 @@ pub(crate) fn make_app(
         menu_kbd: true,
         weather_blend: None,
         weather_cycle: None,
+        sky: weather::Regional::new(),
+        sky_anchored: false,
+        weather_local: weather::Local::default(),
         metar_rx: None,
         metar_once: false,
         metar_next: 0.0,

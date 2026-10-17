@@ -9,8 +9,12 @@ const ALPHA_BLEND: wgpu::BlendState = wgpu::BlendState {
     alpha: wgpu::BlendComponent::REPLACE,
 };
 
+pub type LoadingFrame = Box<dyn FnMut(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>) + Send>;
+
 pub type DeviceHook = Arc<
-    dyn Fn(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>, wgpu::TextureFormat) + Send + Sync,
+    dyn Fn(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>, wgpu::TextureFormat) -> Option<LoadingFrame>
+        + Send
+        + Sync,
 >;
 
 static DEVICE_HOOK: std::sync::Mutex<Option<DeviceHook>> = std::sync::Mutex::new(None);
@@ -27,6 +31,9 @@ pub(crate) fn pcache() -> Option<&'static wgpu::PipelineCache> {
 }
 
 fn open_pipeline_cache(device: &wgpu::Device, info: &wgpu::AdapterInfo) {
+    if info.backend == wgpu::Backend::Noop {
+        return;
+    }
     if !device.features().contains(wgpu::Features::PIPELINE_CACHE)
         || ::legacy_config::env::var_os("OMSI_NO_PIPELINE_CACHE").is_some()
     {
@@ -472,12 +479,10 @@ impl Renderer {
             })
             .await
             .context("request_device")?;
-        if let Some(surface) = surface {
-            let hook = DEVICE_HOOK.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            if let Some(hook) = hook {
-                hook(&device, &queue, surface, format);
-            }
-        }
+        let loading = surface.and_then(|surface| {
+            let hook = DEVICE_HOOK.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
+            hook(&device, &queue, surface, format).map(|frame| (surface, frame))
+        });
         open_pipeline_cache(&device, &info);
         log::info!("graphics device opened; compiling renderer pipelines");
         let adapter_table = device
@@ -559,13 +564,26 @@ impl Renderer {
             log::info!("renderer: every mesh in buffers of its own (no shared mesh pages)");
         }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let mut renderer = Self::build(
-            device.clone(),
-            queue.clone(),
-            format!("{} ({:?})", info.name, info.backend),
-            format,
-            options,
-        );
+        let compiled = std::sync::atomic::AtomicBool::new(false);
+        let mut renderer = std::thread::scope(|threads| {
+            if let Some((surface, mut frame)) = loading {
+                let (device, queue, compiled) = (&device, &queue, &compiled);
+                threads.spawn(move || {
+                    while !compiled.load(std::sync::atomic::Ordering::Relaxed) {
+                        frame(device, queue, surface);
+                    }
+                });
+            }
+            let renderer = Self::build(
+                device.clone(),
+                queue.clone(),
+                format!("{} ({:?})", info.name, info.backend),
+                format,
+                options,
+            );
+            compiled.store(true, std::sync::atomic::Ordering::Relaxed);
+            renderer
+        });
         renderer.mesh_pages = mesh_pages;
         match scope.pop().await {
             None => {
@@ -2496,7 +2514,7 @@ impl Renderer {
                 cube_wait: 0,
                 cube_eye: None,
                 cube_recapture: false,
-                cloud_sig: [0.0; 12],
+                cloud_sig: [0.0; 16],
                 cloud_age: 0,
                 cloud_offset: [0.0; 2],
             }

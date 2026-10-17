@@ -19,7 +19,15 @@ impl App {
         } else if self.weather_blend.is_some() {
             self.tick_weather(dt);
         }
-        let daylight = ::simulation::Daylight::compute(&self.clock, self.envir.as_ref());
+        let mut daylight = ::simulation::Daylight::compute(&self.clock, self.envir.as_ref());
+        // Enable night maps and street lamps when brightness is below 0.05
+        if let Some(w) = self.weather.as_ref() {
+            let clarity = ((self.weather_local.visibility_m.max(50.0) / 50.0).ln() / 1000.0f32.ln())
+                .clamp(0.0, 1.0);
+            if clarity <= 0.05 || w.brightness * w.brightness <= 0.05 {
+                daylight.lamps_on = true;
+            }
+        }
         if self.lamps_on != Some(daylight.lamps_on) {
             self.lamps_on = Some(daylight.lamps_on);
             if let (Some(w), Some(r), Some(scene)) = (
@@ -49,12 +57,16 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             p.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                let sheltered = precip_of(w).0 != 0
+                // the weather and the road's wetness where this vehicle stands
+                let (x, y) = (p.vehicle.position.x, p.vehicle.position.y);
+                let local = self.sky.sample(w, [x, y], weather::enhanced_sky());
+                let wetness = self.wet_grid.at(x, y);
+                let sheltered = local.precip_kind != 0
                     && self.world.as_ref().is_some_and(|world| {
-                        crate::shelter::windscreen_top(&p.vehicle)
-                            .is_some_and(|top| self.shelter.covers_anywhere(world, top))
-                    });
-                apply_weather(&mut p.vehicle, w, self.wetness, sheltered);
+                    crate::shelter::windscreen_top(&p.vehicle)
+                        .is_some_and(|top| self.shelter.covers_anywhere(world, top))
+                });
+                weather::apply_to_vehicle(&mut p.vehicle, w, &local, wetness, sheltered);
             }
         }
         for q in self.placed.iter_mut() {
@@ -66,17 +78,22 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             q.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                let sheltered = precip_of(w).0 != 0
+                // the weather and the road's wetness where this vehicle stands
+                let (x, y) = (q.vehicle.position.x, q.vehicle.position.y);
+                let local = self.sky.sample(w, [x, y], weather::enhanced_sky());
+                let wetness = self.wet_grid.at(x, y);
+                let sheltered = local.precip_kind != 0
                     && self.world.as_ref().is_some_and(|world| {
-                        crate::shelter::windscreen_top(&q.vehicle)
-                            .is_some_and(|top| self.shelter.covers_anywhere(world, top))
-                    });
-                apply_weather(&mut q.vehicle, w, self.wetness, sheltered);
+                    crate::shelter::windscreen_top(&q.vehicle)
+                        .is_some_and(|top| self.shelter.covers_anywhere(world, top))
+                });
+                weather::apply_to_vehicle(&mut q.vehicle, w, &local, wetness, sheltered);
             }
         }
         let __t = Instant::now();
         if let Some(wt) = &self.weather {
-            lights::set_cone_strength(wt.fog.0, precip_of(wt).1, daylight.night);
+            lights::set_cone_strength(self.weather_local.visibility_m, self.weather_local.precip_rate, daylight.night);
+            lights::set_brightness(wt.brightness);
         }
         if let Some(r) = self.renderer.as_mut() {
             lights::upload_corona_textures(r);
@@ -90,7 +107,7 @@ impl App {
             w.update_light_map_atlas(r, cam.position);
             // the roofs around the camera, while there is weather to keep off (#137)
             if self.weather.as_ref().is_some_and(|wt| {
-                precip_of(wt).0 != 0 || wt.snow || wt.snow_on_road || self.wetness > 0.0
+                self.weather_local.precip_kind != 0 || wt.snow_cover || wt.snow_on_road || self.wetness > 0.0
             }) {
                 self.shelter
                     .update(w, cam.position, Some(std::time::Duration::from_millis(2)));
@@ -156,7 +173,7 @@ impl App {
                 }
             }
             if let Some(wt) = &self.weather {
-                let (kind, rate) = precip_of(wt);
+                let (kind, rate) = self.weather_local.precip();
                 self.rain.set(kind, rate);
                 let wind = crate::rain::weather_wind(wt);
                 // every bus one may ride in keeps the weather out: the own, another
@@ -192,8 +209,17 @@ impl App {
                     scene,
                     &buses,
                     &self.shelter,
+                    w.camera_ground(cam.position.x, cam.position.y, cam.position.z),
                 );
                 *self.profile.entry("lights.rain").or_default() += __tr.elapsed().as_secs_f64();
+                self.lightning.tick(
+                    if self.paused { 0.0 } else { dt },
+                    self.weather_local.storm,
+                    self.weather_local.visibility_m,
+                    cam.position,
+                    |x, y| w.camera_ground(x, y, cam.position.z + 3000.0),
+                    scene,
+                );
                 if kind == 1 || self.wetness > 0.1 {
                     let mut wheels = self
                         .player
@@ -212,8 +238,9 @@ impl App {
                             speed = speed.max(f.vel.length() as f32);
                         }
                     }
-                    let wetness = self.wetness;
+                    let grid = &self.wet_grid;
                     self.splashes.update(&wheels, speed, &|x, y| {
+                        let wetness = grid.at(x, y);
                         let wet = w.wet_road_at(x, y, wetness);
                         if wet > 0.0 {
                             // a wet road always throws water; a puddle throws most
@@ -267,13 +294,13 @@ impl App {
                         dt,
                         (kind, rate),
                         inside,
-                        street_condition(wt, self.wetness),
+                        weather::street_condition(wt, &self.weather_local, self.wetness),
                         cam.position,
                         &steps,
                     );
                     *self.profile.entry("lights.ambience").or_default() +=
                         __tm.elapsed().as_secs_f64();
-                    if let Some(every) = debug_sound_every() {
+                    if let Some(every) = weather::debug_sound_every() {
                         static LAST: std::sync::atomic::AtomicU32 =
                             std::sync::atomic::AtomicU32::new(u32::MAX);
                         let bucket = (self.clock.time / every as f64) as u32;
@@ -281,7 +308,7 @@ impl App {
                             log::info!(
                                 "sound: environment - {} (precip {kind} {rate:.2}, StreetCond {:.2}, {} voices)",
                                 amb.last,
-                                street_condition(wt, self.wetness),
+                                weather::street_condition(wt, &self.weather_local, self.wetness),
                                 a.voice_count()
                             );
                         }

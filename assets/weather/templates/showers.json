@@ -1,0 +1,11 @@
+{
+  "name": "Sun and Showers",
+  "description": "Bright spells, then a sudden cloudburst. It rains in places only.",
+  "metar": "ZZZZ 011200Z 26012G22KT 9000 SHRA SCT025 BKN040CB 14/08 Q1005",
+  "next": [
+    "partly_cloudy",
+    "rain",
+    "thunderstorm",
+    "cloudy"
+  ]
+}

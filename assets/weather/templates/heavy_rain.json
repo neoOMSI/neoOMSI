@@ -1,0 +1,10 @@
+{
+  "name": "Downpour",
+  "description": "Sheets of water and a gusty wind. Wipers at full speed.",
+  "metar": "ZZZZ 011200Z 22014G26KT 1800 +RA OVC008 13/12 Q0992",
+  "next": [
+    "rain",
+    "thunderstorm",
+    "dark_storm"
+  ]
+}

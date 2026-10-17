@@ -229,8 +229,9 @@ pub(crate) struct Extra {
 
 pub(crate) struct WeatherInfo {
     pub spec: String,
-    pub weather: ::content::weather::Weather,
-    pub custom: crate::weather_setup::CustomWeather,
+    pub weather: crate::weather::Weather,
+    pub local: crate::weather::Local,
+    pub custom: crate::weather::CustomWeather,
     pub is_custom: bool,
     pub wetness: f32,
     pub blend: Option<(f32, String)>,
@@ -267,7 +268,7 @@ pub(crate) enum Action {
     VehicleStartUp,
     WeatherPreset(String, f32),
     WeatherNext,
-    WeatherCustom(Box<crate::weather_setup::CustomWeather>),
+    WeatherCustom(Box<crate::weather::CustomWeather>),
     WeatherFromCurrent,
     WeatherMetar(String),
     WeatherCycle(bool),

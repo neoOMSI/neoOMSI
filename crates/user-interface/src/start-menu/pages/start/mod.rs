@@ -32,7 +32,7 @@ impl Ui {
         if self.start.last_sect != Some(v.sect) {
             self.start.prev_sect = self.start.last_sect.unwrap_or(v.sect);
             self.start.last_sect = Some(v.sect);
-            self.start.sect_t = 0.0;
+            self.start.sect_t = if self.start.prev_sect != 0 && v.sect != 0 { 1.0 } else { 0.0 };
         }
         self.start.sect_t = (self.start.sect_t + self.anim_dt / 0.2).min(1.0);
         let ep = out(self.start.page_t);
@@ -45,7 +45,7 @@ impl Ui {
         self.text.alpha = ep;
         self.text.rounded(r, scene, card, 0.0, OPT_CARD);
 
-        self.text.rounded(r, scene, [0.0, bar_h, w, bar_h + 1.0], 0.0, [255, 255, 255, 14]);
+        self.text.rounded(r, scene, [0.0, bar_h, w, bar_h + 1.0], 0.0, DIVIDER);
         let mut hits: Hits = ([[0.0; 4]; 16], [[0.0; 4]; 32]);
         if v.sect == 0 {
             self.start_overview(r, scene, f, card, v, u, &mut hits);

@@ -1,0 +1,15 @@
+{
+  "name": "Freezing Fog",
+  "description": "Fog that frosts every twig and signpost. Cold, white and silent.",
+  "metar": "ZZZZ 011200Z 00000KT 0250 FZFG VV001 M03/M04 Q1028",
+  "months": [
+    11,
+    2
+  ],
+  "ground_wet": 0.2,
+  "next": [
+    "fog",
+    "frost",
+    "overcast"
+  ]
+}

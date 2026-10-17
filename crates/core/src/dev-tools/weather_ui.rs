@@ -1,8 +1,7 @@
 #![allow(unused_imports)]
 use super::types::*;
 use super::util::*;
-use crate::weather_setup::{CUSTOM_CLOUDS, CUSTOM_PRECIP, CustomWeather};
-use ::content::weather::Weather;
+use crate::weather::{CUSTOM_PRECIP, CustomWeather, PrecipKind, Weather};
 use imgui::Condition;
 
 const SCENARIOS: [&str; 10] = [
@@ -47,7 +46,10 @@ impl WeatherTool {
     }
 
     fn reload(&mut self) {
-        self.presets = crate::weather_cycle::installed();
+        self.presets = crate::weather::template::library()
+            .into_iter()
+            .map(|t| (crate::weather::spec::template_spec(&t.id), t.weather()))
+            .collect();
         self.loaded = true;
         self.selected = None;
     }
@@ -115,12 +117,14 @@ fn compass(deg: f32) -> &'static str {
 }
 
 fn cloud_name(w: &Weather) -> String {
-    let t = w.clouds.0.trim();
-    if t.is_empty() || t.starts_with("-1") {
-        "none".to_string()
-    } else {
-        format!("{t}, base {:.0} m", w.clouds.1)
+    if w.clouds.is_empty() {
+        return "none".to_string();
     }
+    w.clouds
+        .iter()
+        .map(|l| format!("{} {:.0} m", l.code(), l.base_m))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn precip_name(kind: i32) -> &'static str {
@@ -137,10 +141,10 @@ fn source(wi: &WeatherInfo) -> String {
         "map default".to_string()
     } else if wi.is_custom {
         "custom".to_string()
-    } else if let Some(c) = s.strip_prefix("metar:") {
-        format!("METAR {c}")
-    } else if s.starts_with(crate::weather_setup::REPORT) {
+    } else if s.starts_with(crate::weather::REPORT) {
         "METAR report (host)".to_string()
+    } else if let Some(c) = s.strip_prefix("metar") .and_then(|c| c.split_once(':')).map(|x| x.1) {
+        format!("METAR {c}")
     } else {
         s.to_string()
     }
@@ -166,19 +170,18 @@ fn status(ui: &imgui::Ui, wi: &WeatherInfo) {
             .overlay_text(format!("-> {to}  {:.0}%", k * 100.0))
             .build(ui);
     }
-    let rh = crate::weather_setup::relative_humidity(w.temp.0, w.temp.1);
-    let dew = crate::weather_setup::dew_point_c(w.temp.0, rh);
+    let (rh, dew) = (w.rel_humidity(), w.dew_c);
     ui.text(format!(
         "Visibility {:.0} m   Temp {:.1} C   Humidity {:.0}%   Dew {:.1} C",
-        w.fog.0, w.temp.0, rh, dew
+        w.visibility_m, w.temp_c, rh, dew
     ));
     ui.text(format!(
         "Wind {:.0} deg ({}) {:.1} m/s = {} Bft   Pressure {:.0} hPa",
-        w.wind.0,
-        compass(w.wind.0),
-        w.wind.1,
-        beaufort(w.wind.1),
-        w.pressure
+        w.wind_dir,
+        compass(w.wind_dir),
+        w.wind_speed,
+        beaufort(w.wind_speed),
+        w.pressure_hpa
     ));
     ui.text(format!(
         "Clouds: {}   Precip: {} {:.0}%",
@@ -187,8 +190,16 @@ fn status(ui: &imgui::Ui, wi: &WeatherInfo) {
         wi.precip.1 * 100.0
     ));
     ui.text(format!(
-        "Cloud density {:.2}   Drift {:.0} / {:.0}",
-        wi.density, wi.drift[0], wi.drift[1]
+        "Station: {:?} {:.0}%   Cloud density {:.2}   Offset {:.3} / {:.3}",
+        w.precip.kind,
+        w.precip.intensity * 100.0,
+        wi.density,
+        wi.drift[0],
+        wi.drift[1]
+    ));
+    ui.text(format!(
+        "Here: sky {:.2}   visibility {:.0} m   storm {:.2}",
+        wi.local.thick, wi.local.visibility_m, wi.local.storm
     ));
     for (i, l) in wi.layers.iter().enumerate() {
         ui.text_disabled(format!(
@@ -204,35 +215,30 @@ fn status(ui: &imgui::Ui, wi: &WeatherInfo) {
         "Road wetness {:.0}%   Street cond {:.2}   Snow {}{}",
         wi.wetness * 100.0,
         wi.street_cond,
-        if w.snow { "yes" } else { "no" },
+        if w.snow_cover { "yes" } else { "no" },
         if w.snow_on_road { ", on road" } else { "" }
     ));
 }
 
 fn summary(w: &Weather) -> String {
-    let vis = if w.fog.0 >= 10_000.0 {
-        format!("{:.0} km", w.fog.0 / 1000.0)
+    let vis = if w.visibility_m >= 10_000.0 {
+        format!("{:.0} km", w.visibility_m / 1000.0)
     } else {
-        format!("{:.0} m", w.fog.0)
+        format!("{:.0} m", w.visibility_m)
     };
-    let kind = w.precip.first().copied().unwrap_or(0.0) as i32;
-    let clouds = {
-        let t = w.clouds.0.trim();
-        if t.starts_with("-1") || t.is_empty() { "clear" } else { t }
+    let clouds = if w.clouds.is_empty() { "clear".to_string() } else { cloud_name(w) };
+    let precip = match w.precip.kind {
+        PrecipKind::None => "",
+        PrecipKind::Snow | PrecipKind::Sleet => ", snow",
+        _ if w.precip.vicinity => ", rain nearby",
+        _ if w.precip.showers => ", showers",
+        _ => ", rain",
     };
-    format!(
-        "{vis}, {:.0} C, {clouds}{}",
-        w.temp.0,
-        match kind {
-            1 => ", rain",
-            2 => ", snow",
-            _ => "",
-        }
-    )
+    format!("{vis}, {:.0} C, {clouds}{precip}", w.temp_c)
 }
 
 fn same_file(a: &str, b: &str) -> bool {
-    a.replace('\\', "/").eq_ignore_ascii_case(&b.replace('\\', "/"))
+    a.eq_ignore_ascii_case(b)
 }
 
 fn presets(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mut Vec<Action>) {
@@ -241,7 +247,7 @@ fn presets(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &m
         tool.reload();
     }
     ui.same_line();
-    ui.text_disabled(format!("{} installed (Weather/*.owt)", tool.presets.len()));
+    ui.text_disabled(format!("{} templates (stock + Weather/Templates/*.json)", tool.presets.len()));
     ui.set_next_item_width(-1.0);
     ui.input_text("##wfilter", &mut tool.filter)
         .hint("Filter by name or file")
@@ -304,11 +310,11 @@ fn presets(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &m
             ui.text_disabled(summary(w));
             ui.text_disabled(format!(
                 "wind {:.0} deg {:.1} m/s, {:.0} hPa, clouds {}, wet {:.0}%",
-                w.wind.0,
-                w.wind.1,
-                w.pressure,
+                w.wind_dir,
+                w.wind_speed,
+                w.pressure_hpa,
                 cloud_name(w),
-                w.ground_wet[0] / 255.0 * 100.0
+                w.ground_wet * 100.0
             ));
             if !w.description.trim().is_empty() {
                 ui.text_wrapped(w.description.trim());
@@ -355,15 +361,11 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
     match i {
         0 => {}
         1 => {
-            c.cloud = 1;
-            c.cloud_base_m = 1500.0;
             c.visibility_m = 30_000.0;
             c.wind_speed = 3.0;
             c.temp_c = 20.0;
         }
         2 => {
-            c.cloud = 3;
-            c.cloud_base_m = 900.0;
             c.visibility_m = 15_000.0;
             c.wind_speed = 5.0;
             c.humidity = 70.0;
@@ -371,8 +373,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.85;
         }
         3 => {
-            c.cloud = 4;
-            c.cloud_base_m = 500.0;
             c.visibility_m = 8_000.0;
             c.wind_speed = 4.0;
             c.humidity = 85.0;
@@ -381,8 +381,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.7;
         }
         4 => {
-            c.cloud = 4;
-            c.cloud_base_m = 350.0;
             c.visibility_m = 4_000.0;
             c.wind_speed = 3.0;
             c.humidity = 92.0;
@@ -394,8 +392,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.7;
         }
         5 => {
-            c.cloud = 4;
-            c.cloud_base_m = 300.0;
             c.visibility_m = 2_500.0;
             c.wind_speed = 7.0;
             c.humidity = 95.0;
@@ -407,8 +403,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.6;
         }
         6 => {
-            c.cloud = 4;
-            c.cloud_base_m = 250.0;
             c.visibility_m = 1_200.0;
             c.wind_speed = 18.0;
             c.humidity = 98.0;
@@ -420,8 +414,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.4;
         }
         7 => {
-            c.cloud = 4;
-            c.cloud_base_m = 350.0;
             c.visibility_m = 1_800.0;
             c.wind_speed = 4.0;
             c.humidity = 90.0;
@@ -435,8 +427,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.8;
         }
         8 => {
-            c.cloud = 4;
-            c.cloud_base_m = 100.0;
             c.visibility_m = 120.0;
             c.wind_speed = 0.5;
             c.humidity = 100.0;
@@ -446,7 +436,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.8;
         }
         _ => {
-            c.cloud = 0;
             c.visibility_m = 40_000.0;
             c.wind_speed = 1.0;
             c.humidity = 30.0;
@@ -487,12 +476,9 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
             temp_c: if cold { r(-8.0, 2.0) } else { r(2.0, 30.0) },
             humidity: r(30.0, 100.0),
             pressure: r(985.0, 1030.0),
-            cloud: (r(0.0, 5.0) as usize).min(4),
-            cloud_base_m: r(250.0, 3000.0),
             ..CustomWeather::default()
         };
         if rain > 0.55 {
-            c.cloud = 4;
             c.precip = if c.temp_c < 1.5 { 2 } else { 1 };
             c.precip_intensity = r(20.0, 255.0);
             c.road_wetness = if c.precip == 1 { r(0.4, 1.0) } else { r(0.0, 0.4) };
@@ -526,14 +512,17 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
     let before = tool.edit.clone();
     let e = &mut tool.edit;
     ui.set_next_item_width(-150.0);
-    ui.slider_config("Visibility##cw", 50.0, 50_000.0)
-        .flags(imgui::SliderFlags::LOGARITHMIC)
-        .display_format("%.0f m")
-        .build(&mut e.visibility_m);
-    ui.set_next_item_width(-150.0);
-    ui.slider_config("Brightness##cw", 0.0, 1.5)
+    let mut clarity = ((e.visibility_m.max(50.0) / 50.0).ln() / 1000.0f32.ln()).clamp(0.0, 1.0);
+    if ui
+        .slider_config("Visibility & brightness##cw", 0.0, 1.0)
         .display_format("%.2f")
-        .build(&mut e.brightness);
+        .build(&mut clarity)
+    {
+        e.visibility_m = 50.0 * 1000.0f32.powf(clarity);
+        e.brightness = clarity.sqrt();
+    }
+    ui.same_line();
+    ui.text(format!("{:.0} m", e.visibility_m));
     ui.set_next_item_width(-150.0);
     ui.slider_config("Wind direction##cw", 0.0, 360.0)
         .display_format("%.0f deg")
@@ -557,18 +546,12 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
     ui.same_line();
     ui.text(format!(
         "dew {:.1}",
-        crate::weather_setup::dew_point_c(e.temp_c, e.humidity)
+        crate::weather::model::dew_point_c(e.temp_c, e.humidity)
     ));
     ui.set_next_item_width(-150.0);
     ui.slider_config("Pressure##cw", 900.0, 1100.0)
         .display_format("%.0f hPa")
         .build(&mut e.pressure);
-    ui.set_next_item_width(-150.0);
-    ui.combo_simple_string("Cloud type##cw", &mut e.cloud, &CUSTOM_CLOUDS[..]);
-    ui.set_next_item_width(-150.0);
-    ui.slider_config("Cloud base##cw", 50.0, 5000.0)
-        .display_format("%.0f m")
-        .build(&mut e.cloud_base_m);
     let mut p = e.precip.clamp(0, 2) as usize;
     ui.set_next_item_width(-150.0);
     if ui.combo_simple_string("Precipitation##cw", &mut p, &CUSTOM_PRECIP[..]) {
@@ -601,7 +584,7 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
     ui.set_next_item_width(-190.0);
     ui.input_text("##wsave", &mut tool.save_name).build();
     ui.same_line();
-    if ui.button("Save current as .owt") {
+    if ui.button("Save current as template") {
         actions.push(Action::WeatherSave(tool.save_name.clone()));
     }
 }
@@ -729,36 +712,4 @@ fn live(
         wi.day_of_year,
         if extra.paused { "  (paused)" } else { "" }
     ));
-}
-
-pub(super) fn to_owt(name: &str, w: &Weather) -> String {
-    let p = |i: usize| w.precip.get(i).copied().unwrap_or(0.0);
-    let mut s = String::new();
-    s.push_str(&format!("[name]\n{name}\n"));
-    s.push_str("[description]\nSaved from the weather tool\n[end]\n");
-    s.push_str(&format!("[fog]\n{}\n{}\n", w.fog.0, w.fog.1));
-    s.push_str(&format!("[wind]\n{}\n{}\n", w.wind.0, w.wind.1));
-    s.push_str(&format!("[temp]\n{}\n{}\n", w.temp.0, w.temp.1));
-    s.push_str(&format!("[press]\n{}\n", w.pressure));
-    let clouds = if w.clouds.0.trim().is_empty() { "-1" } else { w.clouds.0.trim() };
-    s.push_str(&format!("[clouds]\n{}\n{}\n", clouds, w.clouds.1));
-    s.push_str(&format!(
-        "[precip]\n{}\n{}\n{}\n{}\n{}\n",
-        p(0),
-        p(1),
-        p(2),
-        p(3),
-        p(4)
-    ));
-    s.push_str(&format!(
-        "[groundwet]\n{}\n{}\n{}\n",
-        w.ground_wet[0], w.ground_wet[1], w.ground_wet[2]
-    ));
-    if w.snow {
-        s.push_str("[snow]\n");
-    }
-    if w.snow_on_road {
-        s.push_str("[snowonroad]\n");
-    }
-    s
 }

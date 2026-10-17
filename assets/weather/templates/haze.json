@@ -1,0 +1,14 @@
+{
+  "name": "Summer Haze",
+  "description": "Warm, milky air that softens everything in the distance.",
+  "metar": "ZZZZ 011200Z 18004KT 5000 HZ SKC 27/14 Q1017",
+  "months": [
+    5,
+    9
+  ],
+  "next": [
+    "clear",
+    "hot",
+    "fair"
+  ]
+}

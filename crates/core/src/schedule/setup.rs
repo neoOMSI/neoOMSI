@@ -6,6 +6,14 @@ impl Schedule {
     /// `clock` gives the date: tours carry a validity mask (bits 0-6 Monday…Sunday, 7 public
     /// holiday, 8 school days, 9 school holidays) that selects which run today.
     pub fn new(root: &Path, world: &World, clock: &::simulation::SimClock) -> Schedule {
+        Self::build(root, world, clock, true)
+    }
+
+    pub fn timetable_only(root: &Path, world: &World, clock: &::simulation::SimClock) -> Schedule {
+        Self::build(root, world, clock, false)
+    }
+
+    fn build(root: &Path, world: &World, clock: &::simulation::SimClock, vehicles: bool) -> Schedule {
         let chrono_dirs = world.chrono_dirs.read().clone();
         let deactivated = ::map::chrono_deactivated_lines(&chrono_dirs);
         let data = TimetableData::load_with_chrono(&world.map_dir, &chrono_dirs, &deactivated);
@@ -120,7 +128,7 @@ impl Schedule {
         };
         {
             let lists = &world.ailists;
-            for g in lists.groups.iter().filter(|g| g.is_depot) {
+            for g in lists.groups.iter().filter(|g| vehicles && g.is_depot) {
                 let mut vehicles = Vec::new();
                 for tg in &g.typgroups {
                     let path = ::mods::resolve_path(root, &tg.file);
@@ -147,7 +155,7 @@ impl Schedule {
         let mut trains: HashMap<String, Vec<Vec<(Arc<VehicleType>, bool)>>> = HashMap::new();
         {
             let lists = &world.ailists;
-            for g in lists.groups.iter().filter(|g| !g.is_depot) {
+            for g in lists.groups.iter().filter(|g| vehicles && !g.is_depot) {
                 for v in &g.vehicles {
                     if !v.file.to_ascii_lowercase().ends_with(".zug") {
                         continue;

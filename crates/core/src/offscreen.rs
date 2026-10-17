@@ -234,13 +234,16 @@ pub(crate) fn run_offscreen(
     };
     let mut player_ref: Option<Player> = None;
     let envir = ::content::Envir::load(&args.root.join("envir.cfg")).ok();
-    let weather = load_weather(args);
-    setup_sky(args, &renderer, &mut scene, envir.as_ref(), Some(&weather));
+    let weather = weather::spec::load(args);
+    let mut sky_region = weather::Regional::new();
+    sky_region.anchor(&weather, [0.0; 2], weather::enhanced_sky());
+    let wx_local = weather::Local::uniform(&weather);
+    weather::setup_sky(args, &renderer, &mut scene, envir.as_ref());
     if let Some(p) = player.as_mut() {
         let sheltered = crate::shelter::windscreen_top(&p.vehicle)
             .and_then(|top| crate::shelter::roof_at(&world, top.x, top.y).map(|r| top.z < r))
             .unwrap_or(false);
-        apply_weather(&mut p.vehicle, &weather, initial_wetness(&weather), sheltered);
+        weather::apply_to_vehicle(&mut p.vehicle, &weather, &wx_local, weather::initial_wetness(&weather), sheltered);
     }
     // the workshop's waiting time moves the clock on, so the sky has to follow it
     let mut service_seconds = 0.0f64;
@@ -446,18 +449,10 @@ pub(crate) fn run_offscreen(
     };
     let mut srv_metar_due = Instant::now();
     let mut srv_metar_rx: Option<
-        std::sync::mpsc::Receiver<Option<::content::weather::Weather>>,
+        std::sync::mpsc::Receiver<Option<weather::Weather>>,
     > = None;
     // (the weather's name on the status page)
-    let mut srv_weather_name = if weather.path.to_string_lossy().starts_with("metar:") {
-        weather.name.clone()
-    } else {
-        weather
-            .path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default()
-    };
+    let mut srv_weather_name = weather.name.clone();
     if let (true, Some((pw, speed))) = (server, server::SERVER_ADMIN.get()) {
         srv_admin.password = pw.clone();
         if let Some(l) = lan_off.as_mut() {
@@ -492,7 +487,7 @@ pub(crate) fn run_offscreen(
                             let wait = if report.is_some() { 600 } else { 60 };
                             srv_metar_due = Instant::now() + std::time::Duration::from_secs(wait);
                             if let Some(w) = report {
-                                if let Some(wire) = report_wire(&w) {
+                                if let Some(wire) = weather::spec::wire(&w) {
                                     if wire != l.weather() {
                                         log::info!(
                                             "server: weather now the METAR report of {icao}: {wire}"
@@ -514,7 +509,7 @@ pub(crate) fn run_offscreen(
                     srv_metar_rx = Some(rx);
                     let icao = icao.clone();
                     std::thread::spawn(move || {
-                        let _ = tx.send(try_metar(&icao));
+                        let _ = tx.send(weather::net::fetch(&icao));
                     });
                 }
             }
@@ -635,7 +630,7 @@ pub(crate) fn run_offscreen(
                 t,
                 Some(&view_cam),
                 w as f64 / h.max(1) as f64,
-                weather.fog.0 as f64,
+                wx_local.visibility_m as f64,
                 &run_clock,
                 humans_off.as_ref(),
                 player.as_ref(),
@@ -673,10 +668,11 @@ pub(crate) fn run_offscreen(
                         );
                     }
                     let daylight = ::simulation::Daylight::compute(&run_clock, envir.as_ref());
-                    let lighting = weather_lighting(
+                    let lighting = weather::lighting(
                         &daylight,
                         &weather,
-                        cloud_drift_at(&weather, run_clock.time),
+                        &sky_region,
+                        &wx_local,
                         0.0,
                         ::config::get_bool("graphics", "shadows").unwrap_or(true),
                     );
@@ -1436,16 +1432,17 @@ pub(crate) fn run_offscreen(
                         vehicles.extend(t.cars.iter().map(|c| &c.vehicle));
                     }
                     vehicles.extend(remotes_off.remotes.values().map(|r| r.vehicle()));
-                    lights::set_cone_strength(weather.fog.0, precip_of(&weather).1, daylight.night);
+                    lights::set_cone_strength(wx_local.visibility_m, wx_local.precip_rate, daylight.night);
                     lights::upload_corona_textures(&mut renderer);
                     world.update_light_map_atlas(&renderer, cam.position);
                     lights::collect(&world, &mut scene, &daylight, cam.position, &vehicles);
                 }
-                let rate = precip_of(&weather).1;
-                let mut lighting = weather_lighting(
+                let rate = wx_local.precip_rate;
+                let mut lighting = weather::lighting(
                     &daylight,
                     &weather,
-                    cloud_drift_at(&weather, snap_clock.time),
+                    &sky_region,
+                    &wx_local,
                     if rate > 0.0 {
                         (0.4 + rate).min(1.0)
                     } else {
@@ -2931,17 +2928,18 @@ pub(crate) fn run_offscreen(
     world.set_lamps(&renderer, &mut scene, daylight.lamps_on);
     world.update_night_modes(&renderer, &mut scene, &clock, daylight.brightness);
     // a run starts with the roads already in the state this weather would leave them
-    let mut wetness = initial_wetness(&weather);
+    let mut wetness = weather::initial_wetness(&weather);
     if let Some(v) = ::legacy_config::env::var("OMSI_WETNESS")
         .ok()
         .and_then(|v| v.parse().ok())
     {
         wetness = v;
     }
-    let mut lighting = weather_lighting(
+    let mut lighting = weather::lighting(
         &daylight,
         &weather,
-        cloud_drift_at(&weather, clock.time),
+        &sky_region,
+        &wx_local,
         wetness,
         ::config::get_bool("graphics", "shadows").unwrap_or(true),
     );
@@ -3028,14 +3026,14 @@ pub(crate) fn run_offscreen(
             vehicles.extend(t.cars.iter().map(|c| &c.vehicle));
         }
         vehicles.extend(remotes_off.remotes.values().map(|r| r.vehicle()));
-        lights::set_cone_strength(weather.fog.0, precip_of(&weather).1, daylight.night);
+        lights::set_cone_strength(wx_local.visibility_m, wx_local.precip_rate, daylight.night);
         lights::upload_corona_textures(&mut renderer);
         world.update_light_map_atlas(&renderer, camera.position);
         lights::collect(&world, &mut scene, &daylight, camera.position, &vehicles);
         let mut shelter = crate::shelter::Shelter::new();
         shelter.update(&world, camera.position, None);
         shelter.upload(&renderer);
-        let (kind, rate) = precip_of(&weather);
+        let (kind, rate) = wx_local.precip();
         let mut rn = rain::Rain::new();
         rn.set(kind, rate);
         for _ in 0..30 {
@@ -3053,6 +3051,7 @@ pub(crate) fn run_offscreen(
                     .map(|p| rain::vehicle_boxes(&p.vehicle))
                     .unwrap_or_default(),
                 &shelter,
+                world.camera_ground(camera.position.x, camera.position.y, camera.position.z),
             );
         }
         // a moving player's wheels through the puddles the enhanced renderer paints on wet

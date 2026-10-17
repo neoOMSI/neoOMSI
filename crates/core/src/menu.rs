@@ -123,7 +123,7 @@ pub struct Menu {
     pub icao_all_job: Option<std::sync::mpsc::Receiver<Vec<(String, String)>>>,
     pub icao_all_started: bool,
     pub icao_top: usize,
-    pub custom: crate::weather_setup::CustomWeather,
+    pub custom: crate::weather::CustomWeather,
     pub traffic: usize,
     pub passengers: bool,
     pub schedule: bool,
@@ -153,6 +153,9 @@ pub struct Menu {
     pub veh_open: Option<String>,
     pub drop: usize,
     pub drop_top: usize,
+    drop_typed: String,
+    drop_typed_in: usize,
+    drop_typed_at: Option<std::time::Instant>,
     pub edit: u8,
     pub details: bool,
     pub liveries: Vec<String>,
@@ -370,33 +373,12 @@ impl Menu {
         }
         let mut weathers = vec![
             ("default".to_string(), String::new()),
-            ("cycle".to_string(), crate::weather_cycle::CYCLE.to_string()),
+            ("cycle".to_string(), crate::weather::CYCLE.to_string()),
             ("real".to_string(), "metar-sync:".to_string()),
             ("custom".to_string(), "custom".to_string()),
         ];
-        if let Ok(rd) = std::fs::read_dir(root.join("Weather")) {
-            let mut files: Vec<PathBuf> = rd
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.extension()
-                        .map(|e| e.eq_ignore_ascii_case("owt"))
-                        .unwrap_or(false)
-                })
-                .collect();
-            files.sort();
-            for f in files {
-                let name = f
-                    .file_stem()
-                    .unwrap()
-                    .to_string_lossy()
-                    .trim_start_matches('#')
-                    .to_string();
-                weathers.push((
-                    name,
-                    format!("Weather/{}", f.file_name().unwrap().to_string_lossy()),
-                ));
-            }
+        for t in crate::weather::template::library() {
+            weathers.push((t.name.clone(), crate::weather::spec::template_spec(&t.id)));
         }
         let map = maps
             .iter()
@@ -469,6 +451,9 @@ impl Menu {
             veh_open: None,
             drop: 0,
             drop_top: 0,
+            drop_typed: String::new(),
+            drop_typed_in: 0,
+            drop_typed_at: None,
             edit: 0,
             details: false,
             liveries: Vec::new(),
@@ -701,7 +686,7 @@ impl Menu {
         }
         self.metar_live = ::config::get_bool("start_menu", "metar_live").unwrap_or(true);
         self.icao = get("icao");
-        if let Some(c) = crate::weather_setup::custom_weather(Some(&get("custom_weather"))) {
+        if let Some(c) = crate::weather::custom_weather(Some(&get("custom_weather"))) {
             self.custom = c;
         }
     }
@@ -768,10 +753,10 @@ impl Menu {
             return self.entry_rows().into_iter().map(|r| r.1).collect();
         }
         if kind == 13 {
-            return crate::weather_setup::CUSTOM_CLOUDS.iter().map(|s| s.to_string()).collect();
+            return Self::CUSTOM_HUMIDITY.iter().map(|h| format!("{h:.0} %")).collect();
         }
         if kind == 14 {
-            return crate::weather_setup::CUSTOM_PRECIP.iter().map(|s| s.to_string()).collect();
+            return crate::weather::CUSTOM_PRECIP.iter().map(|s| s.to_string()).collect();
         }
         if kind == 16 {
             return self.trip_rows();
@@ -788,7 +773,7 @@ impl Menu {
     pub fn drop_sel(&self, kind: usize) -> usize {
         match kind {
             11 => self.map,
-            13 => self.custom.cloud,
+            13 => Self::CUSTOM_HUMIDITY.iter().position(|h| *h >= self.custom.humidity).unwrap_or(5),
             14 => self.custom.precip.clamp(0, 2) as usize,
             12 => {
                 let shown = self.entry_shown();
@@ -804,7 +789,7 @@ impl Menu {
     pub fn drop_pick(&mut self, kind: usize, i: usize) {
         match kind {
             11 => self.map = i,
-            13 => self.custom_set(1, i as f32 / (crate::weather_setup::CUSTOM_CLOUDS.len() - 1).max(1) as f32),
+            13 => self.custom_set(1, i as f32 / 5.0),
             14 => self.custom_set(2, i as f32 / 2.0),
             12 => {
                 if let Some(r) = self.entry_rows().get(i) {
@@ -819,7 +804,60 @@ impl Menu {
         self.drop = 0;
     }
 
+    /// The same letter typed again cycles through the entries starting with it.
+    pub fn drop_type(&mut self, text: &str) {
+        let kind = self.drop;
+        let typed: String = text.chars().filter(|c| !c.is_control()).flat_map(char::to_lowercase).collect();
+        if kind == 0 || typed.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.drop_typed_in != kind || self.drop_typed_at.is_none_or(|t| now.duration_since(t).as_millis() > 900) {
+            self.drop_typed.clear();
+        }
+        self.drop_typed_at = Some(now);
+        self.drop_typed_in = kind;
+        self.drop_typed.push_str(&typed);
+        let items = self.drop_items(kind);
+        let n = items.len();
+        if n == 0 {
+            return;
+        }
+        let mut chars = self.drop_typed.chars();
+        let first = chars.next();
+        let (needle, from) = if chars.all(|c| Some(c) == first) {
+            (first.map(String::from).unwrap_or_default(), self.drop_sel(kind) + 1)
+        } else {
+            (self.drop_typed.clone(), self.drop_sel(kind))
+        };
+        let hit = (0..n)
+            .map(|k| (from + k) % n)
+            .find(|&i| items[i].trim().to_lowercase().starts_with(&needle));
+        if let Some(i) = hit {
+            self.drop_pick(kind, i);
+            self.drop = kind;
+            self.drop_top = i.saturating_sub(2);
+        }
+    }
+
+    pub fn drop_step(&mut self, d: i32) {
+        let kind = self.drop;
+        let n = self.drop_items(kind).len() as i32;
+        if kind == 0 || n == 0 {
+            return;
+        }
+        let i = (self.drop_sel(kind) as i32 + d).clamp(0, n - 1) as usize;
+        self.drop_pick(kind, i);
+        self.drop = kind;
+        if i < self.drop_top {
+            self.drop_top = i;
+        } else if i >= self.drop_top + 6 {
+            self.drop_top = i - 5;
+        }
+    }
+
     pub fn drop_toggle(&mut self, kind: usize) {
+        self.drop_typed.clear();
         self.drop = if self.drop == kind { 0 } else { kind };
         self.drop_top = self.drop_sel(kind).saturating_sub(2);
     }
@@ -1212,7 +1250,7 @@ impl Menu {
             self.icao_all_started = true;
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let _ = tx.send(crate::weather_setup::metar_station_list());
+                let _ = tx.send(crate::weather::net::station_list());
             });
             self.icao_all_job = Some(rx);
         }
@@ -1228,7 +1266,7 @@ impl Menu {
         let (tx, rx) = std::sync::mpsc::channel();
         let c = code.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(crate::weather_setup::metar_station_info(&c).map(|i| i.name));
+            let _ = tx.send(crate::weather::net::station_info(&c).map(|i| i.name));
         });
         self.icao_job = Some((code, rx));
     }
@@ -1543,14 +1581,16 @@ impl Menu {
         };
         vec![
             (tr("start.weather.vis"), vis),
-            (tr("start.weather.clouds"), crate::weather_setup::CUSTOM_CLOUDS[c.cloud].to_string()),
+            (::i18n::translate("pause.world.text.humidity", &[]), format!("{:.0} %", c.humidity)),
             (
                 tr("start.weather.precip"),
-                crate::weather_setup::CUSTOM_PRECIP[c.precip.clamp(0, 2) as usize].to_string(),
+                crate::weather::CUSTOM_PRECIP[c.precip.clamp(0, 2) as usize].to_string(),
             ),
             (tr("start.weather.temp"), format!("{:.0} \u{b0}C", c.temp_c)),
         ]
     }
+
+    const CUSTOM_HUMIDITY: [f32; 6] = [30.0, 50.0, 70.0, 85.0, 95.0, 100.0];
 
     const CUSTOM_VIS: [f32; 8] = [200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0, 50000.0];
 
@@ -1559,7 +1599,7 @@ impl Menu {
         let vis = Self::CUSTOM_VIS.iter().position(|v| *v >= c.visibility_m).unwrap_or(7);
         vec![
             vis as f32 / 7.0,
-            c.cloud as f32 / (crate::weather_setup::CUSTOM_CLOUDS.len() - 1).max(1) as f32,
+            Self::CUSTOM_HUMIDITY.iter().position(|h| *h >= c.humidity).unwrap_or(5) as f32 / 5.0,
             c.precip.clamp(0, 2) as f32 / 2.0,
             ((c.temp_c + 30.0) / 75.0).clamp(0.0, 1.0),
         ]
@@ -1570,7 +1610,7 @@ impl Menu {
         let c = &mut self.custom;
         match i {
             0 => c.visibility_m = Self::CUSTOM_VIS[(f * 7.0).round() as usize],
-            1 => c.cloud = (f * (crate::weather_setup::CUSTOM_CLOUDS.len() - 1) as f32).round() as usize,
+            1 => c.humidity = Self::CUSTOM_HUMIDITY[(f * 5.0).round() as usize],
             2 => {
                 c.precip = (f * 2.0).round() as i32;
                 c.road_wetness = if c.precip == 1 { 0.8 } else { 0.0 };
@@ -1590,7 +1630,10 @@ impl Menu {
                 let at = VIS.iter().position(|v| *v >= c.visibility_m).unwrap_or(7) as i32;
                 c.visibility_m = VIS[(at + dir).clamp(0, 7) as usize];
             }
-            1 => c.cloud = (c.cloud as i32 + dir).rem_euclid(crate::weather_setup::CUSTOM_CLOUDS.len() as i32) as usize,
+            1 => {
+                let at = Self::CUSTOM_HUMIDITY.iter().position(|h| *h >= c.humidity).unwrap_or(5) as i32;
+                c.humidity = Self::CUSTOM_HUMIDITY[(at + dir).clamp(0, 5) as usize];
+            }
             2 => {
                 c.precip = (c.precip + dir).rem_euclid(3);
                 c.road_wetness = if c.precip == 1 { 0.8 } else { 0.0 };

@@ -1,0 +1,14 @@
+{
+  "name": "Dark Storm",
+  "description": "Midday turned to dusk. A black wall of cloud, street lamps on.",
+  "metar": "ZZZZ 011200Z 21018G38KT 0900 +TSRA BKN006CB OVC012 20/19 Q0987",
+  "months": [
+    5,
+    9
+  ],
+  "snow_cover": true,
+  "next": [
+    "thunderstorm",
+    "heavy_rain"
+  ]
+}

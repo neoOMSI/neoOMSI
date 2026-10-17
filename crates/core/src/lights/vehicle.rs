@@ -8,7 +8,7 @@ use super::sources::corona_lights;
 use super::spill::{interior_spill, spill_vehicles};
 use super::spot2::{Section, spotlights_2};
 use super::tuning::*;
-use super::weather::fog_darkness;
+use super::weather::{brightness_darkness, fog_darkness};
 use glam::{Mat4, Vec3};
 use ::render::{Corona, PointLight, Scene};
 use ::simulation::VehicleInstance;
@@ -142,6 +142,7 @@ fn cull_hidden(
         if c.beam {
             c.position += f.cfg.cone_shift(c.direction);
         } else if !c.halo {
+            c.size = c.size.min(0.6);
             c.brightness = c.brightness.min(1.0);
         }
         true
@@ -171,6 +172,7 @@ fn road_and_lamp_lights(
         }
     };
     let body_rot = v.body_rotation();
+    let front = body_rot.transform_vector3(Vec3::Y).normalize_or_zero();
 
     for (mut c, owner) in crate::scene::model_lights_owned(
         &ty.model,
@@ -185,6 +187,9 @@ fn road_and_lamp_lights(
         }
         c.brightness *= ec.gain;
         c.size *= ec.size.max(0.0);
+        if !c.beam && !c.halo && c.direction.dot(front) > 0.7 {
+            c.size *= 0.5;
+        }
         c.spread = ec.spread.max(0.05);
         for k in 0..3 {
             c.color[k] *= ec.color[k];
@@ -211,16 +216,20 @@ fn road_and_lamp_lights(
         ));
     }
 
-    let night = f.night.max(fog_darkness() * cfg.weather_night);
+    let night = f
+        .night
+        .max(fog_darkness() * cfg.weather_night)
+        .max(brightness_darkness());
+    let lamp_night = 1.0;
     if !v.part_hidden(0) {
-        headlamps(cfg, faders, v, night, lights);
+        headlamps(cfg, faders, v, lamp_night, lights);
         let section = Section {
             model: &ty.model,
             rot: body_rot,
             origin: v.position,
             owner: super::owner_key(v),
         };
-        spotlights_2(cfg, faders, &section, &value_of, night, lights);
+        spotlights_2(cfg, faders, &section, &value_of, lamp_night, lights);
     }
     for (k, t) in v.trailers.iter().enumerate() {
         if v.part_hidden(k + 1) {
@@ -232,7 +241,7 @@ fn road_and_lamp_lights(
             origin: t.position,
             owner: super::owner_key(t),
         };
-        spotlights_2(cfg, faders, &section, &|n| t.value(v, n), night, lights);
+        spotlights_2(cfg, faders, &section, &|n| t.value(v, n), lamp_night, lights);
     }
     if spill && cfg.spill.on && night > 0.05 {
         interior_spill(cfg, faders, v, &value_of, night, lights);

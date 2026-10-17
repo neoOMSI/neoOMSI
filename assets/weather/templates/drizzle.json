@@ -1,0 +1,10 @@
+{
+  "name": "Fine Drizzle",
+  "description": "A fine, endless drizzle. Never really rain, never really dry.",
+  "metar": "ZZZZ 011200Z 22007KT 3500 -DZ BR OVC009 11/10 Q1006",
+  "next": [
+    "light_rain",
+    "overcast",
+    "mist"
+  ]
+}

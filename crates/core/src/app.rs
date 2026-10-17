@@ -22,8 +22,14 @@ pub(crate) struct ProfileMark {
     pub(crate) gpu: Vec<(String, f64, u32)>,
 }
 
+pub(crate) type SurfaceRequest = (
+    wgpu::Instance,
+    std::sync::mpsc::Sender<Result<wgpu::Surface<'static>, String>>,
+);
+
 pub(crate) struct Boot {
     pub(crate) rx: std::sync::mpsc::Receiver<(Result<Renderer>, wgpu::Instance)>,
+    pub(crate) surfaces: std::sync::mpsc::Receiver<SurfaceRequest>,
     pub(crate) window: Arc<Window>,
     pub(crate) span_rect: Option<(
         winit::dpi::PhysicalPosition<i32>,
@@ -93,7 +99,7 @@ pub(crate) struct App {
     pub(crate) redraw_ended: Option<Instant>,
     pub(crate) first_populate: bool,
     pub(crate) envir: Option<content::Envir>,
-    pub(crate) weather: Option<content::weather::Weather>,
+    pub(crate) weather: Option<weather::Weather>,
     pub(crate) clock: simulation::SimClock,
     pub(crate) started: Instant,
     pub(crate) total_frames: u32,
@@ -234,10 +240,15 @@ pub(crate) struct App {
     pub(crate) log_state: applog::LogState,
     pub(crate) career: career::Career,
     pub(crate) wetness: f32,
-    pub(crate) cloud_drift: [f32; 2],
-    pub(crate) weather_blend: Option<weather_cycle::Blend>,
-    pub(crate) weather_cycle: Option<weather_cycle::Cycle>,
-    pub(crate) metar_rx: Option<std::sync::mpsc::Receiver<Option<content::weather::Weather>>>,
+    pub(crate) wet_grid: weather::WetGrid,
+    pub(crate) rain_cache: Option<([f32; 256], [f64; 2], f32, f32)>,
+    pub(crate) lightning: lightning::Lightning,
+    pub(crate) sky: weather::Regional,
+    pub(crate) sky_anchored: bool,
+    pub(crate) weather_local: weather::Local,
+    pub(crate) weather_blend: Option<weather::Blend>,
+    pub(crate) weather_cycle: Option<weather::Cycle>,
+    pub(crate) metar_rx: Option<std::sync::mpsc::Receiver<Option<weather::Weather>>>,
     pub(crate) metar_once: bool,
     pub(crate) metar_next: f64,
     pub(crate) cursor_kind: u8,
@@ -366,39 +377,61 @@ impl App {
             let w = window.clone();
             let started = Instant::now();
             render::set_device_hook(Some(Arc::new(move |device, queue, surface, format| {
-                let size = w.inner_size();
-                let (pw, ph) = (size.width.max(1), size.height.max(1));
-                surface.configure(
-                    device,
-                    &wgpu::SurfaceConfiguration {
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        format,
-                        color_space: wgpu::SurfaceColorSpace::Auto,
-                        width: pw,
-                        height: ph,
-                        present_mode: wgpu::PresentMode::AutoVsync,
-                        desired_maximum_frame_latency: 2,
-                        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-                        view_formats: vec![],
-                    },
-                );
+                let w = w.clone();
+                let caption = ::i18n::translate("splash.compile-shaders", &[]);
                 let mut screen = user_interface::LoadingScreen::new(device, queue, format);
-                if let wgpu::CurrentSurfaceTexture::Success(frame)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) = surface.get_current_texture()
-                {
-                    let view = frame.texture.create_view(&Default::default());
-                    screen.draw(
-                        device,
-                        queue,
-                        &view,
-                        (pw, ph),
-                        &::i18n::translate("splash.compile-shaders", &[]),
-                        None,
-                        started.elapsed().as_secs_f32(),
-                    );
-                    w.pre_present_notify();
-                    queue.present(frame);
-                    w.set_visible(true);
+                let mut configured = (0, 0);
+                let mut shown = false;
+                let mut frame: render::LoadingFrame = Box::new(move |device, queue, surface| {
+                    let size = w.inner_size();
+                    let (pw, ph) = (size.width.max(1), size.height.max(1));
+                    if configured != (pw, ph) {
+                        surface.configure(
+                            device,
+                            &wgpu::SurfaceConfiguration {
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                format,
+                                color_space: wgpu::SurfaceColorSpace::Auto,
+                                width: pw,
+                                height: ph,
+                                present_mode: wgpu::PresentMode::AutoVsync,
+                                desired_maximum_frame_latency: 2,
+                                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                                view_formats: vec![],
+                            },
+                        );
+                        configured = (pw, ph);
+                    }
+                    match surface.get_current_texture() {
+                        wgpu::CurrentSurfaceTexture::Success(frame)
+                        | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                            let view = frame.texture.create_view(&Default::default());
+                            screen.draw(
+                                device,
+                                queue,
+                                &view,
+                                (pw, ph),
+                                &caption,
+                                None,
+                                started.elapsed().as_secs_f32(),
+                            );
+                            w.pre_present_notify();
+                            queue.present(frame);
+                            if !shown {
+                                w.set_visible(true);
+                                shown = true;
+                            }
+                        }
+                        wgpu::CurrentSurfaceTexture::Outdated
+                        | wgpu::CurrentSurfaceTexture::Lost => configured = (0, 0),
+                        _ => std::thread::sleep(std::time::Duration::from_millis(16)),
+                    }
+                });
+                if cfg!(target_os = "macos") {
+                    frame(device, queue, surface);
+                    None
+                } else {
+                    Some(frame)
                 }
             })));
         }
@@ -430,13 +463,32 @@ impl App {
                 != Some("enhanced"),
         };
         let (tx, rx) = std::sync::mpsc::channel();
-        {
-            let mut instance = self.instance.clone();
-            let r = window_renderer(&mut instance, &window, options);
+        let (surface_tx, surfaces) = std::sync::mpsc::channel::<SurfaceRequest>();
+        let mut instance = self.instance.clone();
+        if cfg!(target_os = "macos") {
+            let w = window.clone();
+            let r = window_renderer(
+                &mut instance,
+                &|i| i.create_surface(w.clone()).map_err(|e| e.to_string()),
+                options,
+            );
             let _ = tx.send((r, instance));
+        } else {
+            std::thread::spawn(move || {
+                let make_surface = |i: &wgpu::Instance| {
+                    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+                    let _ = surface_tx.send((i.clone(), reply_tx));
+                    reply_rx
+                        .recv()
+                        .unwrap_or_else(|_| Err("the window is gone".into()))
+                };
+                let r = window_renderer(&mut instance, &make_surface, options);
+                let _ = tx.send((r, instance));
+            });
         }
         self.boot = Some(Boot {
             rx,
+            surfaces,
             window,
             span_rect,
             start_exclusive,
@@ -448,6 +500,13 @@ impl App {
         let Some(boot) = self.boot.as_ref() else {
             return;
         };
+        while let Ok((instance, reply)) = boot.surfaces.try_recv() {
+            let _ = reply.send(
+                instance
+                    .create_surface(boot.window.clone())
+                    .map_err(|e| e.to_string()),
+            );
+        }
         let (renderer, instance) = match boot.rx.try_recv() {
             Ok(v) => v,
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -790,24 +849,29 @@ impl App {
         let renderer = self.renderer.take().expect("renderer");
         let mut scene = renderer.new_scene();
         self.envir = content::Envir::load(&self.args.root.join("envir.cfg")).ok();
-        if weather_cycle::is_cycle(self.args.weather.as_deref()) {
+        self.clock = start_clock(&self.args);
+        if weather::is_cycle(self.args.weather.as_deref()) {
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
                 .unwrap_or(7);
-            let mut c = weather_cycle::Cycle::new(seed);
-            let month = start_clock(&self.args).day_month().1;
-            let all = weather_cycle::installed();
-            let clear = content::weather::Weather {
-                fog: (50000.0, 1.0),
-                ..Default::default()
-            };
-            let r = c.rand();
-            self.args.weather = weather_cycle::pick(&all, &clear, "", month, r);
+            let mut c = weather::Cycle::new(seed);
+            let month = self.clock.day_month().1.max(1) as u32;
+            let first = c.pick(month, &weather::Weather::default());
+            self.args.weather = first.map(|t| weather::spec::template_spec(&t.id));
             log::info!("weather cycle: starting with {:?}", self.args.weather);
             self.weather_cycle = Some(c);
         }
-        self.weather = Some(load_weather(&self.args));
+        let first_weather = weather::spec::load(&self.args);
+        self.wetness = weather::initial_wetness(&first_weather);
+        let cellular = first_weather.precip.showers || first_weather.precip.thunder || first_weather.precip.vicinity;
+        self.wet_grid.set_all(if cellular { 0.0 } else { self.wetness });
+        self.sky = weather::Regional::new();
+        let observer = self.weather_observer();
+        self.sky.anchor(&first_weather, observer, weather::enhanced_sky());
+        self.weather_local = self.sky.sample(&first_weather, observer, weather::enhanced_sky());
+        self.weather = Some(first_weather);
+        self.sky_anchored = false;
         if self
             .args
             .weather
@@ -816,15 +880,7 @@ impl App {
         {
             self.metar_next = 600.0;
         }
-        self.wetness = self.weather.as_ref().map(initial_wetness).unwrap_or(0.0);
-        self.clock = start_clock(&self.args);
-        setup_sky(
-            &self.args,
-            &renderer,
-            &mut scene,
-            self.envir.as_ref(),
-            self.weather.as_ref(),
-        );
+        weather::setup_sky(&self.args, &renderer, &mut scene, self.envir.as_ref());
         if !self.args.all && self.args.radius.is_none() {
             match open_world(&self.args) {
                 Ok((w, cam, _)) => {

@@ -1,0 +1,11 @@
+{
+  "name": "Fresh Breeze",
+  "description": "Bright and blustery. Clouds race by and the trees never rest.",
+  "metar": "ZZZZ 011200Z 26016G26KT 9999 SCT028 BKN070 15/07 Q1012",
+  "next": [
+    "fair",
+    "partly_cloudy",
+    "gale",
+    "cloudy"
+  ]
+}

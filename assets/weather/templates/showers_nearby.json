@@ -1,0 +1,10 @@
+{
+  "name": "Rain on the Horizon",
+  "description": "Dry here, but dark curtains of rain hang in the distance.",
+  "metar": "ZZZZ 011200Z 27010KT 9999 VCSH SCT028 BKN045CB 16/09 Q1008",
+  "next": [
+    "showers",
+    "partly_cloudy",
+    "buildup"
+  ]
+}

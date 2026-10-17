@@ -46,6 +46,19 @@ impl App {
                     self.start_back();
                     return;
                 }
+                if let Some(m) = self.menu.as_mut().filter(|m| m.drop != 0) {
+                    match code {
+                        K::Enter | K::NumpadEnter => m.drop = 0,
+                        K::ArrowUp => m.drop_step(-1),
+                        K::ArrowDown => m.drop_step(1),
+                        K::PageUp => m.drop_step(-6),
+                        K::PageDown => m.drop_step(6),
+                        K::Home => m.drop_step(i32::MIN / 2),
+                        K::End => m.drop_step(i32::MAX / 2),
+                        _ => {}
+                    }
+                    return;
+                }
                 if code == K::KeyQ || code == K::KeyE {
                     self.start_tab(if code == K::KeyQ { -1 } else { 1 });
                     return;

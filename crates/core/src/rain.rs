@@ -5,11 +5,11 @@
 use glam::{DVec3, Vec3};
 use ::render::{Corona, Scene};
 
-const HALF_WIDTH: f32 = 16.0;
+const HALF_WIDTH: f32 = 20.0;
+const MAX_DROPS: f32 = 14000.0;
 
-pub fn weather_wind(weather: &::content::weather::Weather) -> Vec3 {
-    let heading = weather.wind.0.to_radians();
-    Vec3::new(heading.sin(), heading.cos(), 0.0) * weather.wind.1
+pub fn weather_wind(weather: &crate::weather::Weather) -> Vec3 {
+    crate::weather::wind_vector(weather)
 }
 
 pub struct Rain {
@@ -64,7 +64,7 @@ impl Rain {
         let n = if kind == 0 || self.rate == 0.0 {
             0
         } else {
-            (300.0 + 2100.0 * self.rate) as usize
+            (MAX_DROPS * (0.02 + 0.98 * self.rate.powf(1.25))) as usize
         };
         while self.particles.len() < n {
             let p = Vec3::new(
@@ -80,15 +80,17 @@ impl Rain {
         self.var.truncate(n);
     }
 
-    fn advance(&mut self, dt: f32, camera: DVec3, wind: Vec3) -> Vec3 {
+    fn advance(&mut self, dt: f32, camera: DVec3, wind: Vec3, floor: f32, hits: &mut Vec<Vec3>) -> Vec3 {
         // Keep drops in the world as the camera moves through them. Recentring the box
         // used to carry every drop along with the bus, even at motorway speed.
         let movement = self
             .camera
             .replace(camera)
             .map_or(Vec3::ZERO, |old| (camera - old).as_vec3());
-        let fall = if self.kind == 2 { 1.5 } else { 9.0 };
+        let fall = if self.kind == 2 { 1.5 } else { 4.0 + 6.0 * self.rate };
         let velocity = wind - Vec3::Z * fall;
+        let top = 20.0f32;
+        let floor = floor.min(top - 4.0);
         for (i, p) in self.particles.iter_mut().enumerate() {
             let v = self.var.get(i).copied().unwrap_or(1.0);
             // snow drifts more with its own factor, rain falls faster or slower
@@ -96,9 +98,13 @@ impl Rain {
             *p += own * dt - movement;
             p.x = (p.x + HALF_WIDTH).rem_euclid(HALF_WIDTH * 2.0) - HALF_WIDTH;
             p.y = (p.y + HALF_WIDTH).rem_euclid(HALF_WIDTH * 2.0) - HALF_WIDTH;
-            p.z = (p.z + 2.0).rem_euclid(22.0) - 2.0;
+            if dt > 0.0 && p.z < floor && p.z > floor - 3.0 {
+                hits.push(Vec3::new(p.x, p.y, floor));
+            }
+            p.z = (p.z - floor).rem_euclid(top - floor) + floor;
         }
-        (velocity - movement / dt.max(0.001)).normalize_or_zero()
+        let ride = if dt > 0.0 { (-movement / dt).clamp_length_max(15.0) * 0.35 } else { Vec3::ZERO };
+        (velocity + ride).normalize_or_zero()
     }
 
     /// Move the particles (camera-relative box) and push them as sprites.
@@ -115,12 +121,15 @@ impl Rain {
         scene: &mut Scene,
         inside: &[(DVec3, f64, [f32; 6])],
         shelter: &crate::shelter::Shelter,
+        ground: Option<f64>,
     ) {
         if self.particles.is_empty() {
             self.camera = Some(camera);
             return;
         }
-        let streak = self.advance(dt, camera, wind);
+        let floor = ground.map_or(-3.0, |g| (g - camera.z) as f32);
+        let mut hits: Vec<Vec3> = Vec::new();
+        let streak = self.advance(dt, camera, wind, floor, &mut hits);
         let buses: Vec<(DVec3, f64, [f32; 6])> = inside
             .iter()
             .filter(|b| (b.0 - camera).length() < 40.0)
@@ -142,9 +151,13 @@ impl Rain {
         };
         let in_bus = |p: DVec3| buses.iter().any(|b| in_one(p, *b));
         let (size, color, brightness) = if self.kind == 2 {
-            (0.06, [1.0, 1.0, 1.0], 0.9)
+            (0.045, [0.94, 0.96, 1.0], 0.85)
         } else {
-            (0.035, [0.72, 0.77, 0.86], 0.22)
+            (
+                0.02 + 0.03 * self.rate,
+                [0.72, 0.77, 0.86],
+                0.28 + 0.6 * self.rate,
+            )
         };
         let smooth = |a: f32, b: f32, x: f32| {
             let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
@@ -158,7 +171,7 @@ impl Rain {
             // wall of drops, no wrap-around and no pop-in is seen
             let edge = p.x.abs().max(p.y.abs()) / HALF_WIDTH;
             let fade = (1.0 - smooth(0.55, 1.0, edge))
-                * smooth(-2.0, -0.2, p.z)
+                * smooth(0.8, 3.5, p.length())
                 * (1.0 - smooth(15.0, 20.0, p.z));
             let v = self.var.get(i).copied().unwrap_or(1.0);
             // far drops are fainter: depth reads, the rain is no flat curtain
@@ -183,8 +196,26 @@ impl Rain {
                 brightness: b,
                 direction: if self.kind == 2 { Vec3::ZERO } else { streak },
                 cone_cos: if self.kind == 2 { -1.0 } else { -2.0 },
+                flags: if self.kind == 2 { 64 } else { 0 },
                 ..Default::default()
             });
+        }
+        if self.kind == 1 {
+            for h in hits.iter() {
+                let w = camera + h.as_dvec3();
+                if (w - camera).length() < 2.0 || in_bus(w) || (roofs && shelter.covers(w + DVec3::Z * 0.5)) {
+                    continue;
+                }
+                scene.coronas.push(Corona {
+                    position: w + DVec3::Z * 0.03,
+                    size: 0.005 + 0.004 * self.rate,
+                    color,
+                    brightness: 0.18 + 0.25 * self.rate,
+                    direction: Vec3::Z,
+                    cone_cos: -2.0,
+                    ..Default::default()
+                });
+            }
         }
         if ::legacy_config::env::var_os("OMSI_DEBUG_RAIN").is_some() {
             log::info!(
@@ -286,11 +317,12 @@ mod tests {
         rain.var = vec![1.0];
         rain.camera = Some(DVec3::ZERO);
         let camera = DVec3::new(0.0, 2.0, 0.0);
-        let direction = rain.advance(0.1, camera, Vec3::X * 3.0);
+        let mut hits = Vec::new();
+        let direction = rain.advance(0.1, camera, Vec3::X * 3.0, -2.0, &mut hits);
         let world = camera + rain.particles[0].as_dvec3();
-        assert!((world - DVec3::new(0.3, 0.0, 9.1)).length() < 1e-5);
-        assert!(direction.abs_diff_eq(Vec3::new(3.0, -20.0, -9.0).normalize(), 1e-5));
-        rain.advance(0.0, DVec3::splat(10000.0), Vec3::ZERO);
+        assert!((world - DVec3::new(0.3, 0.0, 9.0)).length() < 1e-5);
+        assert!(direction.z < -0.8);
+        rain.advance(0.0, DVec3::splat(10000.0), Vec3::ZERO, -2.0, &mut hits);
         let p = rain.particles[0];
         assert!(
             p.is_finite()
@@ -312,12 +344,12 @@ mod tests {
             Some(wgpu::TextureFormat::Rgba8UnormSrgb),
             ::render::RenderOptions::default(),
         ))
-        .unwrap();
+            .unwrap();
         let drawn = |shelter: &crate::shelter::Shelter| {
             let mut rain = Rain::new();
             rain.set(1, 1.0);
             let mut scene = renderer.new_scene();
-            rain.tick(0.0, DVec3::ZERO, Vec3::ZERO, &mut scene, &[], shelter);
+            rain.tick(0.0, DVec3::ZERO, Vec3::ZERO, &mut scene, &[], shelter, None);
             scene.coronas
         };
         let open = drawn(&crate::shelter::Shelter::new());
@@ -333,7 +365,9 @@ mod tests {
     fn dry_weather_has_no_particles_and_heavy_rain_keeps_the_budget() {
         let mut rain = Rain::new();
         rain.set(1, 1.0);
-        assert_eq!(rain.particles.len(), 2400);
+        assert_eq!(rain.particles.len(), MAX_DROPS as usize);
+        rain.set(1, 0.1);
+        assert!(rain.particles.len() < MAX_DROPS as usize / 4);
         rain.set(1, 0.0);
         assert!(rain.particles.is_empty());
         rain.set(2, 1.0);

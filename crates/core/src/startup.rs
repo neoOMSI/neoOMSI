@@ -377,7 +377,7 @@ fn backend_instance(b: wgpu::Backends) -> wgpu::Instance {
 /// Vulkan and DirectX 12, and only when none opens is the game given up, saying so.
 pub(crate) fn window_renderer(
     instance: &mut wgpu::Instance,
-    window: &std::sync::Arc<winit::window::Window>,
+    make_surface: &dyn Fn(&wgpu::Instance) -> Result<wgpu::Surface<'static>, String>,
     options: ::render::RenderOptions,
 ) -> Result<Renderer> {
     let mut failures: Vec<String> = Vec::new();
@@ -393,7 +393,7 @@ pub(crate) fn window_renderer(
     // of on the chip's Vulkan.
     for software_round in [false, true] {
         for (b, inst) in &candidates {
-            let surface = match inst.create_surface(window.clone()) {
+            let surface = match make_surface(inst) {
                 Ok(s) => s,
                 Err(e) => {
                     let what = format!(

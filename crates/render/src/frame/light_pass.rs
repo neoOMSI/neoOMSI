@@ -372,7 +372,7 @@ impl Renderer {
         for &i in order.iter() {
             let c = &scene.coronas[i];
             let p = (c.position - ro).as_vec3();
-            let b = if c.cone_cos < -1.5 || c.beam || c.halo {
+            let b = if c.cone_cos < -1.5 || c.beam || c.halo || c.flags & 64 != 0 {
                 c.brightness
             } else {
                 c.brightness * (night * night + 0.8) * 0.6

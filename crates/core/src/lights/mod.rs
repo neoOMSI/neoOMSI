@@ -28,7 +28,7 @@ pub use sprites::{
     cone_texture_id, corona_texture_id, glow_texture_id, load_smoke_texture, set_corona_root,
     star_texture_id, upload_corona_textures,
 };
-pub use weather::{apply_weather, lighting_from, set_cone_strength};
+pub use weather::{apply_weather, lighting_from, set_brightness, set_cone_strength};
 
 fn owner_key<T>(t: &T) -> usize {
     t as *const T as usize

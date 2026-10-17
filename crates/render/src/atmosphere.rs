@@ -107,6 +107,7 @@ pub struct SkyState {
     /// Pre-exposure: scene radiance times this is what the picture holds (mid grey in the
     /// day's light comes out at about 0.18).
     pub exposure: f32,
+    pub exposure_clear: f32,
 }
 
 /// Optical depth per unit coefficient (Rayleigh, Mie, ozone) along a ray from altitude h
@@ -408,15 +409,16 @@ impl SkyState {
             .iter()
             .map(|l| [l.x / lut_scale, l.y / lut_scale, l.z / lut_scale, 1.0])
             .collect();
-        // the light the eye adapts to: a low sun still falls fully on the walls that face it,
-        // which a horizontal surface alone does not tell (a sunlit facade at seven in the
-        // evening came out washed out)
-        let sun_facing =
-            s.z.max(0.0) + (1.0 - s.z.max(0.0)) * LOW_SUN_WALLS * (s.z * 20.0).clamp(0.0, 1.0);
-        // (the exposure is that of the night as it is by default: a darker night stays dark)
-        let night_lost = (1.0 - night_light) * std::f32::consts::PI * NIGHT_SKY.dot(lum);
-        let e_ref =
-            ((sun * sun_facing + sky_horizontal).dot(lum) + night_lost).max(0.0) + ARTIFICIAL;
+        let exposure = reference_exposure(sun, sky_horizontal, s, night_light);
+        let neutral = input.overcast <= 0.0
+            && input.rain <= 0.0
+            && input.haze <= 1.0
+            && input.sun_visibility >= 1.0;
+        let exposure_clear = if neutral {
+            exposure
+        } else {
+            Self::clear_exposure(input, &raw)
+        };
         SkyState {
             input: *input,
             sun,
@@ -426,8 +428,46 @@ impl SkyState {
             sh,
             sky_horizontal,
             ground,
-            exposure: exposure_for(e_ref),
+            exposure,
+            exposure_clear,
         }
+    }
+
+    fn clear_exposure(input: &SkyInput, raw: &RawSky) -> f32 {
+        let own;
+        let raw = if input.haze == 1.0 {
+            raw
+        } else {
+            own = Self::compute_raw(&SkyInput {
+                haze: 1.0,
+                ..*input
+            });
+            &own
+        };
+        let white = daylight_white();
+        let wb = |c: Vec3| c / white;
+        let night_light = input.night_light.clamp(0.0, 4.0);
+        let tint = input
+            .tint
+            .map(|t| t.clamp(Vec3::splat(0.25), Vec3::splat(4.0)));
+        let s = input.sun_dir.normalize_or_zero();
+        let sun = wb(raw.sun) * tint[0];
+        let (w, h) = (SKY_LUT_W as usize, SKY_LUT_H as usize);
+        let az_step = std::f32::consts::PI / w as f32;
+        let mut sky_horizontal = Vec3::ZERO;
+        for row in (h / 2)..h {
+            let (e0, e1) = (
+                lut_elevation(row as f32 / h as f32),
+                lut_elevation((row + 1) as f32 / h as f32),
+            );
+            let el = lut_elevation((row as f32 + 0.5) / h as f32);
+            let weight = el.sin().max(0.0) * el.cos() * az_step * (e1 - e0) * 2.0;
+            for col in 0..w {
+                let l = wb(raw.lut[row * w + col]) * tint[1] + NIGHT_SKY * night_light;
+                sky_horizontal += l * weight;
+            }
+        }
+        reference_exposure(sun, sky_horizontal, s, night_light)
     }
 
     fn compute_raw(input: &SkyInput) -> RawSky {
@@ -519,6 +559,15 @@ fn ground_sh(l: Vec3) -> [Vec3; 9] {
     out[0] = l * (0.282_095 * 2.0 * std::f32::consts::PI);
     out[2] = l * (-0.488_603 * std::f32::consts::PI);
     out
+}
+
+fn reference_exposure(sun: Vec3, sky_horizontal: Vec3, s: Vec3, night_light: f32) -> f32 {
+    let lum = Vec3::new(0.2126, 0.7152, 0.0722);
+    let sun_facing =
+        s.z.max(0.0) + (1.0 - s.z.max(0.0)) * LOW_SUN_WALLS * (s.z * 20.0).clamp(0.0, 1.0);
+    let night_lost = (1.0 - night_light) * std::f32::consts::PI * NIGHT_SKY.dot(lum);
+    let e_ref = ((sun * sun_facing + sky_horizontal).dot(lum) + night_lost).max(0.0) + ARTIFICIAL;
+    exposure_for(e_ref)
 }
 
 /// Pre-exposure for a reference irradiance: full exposure by day, only part of the way

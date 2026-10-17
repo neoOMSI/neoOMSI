@@ -10,7 +10,7 @@ pub(crate) fn season_folder(args: &Args, global: &::map::GlobalCfg) -> (i32, Opt
         args,
         global,
         start_clock(args).day_of_year,
-        load_weather(args).snow,
+        weather::spec::resolve_ground_snow(args),
     )
 }
 

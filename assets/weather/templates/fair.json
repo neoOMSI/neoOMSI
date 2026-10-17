@@ -1,0 +1,11 @@
+{
+  "name": "Fair Weather",
+  "description": "A few lazy cumulus drifting across a friendly blue sky.",
+  "metar": "ZZZZ 011200Z 27006KT 9999 FEW040 20/10 Q1018",
+  "next": [
+    "clear",
+    "partly_cloudy",
+    "breezy",
+    "haze"
+  ]
+}

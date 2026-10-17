@@ -1,0 +1,14 @@
+{
+  "name": "Scorcher",
+  "description": "Cloudless and baking. The tarmac shimmers and the shade is precious.",
+  "metar": "ZZZZ 011200Z 20005KT CAVOK 34/12 Q1011",
+  "months": [
+    6,
+    8
+  ],
+  "next": [
+    "clear",
+    "haze",
+    "buildup"
+  ]
+}

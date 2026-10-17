@@ -31,7 +31,7 @@ impl App {
             let fog = self
                 .weather
                 .as_ref()
-                .map(|w| w.fog.0 as f64)
+                .map(|_| self.weather_local.visibility_m as f64)
                 .unwrap_or(50000.0);
             traffic_inputs(
                 t,
@@ -87,15 +87,9 @@ impl App {
             let gloomy = self
                 .weather
                 .as_ref()
-                .map(|w| {
-                    let (kind, rate) = precip_of(w);
-                    w.fog.0 < 600.0
-                        || (kind != 0 && rate > 0.05)
-                        || w.clouds
-                        .0
-                        .trim()
-                        .to_ascii_lowercase()
-                        .starts_with("overcast")
+                .map(|_| {
+                    let l = &self.weather_local;
+                    l.visibility_m < 600.0 || (l.precip_kind != 0 && l.precip_rate > 0.05) || l.thick > 0.85
                 })
                 .unwrap_or(false);
             // Omsi switches the AI's lights on below a light value of 0.75, before
@@ -152,7 +146,7 @@ impl App {
                 let street = self
                     .weather
                     .as_ref()
-                    .map(|w| street_condition(w, self.wetness))
+                    .map(|w| weather::street_condition(w, &self.weather_local, self.wetness))
                     .unwrap_or(0.0);
                 let muffled = audio_inside;
                 // heard round the camera (the ear), not round the player's bus: a

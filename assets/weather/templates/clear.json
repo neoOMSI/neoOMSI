@@ -1,0 +1,11 @@
+{
+  "name": "Crystal Clear",
+  "description": "Not a cloud in sight. Clean air and a razor-sharp horizon.",
+  "metar": "ZZZZ 011200Z 36003KT CAVOK 18/06 Q1024",
+  "next": [
+    "fair",
+    "breezy",
+    "hot",
+    "haze"
+  ]
+}

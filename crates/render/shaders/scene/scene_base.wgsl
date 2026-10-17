@@ -1996,7 +1996,7 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
             // stands out against a grey street instead of fading into it
             let env_night = select(1.0 - 0.85 * clamp(camera.sun_color.w, 0.0, 1.0), 1.0, camera.sky_color.w > 0.5);
             let env_light = clamp(camera.sun_color.r * camera.sun_dir.w + camera.sky_color.r + camera.ambient.r, 0.05, 1.0) * env_night;
-            let wet = camera.shadow.w * weather_outside_n(in.world, n, false, in.params2.w);
+            let wet = local_wetness(in.world) * weather_outside_n(in.world, n, false, in.params2.w);
             lit = lit * (1.0 - 0.30 * wet);
             // the water film mirrors the (overcast) sky a little, mostly at grazing
             // angles; kept faint - a strong rim read as a white outline round the bus
@@ -2063,7 +2063,7 @@ fn shade_vanilla(in: FsIn, puddle_weight: ptr<function, f32>, capture: bool) -> 
     // (not under a roof - Vanilla+ only: OMSI 2 wets [moisture] surfaces everywhere)
     let unroofed = select(1.0 - sheltered(in.world), 1.0, camera.sky_color.w > 0.5);
     let outside = weather_outside_n(in.world, n, material.extra.x > 0.5, in.params2.w) * unroofed;
-    let wet = camera.shadow.w * material.params2.z * outside;
+    let wet = local_wetness(in.world) * material.params2.z * outside;
     if (wet > 0.0) {
         let vdir = normalize(in.world - camera.cam_pos.xyz);
         let facing = clamp(-dot(vdir, n), 0.0, 1.0);

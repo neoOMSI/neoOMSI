@@ -3967,6 +3967,7 @@ dependencies = [
  "model",
  "mods",
  "parking_lot",
+ "rayon",
  "scenery",
  "texture",
 ]
@@ -4303,6 +4304,7 @@ dependencies = [
  "legacy-config",
  "log",
  "mods",
+ "rayon",
 ]
 
 [[package]]

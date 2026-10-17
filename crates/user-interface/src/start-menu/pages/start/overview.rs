@@ -15,6 +15,9 @@ impl Ui {
         let go_h = (60.0 * u).round();
         let go = [x1 - gw, dock[1] + (dock_h - go_h) * 0.5, x1, dock[1] + (dock_h + go_h) * 0.5];
 
+        if !v.on_foot {
+            self.start_bus_picture(r, scene, [card[0], card[1], card[2], dock[1]], v, u);
+        }
         let title = clip_to(&self.text, name, tpx as f32, (x1 - x0) * 0.7);
         let tl = self.text.label(r, scene, &title, tpx, WHITE);
         let ty = card[1] + 26.0 * u;
@@ -44,30 +47,25 @@ impl Ui {
         let (ay0, ay1) = (sy + sl.h as f32 + 16.0 * u, dock[1]);
         if v.on_foot {
             self.start_foot_note(r, scene, [card[0], ay0, card[2], ay1], u);
-        } else {
-            self.start_bus_picture(r, scene, [card[0], ay0, card[2], ay1], v, u);
         }
 
         self.text.rounded(r, scene, dock, 0.0, SIDEBAR);
-        self.text.rounded(r, scene, [dock[0], dock[1], dock[2], dock[1] + 1.0], 0.0, [255, 255, 255, 18]);
+        self.text.rounded(r, scene, [dock[0], dock[1], dock[2], dock[1] + 1.0], 0.0, DIVIDER);
         let map = v.maps.get(v.map).map(String::as_str).unwrap_or("-");
         let row = |i: usize| v.rows.get(i).cloned().unwrap_or_default();
-        let items: [(&str, &str, String, String); 3] = [
+        let items: [(&str, String, String); 3] = [
             (
                 "route",
-                TAB_KEYS[0],
                 map.to_string(),
                 if v.free { tr("start.maps.free") } else { row(7).1 },
             ),
             (
                 if v.on_foot { "directions_walk" } else { "directions_bus" },
-                TAB_KEYS[1],
                 if v.on_foot { tr("start.maps.onfoot_short") } else { row(0).1 },
                 if v.on_foot { String::new() } else { v.maker.to_string() },
             ),
             (
                 "schedule",
-                TAB_KEYS[2],
                 format!("{}  -  {}", row(1).1, row(6).1),
                 row(5).1,
             ),
@@ -75,28 +73,25 @@ impl Ui {
         let tgap = 12.0 * u;
         let tw = ((go[0] - 24.0 * u - x0 - tgap * 2.0) / 3.0).floor();
         let isz = (28.0 * u).round();
-        for (k, (icon, key, value, sub)) in items.iter().enumerate() {
+        for (k, (icon, value, sub)) in items.iter().enumerate() {
             let x = x0 + k as f32 * (tw + tgap);
             let rc = [x, dock[1] + 14.0 * u, x + tw, dock[3] - 14.0 * u];
             let th = rc[3] - rc[1];
             let hot = inside(rc, f.cursor);
             let hv = self.ease((220, "sum", k), if hot { 1.0 } else { 0.0 }, 10.0);
-            self.text.rounded(r, scene, rc, ROW_R * u, mix(OPT_ROW, OPT_ROW_HOT, hv));
-            let ix = rc[0] + 18.0 * u;
+            self.text.rounded(r, scene, rc, 12.0 * u, mix(OPT_ROW, OPT_ROW_HOT, hv));
+            let ix = rc[2] - 18.0 * u - isz;
             if let Some(ic) = self.text.icon(r, scene, icon, isz as u32, ACCENT) {
                 ic.place(scene, ix, rc[1] + (th - isz) * 0.5);
             }
-            let tx = ix + isz + 16.0 * u;
-            let room = rc[2] - tx - 14.0 * u;
-            let cl = self.text.label(r, scene, key, (11.0 * u) as u32, if hot { SOFT } else { MUTED });
+            let tx = rc[0] + 20.0 * u;
+            let room = ix - 16.0 * u - tx;
             let vt = clip_to(&self.text, value, 19.0 * u, room);
             let vl = self.text.label(r, scene, &vt, (19.0 * u) as u32, WHITE);
             let st = clip_to(&self.text, sub, 13.0 * u, room);
             let stl = self.text.label(r, scene, &st, (13.0 * u) as u32, MUTED);
-            let total = (cl.h + vl.h) as f32 + if sub.is_empty() { 0.0 } else { stl.h as f32 };
+            let total = vl.h as f32 + if sub.is_empty() { 0.0 } else { stl.h as f32 };
             let mut y = rc[1] + (th - total) * 0.5;
-            cl.place(scene, tx, y);
-            y += cl.h as f32;
             vl.place(scene, tx, y);
             y += vl.h as f32;
             if !sub.is_empty() {
@@ -104,7 +99,7 @@ impl Ui {
             }
             self.start.summary.push(rc);
         }
-        self.start_button(r, scene, f, go, "start.maps.drive", "play_arrow", 0, u);
+        self.start_button(r, scene, f, go, "start.maps.drive", None, 24.0, 0, u);
         self.start.go = go;
     }
 
@@ -136,6 +131,11 @@ impl Ui {
         if v.sect == 2 && v.on_foot {
             self.start_foot_note(r, scene, rc, u);
             return;
+        }
+        if v.sect == 1 {
+            self.start_route_picture(r, scene, [rc[0] + 1.0, rc[1], rc[2], rc[3]], u);
+        } else if v.sect == 2 {
+            self.start_bus_picture(r, scene, [rc[0] + 1.0, rc[1], rc[2], rc[3]], v, u);
         }
         let map = v.maps.get(v.map).cloned().unwrap_or_else(|| "-".to_string());
         let (title, sub, icon) = match v.sect {
@@ -181,11 +181,7 @@ impl Ui {
             top += sl.h as f32 + 6.0 * u;
         }
         let area = [rc[0] + pad, top + 18.0 * u, rc[2] - pad, rc[3] - pad];
-        if v.sect == 2 {
-            self.start_bus_picture(r, scene, area, v, u);
-        } else if v.sect == 1 {
-            self.start_route_picture(r, scene, area, u);
-        } else {
+        if !matches!(v.sect, 1 | 2) {
             self.start_art(r, scene, area, &icon);
         }
     }

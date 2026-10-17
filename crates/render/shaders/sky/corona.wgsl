@@ -201,10 +201,11 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     let lamp = select(max(in.size * grow, dist * 0.002) * 0.9, in.size, streak);
     // Enhanced: the sprite spans the glare's angle round the lamp (or the lamp's own glow
     // where that is wider); `glare_enhanced` draws the bitmap in the inner `core` of it.
-    let plain = (u32(in.extra.z + 0.5) & 32u) != 0u;
+    let flake = (u32(in.extra.z + 0.5) & 64u) != 0u;
+    let plain = (u32(in.extra.z + 0.5) & 32u) != 0u || flake;
     let glare = enhanced && !streak && !plain;
     let size = select(lamp, max(lamp, dist * GLARE_ANGLE), glare);
-    let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(0.06, 4.0), streak);
+    let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(1.0, 8.0), streak);
     var upv = up;
     if (streak) {
         upv = vec3<f32>(0.0, 0.0, 1.0);
@@ -215,12 +216,15 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     // the spot moved towards the viewer by its z offset, so that a lamp inside its housing
     // shows (without one: half its size, at most half a metre)
     let pull = select(min(lamp * 0.5, 0.5), in.extra.y, in.extra.y >= 0.0);
-    let wp = in.pos + (right * c.x * stretch.x + upv * c.y * stretch.y) * size + select(view_dir * min(pull, dist * 0.9), vec3<f32>(0.0), streak);
+    var wp = in.pos + (right * c.x * stretch.x + upv * c.y * stretch.y) * size + select(view_dir * min(pull, dist * 0.9), vec3<f32>(0.0), streak);
+    if (streak) {
+        wp = in.pos + right * c.x * max(size * 0.03, dist * 0.0005) + upv * c.y * size * stretch.y;
+    }
     out.clip = camera.view_proj * vec4<f32>(wp, 1.0);
     out.uv = c * 0.5 + 0.5;
     out.color = vec4<f32>(in.color.rgb, brightness);
     out.kind = select(0.0, 1.0, streak || plain);
-    out.star = 0.0;
+    out.star = select(0.0, 1.0, streak || flake);
     out.beam = 0.0;
     out.cone = vec2<f32>(0.0, 0.0);
     if (glare) {
@@ -269,13 +273,21 @@ fn corona_shape(in: CoronaOut) -> vec3<f32> {
     return t;
 }
 
+fn streak_light() -> vec3<f32> {
+    return clamp(camera.ambient.rgb + camera.sun_color.rgb * 0.6, vec3<f32>(0.04), vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(in: CoronaOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a, 1.0);
+    var lit = vec3<f32>(1.0);
+    if (in.star > 0.5 && in.kind > 0.5) {
+        lit = streak_light();
+    }
+    return vec4<f32>(in.color.rgb * lit * corona_shape(in) * in.color.a, 1.0);
 }
 
 fn corona_scatter() -> f32 {
-    return clamp(max(enh.fog.x / 2.3e-3, enh.weather.z), 0.0, 1.0);
+    return clamp(max(enh.fog.x / 2.3e-3, enh.weather.z * 0.4), 0.0, 1.0) * 0.0625;
 }
 
 // Enhanced graphics: the corona in the pre-exposed high-range picture - the glare of a
@@ -285,7 +297,11 @@ fn corona_scatter() -> f32 {
 fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
     // (a fog cone is lit fog, not glare: it keeps the scene's level too)
     if (in.kind > 0.5) {
-        return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a * enh.exposure.y, 1.0);
+        var lit = vec3<f32>(1.0);
+        if (in.star > 0.5) {
+            lit = streak_light();
+        }
+        return vec4<f32>(in.color.rgb * lit * corona_shape(in) * in.color.a * enh.exposure.y * (enh.exposure.w / 1.6), 1.0);
     }
     return vec4<f32>(in.color.rgb * glare_enhanced(in) * in.color.a * enh.exposure.w, 1.0);
 }
@@ -311,8 +327,8 @@ fn glare_enhanced(in: CoronaOut) -> vec3<f32> {
     let edge = (1.0 - r * r) * (1.0 - r * r) * select(0.0, 1.0, r < 1.0);
     let r0 = max(core * 0.35, 0.01);
     let veil = 0.06 * in.cone.y * r0 * r0 / (r * r + r0 * r0);
-    let a0 = mix(r0, 0.35, scatter);
-    let aureole = 0.5 * scatter * sqrt(in.cone.y) * a0 * a0 / (r * r + a0 * a0);
+    let a0 = mix(r0, 0.18, scatter);
+    let aureole = 0.25 * scatter * sqrt(in.cone.y) * a0 * a0 / (r * r + a0 * a0);
     return glow + tint * (veil + aureole) * edge;
 }
 
@@ -367,5 +383,5 @@ fn fs_smoke(in: CoronaOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_smoke_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
     let c = smoke_color(in);
-    return vec4<f32>(c.rgb * enh.exposure.y, c.a);
+    return vec4<f32>(c.rgb * enh.exposure.y * (enh.exposure.w / 1.6), c.a);
 }

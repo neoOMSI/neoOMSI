@@ -1,0 +1,15 @@
+{
+  "name": "Pea Soup",
+  "description": "Thick, still fog. The next junction is only a rumour.",
+  "metar": "ZZZZ 011200Z 00000KT 0300 FG VV002 05/05 Q1024",
+  "months": [
+    9,
+    3
+  ],
+  "ground_wet": 0.3,
+  "next": [
+    "mist",
+    "freezing_fog",
+    "overcast"
+  ]
+}

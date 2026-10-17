@@ -10,7 +10,7 @@ impl Ui {
         let tab_h = (44.0 * u).round();
         let band_b = y0 + tab_h + 12.0 * u;
         self.text.rounded(r, scene, [card[0], card[1], card[2], band_b], 0.0, SIDEBAR);
-        self.text.rounded(r, scene, [card[0], band_b, card[2], band_b + 1.0], 0.0, [255, 255, 255, 14]);
+        self.text.rounded(r, scene, [card[0], band_b, card[2], band_b + 1.0], 0.0, DIVIDER);
         self.text.alpha = tab_a;
         let px = (16.0 * u) as u32;
         let isz = (20.0 * u).round();
@@ -22,7 +22,7 @@ impl Ui {
             let on = v.sect == k + 1;
             let hot = inside(rc, f.cursor);
             let ov = self.ease((221, "tab", k), if on { 1.0 } else { 0.0 }, 12.0);
-            let hv = self.ease((221, "tabhot", k), if hot && !on { 1.0 } else { 0.0 }, 12.0);
+            let hv = self.ease((221, "tabhot", k), if hot { 1.0 } else { 0.0 }, 12.0);
             self.text.rounded(r, scene, rc, tab_h * 0.5, mix(fade(LIT, hv), OPT_GROUP_ON, ov));
             let l = self.text.label(r, scene, &label, px, if on { WHITE } else { mix(SOFT, WHITE, hv) });
             let gx = rc[0] + 18.0 * u;
@@ -48,7 +48,7 @@ impl Ui {
         let right = [card[0] + pw + side, band_b + 1.0, card[2], card[3]];
         self.text.alpha = self.start.page_e;
         self.text.rounded(r, scene, right, 0.0, OPT_ROW);
-        self.text.rounded(r, scene, [right[0], right[1], right[0] + 1.0, right[3]], 0.0, [255, 255, 255, 14]);
+        self.text.rounded(r, scene, [right[0], right[1], right[0] + 1.0, right[3]], 0.0, DIVIDER);
         self.text.alpha = self.start.sect_e;
 
         let s = v.sect;
@@ -66,10 +66,10 @@ impl Ui {
 
         if s < 3 {
             let label = format!("{} {}", tr("start.maps.next"), tr(TAB_KEYS[s]));
-            self.start_button(r, scene, f, btn, &label, "chevron_right", 1, u);
+            self.start_button(r, scene, f, btn, &label, Some("chevron_right"), 18.0, 1, u);
             self.start.next = btn;
         } else {
-            self.start_button(r, scene, f, btn, "start.maps.drive", "play_arrow", 0, u);
+            self.start_button(r, scene, f, btn, "start.maps.drive", None, 22.0, 0, u);
             self.start.go = btn;
         }
         self.start_drop_flush(r, scene, f, v, u);

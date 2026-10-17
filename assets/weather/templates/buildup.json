@@ -1,0 +1,15 @@
+{
+  "name": "Towering Clouds",
+  "description": "Cumulus piling up into huge white towers. Something is brewing.",
+  "metar": "ZZZZ 011200Z 21008KT 9999 FEW030 SCT038TCU BKN100 29/18 Q1006",
+  "months": [
+    5,
+    9
+  ],
+  "next": [
+    "showers_nearby",
+    "thunderstorm",
+    "hot",
+    "partly_cloudy"
+  ]
+}

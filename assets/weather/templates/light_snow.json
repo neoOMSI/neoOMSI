@@ -1,0 +1,15 @@
+{
+  "name": "Flurries",
+  "description": "Light, drifting snow. Cosy and quiet.",
+  "metar": "ZZZZ 011200Z 31006KT 4000 -SN OVC020 M01/M03 Q1011",
+  "months": [
+    11,
+    3
+  ],
+  "snow_cover": true,
+  "next": [
+    "snow",
+    "overcast",
+    "frost"
+  ]
+}

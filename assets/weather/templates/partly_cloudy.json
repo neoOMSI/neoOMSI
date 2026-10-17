@@ -1,0 +1,11 @@
+{
+  "name": "Sun and Clouds",
+  "description": "Scattered cumulus throw moving shadows over the streets.",
+  "metar": "ZZZZ 011200Z 25009KT 9999 SCT030 SCT080 18/09 Q1015",
+  "next": [
+    "fair",
+    "cloudy",
+    "showers",
+    "buildup"
+  ]
+}

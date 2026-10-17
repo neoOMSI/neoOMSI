@@ -9,3 +9,4 @@ description = "Timetables: TTData (bus stops, station links, trips, tracks, line
 legacy-config = { path = "../legacy-config" }
 mods = { path = "../mods" }
 log.workspace = true
+rayon.workspace = true

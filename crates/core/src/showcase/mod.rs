@@ -90,6 +90,10 @@ impl Showcase {
         self.view.zoom_by(k);
     }
 
+    pub fn zoom_now(&mut self, k: f32) {
+        self.view.zoom_now(k);
+    }
+
     pub fn reset_view(&mut self) {
         self.view.reset();
     }
@@ -128,8 +132,8 @@ impl Showcase {
             {
                 let same = current.as_ref().is_some_and(|c| c.same_model(&w));
                 if let (Some(m), true) = (self.model.as_mut(), same) {
+                    // (the time and weather of a look do not change the picture)
                     m.look = w;
-                    self.dirty = true;
                 } else if self.loading.is_none() {
                     match load::spawn(renderer, &w) {
                         Ok(job) => self.loading = Some((w, job)),
@@ -143,6 +147,12 @@ impl Showcase {
         }
         self.busy = self.loading.is_some();
 
+        if let Some(m) = self.model.as_mut() {
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(4);
+            if m.world.apply_texture_upgrades(renderer, &mut m.scene, Some(until)) > 0 {
+                self.dirty = true;
+            }
+        }
         if self.view.step(dt, self.auto_turn) {
             self.dirty = true;
         }
@@ -246,3 +256,4 @@ impl Showcase {
         self.model.is_some() && self.target.is_some()
     }
 }
+

@@ -1,7 +1,7 @@
 //! Reading and writing the values of the sliders and switches of the options windows.
 
 use super::*;
-use crate::{controllers, player, weather_setup};
+use crate::{controllers, player};
 
 pub(super) const SPEEDS: [f64; 5] = [1.0, 2.0, 4.0, 8.0, 15.0];
 pub(crate) const TRAFFIC: [usize; 7] = [0, 10, 20, 30, 50, 80, 120];
@@ -94,14 +94,6 @@ pub(crate) fn steps_of(verb: &str) -> Option<Vec<f32>> {
     })
 }
 
-pub(super) const CLOUD_TYPES: [(&str, &str); 5] = [
-    ("-1", "None"),
-    ("Cumulus 1", "Few clouds"),
-    ("Cumulus 2", "Scattered"),
-    ("Cumulus 3", "Broken"),
-    ("Overcast 1", "Overcast"),
-];
-
 pub(super) const PRECIP_KINDS: [&str; 3] = ["None", "Rain", "Snow"];
 
 pub(crate) const CUSTOM_WEATHER: &str = "Custom weather";
@@ -130,36 +122,9 @@ mod tests {
     }
 }
 
-pub(super) fn cloud_index(kind: &str) -> Option<usize> {
-    let k = kind.trim();
-    CLOUD_TYPES.iter().position(|(id, _)| {
-        id.eq_ignore_ascii_case(k) || (*id == "-1" && (k.is_empty() || k.starts_with("-1")))
-    })
-}
-
-pub(super) fn custom_state(app: &App) -> weather_setup::CustomWeather {
-    if let Some(mut c) = weather_setup::custom_weather(app.args.weather.as_deref()) {
-        // Wetness keeps evolving while driving; never restore an old serialized value just
-        // because another custom field (brightness, humidity, etc.) was edited.
-        c.road_wetness = app.wetness;
-        return c;
-    }
-    match app.weather.as_ref() {
-        Some(w) => weather_setup::CustomWeather::from_weather(w, 1.0, app.wetness),
-        None => weather_setup::CustomWeather::default(),
-    }
-}
-
 pub(crate) fn set_precip(app: &mut App, to: usize) {
     let to = to.min(PRECIP_KINDS.len() - 1);
-    app.edit_weather(|w| {
-        w.precip[0] = to as f32;
-        w.snow = to == 2;
-        // (rain or snow with no strength would be nothing: a moderate one)
-        if to != 0 && w.precip[1] < 1.0 {
-            w.precip[1] = 100.0;
-        }
-    });
+    app.edit_weather(|w| w.set_simple_precip(to));
 }
 
 pub(crate) fn is_slider(verb: &str) -> bool {
@@ -260,21 +225,17 @@ pub(crate) fn option_now(app: Option<&App>, verb: &str, arg: &str) -> Option<f32
         "day" => app?.clock.day_month().0 as f32,
         "month" => app?.clock.day_month().1 as f32,
         "year" => app?.clock.year as f32,
-        "visibility" => app?.weather.as_ref()?.fog.0,
+        "visibility" => app?.weather.as_ref()?.visibility_m,
         "rain_amt" => {
             let w = app?.weather.as_ref()?;
-            if w.precip.first().copied().unwrap_or(0.0) < 0.5 {
-                0.0
-            } else {
-                (w.precip.get(1).copied().unwrap_or(0.0) / 255.0).clamp(0.0, 1.0)
-            }
+            if w.precip.is_falling() { w.precip.intensity.clamp(0.0, 1.0) } else { 0.0 }
         }
         "wet" => app?.wetness,
-        "brightness" => custom_state(app?).brightness,
-        "humidity" => custom_state(app?).humidity,
-        "temp" => app?.weather.as_ref()?.temp.0,
-        "wind_speed" => app?.weather.as_ref()?.wind.1,
-        "wind_dir" => app?.weather.as_ref()?.wind.0.rem_euclid(360.0),
+        "brightness" => app?.weather.as_ref()?.brightness,
+        "humidity" => app?.weather.as_ref()?.rel_humidity(),
+        "temp" => app?.weather.as_ref()?.temp_c,
+        "wind_speed" => app?.weather.as_ref()?.wind_speed,
+        "wind_dir" => app?.weather.as_ref()?.wind_dir.rem_euclid(360.0),
         _ => return None,
     })
 }
@@ -525,49 +486,43 @@ pub(crate) fn option_set(
         }
         // the weather, made by hand (what the preset was stays as it was but for this)
         "visibility" => {
-            app?.edit_weather(|w| w.fog.0 = v);
+            app?.edit_weather(|w| w.visibility_m = v);
             None
         }
         "rain_amt" => {
-            app?.edit_weather(|w| {
-                w.precip[1] = (v * 255.0).round();
-                if v > 0.0 && w.precip[0] < 0.5 {
-                    w.precip[0] = 1.0;
-                }
-            });
+            app?.edit_weather(|w| w.set_precip_amount(v));
             None
         }
         "wet" => {
             let app = app?;
-            let mut c = custom_state(app);
-            c.road_wetness = v;
-            app.set_custom_weather(c);
+            if !app.metar_locked() {
+                app.wetness = v.clamp(0.0, 1.0);
+                app.wet_grid.set_all(app.wetness);
+            }
             None
         }
         "brightness" => {
-            let app = app?;
-            let mut c = custom_state(app);
-            c.brightness = v;
-            app.set_custom_weather(c);
+            app?.edit_weather(|w| w.brightness = v.clamp(0.0, 1.5));
             None
         }
         "humidity" => {
-            let app = app?;
-            let mut c = custom_state(app);
-            c.humidity = v;
-            app.set_custom_weather(c);
+            app?.edit_weather(|w| w.set_rel_humidity(v));
             None
         }
         "temp" => {
-            app?.edit_weather(|w| w.temp.0 = v);
+            app?.edit_weather(|w| {
+                let rh = w.rel_humidity();
+                w.temp_c = v;
+                w.set_rel_humidity(rh);
+            });
             None
         }
         "wind_speed" => {
-            app?.edit_weather(|w| w.wind.1 = v);
+            app?.edit_weather(|w| w.wind_speed = v);
             None
         }
         "wind_dir" => {
-            app?.edit_weather(|w| w.wind.0 = v);
+            app?.edit_weather(|w| w.wind_dir = v);
             None
         }
         _ => None,
@@ -617,7 +572,7 @@ pub(crate) fn toggle_now(app: Option<&App>, id: &str) -> Option<bool> {
         "auto_ibis" => ::config::get_bool("gameplay", "auto_ibis").unwrap_or(false),
         "time_sync" => ::config::get_bool("gameplay", "time_sync").unwrap_or(false),
         "metar_sync" => ::config::get_bool("gameplay", "metar_sync").unwrap_or(false),
-        "snow_cover" => app?.weather.as_ref().is_some_and(|w| w.snow),
+        "snow_cover" => app?.weather.as_ref().is_some_and(|w| w.snow_cover),
         "snow_road" => app?.weather.as_ref().is_some_and(|w| w.snow_on_road),
         "camcoll" => ::config::get_bool("camera", "collision").unwrap_or(true),
         "steer_look" => ::config::get_bool("camera", "steer_look").unwrap_or(false),
@@ -915,7 +870,7 @@ fn toggle_set_inner(mut app: Option<&mut App>, id: &str, on: bool) -> Option<(&'
             None
         }
         "snow_cover" => {
-            app?.edit_weather(|w| w.snow = on);
+            app?.edit_weather(|w| w.snow_cover = on);
             None
         }
         "snow_road" => {

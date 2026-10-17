@@ -1,0 +1,15 @@
+{
+  "name": "Frosty Morning",
+  "description": "Clear, bone-dry and bitterly cold. Crisp air and a sparkling world.",
+  "metar": "ZZZZ 011200Z 00000KT CAVOK M08/M12 Q1031",
+  "months": [
+    11,
+    3
+  ],
+  "snow_cover": true,
+  "next": [
+    "clear",
+    "freezing_fog",
+    "light_snow"
+  ]
+}

@@ -1,6 +1,15 @@
 use crate::*;
 
 #[test]
+fn glass_shader_requires_shading_profile() {
+    let source = scene_shader_source();
+    let without_marker = source.replace("const SHADING_PROFILE_ENABLED: bool = true;", "");
+    assert_ne!(source, without_marker);
+    let error = wgpu::naga::front::wgsl::parse_str(&without_marker).unwrap_err();
+    assert!(error.emit_to_string(&without_marker).contains("SHADING_PROFILE_ENABLED"));
+}
+
+#[test]
 fn shaders_validate_and_match_the_uniforms() {
     use wgpu::naga;
     let modules = [

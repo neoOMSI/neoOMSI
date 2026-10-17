@@ -17,6 +17,7 @@ content = { path = "../content" }
 scenery = { path = "../scenery" }
 glam.workspace = true
 log.workspace = true
+rayon.workspace = true
 anyhow.workspace = true
 hashbrown.workspace = true
 texture = { path = "../texture" }

@@ -1,0 +1,14 @@
+{
+  "name": "Thunderstorm",
+  "description": "Anvil clouds, a heavy downpour and lightning in cells.",
+  "metar": "ZZZZ 011200Z 20012G32KT 2500 +TSRA BKN018CB 23/20 Q1003",
+  "months": [
+    5,
+    9
+  ],
+  "next": [
+    "heavy_rain",
+    "showers",
+    "cloudy"
+  ]
+}

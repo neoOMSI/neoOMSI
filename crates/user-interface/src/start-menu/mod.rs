@@ -160,6 +160,7 @@ pub struct StartUi {
     pub update_btn: [f32; 4],
     pub active: bool,
     pub hand: bool,
+    pub typing: bool,
     pub items: Vec<[f32; 4]>,
     pub tabs: Vec<[f32; 4]>,
     pub maps: Vec<[f32; 4]>,
@@ -339,6 +340,7 @@ impl Ui {
         self.start.update = v.update.clone();
         self.start.driver = v.profile.name.clone();
         self.start.drv_open_now = v.drivers.open;
+        self.start.typing = false;
         let at = |rs: &[[f32; 4]]| rs.iter().any(|rc| inside(*rc, f.cursor));
         match v.page {
             StartPage::Start => {
@@ -351,13 +353,12 @@ impl Ui {
                     || at(&self.start.summary)
                     || at(&self.start.sect_tabs)
                     || at(&self.start.veh)
-                    || at(&[self.start.search, self.start.plate, self.start.details])
+                    || at(&[self.start.details])
                     || at(&self.start.drops)
                     || at(&self.start.drop_items)
                     || at(&self.start.lines)
                     || at(&self.start.tours)
                     || at(&self.start.entries)
-                    || at(&[self.start.line_filter, self.start.tour_filter])
                     || at(&self.start.seasons)
                     || at(&[self.start.close, self.start.next, self.start.cont])
                     || at(&[self.start.time_field, self.start.date_field, self.start.now])
@@ -367,15 +368,18 @@ impl Ui {
                     || at(&self.start.weather_modes)
                     || at(&self.start.sliders)
                     || at(&self.start.icao_picks)
-                    || at(&[self.start.icao_field, self.start.metar_sync, self.start.foot])
+                    || at(&[self.start.metar_sync, self.start.foot])
                     || at(&self.start.tabs) || at(&[self.start.go, self.start.quit, self.start.update_btn, self.start.profile_btn]);
+                self.start.typing = !at(&self.start.drop_items)
+                    && at(&[self.start.search, self.start.plate, self.start.line_filter, self.start.tour_filter, self.start.icao_field]);
             }
             StartPage::Multiplayer => {
                 self.draw_start_join(r, scene, f, m, v);
                 self.hand = at(&self.start.mp_tabs)
                     || at(&self.start.servers)
                     || at(&self.start.tabs)
-                    || at(&[self.start.go, self.start.field, self.start.host_row, self.start.quit, self.start.update_btn, self.start.profile_btn]);
+                    || at(&[self.start.go, self.start.host_row, self.start.quit, self.start.update_btn, self.start.profile_btn]);
+                self.start.typing = at(&[self.start.field]);
             }
             StartPage::Options => {
                 self.text.rounded(r, scene, [0.0, 0.0, m.w, m.h], 0.0, [10, 12, 16, 255]);
@@ -398,6 +402,7 @@ impl Ui {
 }
 
 pub(super) const BG: [u8; 4] = [10, 12, 16, 255];
+pub(super) const DIVIDER: [u8; 4] = [255, 255, 255, 8];
 pub(super) const ACCENT_TEXT: [u8; 4] = [232, 160, 48, 0];
 /// A dropdown row that is over (a trip already gone): well below `MUTED`.
 pub(super) const GONE: [u8; 4] = [85, 85, 88, 0];

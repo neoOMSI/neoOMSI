@@ -157,13 +157,17 @@ impl World {
 
     /// The worker-side reader of vehicle sets (see [`VehiclePrefetch`]).
     pub fn vehicle_prefetch(&self, renderer: &Renderer) -> VehiclePrefetch {
+        self.vehicle_prefetch_on((renderer.device.clone(), renderer.queue.clone()))
+    }
+
+    pub fn vehicle_prefetch_on(&self, gpu: (wgpu::Device, wgpu::Queue)) -> VehiclePrefetch {
         VehiclePrefetch {
             root: self.root.clone(),
             textures: self.textures.clone(),
             on_gpu: self.vehicle_textures.clone(),
             meshes_on_gpu: self.vehicle_meshes.clone(),
             ready: self.vehicle_ready.clone(),
-            gpu: (renderer.device.clone(), renderer.queue.clone()),
+            gpu,
         }
     }
 
