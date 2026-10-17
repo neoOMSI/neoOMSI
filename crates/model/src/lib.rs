@@ -489,10 +489,7 @@ pub struct ModelItem {
 }
 
 impl Model {
-    /// Add a text texture at its declared model slot.  OMSI model files may leave holes in
-    /// this table: a bare number immediately before `[texttexture]` / `[texttexture_enh]`
-    /// names the slot which `[useTextTexture]` addresses.  Treating the declarations as a
-    /// dense list makes later dashboard displays bind to the wrong generated texture.
+    /// Adds a text texture at its declared model slot.
     fn add_text_texture(&mut self, slot: Option<usize>, text: TextTexture) {
         if let Some(slot) = slot {
             if slot >= self.text_textures.len() {
@@ -1400,9 +1397,7 @@ mod tests {
         assert!(!tt[2].full_color);
     }
 
-    /// Model files may use sparse, explicitly numbered text-texture slots.  The Gold
-    /// E400MMC's dashboard refers to slots above 140 while its VIX declarations occupy
-    /// the low slots, so packing these declarations changes what every mesh displays.
+    /// Explicit text-texture slots may be sparse.
     #[test]
     fn texttextures_keep_their_declared_sparse_slots() {
         let m = super::Model::parse(&::legacy_config::CfgFile::from_str(

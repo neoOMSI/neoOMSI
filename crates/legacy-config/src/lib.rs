@@ -258,8 +258,7 @@ impl<'a> CfgReader<'a> {
         self.block_line
     }
 
-    /// The free-text line immediately before the keyword that opened the current block.
-    /// Model files use this for the declared slot number of a `[texttexture]`.
+    /// The line immediately before the current block.
     pub fn line_before_block(&self) -> Option<&'a str> {
         self.block_line
             .checked_sub(2)
