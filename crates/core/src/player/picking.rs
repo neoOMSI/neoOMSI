@@ -2,7 +2,7 @@ use super::*;
 
 impl Player {
     pub(crate) fn pick(&self, origin: DVec3, dir: Vec3, spread: f32) -> Option<usize> {
-        let (i, hit_dir) = pick_in(&self.vehicle, origin, dir, spread)?;
+        let (i, hit_dir) = pick_in(&self.vehicle, origin, dir, spread, self.view_inside)?;
         if self.control_hidden(origin, hit_dir, None, i) {
             return None;
         }
@@ -29,7 +29,8 @@ impl Player {
         dir: Vec3,
         spread: f32,
     ) -> Option<(usize, usize)> {
-        let ((ti, i), hit_dir) = pick_trailer_in(&self.vehicle, origin, dir, spread)?;
+        let ((ti, i), hit_dir) =
+            pick_trailer_in(&self.vehicle, origin, dir, spread, self.view_inside)?;
         if self.control_hidden(origin, hit_dir, Some(ti), i) {
             return None;
         }
@@ -92,7 +93,10 @@ impl Player {
         let vehicle = &self.vehicle;
         let o = (origin - vehicle.position).as_vec3();
         for (i, mesh) in vehicle.ty.meshes.iter().enumerate() {
-            if !vehicle.mesh_props[i].visible || skip == Some((None, i)) {
+            if !vehicle.mesh_props[i].visible
+                || skip == Some((None, i))
+                || !in_view(&vehicle.ty, i, self.view_inside)
+            {
                 continue;
             }
             let transform = vehicle.mesh_local_transform(i);
@@ -120,7 +124,10 @@ impl Player {
         for (ti, trailer) in vehicle.trailers.iter().enumerate() {
             let o = (origin - trailer.position).as_vec3();
             for (i, mesh) in trailer.ty.meshes.iter().enumerate() {
-                if !trailer.mesh_props[i].visible || skip == Some((Some(ti), i)) {
+                if !trailer.mesh_props[i].visible
+                    || skip == Some((Some(ti), i))
+                    || !in_view(&trailer.ty, i, self.view_inside)
+                {
                     continue;
                 }
                 let transform = trailer.mesh_local_transform(i);
@@ -185,7 +192,9 @@ impl Player {
         let o = (origin - self.vehicle.position).as_vec3();
         let mut best: Option<(f32, usize)> = None;
         for (i, vm) in self.vehicle.ty.meshes.iter().enumerate() {
-            if !self.vehicle.mesh_props[i].visible {
+            if !self.vehicle.mesh_props[i].visible
+                || !in_view(&self.vehicle.ty, i, self.view_inside)
+            {
                 continue;
             }
             let xf = self.vehicle.mesh_local_transform(i);
@@ -386,6 +395,7 @@ pub(crate) fn pick_in(
     origin: DVec3,
     dir: Vec3,
     spread: f32,
+    inside: bool,
 ) -> Option<(usize, Vec3)> {
     let o = (origin - vehicle.position).as_vec3();
     let right = Vec3::new(-dir.y, dir.x, 0.0).normalize_or_zero();
@@ -413,6 +423,7 @@ pub(crate) fn pick_in(
         .filter_map(|(i, vm)| {
             if vehicle.ty.model.meshes[vm.def_index].mouse_event.is_none()
                 || !vehicle.mesh_props[i].visible
+                || !in_view(&vehicle.ty, i, inside)
             {
                 return None;
             }
@@ -505,6 +516,7 @@ pub(crate) fn pick_trailer_in(
     origin: DVec3,
     dir: Vec3,
     spread: f32,
+    inside: bool,
 ) -> Option<((usize, usize), Vec3)> {
     let right = Vec3::new(-dir.y, dir.x, 0.0).normalize_or_zero();
     let up = dir.cross(right).normalize_or_zero();
@@ -537,6 +549,7 @@ pub(crate) fn pick_trailer_in(
                 .filter_map(move |(i, vm)| {
                     if trailer.ty.model.meshes[vm.def_index].mouse_event.is_none()
                         || !trailer.mesh_props[i].visible
+                        || !in_view(&trailer.ty, i, inside)
                     {
                         return None;
                     }
@@ -611,9 +624,22 @@ pub(super) fn in_front_of(other: f32, control: f32) -> bool {
     other < control - 0.03
 }
 
+/// Whether the mouse ray meets this mesh at all: OMSI tests only the meshes whose
+/// `[viewpoint]` is drawn in the current view (no bits, or the view's bit: 2 inside, 1
+/// outside). An outside-only shell or an AI-only interior (`[viewpoint] 4`, the HHA
+/// eCitaro's `19_AI_int.o3d` over its Almex touch screen) must not swallow a click on a
+/// switch it is not even drawn over.
+pub(super) fn in_view(ty: &::simulation::VehicleType, i: usize, inside: bool) -> bool {
+    viewpoint_in_view(ty.model.meshes[ty.meshes[i].def_index].viewpoint, inside)
+}
+
+fn viewpoint_in_view(viewpoint: i32, inside: bool) -> bool {
+    viewpoint == 0 || viewpoint & if inside { 2 } else { 1 } != 0
+}
+
 #[cfg(test)]
 mod occlusion_tests {
-    use super::in_front_of;
+    use super::{in_front_of, viewpoint_in_view};
     use ::geometry::{MeshData, ray_mesh};
     use glam::{Mat4, Vec3};
 
@@ -636,6 +662,26 @@ mod occlusion_tests {
         let dash = ray_mesh(o, d, &wall(0.6), &Mat4::IDENTITY).unwrap();
         assert!(in_front_of(dash, hatch));
         assert!(!in_front_of(hatch, dash));
+    }
+
+    #[test]
+    fn the_ray_meets_only_the_meshes_drawn_in_this_view() {
+        for (vp, inside, outside) in [
+            (0, true, true),
+            (1, false, true),
+            (2, true, false),
+            (3, true, true),
+            (4, false, false),
+            (5, false, true),
+            (6, true, false),
+        ] {
+            assert_eq!(viewpoint_in_view(vp, true), inside, "viewpoint {vp} inside");
+            assert_eq!(
+                viewpoint_in_view(vp, false),
+                outside,
+                "viewpoint {vp} outside"
+            );
+        }
     }
 
     #[test]

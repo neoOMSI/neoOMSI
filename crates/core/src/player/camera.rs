@@ -18,6 +18,7 @@ pub(crate) fn steering_view_yaw(
 
 impl Player {
     pub(crate) fn sync_transforms(&mut self, renderer: &Renderer, scene: &mut Scene, inside: bool) {
+        self.view_inside = inside;
         sync_vehicle_transforms(
             renderer,
             scene,
