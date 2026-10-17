@@ -57,6 +57,8 @@ pub fn oncoming_emergency(
 pub struct EmergencyApproach {
     pub vehicle: VehicleId,
     pub gap: f32,
+    /// The emergency vehicle's speed (m/s).
+    pub speed: f32,
 }
 
 /// Legacy AI cars request their active drive through TrafficPriority; scheduled buses
@@ -108,6 +110,7 @@ pub fn approaching_emergency(
             let r = EmergencyApproach {
                 vehicle: drive.vehicle,
                 gap,
+                speed: drive.speed,
             };
             if nearest.is_none_or(|n| {
                 gap.abs() < n.gap.abs() || (gap.abs() == n.gap.abs() && r.vehicle < n.vehicle)

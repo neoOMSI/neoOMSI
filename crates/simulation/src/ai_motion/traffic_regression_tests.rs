@@ -180,6 +180,7 @@ fn emergency_courtesy_moves_a_standing_real_body_without_teleporting() {
         inputs.emergency = Some(EmergencyApproach {
             vehicle: VehicleId(9),
             gap: 20.0,
+            speed: 0.0,
         });
         inputs.lead_gap = Some(8.0);
         let decision = coordinator.plan(&scene, &mut memory, &inputs);

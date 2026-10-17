@@ -202,6 +202,9 @@ pub struct ManeuverState {
     pub dwell_code: i16,
     /// Committed courtesy trajectory; keep its odometer anchor while yielding.
     pub emergency_ramp: Option<(f32, f32, f32, f32)>,
+    /// Pulled over for an emergency vehicle that could not get past: it drives on ahead of
+    /// that vehicle up to this odometer reading (`EMERGENCY_RELEASE`).
+    pub emergency_release: Option<(VehicleId, f32)>,
     /// A stopped vehicle's corner-clearance trajectory, anchored until it clears
     /// the parked row. Re-anchoring it every tick prevents steering recovery.
     pub kerb_ramp: Option<(f32, f32, f32, f32)>,
@@ -636,7 +639,23 @@ impl ManeuverCoordinator {
         // round it. Elsewhere - a junction, a roundabout, an approach between islands - it
         // drives on and clears the way (standing there, every car in front of the ambulance
         // in a roundabout held it up for good).
-        if input.emergency.is_some() && !actor.at_stop && emergency_can_pass_here(scene.net, actor) {
+        // Pulled over and standing with the emergency vehicle standing right behind it, it
+        // cannot get past here: drive on ahead of it for a while and clear the way.
+        if let Some(e) = input.emergency {
+            if actor.speed < 0.3 && actor.stopped > EMERGENCY_YIELD_WAIT && e.speed < 0.5
+                && (0.0..EMERGENCY_YIELD_BEHIND).contains(&e.gap)
+            {
+                state.emergency_release = Some((e.vehicle, actor.odometer + EMERGENCY_RELEASE));
+            }
+        }
+        if state.emergency_release.is_some_and(|r| actor.odometer >= r.1) {
+            state.emergency_release = None;
+        }
+        let released = state.emergency_release
+            .is_some_and(|r| input.emergency.is_some_and(|e| e.vehicle == r.0));
+        if input.emergency.is_some() && !released && !actor.at_stop
+            && emergency_can_pass_here(scene.net, actor)
+        {
             return self.yield_to_emergency(scene, actor, state, input);
         }
         if let Some(d) = self.plan_required_change(scene, actor, state) {
@@ -2001,6 +2020,12 @@ enum QueueEnd {
     /// At the junction; the distance to its end when the way goes straight across.
     Junction(Option<f32>),
 }
+
+/// A car that has pulled over and stood this long (s) with the emergency vehicle standing
+/// within `EMERGENCY_YIELD_BEHIND` (m) behind it drives on for `EMERGENCY_RELEASE` (m).
+const EMERGENCY_YIELD_WAIT: f32 = 4.0;
+const EMERGENCY_YIELD_BEHIND: f32 = 20.0;
+const EMERGENCY_RELEASE: f32 = 80.0;
 
 /// How far ahead (m) an emergency vehicle looks at the queue in front of it, ...
 const EMERGENCY_QUEUE_LOOK: f32 = 220.0;

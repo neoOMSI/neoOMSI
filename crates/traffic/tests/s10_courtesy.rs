@@ -50,6 +50,7 @@ fn courtesy_moves_within_lane_bounds_and_mirrors_on_left_hand_maps() {
         inputs.emergency = Some(EmergencyApproach {
             vehicle: VehicleId(9),
             gap: 30.0,
+            speed: 0.0,
         });
         let mut c = ManeuverCoordinator::new();
         let mut state = ManeuverState::default();
@@ -86,6 +87,7 @@ fn scenery_can_veto_courtesy_without_erasing_ordinary_stop_constraints() {
     inputs.emergency = Some(EmergencyApproach {
         vehicle: VehicleId(9),
         gap: 30.0,
+        speed: 0.0,
     });
     let decision = ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &inputs);
     assert!(decision.lateral_target.is_none());
@@ -120,7 +122,48 @@ fn a_car_in_a_roundabout_drives_on_instead_of_stopping_for_the_ambulance_behind(
         tick: 1,
     };
     let mut inputs = ManeuverInputs::new(0);
-    inputs.emergency = Some(EmergencyApproach { vehicle: VehicleId(9), gap: 15.0 });
+    inputs.emergency = Some(EmergencyApproach { vehicle: VehicleId(9), gap: 15.0, speed: 0.0 });
     let d = ManeuverCoordinator::new().plan(&scene, &mut ManeuverState::default(), &inputs);
     assert_ne!(d.binding, Some(Reason::EmergencyYield), "stopped in the ring: {d:?}");
+}
+
+/// A car pulled over for an ambulance that stands right behind it and cannot get past
+/// drives on after a few seconds instead of waiting for it for good (Ahlheim).
+#[test]
+fn a_car_pulled_over_drives_on_when_the_emergency_behind_cannot_pass() {
+    let net = two_way();
+    let mut actor = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    actor.half_width = 0.9;
+    let occupancy = Occupancy::build(net.version(), 1, vec![]);
+    let mut inputs = ManeuverInputs::new(0);
+    inputs.emergency = Some(EmergencyApproach { vehicle: VehicleId(9), gap: 6.0, speed: 0.0 });
+    let mut c = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    let mut plan = |actor: &ManeuverActor, state: &mut ManeuverState| {
+        let actors = [actor.clone()];
+        let scene = ManeuverScene {
+            static_clearance: None,
+            net: &net,
+            occupancy: &occupancy,
+            actors: &actors,
+            people: &[],
+            time: 1.0,
+            dt: 0.02,
+            tick: 1,
+        };
+        c.plan(&scene, state, &inputs).binding
+    };
+    // just stopped beside the kerb: it waits for the ambulance to come past
+    actor.stopped = 1.0;
+    assert_eq!(plan(&actor, &mut state), Some(Reason::EmergencyYield));
+    // the ambulance still stands behind it: it drives on, and keeps going
+    actor.stopped = 5.0;
+    assert_ne!(plan(&actor, &mut state), Some(Reason::EmergencyYield));
+    actor.stopped = 0.0;
+    actor.speed = 5.0;
+    actor.odometer = 100.0;
+    assert_ne!(plan(&actor, &mut state), Some(Reason::EmergencyYield));
+    // further on it makes way again
+    actor.odometer = 160.0;
+    assert_eq!(plan(&actor, &mut state), Some(Reason::EmergencyYield));
 }
