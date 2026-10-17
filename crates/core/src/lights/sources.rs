@@ -6,7 +6,8 @@ use ::render::{Corona, LightMode, PointLight};
 
 fn is_signal(color: [f32; 3]) -> bool {
     let [r, g, b] = color;
-    r >= 0.6 && b <= 0.35 && g <= r * 0.85
+    let (hi, lo) = (r.max(g).max(b), r.min(g).min(b));
+    (r >= 0.6 && b <= 0.35 && g <= r * 0.85) || (hi >= 0.3 && hi - lo >= hi * 0.6)
 }
 
 pub(super) fn corona_light(cfg: &LightSettings, c: &Corona, dark: f32) -> Option<PointLight> {

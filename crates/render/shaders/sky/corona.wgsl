@@ -197,7 +197,8 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     let lamp = select(max(in.size * grow, dist * 0.002) * 0.9, in.size, streak);
     // Enhanced: the sprite spans the glare's angle round the lamp (or the lamp's own glow
     // where that is wider); `glare_enhanced` draws the bitmap in the inner `core` of it.
-    let glare = enhanced && !streak;
+    let plain = (u32(in.extra.z + 0.5) & 32u) != 0u;
+    let glare = enhanced && !streak && !plain;
     let size = select(lamp, max(lamp, dist * GLARE_ANGLE), glare);
     let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(0.06, 4.0), streak);
     var upv = up;
@@ -214,7 +215,7 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     out.clip = camera.view_proj * vec4<f32>(wp, 1.0);
     out.uv = c * 0.5 + 0.5;
     out.color = vec4<f32>(in.color.rgb, brightness);
-    out.kind = select(0.0, 1.0, streak);
+    out.kind = select(0.0, 1.0, streak || plain);
     out.star = 0.0;
     out.beam = 0.0;
     out.cone = vec2<f32>(0.0, 0.0);
