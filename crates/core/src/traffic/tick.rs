@@ -260,6 +260,7 @@ impl Traffic {
                 yielding: c.yielding,
                 wait_at: c.wait_at,
                 priority: c.vehicle.var("TrafficPriority").is_some_and(|v| v > 0.5),
+                passing: c.maneuver.passing.is_some_and(|p| !p.aborted),
             })
             .collect();
         let aspects: HashMap<(usize, usize), Aspect> = self

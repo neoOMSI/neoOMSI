@@ -10,8 +10,9 @@ pub(super) struct EmergencyReservation {
     /// clear of the traffic that makes way for it.
     pub movement: Vec<usize>,
     /// The oncoming lanes beside it, where it passes a queue across the junction
-    /// (`emergency_through`).
+    /// (`emergency_through`), and whether it is out there passing now.
     pub oncoming: Vec<usize>,
+    pub passing: bool,
     exit: Option<usize>,
     /// The reserved movement shows the owner a stop aspect: it crosses against it, slowly.
     /// Sticky for the reservation's life, so the owner does not speed up once past the line.
@@ -88,6 +89,7 @@ impl JunctionCoordinator {
                 lanes,
                 movement: way_through,
                 oncoming: oncoming_beside(net, way, &movement),
+                passing: false,
                 exit: movement.exit.map(|x| x.0),
                 against_signal: false,
                 ahead: Vec::new(),
@@ -97,8 +99,10 @@ impl JunctionCoordinator {
         for r in &mut self.emergency_reservations {
             let Some((owner, way)) = actors.iter().zip(ways).find(|(a, _)| a.id == r.owner) else {
                 r.ahead.clear();
+                r.passing = false;
                 continue;
             };
+            r.passing = owner.passing;
             let until = junction_ahead(net, way).map(|m| {
                 m.lanes.iter().map(|&(l, d)| d + net.lanes[l].length()).fold(0.0, f32::max)
             });
@@ -153,14 +157,15 @@ impl JunctionCoordinator {
 
     /// Does a movement through `lanes` cross, join or share the way an emergency vehicle
     /// reserved (`r.movement`), or the oncoming side it passes the vehicles in front of it
-    /// on? Only that traffic stops for it: one junction object can hold a whole square (#462).
+    /// on while it passes them? Only that traffic stops for it: one junction object can hold
+    /// a whole square (#462). (Not while it only queues: then it held the traffic its queue
+    /// had to drain into, Ahlheim.)
     pub(super) fn meets_emergency(
         net: &Network,
         r: &EmergencyReservation,
         lanes: &[usize],
     ) -> bool {
-        let passing = !r.ahead.is_empty();
-        let on = |l: &usize| r.movement.contains(l) || (passing && r.oncoming.contains(l));
+        let on = |l: &usize| r.movement.contains(l) || (r.passing && r.oncoming.contains(l));
         lanes.iter().any(|&l| {
             on(&l)
                 || net.crossings[l].iter().any(|c| on(&c.other))

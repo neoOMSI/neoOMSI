@@ -448,13 +448,15 @@ fn two_way_crossing() -> Network {
 }
 
 /// An ambulance passing a queue across its junction drives on the oncoming side: traffic
-/// turning into that side waits for it too, not only traffic meeting its own lane.
+/// turning into that side waits for it too, not only traffic meeting its own lane. Not
+/// while it only queues: that traffic may be what the queue drains into (Ahlheim).
 #[test]
 fn traffic_turning_into_the_oncoming_side_waits_for_an_ambulance_passing_its_queue() {
-    for queue in [true, false] {
+    for (queue, passing) in [(true, true), (true, false), (false, false)] {
         let mut w = Harness::new(two_way_crossing());
         let mut amb = emergency(1, 0);
         amb.s = 80.0;
+        amb.passing = passing;
         let a = w.add(amb);
         w.place(a, 0, 80.0);
         if queue {
@@ -467,7 +469,7 @@ fn traffic_turning_into_the_oncoming_side_waits_for_an_ambulance_passing_its_que
         prepare(&w, &mut c);
         assert!(c.emergency_owns(VehicleId(1), 1));
         let held = w.plan(&mut c, turn, None).binding == Some(Reason::EmergencyYield);
-        assert_eq!(held, queue, "a queue in front of the ambulance: {queue}");
+        assert_eq!(held, passing, "a queue in front of the ambulance: {queue}, passing it: {passing}");
     }
 }
 
@@ -487,4 +489,48 @@ fn only_a_car_taking_the_emergencys_way_crosses_the_red_line_for_it() {
     assert!(c.emergency_owns(VehicleId(1), 1));
     assert!(c.emergency_leads(VehicleId(2), &[(1, 4.0), (2, 24.0)]));
     assert!(!c.emergency_leads(VehicleId(2), &[(9, 4.0)]));
+}
+
+/// A single-lane tunnel driven both ways under traffic lights (Ahlheim): 0 eastbound
+/// approach, 1 eastbound through the tunnel, 2 westbound approach, 3 westbound through it,
+/// 0.1 m beside 1.
+fn single_lane_tunnel() -> Network {
+    use glam::DVec3;
+    let street = |a: DVec3, b: DVec3| LaneBuilder::polyline(vec![a, b], LaneKind::Street, 3.0);
+    let mut net = Network {
+        lanes: vec![
+            street(DVec3::new(-115.0, 0.0, 0.0), DVec3::new(-15.0, 0.0, 0.0)),
+            common::object_lane(DVec3::new(-15.0, 0.0, 0.0), DVec3::new(15.0, 0.0, 0.0), 0),
+            street(DVec3::new(115.0, 0.1, 0.0), DVec3::new(15.0, 0.1, 0.0)),
+            common::object_lane(DVec3::new(15.0, 0.1, 0.0), DVec3::new(-15.0, 0.1, 0.0), 1),
+        ],
+        ..Default::default()
+    };
+    net.lanes[0].next = vec![1];
+    net.lanes[2].next = vec![3];
+    net.lanes[0].traffic_light = Some((0, 0));
+    net.lanes[2].traffic_light = Some((0, 1));
+    net.compute_conflicts();
+    net
+}
+
+/// The two ways through a single-lane tunnel meet along its whole length: an ambulance
+/// crossing against its red light waits for the car coming through the tunnel towards it.
+#[test]
+fn an_ambulance_waits_for_the_car_coming_through_a_single_lane_tunnel() {
+    let net = single_lane_tunnel();
+    let c = net.crossings[1].iter().find(|c| c.other == 3).expect("the two ways do not meet");
+    assert!(c.before + c.after > 25.0, "they meet over {} m only", c.before + c.after);
+    let mut w = Harness::new(net);
+    w.aspects.insert((0, 0), Aspect::Red);
+    w.aspects.insert((0, 1), Aspect::Green);
+    let mut amb = emergency(1, 0);
+    amb.s = 92.0;
+    let a = w.add(amb);
+    w.place(a, 0, 92.0);
+    let car = w.add(JunctionActor::new(VehicleId(2), 3, 6.0));
+    w.place(car, 3, 6.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(w.plan(&mut c, a, None).yield_at.is_some(), "drove into the tunnel towards the car");
 }

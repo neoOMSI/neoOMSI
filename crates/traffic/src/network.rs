@@ -556,6 +556,48 @@ const MEET_MAX: f32 = 14.0;
 /// vertically (m) do not meet: a bridge does not conflict with the road under it.
 pub const MEET_CLEARANCE: f64 = 4.0;
 
+/// Lanes running against each other closer than this (m) are one lane driven both ways ...
+const HEAD_ON_DIST: f64 = 1.5;
+/// ... if they do so for at least this long (m).
+const HEAD_ON_MIN: f32 = 6.0;
+
+/// The meeting place of lanes `a` and `b` where they are one lane driven both ways
+/// (`HEAD_ON_DIST`), as seen from `a` (lane `i`) and from `b` (lane `j`).
+fn head_on(a: &Lane, b: &Lane, i: usize, j: usize) -> Option<(Crossing, Crossing)> {
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    let (mut blo, mut bhi) = (f32::MAX, f32::MIN);
+    let n = (a.length() / 0.5).ceil() as usize;
+    for k in 0..=n {
+        let s = (k as f32 * 0.5).min(a.length());
+        let (p, h) = a.at(s);
+        let Some((sb, d)) = b.nearest_point(p) else { continue };
+        let (q, hb) = b.at(sb);
+        if d < HEAD_ON_DIST
+            && (p.z - q.z).abs() <= MEET_CLEARANCE
+            && wrap_deg(hb - h).abs() > 150.0
+        {
+            (lo, hi) = (lo.min(s), hi.max(s));
+            (blo, bhi) = (blo.min(sb), bhi.max(sb));
+        }
+    }
+    if hi - lo < HEAD_ON_MIN || bhi - blo < HEAD_ON_MIN {
+        return None;
+    }
+    let (at, other_at) = (0.5 * (lo + hi), 0.5 * (blo + bhi));
+    let (half, other_half) = (0.5 * (hi - lo), 0.5 * (bhi - blo));
+    let seen = |other, at, half, other_at, other_half| Crossing {
+        other,
+        at,
+        other_at,
+        merge: false,
+        before: half,
+        after: half,
+        other_before: other_half,
+        other_after: other_half,
+    };
+    Some((seen(j, at, half, other_at, other_half), seen(i, other_at, other_half, at, half)))
+}
+
 /// How far before and after distance `at` of lane `a` its centre line stays within
 /// `MEET_DIST` of lane `b`'s (in half-metre steps, at least the half metre around the point).
 fn meeting_extent(a: &Lane, at: f32, b: &Lane) -> (f32, f32) {
@@ -947,6 +989,16 @@ impl Network {
                     let place = place.filter(|&(sa, sb)| {
                         (a.at(sa).0.z - b.at(sb).0.z).abs() <= MEET_CLEARANCE
                     });
+                    // One lane driven both ways (a single-lane tunnel, signal-controlled):
+                    // the whole stretch they share is the meeting place.
+                    if let Some((ca, cb)) = head_on(a, b, i, j) {
+                        self.conflicts[i].push(j);
+                        self.conflicts[j].push(i);
+                        self.crossings[i].push(ca);
+                        self.crossings[j].push(cb);
+                        n += 1;
+                        continue;
+                    }
                     // `[blockpath]`: the object says the two are in each other's way even
                     // where their lines do not cross - the whole of both is the meeting place
                     let (pa, pb) = (

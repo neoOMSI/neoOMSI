@@ -290,6 +290,8 @@ pub struct JunctionActor {
     pub wait_at: Option<f32>,
     /// `TrafficPriority` set by the script (an ambulance, the player's bus).
     pub priority: bool,
+    /// Out on the oncoming lane, passing the vehicles in front of it.
+    pub passing: bool,
 }
 
 impl JunctionActor {
@@ -317,6 +319,7 @@ impl JunctionActor {
             yielding: false,
             wait_at: None,
             priority: false,
+            passing: false,
         }
     }
 }
