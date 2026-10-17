@@ -107,7 +107,7 @@ pub(super) fn place(renderer: &Renderer, r: Ready) -> Model {
     let centre = Vec3::new(bb[3], front - total * 0.5, bb[5]);
     let radius = 0.5 * (total * total + bb[0] * bb[0] + bb[2] * bb[2]).sqrt();
 
-    let weather = load_weather(&args);
+    let weather = crate::weather::spec::load(&args);
     let lighting = light::lighting(&args, &weather);
     Model {
         look: r.look,

@@ -51,7 +51,7 @@ impl Player {
                 let path = ::mods::resolve_path(v.ty.def.dir(), f);
                 ss.play_file_direct(a, &path, *vol);
             }
-            if let Some(every) = debug_sound_every() {
+            if let Some(every) = weather::debug_sound_every() {
                 static LAST: std::sync::atomic::AtomicU32 =
                     std::sync::atomic::AtomicU32::new(u32::MAX);
                 let bucket = (v.host.clock.time / every as f64) as u32;

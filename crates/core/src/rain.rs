@@ -7,9 +7,8 @@ use ::render::{Corona, Scene};
 
 const HALF_WIDTH: f32 = 16.0;
 
-pub fn weather_wind(weather: &::content::weather::Weather) -> Vec3 {
-    let heading = weather.wind.0.to_radians();
-    Vec3::new(heading.sin(), heading.cos(), 0.0) * weather.wind.1
+pub fn weather_wind(weather: &crate::weather::Weather) -> Vec3 {
+    crate::weather::wind_vector(weather)
 }
 
 pub struct Rain {

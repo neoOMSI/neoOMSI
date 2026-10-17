@@ -282,9 +282,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
         let cloud = app
             .weather
             .as_ref()
-            .and_then(|w| cloud_index(&w.clouds.0))
-            .map(|i| CLOUD_TYPES[i].1.to_string())
-            .or_else(|| app.weather.as_ref().map(|w| w.clouds.0.trim().to_string()))
+            .map(|w| CLOUD_TYPES[w.simple_cloud_index()].1.to_string())
             .unwrap_or_default();
         weather.push((
             row(
@@ -319,10 +317,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
         let kind = app
             .weather
             .as_ref()
-            .map(|w| {
-                (w.precip.first().copied().unwrap_or(0.0).max(0.0) as usize)
-                    .min(PRECIP_KINDS.len() - 1)
-            })
+            .map(|w| w.simple_precip_index().min(PRECIP_KINDS.len() - 1))
             .unwrap_or(0);
         weather.push((
             row(
@@ -367,7 +362,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             &tx("pause.world.text.the_air_temperature"),
             &|v| format!("{} °C", v as i64),
         ));
-        let dew_temp = app.weather.as_ref().map(|w| w.temp.0).unwrap_or(15.0);
+        let dew_temp = app.weather.as_ref().map(|w| w.temp_c).unwrap_or(15.0);
         climate.extend(slider_row(
             Some(app),
             "humidity",
@@ -378,7 +373,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
                     "{:.0} % · {} {:.0} °C",
                     v,
                     tx("pause.world.dew"),
-                    crate::weather_setup::dew_point_c(dew_temp, v)
+                    crate::weather::model::dew_point_c(dew_temp, v)
                 )
             },
         ));

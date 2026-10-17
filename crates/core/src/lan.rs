@@ -1221,22 +1221,11 @@ fn host_weather(args: &Args, weather: &str) -> Result<Option<String>, String> {
     if w.is_empty() {
         return Ok(None);
     }
-    if crate::weather_setup::custom_weather(Some(w)).is_some() {
-        return Ok(Some(w.to_string()));
-    }
-    if w.starts_with(crate::weather_setup::REPORT) {
-        return if crate::weather_setup::from_report(w).is_some() {
-            Ok(Some(w.to_string()))
-        } else {
-            Err(format!("the host's weather {w} cannot be read here"))
-        };
-    }
-    let path = ::mods::resolve_path(&args.root, w);
-    let inside = !w.contains("..") && !w.starts_with('/') && !w.contains(':');
-    if inside && ::legacy_config::vfs::is_file(&path) {
+    let _ = args;
+    if crate::weather::spec::is_readable(w) {
         Ok(Some(w.to_string()))
     } else {
-        Err(format!("the host's weather {w} is not installed here"))
+        Err(format!("the host's weather {w} cannot be read or is not installed here"))
     }
 }
 

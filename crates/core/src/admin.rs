@@ -17,7 +17,7 @@
 //! `ban <id>`, `bring <id>`, `goto <id>`, `time <seconds>`, `speed <factor>`,
 //! `weather next`, `say <text>`, `bringall`, `service <repair|refuel|wash> <id|all>`,
 //! `unstick <id>`, `clock <seconds of the day>`, `traffic next`, `traffic clear`,
-//! `weather cycle`, `weather set <Weather/file.owt>`, `mute <id>`, `unmute <id>`,
+//! `weather cycle`, `weather set template:<id>`, `mute <id>`, `unmute <id>`,
 //! `voice on|off`.
 
 use crate::App;
@@ -122,12 +122,13 @@ pub(crate) fn items(app: &App) -> Vec<(String, String)> {
         ::i18n::translate("pause.admin.weather_cycle", &[("state", &::i18n::translate(if cycling { "pause.admin.on" } else { "pause.admin.off" }, &[]))]),
         "weather cycle".into(),
     ));
-    for (file, w) in crate::weather_cycle::installed() {
+    for t in crate::weather::template::library() {
+        let (file, w) = (crate::weather::spec::template_spec(&t.id), t);
         let now = app
             .args
             .weather
             .as_deref()
-            .is_some_and(|c| c.replace('\\', "/").eq_ignore_ascii_case(&file));
+            .is_some_and(|c| c.eq_ignore_ascii_case(&file));
         let mark = if now {
             format!("  {}", ::i18n::translate("pause.admin.now", &[]))
         } else {
@@ -247,7 +248,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_nanos() as u64)
                         .unwrap_or(7);
-                    let mut c = crate::weather_cycle::Cycle::new(seed);
+                    let mut c = crate::weather::Cycle::new(seed);
                     // (the first change soon, not in an hour)
                     c.next_in = 60.0;
                     app.weather_cycle = Some(c);
@@ -260,9 +261,7 @@ fn host_action(app: &mut App, action: &str, by: Option<u32>) {
             }
             // (only an installed weather file: the name comes from the admin's game)
             ("set", file)
-            if !file.contains("..")
-                && file.to_ascii_lowercase().starts_with("weather/")
-                && file.to_ascii_lowercase().ends_with(".owt") =>
+            if weather_file_ok(file) =>
                 {
                     app.change_weather(Some(file.to_string()), true, 1.0);
                 }
@@ -656,13 +655,10 @@ impl ServerAdmin {
     }
 }
 
-/// A weather file an admin may choose: a `Weather/….owt` path, nothing above it.
 fn weather_file_ok(file: &str) -> bool {
-    let f = file.replace('\\', "/").to_ascii_lowercase();
-    f.starts_with("weather/")
-        && f.ends_with(".owt")
-        && !f.contains("..")
-        && f.matches('/').count() == 1
+    file.strip_prefix("template:").is_some_and(|id| {
+        !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
 }
 
 /// Who the commands of the web gateway's `POST /admin` come from: no player has this id.
@@ -907,11 +903,9 @@ mod weather_file_tests {
 
     #[test]
     fn only_a_weather_file() {
-        assert!(weather_file_ok("Weather/#CAVOK.owt"));
-        assert!(weather_file_ok("weather\\Bodennebel.OWT"));
-        assert!(!weather_file_ok("Weather/../server.cfg"));
-        assert!(!weather_file_ok("Weather/sub/x.owt"));
-        assert!(!weather_file_ok("maps/x.owt"));
-        assert!(!weather_file_ok("Weather/x.cfg"));
+        assert!(weather_file_ok("template:heavy_rain"));
+        assert!(!weather_file_ok("template:../server"));
+        assert!(!weather_file_ok("Weather/x.owt"));
+        assert!(!weather_file_ok("template:"));
     }
 }

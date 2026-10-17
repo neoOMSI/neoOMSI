@@ -261,9 +261,7 @@ pub(crate) fn prepare(args: &mut Args, path: &Path) -> Result<ServerCfg> {
         }
     });
     if let Some(icao) = station.as_ref() {
-        match crate::weather_setup::try_metar(icao)
-            .and_then(|w| crate::weather_setup::report_wire(&w))
-        {
+        match crate::weather::net::fetch(icao).and_then(|w| crate::weather::spec::wire(&w)) {
             Some(wire) => args.weather = Some(wire),
             None => log::warn!("server: no METAR report for {icao} yet; trying again soon"),
         }

@@ -93,7 +93,7 @@ pub(crate) struct App {
     pub(crate) redraw_ended: Option<Instant>,
     pub(crate) first_populate: bool,
     pub(crate) envir: Option<content::Envir>,
-    pub(crate) weather: Option<content::weather::Weather>,
+    pub(crate) weather: Option<weather::Weather>,
     pub(crate) clock: simulation::SimClock,
     pub(crate) started: Instant,
     pub(crate) total_frames: u32,
@@ -234,10 +234,12 @@ pub(crate) struct App {
     pub(crate) log_state: applog::LogState,
     pub(crate) career: career::Career,
     pub(crate) wetness: f32,
-    pub(crate) cloud_drift: [f32; 2],
-    pub(crate) weather_blend: Option<weather_cycle::Blend>,
-    pub(crate) weather_cycle: Option<weather_cycle::Cycle>,
-    pub(crate) metar_rx: Option<std::sync::mpsc::Receiver<Option<content::weather::Weather>>>,
+    pub(crate) sky: weather::Regional,
+    pub(crate) sky_anchored: bool,
+    pub(crate) weather_local: weather::Local,
+    pub(crate) weather_blend: Option<weather::Blend>,
+    pub(crate) weather_cycle: Option<weather::Cycle>,
+    pub(crate) metar_rx: Option<std::sync::mpsc::Receiver<Option<weather::Weather>>>,
     pub(crate) metar_once: bool,
     pub(crate) metar_next: f64,
     pub(crate) cursor_kind: u8,
@@ -790,24 +792,27 @@ impl App {
         let renderer = self.renderer.take().expect("renderer");
         let mut scene = renderer.new_scene();
         self.envir = content::Envir::load(&self.args.root.join("envir.cfg")).ok();
-        if weather_cycle::is_cycle(self.args.weather.as_deref()) {
+        self.clock = start_clock(&self.args);
+        if weather::is_cycle(self.args.weather.as_deref()) {
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
                 .unwrap_or(7);
-            let mut c = weather_cycle::Cycle::new(seed);
-            let month = start_clock(&self.args).day_month().1;
-            let all = weather_cycle::installed();
-            let clear = content::weather::Weather {
-                fog: (50000.0, 1.0),
-                ..Default::default()
-            };
-            let r = c.rand();
-            self.args.weather = weather_cycle::pick(&all, &clear, "", month, r);
+            let mut c = weather::Cycle::new(seed);
+            let month = self.clock.day_month().1.max(1) as u32;
+            let first = c.pick(month, &weather::Weather::default());
+            self.args.weather = first.map(|t| weather::spec::template_spec(&t.id));
             log::info!("weather cycle: starting with {:?}", self.args.weather);
             self.weather_cycle = Some(c);
         }
-        self.weather = Some(load_weather(&self.args));
+        let first_weather = weather::spec::load(&self.args);
+        self.wetness = weather::initial_wetness(&first_weather);
+        self.sky = weather::Regional::new();
+        let observer = self.weather_observer();
+        self.sky.anchor(&first_weather, observer, weather::enhanced_sky());
+        self.weather_local = self.sky.sample(&first_weather, observer, weather::enhanced_sky());
+        self.weather = Some(first_weather);
+        self.sky_anchored = false;
         if self
             .args
             .weather
@@ -816,15 +821,7 @@ impl App {
         {
             self.metar_next = 600.0;
         }
-        self.wetness = self.weather.as_ref().map(initial_wetness).unwrap_or(0.0);
-        self.clock = start_clock(&self.args);
-        setup_sky(
-            &self.args,
-            &renderer,
-            &mut scene,
-            self.envir.as_ref(),
-            self.weather.as_ref(),
-        );
+        weather::setup_sky(&self.args, &renderer, &mut scene, self.envir.as_ref());
         if !self.args.all && self.args.radius.is_none() {
             match open_world(&self.args) {
                 Ok((w, cam, _)) => {

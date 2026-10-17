@@ -35,6 +35,7 @@ const CLOUD_EDGE_SOFTNESS: f32 = 0.3;
 const CLOUD_BOTTOM_SOFTNESS: f32 = 0.2;
 const CLOUD_MAX_DIST: f32 = 60000.0;
 const CLOUD_MS_GAIN: f32 = 4.0;
+const CLOUD_CELL_SPREAD: f32 = 0.7;
 
 @group(1) @binding(6) var t_cloud_shape: texture_2d<f32>;
 @group(1) @binding(7) var t_cloud_detail: texture_3d<f32>;
@@ -80,8 +81,8 @@ fn cloud_shell(d: vec3<f32>, h: f32) -> f32 {
 fn cloud_coverage(p: vec2<f32>) -> f32 {
     let cover = camera.clouds.x;
     let uv = p / CLOUD_FIELD_TILE + camera.clouds.yz * (CLOUD_DRIFT_UNIT / CLOUD_FIELD_TILE);
-    let field = textureSampleLevel(t_clouds, s_repeat, uv * 0.2, 5.0).g;
-    return clamp(0.15 + cover * 0.75 + (field - 0.5) * 0.2, 0.0, 1.0);
+    let field = textureSampleLevel(t_clouds, s_repeat, uv * 0.2, 5.0).r;
+    return clamp(0.15 + cover * 0.75 + (field - 0.5) * CLOUD_CELL_SPREAD * (1.0 - smoothstep(0.85, 1.0, cover)), 0.0, 1.0);
 }
 
 // The heap before its billows (h: 0 at the base, 1 at the top of the layer).
@@ -119,13 +120,14 @@ fn cloud_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool) -> f
 
 // ---- the layers (enh.layers[i]: x base, y top (m), z cover 0..1, w shape 0 flat stratus ..
 // 1 piled cumulus): up to three, low to high; what the weather makes of them is told by
-// the CPU (weather_setup.rs `cloud_layers_of`).
+// the CPU (weather/sky.rs `render_sky`).
 
 fn layer_coverage(p: vec2<f32>, cover: f32, li: f32) -> f32 {
     let uv = p / CLOUD_FIELD_TILE + camera.clouds.yz * (CLOUD_DRIFT_UNIT / CLOUD_FIELD_TILE) * (1.0 + li) + vec2<f32>(0.37, 0.61) * li;
-    let field = textureSampleLevel(t_clouds, s_repeat, uv * 0.2, 5.0).g;
-    // a flat deck is even, piled cloud gathers where the field is thick
-    return clamp(0.15 + cover * 0.75 + (field - 0.5) * 0.2, 0.0, 1.0);
+    let field = textureSampleLevel(t_clouds, s_repeat, uv * 0.2, 5.0).r;
+    // the cell map (R) is the same one the CPU lets the rain fall from (weather/region.rs):
+    // the sky is thick where it rains, and an overcast deck stays even
+    return clamp(0.15 + cover * 0.75 + (field - 0.5) * CLOUD_CELL_SPREAD * (1.0 - smoothstep(0.85, 1.0, cover)), 0.0, 1.0);
 }
 
 fn layer_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool, li: f32, shape: f32) -> f32 {

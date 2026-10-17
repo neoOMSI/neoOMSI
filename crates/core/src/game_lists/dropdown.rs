@@ -4,26 +4,9 @@ use super::*;
 
 pub(super) fn weather_files() -> Vec<String> {
     scan_cached(&WEATHER_SCAN, || {
-        let mut files: Vec<String> = ::mods::read_dir_merged("Weather")
-            .into_iter()
-            .filter(|p| {
-                p.extension()
-                    .map(|e| e.eq_ignore_ascii_case("owt"))
-                    .unwrap_or(false)
-            })
-            .filter_map(|p| {
-                p.file_name()
-                    .map(|n| format!("Weather/{}", n.to_string_lossy()))
-            })
-            .collect();
-        files.sort_by(|a, b| {
-            bus_cmp(
-                a.trim_start_matches("Weather/").trim_start_matches('#'),
-                b.trim_start_matches("Weather/").trim_start_matches('#'),
-            )
-        });
-        files.dedup();
-        files
+        let mut all = crate::weather::template::library();
+        all.sort_by(|a, b| bus_cmp(&a.name, &b.name));
+        all.into_iter().map(|t| t.id).collect()
     })
 }
 
@@ -57,24 +40,19 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
     let mut current: Option<usize> = None;
     let items: Vec<(String, String)> = match id {
         "weather" => {
-            let now = weather_name(app);
+            let now = app.weather.as_ref().and_then(|w| match &w.source {
+                crate::weather::Source::Template(id) => Some(id.clone()),
+                _ => None,
+            });
             weather_files()
                 .into_iter()
                 .enumerate()
-                .map(|(i, f)| {
-                    let stem = f
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&f)
-                        .rsplit_once('.')
-                        .map(|x| x.0)
-                        .unwrap_or(&f)
-                        .trim_start_matches('#')
-                        .to_string();
-                    if stem.eq_ignore_ascii_case(&now) {
+                .map(|(i, id)| {
+                    if now.as_deref() == Some(id.as_str()) {
                         current = Some(i);
                     }
-                    (stem, format!("wx {f}"))
+                    let name = crate::weather::template::find(&id).map_or(id.clone(), |t| t.name);
+                    (name, format!("wx {}", crate::weather::spec::template_spec(&id)))
                 })
                 .collect()
         }
@@ -89,7 +67,7 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
             v
         }
         "cloudkind" => {
-            current = app.weather.as_ref().and_then(|w| cloud_index(&w.clouds.0));
+            current = app.weather.as_ref().map(|w| w.simple_cloud_index());
             CLOUD_TYPES
                 .iter()
                 .enumerate()
@@ -97,10 +75,10 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
                 .collect()
         }
         "precipkind" => {
-            current = app.weather.as_ref().map(|w| {
-                (w.precip.first().copied().unwrap_or(0.0).max(0.0) as usize)
-                    .min(PRECIP_KINDS.len() - 1)
-            });
+            current = app
+                .weather
+                .as_ref()
+                .map(|w| w.simple_precip_index().min(PRECIP_KINDS.len() - 1));
             PRECIP_KINDS
                 .iter()
                 .enumerate()
@@ -232,10 +210,8 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 .filter(|i| *i < CLOUD_TYPES.len())
             {
                 app.edit_weather(|w| {
-                    w.clouds.0 = CLOUD_TYPES[i].0.to_string();
-                    if i == 0 {
-                        w.clouds.1 = 0.0;
-                    }
+                    let base = w.clouds.first().map_or(900.0, |l| l.base_m);
+                    w.set_simple_cloud(i, base);
                 });
             }
         }
@@ -403,41 +379,10 @@ fn settings_pick_inner(mut app: Option<&mut App>, action: &str) -> Option<String
 }
 
 pub(super) fn weather_name(app: &App) -> String {
-    if app
-        .weather
-        .as_ref()
-        .is_some_and(|w| w.name == CUSTOM_WEATHER)
-    {
-        return CUSTOM_WEATHER.to_string();
-    }
-    if app
-        .args
-        .weather
-        .as_deref()
-        .is_some_and(|p| p.starts_with(crate::weather_setup::REPORT))
-    {
-        if let Some(n) = app
-            .weather
-            .as_ref()
-            .map(|w| w.name.trim().to_string())
-            .filter(|n| !n.is_empty())
-        {
-            return n;
-        }
-    }
-    match app.args.weather.as_deref() {
-        Some(p) => {
-            let p = p.replace('\\', "/");
-            let file = p.rsplit('/').next().unwrap_or("");
-            let stem = file.rsplit_once('.').map(|x| x.0).unwrap_or(file);
-            stem.trim_start_matches('#').to_string()
-        }
-        None => app
-            .weather
-            .as_ref()
-            .map(|w| w.name.trim().to_string())
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| "Map default".to_string()),
+    match app.weather.as_ref() {
+        Some(w) if w.source == crate::weather::Source::Custom => CUSTOM_WEATHER.to_string(),
+        Some(w) if !w.name.trim().is_empty() => w.name.trim().to_string(),
+        _ => "Map default".to_string(),
     }
 }
 

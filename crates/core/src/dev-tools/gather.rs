@@ -294,12 +294,12 @@ impl crate::App {
 
     fn dev_weather_info(&self) -> WeatherInfo {
         let w = self.weather.clone().unwrap_or_default();
-        let parsed = crate::weather_setup::custom_weather(self.args.weather.as_deref());
-        let is_custom = parsed.is_some();
+        let parsed = crate::weather::custom_weather(self.args.weather.as_deref());
+        let is_custom = parsed.is_some() || matches!(w.source, crate::weather::Source::Custom);
         let custom = parsed.unwrap_or_else(|| {
-            crate::weather_setup::CustomWeather::from_weather(&w, 1.0, self.wetness)
+            crate::weather::CustomWeather::from_weather(&w, w.brightness, self.wetness)
         });
-        let density = crate::weather_setup::clouds_of(&w, [0.0; 2]).0;
+        let sky = crate::weather::sky::render_sky(&w, self.weather_local.precip_rate);
         let client = self
             .lan
             .as_ref()
@@ -322,11 +322,12 @@ impl crate::App {
             year: self.clock.year,
             day_of_year: self.clock.day_of_year,
             day_month: self.clock.day_month(),
-            density,
-            layers: crate::weather_setup::cloud_layers_of(&w),
-            precip: crate::weather_setup::precip_of(&w),
-            street_cond: crate::weather_setup::street_condition(&w, self.wetness),
-            drift: self.cloud_drift,
+            density: sky.density,
+            local: self.weather_local,
+            layers: sky.layers,
+            precip: self.weather_local.precip(),
+            street_cond: crate::weather::street_condition(&w, &self.weather_local, self.wetness),
+            drift: self.sky.offset(),
             weather: w,
         }
     }
@@ -366,7 +367,7 @@ impl crate::App {
                 self.metar_once = true;
                 let station = icao.clone();
                 std::thread::spawn(move || {
-                    let _ = tx.send(crate::weather_setup::try_metar(&station));
+                    let _ = tx.send(crate::weather::net::fetch(&station));
                 });
                 self.service_msg = Some((format!("Weather: loading METAR for {icao}"), 4.0));
             }
@@ -377,7 +378,7 @@ impl crate::App {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_nanos() as u64)
                             .unwrap_or(7);
-                        self.weather_cycle = Some(crate::weather_cycle::Cycle::new(seed));
+                        self.weather_cycle = Some(crate::weather::Cycle::new(seed));
                     }
                 } else {
                     self.weather_cycle = None;
@@ -397,30 +398,9 @@ impl crate::App {
                 let Some(w) = self.weather.clone() else {
                     return;
                 };
-                let safe: String = name
-                    .trim()
-                    .chars()
-                    .map(|c| {
-                        if c.is_ascii_alphanumeric() || c == '-' || c == ' ' {
-                            c
-                        } else {
-                            '_'
-                        }
-                    })
-                    .collect();
-                if safe.is_empty() {
-                    self.service_msg = Some(("Give the weather a name".into(), 3.0));
-                    return;
-                }
-                let dir = crate::startup::content_dir()
-                    .unwrap_or_else(|| self.args.root.clone())
-                    .join("Weather");
-                let path = dir.join(format!("{safe}.owt"));
-                let text = super::weather_ui::to_owt(&safe, &w);
-                let res = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, text));
-                self.service_msg = Some(match res {
-                    Ok(_) => (format!("Weather saved: {}", path.display()), 5.0),
-                    Err(e) => (format!("Weather not saved: {e}"), 5.0),
+                self.service_msg = Some(match crate::weather::template::save(&w, &name) {
+                    Ok(path) => (format!("Weather template saved: {}", path.display()), 5.0),
+                    Err(e) => (format!("Weather template not saved: {e}"), 5.0),
                 });
             }
             Action::SetTime(t) => {

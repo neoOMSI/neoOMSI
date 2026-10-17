@@ -34,9 +34,9 @@ impl App {
             && ::config::get_bool("graphics", "triple_screen").unwrap_or(false)
             && ::config::get_bool("graphics", "triple_screen_hud").unwrap_or(true)
             && self
-                .surface
-                .as_ref()
-                .is_some_and(|s| s.config.width >= s.config.height.saturating_mul(2));
+            .surface
+            .as_ref()
+            .is_some_and(|s| s.config.width >= s.config.height.saturating_mul(2));
         let crosshair = !screenshot_mode
             && ::config::get_bool("camera", "crosshair").unwrap_or(true)
             && !matches!(self.view.as_str(), "pax" | "outside")
@@ -115,11 +115,11 @@ impl App {
                         &[],
                     )),
                     (None, Some(e))
-                        if ::config::get_bool("voice", "enabled").unwrap_or(true)
-                            && lan.voice_allowed() =>
-                    {
-                        lines.push(::i18n::translate("pause.msg.voice_error", &[("error", e)]))
-                    }
+                    if ::config::get_bool("voice", "enabled").unwrap_or(true)
+                        && lan.voice_allowed() =>
+                        {
+                            lines.push(::i18n::translate("pause.msg.voice_error", &[("error", e)]))
+                        }
                     _ => {}
                 }
             }
@@ -284,11 +284,11 @@ impl App {
                 let chat = (!screenshot_mode
                     && self.lan.is_some()
                     && ::config::get_bool("ui", "chat").unwrap_or(true))
-                .then(|| ui::ChatView {
-                    lines: &self.remotes.chat.lines,
-                    typing: self.remotes.chat.typing.as_deref(),
-                    error: self.remotes.chat.error(),
-                });
+                    .then(|| ui::ChatView {
+                        lines: &self.remotes.chat.lines,
+                        typing: self.remotes.chat.typing.as_deref(),
+                        error: self.remotes.chat.error(),
+                    });
                 ui.chat.hidden = self.remotes.chat.hidden;
                 let triple_views = if triple_projection {
                     self.camera.as_ref().and_then(|camera| {
@@ -327,22 +327,22 @@ impl App {
                                                 Some(views.projections[panel]),
                                                 &speaking,
                                             )
-                                            .into_iter()
-                                            .filter(|((x, y), ..)| {
-                                                *x >= 0.0
-                                                    && *x < panel_width
-                                                    && *y >= 0.0
-                                                    && *y <= h
-                                            })
-                                            .map(|((x, y), name, sub, alpha, talking)| {
-                                                (
-                                                    (x + panel_width * panel as f32, y),
-                                                    name,
-                                                    sub,
-                                                    alpha,
-                                                    talking,
-                                                )
-                                            }),
+                                                .into_iter()
+                                                .filter(|((x, y), ..)| {
+                                                    *x >= 0.0
+                                                        && *x < panel_width
+                                                        && *y >= 0.0
+                                                        && *y <= h
+                                                })
+                                                .map(|((x, y), name, sub, alpha, talking)| {
+                                                    (
+                                                        (x + panel_width * panel as f32, y),
+                                                        name,
+                                                        sub,
+                                                        alpha,
+                                                        talking,
+                                                    )
+                                                }),
                                         );
                                     }
                                     tags
@@ -362,10 +362,10 @@ impl App {
                     || ui.chat.hovered
                     || map_open
                     || (!vr_active
-                        && self
-                            .navigator
-                            .as_ref()
-                            .is_some_and(|n| n.over_panel(ui_cursor.0, ui_cursor.1)));
+                    && self
+                    .navigator
+                    .as_ref()
+                    .is_some_and(|n| n.over_panel(ui_cursor.0, ui_cursor.1)));
                 let dropdown = self
                     .dropdown
                     .as_ref()
@@ -504,13 +504,22 @@ impl App {
 
         let mut lighting = match self.weather.as_ref() {
             Some(w) => {
-                self.wetness = road_wetness(precip_of(w).1, dt as f64, self.wetness);
-                set_cloud_day(self.clock.year, self.clock.day_of_year);
-                set_cloud_time(self.clock.time);
-                weather_lighting(
+                let enhanced = weather::enhanced_sky();
+                let observer = match self.camera.as_ref() {
+                    Some(c) => [c.position.x, c.position.y],
+                    None => self.weather_observer(),
+                };
+                if !self.sky_anchored && self.camera.is_some() {
+                    self.sky.anchor(w, observer, enhanced);
+                    self.sky_anchored = true;
+                }
+                self.weather_local = self.sky.sample(w, observer, enhanced);
+                self.wetness = weather::road_wetness(self.weather_local.precip_rate, dt as f64, self.wetness);
+                weather::lighting(
                     &daylight,
                     w,
-                    self.cloud_drift,
+                    &self.sky,
+                    &self.weather_local,
                     self.wetness,
                     ::config::get_bool("graphics", "shadows").unwrap_or(true),
                 )
@@ -570,10 +579,10 @@ impl App {
             .map(|p| lights::vehicle_velocity(&p.vehicle))
             .unwrap_or_default()
             - self
-                .weather
-                .as_ref()
-                .map(rain::weather_wind)
-                .unwrap_or_default();
+            .weather
+            .as_ref()
+            .map(rain::weather_wind)
+            .unwrap_or_default();
         lighting.animation_time = Some(self.clock.run_time as f32);
         lighting.led_glow =
             ::config::get_int("graphics", "led_glow").unwrap_or(6) as u8 as f32 * 0.25;
@@ -643,47 +652,47 @@ impl App {
             let acquired = match s.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(_)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(_)
-                    if hidden_now =>
-                {
-                    wgpu::CurrentSurfaceTexture::Occluded
-                }
+                if hidden_now =>
+                    {
+                        wgpu::CurrentSurfaceTexture::Occluded
+                    }
                 other => other,
             };
             let (frame, stand_in) = match acquired {
                 wgpu::CurrentSurfaceTexture::Success(frame)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (Some(frame), None),
                 wgpu::CurrentSurfaceTexture::Occluded
-                    if ::legacy_config::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
-                {
-                    let (w, h) = (s.config.width, s.config.height);
-                    if self
-                        .stand_in
-                        .as_ref()
-                        .map(|t| (t.width(), t.height()) != (w, h))
-                        .unwrap_or(true)
+                if ::legacy_config::env::var_os("OMSI_RENDER_OCCLUDED").is_some() =>
                     {
-                        self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
-                            label: Some("hidden window"),
-                            size: wgpu::Extent3d {
-                                width: w,
-                                height: h,
-                                depth_or_array_layers: 1,
-                            },
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: r.format(),
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                            view_formats: &[],
-                        }));
-                    }
-                    (
-                        None,
-                        self.stand_in
+                        let (w, h) = (s.config.width, s.config.height);
+                        if self
+                            .stand_in
                             .as_ref()
-                            .map(|t| t.create_view(&Default::default())),
-                    )
-                }
+                            .map(|t| (t.width(), t.height()) != (w, h))
+                            .unwrap_or(true)
+                        {
+                            self.stand_in = Some(r.device.create_texture(&wgpu::TextureDescriptor {
+                                label: Some("hidden window"),
+                                size: wgpu::Extent3d {
+                                    width: w,
+                                    height: h,
+                                    depth_or_array_layers: 1,
+                                },
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D2,
+                                format: r.format(),
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                view_formats: &[],
+                            }));
+                        }
+                        (
+                            None,
+                            self.stand_in
+                                .as_ref()
+                                .map(|t| t.create_view(&Default::default())),
+                        )
+                    }
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     reconfigure = true;
                     (None, None)
@@ -806,11 +815,11 @@ impl App {
                     }
                     while (self.in_cab || near)
                         && drawn
-                            < (if vr_active {
-                                draw_limit
-                            } else {
-                                self.mirrors_seen.clamp(1, 2)
-                            })
+                        < (if vr_active {
+                        draw_limit
+                    } else {
+                        self.mirrors_seen.clamp(1, 2)
+                    })
                         && (vr_active || self.mirror_budget >= 1.0)
                     {
                         let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) else {
@@ -900,11 +909,11 @@ impl App {
                     if !xr_active
                         && triple_projection
                         && let Some(views) =
-                            camera_util::triple_screen_cameras(
-                                cam,
-                                s.config.width,
-                                s.config.height,
-                            )
+                        camera_util::triple_screen_cameras(
+                            cam,
+                            s.config.width,
+                            s.config.height,
+                        )
                     {
                         r.render_triple(
                             scene,
@@ -1053,11 +1062,11 @@ impl App {
                 None => {
                     self.player.is_some()
                         && self
-                            .play_since
-                            .get_or_insert_with(Instant::now)
-                            .elapsed()
-                            .as_secs_f32()
-                            > 15.0
+                        .play_since
+                        .get_or_insert_with(Instant::now)
+                        .elapsed()
+                        .as_secs_f32()
+                        > 15.0
                 }
             };
             if profiling && self.cpu_mark.is_none() && self.profile_mark.is_none() && mark_due {
