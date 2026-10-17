@@ -208,7 +208,7 @@ impl App {
                     self.weather_local.storm,
                     self.weather_local.visibility_m,
                     cam.position,
-                    w.camera_ground(cam.position.x, cam.position.y, cam.position.z),
+                    |x, y| w.camera_ground(x, y, cam.position.z + 3000.0),
                     scene,
                 );
                 if kind == 1 || self.wetness > 0.1 {

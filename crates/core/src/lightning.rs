@@ -66,12 +66,13 @@ impl Lightning {
         pts
     }
 
-    fn strike(&mut self, camera: DVec3, ground: Option<f64>, visibility: f32) {
+    fn strike(&mut self, camera: DVec3, ground: &impl Fn(f64, f64) -> Option<f64>, visibility: f32) {
         let r = self.rand();
-        let dist = 500.0 + (r * r) as f64 * 5000.0;
+        let dist = 60.0 + (r * r) as f64 * 5400.0;
         let bearing = self.rand() as f64 * std::f64::consts::TAU;
-        let gz = ground.unwrap_or(camera.z - 2.0);
-        let bottom = DVec3::new(camera.x + bearing.cos() * dist, camera.y + bearing.sin() * dist, gz);
+        let (x, y) = (camera.x + bearing.cos() * dist, camera.y + bearing.sin() * dist);
+        let gz = ground(x, y).unwrap_or(camera.z - 2.0);
+        let bottom = DVec3::new(x, y, gz);
         let height = 1000.0 + self.rand() as f64 * 600.0;
         let top = bottom + DVec3::new((self.rand() as f64 - 0.5) * 400.0, (self.rand() as f64 - 0.5) * 400.0, height);
         let main = self.path(top, bottom, 28, 60.0);
@@ -95,13 +96,13 @@ impl Lightning {
         storm: f32,
         visibility: f32,
         camera: DVec3,
-        ground: Option<f64>,
+        ground: impl Fn(f64, f64) -> Option<f64>,
         scene: &mut Scene,
     ) {
         if storm > 0.05 && self.bolt.is_none() {
             self.next -= dt;
             if self.next <= 0.0 {
-                self.strike(camera, ground, visibility);
+                self.strike(camera, &ground, visibility);
                 self.next = (3.0 + self.rand() * 14.0) / (0.3 + storm);
             }
         }
