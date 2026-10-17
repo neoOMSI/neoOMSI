@@ -208,9 +208,9 @@ impl Renderer {
                     (d - d.round()).abs() * 70000.0
                 })
                 .fold(0.0f32, f32::max);
-            if moved > 1.5 && p.cloud_age >= 6 {
+            if moved > 6.0 && p.cloud_age >= 30 {
                 p.cloud_offset = lighting.cloud_offset;
-                p.cloud_age = p.cloud_age.min(6);
+                p.cloud_age = p.cloud_age.min(30);
                 p.cube_recapture = p.cube_filled;
             }
         }
