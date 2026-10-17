@@ -154,6 +154,7 @@ pub struct Menu {
     pub drop: usize,
     pub drop_top: usize,
     drop_typed: String,
+    drop_typed_in: usize,
     drop_typed_at: Option<std::time::Instant>,
     pub edit: u8,
     pub details: bool,
@@ -472,6 +473,7 @@ impl Menu {
             drop: 0,
             drop_top: 0,
             drop_typed: String::new(),
+            drop_typed_in: 0,
             drop_typed_at: None,
             edit: 0,
             details: false,
@@ -831,10 +833,11 @@ impl Menu {
             return;
         }
         let now = std::time::Instant::now();
-        if self.drop_typed_at.is_none_or(|t| now.duration_since(t).as_millis() > 900) {
+        if self.drop_typed_in != kind || self.drop_typed_at.is_none_or(|t| now.duration_since(t).as_millis() > 900) {
             self.drop_typed.clear();
         }
         self.drop_typed_at = Some(now);
+        self.drop_typed_in = kind;
         self.drop_typed.push_str(&typed);
         let items = self.drop_items(kind);
         let n = items.len();
@@ -875,6 +878,7 @@ impl Menu {
     }
 
     pub fn drop_toggle(&mut self, kind: usize) {
+        self.drop_typed.clear();
         self.drop = if self.drop == kind { 0 } else { kind };
         self.drop_top = self.drop_sel(kind).saturating_sub(2);
     }

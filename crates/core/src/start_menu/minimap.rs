@@ -62,15 +62,42 @@ const DEFAULT_DATE: &str = "2026-10-01";
 const TOLERANCE: f32 = 0.75;
 const BEFORE_STOP: f64 = 12.0;
 const KEPT: usize = 4;
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 const CACHE_FILES: usize = 32;
 
-static BUILT: Mutex<Vec<(String, Minimap)>> = Mutex::new(Vec::new());
+static BUILT: Mutex<Vec<(String, Vec<Dep>, Minimap)>> = Mutex::new(Vec::new());
 static BUILDING: Mutex<()> = Mutex::new(());
 
-fn kept(key: &str) -> Option<Minimap> {
-    let built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
-    built.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Dep {
+    name: String,
+    path: PathBuf,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl Dep {
+    fn of(root: &Path, name: &str) -> Dep {
+        let path = ::mods::resolve_path(root, name);
+        let meta = std::fs::metadata(&path).ok();
+        Dep {
+            name: name.to_string(),
+            len: meta.as_ref().map_or(0, |m| m.len()),
+            modified: meta.and_then(|m| m.modified().ok()),
+            path,
+        }
+    }
+}
+
+fn deps_fresh(root: &Path, deps: &[Dep]) -> bool {
+    use rayon::prelude::*;
+    deps.par_iter().all(|d| Dep::of(root, &d.name) == *d)
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Cached {
+    deps: Vec<Dep>,
+    minimap: Minimap,
 }
 
 pub(crate) fn minimap(map: &str, date: &str) -> Result<Minimap> {
@@ -80,32 +107,41 @@ pub(crate) fn minimap(map: &str, date: &str) -> Result<Minimap> {
     let cfg = ::mods::resolve_path(&root, map);
     let code = ::map::date_code(date).with_context(|| format!("'{date}' is not a date (YYYY-MM-DD)"))?;
     let map_dir = cfg.parent().map(Path::to_path_buf).unwrap_or_default();
+    let _one = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
     // the date only changes the preview through the chrono folders active on it
     let chrono = ::map::active_chrono_dirs(&map_dir, code);
-    let key = format!("{map}|{chrono:?}");
-    if let Some(v) = kept(&key) {
-        return Ok(v);
-    }
-    let _one = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(v) = kept(&key) {
-        return Ok(v);
-    }
     let file = cache_file(map, &map_dir, &chrono);
-    let v = match file.as_deref().and_then(read_cached) {
-        Some(v) => v,
+    let key = match &file {
+        Some(f) => f.to_string_lossy().into_owned(),
+        None => format!("{map}|{chrono:?}"),
+    };
+    let kept = {
+        let built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
+        built.iter().find(|b| b.0 == key).map(|b| (b.1.clone(), b.2.clone()))
+    };
+    if let Some((_, v)) = kept.filter(|(deps, _)| deps_fresh(&root, deps)) {
+        return Ok(v);
+    }
+    let cached = file
+        .as_deref()
+        .and_then(read_cached)
+        .filter(|c| deps_fresh(&root, &c.deps));
+    let (deps, v) = match cached {
+        Some(c) => (c.deps, c.minimap),
         None => {
-            let v = build(map, date, &root, &cfg, code)?;
+            let (v, deps) = build(map, date, &root, &cfg, code)?;
             if let Some(f) = &file {
-                write_cached(f, &v);
+                write_cached(f, &deps, &v);
             }
-            v
+            (deps, v)
         }
     };
     let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
+    built.retain(|b| b.0 != key);
     if built.len() >= KEPT {
         built.remove(0);
     }
-    built.push((key, v.clone()));
+    built.push((key, deps, v.clone()));
     Ok(v)
 }
 
@@ -136,20 +172,20 @@ fn cache_file(map: &str, map_dir: &Path, chrono: &[PathBuf]) -> Option<PathBuf> 
     any.then(|| lib::data_dir().join("cache").join("minimap").join(format!("{:016x}.json", h.finish())))
 }
 
-fn read_cached(path: &Path) -> Option<Minimap> {
+fn read_cached(path: &Path) -> Option<Cached> {
     let t0 = std::time::Instant::now();
-    let v: Minimap = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-    log::info!("minimap of {} from the cache in {:.2} s", v.map, t0.elapsed().as_secs_f64());
-    Some(v)
+    let c: Cached = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    log::info!("minimap of {} from the cache in {:.2} s", c.minimap.map, t0.elapsed().as_secs_f64());
+    Some(c)
 }
 
-fn write_cached(path: &Path, v: &Minimap) {
+fn write_cached(path: &Path, deps: &[Dep], v: &Minimap) {
     let Some(dir) = path.parent() else {
         return;
     };
     let tmp = path.with_extension("tmp");
     let saved = std::fs::create_dir_all(dir)
-        .and_then(|_| std::fs::write(&tmp, serde_json::to_vec(v).unwrap_or_default()))
+        .and_then(|_| std::fs::write(&tmp, serde_json::to_vec(&Cached { deps: deps.to_vec(), minimap: v.clone() }).unwrap_or_default()))
         .and_then(|_| std::fs::rename(&tmp, path));
     if let Err(e) = saved {
         log::warn!("minimap cache {}: {e}", path.display());
@@ -235,10 +271,15 @@ fn trip_routes(
     (lanes, trips, placed.into_keys().collect(), trains)
 }
 
-fn build(map: &str, date: &str, root: &Path, cfg: &Path, code: i32) -> Result<Minimap> {
+fn build(map: &str, date: &str, root: &Path, cfg: &Path, code: i32) -> Result<(Minimap, Vec<Dep>)> {
     let t0 = std::time::Instant::now();
     let world = World::open(root, cfg, code)?;
-    world.index();
+    let deps: Vec<Dep> = {
+        use rayon::prelude::*;
+        let ix = world.index();
+        let names: Vec<&String> = ix.files.keys().collect();
+        names.into_par_iter().map(|n| Dep::of(root, n)).collect()
+    };
 
     let nav = world.navigation_map();
     let mut net = ::simulation::traffic::Network {
@@ -326,12 +367,31 @@ fn build(map: &str, date: &str, root: &Path, cfg: &Path, code: i32) -> Result<Mi
         lanes.len(),
         t0.elapsed().as_secs_f64()
     );
-    Ok(Minimap {
+    let v = Minimap {
         map: map.to_string(),
         roads,
         stops,
         entries,
         lanes,
         trips,
-    })
+    };
+    Ok((v, deps))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_changed_dependency_makes_the_preview_stale() {
+        let dir = std::env::temp_dir().join(format!("minimap-deps-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Splines")).unwrap();
+        let file = dir.join("Splines").join("road.sli");
+        std::fs::write(&file, "[spline]\n").unwrap();
+        let deps = vec![Dep::of(&dir, "Splines/road.sli"), Dep::of(&dir, "Sceneryobjects/gone.sco")];
+        assert!(deps_fresh(&dir, &deps));
+        std::fs::write(&file, "[spline]\n[path]\n").unwrap();
+        assert!(!deps_fresh(&dir, &deps));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
