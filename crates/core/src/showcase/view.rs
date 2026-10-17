@@ -39,6 +39,11 @@ impl View {
         self.idle = 0.0;
     }
 
+    pub fn zoom_now(&mut self, k: f32) {
+        self.zoom_by(k);
+        self.now[ZOOM] = self.to[ZOOM];
+    }
+
     pub fn reset(&mut self) {
         self.to = START;
         self.to[YAW] = self.now[YAW].rem_euclid(360.0) + (START[YAW] - self.now[YAW].rem_euclid(360.0)).rem_euclid(360.0);

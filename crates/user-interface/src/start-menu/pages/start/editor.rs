@@ -22,7 +22,7 @@ impl Ui {
             let on = v.sect == k + 1;
             let hot = inside(rc, f.cursor);
             let ov = self.ease((221, "tab", k), if on { 1.0 } else { 0.0 }, 12.0);
-            let hv = self.ease((221, "tabhot", k), if hot && !on { 1.0 } else { 0.0 }, 12.0);
+            let hv = self.ease((221, "tabhot", k), if hot { 1.0 } else { 0.0 }, 12.0);
             self.text.rounded(r, scene, rc, tab_h * 0.5, mix(fade(LIT, hv), OPT_GROUP_ON, ov));
             let l = self.text.label(r, scene, &label, px, if on { WHITE } else { mix(SOFT, WHITE, hv) });
             let gx = rc[0] + 18.0 * u;

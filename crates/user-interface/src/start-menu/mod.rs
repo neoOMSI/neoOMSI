@@ -402,7 +402,7 @@ impl Ui {
 }
 
 pub(super) const BG: [u8; 4] = [10, 12, 16, 255];
-pub(super) const DIVIDER: [u8; 4] = [5, 5, 6, 255];
+pub(super) const DIVIDER: [u8; 4] = [255, 255, 255, 8];
 pub(super) const ACCENT_TEXT: [u8; 4] = [232, 160, 48, 0];
 /// A dropdown row that is over (a trip already gone): well below `MUTED`.
 pub(super) const GONE: [u8; 4] = [85, 85, 88, 0];

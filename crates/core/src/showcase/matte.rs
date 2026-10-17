@@ -39,7 +39,8 @@ fn combine(black: &[u8], white: &[u8], w: usize, h: usize) -> Vec<u8> {
         }
         return out;
     }
-    for i in 0..n {
+    use rayon::prelude::*;
+    out.par_chunks_mut(4).enumerate().for_each(|(i, px)| {
         let o = i * 4;
         let mut seen = 0.0f32;
         for c in 0..3 {
@@ -48,18 +49,18 @@ fn combine(black: &[u8], white: &[u8], w: usize, h: usize) -> Vec<u8> {
         }
         let a = (1.0 - seen / 3.0).clamp(0.0, 1.0);
         if a < 0.02 {
-            continue;
+            return;
         }
         if a > 0.92 {
-            out[o..o + 3].copy_from_slice(&black[o..o + 3]);
-            out[o + 3] = 255;
-            continue;
+            px[..3].copy_from_slice(&black[o..o + 3]);
+            px[3] = 255;
+            return;
         }
         for c in 0..3 {
             let fg = (black[o + c] as f32 - bg[c] * (1.0 - a)) / a;
-            out[o + c] = fg.clamp(0.0, 255.0).round() as u8;
+            px[c] = fg.clamp(0.0, 255.0).round() as u8;
         }
-        out[o + 3] = (a * 255.0).round() as u8;
-    }
+        px[3] = (a * 255.0).round() as u8;
+    });
     out
 }
