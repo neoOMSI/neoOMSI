@@ -15,6 +15,9 @@ impl Ui {
         let go_h = (60.0 * u).round();
         let go = [x1 - gw, dock[1] + (dock_h - go_h) * 0.5, x1, dock[1] + (dock_h + go_h) * 0.5];
 
+        if !v.on_foot {
+            self.start_bus_picture(r, scene, [card[0], card[1], card[2], dock[1]], v, u);
+        }
         let title = clip_to(&self.text, name, tpx as f32, (x1 - x0) * 0.7);
         let tl = self.text.label(r, scene, &title, tpx, WHITE);
         let ty = card[1] + 26.0 * u;
@@ -44,8 +47,6 @@ impl Ui {
         let (ay0, ay1) = (sy + sl.h as f32 + 16.0 * u, dock[1]);
         if v.on_foot {
             self.start_foot_note(r, scene, [card[0], ay0, card[2], ay1], u);
-        } else {
-            self.start_bus_picture(r, scene, [card[0], ay0, card[2], ay1], v, u);
         }
 
         self.text.rounded(r, scene, dock, 0.0, SIDEBAR);
@@ -133,6 +134,8 @@ impl Ui {
         }
         if v.sect == 1 {
             self.start_route_picture(r, scene, [rc[0] + 1.0, rc[1], rc[2], rc[3]], u);
+        } else if v.sect == 2 {
+            self.start_bus_picture(r, scene, [rc[0] + 1.0, rc[1], rc[2], rc[3]], v, u);
         }
         let map = v.maps.get(v.map).cloned().unwrap_or_else(|| "-".to_string());
         let (title, sub, icon) = match v.sect {
@@ -178,9 +181,7 @@ impl Ui {
             top += sl.h as f32 + 6.0 * u;
         }
         let area = [rc[0] + pad, top + 18.0 * u, rc[2] - pad, rc[3] - pad];
-        if v.sect == 2 {
-            self.start_bus_picture(r, scene, area, v, u);
-        } else if v.sect != 1 {
+        if !matches!(v.sect, 1 | 2) {
             self.start_art(r, scene, area, &icon);
         }
     }
