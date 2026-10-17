@@ -1,0 +1,14 @@
+{
+  "name": "Snowfall",
+  "description": "Steady, heavy flakes settling on the road.",
+  "metar": "ZZZZ 011200Z 32010KT 1500 SN OVC012 M03/M05 Q1006",
+  "months": [
+    11,
+    3
+  ],
+  "snow_cover": true,
+  "next": [
+    "light_snow",
+    "blizzard"
+  ]
+}

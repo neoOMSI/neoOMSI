@@ -1,0 +1,11 @@
+{
+  "name": "Heavy Skies",
+  "description": "A broken deck of clouds. The sun only peeks through now and then.",
+  "metar": "ZZZZ 011200Z 24010KT 9999 BKN028 15/09 Q1010",
+  "next": [
+    "partly_cloudy",
+    "overcast",
+    "light_rain",
+    "mist"
+  ]
+}

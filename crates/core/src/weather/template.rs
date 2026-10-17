@@ -64,57 +64,41 @@ pub fn normalize_id(s: &str) -> String {
         .replace([' ', '-'], "_")
 }
 
-struct Stock {
-    id: &'static str,
-    name: &'static str,
-    description: &'static str,
-    metar: &'static str,
-    months: Option<(u32, u32)>,
-    wet: Option<f32>,
-    snow: bool,
-    next: &'static [&'static str],
-}
-
-const STOCK: &[Stock] = &[
-    Stock { id: "clear", name: "Clear", description: "Not a cloud in the sky.", metar: "ZZZZ 011200Z 00000KT CAVOK 18/08 Q1020", months: None, wet: None, snow: false, next: &["fair", "hot", "haze"] },
-    Stock { id: "fair", name: "Fair", description: "A few fair-weather clouds.", metar: "ZZZZ 011200Z 27006KT 9999 FEW040 20/10 Q1018", months: None, wet: None, snow: false, next: &["clear", "partly_cloudy", "haze"] },
-    Stock { id: "partly_cloudy", name: "Partly cloudy", description: "Scattered cumulus.", metar: "ZZZZ 011200Z 25009KT 9999 SCT030 SCT080 18/09 Q1015", months: None, wet: None, snow: false, next: &["fair", "cloudy", "showers"] },
-    Stock { id: "cloudy", name: "Cloudy", description: "A broken cloud deck.", metar: "ZZZZ 011200Z 24010KT 9999 BKN028 15/09 Q1010", months: None, wet: None, snow: false, next: &["partly_cloudy", "overcast", "light_rain", "mist"] },
-    Stock { id: "overcast", name: "Overcast", description: "A closed grey sky.", metar: "ZZZZ 011200Z 24008KT 8000 OVC018 11/08 Q1008", months: None, wet: None, snow: false, next: &["cloudy", "drizzle", "light_rain", "mist"] },
-    Stock { id: "haze", name: "Haze", description: "Dry, hazy air.", metar: "ZZZZ 011200Z 18004KT 5000 HZ SKC 27/14 Q1017", months: Some((5, 9)), wet: None, snow: false, next: &["clear", "hot", "fair"] },
-    Stock { id: "hot", name: "Hot", description: "Cloudless and hot.", metar: "ZZZZ 011200Z 20005KT CAVOK 34/12 Q1011", months: Some((6, 8)), wet: None, snow: false, next: &["clear", "haze", "thunderstorm"] },
-    Stock { id: "mist", name: "Mist", description: "Damp air, short sight.", metar: "ZZZZ 011200Z 00000KT 3000 BR BKN004 09/08 Q1019", months: None, wet: Some(0.25), snow: false, next: &["fog", "overcast", "fair"] },
-    Stock { id: "fog", name: "Fog", description: "Dense fog on a cold, still morning.", metar: "ZZZZ 011200Z 00000KT 0300 FG VV002 05/05 Q1024", months: Some((9, 3)), wet: Some(0.3), snow: false, next: &["mist", "overcast"] },
-    Stock { id: "drizzle", name: "Drizzle", description: "Fine, steady drizzle.", metar: "ZZZZ 011200Z 22007KT 3500 -DZ BR OVC009 11/10 Q1006", months: None, wet: None, snow: false, next: &["light_rain", "overcast", "mist"] },
-    Stock { id: "light_rain", name: "Light rain", description: "Light rain from a low deck.", metar: "ZZZZ 011200Z 23008KT 6000 -RA BKN014 OVC025 13/11 Q1003", months: None, wet: None, snow: false, next: &["rain", "drizzle", "cloudy"] },
-    Stock { id: "rain", name: "Rain", description: "Steady rain.", metar: "ZZZZ 011200Z 23012KT 4000 RA OVC012 12/11 Q0998", months: None, wet: None, snow: false, next: &["heavy_rain", "light_rain", "showers"] },
-    Stock { id: "heavy_rain", name: "Heavy rain", description: "A downpour with a gusty wind.", metar: "ZZZZ 011200Z 22014G26KT 1800 +RA OVC008 13/12 Q0992", months: None, wet: None, snow: false, next: &["rain", "thunderstorm"] },
-    Stock { id: "showers", name: "Showers", description: "Showers between the sun: it rains in places only.", metar: "ZZZZ 011200Z 26012G22KT 9000 SHRA SCT025 BKN040CB 14/08 Q1005", months: None, wet: None, snow: false, next: &["partly_cloudy", "rain", "thunderstorm", "cloudy"] },
-    Stock { id: "showers_nearby", name: "Showers nearby", description: "Dry here, with showers in the vicinity.", metar: "ZZZZ 011200Z 27010KT 9999 VCSH SCT028 BKN045CB 16/09 Q1008", months: None, wet: None, snow: false, next: &["showers", "partly_cloudy"] },
-    Stock { id: "thunderstorm", name: "Thunderstorm", description: "Cumulonimbus and a heavy downpour in cells.", metar: "ZZZZ 011200Z 20012G32KT 2500 +TSRA BKN018CB 23/20 Q1003", months: Some((5, 9)), wet: None, snow: false, next: &["heavy_rain", "showers", "cloudy"] },
-    Stock { id: "light_snow", name: "Light snow", description: "Light snowfall.", metar: "ZZZZ 011200Z 31006KT 4000 -SN OVC020 M01/M03 Q1011", months: Some((11, 3)), wet: None, snow: true, next: &["snow", "overcast", "frost"] },
-    Stock { id: "snow", name: "Snow", description: "Steady snow, settling on the road.", metar: "ZZZZ 011200Z 32010KT 1500 SN OVC012 M03/M05 Q1006", months: Some((11, 3)), wet: None, snow: true, next: &["light_snow", "blizzard"] },
-    Stock { id: "blizzard", name: "Blizzard", description: "Heavy snow, a gale and no sight.", metar: "ZZZZ 011200Z 36020G35KT 0400 +SN VV003 M07/M09 Q0996", months: Some((12, 2)), wet: None, snow: true, next: &["snow"] },
-    Stock { id: "frost", name: "Frost", description: "A clear, hard frost.", metar: "ZZZZ 011200Z 00000KT CAVOK M08/M12 Q1031", months: Some((11, 3)), wet: None, snow: true, next: &["clear", "fog", "light_snow"] },
+const STOCK_FILES: &[(&str, &str)] = &[
+    ("clear.json", include_str!("../../../../assets/weather/templates/clear.json")),
+    ("fair.json", include_str!("../../../../assets/weather/templates/fair.json")),
+    ("partly_cloudy.json", include_str!("../../../../assets/weather/templates/partly_cloudy.json")),
+    ("breezy.json", include_str!("../../../../assets/weather/templates/breezy.json")),
+    ("cloudy.json", include_str!("../../../../assets/weather/templates/cloudy.json")),
+    ("overcast.json", include_str!("../../../../assets/weather/templates/overcast.json")),
+    ("haze.json", include_str!("../../../../assets/weather/templates/haze.json")),
+    ("hot.json", include_str!("../../../../assets/weather/templates/hot.json")),
+    ("buildup.json", include_str!("../../../../assets/weather/templates/buildup.json")),
+    ("mist.json", include_str!("../../../../assets/weather/templates/mist.json")),
+    ("fog.json", include_str!("../../../../assets/weather/templates/fog.json")),
+    ("freezing_fog.json", include_str!("../../../../assets/weather/templates/freezing_fog.json")),
+    ("drizzle.json", include_str!("../../../../assets/weather/templates/drizzle.json")),
+    ("light_rain.json", include_str!("../../../../assets/weather/templates/light_rain.json")),
+    ("rain.json", include_str!("../../../../assets/weather/templates/rain.json")),
+    ("heavy_rain.json", include_str!("../../../../assets/weather/templates/heavy_rain.json")),
+    ("showers.json", include_str!("../../../../assets/weather/templates/showers.json")),
+    ("showers_nearby.json", include_str!("../../../../assets/weather/templates/showers_nearby.json")),
+    ("thunderstorm.json", include_str!("../../../../assets/weather/templates/thunderstorm.json")),
+    ("dark_storm.json", include_str!("../../../../assets/weather/templates/dark_storm.json")),
+    ("gale.json", include_str!("../../../../assets/weather/templates/gale.json")),
+    ("hail.json", include_str!("../../../../assets/weather/templates/hail.json")),
+    ("sleet.json", include_str!("../../../../assets/weather/templates/sleet.json")),
+    ("light_snow.json", include_str!("../../../../assets/weather/templates/light_snow.json")),
+    ("snow.json", include_str!("../../../../assets/weather/templates/snow.json")),
+    ("blizzard.json", include_str!("../../../../assets/weather/templates/blizzard.json")),
+    ("frost.json", include_str!("../../../../assets/weather/templates/frost.json")),
 ];
 
 fn stock() -> Vec<Template> {
-    STOCK
+    STOCK_FILES
         .iter()
-        .map(|s| Template {
-            id: s.id.into(),
-            name: s.name.into(),
-            description: s.description.into(),
-            metar: s.metar.into(),
-            brightness: None,
-            ground_wet: s.wet,
-            snow_cover: s.snow.then_some(true),
-            snow_on_road: None,
-            temp_c: None,
-            months: s.months,
-            next: s.next.iter().map(|n| n.to_string()).collect(),
-            cycle: true,
-            stock: true,
+        .filter_map(|(file, text)| {
+            parse_json(file, text, &[]).map(|t| Template { stock: true, ..t })
         })
         .collect()
 }
@@ -122,7 +106,11 @@ fn stock() -> Vec<Template> {
 fn read_user(file: &str, known: &[Template]) -> Option<Template> {
     let path: PathBuf = ::mods::find_in_roots(&format!("Weather/Templates/{file}"))?.1;
     let bytes = ::legacy_config::vfs::read(&path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?;
+    parse_json(file, &String::from_utf8_lossy(&bytes), known)
+}
+
+fn parse_json(file: &str, json: &str, known: &[Template]) -> Option<Template> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let id = normalize_id(file);
     let parent = v
         .get("extends")
@@ -219,7 +207,7 @@ mod tests {
             let w = t.weather();
             assert_eq!(w.source, Source::Template(t.id.clone()));
             for n in &t.next {
-                assert!(STOCK.iter().any(|s| s.id == n), "{} -> {n}", t.id);
+                assert!(stock().iter().any(|s| &s.id == n), "{} -> {n}", t.id);
             }
         }
         let rain = stock().into_iter().find(|t| t.id == "rain").unwrap().weather();

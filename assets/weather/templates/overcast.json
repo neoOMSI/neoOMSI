@@ -1,0 +1,11 @@
+{
+  "name": "Grey Lid",
+  "description": "A closed, even grey sky. Flat light and no shadows.",
+  "metar": "ZZZZ 011200Z 24008KT 8000 OVC018 11/08 Q1008",
+  "next": [
+    "cloudy",
+    "drizzle",
+    "light_rain",
+    "mist"
+  ]
+}

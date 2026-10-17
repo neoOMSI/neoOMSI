@@ -1,0 +1,11 @@
+{
+  "name": "Morning Mist",
+  "description": "Damp air and a low veil over the streets. Sight is short but softly lit.",
+  "metar": "ZZZZ 011200Z 00000KT 3000 BR BKN004 09/08 Q1019",
+  "ground_wet": 0.25,
+  "next": [
+    "fog",
+    "overcast",
+    "fair"
+  ]
+}

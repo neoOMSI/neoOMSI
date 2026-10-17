@@ -1,0 +1,10 @@
+{
+  "name": "Steady Rain",
+  "description": "Proper rain. Steady, grey and wet from kerb to kerb.",
+  "metar": "ZZZZ 011200Z 23012KT 4000 RA OVC012 12/11 Q0998",
+  "next": [
+    "heavy_rain",
+    "light_rain",
+    "showers"
+  ]
+}

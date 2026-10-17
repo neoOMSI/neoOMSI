@@ -1,0 +1,15 @@
+{
+  "name": "Sleet",
+  "description": "Half rain, half snow. Grey, slushy and miserable.",
+  "metar": "ZZZZ 011200Z 29010KT 3000 PL OVC010 01/00 Q1002",
+  "months": [
+    11,
+    3
+  ],
+  "ground_wet": 0.8,
+  "next": [
+    "light_snow",
+    "rain",
+    "overcast"
+  ]
+}

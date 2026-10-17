@@ -1,0 +1,14 @@
+{
+  "name": "Gale",
+  "description": "A howling wind tears at everything. Ragged clouds fly low.",
+  "metar": "ZZZZ 011200Z 25026G42KT 9999 SCT025 BKN040 11/04 Q0984",
+  "months": [
+    9,
+    3
+  ],
+  "next": [
+    "breezy",
+    "heavy_rain",
+    "cloudy"
+  ]
+}

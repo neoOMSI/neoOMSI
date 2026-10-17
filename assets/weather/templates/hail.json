@@ -1,0 +1,13 @@
+{
+  "name": "Hailstorm",
+  "description": "A hard, rattling burst of hail from a dark cumulonimbus.",
+  "metar": "ZZZZ 011200Z 24014G30KT 2000 +TSGR BKN015CB 16/12 Q1001",
+  "months": [
+    4,
+    9
+  ],
+  "next": [
+    "thunderstorm",
+    "showers"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Soft Rain",
+  "description": "Gentle rain from a low, grey deck. Wipers on intermittent.",
+  "metar": "ZZZZ 011200Z 23008KT 6000 -RA BKN014 OVC025 13/11 Q1003",
+  "next": [
+    "rain",
+    "drizzle",
+    "cloudy"
+  ]
+}

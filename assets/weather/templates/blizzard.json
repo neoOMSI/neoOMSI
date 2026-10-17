@@ -1,0 +1,13 @@
+{
+  "name": "Whiteout",
+  "description": "Driving snow, a gale and almost no sight. Stay home if you can.",
+  "metar": "ZZZZ 011200Z 36020G35KT 0400 +SN VV003 M07/M09 Q0996",
+  "months": [
+    12,
+    2
+  ],
+  "snow_cover": true,
+  "next": [
+    "snow"
+  ]
+}
