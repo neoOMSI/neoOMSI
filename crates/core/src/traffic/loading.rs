@@ -960,7 +960,10 @@ impl Traffic {
             // script cuts the drive at (#327)
             15.0 + (seed % 7) as f32
         } else {
-            100.0
+            // a car keeps to the limit, and where the map lets it go faster (a motorway's
+            // 130, or 180-200 for none) goes as fast as its driver likes: 125-150 km/h (it
+            // was held to 100 everywhere)
+            125.0 + (seed % 26) as f32
         };
         // lorries and vans take bends more gently than cars
         state.lat_accel = if kind == LaneKind::Air {

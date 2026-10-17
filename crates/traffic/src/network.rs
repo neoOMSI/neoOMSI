@@ -506,6 +506,15 @@ pub struct Crossing {
     pub other_after: f32,
 }
 
+/// How far before two ways meet `Network::merge_offset` measures which of them comes in
+/// from the side (m).
+pub const MERGE_BACK: f32 = 25.0;
+/// How much further off the line of the lane they become the way that ends lies (m).
+pub const MERGE_SIDE_MIN: f32 = 0.8;
+/// How far back two ways that meet are looked at for a common start (m): a bus bay is a
+/// few dozen metres long, an acceleration lane comes from another road.
+pub const SPLIT_BACK: f32 = 120.0;
+
 /// Two vehicles whose centre lines come closer than this (m) touch: the half widths of two
 /// buses.
 pub const MEET_DIST: f64 = 2.6;
@@ -1037,7 +1046,119 @@ impl Network {
             return false;
         }
         // side by side from the same direction: the one turning across the other waits
-        la.turn != 0 && lb.turn == 0
+        if la.turn != lb.turn {
+            return la.turn != 0 && lb.turn == 0;
+        }
+        // where two ways become one, the one that comes in from the side (an acceleration
+        // lane, a lane that drops out) gives way to the one that goes straight on
+        // (not a bus bay running back into the road it left just before: there the bus
+        // pulling out keeps the way it had)
+        match la.next.iter().find(|n| lb.next.contains(n)) {
+            Some(&m) => {
+                self.merge_offset(a, m) > self.merge_offset(b, m) + MERGE_SIDE_MIN
+                    && !self.split_before(a, b, SPLIT_BACK)
+            }
+            None => false,
+        }
+    }
+
+    /// Did the ways into lanes `a` and `b` part within `back` m before them (a bay that
+    /// left the road and runs back into it)?
+    pub fn split_before(&self, a: usize, b: usize, back: f32) -> bool {
+        let behind = |from: usize| {
+            let mut seen: Vec<usize> = vec![from];
+            let mut open = vec![(from, 0.0f32)];
+            while let Some((l, d)) = open.pop() {
+                for &p in self.prev.get(l).map(|v| v.as_slice()).unwrap_or(&[]) {
+                    let dp = d + self.lanes[p].length();
+                    if !seen.contains(&p) && seen.len() < 64 {
+                        seen.push(p);
+                        if dp < back {
+                            open.push((p, dp));
+                        }
+                    }
+                }
+            }
+            seen
+        };
+        let (wa, wb) = (behind(a), behind(b));
+        wa.iter().any(|l| wb.contains(l))
+    }
+
+    /// Does the way on from `s` along `lane` end by running into the way of a lane beside
+    /// it within `look` m: an acceleration lane, or a lane that drops out of the road? Then
+    /// (the distance to where the two ways meet, the lane beside it at `s`). Which of two
+    /// ways that meet is the one that ends: the one that comes in from the side of the lane
+    /// they become (`merge_offset`), not the one it continues straight on.
+    pub fn merges_into(&self, lane: usize, s: f32, look: f32) -> Option<(f32, usize)> {
+        let l = self.lanes.get(lane)?;
+        if l.kind != LaneKind::Street {
+            return None;
+        }
+        // (lane, distance from `s` to its start) along the one way on
+        let way = |from: usize, s: f32| {
+            let mut out = Vec::new();
+            let (mut cur, mut d) = (from, self.lanes[from].length() - s);
+            for _ in 0..16 {
+                let [n] = self.lanes[cur].next.as_slice() else {
+                    break;
+                };
+                if *n == from || out.iter().any(|&(x, _)| x == *n) || d > look {
+                    break;
+                }
+                out.push((*n, d));
+                d += self.lanes[*n].length();
+                cur = *n;
+            }
+            out
+        };
+        let ours = way(lane, s);
+        // (the paths of its own road beside it: an acceleration lane is one of them)
+        for b in [l.left, l.right].into_iter().flatten() {
+            let theirs = way(b, self.beside_s(lane, b, s.min(l.length())));
+            let Some(k) = ours
+                .iter()
+                .position(|(x, _)| theirs.iter().any(|(y, _)| y == x))
+            else {
+                continue;
+            };
+            let (m, d) = ours[k];
+            let mine = if k == 0 { lane } else { ours[k - 1].0 };
+            let other = match theirs.iter().position(|&(y, _)| y == m) {
+                Some(0) => b,
+                Some(j) => theirs[j - 1].0,
+                None => continue,
+            };
+            if mine == other || !self.prev.get(m).is_some_and(|p| p.len() > 1) {
+                continue;
+            }
+            if self.merge_offset(mine, m) > self.merge_offset(other, m) + MERGE_SIDE_MIN {
+                return Some((d, b));
+            }
+        }
+        None
+    }
+
+    /// How far off the line of lane `m`, drawn back from its start, lane `a` that runs into
+    /// it lies `MERGE_BACK` m before it (following the one way back): about nothing for the
+    /// lane `m` goes straight on from, a lane's width for one that comes in beside it.
+    pub fn merge_offset(&self, a: usize, m: usize) -> f32 {
+        let (start, h) = (self.lanes[m].start(), self.lanes[m].start_heading());
+        let hr = (h as f64).to_radians();
+        let side = DVec3::new(hr.cos(), -hr.sin(), 0.0);
+        let (mut lane, mut back) = (a, MERGE_BACK);
+        loop {
+            let l = &self.lanes[lane];
+            if back <= l.length() {
+                let p = l.at(l.length() - back).0;
+                return (p - start).dot(side).abs() as f32;
+            }
+            back -= l.length();
+            match self.prev.get(lane).map(|p| p.as_slice()) {
+                Some(&[p]) if p != a => lane = p,
+                _ => return (l.start() - start).dot(side).abs() as f32,
+            }
+        }
     }
 
     /// The lane beside `lane` at `s` that carries the traffic the other way (the other half

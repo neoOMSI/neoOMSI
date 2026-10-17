@@ -68,6 +68,11 @@ pub const DISCRETIONARY_DWELL: f32 = 0.6;
 pub const OSCILLATION_WINDOW: f32 = 8.0;
 /// How far ahead a turn lane is entered (m).
 pub const TURN_LANE_LOOKAHEAD: f32 = 150.0;
+/// How far ahead a lane that ends (an acceleration lane, a lane that drops out) makes the
+/// vehicle on it move over (m): an acceleration lane is 100-250 m long.
+pub const MERGE_LOOKAHEAD: f32 = 400.0;
+/// A vehicle does not change onto a lane that ends within this (m).
+pub const KEEP_OFF_ENDING: f32 = 400.0;
 /// A stopped corner-clearance ramp (m). Provisional improvement: lets the wheels
 /// turn toward nearby clearance while realization still rejects every collision.
 pub const CORNER_RECOVERY_RAMP: f32 = 2.0;
@@ -778,8 +783,15 @@ impl ManeuverCoordinator {
         let dir = side_of(net, actor.lane, to);
         // (waiting for a gap, the car stops before the lane the map closes to it, which may
         // lie a spline joint or two ahead, else before the end of its lane)
+        // (on a lane that ends, before the end of it: the acceleration lane goes on to where
+        // it runs into the road, not only to the end of its first piece)
         let wait_at = closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next)
             .filter(|_| actor.lane_kind == LaneKind::Street)
+            .or_else(|| {
+                net.merges_into(actor.lane, actor.s, MERGE_LOOKAHEAD)
+                    .filter(|&(_, b)| b == to)
+                    .map(|(d, _)| d)
+            })
             .unwrap_or(net.lanes[actor.lane].length() - actor.s);
         Some(self.commit_or_wait(scene, actor, state, to, dir, kind, s_to, wait_at))
     }
@@ -904,7 +916,10 @@ impl ManeuverCoordinator {
         let mut wish: Option<(usize, i32, i16)> = None;
         if let Some(left) = pass_side {
             let s_left = net.beside_s(actor.lane, left, actor.s);
-            if self.open_to(net, actor, left) && self.stays_open(net, actor, left, s_left) {
+            if self.open_to(net, actor, left)
+                && self.stays_open(net, actor, left, s_left)
+                && !ends_soon(net, left, s_left)
+            {
                 // (a parked car standing in the lane is no vehicle of the scene: without it, a
                 // bus behind one in X10 Berlin's bus lane waited there for good)
                 let ahead = self.nearest_ahead_on_way(scene, actor, 45.0)
@@ -943,7 +958,11 @@ impl ManeuverCoordinator {
         {
             if let Some(right) = keep_side {
                 let s_right = net.beside_s(actor.lane, right, actor.s);
-                if self.open_to(net, actor, right) && self.stays_open(net, actor, right, s_right) {
+                // (not onto an acceleration lane: it only has to merge back again)
+                if self.open_to(net, actor, right)
+                    && self.stays_open(net, actor, right, s_right)
+                    && !ends_soon(net, right, s_right)
+                {
                     if self.parallel_room(scene, actor, right, (actor.speed * 5.5 + 10.0).max(40.0))
                         && self.lane_clear(scene, actor.id, right, s_right, 30.0, 70.0)
                     {
@@ -1824,6 +1843,12 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
                     .is_none()
         });
     }
+    // The lane ends, running into the way of the lane beside it (an acceleration lane, a
+    // lane that drops out): move over onto that one in good time, as soon as there is a
+    // gap, not at the end of it.
+    if let Some(b) = ending_lane(net, actor) {
+        return Some(b);
+    }
     let to_junction = lane.length() - actor.s;
     if to_junction >= TURN_LANE_LOOKAHEAD {
         return None;
@@ -1848,6 +1873,23 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// The lane beside that a vehicle on a lane that ends (`Network::merges_into`, within
+/// `MERGE_LOOKAHEAD`) moves over onto, when it may drive there.
+/// Does `lane` end within `KEEP_OFF_ENDING` from `s` (see `Network::merges_into`)?
+fn ends_soon(net: &Network, lane: usize, s: f32) -> bool {
+    net.merges_into(lane, s, KEEP_OFF_ENDING).is_some()
+}
+
+fn ending_lane(net: &Network, actor: &ManeuverActor) -> Option<usize> {
+    // (a timetable bus keeps to its route: its bay runs back into the road too)
+    if actor.lane_kind != LaneKind::Street || actor.veh_type < 0 {
+        return None;
+    }
+    let (_, b) = net.merges_into(actor.lane, actor.s, MERGE_LOOKAHEAD)?;
+    let l = &net.lanes[b];
+    (l.allows(actor.veh_type) && l.density > 0.0 && !l.no_cars).then_some(b)
 }
 
 /// How far ahead (from distance `s` along `lane`, within `TURN_LANE_LOOKAHEAD`) the way
