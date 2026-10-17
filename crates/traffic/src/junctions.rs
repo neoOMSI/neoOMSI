@@ -52,6 +52,9 @@ const QUEUE_SPEED: f32 = 1.5;
 /// A car entering a roundabout gives way to a ring car standing closer than this (m, its
 /// front from the place they meet) as to a moving one.
 const RING_QUEUE_KEEP: f32 = 10.0;
+/// How far into the meeting place its front must be for a vehicle to count as in it
+/// already, not just at its line (m).
+const NOSED_IN: f32 = 1.5;
 /// Half the width of a footpath crossing a lane (m), for where a vehicle is past it.
 const WALK_HALF_WIDTH: f32 = 2.0;
 /// Seconds a cycle of standing vehicles that only give way to each other by the rules
@@ -977,10 +980,14 @@ impl JunctionCoordinator {
                     // before its entry too: it does not cut in while the ring queues (a
                     // standing ring car counted as never arriving, the entries filled the
                     // ring and the cars on it then had to wait for them).
+                    // (not once its front is well into the meeting place: the ring car
+                    // standing behind it there stands for it, and each waited for the other
+                    // for good - a player's bus come up from behind on the ring)
+                    let nosed_in = mine_ahead < -NOSED_IN;
                     let entering_ring = scene.net.is_ring(m) && !scene.net.is_ring(l)
                         && scene.net.must_yield(l, m);
                     if entering_ring && !actor.emergency && o.speed < 1.0
-                        && theirs > 0.3 && theirs < RING_QUEUE_KEEP
+                        && theirs > 0.3 && theirs < RING_QUEUE_KEEP && !nosed_in
                     {
                         yields = true;
                         yields_moving |= o.speed >= 0.3;
@@ -995,6 +1002,13 @@ impl JunctionCoordinator {
                     if (priority_merge || they_give_way) && mode.is_none() && !o.emergency
                         && theirs > stopping_distance(o)
                     {
+                        continue;
+                    }
+                    // Well into the meeting place already, a vehicle that has to give way
+                    // clears it rather than stopping there in the other's way, while the
+                    // other can still stop before it (it stopped with its nose in the ring,
+                    // and the bus coming round behind could not get past it).
+                    if nosed_in && !o.emergency && mode.is_none() && theirs > stopping_distance(o) {
                         continue;
                     }
                     if claimed || (is_on && o.speed > 0.5 && !waits_short) {

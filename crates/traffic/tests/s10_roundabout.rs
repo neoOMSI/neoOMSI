@@ -225,3 +225,64 @@ fn an_entering_car_does_not_cut_in_ahead_of_ring_traffic_queueing_at_its_entry()
     let d = w.plan(&mut JunctionCoordinator::new(), entrant, None);
     assert!(d.yield_at.is_some(), "cut into the standing ring queue: {d:?}");
 }
+
+/// A car's front ahead of its origin (`JunctionActor::new`).
+const FRONT: f32 = 2.25;
+
+/// The object roundabout of the tests above, and where on its entry (16) the place where it
+/// meets the ring begins.
+fn object_ring() -> (Harness, f32) {
+    let at = |k: usize| {
+        let a = (k % 16) as f64 * std::f64::consts::FRAC_PI_8;
+        DVec3::new(15.0 * a.cos(), 15.0 * a.sin(), 0.0)
+    };
+    let mut lanes: Vec<Lane> = (0..16).map(|k| object_lane(at(k), at(k + 1), k as u16)).collect();
+    lanes.push(object_lane(DVec3::new(25.0, -20.0, 0.0), at(0), 16));
+    let mut net = Network { lanes, ..Default::default() };
+    net.link(1.0);
+    let c = net.crossings[16].iter().find(|c| c.other == 15).expect("entry meets the ring");
+    let meet = c.at - c.before;
+    (Harness::new(net), meet)
+}
+
+#[test]
+fn an_entering_car_with_its_nose_in_the_ring_does_not_wait_for_the_ring_car_behind_it() {
+    // it had nosed into the ring when a bus came round behind it; the bus stopped behind
+    // it, and the car must not now wait for the standing bus to go first (each waited for
+    // the other for good, Gerolstein)
+    let (mut w, meet) = object_ring();
+    let entrant = add(&mut w, 20, 16, meet + 3.0 - FRONT, 0.0);
+    w.actors[entrant].stopped = 5.0;
+    let ring = add(&mut w, u64::MAX, 14, 3.0, 0.0);
+    w.actors[ring].stopped = 5.0;
+    let to_15 = w.net.lanes[14].length() - 3.0;
+    w.approach(ring, 15, to_15);
+    let d = w.plan(&mut JunctionCoordinator::new(), entrant, None);
+    assert!(d.yield_at.is_none(), "waits for the bus standing behind it: {d:?}");
+}
+
+#[test]
+fn an_entering_car_with_its_nose_in_the_ring_clears_it_for_ring_traffic_that_can_stop() {
+    let (mut w, meet) = object_ring();
+    let entrant = add(&mut w, 20, 16, meet + 3.0 - FRONT, 1.0);
+    // a car comes round the ring two lanes before the merge, slow enough to stop
+    let ring = add(&mut w, 10, 13, 1.0, 4.0);
+    let to_14 = w.net.lanes[13].length() - 1.0;
+    w.approach(ring, 14, to_14);
+    w.approach(ring, 15, to_14 + w.net.lanes[14].length());
+    let d = w.plan(&mut JunctionCoordinator::new(), entrant, None);
+    assert!(d.yield_at.is_none(), "stopped in the ring in the way: {d:?}");
+}
+
+#[test]
+fn an_entering_car_at_its_line_still_waits_for_the_ring_queue() {
+    // only a car well into the meeting place counts as in it: one at its line waits
+    let (mut w, meet) = object_ring();
+    let entrant = add(&mut w, 20, 16, meet - FRONT, 0.0);
+    let ring = add(&mut w, 10, 14, 3.0, 0.0);
+    w.actors[ring].stopped = 6.0;
+    let to_15 = w.net.lanes[14].length() - 3.0;
+    w.approach(ring, 15, to_15);
+    let d = w.plan(&mut JunctionCoordinator::new(), entrant, None);
+    assert!(d.yield_at.is_some(), "cut into the standing ring queue: {d:?}");
+}
