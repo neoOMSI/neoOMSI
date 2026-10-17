@@ -371,13 +371,13 @@ impl App {
         {
             let w = window.clone();
             let started = Instant::now();
-            render::set_device_hook(Some(Arc::new(move |device, queue, _, format| {
+            render::set_device_hook(Some(Arc::new(move |device, queue, surface, format| {
                 let w = w.clone();
                 let caption = ::i18n::translate("splash.compile-shaders", &[]);
                 let mut screen = user_interface::LoadingScreen::new(device, queue, format);
                 let mut configured = (0, 0);
                 let mut shown = false;
-                Box::new(move |device, queue, surface| {
+                let mut frame: render::LoadingFrame = Box::new(move |device, queue, surface| {
                     let size = w.inner_size();
                     let (pw, ph) = (size.width.max(1), size.height.max(1));
                     if configured != (pw, ph) {
@@ -421,7 +421,13 @@ impl App {
                         | wgpu::CurrentSurfaceTexture::Lost => configured = (0, 0),
                         _ => std::thread::sleep(std::time::Duration::from_millis(16)),
                     }
-                })
+                });
+                if cfg!(target_os = "macos") {
+                    frame(device, queue, surface);
+                    None
+                } else {
+                    Some(frame)
+                }
             })));
         }
         let options = render::RenderOptions {

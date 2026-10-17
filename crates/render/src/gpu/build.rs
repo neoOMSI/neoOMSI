@@ -12,7 +12,7 @@ const ALPHA_BLEND: wgpu::BlendState = wgpu::BlendState {
 pub type LoadingFrame = Box<dyn FnMut(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>) + Send>;
 
 pub type DeviceHook = Arc<
-    dyn Fn(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>, wgpu::TextureFormat) -> LoadingFrame
+    dyn Fn(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>, wgpu::TextureFormat) -> Option<LoadingFrame>
         + Send
         + Sync,
 >;
@@ -478,7 +478,7 @@ impl Renderer {
             .context("request_device")?;
         let loading = surface.and_then(|surface| {
             let hook = DEVICE_HOOK.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
-            Some((surface, hook(&device, &queue, surface, format)))
+            hook(&device, &queue, surface, format).map(|frame| (surface, frame))
         });
         open_pipeline_cache(&device, &info);
         log::info!("graphics device opened; compiling renderer pipelines");
