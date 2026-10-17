@@ -466,6 +466,7 @@ impl Traffic {
             .ok()
             .and_then(|v| v.parse::<u64>().ok());
         let debug_doors = ::legacy_config::env::var_os("OMSI_DEBUG_DOORS").is_some();
+        let debug_stuck = ::legacy_config::env::var_os("OMSI_DEBUG_STUCK").is_some();
         // (in the coordinator's order, by stable id: what one vehicle is granted holds back
         // those planned after it, so the container order must not decide)
         let bodies_ahead = self.bodies_in_way(&occupancy, &external_ids);
@@ -938,6 +939,16 @@ impl Traffic {
                 &junction_actors,
                 &aspects,
             );
+            if debug_stuck {
+                let id = self.cars[i].id;
+                self.cars[i].junction_why = format!(
+                    "{:?} waits for {:?} ({}) {:?}",
+                    decision.state,
+                    self.junctions.blocked_by(id),
+                    self.junctions.wait_kind(id).unwrap_or("-"),
+                    decision.reasons
+                );
+            }
             let light = decision.light;
             let yield_at = decision.yield_at;
             self.cars[i].light_hold = light.is_some();

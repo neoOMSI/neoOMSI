@@ -20,6 +20,8 @@ pub(super) struct EmergencyReservation {
     /// The vehicles on the owner's way between it and the junction: they lead it through
     /// and are not held back by its reservation.
     pub ahead: Vec<VehicleId>,
+    /// The owner's way through the junction object, from its signals on.
+    through: Vec<usize>,
 }
 
 impl JunctionCoordinator {
@@ -41,13 +43,16 @@ impl JunctionCoordinator {
                 .zip(ways)
                 .find(|(a, _)| a.id == r.owner)
                 .is_some_and(|(a, w)| {
-                    r.lanes.iter().any(|lane| {
+                    // (inside: on its way through the junction, not anywhere on the object -
+                    // one that gave up its rights at the signal before it kept them, Ahlheim)
+                    let inside = |l: &usize| r.movement.contains(l) && r.exit != Some(*l);
+                    r.movement.iter().filter(|l| inside(l)).any(|lane| {
                         on_lane.get(lane).is_some_and(|bodies| {
                             bodies.iter().any(|&(i, _, _, foreign)| {
                                 !foreign && actors.get(i).is_some_and(|part| part.id == a.id)
                             })
                         })
-                    }) || r.lanes.contains(&a.lane)
+                    }) || inside(&a.lane)
                         || (r.exit == Some(a.lane) && a.s < a.rear + 1.0)
                         // (it stays while the queue moves on, not flickering with its speed)
                         || (a.emergency
@@ -93,6 +98,7 @@ impl JunctionCoordinator {
                 exit: movement.exit.map(|x| x.0),
                 against_signal: false,
                 ahead: Vec::new(),
+                through: Vec::new(),
             });
         }
         // who drives in front of each owner on its way, up to and through the junction
@@ -103,6 +109,12 @@ impl JunctionCoordinator {
                 continue;
             };
             r.passing = owner.passing;
+            r.through = way
+                .iter()
+                .skip_while(|(l, _)| !r.lanes.contains(l))
+                .take_while(|(l, _)| r.lanes.contains(l))
+                .map(|&(l, _)| l)
+                .collect();
             let until = junction_ahead(net, way).map(|m| {
                 m.lanes.iter().map(|&(l, d)| d + net.lanes[l].length()).fold(0.0, f32::max)
             });
@@ -142,7 +154,7 @@ impl JunctionCoordinator {
                 && way
                     .iter()
                     .take_while(|(l, _)| r.lanes.contains(l))
-                    .all(|(l, _)| r.movement.contains(l))
+                    .all(|(l, _)| r.through.contains(l))
         })
     }
 

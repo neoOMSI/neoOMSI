@@ -534,3 +534,73 @@ fn an_ambulance_waits_for_the_car_coming_through_a_single_lane_tunnel() {
     prepare(&w, &mut c);
     assert!(w.plan(&mut c, a, None).yield_at.is_some(), "drove into the tunnel towards the car");
 }
+
+/// A crossing object whose signal stands on its own path some metres before the crossing
+/// (Ahlheim): 0 approach, 1 the signal's path of the object, 2 the way across, 3 exit;
+/// 4 the crossing path, 5 its approach.
+fn signal_before_the_crossing() -> Network {
+    use glam::DVec3;
+    let street = |a: DVec3, b: DVec3| LaneBuilder::polyline(vec![a, b], LaneKind::Street, 3.0);
+    let mut net = Network {
+        lanes: vec![
+            street(DVec3::new(-120.0, 0.0, 0.0), DVec3::new(-20.0, 0.0, 0.0)),
+            common::object_lane(DVec3::new(-20.0, 0.0, 0.0), DVec3::new(-10.0, 0.0, 0.0), 0),
+            common::object_lane(DVec3::new(-10.0, 0.0, 0.0), DVec3::new(10.0, 0.0, 0.0), 1),
+            street(DVec3::new(10.0, 0.0, 0.0), DVec3::new(110.0, 0.0, 0.0)),
+            common::object_lane(DVec3::new(0.0, -10.0, 0.0), DVec3::new(0.0, 10.0, 0.0), 2),
+            street(DVec3::new(0.0, -110.0, 0.0), DVec3::new(0.0, -10.0, 0.0)),
+        ],
+        ..Default::default()
+    };
+    for (from, to) in [(0, 1), (1, 2), (2, 3), (5, 4)] {
+        net.lanes[from].next = vec![to];
+    }
+    net.lanes[1].traffic_light = Some((0, 0));
+    net.compute_conflicts();
+    net
+}
+
+/// The car in front of an ambulance at a signal standing before the crossing leads it
+/// through the red light on the same way.
+#[test]
+fn the_car_at_a_signal_before_the_crossing_leads_the_emergency_through() {
+    let mut w = Harness::new(signal_before_the_crossing());
+    w.aspects.insert((0, 0), Aspect::Red);
+    let mut amb = emergency(1, 0);
+    amb.s = 85.0;
+    let a = w.add(amb);
+    w.place(a, 0, 85.0);
+    let head = w.add(JunctionActor::new(VehicleId(2), 0, 98.0));
+    w.place(head, 0, 98.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 2));
+    w.plan(&mut c, a, None);
+    assert!(w.plan(&mut c, head, None).light.is_none(), "the head of the queue kept its red");
+}
+
+/// An emergency vehicle that gave up its rights at the signal of the object, before the
+/// crossing, gives up its reservation too: the cross traffic is not held for it.
+#[test]
+fn an_emergency_that_gave_up_before_the_crossing_releases_it() {
+    let mut w = Harness::new(signal_before_the_crossing());
+    let mut amb = emergency(1, 1);
+    amb.s = 5.0;
+    let a = w.add(amb);
+    w.place(a, 1, 5.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 2));
+    w.actors[a].emergency = false;
+    prepare(&w, &mut c);
+    assert!(!c.owns_emergency_reservation(VehicleId(1)));
+    // inside the crossing it keeps it until it is through
+    let mut w = Harness::new(signal_before_the_crossing());
+    let a = w.add(emergency(1, 2));
+    w.place(a, 2, 5.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    w.actors[a].emergency = false;
+    prepare(&w, &mut c);
+    assert!(c.owns_emergency_reservation(VehicleId(1)));
+}

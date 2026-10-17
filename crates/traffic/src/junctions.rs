@@ -512,6 +512,18 @@ impl JunctionCoordinator {
         self.wait_for.get(&id).copied()
     }
 
+    /// Waits this vehicle by the right-of-way rules alone (`rule`), or for room at its
+    /// exit (`exit`)? For the stuck diagnostics.
+    pub fn wait_kind(&self, id: VehicleId) -> Option<&'static str> {
+        if self.rule_waiters.contains(&id) {
+            Some("rule")
+        } else if self.exit_waiters.contains(&id) {
+            Some("exit")
+        } else {
+            None
+        }
+    }
+
     /// How many vehicles currently hold a junction commitment (a health/leak check).
     pub fn commitment_count(&self) -> usize {
         self.commitments.len()
