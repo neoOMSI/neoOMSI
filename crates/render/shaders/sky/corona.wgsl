@@ -197,7 +197,8 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     let lamp = select(max(in.size * grow, dist * 0.002) * 0.9, in.size, streak);
     // Enhanced: the sprite spans the glare's angle round the lamp (or the lamp's own glow
     // where that is wider); `glare_enhanced` draws the bitmap in the inner `core` of it.
-    let plain = (u32(in.extra.z + 0.5) & 32u) != 0u;
+    let flake = (u32(in.extra.z + 0.5) & 64u) != 0u;
+    let plain = (u32(in.extra.z + 0.5) & 32u) != 0u || flake;
     let glare = enhanced && !streak && !plain;
     let size = select(lamp, max(lamp, dist * GLARE_ANGLE), glare);
     let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(1.0, 8.0), streak);
@@ -219,7 +220,7 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     out.uv = c * 0.5 + 0.5;
     out.color = vec4<f32>(in.color.rgb, brightness);
     out.kind = select(0.0, 1.0, streak || plain);
-    out.star = select(0.0, 1.0, streak);
+    out.star = select(0.0, 1.0, streak || flake);
     out.beam = 0.0;
     out.cone = vec2<f32>(0.0, 0.0);
     if (glare) {
@@ -296,7 +297,7 @@ fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
         if (in.star > 0.5) {
             lit = streak_light();
         }
-        return vec4<f32>(in.color.rgb * lit * corona_shape(in) * in.color.a * enh.exposure.y, 1.0);
+        return vec4<f32>(in.color.rgb * lit * corona_shape(in) * in.color.a * enh.exposure.y * (enh.exposure.w / 1.6), 1.0);
     }
     return vec4<f32>(in.color.rgb * glare_enhanced(in) * in.color.a * enh.exposure.w, 1.0);
 }
@@ -378,5 +379,5 @@ fn fs_smoke(in: CoronaOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_smoke_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
     let c = smoke_color(in);
-    return vec4<f32>(c.rgb * enh.exposure.y, c.a);
+    return vec4<f32>(c.rgb * enh.exposure.y * (enh.exposure.w / 1.6), c.a);
 }

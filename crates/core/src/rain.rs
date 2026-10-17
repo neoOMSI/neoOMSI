@@ -151,7 +151,7 @@ impl Rain {
         };
         let in_bus = |p: DVec3| buses.iter().any(|b| in_one(p, *b));
         let (size, color, brightness) = if self.kind == 2 {
-            (0.06, [1.0, 1.0, 1.0], 0.9)
+            (0.045, [0.94, 0.96, 1.0], 0.85)
         } else {
             (
                 0.02 + 0.03 * self.rate,
@@ -196,6 +196,7 @@ impl Rain {
                 brightness: b,
                 direction: if self.kind == 2 { Vec3::ZERO } else { streak },
                 cone_cos: if self.kind == 2 { -1.0 } else { -2.0 },
+                flags: if self.kind == 2 { 64 } else { 0 },
                 ..Default::default()
             });
         }

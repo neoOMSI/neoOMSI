@@ -107,6 +107,7 @@ pub struct SkyState {
     /// Pre-exposure: scene radiance times this is what the picture holds (mid grey in the
     /// day's light comes out at about 0.18).
     pub exposure: f32,
+    pub exposure_clear: f32,
 }
 
 /// Optical depth per unit coefficient (Rayleigh, Mie, ozone) along a ray from altitude h
@@ -417,6 +418,23 @@ impl SkyState {
         let night_lost = (1.0 - night_light) * std::f32::consts::PI * NIGHT_SKY.dot(lum);
         let e_ref =
             ((sun * sun_facing + sky_horizontal).dot(lum) + night_lost).max(0.0) + ARTIFICIAL;
+        let exposure = exposure_for(e_ref);
+        let neutral = input.overcast <= 0.0
+            && input.rain <= 0.0
+            && input.haze <= 1.0
+            && input.sun_visibility >= 1.0;
+        let exposure_clear = if neutral {
+            exposure
+        } else {
+            Self::compute(&SkyInput {
+                overcast: 0.0,
+                rain: 0.0,
+                haze: 1.0,
+                sun_visibility: 1.0,
+                ..*input
+            })
+                .exposure
+        };
         SkyState {
             input: *input,
             sun,
@@ -426,7 +444,8 @@ impl SkyState {
             sh,
             sky_horizontal,
             ground,
-            exposure: exposure_for(e_ref),
+            exposure,
+            exposure_clear,
         }
     }
 

@@ -123,6 +123,7 @@ impl Renderer {
         };
         self.exposure = Some(log_exposure);
         let pre = log_exposure.exp() * lighting.brightness.clamp(0.0, 4.0);
+        let lamp_k = (st.exposure_clear / st.exposure.max(1e-6)).clamp(0.05, 1.0);
         let axes = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z];
         let avg = axes
             .iter()
@@ -224,8 +225,8 @@ impl Renderer {
                 pre,
                 2f32.powf(-self.exposure_log.as_ref().map(|l| l.ev).unwrap_or(0.0))
                     .clamp(0.7, 1.6),
-                pre * WINDOW_RADIANCE,
-                1.6,
+                pre * lamp_k * WINDOW_RADIANCE,
+                1.6 * lighting.brightness.clamp(0.0, 4.0),
             ],
             sun: st.sun.extend(SUN_RADIUS).to_array(),
             sh,
@@ -238,7 +239,7 @@ impl Renderer {
                 lighting.rain.clamp(0.0, 1.0),
                 input_overcast,
             ],
-            lights: [PROBE_MIPS as f32, LAMP_E, CABIN_E, input.sun_visibility],
+            lights: [PROBE_MIPS as f32, LAMP_E * lamp_k, CABIN_E, input.sun_visibility],
             sun_disc: st.sun_disc.extend(dt).to_array(),
             debug: [
                 debug_view(),
