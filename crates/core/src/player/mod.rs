@@ -66,6 +66,9 @@ pub(crate) struct Player {
     pub(crate) blinker_cancel: bool,
     /// Last `$msg` from the player's vehicle which reached the HUD.
     pub(crate) message_serial: u64,
+    /// The vehicle was last drawn from inside (`[viewpoint]` bit 2) rather than from
+    /// outside (bit 1): a click only meets the meshes drawn for that view.
+    pub(crate) view_inside: bool,
 }
 
 pub(crate) const ACTION_ALIASES: &[(&str, &[&str])] = &[
