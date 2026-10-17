@@ -126,6 +126,7 @@ impl Renderer {
         let pre = log_exposure.exp() * bright;
         let lamp_day = (st.exposure_clear / st.exposure.max(1e-6)).clamp(0.25, 1.0);
         let lamp_k = lamp_day + (1.0 - lamp_day) * (1.0 - lighting.brightness.clamp(0.0, 1.0));
+        let lamp_day_boost = (atmosphere::exposure_for(0.0015) / st.exposure.max(1e-6)).clamp(1.0, 400.0);
         let axes = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z];
         let avg = axes
             .iter()
@@ -241,7 +242,7 @@ impl Renderer {
                 lighting.rain.clamp(0.0, 1.0),
                 input_overcast,
             ],
-            lights: [PROBE_MIPS as f32, LAMP_E * lamp_k / bright, CABIN_E, input.sun_visibility],
+            lights: [PROBE_MIPS as f32, LAMP_E * lamp_day_boost / bright, CABIN_E, input.sun_visibility],
             sun_disc: st.sun_disc.extend(dt).to_array(),
             debug: [
                 debug_view(),

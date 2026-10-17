@@ -219,17 +219,17 @@ fn road_and_lamp_lights(
     let night = f
         .night
         .max(fog_darkness() * cfg.weather_night)
-        .max(brightness_darkness())
-        .max(0.3);
+        .max(brightness_darkness());
+    let lamp_night = 1.0;
     if !v.part_hidden(0) {
-        headlamps(cfg, faders, v, night, lights, coronas);
+        headlamps(cfg, faders, v, lamp_night, lights, coronas);
         let section = Section {
             model: &ty.model,
             rot: body_rot,
             origin: v.position,
             owner: super::owner_key(v),
         };
-        spotlights_2(cfg, faders, &section, &value_of, night, lights);
+        spotlights_2(cfg, faders, &section, &value_of, lamp_night, lights);
     }
     for (k, t) in v.trailers.iter().enumerate() {
         if v.part_hidden(k + 1) {
@@ -241,9 +241,9 @@ fn road_and_lamp_lights(
             origin: t.position,
             owner: super::owner_key(t),
         };
-        spotlights_2(cfg, faders, &section, &|n| t.value(v, n), night, lights);
+        spotlights_2(cfg, faders, &section, &|n| t.value(v, n), lamp_night, lights);
     }
-    if spill && cfg.spill.on && night > 0.35 {
+    if spill && cfg.spill.on && night > 0.05 {
         interior_spill(cfg, faders, v, &value_of, night, lights);
     }
 }
