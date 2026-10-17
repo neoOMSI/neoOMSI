@@ -297,9 +297,13 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
                 od = od + rain_mask(cloud_ground(d, t)) * tb / 8.0;
             }
             let shaft = (1.0 - exp(-od * enh.debug.w / 6000.0)) * horizon_fade;
-            let grey = vec3<f32>(dot(sky_top, vec3<f32>(0.2126, 0.7152, 0.0722))) * 0.6;
-            col = mix(col, grey, shaft * 0.8);
-            alpha = max(alpha, shaft * 0.7);
+            let luma = dot(sky_top, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let grey = mix(vec3<f32>(luma), sky_top, 0.4) * 0.6;
+            let haze = 1.0 - smoothstep(0.0, 0.3, d.z);
+            let curtain = mix(col * 0.7, grey, 0.55);
+            let soft = shaft * shaft * (3.0 - 2.0 * shaft);
+            col = mix(col, mix(curtain, col, haze * 0.5), soft * 0.8);
+            alpha = max(alpha, soft * 0.7);
         }
     }
     return vec4<f32>(col, alpha);
