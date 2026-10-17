@@ -584,7 +584,8 @@ impl Schedule {
                     traffic.car(ci).vehicle.ty.clone(),
                     traffic.car(ci).is_rail(),
                 );
-                place_stops(traffic.net(), &lanes, base, &mut stops, &ty, rail);
+                let rear = traffic.coupled_rear(&ty);
+                place_stops(traffic.net(), &lanes, base, &mut stops, &ty, rail, rear);
                 stops.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
                 log::debug!(
                     "scheduled bus {}: route carried on by {} lanes, {} more stops",

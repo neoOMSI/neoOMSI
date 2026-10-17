@@ -301,7 +301,8 @@ impl Schedule {
                 traffic.car(ci).vehicle.ty.clone(),
                 traffic.car(ci).is_rail(),
             );
-            place_stops(traffic.net(), &section, 0, &mut stops, &ty, rail);
+            let rear = traffic.coupled_rear(&ty);
+            place_stops(traffic.net(), &section, 0, &mut stops, &ty, rail, rear);
             // the tour's bus that has just finished its trip takes this one on from where
             // it stands: the section itself when it stands on it, else the shortest way
             // from its lane onto one of the section's first lanes (round a terminal loop)
@@ -388,10 +389,13 @@ impl Schedule {
                 .collect();
             let layover = departure > day_time;
             // its track begins at the stand it has just pulled onto, short of the first stop:
-            // it waits there, not at the stop
+            // it waits there, not at the stop - unless it stands across a lane forking off
+            // behind it (the stop pulled up into its bay, `fit_bays`): then it moves up now
+            let half_width = crate::traffic::extents(&ty, 12.0).2;
             let stand_hold = stops
                 .first()
                 .filter(|&&(ri, ss, ..)| track && layover && (ri > 0 || ss - s0 >= 2.0))
+                .filter(|_| rail || !in_the_way(net, &route, 0, s0, rear, half_width))
                 .map(|&(ri, ss, _, t, ..)| routing::stand_leave(net, &route, s0, (ri, ss), t))
                 .filter(|&t| t > day_time);
             let n_stops = stops.len();
@@ -496,7 +500,8 @@ impl Schedule {
             .as_ref()
             .map(|t| t[0].0.clone())
             .unwrap_or_else(|| ty.clone());
-        place_stops(traffic.net(), &section, 0, &mut stops, &lead_ty, rail);
+        let rear = traffic.coupled_rear(&lead_ty);
+        place_stops(traffic.net(), &section, 0, &mut stops, &lead_ty, rail, rear);
         log::debug!(
             "spawn trip {trip_name}: departure {:.2} min, now {:.2} min, leg {leg} at {:.0} %, step {at} of {}, start {s:.0} m into its lane",
             departure / 60.0,

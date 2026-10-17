@@ -726,6 +726,14 @@ impl Traffic {
     }
 
 
+    /// How far the rear of `ty`'s whole consist - its rear sections and trailers hung on
+    /// its couplings (`trailer_chain`), standing in line - reaches behind its origin (m),
+    /// before the vehicle is made (`consist_rear` measures one that has been).
+    pub(crate) fn coupled_rear(&mut self, ty: &Arc<VehicleType>) -> f32 {
+        coupled_rear_of(ty, &self.trailer_chain(ty))
+    }
+
+
     /// See [`Traffic::trailer_chain`]: from `ty` (turned round: `rev`) towards the back of
     /// the train, or towards its front, the nearest first.
     pub(crate) fn coupled_chain(
@@ -1237,6 +1245,27 @@ pub(crate) fn car_key(path: &Path) -> String {
     }
 }
 
+/// See [`Traffic::coupled_rear`]: `ty` with `chain` coupled behind it.
+fn coupled_rear_of(ty: &VehicleType, chain: &[(Arc<VehicleType>, bool)]) -> f32 {
+    let (_, rear, _) = extents(ty, 12.0);
+    // (front coupling, back coupling): how far ahead of the origin along the way; a part
+    // turned round has them the other way round
+    let couplings = |def: &::legacy_vehicle::Vehicle, rev: bool| {
+        let front = def.coupling_front.as_ref().map_or(4.0, |c| c.pos[1]);
+        let back = def.coupling_back.as_ref().map_or(-4.0, |c| c.pos[1]);
+        if rev { (-back, -front) } else { (front, back) }
+    };
+    let (mut end, mut joint) = (-rear, couplings(&ty.def, false).1);
+    for (t, rev) in chain {
+        let (front, back) = couplings(&t.def, *rev);
+        let origin = joint - front;
+        let (f, r, _) = extents(t, 12.0);
+        end = end.min(origin - if *rev { f } else { r });
+        joint = origin + back;
+    }
+    -end
+}
+
 /// The vehicle files of the map's `.zug` trains (a car naming a group: all its vehicles).
 fn train_cars(root: &Path, lists: &::map::ailists::AiLists) -> hashbrown::HashSet<String> {
     let mut out = hashbrown::HashSet::new();
@@ -1336,5 +1365,38 @@ mod train_car_tests {
             "vehicles/zug/kopf.ovh"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod coupled_rear_tests {
+    use super::coupled_rear_of;
+    use ::legacy_vehicle::vehicle::Coupling;
+    use std::sync::Arc;
+
+    fn part(length: f32, front: Option<f32>, back: Option<f32>) -> Arc<::simulation::VehicleType> {
+        Arc::new(::simulation::VehicleType::of_definition(
+            ::legacy_vehicle::Vehicle {
+                bounding_box: Some([2.5, length, 3.0, 0.0, 0.0, 1.5]),
+                coupling_front: front.map(|y| Coupling { pos: [0.0, y, 0.5] }),
+                coupling_back: back.map(|y| Coupling { pos: [0.0, y, 0.5] }),
+                ..Default::default()
+            },
+        ))
+    }
+
+    /// An articulated bus: its rear section hangs on the joint behind the front one.
+    #[test]
+    fn the_rear_of_an_articulated_bus_is_its_rear_sections() {
+        let front = part(11.0, None, Some(-4.5));
+        // a solo bus reaches back half its length
+        assert!((coupled_rear_of(&front, &[]) - 5.5).abs() < 1e-4);
+        // the joint 4.5 m behind the origin, the rear section's origin 3.5 m behind that,
+        // its rear end 4 m further
+        let rear = part(8.0, Some(3.5), None);
+        assert!((coupled_rear_of(&front, &[(rear.clone(), false)]) - 12.0).abs() < 1e-4);
+        // turned round, a part hangs on its back coupling instead
+        let turned = part(8.0, None, Some(-3.5));
+        assert!((coupled_rear_of(&front, &[(turned, true)]) - 12.0).abs() < 1e-4);
     }
 }
