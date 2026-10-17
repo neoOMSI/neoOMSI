@@ -6,7 +6,7 @@ mod submit;
 mod surface;
 mod timers;
 
-pub use build::{DeviceHook, set_device_hook};
+pub use build::{DeviceHook, LoadingFrame, set_device_hook};
 pub use gpu_env::*;
 pub use renderer::*;
 pub(crate) use shader_src::*;
