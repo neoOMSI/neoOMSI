@@ -107,6 +107,11 @@ pub struct AiState {
     /// Whether the last applied acceleration came from collision prevention rather than the
     /// comfort envelope.
     pub emergency: bool,
+    /// The bends `curve_speed` found at its samples last step: (place on the road as a
+    /// count of 2.5 m of the odometer, lane, distance along it, curvature), and the network
+    /// version they belong to.
+    curve_memo: Vec<(i64, usize, f32, f32)>,
+    curve_memo_net: u64,
 }
 
 /// What a car keeps its distance to: the gap from its front bumper to the thing (m), how
@@ -394,6 +399,8 @@ impl AiState {
             realized_speed: 0.0,
             reconciled: false,
             emergency: false,
+            curve_memo: Vec::new(),
+            curve_memo_net: 0,
         }
     }
 
@@ -805,16 +812,37 @@ impl AiState {
     /// (2 m/s²) into tight ones. A bend is the lane's curvature or the way's turn over 6 m,
     /// whichever is sharper (linked lanes may kink by up to 40°).
     pub fn curve_speed(&self, net: &Network) -> f32 {
-        let mut best = self.curve_speed_on(net, &self.seq(net), self.s);
+        self.curve_speed_memo(net, &mut None)
+    }
+
+    /// `curve_speed`, taking the bends of the samples it looked at last step from
+    /// `curve_memo` and keeping those of this step there: the samples lie at fixed places of
+    /// the road, and most of them are the same from step to step.
+    fn curve_speed_remembered(&mut self, net: &Network) -> f32 {
+        let mut memo = Some(Vec::with_capacity(self.curve_memo.len()));
+        let v = self.curve_speed_memo(net, &mut memo);
+        self.curve_memo = memo.unwrap_or_default();
+        self.curve_memo_net = net.version().get();
+        v
+    }
+
+    fn curve_speed_memo(&self, net: &Network, memo: &mut Option<Vec<(i64, usize, f32, f32)>>) -> f32 {
+        let mut best = self.curve_speed_on(net, &self.seq(net), self.s, memo);
         if let Some(c) = self.change {
             if c.to < net.lanes.len() {
-                best = best.min(self.curve_speed_on(net, &self.change_seq(c.to), c.s_to));
+                best = best.min(self.curve_speed_on(net, &self.change_seq(c.to), c.s_to, memo));
             }
         }
         best
     }
 
-    fn curve_speed_on(&self, net: &Network, q: &LaneSeq, s: f32) -> f32 {
+    fn curve_speed_on(
+        &self,
+        net: &Network,
+        q: &LaneSeq,
+        s: f32,
+        memo: &mut Option<Vec<(i64, usize, f32, f32)>>,
+    ) -> f32 {
         let reach = (self.speed * self.speed / 4.0 + 12.0).min(90.0);
         let mut best = f32::MAX;
         // Samples sit at fixed road places (every 2.5 m of odometer), not fixed distances
@@ -824,11 +852,25 @@ impl AiState {
         let mut next = first;
         while d <= reach {
             let (i, u) = q.locate(net, s, d);
-            let turn = wrap_deg(q.point(net, s, d + 3.0).1 - q.point(net, s, d - 3.0).1)
-                .abs()
-                .to_radians()
-                / 6.0;
-            let k = net.lanes[q.lanes[i]].curvature_at(u).abs().max(turn);
+            let lane = q.lanes[i];
+            // (the first sample is the car's own place, off the grid)
+            let place = (d > 0.0).then(|| ((self.odometer + d) / 2.5).round() as i64);
+            let known = place.filter(|_| self.curve_memo_net == net.version().get()).and_then(|g| {
+                self.curve_memo
+                    .iter()
+                    .find(|m| m.0 == g && m.1 == lane && (m.2 - u).abs() < 0.01)
+                    .map(|m| m.3)
+            });
+            let k = known.unwrap_or_else(|| {
+                let turn = wrap_deg(q.point(net, s, d + 3.0).1 - q.point(net, s, d - 3.0).1)
+                    .abs()
+                    .to_radians()
+                    / 6.0;
+                net.lanes[lane].curvature_at(u).abs().max(turn)
+            });
+            if let (Some(m), Some(g)) = (memo.as_mut(), place) {
+                m.push((g, lane, u, k));
+            }
             if k > 1e-4 {
                 let v = (self.lat_accel / k).sqrt().max(2.5);
                 // (a bend may begin up to one sample spacing before the sample that finds
@@ -921,6 +963,17 @@ impl AiState {
     /// The separated longitudinal request: the comfortable command plus a collision-
     /// prevention value, and the cause that most strongly binds it.
     pub fn desired_demand(&self, net: &Network, lead: Option<Lead>, stop: Option<f32>) -> LongitudinalDemand {
+        self.desired_demand_bend(net, lead, stop, self.curve_speed(net))
+    }
+
+    /// `desired_demand` with the speed the bends ahead allow (`curve_speed`) already known.
+    fn desired_demand_bend(
+        &self,
+        net: &Network,
+        lead: Option<Lead>,
+        stop: Option<f32>,
+        bend: f32,
+    ) -> LongitudinalDemand {
         let Some(lane) = net.lanes.get(self.lane) else {
             return LongitudinalDemand {
                 comfort: 0.0,
@@ -963,7 +1016,6 @@ impl AiState {
         let mut reason = Reason::SpeedLimit;
         // bends: follow the speed profile `curve_speed` lays out (it assumes 2 m/s² of
         // braking), blending in over the last metre per second above it
-        let bend = self.curve_speed(net);
         if bend < v0 && v > bend - 1.0 {
             let track = -2.0 + (bend - v) / 0.6;
             let k = ((v - (bend - 1.0)) / 1.0).clamp(0.0, 1.0);
@@ -1055,7 +1107,8 @@ impl AiState {
         if net.lanes.get(self.lane).is_none() {
             return false;
         }
-        let demand = self.desired_demand(net, lead, stop);
+        let bend = self.curve_speed_remembered(net);
+        let demand = self.desired_demand_bend(net, lead, stop, bend);
         self.emergency = demand.is_emergency();
         let mut acc = demand.effective();
         if let Some(cap) = self.accel_cap {
@@ -1446,6 +1499,34 @@ mod tests {
         };
         net.link(1.5);
         net
+    }
+
+    /// A car driving into a bend gets the same bend speed from the samples it remembers
+    /// from step to step as from looking at them all again.
+    #[test]
+    fn the_remembered_bends_give_the_same_speed() {
+        // 60 m straight north, then a quarter circle of 25 m radius to the east
+        let mut points = vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 60.0, 0.0)];
+        points.extend((1..=18).map(|k| {
+            let a = (k as f64 * 5.0).to_radians();
+            DVec3::new(25.0 - 25.0 * a.cos(), 60.0 + 25.0 * a.sin(), 0.0)
+        }));
+        let mut net = Network {
+            lanes: vec![LaneBuilder::polyline(points, LaneKind::Street, 3.0)],
+            ..Default::default()
+        };
+        net.link(1.5);
+        let mut c = car(&net, 5.0, 14.0);
+        for _ in 0..200 {
+            let mut looked_again = c.clone();
+            looked_again.curve_memo.clear();
+            let fresh = looked_again.curve_speed(&net);
+            let remembered = c.curve_speed_remembered(&net);
+            assert!((fresh - remembered).abs() < 1e-3, "{fresh} against {remembered} at {}", c.s);
+            c.s += 0.28;
+            c.odometer += 0.28;
+        }
+        assert!(c.curve_speed(&net) < 14.0, "the bend never slowed it");
     }
 
     fn car(net: &Network, s: f32, speed: f32) -> AiState {
