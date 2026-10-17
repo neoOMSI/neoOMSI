@@ -63,6 +63,9 @@ pub(super) const VEHICLE_TESTS_PER_FRAME: usize = 2;
 /// A vehicle's shadow box starts this far above its bounding box's floor: light passes
 /// under the body, and the ground under a car is no hard dark rectangle.
 pub(super) const BODY_CLEARANCE: f64 = 0.3;
+/// A triangle this close to a light (beyond its own size) is the lamp's housing and casts
+/// no shadow of that light.
+pub(super) const LAMP_HOUSING: f64 = 0.5;
 pub(super) const SHADOW_RANGE: f64 = 50.0;
 pub(super) const SHADOW_REACH: f64 = 25.0;
 pub(super) const SHADOW_MAX: usize = 32;

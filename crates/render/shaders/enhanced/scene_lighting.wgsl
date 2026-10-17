@@ -688,14 +688,12 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     let cabin = sf.albedo * cabin_light * mix(1.0, ao, 0.85);
     var rgb = (direct + ambient + lamps) * pre + cabin;
     var emit = tex.rgb * material.emissive.rgb * max(enh.exposure.z * 2.0, 0.8);
-    if (material.extra.w > 0.5) {
-        let nuv = select(buv, vec2<f32>(in.uv.x, 1.0 - in.uv.y), terrain);
+    if (material.extra.w > 0.5 && !terrain) {
+        let nuv = buv;
         let switched = material.extra.w > 1.5;
         let night = select(camera.sun_color.w, 1.0, switched);
         let nm = sample_nightmap(nuv).rgb * night * select(clamp(in.params2.y, 0.0, 1.0), 1.0, switched);
-        if (terrain) {
-            rgb = rgb + sf.albedo / PI * nm * enh.lights.y * 3.0 * pre;
-        } else if (switched) {
+        if (switched) {
             let shown = clamp(rgb / max(enh.exposure.y, 1e-3), vec3<f32>(0.0), vec3<f32>(1.0));
             emit = emit + nm * (vec3<f32>(1.0) - shown) * enh.exposure.y;
         } else {
