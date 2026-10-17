@@ -31,7 +31,7 @@ pub fn lighting(
 ) -> ::render::Lighting {
     let clouds = CLOUDS.load(Relaxed);
     let bright = w.brightness.clamp(0.0, 1.0);
-    let visibility_m = local.visibility_m * (0.25 + 0.75 * bright);
+    let visibility_m = local.visibility_m;
     let mut l = crate::lights::lighting_from(daylight, visibility_m);
     l.enhanced = ENHANCED.load(Relaxed);
     l.classic = CLASSIC.load(Relaxed);

@@ -512,14 +512,17 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
     let before = tool.edit.clone();
     let e = &mut tool.edit;
     ui.set_next_item_width(-150.0);
-    ui.slider_config("Visibility##cw", 50.0, 50_000.0)
-        .flags(imgui::SliderFlags::LOGARITHMIC)
-        .display_format("%.0f m")
-        .build(&mut e.visibility_m);
-    ui.set_next_item_width(-150.0);
-    ui.slider_config("Brightness##cw", 0.0, 1.5)
+    let mut clarity = ((e.visibility_m.max(50.0) / 50.0).ln() / 1000.0f32.ln()).clamp(0.0, 1.0);
+    if ui
+        .slider_config("Visibility & brightness##cw", 0.0, 1.0)
         .display_format("%.2f")
-        .build(&mut e.brightness);
+        .build(&mut clarity)
+    {
+        e.visibility_m = 50.0 * 1000.0f32.powf(clarity);
+        e.brightness = clarity.sqrt();
+    }
+    ui.same_line();
+    ui.text(format!("{:.0} m", e.visibility_m));
     ui.set_next_item_width(-150.0);
     ui.slider_config("Wind direction##cw", 0.0, 360.0)
         .display_format("%.0f deg")
