@@ -324,6 +324,40 @@ fn an_ambulance_passes_while_the_oncoming_traffic_waits_for_it() {
     assert_ne!(oncoming(12.0), ManeuverPhase::Passing);
 }
 
+fn queue_of_eight() -> Vec<BodyFootprint> {
+    let mut feet: Vec<_> = (0..8).map(|k| queued(10 + k, 0, 0.0, 60.0 + k as f32 * 6.5, 0.0)).collect();
+    feet.push(queued(30, 0, 0.0, 150.0, 0.0));
+    feet
+}
+
+/// A road drawn a little wider (lane middles 4.15 m apart, Ahlheim) is no divided
+/// carriageway to an ambulance, though an ordinary car still does not pass there (#126).
+#[test]
+fn an_ambulance_passes_on_a_road_drawn_a_little_wider() {
+    let mut net = two_way();
+    for p in &mut net.lanes[1].points {
+        p.x -= 0.65;
+    }
+    net.lanes[1].refresh();
+    net.link(1.5);
+    let s = 60.0 - 2.1 - 6.0 - 3.5;
+    let (d, _) = plan_behind_queue(&net, ambulance(s), queue_of_eight(), 6.0, false);
+    assert_eq!(d.phase, ManeuverPhase::Passing, "{d:?}");
+    assert_ne!(plan(&net, &[], &|_, _| true, false).phase, ManeuverPhase::Passing);
+}
+
+/// An ambulance that waits at a give-way line beyond the queue in front of it (`yielding`)
+/// still passes the queue.
+#[test]
+fn an_ambulance_waiting_at_a_junction_beyond_the_queue_still_passes_it() {
+    let net = two_way();
+    let s = 60.0 - 2.1 - 6.0 - 3.5;
+    let mut amb = ambulance(s);
+    amb.yielding = true;
+    let (d, _) = plan_behind_queue(&net, amb, queue_of_eight(), 6.0, false);
+    assert_eq!(d.phase, ManeuverPhase::Passing, "{d:?}");
+}
+
 /// A road north through a crossing object (y 100..120, crossed at y 110 by a path of the
 /// same object), one lane each way; `exit_east`: the way across turns east instead.
 /// Lanes: 0 approach, 1 junction, 2 exit; 3/4/5 the oncoming lanes; 6 the crossing path.

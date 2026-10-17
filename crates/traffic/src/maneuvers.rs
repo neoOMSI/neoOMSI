@@ -1057,7 +1057,9 @@ impl ManeuverCoordinator {
             || actor.change.is_some()
             || (actor.stopped < settle && !rolling)
             || !input.lead_standing
-            || actor.yielding
+            // (an emergency vehicle waiting at a junction beyond the queue still passes it;
+            // `emergency_queue` decides whether it may go across)
+            || (actor.yielding && !input.priority_pass)
             || actor.at_stop
             || scene.time < state.pass_retry
         {
@@ -1111,7 +1113,7 @@ impl ManeuverCoordinator {
         };
         // A geometrically parallel oncoming path may be across a central island. Its
         // existence does not make the gap between the carriageways a passing lane (#126).
-        if split_carriageway(side, lane.width, net.lanes[opp].width) {
+        if split_carriageway(side, lane.width, net.lanes[opp].width, input.priority_pass) {
             return None;
         }
         if !(2.3..=5.5).contains(&side) {
@@ -1209,7 +1211,7 @@ impl ManeuverCoordinator {
         let clear_d = probe.clear_at(actor.half_width);
         // The oncoming lane has to lie right beside this one for as long as the car is out
         // there: an island or hatched area that starts after the pull-out is no road either.
-        if !passing_corridor(net, &way, clear_d + actor.front, through.is_some()) {
+        if !passing_corridor(net, &way, clear_d + actor.front, through.is_some(), input.priority_pass) {
             // (the road does not change: a car stuck in a queue need not look again at once)
             state.pass_retry = scene.time + 1.0;
             return None;
@@ -2016,7 +2018,7 @@ fn emergency_can_pass_here(net: &Network, actor: &ManeuverActor) -> bool {
         return false;
     }
     net.opposite(actor.lane, actor.s.min(lane.length())).is_some_and(|(opp, _, side)| {
-        (2.3..=5.5).contains(&side) && !split_carriageway(side, lane.width, net.lanes[opp].width)
+        (2.3..=5.5).contains(&side) && !split_carriageway(side, lane.width, net.lanes[opp].width, true)
     })
 }
 
@@ -2050,9 +2052,11 @@ const EMERGENCY_THROUGH_TURN: f32 = 25.0;
 /// Is there a strip (an island, a median) between two opposing lanes whose centres lie
 /// `side` metres apart? Paths are often authored narrower than the lane painted on the road
 /// (2 m paths 3.2 m apart on an ordinary two-lane street), so a lane counts at least
-/// `MIN_LANE_WIDTH` wide; the 0.6 m tolerance is provisional.
-fn split_carriageway(side: f32, width: f32, other: f32) -> bool {
-    side > (width.max(MIN_LANE_WIDTH) + other.max(MIN_LANE_WIDTH)) * 0.5 + 0.6
+/// `MIN_LANE_WIDTH` wide; the 0.6 m tolerance is provisional. An `emergency` vehicle allows
+/// 1.2 m: a road drawn a little wider is no island to it (the sweep still meets a kerb).
+fn split_carriageway(side: f32, width: f32, other: f32, emergency: bool) -> bool {
+    let tolerance = if emergency { 1.2 } else { 0.6 };
+    side > (width.max(MIN_LANE_WIDTH) + other.max(MIN_LANE_WIDTH)) * 0.5 + tolerance
 }
 
 /// The narrowest lane (m) a passing check assumes, whatever width the path was given.
@@ -2061,7 +2065,7 @@ const MIN_LANE_WIDTH: f32 = 3.0;
 /// Is the road a single lane each way with the oncoming lane directly beside it, from the
 /// actor origin to `distance` metres along `way`? Separate carriageways (an island, a median,
 /// a hatched area between the lanes) are no passing room (#126).
-fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_junction: bool) -> bool {
+fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_junction: bool, emergency: bool) -> bool {
     let mut d = 0.0f32;
     loop {
         let Some((lane, u)) = way_locate(net, way, d.min(distance)) else { return false };
@@ -2078,7 +2082,7 @@ fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_juncti
             return false;
         }
         let Some((opp, _, side)) = net.opposite(lane, u.min(l.length())) else { return false };
-        if !(2.3..=5.5).contains(&side) || split_carriageway(side, l.width, net.lanes[opp].width) {
+        if !(2.3..=5.5).contains(&side) || split_carriageway(side, l.width, net.lanes[opp].width, emergency) {
             return false;
         }
         if d >= distance {
