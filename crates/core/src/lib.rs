@@ -431,9 +431,14 @@ pub(crate) fn make_app(
         None
     };
     lan_mods::remove_stale();
+    if args.lan_join.is_some() && lan.as_ref().is_none_or(|l| l.welcome.is_none()) {
+        let message = lan.as_ref().and_then(|l| l.rejected.as_deref())
+            .unwrap_or("The host did not answer in time. Check the session code and try again.");
+        anyhow::bail!("Could not join session: {message}");
+    }
     if let Some(l) = lan.as_mut() {
         lan::share_mods(&mut args, l);
-        lan::take_host_map(&mut args, l);
+        lan::take_host_map(&mut args, l).map_err(|e| anyhow::anyhow!("Could not join session: {e}"))?;
     }
     if let (Some(cfg), Some(l)) = (server_cfg.as_ref(), lan.as_ref()) {
         lan::open_public_gateway(l, server::info_of(cfg), cfg.web_port, cfg.tunnel);
@@ -466,6 +471,9 @@ pub(crate) fn make_app(
     }
     let mut lan_game = lan::LanGame::default();
     if args.export_glb.is_none() && args.lan_join.is_some() {
+        if let Some(l) = lan.as_mut() {
+            lan::adopt_host_world(&mut args, l, &mut lan_game);
+        }
         if let Some(t) = lan.as_ref().and_then(lan::host_time_now) {
             args.time = t;
         }
@@ -475,9 +483,6 @@ pub(crate) fn make_app(
         return run_export(&args, &out).map(|_| None);
     }
     if let Some(out) = args.offscreen.clone() {
-        if let Some(l) = lan.as_mut() {
-            lan::adopt_host_world(&mut args, l, &mut lan_game);
-        }
         let r = run_offscreen(&args, &out, lan, lan_game);
         lan_mods::clean_up();
         return r.map(|_| None);
@@ -682,6 +687,7 @@ pub(crate) fn make_app(
         worst_ms: 0.0,
         governor: (0.0, 0, 0.0),
         governor_low: 0,
+        governor_recovery: 0,
         governor_wait_prev: 0.0,
         hidden_frames: 0,
         exiting: false,

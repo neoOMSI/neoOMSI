@@ -36,8 +36,23 @@ pub(super) fn render_scale_step(fps: f32, slow_frame_wait_share: f32) -> f32 {
     // filled the card's memory with the old ones until the driver gave up)
     if fps < 40.0 && slow_frame_wait_share >= 0.4 {
         -0.15
-    } else if fps > 58.0 || slow_frame_wait_share < 0.2 {
+    } else if fps > 58.0 {
         0.15
+    } else {
+        0.0
+    }
+}
+
+pub(super) fn stable_render_scale_step(fps: f32, wait: f32, recovery: &mut u8) -> f32 {
+    let step = render_scale_step(fps, wait);
+    if step <= 0.0 {
+        *recovery = 0;
+        return step;
+    }
+    *recovery = recovery.saturating_add(1);
+    if *recovery >= 4 {
+        *recovery = 0;
+        step
     } else {
         0.0
     }
@@ -45,13 +60,25 @@ pub(super) fn render_scale_step(fps: f32, slow_frame_wait_share: f32) -> f32 {
 
 #[cfg(test)]
 mod governor_tests {
-    use super::render_scale_step;
+    use super::{render_scale_step, stable_render_scale_step};
 
     #[test]
     fn cpu_stutters_do_not_reduce_picture_quality() {
-        assert!(render_scale_step(35.0, 0.1) > 0.0);
+        assert_eq!(render_scale_step(35.0, 0.1), 0.0);
         assert!(render_scale_step(35.0, 0.6) < 0.0);
         assert!(render_scale_step(60.0, 0.6) > 0.0);
+    }
+
+    #[test]
+    fn scale_recovers_only_after_twenty_seconds_of_good_frames() {
+        let mut recovery = 0;
+        for _ in 0..3 {
+            assert_eq!(stable_render_scale_step(90.0, 0.0, &mut recovery), 0.0);
+        }
+        assert!(stable_render_scale_step(90.0, 0.0, &mut recovery) > 0.0);
+        assert_eq!(stable_render_scale_step(90.0, 0.0, &mut recovery), 0.0);
+        assert!(stable_render_scale_step(25.0, 0.7, &mut recovery) < 0.0);
+        assert_eq!(recovery, 0);
     }
 }
 

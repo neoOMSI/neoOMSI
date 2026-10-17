@@ -26,6 +26,27 @@ fn pose(x: f64) -> Pose {
     }
 }
 
+#[test]
+fn reordered_info_cannot_restore_an_old_destination() {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let from = socket.local_addr().unwrap();
+    let mut client = LanSession::join_addr(vec![from], None, "client", world("m")).unwrap();
+    let mut p = pose(0.0);
+    p.id = 2;
+    p.destination = "New destination".into();
+    let newer = versioned_info(&p.encode_info(), 0);
+    client.on_info(&newer.split('|').collect::<Vec<_>>(), from);
+    p.destination = "Old destination".into();
+    let older = versioned_info(&p.encode_info(), u16::MAX);
+    client.on_info(&older.split('|').collect::<Vec<_>>(), from);
+    client.on_info(&p.encode_info().split('|').collect::<Vec<_>>(), from);
+    assert_eq!(client.peers.get(&2).unwrap().pose.destination, "New destination");
+    p.destination = "Newest destination".into();
+    let newest = versioned_info(&p.encode_info(), 1);
+    client.on_info(&newest.split('|').collect::<Vec<_>>(), from);
+    assert_eq!(client.peers.get(&2).unwrap().pose.destination, "Newest destination");
+}
+
 fn world(map: &str) -> WorldInfo {
     WorldInfo {
         map: map.into(),
@@ -1108,6 +1129,17 @@ fn welcome_msg_for(session: u64, id: u32, nonce: u64) -> String {
     )
 }
 
+fn connect_to_fake_host(c: &mut LanSession, host: &UdpSocket, id: u32) {
+    let until = Instant::now() + Duration::from_secs(2);
+    while !c.connected && Instant::now() < until {
+        host.send_to(welcome_msg(id, c.nonce).as_bytes(), to_client(c))
+            .unwrap();
+        c.tick(0.01, &pose(0.0));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(c.connected, "the client did not receive the welcome");
+}
+
 fn state_of(id: u32, x: f64) -> Vec<u8> {
     let mut p = pose(x);
     p.id = id;
@@ -1193,8 +1225,7 @@ fn a_client_takes_a_limited_number_of_players() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(2, c.nonce).as_bytes(), to_client(&c))
-        .unwrap();
+    connect_to_fake_host(&mut c, &host, 2);
     for id in 3..(3 + 3 * MAX_PEERS as u32) {
         host.send_to(&state_of(id, id as f64), to_client(&c))
             .unwrap();
@@ -1239,11 +1270,11 @@ fn a_full_session_turns_the_next_player_away() {
             "HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||{:016X}",
             i + 1
         );
-        p.send_to(hello.as_bytes(), at).unwrap();
-        host.tick(0.01, &pose(0.0));
         // everybody gets in only once the ones before them have loaded (a state arrived)
         let mut id = None;
         for _ in 0..20 {
+            p.send_to(hello.as_bytes(), at).unwrap();
+            host.tick(0.01, &pose(0.0));
             match p.recv_from(&mut buf) {
                 Ok((n, _)) => {
                     let text = String::from_utf8_lossy(&buf[..n]).to_string();
@@ -1287,22 +1318,43 @@ fn too_many_loading_players_wait() {
     let mut host = LanSession::host(27900, "host", world("m"), true).unwrap();
     let at = SocketAddr::from((Ipv4Addr::LOCALHOST, host.local_addr().unwrap().port()));
     let players: Vec<UdpSocket> = (0..MAX_JOINING + 1).map(|_| raw()).collect();
-    for (i, p) in players.iter().enumerate() {
+    let mut buf = [0u8; 512];
+    for (i, p) in players.iter().take(MAX_JOINING).enumerate() {
         let hello = format!(
             "HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||{:016X}",
             i + 1
         );
-        p.send_to(hello.as_bytes(), at).unwrap();
-    }
-    for _ in 0..10 {
-        host.tick(0.01, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(5));
+        let mut welcomed = false;
+        for _ in 0..20 {
+            p.send_to(hello.as_bytes(), at).unwrap();
+            host.tick(0.01, &pose(0.0));
+            if let Ok((n, _)) = p.recv_from(&mut buf) {
+                if buf[..n].starts_with(b"WELCOME|") {
+                    welcomed = true;
+                    break;
+                }
+            }
+        }
+        assert!(welcomed, "loading player {i} was not welcomed");
     }
     assert_eq!(host.peer_count(), MAX_JOINING);
-    let mut buf = [0u8; 512];
+    let late = &players[MAX_JOINING];
+    let hello = format!(
+        "HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||{:016X}",
+        MAX_JOINING + 1
+    );
     let mut answers = Vec::new();
-    while let Ok((n, _)) = players[MAX_JOINING].recv_from(&mut buf) {
-        answers.push(String::from_utf8_lossy(&buf[..n]).to_string());
+    for _ in 0..20 {
+        late.send_to(hello.as_bytes(), at).unwrap();
+        host.tick(0.01, &pose(0.0));
+        if let Ok((n, _)) = late.recv_from(&mut buf) {
+            let answer = String::from_utf8_lossy(&buf[..n]).to_string();
+            let rejected = answer.starts_with("REJECT") && answer.contains("try again");
+            answers.push(answer);
+            if rejected {
+                break;
+            }
+        }
     }
     assert!(
         answers
@@ -1371,8 +1423,7 @@ fn idle_buses_send_less() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(4, c.nonce).as_bytes(), to_client(&c))
-        .unwrap();
+    connect_to_fake_host(&mut c, &host, 4);
     // (the simulated seconds pass quickly: the silent host must not time out meanwhile)
     host.set_nonblocking(true).unwrap();
     let still = pose(5.0);
@@ -1448,6 +1499,13 @@ fn players_without_a_bus_stay_in_the_session() {
         s.heartbeat = 0.2;
     }
     let none = Pose::default();
+    let until = Instant::now() + Duration::from_secs(3);
+    while !c.connected && Instant::now() < until {
+        host.tick(0.01, &none);
+        c.tick(0.01, &none);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(c.connected, "the client did not join the session");
     let t0 = Instant::now();
     let mut last = Instant::now();
     let mut id = None;

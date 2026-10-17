@@ -656,6 +656,12 @@ impl Navigator {
         for (k, sp) in markers.into_iter().rev() {
             marks::stop_pin(&mut pins, &mut self.atlas, sp, marks::Pin::of(k, n_stops), s * 1.05);
         }
+        for player in &f.players {
+            if let Some(p) = project(vpm, vp, rel(player.position)).filter(|p| map.contains(*p)) {
+                let a = (angle_diff(self.cam_heading, player.heading) as f32).to_radians();
+                marks::own_arrow(&mut pins, p, a, 8.0 * s, marks::AI_BUS, None);
+            }
+        }
         if let Some(bp) = project(vpm, vp, rel(f.bus)) {
             let a = (angle_diff(self.cam_heading, f.heading) as f32).to_radians();
             marks::own_arrow(&mut pins, bp, a, 9.0 * s, ACCENT, None);

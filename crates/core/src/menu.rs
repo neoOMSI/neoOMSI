@@ -93,6 +93,7 @@ pub type Probes = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Stri
 pub struct Menu {
     pub probes: Probes,
     pub join_pending: bool,
+    pub joining_world: bool,
     pub drv_open: bool,
     pub drv_names: Vec<String>,
     pub drv_new: Option<String>,
@@ -449,6 +450,7 @@ impl Menu {
             addr_focus: false,
             probes: Default::default(),
             join_pending: false,
+            joining_world: false,
             drv_open: false,
             drv_names: Vec::new(),
             drv_new: None,

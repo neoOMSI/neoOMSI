@@ -483,6 +483,7 @@ fn following(net: Network, lanes: Vec<usize>, progress: usize, s: f32) -> Naviga
 fn frame_at(bus: DVec3, heading: f64, stops: Vec<NavStop>) -> NavFrame<'static> {
     NavFrame {
         traffic: None,
+        players: Vec::new(),
         bus,
         heading,
         speed_kmh: 30.0,

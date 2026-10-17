@@ -53,8 +53,16 @@ pub struct NavStop {
     pub arrival: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct NavPlayer {
+    pub position: DVec3,
+    pub heading: f64,
+    pub name: String,
+}
+
 pub struct NavFrame<'a> {
     pub traffic: Option<&'a Traffic>,
+    pub players: Vec<NavPlayer>,
     pub bus: DVec3,
     pub heading: f64,
     pub speed_kmh: f32,
@@ -237,6 +245,7 @@ impl<'a> NavFrame<'a> {
     pub(crate) fn clone_ref(&self) -> NavFrame<'a> {
         NavFrame {
             traffic: self.traffic,
+            players: self.players.clone(),
             bus: self.bus,
             heading: self.heading,
             speed_kmh: self.speed_kmh,

@@ -73,6 +73,12 @@ impl App {
     }
 
     pub(crate) fn start_frame(&mut self, event_loop: &ActiveEventLoop, dt: f32) {
+        if self.menu.as_ref().is_some_and(|m| m.joining_world) {
+            if let Some(lan) = self.lan.as_mut() {
+                let pose = ::network::Pose { bus: self.args.bus.clone().unwrap_or_default(), ..Default::default() };
+                lan.keepalive(dt, &pose);
+            }
+        }
         // (not on the Options page: each change to the order would read every vehicle again)
         if let Some(m) = self.menu.as_mut().filter(|m| m.page != StartPage::Options) {
             m.reload_content(&self.args.root);

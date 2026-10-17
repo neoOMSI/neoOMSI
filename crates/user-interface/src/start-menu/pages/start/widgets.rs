@@ -149,7 +149,7 @@ impl Ui {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn start_button(&mut self, r: &Renderer, scene: &mut Scene, f: &Frame, rc: [f32; 4], label: &str, icon: Option<&str>, px: f32, id: usize, u: f32) {
+    pub(in super::super) fn start_button(&mut self, r: &Renderer, scene: &mut Scene, f: &Frame, rc: [f32; 4], label: &str, icon: Option<&str>, px: f32, id: usize, u: f32) {
         let bh = rc[3] - rc[1];
         let hv = self.ease((215, "go", id), if inside(rc, f.cursor) { 1.0 } else { 0.0 }, 10.0);
         self.text.rounded(r, scene, rc, bh * 0.5, mix(ACCENT, ACCENT_HOT, hv));

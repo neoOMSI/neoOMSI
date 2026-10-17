@@ -4,6 +4,7 @@ use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::assets::talk::{FRAME, RATE};
 
@@ -26,6 +27,23 @@ const BITRATE: i32 = 24_000;
 const PTT_TAIL: u32 = 5;
 const VAD_HOLD: u32 = 20;
 const MAX_QUEUE: usize = 50;
+
+#[derive(Default)]
+struct ErrorThrottle {
+    last: Option<Instant>,
+    suppressed: u32,
+}
+
+impl ErrorThrottle {
+    fn record(&mut self, now: Instant) -> Option<u32> {
+        if self.last.is_some_and(|last| now.saturating_duration_since(last) < Duration::from_secs(10)) {
+            self.suppressed = self.suppressed.saturating_add(1);
+            return None;
+        }
+        self.last = Some(now);
+        Some(std::mem::take(&mut self.suppressed))
+    }
+}
 
 struct Shared {
     transmit: AtomicU8,
@@ -252,11 +270,22 @@ impl Mic {
         });
         let chain = Chain::new(shared.clone(), cfg.sample_rate(), cfg.channels() as usize)?;
         let lost = shared.clone();
+        let mut errors = ErrorThrottle::default();
         let on_error = move |e: cpal::Error| {
             if e.kind() == cpal::ErrorKind::DeviceNotAvailable {
                 lost.lost.store(true, Ordering::Relaxed);
             }
-            log::warn!("microphone: {e}");
+            if e.kind() != cpal::ErrorKind::Xrun {
+                log::warn!("microphone: {e}");
+                return;
+            }
+            if let Some(suppressed) = errors.record(Instant::now()) {
+                if suppressed == 0 {
+                    log::warn!("microphone: {e}");
+                } else {
+                    log::warn!("microphone: {e} ({suppressed} similar errors suppressed)");
+                }
+            }
         };
         use cpal::SampleFormat as F;
         let stream = match cfg.sample_format() {
@@ -332,6 +361,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn microphone_errors_are_rate_limited_and_counted() {
+        let mut throttle = ErrorThrottle::default();
+        let now = Instant::now();
+        assert_eq!(throttle.record(now), Some(0));
+        assert_eq!(throttle.record(now + Duration::from_secs(1)), None);
+        assert_eq!(throttle.record(now + Duration::from_secs(2)), None);
+        assert_eq!(throttle.record(now + Duration::from_secs(10)), Some(2));
+    }
 
     fn chain() -> Chain {
         let shared = Arc::new(Shared {

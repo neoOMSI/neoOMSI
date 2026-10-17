@@ -143,7 +143,7 @@ impl App {
                     && ::legacy_config::env::var_os("OMSI_FIXED_SCALE").is_none();
                 if let (Some(r), true) = (self.renderer.as_mut(), free) {
                     let s = r.dynamic_scale();
-                    let step = render_scale_step(fps, wait_share);
+                    let step = stable_render_scale_step(fps, wait_share, &mut self.governor_recovery);
                     r.set_dynamic_scale(s + step);
                     if (r.dynamic_scale() - s).abs() > 1e-3 {
                         log::info!(

@@ -510,6 +510,39 @@ fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
+fn peek_http_head(stream: &TcpStream, head: &mut [u8]) -> Result<usize, String> {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let n = stream.peek(head).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("connection closed before the HTTP header".into());
+        }
+        if head[..n].windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            return Ok(n);
+        }
+        if n == head.len() || Instant::now() >= until {
+            return Err("HTTP header too large or incomplete".into());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn read_http_head(stream: &mut impl Read, head: &mut [u8]) -> Result<Vec<u8>, String> {
+    let mut request = Vec::new();
+    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+        if request.len() >= head.len() {
+            return Err("HTTP header too large".into());
+        }
+        let limit = head.len() - request.len();
+        let n = stream.read(&mut head[..limit]).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("connection closed before the HTTP header".into());
+        }
+        request.extend_from_slice(&head[..n]);
+    }
+    Ok(request)
+}
+
 /// Compare two secrets in a time that does not tell how much of them matched.
 fn same_secret(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
@@ -604,19 +637,18 @@ fn serve(
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| e.to_string())?;
-    let mut head = [0u8; 2048];
-    let n = stream.peek(&mut head).map_err(|e| e.to_string())?;
+    let mut head = [0u8; 8192];
+    let n = peek_http_head(&stream, &mut head)?;
     let req = String::from_utf8_lossy(&head[..n]).to_string();
     let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
     let upgrade = req.to_ascii_lowercase().contains("upgrade: websocket");
     if !upgrade {
         let mut s = stream;
         // (the request is read off the socket before the answer: some proxies wait)
-        let got = s.read(&mut head).unwrap_or(0);
-        let mut request = head[..got].to_vec();
+        let mut request = read_http_head(&mut s, &mut head)?;
+        read_body(&mut s, &mut request);
         let (status, ctype, body): (&str, &str, Vec<u8>) = match path.as_str() {
             "/admin" => {
-                read_body(&mut s, &mut request);
                 let (status, text) = local_admin(&request, peer, info);
                 (status, "text/plain; charset=utf-8", text.into_bytes())
             }
@@ -669,6 +701,10 @@ fn serve(
             "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
             body.len()
         );
+        // Let queued response data drain before closing the connection.
+        socket2::SockRef::from(&s)
+            .set_linger(Some(Duration::from_secs(5)))
+            .map_err(|e| e.to_string())?;
         s.write_all(hdr.as_bytes()).map_err(|e| e.to_string())?;
         s.write_all(&body).map_err(|e| e.to_string())?;
         return Ok(());
@@ -994,6 +1030,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn http_header_can_arrive_in_fragments() {
+        struct Fragments<'a>(&'a [u8]);
+        impl Read for Fragments<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.0.len().min(buf.len()).min(3);
+                buf[..n].copy_from_slice(&self.0[..n]);
+                self.0 = &self.0[n..];
+                Ok(n)
+            }
+        }
+        let expected = b"GET /players HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let mut source = Fragments(expected);
+        let mut buf = [0u8; 128];
+        assert_eq!(read_http_head(&mut source, &mut buf).unwrap(), expected);
+    }
+
+    #[test]
     fn urls() {
         assert_eq!(
             ws_url("https://abc.trycloudflare.com").as_deref(),
@@ -1217,20 +1270,24 @@ mod tests {
         // the admin door over a real connection: a body sent after the head is read too
         gw.info.lock().unwrap().local_admin_password = "pw".into();
         let mut s = TcpStream::connect(gw.addr).unwrap();
-        s.write_all(b"POST /admin HTTP/1.1\r\nHost: x\r\nX-Admin-Password: pw\r\nContent-Length: 11\r\n\r\n").unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        s.write_all(b"POST /ad").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        s.write_all(b"min HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Admin-Password: pw\r\nContent-Length: 11\r\n\r\n").unwrap();
         std::thread::sleep(Duration::from_millis(50));
         s.write_all(b"say hello\r\n").unwrap();
         let mut r = String::new();
-        let _ = s.read_to_string(&mut r);
+        s.read_to_string(&mut r).expect("read admin response");
         assert!(r.starts_with("HTTP/1.1 202"), "{r}");
         assert_eq!(gw.info.lock().unwrap().local_admin_queue, ["say hello"]);
         // the players' positions only when the server shares them
         let get = |path: &str| {
             let mut s = TcpStream::connect(gw.addr).unwrap();
-            s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes())
+            s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").as_bytes())
                 .unwrap();
             let mut r = String::new();
-            let _ = s.read_to_string(&mut r);
+            s.read_to_string(&mut r).expect("read players response");
             r
         };
         assert!(get("/players").starts_with("HTTP/1.1 404"));

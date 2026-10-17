@@ -986,15 +986,15 @@ impl Pose {
         // the display texts get what room is left in one datagram (long vehicle and figure
         // paths and a destination in another alphabet made an INFO too long to be taken in:
         // the others never learnt which bus the player drove)
-        let room = MAX_DATAGRAM.saturating_sub(head.len() + figure.len() + 1);
+        let ibis = encode_ibis(self.hof, &self.ibis);
+        let room = MAX_DATAGRAM.saturating_sub(head.len() + figure.len() + ibis.len() + 10);
         let info = format!(
             "{head}{}|{figure}",
             encode_texts(&self.texts, MAX_TEXTS, MAX_TEXT_LEN, room)
         );
         // the `[matl_freetex]` pictures in what room is left (an older game reads the fields
         // it knows and passes the rest by), then the IBIS values the matrix is drawn from
-        let ibis = encode_ibis(self.hof, &self.ibis);
-        let room = MAX_DATAGRAM.saturating_sub(info.len() + ibis.len() + 2);
+        let room = MAX_DATAGRAM.saturating_sub(info.len() + ibis.len() + 10);
         let info = format!(
             "{info}|{}",
             encode_texts(&self.freetex, MAX_FREETEX, MAX_FREETEX_LEN, room)
@@ -1119,6 +1119,11 @@ impl Pose {
     }
 }
 
+fn versioned_info(info: &str, seq: u16) -> String {
+    let separator = if info.split('|').count() == 15 { "||" } else { "|" };
+    format!("{info}{separator}{seq:04X}")
+}
+
 /// Where a player is on the ground: on foot, or in their bus.
 fn spot(pose: &Pose, vehicle: bool) -> Option<(f64, f64)> {
     match pose.walker {
@@ -1142,7 +1147,7 @@ fn finite_or(v: f32, or: f32) -> f32 {
 /// Text from the network or for it: no field separators or control characters, no
 /// surrounding blanks, at most `max` characters.
 /// Display texts at most (and characters each) an `INFO` carries.
-pub const MAX_TEXTS: usize = 12;
+pub const MAX_TEXTS: usize = 24;
 const MAX_TEXT_LEN: usize = 64;
 pub const MAX_IBIS: usize = 16;
 const IBIS_RANGE: f32 = 1.0e6;
@@ -1386,6 +1391,7 @@ pub struct Peer {
     /// An INFO has arrived: `pose.bus` and the rest are known.
     pub has_info: bool,
     last_seq: u16,
+    last_info_seq: Option<u16>,
     state_at: Instant,
     states: Bucket,
     messages: Bucket,
@@ -1413,6 +1419,7 @@ impl Peer {
             has_pose: false,
             has_info: false,
             last_seq: 0,
+            last_info_seq: None,
             state_at: now,
             states: Bucket::new(STATE_RATE.1),
             messages: Bucket::new(MESSAGE_RATE.1),
@@ -1509,6 +1516,7 @@ pub struct LanSession {
     events: Vec<LanEvent>,
     chat: Bucket,
     seq: u16,
+    info_seq: u16,
     /// The last state sent (without its header), and for how long it has not changed.
     last_state: Vec<u8>,
     unchanged: f32,
@@ -1621,6 +1629,7 @@ impl LanSession {
             events: Vec::new(),
             chat: Bucket::new(CHAT_RATE.1),
             seq: 0,
+            info_seq: 0,
             last_state: Vec::new(),
             unchanged: 0.0,
             last_info: String::new(),
@@ -2687,11 +2696,13 @@ impl LanSession {
         if (info != self.last_info && self.info_acc >= INFO_MIN_GAP) || self.info_acc >= INFO_EVERY
         {
             self.info_acc = 0.0;
+            self.info_seq = self.info_seq.wrapping_add(1);
+            let packet = versioned_info(&info, self.info_seq);
             match self.role {
-                Role::Host => self.broadcast(info.as_bytes(), None),
+                Role::Host => self.broadcast(packet.as_bytes(), None),
                 Role::Client => {
                     if let Some(h) = self.host {
-                        self.send(info.as_bytes(), h);
+                        self.send(packet.as_bytes(), h);
                     }
                 }
             }
@@ -3107,6 +3118,7 @@ impl LanSession {
             return;
         };
         let id = info.id;
+        let seq = parts.get(16).and_then(|s| u16::from_str_radix(s, 16).ok());
         if id == self.my_id || id == 0 {
             return;
         }
@@ -3127,6 +3139,12 @@ impl LanSession {
                         .or_insert_with(|| Peer::new(None, Pose::placeholder(id, "", "")))
                 }
             };
+            if let Some(last) = peer.last_info_seq {
+                if seq.is_none_or(|current| !wire::seq_newer(current, last)) {
+                    return;
+                }
+            }
+            peer.last_info_seq = seq;
             let mut info = info;
             // a player keeps the name it joined with unless it sends one
             if info.name.is_empty() {
@@ -3148,7 +3166,10 @@ impl LanSession {
             peer.pose.set_info(&info);
             peer.has_info = true;
             peer.last_seen = Instant::now();
-            relay = host.then(|| peer.pose.encode_info());
+            relay = host.then(|| {
+                let text = peer.pose.encode_info();
+                seq.map_or(text.clone(), |n| versioned_info(&text, n))
+            });
         }
         if let Some(text) = relay {
             // passed on as the host read it, not as it came

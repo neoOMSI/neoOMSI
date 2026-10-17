@@ -3195,6 +3195,7 @@ pub(crate) fn run_offscreen(
             let ui_units = ::config::get_string("ui", "units").unwrap_or_else(|| "metric".into());
             let frame = navigator::NavFrame {
                 traffic: traffic.as_ref(),
+                players: Vec::new(),
                 bus: p.vehicle.position,
                 heading: p.vehicle.heading,
                 speed_kmh: p.vehicle.physics.velocity_kmh(),

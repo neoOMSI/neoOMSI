@@ -185,6 +185,16 @@ impl App {
         let Some(m) = self.menu.as_ref() else {
             return;
         };
+        let joining_world = m.joining_world && join.is_none();
+        if joining_world {
+            let selected = m.maps.get(m.map).map(|x| x.1.replace('\\', "/"));
+            let host_map = self.lan.as_ref().and_then(|l| l.welcome.as_ref())
+                .map(|w| w.world.map.replace('\\', "/"));
+            if !matches!((selected, host_map), (Some(a), Some(b)) if a.eq_ignore_ascii_case(&b)) {
+                crate::fatal_dialog("Choose the host's map", "Select the host's map before joining the world.");
+                return;
+            }
+        }
         let host = m.host;
         self.args.map = m.maps.get(m.map).map(|x| x.1.clone()).unwrap_or(self.args.map.clone());
         self.args.bus = if m.on_foot { None } else { m.vehicles.get(m.vehicle).map(|x| x.1.clone()) };
@@ -254,11 +264,31 @@ impl App {
                 Err(e) => log::warn!("LAN: {e}"),
             }
         }
-        self.lan = None;
-        self.lan = crate::lan::start(&self.args);
+        if !joining_world {
+            self.lan = None;
+            self.lan = crate::lan::start(&self.args);
+        }
+        if self.args.lan_join.is_some() && self.lan.as_ref().is_none_or(|l| l.welcome.is_none()) {
+            let message = self.lan.as_ref().and_then(|l| l.rejected.as_deref())
+                .unwrap_or("The host did not answer in time. Check the session code and try again.");
+            crate::fatal_dialog("Could not join session", message);
+            self.lan = None;
+            self.args.lan_join = None;
+            return;
+        }
         if let Some(l) = self.lan.as_mut() {
-            crate::lan::share_mods(&mut self.args, l);
-            crate::lan::take_host_map(&mut self.args, l);
+            if !joining_world {
+                crate::lan::share_mods(&mut self.args, l);
+            }
+            if let Err(message) = crate::lan::take_host_map(&mut self.args, l) {
+                crate::fatal_dialog("Could not join session", &message);
+                self.lan = None;
+                self.args.lan_join = None;
+                return;
+            }
+            if l.role == ::network::Role::Client {
+                crate::lan::adopt_host_world(&mut self.args, l, &mut self.remotes);
+            }
             if l.role == ::network::Role::Host {
                 l.clock_speed = if ::config::get_bool("gameplay", "time_sync").unwrap_or(false) {
                     1.0
@@ -271,6 +301,26 @@ impl App {
             if let Some(t) = self.lan.as_ref().and_then(crate::lan::host_time_now) {
                 self.args.time = t;
             }
+        }
+        if self.args.lan_join.is_some() && !joining_world {
+            if let Some(m) = self.menu.as_mut() {
+                m.reload_content(&self.args.root);
+                let Some(index) = m.maps.iter().position(|(_, path)| path.eq_ignore_ascii_case(&self.args.map)) else {
+                    crate::fatal_dialog("Could not join session", "The host's map could not be shown in the map selector.");
+                    self.lan = None;
+                    self.args.lan_join = None;
+                    return;
+                };
+                m.map = index;
+                m.route = false;
+                m.entry = None;
+                m.joining_world = true;
+                m.host = false;
+                m.page = StartPage::Start;
+                m.open_sect(1);
+            }
+            crate::fatal_dialog("Connected", "Choose a starting point on the host's map, then select Drive.");
+            return;
         }
         self.menu = None;
         self.hud = None;

@@ -356,9 +356,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     let mut fonts_used: HashSet<String> = HashSet::new();
     let mut queue: Vec<(String, PathBuf)> = map_texts;
     queue.append(&mut text_todo);
-    let mut rounds = 0;
-    while !queue.is_empty() && rounds < 6 {
-        rounds += 1;
+    while !queue.is_empty() {
         let mut next: Vec<(String, PathBuf)> = Vec::new();
         for (rel, path) in std::mem::take(&mut queue) {
             if !scanned.insert(rel.to_lowercase()) {
@@ -371,6 +369,24 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                 .rsplit_once('/')
                 .map(|(d, _)| d.to_string())
                 .unwrap_or_default();
+            if rel.to_ascii_lowercase().ends_with(".sli") {
+                if let Ok(spline) = ::scenery::sli::Spline::load(&path) {
+                    let dir = path.parent().unwrap_or_else(|| Path::new(""));
+                    let dirs = crate::scene::texture_dirs(&args.root, dir);
+                    let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+                    for texture in spline.textures {
+                        let Some(path) = ::texture::find_texture(&texture.file, &dir_refs) else {
+                            continue;
+                        };
+                        let Some(rel) = content_relative(&path) else { continue };
+                        if refuse_path(&rel).is_none() {
+                            if let Some((_, source)) = ::mods::find_in_roots(&rel) {
+                                files.entry(rel.to_ascii_lowercase()).or_insert((rel, source));
+                            }
+                        }
+                    }
+                }
+            }
             // the fonts its text textures write with (`[texttexture]`: variable, font, …)
             let lines: Vec<&str> = text.lines().collect();
             for (i, l) in lines.iter().enumerate() {
@@ -398,7 +414,12 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     continue;
                 }
                 // a path from the root ("Sceneryobjects\\...") or from this file's folder
-                let candidates = [norm(t), norm(&format!("{here}/{t}"))];
+                let mut candidates = Vec::new();
+                if lower.ends_with(".o3d") || lower.ends_with(".x") {
+                    candidates.push(norm(&format!("{here}/model/{t}")));
+                }
+                candidates.push(norm(t));
+                candidates.push(norm(&format!("{here}/{t}")));
                 for c in candidates {
                     if c.split('/').count() < 2 {
                         continue;
@@ -1451,11 +1472,13 @@ mod tests {
         ));
         std::fs::create_dir_all(root.join("maps/Test")).unwrap();
         std::fs::create_dir_all(root.join("Sceneryobjects/Test")).unwrap();
+        std::fs::create_dir_all(root.join("Sceneryobjects/Test/model")).unwrap();
+        std::fs::create_dir_all(root.join("Splines/Test/texture")).unwrap();
         std::fs::create_dir_all(root.join("Vehicles/NotShared")).unwrap();
         std::fs::write(root.join("maps/Test/global.cfg"), "[name]\nTest\n").unwrap();
         std::fs::write(
             root.join("maps/Test/tile_0_0.map"),
-            "[object]\n0\nSceneryobjects\\Test\\object.sco\n",
+            "[object]\n0\nSceneryobjects\\Test\\object.sco\n[spline]\n0\nSplines\\Test\\road.sli\n",
         )
         .unwrap();
         std::fs::write(
@@ -1467,6 +1490,9 @@ mod tests {
             .unwrap();
         std::fs::write(root.join("Sceneryobjects/Test/model.cfg"), "[mesh]\nmissing.o3d\n")
             .unwrap();
+        std::fs::write(root.join("Sceneryobjects/Test/model/missing.o3d"), "mesh").unwrap();
+        std::fs::write(root.join("Splines/Test/road.sli"), "[texture]\nroad.bmp\n").unwrap();
+        std::fs::write(root.join("Splines/Test/texture/road.bmp"), "texture").unwrap();
         std::fs::write(root.join("Vehicles/NotShared/ai.bus"), "not a map resource\n").unwrap();
 
         ::mods::add_content_root(root.clone());
@@ -1482,6 +1508,9 @@ mod tests {
         assert!(paths.contains("maps/Test/tile_0_0.map"));
         assert!(paths.contains("Sceneryobjects/Test/object.sco"));
         assert!(paths.contains("Sceneryobjects/Test/model.cfg"));
+        assert!(paths.contains("Sceneryobjects/Test/model/missing.o3d"));
+        assert!(paths.contains("Splines/Test/road.sli"));
+        assert!(paths.contains("Splines/Test/texture/road.bmp"));
         assert!(!paths.iter().any(|path| path.starts_with("Vehicles/")));
     }
 }

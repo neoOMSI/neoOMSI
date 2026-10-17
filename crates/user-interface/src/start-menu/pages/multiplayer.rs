@@ -124,5 +124,9 @@ impl Ui {
 
         self.start.field = field;
         self.start.host_row = row;
+        let join_y = row[3] + 24.0 * u;
+        let join = [a[0], join_y, (a[0] + 240.0 * u).min(a[2]), join_y + 54.0 * u];
+        self.start_button(r, scene, f, join, "Join session", Some("login"), 20.0, 0, u);
+        self.start.go = join;
     }
 }

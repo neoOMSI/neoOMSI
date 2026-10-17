@@ -461,6 +461,14 @@ impl Navigator {
                 s,
             );
         }
+        for player in &f.players {
+            let p = to_screen(player.position);
+            if win.contains(p) && p.y > 50.0 * s {
+                marks::own_arrow(&mut ui, p, (player.heading as f32).to_radians(), 8.0 * s, marks::AI_BUS, None);
+                marks::halo_text(&mut ui, &mut self.atlas, &self.fonts, &player.name, 12.0 * s,
+                    Weight::Medium, p + Vec2::new(0.0, 13.0 * s), Align::Center, TEXT, s);
+            }
+        }
         marks::own_arrow(&mut ui, bus_at, (f.heading as f32).to_radians(), 9.5 * s, TEXT, Some(Color::rgba(0, 0, 0, 0.35)));
         let head = Rect::new(0.0, 0.0, w, if emb { 0.0 } else { 44.0 * s });
         let pad = 16.0 * s;

@@ -210,6 +210,7 @@ impl App {
                     let hud_offset = s.config.width as f32 / 3.0;
                     let frame = navigator::NavFrame {
                         traffic: self.traffic.as_ref(),
+                        players: crate::lan::navigator_players(self.lan.as_ref()),
                         bus: at,
                         heading,
                         speed_kmh: p.vehicle.physics.velocity_kmh(),

@@ -13,7 +13,7 @@ use winit::keyboard::KeyCode;
 
 pub const WELCOME_WAIT: Duration = Duration::from_secs(3);
 /// A host busy loading a heavy part of a big map can take longer than 3 s to answer.
-pub const HOST_ANSWER_WAIT: Duration = Duration::from_secs(8);
+pub const HOST_ANSWER_WAIT: Duration = Duration::from_secs(20);
 const GAP_ALONG: f64 = 3.0;
 const GAP_ACROSS: f64 = 1.0;
 const MAX_VEHICLE_FILE: u64 = 16 << 20;
@@ -517,6 +517,38 @@ pub struct LanGame {
     weather_seen: Option<String>,
     /// Retried only after a while: retrying every frame stalled a server on an unloadable bus.
     failed: hashbrown::HashMap<(u32, String), std::time::Instant>,
+    loading: hashbrown::HashMap<u32, RemoteLoad>,
+}
+
+type PreparedRemote = (
+    Arc<::simulation::VehicleType>,
+    bool,
+    Vec<(Arc<::simulation::VehicleType>, bool)>,
+);
+
+struct RemoteLoad {
+    bus: String,
+    result: std::sync::mpsc::Receiver<Option<PreparedRemote>>,
+}
+
+fn take_finished_loads(
+    loading: &mut hashbrown::HashMap<u32, RemoteLoad>,
+) -> hashbrown::HashMap<u32, (String, Option<PreparedRemote>)> {
+    let mut ready = hashbrown::HashMap::new();
+    loading.retain(|id, load| {
+        match load.result.try_recv() {
+            Ok(result) => {
+                ready.insert(*id, (load.bus.clone(), result));
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                ready.insert(*id, (load.bus.clone(), None));
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+        }
+    });
+    ready
 }
 
 pub struct Frame<'a> {
@@ -571,19 +603,25 @@ fn date_of(clock: &::simulation::SimClock) -> String {
 }
 
 pub fn player_name(args: &Args) -> String {
-    let given = args.lan_name.trim();
+    player_name_from(&args.lan_name, args.driver.as_deref(), &omsi_launcher_lib::load_config().profile)
+}
+
+fn player_name_from(given: &str, driver: Option<&str>, profile: &str) -> String {
+    let given = given.trim();
     if !given.is_empty() && given != "Driver" {
         return given.to_string();
     }
-    if let Some(stem) = args
-        .driver
-        .as_deref()
+    if let Some(stem) = driver
         .and_then(|d| Path::new(d).file_stem())
         .map(|s| s.to_string_lossy().to_string())
     {
         if !stem.trim().is_empty() && stem != "Driver" {
             return stem;
         }
+    }
+    let profile = profile.trim();
+    if !profile.is_empty() && profile != "Driver" {
+        return profile.to_string();
     }
     "Driver".into()
 }
@@ -597,6 +635,21 @@ pub fn world_info(args: &Args) -> ::network::WorldInfo {
         weather: args.weather.clone().unwrap_or_default().replace('\\', "/"),
         season: args.season.clone().unwrap_or_default(),
     }
+}
+
+pub fn navigator_players(lan: Option<&LanSession>) -> Vec<crate::navigator::NavPlayer> {
+    lan.into_iter().flat_map(|s| s.peers()).filter_map(|peer| {
+        if !peer.has_pose { return None; }
+        let pose = &peer.pose;
+        let (position, heading) = if let Some(w) = &pose.walker {
+            (DVec3::new(w.x, w.y, w.z), w.heading as f64)
+        } else if pose.has_vehicle() {
+            (DVec3::new(pose.x, pose.y, pose.z), pose.heading as f64)
+        } else {
+            return None;
+        };
+        Some(crate::navigator::NavPlayer { position, heading, name: pose.name.clone() })
+    }).collect()
 }
 
 struct WsPath {
@@ -964,8 +1017,8 @@ pub fn start(args: &Args) -> Option<LanSession> {
         match (&session.welcome, &session.rejected) {
             (Some(_), _) => log::info!("LAN: welcome after {:.2} s", t0.elapsed().as_secs_f32()),
             (None, Some(why)) => log::warn!("LAN: turned away: {why}"),
-            (None, None) => log::info!(
-                "LAN: no welcome within {:.0} s; the host's world is taken over when it comes",
+            (None, None) => log::warn!(
+                "LAN: no welcome within {:.0} s",
                 HOST_ANSWER_WAIT.as_secs_f32()
             ),
         }
@@ -1065,10 +1118,9 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            let (result, map) = worker
+            let (result, _) = worker
                 .join()
                 .unwrap_or_else(|_| (Err("the download stopped".into()), args.map.clone()));
-            args.map = map;
             match result {
                 Ok(r) => {
                     let text = if r.fetched > 0 {
@@ -1129,16 +1181,17 @@ pub fn answering_while<T>(
 
 /// Not left to the host's mod list: listing a big add-on map can outlast the joiner's
 /// wait, leaving the player alone on its own map.
-pub fn take_host_map(args: &mut Args, lan: &mut LanSession) {
+pub fn take_host_map(args: &mut Args, lan: &mut LanSession) -> Result<(), String> {
     if lan.role != Role::Client {
-        return;
+        return Ok(());
     }
     let Some(theirs) = lan
         .welcome
         .as_ref()
         .map(|w| w.world.map.trim().replace('\\', "/"))
     else {
-        return;
+        return Err(lan.rejected.clone().unwrap_or_else(||
+            "The host did not answer in time. Check the session code and try again.".into()));
     };
     // compared from `maps/` on: a whole path or an archive path is still the host's map,
     // and mistaking it for another map dropped the chosen line and tour
@@ -1149,14 +1202,13 @@ pub fn take_host_map(args: &mut Args, lan: &mut LanSession) {
             None => s,
         }
     };
-    if theirs.is_empty() || norm(&theirs) == norm(&args.map) {
-        return;
+    if crate::lan_mods::refuse_path(&theirs).is_some() || !theirs.to_ascii_lowercase().starts_with("maps/") {
+        return Err("The host sent an invalid map path.".into());
     }
-    if crate::lan_mods::refuse_path(&theirs).is_some() || !norm(&theirs).starts_with("maps/") {
-        return;
-    }
-    match ::mods::find_in_roots(&theirs) {
-        Some(_) => {
+    let installed = ::mods::find_in_roots(&theirs).is_some_and(|(_, path)| ::legacy_config::vfs::is_file(&path))
+        || ::legacy_config::vfs::is_file(&::mods::resolve_path(&args.root, &theirs));
+    if installed {
+        if norm(&theirs) != norm(&args.map) {
             log::info!(
                 "LAN: the session is on the host's map {theirs} (not {})",
                 args.map
@@ -1164,23 +1216,18 @@ pub fn take_host_map(args: &mut Args, lan: &mut LanSession) {
             args.map = theirs;
             // the entry point, depot file and tour chosen belonged to the other map
             args.entry = 0;
+            args.auto_entry = false;
             args.spawn = None;
             args.hof = None;
             args.line = None;
             args.tour = None;
             args.trip = None;
-            let mine = world_info(args);
-            lan.set_world(mine);
+            args.whole_tour = false;
         }
-        None => {
-            let line = format!(
-                "the host plays on {theirs}, which is not installed here - install that map to meet the others"
-            );
-            log::warn!("LAN: {line}");
-            if !lan.warnings.contains(&line) {
-                lan.warnings.push(line);
-            }
-        }
+        lan.set_world(world_info(args));
+        Ok(())
+    } else {
+        Err(format!("The host's map {theirs} is not available here. Install the map or check the map download and try again."))
     }
 }
 
@@ -2290,7 +2337,7 @@ fn remote_bus_file(args: &Args, bus: &str) -> Result<PathBuf, String> {
 fn remote_type(
     args: &Args,
     pose: &Pose,
-    player: Option<&Player>,
+    fallback: Option<Arc<::simulation::VehicleType>>,
 ) -> Option<(Arc<::simulation::VehicleType>, bool)> {
     let allowed = crate::server::SERVER_VEHICLES
         .get()
@@ -2317,8 +2364,8 @@ fn remote_type(
                 pose.id,
                 pose.bus
             );
-            if let Some(p) = player {
-                return Some((p.vehicle.ty.clone(), true));
+            if let Some(ty) = fallback {
+                return Some((ty, true));
             }
             let first = allowed.and_then(|l| l.first())?;
             let path = remote_bus_file(args, first).ok()?;
@@ -2329,18 +2376,51 @@ fn remote_type(
     }
 }
 
+fn prepare_remote(
+    args: &Args,
+    pose: &Pose,
+    fallback: Option<Arc<::simulation::VehicleType>>,
+) -> Option<PreparedRemote> {
+    let started = Instant::now();
+    let (ty, stand_in) = remote_type(args, pose, fallback)?;
+    let mut trailers = Vec::new();
+    let mut lead = ty.clone();
+    let mut lead_rev = false;
+    for _ in 0..8 {
+        let Some((path, rev)) = crate::spawn::next_coupled(&lead.def, lead_rev, true) else {
+            break;
+        };
+        match ::simulation::VehicleType::load(&args.root, &path) {
+            Ok(mut t) => {
+                t.follow_winding_of(&lead);
+                let t = Arc::new(t);
+                trailers.push((t.clone(), rev));
+                lead = t;
+                lead_rev = rev;
+            }
+            Err(e) => {
+                log::warn!("LAN: rear section {}: {e}", path.display());
+                break;
+            }
+        }
+    }
+    log::info!("LAN: prepared player {}'s vehicle in {:.0} ms", pose.id, started.elapsed().as_secs_f64() * 1000.0);
+    Some((ty, stand_in, trailers))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn new_remote(
     game: &mut LanGame,
     args: &Args,
     pose: &Pose,
-    player: Option<&Player>,
+    prepared: PreparedRemote,
     world: &World,
     r: &Renderer,
     scene: &mut Scene,
     clock: Option<&::simulation::SimClock>,
 ) -> Option<RemoteVehicle> {
-    let (ty, stand_in) = remote_type(args, pose, player)?;
+    let started = Instant::now();
+    let (ty, stand_in, trailers) = prepared;
     let mut host =
         ::simulation::VehicleHost::new(clock.cloned().unwrap_or_else(|| crate::start_clock(args)));
     host.font_lib = Some(world.fonts.clone());
@@ -2366,32 +2446,11 @@ fn new_remote(
     vehicle.apply_paint_vars(scheme);
     let render = world.add_vehicle_shared(r, scene, &ty, scheme, None);
     let mut trailer_renders = Vec::new();
-    let mut lead = ty.clone();
-    let mut lead_rev = false;
-    for _ in 0..8 {
-        let Some((path, rev)) = crate::spawn::next_coupled(&lead.def, lead_rev, true) else {
-            break;
-        };
-        match ::simulation::VehicleType::load(&args.root, &path) {
-            Ok(mut t) => {
-                t.follow_winding_of(&lead);
-                let t = Arc::new(t);
-                trailer_renders.push(world.add_vehicle_shared(
-                    r,
-                    scene,
-                    &t,
-                    scheme.filter(|i| *i < t.paint_schemes.len()),
-                    Some(&render),
-                ));
-                vehicle.attach_trailer_ex(t.clone(), rev);
-                lead = t;
-                lead_rev = rev;
-            }
-            Err(e) => {
-                log::warn!("LAN: rear section {}: {e}", path.display());
-                break;
-            }
-        }
+    for (t, rev) in trailers {
+        trailer_renders.push(world.add_vehicle_shared(
+            r, scene, &t, scheme.filter(|i| *i < t.paint_schemes.len()), Some(&render),
+        ));
+        vehicle.attach_trailer_ex(t, rev);
     }
     // After attaching the rear sections: their variables are part of the table.
     let table = sync_table(game, &vehicle);
@@ -2403,6 +2462,7 @@ fn new_remote(
         .map(|q| (DVec3::new(q.x, q.y, q.z), q.heading as f64))
         .collect();
     let matched = pose.table == table.hash;
+    log::info!("LAN: instantiated player {}'s vehicle in {:.0} ms", pose.id, started.elapsed().as_secs_f64() * 1000.0);
     log::info!(
         "LAN: drawing player {} '{}' in {}{} at ({:.1}, {:.1}) heading {:.0}{}; {}",
         pose.id,
@@ -3079,6 +3139,7 @@ pub fn tick(
             release(r, scene, w, frame.audio, rv);
         }
     }
+    let mut ready = take_finished_loads(&mut game.loading);
     let poses: Vec<Pose> = lan
         .peers()
         .filter(|p| p.has_pose && p.has_info && p.pose.has_vehicle())
@@ -3104,17 +3165,31 @@ pub fn tick(
             {
                 continue;
             }
-            let Some(rv) = new_remote(
-                game,
-                args,
-                &pose,
-                player.as_deref(),
-                w,
-                r,
-                scene,
-                frame.clock,
-            ) else {
-                game.failed.insert(key, std::time::Instant::now());
+            let prepared = ready.remove(&pose.id).filter(|(bus, _)| *bus == pose.bus);
+            let Some((_, result)) = prepared else {
+                if !game.loading.contains_key(&pose.id) && game.loading.len() < 2 {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let args = args.clone();
+                    let pending_pose = pose.clone();
+                    let fallback = player.as_deref().map(|p| p.vehicle.ty.clone());
+                    match std::thread::Builder::new().name("lan-vehicle-load".into()).spawn(move || {
+                        let _ = tx.send(prepare_remote(&args, &pending_pose, fallback));
+                    }) {
+                        Ok(_) => { game.loading.insert(pose.id, RemoteLoad { bus: pose.bus.clone(), result: rx }); }
+                        Err(e) => {
+                            log::warn!("LAN: cannot start vehicle loader: {e}");
+                            game.failed.insert(key, Instant::now());
+                        }
+                    }
+                }
+                continue;
+            };
+            let Some(prepared) = result else {
+                game.failed.insert(key, Instant::now());
+                continue;
+            };
+            let Some(rv) = new_remote(game, args, &pose, prepared, w, r, scene, frame.clock) else {
+                game.failed.insert(key, Instant::now());
                 continue;
             };
             game.failed.remove(&key);
@@ -3516,6 +3591,70 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_loads_do_not_block_and_disconnected_workers_are_released() {
+        let (pending_tx, pending_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let (lost_tx, lost_rx) = std::sync::mpsc::channel();
+        let mut loads = hashbrown::HashMap::new();
+        for (id, bus, result) in [(1, "pending.bus", pending_rx), (2, "done.bus", done_rx), (3, "lost.bus", lost_rx)] {
+            loads.insert(id, RemoteLoad { bus: bus.into(), result });
+        }
+        done_tx.send(None).unwrap();
+        drop(lost_tx);
+        let ready = take_finished_loads(&mut loads);
+        assert_eq!(ready.get(&2).unwrap().0, "done.bus");
+        assert!(ready.get(&3).unwrap().1.is_none());
+        assert_eq!(loads.len(), 1);
+        assert!(loads.contains_key(&1));
+        drop(pending_tx);
+        assert!(take_finished_loads(&mut loads).contains_key(&1));
+        assert!(loads.is_empty());
+    }
+
+    #[test]
+    fn multiplayer_uses_the_selected_driver_profile() {
+        assert_eq!(player_name_from("Driver", None, " Alice "), "Alice");
+        assert_eq!(player_name_from("Custom", Some("Old.drv"), "Alice"), "Custom");
+        assert_eq!(player_name_from("Driver", Some("Old.drv"), "Alice"), "Old");
+        assert_eq!(player_name_from("Driver", None, ""), "Driver");
+    }
+
+    #[test]
+    fn joining_loads_the_hosts_map_or_fails_before_loading_another() {
+        use clap::Parser;
+        let root = std::env::temp_dir().join(format!("neoomsi-join-map-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = "maps/CodexJoinTest/global.cfg";
+        std::fs::create_dir_all(root.join("maps/CodexJoinTest")).unwrap();
+        std::fs::write(root.join(path), b"test").unwrap();
+        let mut args = Args::try_parse_from(["test"]).unwrap();
+        args.root = root.clone();
+        args.map = "maps/Yorkshire/global.cfg".into();
+        args.line = Some("old line".into());
+        args.auto_entry = true;
+        let mut lan = LanSession::join_addr(vec![], None, "guest", world_info(&args)).unwrap();
+        assert!(take_host_map(&mut args, &mut lan).is_err());
+        assert_eq!(args.map, "maps/Yorkshire/global.cfg");
+        lan.welcome = Some(::network::Welcome {
+            host_name: "host".into(), session: 1,
+            world: ::network::WorldInfo { map: path.into(), ..Default::default() },
+            at: Instant::now(), players: 1,
+        });
+        take_host_map(&mut args, &mut lan).unwrap();
+        assert_eq!(args.map, path);
+        assert_eq!(lan.world.map, path);
+        assert!(args.line.is_none());
+        assert!(!args.auto_entry);
+        lan.welcome.as_mut().unwrap().world.map = "maps/Missing/global.cfg".into();
+        assert!(take_host_map(&mut args, &mut lan).unwrap_err().contains("not available"));
+        assert_eq!(args.map, path);
+        std::fs::remove_file(root.join(path)).unwrap();
+        std::fs::remove_dir(root.join("maps/CodexJoinTest")).unwrap();
+        std::fs::remove_dir(root.join("maps")).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
 
     /// Visual values outrank sound ones in the capped list: the Agora L's sounds crowded out
     /// its roller blind's scroll.

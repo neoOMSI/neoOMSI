@@ -254,6 +254,7 @@ pub(crate) struct App {
     pub(crate) worst_ms: f32,
     pub(crate) governor: (f32, u32, f32),
     pub(crate) governor_low: u32,
+    pub(crate) governor_recovery: u8,
     pub(crate) governor_wait_prev: f64,
     pub(crate) hidden_frames: u32,
     pub(crate) exiting: bool,
