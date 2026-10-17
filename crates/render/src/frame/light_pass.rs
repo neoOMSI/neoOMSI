@@ -337,13 +337,12 @@ impl Renderer {
         })
     }
 
-    pub(crate) fn prepare_coronas(&self, scene: &mut Scene, night: f32, enhanced: bool) {
+    pub(crate) fn prepare_coronas(&self, scene: &mut Scene, night: f32) {
         let ro = scene.render_origin;
         let mut order = std::mem::take(&mut scene.corona_order);
         order.clear();
         for (i, c) in scene.coronas.iter().enumerate() {
-            // no OMSI star in Enhanced: its glow filter does the glare (#365)
-            if c.brightness > 0.001 && !(enhanced && c.flags & 8 != 0) {
+            if c.brightness > 0.001 {
                 order.push(i);
             }
         }

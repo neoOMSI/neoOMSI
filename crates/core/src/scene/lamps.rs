@@ -176,6 +176,23 @@ pub fn model_light_sources(model: &Model) -> Vec<(usize, glam::Vec3, glam::Vec3)
     out
 }
 
+struct EnhLight<'a> {
+    pos: [f32; 3],
+    dir: [f32; 3],
+    up: [f32; 3],
+    omni: bool,
+    rotating: i32,
+    color: [f32; 3],
+    size: f32,
+    cone_inner: f32,
+    cone_outer: f32,
+    variable: &'a str,
+    z_offset: f32,
+    effect: u8,
+    cone: bool,
+    bitmap: Option<&'a str>,
+}
+
 pub fn model_lights_owned(
     model: &Model,
     mesh_transforms: &dyn Fn(usize) -> Mat4,
@@ -202,21 +219,30 @@ pub fn model_lights_owned(
         for l in &md.light_enh {
             owners.resize(out.len(), seq.wrapping_sub(1));
             seq += 1;
-            let b = value_of(&l.variable).clamp(0.0, 1.0);
-            if b <= 0.0 {
+            // after the variable: factor, z offset, effect bits, time constant
+            let factor = l.values.first().copied().unwrap_or(0.0);
+            let b =
+                (value_of(&l.variable) * if factor > 0.0 { factor } else { 1.0 }).clamp(0.0, 2.0);
+            if !(b > 0.0) || !b.is_finite() {
                 continue;
             }
-            let p = xf.transform_point3(glam::Vec3::from(l.pos)).as_dvec3() + pos;
-            out.push(::render::Corona {
-                position: p,
-                size: (l.size * 0.5).max(0.0),
-                color: [l.color[0] / 255.0, l.color[1] / 255.0, l.color[2] / 255.0],
-                brightness: b,
-                direction: glam::Vec3::ZERO,
-                cone_cos: -1.0,
-                texture: crate::lights::glow_texture_id(),
-                ..Default::default()
-            });
+            let light = EnhLight {
+                pos: l.pos,
+                dir: [0.0; 3],
+                up: [0.0; 3],
+                omni: true,
+                rotating: 2,
+                color: l.color,
+                size: l.size,
+                cone_inner: 0.0,
+                cone_outer: 0.0,
+                variable: &l.variable,
+                z_offset: l.values.get(1).copied().unwrap_or(0.0),
+                effect: l.values.get(2).map_or(0, |e| (*e as i32).clamp(0, 7) as u8),
+                cone: false,
+                bitmap: l.texture.as_deref(),
+            };
+            push_light_sprites(&mut out, &light, b, &xf, pos, &model_dir);
         }
         for (k, l) in md.light_enh_2.iter().enumerate() {
             owners.resize(out.len(), seq.wrapping_sub(1));
@@ -229,119 +255,137 @@ pub fn model_lights_owned(
             if !(b > 0.0) || !b.is_finite() {
                 continue;
             }
-            let p = xf.transform_point3(glam::Vec3::from(l.pos)).as_dvec3() + pos;
-            let dir = if l.omni {
-                glam::Vec3::ZERO
-            } else {
-                xf.transform_vector3(glam::Vec3::from(l.dir))
-                    .normalize_or_zero()
+            let light = EnhLight {
+                pos: l.pos,
+                dir: l.dir,
+                up: l.up,
+                omni: l.omni,
+                rotating: l.rotating,
+                color: l.color,
+                size: l.size,
+                cone_inner: l.cone_inner,
+                cone_outer: l.cone_outer,
+                variable: &l.variable,
+                z_offset: l.z_offset,
+                effect: l
+                    .values
+                    .first()
+                    .map(|v| ::legacy_config::parse_f32(v) as i32)
+                    .unwrap_or(0)
+                    .clamp(0, 7) as u8,
+                cone: l.cone,
+                bitmap: l.bitmap.as_deref(),
             };
-            let up = xf
-                .transform_vector3(glam::Vec3::from(l.up))
-                .normalize_or(glam::Vec3::Z);
-            let half_cos = |deg: f32| (deg.max(1.0) * 0.5).min(180.0).to_radians().cos();
-            let (outer, inner) = (
-                l.cone_outer.max(l.cone_inner),
-                l.cone_inner.min(l.cone_outer),
-            );
-            let flags = l
-                .values
-                .first()
-                .map(|v| ::legacy_config::parse_f32(v) as i32)
-                .unwrap_or(0)
-                .clamp(0, 7) as u8;
-            let color = [l.color[0] / 255.0, l.color[1] / 255.0, l.color[2] / 255.0];
-            let effect_tex = l
-                .bitmap
-                .as_deref()
-                .map(|b| crate::lights::corona_texture_id(&model_dir, b))
-                .filter(|t| *t != 0);
-            let flags = if effect_tex.is_some() { flags & !(1 | 2 | 4) } else { flags };
-            let glow = ::render::Corona {
-                position: p,
-                size: (l.size * 0.5).max(0.0),
-                color,
-                brightness: b,
-                direction: dir,
-                cone_cos: half_cos(outer),
-                inner_cos: if inner > 0.0 { half_cos(inner) } else { -2.0 },
-                rotating: if l.omni {
-                    2
-                } else {
-                    l.rotating.clamp(0, 2) as u8
-                },
-                up,
-                z_offset: l.z_offset.max(0.0),
-                flags: (flags & !1)
-                    | if matches!(
-                        l.variable.to_ascii_lowercase().as_str(),
-                        "lights_lowbeam" | "lights_mainbeam" | "lights_highbeam"
-                    ) {
-                    16
-                } else {
-                    0
-                }
-                    | if effect_tex.is_some() { 32 } else { 0 },
-                texture: l
-                    .bitmap
-                    .as_deref()
-                    .map(|b| crate::lights::corona_texture_id(&model_dir, b))
-                    .filter(|t| *t != 0)
-                    .unwrap_or_else(crate::lights::glow_texture_id),
-                ..Default::default()
-            };
-            if flags & 4 == 0 {
-                out.push(glow);
-            }
-            if flags & 1 != 0 {
-                // rays reach about three lens radii, as measured against OMSI 2.2.032 (#324)
-                out.push(::render::Corona {
-                    size: l.size * 1.5,
-                    rotating: 2,
-                    flags: 8,
-                    texture: crate::lights::star_texture_id(),
-                    ..glow
-                });
-            }
-            if effect_tex.is_none() && flags & 2 == 0 {
-                out.push(::render::Corona {
-                    position: p,
-                    size: l.size,
-                    color,
-                    brightness: b,
-                    direction: dir,
-                    cone_cos: (l.cone_outer.max(l.cone_inner) * 0.5).to_radians(),
-                    inner_cos: (l.cone_inner.min(l.cone_outer).max(0.0) * 0.5).to_radians(),
-                    texture: crate::lights::glow_texture_id(),
-                    halo: true,
-                    ..Default::default()
-                });
-            }
-            if effect_tex.is_none()
-                && l.cone
-                && !l.omni
-                && dir.length_squared() > 0.5
-                && l.cone_inner >= 0.0
-                && l.cone_outer >= l.cone_inner
-                && flags & 2 == 0
-            {
-                out.push(::render::Corona {
-                    position: p,
-                    size: l.size,
-                    color: [l.color[0] / 255.0, l.color[1] / 255.0, l.color[2] / 255.0],
-                    brightness: b,
-                    direction: dir,
-                    cone_cos: (l.cone_outer * 0.5).to_radians(),
-                    inner_cos: (l.cone_inner * 0.5).to_radians(),
-                    texture: crate::lights::cone_texture_id(),
-                    beam: true,
-                    ..Default::default()
-                });
-            }
+            push_light_sprites(&mut out, &light, b, &xf, pos, &model_dir);
         }
     }
     owners.resize(out.len(), seq.wrapping_sub(1));
     out.into_iter().zip(owners).collect()
+}
+
+fn push_light_sprites(
+    out: &mut Vec<::render::Corona>,
+    l: &EnhLight,
+    b: f32,
+    xf: &Mat4,
+    pos: DVec3,
+    model_dir: &std::path::Path,
+) {
+    let p = xf.transform_point3(glam::Vec3::from(l.pos)).as_dvec3() + pos;
+    let dir = if l.omni {
+        glam::Vec3::ZERO
+    } else {
+        xf.transform_vector3(glam::Vec3::from(l.dir))
+            .normalize_or_zero()
+    };
+    let up = xf
+        .transform_vector3(glam::Vec3::from(l.up))
+        .normalize_or(glam::Vec3::Z);
+    let half_cos = |deg: f32| (deg.max(1.0) * 0.5).min(180.0).to_radians().cos();
+    let (outer, inner) = (
+        l.cone_outer.max(l.cone_inner),
+        l.cone_inner.min(l.cone_outer),
+    );
+    let flags = l.effect;
+    let color = [l.color[0] / 255.0, l.color[1] / 255.0, l.color[2] / 255.0];
+    let effect_tex = l
+        .bitmap
+        .map(|b| crate::lights::corona_texture_id(model_dir, b))
+        .filter(|t| *t != 0);
+    let glow = ::render::Corona {
+        position: p,
+        size: (l.size * 0.5).max(0.0),
+        color,
+        brightness: b,
+        direction: dir,
+        cone_cos: half_cos(outer),
+        inner_cos: if inner > 0.0 { half_cos(inner) } else { -2.0 },
+        rotating: if l.omni {
+            2
+        } else {
+            l.rotating.clamp(0, 2) as u8
+        },
+        up,
+        z_offset: l.z_offset.max(0.0),
+        flags: (flags & !1)
+            | if matches!(
+                l.variable.to_ascii_lowercase().as_str(),
+                "lights_lowbeam" | "lights_mainbeam" | "lights_highbeam"
+            ) {
+                16
+            } else {
+                0
+            }
+            | if effect_tex.is_some() { 32 } else { 0 },
+        texture: effect_tex.unwrap_or_else(crate::lights::glow_texture_id),
+        ..Default::default()
+    };
+    if flags & 4 == 0 {
+        out.push(glow);
+    }
+    if flags & 1 != 0 {
+        out.push(::render::Corona {
+            size: l.size * 1.5,
+            rotating: 2,
+            flags: 8 | 32,
+            texture: crate::lights::star_texture_id(),
+            ..glow
+        });
+    }
+    if flags & 2 == 0 {
+        out.push(::render::Corona {
+            position: p,
+            size: l.size,
+            color,
+            brightness: b,
+            direction: dir,
+            cone_cos: (outer * 0.5).to_radians(),
+            inner_cos: (inner.max(0.0) * 0.5).to_radians(),
+            texture: crate::lights::glow_texture_id(),
+            halo: true,
+            ..Default::default()
+        });
+    }
+    if l.cone
+        && !l.omni
+        && dir.length_squared() > 0.5
+        && l.cone_inner >= 0.0
+        && l.cone_outer >= l.cone_inner
+        && flags & 2 == 0
+    {
+        out.push(::render::Corona {
+            position: p,
+            size: l.size,
+            color,
+            brightness: b,
+            direction: dir,
+            cone_cos: (l.cone_outer * 0.5).to_radians(),
+            inner_cos: (l.cone_inner * 0.5).to_radians(),
+            texture: crate::lights::cone_texture_id(),
+            beam: true,
+            ..Default::default()
+        });
+    }
 }
 
 impl World {

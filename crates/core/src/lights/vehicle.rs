@@ -142,7 +142,6 @@ fn cull_hidden(
         if c.beam {
             c.position += f.cfg.cone_shift(c.direction);
         } else if !c.halo {
-            c.size = c.size.min(0.6);
             c.brightness = c.brightness.min(1.0);
         }
         true
@@ -172,7 +171,6 @@ fn road_and_lamp_lights(
         }
     };
     let body_rot = v.body_rotation();
-    let front = body_rot.transform_vector3(Vec3::Y).normalize_or_zero();
 
     for (mut c, owner) in crate::scene::model_lights_owned(
         &ty.model,
@@ -187,9 +185,6 @@ fn road_and_lamp_lights(
         }
         c.brightness *= ec.gain;
         c.size *= ec.size.max(0.0);
-        if !c.beam && !c.halo && c.direction.dot(front) > 0.7 {
-            c.size *= 0.5;
-        }
         c.spread = ec.spread.max(0.05);
         for k in 0..3 {
             c.color[k] *= ec.color[k];

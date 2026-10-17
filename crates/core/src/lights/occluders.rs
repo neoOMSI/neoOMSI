@@ -164,6 +164,7 @@ fn vehicle_bodies(f: &Frame, vehicles: &[&VehicleInstance]) -> Vec<(Obb, Occlude
             let o = Obb::from_box(bbox, origin, heading.to_degrees());
             let mut oc = box_occluder(&o);
             oc.half = Vec2::new(o.half.x as f32 - 0.1, o.half.y as f32 - 0.1);
+            oc.z0 = (o.z0 + BODY_CLEARANCE).min(o.z1);
             out.push((o, oc));
         }
     }
