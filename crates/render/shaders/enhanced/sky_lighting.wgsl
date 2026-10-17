@@ -30,8 +30,8 @@ const CLOUD_STEPS: i32 = 96;
 const CLOUD_SIGMA: f32 = 0.04;
 const CLOUD_SHAPE_PERIOD: f32 = 14000.0;
 const CLOUD_DETAIL_PERIOD: f32 = 350.0;
-const CLOUD_DETAIL_STRENGTH: f32 = 0.3;
-const CLOUD_EDGE_SOFTNESS: f32 = 0.3;
+const CLOUD_DETAIL_STRENGTH: f32 = 0.2;
+const CLOUD_EDGE_SOFTNESS: f32 = 0.42;
 const CLOUD_BOTTOM_SOFTNESS: f32 = 0.2;
 const CLOUD_MAX_DIST: f32 = 60000.0;
 const CLOUD_MS_GAIN: f32 = 4.0;
@@ -195,7 +195,7 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
     let sd = normalize(camera.sun_dir.xyz);
     let t1 = min(cloud_shell(d, top), min(t0 + 12000.0, CLOUD_MAX_DIST + 6000.0));
     let ds = (t1 - t0) / f32(steps);
-    let lod = log2(max(t0 * pix * f32(textureDimensions(t_cloud_shape).x) / CLOUD_SHAPE_PERIOD, 1.0));
+    let lod = log2(max(t0 * pix * f32(textureDimensions(t_cloud_shape).x) / CLOUD_SHAPE_PERIOD, 1.0)) + 0.75;
     let cos_sun = dot(d, sd);
     let rm0 = rain_mask(cloud_ground(d, t0));
     let cells_only = li == 0 && enh.debug.w > 0.001 && enh.debug.z < 0.5;
@@ -267,7 +267,7 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
     var hit = 0.0;
     var hit_w = 0.0;
     for (var li = 0; li < 3; li = li + 1) {
-        let steps = select(select(16, 28, li == 1), 64, li == 0);
+        let steps = select(select(28, 48, li == 1), 112, li == 0);
         let o = cloud_march_layer(d, li, steps, closed, pix, sun, sky_top, ground);
         acc = acc + trans * o.acc;
         hit = hit + trans * o.hit;
