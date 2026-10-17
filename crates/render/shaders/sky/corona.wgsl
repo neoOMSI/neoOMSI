@@ -219,7 +219,7 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     out.uv = c * 0.5 + 0.5;
     out.color = vec4<f32>(in.color.rgb, brightness);
     out.kind = select(0.0, 1.0, streak || plain);
-    out.star = 0.0;
+    out.star = select(0.0, 1.0, streak);
     out.beam = 0.0;
     out.cone = vec2<f32>(0.0, 0.0);
     if (glare) {
@@ -268,13 +268,21 @@ fn corona_shape(in: CoronaOut) -> vec3<f32> {
     return t;
 }
 
+fn streak_light() -> vec3<f32> {
+    return clamp(camera.ambient.rgb + camera.sun_color.rgb * 0.6, vec3<f32>(0.04), vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(in: CoronaOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a, 1.0);
+    var lit = vec3<f32>(1.0);
+    if (in.star > 0.5 && in.kind > 0.5) {
+        lit = streak_light();
+    }
+    return vec4<f32>(in.color.rgb * lit * corona_shape(in) * in.color.a, 1.0);
 }
 
 fn corona_scatter() -> f32 {
-    return clamp(max(enh.fog.x / 2.3e-3, enh.weather.z), 0.0, 1.0);
+    return clamp(max(enh.fog.x / 2.3e-3, enh.weather.z * 0.4), 0.0, 1.0);
 }
 
 // Enhanced graphics: the corona in the pre-exposed high-range picture - the glare of a
@@ -284,7 +292,11 @@ fn corona_scatter() -> f32 {
 fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
     // (a fog cone is lit fog, not glare: it keeps the scene's level too)
     if (in.kind > 0.5) {
-        return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a * enh.exposure.y, 1.0);
+        var lit = vec3<f32>(1.0);
+        if (in.star > 0.5) {
+            lit = streak_light();
+        }
+        return vec4<f32>(in.color.rgb * lit * corona_shape(in) * in.color.a * enh.exposure.y, 1.0);
     }
     return vec4<f32>(in.color.rgb * glare_enhanced(in) * in.color.a * enh.exposure.w, 1.0);
 }
