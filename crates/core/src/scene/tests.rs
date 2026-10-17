@@ -144,7 +144,7 @@ fn installed_sor_ois_retains_powered_freetex() {
     assert!(
         definitions
             .iter()
-            .any(|(item, key, _)| *item && key.eq_ignore_ascii_case("cerna.bmp")),
+            .any(|(item, key, _)| item.is_some() && key.eq_ignore_ascii_case("cerna.bmp")),
         "{definitions:?}"
     );
     println!("SOR NB OIS: {definitions:?}");
@@ -165,7 +165,7 @@ fn powered_terminal_freetex_is_kept_and_replaces_its_black_nightmap() {
     let defs: Vec<&MaterialDef> = model.meshes[0].materials.iter().collect();
     assert_eq!(
         free_texture_defs(&defs),
-        vec![(true, "black.bmp".into(), "screen".into())]
+        vec![(Some(1), "black.bmp".into(), "screen".into())]
     );
     let base = freetex_test_look();
     let mut powered = base.clone();
@@ -175,7 +175,7 @@ fn powered_terminal_freetex_is_kept_and_replaces_its_black_nightmap() {
         item: Some(powered),
         more: Vec::new(),
     };
-    let changed = spec.with_freetex(Some(10), 20, true, true);
+    let changed = spec.with_freetex(Some(10), 20, true, Some(1));
     assert_eq!(changed.base.diffuse, None); // unpowered remains black
     assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(20));
     assert_eq!(changed.item.as_ref().unwrap().night, Some(20));
@@ -196,14 +196,14 @@ fn freetex_preserves_other_stages_and_per_vehicle_script_textures() {
         item: Some(item),
         more: Vec::new(),
     };
-    let changed = spec.with_freetex(Some(10), 20, true, false);
+    let changed = spec.with_freetex(Some(10), 20, true, None);
     assert_eq!(changed.base.diffuse, Some(20));
     assert_eq!(changed.base.night, Some(20));
     assert_eq!(changed.base.lightmap, Some(11));
     assert_eq!(changed.base.transmap, Some((20, true)));
     assert_eq!(changed.base.envmap, Some((12, 0.5)));
     assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(99));
-    let missing_key = spec.with_freetex(None, 21, true, true);
+    let missing_key = spec.with_freetex(None, 21, true, Some(1));
     assert_eq!(missing_key.item.as_ref().unwrap().night, Some(10));
     assert_eq!(missing_key.item.as_ref().unwrap().diffuse, Some(99));
 }
@@ -221,7 +221,7 @@ fn freetex_updates_every_light_state_of_a_changed_slot() {
         more: vec![item],
     };
 
-    let changed = spec.with_freetex(Some(10), 20, true, false);
+    let changed = spec.with_freetex(Some(10), 20, true, None);
     assert_eq!(changed.base.diffuse, Some(20));
     assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(20));
     assert_eq!(changed.more[0].diffuse, Some(20));
@@ -241,7 +241,7 @@ fn freetex_and_dynamic_lightmap_keep_the_live_display_texture() {
         item: Some(item.clone()),
         more: vec![item],
     };
-    let mut changed = spec.with_freetex(Some(10), 20, true, false);
+    let mut changed = spec.with_freetex(Some(10), 20, true, None);
     changed.set_lightmap(Some(30));
     assert_eq!(changed.base.diffuse, Some(20));
     assert_eq!(changed.base.lightmap, Some(30));
@@ -261,8 +261,8 @@ fn item_only_freetex_overrides_a_matching_base_freetex() {
         item: Some(item),
         more: Vec::new(),
     };
-    let base_changed = spec.with_freetex_from(&spec, Some(10), 20, true, false);
-    let changed = base_changed.with_freetex_from(&spec, Some(10), 30, true, true);
+    let base_changed = spec.with_freetex_from(&spec, Some(10), 20, true, None);
+    let changed = base_changed.with_freetex_from(&spec, Some(10), 30, true, Some(1));
 
     assert_eq!(changed.base.diffuse, Some(20));
     assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(30));
@@ -286,8 +286,8 @@ fn item_freetex_keeps_the_plain_slots_free_picture() {
     assert_eq!(
         free_texture_defs(&defs),
         vec![
-            (false, "Way150_Misc.dds".into(), "Way150_Misc".into()),
-            (true, "Way150_Misc_LM.dds".into(), "Way150_MiscLM".into()),
+            (None, "Way150_Misc.dds".into(), "Way150_Misc".into()),
+            (Some(1), "Way150_Misc_LM.dds".into(), "Way150_MiscLM".into()),
         ]
     );
     let mut base = freetex_test_look();
@@ -300,7 +300,7 @@ fn item_freetex_keeps_the_plain_slots_free_picture() {
         more: vec![item],
     };
     let changed =
-        spec.with_free_textures([(Some(10), 20, true, false), (Some(11), 21, false, true)]);
+        spec.with_free_textures([(Some(10), 20, true, None), (Some(11), 21, false, Some(1))]);
 
     assert_eq!(changed.base.diffuse, Some(20));
     assert_eq!(changed.base.night, None);
@@ -308,7 +308,44 @@ fn item_freetex_keeps_the_plain_slots_free_picture() {
     assert_eq!(item.diffuse, Some(20));
     assert_eq!(item.night, Some(21));
     assert_eq!(changed.more[0].diffuse, Some(20));
-    assert_eq!(changed.more[0].night, Some(21));
+    // (item 1's own free texture is not item 2's)
+    assert_eq!(changed.more[0].night, Some(11));
+}
+
+#[test]
+fn a_later_items_freetex_leaves_the_earlier_item_alone() {
+    // #479: the NLC's switch lamps - item 1 is the white stripe under a light map, item 2
+    // the same stripe made black (`Schalter_NM` = 1px_nm.bmp) under a night map. Item 2's
+    // free texture laid on item 1 as well, the lit stripe went dark when switched on.
+    let model = ::model::Model::parse(&::legacy_config::CfgFile::from_str(
+        "model.cfg",
+        concat!(
+            "[mesh]\nLC_Pult_s01.o3d\n",
+            "[matl_change]\n1px_lm.bmp\n0\npult_s01_lm\n",
+            "[matl_item]\n[matl_lightmap]\nrosa_LM.dds\n\n",
+            "[matl_item]\n[matl_freetex]\n1px_lm.bmp\nSchalter_NM\n",
+            "[matl_nightmap]\ngelb_NM.dds\n",
+        ),
+    ));
+    let defs: Vec<&MaterialDef> = model.meshes[0].materials.iter().collect();
+    assert_eq!(
+        free_texture_defs(&defs),
+        vec![(Some(2), "1px_lm.bmp".into(), "Schalter_NM".into())]
+    );
+    let base = freetex_test_look();
+    let mut lit = base.clone();
+    lit.lightmap = Some(11);
+    let mut lamp = base.clone();
+    lamp.night = Some(12);
+    let spec = SlotSpec {
+        base,
+        item: Some(lit),
+        more: vec![lamp],
+    };
+    let changed = spec.with_freetex(Some(10), 20, true, Some(2));
+    assert_eq!(changed.base.diffuse, None);
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, None);
+    assert_eq!(changed.more[0].diffuse, Some(20));
 }
 
 #[test]
@@ -321,7 +358,7 @@ fn inactive_dynamic_lightmap_keeps_the_original_lightmap() {
         item: None,
         more: Vec::new(),
     };
-    let mut changed = spec.with_freetex(Some(10), 20, true, false);
+    let mut changed = spec.with_freetex(Some(10), 20, true, None);
     changed.set_lightmap(None);
 
     assert_eq!(changed.base.diffuse, Some(20));

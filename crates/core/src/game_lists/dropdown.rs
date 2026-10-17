@@ -222,13 +222,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 .take(4)
                 .collect::<String>()
                 .to_ascii_uppercase();
-            ::config::set_setting("gameplay", "metar_station", code.clone());
-            let _ = ::config::save();
-            app.metar_rx = None;
-            app.metar_once = false;
-            // With sync on, the new station is fetched at once. With it off this simply
-            // selects the station for "Load current METAR once".
-            app.metar_next = 0.0;
+            app.set_metar_station(code);
         }
         "cloud" => {
             if let Some(i) = arg

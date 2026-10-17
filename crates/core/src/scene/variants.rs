@@ -217,17 +217,32 @@ impl MultiLight {
 
 /// `[matl_freetex]`: the slot shows the texture file named by a string variable - the
 /// SD200's destination roller reads the terminus pictures of the map's `.hof` this way.
-pub(super) fn free_texture_defs(overrides: &[&MaterialDef]) -> Vec<(bool, String, String)> {
-    [false, true]
-        .into_iter()
-        .filter_map(|item| {
-            overrides.iter().filter(|o| o.item == item).find_map(|o| {
-                o.freetex
-                    .as_ref()
-                    .map(|(key, var)| (item, key.clone(), var.clone()))
-            })
-        })
-        .collect()
+pub(super) fn free_texture_defs(
+    overrides: &[&MaterialDef],
+) -> Vec<(Option<usize>, String, String)> {
+    let mut changes = 0;
+    let mut items = 0;
+    let mut defs: Vec<(Option<usize>, String, String)> = Vec::new();
+    for o in overrides {
+        // (the items of a later [matl_change] merge into item 1, as the slot's materials do)
+        let item = if !o.item {
+            changes += usize::from(o.change.is_some());
+            None
+        } else if changes <= 1 {
+            items += 1;
+            Some(items)
+        } else {
+            Some(1)
+        };
+        if let Some((key, var)) = &o.freetex {
+            if !defs.iter().any(|(i, _, _)| *i == item) {
+                defs.push((item, key.clone(), var.clone()));
+            }
+        }
+    }
+    // (the plain slot's first: it shows in the items as well)
+    defs.sort_by_key(|(item, _, _)| *item);
+    defs
 }
 
 #[derive(Clone)]
@@ -237,8 +252,9 @@ pub struct FreeTex {
     /// names the same black texture as its diffuse and its switched night map).
     pub key: Option<TextureId>,
     pub diffuse: bool,
-    /// A declaration inside `[matl_item]` must not change the unpowered material.
-    pub item_only: bool,
+    /// The `[matl_item]` the declaration is inside (1, 2, ...), whose material alone it
+    /// changes; `None`: the plain material's, shown in every item too.
+    pub item: Option<usize>,
     /// Where the file name is looked up (the vehicle's texture folders).
     pub dirs: Vec<PathBuf>,
     pub textures: Arc<::texture::TextureCache>,
@@ -425,22 +441,24 @@ impl SlotSpec {
         key: Option<TextureId>,
         tex: TextureId,
         diffuse: bool,
-        item_only: bool,
+        item: Option<usize>,
     ) -> Self {
-        self.with_freetex_from(self, key, tex, diffuse, item_only)
+        self.with_freetex_from(self, key, tex, diffuse, item)
     }
 
     /// Apply a free texture while matching its source against the slot before any other
     /// free-texture replacements.  An item-only declaration can therefore override the
     /// powered material even when a preceding base declaration replaced the same source.
+    /// `item`: see `FreeTex::item`.
     pub(super) fn with_freetex_from(
         &self,
         source: &Self,
         key: Option<TextureId>,
         tex: TextureId,
         diffuse: bool,
-        item_only: bool,
+        item: Option<usize>,
     ) -> Self {
+        let item_only = item.is_some();
         let mut spec = self.clone();
         let replace = |look: &mut Look, source: &Look| {
             // A per-vehicle text/script texture has already replaced the original
@@ -478,29 +496,28 @@ impl SlotSpec {
                 }
             }
         };
+        let shows_in = |n: usize| item.is_none_or(|i| i == n);
         if !item_only {
             replace(&mut spec.base, &source.base);
         }
-        if let Some(item) = &mut spec.item {
-            if let Some(source_item) = &source.item {
-                replace(item, source_item);
-            }
+        if let (Some(look), Some(source_item), true) = (&mut spec.item, &source.item, shows_in(1)) {
+            replace(look, source_item);
         }
-        for (more, source_more) in spec.more.iter_mut().zip(&source.more) {
-            replace(more, source_more);
+        for (k, (more, source_more)) in spec.more.iter_mut().zip(&source.more).enumerate() {
+            if shows_in(k + 2) {
+                replace(more, source_more);
+            }
         }
         spec
     }
 
-    /// The slot with all live free textures `(key, texture, diffuse, item_only)`, the plain
-    /// slot's first: they show in its item as well (#114).
     pub(super) fn with_free_textures(
         &self,
-        free: impl IntoIterator<Item = (Option<TextureId>, TextureId, bool, bool)>,
+        free: impl IntoIterator<Item = (Option<TextureId>, TextureId, bool, Option<usize>)>,
     ) -> Self {
         free.into_iter()
-            .fold(self.clone(), |spec, (key, tex, diffuse, item_only)| {
-                spec.with_freetex_from(self, key, tex, diffuse, item_only)
+            .fold(self.clone(), |spec, (key, tex, diffuse, item)| {
+                spec.with_freetex_from(self, key, tex, diffuse, item)
             })
     }
 

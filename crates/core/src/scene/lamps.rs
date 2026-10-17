@@ -251,6 +251,12 @@ pub fn model_lights_owned(
                 .unwrap_or(0)
                 .clamp(0, 7) as u8;
             let color = [l.color[0] / 255.0, l.color[1] / 255.0, l.color[2] / 255.0];
+            let effect_tex = l
+                .bitmap
+                .as_deref()
+                .map(|b| crate::lights::corona_texture_id(&model_dir, b))
+                .filter(|t| *t != 0);
+            let flags = if effect_tex.is_some() { flags & !(1 | 2 | 4) } else { flags };
             let glow = ::render::Corona {
                 position: p,
                 size: (l.size * 0.5).max(0.0),
@@ -274,7 +280,8 @@ pub fn model_lights_owned(
                     16
                 } else {
                     0
-                },
+                }
+                    | if effect_tex.is_some() { 32 } else { 0 },
                 texture: l
                     .bitmap
                     .as_deref()
@@ -296,7 +303,7 @@ pub fn model_lights_owned(
                     ..glow
                 });
             }
-            if flags & 2 == 0 {
+            if effect_tex.is_none() && flags & 2 == 0 {
                 out.push(::render::Corona {
                     position: p,
                     size: l.size,
@@ -310,7 +317,8 @@ pub fn model_lights_owned(
                     ..Default::default()
                 });
             }
-            if l.cone
+            if effect_tex.is_none()
+                && l.cone
                 && !l.omni
                 && dir.length_squared() > 0.5
                 && l.cone_inner >= 0.0

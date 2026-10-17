@@ -514,21 +514,16 @@ fn own_vehicle_is_drawn_after_every_scenery_queue() {
 }
 
 #[test]
-fn own_vehicle_needs_the_camera_inside_it_or_a_trailer() {
+fn own_vehicle_includes_trailers_from_any_camera_position() {
     let box_of = |origin: DVec3| (origin, 0.0, [2.5, 12.0, 3.2, 0.0, 0.0, 1.6]);
     let front = box_of(DVec3::new(0.0, 0.0, 0.0));
     let trailer = box_of(DVec3::new(0.0, -10.0, 0.0));
     let both = vec![front.0, trailer.0];
     assert_eq!(
-        own_vehicle_origins(DVec3::new(0.5, 4.0, 2.0), Some(front), &[trailer]),
+        own_vehicle_origins(Some(front), &[trailer]),
         both
     );
-    assert_eq!(
-        own_vehicle_origins(DVec3::new(0.0, -12.0, 2.0), Some(front), &[trailer]),
-        both
-    );
-    assert!(own_vehicle_origins(DVec3::new(8.0, 0.0, 2.0), Some(front), &[trailer]).is_empty());
-    assert!(own_vehicle_origins(DVec3::ZERO, None, &[]).is_empty());
+    assert!(own_vehicle_origins(None, &[]).is_empty());
 }
 
 #[test]

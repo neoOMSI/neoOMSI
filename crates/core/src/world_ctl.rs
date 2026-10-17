@@ -685,6 +685,27 @@ impl App {
         crate::launcher::drive::nearest_airport(&self.args.root.to_string_lossy(), &self.args.map)
     }
 
+    pub(crate) fn set_metar_station(&mut self, station: String) {
+        ::config::set_setting("gameplay", "metar_station", station.clone());
+        let _ = ::config::save();
+        if let Some((mode, _)) = self
+            .args
+            .weather
+            .as_deref()
+            .and_then(crate::weather_setup::metar_mode)
+        {
+            let prefix = match mode {
+                crate::weather_setup::MetarMode::Once => "metar-once:",
+                crate::weather_setup::MetarMode::Sync => "metar-sync:",
+                crate::weather_setup::MetarMode::Legacy => "metar:",
+            };
+            self.args.weather = Some(format!("{prefix}{station}"));
+        }
+        self.metar_rx = None;
+        self.metar_once = false;
+        self.metar_next = 0.0;
+    }
+
     pub(crate) fn load_metar_once(&mut self) {
         if self
             .lan

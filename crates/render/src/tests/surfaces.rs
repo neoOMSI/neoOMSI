@@ -1,6 +1,210 @@
 use crate::*;
 
 #[test]
+#[ignore = "requires a graphics adapter; renders late scenery through exterior glass"]
+fn exterior_glass_tints_late_scenery_without_covering_foreground() {
+    let adapter = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &adapter, None, Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions { msaa: 1, ssao: false, fxaa: false, ..Default::default() },
+    )).expect("test renderer");
+    let mut scene = renderer.new_scene();
+    let texture = renderer.add_texture(&mut scene, &::texture::Image::solid([255, 255, 255, 128]), false);
+    let glass = renderer.add_material_extra(
+        &mut scene, Some(texture), AlphaMode::Blend, [1.0; 4], false,
+        None, None, None, None, [0.0; 3],
+        MaterialExtra { glass: true, no_z_write: true, ..Default::default() },
+    );
+    let red = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.8, 0.05, 0.05, 1.0], true);
+    let green = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.05, 0.8, 0.05, 1.0], true);
+    let shelter_glass = renderer.add_material(&mut scene, None, AlphaMode::Blend, [0.1, 0.1, 0.7, 0.4], true);
+    let mut quad = |left: f32, right: f32, z: f64, material| {
+        let mesh = renderer.add_mesh(&mut scene, &MeshData {
+            positions: vec![Vec3::new(left, -5.0, 0.0), Vec3::new(right, -5.0, 0.0),
+                Vec3::new(right, 5.0, 0.0), Vec3::new(left, 5.0, 0.0)],
+            normals: vec![Vec3::Z; 4], uvs: vec![glam::Vec2::ZERO; 4],
+            indices: vec![0, 1, 2, 0, 2, 3], ranges: vec![(0, 6, 0)], one_sided: false,
+        });
+        renderer.add_instance(&mut scene, mesh, DVec3::new(0.0, 0.0, z), Mat4::IDENTITY, vec![material])
+    };
+    let behind = quad(-6.0, 6.0, -1.0, red);
+    let body = quad(0.0, 6.0, 0.0, green);
+    let pane = quad(-6.0, 6.0, 0.0, glass);
+    let foreground = quad(0.0, 6.0, 1.0, shelter_glass);
+    scene.instances[behind].render_phase = RenderPhase::AfterVehicles;
+    scene.instances[foreground].render_phase = RenderPhase::AfterVehicles;
+    scene.instances[body].ordered = true;
+    let camera = Camera {
+        position: DVec3::new(0.0, -0.105, 6.0), yaw: 0.0, pitch: -89.0, roll: 0.0,
+        fov_deg: 90.0, near: 0.1, far: 100.0,
+    };
+    let lighting = Lighting {
+        enhanced: true, sun_intensity: 0.0, ambient: Vec3::ZERO, secondary: Vec3::ZERO,
+        shadows: false, detail: false, fog_density: 0.0,
+        inside: Some((DVec3::ZERO, 0.0, [5.0, 5.0, 2.0, 0.0, 0.0, 0.0])),
+        ..Default::default()
+    };
+    renderer.set_params(&mut scene, pane, &[], false, &[]);
+    let without = renderer.render_to_image(&mut scene, 64, 64, &camera, &lighting).unwrap();
+    renderer.set_params(&mut scene, pane, &[], true, &[]);
+    let with = renderer.render_to_image(&mut scene, 64, 64, &camera, &lighting).unwrap();
+    let pixel = |image: &[u8], x: usize| -> [u8; 3] {
+        image[(32 * 64 + x) * 4..][..3].try_into().unwrap()
+    };
+    let (behind_without, behind_with) = (pixel(&without, 20), pixel(&with, 20));
+    assert!(behind_with[0] + 15 < behind_without[0],
+        "late scenery bypassed glass: {behind_without:?} -> {behind_with:?}");
+    let (front_without, front_with) = (pixel(&without, 44), pixel(&with, 44));
+    assert!(front_with[1] > front_with[0] + 30,
+        "bus body disappeared behind shelter glass: {front_with:?}");
+    assert!((0..3).all(|c| (front_without[c] as f32 / front_without[1] as f32
+        - front_with[c] as f32 / front_with[1] as f32).abs() < 0.03),
+        "glass covered foreground: {front_without:?} -> {front_with:?}");
+}
+
+#[test]
+#[ignore = "requires a graphics adapter; renders an interior-lit glass pane"]
+fn interior_lamp_does_not_wash_out_glass() {
+    let adapter = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let mut renderer = pollster::block_on(Renderer::new_with(
+        &adapter,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        RenderOptions {
+            msaa: 1,
+            ssao: false,
+            shadow_size: 1024,
+            fxaa: false,
+            render_scale: 1.0,
+            ..Default::default()
+        },
+    ))
+    .expect("test renderer");
+    let mut scene = renderer.new_scene();
+    let texture = renderer.add_texture(
+        &mut scene,
+        &::texture::Image::solid([255, 255, 255, 128]),
+        false,
+    );
+    let glass = renderer.add_material_extra(
+        &mut scene,
+        Some(texture),
+        AlphaMode::Blend,
+        [1.0; 4],
+        false,
+        None,
+        None,
+        None,
+        None,
+        [0.0; 3],
+        MaterialExtra {
+            glass: true,
+            no_z_write: true,
+            ..Default::default()
+        },
+    );
+    let black = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.0, 0.0, 0.0, 1.0], true);
+    let red = renderer.add_material(&mut scene, None, AlphaMode::Opaque, [0.8, 0.05, 0.05, 1.0], true);
+    let mut quad = |left: f32, right: f32, z: f32, material| {
+        let mesh = renderer.add_mesh(
+            &mut scene,
+            &MeshData {
+                positions: vec![
+                    Vec3::new(left, -5.0, z),
+                    Vec3::new(right, -5.0, z),
+                    Vec3::new(right, 5.0, z),
+                    Vec3::new(left, 5.0, z),
+                ],
+                normals: vec![Vec3::Z; 4],
+                uvs: vec![glam::Vec2::splat(0.5); 4],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                ranges: vec![(0, 6, 0)],
+                one_sided: false,
+            },
+        );
+        renderer.add_instance(&mut scene, mesh, DVec3::ZERO, Mat4::IDENTITY, vec![material])
+    };
+    quad(-6.0, 0.0, -1.0, black);
+    quad(0.0, 6.0, -1.0, red);
+    let pane = quad(-6.0, 6.0, 0.0, glass);
+    let first = renderer.alloc_interior_lights(&mut scene, 1);
+    renderer.set_interior_light(
+        &mut scene,
+        first,
+        PointLight {
+            position: DVec3::new(0.0, 0.0, 2.0),
+            radius: 100.0,
+            core: 3.0,
+            intensity: 0.0,
+            ..Default::default()
+        },
+    );
+    renderer.set_interior_lamps(&mut scene, pane, first, 1);
+    let camera = Camera {
+        position: DVec3::new(0.0, -0.105, 6.0),
+        yaw: 0.0,
+        pitch: -89.0,
+        roll: 0.0,
+        fov_deg: 90.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    let lighting = Lighting {
+        enhanced: true,
+        sun_intensity: 0.0,
+        secondary: Vec3::ZERO,
+        ambient: Vec3::ZERO,
+        shadows: false,
+        detail: false,
+        fog_density: 0.0,
+        ..Default::default()
+    };
+    let off = renderer.render_to_image(&mut scene, 64, 64, &camera, &lighting).unwrap();
+    let left = &off[(32 * 64 + 20) * 4..][..3];
+    let right = &off[(32 * 64 + 44) * 4..][..3];
+    assert!(right[0] > left[0] + 20, "backdrop not visible: {left:?}, {right:?}");
+    scene.interior_lights[first as usize].intensity = 1.0;
+    let on = renderer.render_to_image(&mut scene, 64, 64, &camera, &lighting).unwrap();
+    for x in [20, 44] {
+        let pixel = (32 * 64 + x) * 4;
+        let before = &off[pixel..pixel + 3];
+        let after = &on[pixel..pixel + 3];
+        assert!(before.iter().zip(after).all(|(a, b)| a.abs_diff(*b) <= 10),
+            "lamp washed out glass at x={x}: {before:?} -> {after:?}");
+    }
+    let night = Lighting { night: 1.0, ..lighting };
+    scene.interior_lights[first as usize].intensity = 0.0;
+    let night_off = renderer.render_to_image(&mut scene, 64, 64, &camera, &night).unwrap();
+    scene.interior_lights[first as usize].intensity = 1.0;
+    let night_on = renderer.render_to_image(&mut scene, 64, 64, &camera, &night).unwrap();
+    for x in [20, 44] {
+        let pixel = (32 * 64 + x) * 4;
+        let before = &night_off[pixel..pixel + 3];
+        let after = &night_on[pixel..pixel + 3];
+        let max_change = before.iter().zip(after).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+        assert!((1..=10).contains(&max_change),
+            "night glass should be subtly lit at x={x}: {before:?} -> {after:?}");
+    }
+    let day = Lighting {
+        night: 0.0,
+        sun_dir: Vec3::Z,
+        sun_intensity: 1.0,
+        ..night
+    };
+    renderer.set_params(&mut scene, pane, &[], false, &[]);
+    let unobstructed = renderer.render_to_image(&mut scene, 64, 64, &camera, &day).unwrap();
+    renderer.set_params(&mut scene, pane, &[], true, &[]);
+    let through = renderer.render_to_image(&mut scene, 64, 64, &camera, &day).unwrap();
+    for x in [20, 44] {
+        let pixel = (32 * 64 + x) * 4;
+        let before = &unobstructed[pixel..pixel + 3];
+        let after = &through[pixel..pixel + 3];
+        assert!(after[1] <= before[1].saturating_add(35),
+            "sunlight washed out glass at x={x}: {before:?} -> {after:?}");
+    }
+}
+
+#[test]
 #[ignore = "requires a graphics adapter; checks cabin lamp codes across perspective triangles"]
 fn first_cabin_lamp_off_matches_no_cabin_light() {
     let adapter = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());

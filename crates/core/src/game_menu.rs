@@ -191,11 +191,7 @@ impl App {
             w.set_ime_allowed(false);
         }
         if code.len() == 4 && code.chars().all(|c| c.is_ascii_alphabetic()) {
-            config::set_setting("gameplay", "metar_station", code.clone());
-            let _ = config::save();
-            self.metar_rx = None;
-            self.metar_once = false;
-            self.metar_next = 0.0;
+            self.set_metar_station(code.clone());
             self.service_msg = Some((i18n::translate("pause.msg.metar_source", &[("code", &code)]), 3.0));
         } else if !code.is_empty() {
             self.service_msg = Some((i18n::translate("pause.msg.icao_invalid", &[]), 3.0));

@@ -258,6 +258,14 @@ impl<'a> CfgReader<'a> {
         self.block_line
     }
 
+    /// The line immediately before the current block.
+    pub fn line_before_block(&self) -> Option<&'a str> {
+        self.block_line
+            .checked_sub(2)
+            .and_then(|i| self.file.lines.get(i))
+            .map(String::as_str)
+    }
+
     pub fn seek(&mut self, pos: usize) {
         self.pos = pos.min(self.file.lines.len());
     }
