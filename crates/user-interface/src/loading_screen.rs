@@ -12,7 +12,7 @@ pub struct LoadingScreen {
 
 impl LoadingScreen {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let mut gpu = Gpu::new(device, format, 1, 512);
+        let mut gpu = Gpu::new(device, format, 4, 512);
         static ART: &[u8] = include_bytes!("../../../assets/backgrounds/loading-screen/comp1.png");
         static LOGO: &[u8] = include_bytes!("../../../assets/logos/wordmark-gradient-dark.png");
         let bg = image::load_from_memory(ART).ok().map(|i| {
