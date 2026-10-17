@@ -1,19 +1,14 @@
 //! Minimal headless scenario runner.
 //!
-//! A scenario is a fixed-step loop with no renderer and no OMSI assets. The step closure
-//! receives the tick index, elapsed simulation time, and the [`Capture`] to record into;
-//! it owns the world and pushes snapshots/events. This is the seam the Stage 0 scenarios
-//! (S1–S3) and later automatic captures run on.
+//! A fixed-step loop with no renderer and no OMSI assets; the step closure owns the world
+//! and records into the [`Capture`].
 
 use crate::diagnostics::{Capture, TraceHeader};
 
-/// Fixed simulation step for the traffic domain (s): decisions run at a stable rate,
-/// independent of the render frame rate. Rendering may run at any rate on top.
+/// Fixed simulation step for the traffic domain (s), independent of the render frame rate.
 pub const SIM_DT: f32 = 0.02;
-/// Most steps to run in one frame. Frames of up to this many fixed steps (25 fps and
-/// faster) run every step at `SIM_DT`; a longer frame is shared out evenly over this many
-/// steps. A slow frame then costs no more steps than a fast one, so the traffic cannot
-/// make the frame rate spiral down, and no traffic time is dropped.
+/// Most steps to run in one frame (25 fps and faster run fixed `SIM_DT` steps); a longer
+/// frame is shared out over this many steps, so slow frames cannot spiral the rate down.
 pub const MAX_SIM_STEPS: u32 = 2;
 
 /// A fixed-step headless scenario description.
@@ -60,21 +55,15 @@ where
 
 /// Advance a fixed-step accumulator by one render frame.
 ///
-/// Returns how many steps to run this frame and how long each is. While the frame's time
-/// (with what is left over from the frames before) is at most `max_steps` steps of `dt`,
-/// they are fixed `dt` steps and the remainder waits for the next frame: the sequence of
-/// steps depends only on the elapsed time, not on how it was partitioned into render
-/// frames, which is what makes replays frame-rate independent. A longer frame runs
-/// `max_steps` equal, longer steps that take all of its time. Either way the steps add up to
-/// the time that came in, so the traffic keeps time with the clock, and a frame never runs
-/// more than `max_steps` of them.
+/// Returns the step count and step length. Up to `max_steps` steps they are fixed `dt` steps
+/// (the remainder carries over), so replays do not depend on the frame partition; a longer
+/// frame runs `max_steps` equal, longer steps. Either way no time is dropped.
 pub fn advance_fixed_clock(accum: &mut f32, frame_dt: f32, dt: f32, max_steps: u32) -> (u32, f32) {
     if dt <= 0.0 || max_steps == 0 {
         return (0, dt);
     }
     *accum += frame_dt.max(0.0);
-    // A single division avoids the rounding drift of repeated subtraction, which otherwise
-    // drops a decision tick over a long run at high frame rates and makes replays diverge.
+    // One division: repeated subtraction drifts and drops ticks at high frame rates.
     let due = (*accum / dt).floor();
     if due <= max_steps as f32 {
         let steps = due as u32;

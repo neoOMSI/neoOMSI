@@ -1,9 +1,7 @@
 //! Stage 5 — a side road's car at a main road with steady traffic.
 //!
-//! The south->north road has the right of way over the west approach (it comes from the
-//! right). Its cars come every 3 s at 36 km/h: never a gap the waiting car takes, however
-//! much shorter its patience makes the gap it wants. A driver who has waited long makes
-//! himself seen; the main road's cars that can still stop comfortably let him in.
+//! The south->north road (from the right) has priority; its cars every 3 s at 36 km/h never
+//! leave a gap. A driver who has waited long is let in by those that can still stop comfortably.
 
 mod common;
 
@@ -113,8 +111,7 @@ fn a_side_road_car_gets_in_after_a_long_wait() {
             }
             break;
         }
-        // move: the side car waits; the main road's cars keep their distance and stop where
-        // the coordinator holds them
+        // move: the side car waits; the main road's cars stop where the coordinator holds them
         side.stopped += DT;
         side.yield_time += DT;
         side.yielding = true;

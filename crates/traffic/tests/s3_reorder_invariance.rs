@@ -1,8 +1,7 @@
 //! Stage 3 exit gate — container reordering and worker scheduling do not change decisions.
 //!
-//! The same realized bodies and inputs are handed to the perception and arbitration layers
-//! in different orders (representing an entity-container reorder) and in different
-//! scheduling partitions. Decisions keyed by stable `VehicleId` must be identical.
+//! The same bodies and inputs, handed over in different orders and scheduling partitions,
+//! must give identical decisions keyed by stable `VehicleId`.
 
 mod common;
 
@@ -138,10 +137,8 @@ fn a_swept_clearance_does_not_depend_on_body_order() {
     }
 }
 
-/// The junction scene of `junction_planning_does_not_depend_on_container_order`, its cars
-/// stored in `order`: a queue stands on the exit of `blocked_exit` with room for one car
-/// behind it, and three cars come up to the junction (two of them side by side - an
-/// abstraction - and both at the line).
+/// The junction scene of `junction_planning_does_not_depend_on_container_order`, cars stored
+/// in `order`: a queue on the exit leaves room for one car, and three cars come up to it.
 fn junction_scene(order: &[u64]) -> common::Harness {
     let mut h = common::Harness::new(common::blocked_exit());
     for &id in order {

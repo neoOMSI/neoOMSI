@@ -1,9 +1,7 @@
 //! A side-road claim made before priority traffic arrived does not take the right of way.
 //!
-//! A vehicle on the lower-priority road claims its movement as soon as it is inside its
-//! decision zone and nothing is coming. When a vehicle on the priority road turns up while the
-//! side-road vehicle can still stop, the priority road keeps the right of way: the early claim
-//! is not a commitment the priority road has to wait for.
+//! A side-road vehicle claims its movement inside its decision zone when nothing comes; a
+//! priority-road vehicle arriving while it can still stop keeps the right of way.
 
 mod common;
 

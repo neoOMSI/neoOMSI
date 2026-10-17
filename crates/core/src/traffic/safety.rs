@@ -19,9 +19,8 @@ fn rotated(v: DVec2, heading: f64) -> DVec2 {
     DVec2::new(v.x * c + v.y * s, -v.x * s + v.y * c)
 }
 
-/// Sweep articulated sections about their own axles. Extending the tractor's box
-/// to the back of a bendy bus rotates the entire rear at once and invents a wide
-/// tail swing into parked cars that the real articulation never makes.
+/// Sweep articulated sections about their own axles (one stretched tractor box would
+/// invent a wide tail swing into parked cars).
 pub(super) fn articulated_clear(
     collision: &::simulation::collision::CollisionWorld,
     occupancy: &Occupancy,
@@ -95,9 +94,8 @@ pub(super) fn articulated_clear(
     true
 }
 
-/// Side envelope of the realized rigid body relative to its lane. Long overhangs
-/// matter while leaving a bend: treating a bus as an aligned width-only strip
-/// misses the front corner beside a parked car.
+/// Side envelope of the realized rigid body relative to its lane, overhangs included
+/// (a width-only strip misses the front corner leaving a bend).
 pub(super) fn side_extent(front: f32, rear: f32, half_width: f32, yaw_deg: f32, side: f32) -> f32 {
     let (s, c) = yaw_deg.to_radians().sin_cos();
     half_width * c.abs() + (front * s * side).max(-rear * s * side).max(0.0)
@@ -124,9 +122,8 @@ pub(super) fn corner_swerve(
     let (bbox, obstacle) = match collision.hit(&bbox) {
         Some(obstacle) => (bbox, obstacle),
         None => {
-            // Not touching yet: the vehicle stopped short of what its realization saw
-            // coming (`scenery_ahead` metres on). Find that contact along the way, so the
-            // swerve is asked for before the bumper is against it.
+            // Not touching yet: find the contact realization saw `ahead` along the way, so
+            // the swerve is asked for before the bumper is against it.
             let way = |d: f32| state.way_point(net, d);
             let mut found = None;
             let mut last = -1.0f32;
@@ -156,13 +153,10 @@ pub(super) fn corner_swerve(
     if side.abs() < 0.5 { return None; } // a wall ahead is a stop, not a side swerve
     let lateral = (body.position - p).truncate().dot(right) as f32;
     let mut room = (lane.width * 0.5 - caps.half_width - 0.05).max(0.0);
-    // Long bodies need swing room on junction aprons, where car centre paths
-    // alone understate the available turning space. Verify that space physically.
+    // long bodies need swing room on junction aprons (checked physically below)
     if lane.turn != 0 || !net.crossings[state.lane].is_empty() { room = room.max(1.0); }
-    // A wide vehicle (a bus in a narrow lane) has almost no room left inside its lane, so a
-    // swerve was never found and it stood against the parked car for good. Being against
-    // something already is reason enough to lean over the lane edge; every candidate path is
-    // checked against the real collision boxes and other vehicles below.
+    // A wide vehicle in a narrow lane has no room inside it and stood against the parked car
+    // for good: lean over the lane edge (every candidate is checked against real boxes).
     room = room.max(0.6);
     let sign = side.signum() as f32;
     'candidates: for step in [0.35f32, 0.6, 0.2] {
@@ -278,9 +272,8 @@ pub(super) fn scenery_clear(
             actor.rear as f64,
             actor.half_width as f64,
         );
-        // The path's height is only a reference: Berlin's authored asphalt can sit
-        // above it. Use the same nearest-road-level query as the tyres, so asphalt
-        // cannot become a wall and a bridge above this road cannot lift the sweep.
+        // The road level as the tyres find it, not the path's (Berlin's asphalt sits above
+        // it; a bridge above must not lift the sweep).
         let road_z = contact.and_then(|g| g.road_height(s.p.x, s.p.y, s.p.z, 1.5))
             .unwrap_or(s.p.z);
         body.z0 = road_z + 0.15;

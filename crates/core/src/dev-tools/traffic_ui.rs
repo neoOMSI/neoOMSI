@@ -250,8 +250,8 @@ mod tests {
             });
         }
         let mut tool = TrafficTool::default();
-        // Default settings reproduced the crash. Also exercise toggling and reopening,
-        // alongside the pre-existing boxes overlay which shares the background list.
+        // Default settings reproduced the crash; also toggle and reopen alongside the
+        // boxes overlay, which shares the background list.
         for (paths, boxes, labels) in [(true, true, true), (true, false, true),
             (false, true, false), (true, true, true)] {
             tool.paths = paths; tool.boxes = boxes; tool.labels = labels;

@@ -1,8 +1,6 @@
-//! Stage 6 exit gate — the door/station script handshake.
-//!
-//! Acknowledged, unsupported and stuck feedback are distinct: an unsupported script uses the
-//! documented fixed-close fallback, a stuck script is waited on up to the timeout, and a
-//! script that reports its doors open is waited on longer, but not forever.
+//! Stage 6 exit gate — the door/station script handshake. An unsupported script uses the
+//! fixed-close fallback, a stuck one is waited on up to the timeout, and one reporting its
+//! doors open is waited on longer, but not forever.
 
 mod common;
 

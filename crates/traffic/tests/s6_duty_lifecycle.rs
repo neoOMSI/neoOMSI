@@ -1,9 +1,8 @@
 //! Stage 6 exit gate — the duty lifecycle: terminus handover, out of service, pending route
 //! and no duplicate ownership.
 //!
-//! The timetable assignment itself stays in `schedule`; this checks the service-side
-//! lifecycle contract: exactly one owner per duty, an explicit next-trip/out-of-service state,
-//! a diagnosed pending route, and legitimate simultaneous departures from different duties.
+//! The timetable assignment stays in `schedule`; this checks one owner per duty, explicit
+//! next-trip/out-of-service states, a diagnosed pending route and parallel departures.
 
 mod common;
 

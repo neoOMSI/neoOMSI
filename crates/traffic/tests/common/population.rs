@@ -1,8 +1,5 @@
-//! Shared headless fixture for the Stage 8 population scenarios.
-//!
-//! A straight street lane (or a few) with a [`PopulationCoordinator`], synthetic realized
-//! bodies for the occupancy, and helpers to submit demand and read typed decisions. No
-//! renderer and no OMSI assets.
+//! Headless fixture for the population scenarios: straight street lanes, a
+//! [`PopulationCoordinator`], synthetic bodies, and demand/decision helpers.
 
 #![allow(dead_code)]
 
@@ -68,8 +65,7 @@ pub struct PopWorld {
     pub time: f32,
 }
 
-/// The frozen scene, built from disjoint field borrows so a test can plan while holding the
-/// network.
+/// The frozen scene, from disjoint field borrows so a test can plan while holding the network.
 pub fn scene<'a>(
     net: &'a Network,
     occ: &'a Occupancy,
@@ -105,8 +101,7 @@ impl PopWorld {
         occupancy(&self.net, self.tick, &self.bodies)
     }
 
-    /// Annotate every outstanding request as if it were valid, on loaded ground, with the
-    /// given visibility.
+    /// Mark every outstanding request valid and on loaded ground, with the given visibility.
     pub fn facts(&self, visible: bool) -> HashMap<SpawnRequestId, SpawnFacts> {
         self.coord
             .requests()

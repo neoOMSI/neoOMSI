@@ -1,9 +1,6 @@
-//! Stage 5 — exit storage is held by exactly the admitted vehicles.
-//!
-//! A queue stands on the short exit of a junction. Each admitted vehicle takes its length
-//! plus gap out of the free distance behind the queue's tail, keeps that slot on the ticks
-//! after (while it drives through the junction) and gives it up once its body is on the
-//! exit. A vehicle that is not admitted takes nothing.
+//! Stage 5 — exit storage is held by exactly the admitted vehicles: each takes its length
+//! plus gap behind the exit queue's tail, keeps it while driving through the junction and
+//! gives it up once its body is on the exit.
 
 mod common;
 

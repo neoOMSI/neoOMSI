@@ -1,20 +1,15 @@
 //! Timetable buses as traffic: the engine-side adapter over the domain service machine.
 //!
-//! A timetable bus is one of the town's AI cars (`AiCar`, created by the same
-//! `Traffic::create_car` as every other car, driven by the same following, lights, junctions,
-//! lane changes and passing). Everything that decides *when* it serves a stop - the service
-//! phases, berth assignment, docking eligibility, dwell and the door handshake policy - lives
-//! in [`::traffic::service`] (`ServiceCoordinator`). This module keeps only what needs engine
-//! access: the trip's compiled [`StopTarget`]s, the destination/displays, the always/early
-//! policy, and the mapping of script feedback into the typed [`ScriptFeedback`] the domain
-//! understands. The body is still moved by the same following controller; this module only
-//! says where to stop and what the service state is.
+//! A timetable bus is an ordinary AI car (`AiCar`). When it serves a stop (phases, berths,
+//! dwell, door handshake) is decided in [`::traffic::service`]; this module keeps what needs
+//! engine access: the compiled [`StopTarget`]s, displays, stop policy and the mapping of
+//! script feedback into [`ScriptFeedback`].
 
 use ::traffic::{ServicePhase, ServiceState, StopTarget};
 use std::collections::VecDeque;
 
-/// A passenger merely queuing at the doors (not physically in a doorway) may hold the bus
-/// open no longer than this (s): a passenger who never gets on must not strand the bus.
+/// How long a passenger merely queuing at the doors may hold the bus (s), so one who never
+/// gets on cannot strand it.
 const MAX_DWELL: f32 = 90.0;
 
 /// The engine-side half of a scheduled bus: the content the domain does not own.
@@ -36,13 +31,11 @@ pub struct BusService {
     pub wait_departure: Vec<i64>,
     /// The timetable still carries the route on as tiles bring their lanes.
     pub route_open: bool,
-    /// A train on a track of its own: its trip ends at the track's end, not at its last
-    /// station (#342).
+    /// A train on a track of its own: its trip ends at the track's end (#342).
     pub to_track_end: bool,
     /// It waits at its last station for the profile's departure there, however long (#101).
     pub stand_at_end: bool,
-    /// On its layover at the stand, where its timetable track begins short of the first
-    /// stop: it stands there until this day time (s), then drives to the stop.
+    /// Layover at a stand short of the first stop: it stands until this day time (s).
     pub hold_until: Option<f64>,
 }
 
@@ -104,9 +97,8 @@ impl BusService {
         }
     }
 
-    /// Somebody is still at the doors: keep them open for `secs` more. Somebody physically
-    /// in a doorway holds the bus however long; someone merely queuing holds it only up to
-    /// `MAX_DWELL` (a passenger who never gets on must not strand the bus for good).
+    /// Somebody is still at the doors: keep them open for `secs` more. Someone in a doorway
+    /// holds the bus indefinitely, someone merely queuing only up to `MAX_DWELL`.
     pub fn hold(&mut self, secs: f32, in_doorway: bool) {
         if self.state.phase == ServicePhase::Boarding
             && (in_doorway || self.state.phase_t < MAX_DWELL)
@@ -123,8 +115,7 @@ impl BusService {
         self.hold_until = None;
     }
 
-    /// The berth of the front stop, if any, against the vehicle's planned route. A stop whose
-    /// lane has not been loaded yet has no berth (the service reports `RoutePending`).
+    /// The front stop's berth on the planned route (none while its lane is not loaded).
     pub fn front_berth(&self, route: &[usize]) -> Option<::traffic::BerthGeometry> {
         let target = self.stops.front()?;
         let lane = route.get(target.route_index).copied()?;
@@ -159,13 +150,11 @@ pub fn script_feedback(
     match phase {
         ServicePhase::ClosingDoors | ServicePhase::WaitingToMerge | ServicePhase::Departing => {
             match vehicle.var("AI_Scheduled_AtStation") {
-                // The engine always injects the variable, so an absent one only happens for
-                // an adapter that never set the station at all: the fixed-close fallback.
+                // (absent only if the station was never set: the fixed-close fallback)
                 None => ScriptFeedback::Unsupported,
                 // The script wrote 0: doors shut, the stop brake is off.
                 Some(v) if v.abs() < 0.5 => ScriptFeedback::Released,
-                // The script has not answered. If its doors are reported open, the bus waits
-                // longer for them; otherwise the state is unknown.
+                // No answer yet: doors reported open make the bus wait longer.
                 Some(_) if doors_known_open(vehicle) => ScriptFeedback::StuckDoorsOpen,
                 Some(_) => ScriptFeedback::StuckUnknown,
             }
@@ -174,8 +163,7 @@ pub fn script_feedback(
     }
 }
 
-/// Whether the vehicle's script reports a door as open (a proven unsafe state to drive off
-/// with, as distinct from a script that never reports door state at all).
+/// Whether the vehicle's script reports a door as open (unsafe to drive off with).
 fn doors_known_open(vehicle: &::simulation::VehicleInstance) -> bool {
     for name in ["door_0", "door0", "PAX_Entry0_Open"] {
         if vehicle.var(name).map(|v| v > 0.5).unwrap_or(false) {
@@ -185,14 +173,11 @@ fn doors_known_open(vehicle: &::simulation::VehicleInstance) -> bool {
     false
 }
 
-/// Origin rest position before the pole: the road vehicle's actual front bumper,
-/// retaining the content's holding correction. Rail vehicles retain their platform
-/// alignment convention (half the leading car length).
+/// Origin rest position before the pole: a road vehicle's front bumper (plus the content's
+/// holding correction), a train's half leading-car length.
 ///
-/// A deliberate departure from Omsi.exe for road vehicles: it measures the way to the stop
-/// from the vehicle's origin (0x7da4e3), so an OMSI bus comes to rest with its origin at
-/// the stop point and its front several metres past the pole. Here the front stops at the
-/// pole. Trains keep OMSI's rule: their front at the station.
+/// A deliberate departure from OMSI for road vehicles, which stop with their origin at the
+/// stop point and the front metres past the pole. Trains keep OMSI's rule.
 pub fn stop_shift(ty: &::simulation::VehicleType, rail: bool) -> f32 {
     let hold = ty.def.ai_brake_performance.map(|b| b[4]).unwrap_or(0.0);
     let front = if rail {
@@ -237,9 +222,8 @@ mod tests {
         assert!(s.standing_for(0.0) > 100.0);
     }
 
-    /// #298: the stops marked "wait dep. time" reach the service, and a bus waiting there for
-    /// its departure stands at its stop (the stood-too-long and crawl timers of the traffic
-    /// leave it alone) and is gone round by the traffic behind it.
+    /// #298: a bus waiting for its departure at a "wait dep. time" stop stands there (no
+    /// stood-too-long or crawl timers) and is gone round by the traffic behind it.
     #[test]
     fn a_bus_waiting_for_its_departure_stands_at_its_stop() {
         let mut s = BusService::new(vec![stop(1, 1300.0), stop(2, 2000.0)]);

@@ -1,19 +1,8 @@
 //! Longitudinal control: speed composition, car following, the comfort envelope, launch
 //! behaviour and realized-motion reconciliation.
 //!
-//! [`BehaviorEnvelope`] owns the shared comfort bounds (comfort acceleration/service braking,
-//! the emergency ceiling, jerk, default headway/gap/reaction) with units, and
-//! [`LongitudinalDemand`] separates the comfortable command from collision prevention.
-//!
-//! ## Tuning provenance
-//!
-//! The constants and envelope defaults here are **provisional/improvement** neoOMSI targets
-//! (plan section 6), not values established by the OMSI reference. The one verified content
-//! value is `[ai_brakeperformance]` element 4 (the stop-holding correction); the braking
-//! strength's remaining values are unresolved and use an explicit provisional class fallback
-//! (`BrakingCapability`, `D3`). Driver traits are seeded per vehicle (persistent, not
-//! per-frame). The full parameter table with units, rationale and provenance is in
-//! `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
+//! The constants and envelope defaults are provisional neoOMSI targets, not OMSI reference
+//! values; only `[ai_brakeperformance]` element 4 (the stop-holding correction) is verified.
 
 use glam::{DVec2, DVec3};
 use crate::capabilities::BrakingCapability;
@@ -56,9 +45,7 @@ pub struct AiState {
     pub planned_next: Option<usize>,
     /// The lanes after `planned_next`, decided `PLAN_AHEAD` metres in advance.
     pub ahead: Vec<usize>,
-    /// During a lane change: the way on from the lane the car is moving over to, chosen
-    /// when the change begins, so that the steering and the speed for the bends already
-    /// know it.
+    /// During a lane change: the way on from the target lane, chosen when the change begins.
     pub change_plan: Vec<usize>,
     /// The lane the car came from (the way behind it, for the rear axle).
     pub prev_lane: Option<usize>,
@@ -73,9 +60,7 @@ pub struct AiState {
     /// Seconds until the next lane change may start.
     pub change_cooldown: f32,
     /// Lateral offset from the lane (m, positive = right): bus bays, swerving round a
-    /// parked car. It moves towards `lateral_target` along an S-curve over the distance
-    /// driven (`lateral_ramp`), so that the car is straight again when it gets there and
-    /// nothing moves while it stands.
+    /// parked car. Eased to `lateral_target` by distance (`lateral_ramp`), not by time.
     pub lateral: f32,
     pub lateral_target: f32,
     /// The S-curve in progress: (from, to, odometer at its start, its length in m).
@@ -162,9 +147,8 @@ pub fn arrival_time(dist: f32, v: f32, a: f32, v_max: f32) -> f32 {
     }
 }
 
-/// How far along its S-curve (smoothstep, 0..1) a car moving back from the lane `side`
-/// metres to the left has to be before its middle is `clear` metres from that lane's
-/// middle (out of the way of the traffic there).
+/// S-curve progress (smoothstep, 0..1) at which a car moving back from a lane `side` metres
+/// to its left has its middle `clear` metres from that lane's middle.
 pub fn ramp_progress_for(side: f32, clear: f32) -> f32 {
     if clear <= 0.0 {
         return 0.0;
@@ -254,9 +238,8 @@ impl LongitudinalDemand {
     }
 }
 
-/// The realized pose and speed of the body that carries a vehicle, fed back by the motion
-/// adapter. The domain commits route progress from this; it never advances its own pose past
-/// the realized body.
+/// The realized pose and speed of the body carrying a vehicle, fed back by the motion
+/// adapter. Route progress is committed from this, never past the realized body.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RealizedMotion {
     pub pose: DVec3,
@@ -279,9 +262,8 @@ const FEEDBACK_ROUTE_LANES: usize = 3;
 const FEEDBACK_MAX_LEAD: f32 = 2.0;
 const FEEDBACK_ROUTE_REACH: f32 = 80.0;
 
-/// A lane change: the car moves over from its lane to `to` along `length` metres of road
-/// (by distance, not by time: a car that has to stop halfway stands still, and so does its
-/// way).
+/// A lane change onto `to` over `length` metres of road (by distance, not time: a car that
+/// stops halfway stands still).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaneChange {
     pub to: usize,
@@ -434,10 +416,8 @@ impl AiState {
     /// A random way on from the end of `lane`.
     fn choose_after(&mut self, net: &Network, lane: usize) -> Option<usize> {
         let l = &net.lanes[lane];
-        // (a car of a traffic pool - the trucks of a map that keeps them to its port roads -
-        // takes the ways its pool may go, as it was put on one; where none of them does, the
-        // ways with traffic, then the ways it may drive at all: it does not stand at the
-        // junction for ever)
+        // (a pool car, e.g. port-road trucks, takes its pool's ways; failing that, ways with
+        // traffic, then any it may drive, so it never stands at the junction for ever)
         let open_to = |pooled: bool| -> Vec<usize> {
             l.next
                 .iter()
@@ -468,9 +448,8 @@ impl AiState {
         } else {
             open
         };
-        // and a way that goes on rather than into the end of the network, where there is
-        // the choice (the map's edge is where OMSI takes its cars away; a village like
-        // Grundorf had a queue of twenty growing at the end of its one outbound road)
+        // and prefer a way that goes on over a dead end (OMSI removes cars at the map's edge;
+        // Grundorf queued twenty at the end of its one outbound road)
         if l.kind == LaneKind::Street && net.reach.len() == net.lanes.len() {
             let through: Vec<usize> = choices
                 .iter()
@@ -643,9 +622,8 @@ impl AiState {
         d + ss
     }
 
-    /// A timetable route that moves over to the lane beside the current one next: that lane
-    /// and the side it lies on (1 left, 2 right). The driver starts the move as soon as the
-    /// lane is free (`start_route_change`).
+    /// A timetable route's next step onto the lane beside: that lane and its side (1 left,
+    /// 2 right). The driver moves over once the lane is free (`start_route_change`).
     pub fn route_change_due(&self, net: &Network) -> Option<(usize, i32)> {
         if self.route.is_empty() || self.change.is_some() {
             return None;
@@ -684,14 +662,12 @@ impl AiState {
         }
     }
 
-    /// A route vehicle pulling out into `to`, the lane beside its route lane: the lanes beside
-    /// the route on from there, for at least `reach` metres, go into its route, with a change
-    /// back onto the route after them. Without them the body out there was put back on the
-    /// route lane beside it (`commit_feedback` places a route vehicle on its route) and
-    /// steered back in at once - into the car it was going round. Returns the old route index
-    /// from which on the route kept its lanes and the new index of that lane, or `None` (no
-    /// route, or no lanes beside it far enough, or a route index `keep` refuses to drop - a
-    /// stop's lane; the route is unchanged).
+    /// A route vehicle pulling out into `to`, beside its route lane: the lanes beside the
+    /// route for at least `reach` metres join the route, with a change back after them (else
+    /// `commit_feedback` snaps the body back onto the route lane, into the car it passes).
+    /// Returns (old route index where the kept lanes resume, its new index), or `None` with
+    /// the route unchanged (no route, no lanes beside far enough, or `keep` refuses to drop
+    /// an index, e.g. a stop's lane).
     pub fn splice_bypass(
         &mut self,
         net: &Network,
@@ -755,11 +731,8 @@ impl AiState {
         q.cur = q.n;
         q.lanes[q.n] = self.lane;
         q.n += 1;
-        // A route change onto the lane beside still to be made: the way goes straight on at
-        // the end of this lane, not over to the lane after that one. (Joined up as a joint,
-        // the way bent over towards it, and a bus waiting for its gap at the end of the lane
-        // turned half into the lane beside - where the car coming up stopped behind its
-        // corner, and the gap never came.)
+        // A pending route change onto the lane beside: the way goes straight on at the end of
+        // this lane (bent over as a joint, a bus waiting for its gap blocked the lane beside).
         let pending = self.change.is_none()
             && self.route.get(self.route_index + 1).is_some_and(|&b| net.parallel(self.lane, b))
             && self.planned_next.is_some_and(|n| !net.lanes[self.lane].next.contains(&n));
@@ -794,18 +767,16 @@ impl AiState {
         q
     }
 
-    /// The point of the car's way `d` metres ahead of it (behind for negative `d`): along
-    /// its lanes with the joints smoothed, over to the new lane during a lane change, and
-    /// out to the side where it pulls into a bay or round a parked car. The steering
-    /// follows this curve; it has no steps, so neither does the car.
+    /// The step-free point of the car's way `d` metres ahead (behind for negative `d`) that
+    /// the steering follows: along its lanes with joints smoothed, across a lane change, and
+    /// out into a bay or round a parked car.
     pub fn way_point(&self, net: &Network, d: f32) -> DVec3 {
         let change = self.change.filter(|c| c.to < net.lanes.len()).map(|c| self.change_seq(c.to));
         self.way_point_on(net, &self.seq(net), change.as_ref(), d)
     }
 
-    /// [`Self::way_point`] for many points of one unchanged state: the lane sequences are
-    /// built once instead of once per point. A body step or the scenery look-ahead asks
-    /// for hundreds of points of the same way.
+    /// [`Self::way_point`] for many points of one unchanged state, building the lane
+    /// sequences once (a body step asks for hundreds of points).
     pub fn way_fn<'a>(&'a self, net: &'a Network) -> impl Fn(f32) -> DVec3 + 'a {
         let seq = self.seq(net);
         let change = self.change.filter(|c| c.to < net.lanes.len()).map(|c| self.change_seq(c.to));
@@ -830,11 +801,9 @@ impl AiState {
         p
     }
 
-    /// How fast the car may be going now so that it can take every bend of the next stretch
-    /// of its way at `lat_accel`, braking gently (2 m/s²) into the tight ones. Without this
-    /// the cars swept round a junction at 40 km/h - well over a g. The bend is the lane's
-    /// own curvature or the turn of the way over 6 m, whichever is sharper: lanes are linked
-    /// with up to 40° between them, and such a kink is a bend too.
+    /// The speed now that lets the car take every bend ahead at `lat_accel`, braking gently
+    /// (2 m/s²) into tight ones. A bend is the lane's curvature or the way's turn over 6 m,
+    /// whichever is sharper (linked lanes may kink by up to 40°).
     pub fn curve_speed(&self, net: &Network) -> f32 {
         let mut best = self.curve_speed_on(net, &self.seq(net), self.s);
         if let Some(c) = self.change {
@@ -848,10 +817,8 @@ impl AiState {
     fn curve_speed_on(&self, net: &Network, q: &LaneSeq, s: f32) -> f32 {
         let reach = (self.speed * self.speed / 4.0 + 12.0).min(90.0);
         let mut best = f32::MAX;
-        // The samples lie at fixed places of the road (every 2.5 m of the odometer), not at
-        // fixed distances ahead of the car: moving with the car, the sample that caught a
-        // bend jumped 2.5 m nearer every 2.5 m, the allowed speed fell in steps of 4 m²/s²
-        // and the car braked hard, let go and braked hard again with nothing in front of it.
+        // Samples sit at fixed road places (every 2.5 m of odometer), not fixed distances
+        // ahead: samples moving with the car made the allowed speed step and the car pulse-brake.
         let first = 2.5 - self.odometer.rem_euclid(2.5);
         let mut d = 0.0f32;
         let mut next = first;
@@ -864,9 +831,8 @@ impl AiState {
             let k = net.lanes[q.lanes[i]].curvature_at(u).abs().max(turn);
             if k > 1e-4 {
                 let v = (self.lat_accel / k).sqrt().max(2.5);
-                // (a bend may begin anywhere up to a sample's spacing before the sample
-                // that finds it: the speed is taken from there, or the car met the start of
-                // a tight turn half a metre after its profile had allowed 1 m/s more)
+                // (a bend may begin up to one sample spacing before the sample that finds
+                // it: the speed is taken from there)
                 best = best.min((v * v + 2.0 * 2.0 * (d - 2.5).max(0.0)).sqrt());
             }
             d = next;
@@ -907,10 +873,9 @@ impl AiState {
         None
     }
 
-    /// Set the indicator for what the car is doing or about to do: a lane change, its own
-    /// manoeuvre (pulling away from a stop), moving sideways into a bay or out round a
-    /// parked car and back, and a turn at the junction ahead - from about four seconds
-    /// before it (at least 25 m, at most 60 m) until the turn is done.
+    /// Set the indicator for a lane change, the driver's own manoeuvre (pulling away from a
+    /// stop), moving into a bay or round a parked car, and a turn ahead: from about 4 s
+    /// before it (25-60 m) until the turn is done.
     pub fn update_blinker(&mut self, net: &Network) {
         self.blinker = if let Some(c) = self.change {
             c.dir
@@ -946,11 +911,9 @@ impl AiState {
         self.drive(net, dt, lead, stop_at)
     }
 
-    /// The acceleration the driver wants (the Intelligent Driver Model): towards the
-    /// desired speed on a free road, and a braking term for what is ahead that is gentle
-    /// (`decel`) while there is room and only as hard as it must be when there is not.
-    /// `lead` is the vehicle ahead, `stop` the distance from the car's origin to where it
-    /// has to stop (a light, a junction it gives way at, a bus stop).
+    /// The driver's wanted acceleration (Intelligent Driver Model): towards the desired speed,
+    /// braking gently (`decel`) for `lead` (the vehicle ahead) or `stop` (distance from the
+    /// origin to a light, a give-way junction or a bus stop), harder only when it must.
     pub fn desired_accel(&self, net: &Network, lead: Option<Lead>, stop: Option<f32>) -> f32 {
         self.desired_demand(net, lead, stop).effective()
     }
@@ -978,10 +941,8 @@ impl AiState {
                 / 3.6
         };
         let mut v0 = limit(lane);
-        // a lower limit on the lanes ahead (a junction's turning lanes, a 30 zone) is
-        // reached at that speed, slowing gently (1.2 m/s²) from where it has to: taken only
-        // on entering the lane, the new limit threw the model into a -3 m/s² stop at every
-        // junction, with nothing in front of the car
+        // a lower limit on the lanes ahead (turn lanes, a 30 zone) is met by slowing gently
+        // (1.2 m/s²) from where needed, not by a hard stop on entering the lane
         {
             let reach = (v * v / 2.4 + 10.0).min(120.0);
             let mut d = lane.length() - self.s;
@@ -1017,10 +978,8 @@ impl AiState {
         let mut out = acc;
         if let Some(l) = lead {
             let idm = acc + interaction(l.gap, l.speed.max(0.0), self.min_gap, self.headway);
-            // The constant-acceleration heuristic (the "ACC" variant of the model): how hard
-            // the driver has to brake if the car ahead keeps doing what it does. A car that
-            // has just cut in close ahead but drives almost as fast calls for a firm brake
-            // and a gap that opens again over the next seconds, not an emergency stop.
+            // The constant-acceleration heuristic (the "ACC" model variant): a car cutting in
+            // close but almost as fast calls for a firm brake, not an emergency stop.
             let (vl, s, al) = (l.speed.max(0.0), l.gap.max(0.05), l.acc.min(a));
             let den = vl * vl - 2.0 * s * al;
             let cah = if vl * (v - vl) <= -2.0 * s * al && den > 1e-3 {
@@ -1042,11 +1001,9 @@ impl AiState {
             out = out.min(acc_lead);
         }
         if let Some(d) = stop {
-            // A stop line: far away the model's braking term (without a time gap, the line
-            // does not move off), gently; once the constant deceleration that stops the car
-            // at the line reaches half the driver's comfortable braking, that deceleration.
-            // The model alone braked twice as hard as needed when a light turned yellow 25 m
-            // ahead, and then eased off.
+            // A stop line: the model's braking term (no time gap) while far, then the constant
+            // deceleration that stops at the line once it reaches half the comfortable braking
+            // (the model alone braked twice as hard as needed at a yellow light).
             let room = (d - self.front - STOP_LINE_GAP).max(0.02);
             let need = v * v / (2.0 * room);
             let idm = (acc + interaction(d - self.front, 0.0, STOP_LINE_GAP, 0.2)).max(-0.5 * b);
@@ -1058,9 +1015,8 @@ impl AiState {
             }
             out = out.min(a_stop);
         }
-        // Meet a lower limit or speed profile rather than approaching it asymptotically: the
-        // free term alone leaves the car a few m/s over a new limit at the joint. A speed
-        // proportional correction is enough to shed the difference without a hard clamp.
+        // Meet a lower limit or speed profile instead of approaching it asymptotically, with
+        // a speed-proportional correction rather than a hard clamp.
         if v > v0 {
             let need = -((v - v0) * 2.0).min(MAX_BRAKE);
             if need < out {
@@ -1068,9 +1024,8 @@ impl AiState {
             }
             out = out.min(need);
         }
-        // Separate the collision-prevention channel from the comfort envelope: the comfort
-        // command never brakes harder than the vehicle's ordinary maximum, and anything
-        // beyond that is an explicit emergency.
+        // The comfort command never brakes harder than the ordinary maximum; anything beyond
+        // is an explicit emergency.
         let ceiling = self.envelope.emergency_decel.max(a);
         let out = out.clamp(-ceiling, a);
         let floor = -self.brakes.max_decel.max(0.5);
@@ -1106,10 +1061,9 @@ impl AiState {
         if let Some(cap) = self.accel_cap {
             acc = acc.min(cap);
         }
-        // standing: a driver who is held there moves off only after a moment when the way
-        // clears (the wave that runs down a queue at a green light). Only *entering* the
-        // hold sets the timer: a re-hold after a brief flicker of a constraint keeps the
-        // count, so a junction that is free and not free by turns cannot reset the launch.
+        // standing: a held driver moves off only after `reaction` (the wave down a queue at a
+        // green). Only entering the hold sets the timer, so a flickering constraint cannot
+        // reset the launch.
         if self.speed < 0.05 {
             if acc <= 0.05 {
                 if !self.held {
@@ -1158,9 +1112,8 @@ impl AiState {
             } else {
                 c.t += ds / c.length;
             }
-            // Random traffic can change across an ordinary spline joint. Advance both
-            // longitudinal origins while retaining the blend's progress and indicator.
-            // Route changes keep their explicit route-entry completion semantics.
+            // Random traffic may change across a spline joint: advance both origins, keeping
+            // the blend's progress and indicator (route changes complete on route entry).
             if c.t < 1.0 && self.route.is_empty() {
                 for _ in 0..PLAN_LANES {
                     let from_len = net.lanes[self.lane].length();
@@ -1354,10 +1307,9 @@ impl AiState {
         if net.lanes.get(self.lane).is_none() {
             return None;
         }
-        // A scheduled route includes the adjacent target lane. Selecting the nearest
-        // route lane halfway through a change switches the source underneath the blend,
-        // making its remaining trajectory jump sideways. Keep the source until drive
-        // completes the change, and reconcile both longitudinal coordinates together.
+        // A scheduled route includes a change's target lane: switching to the nearest route
+        // lane mid-change would make the blend jump sideways, so keep the source until
+        // `drive` completes the change and reconcile both coordinates together.
         if let Some(mut change) = self.change {
             let target = net.lanes.get(change.to)?;
             let (s, _) = net.lanes[self.lane].nearest_point(realized.pose)?;
@@ -1426,10 +1378,8 @@ impl AiState {
             .map(|f| (f, 0))
         };
         let Some((fix, offset)) = projected else {
-            // The body is off its way (swung wide, turned across it): it cannot be placed
-            // on the route, but the planner must not run on without it either. Left alone
-            // it advanced at its own speed while the body crept back, and a few seconds
-            // later the body was a lane behind its way.
+            // The body is off its way: it cannot be placed on the route, but the planner must
+            // not run on without it (or the body ends up a lane behind its way).
             self.hold_to_rejected_body(net, realized);
             self.reconciled = false;
             return None;

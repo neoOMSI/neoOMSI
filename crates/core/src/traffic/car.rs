@@ -28,9 +28,8 @@ impl AiCar {
     }
 
 
-    /// Boarding permission shared with the passenger simulation: true only when the service
-    /// owner has docked at a valid berth (`ServicePhase::Boarding`), so passengers and the
-    /// bus cannot disagree about whether the stop is being served.
+    /// Boarding permission shared with the passenger simulation: true only once the service
+    /// owner has docked at a valid berth (`ServicePhase::Boarding`), so both agree.
     pub fn boarding_permission(&self) -> bool {
         self.bus
             .as_ref()

@@ -1,8 +1,6 @@
 //! Stage 3 exit gate — player/LAN trailers are perceived, and height separates bridges.
-//!
-//! External road users (the player and LAN remotes) are fed to perception with stable ids;
-//! their trailers are separate footprints sharing the towing id. A body on a bridge above a
-//! road does not occupy that road, while a body at the same level does.
+//! Trailers are separate footprints sharing the towing id; a body on a bridge above a road
+//! does not occupy that road.
 
 use glam::{DVec2, DVec3};
 use traffic::perception::{BodyFootprint, Occupancy, SweepSample};
@@ -48,7 +46,6 @@ fn a_lan_trailer_is_perceived_as_its_own_body() {
     let hit = occ.swept_clearance(&sample(11.0), 1.25, &[]).unwrap();
     assert_eq!(hit.owner, VehicleId(0x1000), "the trailer's owner was lost");
     assert_eq!(hit.part, 1, "the trailer is not reported as a separate part");
-    // The towing vehicle is perceived where it stands.
     assert_eq!(
         occ.swept_clearance(&sample(20.0), 1.25, &[]).map(|s| s.owner),
         Some(VehicleId(0x1000))

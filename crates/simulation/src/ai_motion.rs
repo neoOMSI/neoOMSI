@@ -159,9 +159,8 @@ struct Wheel {
 
 /// How far over its way an AI car's wheel climbs onto what is drawn there (m), and how far
 /// under the way it goes down to it: the road drawn higher than the lane the map laid out
-/// (the car sank into it), not a deck overhead. The bounded, provisional search tolerates
-/// imperfect path heights in either direction. Later probes follow previous contacts and
-/// local path grade; missing wheels share the supported axle instead of dipping to terrain.
+/// (the car sank into it), not a deck overhead. Later probes follow previous contacts;
+/// missing wheels share the supported axle instead of dipping to terrain.
 const AI_CONTACT_RANGE: f64 = 1.5;
 /// A rear-axle target this far (m) from the body is not tracking error but a relocation, or a
 /// way that has not caught up with the body.
@@ -195,9 +194,8 @@ const AI_CONTACT_REACQUIRE: f64 = 3.0;
 /// previous road plane. This is a continuity filter, not a limit on the road's total grade.
 const AI_CONTACT_DISCONTINUITY: f64 = 0.35;
 /// How long (s) a car that has lost all support stands and waits for it: long enough for a
-/// tile streaming in under it, not for ground that never comes (a car past the loaded
-/// area, a way over an object without a surface). After that it drives on at its way's
-/// height, as it did before the support search.
+/// tile streaming in under it, not for ground that never comes (past the loaded area).
+/// After that it drives on at its way's height.
 const AI_GROUND_PATIENCE: f32 = 5.0;
 
 #[derive(Debug, Clone)]
@@ -517,9 +515,8 @@ impl AiBody {
         self.a_lat = 0.0;
     }
 
-    /// Reject translation/yaw at an obstacle while allowing the driver to keep
-    /// turning the wheels. Restoring the steering too repeats the same clipped
-    /// front-corner step forever, particularly with a bus's long wheelbase.
+    /// Reject translation/yaw at an obstacle but keep the steering, else the same clipped
+    /// front-corner step repeats forever (a bus's long wheelbase).
     pub fn reject_motion(&mut self, previous: &Self) {
         let (steer, command) = (self.steer, self.steer_cmd);
         self.clone_from(previous);
@@ -560,13 +557,9 @@ impl AiBody {
     }
 
     /// How far (m) this body would travel along `way` before `touches` reports contact, going
-    /// at `speed` (at least 1 m/s, so that a standing body still looks along its way). The real
-    /// steering is run - lock, rate and pure pursuit - so a bus's front corner and its swing
-    /// through a bend are where the real body will be, not where the lane centre line is.
-    /// `None`: it stays clear for `reach` metres, or already touches (a contact that exists is
-    /// not one it is about to make). The body is sampled every 0.5 m: a vehicle's box is far
-    /// longer than that, so nothing it would pass over is missed. It moves on in steps of
-    /// `PROBE_STEP` at least (at a crawl a step of 0.05 s was 5 cm, most of the traffic's time).
+    /// at `speed` (at least 1 m/s), with the real steering so a bus's front corner swings as
+    /// it will. `None`: clear for `reach` metres, or already touching. Sampled every 0.5 m,
+    /// in steps of at least `PROBE_STEP`.
     pub fn distance_to_contact(
         &self,
         way: &dyn Fn(f32) -> DVec3,
@@ -630,14 +623,10 @@ impl AiBody {
         self.recovery_steer = best.2;
     }
 
-    /// Where the rotation point aims beside the way in a bend: towards its inside, so that
-    /// the area the body sweeps lies across the way instead of outside it. With the rear axle
-    /// on a circle of radius R the nose, `sweep_reach` ahead of it, runs about reach²/2R
-    /// outside while the flank inside barely leaves the lane: a 12 m bus put its front over
-    /// the kerb of a roundabout and into the mast on the island of a left turn. Aiming
-    /// reach²/5R inside centres the sweep (measured on the C2, see `sweep_measure`; an
-    /// articulated bus has its trailer cutting inside and keeps its front section on the
-    /// way: `sweep_reach` 0).
+    /// Where the rotation point aims beside the way in a bend: towards its inside, so the
+    /// body's sweep lies across the way (the nose otherwise runs about reach²/2R outside).
+    /// Aiming reach²/5R inside centres it (measured on the C2, `sweep_measure`; an
+    /// articulated bus keeps its front section on the way: `sweep_reach` 0).
     fn sweep_shift(&self, way: &dyn Fn(f32) -> DVec3, look: f32) -> DVec2 {
         let reach = self.sweep_reach;
         if reach <= 0.0 {
@@ -713,13 +702,9 @@ impl AiBody {
         let target = way(self.rot_long).truncate();
         let off_way = (target - self.rear).length();
         if self.started && off_way > SNAP_DISTANCE && self.lost < SNAP_PATIENCE {
-            // The way says the rear axle is a body length away. The body is the single
-            // pose owner and moves continuously, so the way is what is wrong: a joint the
-            // planner has not yet reconciled with where the body is. Putting the body on it
-            // at once was the bus that jumped back (or on) at a corner and left its rear
-            // section jack-knifed. Stand still for a moment: the planner re-reads the body
-            // every tick and the way follows it. Only a mismatch that lasts is a real
-            // relocation.
+            // The way says the rear axle is a body length away: the body owns the pose, so
+            // the way lags. Snapping at once jack-knifed rear sections; wait for the planner
+            // to follow, and only a mismatch that lasts is a real relocation.
             self.lost += dt;
             self.travelled = 0.0;
             self.yaw_rate = 0.0;
@@ -750,9 +735,8 @@ impl AiBody {
         self.lost = 0.0;
         let fwd = dir(self.heading);
         let right = DVec2::new(fwd.y, -fwd.x);
-        // Route progress is committed from this body's motion. The old catch-up servo
-        // amplified the already advanced command and fed that extra speed into the next
-        // tick. Steering follows the way; only the longitudinal owner may choose speed.
+        // Route progress is committed from this body's motion: steering follows the way;
+        // only the longitudinal owner may choose speed.
         let v = speed.max(0.0);
         let normal_look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
         // (`OMSI_AI_MODEL_LOCK` holds the vehicle to its model's lock for comparison)
@@ -1193,10 +1177,8 @@ impl AiBody {
 static MODEL_LOCK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 static DEBUG_WIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// A debug switch of the environment, read once. `drive` runs a few dozen times per car and
-/// tick (the scenery look-ahead drives a probe body along the way), on every worker thread:
-/// asking the environment each time - a process-wide lock on Windows - was most of the AI
-/// bodies' time, the threads queueing for each other.
+/// A debug switch of the environment, read once: `drive` runs dozens of times per car and
+/// tick, and reading the environment takes a process-wide lock on Windows.
 fn env_switch(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
     *cell.get_or_init(|| std::env::var_os(name).is_some())
 }

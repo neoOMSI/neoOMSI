@@ -43,8 +43,8 @@ impl JunctionCoordinator {
                 .zip(ways)
                 .find(|(a, _)| a.id == r.owner)
                 .is_some_and(|(a, w)| {
-                    // (inside: on its way through the junction, not anywhere on the object -
-                    // one that gave up its rights at the signal before it kept them, Ahlheim)
+                    // (inside its way through, not anywhere on the object: one that gave up
+                    // at the signal kept its rights otherwise, Ahlheim)
                     let inside = |l: &usize| r.movement.contains(l) && r.exit != Some(*l);
                     r.movement.iter().filter(|l| inside(l)).any(|lane| {
                         on_lane.get(lane).is_some_and(|bodies| {
@@ -143,9 +143,8 @@ impl JunctionCoordinator {
         self.emergency_reservations.iter().any(|r| r.owner == id)
     }
 
-    /// Is `id` in front of an emergency vehicle on its way through the reserved junction
-    /// that `way` enters? It leads it through, at a red light carefully over the line, if it
-    /// takes the same way through.
+    /// Is `id` in front of an emergency vehicle and taking the same way through the reserved
+    /// junction `way` enters? Then it leads it through (carefully over a red line).
     pub fn emergency_leads(&self, id: VehicleId, way: &[(usize, f32)]) -> bool {
         let Some(&(lane, _)) = way.first() else { return false };
         self.emergency_reservations.iter().any(|r| {
@@ -167,11 +166,9 @@ impl JunctionCoordinator {
             .then_some(EMERGENCY_CROSSING_SPEED)
     }
 
-    /// Does a movement through `lanes` cross, join or share the way an emergency vehicle
-    /// reserved (`r.movement`), or the oncoming side it passes the vehicles in front of it
-    /// on while it passes them? Only that traffic stops for it: one junction object can hold
-    /// a whole square (#462). (Not while it only queues: then it held the traffic its queue
-    /// had to drain into, Ahlheim.)
+    /// Does a movement through `lanes` meet the reserved way (`r.movement`), or the oncoming
+    /// side while the owner passes on it? Only that traffic stops: one junction object can
+    /// hold a whole square (#462); a queueing owner must not hold its queue's exit (Ahlheim).
     pub(super) fn meets_emergency(
         net: &Network,
         r: &EmergencyReservation,

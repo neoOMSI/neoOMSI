@@ -1,8 +1,7 @@
 //! Stage 6 exit gate — three buses sharing one curb stop.
 //!
-//! One berth, three scheduled buses arriving a few seconds apart. A bus waiting upstream has
-//! not served the stop: only the berth owner may board, each bus serves the stop exactly once,
-//! and a following bus does not dock through the one that is still departing.
+//! One berth, three buses arriving seconds apart: only the berth owner boards, each bus serves
+//! the stop once, and a follower does not dock through the one still departing.
 
 mod common;
 

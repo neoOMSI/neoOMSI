@@ -229,8 +229,7 @@ fn an_entering_car_does_not_cut_in_ahead_of_ring_traffic_queueing_at_its_entry()
 /// A car's front ahead of its origin (`JunctionActor::new`).
 const FRONT: f32 = 2.25;
 
-/// The object roundabout of the tests above, and where on its entry (16) the place where it
-/// meets the ring begins.
+/// The object roundabout above, and where on its entry (16) the meeting place begins.
 fn object_ring() -> (Harness, f32) {
     let at = |k: usize| {
         let a = (k % 16) as f64 * std::f64::consts::FRAC_PI_8;

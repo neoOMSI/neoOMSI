@@ -1,18 +1,15 @@
 //! Immutable per-tick snapshot, committed state, and deterministic arbitration.
 //!
-//! Planning reads one [`Snapshot`]; it never mutates another vehicle. Candidate decisions
-//! that need a shared resource (a junction lane, a merge order, downstream exit space) go
-//! through [`Arbiter`], which grants deterministically by stable [`VehicleId`]. The result
-//! is written back as a [`Commit`] at the end of the tick and read as the previous commit
-//! on the next, so previous-frame blocker/leader relations are keyed by id rather than by
-//! container position.
+//! Planning reads one [`Snapshot`] and never mutates another vehicle. Shared resources
+//! (junction lanes, merge order, exit space) go through [`Arbiter`], which grants by stable
+//! [`VehicleId`]; the [`Commit`] carries last tick's relations keyed by id, not by container
+//! position.
 
 use crate::ids::{LaneId, NetworkVersion, VehicleId};
 use crate::perception::Occupancy;
 use hashbrown::HashMap;
 
-/// What was committed last tick: which vehicle each one kept behind, and the lane claims it
-/// held. Keyed by stable id, so reordering the entity container changes nothing.
+/// What was committed last tick (who waited behind whom, lane claims), keyed by stable id.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Commit {
     pub blocked_by: HashMap<VehicleId, VehicleId>,
@@ -34,8 +31,7 @@ impl Commit {
     }
 }
 
-/// One frozen tick that all planners read: the realized occupancy, the previous commit, and
-/// the network version it was built against.
+/// One frozen tick that all planners read.
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
     pub tick: u64,
@@ -55,17 +51,15 @@ impl Snapshot {
     }
 }
 
-/// Exit storage reserved at one lane: the free distance to the first obstacle is shared by
-/// every admitted vehicle.
+/// Exit storage at one lane: the free distance to the first obstacle, shared by all slots.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Storage {
     capacity: f32,
     slots: Vec<(VehicleId, f32)>,
 }
 
-/// The deterministic arbiter for lane reservations, simultaneous merges, and downstream
-/// exit storage. Grants are keyed by stable id; ties go to the lower id, never to container
-/// order, so the same inputs decide the same way whatever the storage order.
+/// The deterministic arbiter for lane claims, simultaneous merges and exit storage; ties go
+/// to the lower id, never to container order.
 #[derive(Debug, Clone, Default)]
 pub struct Arbiter {
     claims: HashMap<LaneId, Vec<VehicleId>>,
@@ -114,8 +108,7 @@ impl Arbiter {
         self.storage.entry(lane).or_default().capacity = capacity.max(0.0);
     }
 
-    /// Try to reserve `need` metres of `lane`'s exit storage for `id`. Every admitted slot
-    /// counts against the same capacity, so the exit is not promised twice.
+    /// Try to reserve `need` metres of `lane`'s exit storage for `id` (never promised twice).
     pub fn reserve_storage(&mut self, lane: LaneId, id: VehicleId, need: f32) -> bool {
         if !self.storage_fits(lane, id, need, &[]) {
             return false;
@@ -124,9 +117,8 @@ impl Arbiter {
         true
     }
 
-    /// Whether `reserve_storage` would grant `id` its `need` metres, without reserving them
-    /// (a slot `id` holds already is always kept). The slots of `arrived` - vehicles whose
-    /// bodies are on the exit already, and so taken off its free distance - do not count.
+    /// Whether `reserve_storage` would grant `id` its `need` metres, without reserving. Slots
+    /// of `arrived` (bodies already on the exit, so off its free distance) do not count.
     pub fn storage_fits(&self, lane: LaneId, id: VehicleId, need: f32, arrived: &[VehicleId]) -> bool {
         let Some(s) = self.storage.get(&lane) else {
             return need <= 0.0;
@@ -138,8 +130,7 @@ impl Arbiter {
         used + need.max(0.0) <= s.capacity
     }
 
-    /// Put back a slot granted on an earlier tick (the arbiter is rebuilt every tick from the
-    /// committed state), whatever this tick's capacity is.
+    /// Put back a slot granted on an earlier tick, whatever this tick's capacity is.
     pub fn hold_storage(&mut self, lane: LaneId, id: VehicleId, need: f32) {
         let s = self.storage.entry(lane).or_default();
         if let Some(slot) = s.slots.iter_mut().find(|(x, _)| *x == id) {

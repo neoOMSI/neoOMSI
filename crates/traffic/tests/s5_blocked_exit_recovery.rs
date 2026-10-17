@@ -1,9 +1,7 @@
 //! Stage 5 exit gate — blocked downstream exit and recovery.
 //!
-//! A short exit lane is fully occupied by a stopped vehicle. The entering vehicle must wait
-//! outside the conflict for as long as the blocker stands: waiting duration never grants
-//! entry (there is no `GRIDLOCK_WAIT` timer any more). When the blocker is removed, the
-//! admitted flow resumes within a bounded number of ticks, and it then holds the claim.
+//! A stopped vehicle fills a short exit lane: the entering vehicle waits outside the conflict
+//! however long (waiting never grants entry), and is admitted soon after the blocker goes.
 
 mod common;
 

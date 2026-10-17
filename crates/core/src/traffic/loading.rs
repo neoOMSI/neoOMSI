@@ -33,14 +33,10 @@ impl Traffic {
                 .unwrap_or_default();
         let group_curves = !dens.is_empty();
         {
-            // `unsched_vehgroups.txt` names the groups the random traffic is made of. The
-            // other `[aigroup_2]`s exist only for the timetable: on Berlin-Spandau "Pan Am"
-            // and "Mi-8 Soviet AF" fly TXL.ttl and Relais.ttl, and taking them into the
-            // random pool put airliners on the flight paths at any hour of the day. Its
-            // number is the group's default density on the paths without a `[rule]
-            // trafficdensity` for it (see `uvg_density`): 0 means only where the paths ask
-            // for the group. Taken as "off", Spandau had no trucks and no Trabant at all,
-            // though 865 paths ask for the one and 462 around Falkensee for the other.
+            // `unsched_vehgroups.txt` names the random traffic's groups; the other
+            // `[aigroup_2]`s are timetable-only (Spandau's airliners). Its number is the
+            // group's default density on paths without a `[rule] trafficdensity` for it
+            // (`uvg_density`): 0 = only where paths ask for it, not "off" (Spandau's trucks).
             // `OMSI_TRAFFIC_ALL_GROUPS=1` lets such groups drive everywhere.
             let all_groups = ::legacy_config::env::var_os("OMSI_TRAFFIC_ALL_GROUPS").is_some();
             let unscheduled: Option<Vec<(String, i32)>> =
@@ -133,11 +129,8 @@ impl Traffic {
                 }
             }
         }
-        // No buses in the random road traffic: the depot groups of `ailists.cfg` are the
-        // fleet the *timetable* drives, and OMSI puts a bus on a street only because a trip
-        // of the map's TTData runs there. Mixing the depot fleet into the random pool put
-        // the map's one bus type on every road of the map - on Grundorf that is a single
-        // articulated GN92, which is why it seemed to be a type of our own choosing.
+        // No buses in the random road traffic: the depot groups are the timetable's fleet,
+        // and OMSI puts a bus on a street only for a trip of the map's TTData.
         if let Ok(list) = ::legacy_config::env::var("OMSI_DEBUG_LANES") {
             // lane indices, or `at:x,y,r` for the street lanes passing within r m of a point
             // (the indices change from run to run on a map whose tiles load in parallel)
@@ -569,12 +562,9 @@ impl Traffic {
 
 
     /// Turn train `ci` round as Omsi.exe does for a trip whose `[trainreverse]` differs from
-    /// how the train stands (0x613a98): the whole consist the other way, its last car
-    /// leading - here the vehicle that drives is made anew as that car, standing where it
-    /// stands (at `s` on `lane`, which runs the new way), and the others coupled behind it
-    /// in the opposite order, each turned round. `behind`: the lanes the train has behind
-    /// it now, nearest last, for the track its cars stand on. The car keeps its id and its
-    /// service.
+    /// how the train stands (0x613a98): its last car leads (at `s` on `lane`), the others
+    /// coupled behind it reversed and turned round. `behind`: the lanes behind the train
+    /// now, nearest last. The car keeps its id and its service.
     pub(crate) fn turn_train(
         &mut self,
         world: &World,
@@ -712,15 +702,10 @@ impl Traffic {
     }
 
 
-    /// The vehicles coupled behind `ty` (its rear sections, trailers, the cars of a unit),
-    /// each with whether it is turned round, loaded (once per file). As Omsi.exe builds a
-    /// consist (0x70a174): towards the back of the train a vehicle goes on with its
-    /// `[couple_back]`, or with its `[couple_front]` when it is itself turned round; the
-    /// coupled one is turned round when the coupling's flag says so, against the one it
-    /// hangs on; and a coupling back to the file it came from that turns nothing round is
-    /// not followed. (Following `[couple_back]` whatever the way, the Berlin A3's unit -
-    /// the S car and its K car turned round behind it, whose own `[couple_back]` names the
-    /// S car again - went on S, K, S, K, S, none of them turned.)
+    /// The vehicles coupled behind `ty`, each with whether it is turned round, loaded once
+    /// per file. As Omsi.exe (0x70a174): a vehicle goes on with `[couple_back]`, or
+    /// `[couple_front]` when turned round; the coupling's flag turns the next one round; a
+    /// non-turning coupling back to the file it came from is not followed (Berlin A3).
     pub(crate) fn trailer_chain(&mut self, ty: &Arc<VehicleType>) -> Vec<(Arc<VehicleType>, bool)> {
         self.coupled_chain(ty, false, true)
     }
@@ -857,10 +842,8 @@ impl Traffic {
                 vehicle.state.str_vars[i as usize] = reg;
             }
         } else {
-            // A vehicle of the random traffic with a `[number]` list takes a number of it at
-            // random and the plate beside it, else the plate its mode makes of the number
-            // (TRoadVehicleInst.virtual_11 at 0x7e7b51); a free plate is one of the map's
-            // registrations.txt.
+            // a random-traffic vehicle with a `[number]` list takes a random entry and its
+            // plate, else its mode's plate (0x7e7b51); a free plate is from registrations.txt
             let numbers = ty.def.numbers_with_plates();
             if !numbers.is_empty() {
                 let (n, plate) = &numbers[(seed.rotate_left(29) % numbers.len() as u64) as usize];
@@ -893,9 +876,8 @@ impl Traffic {
         } else {
             Some(ai_ground(world))
         };
-        // and what its wheels stand on, asked as the player's are (see `AiBody::settle`); a
-        // coupled part (an articulated bus's rear, a lorry's trailer) asks it too, with the
-        // height it is at - the plain sampler gave it the deck of a bridge over its road
+        // and what its wheels stand on, asked as the player's are (`AiBody::settle`), coupled
+        // parts at their own height (the plain sampler put them on a bridge over the road)
         // (`OMSI_AI_WAY_ONLY=1`: on the way and the plain sampler, as before - A/B runs)
         vehicle.contact = (kind == LaneKind::Street
             && ::legacy_config::env::var_os("OMSI_AI_WAY_ONLY").is_none())
@@ -916,9 +898,8 @@ impl Traffic {
                     .map(|i| (i.width, i.height, i.rgba))
             });
         }
-        // a rear section's plates and numbers are `[texttexture]`s of its own reading the
-        // leading vehicle's strings (`TrailerPart::update_text_textures`), so they need the
-        // same fonts the front's do
+        // a rear section's plates read the leading vehicle's strings
+        // (`TrailerPart::update_text_textures`), so they need the front's fonts
         for t in vehicle.trailers.iter_mut() {
             t.init_text_textures(&mut world.fonts.lock(), &|p| {
                 ::texture::decode_file(p)
@@ -951,8 +932,7 @@ impl Traffic {
             // with a little more on the arterial roads
             56.0 + (seed % 7) as f32
         } else if heavy {
-            // (a truck keeps to the limit like the cars, up to a truck's own 80-90 km/h: it
-            // took 38-47 on every road, crawling along 80 km/h roads, #327)
+            // (a truck keeps to the limit like the cars, up to its own 80-90 km/h, #327)
             80.0 + (seed % 10) as f32
         } else if kind == LaneKind::Street && ty.def.mass > 0.0 && ty.def.mass <= 0.3 {
             // a bicycle (stock ones weigh exactly 0.3 t): 15-21 km/h, the `vmax` range their
@@ -970,9 +950,8 @@ impl Traffic {
             2.4 + (seed % 7) as f32 * 0.1
         };
         if bus.is_some() {
-            // it brakes for its stops the way the town's drivers brake for a light: with
-            // 1.5 m/s² of "comfortable" braking the planner braked at half that and crept
-            // up to every stop for a hundred metres
+            // it brakes for its stops like the town's drivers for a light (with 1.5 m/s² the
+            // planner crept up to every stop)
             state.decel = 2.1;
             state.accel = state.accel.max(1.0);
             state.min_gap = state.min_gap.max(2.2);
@@ -988,9 +967,8 @@ impl Traffic {
         if bus.is_some() {
             caps.class = VehicleClass::Bus;
         }
-        // The vehicle's braking envelope: the verified stop correction plus the explicit
-        // provisional class strength. The driver's comfortable `decel` stays a personality
-        // trait but is bounded by what the vehicle can actually do.
+        // braking envelope: the verified stop correction plus the provisional class strength;
+        // the driver's comfortable `decel` is bounded by what the vehicle can do
         state.brakes = caps.braking();
         state.decel = state.decel.min(state.brakes.max_decel.max(0.5));
         let (front, rear, half_width) = (caps.front, caps.rear, caps.half_width);

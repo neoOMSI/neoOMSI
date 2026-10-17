@@ -1,17 +1,8 @@
-//! Headless domain benchmark: the per-tick cost of the traffic domain at 100, 500 and 1000
-//! active vehicles under an ordinary and a congested junction load.
+//! Headless domain benchmark: per-tick cost of occupancy build + junction planning at 100,
+//! 500 and 1000 vehicles, ordinary and congested (std only, `harness = false`, no new deps).
 //!
-//! This target is `harness = false` and uses only `std`, so it adds no dependency and keeps
-//! `cargo tree -p traffic` at `glam`, `hashbrown`, `log` (+ leaves). It measures the work core
-//! does **before** motion realization: build the frozen `Occupancy` (the local spatial index),
-//! then plan each vehicle's junction decision against that one snapshot. Rendering, asset
-//! loading and vehicle scripts are deliberately excluded (the plan measures those separately).
-//!
-//! Run with `cargo bench -p traffic --bench domain`.
-//!
-//! Reported per case: p50/p95/p99 per-tick cost, allocations per tick and bytes per tick
-//! (counting global allocator), and peak live heap. A streaming case measures
-//! `Network::extend` + relinking.
+//! Run with `cargo bench -p traffic --bench domain`. Reports p50/p95/p99 tick cost,
+//! allocations and bytes per tick, peak live heap, and a `Network::extend` streaming case.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,10 +16,6 @@ use traffic::{
     LaneKey, LaneKind, Lead, ManeuverActor, ManeuverCoordinator, ManeuverInputs, ManeuverScene,
     ManeuverState, Network, VehicleId,
 };
-
-// ---------------------------------------------------------------------------------------
-// Counting allocator
-// ---------------------------------------------------------------------------------------
 
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
 static BYTES: AtomicUsize = AtomicUsize::new(0);
@@ -67,10 +54,6 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static GLOBAL: Counting = Counting;
-
-// ---------------------------------------------------------------------------------------
-// Synthetic world
-// ---------------------------------------------------------------------------------------
 
 const APPROACH_LEN: f64 = 2000.0;
 const HALF_LEN: f64 = 2.25;
@@ -136,8 +119,7 @@ fn approaches() -> [(usize, DVec2, DVec2); 4] {
     ]
 }
 
-/// `n` vehicles on the four approaches. Ordinary spreads them over the whole approach;
-/// congested packs them bumper-to-bumper against the stop line.
+/// `n` vehicles on the four approaches: spread out, or (congested) packed at the stop line.
 fn place(n: usize, congested: bool) -> Vec<BodyFootprint> {
     let app = approaches();
     let per = n.div_ceil(app.len());
@@ -177,8 +159,8 @@ fn place(n: usize, congested: bool) -> Vec<BodyFootprint> {
     feet
 }
 
-/// Everything a tick's junction planning reads, rebuilt from the realized bodies each tick,
-/// exactly as `core::Traffic::tick` does.
+/// Everything a tick's junction planning reads, rebuilt each tick as `core::Traffic::tick`
+/// does.
 struct Scene {
     actors: Vec<JunctionActor>,
     index_of: HashMap<VehicleId, usize>,
@@ -255,16 +237,12 @@ impl Scene {
     }
 }
 
-/// A process-wide empty pedestrian map, so the scene can borrow it for its whole life.
+/// An empty pedestrian map the scene can borrow for `'static`.
 fn empty_walkers() -> &'static HashMap<usize, Vec<f32>> {
     static EMPTY: std::sync::LazyLock<HashMap<usize, Vec<f32>>> =
         std::sync::LazyLock::new(HashMap::new);
     &EMPTY
 }
-
-// ---------------------------------------------------------------------------------------
-// Measurement
-// ---------------------------------------------------------------------------------------
 
 struct Report {
     ticks: usize,
@@ -382,8 +360,7 @@ fn print_report(label: &str, r: &Report) {
     );
 }
 
-/// Streaming update cost: extend the network and relink, the per-tile work the population
-/// owner requests ahead of a route frontier.
+/// Streaming update cost: extend the network and relink (the per-tile load work).
 fn run_streaming() {
     let ticks = 40;
     let mut times = Vec::with_capacity(ticks);

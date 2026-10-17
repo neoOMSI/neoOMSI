@@ -1,13 +1,7 @@
 //! S1 — queue discharge at a red signal.
 //!
-//! A synthetic, headless scenario: one straight lane, a stop line, and 20 cars queued
-//! bumper-to-bumper with distinct driver traits. The signal is red for 20 s, then green
-//! for 30 s. No renderer or OMSI assets are involved.
-//!
-//! What it checks (provisional Stage 1 bounds from `docs/traffic_refactor/SCENARIOS.md`):
-//! - no car's front bumper crosses the stop line while the signal is red;
-//! - the queue discharges after green;
-//! - no AI-created body overlap appears during the run.
+//! 20 cars with distinct traits queued at a stop line, red for 20 s then green for 30 s: no
+//! car crosses on red, the queue discharges, and no bodies overlap.
 
 use traffic::{
     AiState, Capture, CaptureTrigger, LaneBuilder, LaneId, LaneKind, Network, NetworkVersion,

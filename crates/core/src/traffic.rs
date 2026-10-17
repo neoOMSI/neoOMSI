@@ -1,13 +1,8 @@
 //! AI road traffic: vehicles from `ailists.cfg` moving on the map's path network, the
 //! traffic light programs of the junctions, and the population of cars around the player.
 //!
-//! This is the L6 engine adapter for the headless [`::traffic`] domain crate. Stage 9b split
-//! the formerly single-file orchestrator into owned submodules; `Traffic` itself and its
-//! shared types/free helpers stay here, and the `impl Traffic`/`impl AiCar`/`impl Viewer`
-//! method groups live in the submodules (`car`, `viewer`, `loading`, `population`,
-//! `perception`, `presentation`, `network`, `lan`, `lifecycle`, `diagnostics`, `tick`).
-//! Types are defined here so every submodule can read their private fields; methods are
-//! `pub(crate)` where a sibling submodule calls them.
+//! The L6 engine adapter for the headless [`::traffic`] domain crate. Types live here so
+//! every submodule can read their private fields; the method groups live in the submodules.
 
 use crate::bus_service::BusService;
 use crate::scene::{VehicleRender, World};
@@ -49,8 +44,6 @@ fn people_cell(p: DVec2) -> (i32, i32) {
     )
 }
 
-
-// ---- Stage 9b decomposition: the adapter is split into owned submodules ----
 mod car;
 pub(crate) use car::emergency_drive;
 mod viewer;
@@ -106,29 +99,23 @@ pub fn warm_up(world: &World, ty: &Arc<VehicleType>, hof: Option<Arc<::legacy_ve
 /// this far past the obstacle's rear (m).
 const PRIORITY_WARN_GAP: f32 = 60.0;
 
-/// Seconds a car may stand held at low speed behind a non-moving obstruction before its
-/// driver sounds the horn (s). This is a documented provisional neoOMSI trigger: the
-/// reference establishes only that `ev_AI_Horn` exists, not its original trigger. It is
-/// presentation feedback and never grants entry or releases a claim.
+/// Seconds a car may stand held behind a non-moving obstruction before it sounds the horn
+/// (provisional: OMSI's `ev_AI_Horn` trigger is unknown). Presentation only.
 const HORN_HOLD: f32 = 3.0;
 /// Minimum seconds between two horns from the same car (s), so a queue does not beep.
 const HORN_COOLDOWN: f32 = 8.0;
 /// Above this speed (m/s) a car is moving, not held, and does not sound the horn.
 const HORN_SPEED: f32 = 1.0;
 
-/// How far (m) short of scenery its body would touch a vehicle stops: it sees the contact
-/// coming (`AiCar::scenery_ahead`) and brakes for it like for any standing thing, instead of
-/// driving up to it and having the move refused.
+/// How far (m) short of scenery its body would touch a vehicle stops
+/// (`AiCar::scenery_ahead`), braking for it instead of having the move refused.
 const SCENERY_STOP_MARGIN: f32 = 0.35;
-/// Seconds a vehicle stays pinned against scenery (it cannot move without touching it) before
-/// it gives up like a car that has stood for a minute: it is taken off once out of sight, bus
-/// or not - a timetable bus stuck against a wall held the whole line for good.
+/// Seconds a vehicle stays pinned against scenery before it gives up and is taken off once
+/// out of sight, bus or not (a timetable bus stuck against a wall held the whole line).
 const SCENERY_PINNED_GONE: f32 = 25.0;
 /// Seconds a vehicle stands held by scenery before it stops looking for it: Omsi.exe's AI
-/// never collides with scenery at all, and a body that clips a kerb post or a shelter roof on
-/// its authored path (a long bus on a tight corner, a bay narrower than the model) has no way
-/// round. Driving through it along the path beats holding the line, and the stop for it
-/// before contact keeps the clipping to the cases that cannot be avoided.
+/// never collides with scenery, and a body clipping a kerb post on its authored path has no
+/// way round, so driving through beats holding the line.
 const SCENERY_GHOST_AFTER: f32 = 3.0;
 /// A car that has stood this long (s) for a waiting passenger in its way edges past at
 /// `PEOPLE_CREEP` (m/s) for its length plus `PEOPLE_PAST_MARGIN` (m); they step aside
@@ -497,8 +484,7 @@ pub struct Traffic {
     /// Steps the traffic has run (for the work a vehicle does only every so many of them).
     step_count: u64,
     /// How far the frame being drawn is from the last step to the next (0..1, set before
-    /// `sync`): the vehicles are drawn that far from their pose before the last step to
-    /// their pose now. 1 draws them where the simulation has them.
+    /// `sync`); 1 draws the vehicles where the simulation has them.
     drawn_alpha: f32,
     /// The simulated poses of the vehicles while `sync` draws them between steps.
     sim_poses: Vec<PartPose>,
@@ -963,9 +949,7 @@ impl Traffic {
         &self.cars
     }
 
-    /// The active AI cars, mutably. The engine adapter (population/schedule/LAN) owns broad
-    /// mutation of the fleet; prefer [`Traffic::car_mut_by_id`] or a narrower command when one
-    /// vehicle is meant.
+    /// The active AI cars, mutably; prefer [`Traffic::car_mut_by_id`] for one vehicle.
     pub(crate) fn cars_mut(&mut self) -> &mut Vec<AiCar> {
         &mut self.cars
     }
@@ -980,8 +964,7 @@ impl Traffic {
         &mut self.cars[ci]
     }
 
-    /// The active AI car with this stable id, mutably. Targeted alternative to scanning
-    /// [`Traffic::cars_mut`] for an event or display update aimed at one vehicle.
+    /// The active AI car with this stable id, mutably.
     pub(crate) fn car_mut_by_id(&mut self, id: VehicleId) -> Option<&mut AiCar> {
         self.cars.iter_mut().find(|c| c.id == id)
     }

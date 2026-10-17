@@ -1,9 +1,7 @@
 //! Shared headless fixture for the Stage 7 maneuver scenarios.
 //!
-//! A small kinematic world over a synthetic [`Network`] and one [`ManeuverCoordinator`]: each
-//! car obeys the lane change, lateral target and stop the coordinator hands back, and the
-//! coordinator reads the realized occupancy built from the same bodies. No renderer and no
-//! OMSI assets.
+//! A small kinematic world over a synthetic [`Network`] and one [`ManeuverCoordinator`]: cars
+//! obey what the coordinator hands back, which reads the occupancy of the same bodies.
 
 #![allow(dead_code)]
 

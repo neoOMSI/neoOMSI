@@ -140,8 +140,7 @@ impl Schedule {
         };
         let (steps, _) = self.steps_of(trip_name, &trip_stations(trip));
         let keys: Vec<Option<LaneKey>> = steps.iter().map(|st| st.key).collect();
-        // The navigator's whole-map network has every tile's lanes whether loaded or not:
-        // a key with no lane is missing here, never merely pending.
+        // (the whole-map network has every tile: a key with no lane is missing, not pending)
         compile_route(net, &keys, |_| TileState::Unknown, None)
             .lanes()
             .into_iter()

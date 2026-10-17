@@ -1,33 +1,13 @@
-//! Population: demand, eligibility/admission, the dormant lifecycle and streaming recovery.
+//! Population: demand, admission, the dormant lifecycle and streaming recovery.
 //!
-//! This is the L3/L4 owner of *who may be on the road*, mirroring `traffic::junctions`,
-//! `traffic::service` and `traffic::maneuvers`. It keeps four things distinct that the legacy
-//! population pass mixed together:
+//! Demand (what the map and timetable ask for), admission (may a vehicle be placed now:
+//! path, continuation, ground, gap, visibility), physical occupancy (read only) and
+//! presentation visibility are kept distinct. Admission is a bounded, deterministic queue
+//! with per-entrance backoff: a busy entrance retries later instead of stacking vehicles.
 //!
-//! 1. **demand** - how many vehicles the map, the timetable and the camera ask for;
-//! 2. **eligibility/admission** - whether a requested vehicle may be placed now (valid path,
-//!    a feasible continuation, loaded ground, a physical gap and presentation visibility);
-//! 3. **physical occupancy** - read from the frozen [`Occupancy`], never written here;
-//! 4. **presentation visibility** - whether placing now would pop into view.
-//!
-//! A population target is therefore *not* an order to put a vehicle on every lane that looks
-//! free. Admission is a bounded, deterministic queue with per-entrance backpressure: a busy
-//! entrance retries later instead of stacking vehicles, and an over-budget request is denied
-//! with a typed [`Reason`] rather than growing the queue.
-//!
-//! The dormant lifecycle is a logical-actor registry: identity, class, duty ownership and
-//! progress are kept by this module while a vehicle is out of the active area; the kinematic
-//! step and the assets stay in the integration adapter. Reactivation is validated (ground,
-//! gap, path) before any body is rebuilt, so dormant motion cannot create an overlap.
-//!
-//! Like the other owners this module holds no `Capture`; it returns typed decisions and the
-//! adapter forwards the [`TraceEvent`]s.
-//!
-//! ## Tuning provenance
-//!
-//! The constants below carry their unit in the name and their rationale on each item, and are
-//! **provisional** neoOMSI targets (plan sections 6 and 8): the map supplies demand, not these
-//! admission bounds. The full table is in `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
+//! The dormant registry keeps identity, class and duty of vehicles out of the active area;
+//! reactivation is validated (ground, gap, path) before a body is rebuilt, so dormant motion
+//! cannot create an overlap. The admission bounds below are provisional neoOMSI targets.
 
 use crate::diagnostics::{Reason, TraceEvent};
 use crate::ids::VehicleId;
@@ -37,36 +17,27 @@ use glam::DVec2;
 use hashbrown::{HashMap, HashSet};
 use std::collections::VecDeque;
 
-// ---- named policy (units in the name) -------------------------------------------------
-
 /// Most requests examined in one pass; the rest keep their place in the queue.
 pub const ADMIT_PER_PASS: usize = 64;
 /// Hard bound on the pending request queue: a busy entrance cannot grow it without bound.
 pub const QUEUE_MAX: usize = 256;
-/// Shortest and longest retry delay for a queued request (s): an entrance that turned a
-/// request away is not asked again before the delay, which doubles with every refusal in a
-/// row.
+/// Shortest and longest retry delay at an entrance (s), doubling with each refusal in a row.
 pub const RETRY_MIN: f32 = 0.5;
 pub const RETRY_MAX: f32 = 6.0;
 /// No body may lie within this distance of a candidate (m).
 pub const GAP_MARGIN: f64 = 14.0;
-/// An entrance: this long a stretch of one lane (m). Requests in it share their backoff; a
-/// blocked spot says nothing about the rest of a long lane.
+/// An entrance: this long a stretch of one lane (m), sharing one backoff.
 pub const ENTRANCE_LENGTH: f32 = GAP_MARGIN as f32;
 /// The whole-map dormant population is capped at this multiple of the street target.
 pub const DORMANT_CAP_FACTOR: f32 = 8.0;
 /// A dormant actor is woken only up to this multiple of the target around the centre.
 pub const WAKE_BUDGET_FACTOR: f32 = 1.25;
 
-// ---- input and output types -----------------------------------------------------------
-
-/// A stable identity for one outstanding spawn request, so a retry can be told apart from a
-/// new request even when positions are equal.
+/// A stable identity for one outstanding spawn request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SpawnRequestId(pub u64);
 
-/// What budget a request draws on. Scheduled duty capacity and unscheduled demand are
-/// distinct; a dormant reactivation and a parked pull-out are their own cases.
+/// What budget a request draws on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnClass {
     /// A timetable duty (only ever admitted through `scheduled_admission`).
@@ -110,9 +81,7 @@ pub struct SpawnRequest {
     pub s: f32,
 }
 
-/// The content/runtime facts the adapter knows and the domain does not: whether a valid path
-/// exists from here, whether it has a feasible immediate continuation, whether the ground is
-/// loaded, and whether placing here would be visible.
+/// The content/runtime facts about a placement that only the adapter knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpawnFacts {
     pub path_valid: bool,
@@ -132,8 +101,7 @@ impl Default for SpawnFacts {
     }
 }
 
-/// A dormant actor as the adapter presents it: identity and duty are the domain's, the
-/// kinematic position is the adapter's, and the environment facts are re-validated.
+/// A dormant actor as the adapter presents it, with freshly validated environment facts.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DormantView {
     pub id: VehicleId,
@@ -160,8 +128,7 @@ pub struct PopulationDemand {
     pub dormant_capacity: usize,
 }
 
-/// The frozen per-pass inputs. Built once by the adapter; the coordinator never touches
-/// another vehicle.
+/// The frozen per-pass inputs, built once by the adapter.
 pub struct PopulationScene<'a> {
     pub net: &'a Network,
     pub occupancy: &'a Occupancy,
@@ -248,8 +215,6 @@ fn request_point(net: &Network, req: &SpawnRequest) -> Option<DVec2> {
     Some(lane.at(s).0.truncate())
 }
 
-// ---- coordinator state -----------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, Default)]
 struct Entrance {
     /// Refusals in a row.
@@ -319,8 +284,7 @@ impl PopulationCoordinator {
         self.capacity_denied
     }
 
-    /// Submit a request. Returns `None` when the queue is full: the caller must not stack
-    /// more demand; the entrance backpressure (not a growing queue) handles the load.
+    /// Submit a request. `None` when the queue is full: the caller must not stack more demand.
     pub fn request(&mut self, class: SpawnClass, lane: usize, s: f32) -> Option<SpawnRequest> {
         if self.queue.len() >= QUEUE_MAX {
             return None;
@@ -341,8 +305,7 @@ impl PopulationCoordinator {
         self.queue.iter()
     }
 
-    /// Admit (or refuse) a scheduled duty against its distinct budget. Does not touch the
-    /// random queue; the adapter creates the bus itself.
+    /// Admit (or refuse) a scheduled duty against its own budget, outside the random queue.
     pub fn scheduled_admission(&self, demand: &PopulationDemand) -> SpawnOutcome {
         if demand.scheduled_cap > 0 && demand.scheduled_count >= demand.scheduled_cap as usize {
             SpawnOutcome::Deny(Reason::AtCapacity)
@@ -367,8 +330,7 @@ impl PopulationCoordinator {
         }
     }
 
-    /// Drain the queue into decisions. Admitted and denied requests leave; retried requests
-    /// stay queued behind the new ones. Deterministic: strict submission order.
+    /// Drain the queue into decisions in strict submission order; retried requests stay queued.
     pub fn plan(
         &mut self,
         scene: &PopulationScene,
@@ -378,22 +340,19 @@ impl PopulationCoordinator {
         let mut kept: VecDeque<SpawnRequest> = VecDeque::with_capacity(self.queue.len());
         let mut attempts = 0usize;
         let mut admitted_random = 0usize;
-        // Placements admitted earlier in this same pass: an admission must not overlap one
-        // that has not reached the occupancy yet.
+        // Placements admitted this pass, not in the occupancy yet.
         let mut pass_spots: Vec<DVec2> = Vec::new();
         while let Some(req) = self.queue.pop_front() {
             if attempts >= ADMIT_PER_PASS {
                 kept.push_back(req);
                 continue;
             }
-            // Only requests the adapter annotated this pass are considered; the rest (another
-            // lane kind, or no facts yet) keep their place untouched.
+            // Requests without facts this pass keep their place.
             let Some(&f) = facts.get(&req.id) else {
                 kept.push_back(req);
                 continue;
             };
-            // An entrance that turned a request away waits out its backoff: the request
-            // keeps its place and is not examined.
+            // The entrance is still backing off.
             if self
                 .entrance
                 .get(&entrance_of(&req))
@@ -442,14 +401,12 @@ impl PopulationCoordinator {
             out.push(SpawnDecision::new(req, SpawnOutcome::Admit));
         }
         self.queue = kept;
-        // An entrance nobody asks at any more is forgotten.
         let asked: HashSet<(usize, i32)> = self.queue.iter().map(entrance_of).collect();
         self.entrance.retain(|k, _| asked.contains(k));
         out
     }
 
-    /// Whether there is a physical gap at the request's placement, accounting for the
-    /// placements already admitted earlier in the same pass.
+    /// Whether there is a physical gap at the placement, including this pass's admissions.
     fn gap_open(&self, scene: &PopulationScene, req: &SpawnRequest, extra: &[DVec2]) -> bool {
         let Some(lane) = scene.net.lanes.get(req.lane) else {
             return false;
@@ -469,8 +426,7 @@ impl PopulationCoordinator {
         !blocked
     }
 
-    /// Record a refusal at the request's entrance and return the retry delay: `RETRY_MIN`,
-    /// doubled with every refusal in a row there, up to `RETRY_MAX`.
+    /// Record a refusal at the request's entrance and return the backed-off retry delay.
     fn note_denied(&mut self, req: &SpawnRequest) -> f32 {
         let time = self.time;
         let e = self.entrance.entry(entrance_of(req)).or_default();
@@ -480,8 +436,8 @@ impl PopulationCoordinator {
         delay
     }
 
-    /// Validate the dormant registry and return which actors may be placed back now. Identity
-    /// and duty are preserved; a blocked actor simply stays dormant.
+    /// Validate the dormant registry and return which actors may be placed back now; a
+    /// blocked actor stays dormant.
     pub fn plan_dormant(
         &mut self,
         scene: &PopulationScene,
@@ -492,7 +448,6 @@ impl PopulationCoordinator {
         budget = budget.saturating_sub(scene.demand.unscheduled_count);
         let mut pass_spots: Vec<DVec2> = Vec::new();
         for v in views {
-            // Only actors this registry owns are eligible (identity is the domain's).
             let Some(rec) = self.dormant.get(&v.id).copied() else {
                 continue;
             };
@@ -609,8 +564,7 @@ impl PopulationCoordinator {
         self.dormant.len() < capacity
     }
 
-    /// Release a vehicle. Returns true exactly once, when the vehicle was a known dormant
-    /// actor, so the adapter can notify schedule/passengers and release resources once.
+    /// Release a vehicle. True exactly once, if it was a known dormant actor.
     pub fn release(&mut self, id: VehicleId, _cause: RemovalCause) -> bool {
         let was_dormant = self.dormant.remove(&id).is_some();
         if was_dormant {
@@ -619,8 +573,7 @@ impl PopulationCoordinator {
         was_dormant
     }
 
-    /// A route changed under a vehicle: drop its dormant registration if the way no longer
-    /// includes where it slept.
+    /// Drop a dormant registration whose lane is no longer on the vehicle's way.
     pub fn retain_on_way(&mut self, id: VehicleId, way: &[usize]) {
         if self
             .dormant
@@ -632,8 +585,8 @@ impl PopulationCoordinator {
         }
     }
 
-    /// The network grew or was rebuilt: queued demand and entrance state are stale, but the
-    /// dormant registry (identity/duty) survives because lane indices are stable.
+    /// The network was rebuilt: drop queued demand; the dormant registry survives (lane
+    /// indices are stable).
     pub fn invalidate_network(&mut self) {
         self.queue.clear();
         self.entrance.clear();

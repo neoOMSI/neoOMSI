@@ -1,8 +1,7 @@
 //! Planned route progress.
 //!
-//! A route can visit the same lane more than once (loops, out-and-back services), so a
-//! lane id alone cannot identify a position on a route. A `RouteProgress` names the trip,
-//! the directed occurrence of the route, the lane, and the distance along it.
+//! A route can visit the same lane more than once (loops), so a position names the trip
+//! and the route occurrence as well as the lane.
 
 use crate::ids::{LaneId, TripId};
 use crate::network::{LaneKey, Network};
@@ -183,12 +182,9 @@ fn skip_detours(net: &Network, slots: &mut [RouteStepState]) {
     }
 }
 
-/// A station link that leaves its lane only to change back onto it a little later: such a
-/// detour into the lane beside is passed over (made `Missing`), so the route stays on the
-/// lane it came along and `bridge_gaps` puts the way along it back in. X10 Berlin's link
-/// from U Kurfuerstendamm to U Uhlandstr. crosses the junction into the inner lane and
-/// changes back onto the bus lane 60 m on: the buses pulled out of the bus lane and back.
-/// Every lane of the way along it must run beside the detour, so the route is not cut short.
+/// Pass over (make `Missing`) a station link's short detour into the lane beside that
+/// changes straight back, so the route stays on its lane and `bridge_gaps` fills it in
+/// (X10 Berlin, U Kurfuerstendamm to U Uhlandstr.: buses left the bus lane and came back).
 fn skip_lane_detours(net: &Network, slots: &mut [RouteStepState]) {
     const REACH: usize = 8;
     const MAX_DETOUR: f32 = 200.0;
@@ -204,8 +200,7 @@ fn skip_lane_detours(net: &Network, slots: &mut [RouteStepState]) {
         if !net.parallel(y, c) {
             continue;
         }
-        // (only a detour away from the kerb: a stop bay beside the lane is changed into on
-        // purpose, and its stop must stay on it)
+        // (only a detour away from the kerb: a stop bay beside the lane is entered on purpose)
         let (pc, hc) = net.lanes[c].at(0.0);
         let py = net.lanes[y].at(net.beside_s(c, y, 0.0)).0;
         let h = (hc as f64).to_radians();
@@ -303,9 +298,6 @@ fn ordered(m: f32) -> u64 {
 }
 
 /// The outcome of compiling a timetable trip onto the loaded network.
-///
-/// `Invalid` and `PendingTiles` are different states: an invalid trip has no loaded lane
-/// and no tile that could bring one, while a pending trip is still waiting for its tiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteStatus {
     /// Every step resolved to a lane.

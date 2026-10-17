@@ -307,9 +307,8 @@ fn an_ambulance_passes_a_whole_queue_up_to_the_first_gap_it_fits_into() {
     assert!(back_in < 150.0 - 2.1 - s, "back in behind the car beyond the gap: {back_in}");
 }
 
-/// An ambulance passes a queue though an oncoming car stands before the stretch it passes
-/// along: that car waits for it (`oncoming_emergency`), it does not count as coming (both
-/// waited for each other, Ahlheim). One driving towards it still holds it back.
+/// An ambulance passes a queue though an oncoming car waits before the stretch it passes
+/// along (`oncoming_emergency`, Ahlheim); one driving towards it still holds it back.
 #[test]
 fn an_ambulance_passes_while_the_oncoming_traffic_waits_for_it() {
     let net = two_way();

@@ -1,12 +1,7 @@
 //! S2 — a blocked downstream exit.
 //!
-//! A synthetic, headless approximation of the "full downstream storage" case: a vehicle
-//! approaches a stopped blocker that occupies the space ahead for longer than the old
-//! `GRIDLOCK_WAIT` (45 s). Waiting duration must never grant passage: the vehicle only
-//! moves on once the blocker is physically removed. Junction-admission specifics live in
-//! `core` and are exercised once the integration facade lands.
-//!
-//! What it checks:
+//! A vehicle waits behind a stopped blocker longer than 45 s; waiting must never grant
+//! passage, only the blocker's removal does. Checks:
 //! - the vehicle never overlaps or passes the blocker while it is present;
 //! - after the blocker is removed at t = 50 s, the vehicle resumes and passes the point;
 //! - the capture records the wait and the recovery.

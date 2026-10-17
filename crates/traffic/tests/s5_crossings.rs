@@ -1,8 +1,7 @@
 //! Stage 5 exit gate — pedestrian protection and rail-crossing restrictions.
 //!
-//! A pedestrian on a crossing and a train on its rail lane both hold the street movement
-//! outside the conflict; neither is driven through, and the movement resumes once the
-//! crossing clears.
+//! A pedestrian on a crossing or a train on its rail lane holds the street movement outside
+//! the conflict until the crossing clears.
 
 mod common;
 

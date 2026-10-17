@@ -1,8 +1,7 @@
 //! Stage 5 exit gate — priority turns and oncoming commitment.
 //!
-//! Content rules decide first: a `[rule] priority` main road goes before an unmarked side
-//! road, and a left turn across the oncoming traffic waits for it. The priority is
-//! deterministic and does not depend on which vehicle is planned first.
+//! A `[rule] priority` main road goes before an unmarked side road, and a left turn waits
+//! for oncoming traffic, independent of which vehicle is planned first.
 
 mod common;
 

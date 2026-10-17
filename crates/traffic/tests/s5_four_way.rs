@@ -1,8 +1,5 @@
-//! Stage 5 exit gate — four-way / conflicting claims.
-//!
-//! Two approaches meet at a `+` junction. The rule-first coordinator admits the movement
-//! with the right of way and holds the other at its line; no two conflicting movements are
-//! granted at once, and the decision does not depend on the container order.
+//! Four-way conflicting claims: the right of way is admitted, the other held at its line,
+//! never both, independent of container order.
 
 mod common;
 
@@ -52,8 +49,7 @@ fn conflicting_claims_admit_exactly_one_movement() {
     );
 }
 
-/// Reordering the actors must not change who is admitted: the outcome follows the rule and
-/// the stable ids, not the storage order.
+/// Reordering the actors must not change who is admitted.
 #[test]
 fn the_admission_does_not_depend_on_container_order() {
     let mut first_order = Harness::new(four_way());

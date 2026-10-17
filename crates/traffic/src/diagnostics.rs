@@ -1,8 +1,7 @@
 //! Typed diagnostics: why a vehicle is constrained, and what transitions it makes.
 //!
-//! These types replace ad-hoc string hints as the source of truth for a decision's cause.
-//! A projection to the legacy short labels keeps the existing `OMSI_TRACE_AI` output
-//! working while callers migrate.
+//! These types are the source of truth for a decision's cause; a projection to short labels
+//! feeds the `OMSI_TRACE_AI` output.
 
 use crate::ids::{LaneId, NetworkVersion, StopId, TripId, VehicleId};
 
@@ -31,8 +30,7 @@ pub enum Reason {
     SpeedLimit,
     Curvature,
     StopTarget,
-    /// The stop was passed without docking (the boarding region was overshot); recorded, not
-    /// hidden by opening the doors somewhere up the queue.
+    /// The stop was passed without docking (the boarding region was overshot).
     MissedStop,
     /// A supported door handshake did not answer within the close timeout.
     ScriptTimeout,
@@ -207,8 +205,7 @@ impl ServicePhase {
         matches!(self, ServicePhase::Boarding)
     }
 
-    /// Whether the bus still occupies a berth (docking through merge-out; standing at a
-    /// terminus layover counts as holding the berth too).
+    /// Whether the bus still occupies a berth (docking through merge-out, or a layover).
     pub fn holds_berth(&self) -> bool {
         matches!(
             self,
@@ -220,8 +217,7 @@ impl ServicePhase {
         )
     }
 
-    /// Standing at one of its stops (doors or door handshake, or a layover). The stopped/
-    /// crawl timers do not count a moving bus that merely passed a stop.
+    /// Standing at one of its stops (doors, door handshake or a layover), not merely passing.
     pub fn at_stop(&self) -> bool {
         matches!(
             self,
@@ -247,8 +243,8 @@ impl ServicePhase {
     }
 }
 
-/// Where a vehicle is in its lateral maneuver. The [`crate::maneuvers::ManeuverCoordinator`] is
-/// the single writer of this state; it explains lateral intent in a trace without changing it.
+/// Where a vehicle is in its lateral maneuver (single writer:
+/// [`crate::maneuvers::ManeuverCoordinator`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ManeuverPhase {
     /// Driving along its lane with no lateral maneuver.
@@ -365,10 +361,8 @@ pub enum TraceEvent {
     TopologyRequested {
         tile: (i32, i32),
     },
-    /// An AI driver sounded its horn at the binding constraint. Presentation feedback only:
-    /// it never grants entry, releases a claim or otherwise resolves a blocked maneuver.
-    /// The exact legacy trigger of `ev_AI_Horn` is unestablished; this records the documented
-    /// provisional neoOMSI trigger (see the maintainer guide).
+    /// An AI driver sounded its horn at the binding constraint. Presentation only: it never
+    /// resolves a blocked maneuver. (The legacy `ev_AI_Horn` trigger is unestablished.)
     Horn {
         vehicle: VehicleId,
         reason: Reason,

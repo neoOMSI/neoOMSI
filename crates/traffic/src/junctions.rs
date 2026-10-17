@@ -1,30 +1,20 @@
 //! Junction coordinator: admission, commitments, fairness, release, and the wait-for graph.
 //!
-//! One owner decides who may enter a junction and why. Planning reads a frozen [`JunctionScene`]
-//! and returns a [`JunctionDecision`]; it never mutates another vehicle. Commitments (the lanes
-//! a vehicle has claimed and the exit storage it holds) are keyed by stable [`VehicleId`] and
-//! released only on tail clearance, route change, removal, or network invalidation. A clock
-//! timeout never erases a body that still occupies a conflict area.
+//! Planning reads a frozen [`JunctionScene`] and returns a [`JunctionDecision`]; it never
+//! mutates another vehicle. Commitments (claimed lanes, held exit storage) are keyed by
+//! [`VehicleId`] and released only on tail clearance, route change, removal or network
+//! invalidation, never by a timeout while a body still occupies a conflict area.
 //!
-//! The content rules come first:
-//! - `[crossingproblem]` (`Lane::crossing_problem`) marks a **keep-clear** path: it may not be
-//!   entered (nor speculatively reserved) unless the whole movement can be cleared, so the
-//!   junction is not blocked.
-//! - `[blockpath] <path> <mode>` is a typed [`BlockMode`]. The reference parser only proves the
-//!   two values are stored; the decision meaning below is a documented neoOMSI interpretation
-//!   (Stage 5):
-//!   - [`BlockMode::Occupy`] (0): the paths conflict while a body actually occupies one of them.
-//!   - [`BlockMode::Reserve`] (1): a speculative reservation alone refuses the other's claim
-//!     (reservation refusal).
-//!   - [`BlockMode::Oncoming`] (2): the other is the oncoming/return path; this vehicle may
-//!     reserve but must not enter until the other has committed (entry refusal).
+//! Content rules:
+//! - `[crossingproblem]` marks a keep-clear path: not entered (nor reserved) unless the whole
+//!   movement can be cleared.
+//! - `[blockpath] <path> <mode>` is a [`BlockMode`]; OMSI only proves the values are stored,
+//!   the meaning is a neoOMSI interpretation:
+//!   - [`BlockMode::Occupy`] (0): conflict only while a body occupies one of the paths.
+//!   - [`BlockMode::Reserve`] (1): a reservation alone refuses the other's claim.
+//!   - [`BlockMode::Oncoming`] (2): may reserve, but not enter until the other has committed.
 //!
-//! ## Tuning provenance
-//!
-//! The decision-zone constants below carry their unit and rationale on each item; they are
-//! **provisional** neoOMSI targets. The legality itself is **content** (`[blockpath]`,
-//! `[crossingproblem]`, signal programs). The full table is in
-//! `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
+//! The decision-zone constants are provisional neoOMSI tuning.
 
 use crate::diagnostics::{JunctionState, Reason};
 use crate::following::{AiState, Lead, MAX_BRAKE};
@@ -151,11 +141,9 @@ fn movement_clear_at(net: &Network, jn: &Movement) -> f32 {
         .fold(jn.lanes[0].1, f32::max)
 }
 
-/// The light that holds a vehicle at the start of `way[k]`: that lane's light, unless the
-/// vehicle has already gone through that same light on its way in the crossing object (the
-/// paths after a stop line often carry its light on). Another light of the object - a
-/// second stop line for the turn, the signal after a pedestrian crossing's - holds it as
-/// well: skipping every light after the first, the cars of BRT Berlin ran its junctions' red.
+/// The light that holds a vehicle at the start of `way[k]`, unless it already went through
+/// that same light in this crossing object (paths after a stop line carry it on). Other
+/// lights of the object still hold it (BRT Berlin cars otherwise ran the second red).
 pub fn light_at_entry(net: &Network, way: &[(usize, f32)], k: usize) -> Option<(usize, usize)> {
     let l = way[k].0;
     let light = net.lanes[l].traffic_light?;
@@ -187,8 +175,7 @@ pub fn time_to(dist: f32, v: f32, a: f32) -> f32 {
     (-v + (v * v + 2.0 * a * dist).sqrt()) / a
 }
 
-/// Seconds until a vehicle reaches a meeting place `distance` metres ahead (see
-/// `core::traffic`'s original `crossing_arrival`, kept here as the domain owner).
+/// Seconds until a vehicle reaches a meeting place `distance` metres ahead.
 pub fn crossing_arrival(
     st: &AiState,
     distance: f32,
@@ -261,7 +248,7 @@ pub fn block_mode_between(net: &Network, a: usize, b: usize) -> Option<BlockMode
         .map(|r| BlockMode::from_raw(r.mode))
 }
 
-/// The junction inputs for one vehicle, with the fields the admission rules read.
+/// The junction inputs for one vehicle.
 #[derive(Debug, Clone)]
 pub struct JunctionActor {
     /// Active emergency drive, distinct from general script/depot priority.
@@ -405,9 +392,8 @@ pub enum Recovery {
     RequestRouteRecovery { vehicle: VehicleId },
     /// The hold is legal (a red signal or a physically full road): wait, do not force.
     WaitLegal { vehicle: VehicleId },
-    /// A cycle of vehicles that only wait for each other by the rules has stood too long:
-    /// this one is let go (it still waits for moving vehicles, bodies, people and signals,
-    /// but drives into a full exit up to the queue's tail).
+    /// A rule-only wait cycle stood too long: this one is let go (still waits for moving
+    /// vehicles, bodies, people and signals; drives into a full exit up to the queue's tail).
     GridlockPass { vehicle: VehicleId },
 }
 
@@ -420,11 +406,8 @@ pub enum WaitDiagnosis {
     LegalCongestion { cycle: Vec<VehicleId> },
     /// A cycle held by bodies in the way (or with a member still moving): capacity, not a bug.
     FullCapacity { cycle: Vec<VehicleId> },
-    /// Standing vehicles that each wait for the next by the rules alone: the right of way
-    /// (four cars at a right-before-left crossing that each see one coming from the right),
-    /// a full exit or the box rule (a ring of queues round a block, each waiting for the next
-    /// junction's exit), with the queues behind such holds. No rule ends it, so the
-    /// coordinator lets one go after a while.
+    /// Standing vehicles that each wait for the next by the rules alone (right of way, a full
+    /// exit, the box rule, or queued behind such a hold). No rule ends it, so one is let go.
     YieldCycle { cycle: Vec<VehicleId> },
     /// A member's route changed or was removed.
     RouteRecovery { vehicle: VehicleId },
@@ -436,9 +419,8 @@ pub struct JunctionCoordinator {
     emergency_reservations: Vec<emergency::EmergencyReservation>,
     claims: Arbiter,
     amber: HashMap<VehicleId, (usize, usize)>,
-    /// The crossing object a vehicle is inside and the lights of it it has driven through:
-    /// a path further on that carries one of them again does not hold it, also once the
-    /// lane with that light is behind it.
+    /// The crossing object a vehicle is inside and its lights already driven through (a later
+    /// path carrying one of them again does not hold it).
     through_light: HashMap<VehicleId, (((i32, i32), i64), Vec<(usize, usize)>)>,
     commitments: HashMap<VehicleId, Commitment>,
     wait_for: HashMap<VehicleId, VehicleId>,
@@ -481,8 +463,7 @@ impl JunctionCoordinator {
         self.claims_of(id).contains(&lane)
     }
 
-    /// Rehydrate a committed claim without planning (restoring a persisted/LAN commit). The
-    /// claim is released by the same tail-clearance/route/removal rules as any other.
+    /// Rehydrate a committed claim without planning (a persisted/LAN commit).
     pub fn restore_claim(&mut self, id: VehicleId, lanes: &[usize]) {
         for &l in lanes {
             self.claims.grant(LaneId(l), id);
@@ -497,10 +478,8 @@ impl JunctionCoordinator {
         c.state = JunctionState::Inside;
     }
 
-    /// The order to plan a tick's vehicles in: those holding a claim first (what they were
-    /// granted stands, whatever the others ask for), then by stable id. A claim or exit room
-    /// granted during a tick holds back the vehicles planned after it, so planning in
-    /// container order made the outcome depend on where a vehicle happened to be stored.
+    /// The order to plan a tick's vehicles in: claim holders first (their grant stands), then
+    /// by stable id, so the outcome does not depend on storage order.
     pub fn plan_order(&self, actors: &[JunctionActor]) -> Vec<usize> {
         let mut order: Vec<usize> = (0..actors.len()).collect();
         order.sort_unstable_by_key(|&i| (self.claims_of(actors[i].id).is_empty(), actors[i].id));
@@ -512,8 +491,7 @@ impl JunctionCoordinator {
         self.wait_for.get(&id).copied()
     }
 
-    /// Waits this vehicle by the right-of-way rules alone (`rule`), or for room at its
-    /// exit (`exit`)? For the stuck diagnostics.
+    /// Whether the vehicle waits by right of way alone (`rule`) or for exit room (`exit`).
     pub fn wait_kind(&self, id: VehicleId) -> Option<&'static str> {
         if self.rule_waiters.contains(&id) {
             Some("rule")
@@ -529,10 +507,8 @@ impl JunctionCoordinator {
         self.commitments.len()
     }
 
-    /// Begin a tick: refresh the arbiter from committed claims and exit storage. The free
-    /// storage of an exit is measured again this tick against the realized occupancy; the
-    /// slots of the vehicles admitted on earlier ticks count against it until they are on
-    /// the exit (or not admitted any more).
+    /// Begin a tick: refresh the arbiter from committed claims and exit storage (earlier
+    /// admissions count against an exit until they are on it).
     pub fn begin_tick(&mut self, _tick: u64) {
         self.claims = Arbiter::new();
         for (id, c) in &self.commitments {
@@ -596,8 +572,7 @@ impl JunctionCoordinator {
         }
     }
 
-    /// Network invalidation (a rebuilt network, not one that only grew: its lane indices and
-    /// meeting places stand): every claim made against the old version is released.
+    /// A rebuilt (not merely grown) network releases every claim made against the old one.
     pub fn invalidate_network(&mut self) {
         self.emergency_reservations.clear();
         self.claims = Arbiter::new();
@@ -618,11 +593,8 @@ impl JunctionCoordinator {
         &self.wait_for
     }
 
-    // ---- signals -----------------------------------------------------------------------
-
-    /// The signal verdict for the movement ahead: where the vehicle has to stop (distance from
-    /// its origin), or None. A vehicle that can stop comfortably stops at yellow; one too close
-    /// drives on and remembers it, so the red that follows does not stop it mid-junction.
+    /// Where the light makes the vehicle stop (distance from its origin), or None. One too
+    /// close to stop at yellow drives on and remembers it, so red does not stop it mid-junction.
     fn signal_stop(
         &mut self,
         scene: &JunctionScene,
@@ -673,17 +645,14 @@ impl JunctionCoordinator {
             let for_emergency = (actor.emergency && self.emergency_owns(actor.id, way[k].0))
                 || self.emergency_leads(actor.id, &way[k..]);
             if for_emergency && gap < 15.0 && actor.speed <= emergency::EMERGENCY_CROSSING_SPEED {
-                // Only the reserved movement gets a red-light exception. Admission still
-                // checks actual occupants, pedestrians and full downstream exits.
+                // Red-light exception for the reserved movement only; admission still checks
+                // occupants, pedestrians and full exits.
                 continue;
             }
             let comfortable = v * v / (2.0 * actor.decel * 1.4) + 1.0;
             let possible = v * v / (2.0 * MAX_BRAKE * 0.8);
-            // Reaching the line on green or yellow commits a vehicle only while it still
-            // moves on, or once its front is over the line and it is rolling: one that crept
-            // up to the line in a queue can stop there when the light changes (it used to roll
-            // on into the junction at walking pace long after red), and one standing with its
-            // nose just over the line does not set off at red.
+            // Reaching the line on green/yellow commits only while still moving on (or rolling
+            // with its front over the line): a car that crept up in a queue stops at red.
             let committed = amber == Some((c, li))
                 && (v >= AMBER_COMMIT_SPEED || (gap < 0.0 && v > 1.0));
             let go = match aspect {
@@ -727,12 +696,8 @@ impl JunctionCoordinator {
         stop
     }
 
-    // ---- admission ---------------------------------------------------------------------
-
-    /// Plan one vehicle's junction movement for this tick.
-    ///
-    /// `way` is the vehicle's own planned way (its lane sequence and distances); `lead` is what
-    /// it follows now. `movement` is the junction found on that way, if any.
+    /// Plan one vehicle's junction movement for this tick. `way` is its planned lanes and
+    /// distances, `lead` what it follows, `movement` the junction on that way.
     pub fn plan(
         &mut self,
         scene: &JunctionScene,
@@ -751,10 +716,8 @@ impl JunctionCoordinator {
             d.light = light;
             return d;
         };
-        // a junction beyond a red light's line is not decided yet
-        // (on the ring of a roundabout a car drives on and out of the way; in front of the
-        // emergency vehicle on its way, it leads it through. One admitted already stops too
-        // while it still can, #462.)
+        // Yield to an emergency reservation (not on a ring or ahead of it; an admitted one
+        // too while it can still stop, #462). Beyond a red line nothing is decided yet.
         let can_stop_before = jn.lanes[0].1 - actor.front >= firm_stop(actor);
         let my_lanes: Vec<usize> = jn.lanes.iter().map(|&(l, _)| l).collect();
         if !jn.inside && !scene.net.is_ring(actor.lane) && self.emergency_reservations.iter().any(|r|
@@ -831,8 +794,7 @@ impl JunctionCoordinator {
         // (of those, for a vehicle that is moving)
         let mut yields_moving = false;
         let mut soft: Vec<usize> = Vec::new();
-        // (where a hold stops the vehicle short of its meeting place, and whether the one
-        // held for comes the other way)
+        // (stop point short of the meeting place, and whether the other one is oncoming)
         let mut holds: Vec<(f32, bool)> = Vec::new();
         let mut pedestrian = false;
         let mut stop_at = if jn.inside { None } else { Some(entry) };
@@ -885,8 +847,7 @@ impl JunctionCoordinator {
                         + if v < 0.5 { actor.reaction } else { 0.0 };
                     let t_mine = time_to(point - c.before - actor.front, v, a_me)
                         + if v < 0.1 { actor.reaction } else { 0.0 };
-                    // (one that has waited long at its line for a gap is standing there on
-                    // purpose: its claim stands, and is weighed from as far as the junction is)
+                    // (a long waiter at its line keeps its claim, weighed from any distance)
                     let seen = self
                         .commitments
                         .get(&o.id)
@@ -905,21 +866,16 @@ impl JunctionCoordinator {
                                         .map(|&k| scene.actors[k].speed < 1.0)
                                         .unwrap_or(false)
                             }));
-                    // The content block rule between the two paths is honored before the
-                    // geometric convention. `Occupy` ignores speculative claims (only bodies
-                    // conflict); `Reserve` refuses a reservation; `Oncoming` keeps the default
-                    // commitment rule (a body or a committed reservation is waited for).
+                    // `[blockpath]` beats geometry: `Occupy` ignores claims, `Reserve` refuses
+                    // a reservation, `Oncoming` keeps the default commitment rule.
                     let mode = block_mode_between(scene.net, l, m);
-                    // Entry paths can be part of the same scenery object as the ring.
-                    // Being on that object is not permission to cross a give-way merge.
+                    // (an entry path on the ring's object still gives way at the merge)
                     let yielding_merge = c.merge && scene.net.must_yield(l, m)
                         && !scene.net.must_yield(m, l);
                     let priority_merge = c.merge && scene.net.must_yield(m, l)
                         && !scene.net.must_yield(l, m);
-                    // A `[rule] priority` difference between the two paths is signage: an
-                    // early claim from the lower road does not take the right of way while
-                    // that vehicle can still stop before the meeting place. Both sides judge
-                    // it with the same stopping distance so they agree on who goes.
+                    // A `[rule] priority` difference is signage: an early claim from the lower
+                    // road does not win while it can still stop (same distance on both sides).
                     let signed = (scene.net.lanes[l].priority - scene.net.lanes[m].priority)
                         .abs() > 0.5;
                     let mine_ahead = point - c.before - actor.front;
@@ -945,7 +901,7 @@ impl JunctionCoordinator {
                         waits_short,
                         stalled,
                     );
-                    // reservation refusal: a speculative claim alone holds this vehicle back
+                    // reservation refusal: a claim alone holds this vehicle back
                     if mode == Some(BlockMode::Reserve)
                         && self.claims.holds(LaneId(m), o.id)
                         && !stalled
@@ -976,25 +932,16 @@ impl JunctionCoordinator {
                         }
                         continue;
                     }
-                    // A lower-priority entrant still upstream of the conflict must stop,
-                    // even if it holds a speculative claim. A body already overlapping,
-                    // a blockpath reservation, or an entrant unable to stop stays protected.
-                    // On a roundabout the ring has the right of way over an entry path of the
-                    // same object, whatever claim the entering car made before it saw the
-                    // ring traffic, while the entering car can still stop braking firmly (a
-                    // car coming at 48 km/h 40 m out counted as unable to stop at a gentle
-                    // rate, and the ring gave way to it).
+                    // The ring beats an entry of the same object, whatever it claimed, while
+                    // the entering car can still stop braking firmly (a gentle-rate test let a
+                    // 48 km/h car 40 m out cut in).
                     let ring_first = scene.net.is_ring(l) && !scene.net.is_ring(m)
                         && scene.net.must_yield(m, l);
                     if ring_first && mode.is_none() && !o.emergency && theirs > firm_stop(o) {
                         continue;
                     }
-                    // Entering a roundabout, a car gives way to ring traffic standing just
-                    // before its entry too: it does not cut in while the ring queues (a
-                    // standing ring car counted as never arriving, the entries filled the
-                    // ring and the cars on it then had to wait for them).
-                    // (not once its front is well into the meeting place: the ring car behind
-                    // it waits for it, a deadlock)
+                    // Entering a roundabout, also give way to a ring car standing just before
+                    // the entry, or the entries fill the ring (not once nosed in: deadlock).
                     let nosed_in = mine_ahead < -NOSED_IN;
                     let entering_ring = scene.net.is_ring(m) && !scene.net.is_ring(l)
                         && scene.net.must_yield(l, m);
@@ -1048,9 +995,8 @@ impl JunctionCoordinator {
                         continue;
                     }
                     if t_j < (actor.accept_gap + 2.0).max(t_clear + 1.0) * patience {
-                        // (a priority-road vehicle standing only for a moment is about to
-                        // come on: the entry's long wait does not outrank it; a stalled
-                        // queue is left to the fairness rule below)
+                        // (a priority-road car stopped only briefly still outranks a long
+                        // wait; a stalled queue is left to the fairness rule)
                         holds.push(hold);
                         if t_j == f32::MAX || (o.speed < 0.3 && (stalled || !signed)) {
                             soft.push(j);
@@ -1086,10 +1032,9 @@ impl JunctionCoordinator {
                 }
             }
         }
-        // Let go out of a gridlock of vehicles that only wait for each other by the rules (see
-        // `classify_waits`): the right of way to the standing ones, a full exit and the box
-        // rule no longer hold it; moving vehicles, bodies, people and signals still do (it
-        // drives into the junction up to the queue's tail, as drivers do).
+        // Let out of a rule-only gridlock (`classify_waits`): right of way to standing ones, a
+        // full exit and the box rule no longer hold it; moving vehicles, bodies, people and
+        // signals still do.
         let pass = self.gridlock_pass.get(&me_id).is_some_and(|&until| scene.time < until);
         let mut exit_full = false;
         // (the exit storage this vehicle takes if it is admitted)
@@ -1126,8 +1071,7 @@ impl JunctionCoordinator {
                             ruled = true;
                             exit_full = true;
                             reasons.push(Reason::OccupiedExit);
-                            // it waits for the queue's tail to move on, and for those that
-                            // were given the room before it to get there
+                            // (waits for the queue's tail and the earlier room holders)
                             let holders: Vec<VehicleId> = self
                                 .claims
                                 .storage_holders(LaneId(e))
@@ -1144,10 +1088,8 @@ impl JunctionCoordinator {
                 }
             }
         }
-        // Don't block the box (StVO §11 (1)): with the traffic ahead standing or crawling past
-        // the junction, a vehicle waits at the line unless there is room for all of it beyond
-        // the movement's last conflict - a queue reaching back into the junction otherwise
-        // filled it and held the crossing traffic through its own green.
+        // Don't block the box (StVO §11 (1)): with the traffic ahead standing, wait at the
+        // line unless the whole vehicle fits beyond the movement's last conflict.
         if !jn.inside && !exit_full && !pass {
             if let Some(l) = lead {
                 let lead_rear = actor.front + l.gap;
@@ -1186,9 +1128,8 @@ impl JunctionCoordinator {
         }
         let mut blocked = (hard && !cannot_stop)
             || ((ruled || yields || !soft.is_empty()) && !cannot_stop_gently);
-        // An emergency vehicle waits for whoever moves or has the right of way, but not for
-        // vehicles that only stand there - they stand for it, held by its reservation, and
-        // waiting for them as well, it stood at the line for good.
+        // An emergency vehicle does not wait for merely standing vehicles (they stand for it;
+        // waiting on them too deadlocked it at the line).
         if actor.emergency {
             blocked |= hard || ruled || yields;
         }
@@ -1213,12 +1154,8 @@ impl JunctionCoordinator {
             JunctionState::Admitted
         };
         if blocked && !jn.inside {
-            // A driver who has waited long at the line makes himself seen: he keeps a claim
-            // on his way through while still waiting, so the vehicles not yet committed to
-            // the junction hold back for him (those that can still stop) and he goes once
-            // those already on their way are through. Without it a side road's car at a main
-            // road whose traffic never left the gap it wants - `patience` shortens that by a
-            // third at most - waited for good. (Not into a full exit.)
+            // A long waiter makes himself seen: he keeps a claim while waiting, so uncommitted
+            // traffic holds back for him (else a side road at a busy main road waits for good).
             if !exit_full && !queued && wait > LONG_WAIT_CLAIM {
                 for &l in &lanes {
                     self.claims.grant(LaneId(l), me_id);
@@ -1243,11 +1180,8 @@ impl JunctionCoordinator {
             } else if !hard {
                 self.exit_waiters.insert(me_id);
             }
-            // A turn across the oncoming traffic at a signal does not wait at the line for
-            // a gap that may never come in its green: it pulls into the junction up to where
-            // it meets the oncoming lanes and goes when they stop (waiting at the line, one
-            // car a cycle got through on yellow and the queue grew into the junctions
-            // behind). Only one at a time, and only when nothing else holds it.
+            // A turn across oncoming traffic at a signal pulls in to the meeting place and goes
+            // when they stop (at the line only one car a cycle got through). One at a time.
             let signalized = jn
                 .lanes
                 .iter()
@@ -1285,7 +1219,6 @@ impl JunctionCoordinator {
             self.drop_claims(me_id);
             return (None, reasons, JunctionState::Approaching);
         }
-        // claim the way through, and the room it needs at the exit
         for &l in &lanes {
             self.claims.grant(LaneId(l), me_id);
         }
@@ -1324,8 +1257,7 @@ impl JunctionCoordinator {
         }
     }
 
-    /// Exit storage is held until the vehicle is on that exit (its body counts there from
-    /// then on) or the exit is no longer ahead on its way.
+    /// Exit storage is held until the vehicle is on that exit or it is no longer ahead.
     fn release_passed_storage(&mut self, id: VehicleId, way: &[(usize, f32)]) {
         let Some(c) = self.commitments.get_mut(&id) else {
             return;
@@ -1347,23 +1279,16 @@ impl JunctionCoordinator {
         self.waiting_since.entry(id).or_insert(tick);
     }
 
-    // ---- wait-for graph -----------------------------------------------------------------
-
-    /// Classify persistent holds. A cyclic set of vehicles each waiting on the next, all
-    /// stationary and holding speculative claims but none physically in a conflict, is a
-    /// stale-claim deadlock; one that only waits for each other by the rules (the right of
-    /// way, a full exit, the box rule, and the queues behind such holds) is a yield cycle; a
-    /// cycle that includes a red signal or a body in the way is legal and must not be forced.
-    /// Every hold of a vehicle counts (it may wait for several), and a vehicle standing
-    /// close behind a standing one waits for it, so a cycle through any of them - a ring of
-    /// queues round a block, each waiting for the next junction's exit - is found.
+    /// Classify persistent wait cycles: standing claim holders with no body in a conflict are
+    /// a stale-claim deadlock, rule-only waits (and queues behind them) a yield cycle, and a
+    /// cycle with a red signal or a body in the way is legal and not forced.
     pub fn classify_waits(
         &mut self,
         scene: &JunctionScene,
     ) -> (Vec<WaitDiagnosis>, Vec<Recovery>) {
         let mut out = Vec::new();
         for mut cycle in self.wait_cycles(scene) {
-            // (deterministic: the same set is reported in the same order every tick)
+            // (deterministic report order)
             cycle.sort_unstable();
             out.push(self.classify_cycle(scene, &cycle));
         }
@@ -1372,8 +1297,7 @@ impl JunctionCoordinator {
         for d in &out {
             match d {
                 WaitDiagnosis::StaleClaimCycle { cycle } => {
-                    // deterministic order: the lowest id keeps the first safe retry, the rest
-                    // cancel their speculative claims
+                    // the longest waiter retries, the rest cancel their claims
                     let sorted = self.by_wait(cycle);
                     for &id in sorted.iter().skip(1) {
                         let lanes = self
@@ -1445,9 +1369,8 @@ impl JunctionCoordinator {
         sorted
     }
 
-    /// The cycles of the wait-for graph: its strongly connected sets of two or more vehicles
-    /// (Tarjan), from every hold recorded this tick, the single ones put in directly and the
-    /// queues: a standing vehicle close behind a standing one waits for it.
+    /// The wait-for graph's strongly connected sets of 2+ vehicles (Tarjan), including queue
+    /// links (a standing vehicle close behind a standing one waits for it).
     fn wait_cycles(&self, scene: &JunctionScene) -> Vec<Vec<VehicleId>> {
         let mut edges: HashMap<VehicleId, Vec<VehicleId>> = self.wait_edges.clone();
         let queued = scene.actors.iter().filter_map(|a| {
@@ -1549,8 +1472,7 @@ impl JunctionCoordinator {
                 cycle: cycle.to_vec(),
             };
         }
-        // (every member stands, held by the rules alone or queued behind such a hold - one
-        // with no junction hold of its own - and one at least is held at a junction)
+        // (all stand, held by rules alone or queued behind such a hold; one at a junction)
         let by_rule = |id: &VehicleId| {
             self.rule_waiters.contains(id) || self.exit_waiters.contains(id)
         };
@@ -1578,8 +1500,7 @@ fn stopping_distance(a: &JunctionActor) -> f32 {
     a.speed * a.reaction + a.speed * a.speed / (2.0 * a.decel.max(0.1))
 }
 
-/// Whether two lanes belong to the same crossing object (a vehicle on `a` is already past
-/// the line of the junction `b` belongs to).
+/// Whether two lanes belong to the same crossing object.
 fn same_object(net: &Network, a: usize, b: usize) -> bool {
     let object = |l: usize| {
         let lane = &net.lanes[l];
@@ -1588,8 +1509,7 @@ fn same_object(net: &Network, a: usize, b: usize) -> bool {
     object(a).is_some() && object(a) == object(b)
 }
 
-/// The controller `AiState` of an actor, for the crossing-arrival prediction. Junction actors
-/// carry their own fields; this reconstructs a minimal state from them.
+/// A minimal `AiState` of an actor, for the crossing-arrival prediction.
 fn actor_state(_scene: &JunctionScene, o: &JunctionActor) -> AiState {
     let mut st = AiState::new(o.lane, o.s, 0);
     st.speed = o.speed;

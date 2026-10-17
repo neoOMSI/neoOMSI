@@ -1,15 +1,12 @@
 //! Traffic path network and AI road vehicles (original units `mc_path`, `mc_pathrule`,
 //! the AI part of `mc_roadvehicle`).
 //!
-//! Lanes come from `[path]` entries of splines (running along the spline at a lateral
-//! offset) and of scenery objects (arcs in the object's frame). Lane ends are linked by
-//! proximity, which reproduces the original's spline `prev`/`next` chains and the object
-//! `[splinehelper]` connectors without needing their ids.
+//! Lanes come from the `[path]` entries of splines and scenery objects; lane ends are linked
+//! by proximity, which reproduces the spline chains and `[splinehelper]` connectors.
 //!
-//! The domain is split by responsibility: [`network`] (topology and geometry), [`rules`]
-//! (content-derived permissions), [`signals`] (light programs), and [`following`]
-//! (longitudinal control and per-vehicle state). The Stage 1 contract types live in
-//! [`ids`], [`capabilities`], [`routing`], [`service`], and [`diagnostics`].
+//! Modules: [`network`] (topology, geometry), [`rules`] (permissions), [`signals`] (light
+//! programs), [`following`] (longitudinal control); contract types in [`ids`],
+//! [`capabilities`], [`routing`], [`service`] and [`diagnostics`].
 
 pub mod capabilities;
 pub mod diagnostics;

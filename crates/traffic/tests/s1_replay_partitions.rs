@@ -1,11 +1,8 @@
 //! Stage 1 exit gate — fixed-tick replays match across render-frame partitions.
 //!
-//! The S1 world (a queue at a red signal) is stepped with the same fixed `SIM_DT` the
-//! window and offscreen paths use, but the elapsed time is partitioned into 25/30/60/144
-//! FPS frames through [`advance_fixed_clock`]. The sequence of decision ticks, and the
-//! rolling decision hash, must be identical regardless of how the time was partitioned.
-//! Slower frames are shared out over at most `MAX_SIM_STEPS` longer steps: they cannot
-//! repeat the fixed sequence, but they must keep the simulated time.
+//! The S1 world (a queue at a red signal) runs at the fixed `SIM_DT` with 25/30/60/144 FPS
+//! frames through [`advance_fixed_clock`]: decision ticks and hash must not depend on the
+//! partition. Slower frames (capped at `MAX_SIM_STEPS` longer steps) must keep sim time.
 
 use traffic::scenario::{advance_fixed_clock, MAX_SIM_STEPS, SIM_DT};
 use traffic::{

@@ -1,11 +1,8 @@
 //! Occupancy and route-relative perception.
 //!
-//! Every planner reasons about the same physical world through one immutable per-tick
-//! [`Occupancy`]. The indexes (per-lane intervals and a spatial grid) are built once from
-//! realized bodies and never replace those bodies: the realized geometry is the truth, a
-//! lane projection only accelerates a query. Bodies that span more than one lane (a lane
-//! change, the rear still on the lane it left), articulated rear sections, and trailers all
-//! carry the same stable [`VehicleId`]; trailers and rear sections differ only by `part`.
+//! Every planner reads one immutable per-tick [`Occupancy`] built from realized bodies; the
+//! lane and grid indexes only accelerate queries, the realized geometry is the truth. All
+//! parts of one vehicle share its stable [`VehicleId`] and differ only by `part`.
 //!
 //! Coordinate conventions:
 //! - A [`Placement`] gives the distance `s` along a lane of the vehicle origin and the
@@ -302,8 +299,7 @@ impl Occupancy {
         self.by_lane.get(&lane).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// The legacy flat view of the lane index: `(container index, s, lateral, foreign)`.
-    /// Callers that still speak container indices build it from stable ids once per tick.
+    /// The flat view of the lane index: `(container index, s, lateral, foreign)`.
     pub fn lane_view(
         &self,
         index_of: &HashMap<VehicleId, usize>,
@@ -328,8 +324,7 @@ impl Occupancy {
     /// Visit realized bodies near `p`, allowing for each body's maximum half extent.
     pub fn near(&self, p: DVec2, radius: f64, mut visit: impl FnMut(&BodyFootprint)) {
         let r = radius.max(0.0);
-        // Centres are indexed once. Expand by the largest body, then visit only cells
-        // intersecting the query bounds instead of a fixed 5x5 neighbourhood per sample.
+        // Expand by the largest body and visit only the cells meeting the query bounds.
         let reach = r + self.max_body_extent;
         let (x0, y0) = cell(p - DVec2::splat(reach));
         let (x1, y1) = cell(p + DVec2::splat(reach));
@@ -431,9 +426,8 @@ impl Occupancy {
                 let rel = p2 - f.center;
                 let gx = f.half_w + half_width * across.dot(f.right).abs() - 0.1;
                 let gy = f.half_len + half_width * across.dot(f.fwd).abs() - 0.1;
-                // A cross-section is a segment, not the rectangle obtained by growing
-                // both body axes independently. Its normal is the third separating
-                // axis; without it an angled bus grows phantom corners into a clear lane.
+                // A cross-section is a segment: its normal is a third separating axis, or
+                // an angled bus grows phantom corners into a clear lane.
                 let along = (f.half_w - 0.1).max(0.0) * s.dir.dot(f.right).abs()
                     + (f.half_len - 0.1).max(0.0) * s.dir.dot(f.fwd).abs();
                 if rel.dot(f.right).abs() <= gx && rel.dot(f.fwd).abs() <= gy
@@ -536,10 +530,8 @@ pub struct RouteFix {
 
 /// Reconcile a realized pose with controller progress locally on the planned route.
 ///
-/// The body is projected onto `route`, but the projection is accepted only when it lies on
-/// the route itself: close to the lane centre and roughly matching the lane heading. A
-/// projection that is off to the side (a nearby parallel road) or faces another way is
-/// rejected rather than snapped onto, so progress never jumps between streets.
+/// A projection is accepted only near the lane centre and roughly along the lane heading,
+/// so progress never jumps onto a nearby parallel street.
 #[allow(clippy::too_many_arguments)]
 pub fn project_on_route_local(
     net: &Network,

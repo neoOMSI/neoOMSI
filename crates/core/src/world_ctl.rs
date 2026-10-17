@@ -107,8 +107,7 @@ impl App {
                 if let Some(t) = self.traffic.as_mut() {
                     t.set_day_time(time);
                 }
-                // a time jump is an explicit reset: do not let the fixed clock catch up
-                // the whole jump as one enormous motion update
+                // a time jump is a reset: the fixed clock must not catch up the whole jump
                 self.sim_accum = 0.0;
             }
             lan::WorldUpdate::Slew(s) => {

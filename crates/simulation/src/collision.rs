@@ -921,8 +921,7 @@ impl CollisionWorld {
 
     /// First box (or collision mesh face) overlapping `b`.
     pub fn hit(&self, b: &Obb) -> Option<Obb> {
-        // A boolean/first-hit query must not collect and clip every nearby mesh face.
-        // Preserve the original box/mesh order, but stop as soon as a real hit is found.
+        // First hit only: stop at the first real hit instead of clipping every nearby face.
         for i in self.near(b) {
             if self.boxes[i].overlaps(b) {
                 return Some(self.boxes[i]);

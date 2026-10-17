@@ -34,13 +34,8 @@ impl Traffic {
     }
 
 
-    /// Advance all cars.
-    /// `player`: (centre, heading in degrees, half length, half width, speed) of the
-    /// player's vehicle.
-    /// The railway signals' aspects from where the trains are: a signal shows go (1, or 2
-    /// with a `[speedlimit]`) while a train's route is about to enter the track its signal
-    /// route covers and no other train is on it; otherwise it shows stop (and falls back to
-    /// stop behind the train that passed it).
+    /// Railway signal aspects: go (1, or 2 with a `[speedlimit]`) while a train is about to
+    /// enter its signal route's track and no other train is on it, otherwise stop.
     pub fn signal_aspects(
         &self,
         routes: &[::map::ailists::SignalRoute],
@@ -76,9 +71,8 @@ impl Traffic {
                 (here, ahead)
             })
             .collect();
-        // the player's own train (driven on the rails): the lanes ahead of it the way it goes,
-        // every branch at a fork (which it takes is not known yet) - its signals stayed at
-        // stop, only an AI train ever cleared them
+        // the player's own train: the lanes ahead, every branch at a fork (else its signals
+        // stayed at stop)
         if let Some((lane, along)) = player_rail.filter(|(l, _)| *l < self.net.lanes.len()) {
             let here = self.net.lanes[lane].key.map(|k| k.id).unwrap_or(-1);
             let mut ahead: Vec<i64> = Vec::new();
@@ -125,9 +119,8 @@ impl Traffic {
     }
 
 
-    /// The switches the trains need set: (map object, `[path]` index) of the next lanes of
-    /// every train's timetable route. A train throws the points ahead of it to the
-    /// `[switchdir]` of the path its route takes (see `World::set_switches`).
+    /// The switches the trains need set: (map object, `[path]` index) of each train's next
+    /// lanes (see `World::set_switches`).
     pub fn switch_requests(&self) -> Vec<(i64, u16)> {
         let mut out = Vec::new();
         for c in &self.cars {
@@ -152,8 +145,7 @@ impl Traffic {
     }
 
 
-    /// `OMSI_DEBUG_LIGHTS`: every change of the lights of the chosen programs, with the
-    /// game time and the program's cycle position.
+    /// `OMSI_DEBUG_LIGHTS`: log light changes of the chosen programs with time and cycle.
     pub(crate) fn log_lights(&mut self) {
         let Some(sel) = self.light_log.as_deref() else {
             return;
@@ -209,12 +201,8 @@ impl Traffic {
 
 
     /// Play the `[sound_ai]` sets of the cars near `listener` (others are silenced).
-    /// `street_cond` is the state of the road (see `VehicleHost::street_cond`): the stock
-    /// AI sound configuration fades `WetLane_1`/`WetLane_2` in with it, which is what a car
-    /// driving past through the wet sounds like. `muffled`: the listener (the player) sits in
-    /// a cabin right now, so every AI car's sound is heard through that bodywork and glass -
-    /// a passing car's horn does not simply sound like the street outside once the windows
-    /// are shut.
+    /// `street_cond` fades in the stock `WetLane_1`/`WetLane_2`; `muffled` means the listener
+    /// sits in a cabin, so AI sounds are heard through its bodywork.
     pub fn update_audio(
         &mut self,
         audio: &::audio::AudioEngine,
@@ -282,7 +270,7 @@ impl Traffic {
                             parts.push((i, part, dir));
                         }
                     }
-                    // the clips are read in the background the first time; silent till then
+                    // (clips load in the background; silent till then)
                     let ready = audio.clips_ready(&::audio::SoundSet::clip_paths(&cfg, &dir))
                         && parts.iter().all(|(_, part, dir)| {
                         audio.clips_ready(&::audio::SoundSet::clip_paths(part, dir))
@@ -339,8 +327,7 @@ impl Traffic {
     }
 
 
-    /// Obstacle boxes of all AI vehicles (for the player's collisions), with the rear
-    /// sections of articulated buses and the trailers.
+    /// Obstacle boxes of all AI vehicles and their trailers (for the player's collisions).
     pub fn boxes(&self, near: DVec3, radius: f64) -> Vec<::simulation::collision::Obb> {
         self.cars
             .iter()
@@ -352,8 +339,7 @@ impl Traffic {
                     .def
                     .bounding_box
                     .unwrap_or([2.0, 4.5, 1.6, 0.0, 0.0, 0.8]);
-                // moving, and with a mass of its own: a car that runs into the bus is no
-                // bulldozer
+                // (moving, with its own mass: a car hitting the bus is no bulldozer)
                 let h = c.vehicle.heading.to_radians();
                 let v = glam::DVec2::new(h.sin(), h.cos()) * c.state.speed as f64;
                 let (mass, id) = (c.vehicle.physics.mass_kg, c.id.get());
@@ -382,8 +368,7 @@ impl Traffic {
     }
 
 
-    /// State of light `li` of controller `c` now and the seconds it keeps showing it (the
-    /// pedestrians only start across on a green that lasts).
+    /// State of light `li` of controller `c` and how long (s) it keeps showing it.
     pub fn light_state(&self, c: usize, li: usize) -> Option<(i32, f32)> {
         let ctl = self.lights.get(c)?;
         Some((ctl.state(li), ctl.remaining(li)))
@@ -396,16 +381,14 @@ impl Traffic {
     }
 
 
-    /// How far the frame being drawn is between the last step and the next (the steps'
-    /// accumulator over the step, 0..1). Left at 1, `sync` draws the simulated poses.
+    /// How far (0..1) the drawn frame is between the last step and the next; at 1 `sync`
+    /// draws the simulated poses.
     pub fn set_tick_fraction(&mut self, alpha: f32) {
         self.drawn_alpha = alpha.clamp(0.0, 1.0);
     }
 
-    /// Draw every vehicle `drawn_alpha` of the way from its pose before the last step to its
-    /// pose now, keeping the simulated poses in `sim_poses` for `draw_simulated`. The steps
-    /// come at 50 Hz: drawn where the simulation has them, the vehicles stood still on one
-    /// frame in six at 60 fps, and on two in three at 144 fps.
+    /// Draw every vehicle `drawn_alpha` of the way between its last two step poses (steps
+    /// are 50 Hz; drawn as simulated, vehicles stood still on frames without a step).
     fn draw_between_steps(&mut self) {
         self.sim_poses.clear();
         if self.drawn_alpha >= 1.0 || self.mirror {
@@ -424,8 +407,7 @@ impl Traffic {
         }
     }
 
-    /// Put the vehicles back where the simulation has them after `draw_between_steps`
-    /// (the cars are the same and in the same order in between).
+    /// Put the vehicles back to their simulated poses after `draw_between_steps`.
     fn draw_simulated(&mut self) {
         if self.sim_poses.is_empty() {
             return;
@@ -441,8 +423,7 @@ impl Traffic {
         self.sim_poses.clear();
     }
 
-    /// Run `f` on the traffic with the vehicles where `sync` draws them, for what else is
-    /// drawn on them after `sync` (their lights' coronas and spots).
+    /// Run `f` with the vehicles at their drawn poses (for coronas and spots after `sync`).
     pub(crate) fn with_drawn_poses<R>(&mut self, f: impl FnOnce(&Self) -> R) -> R {
         self.draw_between_steps();
         let r = f(self);
@@ -463,15 +444,14 @@ impl Traffic {
         self.frame_dt = dt;
     }
 
-    /// The time the drivers' animations move on by this `sync` (a short step before the
-    /// first frame has been timed).
+    /// The drivers' animation step for this `sync` (a short one before the first timed frame).
     fn driver_dt(&self) -> f32 {
         if self.frame_dt > 0.0 { self.frame_dt } else { 1.0 / 120.0 }
     }
 
 
-    /// The drivers of the timetable buses near the camera: made when a bus comes within
-    /// `DRIVER_NEAR`, posed every sync, let go when it is twice that far or gone.
+    /// Timetable bus drivers near the camera: made within `DRIVER_NEAR`, dropped beyond twice
+    /// that.
     pub(crate) fn sync_drivers(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
         let Some(eye) = self.viewer.map(|v| v.pos) else {
             return;
@@ -530,8 +510,7 @@ impl Traffic {
     }
 
 
-    /// The `TrafficLightPhase` and `TrafficLightApproach` values of light `li` of
-    /// controller `c` (for scenery scripts).
+    /// `TrafficLightPhase` and `TrafficLightApproach` of light `li` of controller `c`.
     pub fn light_vars(&self, c: usize, li: usize) -> (f32, f32) {
         self.lights
             .get(c)
@@ -546,7 +525,7 @@ impl Traffic {
 
 
     pub fn sync(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
-        // cars that have parked: the parked object stands in their place from now on
+        // parked cars: the parked object takes their place
         let mut i = 0;
         while i < self.cars.len() {
             match self.cars[i].maneuver.park {
@@ -576,10 +555,8 @@ impl Traffic {
         // (drawn between the last two steps from here on, simulated again at the end)
         self.draw_between_steps();
         self.sync_drivers(world, renderer, scene);
-        // traffic light lamps: the lamp's script (or the stock rules) turns the state of its
-        // light into the `[visible] red|yellow|green 1` meshes and the coronas, and moves
-        // what it animates (a barrier arm); it runs on the time since the last sync (an
-        // offscreen run syncs only for its pictures)
+        // traffic light lamps: script (or stock rules) maps the light state to the
+        // `[visible] red|yellow|green 1` meshes, coronas and animations, on time since last sync
         let dt = std::mem::take(&mut self.lamp_dt);
         let near = self.viewer.map(|v| v.pos);
         let debug_lamps = ::legacy_config::env::var_os("OMSI_DEBUG_LAMPS").is_some();
@@ -625,12 +602,10 @@ impl Traffic {
             };
             let (r, y, g) = TrafficLightController::lamps(state);
             let value = |lamp: &crate::scene::LightObject, var: &str| -> f32 {
-                // Custom signals can shift phases or blink the standard channels (Numazu
-                // pedestrian lamps). Use their script outputs whenever they are available.
+                // Custom signal scripts can shift or blink the channels (Numazu): prefer them.
                 let scripted = lamp.script.as_ref().and_then(|script| {
                     let s = script.lock();
-                    // A failed/missing script can still have a varlist of zeroes. Keep
-                    // stock fallback behaviour if it has no runnable frame block.
+                    // (a failed script may still have a zeroed varlist: stock fallback)
                     if s.program.frame.is_empty() {
                         None
                     } else {
@@ -663,8 +638,7 @@ impl Traffic {
                         || format!("lamp_{:.0}_{:.0}", at.x, at.y),
                     );
                 }
-                // `OMSI_DEBUG_LAMPS`: where the moving lamps are (barriers) and how far their
-                // meshes are turned, each time the lamps are updated
+                // `OMSI_DEBUG_LAMPS`: moving lamp positions and mesh angles per update
                 if lamp.animated && debug_lamps {
                     let turn = s
                         .mesh_transforms
@@ -717,8 +691,7 @@ impl Traffic {
                 }
                 lamp.shown = Some(sig);
             }
-            // Traffic lamps do not enter World's ordinary scripted-object update path.
-            // Switch their materials here too, so [matl_item] nightmaps light the LEDs.
+            // Lamps skip World's scripted-object update: switch materials here for nightmaps.
             for (inst, slot, base, item, var, more) in &lamp.variants {
                 renderer.set_material(
                     scene,
@@ -736,8 +709,7 @@ impl Traffic {
                     Some((var, want)) => (value(lamp, var) - want).abs() < 0.5,
                     None => true,
                 };
-                // lenses switched by their material instead (`[alphascale]` and
-                // `[matl_lightmap]` on the lamp's variables, #826)
+                // (lenses switched by material: `[alphascale]`/`[matl_lightmap]`, #826)
                 match lamp.slots.get(k).filter(|s| !s.is_empty()) {
                     Some(slots) => {
                         let known = |v: &str| -> Option<f32> {
@@ -763,16 +735,12 @@ impl Traffic {
                 }
             }
         }
-        // A far car's script textures (its destination sign) stay as they are drawn: OMSI
-        // shows them at any distance its model level has them. (They were stood in for by
-        // their mean colour beyond 50 m, and every timetable bus coming up the street had
-        // a blank sign until it was almost there.) What a far car's scripts redraw goes to
-        // the GPU at most every half second, a slice of the cars per frame.
+        // Far cars keep their script textures (OMSI shows signs at any distance); their
+        // redraws are uploaded at most every 0.5 s, a slice of the cars per frame.
         let tick = (self.time as f64 * 2.0) as u64;
         let mut budget = SCRIPT_UPLOAD_BUDGET;
-        // `Envir_Brightness`, which Omsi.exe sets for every road vehicle as for the
-        // player's: the stock buses fade their windows by it at night (left at the engine's
-        // default of 1, an AI bus under the street lamps kept its daytime brown glass)
+        // `Envir_Brightness`, set by Omsi.exe for every road vehicle: stock buses fade their
+        // windows by it at night
         if let Some(d) = self.daylight {
             for c in self.cars.iter_mut().filter(|c| c.vehicle.ai_visuals) {
                 let b = d.envir_brightness(world.light_map_light_at(c.vehicle.position));
@@ -780,8 +748,7 @@ impl Traffic {
             }
         }
         for c in &mut self.cars {
-            // out of sight (`tick` decided): hidden once, then left alone until it comes
-            // into view again - its many per-mesh updates were a third of this stage
+            // out of sight: hidden once, then skipped until visible (saves per-mesh updates)
             if !c.vehicle.ai_visuals {
                 if !c.render.hidden {
                     c.render.hidden = true;
@@ -813,10 +780,8 @@ impl Traffic {
                 &mut budget,
             );
             crate::scene::sync_vehicle_materials(renderer, scene, &c.vehicle, &mut c.render);
-            // a coupled part runs no scripts of its own: its plates, its displays and its
-            // switched materials follow the leading vehicle's, as the player's own rear
-            // sections do (without this an AI bus's rear section kept the blank textures and
-            // the unswitched materials it was built with)
+            // a coupled part runs no scripts: its plates, displays and materials follow the
+            // leading vehicle's, as on the player's bus
             {
                 let mut trailers = std::mem::take(&mut c.vehicle.trailers);
                 for (t, r) in trailers.iter_mut().zip(c.trailer_renders.iter_mut()) {
@@ -824,9 +789,7 @@ impl Traffic {
                 }
                 c.vehicle.trailers = trailers;
             }
-            // an articulated AI bus (timetable or random traffic) bends its bellows like the
-            // player's while it is near enough for the fold to show; farther out its shape
-            // just stays as it was, which nobody can tell from still following the road
+            // an articulated AI bus bends its bellows only while near enough for it to show
             if !c.render.skinned.is_empty()
                 || c.trailer_renders.iter().any(|r| !r.skinned.is_empty())
             {
@@ -855,12 +818,8 @@ impl Traffic {
                 let def = &c.vehicle.ty.model.meshes[c.vehicle.ty.meshes[i].def_index];
                 let vp = def.viewpoint;
                 let vp_ok = vp == 0 || vp & 4 != 0;
-                // AI vehicles do not run every cockpit/material script that the player
-                // vehicle runs.  Some models consequently leave an `[alphascale]`
-                // variable at zero; applying it to an opaque body makes the traffic bus
-                // translucent and reveals the interior through its panels.  Opaque slots
-                // are never allowed to be faded by a dynamic alpha value; windows and
-                // explicitly alpha-tested/blended slots retain their authored behavior.
+                // AI vehicles skip some scripts and may leave `[alphascale]` at zero: never
+                // fade opaque slots by it (the bus went see-through); blended ones keep it.
                 let mut alpha = p.slot_alpha.clone();
                 for (slot, mat) in scene.instances[*inst].materials.iter().enumerate() {
                     if scene
@@ -912,8 +871,7 @@ impl Traffic {
     }
 
 
-    /// The light programs of the crossings within `radius` of `near` (host): (crossing
-    /// object, position in the cycle, clock held at a stop point).
+    /// Light programs within `radius` of `near` (host): (object, cycle position, held clock).
     pub fn light_states(&self, near: DVec3, radius: f64) -> Vec<(i64, f64, bool)> {
         let mut ctls: Vec<usize> = self
             .net
@@ -974,8 +932,7 @@ fn set_part_poses(v: &mut VehicleInstance, mut poses: impl Iterator<Item = PartP
     }
 }
 
-/// Further than this (m) between two steps a part was put somewhere else, not driven
-/// there: it is drawn where it is now rather than sliding across.
+/// A part that moved further than this (m) in one step was teleported: no slide across.
 const DRAWN_JUMP: f64 = 5.0;
 
 /// The pose `alpha` (0..1) of the way from `from` to `to`, the heading the short way round.
@@ -998,9 +955,7 @@ mod tests {
     use super::*;
     use ::traffic::SIM_DT;
 
-    /// The traffic steps at 50 Hz whatever the frame rate; the drivers are drawn every
-    /// frame and must move on by the frame's time. On the last step's 20 ms they moved
-    /// nearly three times too fast at 144 fps (and on frames without a step as well).
+    /// Traffic steps at 50 Hz, but the drivers animate by the frame time, not the step's.
     #[test]
     fn the_drivers_move_on_by_the_frame_not_by_the_last_step() {
         let mut t = Traffic::for_tests(Network::default());
@@ -1050,9 +1005,7 @@ mod tests {
         assert_eq!((v.position, v.heading, v.pitch, v.bank), simulated[0], "the simulation's pose is untouched");
     }
 
-    /// A car at a steady 50 km/h, stepped at 50 Hz and drawn at 60 and 144 fps: drawn at its
-    /// simulated pose, it stood still on every frame without a step; drawn between its last
-    /// two poses, it moves on by the frame's time on every frame.
+    /// A steady 50 km/h car stepped at 50 Hz and drawn at 60/144 fps moves on every frame.
     #[test]
     fn drawn_between_steps_a_steady_car_moves_on_every_frame() {
         let v = 50.0 / 3.6;
@@ -1071,7 +1024,7 @@ mod tests {
                 }
                 let alpha = (accum / SIM_DT).clamp(0.0, 1.0) as f64;
                 let drawn = from + (to - from) * alpha;
-                // (from the second step on: before it there is no pose to come from)
+                // (skip the first steps: no previous pose yet)
                 if let Some(l) = last.filter(|_| k > 4) {
                     least = least.min(drawn - l);
                     most = most.max(drawn - l);

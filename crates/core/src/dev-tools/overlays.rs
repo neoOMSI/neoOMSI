@@ -14,8 +14,7 @@ pub(super) fn draw_boxes(
     draw_boxes_on(&list, cam, size, boxes, over);
 }
 
-/// Use the caller's draw list when boxes are part of a larger overlay. ImGui allows
-/// only one live background DrawListMut; acquiring it again would panic.
+/// Use the caller's draw list: ImGui allows only one live background DrawListMut.
 pub(super) fn draw_boxes_on(
     list: &imgui::DrawListMut<'_>,
     cam: &::render::Camera,

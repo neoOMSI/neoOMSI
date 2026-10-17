@@ -370,11 +370,9 @@ fn backend_instance(b: wgpu::Backends) -> wgpu::Instance {
     wgpu::Instance::new(d)
 }
 
-/// The graphics interface's checks: those of a release build, whatever this build is.
-/// wgpu's default follows `debug_assertions`, and the dev-release build (which keeps them)
-/// ran with the DirectX 12 debug layer and full validation on - a large part of every
-/// frame's CPU time went into checking each draw. `WGPU_VALIDATION=1`, `WGPU_DEBUG=1` or
-/// `WGPU_GPU_BASED_VALIDATION=1` switch them on for a graphics bug hunt.
+/// Release-build wgpu checks in every build (the dev-release build otherwise ran DX12
+/// validation on each draw). `WGPU_VALIDATION=1`, `WGPU_DEBUG=1` or
+/// `WGPU_GPU_BASED_VALIDATION=1` switch them on.
 pub(crate) fn instance_flags() -> wgpu::InstanceFlags {
     wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL.with_env()
 }

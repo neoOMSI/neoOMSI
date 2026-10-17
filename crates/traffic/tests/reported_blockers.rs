@@ -22,8 +22,8 @@ fn a_route_change_near_a_shared_continuation_sweeps_the_actual_lane_blend() {
     actor.planned_next = Some(2);
     let actors = [actor];
     let occupancy = Occupancy::default();
-    // A wall beyond the left edge of the target road. The old constant-offset
-    // sweep shifted the already-shared continuation by another whole lane.
+    // A wall beyond the left edge of the target road: a constant-offset sweep would shift
+    // the already-shared continuation by another whole lane.
     let clearance = |samples: &[SweepSample], _: &ManeuverActor|
         samples.iter().all(|sample| sample.p.x >= -4.0);
     let scene = ManeuverScene { net: &net, occupancy: &occupancy, actors: &actors,

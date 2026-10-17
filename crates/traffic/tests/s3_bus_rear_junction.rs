@@ -1,9 +1,7 @@
 //! Stage 3 exit gate — an articulated bus rear still blocks a junction until it is clear.
 //!
-//! The realized geometry is the occupancy truth. While the rear section of an articulated
-//! bus still projects onto the junction lane, that lane is occupied; once the rear has
-//! moved onto the exit lane, the junction is clear even though the bus is still on the
-//! road.
+//! Realized geometry is the occupancy truth: the junction is clear only once the rear
+//! section has moved onto the exit lane.
 
 use glam::DVec2;
 use traffic::perception::{BodyFootprint, Occupancy, Placement, PART_BODY};

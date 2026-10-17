@@ -1,10 +1,6 @@
-//! Content validation for a compiled road network.
-//!
-//! Stage 2 requires wrong or ambiguous topology to be diagnosed at the adapter boundary
-//! rather than compensated for inside the decision code. [`Network::validate`] walks the
-//! compiled lanes once and returns every defect it can prove, with the lane index as
-//! provenance. It never changes the network: decision code and existing tests keep the same
-//! geometry; callers report the defects and can reject or repair the content.
+//! Content validation for a compiled road network: wrong or ambiguous topology is diagnosed
+//! at the adapter boundary, not compensated for in the decision code. [`Network::validate`]
+//! never changes the network; callers report the defects and can reject or repair content.
 
 use crate::network::{BlockRule, Lane, LaneKey, LaneKind, Network};
 

@@ -1,11 +1,8 @@
 /// A `[traffic_light_stop]` / `[traffic_light_jump]` of a light program (`TAmpelStop`:
-/// ampel, time, jumptime, ifAnf). When the cycle clock reaches `time` and the condition
-/// holds, the clock waits there (stop) or continues at `jump_to` (jump). With `if_request`
-/// set the condition is "nobody is asking at `light`": the stock railway crossings keep the
-/// road green at 1 s until a train approaches, the bus loop of Heerstraße skips its bus
-/// phase when no bus is waiting, the depot gates jump over their phases when nothing comes.
-/// Without it the condition is "somebody is asking": a gate stays green while buses keep
-/// coming, a barrier stays closed while the train is still there.
+/// ampel, time, jumptime, ifAnf). At `time`, if the condition holds, the clock waits (stop)
+/// or continues at `jump_to` (jump). With `if_request` the condition is "nobody is asking at
+/// `light`" (a level crossing keeps the road green until a train comes), else "somebody is
+/// asking" (a depot gate stays green while buses keep coming).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LightStop {
     pub light: usize,
@@ -22,9 +19,8 @@ pub const DEFAULT_APPROACH: f32 = 50.0;
 /// asks for a level crossing as soon as the train is near.
 pub const RAIL_APPROACH: f32 = 600.0;
 
-/// Traffic light program of a crossing object instance (`TAmpelGroup`): its lights'
-/// phases and one cycle clock that runs on game time. The clock is state, not a function
-/// of the time of day, because the program may wait at a stop point or jump.
+/// Traffic light program of a crossing object instance (`TAmpelGroup`): phases per light and
+/// one game-time cycle clock (state, not time of day, since the program may stop or jump).
 #[derive(Debug, Clone)]
 pub struct TrafficLightController {
     /// Per light: phases (state, duration).
@@ -172,9 +168,8 @@ impl TrafficLightController {
             let p = self.stops[k];
             let asked = self.request.get(p.light).copied().unwrap_or(false);
             let mut active = if p.if_request { !asked } else { asked };
-            // A stop prolongs a usable phase while traffic is waiting.  It must not hold a
-            // changeover aspect: several UK programs place their stop marker during
-            // red-and-yellow, where holding it leaves the junction permanently in transition.
+            // A stop prolongs a usable phase while traffic waits, never a changeover aspect
+            // (UK programs put stops in red-and-yellow, which would hold the junction there).
             if p.jump_to.is_none() && Self::aspect(self.state(p.light)) == Aspect::RedYellow {
                 active = false;
             }
@@ -321,8 +316,6 @@ impl TrafficLightController {
 
     /// OMSI light states as the stock lamp scripts read them: 0..2 red, 3..5 red and
     /// yellow, 6..8 green (8: the GDR's green with yellow), 9..11 yellow, 12 and above dark.
-    /// (The code once read 8 as yellow and 9 as all-red: every stock program's yellow, 9,
-    /// showed red, so the lights went from green straight to red.)
     pub fn aspect(state: i32) -> Aspect {
         match state {
             0..=2 => Aspect::Red,
@@ -334,12 +327,10 @@ impl TrafficLightController {
         }
     }
 
-    /// What light `i` tells a vehicle now. A light that shows green in its cycle and is dark
-    /// while the program runs is not switched off but not this movement's turn: a turn
-    /// arrow (`KOR` of BRT Berlin's crossings is dark for 34 s of its cycle while the cross
-    /// traffic has green) holds its traffic like red. A light that never shows green (a
-    /// level crossing's, dark until a train comes) and a program that is switched off or
-    /// only flashes yellow stay dark, and the right of way applies.
+    /// What light `i` tells a vehicle now. A light with green in its cycle that is dark now
+    /// is not this movement's turn (a turn arrow, e.g. BRT Berlin's `KOR`) and holds traffic
+    /// like red. A light that never shows green (a level crossing's) and a program that is
+    /// off or only flashes yellow stay dark: the right of way applies.
     pub fn vehicle_aspect(&self, i: usize) -> Aspect {
         match Self::aspect(self.state(i)) {
             Aspect::Dark if self.has_green(i) && self.running() => Aspect::Red,

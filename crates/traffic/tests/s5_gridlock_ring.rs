@@ -1,10 +1,7 @@
 //! Stage 5 — a ring of queues, each waiting for the next junction's exit.
 //!
-//! Two junctions whose exits lead into each other's approach (the smallest ring of queues
-//! round a block): the car at each line waits for its full exit, and one of those exits is
-//! full of a queue standing behind the other line's car. Nothing in the rules ever ends
-//! that; the wait-for graph has to see the ring through the full exits and the queue, and
-//! the coordinator lets one car go into its junction (up to the queue's tail) after a while.
+//! Two junctions whose exits lead into each other's approach, each line's car waiting for
+//! its full exit: the wait-for graph must see the ring and let one car go after a while.
 
 mod common;
 

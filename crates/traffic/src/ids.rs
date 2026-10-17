@@ -1,9 +1,8 @@
 //! Stable identifiers for the traffic domain.
 //!
-//! These survive container reordering: a `VehicleId` stays valid while vehicles are
-//! inserted, removed, or sorted, and a `NetworkVersion` invalidates handles when a
-//! streamed network change makes them meaningless. Vector positions are internal
-//! implementation details and must not leak across the domain boundary as identities.
+//! These survive container reordering (a `VehicleId` stays valid across inserts, removals
+//! and sorts); a `NetworkVersion` invalidates handles after a streamed network change.
+//! Vector positions must not leak across the domain boundary as identities.
 
 use std::fmt;
 
@@ -46,8 +45,7 @@ macro_rules! id_type {
             }
         }
 
-        // Comparing a handle with its raw value is convenient while legacy containers still
-        // speak numbers; the identity is still carried as the typed handle.
+        // Raw-value comparison for legacy containers that still speak numbers.
         impl PartialEq<$inner> for $name {
             #[inline]
             fn eq(&self, other: &$inner) -> bool {

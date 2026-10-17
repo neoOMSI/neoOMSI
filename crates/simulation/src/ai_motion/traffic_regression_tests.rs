@@ -381,10 +381,8 @@ fn bus_bypass_keeps_its_curve_and_real_body_across_a_spline_joint() {
     );
 }
 
-/// A timetable bus round a junction made of short lanes, closed loop: the planner drives,
-/// the body follows its way, and the body's pose is fed back every tick, as in the game. The
-/// body must move continuously: it was once put back a whole lane when the feedback moved the
-/// planner over a joint without repairing the lane behind it.
+/// A timetable bus round a junction of short lanes, pose fed back every tick as in the game:
+/// the body must not jump a lane when feedback moves the planner over a joint.
 #[test]
 fn a_bus_round_short_junction_lanes_never_jumps() {
     let street = |pts: Vec<DVec3>| LaneBuilder::polyline(pts, LaneKind::Street, 3.0);
@@ -466,11 +464,8 @@ fn corner_net(radius: f64, short: f64) -> Network {
     net
 }
 
-/// The body is the single pose owner and moves continuously: whatever the frame time, the
-/// sideways offset of a bay or a swerve, the size of the vehicle or the radius of the turn,
-/// it is never put somewhere else. (With the lane behind the bus left stale by the
-/// realization feedback, a bus with a 0.8 m offset round a 9 m turn at 20 frames a second
-/// jumped eleven metres - a lane length - back or on.)
+/// The body is the single pose owner and moves continuously whatever the frame time, offset,
+/// vehicle size or turn radius (a stale lane behind the bus made it jump a lane length).
 #[test]
 fn no_vehicle_is_put_somewhere_else_round_a_corner() {
     let mut cases = 0;

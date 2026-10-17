@@ -12,8 +12,7 @@ impl Traffic {
 
 
     /// How much traffic group `g` makes now: its `unsched_trafficdens.txt` factor times its
-    /// curve for this day of the week (+1 Monday to Friday, +2 Saturday, +4 Sunday, 0 every
-    /// day).
+    /// curve for this weekday (+1 Mon-Fri, +2 Saturday, +4 Sunday, 0 every day).
     pub(crate) fn group_density(&self, g: usize) -> f32 {
         let Some(gr) = self.groups.get(g) else {
             return 0.0;
@@ -146,10 +145,8 @@ impl Traffic {
     }
 
 
-    /// Put parked cars onto the lanes they stand in or beside: (distance along the lane,
-    /// signed lateral offset, + = right). `cars` are the ones the tiles placed since the last
-    /// call; the cars no lane was found for before are tried again where the lanes `added`
-    /// just came in.
+    /// Put parked cars onto the lanes they stand in or beside (distance along, signed lateral
+    /// offset, + = right); cars no lane was found for are retried on the `added` lanes.
     pub(crate) fn sort_parked(&mut self, cars: Vec<(DVec3, f64)>, added: std::ops::Range<usize>) {
         let mut todo: Vec<DVec3> = Vec::new();
         if !added.is_empty() && !self.parked_waiting.is_empty() {
@@ -174,8 +171,7 @@ impl Traffic {
         }
         let mut on_lanes = 0usize;
         for p in todo {
-            // a car beside a lane is within a few metres of it: the lanes of the cells
-            // around it are enough, and a car in a car park finds none
+            // within a few metres of a lane (a car in a car park finds none)
             let beside = self
                 .net
                 .nearest_lane_near(p, LaneKind::Street)
@@ -233,9 +229,8 @@ impl Traffic {
     }
 
 
-    /// Keep the population around the player: cars are taken off only where nobody sees
-    /// it (far away and out of view, or behind a building), and new ones appear only there.
-    /// `view` (a unit vector) stands in for the viewer when none has been set.
+    /// Keep the population around the player, adding and removing cars only where nobody
+    /// sees it. `view` (a unit vector) stands in for the viewer when none has been set.
     pub fn populate_seen(
         &mut self,
         world: &World,
@@ -313,10 +308,8 @@ impl Traffic {
             off_ground += unloaded as usize;
             let random = !c.is_bus() || c.gone;
             let r = (c.state.length as f64 * 0.5).max(2.0);
-            // standing at the end of the network (the map's edge): Omsi.exe never lets a
-            // random car stand there - once 0x71dc9c finds no next segment (0x612e10) its
-            // segment stays -1 and 0x6fe3fc deletes it the same frame (0x703bb0); a bus
-            // that gave up goes once out of sight, or too far off for the renderer to draw it
+            // standing at the end of the network: Omsi.exe deletes a random car there the
+            // same frame; a bus that gave up goes once out of sight or too far off to draw
             let at_end = c.gone
                 && c.stopped > if c.is_bus() { 20.0 } else { 0.5 }
                 && c.state.route.is_empty()
@@ -327,8 +320,7 @@ impl Traffic {
                 && c.state.speed < 0.1
                 && c.state.route.last() == Some(&c.state.lane)
                 && c.state.s > self.net.lanes[c.state.lane].length() - 25.0;
-            // a random car still on its way that goes out of range sleeps instead (see
-            // `DormantCar`); only one whose trip is over leaves the map
+            // a random car still on its way goes dormant instead (`DormantCar`)
             let sleeps_instead = random
                 && !c.gone
                 && !c.is_bus()
@@ -429,9 +421,8 @@ impl Traffic {
             self.initial = false;
             return;
         }
-        // made only for the lights: nothing new while the target is 0, but the cars of a
-        // target raised and lowered again go as they do anywhere (returning before the loop
-        // above, they stood at the map's edge and drove over unloaded tiles for good)
+        // lights only: nothing new while the target is 0 (after the despawn loop above, so
+        // cars of a target raised and lowered again still go)
         if self.lights_only && self.target == 0 {
             return;
         }
@@ -439,11 +430,8 @@ impl Traffic {
         let has_air = self.types.iter().any(|t| t.2 == LaneKind::Air);
         // the map's traffic density by hour (and group) scales the street traffic ...
         let density = self.street_density();
-        // ... and so does how much road there is around: the same number of cars looks
-        // empty on a six-lane Berlin junction and crowded on a village lane, so the count
-        // asked for is per a neighbourhood of about 250 lanes; and as Omsi spawns on each
-        // path at a rate of its [rule] trafficdensity, paths of low density bring fewer cars
-        // and those of density 0 (or kept clear of cars) none
+        // ... and so does how much road there is around (the count is per ~250 lanes), each
+        // path weighted by its [rule] trafficdensity as Omsi spawns (0 or no_cars: none)
         let near_density: Vec<f32> = self
             .net
             .lanes_starting_near(center, self.spawn_radius)
@@ -466,23 +454,21 @@ impl Traffic {
             .collect();
         let street_target =
             (self.target as f32 * density * road_scale(&near_density)).round() as usize;
-        // One frozen occupancy snapshot for this population pass: the domain admission owner
-        // checks physical gaps against the same realized bodies the rest of the tick uses.
+        // one frozen occupancy snapshot per pass: admission checks gaps against the same
+        // bodies the rest of the tick uses
         let pass_tick = (self.time * 1000.0).max(0.0) as u64;
         let occupancy = Occupancy::build(self.net.version(), pass_tick, self.body_feet(None, &[]));
         self.population.begin_tick(pass_tick, self.time);
         // the cars that come into range again, where they have got to
         self.wake_dormant(world, renderer, scene, center, street_target, &occupancy);
-        // the whole map's population: as dense as around the player, on every street the
-        // map has shown so far (sleeping where the player is not)
+        // the whole map's population, dormant where the player is not
         self.fill_map(center, street_target);
         for (kind, target) in [
             (LaneKind::Street, street_target),
             (LaneKind::Air, if has_air { 3 } else { 0 }),
         ] {
-            // (a LAN host counts the cars round itself only: counted over the whole map,
-            // the traffic it keeps round the other players met its own target and the
-            // host drove through empty streets, #342)
+            // (a LAN host counts the cars round itself only, else the traffic round the
+            // other players met its target and its own streets stayed empty, #342)
             if kind == LaneKind::Street && !self.lan_centers.is_empty() {
                 self.count_near = Some((center, self.spawn_radius));
             }
@@ -497,10 +483,8 @@ impl Traffic {
     }
 
 
-    /// Now and then a car near the player parks: a space at the kerb that a parked car has
-    /// left is taken by a car of the same kind driving up the lane beside it - it indicates,
-    /// slows down, stops beside the space, moves over into it and stands there as the
-    /// parked car it was. Called with every population pass (about every two seconds).
+    /// Now and then a car near the player parks in a kerb space a parked car has left: one
+    /// of the same kind driving up the lane beside it. Called with every population pass.
     pub fn park_in(&mut self, world: &World, center: DVec3) {
         let forced = ::legacy_config::env::var("OMSI_PARK_IN")
             .ok()
@@ -536,8 +520,7 @@ impl Traffic {
             if dh > 180.0 {
                 dh -= 360.0;
             }
-            // beside the lane on the right and in line with it (a space across the kerb or in
-            // a row is not driven into)
+            // beside the lane on the right and in line with it
             if !(1.2..4.2).contains(&lat) || dh.abs() > 12.0 {
                 why.push(format!(
                     "space {key}: {lat:+.1} m beside lane {l}, {dh:+.0} deg"
@@ -595,7 +578,7 @@ impl Traffic {
                 ramped: false,
                 done: false,
             });
-            // (it parks: no more route to plan than to here)
+            // (it parks: no route to plan beyond here)
             car.gone = false;
             if debug {
                 log::info!(
@@ -612,10 +595,8 @@ impl Traffic {
     }
 
 
-    /// Now and then a car parked at the kerb near the player drives off: the parked object
-    /// goes (its space stays empty) and the AI car of the same folder takes its place, in
-    /// the parking position, indicating, and pulls out into its lane once the road behind
-    /// it is clear. Called with every population pass (about every two seconds).
+    /// Now and then a car parked at the kerb near the player drives off: the AI car of the
+    /// same folder replaces the parked object and pulls out once the road behind is clear.
     pub fn pull_out_parked(
         &mut self,
         world: &World,
@@ -654,8 +635,7 @@ impl Traffic {
         while !candidates.is_empty() && tried < 8 {
             tried += 1;
             let (key, p) = candidates.swap_remove(self.rand() as usize % candidates.len());
-            // the AI car of the same folder (a parked Golf is `parked_vw_golf_2.sco` next to
-            // `ai_vw_golf_2.bus`)
+            // the AI car of the same folder (`parked_vw_golf_2.sco` next to `ai_vw_golf_2.bus`)
             let folder = p.sco.parent().map(|d| d.to_string_lossy().to_lowercase());
             let Some(ty) = self
                 .types
@@ -685,8 +665,7 @@ impl Traffic {
             let hr = (h as f64).to_radians();
             let right = DVec3::new(hr.cos(), -hr.sin(), 0.0);
             let lat = (p.pos - q).dot(right) as f32;
-            // beside the lane on the right, facing its way (one parked in the lane itself stands
-            // bumper to bumper in a row it cannot steer out of)
+            // beside the lane on the right, facing its way (one in the lane itself is boxed in)
             let mut dh = (p.heading - h as f64).rem_euclid(360.0);
             if dh > 180.0 {
                 dh -= 360.0;
@@ -787,12 +766,9 @@ impl Traffic {
                         && l.length() > 8.0
                         && (l.start() - center).truncate().length() < radius
                 })
-                // lanes the map keeps clear of cars, and those whose [rule] trafficdensity is
-                // zero, are not spawned on at all; a lower density makes a lane that much less
-                // likely to be picked
+                // not on lanes kept clear of cars or of [rule] trafficdensity 0
                 .filter(|(_, l)| !l.no_cars && l.density > 0.0)
-                // nor, where there are others, lanes that end the network just ahead (the car
-                // would only drive into the end and wait there to be taken away)
+                // nor, where there are others, lanes that end the network just ahead
                 .filter(|(i, _)| {
                     !through
                         || kind != LaneKind::Street
@@ -803,9 +779,8 @@ impl Traffic {
                         .map(|r| *r >= ::traffic::DEAD_END)
                         .unwrap_or(true)
                 })
-                // as many cars on a lane as metres of it (times its density): counted per
-                // lane, the many short lanes of a junction drew the cars into the town's
-                // tangles and left the long roads between them empty
+                // weighted by length times density (per lane, short junction lanes drew all
+                // the cars and left the long roads empty)
                 .map(|(i, l)| (i, l.length() * l.density.clamp(0.05, 4.0)))
                 .collect::<Vec<(usize, f32)>>()
         };
@@ -844,9 +819,8 @@ impl Traffic {
             })
             .count();
         let mut count = unscheduled;
-        // Submit the deficit as demand to the population owner. The cheap, non-type checks
-        // stay here; the admission decision (budget, path, ground, gap, visibility) belongs
-        // to `traffic::population`, which bounds the queue and the per-pass attempts.
+        // Submit the deficit as demand: cheap checks stay here, admission (budget, path,
+        // ground, gap, visibility) belongs to `traffic::population`.
         let deficit = target.saturating_sub(count);
         let mut attempts = 0usize;
         while count < target && deficit > 0 && attempts < target.saturating_mul(12).max(1) {
@@ -910,8 +884,7 @@ impl Traffic {
                 .request(SpawnClass::Unscheduled, lane, s);
             count += 1;
         }
-        // Annotate every outstanding request of this kind with its runtime facts, then let
-        // the owner decide. Requests of another kind are left untouched for their own pass.
+        // annotate this kind's outstanding requests with their runtime facts; the owner decides
         let reqs: Vec<SpawnRequest> = self.population.requests().copied().collect();
         let mut facts: HashMap<SpawnRequestId, SpawnFacts> = HashMap::new();
         for req in &reqs {
@@ -1031,11 +1004,8 @@ impl Traffic {
                 while d.s > self.net.lanes[d.lane].length() && guard < 32 {
                     guard += 1;
                     let l = &self.net.lanes[d.lane];
-                    // the ways a car on the road would take (`AiState::choose_after`): those
-                    // of its group, else those open to cars, else any - only where the
-                    // network ends does it leave the map (filtering by its group alone, the
-                    // trucks of Spandau were gone at the first junction whose turn has no
-                    // `trucks` rule, and hardly one of them ever came into range)
+                    // as `AiState::choose_after`: its group's ways, else those open to cars,
+                    // else any (by group alone, Spandau's trucks vanished at the first junction)
                     let pool = self
                         .types
                         .iter()
@@ -1081,9 +1051,8 @@ impl Traffic {
                 }
             }
             if gone {
-                // (out of the coordinator's registry too: left there, the dormant cars that
-                // drove off the network filled its capacity, `fill_map` put no new ones on the
-                // map, and the traffic round the player died out within a quarter of an hour)
+                // (out of the coordinator's registry too, else they filled its capacity and
+                // `fill_map` stopped adding cars)
                 let d = self.dormant.swap_remove(i);
                 self.population.release(d.id, RemovalCause::Finished);
             } else {
@@ -1093,8 +1062,8 @@ impl Traffic {
     }
 
 
-    /// The cars out of range that have come near again take their bodies back - where
-    /// nobody sees it happen, up to a little over the number asked for around the player.
+    /// Dormant cars that have come near again take their bodies back, unseen, up to a little
+    /// over the target around the player.
     pub(crate) fn wake_dormant(
         &mut self,
         world: &World,
@@ -1111,8 +1080,7 @@ impl Traffic {
         let centers: Vec<DVec3> = std::iter::once(center)
             .chain(self.lan_centers.iter().copied())
             .collect();
-        // Only the actors that have come near are candidates; the coordinator validates the
-        // rest (ground, visibility, gap) and never places one that would overlap.
+        // only those that came near; the coordinator checks ground, visibility and gap
         let views: Vec<DormantView> = self
             .dormant
             .iter()
@@ -1168,8 +1136,7 @@ impl Traffic {
                 let (p, h) = l.at(d.s.clamp(0.0, (l.length() - 0.1).max(0.0)));
                 (p, h as f64)
             };
-            // The domain checked the generic gap; the asset-specific clearance is still the
-            // adapter's, so a trailer or the player's bus cannot be woken onto.
+            // the asset-specific clearance (trailers, the player's bus) is the adapter's
             if !self.spawn_clear(&d.ty, p, h) {
                 self.dormant.push(d);
                 continue;
@@ -1186,8 +1153,7 @@ impl Traffic {
     }
 
 
-    /// Fill the map: the streets the map has shown so far carry as many cars per metre as
-    /// the ones around the player, the ones out of range as dormant cars (see `DormantCar`).
+    /// Fill the loaded streets out of range with dormant cars, as dense as around the player.
     pub(crate) fn fill_map(&mut self, center: DVec3, street_target: usize) {
         if street_target == 0 {
             return;
@@ -1227,7 +1193,6 @@ impl Traffic {
         if present >= map_target {
             return;
         }
-        // The full outside list is only needed while replenishing the map population.
         let outside: Vec<(usize, f32)> = self
             .net
             .lanes
@@ -1297,9 +1262,8 @@ impl Traffic {
     }
 
 
-    /// Put a timetable bus on the road: an AI car like any other (`create_car`), on its
-    /// trip's route at `s` metres into the first lane, with its service (stops).
-    /// Returns the car index. `scheme`: the paint scheme to use (Some), or a random one.
+    /// Put a timetable bus on its route at `s` m into the first lane, with its stops; returns
+    /// the car index. `scheme`: the paint scheme to use (Some), or a random one.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_bus(
         &mut self,
@@ -1316,8 +1280,7 @@ impl Traffic {
     ) -> Result<usize, Reason> {
         let &lane = route.first().ok_or(Reason::NoPath)?;
         let kind = self.net.lanes.get(lane).ok_or(Reason::NoPath)?.kind;
-        // the options' [AIMaxCountScheduled]: no more timetable vehicles than that at once.
-        // Scheduled capacity is a distinct budget from the random population.
+        // the options' [AIMaxCountScheduled], a budget separate from the random population
         let scheduled_count = self
             .cars
             .iter()
@@ -1387,10 +1350,8 @@ impl Traffic {
     }
 
 
-    /// May a vehicle of `ty` be put on the road at `pos` facing `heading` (deg)? Not onto
-    /// (or right up against) another vehicle or the player's: a timetable bus used to be
-    /// checked only for a vehicle origin within 9 m, and a layover bus appeared inside the
-    /// articulated bus waiting at the same stand.
+    /// May a vehicle of `ty` be put on the road at `pos` facing `heading` (deg)? Not onto or
+    /// right up against another vehicle's body or the player's.
     pub fn spawn_clear(&self, ty: &VehicleType, pos: DVec3, heading: f64) -> bool {
         let (front, rear, half_w) = extents(ty, 12.0);
         let h = heading.to_radians();
@@ -1451,11 +1412,8 @@ impl Traffic {
     }
 
 
-    /// Would a vehicle of type `ty` with its origin at `pos`, heading `heading` (and its
-    /// coupled parts, straight behind it) touch one that is already there - an AI vehicle,
-    /// or one of `keep_clear`? Bodies are compared with half a metre to spare, not centres:
-    /// an articulated bus reaches 6 m ahead of its origin and 12 m behind it, and one put
-    /// down 9.3 m from the player's bus stood 1.8 m inside it.
+    /// Would a vehicle of `ty` at `pos`/`heading` (with its coupled parts straight behind)
+    /// touch an AI vehicle or one of `keep_clear`? Bodies (+0.5 m), not centres, are compared.
     pub fn blocked(&mut self, ty: &Arc<VehicleType>, pos: DVec3, heading: f64) -> bool {
         let grown = |mut b: ::simulation::collision::Obb| {
             b.half += glam::DVec2::splat(0.5);
@@ -1549,8 +1507,7 @@ impl Departure {
         if self.unloaded {
             true
         } else if self.at_edge {
-            // (its trip comes back with the tiles; kept until nobody saw it, a bus stood
-            // with its passengers at the far end of a straight road for good)
+            // (its trip comes back with the tiles; only unseen, it could stand for good)
             hidden()
                 || (in_view && ((stopped > 8.0 && self.from_eye > 180.0) || stopped > 150.0))
         } else if !self.random {
@@ -1563,19 +1520,12 @@ impl Departure {
                         || stopped > 150.0
                         || (stopped > 25.0 && self.queued && self.from_eye > 25.0))))
         {
-            // (and in view too once others wait behind it: a fire engine at the end of a
-            // dead-end street held a queue of fourteen cars for two and a half minutes)
-            // (taken at once it vanished in plain view 300 m ahead; but a car kept
-            // until nobody could see it stood for good at the end of a long straight
-            // road in view, and the queue behind it - timetable buses with their
-            // passengers among them - never moved again)
+            // (in view too after a wait, or once others queue behind it: kept until unseen,
+            // a car at the end of a long straight road blocked its queue for good)
             true
         } else if self.gone || self.dist > self.far {
-            // in plain view a car stays until the renderer leaves it out anyway, and
-            // close by (the mirrors, a turn of the head) it stays in any case
-            // (one that gave up in a gridlock goes after four minutes even in view,
-            // unless right beside the viewer: kept until nobody saw it, a jam at a
-            // junction the player watched never cleared)
+            // in view a car stays until the renderer drops it, and close by in any case;
+            // one given up in a gridlock goes after four minutes even in view
             (self.dist > VISIBLE_RANGE * 1.3 && self.from_eye > NEAR_HIDE)
                 || hidden()
                 || (in_view && self.gone && stopped > 240.0 && self.from_eye > 40.0)

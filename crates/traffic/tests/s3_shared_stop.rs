@@ -1,10 +1,4 @@
-//! S3 — three buses sharing one curb stop.
-//!
-//! A headless contract scenario: one berth, three buses. It exercises the service-phase
-//! contract added in Stage 1 and asserts the invariants the Stage 6 berth coordinator must
-//! preserve. It needs no renderer or OMSI assets.
-//!
-//! The full berth queueing/arbitration itself is Stage 6; this test pins the *contract*:
+//! S3 — three buses sharing one curb stop. Pins the berth contract:
 //! - exactly one berth holder at any time;
 //! - only a bus in `Boarding` may open its doors (never a bus still upstream);
 //! - each bus serves the stop exactly once;

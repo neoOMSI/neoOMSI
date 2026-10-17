@@ -1,26 +1,11 @@
-//! Scheduled stop service: physical boarding geometry, berth assignment, and the explicit
-//! [`ServicePhase`] state machine.
+//! Scheduled stop service: berth geometry, berth assignment, and the [`ServicePhase`]
+//! state machine.
 //!
-//! A stop is not a point plus a wait timer: it is a boarding region with a platform side, a
-//! longitudinal docking position, and a lateral offset. [`StopTarget`] is the content input;
-//! [`BerthGeometry`] keeps the stop length, boarding region, approach distance and vehicle
-//! stop correction separately named so each is measured on its own (backlog `D6`).
-//!
-//! [`ServiceCoordinator`] is the single writer of the per-vehicle [`ServiceState`] transitions
-//! and the owner of the berth commitments, mirroring `traffic::junctions`. Planning reads a
-//! frozen [`ServiceScene`] and returns a [`ServiceDecision`]. Berths are granted in stable
-//! arrival order (arrival tick, then stable id), held through closing and merge-out, and
-//! released only when the rear clears the berth, the route changes, the vehicle is removed, or
-//! the network is invalidated. A bus waiting upstream has not served the stop and never opens
-//! its doors.
-//!
-//! ## Tuning provenance
-//!
-//! The constants below carry their unit in the name and their rationale on each item. The
-//! docking tolerances are the plan section 6 neoOMSI targets; the service lengths
-//! (`DEFAULT_BOARDING_REGION`, `DEFAULT_APPROACH_DISTANCE`) are **provisional** until a content
-//! stop length is imported (`D6`); the timing-point/early/layover rules are **improvement**.
-//! The full table is in `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
+//! [`ServiceCoordinator`] is the single writer of [`ServiceState`] transitions and owns the
+//! berth commitments. Berths are granted in stable arrival order (tick, then id) and released
+//! only when the rear clears the berth, the route changes, the vehicle is removed, or the
+//! network is invalidated. A bus waiting upstream has not served the stop and never opens
+//! its doors. The service lengths are provisional until stop lengths are imported (`D6`).
 
 use crate::capabilities::VehicleCapabilities;
 use crate::diagnostics::{Reason, ServicePhase, TraceEvent};
@@ -71,8 +56,7 @@ pub struct StopTarget {
     /// Index into the vehicle's route of the lane the stop is on.
     pub route_index: usize,
     pub side: PlatformSide,
-    /// Where the vehicle's *origin* comes to rest along the lane (m). The front bumper rest
-    /// position therefore also depends on the vehicle's own front offset.
+    /// Where the vehicle's *origin* comes to rest along the lane (m), not its front bumper.
     pub s: f32,
     /// Lateral offset of the berth from the lane centre (m, positive = right).
     pub bay: f32,
@@ -128,9 +112,8 @@ pub enum StopTargetError {
     Unreachable,
 }
 
-/// Compile a stop into a docking target against the occurrence of a route and the
-/// serviceable platform side. The result is a physical berth with a departure time, not a
-/// point: the caller may reject a malformed or unreachable berth instead of inventing one.
+/// Compile a stop into a docking target on a route occurrence, or reject an unreachable
+/// or wrong-side berth instead of inventing one.
 #[allow(clippy::too_many_arguments)]
 pub fn compile_stop_target(
     net: &Network,
@@ -149,8 +132,7 @@ pub fn compile_stop_target(
     let (ri, projected_s, lateral) = net
         .project_stop_on_route(&raw, at, Some(reach.max(5.0) as f64), from)
         .ok_or(StopTargetError::NotOnRoute)?;
-    // The stop lies right (positive lateral) or left of the travel direction. Whether that
-    // is the platform side the vehicle can serve depends on the map's driving side.
+    // Which side is the kerb depends on the map's driving side.
     let on_right = lateral > 0.0;
     let right_is_kerb = !net.left_hand;
     match side {
@@ -176,16 +158,10 @@ pub fn compile_stop_target(
     Ok(StopTarget::new(stop, occurrence, ri, side, s, bay, depart))
 }
 
-// ---- named service geometry and policy ------------------------------------------------
-
-/// Provisional half-length of a stop's boarding region (m), used until a stop's content
-/// length is imported. Named separately from the docking reach (`D6`): the stop's own length,
-/// the region people board in, how far before it a bus pulls in, and the vehicle's brake
-/// correction are four different numbers.
+/// Provisional half-length of a stop's boarding region (m), until stop lengths are
+/// imported (`D6`).
 pub const DEFAULT_BOARDING_REGION: f32 = 6.0;
 /// Distance before the berth at which a bus pulls into its bay and enters `Approach` (m).
-/// This is the concept the legacy `BAY_REACH = 30` approximated; kept named and separate from
-/// the stop length and from the docking reach.
 pub const DEFAULT_APPROACH_DISTANCE: f32 = 30.0;
 /// Brake for a stop from this far (m).
 pub const STOP_REACH: f32 = 80.0;
@@ -201,14 +177,12 @@ pub const DOCK_SPEED: f32 = 0.1;
 pub const DOCK_STALL_TIMEOUT: f32 = 8.0;
 /// A bus that came to rest this close to the berth point (m, either way) ...
 pub const DOCK_SERVE_LONG: f32 = 2.5;
-/// ... and this close to the bay laterally (m) serves the stop from where it stands: people
-/// still reach the doors, and a bus released from the queue a few metres short of the berth
-/// cannot swing fully into the bay. Skipping waiting passengers is the worse outcome.
+/// ... and this close to the bay laterally (m) serves the stop from where it stands: a bus
+/// released from the queue just short of the berth cannot swing fully into the bay.
 pub const DOCK_SERVE_LAT: f32 = 0.8;
 /// Seconds at rest in such a serviceable pose before the doors open.
 pub const DOCK_SETTLE: f32 = 1.5;
-/// Distance upstream of the berth a queueing bus waits at (m). A bus waiting here has not
-/// served the stop.
+/// Distance upstream of the berth a queueing bus waits at (m).
 pub const QUEUE_STANDOFF: f32 = 10.0;
 /// Minimum service time at a stop, whatever the passenger exchange (s).
 pub const MIN_SERVICE: f32 = 5.0;
@@ -216,9 +190,8 @@ pub const MIN_SERVICE: f32 = 5.0;
 pub const CLOSE_MIN: f32 = 1.5;
 /// ... at most this long waiting for a supported script to answer.
 pub const CLOSE_MAX: f32 = 12.0;
-/// ... and at most this long for one whose doors are reported open: a door that can never
-/// shut (a held light barrier, a script that answers only once its doors are closed) must
-/// not keep the bus at its stop for the rest of the session.
+/// ... and at most this long for one whose doors are reported open, so a door that never
+/// shuts (a held light barrier) cannot keep the bus there for the session.
 pub const CLOSE_STUCK_OPEN_MAX: f32 = 120.0;
 /// A layover waits for its departure however long (s).
 pub const LAYOVER_WAIT: f64 = 1800.0;
@@ -234,10 +207,8 @@ pub const MERGE_GAP: f32 = 25.0;
 pub const MERGE_AHEAD: f32 = 8.0;
 /// How far the rear must clear the berth point before the berth is released (m).
 pub const BERTH_CLEAR: f32 = 1.0;
-/// How far short of its berth (m, origin to berth point) a bus may serve the stop from
-/// behind the vehicle that holds the berth for long (`ServiceInputs::berth_held_long`). A bus
-/// on its layover at a stop of several lines held all of them, and the street behind them,
-/// for a quarter of an hour.
+/// How far short of its berth (m) a bus may serve the stop from behind a vehicle holding
+/// the berth for long (`ServiceInputs::berth_held_long`), e.g. one on its layover.
 pub const BEHIND_REACH: f32 = 40.0;
 
 /// Seconds the doors stay open at a stop without anyone holding them.
@@ -270,8 +241,7 @@ pub struct BerthGeometry {
     pub bay: f32,
     /// Timetable departure (seconds of the day).
     pub depart: f64,
-    /// The stop's own content length, when known. Kept separate from the approach distance
-    /// and the vehicle's stop correction.
+    /// The stop's own content length, when known.
     pub stop_length: Option<f32>,
     /// Longitudinal half-length of the boarding region around `s` (m).
     pub boarding_region: f32,
@@ -282,9 +252,7 @@ pub struct BerthGeometry {
 }
 
 impl BerthGeometry {
-    /// Build the berth from a compiled stop target and the network lane it lies on. The stop
-    /// length is not imported yet, so the boarding region is the documented provisional
-    /// fallback and the berth count stays one.
+    /// Build the berth from a compiled stop target (provisional region, one berth).
     pub fn from_target(target: &StopTarget, lane: usize) -> BerthGeometry {
         BerthGeometry {
             stop: target.stop,
@@ -336,9 +304,8 @@ pub struct StopPolicy {
     pub is_last: bool,
     /// The loaded tiles still carry the route on beyond this stop.
     pub route_open: bool,
-    /// The trip ends where its route ends, not at its last stop: a train on a track of its
-    /// own runs on past its last station to the end of its track (the engine ends the trip
-    /// there, see `traffic::tick`).
+    /// The trip ends where its route ends, not at its last stop (a train runs on past its
+    /// last station to the end of its track).
     pub ends_at_route_end: bool,
     /// At its last station it waits for the profile's departure there, however long (#101:
     /// Städtedreieck's light detector buses stand at their last stop for hours).
@@ -352,8 +319,7 @@ pub enum ScriptFeedback {
     Idle,
     /// The script acknowledged the doors are shut.
     Released,
-    /// The script does not take part in the handshake (it has no `AI_Scheduled_AtStation`):
-    /// the documented fixed close interval is the safe fallback.
+    /// The script has no `AI_Scheduled_AtStation` handshake: a fixed close interval is used.
     Unsupported,
     /// The script exposes the handshake but has not answered, and its doors are known open:
     /// the bus waits for them up to `CLOSE_STUCK_OPEN_MAX`.
@@ -427,8 +393,7 @@ pub struct ServiceInputs {
     pub kerb_swerve: Option<f32>,
     /// A junction lies between the bus and the berth, too close for the S-curve into the bay.
     pub junction_first: bool,
-    /// The berth is held by a vehicle that will stand there for long (a bus on its layover):
-    /// a bus waiting for it serves the stop from behind it instead (see `BEHIND_REACH`).
+    /// The berth is held for long (a bus on its layover): serve from behind (`BEHIND_REACH`).
     pub berth_held_long: bool,
 }
 
@@ -455,8 +420,7 @@ pub struct ServiceState {
     /// Settled whether the front stop is served.
     pub serve_decided: bool,
     pub serve: bool,
-    /// Serving the stop from behind the vehicle that holds its berth: it never held the
-    /// berth, and leaves the stop behind as soon as it moves off.
+    /// Serving the stop from behind the berth's holder; done as soon as it moves off.
     pub behind: bool,
 }
 
@@ -502,8 +466,7 @@ impl ServiceState {
         self.phase.holds_berth()
     }
 
-    /// A new trip (the tour's next, or the rest of a trip). Any berth held against the old
-    /// stops is released; the coordinator is reset by the caller.
+    /// A new trip; the caller resets the coordinator.
     pub fn restart(&mut self, layover: bool) {
         *self = ServiceState {
             phase: ServicePhase::EnRoute,
@@ -554,8 +517,7 @@ impl ServiceDecision {
     }
 }
 
-/// A berth a vehicle wants or holds this tick, so the coordinator can order the queue by
-/// stable arrival rather than by container position.
+/// A berth a vehicle wants or holds this tick, for ordering the queue by stable arrival.
 #[derive(Debug, Clone, Copy)]
 pub struct BerthIntent {
     pub vehicle: VehicleId,
@@ -592,8 +554,7 @@ impl ServiceCoordinator {
         self.arrivals.len()
     }
 
-    /// Begin a tick: record arrivals, rebuild the per-stop queue order from stable arrival
-    /// order, and release berths whose owner is gone.
+    /// Begin a tick: record arrivals, rebuild queue order, release berths of gone owners.
     pub fn begin_tick(&mut self, intents: &[BerthIntent], tick: u64) {
         self.tick = tick;
         self.order.clear();
@@ -660,10 +621,7 @@ impl ServiceCoordinator {
         self.order.clear();
     }
 
-    // ---- planning ----------------------------------------------------------------------
-
-    /// Plan one vehicle's service for this tick. `state` is the single per-vehicle state the
-    /// coordinator writes; `input` carries this vehicle's berth, distance and content policy.
+    /// Plan one vehicle's service for this tick, writing its `state`.
     pub fn plan(
         &mut self,
         scene: &ServiceScene,
@@ -679,7 +637,6 @@ impl ServiceCoordinator {
         let berth = input.berth.or(held);
         let mut d = ServiceDecision::new(state.phase);
         let Some(berth) = berth else {
-            // No stop ahead and none held.
             if matches!(
                 state.phase,
                 ServicePhase::Approach
@@ -759,8 +716,7 @@ impl ServiceCoordinator {
                     && state.phase_t >= DOCK_SETTLE
                     && (0.0..BEHIND_REACH).contains(&input.distance)
                 {
-                    // the berth is taken for long (a layover): serve the stop from where it
-                    // stands behind, as a driver does at a busy terminus
+                    // the berth is taken for long (a layover): serve the stop from behind it
                     state.behind = true;
                     d.stop_at = Some(actor.front);
                     self.enter_boarding(state, &berth, scene.day_time, &actor, &input.policy, &mut d);
@@ -794,8 +750,7 @@ impl ServiceCoordinator {
                     state.dock_stall_t = 0.0;
                     self.enter_boarding(state, &berth, scene.day_time, &actor, &input.policy, &mut d);
                 } else if input.distance < -berth.boarding_region || state.dock_stall_t >= DOCK_STALL_TIMEOUT {
-                    // The boarding region was overshot: record a missed stop, never open the
-                    // doors somewhere up the queue to make it disappear.
+                    // Overshot: a missed stop, never doors opened somewhere up the queue.
                     self.release_key(&berth);
                     state.berth = None;
                     state.fault = Some(Reason::MissedStop);
@@ -807,8 +762,7 @@ impl ServiceCoordinator {
                         vehicle: id,
                         reason: Reason::MissedStop,
                     });
-                    // The bus continues to its next stop; it cannot reverse to recover
-                    // the pose, and a permanent ServiceFault would block this lane.
+                    // (it cannot reverse, and a permanent ServiceFault would block the lane)
                     state.phase = ServicePhase::EnRoute;
                     state.dock_stall_t = 0.0;
                     d.stop_at = None;
@@ -829,8 +783,7 @@ impl ServiceCoordinator {
                     && state.leave_at - scene.day_time > LAYOVER_BOARDING + 10.0
                     && input.policy.wait_departure.contains(&berth.stop.get())
                 {
-                    // the exchange is over and its departure is far off: it waits for it as on
-                    // a layover, the doors shut until shortly before it leaves
+                    // departure far off: wait as on a layover, doors shut until shortly before
                     state.phase = ServicePhase::Layover;
                     state.phase_t = 0.0;
                     d.boarding = false;
@@ -842,9 +795,8 @@ impl ServiceCoordinator {
                     && self.berth_free(scene, &berth, id)
                     && self.first_in_order(&berth, id) =>
             {
-                // on its layover behind the berth's holder, which has left: it moves up onto
-                // the berth and waits there. Standing on behind it, its tail kept the lanes
-                // behind it shut for the rest of its layover (X10 Berlin, Hertzallee).
+                // the berth's holder has left: move up onto the berth so its tail does not
+                // block the lanes behind for the layover (X10 Berlin, Hertzallee)
                 state.behind = false;
                 state.layover = true;
                 self.grant(&berth, id);
@@ -920,8 +872,7 @@ impl ServiceCoordinator {
                 }
             }
             ServicePhase::Departing if state.behind => {
-                // (served from behind the berth's holder: the stop is done as it moves off,
-                // and it goes round that vehicle like any other traffic)
+                // (served from behind the berth's holder: the stop is done as it moves off)
                 state.behind = false;
                 self.release(id);
                 d.consume_stop = true;
@@ -990,11 +941,8 @@ impl ServiceCoordinator {
         d
     }
 
-    // ---- helpers -----------------------------------------------------------------------
-
-    /// Whether a vehicle serves the front stop whoever wants it or not: the trip's first (a
-    /// layover) and last, the ones its timetable marks always, and any stop it would reach
-    /// more than `EARLY_STOP` early (`EARLY_STOP_SHORT` at a marked stop).
+    /// Whether a vehicle serves the front stop regardless of demand: trip ends, timetable
+    /// marks, or arriving more than `EARLY_STOP` early (`EARLY_STOP_SHORT` at a marked stop).
     fn must_serve(
         &self,
         state: &ServiceState,
@@ -1097,8 +1045,8 @@ impl ServiceCoordinator {
         self.berths.remove(&berth.key());
     }
 
-    /// Whether a realized body other than `ignore` occupies the berth region. A departing bus
-    /// still occupies it until its rear clears, so a follower cannot dock through it.
+    /// Whether no body other than `ignore` occupies the berth region (a departing bus does
+    /// until its rear clears).
     fn berth_free(&self, scene: &ServiceScene, berth: &BerthGeometry, ignore: VehicleId) -> bool {
         scene
             .occupancy
@@ -1111,11 +1059,9 @@ impl ServiceCoordinator {
             .is_none()
     }
 
-    /// Whether pulling out of the berth is blocked by a vehicle in the lane: a faster body
-    /// close behind, or a standing body ahead within the pull-out ramp.
+    /// Whether pulling out is blocked: a faster body close behind, or one standing just ahead.
     fn merge_blocked(&self, scene: &ServiceScene, actor: &ServiceActor, id: VehicleId) -> bool {
-        // A bus already aligned with the lane simply pulls away. Followers behind it
-        // do not need to grant a lateral merge; following controls the front gap.
+        // Already aligned with the lane: no merge to grant, following handles the gap.
         if actor.lateral.abs() <= DOCK_LAT_TOL {
             return false;
         }
@@ -1266,8 +1212,6 @@ mod tests {
         assert_eq!(t.s, 42.0);
         assert_eq!(t.bay, -1.8);
     }
-
-    // ---- coordinator ---------------------------------------------------------------
 
     fn berth(s: f32) -> BerthGeometry {
         BerthGeometry {

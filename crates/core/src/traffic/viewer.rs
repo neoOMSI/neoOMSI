@@ -80,11 +80,9 @@ impl Viewer {
     }
 
 
-    /// Would the renderer draw an object of radius `r` this far away at all? Beyond that a
-    /// car can come and go in plain view without anybody seeing it happen.
+    /// Would the renderer draw an object of radius `r` this far away at all?
     pub fn draws(&self, dist: f64, r: f64) -> bool {
-        // (the renderer measures a vehicle by a sphere about its origin, which may stand
-        // well off its middle: half as much again, and a metre, to be sure)
+        // (the renderer's sphere is about the origin, which may be well off the middle)
         let r = r * 1.5 + 1.0;
         if self.max_dist > 0.0 && dist > self.max_dist + r {
             return false;
@@ -124,9 +122,7 @@ impl Viewer {
 impl Traffic {
 
     /// Is a vehicle of radius `r` at `p` hidden from the viewer by buildings (or a hill)?
-    /// Every line of sight to it must be: to its middle, to both ends whichever way it
-    /// points and over its roof. A single line to the middle let a car come and go half
-    /// out from behind a corner, in plain view.
+    /// Every line of sight must be: to its middle, both ends and (if large) its roof.
     pub(crate) fn occluded(&self, world: &World, v: &Viewer, p: DVec3, r: f64) -> bool {
         let rel = (p - v.pos).truncate();
         let across = if rel.length() > 1e-3 {
@@ -150,8 +146,7 @@ impl Traffic {
     }
 
 
-    /// Is the line of sight from the viewer to the point `target` blocked by a building
-    /// (or a hill)?
+    /// Is the line of sight from the viewer to `target` blocked by a building (or a hill)?
     pub(crate) fn sight_blocked(&self, world: &World, v: &Viewer, target: DVec3) -> bool {
         let p = target;
         let blocker = match &self.occluders {
@@ -206,15 +201,10 @@ impl Traffic {
     }
 
 
-    /// Could the player not see a vehicle (radius `r`) at `p` appear or vanish? Never close
-    /// by: mirrors, a turn of the head and the gaps between houses see what is near,
-    /// whatever the collision boxes say (a bus let appear 40 m away behind a box that stood
-    /// for a building with a gateway in it was seen popping up in the middle of the street).
-    /// Within `NEAR_HIDE` only behind a building or the ground, wherever the camera looks -
-    /// the mirrors look back, and the head turns: buses appeared 160 m behind the player
-    /// in plain sight of the mirrors, and a bus waiting at the edge of the loaded route
-    /// vanished beside the player's bus because the camera was looking ahead. Further off:
-    /// beyond what is drawn, out of the picture, or behind something.
+    /// Could the player not see a vehicle (radius `r`) at `p` appear or vanish? Close by only
+    /// when deep underground (mirrors and gaps between houses see what is near); within
+    /// `NEAR_HIDE` only behind a building, wherever the camera looks (mirrors look back);
+    /// further off: beyond what is drawn, out of the picture, or behind something.
     pub fn hidden(&self, world: &World, p: DVec3, r: f64) -> bool {
         let Some(v) = self.viewer else { return true };
         let d = (p - v.pos).length();
@@ -238,8 +228,7 @@ impl Traffic {
     }
 
 
-    /// `hidden` for every part of `c` on the track: a train went with its locomotive behind
-    /// a building, its coaches in plain view.
+    /// `hidden` for every part of `c` on the track, not just the locomotive.
     pub(crate) fn consist_hidden(&self, world: &World, c: &AiCar, r: f64) -> bool {
         let v = &c.vehicle;
         (v.part_hidden(0) || self.hidden(world, v.position, r))

@@ -388,8 +388,8 @@ impl Schedule {
                 })
                 .collect();
             let layover = departure > day_time;
-            // its track begins at the stand it has just pulled onto, short of the first stop:
-            // it waits there, not at the stop - unless it stands in the road's way (`fit_bays`)
+            // a track starting at a stand short of the first stop: it waits there, unless it
+            // stands in the road's way (`fit_bays`)
             let half_width = crate::traffic::extents(&ty, 12.0).2;
             let stand_hold = stops
                 .first()
@@ -588,8 +588,7 @@ impl Schedule {
             .map(|(ri, ss, lat, t, id, side)| (ri - start_index, ss, lat, t, id, side))
             .collect();
         let route: Vec<usize> = section[start_index..].to_vec();
-        // put out before its departure at the start of a track that begins short of the
-        // first stop (the stand): it waits there, not at the stop
+        // put out early at a stand short of the first stop: it waits there, not at the stop
         let stand_hold = stops
             .first()
             .filter(|&&(ri, ss, ..)| track && departure > day_time && (ri > 0 || ss - s >= 2.0))
@@ -611,10 +610,9 @@ impl Schedule {
             Some(scheme),
         ) {
             Ok(ci) => ci,
-            // A full scheduled budget or a busy entrance is a real, diagnosed wait: the duty
-            // keeps its place and is retried, it is never silently dropped.
+            // A full budget or busy entrance is a diagnosed wait: retried, never dropped.
             Err(Reason::AtCapacity) | Err(Reason::EntranceBusy) => return Placed::Busy,
-            // No usable path at all is a content/duty fault, not a capacity wait.
+            // No usable path is a content/duty fault.
             Err(_) => return Placed::Drop,
         };
         self.car_departure.insert(traffic.car(ci).id.get(), i);

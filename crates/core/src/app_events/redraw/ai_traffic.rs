@@ -2,8 +2,7 @@
 
 use super::*;
 
-/// Fixed simulation step for the traffic domain: decisions run at a stable rate,
-/// independent of the render frame rate. Rendering may run at any rate on top.
+/// Fixed simulation step for the traffic domain, independent of the render frame rate.
 pub(super) const SIM_DT: f32 = ::traffic::SIM_DT;
 /// Most steps to run in one frame: a longer frame shares its time out over this many
 /// longer steps (see `traffic::advance_fixed_clock`), so none of it is lost.

@@ -1,9 +1,7 @@
 //! Shared headless fixture for the Stage 6 service scenarios.
 //!
-//! A single straight lane with one or more buses driving to a stop. The buses are moved by a
-//! tiny kinematic model that obeys the `stop_at` distance the `ServiceCoordinator` hands back,
-//! and the coordinator reads the realized occupancy built from the same bodies. No renderer,
-//! no OMSI assets.
+//! A single straight lane with buses driving to a stop, moved by a tiny kinematic model that
+//! obeys the `ServiceCoordinator`'s `stop_at`. No renderer, no OMSI assets.
 
 #![allow(dead_code)]
 

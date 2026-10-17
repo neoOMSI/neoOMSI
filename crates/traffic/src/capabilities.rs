@@ -1,9 +1,7 @@
 //! Validated, immutable physical capabilities of a vehicle.
 //!
-//! Capabilities are derived once when a vehicle enters the traffic world and are not
-//! mutated afterwards. They separate what a vehicle physically is from what a driver
-//! chooses to do (speed, gaps, reactions), and from asset/presentation state. The
-//! reported fallback provenance is kept so a later stage can calibrate the guesses.
+//! Derived once when a vehicle enters the traffic world and never mutated: what a vehicle
+//! physically is, apart from driver choices and presentation. Fallbacks stay reported.
 
 /// The physical class a vehicle drives as (`[ai_veh_type]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,20 +77,14 @@ pub enum CapabilityDefect {
 /// Where the braking strength used by the longitudinal controller came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrakeSource {
-    /// A content value drove the braking envelope under an interpretation that is not yet
-    /// proven.
+    /// A content value drove the braking envelope under a not yet proven interpretation.
     ContentProvisional,
     /// No usable content braking strength: an explicit class-based fallback.
     ClassFallback,
 }
 
-/// A vehicle's braking envelope, separated into the verified stop correction and a braking
-/// strength whose `[ai_brakeperformance]` semantics are not established (backlog `D3`).
-///
-/// Element 4 is the holding-point correction the stop logic already used. The meanings of
-/// elements 0..3 remain unresolved, so the strength is an explicit class-based fallback
-/// rather than a guess. All five values are kept exactly so a later stage can calibrate them
-/// once their meaning is established.
+/// A vehicle's braking envelope: the verified stop correction (`[ai_brakeperformance]`
+/// element 4) and a class-based fallback strength, as elements 0..3 are unresolved (`D3`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BrakingCapability {
     /// `[ai_brakeperformance]` element 4: the holding-point correction for stop precision (m).
@@ -182,9 +174,8 @@ impl VehicleCapabilities {
         self.source == CapabilitySource::LengthFallback
     }
 
-    /// The braking envelope. Element 4 stays the verified stop correction; the braking
-    /// strength is the explicit class fallback while the other values' meanings are
-    /// unresolved. The raw values are carried through unchanged.
+    /// The braking envelope: element 4 as the stop correction, the class fallback as the
+    /// strength, the raw values unchanged.
     pub fn braking(&self) -> BrakingCapability {
         let mut b = BrakingCapability::fallback(self.class);
         if let Some(raw) = self.brake_performance {

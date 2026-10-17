@@ -29,9 +29,8 @@ impl Traffic {
     }
 
 
-    /// Hand timetable bus `ci` the next trip of its tour: its route from the lane it is on
-    /// (`route[0]` is that lane, `s` where it is on it) and the trip's stops. It stays where
-    /// it stands; a stop right there is served in place (its layover).
+    /// Hand timetable bus `ci` its tour's next trip, from where it stands (`route[0]` is its
+    /// lane, `s` its position); a stop right there is served in place (its layover).
     pub fn reroute(
         &mut self,
         ci: usize,
@@ -149,8 +148,7 @@ impl Traffic {
 
 
     /// Tell a scheduled bus's script who wants in or out (`PAX_Entry<i>_Req`,
-    /// `PAX_Exit<i>_Req`): the stock AI door scripts open the rear doors only for a stop
-    /// request, which comes from the exit requests.
+    /// `PAX_Exit<i>_Req`): stock AI door scripts open the rear doors only on a stop request.
     pub fn set_pax_requests(&mut self, id: VehicleId, entry: &[bool], exit: &[bool]) {
         if let Some(c) = self.cars.iter_mut().find(|c| c.id == id) {
             for (i, r) in entry.iter().enumerate() {
@@ -165,8 +163,6 @@ impl Traffic {
     }
 
 
-    /// Keep a scheduled bus at its stop for at least `secs` more with the doors open:
-    /// passengers are still queueing at a door or stepping in.
     /// The passengers' wishes for the timetable buses' next stops (see `stop_wishes`).
     pub fn set_stop_wishes(
         &mut self,

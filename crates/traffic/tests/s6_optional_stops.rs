@@ -1,9 +1,5 @@
-//! Stage 6 exit gate — optional/request stops, timing points, early/late and layovers.
-//!
-//! Dwell and skip policy follow explicit service semantics: an unwanted mid-route stop is
-//! skipped, a wanted or marked stop is served, a bus early for its departure waits for it
-//! only at a stop its timetable marks "wait dep. time" (elsewhere it leaves once the exchange
-//! is over), a late bus goes at once, and a layover waits its departure out of the lane.
+//! Optional/request stops, timing points, early/late buses and layovers: an early bus waits
+//! for its departure only at a "wait dep. time" stop, a late one goes at once.
 
 mod common;
 
@@ -58,8 +54,7 @@ fn a_timing_point_is_served_even_without_demand() {
     assert!(reached_boarding(&mut w, 3000), "a timing point was skipped");
 }
 
-/// Runs the bus until it pulls out of its stop and returns the day time it did, or `None`
-/// when it still stood there after `ticks`. Until then it keeps its berth.
+/// The day time the bus pulls out of its stop, or `None` if it still stands after `ticks`.
 fn left_at(w: &mut ServiceWorld, ticks: u32) -> Option<f64> {
     for _ in 0..ticks {
         w.step();
@@ -76,8 +71,7 @@ fn left_at(w: &mut ServiceWorld, ticks: u32) -> Option<f64> {
 
 #[test]
 fn an_early_bus_waits_for_its_departure_at_a_stop_marked_to_wait() {
-    // "always + wait dep. time" (4): served without demand, and it stands until its departure,
-    // five minutes from now (#298, Städtedreieck's NE buses at Hauptbahnhof)
+    // "always + wait dep. time" (4): served without demand, stands until its departure (#298)
     let depart = 36000.0 + 300.0;
     let mut w = single(depart);
     w.bus_mut(1).demand.wanted = Some(false);
@@ -104,8 +98,7 @@ fn an_early_bus_waits_for_its_departure_at_a_stop_marked_to_wait() {
         .expect("it never left");
     assert!(left >= depart, "it left {:.0} s before its departure", depart - left);
     assert!(left < depart + 5.0, "it stood on {:.0} s after its departure", left - depart);
-    // the exchange over, it waits with the doors shut, as on a layover, and opens them again
-    // shortly before it leaves
+    // after the exchange it waits doors shut and reopens them shortly before leaving
     assert!(doors_shut && doors_again);
 }
 

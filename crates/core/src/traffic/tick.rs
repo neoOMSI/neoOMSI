@@ -5,9 +5,8 @@ use super::*;
 
 impl Traffic {
 
-    /// The fixed simulation tick: the ordered pipeline of named phases below. Every phase
-    /// reads/writes this `Traffic` and the frozen per-tick data phase 4 hands on; a live
-    /// vehicle is never switched between state models mid-tick.
+    /// The fixed simulation tick, run as the ordered phases below; a live vehicle never
+    /// switches state model mid-tick.
     pub fn tick(&mut self, dt: f32, player: Option<PlayerBox>) {
         self.lamp_dt += dt;
         if self.mirror {
@@ -58,15 +57,13 @@ impl Traffic {
             .collect();
     }
 
-    /// 2. The light programs: reset and collect the requests of every approaching car, the
-    /// player and the other players (depot gates), the pedestrian push buttons, then advance
-    /// the cycle clocks. Returns the pedestrian positions for the junction scene.
+    /// 2. The light programs: collect the requests of cars, players (depot gates) and push
+    /// buttons, then advance the cycle clocks. Returns the pedestrian positions.
     fn tick_light_requests(
         &mut self,
         dt: f32,
         player: Option<PlayerBox>,
     ) -> HashMap<usize, Vec<f32>> {
-        // the light programs: requests of whoever is coming, then the cycle clocks
         for c in self.lights.iter_mut() {
             c.request.iter_mut().for_each(|r| *r = false);
         }
@@ -86,9 +83,8 @@ impl Traffic {
         for &(l, d, front, train) in &self.rail_ahead {
             ask_light(&mut self.lights, &self.net, l, d, front, train);
         }
-        // the player's bus and the other players' vehicles ask too: a depot gate (Spandau's
-        // `Omnibushof_S_1`, the exit arm on light 1) opens only for whoever asks, and the
-        // player driving out of the depot at the start of a duty found it shut
+        // the players' buses ask too: a depot gate opens only for whoever asks (Spandau's
+        // `Omnibushof_S_1`)
         let askers: Vec<(DVec3, f64, u8)> = player
             .iter()
             .map(|p| (p.0, p.1, self.player_blinker))
@@ -139,9 +135,8 @@ impl Traffic {
         walkers
     }
 
-    /// 3a. Player/other-player standing times for the tick, and this tick's copy of the
-    /// external actors. They stay in `self`: one `set_external_actors` per frame serves
-    /// every fixed tick of that frame.
+    /// 3a. Standing times and this tick's copy of the external actors (kept in `self`: one
+    /// `set_external_actors` per frame serves all its fixed ticks).
     fn tick_presence(
         &mut self,
         dt: f32,
@@ -162,9 +157,8 @@ impl Traffic {
         (player_standing, others)
     }
 
-    /// 3b. Build the frozen `Occupancy`/lane view/junction, service and maneuver actors once,
-    /// then run the per-vehicle decision loop. Returns the frozen data `tick_realize` and
-    /// `tick_finish` still need.
+    /// 3b. Freeze the occupancy and the junction, service and maneuver actors, then run the
+    /// per-vehicle decisions. Returns what `tick_realize` and `tick_finish` need.
     fn tick_plan(
         &mut self,
         dt: f32,
@@ -175,9 +169,8 @@ impl Traffic {
         debug: bool,
     ) -> TickFrame {
         let previous_odometer = self.cars.iter().map(|c| c.state.odometer).collect();
-        // One immutable occupancy snapshot for the tick: realized bodies plus their lane
-        // placements, built once. Geometry is the truth; `by_lane` is a flat id-keyed view
-        // for the checks not yet migrated (leader scans, lane changes, passing).
+        // One occupancy snapshot per tick; `by_lane` is a flat view for the checks not yet
+        // migrated (leader scans, lane changes, passing).
         let occupancy = Occupancy::build(
             self.net.version(),
             (self.time * 1000.0).max(0.0) as u64,
@@ -227,13 +220,11 @@ impl Traffic {
                 }
             }
         }
-        // The junction coordinator owns its own claim/store state (see `begin_tick` below);
-        // exit storage is recomputed fresh this tick against the realized occupancy.
+        // (exit storage is recomputed each tick from the realized occupancy, `begin_tick`)
         let mut remove = Vec::new();
         let mut frames: Vec<Option<AiFrame>> = vec![None; self.cars.len()];
         self.break_lead_pairs();
-        // The junction actors and the signal aspects are frozen once for the tick; all
-        // junction decisions read this snapshot, and the coordinator owns the claims.
+        // Junction actors and signal aspects are frozen once; the coordinator owns the claims.
         let mut junction_actors: Vec<JunctionActor> = self
             .cars
             .iter()
@@ -338,9 +329,7 @@ impl Traffic {
                     pass_reach,
                 }
             }).collect();
-        // The service actors are frozen once too; the coordinator owns berth capacity and
-        // decides the service phases. Arrival order is recorded when a bus first comes
-        // within STOP_REACH of a stop, so a queue is assigned by stable arrival, not by
+        // Service actors too; a queue is assigned by arrival within STOP_REACH, not by
         // container position.
         let service_actors: Vec<ServiceActor> = self
             .cars
@@ -383,8 +372,7 @@ impl Traffic {
             .collect();
         self.services
             .begin_tick(&service_intents, (self.time * 1000.0).max(0.0) as u64);
-        // The maneuver actors are frozen once too; the maneuver coordinator owns every lateral
-        // decision and orders simultaneous lane changes by stable id.
+        // Maneuver actors too; simultaneous lane changes are ordered by stable id.
         let maneuver_actors: Vec<ManeuverActor> = self
             .cars
             .iter()
@@ -446,8 +434,7 @@ impl Traffic {
                 }
             })
             .collect();
-        // (each vehicle's wish only reads the frozen scene: they are found on the workers, in
-        // the vehicles' order, and the coordinator orders them by stable id below)
+        // (each wish reads only the frozen scene, so they are found in parallel)
         let maneuver_intents: Vec<ManeuverIntent> = {
             use rayon::prelude::*;
             let (net, coordinator, actors) = (&self.net, &self.maneuvers, &maneuver_actors[..]);
@@ -461,14 +448,12 @@ impl Traffic {
         };
         self.maneuvers
             .begin_tick(&maneuver_intents, (self.time * 1000.0).max(0.0) as u64);
-        // (the debug switches are asked once a tick, not once a car)
         let debug_car = ::legacy_config::env::var("OMSI_DEBUG_CAR")
             .ok()
             .and_then(|v| v.parse::<u64>().ok());
         let debug_doors = ::legacy_config::env::var_os("OMSI_DEBUG_DOORS").is_some();
         let debug_stuck = ::legacy_config::env::var_os("OMSI_DEBUG_STUCK").is_some();
-        // (in the coordinator's order, by stable id: what one vehicle is granted holds back
-        // those planned after it, so the container order must not decide)
+        // (by stable id: a grant holds back those planned after it)
         let bodies_ahead = self.bodies_in_way(&occupancy, &external_ids);
         for i in self.junctions.plan_order(&junction_actors[..self.cars.len()]) {
             self.cars[i].state.emergency_drive = junction_actors[i].emergency;
@@ -496,8 +481,7 @@ impl Traffic {
                 .map(|(_, j)| self.cars[j].id);
             self.cars[i].merge_after = merging;
             let mut lead = ahead.map(|(l, j)| (l, Some(j)));
-            // the player's bus, wherever it overlaps this car's way, or a LAN player's (the
-            // nearest in the way stands for "the player's bus" in what follows)
+            // the player's or a LAN player's bus overlapping this car's way (the nearest)
             let (mut player, mut player_standing) = (player, player_standing);
             if let Some(p) = player.as_ref() {
                 if let Some(l) = self.player_in_way(i, p) {
@@ -545,14 +529,11 @@ impl Traffic {
                     lead = None;
                 }
             }
-            // parked cars: stop behind one in the middle of the lane, swerve round one at
-            // the kerb (a parked car eats the right half of the lane; the passing car
-            // moves left by what is missing, and back once it is past)
+            // parked cars: stop behind one mid-lane, swerve round one at the kerb
             let mut parked_ahead = false;
             let kerb_swerve: Option<f32>;
             let mut squeeze: Option<VehicleId> = None;
-            // (the car's state does not change before the maneuver block below: one lookahead
-            // serves both the parked-car check and the plans)
+            // (one lookahead serves both the parked-car check and the plans)
             self.way_lanes_into(&self.cars[i].state, 200.0, &mut way_scratch);
             {
                 let car = &self.cars[i];
@@ -571,8 +552,7 @@ impl Traffic {
                         safety::side_extent(st.front, st.rear, car.half_width,
                             car.vehicle.heading as f32 - lane_heading, lat.signum())
                     } else { car.half_width };
-                    // in the way at the side the car is on now (a car pulled out onto the
-                    // other half passes it)
+                    // in the way on the side the car is on now
                     let blocks = if passing {
                         (lat - st.lateral_ahead(along)).abs() < car.half_width + width + 0.2
                     } else {
@@ -586,11 +566,8 @@ impl Traffic {
                             }
                         }
                     } else if !passing && a < side_extent + width + 0.15 && along < 30.0 {
-                        // (only as far as the two bodies would touch: OMSI's cars keep to
-                        // their paths, and moved out by a margin of our own round every car
-                        // at the kerb - 2.7 m from the lane's middle - the traffic of a
-                        // narrow British street lined with parked cars wove to and fro
-                        // across the road instead of keeping to its lane)
+                        // (only as far as the bodies would touch: OMSI's cars keep to their
+                        // paths, and a wider margin made narrow British streets weave)
                         let need = (side_extent + width + 0.15 - a) * -lat.signum();
                         swerve = Some(
                             swerve
@@ -599,12 +576,8 @@ impl Traffic {
                         );
                     }
                 };
-                // (once committed to a lane change - well over, or pulling out round what
-                // stands in the way - the parked cars of the lane it leaves hold it no more,
-                // as the cars standing there do not, `obstacle_ahead`: counted still, the car
-                // that had begun to pull out round a row of them stopped with its nose on the
-                // first, and a lane change that moves on with the car never got anywhere -
-                // six cars queued for good behind the parked row on the Heerstraße)
+                // (once committed to a lane change, the parked cars of the lane it leaves
+                // hold it no more, else it stops on the first of a row, Heerstraße)
                 let leaving = st
                     .change
                     .filter(|c| c.t > 0.4 || (c.bypass && c.wait <= 0.0))
@@ -618,9 +591,8 @@ impl Traffic {
                     }
                 }
                 if !passing && leaving.is_none() {
-                    // Lane assignment is a population hint, not physical clearance.
-                    // Project nearby actual parked boxes onto this route as well, so
-                    // a car on the next/adjacent segment cannot hide a corner from a bus.
+                    // (lane assignment is only a hint: project the nearby parked boxes too,
+                    // so one on an adjacent segment cannot hide a corner from a bus)
                     let probe = Obb::vehicle(car.vehicle.position.truncate(), car.vehicle.heading,
                         35.0, st.rear as f64 + 3.0, 6.0);
                     let route: Vec<_> = near_way.iter().map(|w| w.0).collect();
@@ -641,10 +613,8 @@ impl Traffic {
                         check(d + at, lat, lane, at, width, length);
                     }
                 }
-                // a bus standing half in its bay: squeeze past on
-                // the other side when a metre is enough, instead of queueing behind it -
-                // and stay out until past its front (moving back in while still beside it
-                // steered the car into the bus)
+                // a bus standing half in its bay: squeeze past when a metre is enough, and
+                // stay out until past its front
                 if !passing {
                     let swerving = st.lateral_target.abs() > 0.1;
                     for &(l, d) in near_way {
@@ -660,11 +630,8 @@ impl Traffic {
                             {
                                 continue;
                             }
-                            // a bus that is about to pull away (its last seconds at the stop, the
-                            // indicator on) is not started round; one the car is already going
-                            // round is passed, unless the car can still stop behind it gently
-                            // (only a bus at its stop stands out of the lane on purpose: a car
-                            // off the middle is squeezing past something itself)
+                            // a bus about to pull away is not started round; one already being
+                            // passed is, unless the car can still stop gently behind it
                             let standing =
                                 o.state.speed < 0.3 && o.standing_for(self.day_time) > 3.0;
                             let keep = swerving
@@ -735,10 +702,8 @@ impl Traffic {
                 who.filter(|&j| j < self.cars.len())
                     .map(|j| (self.cars[j].id, l.gap))
             });
-            // Something that may stand for a while (a bus at its stop, the player's bus that
-            // has stopped) is waited behind with room to pull out round it later: a car that
-            // had stopped a metre behind the player's bus scraped its corner when it went
-            // round, and no car can steer out of that.
+            // Something that may stand for a while (a bus at its stop, the player's stopped
+            // bus) is waited behind with room to pull out round it later.
             let may_stand = lead
                 .map(|(l, who)| {
                     match who {
@@ -753,20 +718,16 @@ impl Traffic {
                     }
                 })
                 .unwrap_or(false);
-            // It stops `pass_room` short of it (the room its own steering needs to get out
-            // round it), or as far back as it can without braking hard. The two metres taken
-            // off the gap it keeps to such a thing were not enough: the car still crept up to
-            // under three metres behind the player's bus and never got round it.
+            // It stops `pass_room` short of it (its steering room), or as far back as it can
+            // without braking hard.
             let mut keep_back: Option<f32> = None;
             let mut reserve_pull_out = false;
-            // (an emergency vehicle keeps the room to pull out behind whatever slows in front
-            // of it: closed up to two metres behind a car making way, an ambulance could not
-            // get round it and stood there, blocking the road)
+            // (an emergency vehicle keeps room to pull out behind whatever slows ahead, or
+            // it gets stuck behind a car making way)
             let emergency_behind_slow = junction_actors[i].emergency
                 && lead.is_some_and(|l| l.0.speed < 3.0);
             if standing || may_stand || emergency_behind_slow {
-                // (a parked car standing in the lane too: two metres behind one, a bus in X10
-                // Berlin's bus lane had no room to steer out round it and stood there for good)
+                // (a parked car in the lane too, X10 Berlin's bus lane)
                 if let Some((l, who)) = lead {
                     let car = &self.cars[i];
                     let st = &car.state;
@@ -795,16 +756,14 @@ impl Traffic {
                     let stop_gap = if real - want >= comfortable {
                         want
                     } else {
-                        // (a gap wanted under half a metre is the floor itself: clamp
-                        // panicked with its bounds the wrong way round, #138)
+                        // (a gap under half a metre is the floor: clamp bounds inverted, #138)
                         (real - comfortable).clamp(real.min(0.5).min(want), want)
                     };
                     keep_back = Some(st.front + (real - stop_gap).max(0.0) + 0.6);
                 }
             }
-            // The maneuver owner decides every lateral intent from the frozen scene: passing,
-            // lane changes, bypass, route changes and the kerb swerve round a parked car. No
-            // other function writes `lateral_target`.
+            // The maneuver owner decides every lateral intent; nothing else writes
+            // `lateral_target`.
             let way = &way_scratch[..];
             let merge_wait: Option<f32>;
             let mut maneuver_why: Option<(Reason, f32)> = None;
@@ -825,8 +784,7 @@ impl Traffic {
                     ri >= st.route_index && st.route_distance(&self.net, ri, ss)
                         < inputs.lead_gap.unwrap_or(0.0) + obstacle_len + st.front + 15.0
                 });
-                // (an emergency vehicle also passes a car still slowing down to make way, out
-                // on a free oncoming lane, as a real one does)
+                // (an emergency vehicle also passes a car still slowing to make way)
                 inputs.lead_speed = lead.map(|l| l.0.speed).unwrap_or(0.0);
                 inputs.lead_standing |= inputs.priority_pass
                     && lead.is_some_and(|l| l.0.speed < EMERGENCY_PASS_LEAD_SPEED);
@@ -868,8 +826,7 @@ impl Traffic {
                 if let Some(cmd) = decision.change {
                     let net = &self.net;
                     let car = &mut self.cars[i];
-                    // (a route vehicle going round something takes the lanes beside its route
-                    // into it until it is past, or stays where it is)
+                    // (a route vehicle going round something adds the lanes beside its route)
                     let mut spliced = true;
                     if cmd.kind == ChangeKind::Bypass && !car.state.route.is_empty() {
                         let odometer = car.state.odometer;
@@ -928,8 +885,7 @@ impl Traffic {
                     car.state.accel_cap = Some(car.state.accel_cap.map_or(cap, |a| a.min(cap)));
                 }
             }
-            // The coordinator decides the signal hold and the right of way from the frozen
-            // view; it is the only writer of junction claims.
+            // The coordinator decides signal hold and right of way; it alone writes claims.
             let decision = self.junction_plan(
                 i,
                 way,
@@ -964,9 +920,8 @@ impl Traffic {
                     self.first_red = Some((self.cars[i].id, self.time));
                 }
             }
-            // right of way: at every junction before the red light's line (and in the one the
-            // car is in already) - skipping them all whenever some light ahead was red let a
-            // car cross another's path unchecked on its way to a light further on
+            // right of way: at every junction before the red light's line (and the one the car
+            // is in), not skipped because some light further on is red
             let junction = if self.net.lanes[self.cars[i].state.lane].kind == LaneKind::Air {
                 None
             } else {
@@ -990,8 +945,7 @@ impl Traffic {
                 } else if yield_at.is_none() {
                     st.yield_time = 0.0;
                 }
-                // (`--follow yield`: a car that has stood for a couple of seconds giving way at
-                // a junction without lights)
+                // (`--follow yield`: stood giving way at an unsignalled junction)
                 if car.yielding
                     && st.yield_time >= 2.0
                     && st.yield_time - dt < 2.0
@@ -1055,8 +1009,7 @@ impl Traffic {
                 .ground_held()
                 .then_some(self.cars[i].state.front + 0.1);
             let motion_hold = self.cars[i].motion_fault.map(|_| self.cars[i].state.front + 0.1);
-            // scenery the body would touch ahead on its own way: stop short of it, as for
-            // anything standing there
+            // scenery the body would touch ahead on its own way: stop short of it
             let scenery_hold = self.cars[i]
                 .scenery_ahead
                 .map(|d| self.cars[i].state.front + (d - SCENERY_STOP_MARGIN).max(0.0));
@@ -1121,11 +1074,8 @@ impl Traffic {
                         .reduce(f32::min);
                 }
             }
-            // An AI driver sounds its horn (`ev_AI_Horn`) when held standing at low speed
-            // behind a non-moving obstruction. This is a documented provisional neoOMSI
-            // trigger (the reference proves only that the event exists), it is presentation
-            // feedback only, and it is never a way to resolve a blocked maneuver: it does not
-            // touch stop_at, claims or admission. The script ignores an event it has none of.
+            // `ev_AI_Horn` when held behind a non-moving obstruction: a provisional neoOMSI
+            // trigger (OMSI only proves the event exists), presentation only.
             let mut horn_reason: Option<Reason> = None;
             {
                 let car = &mut self.cars[i];
@@ -1155,8 +1105,7 @@ impl Traffic {
                 self.emit_trace(TraceEvent::Horn { vehicle, reason });
             }
             self.cars[i].held = stop_at.is_some() || lead.map(|l| l.0.gap < 12.0).unwrap_or(false);
-            // a timetable bus: its stops (see `bus_service`); any other car keeps to the middle
-            // of its lane, or swerves round a car parked at the kerb
+            // a timetable bus: its stops (see `bus_service`); any other car keeps to its lane
             let berth_held_long = {
                 let c = &self.cars[i];
                 c.bus
@@ -1296,8 +1245,7 @@ impl Traffic {
                     }
                 }
             }
-            // on its layover at the stand (where its timetable track begins, short of the
-            // first stop): it stands there until it is time to drive to the stop
+            // on its layover at the stand: it waits until it is time to drive to the stop
             {
                 let car = &mut self.cars[i];
                 if let Some(b) = car.bus.as_deref_mut() {
@@ -1314,8 +1262,7 @@ impl Traffic {
                     }
                 }
             }
-            // the end of the way: a timetable bus at the end of its trip drives on as
-            // ordinary traffic until it is out of sight; a dead end is a place to stop
+            // the end of the way
             {
                 let car = &mut self.cars[i];
                 let st = &mut car.state;
@@ -1331,11 +1278,8 @@ impl Traffic {
                 let air = self.net.lanes[st.lane].kind == LaneKind::Air;
                 if exhausted && st.change.is_none() && end < 150.0 {
                     let service = car.bus.as_deref_mut();
-                    // (leaving its last stop where the route ends - a terminus stop at the
-                    // stand, the end of the timetable track: the berth is only cleared a body
-                    // length on, which the route does not reach, and the bus ran off its way
-                    // and was put back on it for ever. The end of the way ends the trip; the
-                    // next trip's track begins there.)
+                    // (a terminus stop at the end of the track: the berth clears only a body
+                    // length on, past the route, so the end of the way ends the trip)
                     let in_service = service
                         .as_ref()
                         .map(|b| {
@@ -1349,12 +1293,9 @@ impl Traffic {
                         .map(|b| !b.stops.is_empty() || b.at_stop())
                         .unwrap_or(false);
                     if !st.route.is_empty() && in_service && !air && !car.gone {
-                        // the end of the route it has: where the loaded tiles end, it waits
-                        // for more route (or to be taken off out of sight); at the end of its
-                        // trip, it stops there and waits for the timetable. An open route is
-                        // not turned into random traffic after a timeout: missing capacity is
-                        // a diagnosed content/service limitation (`RoutePending`), and its
-                        // remaining stops are kept.
+                        // the end of the route it has: it waits for more route, or for the
+                        // timetable at its trip's end; never turned into random traffic
+                        // (`RoutePending` keeps its remaining stops)
                         let at = end - 0.5;
                         stop_at = Some(stop_at.map(|x| x.min(at)).unwrap_or(at));
                         let reason = if service.as_ref().map(|b| b.route_open).unwrap_or(false) {
@@ -1401,12 +1342,8 @@ impl Traffic {
                             );
                         }
                     } else if st.route.is_empty() {
-                        // a dead end (the map's edge, the end of a street spline): Omsi.exe
-                        // drives on at speed and deletes the car the frame it runs out of
-                        // road (0x71dc9c finds no next segment, 0x6fe3fc deletes it), and
-                        // `drive` takes it off there. Braking for the end, the cars stopped
-                        // there one by one and those behind queued into a stop-and-go (an
-                        // aircraft flies on in any case)
+                        // a dead end: OMSI drives on at speed and deletes the car the frame
+                        // it runs out of road, and `drive` takes it off there (no braking)
                         car.gone = true;
                     }
                 }
@@ -1427,14 +1364,12 @@ impl Traffic {
             } else {
                 car.crawl = 0.0;
             }
-            // a random car that has stood for a minute without a light or a junction
-            // holding it has given up: it leaves as soon as nobody sees it
+            // a random car stood for a minute with nothing holding it leaves once unseen
             // (one yielding for minutes is in a gridlock nobody else will end)
             let stood = (car.stopped > 60.0 && !car.yielding || car.stopped > 150.0)
                 && !car.is_bus()
                 && !car.light_hold;
-            // (a vehicle - a bus too - that cannot move without touching scenery gives up
-            // sooner: nothing will change for it)
+            // (one that cannot move without touching scenery gives up sooner)
             let pinned = car.scenery_streak > SCENERY_PINNED_GONE;
             if (stood || pinned) && !car.gone {
                 car.gone = true;
@@ -1463,8 +1398,7 @@ impl Traffic {
             };
             if car.fresh > 0.0 {
                 car.fresh -= dt;
-                // placed moving before a queue or a red light: arrive slower rather than
-                // start with an emergency stop
+                // placed moving before a queue or a red light: arrive slower, no hard stop
                 for _ in 0..16 {
                     if car.state.speed < 0.5
                         || car.state.desired_accel(&self.net, lead_now, stop_at) >= -car.state.decel
@@ -1525,9 +1459,8 @@ impl Traffic {
                     car.why
                 );
             }
-            // Keep steering room through the approach as well as the final hold. A
-            // per-tick stop target alone let the ordinary following model creep back
-            // to min_gap while the bus was still docking, too close to pull out later.
+            // Keep steering room through the approach too, or the following model creeps to
+            // min_gap while the bus docks.
             let following_lead = lead_now.map(|l| if reserve_pull_out {
                 pull_out_following_lead(l, car.state.min_gap, car.pass_room)
             } else { l });
@@ -1543,8 +1476,7 @@ impl Traffic {
                 remove.push(i);
                 continue;
             }
-            // Omsi.exe takes a train away whole once its first car reaches the end of the
-            // track; here each car goes as it reaches the end, the train with its last one
+            // (OMSI removes a train whole at the track end; here each car goes as it arrives)
             let l = &self.net.lanes[car.state.lane];
             if l.kind == LaneKind::Rail && l.next.is_empty() && car.state.s > l.length() {
                 let v = &mut car.vehicle;
@@ -1629,12 +1561,8 @@ impl Traffic {
                     );
                 }
             }
-            // An emergency vehicle (its script sets `TrafficPriority`, the stock ambulance)
-            // is told `TrafficPriorityWarningNeeded` while something holds it up close ahead:
-            // a car or the player's bus it catches up with or has to follow, a red light, a
-            // junction it has to wait at. Its script sounds the siren on it; without the
-            // variable it drove silent all day. (Behind a car at the same speed the siren
-            // flickered on a strict "slower".)
+            // An emergency vehicle (`TrafficPriority`) is told `TrafficPriorityWarningNeeded`
+            // while held up close ahead; its script sounds the siren on it.
             let priority_warning = car.vehicle.var("TrafficPriority").is_some_and(|v| v > 0.5)
                 && (lead_now
                 .is_some_and(|l| l.gap < PRIORITY_WARN_GAP && l.speed < car.state.speed + 0.5)
@@ -1653,9 +1581,8 @@ impl Traffic {
         }
         // (`tick_finish` swap-removes from the back)
         remove.sort_unstable();
-        // Who can be seen: a car out of the view (and farther than the mirrors and the
-        // shadows reach) leaves its animations as they are and is not drawn at all.
-        // Every part on the track counts: a long train vanished with its locomotive (#336).
+        // Who can be seen: a car out of view and of mirror/shadow reach is not drawn or
+        // animated; every part of a train counts (#336).
         if let Some(v) = self.viewer {
             let radius = |front: f32, rear: f32| (front + rear).abs().max(4.0) as f64 + 2.0;
             for c in &mut self.cars {
@@ -1676,13 +1603,10 @@ impl Traffic {
         TickFrame { by_lane, coming, walkers, aspects, junction_actors, frames, remove, previous_odometer }
     }
 
-    /// 4. Realize every body and run its script, in parallel. The domain never owns pose;
-    /// this is where `simulation::ai_motion` writes it.
+    /// 4. Realize every body and run its script, in parallel; `simulation::ai_motion` writes
+    /// the pose.
     fn tick_realize(&mut self, dt: f32, frames: &mut [Option<AiFrame>], previous_odometer: &[f32]) {
-        // The bodies and the scripts of the AI vehicles run in parallel: each car follows
-        // its own way and its OMSI script is its own little machine reading only its own
-        // state; with thirty cars and a dozen timetable buses they were the largest single
-        // cost of a frame.
+        // (each body and script reads only its own state, so they run in parallel)
         {
             use rayon::prelude::*;
             let net = &self.net;
@@ -1715,8 +1639,7 @@ impl Traffic {
                 })
                 .collect();
             let profile = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
-            // (a few cars per job: every job handed out wakes a worker, and the waking cost
-            // the main thread more than a car's work)
+            // (a few cars per job: waking a worker costs more than one car's work)
             work.par_iter_mut()
                 .with_min_len(4)
                 .for_each(|(state, body, vehicle, frame, trail, fault, streak, previous, caps, ahead, ghost, track_start, id, swept)| {
@@ -1740,9 +1663,8 @@ impl Traffic {
                         **streak = 0.0;
                     }
                     let before = (body.kind == MotionKind::Road && !*ghost).then(|| (**body).clone());
-                    // Where would this body touch scenery if it kept to its way? The planner
-                    // brakes for it next tick (and looks for a way round); a refused move is
-                    // only the last resort, with the bumper already against the thing.
+                    // Where would this body touch scenery on its way? The planner brakes for
+                    // it next tick; a refused move is only the last resort.
                     if before.is_some() && body.ground_supported {
                         let trouble = **streak > 0.0 || fault.is_some();
                         if state.speed > 0.05 || ahead.is_some() || trouble {
@@ -1785,10 +1707,7 @@ impl Traffic {
                             let first = **streak == 0.0;
                             **streak += dt;
                             body.reject_motion(&before);
-                            // (every refused move: with the planner holding the vehicle
-                            // between attempts these come about once a second, and choosing
-                            // the way out only every half second *of them* left a bus
-                            // pinned for a quarter of a minute with its wheels as they were)
+                            // (every refused move: they come only about once a second)
                             body.recover_corner(&way,
                                 (caps.front, caps.rear, caps.half_width), &obstruction.unwrap());
                             frame.speed = 0.0;
@@ -1818,9 +1737,8 @@ impl Traffic {
                         frame.odometer = *previous + body.realized_speed(dt) * dt;
                     }
                     if rail && !vehicle.trailers.is_empty() {
-                        // the coupled cars (a train's, a tram's sections) on the track it
-                        // came along, not dragged round the bends like a road trailer
-                        // (cars still before the start of their track are not shown yet)
+                        // the coupled cars on the track it came along, not dragged round
+                        // bends like a road trailer
                         let waiting = std::cell::Cell::new(0);
                         let odo = state.odometer as f64;
                         vehicle.retrail(0.0, &|d| {
@@ -1851,10 +1769,7 @@ impl Traffic {
 
     /// 5. Read the realized pose/speed back into each planner (single pose owner, Stage 4).
     fn tick_commit_feedback(&mut self, dt: f32, previous_odometer: &[f32]) {
-        // Motion feedback (Stage 4, A7): the body is the single pose owner. Each road
-        // vehicle's realized pose and speed are read back into its planner, so route
-        // progress - and every stop distance derived from it - is committed from realized
-        // movement, never from a planner coordinate alone.
+        // (route progress and every stop distance come from realized movement)
         for (i, c) in self.cars.iter_mut().enumerate() {
             if self.net.lanes.get(c.state.lane).map(|l| l.kind) != Some(LaneKind::Street) {
                 continue;
@@ -1870,9 +1785,8 @@ impl Traffic {
         }
     }
 
-    /// 6. The tick tail: optional debug dumps, the wait-for graph, the `OMSI_TRACE_AI` dump,
-    /// the overlap check, removal (releasing every owner exactly once) and the failure
-    /// capture sample.
+    /// 6. The tick tail: debug dumps, wait-for graph, `OMSI_TRACE_AI`, overlap check, removal
+    /// (releasing every owner exactly once) and the failure capture.
     fn tick_finish(
         &mut self,
         player: Option<PlayerBox>,
@@ -1950,11 +1864,8 @@ impl Traffic {
                 );
             }
         }
-        // Persistent unexplained holds: classify a cyclic stale-claim deadlock separately
-        // from legal congestion or a physically full road; the coordinator cancels stale
-        // speculative claims so a valid safe manoeuvre can be retried, and lets one vehicle
-        // of a lasting cycle that only gives way by the rules go first. It never forces a
-        // vehicle across a conflicting body or a red signal.
+        // Persistent holds: a stale-claim cycle (not congestion) has its stale claims
+        // cancelled or one member let go first; never across a body or a red signal.
         {
             let wait_scene = JunctionScene {
                 net: &self.net,
@@ -2056,37 +1967,28 @@ impl Traffic {
     }
 }
 
-/// A parked car further than this (m) from a car's way is not looked at on it: only one
-/// within 6 m of the lane's curve counts, and the curve keeps well within 2 m of its points.
+/// A parked car further than this (m) from a car's way is not looked at on it.
 const PARKED_ON_ROUTE: f64 = 8.0;
 
-/// Is the scenery look-ahead (a probe body driven along the way, most of the vehicles'
-/// realization time) to run for vehicle `id` at step `step`? Every other step, half the
-/// vehicles on one and half on the next; in between, `carried_scenery_ahead` carries its
-/// last finding along. A vehicle in trouble with scenery (a refused move, pinned) or without
-/// a finding yet looks every step.
+/// Does vehicle `id` run the (costly) scenery look-ahead at `step`? Every other step, half the
+/// vehicles each; one in trouble with scenery or without a finding yet looks every step.
 fn scenery_sweep_due(step: u64, id: VehicleId, trouble: bool, swept: bool) -> bool {
     trouble || !swept || step.wrapping_add(id.get()).is_multiple_of(2)
 }
 
 /// The look-ahead's finding `found` at odometer `at`, carried to odometer `now`: the room to
-/// the contact shrinks by what the body has driven since. The look-ahead samples every half
-/// metre, about what a body at 50 km/h drives between two looks, so the carried value is
-/// nearly as good as a new look; what comes into reach is seen a step later, well inside
-/// the 4 m beyond the braking distance the look-ahead reaches.
+/// the contact shrinks by what the body has driven since.
 fn carried_scenery_ahead(at: f32, found: Option<f32>, now: f32) -> Option<f32> {
     found.map(|d| (d - (now - at)).max(0.0))
 }
 
-/// Is emergency vehicle `c` held up in traffic (standing or crawling right behind a leader,
-/// or passing a queue on the oncoming lane), and how far ahead of its front the oncoming
-/// lane is to be kept free for it (m)?
+/// Is emergency vehicle `c` held up in traffic (behind a leader or passing a queue), and how
+/// far ahead of its front (m) is the oncoming lane to be kept free?
 fn emergency_pass_zone(c: &AiCar) -> (bool, f32) {
     if let Some(p) = c.maneuver.passing.filter(|p| !p.aborted) {
         return (true, (p.until + p.back - c.state.odometer).max(0.0) + 5.0);
     }
-    // (not where it cannot pass anyway: a split carriageway, a queue up to a junction it
-    // does not hold)
+    // (not where it cannot pass: a split carriageway, a queue up to a junction it lacks)
     let held = c.why.0 == Reason::Leader
         && c.why.1 - c.state.front < 30.0
         && c.state.speed < EMERGENCY_PASS_LEAD_SPEED
@@ -2147,8 +2049,7 @@ fn emergency_hold_step(hold: f32, holding: bool, behind: bool, dt: f32) -> (f32,
     }
 }
 
-/// The frozen per-tick data the planning phase hands to realization and finish. Every buffer
-/// is owned (no borrow of `Traffic`), so the phases can be separate methods.
+/// The frozen per-tick data planning hands to realization and finish (owned, no borrow).
 struct TickFrame {
     previous_odometer: Vec<f32>,
     by_lane: HashMap<usize, Vec<(usize, f32, f32, bool)>>,
@@ -2210,9 +2111,8 @@ fn ask_light(
     }
 }
 
-/// The lights a bus (the player's, another player's) at `pos` facing `heading`, with its
-/// `blinker` set, asks for: those of the lanes it will drive onto, each within its
-/// `[approachdist]`.
+/// The lights a player's bus at `pos`/`heading` with `blinker` asks for: those of the lanes
+/// it will drive onto, each within its `[approachdist]`.
 fn lights_asked_by(
     net: &Network,
     lights: &[TrafficLightController],
@@ -2243,11 +2143,9 @@ fn lights_asked_by(
         .collect()
 }
 
-/// The street lanes a vehicle `s` metres along `lane` will drive onto within `reach`
-/// metres, with the distance to their starts (0 for its own). At a fork it takes the
-/// branch the `blinker` points to (1 left, 2 right; the next fork only), else the
-/// straightest, judged over the branches' first 15 m: a branch it may not take is not
-/// asked for, nor is a turn of more than 60° (#394).
+/// The street lanes a vehicle `s` m along `lane` drives onto within `reach` m, with the
+/// distance to their starts. At a fork: the `blinker` branch (1 left, 2 right), else the
+/// straightest over 15 m; never a turn over 60° (#394).
 fn street_lanes_ahead(
     net: &Network,
     lane: usize,
@@ -2347,10 +2245,8 @@ mod gate_lane_tests {
         assert!(!gate_lane_ahead(&lane(LaneKind::Rail), DVec3::ZERO, 0.0));
     }
 
-    /// A road forking at y = 20 into a straight lane and a branch bending off to the right
-    /// into a bus lane, both with a light of `[approachdist]` 40 (1 on the branch, 3 on the
-    /// bus lane), as at Menzinger Höhe (#394), and a gate (2) off the road. The branch
-    /// leaves the fork as straight as the straight lane does, and comes first.
+    /// A road forking at y = 20 into a straight lane and a right branch into a bus lane, with
+    /// lights 1 and 3 and a gate (2) off the road, as at Menzinger Höhe (#394).
     fn split() -> (Network, Vec<TrafficLightController>) {
         let street = |a: [f64; 2], heading: f64, length: f64, radius: f64| {
             let start = DVec3::new(a[0], a[1], 0.0);
@@ -2548,10 +2444,8 @@ mod presence_tests {
         assert!((t.others_still[&7] - 0.06).abs() < 1e-6);
     }
 
-    /// The traffic's time of day (light programs, timetable) runs on its own steps; it must
-    /// keep up with the frames' time at any frame rate, slow frames included. With the old
-    /// cap on the steps' debt every frame over 160 ms lost the rest for good, and the
-    /// timetable buses fell behind the game clock.
+    /// The traffic's time of day must keep up with the frames' time at any frame rate, slow
+    /// frames included, or the timetable falls behind the game clock.
     #[test]
     fn the_traffic_clock_keeps_the_frames_time() {
         let mut t = Traffic::for_tests(Network::default());

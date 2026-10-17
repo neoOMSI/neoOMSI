@@ -45,9 +45,8 @@ impl Traffic {
     }
 
 
-    /// Make the population deterministic for a LAN room.  The room's session id is
-    /// shared by the host and every client, so the same map/time produces the same
-    /// initial cars instead of each process inventing a different world.
+    /// Make the population deterministic for a LAN room: host and clients share the session
+    /// id, so the same map/time gives the same initial cars everywhere.
     pub fn set_lan_seed(&mut self, seed: u64) {
         self.rng = seed | 1;
     }

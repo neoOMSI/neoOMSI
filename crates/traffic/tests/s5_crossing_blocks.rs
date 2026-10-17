@@ -1,9 +1,7 @@
 //! Stage 5 exit gate — content rules: `[crossingproblem]` and typed `[blockpath]` modes.
 //!
-//! Provenance: the reference parser only proves that `[crossingproblem]` is a boolean and
-//! that `[blockpath] <path> <mode>` keeps a path plus a byte mode. The decision meanings
-//! tested here are the documented neoOMSI Stage 5 interpretation: keep-clear entry refusal,
-//! reservation refusal (`Reserve`), and oncoming commitment (`Oncoming`).
+//! The reference parser only proves the syntax; the meanings tested (keep-clear entry
+//! refusal, `Reserve`, `Oncoming`) are neoOMSI's documented interpretation.
 
 mod common;
 

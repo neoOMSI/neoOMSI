@@ -560,8 +560,8 @@ impl crate::App {
     }
 }
 
-/// Whether there is a quick save to load, asked of the disk once a second: asked every
-/// frame, it took the better part of a millisecond of each.
+/// Whether there is a quick save to load, asked of the disk once a second (per frame it
+/// cost most of a millisecond).
 fn quicksave_exists(root: &std::path::Path) -> bool {
     static LAST: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());

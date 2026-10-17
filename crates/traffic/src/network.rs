@@ -35,8 +35,7 @@ pub struct LaneKey {
 }
 
 /// One `[blockpath] <path> <mode>` entry: another `[path]` of the same object this lane
-/// blocks while it is taken. The mode's full meaning is not established; it is kept as
-/// content data (with provenance at the adapter) rather than discarded.
+/// blocks while it is taken (the mode's meaning is not established).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockRule {
     /// The other `[path]` index of the same object.
@@ -78,10 +77,8 @@ pub struct Lane {
     /// `[rule] trafficdensity`: how much of the road traffic uses this lane (0 = none), of
     /// any random traffic group, each weighed by its group's traffic factor.
     pub density: f32,
-    /// `[rule] trafficdensity <value> <group>` of the path, the last per group: the group
-    /// is the random traffic group's place in the map's `unsched_vehgroups.txt`. A group
-    /// without one takes its default there (Berlin-Spandau's GDR cars only drive where
-    /// the Falkensee paths ask for them).
+    /// `[rule] trafficdensity <value> <group>` of the path, the last per group (the group's
+    /// place in `unsched_vehgroups.txt`); a group without one takes its default there.
     pub group_density: Vec<(u16, f32)>,
     /// `[rule] no_cars`: cars keep off this lane.
     pub no_cars: bool,
@@ -96,16 +93,14 @@ pub struct Lane {
     /// Parallel lanes of the same road in the same direction (for lane changes).
     pub left: Option<usize>,
     pub right: Option<usize>,
-    /// `[rule] priority` (`TPRIPriority`): who goes first where two paths of a junction
-    /// meet. The stock maps put 192 on the straight paths of the main road and 64 on the
-    /// paths coming out of a side road and leave the rest alone, so an unmarked path sits
-    /// in between at `DEFAULT_PRIORITY`.
+    /// `[rule] priority` (`TPRIPriority`): who goes first where two junction paths meet.
+    /// Stock maps use 192 (main road) and 64 (side road); unmarked is `DEFAULT_PRIORITY`.
     pub priority: f32,
     /// Other `[path]`s of its object this lane blocks while taken (`[blockpath]`), beyond
     /// the places where they cross.
     pub blocks: Vec<BlockRule>,
-    /// `[crossingproblem]` after this `[path]`: a vehicle on it keeps the junction clear.
-    /// Its exact decision semantics are not established; it is carried as content data.
+    /// `[crossingproblem]` after this `[path]`: a vehicle on it keeps the junction clear
+    /// (exact semantics not established).
     pub crossing_problem: bool,
 }
 
@@ -181,10 +176,8 @@ impl Lane {
         (i, if d1 > d0 { (s - d0) / (d1 - d0) } else { 0.0 })
     }
 
-    /// Position and heading at distance `s`. Between two samples the lane is a cubic
-    /// Hermite curve whose tangents are the sampled headings, so a bend stays round
-    /// instead of becoming a chain of chords: a car following the chords turned in small
-    /// jerks at every sample and at every lane joint.
+    /// Position and heading at distance `s`: a cubic Hermite curve through the samples and
+    /// their headings, so a car does not jerk at every chord and lane joint.
     pub fn at(&self, s: f32) -> (DVec3, f32) {
         if self.points.len() < 2 {
             return (
@@ -301,10 +294,8 @@ impl LaneBuilder {
         Self::curve(points, headings, vec![k; n + 1], kind, width)
     }
 
-    /// Lane from sampled points with their tangent headings and curvatures.
-    /// A flight path has no speed limit of its own unless the map gives it one with a
-    /// `[rule] speedlimit`; the street default of 50 km/h had the Tegel approach flown at
-    /// walking pace for an airliner.
+    /// Lane from sampled points with their tangent headings and curvatures. A flight path
+    /// gets no speed limit (not the 50 km/h street default) unless a `[rule] speedlimit`.
     pub fn curve(
         points: Vec<DVec3>,
         headings: Vec<f32>,
@@ -531,10 +522,8 @@ pub struct Crossing {
     pub other_at: f32,
     /// Both lanes end in the same place (one road runs into the other) rather than crossing.
     pub merge: bool,
-    /// The meeting place: how far before and after `at` this lane's centre line stays
-    /// closer than `MEET_DIST` to the other's (where two vehicles on them would touch),
-    /// and the same along the other lane. Two paths that cross at a shallow angle, or two
-    /// turns that bend towards each other, meet over metres, not at a point.
+    /// The meeting place: how far before and after `at` (and `other_at`) the centre lines
+    /// stay closer than `MEET_DIST` (a shallow crossing meets over metres, not at a point).
     pub before: f32,
     pub after: f32,
     pub other_before: f32,
@@ -775,18 +764,10 @@ impl Network {
         }
     }
 
-    /// Does `b` run beside `a` from about where `a` starts - another lane of the same spline,
-    /// or the other branch of a fork in the same junction - without `a` leading into it? A
-    /// timetable track that lists two such paths one after the other changes lanes there
-    /// (Spandau's line 92 moves from lane 5 to lane 6 of a six-lane Falkenseer Chaussee
-    /// piece that way); driving `a` to its end first and then starting `b` sent the bus
-    /// 30 m back and sideways.
-    ///
-    /// Or `b` runs beside a stretch of `a` without starting where it does: a bus lane or
-    /// stop lane of a junction object that begins before or after the lane the route came
-    /// in on (Spandau's Klosterstraße, Heerstraße and Altstädter Ring junctions: the station
-    /// link reaches the stop on the through lane, the next one leaves from the stop lane
-    /// beside it). Driven one after the other the bus jumped up to 58 m back.
+    /// Does `b` run beside `a` (a lane of the same spline or fork starting with it, or a bus
+    /// or stop lane beside a stretch of it) without `a` leading into it? A timetable track
+    /// listing two such paths in a row changes lanes there instead of driving `a` to its end
+    /// (Spandau line 92).
     pub fn parallel(&self, a: usize, b: usize) -> bool {
         let (Some(la), Some(lb)) = (self.lanes.get(a), self.lanes.get(b)) else {
             return false;
@@ -805,9 +786,8 @@ impl Network {
         {
             return true;
         }
-        // (a lane of another spline beside it counts as well: mod maps lay a bus lane or a
-        // second carriageway as splines of their own, and Novi Sad's tracks change onto
-        // them 30 m before the lane they come in on ends)
+        // (a lane of another spline beside it counts too: mod maps lay bus lanes as their
+        // own splines, Novi Sad)
         self.beside(la, lb)
     }
 
@@ -943,12 +923,10 @@ impl Network {
         best.map(|(ri, s, _, lat)| (ri, s, lat))
     }
 
-    /// Where a bus stop at `p` lies on `route`: like [`Network::project_on_route_lateral`],
-    /// but among the points within `reach` (when given) and not before route index
-    /// `from`, a lane with the stop on its kerb side (right, or left with left-hand traffic)
-    /// goes before a nearer one with the stop across it - a route back along the same
-    /// street passes each stop twice, once from the other side, and the bus stopped at the
-    /// stop across the road on its way out. Falls back to the nearest point.
+    /// Where a bus stop at `p` lies on `route` (within `reach`, from route index `from`):
+    /// like [`Network::project_on_route_lateral`], but a lane with the stop on its kerb side
+    /// goes before a nearer one across the road (a route back along the same street).
+    /// Falls back to the nearest point.
     pub fn project_stop_on_route(
         &self,
         route: &[usize],
@@ -1014,8 +992,7 @@ impl Network {
     }
 
     /// `conflicts`, `crossings` and `walks` of the junction objects whose lanes start at
-    /// index `first` (all lanes of an object come with its tile, so a grown network only
-    /// needs its new objects looked at). Returns the pairs and footpath crossings found.
+    /// index `first`. Returns the pairs and footpath crossings found.
     fn conflicts_from(&mut self, first: usize) -> (usize, usize) {
         let len = self.lanes.len();
         self.conflicts.resize(len, Vec::new());
@@ -1057,13 +1034,12 @@ impl Network {
                     } else {
                         polyline_crossing(a, b)
                     };
-                    // A lane above another (a bridge over the road below) does not meet it
-                    // just because their plan views cross: require the bodies to share height.
+                    // a bridge does not meet the road below: the bodies must share height
                     let place = place.filter(|&(sa, sb)| {
                         (a.at(sa).0.z - b.at(sb).0.z).abs() <= MEET_CLEARANCE
                     });
-                    // One lane driven both ways (a single-lane tunnel, signal-controlled):
-                    // the whole stretch they share is the meeting place.
+                    // one lane driven both ways (a single-lane tunnel): the whole shared
+                    // stretch is the meeting place
                     if let Some((ca, cb)) = head_on(a, b, i, j) {
                         self.conflicts[i].push(j);
                         self.conflicts[j].push(i);
@@ -1072,8 +1048,7 @@ impl Network {
                         n += 1;
                         continue;
                     }
-                    // `[blockpath]`: the object says the two are in each other's way even
-                    // where their lines do not cross - the whole of both is the meeting place
+                    // `[blockpath]` without a crossing: all of both is the meeting place
                     let (pa, pb) = (
                         a.key.map(|k| k.path).unwrap_or(u16::MAX),
                         b.key.map(|k| k.path).unwrap_or(u16::MAX),
@@ -1162,11 +1137,9 @@ impl Network {
         (n, walks)
     }
 
-    /// Must a vehicle on lane `a` let one on lane `b` go first where they meet? The path with
-    /// the higher `[rule] priority` goes first; between equals, a left turn waits for the
-    /// oncoming traffic, and otherwise the one coming from the right has the right of way
-    /// (the German "rechts vor links" that the stock maps rely on wherever they set no
-    /// priorities) - mirrored on a left-hand-traffic map. A train always goes first.
+    /// Must a vehicle on lane `a` let one on lane `b` go first where they meet? Trains go
+    /// first, then higher `[rule] priority`; between equals a left turn waits for oncoming
+    /// traffic, else "rechts vor links" (mirrored on a left-hand-traffic map).
     pub fn must_yield(&self, a: usize, b: usize) -> bool {
         let (la, lb) = (&self.lanes[a], &self.lanes[b]);
         if la.kind == LaneKind::Rail {
@@ -1393,8 +1366,7 @@ impl Network {
     }
 
     /// The lanes that come within `NEAR_LANES` of `lane` anywhere (sorted): all that
-    /// `opposite` and `beside_lane` can find beside it. They looked through every lane of
-    /// the cells round the place on every call, for every car on every tick.
+    /// `opposite` and `beside_lane` can find beside it.
     fn near_lanes(&self, lane: usize) -> Cow<'_, [usize]> {
         let work = || {
             let l = &self.lanes[lane];
@@ -1663,9 +1635,8 @@ impl Network {
     }
 
     /// Mark the lanes of roundabouts: short street lanes that lead back to themselves within
-    /// `RING_MAX` metres, turning once round the way traffic circulates (anticlockwise, or
-    /// clockwise on a left-hand-traffic map). Where the map sets no priorities, traffic on
-    /// the ring goes before traffic entering it (`must_yield`), not "from the right".
+    /// `RING_MAX` metres, turning once round the way traffic circulates. Ring traffic then
+    /// goes first in `must_yield`.
     pub fn compute_rings(&mut self) {
         self.ring = vec![false; self.lanes.len()];
         self.mark_rings(0..self.lanes.len());
@@ -1778,7 +1749,6 @@ impl Network {
         dead
     }
 
-    /// Nearest street lane and distance along it to a world point.
     /// Sort the lanes into the grid (called by `link`; call again after adding lanes).
     pub fn build_grid(&mut self) {
         self.grid.clear();
@@ -2050,19 +2020,15 @@ impl Network {
         // every lane now leads (a dead end may go on into the new tiles)
         self.conflicts_from(first);
         self.update_reach_from(first);
-        // A roundabout that is new runs through a new lane: one wholly on the old tiles was
-        // found already, and one across the tile edge was not closed before. So only the
-        // new lanes are searched from (`compute_rings` over the whole network on every tile
-        // would cost what loading the map does).
+        // a new roundabout runs through a new lane, so only those are searched from
         self.ring.resize(end, false);
         self.mark_rings(first..end);
         self.bump_version();
         first..end
     }
 
-    /// Appending lanes can only change the reach of those lanes and their predecessors.
-    /// An outgoing edge into the rest of the network uses its already settled reach. This
-    /// avoids rewalking every loaded tile whenever the streamer adds a small batch.
+    /// Appending lanes can only change the reach of those lanes and their predecessors, so
+    /// only they are walked again.
     fn update_reach_from(&mut self, first: usize) {
         if self.reach.len() != first {
             self.update_reach();
@@ -2071,8 +2037,7 @@ impl Network {
         let mut affected: hashbrown::HashSet<usize> = (first..self.lanes.len()).collect();
         let mut pending: Vec<usize> = affected.iter().copied().collect();
         while let Some(i) = pending.pop() {
-            // The vector-based full pass is cheaper once much of the network leads
-            // into this tile (for example a strongly connected city grid).
+            // the full pass is cheaper once much of the network leads into this tile
             if affected.len() > self.lanes.len() / 4 {
                 self.update_reach();
                 return;

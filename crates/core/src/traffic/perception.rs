@@ -21,11 +21,9 @@ fn body_part_from_obb(parent: &BodyFootprint, part: u16, box_: &Obb) -> BodyFoot
 
 impl Traffic {
 
-    /// Nearest vehicle ahead of position `s` on `lane` (following the lanes `plan` has
-    /// chosen after it, else the first `next`, for up to `look` m): (distance from `s` to
-    /// its rear, its speed along the lane, its index). A vehicle beside the lane's middle
-    /// far enough to be passed (a bus in its bay) does not count; one coming the other way
-    /// round an obstacle does, standing.
+    /// Nearest vehicle ahead of `s` on `lane` along `plan` (else the first `next`), up to
+    /// `look` m: (distance to its rear, its speed, its index). One far enough beside the
+    /// middle to be passed does not count; one coming the other way round an obstacle does.
     pub(crate) fn obstacle_from(
         &self,
         i: usize,
@@ -41,8 +39,7 @@ impl Traffic {
         let mut offset = 0.0f32;
         let mut s_from = s;
         let mut upcoming = plan.map(|p| p.iter().copied());
-        // (as many lanes as fit into `look`: a junction is a string of short ones, and four
-        // of them hid a bus standing just behind it)
+        // (as many lanes as fit into `look`: a junction is a string of short ones)
         for _ in 0..10 {
             if let Some(list) = by_lane.get(&lane) {
                 for &(j, os, lat, foreign) in list {
@@ -50,10 +47,8 @@ impl Traffic {
                         continue;
                     }
                     let o = &self.cars[j];
-                    // Two that overlap (a car that ended up beside or in a bus) each found the
-                    // other ahead - one's front past the other's rear - and each waited for the
-                    // other for good. One that follows this car already and whose middle is
-                    // behind this one's is not its lead: the front one drives off.
+                    // Two overlapping cars each found the other ahead and waited for good: one
+                    // that already follows this car and is behind it is not its lead.
                     if o.lead_car == Some(me.id) {
                         let h = me.vehicle.heading.to_radians();
                         let fwd = DVec2::new(h.sin(), h.cos());
@@ -65,8 +60,7 @@ impl Traffic {
                             continue;
                         }
                     }
-                    // (the lateral place this car will have when it gets there: pulling out
-                    // round a standing bus, it is clear of it before it arrives)
+                    // (this car's lateral place when it gets there, so pulling out clears it)
                     let mine = me.state.lateral_ahead(offset + (os - s_from));
                     if !foreign && (lat - mine).abs() > me.half_width + o.half_width + 0.1 {
                         continue;
@@ -117,7 +111,6 @@ impl Traffic {
     ) -> Option<(Lead, usize)> {
         let me = &self.cars[i].state;
         // once well over into the new lane, what stands in the old one no longer matters
-        // (that is the whole point of pulling out round it)
         let committed = me
             .change
             .map(|c| c.t > 0.4 || (c.bypass && c.wait <= 0.0))
@@ -138,11 +131,8 @@ impl Traffic {
                 }
             }
         }
-        // Merging: a car on another lane that leads into the same lane as the next one of
-        // ours, and is nearer to that joint, goes first; this car keeps behind it as if it
-        // were already ahead in its own lane. (A left turn and the straight lane beside it
-        // end in the same exit; taking the turn at a sensible speed, a car used to be run
-        // through by the one going straight.)
+        // Merging: a car on another lane leading into our next lane that reaches the joint
+        // first goes first; this car keeps behind it as if it were ahead in its own lane.
         if !committed {
             let mut before = self.net.lanes[me.lane].length() - me.s;
             let mut from = me.lane;
@@ -150,9 +140,7 @@ impl Traffic {
                 if before > look {
                     break;
                 }
-                // Separate approaches share storage only at the actual joint. Treating
-                // their longitudinal difference as a bumper gap all the way upstream
-                // makes a bus on the right slow the free lane beside it.
+                // only near the joint (far upstream a bus on the right slowed the free lane)
                 let merge_reach = me.speed * me.speed / (2.0 * me.decel.max(0.5))
                     + me.speed * me.reaction + me.min_gap + 5.0;
                 if before - me.front > merge_reach {
@@ -186,8 +174,7 @@ impl Traffic {
                         if theirs < -2.0 {
                             continue;
                         }
-                        // who reaches the joint first goes first; a near tie goes to the one
-                        // already let in (the order is kept, it does not flip frame by frame)
+                        // a near tie goes to the one already let in (no flipping per frame)
                         let t_me = (before - me.front).max(0.0) / me.speed.max(1.0);
                         let dist_them = (theirs - other.state.front).max(0.0);
                         let t_them = if other.yielding || other.light_hold
@@ -206,8 +193,7 @@ impl Traffic {
                             && other.merge_after != Some(self.cars[i].id)
                             && other.id < self.cars[i].id);
                         if first {
-                            // behind it at the joint; while it is not past yet, wait at the
-                            // joint itself rather than behind a car that is still beside
+                            // behind it at the joint; until it is past, wait at the joint
                             let d = (before - theirs) - other.state.rear;
                             let (d, v) = if d >= 0.0 {
                                 (d, other.state.speed)
@@ -237,8 +223,8 @@ impl Traffic {
     }
 
 
-    /// Is the stretch `s - back .. s + ahead` of `lane` free of cars (other than `i`)?
-    /// bus serving its stop, a broken-down or abandoned car, the player's bus waiting)?
+    /// Is car `i`'s lead an obstacle that stays put (a bus serving its stop, a broken-down
+    /// car, the player's bus waiting)?
     pub(crate) fn standing_obstacle(
         &self,
         i: usize,
@@ -253,9 +239,8 @@ impl Traffic {
         match who {
             Some(j) if j < self.cars.len() => {
                 let o = &self.cars[j];
-                // a bus at its stop, or a car that has stood for long with nothing holding
-                // it (not the head of a queue that waits for a light, a junction or a car),
-                // or the end of a queue standing behind a bus at its stop
+                // a bus at its stop, a car long stood with nothing holding it, or the end of
+                // a queue behind a bus at its stop
                 o.standing_for(self.day_time) > 4.0
                     || (o.stopped > 25.0 && !o.held && self.cars[i].stopped > 6.0)
                     || (o.stopped > 3.0 && self.standing_queue(j).1)
@@ -266,11 +251,8 @@ impl Traffic {
     }
 
 
-    /// The vehicles standing nose to tail from car `j` on (as far as their last steps
-    /// show): the length of road they fill (m), and whether a bus serving its stop heads
-    /// it - a queue that will not move for a while, which the cars behind may pass as a
-    /// whole. (Behind a bus on its layover the whole street
-    /// used to wait, five buses and a dozen cars for a quarter of an hour.)
+    /// The queue standing nose to tail from car `j` on: its length (m), and whether a bus
+    /// serving its stop heads it (then the cars behind may pass it as a whole).
     pub(crate) fn standing_queue(&self, j: usize) -> (f32, bool) {
         let mut k = j;
         let mut len = self.cars[j].state.front + self.cars[j].state.rear;
@@ -297,22 +279,11 @@ impl Traffic {
     }
 
 
-    /// Pull out round something that has stopped in front (a bus at its stop, a car that
-    /// gave up, the player standing in the lane): a car held for a few seconds behind a
-    /// standing obstacle within 25 m moves to a free neighbouring lane - left first, then
-    /// right. With nowhere to go it waits, like everybody else in a jam.
     #[allow(clippy::too_many_arguments)]
 
-    /// The lanes of a car's way with their distance from its origin: the current lane (at
-    /// minus `s`) and the plan, up to `within` metres.
-    /// Where car `i` has to stop for somebody on foot (the distance of its front from its
-    /// origin, as the other stops): anybody standing in the strip it is about to sweep, or
-    /// stepping into it by the time the car gets there. Only the zebras and signalled
-    /// crossings used to count, and only for people strolling the footpaths, so a car
-    /// drove at full speed through a passenger walking off a bus across the road, through
-    /// somebody leaving a stop, or through anybody standing in the carriageway. A
-    /// timetable bus ignores the people waiting at the kerb for it unless they stand well
-    /// inside its path (it pulls up right beside them).
+    /// Where car `i` has to stop for somebody on foot (its front's distance from its origin):
+    /// anybody in the strip it is about to sweep, or stepping into it by the time it gets
+    /// there. A timetable bus ignores people waiting at the kerb unless well inside its path.
     /// `past_standing`: the car edges past standing passengers who step aside
     /// (`PEOPLE_PATIENCE`); the third value says whether the person stopping it is one.
     pub(crate) fn people_stop(
@@ -457,9 +428,8 @@ impl Traffic {
     }
 
 
-    /// Build the frozen junction view for car `i` and let the coordinator decide. The scene
-    /// borrows only immutable fields (network, index, previous blockers) and the caller's
-    /// view maps, so the coordinator is the sole writer of junction claims.
+    /// Build the frozen junction view for car `i` and let the coordinator decide (it stays
+    /// the sole writer of junction claims).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn junction_plan(
         &mut self,
@@ -493,10 +463,8 @@ impl Traffic {
     }
 
 
-    /// Two cars that have each other for their lead - a car that ended up in a bus's body,
-    /// each finding the other in its way - wait for each other for good. The one further
-    /// along its lane (on the same lane; else the lower number) stops taking the other for
-    /// its lead for a few seconds and drives off.
+    /// Two cars that have each other for their lead would wait for good: the one further
+    /// along (same lane; else the lower id) ignores the other for a few seconds.
     pub(crate) fn break_lead_pairs(&mut self) {
         let index: HashMap<VehicleId, usize> = self
             .cars
@@ -507,8 +475,7 @@ impl Traffic {
         let mut pairs: Vec<(usize, VehicleId)> = Vec::new();
         for c in &self.cars {
             let Some(bid) = c.lead_car else { continue };
-            // Each unordered pair is handled once, chosen by stable id rather than by
-            // container position, so a reorder cannot pick a different partner.
+            // each pair once, by stable id so a reorder cannot change the outcome
             if c.id > bid {
                 continue;
             }
@@ -573,10 +540,8 @@ impl Traffic {
     }
 
 
-    /// Realized bodies for the perception layer: primary bodies with their lane placements
-    /// (current lane, the lane a rear still stands on, a lane-change target, a passing
-    /// offset), trailers/rear sections sharing the owner id, and the external road users.
-    /// The geometry is the truth; the placements only accelerate queries.
+    /// Realized bodies for perception: AI bodies with their lane placements, trailers and rear
+    /// sections under the owner id, and external road users. Placements only speed up queries.
     pub(crate) fn body_feet(&self, player: Option<PlayerBox>, others: &[(u32, PlayerBox)]) -> Vec<BodyFootprint> {
         let mut out: Vec<BodyFootprint> = Vec::with_capacity(self.cars.len() * 2 + others.len() + 2);
         for c in &self.cars {
@@ -671,8 +636,7 @@ impl Traffic {
                 c.z + 3.0,
                 speed,
             );
-            // (on the lane it drives along: without it a car changing lanes saw no gap to
-            // keep to the player and cut in right in front of the bus; not one standing
+            // (on the lane it drives along, so lane changers keep their gap; not when standing
             // off the lane, which the cars on it would queue behind)
             if let Some((lane, s, _)) = self.net.lane_along(c, heading, LaneKind::Street, EXTERNAL_ON_LANE, 45.0) {
                 f.current = Some(f.placement_at(&self.net, LaneId(lane), s));
@@ -689,18 +653,12 @@ impl Traffic {
     }
 
 
-    /// Another AI vehicle's body in each car's way where the lanes do not show it: a bus
-    /// standing in its bay across a turning path, a car stopped half inside a junction, the
-    /// rear section of an articulated bus still swinging round, a car cutting in. The way
-    /// ahead is swept with the car's width against every footprint near it (the lanes alone
-    /// let a car turn right into the side of a bus that stood 1.7 m out in its bay).
-    /// Two vehicles that each stand in the other's way are sorted out by `geo_prev`: the one
-    /// with the higher id goes, the other waits.
+    /// Another AI vehicle's body in each car's way where the lanes do not show it (a bus in
+    /// its bay, a swinging rear section, a car cutting in), by sweeping the way with the
+    /// car's width. Mutual blocks are sorted out by `geo_prev`: the higher id goes.
     ///
-    /// Per car (by index): the body met and the way's direction there (see `body_lead`). It
-    /// reads only what the tick froze - the occupancy, `geo_prev`, each car's own way, which
-    /// nothing but its own planning changes - so it is found for every car at once, on the
-    /// workers, before the planning loop, and finds what the loop would.
+    /// Per car (by index): the body met and the way's direction there. It reads only frozen
+    /// tick state, so it runs for all cars in parallel before the planning loop.
     pub(crate) fn bodies_in_way(
         &self,
         occupancy: &Occupancy,
@@ -750,10 +708,8 @@ impl Traffic {
     }
 
 
-    /// Where the player's vehicle is in car `i`'s way: the gap to it and how fast it moves
-    /// along that way. The bus's box is stretched along its motion for the next second and
-    /// a half, so a bus pulling out of a stop, turning across or reversing is seen before
-    /// it is in the lane - the lanes alone saw it only once it stood in them.
+    /// Where the player's vehicle is in car `i`'s way: the gap and its speed along the way.
+    /// Its box is stretched along its motion (1.5 s) so it is seen before it is in the lane.
     pub(crate) fn player_in_way(&self, i: usize, player: &PlayerBox) -> Option<Lead> {
         let car = &self.cars[i];
         if (car.vehicle.position - player.0).length() > LOOK_AHEAD_MAX as f64 + 30.0 {
@@ -785,9 +741,7 @@ impl Traffic {
         while d <= st.front + look {
             let p = st.way_point(&self.net, d.max(0.0));
             if inside(p) {
-                // where between the samples the way enters the box: the gap to a standing bus
-                // used to come in steps of a metre and a half (and up to that much too long,
-                // so that cars stopped closer than they meant to)
+                // bisect where between the samples the way enters the box (exact gap)
                 let (mut lo, mut hi) = ((d - step).max(0.0), d);
                 if d > 0.0 {
                     for _ in 0..5 {
@@ -827,13 +781,11 @@ struct WayProbe<'a> {
     position: DVec3,
     heading: f64,
     half_width: f32,
-    /// Pulling out round something (passing, a bypass): what stands on its lane does not
-    /// stop it.
+    /// Pulling out round something: what stands on its lane does not stop it.
     going_round: bool,
 }
 
-/// The footprints by the car they wait for (`geo_prev`): who waits for whom by geometry,
-/// looked up per car instead of asking every footprint for every car.
+/// The footprints grouped by the car they wait for (`geo_prev`).
 fn waiting_feet(
     feet: &[BodyFootprint],
     geo_prev: &HashMap<VehicleId, Option<VehicleId>>,
@@ -875,8 +827,7 @@ fn swept_body(
             }
         }
     }
-    // A body that already waits for this car is not in its way - unless it is within
-    // reach of the bumper, where the car would be driven into it.
+    // A body that already waits for this car is not in its way, unless at the bumper.
     let h = car.heading.to_radians();
     let fwd = DVec2::new(h.sin(), h.cos());
     let center = car.position.truncate() + fwd * ((st.front - st.rear) * 0.5) as f64;
@@ -901,7 +852,6 @@ fn swept_body(
             ignore.push(f.owner);
         }
     }
-    // Sweep the corridor along the car's own way with its width.
     let mut samples: Vec<SweepSample> = Vec::new();
     let way = st.way_fn(net);
     let mut d = st.front + 0.2;
@@ -930,8 +880,7 @@ const EXTERNAL_ON_LANE: f64 = 2.0;
 mod tests {
     use super::*;
 
-    /// The player's bus stands on the lane it drives along, so a car moving over in front
-    /// of it keeps its gap (it saw no player on the lanes and cut in right in front of it).
+    /// The player's bus stands on the lane it drives along, so lane changers keep their gap.
     #[test]
     fn the_players_bus_is_counted_on_its_lane() {
         let lane = |x: f64| {

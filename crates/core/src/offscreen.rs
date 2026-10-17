@@ -467,9 +467,7 @@ pub(crate) fn run_offscreen(
             l.clock_speed = *speed;
         }
     }
-    // The traffic AI runs on the same fixed tick in the offscreen path as in the window:
-    // the loop's frame `dt` only feeds an accumulator, so the sequence of decision ticks
-    // depends on elapsed time rather than on the frame partition.
+    // Same fixed traffic tick as the window: frame `dt` only feeds an accumulator.
     let mut sim_accum = 0.0f32;
     let profile_traffic = ::legacy_config::env::var_os("OMSI_PROFILE").is_some();
     let mut traffic_timings = TickTimings::default();
@@ -3718,9 +3716,8 @@ pub(crate) fn run_offscreen(
 /// How many traffic steps `OMSI_PROFILE` keeps the timings of (about 22 minutes at 50 Hz).
 const TICK_TIMINGS_KEPT: usize = 1 << 16;
 
-/// The traffic's step timings of an `OMSI_PROFILE` run (presence, plan, bodies/scripts and
-/// total, s): only the most recent `TICK_TIMINGS_KEPT`, so a dedicated server profiled for
-/// days does not keep every step it ran.
+/// `OMSI_PROFILE` traffic step timings (presence, plan, bodies/scripts, total; s), bounded
+/// to the last `TICK_TIMINGS_KEPT` so long server runs do not grow without limit.
 #[derive(Default)]
 struct TickTimings {
     recent: std::collections::VecDeque<[f64; 4]>,

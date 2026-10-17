@@ -1,5 +1,5 @@
 //! Regressions for #125: random traffic drove on into a lane the map closes to it (a lane
-//! that goes on as a bus lane, `[rule] no_cars`) instead of merging into the open lanee
+//! that goes on as a bus lane, `[rule] no_cars`) instead of merging into the open lane.
 use glam::DVec3;
 use traffic::*;
 

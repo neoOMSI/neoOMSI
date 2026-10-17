@@ -1,7 +1,5 @@
-//! Stage 4 exit gate — red-light queues start and discharge with credible per-driver
-//! variation, and a flickering constraint does not reset the launch timer.
-//!
-//! Headless: a synthetic lane and the real longitudinal controller. No renderer or assets.
+//! Stage 4: red-light queues discharge with per-driver variation, and a flickering
+//! constraint does not reset the launch timer.
 
 use glam::DVec3;
 use traffic::{AiState, LaneBuilder, LaneKind, Lead, Network};

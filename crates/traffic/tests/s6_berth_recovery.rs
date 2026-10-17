@@ -1,8 +1,7 @@
 //! Stage 6 exit gate — berth recovery, occupied stops and overshoot.
 //!
-//! A stop occupied by somebody else (the player, a parked body) is waited for, not docked
-//! through; a bus that overshoots the boarding region records a missed/faulted stop instead
-//! of opening its doors somewhere up the queue.
+//! An occupied stop is waited for, not docked through; a bus that overshoots the boarding
+//! region records a missed/faulted stop instead of opening its doors up the queue.
 
 mod common;
 

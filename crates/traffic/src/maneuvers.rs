@@ -1,35 +1,19 @@
 //! Lateral maneuvers: lane changes, merges, overtaking, passing, parking, pull-out and the
 //! lateral half of bus docking.
 //!
-//! This is the L4 owner of every lateral intent on the road, mirroring `traffic::junctions`
-//! and `traffic::service`. Conflicting behaviors (a route-required change, an overtake, a
-//! kerb swerve round a parked car, a bus docking, a park) no longer overwrite
-//! `AiState::lateral_target` in different functions: they submit requests, and one
-//! [`ManeuverCoordinator`] reads a frozen [`ManeuverScene`] and returns a typed
-//! [`ManeuverDecision`] that becomes the single writer of lateral intent.
-//!
-//! Realization stays in `simulation::ai_motion` (steering, articulation, ground contact).
-//! The domain expresses a maneuver as the same primitives the realization already consumes:
-//! a lateral target with an S-curve ramp, a committed lane change, a blinker and a stop
-//! point. The domain never integrates pose; it reads the realized odometer each tick, so a
-//! maneuver has one integrator (the body) and the ramps are recomputed, not re-integrated.
+//! Behaviours submit requests; one [`ManeuverCoordinator`] reads a frozen [`ManeuverScene`]
+//! and returns a [`ManeuverDecision`], the single writer of lateral intent. Realization
+//! (steering, articulation) stays in `simulation::ai_motion`; the domain never integrates
+//! pose, it reads the realized odometer each tick.
 //!
 //! Priorities, highest first:
-//! 1. safety/allowed space (never start a maneuver whose whole trajectory, including the
-//!    return, is not clear) and finishing/aborting a committed maneuver;
+//! 1. safety (never start a maneuver whose whole trajectory, return included, is not clear)
+//!    and finishing/aborting a committed maneuver;
 //! 2. required maneuvers (a route-required change, docking/departure, a committed park);
 //! 3. discretionary maneuvers (overtaking, keeping to the correct lane);
-//! 4. optional maneuvers (passing a standing obstruction) - waiting is correct when the
-//!    whole outbound+return trajectory cannot be checked clear.
+//! 4. optional maneuvers (passing a standing obstruction).
 //!
-//! ## Tuning provenance
-//!
-//! The constants below have their unit in the name and their rationale on each item. Their
-//! provenance is one of: **content** (imported from map/vehicle data), **observed** (OMSI
-//! compatibility), **improvement** (a deliberate neoOMSI behaviour change) or **provisional**
-//! (unverified tuning). The maneuver set is **improvement/provisional** (plan section 6) except
-//! where a content length is passed in. The full table is in
-//! `docs/traffic_refactor/MAINTAINER_GUIDE.md`.
+//! The tuning constants are provisional unless content-derived.
 
 use crate::diagnostics::{ManeuverPhase, Reason};
 use crate::following::{arrival_time, ramp_progress_for, smooth01};
@@ -39,8 +23,6 @@ use crate::wrap_deg;
 use crate::perception::{Occupancy, SweepSample};
 use glam::{DVec2, DVec3};
 use hashbrown::HashMap;
-
-// ---- named maneuver geometry and policy (units always in the name) --------------------
 
 /// Clearance a pulling-out body must keep to the obstacle it steers round (m).
 pub const PULL_OUT_CLEARANCE: f64 = 0.25;
@@ -52,8 +34,7 @@ pub const PULL_OUT_ACCEL: f32 = 1.0;
 pub const BYPASS_RAMP: f32 = 6.0;
 /// Sideways acceleration the return S-curve keeps within (m/s²).
 pub const BACK_IN_LAT_ACCEL: f32 = 2.5;
-/// A car edging out keeps to `PULL_OUT_ACCEL` until its front is this far past the obstacle
-/// rear (m).
+/// Edging out keeps to `PULL_OUT_ACCEL` until the front is this far past the obstacle (m).
 pub const CREEP_PAST: f32 = 2.0;
 /// Room an oncoming vehicle needs beside a passing car (m).
 pub const ONCOMING_ROOM: f32 = 1.15;
@@ -61,8 +42,7 @@ pub const ONCOMING_ROOM: f32 = 1.15;
 pub const SIGNAL_BEFORE_CHANGE: f32 = 1.2;
 /// A lane change that has just finished may not start another for this long (s).
 pub const CHANGE_COOLDOWN: f32 = 6.0;
-/// A wish for a discretionary change must persist this long before it commits (s), so a
-/// flickering local condition cannot make a car jerk between lanes.
+/// A discretionary wish must persist this long before it commits (s), against lane jerking.
 pub const DISCRETIONARY_DWELL: f32 = 0.6;
 /// A discretionary change opposite to the last one is discouraged for this long (s).
 pub const OSCILLATION_WINDOW: f32 = 8.0;
@@ -72,11 +52,9 @@ pub const TURN_LANE_LOOKAHEAD: f32 = 150.0;
 pub const MERGE_LOOKAHEAD: f32 = 400.0;
 /// A vehicle does not change onto a lane that ends within this (m).
 pub const KEEP_OFF_ENDING: f32 = 400.0;
-/// A stopped corner-clearance ramp (m). Provisional improvement: lets the wheels
-/// turn toward nearby clearance while realization still rejects every collision.
+/// A stopped corner-clearance ramp (m): the wheels may turn toward nearby clearance while
+/// realization still rejects every collision.
 pub const CORNER_RECOVERY_RAMP: f32 = 2.0;
-
-// ---- pure ramp geometry (also used by the realization) --------------------------------
 
 /// S-curve lengths (m) a car should try when pulling out round an obstacle `real` metres
 /// ahead: gentlest first, bounded by its own length and room.
@@ -134,8 +112,6 @@ pub fn pass_time(
         .min(v_cap.max(speed));
     wait + arrival_time(first, speed, a0, v_cap) + arrival_time(dist - first, v1, accel, v_cap)
 }
-
-// ---- maneuver lifecycle state ----------------------------------------------------------
 
 /// A car pulling out onto the other half of the road round something standing in its lane.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -202,26 +178,22 @@ pub struct ManeuverState {
     pub dwell_code: i16,
     /// Committed courtesy trajectory; keep its odometer anchor while yielding.
     pub emergency_ramp: Option<(f32, f32, f32, f32)>,
-    /// Pulled over for an emergency vehicle that could not get past: it drives on ahead of
-    /// that vehicle up to this odometer reading (`EMERGENCY_RELEASE`).
+    /// Pulled over for an emergency vehicle that could not get past: drive on ahead of it up
+    /// to this odometer reading.
     pub emergency_release: Option<(VehicleId, f32)>,
-    /// A stopped vehicle's corner-clearance trajectory, anchored until it clears
-    /// the parked row. Re-anchoring it every tick prevents steering recovery.
+    /// A stopped vehicle's corner-clearance trajectory, anchored until it clears the parked
+    /// row (re-anchoring every tick prevents steering recovery).
     pub kerb_ramp: Option<(f32, f32, f32, f32)>,
-    /// The gap (m) to a parked car standing in the lane ahead, as last planned: it is no
-    /// vehicle of the scene, and the lane change round it is discovered from here.
+    /// The gap (m) to a parked car in the lane ahead, as last planned (it is not a scene
+    /// vehicle; the change round it is discovered from here).
     pub parked_block: Option<f32>,
-    /// Out round a parked car: the odometer reading by which its tail is past it. No route
-    /// change back before (a bus moved back into the bus lane beside the car and stood
-    /// there with its nose on it).
+    /// Out round a parked car: the odometer reading by which its tail is past it; no route
+    /// change back before (a bus otherwise stood with its nose on the car).
     pub bypass_until: Option<f32>,
-    /// The road would let it pass the vehicle in front on the oncoming lane, last it looked:
-    /// only oncoming traffic was in the way. An emergency vehicle has the oncoming traffic
-    /// stop for it only then.
+    /// Last look: only oncoming traffic kept it from passing on the oncoming lane (only
+    /// then does an emergency vehicle have oncoming traffic stop for it).
     pub pass_open: bool,
 }
-
-// ---- frozen per-tick scene and inputs --------------------------------------------------
 
 /// One planned lane of a car's way: the network lane and the distance from the car origin to
 /// its start (the first is `(current lane, -s)`).
@@ -349,8 +321,7 @@ impl ChangeCommand {
 
 /// The frozen world a maneuver plan reads. Built once per tick.
 pub struct ManeuverScene<'a> {
-    /// Engine integration checks the full vehicle sweep against authored scenery meshes.
-    /// Pure domain fixtures may omit it; the production adapter supplies it every tick.
+    /// Checks the vehicle sweep against authored scenery (tests may omit it).
     pub static_clearance: Option<&'a dyn Fn(&[SweepSample], &ManeuverActor) -> bool>,
     pub net: &'a Network,
     pub occupancy: &'a Occupancy,
@@ -367,8 +338,8 @@ pub struct ManeuverScene<'a> {
 pub struct ManeuverInputs {
     pub emergency: Option<crate::emergency::EmergencyApproach>,
     pub priority_pass: bool,
-    /// The emergency vehicle holds the reservation of the first junction ahead: it may pass
-    /// a queue across it on the oncoming side.
+    /// The emergency vehicle holds the first junction ahead: it may pass a queue across it
+    /// on the oncoming side.
     pub emergency_through: bool,
     /// A scheduled bus queues for its own occupied stop instead of passing that queue.
     pub queue_for_stop: bool,
@@ -385,8 +356,8 @@ pub struct ManeuverInputs {
     pub lead_gap: Option<f32>,
     /// Whether that obstruction is standing (a pass is possible) or just a slow leader.
     pub lead_standing: bool,
-    /// How fast the leader still moves (m/s): an emergency vehicle passes a car that is
-    /// slowing down to make way, not only one that has stopped.
+    /// How fast the leader still moves (m/s): an emergency vehicle also passes a car still
+    /// slowing down to make way.
     pub lead_speed: f32,
     /// The obstruction's length (m).
     pub obstacle_len: f32,
@@ -422,8 +393,7 @@ pub struct ManeuverDecision {
     pub phase: ManeuverPhase,
     /// Lateral target across the lane (m, positive = right), if it changes.
     pub lateral_target: Option<f32>,
-    /// An explicit S-curve `(from, to, odometer_at_start, length)` when the maneuver needs
-    /// one steeper or gentler than the default.
+    /// An explicit S-curve `(from, to, odometer_at_start, length)` instead of the default.
     pub lateral_ramp: Option<(f32, f32, f32, f32)>,
     /// A lane change to begin.
     pub change: Option<ChangeCommand>,
@@ -437,9 +407,8 @@ pub struct ManeuverDecision {
     pub target_lane: Option<LaneId>,
     pub reasons: Vec<Reason>,
     pub binding: Option<Reason>,
-    /// A route change that cannot be made before its lane ends, made from the lanes after
-    /// them instead: `(to, from)`, the route step `to` becomes `from` (the lane the current
-    /// one goes on into, beside the route's next lane).
+    /// A route change too late for its lane, made from the lanes after instead: `(to, from)`,
+    /// route step `to` becomes `from` (the lane this one goes on into).
     pub defer_change: Option<(usize, usize)>,
 }
 
@@ -461,8 +430,7 @@ impl ManeuverDecision {
     }
 }
 
-/// A vehicle's wish to move to a lane this tick, so the coordinator can order simultaneous
-/// changes by stable id rather than by container position.
+/// A vehicle's wish to move to a lane this tick (ordered by stable id, not storage position).
 #[derive(Debug, Clone, Copy)]
 pub struct ManeuverIntent {
     pub vehicle: VehicleId,
@@ -472,8 +440,6 @@ pub struct ManeuverIntent {
 }
 
 const CLAIM_SPAN: f32 = 40.0;
-
-// ---- the coordinator -------------------------------------------------------------------
 
 /// The single owner of lane-change commitments and the lateral decision.
 #[derive(Debug, Clone, Default)]
@@ -495,8 +461,8 @@ impl ManeuverCoordinator {
         self.approved.get(&id).copied()
     }
 
-    /// Submit optional changes through the same arbitration as route-required changes.
-    /// Discovery only reads the frozen scene; trajectory validation happens at commitment.
+    /// This tick's lane-change wish, arbitrated like route-required changes (trajectories
+    /// are validated at commitment).
     pub fn intent(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &ManeuverState) -> ManeuverIntent {
         let bypassing = state.bypass_until.is_some_and(|u| actor.odometer < u);
         let required = actor.change.map(|c| c.to).or_else(||
@@ -511,9 +477,8 @@ impl ManeuverCoordinator {
         self.approved.len()
     }
 
-    /// Begin a tick: order the submitted lane-change wishes by target lane and stable id, so
-    /// two vehicles moving into the same lane do not both start. The lowest id wins; the
-    /// same inputs decide the same way whatever the storage order.
+    /// Begin a tick: order the lane-change wishes by target lane and stable id, so two
+    /// vehicles moving into the same lane do not both start (the lowest id wins).
     pub fn begin_tick(&mut self, intents: &[ManeuverIntent], tick: u64) {
         self.tick = tick;
         self.approved.clear();
@@ -536,9 +501,8 @@ impl ManeuverCoordinator {
         self.approved.remove(&id);
     }
 
-    /// Approve the lateral request the service owner submitted (docking or merge-out). The
-    /// service lateral is a required maneuver, so it wins over any discretionary intent while
-    /// the berth is held; the service owner still decides the phase and the berth.
+    /// Approve the service owner's lateral request (docking or merge-out), a required
+    /// maneuver that wins over any discretionary intent.
     pub fn service_lateral(&self, lateral: f32, phase: ManeuverPhase) -> ManeuverDecision {
         let mut d = ManeuverDecision::new(phase);
         d.lateral_target = Some(lateral);
@@ -554,17 +518,13 @@ impl ManeuverCoordinator {
         }
     }
 
-    /// Drop this tick's lane-change approvals and claims (a full reset); the next
-    /// `begin_tick` makes them anew. The vehicles' own maneuver states are not touched.
+    /// Drop this tick's lane-change approvals and claims (vehicle states are kept).
     pub fn invalidate_network(&mut self) {
         self.approved.clear();
         self.claimants.clear();
     }
 
-    // ---- planning ----------------------------------------------------------------------
-
-    /// Plan one vehicle's lateral maneuver for this tick. `state` is the single per-vehicle
-    /// memory the coordinator writes; `input` carries the requests submitted for it.
+    /// Plan one vehicle's lateral maneuver for this tick.
     pub fn plan(
         &mut self,
         scene: &ManeuverScene,
@@ -638,13 +598,10 @@ impl ManeuverCoordinator {
             return d;
         }
 
-        // Required route-required change (and the turn lane the way asks for).
-        // Pulled over and stopped, a car makes room only where the emergency vehicle can get
-        // round it. Elsewhere - a junction, a roundabout, an approach between islands - it
-        // drives on and clears the way (standing there, every car in front of the ambulance
-        // in a roundabout held it up for good).
-        // Pulled over and standing with the emergency vehicle standing right behind it, it
-        // cannot get past here: drive on ahead of it for a while and clear the way.
+        // Required route change (and the turn lane the way asks for).
+        // A car makes room only where the emergency vehicle can get round it; elsewhere (a
+        // junction, a roundabout) it drives on and clears the way, as it does when pulled
+        // over with the emergency vehicle standing right behind it.
         if let Some(e) = input.emergency {
             if actor.speed < 0.3 && actor.stopped > EMERGENCY_YIELD_WAIT && e.speed < 0.5
                 && (0.0..EMERGENCY_YIELD_BEHIND).contains(&e.gap)
@@ -711,8 +668,7 @@ impl ManeuverCoordinator {
             return d;
         }
 
-        // Nothing lateral to do: keep to the middle of the lane, or hold the kerb swerve the
-        // world asked for (so a swerve that is no longer needed is given up).
+        // Nothing lateral to do: the lane middle, or the kerb swerve the world still asks for.
         let mut d = ManeuverDecision::new(ManeuverPhase::Idle);
         d.lateral_target = Some(input.kerb_swerve.unwrap_or(0.0));
         d
@@ -720,15 +676,14 @@ impl ManeuverCoordinator {
 
     fn yield_to_emergency(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &mut ManeuverState, input: &ManeuverInputs) -> ManeuverDecision {
         let lane = &scene.net.lanes[actor.lane];
-        // On a multilane road the innermost lane goes inward and the remaining lanes
-        // outward. On a single lane move to the curb without leaving the authored road.
+        // Multilane: the innermost lane goes inward, the rest outward; a single lane moves to
+        // the kerb without leaving the authored road.
         let side = if scene.net.left_hand {
             if lane.right.is_none() && lane.left.is_some() { 1.0 } else { -1.0 }
         } else if lane.left.is_none() && lane.right.is_some() { -1.0 } else { 1.0 };
         // (paths are often authored narrower than the lane: BRT Berlin's are 2 m)
         let target = side * (lane.width.max(MIN_LANE_WIDTH) * 0.5 - actor.half_width - 0.15).max(0.0);
-        // The body steers as it rolls. Braking a stationary queue to zero while asking
-        // for an odometer-based lateral ramp can never open a rescue corridor.
+        // The body steers only as it rolls: a queue braked to zero never opens a corridor.
         let room = input.lead_gap.map(|gap| (gap - actor.min_gap).max(0.0));
         let ramp = (actor.speed * 2.0).max(2.0).min(room.unwrap_or(f32::MAX).max(1.0));
         let trajectory = state.emergency_ramp.filter(|r| (r.1 - target).abs() < 0.01)
@@ -743,8 +698,8 @@ impl ManeuverCoordinator {
             decision.lateral_ramp = Some(trajectory);
             decision.signal = Some((if side > 0.0 { 2 } else { 1 }, 1.5));
         }
-        // Allow a walking-speed roll while moving aside, retaining every ordinary
-        // leader and signal constraint. Once aside, wait for the emergency to pass.
+        // Roll at walking speed while moving aside (leader and signal rules still apply),
+        // then wait for the emergency vehicle to pass.
         let moving_aside = decision.lateral_target.is_some() && (target - actor.lateral).abs() > 0.1;
         let creep = if moving_aside { 1.0 } else { 0.0 };
         decision.accel_cap = Some(((creep - actor.speed) / 1.5).clamp(-actor.decel, 0.6));
@@ -753,10 +708,7 @@ impl ManeuverCoordinator {
         decision
     }
 
-    // ---- route-required / turn-lane changes --------------------------------------------
-
-    /// Use the gap between the innermost lane and its neighbour once their realized
-    /// bodies have made room. Ordinary following still protects every physical gap.
+    /// Use the gap between the innermost lane and its neighbour once their bodies made room.
     fn emergency_corridor(&self, scene: &ManeuverScene, actor: &ManeuverActor, state: &ManeuverState) -> Option<ManeuverDecision> {
         if actor.lane_kind != LaneKind::Street || actor.at_stop || state.passing.is_some() {
             return None;
@@ -803,10 +755,8 @@ impl ManeuverCoordinator {
         };
         let s_to = net.beside_s(actor.lane, to, actor.s.min(net.lanes[actor.lane].length()));
         let dir = side_of(net, actor.lane, to);
-        // (waiting for a gap, the car stops before the lane the map closes to it, which may
-        // lie a spline joint or two ahead, else before the end of its lane)
-        // (on a lane that ends, before it comes too close to the road; a car already in the
-        // taper merges where the ways meet instead of stopping there)
+        // (waiting for a gap, it stops before the lane closed to it, else before its lane's
+        // end; a car already in a merge taper merges instead of stopping there)
         let closed = closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next)
             .filter(|_| actor.lane_kind == LaneKind::Street);
         let ending = net
@@ -847,10 +797,8 @@ impl ManeuverCoordinator {
             d.target_lane = Some(LaneId(to));
             return d;
         }
-        // Not now, and the lane ends soon: where it and the lane beside go on side by side to
-        // the route's next lane, the change is made from there. (Waiting at the end, a bus
-        // steered at the lane it could not get onto, and a car that came up beside it stood
-        // there behind its corner for good.)
+        // Not now, and the lane ends soon: where both lanes go on side by side to the route's
+        // next lane, change from there (waiting at the end, a bus and a car beside it locked).
         let near_end = wait_at - actor.front
             < actor.speed * actor.speed / (2.0 * actor.decel.max(1.0)) + 8.0;
         if near_end && kind == ChangeKind::RouteChange {
@@ -863,8 +811,7 @@ impl ManeuverCoordinator {
                 }
             }
         }
-        // Not now: indicate and wait before the end of the lane (a legal wait outcome, never
-        // cutting through the queue or jumping to another lane).
+        // Not now: indicate and wait before the end of the lane.
         let mut d = ManeuverDecision::new(ManeuverPhase::RouteChange);
         d.signal = Some((dir, 1.0));
         d.stop_at = Some((wait_at - 1.0).max(0.0));
@@ -873,8 +820,6 @@ impl ManeuverCoordinator {
         d.target_lane = Some(LaneId(to));
         d
     }
-
-    // ---- discretionary changes ---------------------------------------------------------
 
     fn plan_discretionary(
         &mut self,
@@ -946,8 +891,8 @@ impl ManeuverCoordinator {
                 && self.stays_open(net, actor, left, s_left)
                 && !ends_soon(net, left, s_left)
             {
-                // (a parked car standing in the lane is no vehicle of the scene: without it, a
-                // bus behind one in X10 Berlin's bus lane waited there for good)
+                // (a parked car in the lane is no scene vehicle; without it a bus behind one
+                // waited for good, X10 Berlin)
                 let ahead = self.nearest_ahead_on_way(scene, actor, 45.0)
                     .map(|(gap, v, owner)| (gap, v, Some(owner)));
                 // (its lead gap keeps 2 m back from it, as `plan_passing` reckons)
@@ -1022,9 +967,8 @@ impl ManeuverCoordinator {
         false
     }
 
-    /// Follow the frozen leader chain, including across spline joints. A car behind a
-    /// boarding bus has the same passing opportunity as the first car behind it; a
-    /// signal or junction queue does not. Do not depend on last tick's container order.
+    /// Follow the frozen leader chain across spline joints: a queue behind a boarding bus
+    /// may be passed, a signal or junction queue may not.
     fn standing_queue(&self, scene: &ManeuverScene, actor: &ManeuverActor, owner: VehicleId) -> bool {
         let mut owner = owner;
         let mut seen = vec![actor.id];
@@ -1043,8 +987,6 @@ impl ManeuverCoordinator {
         }
         false
     }
-
-    // ---- passing -----------------------------------------------------------------------
 
     fn plan_passing(
         &mut self,
@@ -1077,8 +1019,7 @@ impl ManeuverCoordinator {
         if lane.left.is_some() || lane.right.is_some() {
             return None;
         }
-        // Never pull out inside a junction: its paths cross, and beyond it the carriageways
-        // may split round an island.
+        // Never pull out inside a junction (paths cross, carriageways may split beyond).
         if !net.crossings[actor.lane].is_empty() {
             return None;
         }
@@ -1117,16 +1058,14 @@ impl ManeuverCoordinator {
         let Some((opp, os, side)) = net.opposite(actor.lane, actor.s) else {
             return None;
         };
-        // A geometrically parallel oncoming path may be across a central island. Its
-        // existence does not make the gap between the carriageways a passing lane (#126).
+        // A parallel oncoming path across a central island is no passing lane (#126).
         if split_carriageway(side, lane.width, net.lanes[opp].width, input.priority_pass) {
             return None;
         }
         if !(2.3..=5.5).contains(&side) {
             return None;
         }
-        // a leader still rolling (only an emergency vehicle passes one) moves on while it is
-        // passed: the pass is longer by the distance it covers in that time
+        // (a rolling leader, passed only by an emergency vehicle, lengthens the pass)
         let v_lead = if input.priority_pass { input.lead_speed.max(0.0) } else { 0.0 };
         let v_pass = ((lane.speed_limit_kmh * actor.desire).min(actor.max_speed_kmh) / 3.6).clamp(4.0, 14.0);
         // (passing across the junction, it merges back beyond its exit)
@@ -1215,8 +1154,8 @@ impl ManeuverCoordinator {
             back_from: None,
         };
         let clear_d = probe.clear_at(actor.half_width);
-        // The oncoming lane has to lie right beside this one for as long as the car is out
-        // there: an island or hatched area that starts after the pull-out is no road either.
+        // The oncoming lane must stay right beside this one while the car is out there (no
+        // island or hatched area starting later).
         if !passing_corridor(net, &way, clear_d + actor.front, through.is_some(), input.priority_pass) {
             // (the road does not change: a car stuck in a queue need not look again at once)
             state.pass_retry = scene.time + 1.0;
@@ -1360,8 +1299,8 @@ impl ManeuverCoordinator {
             return Some(d);
         }
         if odo >= p.until {
-            // Past the obstacle: back into the lane along one S-curve, laid once from where
-            // the car got past (laid afresh every tick it never got back, #311).
+            // Past the obstacle: back along one S-curve, laid once from where it got past
+            // (re-laid every tick, it never got back, #311).
             let from = *p.back_from.get_or_insert(actor.lateral);
             let mut d = ManeuverDecision::new(ManeuverPhase::Passing);
             d.lateral_target = Some(0.0);
@@ -1373,8 +1312,7 @@ impl ManeuverCoordinator {
             }
             return Some(d);
         }
-        // Still out there: if somebody is coming who gets where the front is headed before
-        // it is back, abort while it still can.
+        // Still out: abort while it can if somebody coming gets there before it is back.
         let r = p.clear_at(actor.half_width) - odo;
         if r > 0.0 {
             if let Some((opp, os, _)) = net.opposite(actor.lane, actor.s) {
@@ -1450,8 +1388,8 @@ impl ManeuverCoordinator {
         None
     }
 
-    /// Sweep the whole ghost trajectory (out and back) against the realized bodies and
-    /// pedestrians in the freeze. `lat(d)` gives the sideways offset at distance `d`.
+    /// Sweep the ghost trajectory (out and back) against bodies and pedestrians; `lat(d)` is
+    /// the sideways offset at distance `d`.
     fn sweep_clear(
         &self,
         scene: &ManeuverScene,
@@ -1490,10 +1428,8 @@ impl ManeuverCoordinator {
             });
             d += 1.0;
         }
-        // Check the whole car, including its swinging front corner. Cross-sections
-        // alone can approve a path whose centre clears a bus but whose bumper clips it.
-        // Articulated rear sections have their own geometry; total rear extent is
-        // used for return room, not a rigid box rotated with the tractor.
+        // Check the whole car with its swinging front corner (cross-sections alone let a
+        // bumper clip a bus); articulated rear sections have their own geometry.
         let rear = scene.occupancy.feet().iter().find(|b| b.owner == actor.id && b.part == 0)
             .map(|b| b.rear).unwrap_or(actor.rear);
         for sample in &samples {
@@ -1512,8 +1448,7 @@ impl ManeuverCoordinator {
             .occupancy
             .swept_clearance(&samples, actor.half_width as f64 + need, &[actor.id])
         {
-            // The first body the ghost path meets: if it is the obstacle itself, the ramp did
-            // not clear it. Any hit inside the maneuver means the path is not clear.
+            // Any hit inside the maneuver (the obstacle itself included) means not clear.
             if hit.d <= distance {
                 return false;
             }
@@ -1528,8 +1463,7 @@ impl ManeuverCoordinator {
     }
 
     /// Who on the oncoming side reaches the stretch `from..to` of `opp` before `t_need`.
-    /// `priority`: an emergency vehicle, for which the oncoming traffic standing before
-    /// that stretch waits (`oncoming_emergency`).
+    /// `priority`: an emergency vehicle, for which oncoming traffic before it waits.
     #[allow(clippy::too_many_arguments)]
     fn oncoming_soon(
         &self,
@@ -1585,8 +1519,6 @@ impl ManeuverCoordinator {
         }
         false
     }
-
-    // ---- parking -----------------------------------------------------------------------
 
     fn plan_parking(
         &self,
@@ -1644,8 +1576,6 @@ impl ManeuverCoordinator {
         d
     }
 
-    // ---- feasibility helpers -----------------------------------------------------------
-
     fn open_to(&self, net: &Network, actor: &ManeuverActor, lane: usize) -> bool {
         let Some(l) = net.lanes.get(lane) else {
             return false;
@@ -1653,8 +1583,8 @@ impl ManeuverCoordinator {
         lane_open_to(l, actor.veh_type)
     }
 
-    /// Does lane `lane` (from `s` on) stay open to `actor` beyond the lookahead? A car does
-    /// not keep right into a lane that goes on as a bus lane, only to move back again.
+    /// Does `lane` (from `s` on) stay open to `actor` beyond the lookahead (no keeping right
+    /// into a lane that becomes a bus lane)?
     fn stays_open(&self, net: &Network, actor: &ManeuverActor, lane: usize, s: f32) -> bool {
         closed_ahead(net, lane, s, actor.veh_type, None).is_none()
     }
@@ -1697,10 +1627,8 @@ impl ManeuverCoordinator {
                 }
             } else {
                 if iv.speed < 0.3 {
-                    // A standing body lets a car in only when it is not abreast of it - or
-                    // when it stands there waiting for that car (two buses side by side on
-                    // X10 Berlin's narrow lanes: the one ahead waited to move over, the one
-                    // behind for it, for good). The sweep still keeps the bodies apart.
+                    // A standing body lets a car in unless abreast of it, or when it waits
+                    // for that car (two buses deadlocked side by side, X10 Berlin).
                     let waits_for_me = scene.actors.iter()
                         .any(|a| a.id == iv.owner && a.lead == Some(actor.id));
                     if !waits_for_me && front >= s_to - actor.rear && rear <= s_to + actor.front {
@@ -1724,10 +1652,8 @@ impl ManeuverCoordinator {
     }
 
     fn merge_trajectory_clear(&self, scene: &ManeuverScene, actor: &ManeuverActor, to: usize, s_to: f32, ramp: f32) -> bool {
-        // Include the lateral transition, not only the gaps on its destination lane.
-        // Realization blends the source and destination ways. A constant lateral
-        // offset is wrong when they curve differently or join one continuation:
-        // after that joint it invents another lane's width of sideways travel.
+        // Sweep the blended source/destination ways (a constant lateral offset is wrong
+        // where they curve differently or join one continuation).
         let net = scene.net;
         let source = way_of(net, actor, ramp + 4.0);
         let mut target_actor = actor.clone();
@@ -1795,8 +1721,8 @@ impl ManeuverCoordinator {
                 }
             }
         }
-        // Rear sections have geometry but no primary lane interval. Include the
-        // realized corridor, otherwise a bus's front section overstates pull-out room.
+        // Rear sections have no lane interval: sweep the realized corridor too, or an
+        // articulated bus overstates its pull-out room.
         let mut samples = Vec::new();
         let mut d = actor.front;
         while d <= actor.front + look {
@@ -1850,8 +1776,7 @@ impl ManeuverCoordinator {
     }
 }
 
-/// The lane the fixed route or a turn lane ahead requires next, if any. This is the target
-/// the coordinator serializes simultaneous changes for; core submits it as an intent.
+/// The lane the fixed route or a turn lane ahead requires next, if any.
 pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
     if let Some(to) = actor.route_next {
         if net.parallel(actor.lane, to) {
@@ -1859,8 +1784,8 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
         }
     }
     let lane = net.lanes.get(actor.lane)?;
-    // The way on closes to this vehicle (a lane that goes on as a bus lane): move over to
-    // the lane beside that stays open, whatever the turn lanes ask.
+    // The way on closes to this vehicle (e.g. becomes a bus lane): move to the open lane
+    // beside, whatever the turn lanes ask.
     if actor.lane_kind == LaneKind::Street
         && closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next).is_some()
     {
@@ -1923,13 +1848,9 @@ fn lane_open_to(l: &Lane, veh_type: i32) -> bool {
     !l.no_cars && l.open_to(veh_type)
 }
 
-/// How far ahead (from distance `s` along `lane`, within `TURN_LANE_LOOKAHEAD`) the way
-/// runs into a joint where every way on is closed to `[ai_veh_type]` `veh_type` (see
-/// `Lane::open_to`): a lane that goes on as a bus lane, a junction path only the timetable
-/// may drive. The way is `first` (the planned next lane) where it is open, then the one
-/// open way on at each joint; where there is a choice of open ways, it does not close.
-/// The end of the network (no way on at all) is not a closure, nor is the way on from a
-/// lane already closed to the vehicle.
+/// How far ahead (from `s` along `lane`, within `TURN_LANE_LOOKAHEAD`) the way reaches a
+/// joint where every way on is closed to `veh_type` (e.g. it becomes a bus lane). A choice
+/// of open ways, the network's end or an already closed lane is no closure.
 pub fn closed_ahead(
     net: &Network,
     lane: usize,
@@ -2017,9 +1938,8 @@ fn lane_window(net: &Network, lane: usize, s: f32, back: f32, ahead: f32) -> Vec
     out
 }
 
-/// Can an emergency vehicle get past `actor` where it is: beside it on a neighbouring lane
-/// of the same direction, or out on an oncoming lane right beside its own, away from any
-/// junction or roundabout?
+/// Can an emergency vehicle get past `actor` here: on a same-direction neighbour lane, or on
+/// an oncoming lane right beside, away from junctions and roundabouts?
 fn emergency_can_pass_here(net: &Network, actor: &ManeuverActor) -> bool {
     let lane = &net.lanes[actor.lane];
     if lane.left.is_some() || lane.right.is_some() {
@@ -2056,15 +1976,12 @@ const EMERGENCY_QUEUE_MAX: f32 = 180.0;
 const EMERGENCY_QUEUE_SPEED: f32 = 4.2;
 /// ... the room (m) beyond its own length it needs to merge back into a gap, ...
 const EMERGENCY_MERGE_MARGIN: f32 = 6.0;
-/// ... and the most its way may turn across a junction it passes over on the oncoming
-/// side (deg).
+/// ... and the most its way may turn across a junction it passes on the oncoming side (deg).
 const EMERGENCY_THROUGH_TURN: f32 = 25.0;
 
-/// Is there a strip (an island, a median) between two opposing lanes whose centres lie
-/// `side` metres apart? Paths are often authored narrower than the lane painted on the road
-/// (2 m paths 3.2 m apart on an ordinary two-lane street), so a lane counts at least
-/// `MIN_LANE_WIDTH` wide; the 0.6 m tolerance is provisional. An `emergency` vehicle allows
-/// 1.2 m: a road drawn a little wider is no island to it (the sweep still meets a kerb).
+/// Is there an island or median between two opposing lanes `side` m apart? Paths are often
+/// narrower than the painted lane, so a lane counts at least `MIN_LANE_WIDTH`; the tolerance
+/// (0.6 m, provisional) is 1.2 m for an `emergency` vehicle.
 fn split_carriageway(side: f32, width: f32, other: f32, emergency: bool) -> bool {
     let tolerance = if emergency { 1.2 } else { 0.6 };
     side > (width.max(MIN_LANE_WIDTH) + other.max(MIN_LANE_WIDTH)) * 0.5 + tolerance
@@ -2073,9 +1990,8 @@ fn split_carriageway(side: f32, width: f32, other: f32, emergency: bool) -> bool
 /// The narrowest lane (m) a passing check assumes, whatever width the path was given.
 const MIN_LANE_WIDTH: f32 = 3.0;
 
-/// Is the road a single lane each way with the oncoming lane directly beside it, from the
-/// actor origin to `distance` metres along `way`? Separate carriageways (an island, a median,
-/// a hatched area between the lanes) are no passing room (#126).
+/// Is the road one lane each way, the oncoming lane right beside, for `distance` m along
+/// `way`? Separate carriageways are no passing room (#126).
 fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_junction: bool, emergency: bool) -> bool {
     let crossing = |w: &WayStep| !net.crossings[w.0].is_empty();
     // (the reserved junction: the first run of junction lanes on the way)
@@ -2085,8 +2001,7 @@ fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_juncti
     loop {
         let Some((lane, u)) = way_locate(net, way, d.min(distance)) else { return false };
         let l = &net.lanes[lane];
-        // (across the reserved junction only the roads on both sides count; another
-        // junction beyond it is not held for it)
+        // (only the reserved junction may be crossed; the roads on both sides count)
         if across_junction && !net.crossings[lane].is_empty() {
             if !way.iter().position(|w| w.0 == lane).is_some_and(|k| reserved.contains(&k)) {
                 return false;

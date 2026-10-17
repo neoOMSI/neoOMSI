@@ -66,8 +66,7 @@ pub(crate) fn own_outlines(
 }
 
 /// The LAN players' buses as obstacles for the AI traffic (their speed as last sent).
-/// A remote's trailers share its id, so perception sees them as parts of the same vehicle
-/// and the traffic cannot drive through the back of an articulated remote bus.
+/// Trailers share the remote's id, so traffic cannot drive through an articulated bus's back.
 pub(crate) fn lan_outlines(game: &lan::LanGame) -> Vec<(u32, traffic::PlayerBox)> {
     let mut out = Vec::new();
     for (id, r) in game.remotes.iter() {
@@ -88,7 +87,7 @@ pub(crate) fn lan_outlines(game: &lan::LanGame) -> Vec<(u32, traffic::PlayerBox)
             out.push((*id, (centre, t.heading, bb[1] * 0.5, bb[0] * 0.5, speed)));
         }
     }
-    // Deterministic order regardless of the remote map's hash order.
+    // (deterministic, not hash order)
     out.sort_by_key(|(id, _)| *id);
     out
 }
@@ -173,8 +172,7 @@ pub(crate) fn traffic_inputs(
         clock.weekday(),
         humans.map(|h| h.strollers()).unwrap_or_default(),
         humans.map(|h| h.on_foot()).unwrap_or_default(),
-        // the player's obstacle boxes follow the streamed tiles; without a player the
-        // world's own are asked
+        // (without a player the world's own obstacle boxes are asked)
         player.and_then(|p| p.vehicle.collision.clone()),
     );
 }

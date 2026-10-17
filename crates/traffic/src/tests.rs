@@ -418,9 +418,8 @@ use crate::following::smooth01;
 
     #[test]
     fn a_stop_does_not_hold_a_red_and_yellow_changeover() {
-        // Add-On London's Brixton Road lights have a demand stop one second into their
-        // red-and-yellow phase.  A queued vehicle must not be able to hold that transition
-        // forever: it still needs to receive the following green.
+        // Add-On London's Brixton Road lights stop on demand 1 s into red-and-yellow: a
+        // queued vehicle must not hold that forever, it still gets the green after it.
         let mut c = TrafficLightController::from_program(
             vec![(vec![(3, 3.0), (6, 33.0), (9, 2.0), (0, 1.0)], Some(0.0))],
             Some(50.0),
@@ -752,8 +751,8 @@ use crate::following::smooth01;
 
     #[test]
     fn a_blockpath_entry_is_a_conflict_even_without_a_crossing() {
-        // Two parallel paths of one object that never touch: `[blockpath]` makes them
-        // each other's obstacle, and its mode is kept as data.
+        // two parallel paths of one object that never touch: `[blockpath]` makes them
+        // each other's obstacle
         let key = |path: u16| {
             Some(LaneKey {
                 tile: (0, 0),

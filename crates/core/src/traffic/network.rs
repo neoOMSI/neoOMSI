@@ -20,10 +20,9 @@ impl Traffic {
     }
 
 
-    /// The lanes the other way along one-way paths `lanes` (see `Schedule`'s route
-    /// building: OMSI's timetable buses drive a path against its direction where the trip's
-    /// station links or track say so). Only timetable routes use them: they carry no traffic
-    /// and no light. Returns how many were added.
+    /// The lanes the other way along one-way paths `lanes`, for timetable routes only (OMSI's
+    /// timetable buses may drive a path against its direction); they carry no traffic and no
+    /// light. Returns how many were added.
     pub fn add_reverse_twins(&mut self, lanes: &[usize]) -> usize {
         let mut new = Vec::new();
         for &l in lanes {
@@ -57,10 +56,9 @@ impl Traffic {
     }
 
 
-    /// A lane from the end of `a` to the start of `b`, for a timetable route that jumps a
-    /// gap in the map (a road piece deleted after the timetable's tracks were recorded - a
-    /// dozen such holes of 10 to 150 m on Novi Sad): a smooth curve with the two lanes'
-    /// headings at its ends, used by the timetable only. None when the two do not line up.
+    /// A smooth lane from the end of `a` to the start of `b`, for a timetable route that jumps
+    /// a gap in the map (a road piece deleted later; a dozen 10-150 m holes on Novi Sad).
+    /// None when the two do not line up.
     pub fn add_connector(&mut self, a: usize, b: usize) -> Option<usize> {
         let (la, lb) = (&self.net.lanes[a], &self.net.lanes[b]);
         let (p0, p1) = (la.end(), lb.start());
@@ -152,12 +150,9 @@ impl Traffic {
             );
         }
         report_network_defects(&self.net);
-        // The network only grew: every lane index stays valid, and the meeting places of the
-        // lanes there already are as they were (the new tiles bring their own junctions), so
-        // the junction claims, exit storage and gridlock clocks stand. The lane-change
-        // approvals are this tick's only (`begin_tick` makes them anew).
-        // queued demand and entrance backpressure are stale; the dormant registry (identity
-        // and duty) survives because lane indices are stable
+        // The network only grew: lane indices and existing junctions stay valid, so junction
+        // claims, exit storage and gridlock clocks stand (lane-change approvals are per tick).
+        // Queued demand and entrance backpressure are stale; the dormant registry survives.
         self.population.invalidate_network();
         self.street_weight += self.net.lanes[added.clone()]
             .iter()

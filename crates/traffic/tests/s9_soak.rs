@@ -1,9 +1,5 @@
-//! Stage 9 accelerated soak: a dense, prolonged mixed churn over every owner, asserting that
-//! each coordinator releases exactly what it hands out and that the bounded queues stay
-//! bounded. No renderer and no OMSI assets; runs far faster than the wall-clock-locked
-//! offscreen loop, so the full 60-minute simulation runs in seconds.
-//!
-//! The short test runs in the normal suite. The 60-minute run is `#[ignore]`d; run it with
+//! Stage 9 soak: dense mixed churn over every owner; each coordinator releases exactly what
+//! it hands out and the bounded queues stay bounded. The 60-minute run is `#[ignore]`d:
 //! `cargo test -p traffic --test s9_soak -- --ignored`.
 
 mod common;
@@ -63,8 +59,7 @@ fn junction_churn(ticks: u64) {
             }
         }
         if t % 5_000 == 0 {
-            // A streamed tile reload invalidates every commitment made against the old
-            // network; the coordinator must drop them all and rebuild from nothing.
+            // A tile reload must drop every commitment made against the old network.
             coord.invalidate_network();
             assert_eq!(coord.commitment_count(), 0, "claims survived network invalidation");
         }
@@ -76,8 +71,7 @@ fn junction_churn(ticks: u64) {
     assert_eq!(coord.commitment_count(), 0, "junction claims leaked");
 }
 
-/// Keep demand saturated against the bounded admission queue, force retries, then stop the
-/// demand and check the queue drains rather than growing without bound.
+/// Saturate the bounded admission queue, then stop demand: the queue drains.
 fn population_churn(ticks: u64) {
     let mut w = PopWorld::new(6);
     for t in 0..ticks {

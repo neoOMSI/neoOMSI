@@ -1,8 +1,7 @@
 //! Stage 5 exit gate — the wait-for graph records holds and never invents a deadlock.
 //!
-//! The classification itself (stale claim vs legal congestion vs full capacity) is unit
-//! tested in `traffic::junctions`; here the real coordinator is driven and its public
-//! wait-for graph is checked.
+//! The classification is unit tested in `traffic::junctions`; here the real coordinator's
+//! public wait-for graph is checked.
 
 mod common;
 

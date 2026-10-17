@@ -1,9 +1,8 @@
 //! Stage 3 exit gate — exit space is reserved for all admitted vehicles, and simultaneous
 //! merges are deterministic.
 //!
-//! The downstream exit has one free storage distance. Every admitted vehicle reserves its
-//! length out of that same distance, so two vehicles cannot each be promised the same
-//! empty space.
+//! Every admitted vehicle reserves its length out of the exit's one free storage distance,
+//! so two cannot be promised the same empty space.
 
 use traffic::world::Arbiter;
 use traffic::{LaneId, VehicleId};

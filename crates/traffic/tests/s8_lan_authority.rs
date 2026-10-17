@@ -1,8 +1,7 @@
 //! Stage 8 exit gate — LAN host authority.
 //!
-//! The host is the single authority: it makes the population decisions. A mirror client never
-//! requests or admits anything; an authority change or a time reset preserves duty ownership
-//! and never duplicates a duty.
+//! The host makes all population decisions; a mirror client never requests or admits.
+//! An authority change or time reset keeps duty ownership and never duplicates a duty.
 
 mod common;
 
@@ -11,14 +10,13 @@ use traffic::*;
 
 #[test]
 fn a_client_makes_no_population_decisions() {
-    // The host fills its population.
     let mut host = PopWorld::new(1);
     host.coord.request(SpawnClass::Unscheduled, 0, 100.0);
     let decisions = host.step(true, demand(5, 0), true);
     assert!(PopWorld::admitted(&decisions) >= 1);
     assert!(host.coord.admitted_total() >= 1);
 
-    // A mirror client only presents replicated committed state: no demand, no admission.
+    // A mirror client: no demand, no admission.
     let client = PopWorld::new(1);
     assert_eq!(client.coord.queue_len(), 0);
     assert_eq!(client.coord.admitted_total(), 0);

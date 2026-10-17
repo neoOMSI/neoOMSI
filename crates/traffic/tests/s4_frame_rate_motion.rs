@@ -1,8 +1,7 @@
 //! Stage 4 exit gate — motion is stable across frame rates and lane joints.
 //!
-//! The test drives a small independent body from the longitudinal controller's command and
-//! commits route progress back with `commit_feedback`, exactly the body-owns-pose contract
-//! the engine uses. No renderer or OMSI assets.
+//! A small body follows the longitudinal controller and commits progress back with
+//! `commit_feedback` (the engine's body-owns-pose contract). No renderer or OMSI assets.
 
 use glam::DVec3;
 use traffic::scenario::{advance_fixed_clock, MAX_SIM_STEPS};
