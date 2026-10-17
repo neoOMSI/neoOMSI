@@ -661,7 +661,7 @@ impl Traffic {
             let (c, heading, hl, hw, speed) = b;
             let h = heading.to_radians();
             let fwd = DVec2::new(h.sin(), h.cos());
-            out.push(BodyFootprint::new(
+            let mut f = BodyFootprint::new(
                 VehicleId(id),
                 c.truncate(),
                 fwd,
@@ -670,7 +670,14 @@ impl Traffic {
                 c.z,
                 c.z + 3.0,
                 speed,
-            ));
+            );
+            // (on the lane it drives along: without it a car changing lanes saw no gap to
+            // keep to the player and cut in right in front of the bus; not one standing
+            // off the lane, which the cars on it would queue behind)
+            if let Some((lane, s, _)) = self.net.lane_along(c, heading, LaneKind::Street, EXTERNAL_ON_LANE, 45.0) {
+                f.current = Some(f.placement_at(&self.net, LaneId(lane), s));
+            }
+            out.push(f);
         };
         if let Some(p) = player {
             external(u64::MAX, p);
@@ -916,9 +923,39 @@ fn swept_body(
     Some((hit, dir))
 }
 
+/// How far (m) the middle of a player's or LAN vehicle may be from a lane to count as on it.
+const EXTERNAL_ON_LANE: f64 = 2.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The player's bus stands on the lane it drives along, so a car moving over in front
+    /// of it keeps its gap (it saw no player on the lanes and cut in right in front of it).
+    #[test]
+    fn the_players_bus_is_counted_on_its_lane() {
+        let lane = |x: f64| {
+            ::traffic::LaneBuilder::polyline(
+                vec![DVec3::new(x, 0.0, 0.0), DVec3::new(x, 400.0, 0.0)],
+                LaneKind::Street,
+                3.5,
+            )
+        };
+        let mut net = Network { lanes: vec![lane(0.0), lane(-3.5)], ..Default::default() };
+        net.link(1.5);
+        let t = Traffic::for_tests(net);
+        let player = (DVec3::new(0.3, 100.0, 0.0), 0.0, 6.0, 1.25, 22.0);
+        let occupancy = Occupancy::build(t.net.version(), 0, t.body_feet(Some(player), &[]));
+        let on = |l: usize| occupancy.intervals(LaneId(l)).iter().find(|iv| iv.owner == VehicleId(u64::MAX)).copied();
+        let iv = on(0).expect("the player is on no lane");
+        assert!((iv.s - 100.0).abs() < 0.1 && (iv.front - 106.0).abs() < 0.1 && (iv.rear - 94.0).abs() < 0.1, "{iv:?}");
+        assert_eq!(iv.speed, 22.0);
+        assert!(on(1).is_none(), "on the lane beside it too");
+        // standing 3 m off the lane (a shoulder): the cars on it do not queue behind it
+        let aside = (DVec3::new(3.0, 100.0, 0.0), 0.0, 6.0, 1.25, 0.0);
+        let occupancy = Occupancy::build(t.net.version(), 0, t.body_feet(Some(aside), &[]));
+        assert!(occupancy.intervals(LaneId(0)).iter().all(|iv| iv.owner != VehicleId(u64::MAX)));
+    }
 
     #[test]
     fn the_footprints_are_found_by_the_car_they_wait_for() {
