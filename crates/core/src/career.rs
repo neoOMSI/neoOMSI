@@ -26,6 +26,7 @@ const PENALTY_KM: f64 = 30.0;
 /// A stop's arrival later than this (s) is late, its departure earlier than minus that early.
 const LATE_ARRIVAL: f64 = 180.0;
 const EARLY_DEPARTURE: f64 = -120.0;
+const AUTOSAVE_SECONDS: f32 = 30.0;
 
 pub struct Career {
     pub driver: Option<Driver>,
@@ -71,6 +72,7 @@ pub struct Career {
     pub seconds: f64,
     /// What `save` has already put into the personnel file.
     written: Written,
+    autosave_t: f32,
 }
 
 /// The counters of this session already written into the personnel file: a second save
@@ -114,6 +116,7 @@ impl Default for Career {
             worst_accel: 0.0,
             seconds: 0.0,
             written: Written::default(),
+            autosave_t: 0.0,
         }
     }
 }
@@ -130,11 +133,11 @@ impl Career {
         } else {
             let own = crate::startup::content_dir()
                 .map(|c| c.join(rel))
-                .unwrap_or_else(|| ::legacy_config::resolve_path(root, rel));
+                .unwrap_or_else(|| ::mods::resolve_path(root, rel));
             let read = if own.exists() {
                 own.clone()
             } else {
-                ::legacy_config::resolve_path(root, rel)
+                ::mods::resolve_path(root, rel)
             };
             (own, read)
         };
@@ -169,6 +172,19 @@ impl Career {
             path: Some(path),
             penalty,
             ..Default::default()
+        }
+    }
+
+    pub fn autosave(&mut self, dt: f32) {
+        self.autosave_t += dt;
+        if self.autosave_t < AUTOSAVE_SECONDS {
+            return;
+        }
+        self.autosave_t = 0.0;
+        if self.path.is_some() && self.seconds > 0.0 {
+            if let Err(e) = self.save() {
+                log::warn!("autosave of the personnel file: {e}");
+            }
         }
     }
 

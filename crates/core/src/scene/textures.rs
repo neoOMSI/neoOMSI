@@ -1,6 +1,42 @@
 use super::*;
 
+/// Leave room for in-flight uploads and allocations outside the scene's texture array.
+/// DXGI's per-process budget already accounts for other GPU users, including the launcher.
+fn cache_texture_limit(requested: u64, textures: u64, memory: Option<(u64, u64)>) -> u64 {
+    let Some((used, budget)) = memory.filter(|(_, budget)| *budget > 0) else {
+        return requested;
+    };
+    let reserve = (budget / 20).clamp(128_000_000, 512_000_000);
+    let available = budget.saturating_sub(used.saturating_sub(textures) + reserve);
+    requested.min(available.max(64_000_000))
+}
+
 impl World {
+    /// Optional fleet uploads must leave room for visible vehicles and their displays.
+    /// Mandatory uploads retain every texture level, regardless of this cache limit.
+    pub fn can_precache_vehicle(&self, renderer: &Renderer, scene: &Scene) -> bool {
+        let requested = self.texture_budget_bytes();
+        if requested == 0 {
+            return true;
+        }
+        let live = self
+            .texture_cache_limit
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let textures = renderer.texture_bytes(scene);
+        let limit = if live == 0 {
+            // Before the first rendered frame (and after a live setting change), obtain
+            // the driver limit before preloading. Small cards must not allocate the
+            // entire requested fleet first and only discover pressure a second later.
+            let initial = cache_texture_limit(requested, textures, ::render::video_memory());
+            self.texture_cache_limit
+                .store(initial, std::sync::atomic::Ordering::Relaxed);
+            initial
+        } else {
+            requested.min(live)
+        };
+        textures < limit - limit / 10
+    }
+
     /// Swap in the textures compressed on the workers since the last call (until
     /// `deadline`), and start compressing the ones uploaded as RGBA since. Returns how many
     /// were swapped.
@@ -106,6 +142,8 @@ impl World {
     pub fn set_texture_budget(&self, bytes: u64) {
         self.texture_limit
             .store(bytes, std::sync::atomic::Ordering::Relaxed);
+        self.texture_cache_limit
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The textures' budget now (bytes, 0 = none).
@@ -114,13 +152,11 @@ impl World {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Keep the textures within their budget, once a second (`force`: now): while they take
-    /// more, the scenery textures only far tiles use lose their finest mip level, the
-    /// farthest first, down to 64 texels a side and never within 150 m of `centers` (the
-    /// camera, the player's bus); when there is room again, those that came within 400 m
-    /// are read again whole on a worker and swapped back. Vehicle textures count but keep
-    /// their levels (a fleet set nobody draws leaves the GPU anyway). Returns the textures
-    /// shrunk or sent to be read again.
+    /// Check the texture budget once a second (`force`: now). Reduce distant scenery
+    /// mips to at least 64 texels, never within 150 m of `centers`. Reserve space for
+    /// restores within 400 m, reclaiming distant mips for nearby restores first.
+    /// If nothing can give way, admit one nearby restore within the pressure margin.
+    /// Vehicle textures keep their levels. Returns reductions, restores and evicted sets.
     pub fn update_texture_budget(
         &self,
         renderer: &Renderer,
@@ -141,20 +177,37 @@ impl World {
             let mut last = self.budget_checked.lock();
             if !force
                 && last
-                .map(|t| t.elapsed().as_secs_f32() < 1.0)
-                .unwrap_or(false)
+                    .map(|t| t.elapsed().as_secs_f32() < 1.0)
+                    .unwrap_or(false)
             {
                 return 0;
             }
             *last = Some(std::time::Instant::now());
         }
         let t0 = std::time::Instant::now();
-        let vehicle_bytes: u64 = self
-            .vehicle_textures
-            .lock()
-            .values()
-            .map(|(t, _)| scene.texture_bytes_of(*t))
-            .sum();
+        // Count the complete texture array: PBR maps, generated displays, tile-owned
+        // textures and variant maps all consume VRAM even without a named-cache entry.
+        // Release unused fleet sets first. This changes residency, never their appearance.
+        let all_bytes = renderer.texture_bytes(scene);
+        let cache_limit = cache_texture_limit(limit, all_bytes, ::render::video_memory());
+        self.texture_cache_limit
+            .store(cache_limit, std::sync::atomic::Ordering::Relaxed);
+        let evicted = if all_bytes > cache_limit {
+            self.trim_vehicle_cache(renderer, scene, cache_limit - cache_limit / 10)
+        } else {
+            0
+        };
+        if evicted > 0 {
+            log::info!(
+                "texture cache: {:.0} -> {:.0} MB, {:.0} MB limit ({:.0} MB requested), {evicted} unused vehicle sets released",
+                all_bytes as f64 / 1e6,
+                renderer.texture_bytes(scene) as f64 / 1e6,
+                cache_limit as f64 / 1e6,
+                limit as f64 / 1e6,
+            );
+        }
+        let usage = renderer.texture_bytes(scene);
+        let limit = cache_limit;
         let ts = tile_size();
         let tile_distance = |k: &(i32, i32)| -> f64 {
             centers
@@ -169,10 +222,8 @@ impl World {
         };
         let states = self.tile_state.lock();
         let mut gpu = self.gpu.lock();
-        if gpu.textures.values().map(|e| e.bytes).sum::<u64>() + vehicle_bytes <= limit
-            && gpu.textures.values().all(|e| e.dropped == 0)
-        {
-            return 0;
+        if usage <= limit && gpu.textures.values().all(|e| e.dropped == 0) {
+            return evicted;
         }
         // how near each scenery texture is: the nearest tile that uses it
         let mut near: hashbrown::HashMap<TextureId, f64> = hashbrown::HashMap::new();
@@ -239,43 +290,55 @@ impl World {
         }
         drop((trees, shared));
         drop(states);
-        let usage: u64 = gpu.textures.values().map(|e| e.bytes).sum::<u64>() + vehicle_bytes;
         let mut entries: Vec<(f64, PathBuf)> = gpu
             .textures
             .iter()
             .map(|(p, e)| (near.get(&e.id).copied().unwrap_or(f64::MAX), p.clone()))
             .collect();
         let mut shrunk: Vec<TextureId> = Vec::new();
+        let mut blocked = hashbrown::HashSet::new();
         let mut restoring = 0usize;
-        // A texture shrunk while its tiles were far that is near now comes back whole at
-        // once, room or not: the far ones give way for it in the seconds after. (Waiting for
-        // room left the buildings right in front of the bus blurred for good on a map that
-        // filled the budget - they had lost their levels on the way in.)
-        {
-            let pending = self.upgrades_pending.lock();
-            for (d, p) in &entries {
-                if *d >= NEAR || restoring >= 24 || usage > limit + limit / 32 {
-                    continue;
-                }
-                if gpu.textures.get(p).is_some_and(|e| e.dropped > 0)
+        let pending = self.upgrades_pending.lock();
+        // Pending compression upgrades also restore reduced textures in full.
+        let reserved: u64 = gpu
+            .textures
+            .iter()
+            .filter(|(p, e)| {
+                e.dropped > 0 && (pending.contains(*p) || gpu.wants_restore.contains(*p))
+            })
+            .map(|(_, e)| e.estimated_restore_growth())
+            .sum();
+        let mut projected = usage + reserved;
+        let target = limit - limit / 10;
+        let pressure_limit = limit + limit / 32;
+        let nearby_growth = entries
+            .iter()
+            .filter_map(|(d, p)| {
+                let e = gpu.textures.get(p)?;
+                (*d < NEAR
+                    && e.dropped > 0
                     && !pending.contains(p)
-                    && !gpu.wants_restore.contains(p)
-                {
-                    gpu.wants_restore.push(p.clone());
-                    restoring += 1;
-                }
-            }
-        }
-        if usage > limit + limit / 32 {
+                    && !gpu.wants_restore.contains(p))
+                .then(|| (*d, p, e.estimated_restore_growth()))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(b.1)))
+            .map(|(_, _, extra)| extra)
+            .unwrap_or(0);
+        let mut over = if projected > pressure_limit {
+            projected.saturating_sub(target)
+        } else {
+            nearby_growth.saturating_sub(target.saturating_sub(projected))
+        };
+        if over > 0 {
             entries.sort_by(|a, b| b.0.total_cmp(&a.0));
-            let mut over = usage - (limit - limit / 10);
             for (d, p) in &entries {
-                // (96 a second: at 16 a map's first tiles stayed over a small card's budget
-                // for a minute and a half)
-                if over == 0 || shrunk.len() >= 256 || *d < NEAR * 1.0 {
+                if over == 0 || shrunk.len() >= 256 || *d < NEAR {
                     break;
                 }
-                if spline_textures.contains(p) {
+                if spline_textures.contains(p)
+                    || pending.contains(p)
+                    || gpu.wants_restore.contains(p)
+                {
                     continue;
                 }
                 let Some(e) = gpu.textures.get_mut(p) else {
@@ -289,45 +352,75 @@ impl World {
                 }
                 let before = e.bytes;
                 // far away and big: two levels at once
-                let n = if *d > 700.0 && w.min(h) / 4 >= MIN_SIDE.max(256) && levels > 2 {
+                let mut n = if *d > 700.0 && w.min(h) / 4 >= MIN_SIDE.max(256) && levels > 2 {
                     2
                 } else {
                     1
                 };
-                if renderer.drop_top_levels(scene, e.id, n) {
-                    e.bytes = scene.texture_bytes_of(e.id);
-                    e.dropped += n;
-                    over = over.saturating_sub(before - e.bytes);
-                    shrunk.push(e.id);
+                if !renderer.drop_top_levels(scene, e.id, n) {
+                    if n == 1 || !renderer.drop_top_levels(scene, e.id, 1) {
+                        blocked.insert(e.id);
+                        continue;
+                    }
+                    n = 1;
                 }
-            }
-        } else {
-            // room for the near ones to come back (with a tenth kept free)
-            entries.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let mut room = (limit - limit / 10).saturating_sub(usage);
-            let pending = self.upgrades_pending.lock();
-            for (d, p) in &entries {
-                if *d > RESTORE || restoring >= 16 {
-                    break;
-                }
-                let Some(e) = gpu.textures.get(p) else {
-                    continue;
-                };
-                if e.dropped == 0 || pending.contains(p) {
-                    continue;
-                }
-                let whole = e.bytes << (2 * e.dropped.min(8));
-                if whole - e.bytes > room {
-                    break;
-                }
-                room -= whole - e.bytes;
-                gpu.wants_restore.push(p.clone());
-                restoring += 1;
+                e.bytes = scene.texture_bytes_of(e.id);
+                e.dropped += n;
+                let freed = before - e.bytes;
+                projected -= freed;
+                over = over.saturating_sub(freed);
+                shrunk.push(e.id);
             }
         }
+        entries.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut room = target.saturating_sub(projected);
+        for (d, p) in &entries {
+            if *d > RESTORE || restoring >= if *d < NEAR { 24 } else { 16 } {
+                break;
+            }
+            let Some(e) = gpu.textures.get(p) else {
+                continue;
+            };
+            if e.dropped == 0 || pending.contains(p) || gpu.wants_restore.contains(p) {
+                continue;
+            }
+            let extra = e.estimated_restore_growth();
+            if extra > room {
+                if *d >= NEAR || restoring > 0 || reserved > 0 {
+                    break;
+                }
+                if extra > pressure_limit.saturating_sub(projected) {
+                    continue;
+                }
+                let reclaimable = entries.iter().any(|(distance, path)| {
+                    *distance >= NEAR
+                        && !spline_textures.contains(path)
+                        && !pending.contains(path)
+                        && !gpu.wants_restore.contains(path)
+                        && gpu
+                            .textures
+                            .get(path)
+                            .filter(|e| !blocked.contains(&e.id))
+                            .and_then(|e| renderer.texture_levels(scene, e.id))
+                            .is_some_and(|(w, h, levels)| w.min(h) / 2 >= MIN_SIDE && levels > 1)
+                });
+                if reclaimable {
+                    break;
+                }
+                // Use the pressure margin only when nothing else can give way.
+                gpu.wants_restore.push(p.clone());
+                restoring += 1;
+                break;
+            }
+            room -= extra;
+            gpu.wants_restore.push(p.clone());
+            restoring += 1;
+        }
+        drop(pending);
         drop(gpu);
         let rebound = renderer.rebind_textures(scene, &shrunk);
-        if (!shrunk.is_empty() || restoring > 0) && ::legacy_config::env::var_os("OMSI_PROFILE").is_some()
+        if (!shrunk.is_empty() || restoring > 0)
+            && ::legacy_config::env::var_os("OMSI_PROFILE").is_some()
         {
             log::info!(
                 "texture budget: {:.0} of {:.0} MB in use, {} textures lost a level ({} materials rebound), {} coming back, in {:.1} ms",
@@ -339,7 +432,7 @@ impl World {
                 t0.elapsed().as_secs_f64() * 1000.0
             );
         }
-        shrunk.len() + restoring
+        shrunk.len() + restoring + evicted
     }
 
     /// After big unloads, cut the free tail off the scene's arrays (meshes, textures,
@@ -358,9 +451,9 @@ impl World {
         // after each streaming burst just to discover that the tail cannot shrink.
         if instances > 0
             && gpu
-            .free_instances
-            .values()
-            .any(|l| l.0.iter().any(|r| r.0 == instances - 1))
+                .free_instances
+                .values()
+                .any(|l| l.0.iter().any(|r| r.0 == instances - 1))
         {
             let free: hashbrown::HashSet<usize> = gpu
                 .free_instances
@@ -424,3 +517,7 @@ impl World {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "texture_budget_tests.rs"]
+mod residency_tests;

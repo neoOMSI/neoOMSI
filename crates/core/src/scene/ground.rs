@@ -74,27 +74,44 @@ pub(super) fn probe_tile(
     // (an embankment the road runs under, ground poking through the asphalt) is no
     // ground and no wall there. Taken with the road, a terrain face over the carriageway was
     // an invisible wall under bridges, and one through it a bump that threw the bus.
-    let ground = terrain.map(|t| {
-        let h = ::geometry::terrain_height(t, lx, ly);
+    let cut_ground = surface.and_then(|s| s.terrain_cut.as_ref());
+    let height = match cut_ground.and_then(|c| c.height(lx, ly)) {
+        Some(h) => h,
+        None => terrain.map(|t| ::geometry::terrain_height(t, lx, ly)),
+    };
+    let ground = height.map(|h| {
         let cut = surface
             .map(|s| s.cut_at(lx, ly, h, surface_flush()))
             .unwrap_or(false);
         (h, cut)
     });
-    // ... unless that face lies buried well under ground that is drawn here and is under the
-    // wheel, not over it: the lower slope of an embankment spline (Marcel's `Damm1` falls
-    // 20 m over 30 m on each side) reaching under a junction the terrain carries. Omsi.exe
-    // takes the highest face there, the ground; taken as the road, it dropped the bus 8 m
-    // through the asphalt into the slope (Cotterell, the junction by the park at 250, 427).
-    let buried = matches!((probe.below, ground), (Some(z), Some((h, false))) if h <= top as f32 && h - z > BURIED_FACE);
-    let on_road = probe.below.is_some() && !buried;
+    // ... unless that face lies buried under ground that is drawn here and is under the
+    // wheel, not over it. Omsi.exe takes the highest face there, the ground; taken as the
+    // road, the bus dropped through the asphalt: 8 m into the lower slope of an embankment
+    // spline (Cotterell, the junction by the park at 250, 427), 0.77 m onto a pavement
+    // spline under a street the terrain carries (#208).
+    let buried = match (probe.below, ground) {
+        (Some(z), Some((h, false))) if h <= top as f32 => buried_share(h - z),
+        _ => 0.0,
+    };
+    // (partly buried: between the two, so that the wheel meets no step where the ground
+    // rises out of the road)
+    if buried > 0.0
+        && buried < 1.0
+        && let (Some(z), Some((h, _))) = (probe.below, ground)
+    {
+        probe.below = Some(z + (h - z) * buried);
+    }
+    let on_road = probe.below.is_some() && buried < 1.0;
     if let (Some((h, cut)), false) = (ground, on_road) {
         // the ground counts where it is drawn; where it is cut away and nothing else is
         // there (a surface without a collision), it still carries rather than let the
         // vehicle drop out of the world
         if !cut || (probe.below.is_none() && h <= top as f32) {
             if h <= top as f32 && probe.below.is_none_or(|z| h > z) {
-                normal = Some(::geometry::terrain_normal(terrain.unwrap(), lx, ly));
+                normal = cut_ground
+                    .and_then(|c| c.normal(lx, ly))
+                    .or_else(|| terrain.map(|t| ::geometry::terrain_normal(t, lx, ly)));
             }
             probe = probe.merge(::geometry::Probe::of(h, top as f32));
         }
@@ -118,9 +135,19 @@ pub(super) fn probe_tile(
     }
 }
 
-/// How far a road face may lie under drawn ground before it counts as buried (m): far more
-/// than the ground poking through the asphalt that the road is there to keep out.
-pub(super) const BURIED_FACE: f32 = 1.0;
+/// How far a road face may lie under drawn ground and still be the road (m): the terrain
+/// grid is coarser than the road and pokes a few centimetres through the asphalt. A margin
+/// Omsi.exe does not have, to smooth those bumps away.
+pub(super) const BURIED_FACE: f32 = 0.1;
+
+/// Over how much more depth (m) a face goes from the road to buried (see [`buried_share`]).
+const BURIED_RAMP: f32 = 0.1;
+
+/// How much of the wheel's ground is the drawn ground over a road face `depth` under it:
+/// 0 within [`BURIED_FACE`], 1 from [`BURIED_RAMP`] deeper, in between linearly.
+fn buried_share(depth: f32) -> f32 {
+    ((depth - BURIED_FACE) / BURIED_RAMP).clamp(0.0, 1.0)
+}
 
 /// How far over the ground a wall's top must stand to be a wall to the wheels (a kerb is
 /// less, and the tyre climbs it).
@@ -191,6 +218,19 @@ impl World {
             .filter(|g| near - g < 3.0)
     }
 
+    /// Where object `id` of tile `group` stands: timetables name a stop by the index of its
+    /// tile in the `[map]` list, as ids repeat on maps joined from several.
+    pub fn object_on_tile(&self, group: i32, id: i64) -> Option<(DVec3, [f64; 3])> {
+        let tile = usize::try_from(group)
+            .ok()
+            .and_then(|i| self.global.raw_tiles.get(i))
+            .copied();
+        if let Some(p) = tile.and_then(|t| self.object_dups.lock().get(&(t, id)).copied()) {
+            return Some(p);
+        }
+        self.object_positions.lock().get(&id).copied()
+    }
+
     /// Where entry point `ep` stands (position, heading): its object, found on the tile
     /// the entry point names (global.cfg's `[entrypoints]` record holds the index of its
     /// tile in the `[map]` list, and the place within that tile). An object of that id on
@@ -256,10 +296,26 @@ impl World {
             if let Some(h) = s.sample_road(lx, ly).or_else(|| s.sample(lx, ly)) {
                 return Some(h as f64);
             }
+            if let Some(h) = s.terrain_cut.as_ref().and_then(|c| c.height(lx, ly)) {
+                return h.map(f64::from);
+            }
         }
         let t = self.terrains.read();
         let terrain = t.get(&(tx, ty))?;
         Some(terrain.sample(lx, ly) as f64)
+    }
+
+    /// Whether a terrain cut took the ground away at world (x, y).
+    pub fn ground_cut_away(&self, x: f64, y: f64) -> bool {
+        let tx = (x / tile_size()).floor() as i32;
+        let ty = (y / tile_size()).floor() as i32;
+        let lx = (x - tx as f64 * tile_size()) as f32;
+        let ly = (y - ty as f64 * tile_size()) as f32;
+        self.surfaces
+            .read()
+            .get(&(tx, ty))
+            .and_then(|s| s.terrain_cut.as_ref().and_then(|c| c.height(lx, ly)))
+            .is_some_and(|h| h.is_none())
     }
 
     /// The wetness a puddle would use at world (x, y): `wetness` where a road surface is
@@ -318,7 +374,7 @@ impl World {
     ///
     /// The mask is stored like a picture (first row = north), the terrain mesh's v runs
     /// north with y, so the rows are turned over here.
-    pub(super) fn load_ground_paint(&self, tile_path: &Path) -> Vec<(usize, Image)> {
+    pub(crate) fn load_ground_paint(&self, tile_path: &Path) -> Vec<(usize, Image)> {
         let Some(name) = tile_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -328,7 +384,7 @@ impl World {
         let mut out = Vec::new();
         for layer in 1..self.global.ground_textures.len() {
             let path =
-                ::legacy_config::resolve_path(&self.map_dir, &format!("texture/map/{name}.{layer}.dds"));
+                ::mods::resolve_path(&self.map_dir, &format!("texture/map/{name}.{layer}.dds"));
             if !::legacy_config::vfs::is_file(&path) {
                 continue;
             }
@@ -365,17 +421,21 @@ impl World {
         let ty = (y / tile_size()).floor() as i32;
         let lx = (x - tx as f64 * tile_size()) as f32;
         let ly = (y - ty as f64 * tile_size()) as f32;
-        let surface = self
-            .surfaces
-            .read()
-            .get(&(tx, ty))
-            .and_then(|s| s.sample(lx, ly))
-            .map(|h| h as f64);
-        let terrain = self
-            .terrains
-            .read()
-            .get(&(tx, ty))
-            .map(|t| t.sample(lx, ly) as f64);
+        let surfaces = self.surfaces.read();
+        let tile_surface = surfaces.get(&(tx, ty));
+        let surface = tile_surface.and_then(|s| s.sample(lx, ly)).map(f64::from);
+        let terrain = match tile_surface
+            .and_then(|s| s.terrain_cut.as_ref())
+            .and_then(|c| c.height(lx, ly))
+        {
+            Some(h) => h.map(f64::from),
+            None => self
+                .terrains
+                .read()
+                .get(&(tx, ty))
+                .map(|t| t.sample(lx, ly) as f64),
+        };
+        drop(surfaces);
         let rough = match (surface, terrain) {
             (Some(s), Some(t)) => Some(s.max(t)),
             (s, t) => s.or(t),
@@ -409,12 +469,24 @@ impl World {
     /// on foot looks a metre up to stop at a face too high to step onto (a platform's edge)
     /// instead of walking under it.
     pub fn walk_height_reach(&self, x: f64, y: f64, near: f64, reach: f64) -> Option<f64> {
+        self.walk_floor_reach(x, y, near, reach).map(|(z, _)| z)
+    }
+
+    /// [`World::walk_height_reach`] plus the face normal (none from the raster).
+    pub fn walk_floor_reach(
+        &self,
+        x: f64,
+        y: f64,
+        near: f64,
+        reach: f64,
+    ) -> Option<(f64, Option<glam::Vec3>)> {
         let probe = drive_probe(&self.terrains, &self.surfaces, x, y, near + reach);
         match probe.below {
-            Some(b) if near - b < 3.0 => Some(b),
+            Some(b) if near - b < 3.0 => Some((b, probe.normal)),
             _ => self
                 .walk_height(x, y)
-                .filter(|z| *z < near + reach.max(0.5)),
+                .filter(|z| *z < near + reach.max(0.5))
+                .map(|z| (z, None)),
         }
     }
 
@@ -425,5 +497,17 @@ impl World {
             (y / tile_size()).floor() as i32,
         );
         self.terrains.read().contains_key(&key)
+    }
+
+    /// Whether an AI vehicle's path is loaded. Splines and object paths belong to their
+    /// source tile and may extend beyond it, even over coordinates with no map tile.
+    /// Timetable connectors without a map identity still use the ground at their position;
+    /// aircraft do not need loaded ground.
+    pub fn traffic_path_loaded(&self, lane: &Lane, pos: DVec3) -> bool {
+        lane.kind == LaneKind::Air
+            || match lane.key {
+                Some(key) => self.terrains.read().contains_key(&key.tile),
+                None => self.has_ground(pos.x, pos.y),
+            }
     }
 }

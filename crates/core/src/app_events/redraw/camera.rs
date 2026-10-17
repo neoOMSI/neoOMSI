@@ -7,6 +7,16 @@ impl App {
     pub(super) fn redraw_camera(&mut self, f: &Frame) {
         let Frame { dt, .. } = *f;
         self.sync_view_look();
+        if self.view == "free" {
+            let zoom_in = self.keys.contains(&KeyCode::Equal) && !self.own_keys.contains(&13);
+            let zoom_out = self.keys.contains(&KeyCode::Minus) && !self.own_keys.contains(&12);
+            if zoom_in {
+                self.zoom_by(3.0 * dt);
+            }
+            if zoom_out {
+                self.zoom_by(-3.0 * dt);
+            }
+        }
         if self.player.is_some() && self.view != "free" {
             // looking around with the keyboard: Alt + I/J/K/L (the plain letters
             // belong to the bus - L is the headlights in Inputs/keyboard.cfg)
@@ -168,6 +178,7 @@ impl App {
             self.camera.as_mut(),
             self.view == "free" || (self.player.is_none() && self.on_foot.is_none()),
         ) {
+            cam.roll = 0.0;
             let mut v = Vec3::ZERO;
             let f = cam.forward();
             let r = cam.right();

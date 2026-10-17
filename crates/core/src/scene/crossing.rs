@@ -3,12 +3,7 @@ use super::*;
 /// Load only the crossing field, also used by the mesh-free navigation pass.
 pub(super) fn load_crossing_field(sco: &SceneryObject, model_dir: &Path) -> Option<MeshData> {
     let file = sco.crossing_height_deformation.as_ref()?;
-    let path = ::legacy_config::resolve_path(&::legacy_config::resolve_path(model_dir, "model"), file);
-    let path = if ::legacy_config::vfs::is_file(&path) {
-        path
-    } else {
-        ::legacy_config::resolve_path(model_dir, file)
-    };
+    let path = mesh_path(model_dir, file);
     match ::legacy_o3d::load_mesh(&path) {
         Ok(mesh) => Some(mesh_from_o3d(&mesh)),
         Err(e) => {

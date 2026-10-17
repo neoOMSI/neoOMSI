@@ -7,6 +7,9 @@ use ::map::{MapSpline, Terrain, tile_size};
 use ::scenery::Spline;
 use std::sync::Arc;
 
+mod terrain_clip;
+pub use terrain_clip::TerrainCut;
+
 /// A texture's OMSI `.surf` height map. Its red channel is centred at 128 and displaces
 /// the wheel's contact height by at most two centimetres in either direction.
 #[derive(Debug, Clone)]
@@ -637,10 +640,100 @@ pub fn build_spline_mesh(
     mesh
 }
 
+pub fn group_spline_ranges(def: &Spline, mesh: &MeshData) -> Option<MeshData> {
+    let drawn: Vec<&::scenery::sli::SplineProfile> = def
+        .profiles
+        .iter()
+        .filter(|p| p.points.len() >= 2 && mesh.ranges.iter().any(|r| r.2 as usize == p.texture))
+        .collect();
+    if drawn.len() < 2
+        || drawn.len() != mesh.ranges.len()
+        || drawn
+            .iter()
+            .zip(&mesh.ranges)
+            .any(|(p, r)| p.texture != r.2 as usize)
+        || drawn
+            .iter()
+            .any(|p| def.textures.get(p.texture).is_some_and(|t| t.alpha >= 2))
+    {
+        return None;
+    }
+    // (the profiles of each range to be, in drawing order)
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (j, profile) in drawn.iter().enumerate() {
+        let joins = groups
+            .iter()
+            .rposition(|g| drawn[g[0]].texture == profile.texture)
+            .filter(|&g| {
+                groups[g + 1..]
+                    .iter()
+                    .flatten()
+                    .all(|&i| !profiles_share_face(drawn[i], profile))
+            });
+        match joins {
+            Some(g) => groups[g].push(j),
+            None => groups.push(vec![j]),
+        }
+    }
+    if groups.len() == drawn.len() {
+        return None;
+    }
+    let mut out = MeshData {
+        positions: mesh.positions.clone(),
+        normals: mesh.normals.clone(),
+        uvs: mesh.uvs.clone(),
+        indices: Vec::with_capacity(mesh.indices.len()),
+        ranges: Vec::with_capacity(groups.len()),
+        one_sided: mesh.one_sided,
+    };
+    for group in &groups {
+        let start = out.indices.len() as u32;
+        for &j in group {
+            let (first, count, _) = mesh.ranges[j];
+            out.indices
+                .extend_from_slice(&mesh.indices[first as usize..(first + count) as usize]);
+        }
+        let count = out.indices.len() as u32 - start;
+        out.ranges.push((start, count, mesh.ranges[group[0]].2));
+    }
+    Some(out)
+}
+
+/// Whether two profiles of a spline have faces at (nearly) one place: a stretch of one lies
+/// within 10 cm of a stretch of the other, along more than a centimetre
+fn profiles_share_face(
+    a: &::scenery::sli::SplineProfile,
+    b: &::scenery::sli::SplineProfile,
+) -> bool {
+    const NEAR: f32 = 0.1;
+    let stretches = |p: &::scenery::sli::SplineProfile| {
+        p.points
+            .windows(2)
+            .map(|w| (Vec2::new(w[0].x, w[0].z), Vec2::new(w[1].x, w[1].z)))
+            .collect::<Vec<_>>()
+    };
+    let along = |(a0, a1): (Vec2, Vec2), (b0, b1): (Vec2, Vec2)| {
+        let length = (a1 - a0).length();
+        if length < 1e-4 {
+            return false;
+        }
+        let dir = (a1 - a0) / length;
+        let across = dir.perp();
+        if across.dot(b0 - a0).abs() > NEAR || across.dot(b1 - a0).abs() > NEAR {
+            return false;
+        }
+        let (t0, t1) = (dir.dot(b0 - a0), dir.dot(b1 - a0));
+        t0.max(t1).min(length) - t0.min(t1).max(0.0) > 0.01
+    };
+    let (sa, sb) = (stretches(a), stretches(b));
+    sa.iter()
+        .any(|&x| sb.iter().any(|&y| along(x, y) || along(y, x)))
+}
+
 /// The profiles of the hole a spline laid with `[spline_terrain_align]` cuts into the ground,
 /// as points (x across, height, how far that end of the hole stands off the spline's end):
 /// the `.sli`'s own `[terrainholeprofile]`s, or else those Omsi.exe makes from the drawn
-/// profiles when it loads the spline (0x5ab908, from 0x5adc52): the profiles are strung
+/// profiles when it loads the spline (0x5ab9b8, from 0x5adcec): the profiles are strung
 /// together where one begins within a centimetre of where the last ended, and each string
 /// gives a trough from its left end to its right end, 3 cm in from both and 3 mm below them,
 /// whose bottom lies 10 cm under the lowest point of the string and reaches half a metre
@@ -649,6 +742,9 @@ pub fn build_spline_mesh(
 /// quarter of the way across. The left edge is always the first profile's first point:
 /// Omsi.exe compares every other profile's start with it but then takes the first one's
 /// again.)
+/// A closed tube can produce bottom corners far outside its edges. Keep those values:
+/// when an end is clamped, its rim doubles back and fails the outline intersection check,
+/// so OMSI leaves the ground above the tunnel intact.
 pub fn terrain_hole_profiles(def: &Spline) -> Vec<Vec<[f32; 3]>> {
     if !def.terrain_hole_profiles.is_empty() {
         return def.terrain_hole_profiles.clone();
@@ -724,7 +820,7 @@ pub fn terrain_hole_profiles(def: &Spline) -> Vec<Vec<[f32; 3]>> {
 
 /// The outlines (world x, y) a spline laid with `[spline_terrain_align]` cuts out of the
 /// ground, one per [`terrain_hole_profiles`] profile, as Omsi.exe's TSplineSegment.Generate
-/// makes them (0x5b1178, from 0x5b13b1): along the right edge (the profile's last point)
+/// makes them (0x5b1228): along the right edge (the profile's last point)
 /// at the inner cross-sections, across the far end (the profile backwards), back along the
 /// left edge (its first point) and across the near end. An end lies where each point's
 /// third value puts it (the hole reaching past the spline's end) unless the map's
@@ -737,6 +833,23 @@ pub fn spline_hole_outlines(
     mirror: bool,
     mode: u8,
 ) -> Vec<Vec<DVec2>> {
+    spline_hole_rims(def, curve, mirror, mode)
+        .into_iter()
+        .map(|r| r.into_iter().map(|p| p.truncate()).collect())
+        .collect()
+}
+
+/// [`spline_hole_outlines`] with the heights of the hole's profile points (world): the
+/// rim along the sides 3 mm under the road's edges. Omsi.exe gives the corners it cuts into
+/// the ground along an outline these heights, not the ground's, so the ground rises to the
+/// road's edge (its `.map.terrain_0.rdy` cache: on Tettau's roads up to 10 cm over the
+/// `.terrain` there).
+pub fn spline_hole_rims(
+    def: &Spline,
+    curve: &SplineCurve,
+    mirror: bool,
+    mode: u8,
+) -> Vec<Vec<DVec3>> {
     if mode == 0 || curve.length <= 0.0 {
         return Vec::new();
     }
@@ -745,7 +858,7 @@ pub fn spline_hole_outlines(
     let n = n.max(1);
     let l = curve.length;
     let curve = &curve.with_sli(def);
-    let at = |x: f32, s: f64| skewed_point(curve, s, x as f64, 0.0).0.truncate();
+    let at = |q: [f32; 3], s: f64| skewed_point(curve, s, q[0] as f64, q[1] as f64).0;
     terrain_hole_profiles(def)
         .into_iter()
         .filter(|p| !p.is_empty())
@@ -758,35 +871,58 @@ pub fn spline_hole_outlines(
             let k = p.len();
             let mut ring = Vec::with_capacity(2 * (k + n - 1));
             for i in 1..n {
-                ring.push(at(p[k - 1][0], i as f64 * l / n as f64));
+                ring.push(at(p[k - 1], i as f64 * l / n as f64));
             }
             for q in p.iter().rev() {
-                ring.push(at(q[0], if mode & 1 == 0 { l } else { l - q[2] as f64 }));
+                ring.push(at(*q, if mode & 1 == 0 { l } else { l - q[2] as f64 }));
             }
             for i in (1..n).rev() {
-                ring.push(at(p[0][0], i as f64 * l / n as f64));
+                ring.push(at(p[0], i as f64 * l / n as f64));
             }
             for q in &p {
-                ring.push(at(q[0], if mode > 2 { 0.0 } else { q[2] as f64 }));
+                ring.push(at(*q, if mode > 2 { 0.0 } else { q[2] as f64 }));
             }
             ring
         })
         .collect()
 }
 
-/// Does a closed outline cross itself? Omsi.exe cuts no hole along one that does (0x5748bc
-/// and the terrain's "Terrain hole cutting" error): a tight curve folds the inner edge over.
+/// Does a closed outline intersect itself? Omsi.exe cuts no hole along one that does
+/// (0x57496c, using 0x57069c): nonadjacent edges must not cross or touch. A tight curve can
+/// fold the inner edge over; a clamped tunnel end can double back through a side's endpoint.
 pub fn outline_crosses_itself(ring: &[DVec2]) -> bool {
+    const EPS: f64 = 1e-10;
+    let mut ring = ring.to_vec();
+    ring.dedup_by(|b, a| a.distance(*b) <= EPS);
+    while ring.len() > 1 && ring[0].distance(ring[ring.len() - 1]) <= EPS {
+        ring.pop();
+    }
     let n = ring.len();
     if n < 4 {
         return n < 3;
     }
-    let cross = |a: DVec2, b: DVec2, c: DVec2| (b - a).perp_dot(c - a);
     let hits = |p1: DVec2, p2: DVec2, q1: DVec2, q2: DVec2| {
-        let (d1, d2) = (cross(q1, q2, p1), cross(q1, q2, p2));
-        let (d3, d4) = (cross(p1, p2, q1), cross(p1, p2, q2));
-        ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
-            && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+        let (u, v, w) = (p2 - p1, q2 - q1, q1 - p1);
+        let den = u.perp_dot(v);
+        // Include the endpoints, as OMSI's segment test does, with a little slack.
+        if den != 0.0 {
+            let (t, s) = (w.perp_dot(v) / den, w.perp_dot(u) / den);
+            if (-EPS..=1.0 + EPS).contains(&t) && (-EPS..=1.0 + EPS).contains(&s) {
+                return true;
+            }
+        }
+        // Collinear overlaps also make the boundary ambiguous. Test distance in metres
+        // so short edges and long edges use the same tolerance.
+        let on = |a: DVec2, b: DVec2, p: DVec2| {
+            let d = b - a;
+            let len = d.length();
+            if len == 0.0 {
+                return p.distance(a) <= EPS;
+            }
+            let along = (p - a).dot(d) / len;
+            (p - a).perp_dot(d).abs() <= EPS * len && (-EPS..=len + EPS).contains(&along)
+        };
+        on(p1, p2, q1) || on(p1, p2, q2) || on(q1, q2, p1) || on(q1, q2, p2)
     };
     for i in 0..n {
         let (a, b) = (ring[i], ring[(i + 1) % n]);
@@ -809,6 +945,15 @@ pub fn outline_crosses_itself(ring: &[DVec2]) -> bool {
 /// ring.
 /// Positions are the mesh's after `transform`, relative to `origin`.
 pub fn hole_mesh_outlines(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> Vec<Vec<DVec2>> {
+    hole_mesh_rims(mesh, transform, origin)
+        .into_iter()
+        .map(|ring| ring.into_iter().map(|p| p.truncate()).collect())
+        .collect()
+}
+
+/// Open cutter boundaries with their world heights. A portal cutter slopes from its
+/// ceiling to its road; terrain cut points must take those heights, as for spline rims.
+pub fn hole_mesh_rims(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> Vec<Vec<DVec3>> {
     use std::collections::HashMap;
     // (a model repeats a vertex for every face and UV seam: the corners by place, to the mm)
     let key = |v: Vec3| {
@@ -818,15 +963,15 @@ pub fn hole_mesh_outlines(mesh: &MeshData, transform: &Mat4, origin: DVec3) -> V
             (v.z * 1000.0).round() as i64,
         )
     };
-    let mut place: HashMap<(i64, i64, i64), DVec2> = HashMap::new();
+    let mut place: HashMap<(i64, i64, i64), DVec3> = HashMap::new();
     let mut edges: HashMap<((i64, i64, i64), (i64, i64, i64)), u32> = HashMap::new();
     for t in mesh.indices.chunks_exact(3) {
         let k = [0, 1, 2].map(|i| {
             let v = mesh.positions[t[i] as usize];
             let kv = key(v);
-            place.entry(kv).or_insert_with(|| {
-                origin.truncate() + transform.transform_point3(v).truncate().as_dvec2()
-            });
+            place
+                .entry(kv)
+                .or_insert_with(|| origin + transform.transform_point3(v).as_dvec3());
             kv
         });
         if k[0] == k[1] || k[1] == k[2] || k[2] == k[0] {
@@ -1050,6 +1195,25 @@ pub fn build_terrain_mesh(t: &Terrain) -> MeshData {
     mesh
 }
 
+pub fn build_water_mesh(heights: [f32; 4]) -> MeshData {
+    let size = tile_size() as f32;
+    let mut mesh = MeshData::default();
+    for (i, (x, y)) in [(0.0, 0.0), (size, 0.0), (0.0, size), (size, size)]
+        .into_iter()
+        .enumerate()
+    {
+        mesh.positions.push(Vec3::new(x, y, heights[i]));
+        mesh.normals.push(Vec3::Z);
+        mesh.uvs.push(Vec2::new(x / 40.0, y / 40.0));
+    }
+    // OMSI's water index buffer (007ac044, stores at 007ac0d2..007ac260) joins
+    // corners 0 and 3. The other diagonal raises the middle of Tettau's sloping
+    // water surface into the road even though all four corner heights are correct.
+    mesh.indices.extend_from_slice(&[0, 3, 2, 0, 1, 3]);
+    mesh.ranges.push((0, 6, 0));
+    mesh
+}
+
 /// Height of the terrain *as drawn* at tile-local metres: the two triangles of each cell
 /// that [`build_terrain_mesh`] makes (diagonal from the cell's (i, j) corner to its
 /// (i+1, j+1) corner, as OMSI splits it), not the bilinear patch `Terrain::sample`
@@ -1236,6 +1400,46 @@ pub fn positive_det_faces_forward(m: &::legacy_o3d::Mesh) -> Option<bool> {
     }
 }
 
+/// Per material slot: (triangles whose normals point against their drawn face, triangles
+/// counted).
+pub fn slot_normals_against(data: &MeshData) -> Vec<(usize, usize)> {
+    let slots = data
+        .ranges
+        .iter()
+        .map(|r| r.2 as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut out = vec![(0usize, 0usize); slots];
+    for &(first, count, slot) in &data.ranges {
+        let start = first as usize;
+        let end = start.saturating_add(count as usize).min(data.indices.len());
+        for t in data.indices[start.min(end)..end].chunks_exact(3) {
+            let (Some(a), Some(b), Some(c)) = (
+                data.positions.get(t[0] as usize),
+                data.positions.get(t[1] as usize),
+                data.positions.get(t[2] as usize),
+            ) else {
+                continue;
+            };
+            let g = (*b - *a).cross(*c - *a);
+            let n = t
+                .iter()
+                .filter_map(|&i| data.normals.get(i as usize))
+                .copied()
+                .sum::<Vec3>();
+            if g.length_squared() > 1e-12 && n.length_squared() > 1e-12 {
+                let e = &mut out[slot as usize];
+                e.1 += 1;
+                // (with y and z swapped, a drawn front's normal is against `g`)
+                if g.dot(n) > 0.0 {
+                    e.0 += 1;
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn reverse_winding(data: &mut MeshData) {
     for t in data.indices.chunks_exact_mut(3) {
         t.swap(1, 2);
@@ -1245,6 +1449,294 @@ pub fn reverse_winding(data: &mut MeshData) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_hole_rims_lower_the_ground_to_the_portal_entrance() {
+        // A sloping cutter with split vertices at its seam, as exporters produce.
+        let cutter = MeshData {
+            positions: vec![
+                Vec3::new(5.0, 8.0, 9.0),
+                Vec3::new(15.0, 8.0, 9.0),
+                Vec3::new(15.0, 11.0, 1.0),
+                Vec3::new(5.0, 11.0, 1.0),
+                Vec3::new(5.0, 11.0, 1.0),
+                Vec3::new(15.0, 11.0, 1.0),
+                Vec3::new(15.0, 12.0, 1.0),
+                Vec3::new(5.0, 12.0, 1.0),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+            ..Default::default()
+        };
+        let origin = DVec3::new(tile_size(), tile_size(), 30.0);
+        let rims = hole_mesh_rims(&cutter, &Mat4::IDENTITY, origin);
+        assert_eq!(rims.len(), 1);
+        assert_eq!(rims[0].len(), 6);
+        assert!(rims[0].iter().any(|p| (p.z - 39.0).abs() < 1e-6));
+        assert!(rims[0].iter().any(|p| (p.z - 31.0).abs() < 1e-6));
+        let mut surface = TileSurface::new(64);
+        surface.add_mesh_outline(&rims[0], 1, 1);
+        let mut terrain = Terrain::flat();
+        terrain.heights.fill(45.0);
+        let cut = TerrainCut::with_spline_outlines(&terrain, &[], &surface.mesh_outlines())
+            .unwrap()
+            .mesh(&terrain);
+        let mut entrance = 0;
+        for &i in &cut.indices {
+            let p = cut.positions[i as usize];
+            if (p.y - 12.0).abs() < 1e-5 && (5.0..=15.0).contains(&p.x) {
+                entrance += 1;
+                assert!((p.z - 31.0).abs() < 1e-5, "entrance buried by {p:?}");
+            }
+        }
+        assert!(entrance > 0);
+        // The cutter's interior is removed; distant terrain retains its height.
+        assert!(ray_mesh(Vec3::new(10.0, 10.5, 60.0), -Vec3::Z, &cut, &Mat4::IDENTITY).is_none());
+        assert!(
+            cut.indices
+                .iter()
+                .any(|&i| cut.positions[i as usize] == Vec3::new(0.0, 0.0, 45.0))
+        );
+    }
+
+    #[test]
+    fn hole_outlines_reject_contacts_between_nonadjacent_edges() {
+        let ring = |points: &[[f64; 2]]| points.iter().map(|p| DVec2::from(*p)).collect::<Vec<_>>();
+        assert!(outline_crosses_itself(&ring(&[
+            [0.0, 0.0],
+            [4.0, 4.0],
+            [0.0, 4.0],
+            [4.0, 0.0],
+        ])));
+        // The tip touches the middle of the first edge without crossing it.
+        assert!(outline_crosses_itself(&ring(&[
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [2.0, 0.0],
+            [0.0, 4.0],
+        ])));
+        // A boundary that retraces part of an edge is invalid too.
+        assert!(outline_crosses_itself(&ring(&[
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 4.0],
+            [0.0, 4.0],
+        ])));
+        // Ordinary adjacent corners and straight subdivisions remain valid.
+        assert!(!outline_crosses_itself(&ring(&[
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [0.0, 4.0],
+        ])));
+        assert!(!outline_crosses_itself(&ring(&[
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [2.0, 0.000001],
+            [0.0, 4.0],
+        ])));
+        // A vertical step repeats a point in plan view; the outline is still simple.
+        assert!(!outline_crosses_itself(&ring(&[
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [0.0, 4.0],
+            [0.0, 0.0],
+        ])));
+        // A repeat does not hide a real crossing.
+        assert!(outline_crosses_itself(&ring(&[
+            [0.0, 0.0],
+            [4.0, 4.0],
+            [4.0, 4.0],
+            [0.0, 4.0],
+            [4.0, 0.0],
+        ])));
+    }
+
+    #[test]
+    fn clamped_tunnel_holes_are_rejected_at_either_end() {
+        // Synthetic closed tube with a nearly horizontal ceiling section. Its automatic
+        // hole profile has a distant bottom corner, so clamped ends double back.
+        let profiles: &[&[(f32, f32)]] = &[
+            &[(0.0, 5.0), (-4.0, 4.9), (-5.0, 0.0)],
+            &[
+                (-5.0, 0.0),
+                (-4.0, 0.0),
+                (-4.0, -0.2),
+                (4.0, -0.2),
+                (4.0, 0.0),
+                (5.0, 0.0),
+            ],
+            &[(5.0, 0.0), (4.0, 4.9), (0.0, 5.0)],
+        ];
+        let def = Spline {
+            profiles: profiles
+                .iter()
+                .map(|points| ::scenery::sli::SplineProfile {
+                    points: points
+                        .iter()
+                        .map(|&(x, z)| ::scenery::sli::SplineProfilePoint {
+                            x,
+                            z,
+                            ..Default::default()
+                        })
+                        .collect(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert!(terrain_hole_profiles(&def)[0][1][0] < -200.0);
+        for radius in [0.0, -200.0, 800.0] {
+            let curve = SplineCurve {
+                start: DVec3::new(1700.0, 1000.0, 50.0),
+                heading_deg: 145.0,
+                grad_end: -5.0,
+                ..plain_curve(70.0, radius)
+            };
+            for mirror in [false, true] {
+                for mode in [2, 3, 4] {
+                    for ring in spline_hole_outlines(&def, &curve, mirror, mode) {
+                        assert!(
+                            outline_crosses_itself(&ring),
+                            "radius={radius}, mirror={mirror}, mode={mode}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn water_interpolates_across_the_authored_diagonal() {
+        // A non-planar surface distinguishes the two diagonals. The old split
+        // put its centre at 30 m instead of 5 m; flat water hides the error.
+        let mesh = build_water_mesh([0.0, 20.0, 40.0, 10.0]);
+        let size = tile_size() as f32;
+        for (u, v, expected) in [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 20.0),
+            (0.0, 1.0, 40.0),
+            (1.0, 1.0, 10.0),
+            (0.5, 0.5, 5.0),
+            (0.75, 0.25, 12.5),
+            (0.25, 0.75, 22.5),
+        ] {
+            let hit = ray_mesh(
+                Vec3::new(u * size, v * size, 100.0),
+                -Vec3::Z,
+                &mesh,
+                &Mat4::IDENTITY,
+            )
+            .expect("water covers the tile");
+            assert!((100.0 - hit - expected).abs() < 1e-4, "at ({u}, {v})");
+        }
+        for triangle in mesh.indices.chunks_exact(3) {
+            let [a, b, c] =
+                [triangle[0], triangle[1], triangle[2]].map(|i| mesh.positions[i as usize]);
+            assert!((b - a).cross(c - a).z > 0.0);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OMSI_ROOT with the Tettau map"]
+    fn tettau_water_stays_below_the_road_to_neuenbau() {
+        let root = std::path::PathBuf::from(std::env::var_os("OMSI_ROOT").expect("OMSI_ROOT"));
+        let path = root.join("maps/Tettau/tile_-18_10.map");
+        let tile = ::map::Tile::load(&path).expect("Tettau tile");
+        assert!(tile.has_water);
+        let water = ::map::terrain::Water::parse(
+            &std::fs::read(path.with_extension("map.water")).expect("Tettau water"),
+        );
+        assert_eq!(water.count, 1);
+        let heights = water.values[..4].try_into().unwrap();
+        let mesh = build_water_mesh(heights);
+        let spline = tile.splines.iter().find(|s| s.id == 4421461).expect("road");
+        let curve = SplineCurve::from_map(spline, DVec2::ZERO);
+        for along in [64.0, 70.0, 78.0] {
+            let road = curve.point_at(along).as_vec3();
+            let hit =
+                ray_mesh(road, -Vec3::Z, &mesh, &Mat4::IDENTITY).expect("water is below the road");
+            assert!(hit > 1.0, "road clearance at {along} m: {hit}");
+        }
+    }
+
+    #[test]
+    fn a_point_the_probes_take_on_a_triangle_is_inside_its_reach() {
+        // (a small xorshift: the same triangles every run)
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let mut taken = 0;
+        for k in 0..4000 {
+            // slivers too: one corner drawn close to the line through the others
+            let a = Vec3::new(rnd() * 40.0, rnd() * 40.0, 0.0);
+            let b = Vec3::new(rnd() * 40.0, rnd() * 40.0, 0.0);
+            let c = if k % 4 == 0 {
+                a.lerp(b, rnd()) + Vec3::new(rnd() * 0.01, rnd() * 0.01, 0.0)
+            } else {
+                Vec3::new(rnd() * 40.0, rnd() * 40.0, 0.0)
+            };
+            let r = drive_reach(&[a, b, c]);
+            // (the furthest the tolerance reaches: -1e-4 on two corners, the rest on the third)
+            for w in [
+                [1.0002, -1e-4, -1e-4],
+                [-1e-4, 1.0002, -1e-4],
+                [-1e-4, -1e-4, 1.0002],
+            ] {
+                let (x, y) = (
+                    a.x * w[0] + b.x * w[1] + c.x * w[2],
+                    a.y * w[0] + b.y * w[1] + c.y * w[2],
+                );
+                if r[0] > f32::MIN {
+                    taken += 1;
+                    assert!(
+                        x >= r[0] && y >= r[1] && x <= r[2] && y <= r[3],
+                        "{a} {b} {c} ({x}, {y}) {r:?}"
+                    );
+                }
+            }
+            for _ in 0..50 {
+                let (x, y) = (rnd() * 44.0 - 2.0, rnd() * 44.0 - 2.0);
+                let d = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+                if d.abs() < 1e-9 {
+                    continue;
+                }
+                let l1 = ((b.y - c.y) * (x - c.x) + (c.x - b.x) * (y - c.y)) / d;
+                let l2 = ((c.y - a.y) * (x - c.x) + (a.x - c.x) * (y - c.y)) / d;
+                let l3 = 1.0 - l1 - l2;
+                if l1.min(l2).min(l3) >= -1e-4 {
+                    taken += 1;
+                    assert!(
+                        x >= r[0] && y >= r[1] && x <= r[2] && y <= r[3],
+                        "{a} {b} {c} ({x}, {y}) {r:?}"
+                    );
+                }
+            }
+        }
+        assert!(taken > 1000);
+    }
+
+    #[test]
+    fn a_probe_past_a_long_triangle_tip_is_inside_its_reach() {
+        // (TruckiHD's case: the tolerance reaches further along the long side than its height)
+        let t = [
+            Vec3::new(0.0, 4.0, 0.0),
+            Vec3::new(30.0, 4.0, 0.0),
+            Vec3::new(31.0, 4.1, 0.0),
+        ];
+        let r = drive_reach(&t);
+        let (x, y) = (31.002f32, 4.100012f32);
+        assert!(x >= r[0] && y >= r[1] && x <= r[2] && y <= r[3], "{r:?}");
+    }
 
     #[test]
     fn static_mesh_merge_preserves_geometry_uvs_and_material_order() {
@@ -1833,6 +2325,132 @@ mod tests {
         assert_eq!(spline_station_count(&def, &plain_curve(4.0, 0.0)), 1);
     }
 
+    /// A spline whose profiles are (texture, x from, x to, height)
+    fn profiled(profiles: &[(usize, f32, f32, f32)]) -> Spline {
+        let mut def = Spline::default();
+        let textures = profiles.iter().map(|p| p.0).max().unwrap_or(0) + 1;
+        def.textures.resize(textures, Default::default());
+        for &(texture, x0, x1, z) in profiles {
+            def.profiles.push(::scenery::sli::SplineProfile {
+                texture,
+                points: [x0, x1]
+                    .map(|x| ::scenery::sli::SplineProfilePoint {
+                        x,
+                        z,
+                        v_scale: 0.1,
+                        ..Default::default()
+                    })
+                    .to_vec(),
+            });
+        }
+        def
+    }
+
+    /// The triangles of each texture slot, whatever order the ranges draw them in.
+    fn triangles_by_slot(m: &MeshData) -> Vec<(u32, Vec<[u32; 3]>)> {
+        let mut slots: Vec<(u32, Vec<[u32; 3]>)> = Vec::new();
+        for &(first, count, slot) in &m.ranges {
+            let tris = m.indices[first as usize..(first + count) as usize]
+                .chunks_exact(3)
+                .map(|t| [t[0], t[1], t[2]]);
+            match slots.iter_mut().find(|s| s.0 == slot) {
+                Some(s) => s.1.extend(tris),
+                None => slots.push((slot, tris.collect())),
+            }
+        }
+        for s in &mut slots {
+            s.1.sort_unstable();
+        }
+        slots.sort_unstable_by_key(|s| s.0);
+        slots
+    }
+
+    /// A road of lanes, gutters and verges side by side draws one range per texture, with
+    /// the same triangles as one range per profile
+    #[test]
+    fn spline_ranges_group_by_texture() {
+        // (RQ_10,5_2spur_7,5m_Oneway.sli: ten profiles over three textures)
+        let def = profiled(&[
+            (0, -4.15, -4.05, 0.1),
+            (0, -4.05, -3.95, 0.1),
+            (1, -3.95, -3.85, 0.1),
+            (1, -3.85, -3.75, 0.1),
+            (2, -3.75, 0.0, 0.1),
+            (2, 0.0, 3.75, 0.1),
+            (1, 3.75, 3.85, 0.1),
+            (1, 3.85, 3.95, 0.1),
+            (0, 3.95, 4.05, 0.1),
+            (0, 4.05, 4.15, 0.1),
+        ]);
+        let mesh = build_spline_mesh(&def, &plain_curve(30.0, 0.0), false, DVec3::ZERO);
+        assert_eq!(mesh.ranges.len(), 10);
+        let grouped = group_spline_ranges(&def, &mesh).unwrap();
+        assert_eq!(
+            grouped.ranges.iter().map(|r| r.2).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(grouped.indices.len(), mesh.indices.len());
+        assert_eq!(grouped.positions, mesh.positions);
+        assert_eq!(grouped.uvs, mesh.uvs);
+        assert!(grouped.one_sided);
+        assert_eq!(triangles_by_slot(&grouped), triangles_by_slot(&mesh));
+        // one range already per texture: nothing to do
+        let single = build_spline_mesh(
+            &strip(2.0, 0.1),
+            &plain_curve(30.0, 0.0),
+            false,
+            DVec3::ZERO,
+        );
+        assert!(group_spline_ranges(&strip(2.0, 0.1), &single).is_none());
+    }
+
+    #[test]
+    fn spline_ranges_keep_faces_drawn_over_others() {
+        let beside = profiled(&[
+            (0, -2.0, 2.0, 0.0),
+            (1, -1.0, 1.0, 0.01),
+            (0, 2.0, 3.0, 0.0),
+        ]);
+        let mesh = build_spline_mesh(&beside, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        let grouped = group_spline_ranges(&beside, &mesh).unwrap();
+        assert_eq!(
+            grouped.ranges.iter().map(|r| r.2).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let under = profiled(&[
+            (0, -2.0, 2.0, 0.0),
+            (1, -1.0, 1.0, 0.01),
+            (0, -0.5, 0.5, 0.0),
+        ]);
+        let mesh = build_spline_mesh(&under, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        assert!(group_spline_ranges(&under, &mesh).is_none());
+        // a wall (a vertical face) on the road's edge only meets it at a line
+        let wall = profiled(&[(0, -2.0, 2.0, 0.0), (1, 2.0, 2.0, 0.0), (0, 2.0, 3.0, 0.0)]);
+        let mut def = wall.clone();
+        def.profiles[1].points[1].z = 1.0;
+        let mesh = build_spline_mesh(&def, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        assert_eq!(group_spline_ranges(&def, &mesh).unwrap().ranges.len(), 2);
+    }
+
+    /// Blended textures keep their profiles' order, and ranges that are not the profiles'
+    /// (a slot taken out) are left alone unless whole textures are missing
+    #[test]
+    fn spline_ranges_leave_blends_and_foreign_ranges() {
+        let mut def = profiled(&[(0, -2.0, 0.0, 0.0), (1, 0.0, 1.0, 0.0), (0, 1.0, 2.0, 0.0)]);
+        let mesh = build_spline_mesh(&def, &plain_curve(20.0, 0.0), false, DVec3::ZERO);
+        assert!(group_spline_ranges(&def, &mesh).is_some());
+        // without texture 1 (a [terrainmapping] slot drawn with the ground)
+        let mut rest = mesh.clone();
+        rest.ranges.retain(|r| r.2 != 1);
+        assert_eq!(group_spline_ranges(&def, &rest).unwrap().ranges.len(), 1);
+        // one range missing that the profiles have
+        let mut torn = mesh.clone();
+        torn.ranges.remove(2);
+        assert!(group_spline_ranges(&def, &torn).is_none());
+        def.textures[0].alpha = 2;
+        assert!(group_spline_ranges(&def, &mesh).is_none());
+    }
+
     /// The skew shifts every cross-section, running from its start value to its end value.
     #[test]
     fn skew_runs_along_the_spline() {
@@ -1978,6 +2596,41 @@ mod tests {
         // a plain spline keeps its gradient parabola
         let p = SplineCurve { delta_h: None, ..c };
         assert!((p.height_at(p.length) - (-5.79 + 73.86 * 0.0619 / 2.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn normals_against_the_drawn_faces_are_counted_per_slot() {
+        let quad = |nz: f32| {
+            let v = |x: f32, y: f32| ::legacy_o3d::Vertex {
+                position: Vec3::new(x, y, 1.0),
+                normal: Vec3::new(0.0, 0.0, nz),
+                uv: Vec2::ZERO,
+            };
+            ::legacy_o3d::Mesh {
+                vertices: vec![v(0.0, 0.0), v(1.0, 0.0), v(0.0, 1.0), v(1.0, 1.0)],
+                triangles: vec![
+                    ::legacy_o3d::Triangle {
+                        indices: [0, 1, 2],
+                        material: 0,
+                    },
+                    ::legacy_o3d::Triangle {
+                        indices: [2, 1, 3],
+                        material: 1,
+                    },
+                ],
+                materials: vec![::legacy_o3d::Material::default(); 2],
+                ..Default::default()
+            }
+        };
+        // drawn as wound: normals along the faces, then against them (#117)
+        assert_eq!(
+            slot_normals_against(&mesh_from_o3d(&quad(1.0))),
+            [(0, 1), (0, 1)]
+        );
+        assert_eq!(
+            slot_normals_against(&mesh_from_o3d(&quad(-1.0))),
+            [(1, 1), (1, 1)]
+        );
     }
 
     #[test]
@@ -2387,6 +3040,20 @@ impl Probe {
     }
 }
 
+/// Triangle `t`'s plan bounds, widened by what weights down to -1e-4 add: 2e-4 of its extent.
+fn drive_reach(t: &[Vec3; 3]) -> [f32; 4] {
+    const ALL: [f32; 4] = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
+    let (p, q, r) = (t[0].truncate(), t[1].truncate(), t[2].truncate());
+    let area2 = (q - p).perp_dot(r - p).abs();
+    let shortest = (q - r).length().min((r - p).length()).min((p - q).length());
+    if area2 < 1e-9 || shortest < 1e-6 {
+        return ALL;
+    }
+    let (lo, hi) = (p.min(q).min(r), p.max(q).max(r));
+    let m = (hi - lo) * 2.5e-4 + 1e-3;
+    [lo.x - m.x, lo.y - m.y, hi.x + m.x, hi.y + m.y]
+}
+
 /// Upward-facing triangles of one tile (tile-local x/y in metres, absolute z), bucketed on a
 /// coarse grid so that a wheel asks only the few faces around it.
 #[derive(Debug, Clone, Default)]
@@ -2403,6 +3070,9 @@ pub struct DriveGrid {
     /// Per cell, the range of `items` that lists its triangles (`cells² + 1` offsets).
     start: Vec<u32>,
     items: Vec<u32>,
+    /// Per triangle, the box (min x, min y, max x, max y) outside which the probes never
+    /// take a point to lie on it (see [`drive_reach`]).
+    reach: Vec<[f32; 4]>,
 }
 
 #[derive(Debug, Clone)]
@@ -2424,6 +3094,7 @@ impl DriveGrid {
             + self.surf_maps.capacity() * std::mem::size_of::<Arc<HeightMap>>()
             + self.start.capacity() * 4
             + self.items.capacity() * 4
+            + self.reach.capacity() * 16
     }
 
     /// Add a triangle; walls (faces steeper than about 70°) are left out, they are nothing
@@ -2501,6 +3172,7 @@ impl DriveGrid {
                 surf_index += 1;
             }
         }
+        self.reach = keep.iter().map(drive_reach).collect();
         self.tris = keep;
         self.ridge = keep_ridge;
         self.surf_tris = keep_surf;
@@ -2560,7 +3232,7 @@ impl DriveGrid {
         let k = cy * self.cells + cx;
         let mut best: Option<(f32, Vec3)> = None;
         for &i in &self.items[self.start[k] as usize..self.start[k + 1] as usize] {
-            if self.ridge.get(i as usize).copied().unwrap_or(false) {
+            if self.ridge.get(i as usize).copied().unwrap_or(false) || !self.reaches(i, x, y) {
                 continue;
             }
             let [a, b, c] = self.tris[i as usize];
@@ -2593,6 +3265,13 @@ impl DriveGrid {
         best
     }
 
+    #[inline]
+    fn reaches(&self, i: u32, x: f32, y: f32) -> bool {
+        self.reach
+            .get(i as usize)
+            .is_none_or(|r| x >= r[0] && y >= r[1] && x <= r[2] && y <= r[3])
+    }
+
     /// The wall tops over tile-local (x, y) alone, as [`DriveGrid::probe`] gives the rest.
     pub fn probe_walls(&self, x: f32, y: f32, z_top: f32) -> Probe {
         self.probe_kind(x, y, z_top, true)
@@ -2609,7 +3288,9 @@ impl DriveGrid {
         }
         let k = cy * self.cells + cx;
         for &i in &self.items[self.start[k] as usize..self.start[k + 1] as usize] {
-            if self.ridge.get(i as usize).copied().unwrap_or(false) != ridges {
+            if self.ridge.get(i as usize).copied().unwrap_or(false) != ridges
+                || !self.reaches(i, x, y)
+            {
                 continue;
             }
             let [a, b, c] = self.tris[i as usize];
@@ -2699,12 +3380,17 @@ pub struct TileSurface {
     hole_cover: Vec<Option<Box<[u16; BLOCK * BLOCK]>>>,
     /// The outlines the splines laid with `[spline_terrain_align]` cut out of the ground
     /// ([`spline_hole_outlines`]), in tile metres, with their bounds (x0, y0, x1, y1): cut
-    /// exactly along them, as Omsi.exe cuts the terrain's triangles, not by texel.
-    outlines: Vec<(Vec<Vec2>, [f32; 4])>,
+    /// exactly along them, as Omsi.exe cuts the terrain's triangles, not by texel. The last
+    /// value: cut out of the ground mesh itself ([`TerrainCut`]), not by the mask.
+    outlines: Vec<(Vec<Vec2>, [f32; 4], bool)>,
+    /// The outlines cut out of the ground mesh, with their heights (tile metres).
+    mesh_rings: Vec<Vec<Vec3>>,
     /// The faces the wheels stand on over this tile (spline height profiles, surface objects):
     /// a texel of the raster is most of a metre wide and holds one height, which put a wheel
     /// next to a kerb on top of the pavement or into the road's camber.
     pub drive: DriveGrid,
+    /// Cut terrain shared by rendering, wheels and pedestrians.
+    pub terrain_cut: Option<TerrainCut>,
 }
 
 /// Edge of a [`TileSurface`] block (texels).
@@ -2743,7 +3429,10 @@ impl TileSurface {
         }
         rasters += self.holes.iter().flatten().count() * n * 4
             + self.hole_cover.iter().flatten().count() * n * 2;
-        (rasters, self.drive.heap_bytes())
+        (
+            rasters,
+            self.drive.heap_bytes() + self.terrain_cut.as_ref().map_or(0, TerrainCut::heap_bytes),
+        )
     }
 
     pub fn new(size: usize) -> TileSurface {
@@ -2754,7 +3443,9 @@ impl TileSurface {
             holes: (0..blocks * blocks).map(|_| None).collect(),
             hole_cover: (0..blocks * blocks).map(|_| None).collect(),
             outlines: Vec::new(),
+            mesh_rings: Vec::new(),
             drive: DriveGrid::default(),
+            terrain_cut: None,
         }
     }
 
@@ -2987,8 +3678,37 @@ impl TileSurface {
         self.rasterize_kind(mesh, transform, origin, tx, ty, true)
     }
 
-    /// Cut the ground inside an aligned spline's outline (world x, y) on tile (tx, ty).
+    /// An aligned spline's outline (world x, y) on tile (tx, ty), cut out of the ground mesh
+    /// ([`TileSurface::mesh_outlines`]); the mask leaves it alone.
+    pub fn add_mesh_outline(&mut self, ring: &[DVec3], tx: i32, ty: i32) {
+        let flat: Vec<DVec2> = ring.iter().map(|p| p.truncate()).collect();
+        let before = self.outlines.len();
+        self.push_outline(&flat, tx, ty, true);
+        if self.outlines.len() > before {
+            let o = DVec3::new(tx as f64 * tile_size(), ty as f64 * tile_size(), 0.0);
+            self.mesh_rings
+                .push(ring.iter().map(|p| (*p - o).as_vec3()).collect());
+        }
+    }
+
+    /// Mark a contour handled by `TerrainCut` so the texture mask leaves it alone.
+    /// Object rims are passed to that cutter separately because they still need insetting.
+    pub fn register_mesh_outline(&mut self, ring: &[DVec3], tx: i32, ty: i32) {
+        let flat: Vec<_> = ring.iter().map(|p| p.truncate()).collect();
+        self.push_outline(&flat, tx, ty, true);
+    }
+
+    /// Cut the ground inside an outline (world x, y) on tile (tx, ty) by the mask.
     pub fn add_outline(&mut self, ring: &[DVec2], tx: i32, ty: i32) {
+        self.push_outline(ring, tx, ty, false);
+    }
+
+    /// The outlines to cut out of the ground mesh, in tile metres.
+    pub fn mesh_outlines(&self) -> Vec<&[Vec3]> {
+        self.mesh_rings.iter().map(|r| r.as_slice()).collect()
+    }
+
+    fn push_outline(&mut self, ring: &[DVec2], tx: i32, ty: i32, mesh: bool) {
         let o = DVec2::new(tx as f64 * tile_size(), ty as f64 * tile_size());
         let pts: Vec<Vec2> = ring.iter().map(|p| (*p - o).as_vec2()).collect();
         let b = pts
@@ -3005,7 +3725,7 @@ impl TileSurface {
         {
             return;
         }
-        self.outlines.push((pts, b));
+        self.outlines.push((pts, b, mesh));
     }
 
     /// Signed distance (m) from tile point (x, y) to the aligned splines' cut, negative
@@ -3013,7 +3733,7 @@ impl TileSurface {
     fn outline_distance(&self, x: f32, y: f32) -> Option<f32> {
         let p = Vec2::new(x, y);
         let mut best: Option<f32> = None;
-        for (ring, b) in &self.outlines {
+        for (ring, b, _) in self.outlines.iter().filter(|o| !o.2) {
             if x < b[0] - OUTLINE_EDGE
                 || y < b[1] - OUTLINE_EDGE
                 || x > b[2] + OUTLINE_EDGE
@@ -3040,9 +3760,10 @@ impl TileSurface {
     }
 
     /// Is tile point (x, y) inside an aligned spline's outline?
-    fn in_outlines(&self, x: f32, y: f32) -> bool {
-        self.outlines.iter().any(|(ring, b)| {
-            if x < b[0] || y < b[1] || x > b[2] || y > b[3] {
+    /// (`masked`: only the ones the mask cuts)
+    fn in_outlines(&self, x: f32, y: f32, masked: bool) -> bool {
+        self.outlines.iter().any(|(ring, b, mesh)| {
+            if (masked && *mesh) || x < b[0] || y < b[1] || x > b[2] || y > b[3] {
                 return false;
             }
             let mut inside = false;
@@ -3322,9 +4043,9 @@ impl TileSurface {
         // outline; and a strip of ground between two holes narrower than two texels (a
         // median, 0.96 m on the Falkenseer Chaussee) keeps its full value, where a distance
         // field's ridge sank to the cut-off and let the sky through in lens-shaped patches.
-        if !self.outlines.is_empty() {
+        if self.outlines.iter().any(|o| !o.2) {
             let (mut lo, mut hi) = ([usize::MAX; 2], [0usize; 2]);
-            for (_, b) in &self.outlines {
+            for (_, b, _) in self.outlines.iter().filter(|o| !o.2) {
                 lo[0] = lo[0].min(((b[0] - OUTLINE_EDGE) / cell).floor().max(0.0) as usize);
                 lo[1] = lo[1].min(((b[1] - OUTLINE_EDGE) / cell).floor().max(0.0) as usize);
                 hi[0] = hi[0].max((((b[2] + OUTLINE_EDGE) / cell).ceil().max(0.0) as usize).min(n));
@@ -3347,7 +4068,7 @@ impl TileSurface {
                                     cx + ((q % 4) as f32 - 1.5) * cell / 4.0,
                                     cy + ((q / 4) as f32 - 1.5) * cell / 4.0,
                                 );
-                                !self.in_outlines(x, y)
+                                !self.in_outlines(x, y, true)
                                     || self
                                         .outline_distance(x, y)
                                         .is_some_and(|d| d > -OUTLINE_KEEP)
@@ -3393,7 +4114,7 @@ impl TileSurface {
     /// Would the ground be taken away at this point? (the per-texel decision `mask_image`
     /// makes, for checks that need to know whether a road is visible)
     pub fn cut_at(&self, x: f32, y: f32, terrain_h: f32, flush: f32) -> bool {
-        if self.in_outlines(x, y) {
+        if self.in_outlines(x, y, false) {
             return true;
         }
         let i = self.texel(x, y);
@@ -3443,7 +4164,7 @@ impl TileSurface {
     /// (Only the map's own holes - `[terrainhole]` meshes, the splines' `[terrainholeprofile]`
     /// - unless `road_cut`.)
     pub fn cuts_anything(&self, terrain_at: &dyn Fn(f32, f32) -> f32, flush: f32) -> bool {
-        if !self.outlines.is_empty() {
+        if self.outlines.iter().any(|o| !o.2) {
             return true;
         }
         let n = self.size;

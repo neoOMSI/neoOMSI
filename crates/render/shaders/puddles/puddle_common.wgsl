@@ -23,30 +23,35 @@ fn puddle_hash(c: vec2<f32>) -> f32 {
 }
 
 // xy: horizontal normal offset; z: the ring's strength, used for roughness as well.
-// Two layers of drops, each cell (25 cm) carrying a drop now and then: an outer ring that
-// widens and fades, and a smaller inner one that follows it.
 fn puddle_ripple(pattern_xy: vec2<f32>, time: f32, rain: f32, coverage: f32) -> vec3<f32> {
     var bump = vec2<f32>(0.0);
     var strength = 0.0;
-    for (var layer = 0; layer < 2; layer = layer + 1) {
+    for (var layer = 0; layer < 3; layer = layer + 1) {
         let fl = f32(layer);
-        let p = pattern_xy * 4.0 + vec2<f32>(fl * 2.59, fl * 4.27);
+        let p = pattern_xy * 5.0 + vec2<f32>(fl * 2.59, fl * 4.27);
         let cell = floor(p);
-        let seed = puddle_hash(cell + vec2<f32>(fl * 31.0, fl * 17.0));
-        let phase = fract(time * (0.7 + seed * 0.9) + seed * 13.0);
-        let local = fract(p) - vec2<f32>(0.5);
+        let id = cell + vec2<f32>(fl * 31.0, fl * 17.0);
+        let seed = puddle_hash(id);
+        let jx = puddle_hash(id + vec2<f32>(7.7, 1.3));
+        let jy = puddle_hash(id + vec2<f32>(3.1, 9.9));
+        let centre = vec2<f32>(0.5) + (vec2<f32>(jx, jy) - vec2<f32>(0.5)) * 0.5;
+        let phase = fract(time * (0.9 + seed * 0.8) + seed * 13.0);
+        let local = fract(p) - centre;
         let r = length(local);
-        let hit = step(1.0 - clamp(0.3 + 0.65 * rain, 0.0, 0.95), fract(seed * 31.7));
-        let fade = (1.0 - phase) * rain * coverage * hit;
-        let outer = (1.0 - smoothstep(0.0, 0.07, abs(r - phase * 0.4))) * fade;
-        let inner = (1.0 - smoothstep(0.0, 0.05, abs(r - phase * 0.24))) * fade * 0.6;
-        let s = max(outer, inner);
-        // Shallow rain rings disturb the image gently; steep normals break neighbouring
-        // reflection rays apart and make otherwise still puddles look like rough waves.
-        bump = bump + normalize(local + vec2<f32>(1e-5, 0.0)) * s * 0.05;
+        let hit = step(1.0 - clamp(0.25 + 0.7 * rain, 0.0, 0.95), fract(seed * 31.7));
+        let fade = (1.0 - phase) * (1.0 - phase) * rain * coverage * hit;
+        var s = 0.0;
+        for (var k = 0; k < 3; k = k + 1) {
+            let rk = phase * 0.42 - f32(k) * 0.07;
+            let ring = (1.0 - smoothstep(0.0, 0.03, abs(r - rk))) * step(0.0, rk) * (1.0 - 0.3 * f32(k));
+            s = max(s, ring);
+        }
+        s = s * fade * 1.6;
+        s = max(s, (1.0 - smoothstep(0.0, 0.06, r)) * smoothstep(0.85, 1.0, 1.0 - phase) * rain * coverage * hit);
+        bump = bump + normalize(local + vec2<f32>(1e-5, 0.0)) * s * 0.12;
         strength = max(strength, s);
     }
-    return vec3<f32>(bump, strength);
+    return vec3<f32>(bump, min(strength, 1.0));
 }
 
 fn puddle_wake(d: vec2<f32>, sh: f32, ch: f32, off: vec2<f32>, half: vec2<f32>, fwd: f32, time: f32) -> vec2<f32> {

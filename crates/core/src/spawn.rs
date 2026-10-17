@@ -6,7 +6,7 @@ use super::*;
 /// driven on its own (OMSI does not even list it): asked for one, the bus it belongs to is
 /// spawned, and a rear section that nothing couples is refused.
 pub(crate) fn player_bus_path(root: &Path, bus: &str) -> Result<PathBuf> {
-    let path = ::legacy_config::resolve_path(root, bus);
+    let path = ::mods::resolve_path(root, bus);
     let def = ::legacy_vehicle::Vehicle::load(&path)
         .with_context(|| format!("loading {}", path.display()))?;
     // a part with a front coupling that another vehicle couples behind itself is a rear
@@ -56,7 +56,7 @@ pub(crate) fn next_coupled(
     } else {
         def.couple_front.as_ref()
     }?;
-    let path = ::legacy_config::resolve_path(def.dir(), file);
+    let path = ::mods::resolve_path(def.dir(), file);
     let same = path.file_name().map(|f| f.to_ascii_lowercase())
         == def.path.file_name().map(|f| f.to_ascii_lowercase());
     if !flag && same {
@@ -80,7 +80,8 @@ pub(crate) fn load_coupled_parts(
             break;
         };
         match ::simulation::VehicleType::load(root, &path) {
-            Ok(t) => {
+            Ok(mut t) => {
+                t.follow_winding_of(&lead);
                 let t = Arc::new(t);
                 log::info!(
                     "coupled behind {}: {} ({} meshes{})",
@@ -211,7 +212,7 @@ pub(crate) fn spawn_player(
     host.hof = find_hof(args, world, &vt);
     host.font_lib = Some(world.fonts.clone());
     if !world.ticket_pack.trim().is_empty() {
-        let p = ::legacy_config::resolve_path(&args.root, &world.ticket_pack);
+        let p = ::mods::resolve_path(&args.root, &world.ticket_pack);
         match ::content::tickets::TicketPack::load(&p) {
             Ok(t) => {
                 log::info!("ticket pack {}: {} tickets", p.display(), t.tickets.len());
@@ -509,6 +510,7 @@ pub(crate) fn spawn_player(
         rail_bound,
         rail: None,
         head: Vec3::ZERO,
+        head_sim: Vec3::ZERO,
         head_vel: Vec3::ZERO,
         head_omega: Vec3::ZERO,
         steer_look: 0.0,
@@ -548,6 +550,7 @@ pub(crate) fn spawn_player(
         arm: Default::default(),
         blinker_key_state: 0,
         blinker_cancel: ::config::get_bool("controls", "blinker_cancel").unwrap_or(true),
+        message_serial: 0,
     };
     for _ in 0..3 {
         p.vehicle.update(1.0 / 30.0);
@@ -810,7 +813,7 @@ fn headlights_off(p: &mut Player) {
         return;
     }
     for _ in 0..4 {
-        if !p.vehicle.var("Spot_Select").is_some_and(|s| s >= 0.0) {
+        if p.vehicle.active_spotlight().is_none() {
             break;
         }
         p.action("kw_scheinwerfer_toggle", true);

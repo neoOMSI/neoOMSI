@@ -74,6 +74,36 @@ fn lan_dir() -> PathBuf {
     crate::data_dir().join("lan")
 }
 
+pub fn dismissed_diagnostics_path() -> PathBuf {
+    crate::data_dir().join("diagnostics").join(".dismissed.json")
+}
+
+pub fn undismissed(
+    findings: Vec<::mods::diagnostics::Finding>,
+) -> Vec<::mods::diagnostics::Finding> {
+    let dismissed = ::mods::diagnostics::dismissed(&dismissed_diagnostics_path());
+    findings
+        .into_iter()
+        .filter(|finding| !dismissed.contains(&finding.key()))
+        .collect()
+}
+
+/// Where the start menu keeps what the last drive of `map` couldn't find: one file however the
+/// map is written (`maps\X\global.cfg` or `maps/x/global.cfg`).
+pub fn map_diagnostics_path(map: &str) -> PathBuf {
+    let name: String = map
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '.' { c } else { '_' })
+        .collect();
+    crate::data_dir().join("diagnostics").join("maps").join(format!("{name}.json"))
+}
+
+pub fn diagnostics_path(id: &str) -> PathBuf {
+    crate::data_dir().join("diagnostics").join(format!("{id}.json"))
+}
+
 fn write(inst: &Instance) {
     let d = dir();
     let _ = std::fs::create_dir_all(&d);
@@ -259,6 +289,7 @@ pub fn list() -> Vec<Instance> {
         inst.running = alive;
         if !alive && now_secs().saturating_sub(inst.ended.unwrap_or(0)) > KEEP_ENDED {
             let _ = std::fs::remove_file(&p);
+            let _ = std::fs::remove_file(diagnostics_path(&inst.id));
             continue;
         }
         if inst.id.is_empty() {
@@ -342,11 +373,15 @@ pub fn start(game: &Path, args: &[String], d: &crate::Duty, profile: &str) -> Re
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let mut command = std::process::Command::new(game);
-    command.args(args).env("OMSI_INSTANCE", &id);
+    command
+        .args(args)
+        .env("OMSI_INSTANCE", &id);
     if let Some(started) = d.discord_session_start {
         command.env("OMSI_DISCORD_SESSION_START", started.to_string());
     }
+    // the engine's stdin is the launcher's protocol pipe
     let child = command
+        .stdin(std::process::Stdio::null())
         .stdout(file)
         .stderr(err)
         .spawn()
@@ -463,9 +498,9 @@ fn end_process(inst: &Instance, grace: std::time::Duration) -> Result<bool> {
             // it has ended already (collected by the next look at the list)
             return Ok(true);
         }
-        request_quit(inst.pid)
+        ask_to_quit(inst)
     } else {
-        request_quit(inst.pid)
+        ask_to_quit(inst)
     };
     if let Err(e) = asked {
         // (it may have ended just now)
@@ -494,6 +529,10 @@ fn end_process(inst: &Instance, grace: std::time::Duration) -> Result<bool> {
         force_kill(inst.pid)?;
     }
     Ok(false)
+}
+
+fn ask_to_quit(inst: &Instance) -> Result<()> {
+    request_quit(inst.pid)
 }
 
 #[cfg(unix)]

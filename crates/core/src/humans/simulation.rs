@@ -201,6 +201,7 @@ impl Humans {
         let mut taken_ticket = false;
         let mut remove: Vec<usize> = Vec::new();
         let passenger_origins: Vec<_> = self.people.iter().map(|p| p.position).collect();
+        let pay_parent = self.buses.player_cabin.as_ref().and_then(|c| c.money_parent);
         self.pax_frame(
             dt,
             world,
@@ -210,7 +211,7 @@ impl Humans {
             &at_stops,
             bus.and_then(|b| b.var("GivenTicket")),
             &mut |money, coins, pos, var| {
-                money.place(world, renderer, scene, coins, pos, var, false)
+                money.place(world, renderer, scene, coins, pos, var, pay_parent, false)
             },
             &mut taken_ticket,
             &mut remove,

@@ -537,6 +537,14 @@ pub fn depot(h: &Hof) -> ApiValue {
 
 /// Build the snapshot.
 pub fn snapshot(i: &Inputs) -> ApiValue {
+    snapshot_inner(i, None)
+}
+
+fn snapshot_with_spotlights(i: &Inputs, spots: &[::model::Spotlight]) -> ApiValue {
+    snapshot_inner(i, Some(spots))
+}
+
+fn snapshot_inner(i: &Inputs, spots: Option<&[::model::Spotlight]>) -> ApiValue {
     let var = i.var;
     // the first of some alternative names that the bus has
     let first = |names: &[&str]| names.iter().find_map(|n| var(n));
@@ -662,7 +670,15 @@ pub fn snapshot(i: &Inputs) -> ApiValue {
     // ---- lights
     let headlights = if on("lights_fern") {
         3
-    } else if on("lights_abbl") || on("lights_main") || var("Spot_Select").is_some_and(|s| s >= 0.0)
+    } else if on("lights_abbl")
+        || on("lights_main")
+        || spots.map_or_else(
+            || var("Spot_Select").is_some_and(|s| s.is_finite() && s.round_ties_even() >= 0.0),
+            |spots| {
+                crate::vehicle::selected_spotlight(var("Spot_Select").unwrap_or(f32::NAN), spots)
+                .is_some()
+            },
+        )
     {
         2
     } else if on("lights_stand") {
@@ -759,22 +775,25 @@ impl VehicleInstance {
     pub fn html_api_snapshot(&self) -> ApiValue {
         let var = |n: &str| self.var(n);
         let text = |n: &str| self.str_var(n);
-        let mut api = snapshot(&Inputs {
-            var: &var,
-            text: &text,
-            speed_kmh: self.physics.velocity_kmh(),
-            steer_deg: self.physics.steer_deg,
-            heading: self.heading,
-            pitch: self.pitch,
-            bank: self.bank,
-            position: (self.position.x, self.position.y, self.position.z),
-            engine_running: crate::startup::engine_running(self),
-            interior_light: self.interior_light(),
-            crashes: self.crashes,
-            last_impact_j: self.last_impact,
-            dirt: self.dirt,
-            trailers: self.trailers.len(),
-        });
+        let mut api = snapshot_with_spotlights(
+            &Inputs {
+                var: &var,
+                text: &text,
+                speed_kmh: self.physics.velocity_kmh(),
+                steer_deg: self.physics.steer_deg,
+                heading: self.heading,
+                pitch: self.pitch,
+                bank: self.bank,
+                position: (self.position.x, self.position.y, self.position.z),
+                engine_running: crate::startup::engine_running(self),
+                interior_light: self.interior_light(),
+                crashes: self.crashes,
+                last_impact_j: self.last_impact,
+                dirt: self.dirt,
+                trailers: self.trailers.len(),
+            },
+            &self.ty.model.spotlights,
+        );
         let route = route(&RouteInputs {
             var: &var,
             text: &text,

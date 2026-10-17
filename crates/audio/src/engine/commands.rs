@@ -14,6 +14,7 @@
 //! definition, not a promise that extreme overload is free.
 
 use crate::assets::{clip::Clip, stream::StreamBuf};
+use crate::voice::voice::Feed;
 use crate::engine::feedback::Counters;
 use crate::voice::{Listener, MixParams, VoiceId};
 use parking_lot::Mutex;
@@ -36,6 +37,11 @@ pub(crate) enum Command {
         stream: Arc<StreamBuf>,
         params: MixParams,
     },
+    PlaySource {
+        id: VoiceId,
+        feed: Feed,
+        params: MixParams,
+    },
     Stop {
         id: VoiceId,
     },
@@ -54,6 +60,7 @@ impl Command {
         match self {
             Command::Play { id, .. }
             | Command::PlayStream { id, .. }
+            | Command::PlaySource { id, .. }
             | Command::Stop { id }
             | Command::SetParams { id, .. } => Some(*id),
             Command::SetListener(_) | Command::SetBus { .. } => None,

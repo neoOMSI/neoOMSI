@@ -2,6 +2,10 @@
 
 use super::*;
 
+fn driver_animation_dt(dt: f32, paused: bool, screenshot_mode: bool) -> f32 {
+    (!paused && !screenshot_mode).then_some(dt).unwrap_or(0.0)
+}
+
 impl App {
     /// Game controllers, mouse steering and the player's vehicle with its frame; the free camera and placed vehicles on foot; radio.
     pub(super) fn redraw_player(&mut self, f: &Frame) {
@@ -12,7 +16,10 @@ impl App {
         let __t = Instant::now();
         self.drag_frame();
         // raycast camera: the free cursor going idle gives the view back to the mouse
-        if self.free_look && (self.cursor_hidden.is_some() || !::config::get_bool("camera", "free_look").unwrap_or(false)) {
+        if self.free_look
+            && (self.cursor_hidden.is_some()
+                || !::config::get_bool("camera", "free_look").unwrap_or(false))
+        {
             self.free_look = false;
         }
         let ray = self.raycast_active();
@@ -46,28 +53,32 @@ impl App {
         }
         if self.world.is_some() {
             if let Some(n) = self.args.tutorial.take() {
-                self.tutorial =
-                    tutorial::Tutorial::load(&self.args.root, n, &::config::get_string("ui", "language").unwrap_or_else(|| "en".into()));
+                self.tutorial = tutorial::Tutorial::load(
+                    &self.args.root,
+                    n,
+                    &::config::get_string("ui", "language").unwrap_or_else(|| "en".into()),
+                );
             }
         }
-        let hwnd = self
-            .window
-            .as_deref()
-            .and_then(controllers::window_handle);
+        let hwnd = self.window.as_deref().and_then(controllers::window_handle);
         let ctl = self
             .controllers
             .get_or_insert_with(|| controllers::Controllers::new(&self.args.root, hwnd));
         ctl.set_focus(self.window_focused);
         ctl.centre = ::config::get_bool("controls", "steer_center").unwrap_or(true);
-        ctl.pedal_throttle = ::config::get_float("controls", "pedal_throttle").unwrap_or(1.0) as f32;
+        ctl.pedal_throttle =
+            ::config::get_float("controls", "pedal_throttle").unwrap_or(1.0) as f32;
         ctl.pedal_brake = ::config::get_float("controls", "pedal_brake").unwrap_or(1.0) as f32;
         ctl.ff_invert = controllers::global_ff_invert();
         ctl.ff_enabled = controllers::ff_enabled();
-        ctl.steer_gain = if (::config::get_float("controls", "wheel_lock").unwrap_or(0.0) as f32) >= 45.0 {
-            ((::config::get_float("controls", "wheel_range").unwrap_or(900.0) as f32) / ::config::get_float("controls", "wheel_lock").unwrap_or(0.0) as f32).clamp(0.1, 20.0)
-        } else {
-            1.0
-        };
+        ctl.steer_gain =
+            if (::config::get_float("controls", "wheel_lock").unwrap_or(0.0) as f32) >= 45.0 {
+                ((::config::get_float("controls", "wheel_range").unwrap_or(900.0) as f32)
+                    / ::config::get_float("controls", "wheel_lock").unwrap_or(0.0) as f32)
+                    .clamp(0.1, 20.0)
+            } else {
+                1.0
+            };
         if ctl.sources.iter().all(Option::is_none)
             && let Some(a) = ::config::get_string("controller", "assign").filter(|a| !a.is_empty())
         {
@@ -75,6 +86,7 @@ impl App {
         }
         let analog = ctl.poll();
         let actions = std::mem::take(&mut ctl.actions);
+        let pressed = ctl.pressed.take();
         let moved = match (analog.steering, self.last_ctl_steer) {
             (Some(x), Some(x0)) => (x - x0).abs() > 0.02,
             _ => false,
@@ -147,6 +159,9 @@ impl App {
                 .unwrap_or(0.0),
             dt,
         });
+        if let Some((device, n)) = pressed.filter(|_| self.key_capture.is_some()) {
+            self.capture_button(&device, n);
+        }
         // Steering as Omsi.exe has it (0x6f4284..0x6f447b): the whole width of the
         // window is the full lock from left to right, divided by the speed in tens
         // of km/h above 10 km/h - at 50 km/h the same hand movement turns the wheel a
@@ -159,12 +174,14 @@ impl App {
             && self.chooser.is_none()
             && !self.paused
         {
-            let k = LOOK_STICK_DEG_S * dt * (::config::get_float("camera", "look_sens").unwrap_or(1.0) as f32);
+            let k = LOOK_STICK_DEG_S
+                * dt
+                * (::config::get_float("camera", "look_sens").unwrap_or(1.0) as f32);
             self.look_by(analog.look[0] * k, analog.look[1] * k);
         }
         if analog.stick {
             if let (Some(x), Some(p)) = (analog.steering, self.player.as_ref()) {
-                let sens = ::config::get_float("controls", "stick_sens").unwrap_or(0.25) as f32;
+                let sens = ::config::get_float("controls", "stick_sens").unwrap_or(1.0) as f32;
                 let target = controllers::gamepad_steering(
                     x,
                     p.vehicle.physics.velocity_kmh(),
@@ -273,6 +290,36 @@ impl App {
             }
         }
         let mut actions = actions;
+        // door buttons are let go even with the menu open: their `_off` must reach the bus
+        let mut doors: Vec<(String, bool)> = Vec::new();
+        actions.retain(|(name, down)| {
+            let n = name.to_ascii_lowercase();
+            let door = n == "doors_release" || n.starts_with("doorkey_");
+            if door {
+                doors.push((n, *down));
+            }
+            !door
+        });
+        for (n, down) in doors {
+            if !down {
+                if let Some(held) = self.pad_doors.get_mut(&n) {
+                    held.0 = held.0.saturating_sub(1);
+                    if held.0 == 0 {
+                        let fired = self.pad_doors.remove(&n).map(|h| h.1).unwrap_or_default();
+                        self.door_triggers_off(&fired);
+                    }
+                }
+            } else if let Some(held) = self.pad_doors.get_mut(&n) {
+                // (another button on the same action: held until the last is let go)
+                held.0 += 1;
+            } else if self.game_menu.is_none() && self.view != "free" {
+                let fired = match n.strip_prefix("doorkey_").and_then(|k| k.parse().ok()) {
+                    Some(k) => self.door_key_fire(k),
+                    None => self.door_release(),
+                };
+                self.pad_doors.insert(n, (1, fired));
+            }
+        }
         if self.game_menu.is_none() {
             let mut game: Vec<String> = Vec::new();
             actions.retain(|(name, down)| {
@@ -283,8 +330,8 @@ impl App {
                     "view_look_up",
                     "view_look_down",
                 ]
-                    .iter()
-                    .position(|x| *x == n)
+                .iter()
+                .position(|x| *x == n)
                 {
                     self.pad_look[k] = *down;
                     return false;
@@ -361,7 +408,10 @@ impl App {
                 let vr_on = self.vr.is_some();
                 #[cfg(not(windows))]
                 let vr_on = false;
-                p.move_head(dt, ::config::get_bool("camera", "head_movement").unwrap_or(true) && !vr_on);
+                p.move_head(
+                    dt,
+                    ::config::get_bool("camera", "head_movement").unwrap_or(true) && !vr_on,
+                );
                 if let Some(w) = self.world.as_ref() {
                     rail_drive::frame(p, self.traffic.as_ref().map(|t| &t.net), w, dt);
                 }
@@ -406,10 +456,13 @@ impl App {
                     .map(|h| h.driver_cue())
                     .unwrap_or_default();
             }
+            // The driver figure has its own idle/look animation clock.  Vehicle ticking is
+            // already paused above, so keep this clock paused as well (including the clean
+            // free-camera screenshot mode) while still syncing its visibility and mirrors.
             p.sync_driver_hands(
                 r,
                 scene,
-                dt,
+                driver_animation_dt(dt, self.paused, self.screenshot_mode.is_some()),
                 ::config::get_bool("gameplay", "driver").unwrap_or(true) && self.on_foot.is_none(),
                 self.view == "driver",
                 ::config::get_bool("gameplay", "hands_in_cab").unwrap_or(false),
@@ -423,17 +476,23 @@ impl App {
                     &key,
                 );
                 if let Some(cam) = self.camera.as_ref() {
-                    p.seat = Vec3::from_array(["seat_x", "seat_y", "seat_z"].map(|k| ::config::get_float("camera", k).unwrap_or(0.0) as f32));
+                    p.seat = Vec3::from_array(
+                        ["seat_x", "seat_y", "seat_z"]
+                            .map(|k| ::config::get_float("camera", k).unwrap_or(0.0) as f32),
+                    );
                     if ::config::get_bool("camera", "head_tracking").unwrap_or(false)
                         && self.headtrack.is_none()
                         && self
-                        .headtrack_failed
-                        .is_none_or(|t| t.elapsed().as_secs_f32() > 5.0)
+                            .headtrack_failed
+                            .is_none_or(|t| t.elapsed().as_secs_f32() > 5.0)
                     {
-                        self.headtrack =
-                            headtrack::HeadTracker::start(::config::get_int("camera", "head_tracking_port").and_then(|v| u16::try_from(v).ok()).unwrap_or(4242));
-                        self.headtrack_failed =
-                            self.headtrack.is_none().then(Instant::now);
+                        self.headtrack = headtrack::HeadTracker::start(
+                            ::config::get_int("camera", "head_tracking_port")
+                                .and_then(|v| u16::try_from(v).ok())
+                                .unwrap_or(4242),
+                            self.window.as_deref().and_then(controllers::window_handle),
+                        );
+                        self.headtrack_failed = self.headtrack.is_none().then(Instant::now);
                     }
                     let tracked = self.headtrack.as_ref().and_then(|h| h.pose()).filter(|_| {
                         ::config::get_bool("camera", "head_tracking").unwrap_or(false)
@@ -450,9 +509,12 @@ impl App {
                             p.steer_look,
                             p.vehicle.physics.controls.steering,
                             dt,
-                            ::config::get_bool("camera", "steer_look").unwrap_or(false) && self.view == "driver",
-                            ::config::get_float("camera", "steer_look_angle").unwrap_or(30.0) as f32,
-                            ::config::get_float("camera", "steer_look_response").unwrap_or(0.25) as f32,
+                            ::config::get_bool("camera", "steer_look").unwrap_or(false)
+                                && self.view == "driver",
+                            ::config::get_float("camera", "steer_look_angle").unwrap_or(30.0)
+                                as f32,
+                            ::config::get_float("camera", "steer_look_response").unwrap_or(0.25)
+                                as f32,
                         )
                     };
                     if let Some(t) = tracked {
@@ -471,7 +533,10 @@ impl App {
                     };
                     let tracked_rot = tracked.map(|mut t| {
                         for (k, axis) in ["yaw", "pitch", "roll"].iter().enumerate() {
-                            if ::config::get_string("camera", "head_tracking_invert").unwrap_or_default().contains(axis) {
+                            if ::config::get_string("camera", "head_tracking_invert")
+                                .unwrap_or_default()
+                                .contains(axis)
+                            {
                                 t.rot[k] = -t.rot[k];
                             }
                         }
@@ -537,8 +602,7 @@ impl App {
                                     from
                                 };
                                 if let Some(from) = from {
-                                    let d = Vec3::from_array(from.pos)
-                                        - Vec3::from_array(to.pos);
+                                    let d = Vec3::from_array(from.pos) - Vec3::from_array(to.pos);
                                     if d.length() < 25.0 {
                                         self.cam_blend.from = Some(from);
                                         self.cam_blend.t = 0.0;
@@ -553,25 +617,18 @@ impl App {
                         match (target.as_ref(), from_now.as_ref()) {
                             (Some(to), Some(from)) => {
                                 if !started {
-                                    self.cam_blend.t += dt.min(CAM_BLEND_MAX_DT)
-                                        / CAM_BLEND_SECS;
+                                    self.cam_blend.t += dt.min(CAM_BLEND_MAX_DT) / CAM_BLEND_SECS;
                                 }
                                 if self.cam_blend.t >= 1.0 {
                                     // (the hand-over to the plain camera: the glide ends exactly on it (k = 1),
                                     // so the curve's tail is not left over to twitch; only what the two ways
                                     // of making the camera might still differ in is eased out)
-                                    let mut last =
-                                        p.driver_world(&blend_local(from, to, 1.0));
+                                    let mut last = p.driver_world(&blend_local(from, to, 1.0));
                                     finish(&mut last);
-                                    self.cam_blend.carry =
-                                        Some(CamCarry::between(&last, &cam));
+                                    self.cam_blend.carry = Some(CamCarry::between(&last, &cam));
                                     self.cam_blend.from = None;
                                 } else {
-                                    let mixed = blend_local(
-                                        from,
-                                        to,
-                                        self.cam_blend.progress(),
-                                    );
+                                    let mixed = blend_local(from, to, self.cam_blend.progress());
                                     cam = p.driver_world(&mixed);
                                     finish(&mut cam);
                                     shown = Some(mixed);
@@ -590,7 +647,9 @@ impl App {
                             }
                         }
                     }
-                    if self.view == "outside" && ::config::get_bool("camera", "collision").unwrap_or(true) {
+                    if self.view == "outside"
+                        && ::config::get_bool("camera", "collision").unwrap_or(true)
+                    {
                         if let Some(w) = self.world.as_ref() {
                             cam = p.camera_clipped(cam, w, self.orbit, dt);
                         }
@@ -646,7 +705,8 @@ impl App {
                     master: if self.paused {
                         0.0
                     } else {
-                        (::config::get_float("audio", "master-volume").unwrap_or(1.0) as f32).clamp(0.0, 1.0)
+                        (::config::get_float("audio", "master-volume").unwrap_or(1.0) as f32)
+                            .clamp(0.0, 1.0)
                     },
                     reverb_time,
                     reverb_mix,
@@ -694,7 +754,8 @@ impl App {
                     master: if self.paused {
                         0.0
                     } else {
-                        (::config::get_float("audio", "master-volume").unwrap_or(1.0) as f32).clamp(0.0, 1.0)
+                        (::config::get_float("audio", "master-volume").unwrap_or(1.0) as f32)
+                            .clamp(0.0, 1.0)
                     },
                     reverb_time,
                     reverb_mix,
@@ -714,5 +775,17 @@ impl App {
             }
         }
         *self.profile.entry("player").or_default() += __t.elapsed().as_secs_f64();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::driver_animation_dt;
+
+    #[test]
+    fn driver_animation_only_advances_while_playing() {
+        assert_eq!(driver_animation_dt(0.016, false, false), 0.016);
+        assert_eq!(driver_animation_dt(0.016, true, false), 0.0);
+        assert_eq!(driver_animation_dt(0.016, false, true), 0.0);
     }
 }

@@ -30,10 +30,10 @@ impl VehicleEditor {
             }],
             sel_path: 0,
             sel_point: 0,
-            draw: true,
-            show_walk: true,
-            show_interior: true,
-            show_exterior: true,
+            draw: false,
+            show_walk: false,
+            show_interior: false,
+            show_exterior: false,
             status: String::new(),
         }
     }

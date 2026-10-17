@@ -347,7 +347,7 @@ fn chrono_cfgs(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Chrono folders of a map that are active on `date` (YYYYMMDD), in the game's order.
 pub fn active_chrono_dirs(map_dir: &Path, date: i32) -> Vec<PathBuf> {
     let mut cfgs = Vec::new();
-    chrono_cfgs(&::legacy_config::resolve_path(map_dir, "Chrono"), &mut cfgs);
+    chrono_cfgs(&::mods::resolve_path(map_dir, "Chrono"), &mut cfgs);
     cfgs.into_iter()
         .filter(|p| {
             CfgFile::read(p)
@@ -366,7 +366,7 @@ pub fn chrono_deactivated_lines(chrono_dirs: &[PathBuf]) -> Vec<(String, PathBuf
     let mut out = Vec::new();
     for d in chrono_dirs {
         let cfg =
-            Some(::legacy_config::resolve_path(d, "Chrono.cfg")).filter(|p| ::legacy_config::vfs::is_file(p));
+            Some(::mods::resolve_path(d, "Chrono.cfg")).filter(|p| ::legacy_config::vfs::is_file(p));
         if let Some(f) = cfg.and_then(|p| CfgFile::read(&p).ok()) {
             out.extend(
                 parse_chrono_cfg(&f)
@@ -385,7 +385,7 @@ pub fn chrono_deactivated_lines(chrono_dirs: &[PathBuf]) -> Vec<(String, PathBuf
 /// buses change to "Spandau 1994" on 29 May 1994.
 pub fn ailists_with_chrono(map_dir: &Path, chrono_dirs: &[PathBuf]) -> AiLists {
     let mut ailists =
-        AiLists::load(&::legacy_config::resolve_path(map_dir, "ailists.cfg")).unwrap_or_default();
+        AiLists::load(&::mods::resolve_path(map_dir, "ailists.cfg")).unwrap_or_default();
     for c in chrono_dirs {
         for name in ["ailists_#upd.cfg", "ailists.cfg"] {
             if let Ok(extra) = AiLists::load(&c.join(name)) {

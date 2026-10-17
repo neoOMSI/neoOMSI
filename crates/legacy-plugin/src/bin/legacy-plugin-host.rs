@@ -4,15 +4,45 @@
 //!
 //! usage: legacy-plugin-host <library>   (then the protocol of `::legacy_plugin::wire` on stdio)
 use legacy_plugin::{Library, wire};
+use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
+
+/// Own copies of stdin and stdout: a plugin may reopen them (GPM.dll sends stdout to its log).
+fn own_pipes() -> std::io::Result<(File, File)> {
+    let (stdin, stdout) = (std::io::stdin(), std::io::stdout());
+    #[cfg(windows)]
+    let (input, output) = {
+        use std::os::windows::io::AsHandle;
+        (
+            stdin.as_handle().try_clone_to_owned()?,
+            stdout.as_handle().try_clone_to_owned()?,
+        )
+    };
+    #[cfg(unix)]
+    let (input, output) = {
+        use std::os::fd::AsFd;
+        (
+            stdin.as_fd().try_clone_to_owned()?,
+            stdout.as_fd().try_clone_to_owned()?,
+        )
+    };
+    Ok((File::from(input), File::from(output)))
+}
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
         eprintln!("usage: legacy-plugin-host <library>");
         std::process::exit(2);
     };
-    let mut input = BufReader::new(std::io::stdin().lock());
-    let mut out = BufWriter::new(std::io::stdout().lock());
+    let (input, out) = match own_pipes() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("legacy-plugin-host: {e}");
+            std::process::exit(2);
+        }
+    };
+    let mut input = BufReader::new(input);
+    let mut out = BufWriter::new(out);
     let lib = match Library::load(std::path::Path::new(&path)) {
         Ok(l) => Some(l),
         Err(e) => {

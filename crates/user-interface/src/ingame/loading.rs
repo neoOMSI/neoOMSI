@@ -10,7 +10,6 @@ impl Ui {
         width: f32,
         height: f32,
         scale: f32,
-        title: &str,
         caption: &str,
         progress: Option<f32>,
         _map_dir: Option<&std::path::Path>,
@@ -20,7 +19,8 @@ impl Ui {
         let black = self.text.plate(r, scene, 8);
         scene.overlays.push((black, [0.0, 0.0, width, height]));
         if self.loading_art.is_none() {
-            static ART: &[u8] = include_bytes!("../../../../assets/backgrounds/loading-screen/image1.png");
+            static ART: &[u8] =
+                include_bytes!("../../../../assets/backgrounds/loading-screen/comp1.png");
             self.loading_art = Some(image::load_from_memory(ART).ok().map(|i| {
                 let i = i.into_rgba8();
                 let (iw, ih) = i.dimensions();
@@ -100,11 +100,7 @@ impl Ui {
             .map(|p| format!("   {:.0} %", p.clamp(0.0, 1.0) * 100.0))
             .unwrap_or_default();
         let compose = |pct: &str| {
-            if title.is_empty() {
-                format!("{caption}{pct}")
-            } else {
-                format!("{caption} {title}{pct}")
-            }
+            format!("{caption}{pct}")
         };
         let line = compose(&pct);
         let widest = compose(if progress.is_some() { "   100 %" } else { "" });

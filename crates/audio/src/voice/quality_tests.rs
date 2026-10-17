@@ -43,6 +43,16 @@ fn gain_time_constant_tracks_output_rate() {
     render(&mut a, 480, 48000); render(&mut b, 960, 96000);
     assert!((a.cur_gain - b.cur_gain).abs() < 0.0001);
 }
+
+#[test]
+fn fading_a_loop_to_zero_does_not_leave_subnormal_output() {
+    let mut voice = Voice::test_voice(1, clip(), VoiceParams { looping: true, ..Default::default() });
+    voice.apply_params(VoiceParams { gain: 0.0, looping: true, ..Default::default() }.into(),
+        Instant::now(), glam::Vec3::ZERO, false);
+    let out = render(&mut voice, 48_000, 48_000);
+    assert_eq!(voice.cur_gain, 0.0);
+    assert!(out[47_000 * 2..].iter().all(|sample| *sample == 0.0));
+}
 #[test]
 fn a_discontinuous_loop_endpoint_is_joined_without_a_hole() {
     let mut source = Clip { sample_rate: 48000, channels: 1, samples: vec![0; 480] };

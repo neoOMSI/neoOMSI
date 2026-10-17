@@ -25,29 +25,30 @@ impl Ui {
         let prev_h = (320.0 * u).min((h * 0.9 - nav_h - btn_h - pad * 2.0 - gap).max(80.0 * u));
         let bh = nav_h + pad + prev_h + gap + btn_h + pad;
         let (x, y) = ((w - bw) * 0.5, ((h - bh) * 0.5).max(0.0));
-        self.text.rounded(r, scene, [x - line, y - line, x + bw + line, y + bh + line], 0.0, BORDER);
-        self.text.rounded(r, scene, [x, y, x + bw, y + bh], 0.0, [14, 16, 20, 255]);
-        self.text.rounded(r, scene, [x, y, x + bw, y + 3.0 * u], 0.0, ACCENT);
+        self.text.rounded(r, scene, [x - line, y - line, x + bw + line, y + bh + line], CARD_R * u + line, BORDER);
+        self.text.rounded(r, scene, [x, y, x + bw, y + bh], CARD_R * u, PANEL);
         self.place_box = [x, y, x + bw, y + bh];
 
         // navbar
         let tl = self.text.label(r, scene, title, (22.0 * u) as u32, WHITE);
-        tl.place(scene, x + (bw - tl.w as f32) * 0.5, y + (nav_h - tl.h as f32) * 0.5);
-        self.text.rounded(r, scene, [x, y + nav_h - line, x + bw, y + nav_h], 0.0, BORDER);
+        let ty0 = y + (nav_h - tl.h as f32) * 0.5;
+        self.text.rounded(r, scene, [x + pad, ty0, x + pad + 4.0 * u, ty0 + tl.h as f32], 2.0 * u, ACCENT);
+        tl.place(scene, x + pad + 16.0 * u, ty0);
 
         // the picture of the vehicle
         let pr = [x + pad, y + nav_h + pad, x + bw - pad, y + nav_h + pad + prev_h];
-        self.text.rounded(r, scene, [pr[0] - line, pr[1] - line, pr[2] + line, pr[3] + line], 0.0, BORDER);
-        self.text.rounded(r, scene, pr, 0.0, [8, 10, 14, 255]);
+        self.text.rounded(r, scene, pr, ROW_R * u, OPT_TRACK);
+        self.place_preview_rect = pr;
         self.place_preview_size = ((pr[2] - pr[0]).round() as u32, (pr[3] - pr[1]).round() as u32);
         let first = preview.first().cloned().unwrap_or_default();
         if let Some(tex) = self.place_picture {
             scene.overlays.push((tex, pr));
             let name = clip_to(&self.text, &first, 18.0 * u, inner - 32.0 * u);
             let nw = self.text.width(&name, 18.0 * u);
-            self.text.rounded(r, scene, [pr[0], pr[3] - 44.0 * u, pr[0] + nw + 32.0 * u, pr[3]], 0.0, [8, 10, 14, 215]);
+            let chip = [pr[0] + 12.0 * u, pr[3] - 48.0 * u, pr[0] + nw + 44.0 * u, pr[3] - 12.0 * u];
+            self.text.rounded(r, scene, chip, ROW_R * u, [PANEL[0], PANEL[1], PANEL[2], 220]);
             let l = self.text.label(r, scene, &name, (18.0 * u) as u32, WHITE);
-            l.place(scene, pr[0] + 16.0 * u, pr[3] - 44.0 * u + (44.0 * u - l.h as f32) * 0.5);
+            l.place(scene, chip[0] + 16.0 * u, chip[1] + (36.0 * u - l.h as f32) * 0.5);
         } else {
             let status = self.place_status.clone();
             let lines: Vec<(String, u32, [u8; 4])> = preview
@@ -78,8 +79,8 @@ impl Ui {
             let hot = *on && inside(rc, f.cursor) && open.is_none();
             let hv = self.ease((205, "pf", i), if hot || open == Some(i) { 1.0 } else { 0.0 }, 8.0);
             let k = if *on { 1.0 } else { 0.4 };
-            self.text.rounded(r, scene, [rc[0] - line, rc[1] - line, rc[2] + line, rc[3] + line], 0.0, fade(if open == Some(i) { ACCENT } else { BORDER }, k));
-            self.text.rounded(r, scene, rc, 0.0, fade(mix([30, 32, 37, 255], [58, 62, 70, 255], hv), k));
+            self.text.rounded(r, scene, [rc[0] - line, rc[1] - line, rc[2] + line, rc[3] + line], ROW_R * u + line, fade(if open == Some(i) { ACCENT } else { OPT_LINE }, k));
+            self.text.rounded(r, scene, rc, ROW_R * u, fade(mix(OPT_FIELD, OPT_FIELD_HOT, hv), k));
             let cl = self.text.label(r, scene, cap, (12.0 * u) as u32, if *on { SOFT } else { MUTED });
             cl.place(scene, rc[0] + 12.0 * u, rc[1] + 9.0 * u);
             let vpx = (15.0 * u) as u32;
@@ -92,7 +93,7 @@ impl Ui {
         if *can_create {
             self.dialog_button(r, scene, f, m, cr, create, 4, open.is_none());
         } else {
-            self.text.rounded(r, scene, cr, 0.0, [30, 32, 37, 110]);
+            self.text.rounded(r, scene, cr, ROW_R * u, fade(OPT_FIELD, 0.45));
             let l = self.text.label(r, scene, create, (16.0 * u) as u32, MUTED);
             l.place(scene, cr[0] + (create_w - l.w as f32) * 0.5, cr[1] + (btn_h - l.h as f32) * 0.5);
         }
@@ -121,13 +122,13 @@ impl Ui {
         let py1 = anchor[1] - 4.0 * u;
         let py0 = py1 - ph;
         let panel = [px0, py0, px0 + pw, py1];
-        self.text.rounded(r, scene, [panel[0] - line, panel[1] - line, panel[2] + line, panel[3] + line], 0.0, ACCENT);
-        self.text.rounded(r, scene, panel, 0.0, [20, 22, 27, 255]);
+        self.text.rounded(r, scene, [panel[0] - line, panel[1] - line, panel[2] + line, panel[3] + line], CARD_R * u + line, ACCENT);
+        self.text.rounded(r, scene, panel, CARD_R * u, OPT_ROW);
         let (bx, inner) = (panel[0] + pad, pw - 2.0 * pad);
         let mut cy = panel[1] + pad;
         if let Some(q) = search {
             let rc = [bx, cy, bx + inner, cy + 40.0 * u];
-            self.text.rounded(r, scene, rc, 0.0, [8, 10, 14, 255]);
+            self.text.rounded(r, scene, rc, ROW_R * u, OPT_TRACK);
             let (txt, col) = if q.is_empty() { (t("pause.dialog.search"), SOFT) } else { (clip_left(&self.text, q, bpx, inner - 32.0 * u), WHITE) };
             let l = self.text.label(r, scene, &txt, bpx as u32, col);
             l.place(scene, rc[0] + 12.0 * u, rc[1] + (40.0 * u - l.h as f32) * 0.5);
@@ -137,7 +138,18 @@ impl Ui {
             }
             cy += search_h;
         }
-        let first = (*scroll).min(options.len().saturating_sub(vis));
+        let max_first = options.len().saturating_sub(vis);
+        let target = (*scroll).min(max_first);
+        let mut pos = self.dialog_list_pos.clamp(0.0, max_first as f32);
+        if self.dialog_t < 0.2 || (target as f32 - pos).abs() < 0.01 {
+            pos = target as f32;
+        } else {
+            pos += (target as f32 - pos) * (1.0 - (-18.0 * self.anim_dt).exp());
+        }
+        self.dialog_list_pos = pos;
+        let first = (pos.floor() as usize).min(max_first);
+        let (list_top, view_end) = (cy, cy + vis as f32 * step - 2.0 * u);
+        let a0 = self.text.alpha;
         if options.is_empty() {
             let l = self.text.label(r, scene, &t("pause.dialog.no_results"), bpx as u32, SOFT);
             l.place(scene, bx + 8.0 * u, cy + 8.0 * u);
@@ -145,31 +157,37 @@ impl Ui {
         if options.len() > vis {
             let th = vis as f32 * step;
             let (tx, n) = (panel[2] - pad * 0.5 - 4.0 * u, options.len() as f32);
-            self.text.rounded(r, scene, [tx, cy, tx + 4.0 * u, cy + th], 0.0, [34, 36, 42, 255]);
-            let ty = cy + th * first as f32 / n;
-            self.text.rounded(r, scene, [tx, ty, tx + 4.0 * u, ty + th * vis as f32 / n], 0.0, ACCENT);
+            self.text.rounded(r, scene, [tx, cy, tx + 4.0 * u, cy + th], 2.0 * u, OPT_TRACK);
+            self.dialog_bar = Some([tx - 8.0 * u, cy, tx + 12.0 * u, cy + th]);
+            let ty = cy + th * pos / n;
+            self.text.rounded(r, scene, [tx, ty, tx + 4.0 * u, ty + th * vis as f32 / n], 2.0 * u, [86, 86, 92, 255]);
         }
         self.dialog_rects.clear();
         let row_w = inner - if options.len() > vis { 10.0 * u } else { 0.0 };
         for (i, o) in options.iter().enumerate() {
-            if i < first || i >= first + vis {
+            if i < first || i > first + vis {
                 self.dialog_rects.push([0.0; 4]);
                 continue;
             }
-            let rc = [bx, cy, bx + row_w, cy + row_h];
+            let ry = list_top + step * (i as f32 - pos);
+
+            let edge = ((ry + step - list_top) / step).min((view_end - ry) / step).clamp(0.0, 1.0);
+            if edge <= 0.03 {
+                self.dialog_rects.push([0.0; 4]);
+                continue;
+            }
+            let rc = [bx, ry.max(list_top), bx + row_w, (ry + row_h).min(view_end)];
             let hot = inside(rc, f.cursor);
             let hv = self.ease((205, "dd", i), if hot { 1.0 } else { 0.0 }, 8.0);
             let on = i == *sel;
-            let bg = mix(if on { [46, 49, 57, 255] } else { [28, 30, 35, 255] }, [46, 49, 57, 255], hv);
-            self.text.rounded(r, scene, rc, 0.0, bg);
-            if on {
-                self.text.rounded(r, scene, [rc[0], rc[1], rc[0] + 4.0 * u, rc[3]], 0.0, ACCENT);
-            }
+            let bg = mix(if on { OPT_GROUP_ON } else { OPT_ROW }, OPT_ROW_HOT, hv);
+            self.text.rounded(r, scene, rc, ROW_R * u, fade(bg, edge));
+            self.text.alpha = a0 * edge;
             let name = clip_to(&self.text, o, bpx, row_w - 32.0 * u);
             let l = self.text.label(r, scene, &name, bpx as u32, if on || hot { WHITE } else { SOFT });
-            l.place(scene, rc[0] + 14.0 * u, rc[1] + (row_h - l.h as f32) * 0.5);
+            l.place(scene, rc[0] + 18.0 * u, ry + (row_h - l.h as f32) * 0.5);
+            self.text.alpha = a0;
             self.dialog_rects.push(rc);
-            cy += step;
         }
     }
 }

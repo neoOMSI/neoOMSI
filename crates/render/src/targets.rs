@@ -43,6 +43,7 @@ impl Renderer {
         self.msaa_targets.clear();
         self.hdr_targets.clear();
         self.glass_picture = None;
+        self.glass_depth = None;
         self.glass_snapshot_source = None;
     }
 
@@ -64,11 +65,7 @@ impl Renderer {
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | if self.puddles.is_some() {
-                    wgpu::TextureUsages::COPY_SRC
-                } else {
-                    wgpu::TextureUsages::empty()
-                },
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         // Half-resolution AO uses one quarter of the pixels; the blur masks the lower resolution.
@@ -156,27 +153,35 @@ impl Renderer {
         &mut self,
         w: u32,
         h: u32,
-    ) -> (wgpu::TextureView, wgpu::TextureView) {
+        color_needed: bool,
+    ) -> (Option<wgpu::TextureView>, wgpu::TextureView) {
         self.target_use.insert((w, h), std::time::Instant::now());
-        if let Some(t) = self.msaa_targets.get(&(w, h)) {
-            return t.clone();
-        }
         self.evict_targets();
         let size = wgpu::Extent3d {
             width: w,
             height: h,
             depth_or_array_layers: 1,
         };
-        let color = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("msaa colour"),
-            size,
-            mip_level_count: 1,
-            sample_count: self.options.msaa,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
+        let make_color = || {
+            self.device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("msaa colour"),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: self.options.msaa,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        if let Some(t) = self.msaa_targets.get_mut(&(w, h)) {
+            if color_needed && t.0.is_none() {
+                t.0 = Some(make_color());
+            }
+            return t.clone();
+        }
         let depth = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("msaa depth"),
             size,
@@ -188,7 +193,9 @@ impl Renderer {
             view_formats: &[],
         });
         let t = (
-            color.create_view(&Default::default()),
+            // HDR has its own multisampled colour target. Its depth buffer must not
+            // allocate another, unused, surface-format colour target alongside it.
+            color_needed.then(make_color),
             depth.create_view(&Default::default()),
         );
         self.msaa_targets.insert((w, h), t.clone());

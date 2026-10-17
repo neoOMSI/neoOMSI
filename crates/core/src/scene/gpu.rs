@@ -30,6 +30,14 @@ pub(super) struct TexEntry {
     pub(super) dropped: u32,
 }
 
+impl TexEntry {
+    /// Approximate growth in the current format; mip rounding can underestimate
+    /// it. The budget reserves a separate 10% margin.
+    pub(super) fn estimated_restore_growth(&self) -> u64 {
+        (self.bytes << (2 * self.dropped.min(8))) - self.bytes
+    }
+}
+
 /// An object type on the GPU.
 pub(super) struct TypeGpu {
     /// Keeps the type (and so the pointer that keys this entry) alive while cached.
@@ -287,8 +295,12 @@ impl GpuCache {
     ) -> Option<(TextureId, PathBuf)> {
         let dirs_ref: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
         let Some(path) = ::texture::find_texture(name, &dirs_ref) else {
-            if !name.trim().is_empty() && self.misses.insert(name.to_string()) {
+            if names_texture(name) && self.misses.insert(name.to_string()) {
                 log::warn!("Did not find texture file \"{name}\"!");
+                // Report it against the model's own texture folder, which is searched first.
+                if let Some(own) = dirs.first() {
+                    ::mods::diagnostics::missing(own, &own.join(name.trim()), ::mods::diagnostics::Kind::Texture);
+                }
                 if ::legacy_config::env::var_os("OMSI_DEBUG_MISSING").is_some() {
                     log::info!("  texture {name} looked for in {:?}", dirs);
                 }

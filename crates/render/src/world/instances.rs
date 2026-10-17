@@ -1,11 +1,32 @@
 use crate::*;
 
+/// Instances in a block of the culling (see `Scene::block_bounds`): those of a tile or a
+/// vehicle are made one after another and lie together.
+pub(crate) const CULL_BLOCK: usize = 128;
+/// How many grown blocks are measured again a frame.
+const CULL_BLOCK_MEASURES: usize = 8;
+
+/// The block's box made to hold the instance's sphere too.
+fn grow_block(bb: &mut (DVec3, DVec3), i: &Instance) {
+    let c = i.origin + i.bounds.centre.as_dvec3();
+    let r = i.bounds.radius as f64;
+    if !c.is_finite() || !r.is_finite() {
+        // (no box holds it: the block is never passed by)
+        *bb = (DVec3::splat(-f64::MAX), DVec3::splat(f64::MAX));
+        return;
+    }
+    bb.0 = bb.0.min(c - r);
+    bb.1 = bb.1.max(c + r);
+}
+
 impl Renderer {
     pub fn new_scene(&self) -> Scene {
         Scene {
             meshes: Vec::new(),
+            mesh_pages: Vec::new(),
             textures: Vec::new(),
             tex_luma: Default::default(),
+            uploaded: Default::default(),
             glass_slot: None,
             materials: Vec::new(),
             instances: Vec::new(),
@@ -25,6 +46,8 @@ impl Renderer {
             smoke_buf: None,
             smoke_count: 0,
             corona_runs: Vec::new(),
+            corona_order: Vec::new(),
+            corona_data: Vec::new(),
             draw_buf: None,
             camera_bind_group: None,
             shadow_bind_group: None,
@@ -32,20 +55,32 @@ impl Renderer {
             sky_bind_group: None,
             overlays: Vec::new(),
             premultiplied: Default::default(),
+            frosted: Default::default(),
             overlay_res: Vec::new(),
             dirty: true,
             changed: Vec::new(),
             changed_mark: Vec::new(),
+            origin_moved: false,
             cache_bounds: ::legacy_config::env::var_os("OMSI_NO_BOUNDS_CACHE").is_none(),
             bounds_meshes: Vec::new(),
             bounds_dirty: false,
+            bounds_full: false,
+            reshaped_meshes: Vec::new(),
+            reshaped_users: Vec::new(),
+            reshaped_upto: 0,
+            block_bounds: Vec::new(),
+            block_dirty: Vec::new(),
+            block_cursor: 0,
+            block_instances: 0,
             uploaded_instances: 0,
             uploaded_entries: 0,
             cpu_models: Vec::new(),
             cpu_params: Vec::new(),
-            last_grid: Vec::new(),
+            light_grid: Default::default(),
             last_lights: Vec::new(),
             bind_groups: HashMap::new(),
+            material_uniform_page: None,
+            looks: HashMap::new(),
             pbr_maps: HashMap::new(),
             snow_textures: Default::default(),
         }
@@ -65,7 +100,8 @@ impl Renderer {
             .map(|r| r.2)
             .max()
             .map(|m| m as usize + 1)
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .max(materials.len());
         scene.instances.push(Instance {
             mesh,
             transform,
@@ -97,6 +133,7 @@ impl Renderer {
             mirror_only: false,
             omsi_caster: false,
             ordered: false,
+            ordered_index: 0,
             casts_shadow: true,
             roof: None,
         });
@@ -117,7 +154,8 @@ impl Renderer {
             .map(|r| r.2)
             .max()
             .map(|m| m as usize + 1)
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .max(materials.len());
         scene.instances.push(Instance {
             mesh,
             transform,
@@ -149,6 +187,7 @@ impl Renderer {
             mirror_only: false,
             omsi_caster: false,
             ordered: false,
+            ordered_index: 0,
             casts_shadow: false,
             roof: None,
         });
@@ -236,9 +275,13 @@ impl Renderer {
         }
     }
 
-    pub fn set_ordered(&self, scene: &mut Scene, instance: usize, on: bool) {
+    /// Draw an instance in its model's authored mesh order. `index` is supplied by the
+    /// owner each time it attaches an instance, because GPU cache reuse may change the
+    /// scene instance id after a vehicle despawns.
+    pub fn set_ordered(&self, scene: &mut Scene, instance: usize, index: u32) {
         if let Some(i) = scene.instances.get_mut(instance) {
-            i.ordered = on;
+            i.ordered = true;
+            i.ordered_index = index;
         }
     }
 
@@ -342,10 +385,18 @@ impl Renderer {
         }
     }
 
+    /// Choose the render origin. A move in height or before the first upload makes every
+    /// instance's entries anew (the roof heights of the lighting depend on it); a move
+    /// sideways rewrites only the models' translations. Making all entries anew for 50 000
+    /// objects at every 100 m the bus drove was a stutter on a slower computer.
     pub fn set_render_origin(&self, scene: &mut Scene, origin: DVec3) {
         if scene.render_origin != origin {
+            if origin.z != scene.render_origin.z || scene.model_buf.is_none() {
+                scene.dirty = true;
+            } else {
+                scene.origin_moved = true;
+            }
             scene.render_origin = origin;
-            scene.dirty = true;
         }
     }
 
@@ -369,33 +420,121 @@ impl Renderer {
         }
     }
 
+    /// A mesh's bounds changed once (freed, given another): every instance drawing it is
+    /// measured again.
     pub(crate) fn mesh_bounds_changed(scene: &mut Scene, mesh: MeshId) {
         scene.bounds_meshes.resize(scene.meshes.len(), false);
         scene.bounds_meshes[mesh] = true;
         scene.bounds_dirty = true;
+        scene.bounds_full = true;
+    }
+
+    /// A pose reshaped a mesh: the instances drawing it are measured again, found from the
+    /// list of those drawing a reshaped mesh.
+    pub(crate) fn mesh_reshaped(scene: &mut Scene, mesh: MeshId) {
+        scene.bounds_meshes.resize(scene.meshes.len(), false);
+        scene.bounds_meshes[mesh] = true;
+        scene.bounds_dirty = true;
+        scene.reshaped_meshes.resize(scene.meshes.len(), false);
+        if !scene.reshaped_meshes[mesh] {
+            scene.reshaped_meshes[mesh] = true;
+            Self::forget_reshaped_users(scene);
+        }
+    }
+
+    /// The list of instances drawing a reshaped mesh is looked for again (an instance was
+    /// given another mesh, instances were cut or moved to other places).
+    pub(crate) fn forget_reshaped_users(scene: &mut Scene) {
+        scene.reshaped_users.clear();
+        scene.reshaped_upto = 0;
+    }
+
+    /// `instance` was given another mesh, or the last instance was moved into its place: it
+    /// joins the list when it now draws a reshaped mesh (one that no longer does stays in it
+    /// and is passed by).
+    pub(crate) fn note_instance_mesh(scene: &mut Scene, instance: usize) {
+        let n = scene.instances.len();
+        if scene.reshaped_upto > n {
+            scene.reshaped_upto = n;
+            scene.reshaped_users.retain(|&k| k < n);
+        }
+        let reshaped = scene
+            .instances
+            .get(instance)
+            .and_then(|i| scene.reshaped_meshes.get(i.mesh))
+            .copied()
+            .unwrap_or(false);
+        if reshaped && instance < scene.reshaped_upto && !scene.reshaped_users.contains(&instance) {
+            scene.reshaped_users.push(instance);
+        }
+    }
+
+    /// Bring the list of instances drawing a reshaped mesh up to the instances there are.
+    fn find_reshaped_users(scene: &mut Scene) {
+        let n = scene.instances.len();
+        if scene.reshaped_upto > n {
+            Self::forget_reshaped_users(scene);
+        }
+        for k in scene.reshaped_upto..n {
+            if scene
+                .reshaped_meshes
+                .get(scene.instances[k].mesh)
+                .copied()
+                .unwrap_or(false)
+            {
+                scene.reshaped_users.push(k);
+            }
+        }
+        scene.reshaped_upto = n;
     }
 
     pub(crate) fn prepare_bounds(scene: &mut Scene) {
         if !scene.cache_bounds {
             return;
         }
+        let blocks = scene.instances.len().div_ceil(CULL_BLOCK);
+        let all = scene.dirty || scene.block_bounds.len() != blocks;
+        scene
+            .block_bounds
+            .resize(blocks, (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN)));
+        scene.block_dirty.resize(blocks, false);
         if scene.dirty {
             for i in &mut scene.instances {
                 i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
             }
         } else {
-            for i in &mut scene.instances[scene.uploaded_instances..] {
+            for k in scene.uploaded_instances..scene.instances.len() {
+                let i = &mut scene.instances[k];
                 i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
+                grow_block(&mut scene.block_bounds[k / CULL_BLOCK], i);
             }
             for &idx in &scene.changed {
                 if let Some(i) = scene.instances.get_mut(idx) {
                     i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
+                    grow_block(&mut scene.block_bounds[idx / CULL_BLOCK], i);
+                    scene.block_dirty[idx / CULL_BLOCK] = true;
                 }
             }
-            if scene.bounds_dirty {
-                for i in &mut scene.instances {
+            if scene.bounds_dirty && scene.bounds_full {
+                for (k, i) in scene.instances.iter_mut().enumerate() {
                     if scene.bounds_meshes.get(i.mesh).copied().unwrap_or(false) {
                         i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
+                        grow_block(&mut scene.block_bounds[k / CULL_BLOCK], i);
+                        scene.block_dirty[k / CULL_BLOCK] = true;
+                    }
+                }
+            } else if scene.bounds_dirty {
+                // (skinning can alter a shared mesh without changing any model matrix: once a
+                // pose, for the instances drawing a reshaped mesh, not once a view)
+                Self::find_reshaped_users(scene);
+                for &k in &scene.reshaped_users {
+                    let Some(i) = scene.instances.get_mut(k) else {
+                        continue;
+                    };
+                    if scene.bounds_meshes.get(i.mesh).copied().unwrap_or(false) {
+                        i.bounds = InstanceBounds::new(&scene.meshes[i.mesh], i.transform);
+                        grow_block(&mut scene.block_bounds[k / CULL_BLOCK], i);
+                        scene.block_dirty[k / CULL_BLOCK] = true;
                     }
                 }
             }
@@ -403,7 +542,61 @@ impl Renderer {
         if scene.bounds_dirty {
             scene.bounds_meshes.fill(false);
             scene.bounds_dirty = false;
+            scene.bounds_full = false;
         }
+        scene.block_instances = scene.instances.len();
+        let measure = |scene: &mut Scene, b: usize| {
+            let mut bb = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
+            let end = ((b + 1) * CULL_BLOCK).min(scene.instances.len());
+            for i in &scene.instances[b * CULL_BLOCK..end] {
+                grow_block(&mut bb, i);
+            }
+            scene.block_bounds[b] = bb;
+            scene.block_dirty[b] = false;
+        };
+        if all {
+            for b in 0..blocks {
+                measure(scene, b);
+            }
+            return;
+        }
+        // (a grown box is never too small, only larger than it need be: a few of them are
+        // made tight again each frame)
+        let mut left = CULL_BLOCK_MEASURES;
+        for _ in 0..blocks {
+            if left == 0 {
+                break;
+            }
+            scene.block_cursor = (scene.block_cursor + 1) % blocks;
+            if scene.block_dirty[scene.block_cursor] {
+                measure(scene, scene.block_cursor);
+                left -= 1;
+            }
+        }
+    }
+
+    /// The spheres around the blocks of `CULL_BLOCK` instances, relative to the render
+    /// origin: a block whose sphere is out of a view holds nothing that view draws. None
+    /// without cached bounds (nothing is passed by then).
+    pub(crate) fn cull_blocks(scene: &Scene) -> Option<Vec<(Vec3, f32)>> {
+        (scene.cache_bounds
+            && scene.block_bounds.len() == scene.instances.len().div_ceil(CULL_BLOCK))
+        .then(|| {
+            scene
+                .block_bounds
+                .iter()
+                .map(|&(lo, hi)| {
+                    if lo.x > hi.x {
+                        (Vec3::ZERO, 0.0)
+                    } else {
+                        (
+                            ((lo + hi) * 0.5 - scene.render_origin).as_vec3(),
+                            ((hi - lo).length() * 0.5) as f32,
+                        )
+                    }
+                })
+                .collect()
+        })
     }
 
     pub fn set_params(

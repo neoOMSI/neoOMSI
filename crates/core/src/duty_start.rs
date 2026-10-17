@@ -13,6 +13,25 @@ use super::*;
 /// duty start, a second or more on a big map).
 static PREOPENED: parking_lot::Mutex<Option<(PathBuf, i32, World)>> = parking_lot::Mutex::new(None);
 
+/// The explicit map position selected by the launcher, when it is a complete bus spawn.
+///
+/// `--spawn` is `x,y,heading[,z]`.  Its optional height is immaterial to route selection,
+/// which works across the road network in the map plane.
+fn selected_spawn(args: &Args) -> Option<(DVec3, f64)> {
+    let values: Vec<f64> = args
+        .spawn
+        .as_deref()?
+        .split(',')
+        .filter_map(|value| value.trim().parse().ok())
+        .collect();
+    (values.len() >= 3).then(|| {
+        (
+            DVec3::new(values[0], values[1], values.get(3).copied().unwrap_or(0.0)),
+            values[2],
+        )
+    })
+}
+
 /// The world opened for the duty start, if it is the one wanted now.
 pub(crate) fn take_preopened(map: &Path, date: i32) -> Option<World> {
     let mut p = PREOPENED.lock();
@@ -31,14 +50,16 @@ pub(crate) fn place_on_duty(args: &mut Args) {
     };
     if !args.schedule
         || args.bus.is_none()
-        || args.spawn.is_some()
         || !args.situation_vars.is_empty()
     {
         return;
     }
     let t0 = Instant::now();
     let clock = start_clock(args);
-    let map_cfg = ::legacy_config::resolve_path(&args.root, &args.map);
+    let map_cfg = ::mods::resolve_path(&args.root, &args.map);
+    // Start recording the drive here, because `open_world` reuses this pre-opened world instead of
+    // opening its own.
+    crate::lab_mods::drive_starts(&args.map);
     let world = match World::open(&args.root, &map_cfg, clock.date_code()) {
         Ok(w) => w,
         Err(e) => {
@@ -75,6 +96,7 @@ pub(crate) fn place_on_duty(args: &mut Args) {
         ..Default::default()
     };
     net.link(1.5);
+    let explicit_spawn = selected_spawn(args);
     // the entry points and where they stand (heading from the object)
     let entries: Vec<(usize, String, DVec3, f64)> = {
         let pos = world.object_positions.lock();
@@ -130,18 +152,27 @@ pub(crate) fn place_on_duty(args: &mut Args) {
                 let (path, _) = navigator::way_back(&net, from, heading, &targets, 40_000.0)?;
                 Some(path.iter().map(|&l| net.lanes[l].length() as f64).sum())
             };
-            let pick = if args.auto_entry {
-                entries
-                    .iter()
-                    .filter_map(|e| cost(e.2, e.3).map(|c| (e, c)))
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
+            let mut stop_spawn: Option<String> = None;
+            let pick = if let Some((position, heading)) = explicit_spawn {
+                cost(position, heading).map(|way| (None, String::new(), way))
+            } else if args.auto_entry {
+                let before = 12.0_f32;
+                let (at, heading) = net.lanes[route[li]].at_ext((stop_s - before).max(0.0));
+                stop_spawn = Some(format!(
+                    "{:.1},{:.1},{:.1},{:.1}",
+                    at.x,
+                    at.y,
+                    (heading as f64).rem_euclid(360.0),
+                    at.z
+                ));
+                Some((None, String::new(), before as f64))
             } else {
                 entries
                     .iter()
                     .find(|e| e.0 == args.entry.min(entries.len().saturating_sub(1)))
-                    .and_then(|e| cost(e.2, e.3).map(|c| (e, c)))
+                    .and_then(|e| cost(e.2, e.3).map(|c| (Some(e.0), e.1.clone(), c)))
             };
-            let Some(((ei, name, _, _), way)) = pick else {
+            let Some((entry, name, way)) = pick else {
                 log::info!(
                     "duty start: no entry point leads to stop {} '{}' of trip {}",
                     j,
@@ -150,20 +181,28 @@ pub(crate) fn place_on_duty(args: &mut Args) {
                 );
                 continue;
             };
+            let origin = entry.map_or_else(
+                || "the start stop".to_owned(),
+                |entry| format!("entry point {entry} '{}'", name.trim()),
+            );
             log::info!(
-                "duty start: trip {} ({} at {}) from stop {} '{}', the bus at entry point {} '{}' ({:.0} m by road){}, {:.1} s",
+                "duty start: trip {} ({} at {}) from stop {} '{}', the bus at {} ({:.0} m by road){}, {:.1} s",
                 k + 1,
                 trip.name,
                 schedule::hhmm(trip.departure),
                 j,
                 stop.name.trim(),
-                ei,
-                name.trim(),
+                origin,
                 way,
-                if args.auto_entry { " (automatic)" } else { "" },
+                if args.auto_entry && explicit_spawn.is_none() { " (automatic)" } else { "" },
                 t0.elapsed().as_secs_f64()
             );
-            args.entry = *ei;
+            if let Some(entry) = entry {
+                args.entry = entry;
+            }
+            if let Some(sp) = stop_spawn {
+                args.spawn = Some(sp);
+            }
             args.duty_trip = Some(k);
             args.duty_first_stop = j;
             // A start long before the tour's first trip (a duty picked at 00:00 whose first
@@ -200,4 +239,35 @@ pub(crate) fn place_on_duty(args: &mut Args) {
         "duty start: no stop of the next trips can be reached from the entry points; the timetable decides, {:.1} s",
         t0.elapsed().as_secs_f64()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn an_explicit_spawn_overrides_the_entry_point_for_route_selection() {
+        let args = Args::parse_from([
+            "omsi",
+            "--bus",
+            "Vehicles/Test.bus",
+            "--entry",
+            "0",
+            "--spawn",
+            "120.5,340.25,87,12.5",
+        ]);
+
+        assert_eq!(
+            selected_spawn(&args),
+            Some((DVec3::new(120.5, 340.25, 12.5), 87.0))
+        );
+    }
+
+    #[test]
+    fn an_incomplete_spawn_cannot_replace_an_entry_point() {
+        let args = Args::parse_from(["omsi", "--bus", "Vehicles/Test.bus", "--spawn", "120,340"]);
+
+        assert_eq!(selected_spawn(&args), None);
+    }
 }

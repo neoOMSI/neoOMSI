@@ -9,9 +9,11 @@
   <a href="https://github.com/neoOMSI/neoOMSI/actions/workflows/test.yml"><img alt="CI" height="28" src="https://img.shields.io/github/actions/workflow/status/neoOMSI/neoOMSI/test.yml?branch=main&style=for-the-badge&label=CI&labelColor=fd6b00&color=ffffff&logo=github-actions&logoColor=white"></a>
   <a href="https://github.com/neoOMSI/neoOMSI/actions/workflows/build.yml"><img alt="Build" height="28" src="https://img.shields.io/github/actions/workflow/status/neoOMSI/neoOMSI/build.yml?branch=main&style=for-the-badge&label=Nightly&labelColor=fd6b00&color=ffffff&logo=github&logoColor=white"></a>
   <a href="https://neoomsi.com/"><img alt="Docs" height="28" src="https://img.shields.io/badge/Docs-Website-ffffff?style=for-the-badge&labelColor=fd6b00&logo=googledocs&logoColor=white"></a>
+  <a href="https://ko-fi.com/shlovto"><img alt="Ko-fi" src="https://img.shields.io/badge/ko--fi-support-29abe0?style=for-the-badge&logo=kofi&logoColor=white"></a>
   <a href="https://github.com/neoOMSI/neoOMSI/releases/latest"><img alt="Release" height="28" src="https://img.shields.io/github/v/release/neoOMSI/neoOMSI?style=for-the-badge&label=Release&labelColor=fd6b00&color=ffffff&logo=rust&logoColor=white"></a>
   <a href="https://discord.gg/neoomsi"><img alt="Discord" height="28" src="https://img.shields.io/badge/Discord-Join%20Chat-ffffff?style=for-the-badge&labelColor=fd6b00&logo=discord&logoColor=white"></a>
   <a href="LICENSE"><img alt="License" height="28" src="https://img.shields.io/github/license/neoOMSI/neoOMSI?style=for-the-badge&labelColor=fd6b00&color=ffffff&logo=open-source-initiative&logoColor=white"></a>
+  <a title="Crowdin" target="_blank" href="https://crowdin.com/project/neoOMSI"><img src="https://badges.crowdin.net/neoOMSI/localized.svg"></a>
 </p>
 
 <p align="center">

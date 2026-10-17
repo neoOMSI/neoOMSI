@@ -446,6 +446,37 @@ impl App {
         }
     }
 
+    fn enter_placed_near(&mut self, pos: DVec3) -> bool {
+        let Some(k) = self.placed_cab_near(pos) else {
+            return false;
+        };
+        let own_near = self
+            .player
+            .as_ref()
+            .and_then(|p| {
+                self.humans
+                    .as_mut()
+                    .and_then(|h| h.vehicle_driver_door(&p.vehicle))
+            })
+            .map(|d| (d - pos).truncate().length() < DOOR_REACH)
+            .unwrap_or(false);
+        if own_near {
+            return false;
+        }
+        let uid = self.placed[k].uid;
+        let seat = {
+            let v = &self.placed[k].vehicle;
+            self.humans
+                .as_mut()
+                .and_then(|h| h.driver_stand(v).and_then(|l| h.vehicle_cabin_world(v, l)))
+        };
+        match seat {
+            Some(to) => self.walk_in(to, Then::Placed(uid)),
+            None => self.take_placed(k),
+        }
+        true
+    }
+
     pub(super) fn use_seat(&mut self) {
         let Some(f) = self.on_foot.as_ref() else {
             return;
@@ -492,6 +523,9 @@ impl App {
         }
         let pos = f.pos;
         if let Some((bus, _)) = f.inside {
+            if bus != BusId::Player && self.enter_placed_near(pos) {
+                return;
+            }
             if bus == BusId::Player {
                 let stand = self.player.as_ref().and_then(|p| {
                     self.humans.as_mut().and_then(|h| {
@@ -522,31 +556,8 @@ impl App {
             }
             return;
         }
-        if let Some(k) = self.placed_cab_near(pos) {
-            let own_near = self
-                .player
-                .as_ref()
-                .and_then(|p| {
-                    self.humans
-                        .as_mut()
-                        .and_then(|h| h.vehicle_driver_door(&p.vehicle))
-                })
-                .map(|d| (d - pos).truncate().length() < DOOR_REACH)
-                .unwrap_or(false);
-            if !own_near {
-                let uid = self.placed[k].uid;
-                let seat = {
-                    let v = &self.placed[k].vehicle;
-                    self.humans
-                        .as_mut()
-                        .and_then(|h| h.driver_stand(v).and_then(|l| h.vehicle_cabin_world(v, l)))
-                };
-                match seat {
-                    Some(to) => self.walk_in(to, Then::Placed(uid)),
-                    None => self.take_placed(k),
-                }
-                return;
-            }
+        if self.enter_placed_near(pos) {
+            return;
         }
         let own_front = self.player.as_ref().and_then(|p| {
             self.humans

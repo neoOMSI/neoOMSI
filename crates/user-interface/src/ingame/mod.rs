@@ -10,19 +10,24 @@ use ab_glyph::{Font, FontVec, PxScale, ScaleFont, VariableFont};
 use ::render::{Renderer, Scene, TextureId};
 
 mod frame;
+mod infobar;
 #[path = "../pause-menu/mod.rs"]
 mod pause_menu;
 mod loading;
 mod run_report;
+#[path = "../start-menu/mod.rs"]
+mod start_menu;
 mod shapes;
 mod style;
+mod timetable;
 #[cfg(test)]
 mod tests;
 mod text;
 mod view;
 mod widgets;
 
-pub use self::pause_menu::{Dialog, Fmt, OptGroup, OptKind, OptRow, OptShow, PauseState, WorldDrop, WorldGroup, WorldRow, ADMIN_PAGE, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PAUSE_ENTRIES, VEHICLE_PAGE, WORLD_PAGE};
+pub use self::pause_menu::{Dialog, Fmt, OptGroup, OptKind, OptRow, OptShow, PauseState, WorldDrop, WorldGroup, WorldRow, ADMIN_PAGE, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PAUSE_ENTRIES, VEHICLE_PAGE, VOICE_SUB, WORLD_PAGE};
+pub use self::start_menu::{DriveRow, DriverMenu, LineRow, ProfileView, StartPage, StartUi, StartUpdate, StartView, TourRow, VehRow};
 pub use self::view::*;
 #[allow(unused_imports)]
 use self::{style::*, text::*};
@@ -72,11 +77,15 @@ pub struct Ui {
     pub menu_scroll_thumb: Option<[f32; 4]>,
     pub lab_tabs: Vec<[f32; 4]>,
     pub admin_visible: bool,
+    /// The labels of the keys that switch the menu tabs (Q and E on QWERTY, A and E on
+    /// AZERTY, ...), left and right, as the player's keyboard layout has them.
+    pub tab_keys: [String; 2],
     pub pause_items: Vec<[f32; 4]>,
     pub lab_groups: Vec<[f32; 4]>,
     pub lab_actions: Vec<[f32; 4]>,
     pub lab_group: usize,
     pub dialog: Option<Dialog>,
+    pub start: StartUi,
     pub dialog_rects: Vec<[f32; 4]>,
     pub dialog_box: [f32; 4],
     pub dialog_back: bool,
@@ -85,11 +94,15 @@ pub struct Ui {
     pub dialog_pane_rc: [f32; 4],
     pub dialog_pane_top: Option<usize>,
     pub dialog_pane_max: usize,
+    pub dialog_bar: Option<[f32; 4]>,
+    pub dialog_pane_bar: Option<[f32; 4]>,
     pub dialog_pane_key: String,
     pub dialog_pane_pos: f32,
+    pub dialog_list_pos: f32,
     pub dialog_under: Option<Dialog>,
     pub place_rects: Vec<[f32; 4]>,
     pub place_preview_size: (u32, u32),
+    pub place_preview_rect: [f32; 4],
     pub place_picture: Option<TextureId>,
     pub map_rect: [f32; 4],
     pub map_picture: Option<TextureId>,
@@ -99,6 +112,7 @@ pub struct Ui {
     pub dialog_preview: Option<Preview>,
     pub dialog_tall: bool,
     pub pause_entries: Vec<String>,
+    pub pause_entry_ids: Vec<&'static str>,
     pub world_view: std::sync::Arc<Vec<WorldGroup>>,
     pub world_view_page: usize,
     pub world_last_page: usize,
@@ -107,11 +121,13 @@ pub struct Ui {
     pub world_tracks: Vec<Option<[f32; 4]>>,
     /// The small "x" behind a key binding: (row, its rectangle).
     pub world_clear: Vec<(usize, [f32; 4])>,
+    pub world_alt: Vec<(usize, [f32; 4])>,
     pub world_group: usize,
     pub world_sub: usize,
     pub world_sub_rc: Vec<[f32; 4]>,
     pub world_scroll: usize,
     pub world_pos: f32,
+    world_held: Option<usize>,
     pub world_bar: Option<([f32; 4], [f32; 4])>,
     pub world_bar_grab: Option<f32>,
     pub world_first: usize,

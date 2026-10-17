@@ -69,16 +69,19 @@ pub(crate) fn texture_budget() -> u64 {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(::config::get_int("graphics", "texture_memory").unwrap_or(0) as u32 as u64);
     if mb > 0 {
-        // (a budget the graphics card cannot hold is taken down to what it can: the
-        // settings offer up to 6 GB, and a 2 GB card lost its device at the first frames,
-        // #323)
-        let card = ::render::ADAPTER_TEXTURE_MB.load(std::sync::atomic::Ordering::Relaxed);
-        if card > 0 && mb > card * 5 / 4 {
-            log::warn!(
-                "texture memory {mb} MB is more than the graphics card holds: {} MB",
-                card * 5 / 4
-            );
-            return card * 5 / 4 * 1_000_000;
+        // With a live driver budget, retain the requested value: World limits optional
+        // residency to available VRAM, including at startup. A static estimate must not
+        // turn the 6 GB setting into 5.5 GB on an 8 GB card, or permanently cap it after
+        // another GPU process exits. Keep the old safety fallback when DXGI is unavailable.
+        if ::render::video_memory().is_none() {
+            let card = ::render::ADAPTER_TEXTURE_MB.load(std::sync::atomic::Ordering::Relaxed);
+            if card > 0 && mb > card * 5 / 4 {
+                log::warn!(
+                    "texture memory {mb} MB exceeds the fallback adapter budget: {} MB",
+                    card * 5 / 4
+                );
+                return card * 5 / 4 * 1_000_000;
+            }
         }
         return mb * 1_000_000;
     }

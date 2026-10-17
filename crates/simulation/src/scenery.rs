@@ -238,10 +238,11 @@ impl SceneryInstance {
         crate::anim::apply_parents(&self.animators, &mut self.mesh_transforms);
         for (i, c) in self.visible_conds.iter().enumerate() {
             self.mesh_visible[i] = match c {
-                Some((id, x)) => (self.state.vars[*id as usize] - x).abs() < 0.5,
+                Some((id, x)) => crate::anim::round_visible(self.state.vars[*id as usize], *x),
                 None => true,
             };
         }
+        crate::anim::apply_visibility_parents(&self.animators, &mut self.mesh_visible);
     }
 
     pub fn var(&self, name: &str) -> Option<f32> {
@@ -302,19 +303,19 @@ impl SceneryInstance {
         if self.html_textures.is_empty() {
             return Vec::new();
         }
-        let num: Vec<(String, f32)> = self
+        let num: Vec<(&str, f32)> = self
             .program
             .var_names
             .iter()
             .enumerate()
-            .map(|(i, n)| (n.clone(), self.state.vars[i]))
+            .map(|(i, n)| (n.as_str(), self.state.vars[i]))
             .collect();
-        let strs: Vec<(String, String)> = self
+        let strs: Vec<(&str, &str)> = self
             .program
             .str_var_names
             .iter()
             .enumerate()
-            .map(|(i, n)| (n.clone(), self.state.str_vars[i].clone()))
+            .map(|(i, n)| (n.as_str(), self.state.str_vars[i].as_str()))
             .collect();
         // (the basic API only: no vehicle, no depot)
         let env = crate::vehicle_api::environment(&self.host.clock, &crate::vehicle_api::locale());

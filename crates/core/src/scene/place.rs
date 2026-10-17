@@ -63,12 +63,28 @@ pub(super) fn stand_in_area(ot: &ObjectType, xf: &Mat4, pos: DVec3, tile: (i32, 
         "{} on tile {tile:?} stands in for far tiles: drawn only from the tiles around it",
         ot.sco.path.display()
     );
-    Some([
+    Some(omsi_loaded_area(tile))
+}
+
+/// The ground of the tiles OMSI loads with `tile`: (min x, min y, max x, max y).
+fn omsi_loaded_area(tile: (i32, i32)) -> [f64; 4] {
+    let ts = tile_size();
+    [
         (tile.0 - OMSI_TILE_DIST) as f64 * ts,
         (tile.1 - OMSI_TILE_DIST) as f64 * ts,
         (tile.0 + OMSI_TILE_DIST + 1) as f64 * ts,
         (tile.1 + OMSI_TILE_DIST + 1) as f64 * ts,
-    ])
+    ]
+}
+
+/// Like [`stand_in_area`], for a mesh whose bounding sphere lies wholly outside the tiles OMSI
+/// loads with `tile`: a backdrop modelled far from its object (London's Walworth Road copy of
+/// Elephant & Castle stood across London Road, #418).
+pub(super) fn beyond_loaded_area(centre: DVec3, radius: f64, tile: (i32, i32)) -> Option<[f64; 4]> {
+    let area = omsi_loaded_area(tile);
+    let dx = (area[0] - centre.x).max(centre.x - area[2]).max(0.0);
+    let dy = (area[1] - centre.y).max(centre.y - area[3]).max(0.0);
+    (dx.hypot(dy) > radius).then_some(area)
 }
 
 /// World bounds (min x, min y, max x, max y) of a mesh placed with `xf` at `origin`.
@@ -82,6 +98,11 @@ pub(super) fn mesh_bounds(m: &MeshData, xf: &Mat4, origin: DVec3) -> [f64; 4] {
         b[3] = b[3].max(w.y);
     }
     b
+}
+
+fn on_own_tile(pos: DVec3, origin: DVec3) -> bool {
+    let (x, y) = (pos.x - origin.x, pos.y - origin.y);
+    (0.0..=tile_size()).contains(&x) && (0.0..=tile_size()).contains(&y)
 }
 
 impl World {
@@ -188,7 +209,7 @@ impl World {
                     .parent()
                     .map(|d| d.to_path_buf())
                     .unwrap_or_default();
-                if let Some(cabin) = self.waiting_cabin(&::legacy_config::resolve_path(&dir, rel)) {
+                if let Some(cabin) = self.waiting_cabin(&::mods::resolve_path(&dir, rel)) {
                     for pp in &cabin.pass_positions {
                         let p = pos + xf.transform_vector3(glam::Vec3::from(pp.pos)).as_dvec3();
                         state
@@ -198,6 +219,10 @@ impl World {
                 }
             }
             if let Some((tex, min_h, max_h, min_r, max_r)) = &ot.sco.tree {
+                // OMSI does not draw a tree record past its tile's edge (#421)
+                if o.map_object && !on_own_tile(pos, st.origin) {
+                    continue;
+                }
                 // Trees are billboards: the map stores texture, height and the ratio of the
                 // width to the height chosen by the editor; a row of trees along a spline
                 // takes the middle of the type's ranges. OMSI scales its tree by (height x
@@ -250,16 +275,91 @@ impl World {
                     idx
                 }))
             };
+            // (OMSI hands `TrafficLightPhase` to any child of a crossing whose first string
+            // names one of its lights, `[trafficlight]` or not - see `names_traffic_light`;
+            // a mod lamp without the keyword sat at its "off" picture, blinking yellow.
+            // Objects with textures of their own to choose stay ordinary objects.)
+            let child_lamp = o
+                .lamp_parent
+                .is_some_and(|p| index.traffic_light_parents.contains(&p))
+                && crate::tiles::names_traffic_light(&o.extra)
+                && ot.dynamic_textures.is_empty()
+                && !ot
+                .meshes
+                .iter()
+                .any(|(_, _, ov)| ov.iter().any(|m| !m.item && m.freetex.is_some()));
+            let lamp = if ot.sco.is_traffic_light || child_lamp {
+                let named = o.extra.first().map(|s| s.trim()).filter(|s| !s.is_empty());
+                let index = named.map(|s| ::legacy_config::parse_f64(s) as usize).unwrap_or(0);
+                if ::legacy_config::env::var_os("OMSI_DEBUG_LAMPS").is_some() {
+                    match o.lamp_parent {
+                        None => log::info!(
+                            "traffic light {} (id {}) names no crossing ([varparent]); extra {:?}",
+                            ot.sco.path.display(),
+                            o.id,
+                            o.extra
+                        ),
+                        Some(p) => log::info!(
+                            "traffic light {} (id {}) at ({:.0}, {:.0}): crossing {p}, light {:?}",
+                            ot.sco.path.display(),
+                            o.id,
+                            pos.x,
+                            pos.y,
+                            o.extra
+                        ),
+                    }
+                }
+                o.lamp_parent.map(|p| (p, index, named.is_none()))
+            } else {
+                None
+            };
             if ot.sco.only_editor || ot.sco.is_help_arrow || ot.meshes.is_empty() {
-                // invisible sound sources (ambient sound objects) still run their script
-                if let (Some(program), true) = (&ot.program, ot.sco.sound.is_some()) {
+                // an invisible lamp's script still reads its crossing light (Gerolstein's
+                // `[onlyeditor]` crossing gong rang nonstop without it, #303)
+                if let (Some((parent, index, any_light)), Some(program)) = (lamp, &ot.program) {
+                    state.light_objects.push(LightObject {
+                        parent,
+                        index,
+                        any_light,
+                        instances: Vec::new(),
+                        slots: Vec::new(),
+                        variants: Vec::new(),
+                        pos,
+                        script: Some(Arc::new(Mutex::new(
+                            ::simulation::scenery::SceneryInstance::new(
+                                program.clone(),
+                                &ot.mesh_defs(),
+                                self.script_clock(),
+                                &o.extra,
+                            ),
+                        ))),
+                        texts: Default::default(),
+                        coronas: Vec::new(),
+                        corona_mesh: Vec::new(),
+                        lit: Vec::new(),
+                        xf,
+                        animated: false,
+                        shown: None,
+                        sound: ot.sco.sound.as_ref().map(|rel| {
+                            let dir = ot
+                                .sco
+                                .path
+                                .parent()
+                                .map(|p| p.to_path_buf())
+                                .unwrap_or_default();
+                            ::mods::resolve_path(&dir, rel)
+                        }),
+                        sounds: Default::default(),
+                    });
+                } else if let (Some(program), true) = (&ot.program, ot.sco.sound.is_some()) {
+                    // invisible sound sources (ambient sound objects) still run their script
                     let inst = ::simulation::scenery::SceneryInstance::new(
                         program.clone(),
                         &ot.mesh_defs(),
                         self.script_clock(),
                         &o.extra,
                     );
-                    self.scripted.lock().push(ScriptedObject {
+                    self.push_scripted(ScriptedObject {
                         ty: ot.clone(),
                         pos,
                         xf,
@@ -275,6 +375,10 @@ impl World {
                         texts: Vec::new(),
                         arrivals: false,
                         htmls: Vec::new(),
+                        last_tex_selection: None,
+                        dynamic_materials: HashMap::new(),
+                        coronas: Vec::new(),
+                        lit: Vec::new(),
                     });
                 }
                 // An editor-only object still lays its paths out: OMSI's invisible
@@ -348,7 +452,8 @@ impl World {
             let mesh_shape = ot
                 .collision
                 .as_ref()
-                .filter(|_| solid && !ot.sco.no_collision && !is_surface && !ot.meshes.is_empty());
+                .filter(|_| solid && !ot.sco.no_collision && !is_surface && !ot.meshes.is_empty())
+                .filter(|_| !(o.parked && ot.sco.bounding_box.is_some()));
             if let Some(c) = mesh_shape {
                 let tris = |m: &dyn Fn(glam::Vec3) -> glam::DVec3| -> Vec<[glam::DVec3; 3]> {
                     c.indices
@@ -536,8 +641,9 @@ impl World {
                 }
             }
             // what the outside camera cannot pass through: houses, walls, shelters, canopies
-            // (surface objects too - a petrol station is a drivable [surface] with a roof)
-            if let Some(shape) = ot.camera_shape() {
+            // (surface objects too - a petrol station is a drivable [surface] with a roof),
+            // and the roofs that keep the weather off
+            if let Some(shape) = ot.camera_shape().or_else(|| ot.shelter_shape()) {
                 state.blockers.push(crate::camera_arm::Blocker {
                     ty: Arc::downgrade(&ot),
                     pos,
@@ -545,44 +651,6 @@ impl World {
                     radius: shape.radius(),
                 });
             }
-            // (OMSI hands `TrafficLightPhase` to any child of a crossing whose first string
-            // names one of its lights, `[trafficlight]` or not - see `names_traffic_light`;
-            // a mod lamp without the keyword sat at its "off" picture, blinking yellow.
-            // Objects with textures of their own to choose stay ordinary objects.)
-            let child_lamp = o
-                .lamp_parent
-                .is_some_and(|p| index.traffic_light_parents.contains(&p))
-                && crate::tiles::names_traffic_light(&o.extra)
-                && ot.dynamic_textures.is_empty()
-                && !ot
-                .meshes
-                .iter()
-                .any(|(_, _, ov)| ov.iter().any(|m| !m.item && m.freetex.is_some()));
-            let lamp = if ot.sco.is_traffic_light || child_lamp {
-                let named = o.extra.first().map(|s| s.trim()).filter(|s| !s.is_empty());
-                let index = named.map(|s| ::legacy_config::parse_f64(s) as usize).unwrap_or(0);
-                if ::legacy_config::env::var_os("OMSI_DEBUG_LAMPS").is_some() {
-                    match o.lamp_parent {
-                        None => log::info!(
-                            "traffic light {} (id {}) names no crossing ([varparent]); extra {:?}",
-                            ot.sco.path.display(),
-                            o.id,
-                            o.extra
-                        ),
-                        Some(p) => log::info!(
-                            "traffic light {} (id {}) at ({:.0}, {:.0}): crossing {p}, light {:?}",
-                            ot.sco.path.display(),
-                            o.id,
-                            pos.x,
-                            pos.y,
-                            o.extra
-                        ),
-                    }
-                }
-                o.lamp_parent.map(|p| (p, index, named.is_none()))
-            } else {
-                None
-            };
             // lights of the placed object
             {
                 let switches: Mutex<Vec<LightSwitch>> = Mutex::new(Vec::new());
@@ -605,6 +673,10 @@ impl World {
                     // a traffic lamp's red, yellow and green glow with its state
                     // (`LightObject::coronas`), not all at once by night
                     if lamp.is_some() && matches!(sw, LightSwitch::Variable(_)) {
+                        continue;
+                    }
+                    // nor those the object's script switches (#372)
+                    if sw.script_var(ot.program.as_deref()).is_some() {
                         continue;
                     }
                     state.coronas.push(StaticCorona {
@@ -694,7 +766,7 @@ impl World {
             .iter()
             .find(|t| t.x == tx && t.y == ty)
             .and_then(|t| {
-                let p = ::legacy_config::resolve_path(&self.map_dir, &format!("{}.LM.bmp", t.file));
+                let p = ::mods::resolve_path(&self.map_dir, &format!("{}.LM.bmp", t.file));
                 if ::legacy_config::vfs::is_file(&p) {
                     ::texture::decode_file(&p)
                         .ok()

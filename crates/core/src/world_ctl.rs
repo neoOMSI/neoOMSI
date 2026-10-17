@@ -3,6 +3,24 @@
 use super::*;
 
 impl App {
+    /// Give every local vehicle the session's calendar and time of day. A vehicle keeps
+    /// its own real-time script counters, but clocks, displays and timetable scripts must
+    /// agree with the game's clock regardless of when the vehicle was spawned.
+    pub(crate) fn sync_vehicle_game_times(&mut self) {
+        let clock = self.clock.clone();
+        if let Some(p) = self.player.as_mut() {
+            p.vehicle.host.clock.sync_game_time_from(&clock);
+        }
+        for q in &mut self.placed {
+            q.vehicle.host.clock.sync_game_time_from(&clock);
+        }
+        if let Some(t) = self.traffic.as_mut() {
+            for car in &mut t.cars {
+                car.vehicle.host.clock.sync_game_time_from(&clock);
+            }
+        }
+    }
+
     pub(crate) fn tick_lan(&mut self, dt: f32) {
         let audio_inside = self.audio_in_cab();
         let walker = self.walker_pose();
@@ -109,9 +127,7 @@ impl App {
                 }
             }
         }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
     }
 
     pub(crate) fn edit_weather(&mut self, f: impl FnOnce(&mut ::content::weather::Weather)) {
@@ -202,7 +218,7 @@ impl App {
             return;
         };
         let file = &p.vehicle.ty.def.path;
-        let bus = ::legacy_config::content_roots()
+        let bus = ::mods::content_roots()
             .iter()
             .chain(std::iter::once(&self.args.root))
             .find_map(|r| file.strip_prefix(r).ok())
@@ -488,7 +504,7 @@ impl App {
             self.service_msg = Some(("In a LAN session the host sets the weather".into(), 3.0));
             return;
         }
-        let mut files: Vec<String> = ::legacy_config::read_dir_merged("Weather")
+        let mut files: Vec<String> = ::mods::read_dir_merged("Weather")
             .into_iter()
             .filter(|p| {
                 p.extension()
@@ -632,7 +648,15 @@ impl App {
     }
 
     pub(crate) fn metar_locked(&self) -> bool {
-        ::config::get_bool("gameplay", "metar_sync").unwrap_or(false)
+        let launch_mode = self
+            .args
+            .weather
+            .as_deref()
+            .and_then(crate::weather_setup::metar_mode)
+            .map(|(mode, _)| mode);
+        let launch_sync = launch_mode == Some(crate::weather_setup::MetarMode::Sync);
+        let launch_once = launch_mode == Some(crate::weather_setup::MetarMode::Once);
+        (launch_sync || (!launch_once && ::config::get_bool("gameplay", "metar_sync").unwrap_or(false)))
             && !self
             .lan
             .as_ref()
@@ -640,21 +664,46 @@ impl App {
     }
 
     pub(crate) fn metar_station(&self) -> String {
-        if !::config::get_string("gameplay", "metar_station").unwrap_or_default().is_empty() {
-            return ::config::get_string("gameplay", "metar_station").unwrap_or_default().to_ascii_uppercase();
-        }
-        match self
+        let launch_station = self
             .args
             .weather
             .as_deref()
-            .and_then(|w| w.strip_prefix("metar:"))
-        {
-            Some(code) if !code.trim().is_empty() => code.trim().to_ascii_uppercase(),
-            _ => crate::launcher::drive::nearest_airport(
+            .and_then(crate::weather_setup::metar_mode)
+            .map(|(_, station)| station);
+        if let Some(code) = launch_station {
+            if !code.trim().is_empty() {
+                return code.trim().to_ascii_uppercase();
+            }
+            return crate::launcher::drive::nearest_airport(
                 &self.args.root.to_string_lossy(),
                 &self.args.map,
-            ),
+            );
         }
+        if !::config::get_string("gameplay", "metar_station").unwrap_or_default().is_empty() {
+            return ::config::get_string("gameplay", "metar_station").unwrap_or_default().to_ascii_uppercase();
+        }
+        crate::launcher::drive::nearest_airport(&self.args.root.to_string_lossy(), &self.args.map)
+    }
+
+    pub(crate) fn set_metar_station(&mut self, station: String) {
+        ::config::set_setting("gameplay", "metar_station", station.clone());
+        let _ = ::config::save();
+        if let Some((mode, _)) = self
+            .args
+            .weather
+            .as_deref()
+            .and_then(crate::weather_setup::metar_mode)
+        {
+            let prefix = match mode {
+                crate::weather_setup::MetarMode::Once => "metar-once:",
+                crate::weather_setup::MetarMode::Sync => "metar-sync:",
+                crate::weather_setup::MetarMode::Legacy => "metar:",
+            };
+            self.args.weather = Some(format!("{prefix}{station}"));
+        }
+        self.metar_rx = None;
+        self.metar_once = false;
+        self.metar_next = 0.0;
     }
 
     pub(crate) fn load_metar_once(&mut self) {
@@ -751,7 +800,9 @@ impl App {
         if self.metar_next > 0.0 {
             return;
         }
-        self.metar_next = 60.0;
+        // METAR reports are ordinarily issued hourly. Ten minutes keeps live weather useful
+        // without needlessly polling the public source during a long drive.
+        self.metar_next = 600.0;
         let icao = self.metar_station();
         let (tx, rx) = std::sync::mpsc::channel();
         self.metar_rx = Some(rx);
@@ -765,7 +816,7 @@ impl App {
         let Some(l) = self.lan.as_mut().filter(|l| l.role == ::network::Role::Host) else {
             return;
         };
-        if !l.weather().to_ascii_lowercase().starts_with("metar:") {
+        if !shares_start_metar(l.weather()) {
             return;
         }
         if let Some(wire) = self
@@ -804,24 +855,31 @@ impl App {
     }
 
     pub(crate) fn sync_real_time(&mut self) {
-        if !self.real_time_locked() {
-            return;
+        if self.real_time_locked()
+            && let Some(real) = crate::real_time::clock_now(&self.clock)
+        {
+            let gap = crate::real_time::gap(&self.clock, &real);
+            if gap.abs() >= 0.25 {
+                self.clock.year = real.year;
+                self.clock.day_of_year = real.day_of_year;
+                self.clock.time = real.time;
+                if let Some(tr) = self.traffic.as_mut() {
+                    tr.day_time += gap;
+                }
+            }
         }
-        let Some(real) = crate::real_time::clock_now(&self.clock) else {
-            return;
+        self.sync_vehicle_game_times();
+    }
+
+    pub(crate) fn set_clock_date(&mut self, year: i32, month: i32, day: i32) {
+        let days = |y: i32, doy: i32| -> i64 {
+            (1..y).map(|i| ::simulation::clock::days_in_year(i) as i64).sum::<i64>() + doy as i64
         };
-        let gap = crate::real_time::gap(&self.clock, &real);
-        if gap.abs() < 0.25 {
-            return;
-        }
-        self.clock.year = real.year;
-        self.clock.day_of_year = real.day_of_year;
-        self.clock.time = real.time;
-        if let Some(tr) = self.traffic.as_mut() {
-            tr.day_time += gap;
-        }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
+        let mut c = self.clock.clone();
+        c.set_date(year, month, day);
+        let diff = days(c.year, c.day_of_year) - days(self.clock.year, self.clock.day_of_year);
+        if diff != 0 {
+            self.shift_clock(diff as f64 * 86400.0);
         }
     }
 
@@ -836,16 +894,21 @@ impl App {
         let mut t = self.clock.time + secs;
         while t < 0.0 {
             t += 86400.0;
-            self.clock.day_of_year = if self.clock.day_of_year > 1 {
-                self.clock.day_of_year - 1
+            if self.clock.day_of_year > 1 {
+                self.clock.day_of_year -= 1;
             } else {
-                ::simulation::clock::days_in_year(self.clock.year - 1)
-            };
+                self.clock.year -= 1;
+                self.clock.day_of_year = ::simulation::clock::days_in_year(self.clock.year);
+            }
         }
         while t >= 86400.0 {
             t -= 86400.0;
-            self.clock.day_of_year =
-                self.clock.day_of_year % ::simulation::clock::days_in_year(self.clock.year) + 1;
+            if self.clock.day_of_year >= ::simulation::clock::days_in_year(self.clock.year) {
+                self.clock.day_of_year = 1;
+                self.clock.year += 1;
+            } else {
+                self.clock.day_of_year += 1;
+            }
         }
         self.clock.time = t;
         if let Some(tr) = self.traffic.as_mut() {
@@ -872,9 +935,7 @@ impl App {
             self.humans_populate_t = 0.0;
             self.first_populate = true;
         }
-        if let Some(p) = self.player.as_mut() {
-            p.vehicle.host.clock = self.clock.clone();
-        }
+        self.sync_vehicle_game_times();
         let h = (t / 3600.0) as u32;
         self.service_msg = Some((
             format!("Clock: {h:02}:{:02}", ((t / 60.0) as u32) % 60),
@@ -1002,5 +1063,23 @@ impl App {
         } else if !changed.is_empty() {
             st.reload(r, scene, Some(&changed), self.audio.as_ref());
         }
+    }
+}
+
+fn shares_start_metar(weather: &str) -> bool {
+    crate::weather_setup::metar_mode(weather).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shares_start_metar;
+
+    #[test]
+    fn all_metar_modes_share_initial_weather_with_lan_clients() {
+        assert!(shares_start_metar("metar:EGNX"));
+        assert!(shares_start_metar("metar-once:EGNX"));
+        assert!(shares_start_metar("metar-sync:EGNX"));
+        assert!(shares_start_metar("METAR:EGNX"));
+        assert!(!shares_start_metar("Clear"));
     }
 }

@@ -71,6 +71,10 @@ impl ClipCache {
             return c.0.clone();
         }
         let clip = read_clip(path);
+        if clip.is_none() {
+            let dir = path.parent().unwrap_or(path);
+            ::mods::diagnostics::missing(dir, path, ::mods::diagnostics::Kind::Sound);
+        }
         self.clips
             .lock()
             .insert(path.to_path_buf(), (clip.clone(), Instant::now()));

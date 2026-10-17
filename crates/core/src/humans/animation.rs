@@ -74,6 +74,9 @@ impl Humans {
         bus_ix: &HashMap<BusId, usize>,
     ) {
         let dt_ms = dt * 1000.0;
+        // what each person's animation is finished with, and where its step sounds (see the
+        // end: the bones are made for everybody at once)
+        let mut finish: Vec<Option<(AnimInput, Option<_>)>> = vec![None; self.people.len()];
         for i in 0..self.people.len() {
             if let Some(pp) = self.people[i].puppet {
                 if pp.mode == PuppetMode::Avatar {
@@ -364,17 +367,32 @@ impl Humans {
             };
             p.pose.advance(&p.ty.rig, &pose_input, dt);
             p.activity = ik_activity;
-            let step = p.finish_animation(self.ik, &input);
+            finish[i] = Some((input, footstep));
+        }
+        // (each person's bones from their own pose alone: made in parallel - one after
+        // another they were most of the animation of the hundreds waiting at a station)
+        let ik = self.ik;
+        let steps: Vec<bool> = {
+            use rayon::prelude::*;
+            self.people
+                .par_iter_mut()
+                .zip(finish.par_iter())
+                .with_min_len(16)
+                .map(|(p, f)| {
+                    f.as_ref()
+                        .is_some_and(|(input, _)| p.finish_animation(ik, input))
+                })
+                .collect()
+        };
+        for ((p, f), step) in self.people.iter().zip(finish).zip(steps) {
             // a foot down inside a vehicle: the link's step sound (outside there are none)
-            if step && footstep.is_some() {
-                if let Some((bus, pack)) = footstep {
-                    self.footfalls.push(ambience::Footfall {
-                        position: p.position,
-                        inside: true,
-                        own_bus: bus == BusId::Player,
-                        pack: Some(pack),
-                    });
-                }
+            if let (true, Some((_, Some((bus, pack))))) = (step, f) {
+                self.footfalls.push(ambience::Footfall {
+                    position: p.position,
+                    inside: true,
+                    own_bus: bus == BusId::Player,
+                    pack: Some(pack),
+                });
             }
         }
     }

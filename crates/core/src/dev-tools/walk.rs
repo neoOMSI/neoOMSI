@@ -28,6 +28,17 @@ pub(super) fn window(ui: &imgui::Ui, open: &mut bool, extra: &Extra) {
                         "On lane {}, attached {}, seated {}, in bus {}",
                         f.on_lane, f.attached, f.seated, f.inside
                     ));
+                    ui.text(format!("Lift {:.2}, floor {:?}", f.lift, f.floor));
+                    ui.text(format!(
+                        "Solids used {}, exempt point {}",
+                        f.solids,
+                        f.exempt
+                            .map_or("none".to_string(), |e| format!("{:.2} {:.2}", e[0], e[1]))
+                    ));
+                    ui.text(format!(
+                        "Step lost {:.3} {:.3}, wall by height {}, reset to safe {}",
+                        f.lost[0], f.lost[1], f.step_wall, f.reset
+                    ));
                 }
                 None => ui.text("Not walking."),
             }
@@ -42,7 +53,11 @@ pub(super) fn window(ui: &imgui::Ui, open: &mut bool, extra: &Extra) {
                     o.z1,
                     o.half.x,
                     o.half.y,
-                    if o.mass > 0.0 { "vehicle" } else { "scenery" }
+                    if o.mass > 0.0 || o.id < -1 {
+                        "vehicle"
+                    } else {
+                        "scenery"
+                    }
                 ));
             }
             ui.separator();
@@ -65,6 +80,9 @@ pub(super) fn window(ui: &imgui::Ui, open: &mut bool, extra: &Extra) {
             ui.text_disabled(
                 "door line: green open, red closed; lane needs along -1.2..len+1, lateral <= 1.0",
             );
-            ui.text_disabled("green scenery, orange vehicles, yellow poles");
+            ui.text_disabled("green scenery, orange vehicles, yellow poles, red blocking");
+            ui.text_disabled(
+                "white dot you, cyan line exempt point, magenta lost part of the step",
+            );
         });
 }

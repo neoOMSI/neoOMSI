@@ -54,7 +54,7 @@ impl Renderer {
         for l in &scene.interior_lights {
             gpu_lights.push(gpu_light(l, (l.position - ro).as_vec3()));
         }
-        let mut grid = vec![u32::MAX; side * side * LIGHT_CELL_CAP];
+        scene.light_grid.begin();
         let mut occ_users: Vec<(usize, u32)> = Vec::new();
         for (li, l) in scene.lights.iter().enumerate() {
             if !drawn_by(l, enhanced) {
@@ -64,10 +64,11 @@ impl Renderer {
                 continue;
             }
             let p = (l.position - ro).as_vec3();
-            let x0 = ((p.x - l.radius - origin[0]) / LIGHT_CELL).floor();
-            let x1 = ((p.x + l.radius - origin[0]) / LIGHT_CELL).floor();
-            let y0 = ((p.y - l.radius - origin[1]) / LIGHT_CELL).floor();
-            let y1 = ((p.y + l.radius - origin[1]) / LIGHT_CELL).floor();
+            let [east, west, north, south] = light_reach(l);
+            let x0 = ((p.x - west - origin[0]) / LIGHT_CELL).floor();
+            let x1 = ((p.x + east - origin[0]) / LIGHT_CELL).floor();
+            let y0 = ((p.y - south - origin[1]) / LIGHT_CELL).floor();
+            let y1 = ((p.y + north - origin[1]) / LIGHT_CELL).floor();
             if x1 < 0.0 || y1 < 0.0 || x0 >= side as f32 || y0 >= side as f32 {
                 continue;
             }
@@ -82,13 +83,9 @@ impl Renderer {
             }
             for y in (y0.max(0.0) as usize)..=(y1.min(side as f32 - 1.0) as usize) {
                 for x in (x0.max(0.0) as usize)..=(x1.min(side as f32 - 1.0) as usize) {
-                    let base = (y * side + x) * LIGHT_CELL_CAP;
-                    if let Some(slot) = grid[base..base + LIGHT_CELL_CAP]
-                        .iter()
-                        .position(|v| *v == u32::MAX)
+                    if !scene.light_grid.add(y * side + x, idx)
+                        && ::legacy_config::env::var_os("OMSI_DEBUG_LIGHT_GRID").is_some()
                     {
-                        grid[base + slot] = idx;
-                    } else if ::legacy_config::env::var_os("OMSI_DEBUG_LIGHT_GRID").is_some() {
                         log::info!(
                             "light grid: cell ({x}, {y}) full, light at ({:.1}, {:.1}) radius {:.0} {} left out",
                             p.x,
@@ -142,12 +139,12 @@ impl Renderer {
             });
         }
         let gpu_lights_bytes: &[u8] = bytemuck::cast_slice(&gpu_lights);
-        let grid_bytes: &[u8] = bytemuck::cast_slice(&grid);
+        let grid_changed = scene.light_grid.finish();
         let mut rebuilt = false;
         match &scene.light_buf {
             Some(b) if b.size() as usize >= gpu_lights_bytes.len() => {
                 if scene.last_lights != gpu_lights_bytes {
-                    self.queue.write_buffer(b, 0, gpu_lights_bytes);
+                    self.write_buffer(b, 0, gpu_lights_bytes);
                 }
             }
             _ => {
@@ -158,15 +155,19 @@ impl Renderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                self.queue.write_buffer(&b, 0, gpu_lights_bytes);
+                self.write_buffer(&b, 0, gpu_lights_bytes);
                 scene.light_buf = Some(b);
                 rebuilt = true;
             }
         }
         match &scene.grid_buf {
             Some(b) => {
-                if scene.last_grid != grid {
-                    self.queue.write_buffer(b, 0, grid_bytes);
+                if let Some(span) = grid_changed {
+                    self.write_buffer(
+                        b,
+                        (span.start * size_of::<u32>()) as u64,
+                        bytemuck::cast_slice(&scene.light_grid.cells[span]),
+                    );
                 }
             }
             None => {
@@ -174,7 +175,7 @@ impl Renderer {
                     &self.device,
                     &self.queue,
                     Some("light grid"),
-                    grid_bytes,
+                    bytemuck::cast_slice(&scene.light_grid.cells),
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 ));
                 rebuilt = true;
@@ -182,7 +183,6 @@ impl Renderer {
         }
         scene.last_lights.clear();
         scene.last_lights.extend_from_slice(gpu_lights_bytes);
-        scene.last_grid = grid;
         if rebuilt {
             self.rebuild_camera_bind_group(scene);
         }
@@ -196,23 +196,17 @@ impl Renderer {
             .iter()
             .enumerate()
             .filter(|(_, p)| p.alpha > 0.002 && p.size > 0.0)
-            .map(|(i, p)| (-(p.position - eye).length_squared(), i))
+            // (far to near where each is drawn: pulled towards the viewer, at most 0.9 of the
+            // way, as `vs_smoke` does)
+            .map(|(i, p)| {
+                let dist = (p.position - eye).length();
+                (-(dist - (p.pull.max(0.0) as f64).min(dist * 0.9)), i)
+            })
             .collect();
         order.sort_by(|a, b| a.0.total_cmp(&b.0));
         let data: Vec<GpuCorona> = order
             .iter()
-            .map(|&(_, i)| {
-                let p = &scene.smoke[i];
-                GpuCorona {
-                    pos: (p.position - ro).as_vec3().to_array(),
-                    size: p.size,
-                    color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
-                    dir: [0.0, 0.0, 0.0, -1.0],
-                    up: [0.0, 0.0, 1.0, 2.0],
-                    // Smoke uses an ordinary billboard; extra.w = 1 selects a fog cone.
-                    extra: [-2.0, 0.0, 0.0, 0.0],
-                }
-            })
+            .map(|&(_, i)| smoke_sprite(&scene.smoke[i], ro))
             .collect();
         scene.smoke_count = data.len() as u32;
         if data.is_empty() {
@@ -220,7 +214,7 @@ impl Renderer {
         }
         let bytes: &[u8] = bytemuck::cast_slice(&data);
         match &scene.smoke_buf {
-            Some(b) if b.size() as usize >= bytes.len() => self.queue.write_buffer(b, 0, bytes),
+            Some(b) if b.size() as usize >= bytes.len() => self.write_buffer(b, 0, bytes),
             _ => {
                 let b = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("smoke"),
@@ -228,7 +222,7 @@ impl Renderer {
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                self.queue.write_buffer(&b, 0, bytes);
+                self.write_buffer(&b, 0, bytes);
                 scene.smoke_buf = Some(b);
             }
         }
@@ -238,12 +232,26 @@ impl Renderer {
         let n = LM_TILE_PX as usize;
         let mut px = vec![0u8; n * n * 4];
         if let Some(img) = img.filter(|i| i.width > 0 && i.height > 0) {
+            let (iw, ih) = (img.width as usize, img.height as usize);
             for y in 0..n {
+                let y0 = y * ih / n;
+                let y1 = ((y + 1) * ih / n).max(y0 + 1).min(ih);
                 for x in 0..n {
-                    let sx = x * img.width as usize / n;
-                    let sy = y * img.height as usize / n;
-                    let o = (sy * img.width as usize + sx) * 4;
-                    px[(y * n + x) * 4..(y * n + x) * 4 + 4].copy_from_slice(&img.rgba[o..o + 4]);
+                    let x0 = x * iw / n;
+                    let x1 = ((x + 1) * iw / n).max(x0 + 1).min(iw);
+                    let mut sum = [0u32; 4];
+                    for sy in y0..y1 {
+                        for sx in x0..x1 {
+                            let o = (sy * iw + sx) * 4;
+                            for c in 0..4 {
+                                sum[c] += img.rgba[o + c] as u32;
+                            }
+                        }
+                    }
+                    let cnt = ((y1 - y0) * (x1 - x0)) as u32;
+                    for c in 0..4 {
+                        px[(y * n + x) * 4 + c] = ((sum[c] + cnt / 2) / cnt) as u8;
+                    }
                 }
             }
         }
@@ -274,6 +282,28 @@ impl Renderer {
 
     pub fn set_light_map_place(&self, x: f64, y: f64, side: f64) {
         self.lm_place.set((x, y, side));
+    }
+
+    /// The roofs around the camera (`sheltered` in scene_base.wgsl): [`COVER_SIDE`]² cells
+    /// of `cell` m, south-west corner at world (`x`, `y`), each the roof's world height.
+    /// The cells wrap round: the corner cell is in slot `slot` (column, row). `roofs` only
+    /// when they changed.
+    pub fn set_cover_map(
+        &self,
+        x: f64,
+        y: f64,
+        cell: f32,
+        slot: (u32, u32),
+        roofs: Option<&[f32]>,
+    ) {
+        self.cover_place.set(Some((x, y, cell, slot)));
+        if let Some(r) = roofs.filter(|r| r.len() == (COVER_SIDE * COVER_SIDE) as usize) {
+            self.write_buffer(
+                &self.cover_buf,
+                COVER_HEADER as u64 * 4,
+                bytemuck::cast_slice(r),
+            );
+        }
     }
 
     pub fn set_corona_texture(&mut self, id: u16, img: &::texture::Image) {
@@ -307,19 +337,24 @@ impl Renderer {
         })
     }
 
-    pub(crate) fn prepare_coronas(&self, scene: &mut Scene, night: f32) {
+    pub(crate) fn prepare_coronas(&self, scene: &mut Scene, night: f32, enhanced: bool) {
         let ro = scene.render_origin;
-        let mut order: Vec<&Corona> = scene
-            .coronas
-            .iter()
-            .filter(|c| c.brightness > 0.001)
-            .collect();
-        order.sort_by_key(|c| c.texture);
-        let mut runs: Vec<(u16, u32, u32)> = Vec::new();
-        for (k, c) in order.iter().enumerate() {
+        let mut order = std::mem::take(&mut scene.corona_order);
+        order.clear();
+        for (i, c) in scene.coronas.iter().enumerate() {
+            // no OMSI star in Enhanced: its glow filter does the glare (#365)
+            if c.brightness > 0.001 && !(enhanced && c.flags & 8 != 0) {
+                order.push(i);
+            }
+        }
+        order.sort_by_key(|&i| scene.coronas[i].texture);
+        let mut runs = std::mem::take(&mut scene.corona_runs);
+        runs.clear();
+        for (k, &i) in order.iter().enumerate() {
+            let tex = scene.coronas[i].texture;
             match runs.last_mut() {
-                Some(r) if r.0 == c.texture => r.2 += 1,
-                _ => runs.push((c.texture, k as u32, 1)),
+                Some(r) if r.0 == tex => r.2 += 1,
+                _ => runs.push((tex, k as u32, 1)),
             }
         }
         if ::legacy_config::env::var_os("OMSI_DEBUG_CONES").is_some() {
@@ -328,51 +363,54 @@ impl Renderer {
                 order.len(),
                 runs.len(),
                 runs,
-                order.iter().filter(|c| c.beam).count()
+                order.iter().filter(|&&i| scene.coronas[i].beam).count()
             );
         }
         scene.corona_runs = runs;
-        let data: Vec<GpuCorona> = order
-            .into_iter()
-            .map(|c| {
-                let p = (c.position - ro).as_vec3();
-                let b = if c.cone_cos < -1.5 || c.beam || c.halo {
-                    c.brightness
-                } else {
-                    c.brightness * (night * night + 0.8) * 0.6
-                };
-                GpuCorona {
-                    pos: p.to_array(),
-                    size: c.size,
-                    color: [c.color[0], c.color[1], c.color[2], b],
-                    dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
-                    up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],
-                    extra: [
-                        c.inner_cos,
-                        if c.beam || c.halo {
-                            c.beam_width
-                        } else {
-                            c.z_offset
-                        },
-                        c.flags as f32,
-                        if c.beam {
-                            1.0
-                        } else if c.halo {
-                            2.0
-                        } else {
-                            0.0
-                        },
-                    ],
-                }
-            })
-            .collect();
+        let mut data = std::mem::take(&mut scene.corona_data);
+        data.clear();
+        data.reserve(order.len());
+        for &i in order.iter() {
+            let c = &scene.coronas[i];
+            let p = (c.position - ro).as_vec3();
+            let b = if c.cone_cos < -1.5 || c.beam || c.halo {
+                c.brightness
+            } else {
+                c.brightness * (night * night + 0.8) * 0.6
+            };
+            data.push(GpuCorona {
+                pos: p.to_array(),
+                size: c.size,
+                color: [c.color[0], c.color[1], c.color[2], b],
+                dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
+                up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],
+                extra: [
+                    c.inner_cos,
+                    if c.beam || c.halo {
+                        c.beam_width
+                    } else {
+                        c.z_offset
+                    },
+                    c.flags as f32,
+                    if c.beam {
+                        1.0
+                    } else if c.halo {
+                        2.0
+                    } else {
+                        0.0
+                    },
+                ],
+            });
+        }
+        scene.corona_order = order;
         scene.corona_count = data.len() as u32;
         if data.is_empty() {
+            scene.corona_data = data;
             return;
         }
         let bytes: &[u8] = bytemuck::cast_slice(&data);
         match &scene.corona_buf {
-            Some(b) if b.size() as usize >= bytes.len() => self.queue.write_buffer(b, 0, bytes),
+            Some(b) if b.size() as usize >= bytes.len() => self.write_buffer(b, 0, bytes),
             _ => {
                 let b = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("coronas"),
@@ -380,9 +418,48 @@ impl Renderer {
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                self.queue.write_buffer(&b, 0, bytes);
+                self.write_buffer(&b, 0, bytes);
                 scene.corona_buf = Some(b);
             }
         }
+        scene.corona_data = data;
+    }
+}
+
+/// A smoke particle as corona.wgsl's `vs_smoke` draws it: a sprite turned to the viewer.
+fn smoke_sprite(p: &SmokeParticle, ro: DVec3) -> GpuCorona {
+    GpuCorona {
+        pos: (p.position - ro).as_vec3().to_array(),
+        size: p.size,
+        color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
+        dir: [0.0, 0.0, 0.0, -1.0],
+        up: [0.0, 0.0, 1.0, 2.0],
+        // (x its turn, y its pull towards the viewer; w 0, as `vs_main` would draw a plain
+        // sprite)
+        extra: [p.angle, p.pull, 0.0, 0.0],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoke is drawn as a plain sprite, not as a fog cone or halo: those branches of
+    /// corona.wgsl normalise the zero direction smoke has and drop every particle.
+    #[test]
+    fn smoke_is_a_plain_sprite() {
+        let p = SmokeParticle {
+            position: DVec3::new(10.0, 20.0, 1.0),
+            size: 0.5,
+            color: [0.66, 0.66, 0.8],
+            alpha: 0.2,
+            angle: 1.5,
+            pull: 0.25,
+        };
+        let g = smoke_sprite(&p, DVec3::new(10.0, 0.0, 0.0));
+        assert!(g.extra[3] < 0.5);
+        assert_eq!(g.pos, [0.0, 20.0, 1.0]);
+        assert_eq!(g.color, [0.66, 0.66, 0.8, 0.2]);
+        assert_eq!([g.extra[0], g.extra[1]], [1.5, 0.25]);
     }
 }

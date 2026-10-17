@@ -90,7 +90,7 @@ impl Renderer {
         mipmaps: bool,
     ) -> TextureId {
         let t = if mipmaps && img.width > 1 && img.height > 1 {
-            self.upload_texture_gpu_mips(img)
+            self.upload_texture_gpu_mips(img, false)
         } else {
             upload_texture(&self.device, &self.queue, img, false)
         };
@@ -168,14 +168,17 @@ impl Renderer {
                 ),
                 _ => vec![255; (w * h * 4) as usize],
             };
-            return self.upload_texture_gpu_mips(&::texture::Image {
-                width: w,
-                height: h,
-                rgba,
-                has_alpha: data.has_alpha,
-            });
+            return self.upload_texture_gpu_mips(
+                &::texture::Image {
+                    width: w,
+                    height: h,
+                    rgba,
+                    has_alpha: data.has_alpha,
+                },
+                false,
+            );
         }
-        self.upload_rgba_gpu_mips(w, h, &data.levels[0])
+        self.upload_rgba_gpu_mips(w, h, &data.levels[0], false)
     }
 
     pub fn texture_bytes(&self, scene: &Scene) -> u64 {
@@ -186,11 +189,19 @@ impl Renderer {
         scene.texture_bytes_of(id)
     }
 
-    fn upload_texture_gpu_mips(&self, img: &::texture::Image) -> GpuTexture {
-        self.upload_rgba_gpu_mips(img.width, img.height, &img.rgba)
+    fn upload_texture_gpu_mips(&self, img: &::texture::Image, plain: bool) -> GpuTexture {
+        self.upload_rgba_gpu_mips(img.width, img.height, &img.rgba, plain)
     }
 
-    fn upload_rgba_gpu_mips(&self, width: u32, height: u32, rgba: &[u8]) -> GpuTexture {
+    /// `plain`: the mip levels as Omsi.exe filters a texture the bus draws itself (see
+    /// [`generate_mip_chain`]).
+    fn upload_rgba_gpu_mips(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        plain: bool,
+    ) -> GpuTexture {
         let img = RgbaRef {
             width,
             height,
@@ -230,7 +241,7 @@ impl Renderer {
             },
             size,
         );
-        self.generate_mip_chain(&texture, mip_count);
+        self.generate_mip_chain(&texture, mip_count, plain);
         let view = texture.create_view(&Default::default());
         GpuTexture {
             texture,
@@ -248,7 +259,9 @@ impl Renderer {
 
     /// Build lower levels from the preceding level. The level-zero pixels are already
     /// uploaded, and [`upload_rgba_gpu_mips`] creates the texture with `RENDER_ATTACHMENT` usage.
-    fn generate_mip_chain(&self, texture: &wgpu::Texture, mip_count: u32) {
+    /// `plain` averages colour and alpha each on their own, as Omsi.exe's D3DXFilterTexture does
+    /// for its text and script textures; otherwise the colour is weighted by alpha (`mip.wgsl`).
+    fn generate_mip_chain(&self, texture: &wgpu::Texture, mip_count: u32, plain: bool) {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -295,7 +308,11 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.mip_pipeline);
+            pass.set_pipeline(if plain {
+                &self.mip_plain_pipeline
+            } else {
+                &self.mip_pipeline
+            });
             pass.set_bind_group(0, &bg, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -308,9 +325,33 @@ impl Renderer {
 
     /// Replace the pixels of a texture (same size as when created, no mipmaps regenerated).
     pub fn update_texture(&self, scene: &Scene, id: TextureId, img: &::texture::Image) {
-        // what the screen shows, for the light it throws (`lights.rs`): a few samples, and
-        // only every 4th upload of a texture - the light follows the picture slowly, while
-        // the strided reads of a big texture are cache misses
+        Self::note_luma(scene, id, img, false);
+        let t = &scene.textures[id].texture;
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: t,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &img.rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(img.width * 4),
+                rows_per_image: Some(img.height),
+            },
+            wgpu::Extent3d {
+                width: img.width,
+                height: img.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// What the screen shows, for the light it throws (`lights.rs`): a few samples, and
+    /// only every 4th upload of a texture unless `always` - the light follows the picture
+    /// slowly, while the strided reads of a big texture are cache misses.
+    fn note_luma(scene: &Scene, id: TextureId, img: &::texture::Image, always: bool) {
         {
             static UPLOADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let tick = UPLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -319,7 +360,7 @@ impl Renderer {
                 .lock()
                 .map(|m| m.contains_key(&id))
                 .unwrap_or(true);
-            if !known || (tick + id) % 4 == 0 {
+            if always || !known || (tick + id) % 4 == 0 {
                 let n = (img.rgba.len() / 4).max(1);
                 let step = (n / 1024).max(1);
                 let (mut sum, mut asum, mut cnt) = (0.0f32, 0.0f32, 0u32);
@@ -350,26 +391,39 @@ impl Renderer {
                 }
             }
         }
-        let t = &scene.textures[id].texture;
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: t,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &img.rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(img.width * 4),
-                rows_per_image: Some(img.height),
-            },
-            wgpu::Extent3d {
-                width: img.width,
-                height: img.height,
-                depth_or_array_layers: 1,
-            },
-        );
+    }
+
+    pub fn update_texture_changed(&self, scene: &mut Scene, id: TextureId, img: &::texture::Image) {
+        if !Self::same_as_uploaded(scene, id, img) {
+            self.update_texture(scene, id, img);
+        }
+    }
+
+    fn same_as_uploaded(scene: &mut Scene, id: TextureId, img: &::texture::Image) -> bool {
+        let Some(generation) = scene.textures.get(id).map(|t| t.generation) else {
+            return false;
+        };
+        match scene.uploaded.get_mut(&id) {
+            Some((g, px, luma)) if *g == generation && *px == img.rgba => {
+                // (the light it throws is taken from every 4th upload only: a picture that
+                // changed once and then stays is measured here, once)
+                if !std::mem::replace(luma, true) {
+                    Self::note_luma(&*scene, id, img, true);
+                }
+                true
+            }
+            Some((g, px, luma)) => {
+                *g = generation;
+                px.clear();
+                px.extend_from_slice(&img.rgba);
+                *luma = false;
+                false
+            }
+            None => {
+                scene.uploaded.insert(id, (generation, img.rgba.clone(), false));
+                false
+            }
+        }
     }
 
     /// Replace the top pixels of a dynamic texture and rebuild its mip chain. Returns true
@@ -386,12 +440,16 @@ impl Renderer {
         };
         let levels = (32 - img.width.max(img.height).leading_zeros()).max(1);
         if old.size != (img.width, img.height) || old.texture.mip_level_count() != levels {
-            scene.textures[id] = self.upload_texture_gpu_mips(img);
+            scene.textures[id] = self.upload_texture_gpu_mips(img, true);
+            Self::same_as_uploaded(scene, id, img);
             return true;
+        }
+        if Self::same_as_uploaded(scene, id, img) {
+            return false;
         }
         self.update_texture(scene, id, img);
         if levels > 1 {
-            self.generate_mip_chain(&scene.textures[id].texture, levels);
+            self.generate_mip_chain(&scene.textures[id].texture, levels, true);
         }
         false
     }
@@ -522,6 +580,7 @@ impl Renderer {
                 },
                 m.address,
                 &m.buf,
+                m.buf_offset,
             );
             n += 1;
         }

@@ -17,6 +17,7 @@ use crate::assets::clip::{Clip, ClipCache};
 use crate::assets::stream::StreamBuf;
 use crate::clock::Clock;
 use crate::device::{watch_default_device, DeviceOutput, OutputFormat};
+use crate::device::mix_output::MixOutput;
 use crate::engine::commands::{Command, CommandQueue};
 use crate::engine::feedback::{ActiveVoice, Counters, Reaper, VoiceAsset};
 use crate::engine::mixer::AudioCore;
@@ -32,7 +33,7 @@ use std::time::Instant;
 /// offline (and without a device) so `render_offline` can drive the same code synchronously.
 enum Mode {
     /// No callback: `render_offline` mixes on the caller's thread.
-    Offline(RefCell<AudioCore>),
+    Offline { core: RefCell<AudioCore>, output: Option<RefCell<MixOutput>> },
     /// A callback is (or was) playing; the core lives inside the stream's closure. A device
     /// change builds a fresh core and replays the still-active voices (see `replay`).
     Device(DeviceOutput),
@@ -105,7 +106,7 @@ impl AudioEngine {
             mixer::muted(),
         );
         AudioEngine {
-            mode: Mode::Offline(RefCell::new(core)),
+            mode: Mode::Offline { core: RefCell::new(core), output: None },
             commands,
             counters,
             reaper,
@@ -119,6 +120,16 @@ impl AudioEngine {
         }
     }
 
+    /// Live 48 kHz mixer and device-rate conversion on a manual clock, without hardware.
+    pub fn new_offline_output(sample_rate: u32, channels: usize) -> AudioEngine {
+        assert!(sample_rate >= 8000 && (1..=8).contains(&channels));
+        let mut engine = Self::new_offline(mixer::MIX_SAMPLE_RATE, 2);
+        if let Mode::Offline { output, .. } = &mut engine.mode {
+            *output = Some(RefCell::new(MixOutput::new(mixer::MIX_SAMPLE_RATE, sample_rate, channels)));
+        }
+        engine
+    }
+
     /// The clock this engine runs on (see [`AudioEngine::new_offline`]).
     pub fn clock(&self) -> Clock {
         self.clock.clone()
@@ -128,15 +139,18 @@ impl AudioEngine {
     /// the offline counterpart of the output callback, for tests and [`AudioEngine::new_offline`].
     pub fn render_offline(&self, out: &mut [f32]) {
         self.pump();
-        if let Mode::Offline(core) = &self.mode {
-            core.borrow_mut().render(out);
+        if let Mode::Offline { core, output } = &self.mode {
+            let mut core = core.borrow_mut();
+            if let Some(output) = output {
+                output.borrow_mut().render(out, &mut |source| core.render_mix(source));
+            } else { core.render(out); }
         }
     }
 
     fn device(&self) -> Option<&DeviceOutput> {
         match &self.mode {
             Mode::Device(d) => Some(d),
-            Mode::Offline(_) => None,
+            Mode::Offline { .. } => None,
         }
     }
 
@@ -249,6 +263,33 @@ impl AudioEngine {
         id
     }
 
+    /// Play `source` until the voice is stopped (on the passenger bus: speech).
+    pub fn play_source(&self, source: Arc<dyn crate::assets::Source>, params: VoiceParams) -> VoiceId {
+        self.pump();
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        if self.active.borrow().len() >= mixer::VOICE_CAPACITY {
+            self.counters.dropped_commands.fetch_add(1, Ordering::Relaxed);
+            return id;
+        }
+        let mut params = MixParams::from(params);
+        params.bus = bus::Bus::Passenger;
+        self.active.borrow_mut().insert(
+            id,
+            ActiveVoice {
+                params,
+                asset: VoiceAsset::Source(source.clone()),
+            },
+        );
+        if !self.output_available() {
+            return id;
+        }
+        let feed = crate::voice::voice::Feed::new(source);
+        if let Some(dropped) = self.commands.push(Command::PlaySource { id, feed, params }) {
+            self.active.borrow_mut().remove(&dropped);
+        }
+        id
+    }
+
     /// New parameters for a voice: queued for the mixer's next block (a few milliseconds),
     /// so the game never waits for a block being mixed. Given twice before that block, the
     /// later ones win.
@@ -309,5 +350,26 @@ mod tests {
         assert!(device.is_open());
         assert_eq!(device.name(), before);
         assert!(!device.reopen_flag().load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_source_plays_until_it_is_stopped() {
+        struct Tone;
+        impl crate::Source for Tone {
+            fn read(&self, _: u32, out: &mut [f32]) {
+                out.fill(0.5);
+            }
+        }
+        let e = AudioEngine::new_offline(48_000, 2);
+        let id = e.play_source(Arc::new(Tone), VoiceParams::default());
+        let mut out = vec![0.0; 4800];
+        e.render_offline(&mut out);
+        e.render_offline(&mut out);
+        assert!(out[4000].abs() > 0.05, "{}", out[4000]);
+        e.stop(id);
+        for _ in 0..5 {
+            e.render_offline(&mut out);
+        }
+        assert!(out.iter().all(|x| x.abs() < 1e-4));
     }
 }

@@ -95,6 +95,8 @@ pub struct Lighting {
     pub envir_tint: [Vec3; 3],
     pub led_glow: f32,
     pub nightmap_glow: f32,
+    pub nightmap_gain: f32,
+    pub lightmap_gain: f32,
     pub atmosphere_brightness: f32,
     pub html_glow: f32,
     pub html_light: f32,
@@ -103,6 +105,7 @@ pub struct Lighting {
     pub led_mips: f32,
     pub glass_wind: Vec3,
     pub animation_time: Option<f32>,
+    pub puddle_seed: [f32; 2],
 }
 
 impl Lighting {
@@ -150,6 +153,8 @@ impl Default for Lighting {
             envir_tint: [Vec3::ONE; 3],
             led_glow: 1.5,
             nightmap_glow: 1.5,
+            nightmap_gain: 0.75,
+            lightmap_gain: 1.0,
             atmosphere_brightness: 1.0,
             html_glow: 1.0,
             html_light: 1.0,
@@ -158,6 +163,7 @@ impl Default for Lighting {
             led_mips: 1.3,
             glass_wind: Vec3::ZERO,
             animation_time: None,
+            puddle_seed: [0.0; 2],
         }
     }
 }

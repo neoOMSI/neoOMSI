@@ -66,11 +66,14 @@ pub(crate) struct OnFoot {
     pub transit: Option<Transit>,
     pub arrive: Option<Then>,
     pub safe: DVec3,
+    /// Where the last walk step ended, at the height steep faces are measured from.
+    pub flat: DVec3,
     pub on_lane: bool,
     pub door_grace: f32,
     pub attached: bool,
     pub wheel: Option<(BusId, glam::Vec3, f32, f32)>,
     pub cab: Option<wheel::CabMove>,
+    pub dbg: collision::MoveDbg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,11 +146,13 @@ impl OnFoot {
             transit: None,
             arrive: None,
             safe: pos,
+            flat: pos,
             on_lane: false,
             door_grace: 0.0,
             attached: false,
             wheel: None,
             cab: None,
+            dbg: collision::MoveDbg::default(),
         }
     }
 
@@ -244,6 +249,8 @@ impl App {
             KeyCode::Escape | KeyCode::F12 | KeyCode::KeyP | KeyCode::KeyV | KeyCode::Slash => {
                 false
             }
+            // the navigator's key (Shift+N) works on foot as in the bus :D
+            _ if self.bound_actions(code).iter().any(|a| a == "toggle_navigator") => false,
             KeyCode::F1 => {
                 if pressed && !repeat {
                     if let Some(f) = self.on_foot.as_mut() {
@@ -392,6 +399,7 @@ impl App {
 
         let bus = self.foot_bus_step(f, dt);
         f.on_lane = bus.door.is_some();
+        f.dbg.exempt = bus.exempt;
         if bus.inside_moved {
             return;
         }

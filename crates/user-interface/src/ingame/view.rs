@@ -159,8 +159,9 @@ pub struct Frame<'a> {
     pub info: Option<String>,
     /// A tutorial page: title, text, picture, page number and count.
     pub tutorial: Option<(&'a str, &'a str, Option<&'a std::path::Path>, usize, usize)>,
-    /// Name tags: a screen position (the point above a bus), the name and a second line.
-    pub tags: Vec<((f32, f32), String, String, f32)>,
+    /// Name tags: a screen position (the point above a bus), the name, a second line, the
+    /// opacity, and whether that player is heard speaking.
+    pub tags: Vec<((f32, f32), String, String, f32, bool)>,
     /// What kind of menu the lines belong to.
     pub menu_kind: MenuKind,
     pub report: Option<&'a RunReportView>,
@@ -185,6 +186,45 @@ pub struct Frame<'a> {
     pub dropdown: Option<DropdownView<'a>>,
     pub lab: Option<PauseState>,
     pub vehicle_menu: &'a [VehicleGroup],
+}
+
+impl<'a> Frame<'a> {
+    pub fn bare(scale: f32, ui_scale: f32, opacity: f32, width: f32, height: f32, cursor: (f32, f32)) -> Frame<'a> {
+        Frame {
+            scale,
+            ui_scale,
+            opacity,
+            width,
+            height,
+            cursor,
+            vr: false,
+            crosshair: false,
+            tooltip: None,
+            chat: None,
+            notes: &[],
+            fps: None,
+            paused: false,
+            menu: None,
+            menu_top: None,
+            timetable: None,
+            info: None,
+            tutorial: None,
+            tags: Vec::new(),
+            menu_kind: MenuKind::Game,
+            report: None,
+            touch: false,
+            build: "",
+            report_status: "",
+            menu_head: None,
+            menu_preview: None,
+            pane_first: None,
+            menu_tabs: None,
+            menu_kbd: false,
+            dropdown: None,
+            lab: None,
+            vehicle_menu: &[],
+        }
+    }
 }
 
 /// One action of the vehicle page: only its id and kind, the texts come from the i18n keys

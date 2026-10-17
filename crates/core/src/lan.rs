@@ -1,10 +1,10 @@
 use crate::scene::{self, World};
 use crate::{Args, Player};
-use glam::DVec3;
+use ::legacy_script::VarId;
 use ::network::{Footprint, LanEvent, LanSession, PartPose, Pose, Role};
 use ::render::{Renderer, Scene};
-use ::legacy_script::VarId;
 use ::simulation::traffic::{Lane, LaneKind, Network};
+use glam::{DVec3, Mat4, Vec3};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -107,7 +107,10 @@ fn fnv1a(data: &[u8]) -> u32 {
 impl SyncTable {
     /// `parts`: rear sections, whose lamps, displays, moving parts and sounds run on the
     /// leading vehicle's variables.
-    pub fn new(ty: &::simulation::VehicleType, parts: &[Arc<::simulation::VehicleType>]) -> SyncTable {
+    pub fn new(
+        ty: &::simulation::VehicleType,
+        parts: &[Arc<::simulation::VehicleType>],
+    ) -> SyncTable {
         let program = &ty.program;
         let types: Vec<&::simulation::VehicleType> = std::iter::once(ty)
             .chain(parts.iter().map(|p| p.as_ref()))
@@ -181,7 +184,7 @@ impl SyncTable {
         );
         let def = &ty.def;
         let load = |rel: &str| -> Option<(Arc<::legacy_vehicle::SoundCfg>, PathBuf)> {
-            let path = ::legacy_config::resolve_path(def.dir(), rel);
+            let path = ::mods::resolve_path(def.dir(), rel);
             match ::legacy_vehicle::SoundCfg::load(&path) {
                 Ok(c) => Some((
                     Arc::new(c),
@@ -221,7 +224,7 @@ impl SyncTable {
         for (k, part) in parts.iter().enumerate() {
             let pdef = &part.def;
             if let Some(rel) = pdef.sound_ai.as_deref().or(pdef.sound.as_deref()) {
-                let path = ::legacy_config::resolve_path(pdef.dir(), rel);
+                let path = ::mods::resolve_path(pdef.dir(), rel);
                 match ::legacy_vehicle::SoundCfg::load(&path) {
                     Ok(c) => part_sounds.push((
                         k,
@@ -533,17 +536,23 @@ pub(crate) fn data_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".neoomsi"))
 }
 
-fn status_path() -> Option<PathBuf> {
-    let id = ::legacy_config::env::var("OMSI_INSTANCE")
+/// This game's file `~/.neoomsi/<dir>/<instance id or pid>.json`.
+pub(crate) fn instance_file(dir: &str) -> Option<PathBuf> {
+    let id = legacy_config::env::var("OMSI_INSTANCE")
         .ok()
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() <= 64
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        .filter(|instance| {
+            !instance.is_empty()
+                && instance.len() <= 64
+                && instance
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
         })
         .unwrap_or_else(|| std::process::id().to_string());
-    Some(data_dir()?.join("lan").join(format!("{id}.json")))
+    Some(data_dir()?.join(dir).join(format!("{id}.json")))
+}
+
+fn status_path() -> Option<PathBuf> {
+    instance_file("lan")
 }
 
 pub struct StatusFileGuard;
@@ -576,18 +585,7 @@ pub fn player_name(args: &Args) -> String {
             return stem;
         }
     }
-    #[cfg(target_os = "macos")]
-    if let Ok(out) = std::process::Command::new("id").arg("-F").output() {
-        let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !full.is_empty() {
-            return full;
-        }
-    }
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .ok()
-        .filter(|u| !u.trim().is_empty())
-        .unwrap_or_else(|| "Driver".into())
+    "Driver".into()
 }
 
 pub fn world_info(args: &Args) -> ::network::WorldInfo {
@@ -930,9 +928,10 @@ pub fn start(args: &Args) -> Option<LanSession> {
                 .map(|t| ::network::ws::ws_url(t).is_none())
                 .unwrap_or(false)
         {
-            if let Some(url) = ::network::SessionCode::decode(args.lan_join.as_deref().unwrap_or(""))
-                .ok()
-                .and_then(|c| ::network::bridge::lookup_tunnel(c.session))
+            if let Some(url) =
+                ::network::SessionCode::decode(args.lan_join.as_deref().unwrap_or(""))
+                    .ok()
+                    .and_then(|c| ::network::bridge::lookup_tunnel(c.session))
             {
                 log::info!(
                     "LAN: no answer at the code's addresses; through the host's tunnel {url}"
@@ -1015,7 +1014,8 @@ pub fn share_mods(args: &mut Args, lan: &mut LanSession) {
                 && std::net::TcpStream::connect_timeout(&host, Duration::from_secs(3)).is_ok();
             if !direct {
                 let base = joined_url.or_else(|| {
-                    ::network::bridge::lookup_tunnel(session).and_then(|u| ::network::ws::ws_url(&u))
+                    ::network::bridge::lookup_tunnel(session)
+                        .and_then(|u| ::network::ws::ws_url(&u))
                 });
                 match base.map(|b| format!("{}/tcp", b.strip_suffix("/ws").unwrap_or(&b))) {
                     Some(tcp_url) => match ::network::ws::tcp_forward(&tcp_url) {
@@ -1155,7 +1155,7 @@ pub fn take_host_map(args: &mut Args, lan: &mut LanSession) {
     if crate::lan_mods::refuse_path(&theirs).is_some() || !norm(&theirs).starts_with("maps/") {
         return;
     }
-    match ::legacy_config::find_in_roots(&theirs) {
+    match ::mods::find_in_roots(&theirs) {
         Some(_) => {
             log::info!(
                 "LAN: the session is on the host's map {theirs} (not {})",
@@ -1231,7 +1231,7 @@ fn host_weather(args: &Args, weather: &str) -> Result<Option<String>, String> {
             Err(format!("the host's weather {w} cannot be read here"))
         };
     }
-    let path = ::legacy_config::resolve_path(&args.root, w);
+    let path = ::mods::resolve_path(&args.root, w);
     let inside = !w.contains("..") && !w.starts_with('/') && !w.contains(':');
     if inside && ::legacy_config::vfs::is_file(&path) {
         Ok(Some(w.to_string()))
@@ -1488,10 +1488,27 @@ pub fn name_tags(
     cam: &::render::Camera,
     width: f32,
     height: f32,
-) -> Vec<((f32, f32), String, String, f32)> {
-    let vp = cam.view_proj(width / height.max(1.0), cam.position);
+    speaking: &dyn Fn(u32) -> bool,
+) -> Vec<((f32, f32), String, String, f32, bool)> {
+    name_tags_with_projection(game, cam, width, height, None, speaking)
+}
+
+pub(crate) fn name_tags_with_projection(
+    game: &LanGame,
+    cam: &::render::Camera,
+    width: f32,
+    height: f32,
+    projection: Option<Mat4>,
+    speaking: &dyn Fn(u32) -> bool,
+) -> Vec<((f32, f32), String, String, f32, bool)> {
+    let vp = projection.map_or_else(
+        || cam.view_proj(width / height.max(1.0), cam.position),
+        |projection| {
+            projection * glam::camera::rh::view::look_to_mat4(Vec3::ZERO, cam.forward(), cam.up())
+        },
+    );
     let mut tags = Vec::new();
-    for r in game.remotes.values() {
+    for (id, r) in &game.remotes {
         let v = &r.vehicle;
         let top =
             v.ty.def
@@ -1548,13 +1565,14 @@ pub fn name_tags(
             name,
             sub,
             alpha,
+            speaking(*id),
         ));
     }
     tags
 }
 
 fn content_relative(path: &Path, root: &Path) -> String {
-    let mut roots = ::legacy_config::content_roots();
+    let mut roots = ::mods::content_roots();
     roots.push(root.to_path_buf());
     for r in roots {
         if let Ok(rel) = path.strip_prefix(&r) {
@@ -1689,7 +1707,7 @@ pub fn my_pose(
         3
     } else if on("lights_abbl")
         || on("lights_main")
-        || v.var("Spot_Select").is_some_and(|s| s >= 0.0)
+        || v.active_spotlight().is_some()
     {
         // mod buses name their lamps their own way; the selected spotlight is the dipped
         // beam every script sets for the renderer
@@ -2242,18 +2260,18 @@ pub fn settle_spawn(
 fn remote_bus_file(args: &Args, bus: &str) -> Result<PathBuf, String> {
     let rel = ::network::vehicle_path(bus)
         .ok_or_else(|| "not a vehicle file inside a content folder".to_string())?;
-    let mut path = ::legacy_config::resolve_path(&args.root, &rel);
+    let mut path = ::mods::resolve_path(&args.root, &rel);
     if !::legacy_config::vfs::is_file(&path) {
         // The sender may keep it elsewhere (an archive, its own content folder): look up the
         // `vehicles/...` tail under our content roots.
         let lower = rel.to_ascii_lowercase().replace('\\', "/");
         if let Some(k) = lower.find("vehicles/") {
-            if let Some((_, p)) = ::legacy_config::find_in_roots(&rel.replace('\\', "/")[k..]) {
+            if let Some((_, p)) = ::mods::find_in_roots(&rel.replace('\\', "/")[k..]) {
                 path = p;
             }
         }
     }
-    let mut roots = ::legacy_config::content_roots();
+    let mut roots = ::mods::content_roots();
     roots.push(args.root.clone());
     if !roots.iter().any(|r| path.starts_with(r)) {
         return Err("not inside a content folder".into());
@@ -2355,7 +2373,8 @@ fn new_remote(
             break;
         };
         match ::simulation::VehicleType::load(&args.root, &path) {
-            Ok(t) => {
+            Ok(mut t) => {
+                t.follow_winding_of(&lead);
                 let t = Arc::new(t);
                 trailer_renders.push(world.add_vehicle_shared(
                     r,

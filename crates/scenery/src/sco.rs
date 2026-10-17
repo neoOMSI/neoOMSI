@@ -179,7 +179,7 @@ pub struct SceneryObject {
 fn read_list(r: &mut ::legacy_config::CfgReader, base: &Path) -> Vec<PathBuf> {
     let n = r.usize();
     (0..n)
-        .map(|_| ::legacy_config::resolve_path(base, r.str()))
+        .map(|_| ::mods::resolve_path(base, r.str()))
         .filter(|p| !p.as_os_str().is_empty())
         .collect()
 }

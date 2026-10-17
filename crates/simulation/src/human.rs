@@ -478,7 +478,7 @@ impl HumanType {
     pub fn load(path: &Path) -> Result<HumanType> {
         let def = Human::load(path).with_context(|| format!("loading {}", path.display()))?;
         let dir = path.parent().unwrap_or(Path::new(""));
-        let model_path = ::legacy_config::resolve_path(dir, &def.model);
+        let model_path = ::mods::resolve_path(dir, &def.model);
         let model = Model::load(&model_path)
             .with_context(|| format!("loading {}", model_path.display()))?;
         let model_dir = model_path
@@ -488,7 +488,7 @@ impl HumanType {
         let load_level = |level: usize| -> Result<Vec<HumanMesh>> {
             let mut meshes = Vec::new();
             for md in model.lod_meshes(level) {
-                let p = ::legacy_config::resolve_path(&model_dir, &md.file);
+                let p = ::mods::resolve_path(&model_dir, &md.file);
                 let m =
                     ::legacy_o3d::load_mesh(&p).with_context(|| format!("loading {}", p.display()))?;
                 let bones: Vec<(i32, Vec<(u32, f32)>)> = m
@@ -595,7 +595,7 @@ impl HumanType {
         let mut variants = Vec::new();
         let mut extra_dirs: Vec<PathBuf> = Vec::new();
         for c in &model.ctc {
-            let mut d = ::legacy_config::resolve_path(dir, &c.path);
+            let mut d = ::mods::resolve_path(dir, &c.path);
             if !::legacy_config::vfs::is_dir(&d) {
                 let last = c
                     .path
@@ -605,7 +605,7 @@ impl HumanType {
                     .next()
                     .unwrap_or("");
                 if !last.is_empty() {
-                    let alt = ::legacy_config::resolve_path(dir, last);
+                    let alt = ::mods::resolve_path(dir, last);
                     if ::legacy_config::vfs::is_dir(&alt) {
                         d = alt;
                     }
@@ -615,7 +615,7 @@ impl HumanType {
             extra_dirs.push(d);
         }
         // the sub-folders of the human's folder and of its texture folder, last
-        for base in [dir.to_path_buf(), ::legacy_config::resolve_path(dir, "texture")] {
+        for base in [dir.to_path_buf(), ::mods::resolve_path(dir, "texture")] {
             for (n, is_dir) in ::legacy_config::vfs::list_dir(&base).unwrap_or_default() {
                 if is_dir && !n.to_string_lossy().eq_ignore_ascii_case("model") {
                     let d = base.join(n);
@@ -667,14 +667,14 @@ impl HumanType {
         let human_dir = self.model_dir.parent().unwrap_or(&self.model_dir);
         let hum_dir = self.def.path.parent().unwrap_or(human_dir);
         let mut dirs = vec![
-            ::legacy_config::resolve_path(&self.model_dir, "texture"),
+            ::mods::resolve_path(&self.model_dir, "texture"),
             self.model_dir.clone(),
-            ::legacy_config::resolve_path(human_dir, "texture"),
+            ::mods::resolve_path(human_dir, "texture"),
             human_dir.to_path_buf(),
-            ::legacy_config::resolve_path(hum_dir, "texture"),
+            ::mods::resolve_path(hum_dir, "texture"),
             hum_dir.to_path_buf(),
-            ::legacy_config::resolve_path(&self.model_dir, "..\\texture"),
-            ::legacy_config::resolve_path(root, "Texture"),
+            ::mods::resolve_path(&self.model_dir, "..\\texture"),
+            ::mods::resolve_path(root, "Texture"),
         ];
         dirs.dedup();
         dirs.extend(self.extra_dirs.iter().cloned());
@@ -3453,7 +3453,7 @@ mod tests {
                 &std::fs::read(root.join(format!("maps/{map}/humans.txt"))).unwrap(),
             );
             for name in text.lines().map(str::trim).filter(|s| !s.is_empty()) {
-                files.insert(::legacy_config::resolve_path(&root, name));
+                files.insert(::mods::resolve_path(&root, name));
             }
         }
         let mut report = String::from("human\tactivity\tside\tjoint_wrist\tskinned_hand\tgap_m\n");

@@ -807,7 +807,14 @@ impl Interp {
                     "src" if !n.src.is_empty() => Val::Str(n.src.clone()),
                     "width" if !n.attr_w.is_empty() => Val::Str(n.attr_w.clone()),
                     "height" if !n.attr_h.is_empty() => Val::Str(n.attr_h.clone()),
-                    _ => Val::Null,
+                    other => match n
+                        .attrs
+                        .iter()
+                        .find(|(a, _)| *a == other.to_ascii_lowercase())
+                    {
+                        Some((_, v)) => Val::Str(v.clone()),
+                        None => Val::Null,
+                    },
                 })
             }
             Val::Elem(i) if name == "appendChild" => {
@@ -873,7 +880,14 @@ impl Interp {
                     "src" => n.src = v,
                     "width" => n.attr_w = v,
                     "height" => n.attr_h = v,
-                    _ => {}
+                    other => {
+                        let o = other.to_ascii_lowercase();
+                        if let Some(e) = n.attrs.iter_mut().find(|(a, _)| *a == o) {
+                            e.1 = v;
+                        } else {
+                            n.attrs.push((o, v));
+                        }
+                    }
                 }
                 Some(Val::Undef)
             }

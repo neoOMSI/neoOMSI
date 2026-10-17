@@ -27,7 +27,7 @@
 //! ```text
 //! HELLO|<proto>|<session or ->|<name>|<bus>|<map>|<date>|<time>|<weather>|<season>|<nonce>
 //!                                                client → host (every second until answered)
-//! WELCOME|<proto>|<id>|<session>|<host name>|<map>|<date>|<time>|<weather>|<season>|<players>
+//! WELCOME|<proto>|<id>|<session>|<host name>|<map>|<date>|<time>|<weather>|<season>|<players>|<voice>|<nonce>
 //!                                                host → client
 //! REJECT|<proto>|<reason>                        host → client
 //! DISCOVER|<proto>                               broadcast, client → any host
@@ -82,6 +82,7 @@ pub mod bridge;
 pub mod official;
 pub mod passenger;
 pub mod tunnel;
+pub mod voice;
 pub mod wire;
 pub mod world;
 pub mod ws;
@@ -91,6 +92,7 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
+pub use voice::{VoiceConfig, VoiceFrame};
 pub use wire::{
     FLAG_BRAKE, FLAG_ELECTRICS, FLAG_ENGINE, FLAG_FOG, FLAG_HORN, FLAG_KNEELING, FLAG_REVERSE,
     FLAG_STOP_BRAKE, FLAG_VEHICLE, FLAG_WIPERS,
@@ -105,7 +107,9 @@ pub use wire::{
 /// passed on to the other players.
 /// 6: up to 63 sound and moving-part values in a state (a 6-bit count: the AA-FR Agora's
 /// sound variables alone filled the 31 there was room for).
-pub const PROTOCOL: u32 = 7;
+/// 7: session-scoped content transfer and the current wire format.
+/// 8: a welcome echoes the join attempt's nonce.
+pub const PROTOCOL: u32 = 8;
 pub const DEFAULT_PORT: u16 = 27015;
 /// Ports a host tries after the default one when that is taken (a second session on the
 /// same machine).
@@ -152,6 +156,10 @@ const MAX_FIELD: usize = 64;
 const STATE_RATE: (f32, f32) = (40.0, 40.0);
 const MESSAGE_RATE: (f32, f32) = (10.0, 20.0);
 const CHAT_RATE: (f32, f32) = (1.0, 3.0);
+const VOICE_RATE: (f32, f32) = (60.0, 60.0);
+const VOICE_MARGIN: f64 = 30.0;
+const MAX_VOICE_QUEUE: usize = 256;
+const VOICE_CAPABLE: &str = "v1";
 // ---------------------------------------------------------------------------------------
 // session codes
 
@@ -1111,6 +1119,22 @@ impl Pose {
     }
 }
 
+/// Where a player is on the ground: on foot, or in their bus.
+fn spot(pose: &Pose, vehicle: bool) -> Option<(f64, f64)> {
+    match pose.walker {
+        Some(w) => Some((w.x, w.y)),
+        None if vehicle => Some((pose.x, pose.y)),
+        None => None,
+    }
+}
+
+fn within(a: Option<(f64, f64)>, b: Option<(f64, f64)>, reach: f64) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => (a.0 - b.0).powi(2) + (a.1 - b.1).powi(2) <= reach * reach,
+        _ => false,
+    }
+}
+
 fn finite_or(v: f32, or: f32) -> f32 {
     if v.is_finite() { v } else { or }
 }
@@ -1370,6 +1394,10 @@ pub struct Peer {
     pub dropped: u32,
     /// The nonce of the player's hellos (host side).
     nonce: Option<u64>,
+    /// The game plays voice frames (host side).
+    pub voice: bool,
+    pub voice_muted: bool,
+    voice_frames: Bucket,
     /// The latest states as they came (arrival, state), oldest first: the game draws the
     /// player's bus between two of them (`Pose::sent_ms`), not only the newest.
     pub history: std::collections::VecDeque<(Instant, Pose)>,
@@ -1392,6 +1420,9 @@ impl Peer {
             dropped: 0,
             history: std::collections::VecDeque::new(),
             nonce: None,
+            voice: false,
+            voice_muted: false,
+            voice_frames: Bucket::new(VOICE_RATE.1),
         }
     }
 
@@ -1527,6 +1558,11 @@ pub struct LanSession {
     /// How fast the session's clock runs (the host's time speed; a client: the host's as
     /// its clock messages say).
     pub clock_speed: f64,
+    /// What the host allows (a client: as the host's welcome and clock messages say).
+    pub voice: VoiceConfig,
+    voice_in: std::collections::VecDeque<VoiceFrame>,
+    /// Where we are, for the range of our voice (host).
+    my_spot: Option<(f64, f64)>,
 }
 
 /// This machine's addresses for another player on its own network, with `port`.
@@ -1613,6 +1649,13 @@ impl LanSession {
             banned: Vec::new(),
             commands: Vec::new(),
             clock_speed: 1.0,
+            voice: if role == Role::Host {
+                VoiceConfig::default()
+            } else {
+                VoiceConfig::OFF
+            },
+            voice_in: std::collections::VecDeque::new(),
+            my_spot: None,
         }
     }
 
@@ -2053,6 +2096,105 @@ impl LanSession {
         Ok(())
     }
 
+    pub fn voice_allowed(&self) -> bool {
+        self.connected && self.voice.enabled
+    }
+
+    pub fn send_voice(&mut self, seq: u16, flags: u8, payload: &[u8]) {
+        if !self.voice_allowed() || payload.is_empty() {
+            return;
+        }
+        let data = voice::encode_voice(self.my_id, seq, flags, payload);
+        match self.role {
+            Role::Host => {
+                for a in self.voice_listeners(self.my_id, flags & voice::FLAG_RADIO != 0) {
+                    self.send(&data, a);
+                }
+            }
+            Role::Client => {
+                if let Some(h) = self.host {
+                    self.send(&data, h);
+                }
+            }
+        }
+    }
+
+    pub fn take_voice(&mut self) -> Vec<VoiceFrame> {
+        self.voice_in.drain(..).collect()
+    }
+
+    /// Host: no voice of player `id` is passed on (or again). Returns whether there is
+    /// such a player.
+    pub fn set_voice_muted(&mut self, id: u32, muted: bool) -> bool {
+        match self.peers.get_mut(&id) {
+            Some(p) if self.role == Role::Host => {
+                p.voice_muted = muted;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Where player `id` (or we) stands, for the range of a voice.
+    fn voice_spot(&self, id: u32) -> Option<(f64, f64)> {
+        if id == self.my_id {
+            return self.my_spot;
+        }
+        self.peers
+            .get(&id)
+            .filter(|p| p.has_pose)
+            .and_then(|p| spot(&p.pose, p.pose.flags & FLAG_VEHICLE != 0))
+    }
+
+    /// The addresses that hear player `id` (host): every player whose game plays voice,
+    /// within the range of the speaker (anywhere for the radio).
+    fn voice_listeners(&self, id: u32, radio: bool) -> Vec<SocketAddr> {
+        let from = self.voice_spot(id);
+        let reach = self.voice.range as f64 + VOICE_MARGIN;
+        self.peers
+            .iter()
+            .filter(|(pid, p)| **pid != id && p.voice)
+            .filter(|(pid, _)| radio || within(from, self.voice_spot(**pid), reach))
+            .filter_map(|(_, p)| p.addr)
+            .collect()
+    }
+
+    fn on_voice(&mut self, data: &[u8], from: SocketAddr) {
+        let Some(frame) = voice::decode_voice(data) else {
+            return;
+        };
+        if frame.id == self.my_id {
+            return;
+        }
+        if self.role == Role::Host {
+            if !self.voice.enabled {
+                return;
+            }
+            let Some(peer) = self.peers.get_mut(&frame.id) else {
+                return;
+            };
+            if peer.addr != Some(from) || peer.voice_muted {
+                return;
+            }
+            if !peer.voice_frames.take(VOICE_RATE) {
+                peer.dropped += 1;
+                return;
+            }
+            peer.last_seen = Instant::now();
+            for a in self.voice_listeners(frame.id, frame.radio()) {
+                self.send(data, a);
+            }
+            let reach = self.voice.range as f64 + VOICE_MARGIN;
+            if !frame.radio() && !within(self.voice_spot(frame.id), self.my_spot, reach) {
+                return;
+            }
+        }
+        if self.voice_in.len() >= MAX_VOICE_QUEUE {
+            self.voice_in.pop_front();
+        }
+        self.voice_in.push_back(frame);
+    }
+
     fn send(&self, data: &[u8], to: SocketAddr) {
         if self.socket.send_to(data, to).is_ok() {
             self.sent.set(self.sent.get() + data.len() as u64);
@@ -2284,7 +2426,7 @@ impl LanSession {
             "-".to_string()
         };
         let msg = format!(
-            "HELLO|{PROTOCOL}|{session}|{}|{}|{}|{:016X}",
+            "HELLO|{PROTOCOL}|{session}|{}|{}|{}|{:016X}|{VOICE_CAPABLE}",
             self.my_name,
             vehicle_path(&mine.bus).unwrap_or_default(),
             self.world.fields(),
@@ -2295,13 +2437,14 @@ impl LanSession {
         }
     }
 
-    fn send_welcome(&self, id: u32, to: SocketAddr) {
+    fn send_welcome(&self, id: u32, to: SocketAddr, nonce: u64) {
         let msg = format!(
-            "WELCOME|{PROTOCOL}|{id}|{}|{}|{}|{}",
+            "WELCOME|{PROTOCOL}|{id}|{}|{}|{}|{}|{}|{nonce:016X}",
             session_hex(self.session),
             self.my_name,
             self.world.fields(),
-            self.peers.len() + 1
+            self.peers.len() + 1,
+            self.voice.field()
         );
         self.send(msg.as_bytes(), to);
     }
@@ -2350,6 +2493,7 @@ impl LanSession {
     /// Returns the ids of players that left this frame.
     pub fn tick(&mut self, dt: f32, mine: &Pose) -> Vec<u32> {
         let mut gone = Vec::new();
+        self.my_spot = spot(mine, !mine.bus.is_empty());
         let wall = self.started.elapsed().as_secs_f64() * 1000.0;
         self.frame_ms = Some(match self.frame_ms {
             Some(prev) => {
@@ -2556,7 +2700,13 @@ impl LanSession {
         if self.role == Role::Host && self.clock_acc >= CLOCK_EVERY {
             self.clock_acc = 0.0;
             self.broadcast(
-                format!("CLOCK|{}|{}", self.world.fields(), self.clock_speed).as_bytes(),
+                format!(
+                    "CLOCK|{}|{}|{}",
+                    self.world.fields(),
+                    self.clock_speed,
+                    self.voice.field()
+                )
+                .as_bytes(),
                 None,
             );
         }
@@ -2659,6 +2809,10 @@ impl LanSession {
                 self.on_state(&data, from);
                 continue;
             }
+            if data[0] == voice::VOICE_MAGIC {
+                self.on_voice(&data, from);
+                continue;
+            }
             let Ok(text) = std::str::from_utf8(&data) else {
                 continue;
             };
@@ -2723,6 +2877,7 @@ impl LanSession {
                         .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1000.0)
                         .unwrap_or(1.0);
                     self.clock_speed = speed;
+                    self.voice = VoiceConfig::from_field(field(&parts, 7));
                     if !world.date.is_empty() {
                         self.host_clock = Some(HostClock {
                             world,
@@ -3107,10 +3262,13 @@ impl LanSession {
         }
         let bus = vehicle_path(field(parts, 4)).unwrap_or_default();
         let world = WorldInfo::from_fields(parts, 5);
-        let nonce = u64::from_str_radix(field(parts, 10), 16).ok();
+        let Some(nonce) = u64::from_str_radix(field(parts, 10), 16).ok() else {
+            self.reject(from, "the joining game did not identify this join attempt");
+            return;
+        };
         // a returning client keeps its id; so does one that tried several of our addresses
         // at once, and the address its latest hello came from is the one it has chosen
-        let same = |p: &Peer| p.addr == Some(from) || (nonce.is_some() && p.nonce == nonce);
+        let same = |p: &Peer| p.addr == Some(from) || p.nonce == Some(nonce);
         let (id, here) = match self.peers.iter().find(|(_, p)| same(p)) {
             Some((id, _)) => {
                 let id = *id;
@@ -3139,7 +3297,7 @@ impl LanSession {
                 );
                 return;
             }
-            None if nonce.is_some_and(|n| self.banned.contains(&n)) => {
+            None if self.banned.contains(&nonce) => {
                 self.reject(from, "the host has sent you away from this session");
                 return;
             }
@@ -3151,12 +3309,8 @@ impl LanSession {
                     .gone_lately
                     .iter()
                     // by the nonce only: a name is no proof (anybody may call themselves
-                    // so); a game without a nonce (none sends none now) by its name
-                    .position(|g| match (nonce, g.0) {
-                        (Some(a), Some(b)) => a == b,
-                        (None, None) => g.1 == name,
-                        _ => false,
-                    })
+                    // so).
+                    .position(|g| g.0 == Some(nonce))
                     .map(|k| self.gone_lately.remove(k));
                 let id = match back
                     .as_ref()
@@ -3195,7 +3349,7 @@ impl LanSession {
                 others.sort();
                 here.extend(others.into_iter().map(|(_, s)| s));
                 let mut peer = Peer::new(Some(from), Pose::placeholder(id, &name, &bus));
-                peer.nonce = nonce;
+                peer.nonce = Some(nonce);
                 self.peers.insert(id, peer);
                 log::info!(
                     "LAN: player {id} '{name}' joined from {from} with {} on {}",
@@ -3218,8 +3372,9 @@ impl LanSession {
         };
         if let Some(p) = self.peers.get_mut(&id) {
             p.last_seen = Instant::now();
+            p.voice = field(parts, 11) == VOICE_CAPABLE;
         }
-        self.send_welcome(id, from);
+        self.send_welcome(id, from, nonce);
         if let Some(here) = here {
             self.send(
                 format!("NOTE|In this session: {}", clean_text(&here, 200)).as_bytes(),
@@ -3259,6 +3414,9 @@ impl LanSession {
             return;
         };
         let session = parse_session_hex(field(parts, 3)).unwrap_or(0);
+        if u64::from_str_radix(field(parts, 12), 16).ok() != Some(self.nonce) {
+            return;
+        }
         if self.session_required && session != self.session {
             self.rejected = Some(format!(
                 "the host answered with session {} instead of {}",
@@ -3269,6 +3427,7 @@ impl LanSession {
         }
         let host_name = clean_text(field(parts, 4), MAX_NAME);
         let world = WorldInfo::from_fields(parts, 5);
+        self.voice = VoiceConfig::from_field(field(parts, 11));
         let players = field(parts, 10)
             .parse::<usize>()
             .unwrap_or(1)

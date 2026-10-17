@@ -26,6 +26,7 @@ winresource = "0.1"
 
 [dependencies]
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 config = { path = "../config" }
 logging = { path = "../logging" }
 map = { path = "../map" }
@@ -37,6 +38,8 @@ geometry = { path = "../geometry" }
 render = { path = "../render" }
 simulation = { path = "../simulation" }
 legacy-plugin = { path = "../legacy-plugin" }
+# the game's allocator (see lib.rs)
+mimalloc = { version = "0.1", default-features = false }
 legacy-vehicle = { path = "../vehicle" }
 content = { path = "../content" }
 timetable = { path = "../timetable" }
@@ -47,6 +50,7 @@ winit.workspace = true
 glam.workspace = true
 pollster.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 log.workspace = true
 getrandom = "0.4"
@@ -69,11 +73,11 @@ aes-gcm = "0.10"
 imgui = { version = "0.12", optional = true }
 bytemuck = { workspace = true, optional = true }
 # updates: the release archives from GitHub
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # the desktop's clipboard and file dialogs (a phone has neither in this form)
 [target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = { version = "3", default-features = false }
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 rfd = "0.17"
 
 [target.'cfg(unix)'.dependencies]
@@ -81,7 +85,7 @@ libc = "0.2"
 
 # Windows: the game controllers through DirectInput, as OMSI reads them (see `dinput`)
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi_Common", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi_Common", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_XboxController", "Win32_UI_WindowsAndMessaging"] }
 openxr = { version = "0.22", default-features = false, features = ["static"] }
 wgpu-hal = { version = "30", features = ["dx12"] }
 

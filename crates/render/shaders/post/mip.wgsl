@@ -14,22 +14,44 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
     out.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
     return out;
 }
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let dim = textureDimensions(t_src);
-    let centre = in.uv * vec2<f32>(dim);
-    let base = vec2<i32>(floor(centre - vec2<f32>(1.0)));
+struct Footprint { rgb: vec3<f32>, plain: vec3<f32>, alpha: f32, total: f32 };
+
+fn footprint(clip: vec2<f32>) -> Footprint {
+    let dim = vec2<i32>(textureDimensions(t_src));
+    let src = vec2<f32>(dim);
+    let dst = max(floor(src * 0.5), vec2<f32>(1.0));
+    let px = floor(clip);
+    let lo = px * src / dst;
+    let hi = (px + vec2<f32>(1.0)) * src / dst;
+    let first = vec2<i32>(floor(lo));
+    let last = vec2<i32>(ceil(hi)) - vec2<i32>(1);
     var rgb = vec3<f32>(0.0);
     var plain = vec3<f32>(0.0);
     var alpha = 0.0;
-    for (var y = 0; y < 2; y = y + 1) {
-        for (var x = 0; x < 2; x = x + 1) {
-            let p = clamp(base + vec2<i32>(x, y), vec2<i32>(0), vec2<i32>(dim) - vec2<i32>(1));
-            let q = textureLoad(t_src, p, 0);
-            rgb = rgb + q.rgb * q.a;
-            plain = plain + q.rgb;
-            alpha = alpha + q.a;
+    var total = 0.0;
+    for (var y = first.y; y <= last.y; y = y + 1) {
+        let wy = min(hi.y, f32(y + 1)) - max(lo.y, f32(y));
+        for (var x = first.x; x <= last.x; x = x + 1) {
+            let wx = min(hi.x, f32(x + 1)) - max(lo.x, f32(x));
+            let w = wx * wy;
+            let q = textureLoad(t_src, clamp(vec2<i32>(x, y), vec2<i32>(0), dim - vec2<i32>(1)), 0);
+            rgb = rgb + q.rgb * (q.a * w);
+            plain = plain + q.rgb * w;
+            alpha = alpha + q.a * w;
+            total = total + w;
         }
     }
-    return vec4<f32>(select(plain * 0.25, rgb / alpha, alpha > 1e-5), alpha * 0.25);
+    return Footprint(rgb, plain, alpha, total);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let f = footprint(in.clip.xy);
+    return vec4<f32>(select(f.plain / f.total, f.rgb / f.alpha, f.alpha > 1e-5), f.alpha / f.total);
+}
+
+@fragment
+fn fs_plain(in: VsOut) -> @location(0) vec4<f32> {
+    let f = footprint(in.clip.xy);
+    return vec4<f32>(f.plain / f.total, f.alpha / f.total);
 }

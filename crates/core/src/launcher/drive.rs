@@ -571,11 +571,11 @@ fn step_bus(l: &mut Launcher, r: Rect) {
                 let dropdown = Rect::new(view.x + 38.0, y, view.w - 50.0 - 36.0, ROW);
                 if !options.is_empty()
                     && ui.select(
-                        &format!("bus-type-{}", model.key),
-                        dropdown,
-                        &mut sel,
-                        &options,
-                    )
+                    &format!("bus-type-{}", model.key),
+                    dropdown,
+                    &mut sel,
+                    &options,
+                )
                 {
                     if let Some(variant) = sel
                         .checked_sub(offset)
@@ -1537,16 +1537,11 @@ fn step_time(l: &mut Launcher, r: Rect) {
         ));
     }
     if let Some(code) = metar.as_ref() {
-        let root = std::path::PathBuf::from(&l.state.config.root);
-        let list = crate::weather_setup::metar_airports(&root);
-
         let mut airport = code.to_uppercase().chars().take(4).collect::<String>();
 
         l.ui.label(Rect::new(r.x, y, 110.0, ROW), "Airport");
 
-        let button_w = 150.0;
-        let gap = 8.0;
-        let input_w = r.w - 110.0 - button_w - gap;
+        let input_w = r.w - 110.0;
 
         if l.ui.text_input(
             "metar-airport",
@@ -1569,24 +1564,6 @@ fn step_time(l: &mut Launcher, r: Rect) {
             };
             l.state.touched();
         }
-        let labels: Vec<String> = list.iter().map(|a| a.1.clone()).collect();
-        let mut sel = list
-            .iter()
-            .position(|a| a.0.eq_ignore_ascii_case(&airport))
-            .unwrap_or(0);
-
-        if l.ui.select(
-            "metar-airport-list",
-            Rect::new(r.x + 110.0 + input_w + gap, y, button_w, ROW),
-            &mut sel,
-            &labels,
-        ) {
-            if let Some(a) = list.get(sel) {
-                l.state.choice.weather = format!("metar:{}", a.0);
-                l.state.touched();
-            }
-        }
-
         y += ROW + 8.0;
     }
     // When Custom weather is selected, the weather cards turn into the editor. The value is
@@ -2278,9 +2255,9 @@ fn summary(l: &mut Launcher, side: Rect) {
     let free = l.state.choice.free || l.state.choice.line.is_none();
     let label = if running > 0
         && l.state
-            .second_armed
-            .map(|t| t.elapsed().as_secs() < 6)
-            .unwrap_or(false)
+        .second_armed
+        .map(|t| t.elapsed().as_secs() < 6)
+        .unwrap_or(false)
     {
         "Start another game"
     } else if free && l.state.joined_server.is_none() {
@@ -2379,9 +2356,9 @@ fn start(l: &mut Launcher) {
     // accident: with one running, the button asks for a second click
     if running > 0
         && l.state
-            .second_armed
-            .map(|t| t.elapsed().as_secs() >= 6)
-            .unwrap_or(true)
+        .second_armed
+        .map(|t| t.elapsed().as_secs() >= 6)
+        .unwrap_or(true)
     {
         l.state.second_armed = Some(std::time::Instant::now());
         l.state.set_status("A game is running already (its window may be behind this one - see Sessions). Click again to start another one anyway.", true);
@@ -2424,7 +2401,7 @@ pub(super) fn selected_weather_as_custom(root: &str, file: &str) -> Option<Strin
     {
         return None;
     }
-    let path = ::legacy_config::resolve_path(std::path::Path::new(root), file);
+    let path = ::mods::resolve_path(std::path::Path::new(root), file);
     let w = ::content::weather::Weather::load(&path).ok()?;
     let wet = (w.ground_wet[0] / 255.0).clamp(0.0, 1.0);
     Some(crate::weather_setup::CustomWeather::from_weather(&w, 1.0, wet).encode())
@@ -2504,7 +2481,7 @@ pub(crate) fn nearest_airport(root: &str, map: &str) -> String {
         .parent()
         .map(|d| d.to_string_lossy().to_string())
         .unwrap_or_default();
-    let tz = ::legacy_config::resolve_path(std::path::Path::new(root), &format!("{dir}/timezone.txt"));
+    let tz = ::mods::resolve_path(std::path::Path::new(root), &format!("{dir}/timezone.txt"));
     let code = ::map::TimeZone::load(&tz)
         .ok()
         .and_then(|t| t.lat_lon())

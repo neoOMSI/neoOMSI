@@ -8,7 +8,7 @@ mod options;
 mod vehicle;
 mod world;
 
-pub use self::options::{Fmt, OPTION_GROUPS, OptGroup, OptKind, OptRow, OptShow};
+pub use self::options::{Fmt, OPTION_GROUPS, OptGroup, OptKind, OptRow, OptShow, VOICE_SUB};
 
 pub(super) type DrawFn = fn(&mut Ui, &Renderer, &mut Scene, &Frame, Metrics, f32, f32);
 

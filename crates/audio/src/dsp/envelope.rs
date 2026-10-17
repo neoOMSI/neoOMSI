@@ -3,6 +3,12 @@
 pub fn coefficient(rate: u32, seconds: f32) -> f32 {
     1.0 - (-1.0 / (rate.max(1) as f32 * seconds)).exp()
 }
+
+/// Clear tails below -400 dB to avoid subnormal slowdowns.
+pub(crate) fn smooth(value: &mut f32, target: f32, coefficient: f32) {
+    *value += (target - *value) * coefficient;
+    if value.abs() < 1e-20 { *value = 0.0; }
+}
 pub struct Envelope { value: f32, stopping: bool }
 impl Default for Envelope {
     fn default() -> Self { Self { value: 0.0, stopping: false } }

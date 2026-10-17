@@ -20,6 +20,116 @@ pub(crate) struct Snapshot {
     pub lights: usize,
     pub interior_lights: usize,
     pub coronas: usize,
+    pub gpu_passes: Vec<(String, f64, u32)>,
+    pub draw_report: Vec<String>,
+    pub light_stats: LightStats,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct LightStats {
+    pub point: usize,
+    pub spot: usize,
+    pub screen: usize,
+    pub shadow_casting: usize,
+    pub beams: usize,
+    pub vanilla_only: usize,
+    pub enhanced_only: usize,
+    pub interior_point: usize,
+    pub interior_spot: usize,
+    pub coronas_beam: usize,
+    pub coronas_halo: usize,
+    pub coronas_rotating: usize,
+    pub occluders: usize,
+    pub max_radius: f32,
+    pub avg_radius: f32,
+    pub total_intensity: f32,
+    pub nearest: Option<f32>,
+    pub sun_intensity: f32,
+    pub sun_elevation: f32,
+    pub night: f32,
+    pub ambient: f32,
+    pub fog_density: f32,
+    pub overcast: f32,
+    pub rain: f32,
+    pub wetness: f32,
+    pub snow: f32,
+    pub cloud_density: f32,
+    pub sun_shadows: bool,
+    pub light_shadows: bool,
+    pub enhanced: bool,
+}
+
+impl LightStats {
+    pub fn gather(
+        scene: &::render::Scene,
+        lighting: &::render::Lighting,
+        cam: glam::DVec3,
+    ) -> LightStats {
+        let mut o = LightStats::default();
+        let mut radius_sum = 0.0f32;
+        let mut near = f64::MAX;
+        for l in &scene.lights {
+            if l.is_screen() {
+                o.screen += 1;
+            } else if l.cone[0] < 0.999 || l.direction.length_squared() > 1e-6 {
+                o.spot += 1;
+            } else {
+                o.point += 1;
+            }
+            if l.shadow_first {
+                o.shadow_casting += 1;
+            }
+            if l.beam != 0.0 {
+                o.beams += 1;
+            }
+            match l.mode {
+                ::render::LightMode::Vanilla => o.vanilla_only += 1,
+                ::render::LightMode::Enhanced => o.enhanced_only += 1,
+                _ => {}
+            }
+            o.occluders += l.occ_count as usize;
+            o.max_radius = o.max_radius.max(l.radius);
+            radius_sum += l.radius;
+            o.total_intensity += l.intensity;
+            near = near.min((l.position - cam).length());
+        }
+        for l in &scene.interior_lights {
+            if l.direction.length_squared() > 1e-6 {
+                o.interior_spot += 1;
+            } else {
+                o.interior_point += 1;
+            }
+            o.total_intensity += l.intensity;
+        }
+        for c in &scene.coronas {
+            o.coronas_beam += c.beam as usize;
+            o.coronas_halo += c.halo as usize;
+            o.coronas_rotating += (c.rotating != 0) as usize;
+        }
+        let n = scene.lights.len();
+        o.avg_radius = if n > 0 { radius_sum / n as f32 } else { 0.0 };
+        o.nearest = (near < f64::MAX).then_some(near as f32);
+        o.sun_intensity = lighting.sun_intensity;
+        o.sun_elevation = lighting
+            .sun_dir
+            .normalize_or_zero()
+            .z
+            .clamp(-1.0, 1.0)
+            .asin()
+            .to_degrees();
+        o.night = lighting.night;
+        o.ambient = lighting.ambient.length();
+        o.fog_density = lighting.fog_density;
+        o.overcast = lighting.overcast;
+        o.rain = lighting.rain;
+        o.wetness = lighting.wetness;
+        o.snow = lighting.snow;
+        o.cloud_density = lighting.cloud_density;
+        o.sun_shadows = lighting.casts_sun_shadows();
+        o.light_shadows = lighting.light_shadows;
+        o.enhanced = lighting.enhanced;
+        o
+    }
 }
 
 pub(crate) struct FootInfo {
@@ -31,6 +141,13 @@ pub(crate) struct FootInfo {
     pub attached: bool,
     pub seated: bool,
     pub inside: bool,
+    pub exempt: Option<[f64; 2]>,
+    pub solids: usize,
+    pub lost: [f64; 2],
+    pub step_wall: bool,
+    pub reset: bool,
+    pub floor: Option<f64>,
+    pub lift: f64,
 }
 
 pub(crate) struct DoorDbg {

@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn scenery_text_cache_separates_addressing_and_border_colours() {
+    let tt = ::model::TextTexture::default();
+    let model = ::model::Model::parse(&::legacy_config::CfgFile::from_str(
+        "display.sco",
+        "[mesh]\ndisplay.o3d\n[matl]\nwrap.bmp\n0\n[matl]\nclamp.bmp\n0\n[matl_texadress_clamp]\n[matl]\nmirror.bmp\n0\n[matl_texadress_mirror]\n[matl]\nonce.bmp\n0\n[matl_texadress_mirroronce]\n[matl]\nborder.bmp\n0\n[matl_texadress_border]\n255\n0\n0\n0\n[matl]\nother_border.bmp\n0\n[matl_texadress_border]\n0\n255\n0\n0\n",
+    ));
+    let keys: Vec<String> = model.meshes[0]
+        .materials
+        .iter()
+        .map(|o| scenery_text_key(&tt, "same text", AlphaMode::Blend, &[o]))
+        .collect();
+    assert_eq!(keys.len(), 6);
+    for (i, key) in keys.iter().enumerate() {
+        for other in &keys[..i] {
+            assert_ne!(key, other, "different addressing must not share a material");
+        }
+    }
+    assert_eq!(
+        keys[0],
+        scenery_text_key(&tt, "same text", AlphaMode::Blend, &[])
+    );
+    // A slot without its own addressing command keeps an earlier block's mode.
+    let inherited = MaterialDef::default();
+    let clamped = &model.meshes[0].materials[1];
+    assert_eq!(
+        keys[1],
+        scenery_text_key(&tt, "same text", AlphaMode::Blend, &[clamped, &inherited])
+    );
+}
+
+#[test]
 fn null_texture_names() {
     assert!(is_null_texture("null.bmp"));
     assert!(is_null_texture(" NULL.BMP "));
@@ -316,4 +347,165 @@ fn scenery_freetex_name_resolution() {
     // 4. Returns None when no matching string exists
     let name_empty = resolve_scenery_freetex_name("Missing", &ov1, &overrides, None, None, &[]);
     assert_eq!(name_empty, None);
+}
+
+fn noop_renderer() -> Renderer {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::NOOP;
+    descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+    let instance = wgpu::Instance::new(descriptor);
+    pollster::block_on(Renderer::new_with(
+        &instance,
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        ::render::RenderOptions::default(),
+    ))
+    .unwrap()
+}
+
+#[test]
+fn dynamic_scenery_material_transitions_and_retention_lifecycle() {
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+
+    let static_base: MaterialId = 1;
+    let static_item: MaterialId = 2;
+    let mesh = renderer.add_mesh(&mut scene, &::geometry::MeshData::default());
+    let inst_idx = renderer.add_instance(
+        &mut scene,
+        mesh,
+        DVec3::ZERO,
+        Mat4::IDENTITY,
+        vec![static_base],
+    );
+    let slot_idx = 0;
+
+    let variants = vec![(inst_idx, slot_idx, static_base, static_item, "SwitchVar".to_string(), vec![])];
+    let mut dynamic_materials: HashMap<(usize, usize), Vec<MaterialId>> = HashMap::new();
+    let mut current_switch_var = 0.0f32;
+
+    // 1. Initial state before any dynamic texture is loaded:
+    apply_scenery_variants(
+        &variants,
+        &dynamic_materials,
+        0.0,
+        &|_| Some(current_switch_var),
+        &renderer,
+        &mut scene,
+    );
+    assert_eq!(scene.instances[inst_idx].materials[slot_idx], static_base);
+
+    // 2. Dynamic texture variant 1 is applied (e.g. livery 1 loaded):
+    let dyn_base_1: MaterialId = 101;
+    let dyn_item_1: MaterialId = 102;
+    dynamic_materials.insert((inst_idx, slot_idx), vec![dyn_base_1, dyn_item_1]);
+    renderer.set_material(&mut scene, inst_idx, slot_idx, dyn_base_1);
+    assert_eq!(scene.instances[inst_idx].materials[slot_idx], dyn_base_1);
+
+    // 3. Ticks 2 and 3: Dynamic texture selection is unchanged, switch variable remains 0.0
+    for _ in 0..2 {
+        apply_scenery_variants(
+            &variants,
+            &dynamic_materials,
+            0.0,
+            &|_| Some(current_switch_var),
+            &renderer,
+            &mut scene,
+        );
+        assert_eq!(
+            scene.instances[inst_idx].materials[slot_idx],
+            dyn_base_1,
+            "dynamic material must be retained across ticks without resetting to static base"
+        );
+    }
+
+    // 4. Switch variable turns on (e.g. nightlight or switch activated):
+    current_switch_var = 1.0;
+    apply_scenery_variants(
+        &variants,
+        &dynamic_materials,
+        0.0,
+        &|_| Some(current_switch_var),
+        &renderer,
+        &mut scene,
+    );
+    assert_eq!(
+        scene.instances[inst_idx].materials[slot_idx],
+        dyn_item_1,
+        "variant evaluation must switch to dynamic item material when variable triggers"
+    );
+
+    // 5. Another tick with switch variable still on:
+    apply_scenery_variants(
+        &variants,
+        &dynamic_materials,
+        0.0,
+        &|_| Some(current_switch_var),
+        &renderer,
+        &mut scene,
+    );
+    assert_eq!(
+        scene.instances[inst_idx].materials[slot_idx],
+        dyn_item_1,
+        "dynamic item material must be retained"
+    );
+
+    // 6. Dynamic texture assignment changes (e.g. livery 2 loaded):
+    let dyn_base_2: MaterialId = 201;
+    let dyn_item_2: MaterialId = 202;
+    dynamic_materials.insert((inst_idx, slot_idx), vec![dyn_base_2, dyn_item_2]);
+    let item_on = change_picks_item(current_switch_var);
+    renderer.set_material(
+        &mut scene,
+        inst_idx,
+        slot_idx,
+        if item_on { dyn_item_2 } else { dyn_base_2 },
+    );
+    assert_eq!(scene.instances[inst_idx].materials[slot_idx], dyn_item_2);
+
+    // 7. Tick with new dynamic texture selection unchanged:
+    apply_scenery_variants(
+        &variants,
+        &dynamic_materials,
+        0.0,
+        &|_| Some(current_switch_var),
+        &renderer,
+        &mut scene,
+    );
+    assert_eq!(scene.instances[inst_idx].materials[slot_idx], dyn_item_2);
+
+    // 8. Switch variable turns back off (0.0):
+    current_switch_var = 0.0;
+    apply_scenery_variants(
+        &variants,
+        &dynamic_materials,
+        0.0,
+        &|_| Some(current_switch_var),
+        &renderer,
+        &mut scene,
+    );
+    assert_eq!(
+        scene.instances[inst_idx].materials[slot_idx],
+        dyn_base_2,
+        "variant evaluation must switch back to second dynamic base material"
+    );
+}
+
+#[test]
+fn a_matl_item_keeps_its_base_slots_inward_normals() {
+    let base = MaterialExtra {
+        normals_inward: true,
+        glass: true,
+        ..Default::default()
+    };
+    let mut item = material_extra(&[], None, None, [0.0; 4]);
+    inherit_base_extra(&mut item, &base);
+    assert!(item.normals_inward);
+    assert!(item.glass);
+    let mut item = MaterialExtra {
+        normals_inward: true,
+        ..Default::default()
+    };
+    inherit_base_extra(&mut item, &MaterialExtra::default());
+    assert!(!item.normals_inward);
 }

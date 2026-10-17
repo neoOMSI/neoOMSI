@@ -5,6 +5,8 @@ pub(super) const FADE_SECS: f32 = 0.15;
 
 pub(super) const PANEL: [u8; 4] = [22, 22, 22, 255];
 pub(super) const PANEL_ALT: [u8; 4] = [31, 31, 31, 255];
+/// The website's dark background (`--page` in `site/src/style.css`).
+pub(super) const SIDEBAR: [u8; 4] = [15, 15, 15, 255];
 pub(super) const BORDER: [u8; 4] = [255, 255, 255, 15];
 pub(super) const ACCENT: [u8; 4] = [232, 160, 48, 255];
 pub(super) const ACCENT_SOFT: [u8; 4] = [232, 160, 48, 34];
@@ -20,6 +22,18 @@ pub(super) const WHITE: [u8; 4] = [236, 236, 236, 0];
 pub(super) const SOFT: [u8; 4] = [200, 200, 200, 0];
 pub(super) const MUTED: [u8; 4] = [142, 142, 142, 0];
 pub(super) const AMBER: [u8; 4] = [255, 200, 110, 0];
+
+/// The settings pages' neutral greys, after the launcher's.
+pub(super) const OPT_ROW: [u8; 4] = [24, 24, 26, 255];
+pub(super) const OPT_ROW_HOT: [u8; 4] = [36, 36, 40, 255];
+pub(super) const OPT_GROUP: [u8; 4] = [22, 22, 24, 255];
+pub(super) const OPT_GROUP_HOT: [u8; 4] = [32, 32, 35, 255];
+pub(super) const OPT_GROUP_ON: [u8; 4] = [42, 42, 46, 255];
+pub(super) const OPT_CARD: [u8; 4] = [18, 18, 20, 255];
+pub(super) const OPT_TRACK: [u8; 4] = [16, 16, 18, 255];
+pub(super) const OPT_LINE: [u8; 4] = [40, 40, 44, 255];
+pub(super) const OPT_FIELD: [u8; 4] = [30, 30, 32, 255];
+pub(super) const OPT_FIELD_HOT: [u8; 4] = [37, 37, 40, 255];
 
 /// The card's radius, a line's, and the inset of lines from the card's edge and of their
 /// text from the line's edge (all times the scale).
@@ -48,6 +62,19 @@ pub(super) fn fade(c: [u8; 4], k: f32) -> [u8; 4] {
         c[2],
         (c[3] as f32 * k.clamp(0.0, 1.0)).round() as u8,
     ]
+}
+
+/// `c` over an `OPT_CARD` card faded by `k`: on a see-through card a white veil lightening it
+/// as much, since a faded `c` would darken the picture behind a second time.
+pub(super) fn on_card(c: [u8; 4], k: f32) -> [u8; 4] {
+    if k >= 1.0 {
+        return c;
+    }
+    let lift = (0..3)
+        .map(|i| (c[i] as f32 - OPT_CARD[i] as f32) / (255.0 - OPT_CARD[i] as f32))
+        .sum::<f32>()
+        / 3.0;
+    [255, 255, 255, (lift.clamp(0.0, 1.0) * 255.0).round() as u8]
 }
 
 /// `c` as a text colour (no outline).

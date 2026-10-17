@@ -15,6 +15,29 @@ passenger root and its projection together. Seated waiting uses the map seat mar
 hips and the walkable floor for the feet. Exit handoff changes coordinate frames at one
 world position.
 
+## Waiting demand and timetable time
+
+Timetable targets use the traffic clock, which continues past midnight. Calls belonging
+to a trip that started before midnight keep the previous day's validity mask. Newly loaded
+stops can create waiting passengers after the scheduled call while its existing service
+deadline is still valid. The stop cube's entering counts, hourly passenger density and
+available waiting places continue to limit the crowd. The window and headless server both
+refresh targets as simulation time advances.
+
+Regressions for #420 and #422 cover a delayed trip entering new stop regions, a 23:55
+departure calling after midnight, previous-day 24:xx departures, invalid service days,
+non-stopping calls, crowd limits and expired passengers. Run them with:
+
+```powershell
+cargo test --locked -p core --lib passenger_targets
+cargo test --locked -p core --lib a_newly_loaded_stop
+```
+
+The optional `installed_tettau_keeps_passenger_targets` test reads Tettau's installed
+timetable via `OMSI_ROOT` and checks all intermediate stops of its Kronach trip five
+minutes late; invoke it with `-- --ignored`.
+
+
 ## Transactions and presentation
 
 Fare ownership follows stable person IDs. The driver's `GivenTicket` is captured as a

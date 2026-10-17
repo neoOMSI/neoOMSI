@@ -64,8 +64,8 @@ export function Faq() {
       <PageHead>
         <h1 className="display">Questions and answers</h1>
         <p className="mt-6 max-w-[36em] text-[19px] text-muted">
-          What neoOMSI is, what you need to play it, and how it runs OMSI&nbsp;2
-          content on Windows, macOS, Linux and Android.
+          Answers about installing neoOMSI, using your existing OMSI 2 content,
+          and what is supported during development.
         </p>
       </PageHead>
       <div className="wrap grid gap-x-16 gap-y-10 pb-20 sm:pb-24 lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]">
@@ -81,7 +81,7 @@ export function Faq() {
             </a>
             . Coming from openOMSI? See{" "}
             <a className="link" href={url("/openomsi/")}>
-              neoOMSI vs openOMSI
+              neoOMSI and openOMSI
             </a>
             .
           </p>

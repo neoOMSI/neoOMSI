@@ -21,7 +21,7 @@
 //! content (a Windows, Linux or macOS executable or a script with `#!`, whatever it is
 //! called). OMSI's own vehicle scripts are data for the game's own interpreter, which
 //! touches nothing outside the vehicle. No plugin is ever loaded from the session folder
-//! (`::legacy_config::mark_sandbox`).
+//! (`::mods::mark_sandbox`).
 
 use crate::Args;
 use aes_gcm::aead::{Aead, KeyInit};
@@ -230,7 +230,7 @@ fn sha256_of(data: &[u8]) -> String {
 /// The content-root-relative spelling of an existing file.  This is how an asset parser's
 /// resolved path becomes a manifest path again.
 fn content_relative(path: &Path) -> Option<String> {
-    ::legacy_config::content_roots()
+    ::mods::content_roots()
         .into_iter()
         .find_map(|root| {
             path.strip_prefix(root).ok().map(|suffix| {
@@ -279,14 +279,14 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
         if depth > 12 {
             return;
         }
-        let roots = ::legacy_config::content_roots();
+        let roots = ::mods::content_roots();
         let comps = ::legacy_config::windows_components(rel);
         let mut seen: HashSet<String> = HashSet::new();
         for r in roots {
             let dir = comps.iter().fold(r.clone(), |p, c| p.join(c));
             let Some(list) = ::legacy_config::vfs::list_dir(&dir).or_else(|| {
                 // (case-insensitively, as Windows would find it)
-                ::legacy_config::find_in_roots(rel)
+                ::mods::find_in_roots(rel)
                     .filter(|(root, _)| *root == r)
                     .and_then(|(_, p)| ::legacy_config::vfs::list_dir(&p))
             }) else {
@@ -305,7 +305,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     if files.contains_key(&key) {
                         continue;
                     }
-                    if let Some((_, path)) = ::legacy_config::find_in_roots(&child) {
+                    if let Some((_, path)) = ::mods::find_in_roots(&child) {
                         let lower = name.to_lowercase();
                         if [".cfg", ".sco", ".sli", ".hum", ".txt", ".hof"]
                             .iter()
@@ -331,11 +331,17 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             add_folder(&map_dir, &mut files, &mut text_todo, 0);
         }
     }
+    if let Some(w) = args.weather.as_deref() {
+        let w = norm(w);
+        if let Some((_, path)) = ::mods::find_in_roots(&w) {
+            files.insert(w.to_lowercase(), (w, path));
+        }
+    }
 
     // the map's tiles and lists, and every text file of what they bring: the objects,
     // splines, vehicles and people they name, with the folders those name in turn
     let mut map_texts: Vec<(String, PathBuf)> = Vec::new();
-    for r in ::legacy_config::content_roots() {
+    for r in ::mods::content_roots() {
         let comps = ::legacy_config::windows_components(&map_dir);
         let dir = comps.iter().fold(r.clone(), |p, c| p.join(c));
         for (name, is_dir) in ::legacy_config::vfs::list_dir(&dir).unwrap_or_default() {
@@ -401,7 +407,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                     if !FOLDERS.contains(&top.as_str()) {
                         continue;
                     }
-                    let Some((_, source)) = ::legacy_config::find_in_roots(&c) else {
+                    let Some((_, source)) = ::mods::find_in_roots(&c) else {
                         continue;
                     };
                     if matches!(top.as_str(), "vehicles" | "trains") {
@@ -447,7 +453,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
                                         continue;
                                     }
                                     if let Some((_, texture_source)) =
-                                        ::legacy_config::find_in_roots(&rel)
+                                        ::mods::find_in_roots(&rel)
                                     {
                                         files
                                             .entry(rel.to_ascii_lowercase())
@@ -465,8 +471,8 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
     }
     // The fonts those text textures use (OMSI reads the `.oft` files of `Fonts` itself,
     // not its sub-folders): each `.oft` with a `[newfont]` of a name in use, and its bitmaps
-    for r in ::legacy_config::content_roots() {
-        let Some(dir) = ::legacy_config::find_in_roots("Fonts")
+    for r in ::mods::content_roots() {
+        let Some(dir) = ::mods::find_in_roots("Fonts")
             .filter(|(root, _)| *root == r)
             .map(|(_, p)| p)
             .or_else(|| Some(r.join("Fonts")))
@@ -501,8 +507,7 @@ fn collect(args: &Args) -> (Manifest, Vec<PathBuf>) {
             }
             for f in std::iter::once(n.clone()).chain(bitmaps) {
                 let rel = format!("Fonts/{f}");
-                if let Some((root, path)) = ::legacy_config::find_in_roots(&rel) {
-                    let _ = root;
+                if let Some((_, path)) = ::mods::find_in_roots(&rel) {
                     files.insert(rel.to_lowercase(), (rel, path));
                 }
             }
@@ -772,7 +777,7 @@ fn process_alive(pid: u32) -> bool {
 pub fn clean_up() {
     let taken = SANDBOX.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some(dir) = taken {
-        ::legacy_config::remove_content_root(&dir);
+        ::mods::remove_content_root(&dir);
         match std::fs::remove_dir_all(&dir) {
             Ok(()) => log::info!("LAN mods: the host's map resources of this session were removed"),
             Err(e) => log::warn!(
@@ -1102,8 +1107,8 @@ pub fn fetch(
         todo.par_iter()
             .map(|&k| {
                 let e = &manifest.entries[k];
-                let Some((_, p)) = ::legacy_config::find_in_roots(&e.path)
-                    .filter(|(root, _)| !::legacy_config::is_sandbox(root))
+                let Some((_, p)) = ::mods::find_in_roots(&e.path)
+                    .filter(|(root, _)| !::mods::is_sandbox(root))
                 else {
                     return (k, false, None);
                 };
@@ -1290,11 +1295,11 @@ pub fn fetch(
     }
     // the session folder is content like any other, searched first, and never a source of
     // plugins
-    ::legacy_config::mark_sandbox(dir.clone());
-    ::legacy_config::add_content_root_first(dir.clone());
+    ::mods::mark_sandbox(dir.clone());
+    ::mods::add_content_root_first(dir.clone());
     // the host's map (now that we have it)
-    let map_ok = refuse_path(&manifest.map).is_none()
-        && ::legacy_config::find_in_roots(&manifest.map).is_some();
+    let map_ok =
+        refuse_path(&manifest.map).is_none() && ::mods::find_in_roots(&manifest.map).is_some();
     if map_ok
         && !manifest.map.is_empty()
         && !manifest
@@ -1361,6 +1366,51 @@ mod tests {
         }
     }
 
+    /// A joining player gets the files the host's own game uses. If two mods ship the same object,
+    /// the joining player gets the copy from the mod higher in the load order.
+    #[test]
+    fn the_host_sends_the_files_its_own_game_uses() {
+        use clap::Parser;
+        let dir = std::env::temp_dir().join(format!("lan-mods-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (town, high, low, omsi) = (dir.join("town"), dir.join("high"), dir.join("low"), dir.join("omsi"));
+        let put = |root: &Path, rel: &str, data: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, data).unwrap();
+        };
+        put(&town, "maps/Town/global.cfg", "[name]\r\nTown\r\n");
+        put(&town, "maps/Town/tile_0_0.map", "[object]\r\n0\r\nSceneryobjects\\LanShared\\a.sco\r\n");
+        put(&high, "Sceneryobjects/LanShared/a.sco", "high");
+        put(&low, "Sceneryobjects/LanShared/a.sco", "low");
+        std::fs::create_dir_all(&omsi).unwrap();
+        for root in [&town, &high, &low, &omsi] {
+            ::mods::add_content_root(root.clone());
+        }
+        let args = crate::Args::parse_from([
+            "neoomsi",
+            "--root",
+            &omsi.to_string_lossy(),
+            "--map",
+            "maps/Town/global.cfg",
+        ]);
+        let (manifest, sources) = collect(&args);
+        let rel = "Sceneryobjects/LanShared/a.sco";
+        let index = manifest
+            .entries
+            .iter()
+            .position(|entry| entry.path.eq_ignore_ascii_case(rel))
+            .expect("the object goes to the players");
+        let used_by_host = ::mods::resolve_path(&omsi, rel);
+        assert_eq!(sources[index], used_by_host);
+        assert_eq!(std::fs::read(&sources[index]).unwrap(), b"high");
+        assert_eq!(manifest.entries[index].sha256, sha256_of(b"high"));
+        for root in [&town, &high, &low, &omsi] {
+            ::mods::remove_content_root(root);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn session_folder_has_a_session_pid_and_random_part() {
         let name = session_dir_name(0x1234_5678_9abc, 4321, &[7; 16]);
@@ -1419,12 +1469,12 @@ mod tests {
             .unwrap();
         std::fs::write(root.join("Vehicles/NotShared/ai.bus"), "not a map resource\n").unwrap();
 
-        ::legacy_config::add_content_root(root.clone());
+        ::mods::add_content_root(root.clone());
         let mut args = Args::try_parse_from(["test"]).unwrap();
         args.root = root.clone();
         args.map = "maps/Test/global.cfg".into();
         let (manifest, _) = collect(&args);
-        ::legacy_config::remove_content_root(&root);
+        ::mods::remove_content_root(&root);
         let _ = std::fs::remove_dir_all(&root);
 
         let paths: HashSet<String> = manifest.entries.into_iter().map(|entry| entry.path).collect();

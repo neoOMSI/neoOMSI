@@ -9,6 +9,7 @@ Before requesting review:
 - Run the relevant checks and document what you actually tested below.
 - Review and understand every submitted change, including AI-assisted code.
 - Never include proprietary OMSI code or assets.
+- Translations: Changes may only be made to the en.json file. Other languages, such as German, may only be edited via Crowdin.
 
 The rendered PR description should be useful to a reviewer, not a completed form.
 Do not add checklist items merely to restate repository policy.

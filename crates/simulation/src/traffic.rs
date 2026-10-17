@@ -69,7 +69,7 @@ pub struct Lane {
     /// Spline/object file the lane came from (debugging).
     pub name: String,
     /// `[rule] trafficdensity`: how much of the road traffic uses this lane (0 = none), of
-    /// any random traffic group.
+    /// any random traffic group, each weighed by its group's traffic factor.
     pub density: f32,
     /// `[rule] trafficdensity <value> <group>` of the path, the last per group: the group
     /// is the random traffic group's place in the map's `unsched_vehgroups.txt`. A group
@@ -262,6 +262,12 @@ impl Lane {
     }
     pub fn end_heading(&self) -> f32 {
         *self.headings.last().unwrap()
+    }
+
+    /// Does `p` lie beyond the end of the lane (past the line across its end)?
+    pub fn past_end(&self, p: DVec3) -> bool {
+        let rel = p - self.end();
+        DVec2::new(rel.x, rel.y).dot(heading_dir(self.end_heading() as f64)) > 0.0
     }
 }
 
@@ -1795,6 +1801,10 @@ pub struct LightStop {
 /// `[approachdist]` (m): about four seconds at town speed.
 pub const DEFAULT_APPROACH: f32 = 50.0;
 
+/// How far before a light with `[approachdist]` 0 or none a train asks for it (m); OMSI
+/// asks for a level crossing as soon as the train is near.
+pub const RAIL_APPROACH: f32 = 600.0;
+
 /// Traffic light program of a crossing object instance (`TAmpelGroup`): its lights'
 /// phases and one cycle clock that runs on game time. The clock is state, not a function
 /// of the time of day, because the program may wait at a stop point or jump.
@@ -1814,12 +1824,9 @@ pub struct TrafficLightController {
     pub request: Vec<bool>,
     /// The clock waits at a stop point.
     pub held: bool,
-    /// A stop point the clock has just been let past without moving (it is not asked again
-    /// at the same instant).
-    passed: Option<usize>,
-    /// Backwards jumps already used in this cycle. They may extend a phase once, but must
-    /// not restart it again until the cycle wraps.
-    rewound: Vec<usize>,
+    /// The stop points the clock has just been let past without moving (they are not asked
+    /// again at the same instant; several may share one, #101).
+    passed: Vec<usize>,
     started: bool,
 }
 
@@ -1835,8 +1842,7 @@ impl TrafficLightController {
             time: 0.0,
             request: vec![false; n],
             held: false,
-            passed: None,
-            rewound: Vec::new(),
+            passed: Vec::new(),
             started: false,
         }
     }
@@ -1904,28 +1910,30 @@ impl TrafficLightController {
             .unwrap_or(DEFAULT_APPROACH)
     }
 
+    /// Whether a vehicle `gap` metres before light `i` asks for it: within its request
+    /// distance (a train's `RAIL_APPROACH` by default, #294) or waiting at its line.
+    pub fn asked_from(&self, i: usize, gap: f32, train: bool) -> bool {
+        let set = self.approach.get(i).copied().flatten().filter(|&d| d > 0.0);
+        let dist = match (train, set) {
+            (true, None) => RAIL_APPROACH,
+            _ => self.approach_dist(i),
+        };
+        gap <= dist + STOP_LINE_GAP + 0.5
+    }
+
     /// Run the cycle clock on by `dt` seconds of game time, honouring the stop and jump
     /// points with this frame's requests (`request`, set by the caller before).
     pub fn advance(&mut self, dt: f32) {
         let cycle = self.cycle_len();
         let mut left = dt.max(0.0) as f64;
         self.held = false;
-        let advance_clock = |this: &mut Self, move_by: f64| {
-            if move_by > 0.0 && this.time + move_by >= cycle - 1e-6 {
-                this.rewound.clear();
-            }
-            this.time = (this.time + move_by).rem_euclid(cycle);
-        };
         // a handful of points per frame at most (a jump may land just before another one)
         for _ in 0..16 {
             let mut best: Option<(usize, f64)> = None;
             for (k, p) in self.stops.iter().enumerate() {
-                if self.rewound.contains(&k) {
-                    continue;
-                }
                 let d = (p.time as f64 - self.time).rem_euclid(cycle);
                 let d = if d > cycle - 1e-6 { 0.0 } else { d };
-                if d < 1e-6 && self.passed == Some(k) {
+                if d < 1e-6 && self.passed.contains(&k) {
                     continue;
                 }
                 if d <= left && best.map(|b| d < b.1).unwrap_or(true) {
@@ -1934,33 +1942,42 @@ impl TrafficLightController {
             }
             let Some((k, d)) = best else {
                 if left > 0.0 {
-                    self.passed = None;
+                    self.passed.clear();
                 }
-                advance_clock(self, left);
+                self.time = (self.time + left).rem_euclid(cycle);
                 return;
             };
             if d > 1e-6 {
-                self.passed = None;
+                self.passed.clear();
             }
-            advance_clock(self, d);
+            self.time = (self.time + d).rem_euclid(cycle);
             left -= d;
             let p = self.stops[k];
             let asked = self.request.get(p.light).copied().unwrap_or(false);
-            let active = if p.if_request { !asked } else { asked };
+            let mut active = if p.if_request { !asked } else { asked };
+            // A stop prolongs a usable phase while traffic is waiting.  It must not hold a
+            // changeover aspect: several UK programs place their stop marker during
+            // red-and-yellow, where holding it leaves the junction permanently in transition.
+            if p.jump_to.is_none() && Self::aspect(self.state(p.light)) == Aspect::RedYellow {
+                active = false;
+            }
             if !active {
-                self.passed = Some(k);
+                self.passed.push(k);
                 continue;
             }
             match p.jump_to {
                 Some(to) => {
-                    let target = (to as f64).rem_euclid(cycle);
-                    if to <= p.time + 1e-6 {
-                        if !self.rewound.contains(&k) {
-                            self.rewound.push(k);
-                        }
-                    }
+                    // a target past the cycle's end starts the next one (#101)
+                    let to = to as f64;
+                    let target = if to >= cycle {
+                        0.0
+                    } else {
+                        to.rem_euclid(cycle)
+                    };
+                    // A backwards jump may repeat as long as its request condition holds
                     self.time = target;
-                    self.passed = Some(k);
+                    self.passed.clear();
+                    self.passed.push(k);
                     if left <= 0.0 {
                         return;
                     }
@@ -1968,7 +1985,7 @@ impl TrafficLightController {
                 None => {
                     self.time = p.time as f64;
                     self.held = true;
-                    self.passed = None;
+                    self.passed.clear();
                     return;
                 }
             }
@@ -2292,7 +2309,7 @@ const STOP_LINE_GAP: f32 = 0.6;
 /// A lane change: the car moves over from its lane to `to` along `length` metres of road
 /// (by distance, not by time: a car that has to stop halfway stands still, and so does its
 /// way).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LaneChange {
     pub to: usize,
     /// Progress 0..1.
@@ -3081,8 +3098,9 @@ impl AiState {
             };
             let Some(next) = self.planned_next.or(fallback) else {
                 // the end of a flight path: the aircraft flies on straight (the way runs on
-                // along the end tangent) until the traffic takes it away out of sight
-                if l.kind == LaneKind::Air {
+                // along the end tangent) until the traffic takes it away out of sight; a
+                // train runs on too, its cars taken away one by one at the end
+                if matches!(l.kind, LaneKind::Air | LaneKind::Rail) {
                     break;
                 }
                 return false; // dead end: despawn
@@ -3407,9 +3425,62 @@ mod tests {
     }
 
     #[test]
-    fn a_backwards_jump_extends_green_once_per_cycle() {
-        // Bowdenham crossings use a rewind to time zero to extend a green. It must not
-        // restart the phase again when the replay reaches that source time.
+    fn a_backwards_jump_repeats_until_its_condition_changes() {
+        for if_request in [false, true] {
+            let mut c = TrafficLightController::from_program(
+                vec![(vec![(0, 3.0), (6, 7.0), (9, 3.0), (0, 7.0)], None)],
+                Some(20.0),
+                &[],
+                &[[0.0, 10.0, if_request as u8 as f32, 3.0]],
+            );
+            c.start(9.5);
+            c.request[0] = !if_request;
+            c.advance(0.5);
+            assert!((c.time - 3.0).abs() < 1e-6, "first rewind: {}", c.time);
+            for _ in 0..3 {
+                c.advance(7.0);
+                assert!((c.time - 3.0).abs() < 1e-6, "repeated rewind: {}", c.time);
+                assert_eq!(c.state(0), 6);
+            }
+            c.request[0] = if_request;
+            c.advance(8.0);
+            assert!((c.time - 11.0).abs() < 1e-6);
+            assert_eq!(c.state(0), 9, "the phase ends when the condition clears");
+        }
+    }
+
+    #[test]
+    fn backwards_jumps_use_the_remaining_frame_time() {
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(0, 3.0), (6, 7.0), (9, 3.0), (0, 7.0)], None)],
+            Some(20.0),
+            &[],
+            &[[0.0, 10.0, 1.0, 3.0]],
+        );
+        c.start(9.5);
+        c.advance(22.0);
+        assert!((c.time - 3.5).abs() < 1e-6, "{}", c.time);
+    }
+
+    #[test]
+    fn a_jump_to_itself_does_not_prevent_clock_progress() {
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(6, 20.0)], None)],
+            Some(20.0),
+            &[],
+            &[[0.0, 10.0, 1.0, 10.0]],
+        );
+        c.start(9.5);
+        c.advance(0.5);
+        assert!((c.time - 10.0).abs() < 1e-6);
+        c.advance(0.0);
+        c.advance(0.5);
+        assert!((c.time - 10.5).abs() < 1e-6, "{}", c.time);
+    }
+
+    #[test]
+    fn a_backwards_jump_to_zero_waits_for_a_request() {
+        // A rewnd to zero keeps the main road green until the side road asks
         let mut c = TrafficLightController::from_program(
             vec![
                 (vec![(6, 15.0), (9, 3.0), (0, 8.0), (8, 5.0)], None),
@@ -3420,18 +3491,82 @@ mod tests {
             &[[1.0, 15.0, 1.0, 0.0]],
         );
         c.time = 14.9;
-        let mut left_green = false;
         for _ in 0..500 {
             c.advance(0.1);
-            left_green |= matches!(
-                TrafficLightController::aspect(c.state(0)),
-                Aspect::Yellow | Aspect::Red
+            assert_eq!(c.state(0), 6, "main road stays green without a request");
+        }
+        c.request[1] = true;
+        c.advance(19.0 - c.time as f32);
+        assert_eq!(c.state(1), 6, "the side road receives green after requesting");
+    }
+
+    #[test]
+    fn a_jump_past_the_cycle_end_restarts_the_cycle() {
+        // Städtedreieck's Bergerplatz (#101): flashing at 0..12 only with light 1 asked
+        let mut c = TrafficLightController::from_program(
+            vec![
+                (
+                    vec![
+                        (9, 5.0),
+                        (12, 2.0),
+                        (9, 5.0),
+                        (0, 3.0),
+                        (3, 1.0),
+                        (6, 29.0),
+                        (9, 3.0),
+                        (0, 39.0),
+                    ],
+                    None,
+                ),
+                (vec![(6, 1.0)], Some(30.0)),
+                (vec![(6, 1.0)], Some(30.0)),
+            ],
+            Some(127.0),
+            &[],
+            &[
+                [1.0, 0.0, 1.0, 15.0],
+                [1.0, 7.0, 0.0, 6.0],
+                [2.0, 87.0, 1.0, 130.0],
+                [2.0, 0.0, 0.0, 87.0],
+            ],
+        );
+        c.time = 20.0;
+        for _ in 0..3000 {
+            c.advance(0.1);
+            assert!(
+                !matches!(c.state(0), 9 | 12) || (45.0..48.0).contains(&c.time),
+                "flashing at {}",
+                c.time
             );
         }
-        assert!(
-            left_green,
-            "the extended green still reached yellow and red"
+        // by night both jumps at 0 let the clock past
+        c.request[1] = true;
+        c.time = 80.0;
+        c.advance(60.0);
+        for _ in 0..600 {
+            c.advance(0.1);
+            assert!((6.0..=7.0).contains(&c.time), "night at {}", c.time);
+        }
+    }
+
+    #[test]
+    fn a_stop_does_not_hold_a_red_and_yellow_changeover() {
+        // Add-On London's Brixton Road lights have a demand stop one second into their
+        // red-and-yellow phase.  A queued vehicle must not be able to hold that transition
+        // forever: it still needs to receive the following green.
+        let mut c = TrafficLightController::from_program(
+            vec![(vec![(3, 3.0), (6, 33.0), (9, 2.0), (0, 1.0)], Some(0.0))],
+            Some(50.0),
+            &[[0.0, 1.0, 0.0]],
+            &[],
         );
+        c.time = 0.9;
+        c.request[0] = true;
+
+        c.advance(0.2);
+        assert!(!c.held, "red-and-yellow changeover was held");
+        c.advance(2.0);
+        assert_eq!(c.state(0), 6, "the queued vehicle receives green");
     }
 
     #[test]
@@ -3457,6 +3592,52 @@ mod tests {
             "front at {front}, line at {line}"
         );
         assert!(hardest > -3.5, "braked at {hardest} m/s²");
+    }
+
+    /// A vehicle waiting at the line asks for a light with `[approachdist] 0` (#294).
+    #[test]
+    fn a_car_waiting_at_the_line_asks_for_its_light() {
+        let net = junction();
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0))],
+            None,
+            &[],
+            &[],
+        );
+        for (speed, decel) in [(3.0, 1.0), (13.9, 2.2), (22.0, 3.0)] {
+            let mut car = AiState::new(0, 0.0, 3);
+            car.speed = speed;
+            car.decel = decel;
+            car.plan_next(&net);
+            let line = 55.0;
+            for _ in 0..3600 {
+                let stop = line - car.s;
+                car.drive(&net, 1.0 / 60.0, None, Some(stop));
+            }
+            assert!(car.speed < 0.01, "stopped: {}", car.speed);
+            let gap = line - (car.s + car.front);
+            assert!(
+                c.asked_from(0, gap, false),
+                "{gap} m before the line at {speed} m/s"
+            );
+            assert!(!c.asked_from(0, gap + 2.0, false));
+        }
+    }
+
+    /// A train asks from `RAIL_APPROACH` unless the program sets a distance (#294).
+    #[test]
+    fn a_train_asks_for_a_level_crossing_from_afar() {
+        let c = TrafficLightController::from_program(
+            vec![(vec![(0, 10.0)], Some(0.0)), (vec![(0, 10.0)], Some(30.0))],
+            None,
+            &[],
+            &[],
+        );
+        assert!(c.asked_from(0, RAIL_APPROACH - 1.0, true));
+        assert!(!c.asked_from(0, RAIL_APPROACH + 2.0, true));
+        assert!(!c.asked_from(0, 100.0, false));
+        assert!(c.asked_from(1, 30.0, true));
+        assert!(!c.asked_from(1, 100.0, true));
     }
 
     #[test]
@@ -3684,6 +3865,30 @@ mod tests {
             car.plan_next(&net);
             assert_eq!(car.planned_next, Some(2), "seed {seed}");
         }
+    }
+
+    #[test]
+    fn a_train_runs_past_the_end_of_its_track() {
+        // at a dead end a car is taken off, a train runs on (its cars go one by one)
+        for (kind, runs_on) in [(LaneKind::Street, false), (LaneKind::Rail, true)] {
+            let lane = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, kind, 3.0);
+            let mut net = Network {
+                lanes: vec![lane],
+                ..Default::default()
+            };
+            net.link(1.5);
+            let mut car = AiState::new(0, 25.0, 1);
+            car.speed = 10.0;
+            let on = (0..50).all(|_| car.drive(&net, 0.1, None, None));
+            assert_eq!(on, runs_on, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_point_beyond_the_lane_end_is_past_it() {
+        let l = LaneBuilder::arc(DVec3::ZERO, 0.0, 30.0, 0.0, 0.0, LaneKind::Rail, 3.0);
+        assert!(l.past_end(l.at_ext(31.0).0));
+        assert!(!l.past_end(l.at_ext(29.0).0));
     }
 
     #[test]

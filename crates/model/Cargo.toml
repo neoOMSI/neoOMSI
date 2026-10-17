@@ -7,4 +7,5 @@ description = "model.cfg parser: meshes, materials, animations, lights, text tex
 
 [dependencies]
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 log.workspace = true

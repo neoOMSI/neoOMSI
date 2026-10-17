@@ -1,6 +1,15 @@
 use crate::*;
 
 #[test]
+fn glass_shader_requires_shading_profile() {
+    let source = scene_shader_source();
+    let without_marker = source.replace("const SHADING_PROFILE_ENABLED: bool = true;", "");
+    assert_ne!(source, without_marker);
+    let error = wgpu::naga::front::wgsl::parse_str(&without_marker).unwrap_err();
+    assert!(error.emit_to_string(&without_marker).contains("SHADING_PROFILE_ENABLED"));
+}
+
+#[test]
 fn shaders_validate_and_match_the_uniforms() {
     use wgpu::naga;
     let modules = [
@@ -215,4 +224,36 @@ fn half_floats_read_back() {
             "{v}"
         );
     }
+}
+
+#[test]
+fn trailer_fog_box_reaches_the_car_ahead() {
+    // O530 G: the front car's box ends 0.75 m before the coupling, the rear car's 0.75 m after it
+    let front = [2.55, 9.565, 2.0, 0.0, 1.191, 1.379];
+    let rear = [2.55, 7.019, 2.0, 0.0, 0.111, 1.379];
+    for heading in [0.0, 20.0, 200.0] {
+        let (sh, ch) = f64::to_radians(heading).sin_cos();
+        let o = DVec3::new(500.0, 700.0, 9.0);
+        let t = o - DVec3::new(sh, ch, 0.0) * 8.706;
+        let b = trailer_fog_boxes(Some((o, heading, front)), &[(t, heading, rear)], o);
+        // front face at the front car's back face: 1.191 - 9.565 / 2 = -3.5915 from its origin
+        let (half, centre) = (b[1][2], b[2][1]);
+        assert!(
+            ((centre + half) - (8.706 - 3.5915) as f32).abs() < 1e-3,
+            "{heading}: {b:?}"
+        );
+        assert!(
+            ((centre - half) - (0.111 - 3.5095)).abs() < 1e-3,
+            "{heading}: {b:?}"
+        );
+        assert_eq!(b[5][3], 0.0);
+    }
+    // a drawbar trailer 4 m behind keeps its box: the air between is outside
+    let t = DVec3::new(0.0, -8.706 - 4.0, 0.0);
+    let b = trailer_fog_boxes(
+        Some((DVec3::ZERO, 0.0, front)),
+        &[(t, 0.0, rear)],
+        DVec3::ZERO,
+    );
+    assert_eq!((b[1][2], b[2][1]), (rear[1] * 0.5, rear[4]));
 }

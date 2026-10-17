@@ -6,13 +6,13 @@ use std::path::PathBuf;
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let content = PathBuf::from(&a[1]);
-    ::legacy_config::add_content_root(content.clone());
-    ::legacy_config::vfs::mount_dir_zips(&content.join("Archives"));
+    ::mods::add_content_root(content.clone());
+    ::mods::mount_dir_zips(&content.join("Archives"));
     let orig = std::env::var("OMSI_ROOT")
         .map(PathBuf::from)
         .unwrap_or(content.clone());
-    ::legacy_config::add_content_root(orig.clone());
-    let bus = ::legacy_config::resolve_path(&orig, &a[2]);
+    ::mods::add_content_root(orig.clone());
+    let bus = ::mods::resolve_path(&orig, &a[2]);
     let filter = a.get(3).map(|s| s.to_ascii_lowercase());
     let vt = std::sync::Arc::new(::simulation::VehicleType::load(&orig, &bus).unwrap());
     let mut v =

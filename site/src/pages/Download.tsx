@@ -15,30 +15,29 @@ import { Icon, PlatformIcon } from "../components/icons";
 const INSTALL: Record<string, ReactNode> = {
   Windows: (
     <>
-      Unpack the zip into a folder of your own (not <code>Program Files</code>)
-      and run <code>neoomsi.exe</code>. SmartScreen may warn about an unknown
-      app: choose <i>More info</i>, then <i>Run anyway</i>.
+      Extract the zip archive into a dedicated folder (avoid <code>Program Files</code>)
+      and launch <code>neoomsi.exe</code>. Windows SmartScreen may warn about an unknown publisher. Check that
+      the archive came from the official neoOMSI GitHub release before deciding
+      whether to run it.
     </>
   ),
   macOS: (
     <>
-      Unpack and open <code>neoOMSI.app</code>. If macOS refuses an app from the
-      internet, right-click it and choose <i>Open</i> twice, or run{" "}
-      <code>xattr -dr com.apple.quarantine neoOMSI.app</code> once.
+      Extract the archive and open <code>neoOMSI.app</code>. macOS may block applications from unidentified developers. Verify the download
+      came from the official GitHub release before approving it in
+      System Settings under Privacy & Security.
     </>
   ),
   Linux: (
     <>
-      Unpack and run <code>./neoomsi</code>. If it does not start, run{" "}
-      <code>chmod +x neoomsi</code> first. Vulkan or OpenGL drivers are needed.
+      Extract the archive and run <code>./neoomsi</code>. If required, make the binary
+      executable with <code>chmod +x neoomsi</code>. Supported Vulkan drivers are required.
     </>
   ),
 };
 
 const TABS = Object.keys(INSTALL);
-const DOWNLOAD_PLATFORMS = PLATFORMS.filter(
-  (build) => build.family !== "Android",
-);
+const DOWNLOAD_PLATFORMS = PLATFORMS;
 
 const asset = (release: Release | null | undefined, build: Build) => {
   const file =
@@ -179,7 +178,8 @@ export function Download() {
       <PageHead>
         <h1 className="display">Download</h1>
         <p className="mt-6 max-w-[38em] text-[19px] text-muted">
-          Play your OMSI 2 maps and buses on Windows, macOS or Linux.
+          Get neoOMSI for Windows, macOS or Linux. You'll need your own
+          OMSI&nbsp;2 installation for maps, buses and other game files.
         </p>
         {available.length > 1 && (
           <div
@@ -231,12 +231,12 @@ export function Download() {
                   </p>
                   <p className="mt-1 text-muted">
                     {selected?.key === "rc"
-                      ? "Preview of the next stable release. Bugs may still occur."
-                      : "Includes the latest changes and may contain bugs or unfinished features."}
+                      ? "Candidate for a future stable release. Bugs may still occur."
+                      : "Experimental development build. Expect bugs, performance issues and missing features."}
                   </p>
                   {!stable && (
                     <p className="mt-2 text-muted">
-                      No stable release available.
+                      No stable release has been published yet.
                     </p>
                   )}
                 </div>

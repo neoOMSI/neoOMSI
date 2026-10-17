@@ -7,6 +7,15 @@ pub type MaterialId = usize;
 pub struct GpuMesh {
     pub(crate) vertex_buf: wgpu::Buffer,
     pub(crate) index_buf: wgpu::Buffer,
+    /// The scene's page (`Scene::mesh_pages`) the buffers belong to, `NO_PAGE` for buffers
+    /// of the mesh's own; where in them the mesh lies, as the draw takes it (a base vertex
+    /// and the first index) and in bytes.
+    pub(crate) page: u32,
+    pub(crate) base_vertex: i32,
+    pub(crate) first_index: u32,
+    pub(crate) vertex_offset: u64,
+    pub(crate) vertex_bytes: u64,
+    pub(crate) index_bytes: u64,
     pub ranges: Vec<(u32, u32, u32)>,
     pub bounds_center: Vec3,
     pub bounds_radius: f32,
@@ -15,6 +24,31 @@ pub struct GpuMesh {
     /// Per material slot: (mean facing direction, centroid) of its triangles in mesh space;
     /// a zero direction when the slot has no triangles.
     pub slot_faces: Vec<(Vec3, Vec3)>,
+    /// Per range: its wall triangles (`wall_triangles`); empty when the mesh has none.
+    pub(crate) walls: Vec<WallRange>,
+}
+
+/// Where the copies of a range's wall triangles lie in the mesh's indices, and the height
+/// of the tallest one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct WallRange {
+    pub(crate) first: u32,
+    pub(crate) count: u32,
+    pub(crate) height: f32,
+}
+
+impl GpuMesh {
+    /// (first index, count) of a draw's range: `ranges[r]`, or from `ranges.len()` on the
+    /// wall triangles of `ranges[r - ranges.len()]`.
+    pub(crate) fn index_range(&self, r: u32) -> (u32, u32) {
+        match self.ranges.get(r as usize) {
+            Some(&(first, count, _)) => (first, count),
+            None => self
+                .walls
+                .get(r as usize - self.ranges.len())
+                .map_or((0, 0), |w| (w.first, w.count)),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -75,40 +109,48 @@ impl RenderPhase {
     ];
 }
 
+/// (`repr(C)`, the fields every pass over all the scene's objects reads first: the
+/// culling of the picture and of each mirror and the search for shadow casters go through
+/// tens of thousands of objects a frame, and with the fields where the compiler put them
+/// each object cost them four or five cache lines instead of one or two)
+#[repr(C)]
 pub struct Instance {
-    pub mesh: MeshId,
-    pub transform: Mat4,
     pub origin: DVec3,
+    pub(crate) bounds: InstanceBounds,
+    pub lod: (f32, f32),
+    pub object_radius: f32,
+    pub mesh: MeshId,
+    pub detail: f32,
+    pub(crate) base: u32,
+    pub visible: bool,
+    pub mirror_only: bool,
+    pub blob: bool,
+    pub surface: bool,
+    pub any_distance: bool,
+    pub casts_shadow: bool,
+    pub omsi_caster: bool,
+    pub presurface: bool,
+    pub near_only: Option<[f64; 4]>,
+    pub transform: Mat4,
     pub materials: Vec<MaterialId>,
     pub slot_alpha: Vec<f32>,
     pub slot_light: Vec<f32>,
     pub slot_night: Vec<f32>,
-    pub visible: bool,
     pub slot_uv: Vec<[f32; 2]>,
     pub interior: f32,
     pub interior_lamps: u32,
     /// Enclosed cabin mesh, independent of switched interior lamps.
     pub cabin: bool,
-    pub(crate) base: u32,
-    pub(crate) bounds: InstanceBounds,
-    pub surface: bool,
-    pub presurface: bool,
     pub render_phase: RenderPhase,
     pub surface_bias: bool,
     pub blend_sort_origin: Option<DVec3>,
-    pub lod: (f32, f32),
-    pub blob: bool,
     pub ground_layer: bool,
     pub decal: bool,
-    pub object_radius: f32,
-    pub detail: f32,
-    pub any_distance: bool,
-    pub near_only: Option<[f64; 4]>,
-    pub mirror_only: bool,
-    pub omsi_caster: bool,
-    pub casts_shadow: bool,
     pub roof: Option<f32>,
     pub ordered: bool,
+    /// Position in a model's authored mesh order when `ordered` is set. This must not
+    /// depend on the scene instance id: vehicle instances are recycled after despawn.
+    pub ordered_index: u32,
 }
 
 impl Instance {
@@ -119,11 +161,14 @@ impl Instance {
 
 pub struct Scene {
     pub meshes: Vec<GpuMesh>,
+    /// Buffers shared by many meshes (see `MeshPage`).
+    pub(crate) mesh_pages: Vec<MeshPage>,
     pub textures: Vec<GpuTexture>,
     /// Mean (light, alpha, colour) of a texture the last time it was uploaded by
     /// `update_texture`: what a script or HTML screen actually shows. light = alpha x brightest
     /// channel, alpha 0..1; colour = the lit pixels' mean hue, its brightest channel 1.
     pub tex_luma: std::sync::Mutex<std::collections::HashMap<TextureId, (f32, f32, [f32; 3])>>,
+    pub(crate) uploaded: std::collections::HashMap<TextureId, (u64, Vec<u8>, bool)>,
     pub(crate) glass_slot: Option<TextureId>,
     pub materials: Vec<Material>,
     pub instances: Vec<Instance>,
@@ -137,6 +182,8 @@ pub struct Scene {
     pub(crate) smoke_buf: Option<wgpu::Buffer>,
     pub(crate) smoke_count: u32,
     pub(crate) corona_runs: Vec<(u16, u32, u32)>,
+    pub(crate) corona_order: Vec<usize>,
+    pub(crate) corona_data: Vec<GpuCorona>,
     pub(crate) model_buf: Option<wgpu::Buffer>,
     pub(crate) params_buf: Option<wgpu::Buffer>,
     pub(crate) light_buf: Option<wgpu::Buffer>,
@@ -150,40 +197,94 @@ pub struct Scene {
     pub(crate) sky_bind_group: Option<wgpu::BindGroup>,
     pub overlays: Vec<(TextureId, [f32; 4])>,
     pub premultiplied: std::collections::HashSet<TextureId>,
+    /// Overlays with these textures are drawn over a blurred copy of what lies beneath
+    /// them, rounded at the corners by the radius given (pixels).
+    pub frosted: HashMap<TextureId, f32>,
     pub(crate) overlay_res: Vec<(TextureId, wgpu::Buffer, wgpu::BindGroup, [f32; 8])>,
     pub(crate) dirty: bool,
     pub(crate) uploaded_instances: usize,
     pub(crate) uploaded_entries: u32,
     pub(crate) changed: Vec<usize>,
     pub(crate) changed_mark: Vec<bool>,
+    /// The render origin moved sideways since the models were uploaded: only their
+    /// translations are written again (see `prepare`), not every instance's entries.
+    pub(crate) origin_moved: bool,
     pub(crate) cache_bounds: bool,
     pub(crate) bounds_meshes: Vec<bool>,
     pub(crate) bounds_dirty: bool,
+    /// A mesh changed once (freed, recycled): the next bounds update looks at every instance.
+    pub(crate) bounds_full: bool,
+    /// The meshes reshaped by poses (people, the driver, skinned vehicle parts) and the
+    /// instances drawing one of them, found up to `reshaped_upto`: a new pose measures
+    /// these again, not the whole scene, every frame.
+    pub(crate) reshaped_meshes: Vec<bool>,
+    pub(crate) reshaped_users: Vec<usize>,
+    pub(crate) reshaped_upto: usize,
+    /// The box (lowest, highest corner) around each `CULL_BLOCK` instances in a row, for the
+    /// culling to pass by whole blocks out of the picture: an instance that moves grows its
+    /// block's box at once, and the boxes of such blocks are measured again, a few a frame.
+    pub(crate) block_bounds: Vec<(DVec3, DVec3)>,
+    pub(crate) block_dirty: Vec<bool>,
+    pub(crate) block_cursor: usize,
+    /// How many instances there were when the boxes were last brought up to date.
+    pub(crate) block_instances: usize,
     pub(crate) cpu_models: Vec<[[f32; 4]; 4]>,
     pub(crate) cpu_params: Vec<[f32; 4]>,
-    pub(crate) last_grid: Vec<u32>,
+    pub(crate) light_grid: LightGrid,
     pub(crate) last_lights: Vec<u8>,
-    pub(crate) bind_groups: HashMap<BindKey, (wgpu::BindGroup, wgpu::Buffer)>,
+    pub(crate) bind_groups: HashMap<BindKey, (wgpu::BindGroup, wgpu::Buffer, u64)>,
+    /// Append-only uniform page. Older pages live as long as their material bindings.
+    pub(crate) material_uniform_page: Option<(wgpu::Buffer, u64)>,
+    /// The number of each material look seen so far, by its key's hash (see `Material::look`).
+    pub(crate) looks: HashMap<u64, u32>,
     pub pbr_maps: HashMap<TextureId, PbrMaps>,
     pub snow_textures: std::collections::HashSet<TextureId>,
 }
 
 impl Scene {
-    pub fn gpu_bytes(&self) -> (u64, u64, u64) {
-        let tex = self.textures.iter().map(|t| t.bytes).sum();
-        let mut seen: std::collections::HashSet<*const ()> = std::collections::HashSet::new();
-        let mut mesh = 0u64;
-        for m in &self.meshes {
-            if m.ranges.is_empty() {
-                continue;
-            }
-            for b in [&m.vertex_buf, &m.index_buf] {
-                if seen.insert(b as *const wgpu::Buffer as *const ()) {
-                    mesh += b.size();
-                }
+    /// The instances whose sphere (`Instance::world_centre` and its radius) may come within
+    /// `reach` of `p`, in their order: every instance of the culling's blocks whose box is
+    /// in reach, those moved or made since the boxes were last measured, and all of them
+    /// while the boxes are being made anew. A pass over the scene for what is near a point
+    /// (the screens' and LEDs' lights) looks at these instead of all.
+    pub fn instances_near(&self, p: DVec3, reach: f64, out: &mut Vec<usize>) {
+        out.clear();
+        let n = self.instances.len();
+        // (the boxes hold the instances as `prepare_bounds` last saw them, with the bounds
+        // that `world_centre` reads until then)
+        let measured = self.block_instances;
+        if !self.cache_bounds || self.dirty || measured > n {
+            out.extend(0..n);
+            return;
+        }
+        let near = |b: usize| {
+            let (lo, hi) = self.block_bounds[b];
+            // (the box's nearest point; an empty block, lo > hi, is never near)
+            lo.x <= hi.x && (p.clamp(lo, hi) - p).length_squared() < reach * reach
+        };
+        for b in 0..self.block_bounds.len() {
+            if near(b) {
+                let end = ((b + 1) * crate::world::CULL_BLOCK).min(measured);
+                out.extend(b * crate::world::CULL_BLOCK..end);
             }
         }
-        let other = [
+        // (moved since: their box may not hold them yet)
+        let before = out.len();
+        for &i in &self.changed {
+            if i < measured && !near(i / crate::world::CULL_BLOCK) {
+                out.push(i);
+            }
+        }
+        out.extend(measured..n);
+        if out.len() > before {
+            out.sort_unstable();
+        }
+    }
+
+    pub fn gpu_bytes(&self) -> (u64, u64, u64) {
+        let tex = self.textures.iter().map(|t| t.bytes).sum();
+        let mesh = self.mesh_buffer_bytes();
+        let other: u64 = [
             &self.model_buf,
             &self.params_buf,
             &self.light_buf,
@@ -195,6 +296,28 @@ impl Scene {
         .filter_map(|b| b.as_ref())
         .map(|b| b.size())
         .sum();
-        (tex, mesh, other)
+        let mut uniforms: std::collections::HashSet<&wgpu::Buffer> =
+            self.materials.iter().map(|m| &m.buf).collect();
+        if let Some((buf, _)) = &self.material_uniform_page {
+            uniforms.insert(buf);
+        }
+        let material_bytes: u64 = uniforms.into_iter().map(|b| b.size()).sum();
+        (tex, mesh, other + material_bytes)
+    }
+}
+
+impl Scene {
+    /// The look number of a material bind group made of `key` (numbers start at 1; 0 is the
+    /// shared look of the opaque depth-only draws).
+    pub(crate) fn look(&mut self, key: &BindKey) -> u32 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        self.intern_look(h.finish())
+    }
+
+    pub(crate) fn intern_look(&mut self, hash: u64) -> u32 {
+        let next = self.looks.len() as u32 + 1;
+        *self.looks.entry(hash).or_insert(next)
     }
 }

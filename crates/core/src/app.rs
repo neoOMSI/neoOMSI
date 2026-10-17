@@ -12,7 +12,34 @@ pub(crate) struct ScreenshotMode {
     pub(crate) help_left: f32,
 }
 
+/// See `App::profile_mark`.
+pub(crate) struct ProfileMark {
+    pub(crate) frames: u32,
+    pub(crate) stages: std::collections::BTreeMap<&'static str, f64>,
+    pub(crate) render: std::collections::BTreeMap<&'static str, f64>,
+    pub(crate) counts: std::collections::BTreeMap<&'static str, f64>,
+    /// The GPU passes' averages (ms) and frame counts so far.
+    pub(crate) gpu: Vec<(String, f64, u32)>,
+}
+
+pub(crate) type SurfaceRequest = (
+    wgpu::Instance,
+    std::sync::mpsc::Sender<Result<wgpu::Surface<'static>, String>>,
+);
+
+pub(crate) struct Boot {
+    pub(crate) rx: std::sync::mpsc::Receiver<(Result<Renderer>, wgpu::Instance)>,
+    pub(crate) surfaces: std::sync::mpsc::Receiver<SurfaceRequest>,
+    pub(crate) window: Arc<Window>,
+    pub(crate) span_rect: Option<(
+        winit::dpi::PhysicalPosition<i32>,
+        winit::dpi::PhysicalSize<u32>,
+    )>,
+    pub(crate) start_exclusive: bool,
+}
+
 pub(crate) struct App {
+    pub(crate) boot: Option<Boot>,
     pub(crate) args: Args,
     pub(crate) instance: wgpu::Instance,
     pub(crate) window: Option<Arc<Window>>,
@@ -20,6 +47,10 @@ pub(crate) struct App {
     pub(crate) renderer: Option<Renderer>,
     /// Pending size during a resize drag.
     pub(crate) resize_pending: Option<(Instant, winit::dpi::PhysicalSize<u32>)>,
+    pub(crate) pending_triple_screen_span: Option<(
+        winit::dpi::PhysicalPosition<i32>,
+        winit::dpi::PhysicalSize<u32>,
+    )>,
     #[cfg(windows)]
     pub(crate) vr: Option<openxr::Vr>,
     pub(crate) scene: Option<Scene>,
@@ -44,7 +75,7 @@ pub(crate) struct App {
     pub(crate) report_pending: bool,
     pub(crate) report_status: String,
     pub(crate) report_save_rx:
-        Option<std::sync::mpsc::Receiver<std::io::Result<Option<std::path::PathBuf>>>>,
+        Option<std::sync::mpsc::Receiver<std::io::Result<Option<PathBuf>>>>,
     /// The duty was told the places of the stops beyond the loaded tiles.
     pub(crate) duty_places: bool,
     pub(crate) hud: Option<hud::Hud>,
@@ -54,6 +85,7 @@ pub(crate) struct App {
     pub(crate) ui: Option<ui::Ui>,
     pub(crate) fps: f32,
     pub(crate) rain: rain::Rain,
+    pub(crate) shelter: shelter::Shelter,
     pub(crate) splashes: puddles::Splashes,
     pub(crate) lamps_on: Option<bool>,
     pub(crate) menu: Option<menu::Menu>,
@@ -62,10 +94,13 @@ pub(crate) struct App {
     pub(crate) radio: radio::Radio,
     pub(crate) profile: std::collections::BTreeMap<&'static str, f64>,
     pub(crate) profile_prev: std::collections::BTreeMap<&'static str, f64>,
+    /// When the last `redraw` returned: the time until the next one is the event loop's
+    /// (`frame.between` in OMSI_PROFILE).
+    pub(crate) redraw_ended: Option<Instant>,
     pub(crate) first_populate: bool,
-    pub(crate) envir: Option<::content::Envir>,
-    pub(crate) weather: Option<::content::weather::Weather>,
-    pub(crate) clock: ::simulation::SimClock,
+    pub(crate) envir: Option<content::Envir>,
+    pub(crate) weather: Option<content::weather::Weather>,
+    pub(crate) clock: simulation::SimClock,
     pub(crate) started: Instant,
     pub(crate) total_frames: u32,
     pub(crate) mirror_budget: f32,
@@ -74,7 +109,7 @@ pub(crate) struct App {
     pub(crate) frozen_mirrors: Option<FrozenMirrors>,
     pub(crate) hover_key: Option<(i32, i32, i32, i32)>,
     pub(crate) view: String,
-    pub(crate) audio: Option<::audio::AudioEngine>,
+    pub(crate) audio: Option<audio::AudioEngine>,
     pub(crate) ambience: Option<ambience::Ambience>,
     pub(crate) cursor: (f32, f32),
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -83,7 +118,12 @@ pub(crate) struct App {
     pub(crate) vr_cursor_warp_pending: Option<(f32, f32)>,
     pub(crate) window_focused: bool,
     pub(crate) keys: hashbrown::HashSet<KeyCode>,
+    /// The held modifiers as the window system reports them (Cmd on a Mac is `super`).
+    pub(crate) modifiers: winit::keyboard::ModifiersState,
     pub(crate) door_key_triggers: hashbrown::HashMap<KeyCode, Vec<String>>,
+    /// A controller door action (`doorkey_N`, `doors_release`) held: how many of its buttons
+    /// are down, and the triggers it fired, let go with the last of them.
+    pub(crate) pad_doors: hashbrown::HashMap<String, (u32, Vec<String>)>,
     pub(crate) last: Instant,
     pub(crate) speed: f32,
     pub(crate) mouse_look: bool,
@@ -101,24 +141,30 @@ pub(crate) struct App {
     pub(crate) game_menu: Option<usize>,
     pub(crate) lab_menu: Option<ui::PauseState>,
     pub(crate) lab_map_direct: bool,
+    pub(crate) restart_pending: bool,
+    pub(crate) restart_prompt: Option<Option<ui::PauseState>>,
     /// The list a vehicle page row opened, shown as a select dialog: the list, its kind and
     /// the list index of each option.
     /// The action of the vehicle page that waits for the vehicle list.
     pub(crate) lab_load: Option<&'static str>,
     /// The place-a-vehicle dialog's choices, while it is open.
-    pub(crate) lab_place: Option<crate::lab_menu::PlaceSel>,
+    pub(crate) lab_place: Option<lab_menu::PlaceSel>,
     /// The showroom that draws the vehicle the place dialog shows, and the interface texture
     /// its picture is in (texture, width, height).
-    pub(crate) lab_room: Option<crate::launcher::showroom::Showroom>,
+    pub(crate) lab_room: Option<showcase::Showcase>,
     pub(crate) lab_pic: Option<(usize, u32, u32)>,
     /// The vehicle list being read on a thread since start-up.
     pub(crate) vehicle_scan: Option<std::sync::mpsc::Receiver<VehicleScan>>,
     pub(crate) lab_list: Option<(Vec<(String, String)>, game_lists::ListKind, Vec<usize>)>,
     pub(crate) menu_top: Option<f32>,
     pub(crate) menu_scroll_drag: bool,
+    pub(crate) lab_bar_drag: u8,
     pub(crate) pane_scroll: Option<(usize, usize)>,
     pub(crate) menu_edit: Option<String>,
     pub(crate) menu_edit_icao: bool,
+    pub(crate) menu_edit_date: bool,
+    /// Destination list order (#447).
+    pub(crate) dest_sort: game_lists::DestSort,
     pub(crate) swap_pending: bool,
     pub(crate) menu_drag: Option<usize>,
     pub(crate) menu_kbd: bool,
@@ -126,6 +172,7 @@ pub(crate) struct App {
     pub(crate) clock_hold: f32,
     pub(crate) pad_look: [bool; 4],
     pub(crate) teleport_pick: bool,
+    pub(crate) teleport_down: Option<(f32, f32)>,
     pub(crate) discord: Option<discord::Discord>,
     pub(crate) discord_next_update: Instant,
     pub(crate) headtrack: Option<headtrack::HeadTracker>,
@@ -168,7 +215,7 @@ pub(crate) struct App {
     pub(crate) key_filter: String,
     pub(crate) key_search: bool,
     pub(crate) route_arrows: route_arrows::RouteArrows,
-    pub(crate) game_keys: Vec<::content::KeyBinding>,
+    pub(crate) game_keys: Vec<content::KeyBinding>,
     pub(crate) own_keys: std::collections::HashSet<i32>,
     pub(crate) own_shift: std::collections::HashSet<i32>,
     pub(crate) menu_prev_pause: bool,
@@ -196,12 +243,13 @@ pub(crate) struct App {
     pub(crate) cloud_drift: [f32; 2],
     pub(crate) weather_blend: Option<weather_cycle::Blend>,
     pub(crate) weather_cycle: Option<weather_cycle::Cycle>,
-    pub(crate) metar_rx: Option<std::sync::mpsc::Receiver<Option<::content::weather::Weather>>>,
+    pub(crate) metar_rx: Option<std::sync::mpsc::Receiver<Option<content::weather::Weather>>>,
     pub(crate) metar_once: bool,
     pub(crate) metar_next: f64,
     pub(crate) cursor_kind: u8,
-    pub(crate) lan: Option<::network::LanSession>,
+    pub(crate) lan: Option<network::LanSession>,
     pub(crate) remotes: lan::LanGame,
+    pub(crate) voice: voice::VoiceChat,
     pub(crate) spikes: u32,
     pub(crate) worst_ms: f32,
     pub(crate) governor: (f32, u32, f32),
@@ -213,7 +261,14 @@ pub(crate) struct App {
     #[cfg(all(feature = "devtools", debug_assertions))]
     pub(crate) devtools: Option<devtools::DevTools>,
     pub(crate) cpu_mark: Option<(f64, Instant, u32)>,
-    pub(crate) plugins: Option<::legacy_plugin::Plugins>,
+    /// Each thread's CPU seconds when `cpu_mark` was taken (OMSI_PROFILE).
+    pub(crate) thread_cpu_mark: Vec<(u32, String, f64)>,
+    /// The stage, renderer stage and count totals when `cpu_mark` was taken: the summary
+    /// averages over the steady frames after it, not over the loading.
+    pub(crate) profile_mark: Option<ProfileMark>,
+    /// When the player's bus first stood in the world (OMSI_PROFILE's mark without --exit-after).
+    pub(crate) play_since: Option<Instant>,
+    pub(crate) plugins: Option<legacy_plugin::Plugins>,
     pub(crate) touch: touch::Touch,
 }
 
@@ -229,11 +284,15 @@ impl App {
     }
 
     pub(crate) fn resumed_impl(&mut self, event_loop: &ActiveEventLoop) {
+        if self.boot.is_some() {
+            return;
+        }
         if let Some(window) = self.window.clone() {
             if self.surface.is_none() {
                 if let Some(r) = self.renderer.as_ref() {
                     let size = window.inner_size();
-                    let vsync = ::config::get_bool("graphics", "vsync").unwrap_or(true) && !self.vr_active();
+                    let vsync = config::get_bool("graphics", "vsync").unwrap_or(true)
+                        && !self.vr_active();
                     self.surface = SurfaceState::new_with(
                         &self.instance,
                         window.clone(),
@@ -267,6 +326,29 @@ impl App {
                 )
             })
             .unwrap_or((1600, 900));
+        let triple_screen = config::get_bool("graphics", "triple_screen").unwrap_or(false);
+        let span = triple_screen
+            && config::get_bool("graphics", "triple_screen_span").unwrap_or(true)
+            && !config::get_bool("vr", "enabled").unwrap_or(false)
+            && legacy_config::env::var_os("OMSI_OPENXR").is_none();
+        let span_rect = span
+            .then(|| triple_monitor_rect(event_loop))
+            .flatten();
+        if span && span_rect.is_none() {
+            log::info!(
+                "triple screen: three aligned monitors were not found; using the normal window layout"
+            );
+        }
+        let mut window_mode = config::get_string("graphics", "window_mode")
+            .unwrap_or_else(|| "windowed".into());
+        if config::get_bool("graphics", "triple_screen").unwrap_or(false)
+            && window_mode != "windowed"
+        {
+            window_mode = "windowed".into();
+            config::set_setting("graphics", "window_mode", window_mode.clone());
+            let _ = config::save();
+        }
+        let start_exclusive = window_mode == "fullscreen";
         let (fit, at) = fit_window(event_loop, lw as f64, lh as f64);
         let mut attrs = Window::default_attributes()
             .with_title("neoOMSI")
@@ -276,60 +358,192 @@ impl App {
         if let Some(at) = at {
             attrs = attrs.with_position(at);
         }
-        let window_mode = ::config::get_string("graphics", "window_mode")
-            .unwrap_or_else(|| "windowed".into());
-        let start_exclusive = window_mode == "fullscreen";
-        match window_mode.as_str() {
-            "borderless" => {
-                attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
-            }
-            _ => {}
+        if span_rect.is_none() && window_mode == "borderless" {
+            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         }
-        if ::legacy_config::env::var_os("OMSI_BACKGROUND").is_some() {
+        if legacy_config::env::var_os("OMSI_BACKGROUND").is_some() {
             attrs = attrs.with_active(false);
         }
         let window = match given {
             Some(w) => w,
             None => Arc::new(event_loop.create_window(attrs).expect("window")),
         };
-        let mut renderer =
-            match window_renderer(
-                &mut self.instance,
-                &window,
-                ::render::RenderOptions {
-                    msaa: ::config::get_int("graphics", "msaa").unwrap_or(4) as u32,
-                    anisotropy: ::config::get_int("graphics", "anisotropy").unwrap_or(8) as u16,
-                    shadow_size: ::config::get_int("graphics", "shadow_size").unwrap_or(2048) as u32,
-                    ssao: ::config::get_bool("graphics", "ssao").unwrap_or(true),
-                    render_scale: ::config::get_float("graphics", "render_scale").unwrap_or(0.0) as f32,
-                    compress_textures: ::config::get_bool("graphics", "texture_compression").unwrap_or(true),
-                    fxaa: ::config::get_string("graphics", "post_aa").as_deref() != Some("off"),
-                    min_obj_size: ::config::get_float("graphics", "min_obj_size").unwrap_or(0.013) as f32,
-                    max_obj_dist: match ::config::get_float("graphics", "max_obj_dist").unwrap_or(-1.0) as f32 {
-                        d if d >= 0.0 => d,
-                        _ => ::config::get_float("graphics", "view_distance").filter(|v| *v > 0.0).map(|v| v as f32).unwrap_or(900.0),
-                    },
-                    omsi_shadow_casters: ::config::get_string("graphics", "shadow_casters").as_deref() == Some("omsi"),
-                    shadow_blobs: ::config::get_bool("graphics", "shadow_blobs").unwrap_or(true),
-                    reflections: ::config::get_bool("graphics", "reflections").unwrap_or(true),
-                    no_enhanced: ::config::get_string("graphics", "graphics").as_deref() != Some("enhanced"),
-                },
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    fatal_message(&format!("The game cannot draw on this computer: {e:#}"));
-                    platform::exit(event_loop);
-                    return;
+        {
+            let w = window.clone();
+            let started = Instant::now();
+            render::set_device_hook(Some(Arc::new(move |device, queue, surface, format| {
+                let w = w.clone();
+                let caption = ::i18n::translate("splash.compile-shaders", &[]);
+                let mut screen = user_interface::LoadingScreen::new(device, queue, format);
+                let mut configured = (0, 0);
+                let mut shown = false;
+                let mut frame: render::LoadingFrame = Box::new(move |device, queue, surface| {
+                    let size = w.inner_size();
+                    let (pw, ph) = (size.width.max(1), size.height.max(1));
+                    if configured != (pw, ph) {
+                        surface.configure(
+                            device,
+                            &wgpu::SurfaceConfiguration {
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                format,
+                                color_space: wgpu::SurfaceColorSpace::Auto,
+                                width: pw,
+                                height: ph,
+                                present_mode: wgpu::PresentMode::AutoVsync,
+                                desired_maximum_frame_latency: 2,
+                                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                                view_formats: vec![],
+                            },
+                        );
+                        configured = (pw, ph);
+                    }
+                    match surface.get_current_texture() {
+                        wgpu::CurrentSurfaceTexture::Success(frame)
+                        | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                            let view = frame.texture.create_view(&Default::default());
+                            screen.draw(
+                                device,
+                                queue,
+                                &view,
+                                (pw, ph),
+                                &caption,
+                                None,
+                                started.elapsed().as_secs_f32(),
+                            );
+                            w.pre_present_notify();
+                            queue.present(frame);
+                            if !shown {
+                                w.set_visible(true);
+                                shown = true;
+                            }
+                        }
+                        wgpu::CurrentSurfaceTexture::Outdated
+                        | wgpu::CurrentSurfaceTexture::Lost => configured = (0, 0),
+                        _ => std::thread::sleep(std::time::Duration::from_millis(16)),
+                    }
+                });
+                if cfg!(target_os = "macos") {
+                    frame(device, queue, surface);
+                    None
+                } else {
+                    Some(frame)
                 }
-            };
+            })));
+        }
+        let options = render::RenderOptions {
+            msaa: config::get_int("graphics", "msaa").unwrap_or(4) as u32,
+            anisotropy: config::get_int("graphics", "anisotropy").unwrap_or(8) as u16,
+            shadow_size: config::get_int("graphics", "shadow_size").unwrap_or(2048) as u32,
+            ssao: config::get_bool("graphics", "ssao").unwrap_or(true),
+            render_scale: config::get_float("graphics", "render_scale").unwrap_or(0.0) as f32,
+            compress_textures: config::get_bool("graphics", "texture_compression")
+                .unwrap_or(true),
+            fxaa: config::get_string("graphics", "post_aa").as_deref() != Some("off"),
+            min_obj_size: config::get_float("graphics", "min_obj_size").unwrap_or(0.013)
+                as f32,
+            max_obj_dist: match config::get_float("graphics", "max_obj_dist").unwrap_or(-1.0)
+                as f32
+            {
+                d if d >= 0.0 => d,
+                _ => config::get_float("graphics", "view_distance")
+                    .filter(|v| *v > 0.0)
+                    .map(|v| v as f32)
+                    .unwrap_or(900.0),
+            },
+            omsi_shadow_casters: config::get_string("graphics", "shadow_casters").as_deref()
+                == Some("omsi"),
+            shadow_blobs: config::get_bool("graphics", "shadow_blobs").unwrap_or(true),
+            reflections: config::get_bool("graphics", "reflections").unwrap_or(true),
+            no_enhanced: config::get_string("graphics", "graphics").as_deref()
+                != Some("enhanced"),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (surface_tx, surfaces) = std::sync::mpsc::channel::<SurfaceRequest>();
+        let mut instance = self.instance.clone();
+        if cfg!(target_os = "macos") {
+            let w = window.clone();
+            let r = window_renderer(
+                &mut instance,
+                &|i| i.create_surface(w.clone()).map_err(|e| e.to_string()),
+                options,
+            );
+            let _ = tx.send((r, instance));
+        } else {
+            std::thread::spawn(move || {
+                let make_surface = |i: &wgpu::Instance| {
+                    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+                    let _ = surface_tx.send((i.clone(), reply_tx));
+                    reply_rx
+                        .recv()
+                        .unwrap_or_else(|_| Err("the window is gone".into()))
+                };
+                let r = window_renderer(&mut instance, &make_surface, options);
+                let _ = tx.send((r, instance));
+            });
+        }
+        self.boot = Some(Boot {
+            rx,
+            surfaces,
+            window,
+            span_rect,
+            start_exclusive,
+        });
+        self.poll_boot(event_loop);
+    }
+
+    pub(crate) fn poll_boot(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(boot) = self.boot.as_ref() else {
+            return;
+        };
+        while let Ok((instance, reply)) = boot.surfaces.try_recv() {
+            let _ = reply.send(
+                instance
+                    .create_surface(boot.window.clone())
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        let (renderer, instance) = match boot.rx.try_recv() {
+            Ok(v) => v,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+                    Instant::now() + std::time::Duration::from_millis(30),
+                ));
+                return;
+            }
+            Err(_) => {
+                fatal_message("The game cannot draw on this computer: the graphics start failed");
+                platform::exit(event_loop);
+                self.boot = None;
+                return;
+            }
+        };
+        render::set_device_hook(None);
+        let Boot {
+            window,
+            span_rect,
+            start_exclusive,
+            ..
+        } = self.boot.take().unwrap();
+        self.instance = instance;
+        let mut renderer = match renderer {
+            Ok(r) => r,
+            Err(e) => {
+                fatal_message(&format!("The game cannot draw on this computer: {e:#}"));
+                platform::exit(event_loop);
+                return;
+            }
+        };
         #[cfg(windows)]
         if cfg!(windows)
-            && (::config::get_bool("vr", "enabled").unwrap_or(false)
-            || ::legacy_config::env::var_os("OMSI_OPENXR").is_some()) {
+            && (config::get_bool("vr", "enabled").unwrap_or(false)
+            || legacy_config::env::var_os("OMSI_OPENXR").is_some())
+        {
             match openxr::Vr::new(
                 &renderer,
-                ::config::get_float("vr", "scale").unwrap_or(0.65).clamp(0.5, 1.0) as f32,
-                ::config::get_bool("vr", "desktop-mirror").unwrap_or(true),
+                config::get_float("vr", "scale")
+                    .unwrap_or(0.65)
+                    .clamp(0.5, 1.0) as f32,
+                config::get_bool("vr", "desktop-mirror").unwrap_or(true),
             ) {
                 Ok(vr) => self.vr = Some(vr),
                 Err(e) => log::error!("OpenXR could not start: {e:#}"),
@@ -357,7 +571,7 @@ impl App {
             &renderer,
             size.width,
             size.height,
-            ::config::get_bool("graphics", "vsync").unwrap_or(true) && !self.vr_active(),
+            config::get_bool("graphics", "vsync").unwrap_or(true) && !self.vr_active(),
         ) {
             Ok(s) => s,
             Err(e) => {
@@ -367,7 +581,7 @@ impl App {
             }
         };
         if start_exclusive {
-            window.set_fullscreen(Some(crate::game_lists::exclusive_fullscreen(&window)));
+            window.set_fullscreen(Some(game_lists::exclusive_fullscreen(&window)));
         }
         let (sw, sh) = renderer.scene_size(size.width, size.height);
         log::info!(
@@ -378,18 +592,37 @@ impl App {
             surface.config.present_mode
         );
         let scene = renderer.new_scene();
+        self.pending_triple_screen_span = span_rect;
         self.window = Some(window);
         self.surface = Some(surface);
         self.renderer = Some(renderer);
         self.scene = Some(scene);
-        self.present_splash("Starting");
+        self.present_splash(&::i18n::translate("splash.loading", &[]));
+        if let Some(w) = self.window.as_ref() {
+            w.focus_window();
+        }
         if self.args.bus.is_some() || self.args.cam.is_some() || self.args.no_menu {
             self.load_world_now(event_loop);
         } else {
-            let mut fonts = ::simulation::texttex::FontLibrary::new(&self.args.root);
-            self.hud = Some(hud::Hud::new(&mut fonts));
-            self.menu = Some(menu::Menu::new(&self.args.root, &self.args.map));
+            let mut menu = menu::Menu::new(&self.args.root, &self.args.map);
+            menu.refresh_continue();
+            menu.apply_last_situation();
+            menu.recall();
+            self.menu = Some(menu);
         }
+    }
+
+    fn apply_pending_triple_screen_span(&mut self) {
+        let Some((position, size)) = self.pending_triple_screen_span.take() else {
+            return;
+        };
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        window.set_fullscreen(None);
+        window.set_decorations(false);
+        window.set_outer_position(position);
+        let _ = window.request_inner_size(size);
     }
 
     pub(crate) fn present_splash(&mut self, caption: &str) {
@@ -414,8 +647,8 @@ impl App {
                 * ui::size_factor(
                 s.config.height as f32,
                 dpi,
-                ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
-                ::config::get_bool("ui", "scale_window").unwrap_or(true),
+                config::get_float("ui", "scale").unwrap_or(1.0) as f32,
+                config::get_bool("ui", "scale_window").unwrap_or(true),
             );
             ui.loading_bg = Some(None);
             ui.loading(
@@ -424,7 +657,6 @@ impl App {
                 s.config.width as f32,
                 s.config.height as f32,
                 scale,
-                "",
                 caption,
                 None,
                 None,
@@ -444,7 +676,7 @@ impl App {
                     near: 0.5,
                     far: 10.0,
                 };
-                let lighting = ::render::Lighting {
+                let lighting = render::Lighting {
                     sky_color: Vec3::new(0.04, 0.045, 0.055),
                     ..Default::default()
                 };
@@ -494,8 +726,8 @@ impl App {
                 * ui::size_factor(
                 s.config.height as f32,
                 dpi,
-                ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
-                ::config::get_bool("ui", "scale_window").unwrap_or(true),
+                config::get_float("ui", "scale").unwrap_or(1.0) as f32,
+                config::get_bool("ui", "scale_window").unwrap_or(true),
             );
             ui.loading(
                 r,
@@ -503,8 +735,7 @@ impl App {
                 s.config.width as f32,
                 s.config.height as f32,
                 scale,
-                &name,
-                "Loading",
+                &::i18n::translate("splash.load-map", &[("map", &name)]),
                 Some((t / 10.0).fract()),
                 map_dir.as_deref(),
                 t,
@@ -522,7 +753,7 @@ impl App {
                     near: 0.5,
                     far: 10.0,
                 };
-                let lighting = ::render::Lighting {
+                let lighting = render::Lighting {
                     sky_color: Vec3::new(0.04, 0.045, 0.055),
                     ..Default::default()
                 };
@@ -543,7 +774,7 @@ impl App {
 
     #[cfg(not(target_os = "android"))]
     pub(crate) fn update_discord(&mut self, loading: bool) {
-        if self.args.server.is_some() || !::config::get_bool("discord", "status").unwrap_or(true) {
+        if self.args.server.is_some() || !config::get_bool("discord", "status").unwrap_or(true) {
             if let Some(discord) = self.discord.as_ref() {
                 discord.stop();
                 if discord.is_finished() {
@@ -567,7 +798,9 @@ impl App {
         }
         self.discord_next_update = now + std::time::Duration::from_secs(5);
         if self.discord.is_none() {
-            self.discord = discord::Discord::start(&::config::get_string("discord", "app_id").unwrap_or_default());
+            self.discord = discord::Discord::start(
+                &config::get_string("discord", "app_id").unwrap_or_default(),
+            );
         }
         if let Some(discord) = self.discord.as_ref() {
             let bus = self.player.as_ref().map(|p| {
@@ -610,7 +843,7 @@ impl App {
         }
         let renderer = self.renderer.take().expect("renderer");
         let mut scene = renderer.new_scene();
-        self.envir = ::content::Envir::load(&self.args.root.join("envir.cfg")).ok();
+        self.envir = content::Envir::load(&self.args.root.join("envir.cfg")).ok();
         if weather_cycle::is_cycle(self.args.weather.as_deref()) {
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -619,7 +852,7 @@ impl App {
             let mut c = weather_cycle::Cycle::new(seed);
             let month = start_clock(&self.args).day_month().1;
             let all = weather_cycle::installed();
-            let clear = ::content::weather::Weather {
+            let clear = content::weather::Weather {
                 fog: (50000.0, 1.0),
                 ..Default::default()
             };
@@ -629,6 +862,14 @@ impl App {
             self.weather_cycle = Some(c);
         }
         self.weather = Some(load_weather(&self.args));
+        if self
+            .args
+            .weather
+            .as_deref()
+            .is_some_and(|weather| weather.starts_with("metar-sync:"))
+        {
+            self.metar_next = 600.0;
+        }
         self.wetness = self.weather.as_ref().map(initial_wetness).unwrap_or(0.0);
         self.clock = start_clock(&self.args);
         setup_sky(
@@ -645,15 +886,14 @@ impl App {
                     let distance = self
                         .args
                         .view_distance
-                        .or_else(|| ::config::get_float("graphics", "view_distance").filter(|v| *v > 0.0))
+                        .or_else(|| {
+                            config::get_float("graphics", "view_distance").filter(|v| *v > 0.0)
+                        })
                         .unwrap_or(900.0)
-                        .max(::map::tile_size());
+                        .max(map::tile_size());
                     w.set_fast_texture_loads(true);
                     w.set_texture_budget(texture_budget());
-                    log::info!(
-                        "texture budget: {:.0} MB",
-                        texture_budget() as f64 / 1e6
-                    );
+                    log::info!("texture budget: {:.0} MB", texture_budget() as f64 / 1e6);
                     self.streamer = Some(tiles::Streamer::new(
                         w.clone(),
                         &start_centers(&self.args, &cam, Some(&w)),
@@ -714,36 +954,51 @@ impl App {
                 };
                 match spawned {
                     Ok(mut p) => {
-                        let audio = ::audio::AudioEngine::new();
+                        let audio = audio::AudioEngine::new();
                         // Queue the user's master before any vehicle can start a voice;
                         // the first redraw must not briefly play at the default full level.
-                        audio.set_listener(::audio::Listener {
-                            master: if self.paused { 0.0 } else { (::config::get_float("audio", "master-volume").unwrap_or(1.0) as f32).clamp(0.0, 1.0) },
+                        audio.set_listener(audio::Listener {
+                            master: if self.paused {
+                                0.0
+                            } else {
+                                (config::get_float("audio", "master-volume").unwrap_or(1.0)
+                                    as f32)
+                                    .clamp(0.0, 1.0)
+                            },
                             ..Default::default()
                         });
                         if let Some(p) = p.as_mut() {
                             p.vehicle.host.auto_clutch =
-                                if ::config::get_bool("gameplay", "auto_clutch").unwrap_or(true) { 1.0 } else { 0.0 };
+                                if config::get_bool("gameplay", "auto_clutch").unwrap_or(true) {
+                                    1.0
+                                } else {
+                                    0.0
+                                };
                             p.load_sounds(&audio);
                             p.ibis_background = true;
                             if self.args.autostart {
                                 let msg = p.start_up();
                                 self.service_msg = Some((msg, 6.0));
                             }
-                            if !p.vehicle.ty.missing_packs.is_empty() {
-                                let packs: Vec<String> = p
-                                    .vehicle
-                                    .ty
-                                    .missing_packs
-                                    .iter()
-                                    .map(|(n, _)| n.clone())
-                                    .collect();
-                                let msg = format!(
-                                    "This bus takes parts from vehicle pack(s) that are not installed: {} (install them for its displays and devices)",
-                                    packs.join(", ")
+                            // The summary also covers the vehicle packs the bus is missing.
+                            let found = omsi_launcher_lib::instances::undismissed(
+                                crate::lab_mods::save_drive(),
+                            );
+                            if let Some(msg) = ::mods::diagnostics::summary(&found) {
+                                let tr = |key: &str| ::i18n::translate(key, &[]);
+                                let menu_path = format!(
+                                    "{} > {} > {}",
+                                    tr("pause.entry.options"),
+                                    tr("pause.options.group.mods"),
+                                    tr(crate::lab_mods::MISSING_TAB)
                                 );
+                                let see = ::i18n::translate(
+                                    "pause.options.mods.missing.see",
+                                    &[("path", &menu_path)],
+                                );
+                                let msg = format!("{msg} · {see}");
                                 self.service_msg = Some(match self.service_msg.take() {
-                                    Some((m, _)) => (format!("{m}   |   {msg}"), 12.0),
+                                    Some((shown, _)) => (format!("{shown}   |   {msg}"), 12.0),
                                     None => (msg, 12.0),
                                 });
                             }
@@ -787,17 +1042,20 @@ impl App {
                     self.camera = Some(cam);
                 }
                 self.navigator = Some(navigator::Navigator::new(
-                    ::config::get_bool("ui", "navigator").unwrap_or(true),
-                    ::config::get_float("ui", "opacity").unwrap_or(0.85).clamp(0.2, 1.0) as f32,
-                    &::config::get_string("ui", "navigator_corner").unwrap_or_else(|| "bottom-left".into()),
+                    config::get_bool("ui", "navigator").unwrap_or(true),
+                    config::get_float("ui", "opacity")
+                        .unwrap_or(0.85)
+                        .clamp(0.2, 1.0) as f32,
+                    &config::get_string("ui", "navigator_corner")
+                        .unwrap_or_else(|| "bottom-left".into()),
                 ));
                 if let Some(n) = self.navigator.as_mut() {
-                    n.arrows = ::config::get_bool("navigator", "arrows").unwrap_or(false);
-                    n.show_ai = ::config::get_bool("navigator", "ai").unwrap_or(true);
-                    n.show_topbar = ::config::get_bool("navigator", "topbar").unwrap_or(true);
-                    n.show_turn = ::config::get_bool("navigator", "turn").unwrap_or(true);
-                    n.show_stoplist = ::config::get_bool("navigator", "stoplist").unwrap_or(true);
-                    n.schedule = ::config::get_bool("navigator", "stops_ext").unwrap_or(false);
+                    n.arrows = config::get_bool("navigator", "arrows").unwrap_or(false);
+                    n.show_ai = config::get_bool("navigator", "ai").unwrap_or(true);
+                    n.show_topbar = config::get_bool("navigator", "topbar").unwrap_or(true);
+                    n.show_turn = config::get_bool("navigator", "turn").unwrap_or(true);
+                    n.show_stoplist = config::get_bool("navigator", "stoplist").unwrap_or(true);
+                    n.schedule = config::get_bool("navigator", "stops_ext").unwrap_or(false);
                 }
                 if let Some(d) = self.args.driver.as_deref() {
                     self.career = career::Career::load(&self.args.root, d);
@@ -807,17 +1065,24 @@ impl App {
                     if let Some(lan) = self.lan.as_ref() {
                         h.set_lan_seed(lan::population_seed(lan));
                     }
-                    h.exact_fare = ::config::get_bool("gameplay", "exact_fare").unwrap_or(true);
-                    h.boarding = ::config::get_string("gameplay", "boarding").unwrap_or_else(|| "auto".into());
-                    h.prefer_seats = ::config::get_bool("gameplay", "pax_prefer_seats").unwrap_or(false);
-                    h.voices = match ::config::get_string("passengers", "voices").unwrap_or_else(|| "all".into()).as_str() {
+                    h.exact_fare = config::get_bool("gameplay", "exact_fare").unwrap_or(true);
+                    h.boarding = config::get_string("gameplay", "boarding").unwrap_or_else(|| "auto".into());
+                    h.prefer_seats = config::get_bool("gameplay", "pax_prefer_seats").unwrap_or(false);
+                    h.voices = match config::get_string("passengers", "voices").unwrap_or_else(|| "all".into()).as_str() {
                         "off" => 2,
                         "tickets" => 1,
                         _ => 0,
                     };
-                    let ik = self.args.pax_ik.unwrap_or(::config::get_bool("passengers", "ik").unwrap_or(true));
+                    let ik = self
+                        .args
+                        .pax_ik
+                        .unwrap_or(config::get_bool("passengers", "ik").unwrap_or(true));
                     h.set_ik(ik);
-                    h.set_natural(::config::get_string("passengers", "motion").unwrap_or_else(|| "natural".into()) == "natural");
+                    h.set_natural(
+                        config::get_string("passengers", "motion")
+                            .unwrap_or_else(|| "natural".into())
+                            == "natural",
+                    );
                     if let Some(p) = self.player.as_mut() {
                         h.set_cabin(&mut p.vehicle);
                         h.ticket_key = ticket_key_name(&self.args.root, &p.bindings);
@@ -924,6 +1189,7 @@ impl App {
                 self.world = Some(w);
             }
         }
+        self.apply_pending_triple_screen_span();
         self.last = Instant::now();
     }
 
@@ -985,8 +1251,8 @@ impl App {
                 * ui::size_factor(
                 s.config.height as f32,
                 dpi,
-                ::config::get_float("ui", "scale").unwrap_or(1.0) as f32,
-                ::config::get_bool("ui", "scale_window").unwrap_or(true),
+                config::get_float("ui", "scale").unwrap_or(1.0) as f32,
+                config::get_bool("ui", "scale_window").unwrap_or(true),
             );
             ui.loading(
                 &renderer,
@@ -994,8 +1260,7 @@ impl App {
                 s.config.width as f32,
                 s.config.height as f32,
                 scale,
-                name.trim(),
-                "Loading",
+                &::i18n::translate("splash.load-map", &[("map", &name.trim())]),
                 Some(done as f32 / total.max(1) as f32),
                 map_dir.as_deref(),
                 self.started.elapsed().as_secs_f32(),
@@ -1018,7 +1283,7 @@ impl App {
                     near: 0.5,
                     far: 10.0,
                 };
-                let lighting = ::render::Lighting {
+                let lighting = render::Lighting {
                     sky_color: Vec3::new(0.08, 0.10, 0.14),
                     ..Default::default()
                 };
@@ -1068,7 +1333,7 @@ impl App {
         if self
             .lan
             .as_ref()
-            .map(|l| l.role == ::network::Role::Host)
+            .map(|l| l.role == network::Role::Host)
             .unwrap_or(false)
         {
             centers.extend(self.remotes.remotes.values().map(|r| r.vehicle().position));
@@ -1099,7 +1364,7 @@ impl App {
             return;
         }
         if let Some(p) = self.player.as_mut() {
-            let objects = ::config::get_bool("gameplay", "collision_objects").unwrap_or(true);
+            let objects = config::get_bool("gameplay", "collision_objects").unwrap_or(true);
             p.vehicle.collision = objects.then(|| w.collision.lock().clone());
             p.vehicle.wheel_walls = objects;
         }

@@ -117,15 +117,6 @@ export const PLATFORMS: Build[] = [
     note: "ARM64 with Vulkan drivers",
     os: "linux-arm",
   },
-  {
-    key: "android-arm64",
-    ext: "apk",
-    name: "Android",
-    family: "Android",
-    arch: "APK",
-    note: "arm64; built locally, not in automated releases",
-    os: "android",
-  },
 ];
 
 export const SERVERS: Build[] = [
@@ -161,7 +152,9 @@ export const SERVERS: Build[] = [
 
 function visitorOs() {
   const ua = navigator.userAgent || "";
-  if (/Android/i.test(ua)) return "android";
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return "";
+  // Recent iPadOS versions can identify themselves as a desktop Mac.
+  if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return "";
   if (/Windows/i.test(ua))
     return /ARM|aarch64/i.test(ua) ? "windows-arm" : "windows";
   if (/Mac OS X|Macintosh/i.test(ua)) return "mac";

@@ -200,6 +200,9 @@ impl MapIndex {
         );
         let t0 = std::time::Instant::now();
         let signal_types = parking_lot::Mutex::new(HashMap::new());
+        // the attachment points of the types `[attachObj]` objects hang on, by file
+        let attach_points: parking_lot::Mutex<HashMap<String, std::sync::Arc<Vec<Mat4>>>> =
+            Default::default();
         // (per tile: the parents its children name a light of, and its objects' files - the
         // objects by id, the files once each - to tell afterwards which of those parents
         // are crossings with a light program)
@@ -212,7 +215,7 @@ impl MapIndex {
                 part.traffic_light_parents = traffic_light_parents(&tile, |file| {
                     let key = file.replace('/', "\\").to_ascii_lowercase();
                     *signal_types.lock().entry(key).or_insert_with(|| {
-                        let path = ::legacy_config::resolve_path(root, file);
+                        let path = ::mods::resolve_path(root, file);
                         match ::scenery::SceneryObject::load(&path) {
                             Ok(sco) => sco.is_traffic_light,
                             Err(e) => {
@@ -351,6 +354,33 @@ impl MapIndex {
                         [first.pose.heading(), 0.0, 0.0],
                     ));
                 }
+                let attached = attached_places(
+                    &tile,
+                    |id| part.objects.get(&id).map(|o| map_pose(o.1, o.2)),
+                    |file, k| {
+                        let key = file.replace('/', "\\").to_ascii_lowercase();
+                        let points = attach_points
+                            .lock()
+                            .entry(key)
+                            .or_insert_with(|| {
+                                let path = ::mods::resolve_path(root, file);
+                                ::scenery::SceneryObject::load(&path)
+                                    .map(|sco| {
+                                        std::sync::Arc::new(
+                                            sco.attachments.iter().map(attachment_matrix).collect(),
+                                        )
+                                    })
+                                    .unwrap_or_default()
+                            })
+                            .clone();
+                        points.get(k).copied().unwrap_or(Mat4::IDENTITY)
+                    },
+                );
+                for (id, pose) in attached {
+                    part.objects
+                        .entry(id)
+                        .or_insert(((*tx, *ty), pose.pos, [pose.heading(), 0.0, 0.0]));
+                }
                 part.tiles_read = 1;
                 Some((part, rows, lights))
             })
@@ -371,7 +401,7 @@ impl MapIndex {
                 let file = &names[k as usize];
                 let key = file.replace('/', "\\").to_ascii_lowercase();
                 let has = *programs.entry(key).or_insert_with(|| {
-                    ::scenery::SceneryObject::load(&::legacy_config::resolve_path(root, file))
+                    ::scenery::SceneryObject::load(&::mods::resolve_path(root, file))
                         .map(|sco| !sco.traffic_lights.is_empty())
                         .unwrap_or(false)
                 });
@@ -461,7 +491,7 @@ impl MapIndex {
         let named: Vec<(&String, &(usize, (i32, i32)))> = self.files.iter().collect();
         let mut missing: Vec<(String, usize, (i32, i32))> = named
             .into_par_iter()
-            .filter(|(f, _)| !::legacy_config::vfs::is_file(&::legacy_config::resolve_path(root, f)))
+            .filter(|(f, _)| !::legacy_config::vfs::is_file(&::mods::resolve_path(root, f)))
             .map(|(f, (n, t))| (f.clone(), *n, *t))
             .collect();
         missing.sort();
@@ -479,6 +509,61 @@ impl MapIndex {
 
 /// Room for a spline's width on either side of its centre line.
 const SPLINE_HALF_WIDTH: f64 = 50.0;
+
+/// Where a tile's `[attachObj]` objects stand, from the tile file alone: on their parent's
+/// `[new_attachment]` point, as loading puts them there (`scene::stage`), through chains of
+/// attachments, in whatever order the file has them. `pose_of` gives the place of the tile's
+/// other objects and spline rows by id; `point` the matrix of a parent type's attachment
+/// point (file, index), the identity for a point it does not have - the parent's origin, as
+/// in the original. A stop hung on its shelter had no place until its tile was loaded, and
+/// the navigator left it out. Where the object has been placed, that place is the better one.
+pub(crate) fn attached_places(
+    tile: &Tile,
+    pose_of: impl Fn(i64) -> Option<Pose>,
+    point: impl Fn(&str, usize) -> Mat4,
+) -> Vec<(i64, Pose)> {
+    // the files of the records an attachment may hang on
+    let files: HashMap<i64, &str> = tile
+        .objects
+        .iter()
+        .chain(&tile.attach_objects)
+        .map(|o| (o.id, o.file.as_str()))
+        .chain(tile.spline_attachments.iter().map(|a| (a.id, a.file.as_str())))
+        .collect();
+    let mut placed: HashMap<i64, Pose> = HashMap::new();
+    let mut open: Vec<&::map::MapObject> = tile.attach_objects.iter().collect();
+    loop {
+        let before = open.len();
+        open.retain(|o| {
+            let Some(parent) = o.parent_id else {
+                return false;
+            };
+            let Some(pp) = placed.get(&parent).copied().or_else(|| pose_of(parent)) else {
+                return true;
+            };
+            let m = files
+                .get(&parent)
+                .map(|f| point(f, o.attach_index))
+                .unwrap_or(Mat4::IDENTITY);
+            placed
+                .entry(o.id)
+                .or_insert_with(|| pp.attached(&m, ::geometry::map_rotation(o.rot)));
+            false
+        });
+        if open.is_empty() || open.len() == before {
+            break;
+        }
+    }
+    placed.into_iter().collect()
+}
+
+/// The pose of a map object placed at `pos` turned by the tile's `rot` (heading, pitch, bank).
+pub(crate) fn map_pose(pos: DVec3, rot: [f64; 3]) -> Pose {
+    Pose {
+        pos,
+        rot: ::geometry::object_rotation(::geometry::map_rotation(rot)),
+    }
+}
 
 /// The world rectangle a tile's square and its splines cover. A damaged length is bounded,
 /// so one bad record cannot make a tile a neighbour of the whole map.
@@ -520,12 +605,14 @@ pub fn read_tile(path: &Path, chrono_dirs: &[PathBuf], detail_limit: u8) -> Opti
         Ok(t) => t,
         Err(e) => {
             log::warn!("{e}");
+            let map = path.parent().unwrap_or(path);
+            ::mods::diagnostics::missing(map, path, ::mods::diagnostics::Kind::Tile);
             return None;
         }
     };
     if let Some(name) = path.file_name() {
         for c in chrono_dirs {
-            let p = ::legacy_config::resolve_path(c, &name.to_string_lossy());
+            let p = ::mods::resolve_path(c, &name.to_string_lossy());
             if !::legacy_config::vfs::is_file(&p) {
                 continue;
             }
@@ -723,9 +810,12 @@ fn row_start(
 ) -> Option<RowStart> {
     let interval = att.interval.max(0.0);
     let d = att.offset[2];
-    let Some((master_tile, first)) = att.repeater else {
+    let Some((master_tile, _)) = att.repeater else {
         // the start distance counts from the start of the chain
         let d0 = index.map(|ix| d - chain_offset(ix, spline.id)).unwrap_or(d);
+        if d0 < -1e-6 {
+            return None;
+        }
         return Some(RowStart {
             s: d0,
             j: 0,
@@ -756,18 +846,14 @@ fn row_start(
             acc,
         });
     }
-    if interval > 0.0 && index.is_some() {
-        // the master is not in the map (a broken chain in a mod map): keep the row's
-        // spacing with its own count, starting at the interval's phase
-        let s = d % interval;
-        return Some(RowStart {
-            s,
-            j: first,
-            backwards: false,
-            d0: s - first as f64 * interval,
-            acc: 0.0,
-        });
-    }
+    // Provenance: neoOMSI stale spline attachment repeater fix
+    // Author: Gustav (TruckiHD).
+    // Source: https://github.com/neoOMSI/neoOMSI/commit/e634595b3ed7a928d3838ef177616044a853e600
+    // Porting note: Please preserve this provenance comment when adapting this fix.
+    //
+    // A repeater continues only the master named by (tile index, id). Stale copies can
+    // name a tile without that master alongside a valid repeater. Guessing a local phase
+    // for them creates a second, shifted row at the tile border
     None
 }
 
@@ -1649,6 +1735,26 @@ mod tests {
         assert!(row_objects(&row(0.0, 0.0, 102.0, None), &dead_end, DVec2::ZERO, None).is_empty());
     }
 
+    /// Omsi.exe drops the whole row when its first object lies before the start of the
+    /// row's own spline, not just that object (Gerolstein's Schullandheim delineators:
+    /// d = -1.37 m, 2 m apart, 30 m range - none of the 16 is placed).
+    #[test]
+    fn row_starting_before_its_spline_is_left_out() {
+        let s = spline(1, 0, 2, 100.0);
+        assert!(row_objects(&row(2.0, 30.0, -1.37, None), &s, DVec2::ZERO, None).is_empty());
+        assert!(row_objects(&row(0.0, 0.0, -1.37, None), &s, DVec2::ZERO, None).is_empty());
+        // the start counts from the chain's start: 595 m lies on spline 10/11, before 12
+        let ix = buffer_stop_chain();
+        let track = spline(12, 11, 0, 250.0);
+        assert!(
+            row_objects(&row(10.0, 100.0, 595.0, None), &track, DVec2::ZERO, Some(&ix)).is_empty()
+        );
+        assert_eq!(
+            row_objects(&row(10.0, 100.0, 600.0, None), &track, DVec2::ZERO, Some(&ix)).len(),
+            11
+        );
+    }
+
     #[test]
     fn tangential_row_rotates_within_the_spline_plane() {
         let s = MapSpline {
@@ -1987,6 +2093,48 @@ mod tests {
     }
 
     #[test]
+    fn orphan_repeater_does_not_duplicate_a_valid_border_row() {
+        let master_spline = spline(1, 0, 2, 100.4);
+        let continuation = MapSpline {
+            pos: [0.0, 100.4, 10.0],
+            ..spline(2, 1, 0, 100.0)
+        };
+        let mut index = MapIndex::default();
+        for s in [&master_spline, &continuation] {
+            index.splines.insert(
+                s.id,
+                IndexedSpline {
+                    length: s.length,
+                    map_chain_offset: None,
+                    prev: s.prev_id,
+                    next: s.next_id,
+                },
+            );
+        }
+        index.masters.insert((0, 5), (1, 10.0));
+        let valid = row(30.0, 200.0, 10.0, Some((0, 4)));
+        // A stale copy names the receiving tile instead of the master's tile. The old
+        // phase fallback made a second row 0.4 m beside the valid one
+        let orphan = row(30.0, 200.0, 10.0, Some((1, 4)));
+        let splines = [continuation];
+        let expected = tile_row_objects(&valid, &splines, DVec2::ZERO, Some(&index));
+        assert_eq!(
+            expected.iter().map(|(_, o)| o.index).collect::<Vec<_>>(),
+            vec![4, 5, 6]
+        );
+        for ((_, object), y) in expected.iter().zip([130.0, 160.0, 190.0]) {
+            assert!((object.pose.pos.y - y).abs() < 1e-6);
+        }
+        assert!(tile_row_objects(&orphan, &splines, DVec2::ZERO, Some(&index)).is_empty());
+        assert!(tile_row_objects(&orphan, &splines, DVec2::ZERO, None).is_empty());
+        let single_orphan = SplineAttachment {
+            interval: 0.0,
+            ..orphan
+        };
+        assert!(tile_row_objects(&single_orphan, &splines, DVec2::ZERO, Some(&index)).is_empty());
+    }
+
+    #[test]
     fn repeater_continues_the_row() {
         let mut ix = MapIndex::default();
         ix.splines.insert(
@@ -2128,5 +2276,52 @@ mod tests {
             "{}",
             child.heading()
         );
+    }
+
+    #[test]
+    fn an_attached_stop_stands_on_its_parents_attachment_point() {
+        let attached = |id, parent, file: &str, index| ::map::MapObject {
+            id,
+            file: file.into(),
+            parent_id: Some(parent),
+            attach_index: index,
+            ..Default::default()
+        };
+        // a stop sign (3) on point 0 of a pole (2) on point 1 of a shelter (1), written before
+        // the pole; one on a point the pole does not have (4); one whose parent is nowhere (5)
+        let tile = Tile {
+            objects: vec![::map::MapObject {
+                id: 1,
+                file: "shelter.sco".into(),
+                ..Default::default()
+            }],
+            attach_objects: vec![
+                attached(3, 2, "sign.sco", 0),
+                attached(2, 1, "pole.sco", 1),
+                attached(4, 2, "sign.sco", 7),
+                attached(5, 99, "sign.sco", 0),
+            ],
+            ..Default::default()
+        };
+        // the shelter faces east; its point 1 is 1.5 m to its right, the pole's point 0 2.5 m up
+        let shelter = map_pose(DVec3::new(10.0, 20.0, 1.0), [90.0, 0.0, 0.0]);
+        let point = |file: &str, k: usize| match (file, k) {
+            ("shelter.sco", 1) => Mat4::from_translation(Vec3::new(1.5, 0.0, 0.0)),
+            ("pole.sco", 0) => Mat4::from_translation(Vec3::new(0.0, 0.0, 2.5)),
+            _ => Mat4::IDENTITY,
+        };
+        let placed: HashMap<i64, Pose> =
+            attached_places(&tile, |id| (id == 1).then_some(shelter), point)
+                .into_iter()
+                .collect();
+        let at = |id: i64| placed.get(&id).map(|p| p.pos);
+        let near = |a: Option<DVec3>, b: DVec3| a.is_some_and(|a| (a - b).length() < 1e-4);
+        // facing east, the shelter's right is south
+        assert!(near(at(2), DVec3::new(10.0, 18.5, 1.0)), "{:?}", at(2));
+        assert!(near(at(3), DVec3::new(10.0, 18.5, 3.5)), "{:?}", at(3));
+        // a point the parent does not have: the parent's origin, as in the original
+        assert!(near(at(4), DVec3::new(10.0, 18.5, 1.0)), "{:?}", at(4));
+        assert_eq!(at(5), None);
+        assert!((placed[&3].heading() - 90.0).abs() < 1e-3);
     }
 }

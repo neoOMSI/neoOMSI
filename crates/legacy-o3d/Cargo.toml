@@ -15,3 +15,4 @@ glam.workspace = true
 log.workspace = true
 encoding_rs.workspace = true
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }

@@ -53,8 +53,27 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                     let m = if let Move::To(_) = mv { Move::Next } else { mv };
                     option_do(app, "free_look", "", m);
                 }
-                v if v.starts_with("pad_") => crate::lab_pads::click(app, v, arg),
+                v if v.starts_with("pad_") => {
+                    let tab = crate::lab_pads::click(app.controllers.as_mut(), v, arg);
+                    if let (Some(t), Some(u)) = (tab, app.ui.as_mut()) {
+                        u.world_sub = t;
+                        u.world_scroll = 0;
+                    }
+                }
                 "keysearch" => {}
+                "setup_root" if step => crate::lab_options::game_root_pick(),
+                "update_now" if step => crate::lab_options::update_check_now(app),
+                "mods_install" if step => crate::lab_mods::install(Some(app)),
+                "mods_open" if step => {
+                    if let Some(d) = ::mods::mods_dir() {
+                        let _ = std::fs::create_dir_all(&d);
+                        crate::updater::open_folder(&d);
+                    }
+                }
+                v if step && v.starts_with("mod_") => crate::lab_mods::apply_in_game(app, v, arg),
+                "pax_pack_get" if step => {
+                    crate::pax_pack::shared(crate::startup::content_dir, crate::pax_pack::PaxPack::start);
+                }
                 "keybind" if matches!(mv, Move::Dec | Move::Inc) => {
                     let mut it = arg.splitn(3, ' ');
                     if let (Some(sec), Some(idx), Some(name)) = (
@@ -75,8 +94,28 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         app.start_icao_edit();
                     }
                 }
+                "date_edit" if step => {
+                    if app.menu_edit.is_some() && app.menu_edit_date {
+                        app.apply_date_edit();
+                    } else if app
+                        .lan
+                        .as_ref()
+                        .is_some_and(|l| l.role == ::network::Role::Client)
+                    {
+                        app.service_msg =
+                            Some(("In a LAN session the host sets the clock".into(), 3.0));
+                    } else if app.real_time_locked() {
+                        app.service_msg = Some((
+                            "The date cannot be changed while the real-time sync is on".into(),
+                            3.0,
+                        ));
+                    } else {
+                        app.menu_edit = Some(String::new());
+                        app.menu_edit_date = true;
+                    }
+                }
                 "time_edit" if step => {
-                    if app.menu_edit.is_some() {
+                    if app.menu_edit.is_some() && !app.menu_edit_date {
                         app.apply_time_edit();
                     } else if app
                         .lan
@@ -92,6 +131,7 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         ));
                     } else {
                         app.menu_edit = Some(String::new());
+                        app.menu_edit_date = false;
                     }
                 }
                 "keybind" if step => {
@@ -108,6 +148,10 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         ::config::set_setting("camera", k, 0.0_f64);
                         let _ = ::config::save();
                     }
+                }
+                "head_pitch_reset" if step => {
+                    ::config::set_setting("camera", "head_pitch", 0.0_f64);
+                    let _ = ::config::save();
                 }
                 "clock_ontime" if step => {
                     if app
@@ -167,15 +211,8 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             "line" => Some(ListKind::Tours(arg.to_string(), None)),
             "free" => {
                 app.duty = None;
-                // unscheduled: the GetTT* callbacks answer ""/0/-1 again, as in Omsi.exe
                 if let Some(p) = app.player.as_mut() {
-                    let h = &mut p.vehicle.host;
-                    h.tt_line.clear();
-                    h.tt_stops.clear();
-                    h.tt_stop_ids.clear();
-                    h.tt_busstop_index = -1;
-                    h.tt_terminus_index = -1;
-                    h.tt_delay = 0.0;
+                    crate::schedule_paper::clear_vehicle(&mut p.vehicle);
                 }
                 app.service_msg = Some((::i18n::translate("pause.msg.free_drive", &[]), 4.0));
                 None
@@ -269,6 +306,10 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
             None
         }
         ListKind::Destinations if verb == "routes" => Some(ListKind::RouteNumbers),
+        ListKind::Destinations if verb == "dest_sort" => {
+            app.dest_sort = app.dest_sort.next();
+            Some(ListKind::Destinations)
+        }
         ListKind::RouteNumbers if verb == "route_type" => match app.menu_edit.take() {
             Some(t) => {
                 set_route_by_hand(app, &t);
@@ -297,7 +338,7 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         .filter(|l| *l > 0.0)
                         .map(|l| format!("{}", l as i64))
                         .unwrap_or_default();
-                    let name = t.strings.first().cloned().unwrap_or_default();
+                    let name = crate::game_lists::terminus_target(t);
                     crate::schedule::set_player_destination_directly(
                         &mut p.vehicle,
                         hof.as_deref(),
@@ -356,7 +397,12 @@ pub(super) fn option_do(app: &mut App, verb: &str, arg: &str, mv: Move) -> bool 
         ));
         return true;
     }
-    if let Some(cur) = toggle_now(app, verb) {
+    option_apply(Some(app), verb, arg, mv)
+}
+
+/// A switch flipped or a slider moved; false when `verb` is neither.
+pub(crate) fn option_apply(mut app: Option<&mut App>, verb: &str, arg: &str, mv: Move) -> bool {
+    if let Some(cur) = toggle_now(app.as_deref(), verb) {
         let on = match mv {
             Move::Next => !cur,
             Move::Inc => true,
@@ -364,23 +410,23 @@ pub(super) fn option_do(app: &mut App, verb: &str, arg: &str, mv: Move) -> bool 
             Move::To(f) => f >= 0.5,
         };
         if on != cur {
-            if let Some((k, v)) = toggle_set(app, verb, on) {
+            if let Some((k, v)) = toggle_set(app.as_deref_mut(), verb, on) {
                 remember_setting(k, &v);
             }
-            sync_live(app);
+            sync_live(app.as_deref_mut());
             LIST_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         return true;
     }
     if let Some(steps) = steps_of(verb) {
-        if let Some(now) = option_now(app, verb, arg) {
+        if let Some(now) = option_now(app.as_deref(), verb, arg) {
             let to = step_move(&steps, now, mv);
             // (a slider dragged sends the same value many times over)
             if (to - now).abs() > 1e-6 {
-                if let Some((k, v)) = option_set(app, verb, arg, to) {
+                if let Some((k, v)) = option_set(app.as_deref_mut(), verb, arg, to) {
                     remember_setting(k, &v);
                 }
-                sync_live(app);
+                sync_live(app.as_deref_mut());
                 LIST_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }

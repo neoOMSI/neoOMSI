@@ -3,7 +3,13 @@
 //! explicit state of the output: no device, opening, open, lost or reopening. The states are
 //! pure transitions so they can be tested without a device.
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+
+#[derive(Default)]
+pub(crate) struct OutputErrors {
+    pub(crate) xruns: AtomicU64,
+    pub(crate) realtime_denials: AtomicU64,
+}
 
 pub struct OutputFormat {
     sample_rate: AtomicU32,

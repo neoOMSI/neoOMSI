@@ -574,6 +574,11 @@ impl Plugin {
         if opl.dll.is_empty() {
             return Err("no [dll]".into());
         }
+        if opl.dll.contains(':') || opl.dll.starts_with(['\\', '/'])
+            || opl.dll.split(['\\', '/']).any(|part| part == "..")
+        {
+            return Err(format!("{}: the library must lie in the plugins folder", opl.dll));
+        }
         let dll =
             resolve_path(plugins_dir, &opl.dll).ok_or_else(|| format!("{} not found", opl.dll))?;
         let (backend, procs) = match Library::load(&dll) {
@@ -876,6 +881,19 @@ mod tests {
         assert_eq!(o.system_vars, ["Time"]);
         assert_eq!(o.string_vars, ["IBIS_terminus_name"]);
         assert_eq!(o.triggers, ["bus_doorfront0"]);
+    }
+
+    #[test]
+    fn a_library_outside_the_plugins_folder_is_refused() {
+        let dir = std::env::temp_dir().join(format!("plugin-escape-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for dll in ["..\\..\\evil.dll", "sub/../../evil.dll", "C:\\evil.dll", "/evil.dll"] {
+            let opl = dir.join("x.opl");
+            std::fs::write(&opl, format!("[dll]\r\n{dll}\r\n")).unwrap();
+            let error = Plugin::load(&opl, &dir, &HostConfig::default()).err().unwrap();
+            assert!(error.contains("must lie in the plugins folder"), "{dll}: {error}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

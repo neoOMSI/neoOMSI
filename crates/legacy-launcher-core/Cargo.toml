@@ -9,23 +9,17 @@ description = "The launcher's data side: maps, buses, lines, profiles, settings,
 name = "omsi_launcher_lib"
 path = "src/lib.rs"
 
-[[bin]]
-name = "neoomsi-launcher"
-path = "src/main.rs"
-
-[build-dependencies]
-winresource = "0.1"
-
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow.workspace = true
 rayon.workspace = true
-zip = { version = "8", default-features = false, features = ["deflate"] }
-sevenz-rust2 = { version = "0.23", default-features = false, features = ["util", "deflate"] }
-unrar-rs = { version = "0.10", default-features = false, features = ["crypto-rust"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["util", "deflate"] }
+unrar-rs = { version = "0.11", default-features = false, features = ["crypto-rust"] }
 config = { path = "../config" }
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 map = { path = "../map" }
 legacy-vehicle = { path = "../vehicle" }
 timetable = { path = "../timetable" }

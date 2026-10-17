@@ -3,7 +3,9 @@
 //! default name did not change. Loops restart at zero; streams retain their bounded ring.
 //! One-shots during an outage are discarded, preventing stale horns/steps on reconnect.
 use super::{AudioEngine, mixer::{self, AudioCore}, feedback::VoiceAsset, commands::Command};
-use crate::device::DeviceState;
+use crate::voice::voice::Feed;
+use crate::device::{DeviceState, OutputFormat};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 impl AudioEngine {
@@ -20,17 +22,17 @@ impl AudioEngine {
         device.close();
         self.pump();
         if was_lost {
-            self.active.borrow_mut().retain(|_, a| a.params.looping || matches!(a.asset, VoiceAsset::Stream(_)));
+            self.active.borrow_mut().retain(|_, a| a.params.looping || a.asset.fed());
         }
         self.commands.clear();
-        let opened = device.open_prepared(|| {
-            let mut core = AudioCore::new(device.format(),
+        let opened = device.open_prepared(Some(mixer::MIX_SAMPLE_RATE), || {
+            let mut core = AudioCore::new(Arc::new(OutputFormat::new(mixer::MIX_SAMPLE_RATE, 2)),
                 self.commands.clone(), self.reaper.clone(), self.counters.clone(), mixer::muted());
-            move |data: &mut [f32]| core.render(data)
+            move |data: &mut [f32]| core.render_mix(data)
         });
         if opened { self.replay(); }
         else {
-            self.active.borrow_mut().retain(|_, a| a.params.looping || matches!(a.asset, VoiceAsset::Stream(_)));
+            self.active.borrow_mut().retain(|_, a| a.params.looping || a.asset.fed());
         }
         opened
     }
@@ -47,6 +49,7 @@ impl AudioEngine {
             let cmd = match &a.asset {
                 VoiceAsset::Clip(c) => Command::Play { id, clip: c.clone(), params: a.params },
                 VoiceAsset::Stream(s) => Command::PlayStream { id, stream: s.clone(), params: a.params },
+                VoiceAsset::Source(s) => Command::PlaySource { id, feed: Feed::new(s.clone()), params: a.params },
             };
             self.commands.push(cmd); self.counters.replays.fetch_add(1, Ordering::Relaxed);
         }

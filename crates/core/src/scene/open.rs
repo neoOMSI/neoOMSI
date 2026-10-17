@@ -8,7 +8,7 @@ use super::*;
 pub fn tile_companion(path: &Path, ext: &str) -> PathBuf {
     // a copy in a content root before the installation's (the editor's ground, a mod's)
     if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
-        let p = ::legacy_config::resolve_path(dir, &format!("{}{}", name.to_string_lossy(), ext));
+        let p = ::mods::resolve_path(dir, &format!("{}{}", name.to_string_lossy(), ext));
         if ::legacy_config::vfs::exists(&p) {
             return p;
         }
@@ -21,9 +21,9 @@ pub fn tile_companion(path: &Path, ext: &str) -> PathBuf {
         return direct;
     };
     let name = format!("{}{}", name.to_string_lossy(), ext);
-    ::legacy_config::mirrored_dirs(dir)
+    ::mods::mirrored_dirs(dir)
         .into_iter()
-        .map(|d| ::legacy_config::resolve_path(&d, &name))
+        .map(|d| ::mods::resolve_path(&d, &name))
         .find(|p| ::legacy_config::vfs::exists(p))
         .unwrap_or(direct)
 }
@@ -57,7 +57,7 @@ impl World {
             }
         );
         // where the sun is: the map's time zone, place and summer time
-        let tz_path = ::legacy_config::resolve_path(&map_dir, "timezone.txt");
+        let tz_path = ::mods::resolve_path(&map_dir, "timezone.txt");
         let mut place = ::simulation::daylight::SunPlace::default();
         if let Ok(tz) = ::map::TimeZone::load(&tz_path) {
             place.timezone = tz.offset_hours as f64;
@@ -80,7 +80,7 @@ impl World {
         }
         ::simulation::daylight::set_place(place);
         let signal_routes =
-            ::legacy_config::CfgFile::read(&::legacy_config::resolve_path(&map_dir, "signalroutes.cfg"))
+            ::legacy_config::CfgFile::read(&::mods::resolve_path(&map_dir, "signalroutes.cfg"))
                 .map(|f| ::map::ailists::parse_signalroutes(&f))
                 .unwrap_or_default();
         if !signal_routes.is_empty() {
@@ -99,7 +99,7 @@ impl World {
         let mut ailists = ::map::ailists::ailists_with_chrono(&map_dir, &chrono_dirs);
         let mut ticket_pack = global.ticket_pack.clone();
         for c in &chrono_dirs {
-            if let Some(cfg) = Some(::legacy_config::resolve_path(c, "Chrono.cfg"))
+            if let Some(cfg) = Some(::mods::resolve_path(c, "Chrono.cfg"))
                 .filter(|p| ::legacy_config::vfs::is_file(p))
                 .and_then(|p| ::legacy_config::CfgFile::read(&p).ok())
             {
@@ -156,6 +156,7 @@ impl World {
             upgrades_done: Default::default(),
             freetex_upgrades: Default::default(),
             texture_limit: Default::default(),
+            texture_cache_limit: Default::default(),
             budget_checked: Default::default(),
             lanes: Mutex::new(Vec::new()),
             lane_tiles: Mutex::new(Vec::new()),
@@ -163,6 +164,7 @@ impl World {
             controller_of_object: Mutex::new(HashMap::new()),
             light_objects: Mutex::new(Vec::new()),
             scripted: Mutex::new(Vec::new()),
+            scripted_of_object: Mutex::new(HashMap::new()),
             collision: Mutex::new(Default::default()),
             light_occluders: Mutex::new(Default::default()),
             poles: Mutex::new(HashMap::new()),
@@ -219,7 +221,7 @@ impl World {
                     t.index,
                     t.x,
                     t.y,
-                    ::legacy_config::resolve_path(&self.map_dir, &t.file),
+                    ::mods::resolve_path(&self.map_dir, &t.file),
                 )
             })
             .filter(|t| ::legacy_config::vfs::is_file(&t.3))
@@ -244,7 +246,7 @@ impl World {
                 (Some((cx, cy)), Some(r)) => (t.x - cx).abs() <= r && (t.y - cy).abs() <= r,
                 _ => true,
             })
-            .map(|t| (t.x, t.y, ::legacy_config::resolve_path(&self.map_dir, &t.file)))
+            .map(|t| (t.x, t.y, ::mods::resolve_path(&self.map_dir, &t.file)))
             .filter(|(_, _, p)| ::legacy_config::vfs::is_file(p))
             .collect()
     }
@@ -523,7 +525,7 @@ impl World {
     /// The file tile (tx, ty) is read from, and the map folder's place relative to `root`.
     pub fn tile_source(&self, tx: i32, ty: i32) -> Option<PathBuf> {
         let t = self.global.tiles.iter().find(|t| t.x == tx && t.y == ty)?;
-        Some(::legacy_config::resolve_path(&self.map_dir, &t.file))
+        Some(::mods::resolve_path(&self.map_dir, &t.file))
     }
 
     /// Rebuild the world's lists (stops, obstacles, lights, lamps) from the loaded tiles.

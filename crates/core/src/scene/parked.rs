@@ -424,7 +424,13 @@ impl World {
                     .cloned()
                     .unwrap_or_default();
                 let alpha = text_alpha(o3d_mats, slot, overrides);
-                let key = scenery_text_key(tt, &text, alpha);
+                let slot_ov: Vec<&MaterialDef> = overrides
+                    .iter()
+                    .filter(|o| {
+                        !o.item && ::simulation::vehicle::override_slot(o3d_mats, o) == Some(slot)
+                    })
+                    .collect();
+                let key = scenery_text_key(tt, &text, alpha, &slot_ov);
                 if let Some(e) = gpu.text_textures.get_mut(&key) {
                     e.2 += 1;
                     let mat = e.1;
@@ -439,7 +445,7 @@ impl World {
                 });
                 let image = scenery_text_image(tt, atlas, &text);
                 let tex = gpu.add_image(renderer, scene, &image, true);
-                let mat = renderer.add_material(scene, Some(tex), alpha, [1.0; 4], false);
+                let mat = scenery_text_material(renderer, scene, tex, alpha, false, &slot_ov);
                 let mat = gpu.material(renderer, scene, mat);
                 gpu.text_textures.insert(key.clone(), (tex, mat, 1));
                 tg.texts.push(key);
@@ -476,9 +482,15 @@ impl World {
             }
         }
         *scripted = kept;
+        let mut by_id = self.scripted_of_object.lock();
+        by_id.clear();
+        for (i, o) in scripted.iter().enumerate() {
+            by_id.insert(o.map_id, i);
+        }
     }
 
-    /// The placed objects that stop the outside camera and may reach into the rectangle
+    /// The placed objects that stop the outside camera or keep the weather off (see
+    /// `ObjectType::camera_shape` and `shelter_shape`) and may reach into the rectangle
     /// `lo`..`hi` of the ground plane (with their types, which are alive while a tile uses
     /// them).
     pub fn camera_blockers(

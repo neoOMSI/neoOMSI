@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Increment when the cached catalog format or the logic that derives it changes.
-const INDEX_VERSION: u32 = 2;
+const INDEX_VERSION: u32 = 4;
 
 /// Modification time of `p`; a path inside an archive used in place has the archive's.
 pub fn mtime_ns(p: &Path) -> u64 {
@@ -209,11 +209,11 @@ pub fn content_stamp(bases: &[PathBuf], inbox: Option<&Path>) -> String {
     let mut h = hasher();
     // the archives used in place come and go with the content folder's `Archives`
     if let Some(c) = bases.first() {
-        folder_stamp(&[c.join(crate::install::ARCHIVES)]).hash(&mut h);
+        folder_stamp(&[c.join(::mods::ARCHIVES_DIR)]).hash(&mut h);
     }
     for b in bases {
         for rel in ["maps", "Vehicles", "Weather"] {
-            let d = b.join(rel);
+            let d = crate::sub_dir(b, rel);
             folder_stamp(std::slice::from_ref(&d)).hash(&mut h);
             if rel == "Weather" {
                 continue;
@@ -243,7 +243,7 @@ pub fn content_stamp(bases: &[PathBuf], inbox: Option<&Path>) -> String {
         }
     });
     if let Some(i) = inbox {
-        folder_stamp(&[i.to_path_buf(), i.join(crate::install::WAITING)]).hash(&mut h);
+        folder_stamp(&[i.to_path_buf()]).hash(&mut h);
     }
     format!("{:016x}", h.finish())
 }

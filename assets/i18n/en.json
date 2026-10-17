@@ -1,4 +1,39 @@
 {
+  "splash": {
+    "compile-shaders": "Compile shaders..",
+    "loading": "Loading..",
+    "load-map": "Loading {map}.."
+  },
+  "ingame": {
+    "navigator": {
+      "kmh": "km/h",
+      "off_route": "Off route",
+      "rerouting": "Recalculating route",
+      "recalculated": "Route recalculated",
+      "jam": "Traffic jam",
+      "slow": "Slow traffic",
+      "map": "Map",
+      "last_stop": "Final stop",
+      "on_time": "on time",
+      "days": {
+        "mon": "Mon",
+        "tue": "Tue",
+        "wed": "Wed",
+        "thu": "Thu",
+        "fri": "Fri",
+        "sat": "Sat",
+        "sun": "Sun"
+      }
+    },
+    "infobar": {
+      "outside": "Ext.",
+      "inside": "Int.",
+      "fuel": "Fuel",
+      "next_stop": "Next stop",
+      "passenger": "Passenger",
+      "passengers": "Passengers"
+    }
+  },
   "pause": {
     "entry": {
       "admin": "Administration",
@@ -16,6 +51,7 @@
       "screenshot": "Screenshot mode",
       "tobus": "Back to my bus",
       "options": "Options",
+      "mainmenu": "Main menu",
       "quit": "Quit",
       "resume": "Resume",
       "save": "Save",
@@ -29,8 +65,8 @@
       },
       "camera": {
         "alt_view": {
-          "desc": "On: the right mouse button turns the view and Shift+right zooms. Off: as in OMSI, the right button zooms and the middle button turns the view",
-          "name": "Right mouse button turns the view"
+          "desc": "On: the right mouse button rotates the view and Shift+right zooms. Off: like OMSI, the right button zooms and the middle button rotates the view",
+          "name": "Right mouse button rotates the view"
         },
         "cam_smooth": {
           "desc": "Enables a smooth transition between camera perspectives",
@@ -42,10 +78,10 @@
         },
         "driver": {
           "desc": "Shows the driver in the outside views and in the mirrors",
-          "name": "Driver at the wheel (outside views)"
+          "name": "Show driver (outside views)"
         },
         "fov": {
-          "desc": "The view angle of the views from the vehicle",
+          "desc": "The viewing angle of the cameras inside the vehicle",
           "name": "Field of view"
         },
         "hands_in_cab": {
@@ -56,10 +92,34 @@
           "desc": "The view moves with the acceleration of the vehicle",
           "name": "Head movement"
         },
+        "head_strength": {
+          "desc": "How strongly the view moves with the vehicle (100% is the movement of OMSI)",
+          "name": "Head movement strength"
+        },
+        "head_vertical": {
+          "desc": "The view moves up and down over bumps and dips",
+          "name": "Head movement up and down"
+        },
+        "head_longitudinal": {
+          "desc": "The view moves forward and back when accelerating and braking",
+          "name": "Head movement forward and back"
+        },
+        "head_lateral": {
+          "desc": "The view moves sideways in curves",
+          "name": "Head movement sideways"
+        },
+        "head_pitch": {
+          "desc": "Adjusts the driver's default viewing angle up or down",
+          "name": "Head pitch"
+        },
+        "head_pitch_reset": {
+          "desc": "Resets the driver's viewing angle to 0°",
+          "name": "Reset head pitch"
+        },
         "headtrack": {
-          "desc": "Head tracking with opentrack (UDP port 4242)",
+          "desc": "Head tracking with TrackIR or opentrack (UDP port 4242)",
           "name": "Head tracking",
-          "desc_port": "Head tracking with opentrack (UDP port {port})"
+          "desc_port": "Head tracking with TrackIR or opentrack (UDP port {port})"
         },
         "look_sens": {
           "desc": "How fast the view turns when you look around with the mouse (100% is the speed of OMSI)",
@@ -86,7 +146,7 @@
           "name": "View turns with steering"
         },
         "steer_look_angle": {
-          "desc": "How far the view turns at full steering lock",
+          "desc": "How far the view turns when the steering is turned fully",
           "name": "Steering view angle"
         },
         "steer_look_response": {
@@ -102,7 +162,7 @@
           "desc": "Which axes of the head tracking are turned around"
         },
         "free_look": {
-          "desc": "Configure free look, the crosshair and the button names"
+          "desc": "Configure free look, the crosshair and the control names"
         }
       },
       "controls": {
@@ -147,11 +207,11 @@
           "name": "Throttle pedal strength"
         },
         "steer_center": {
-          "desc": "Small deviations from the centre position count as driving straight ahead",
-          "name": "Steering centre dead zone"
+          "desc": "Small stick deviations from the centre position count as driving straight ahead",
+          "name": "Gamepad stick dead zone"
         },
         "stick_sens": {
-          "desc": "How far a small stick movement turns the wheel; pushing the stick fully still gives full lock",
+          "desc": "How far a small stick movement turns the wheel; pushing the stick all the way still gives full lock",
           "name": "Gamepad steering sensitivity"
         },
         "wheel_lock": {
@@ -183,6 +243,42 @@
         "window_mode": {
           "name": "Window mode",
           "desc": "How the game fills your screen"
+        },
+        "triple_screen": {
+          "name": "Triple-screen projection",
+          "desc": "Calibrates the view for three monitors around your driving position"
+        },
+        "triple_screen_span": {
+          "name": "Span three monitors at startup",
+          "desc": "Opens a borderless window across three aligned monitors when available"
+        },
+        "triple_screen_hud": {
+          "name": "HUD on centre screen",
+          "desc": "Keeps the game interface on the middle monitor"
+        },
+        "triple_screen_width_mm": {
+          "name": "Visible width of one screen",
+          "desc": "Physical width of each monitor's visible area"
+        },
+        "triple_screen_distance_mm": {
+          "name": "Viewing distance",
+          "desc": "Distance from your eyes to the middle monitor"
+        },
+        "triple_screen_bezel_mm": {
+          "name": "Bezel gap or overlap",
+          "desc": "Positive values leave room for monitor frames; negative values overlap adjacent views"
+        },
+        "triple_screen_left_angle": {
+          "name": "Left screen inward angle",
+          "desc": "Angle of the left monitor toward you"
+        },
+        "triple_screen_right_angle": {
+          "name": "Right screen inward angle",
+          "desc": "Angle of the right monitor toward you"
+        },
+        "triple_screen_eye_height_mm": {
+          "name": "Eye height relative to screen centre",
+          "desc": "Vertical position of your eyes relative to the centre of the middle screen"
         }
       },
       "driving": {
@@ -233,7 +329,7 @@
         },
         "tooltips": {
           "desc": "Shows the name of the control that the cursor or the centre of the screen points at",
-          "name": "Names of buttons"
+          "name": "Control names"
         }
       },
       "gameplay": {
@@ -264,7 +360,7 @@
         },
         "collision_pedestrians": {
           "desc": "Enables or disables running over pedestrians",
-          "name": "Collisions with people"
+          "name": "Collisions with pedestrians"
         },
         "exact_fare": {
           "desc": "Passengers pay the exact amount, so no change is given at the cash desk",
@@ -288,6 +384,18 @@
         "pax_prefer_seats": {
           "desc": "Passengers take a free seat when boarding and use standing places only when all seats are taken",
           "name": "Passengers prefer available seats"
+        },
+        "pax_pack": {
+          "download": "Download",
+          "downloading": "Downloading. Used from the next start of the game",
+          "installed": "Installed",
+          "installing": "Installing. Used from the next start of the game",
+          "missing": "Not downloaded yet; needed for the \"Realistic\" passenger models",
+          "name": "Realistic passenger models",
+          "next_start": "Up to date. A game started before the download still has the old passengers",
+          "outdated": "A newer version is available",
+          "retry": "Try again",
+          "update": "Update"
         }
       },
       "graphics": {
@@ -317,8 +425,8 @@
           "name": "LED glow"
         },
         "led_mips": {
-          "desc": "Keeps the mipmaps of the LED masks (smoother from a distance)",
-          "name": "LED mask mipmaps"
+          "desc": "How strongly the dots of LED destination displays blur with distance; 0 keeps every dot sharp",
+          "name": "LED dot softness"
         },
         "map_detail": {
           "name": "Map detail"
@@ -337,7 +445,7 @@
         },
         "nightmap_glow": {
           "desc": "How strongly lit buttons, lamps and windows glow at night",
-          "name": "Night map glow"
+          "name": "Night texture glow"
         },
         "preset": {
           "desc": "Sets most of the graphics options at once",
@@ -350,7 +458,7 @@
           "name": "Render scale"
         },
         "shadow_casters": {
-          "name": "Shadows cast by"
+          "name": "Cast shadows from"
         },
         "shadow_size": {
           "name": "Shadow map resolution"
@@ -396,13 +504,229 @@
         "free_look": "Free look",
         "gameplay": "Gameplay",
         "graphics": "Graphics",
+        "info": "Info bar",
         "interface": "Interface",
         "keybinds": "Key bindings",
         "map": "Map",
+        "mods": "Mods",
         "sound": "Sound",
+        "game": "Game & Updates",
         "vr": "VR",
         "head_tracking": "Head tracking",
-        "general": "General"
+        "general": "General",
+        "voice": "Voice chat"
+      },
+      "info": {
+        "time": {
+          "desc": "Shows the simulation time",
+          "name": "Time"
+        },
+        "speed": {
+          "desc": "Shows the current speed",
+          "name": "Speed"
+        },
+        "temp": {
+          "desc": "Shows the outside and inside temperature",
+          "name": "Temperature"
+        },
+        "fuel": {
+          "desc": "Shows the fuel level",
+          "name": "Fuel"
+        },
+        "pax": {
+          "desc": "Shows the number of passengers aboard",
+          "name": "Passengers"
+        },
+        "line": {
+          "desc": "Shows the line and its destination",
+          "name": "Line and destination"
+        },
+        "next": {
+          "desc": "Shows the name of the next stop",
+          "name": "Next stop"
+        },
+        "delay": {
+          "desc": "Shows the deviation from the timetable",
+          "name": "Delay"
+        }
+      },
+      "mods": {
+        "install": {
+          "button": "Choose",
+          "desc": "Unpacks a .zip, .7z or .rar archive into the Mods folder.\n\nAn installed mod of the same name is replaced, except while driving; the old version moves to mods/uninstalled.",
+          "name": "Install a mod from an archive",
+          "title": "Select a mod archive to install"
+        },
+        "list": {
+          "desc": "The load order of the installed mods, and what is wrong with them",
+          "name": "Mods"
+        },
+        "none": "No mods installed",
+        "none_desc": "No mods were found. Content in the OMSI 2 folder itself doesn't count as a mod.\n\nInstall a mod from an archive above, or put archives or folders into the Mods folder.",
+        "open": {
+          "button": "Open",
+          "desc": "Opens the Mods folder",
+          "name": "Mods folder"
+        },
+        "status": {
+          "empty_desc": "No OMSI 2 content found in it (e.g. Vehicles or maps)."
+        },
+        "no_content": {
+          "name": "No content folder",
+          "desc": "Choose the OMSI 2 folder under Game first."
+        },
+        "unreadable": "The game cannot read it: {error}",
+        "state": {
+          "empty": "No content",
+          "error": "Unreadable",
+          "missing": "Not found",
+          "hidden": "Hidden",
+          "plugins_blocked": "Plugins blocked"
+        },
+        "order": {
+          "heading": "Load order (top wins)",
+          "unavailable": "Not in the content folder. It keeps its place in case it comes back; Forget removes it from the list.",
+          "unreadable": "Saved load order unreadable",
+          "hidden": "Fully hidden by {mods}: none of its files are used",
+          "overridden": "{n} files hidden by {mods}",
+          "overrides": "Replaces {n} files of {mods}",
+          "replaces": "Replaces {n} original OMSI 2 files",
+          "clash": "{mod} uses the folder Vehicles/{folder} for another bus",
+          "problems": "Problems: {n}",
+          "next_start": "Changes apply at the next start",
+          "unreadable_desc": "The default order is in effect.\n\n{error}"
+        },
+        "action": {
+          "up": "Move up",
+          "down": "Move down",
+          "top": "Move to the top",
+          "bottom": "Move to the bottom",
+          "allow_plugins": "Allow plugins",
+          "block_plugins": "Block plugins",
+          "uninstall_ask": "Uninstall…",
+          "uninstall": "Uninstall",
+          "forget": "Forget",
+          "cancel": "Cancel"
+        },
+        "shared": {
+          "name": "Shared library",
+          "button": "Open",
+          "desc": "Always last: its files are used only where no mod has them. Plugins in it never load."
+        },
+        "new_mods": {
+          "name": "Newly installed mods",
+          "top": "At the top",
+          "bottom": "At the bottom",
+          "desc": "Where a new mod goes in the list. Mods already in the list never move by themselves."
+        },
+        "reset": {
+          "name": "Reset the load order",
+          "button": "Reset",
+          "confirm": "Reset the load order",
+          "desc": "Back to the default order: alphabetical. Entries that are not installed are dropped.",
+          "again": "Click again to reset"
+        },
+        "jobs": {
+          "heading": "Installs",
+          "cancel": "Cancel install",
+          "clear": "Finished installs",
+          "clear_button": "Clear",
+          "installed": "Installed {folder}",
+          "state": {
+            "queued": "Queued",
+            "planning": "Planning",
+            "checking": "Checking space",
+            "unpacking": "Unpacking",
+            "copying": "Copying",
+            "moving": "Moving into place",
+            "done": "Done",
+            "failed": "Failed",
+            "cancelled": "Cancelled"
+          },
+          "keep": "Keep installing",
+          "progress": "{state} {pct}%"
+        },
+        "missing": {
+          "tab": "Missing content",
+          "not_driven": {
+            "name": "Not driven yet",
+            "desc": "Vehicle textures, sounds and scripts show up here once the map has been driven."
+          },
+          "hidden": "{n} hidden",
+          "show_hidden": "Show again",
+          "map": "Missing content of {map}",
+          "game": "Missing content of this session",
+          "checking": "Checking the map…",
+          "failed": "The map could not be checked",
+          "none": "Nothing is missing",
+          "dismiss": "Hide",
+          "missing_dependency": "{requester} needs {pack}, which is not installed ({count} files)",
+          "inactive_dependency": "{requester} needs {pack}: it is in {provider}, which is uninstalled ({count} files)",
+          "incomplete_pack": "{requester} needs files that {provider} does not have in {pack}; perhaps another version ({count} files)",
+          "incomplete_mod": "{requester} lacks some of its own files in {pack} ({count} files)",
+          "missing_file": "{requester}: {count} files not found",
+          "see": "see {path}",
+          "severity": {
+            "required": "Required",
+            "degraded": "Looks wrong",
+            "optional": "Minor"
+          },
+          "name": {
+            "missing_dependency": "{pack} not installed",
+            "inactive_dependency": "{pack} uninstalled",
+            "incomplete_pack": "{pack} incomplete",
+            "incomplete_mod": "{requester} incomplete",
+            "missing_file": "{requester}: {count} files missing"
+          },
+          "advice": {
+            "missing_dependency": "Install {pack}.",
+            "inactive_dependency": "Install {provider} again: it is in mods/uninstalled.",
+            "incomplete_pack": "{requester} may need another version of {pack}.",
+            "incomplete_mod": "A new copy of {requester} usually helps.",
+            "missing_file": "Check the load order, or install a new copy of {requester}."
+          }
+        },
+        "msg": {
+          "next_start": "Saved. Takes effect at the next start."
+        },
+        "plugins": {
+          "blocked": "It has plugins: program code that runs in the game. They are blocked; allow them only if you trust this mod.",
+          "allowed": "Its plugins (program code that runs in the game) are allowed."
+        },
+        "uninstall": {
+          "ask": "Uninstall?",
+          "desc": "Uninstalling moves it to mods/uninstalled."
+        }
+      },
+      "game": {
+        "root": {
+          "button": "Change",
+          "desc": "The folder with Omsi.exe, maps and Vehicles in it",
+          "name": "OMSI 2 installation",
+          "title": "The OMSI 2 folder (with maps and Vehicles in it)",
+          "exe_title": "Select the Omsi.exe of your OMSI 2 installation",
+          "incomplete": "{path} is not a complete OMSI 2 installation.\n\nMissing: {missing}"
+        },
+        "root_none": "Not chosen yet",
+        "root_restart": "takes effect after a restart",
+        "update_auto": {
+          "desc": "Installs a new version as soon as it is found",
+          "name": "Install updates automatically"
+        },
+        "update_available": "{version} is available",
+        "update_check": {
+          "desc": "Looks for a new version when the game starts",
+          "name": "Check for updates automatically"
+        },
+        "update_checking": "Looking for updates...",
+        "update_current": "Current version: {version}",
+        "update_failed": "The last check failed",
+        "update_latest": "{version} is the latest version",
+        "update_now": {
+          "button": "Check now",
+          "desc": "Looks for a new version of neoOMSI",
+          "name": "Check for updates"
+        }
       },
       "interface": {
         "chat": {
@@ -419,11 +743,11 @@
         },
         "name_tags": {
           "desc": "Shows the names of the other players above their buses",
-          "name": "Player names above their buses"
+          "name": "Player names above buses"
         },
         "nav_arrows": {
           "desc": "Shows OMSI 2's route arrows on the road",
-          "name": "Route arrows (as in OMSI 2)"
+          "name": "Route arrows (like OMSI 2)"
         },
         "notes": {
           "desc": "Shows messages such as why the vehicle cannot move, the change still due and the result of a service",
@@ -439,7 +763,7 @@
         },
         "tooltips": {
           "desc": "Shows the name of the control under the cursor",
-          "name": "Names of controls"
+          "name": "Control names"
         },
         "ui_opacity": {
           "desc": "How opaque the backgrounds of the interface are",
@@ -485,7 +809,7 @@
         },
         "nav_turn": {
           "desc": "Shows the next turn at the top of the map",
-          "name": "Turn indicator"
+          "name": "Turn instruction"
         },
         "navigator": {
           "desc": "Enables or disables the minimap",
@@ -575,10 +899,90 @@
           "name": "Position up / down"
         },
         "vr_scale": {
-          "name": "Eye resolution"
+          "name": "Resolution per eye"
         }
       },
       "value": {
+        "boarding": {
+          "auto": "Pay and take the ticket",
+          "pay": "The driver sells the ticket",
+          "walk": "Just walk in"
+        },
+        "pax_motion": {
+          "natural": "Natural",
+          "omsi": "OMSI 2"
+        },
+        "maintenance": {
+          "0": "Infinite (no wear)",
+          "1": "Very bad",
+          "2": "Bad",
+          "3": "Normal",
+          "4": "Good"
+        },
+        "ai_max_scheduled": {
+          "0": "All",
+          "10": "At most 10",
+          "25": "At most 25",
+          "50": "At most 50"
+        },
+        "ai_max_parked": {
+          "-1": "None",
+          "0": "Every space",
+          "35": "At most 35",
+          "100": "At most 100",
+          "250": "At most 250"
+        },
+        "pax_models": {
+          "omsi": "OMSI 2",
+          "realistic": "Realistic"
+        },
+        "shadow_casters": {
+          "all": "Every solid mesh",
+          "omsi": "OMSI 2"
+        },
+        "map_detail": {
+          "-1": "OMSI setting",
+          "0": "Low",
+          "1": "Normal",
+          "2": "Full",
+          "255": "All authored levels"
+        },
+        "view_distance": {
+          "0": "Default (900 m)",
+          "600": "600 m - fastest"
+        },
+        "max_obj_dist": {
+          "-1": "Automatic"
+        },
+        "min_obj_size": {
+          "0_005": "All",
+          "0_013": "Normal",
+          "0_02": "Fewer (faster)",
+          "0_03": "Few (fastest)"
+        },
+        "texture_memory": {
+          "0": "Automatic"
+        },
+        "max_fps": {
+          "0": "Screen refresh rate",
+          "1000": "Unlimited"
+        },
+        "pax_voices": {
+          "all": "Greetings and tickets",
+          "tickets": "Only the ticket asked for",
+          "off": "Silent"
+        },
+        "navigator_corner": {
+          "top-left": "Top left",
+          "top-right": "Top right",
+          "bottom-left": "Bottom left",
+          "bottom-right": "Bottom right"
+        },
+        "window_mode": {
+          "windowed": "Windowed",
+          "borderless": "Windowed Borderless",
+          "fullscreen": "Fullscreen"
+        },
         "post_aa": {
           "fxaa": "FXAA",
           "off": "Off"
@@ -601,6 +1005,47 @@
           "yaw roll": "Yaw and roll",
           "pitch roll": "Pitch and roll",
           "yaw pitch roll": "Yaw, pitch and roll"
+        },
+        "voice_mode": {
+          "ptt": "Push-to-talk (hold the key)",
+          "auto": "Voice activation"
+        }
+      },
+      "voice": {
+        "voice": {
+          "name": "Voice chat",
+          "desc": "Talk to the players near you in a multiplayer session"
+        },
+        "voice_mode": {
+          "name": "Talk",
+          "desc": "Hold the push-to-talk key (see the key bindings; with Shift: over the radio), or whenever you speak"
+        },
+        "mic": {
+          "name": "Microphone",
+          "desc": "Speak: the bar shows how loud you are, and the row lights up while the others hear you",
+          "default": "System default",
+          "off": "Turn the voice chat on to test the microphone"
+        },
+        "mic_gain": {
+          "name": "Microphone volume",
+          "desc": "How loud the others hear you"
+        },
+        "voice_sensitivity": {
+          "name": "Voice activation",
+          "desc": "Higher: quieter speech opens the microphone too"
+        },
+        "voice_denoise": {
+          "name": "Noise suppression",
+          "desc": "Filters the engine, the wind and the keyboard out of your microphone"
+        },
+        "vol_voice": {
+          "name": "Other players",
+          "desc": "How loud the others' voices are"
+        },
+        "pvol": {
+          "name": "Player",
+          "desc": "This player's voice (0: muted)",
+          "muted": "muted"
         }
       }
     },
@@ -612,13 +1057,13 @@
         "run": "Run"
       },
       "map": {
-        "nav": "City map",
+        "nav": "Map",
         "tour": "Line and tour"
       },
       "options": {
         "head": "Options",
         "nav": "Options",
-        "note": "Change the settings of the game."
+        "note": "Change the game settings."
       },
       "vehicle": {
         "choose": "Choose",
@@ -706,13 +1151,13 @@
             "button": "Repair"
           },
           "reset_vehicle": {
-            "name": "Put back on its wheels",
+            "name": "Set upright",
             "desc": "Puts the vehicle upright again",
             "button": "Reset"
           },
           "reload": {
             "name": "Reload this vehicle",
-            "desc": "Read the vehicle's files again (.bus, model and sound configuration, scripts) and drive it from here",
+            "desc": "Reloads the vehicle's files (.bus, model and sound configuration, scripts) and drives it from here",
             "button": "Reload"
           },
           "driver": {
@@ -738,7 +1183,7 @@
       "world": {
         "head": "World",
         "nav": "World",
-        "note": "Change the time, the weather and other settings of the world.",
+        "note": "Change the time, the weather and other world settings.",
         "off": "Off",
         "on": "On"
       },
@@ -756,8 +1201,8 @@
         "group_driving": "Driving and the bus",
         "group_vr": "Headset (VR)",
         "group_scripted": "Scripted (this vehicle)",
-        "press_key": "press a key...",
-        "press_key_desc": "Press Escape to keep the current key",
+        "press_key": "press a key or button...",
+        "press_key_desc": "Press a key or a controller button, or Escape to keep the current binding",
         "not_set": "Not set",
         "no_match": "No matches",
         "no_match_desc": "Try another name or key"
@@ -778,13 +1223,21 @@
         "the_game_follows_your_device_s_date_and_time": "The game follows your device's date and time",
         "date_and_time": "Date and time",
         "synchronized_with_the_real_time": "Synchronized with the real time",
-        "exact_time": "Exact time",
+        "exact_time": "Current time",
         "press_enter_to_change_esc_to_cancel": "Press Enter to apply, Esc to cancel",
         "change_the_current_time_press_enter_to_change": "Change the current time (press Enter to apply)",
+        "exact_date": "Current date",
+        "change_the_current_date_press_enter_to_change": "Change the current date (press Enter to apply)",
         "hour": "Hour",
         "set_the_hour_of_the_day_directly": "Set the hour of the day directly",
         "minute": "Minute",
         "set_the_minute_directly": "Set the minute directly",
+        "day": "Day",
+        "set_the_day_directly": "Set the day directly",
+        "month": "Month",
+        "set_the_month_directly": "Set the month directly",
+        "year": "Year",
+        "set_the_year_directly": "Set the year directly",
         "morning": "Morning",
         "noon": "Noon",
         "evening": "Evening",
@@ -814,11 +1267,11 @@
         "the_kind_of_clouds_in_the_sky": "The kind of clouds in the sky.",
         "none": "None",
         "few_clouds": "Few clouds",
-        "scattered": "Scattered",
-        "broken": "Broken",
+        "scattered": "Scattered clouds",
+        "broken": "Mostly cloudy",
         "overcast": "Overcast",
         "visibility": "Visibility",
-        "how_far_one_can_see_less_is_fog": "How far you can see; less is foggier.",
+        "how_far_one_can_see_less_is_fog": "How far you can see; lower values mean more fog.",
         "brightness": "Brightness",
         "brightness_of_the_custom_weather_lighting": "Brightness of the custom weather lighting.",
         "precipitation": "Precipitation",
@@ -830,7 +1283,7 @@
         "wet_roads": "Wet roads",
         "how_wet_the_roads_are_now_they_dry_in_the_sun_wet_in_the_rain": "How wet the roads are right now (they dry in the sun and get wet in the rain).",
         "snow_cover": "Snow cover",
-        "snow_lying_on_the_world_and_ground": "How much snow lies on the ground and the scenery.",
+        "snow_lying_on_the_world_and_ground": "Whether snow lies on the ground and the scenery.",
         "snow_on_road": "Snow on road",
         "treat_the_road_surface_as_snow_covered": "Treat the road surface as snow-covered.",
         "temperature": "Temperature",
@@ -852,6 +1305,11 @@
       }
     },
     "controls": {
+      "import": {
+        "title": "Import from OMSI 2",
+        "name": "Import",
+        "desc": "Takes the controllers of OMSI 2's Inputs/gamectrler.cfg"
+      },
       "setup": {
         "name": "Set up",
         "desc": "Set up this controller so it can be used in the game."
@@ -861,8 +1319,26 @@
         "desc": "A controller that is switched off is ignored."
       },
       "axes": "Axes",
+      "axis_mode": {
+        "name": "Axis mode",
+        "desc": "Auto detects wheels and pedals. Gamepad uses sticks and triggers; Native uses the device's own axes.",
+        "auto": "Auto",
+        "gamepad": "Gamepad",
+        "native": "Native"
+      },
       "axis": {
         "desc": "What this axis does.",
+        "shape": {
+          "linear": "Linear",
+          "degressive": "Degressive",
+          "progressive": "Progressive",
+          "bi_degressive": "Bi-degressive",
+          "bi_progressive": "Bi-progressive"
+        },
+        "invert": {
+          "name": "Invert",
+          "desc": "Reverses this axis, even before a function is assigned."
+        },
         "name": {
           "0": "X axis",
           "1": "Y axis",
@@ -916,9 +1392,33 @@
       "button": {
         "name": "Button",
         "desc": "What this button does."
+      },
+      "pressed": "Pressed",
+      "find_hint": "Press a button on the controller to find it here",
+      "button_search": "Search buttons",
+      "no_match": "No button matches “{query}”",
+      "pad": {
+        "view": "View",
+        "menu": "Menu",
+        "left_stick": "Left stick (press)",
+        "right_stick": "Right stick (press)"
+      },
+      "hat": {
+        "up": "up",
+        "right": "right",
+        "down": "down",
+        "left": "left",
+        "dpad": "D-pad {dir}",
+        "hat": "Hat {n} {dir}"
       }
     },
     "dialog": {
+      "restart": {
+        "title": "Restart required",
+        "text": "For your changes to take full effect, you have to restart the game",
+        "yes": "Restart",
+        "no": "Later"
+      },
       "place": {
         "models": "models",
         "random_livery": "Random livery",
@@ -971,10 +1471,14 @@
       "route": "Route {line}",
       "route_set": "Route {line}",
       "route_number": "Route number",
+      "dest_sort": "Sort: {mode}",
+      "dest_sort_file": "file order",
+      "dest_sort_name": "name",
+      "dest_sort_code": "code",
       "no_destinations": "This bus has no depot file (.hof) with destinations",
       "no_routes": "No route numbers in the depot file or the timetable",
       "no_hofs": "This bus has no depot files (.hof)",
-      "entry": "Entry {number}",
+      "entry": "Entry point {number}",
       "no_entries": "This map has no entry points",
       "maker_models": "{name}  ({count} models)",
       "unknown_maker": "Unknown manufacturer",
@@ -995,20 +1499,20 @@
       "blinker_warn_toggle": "Hazard lights",
       "brake": "Brake",
       "bus_20h_switch": "20 h switch",
-      "bus_dooraft": "Rear doors",
+      "bus_dooraft": "Door release",
       "bus_doorfront0": "Front door 1",
       "bus_doorfront1": "Front door 2",
       "bus_doorfront5": "Front door 6",
       "bus_linie_minus": "Previous line",
       "bus_linie_plus": "Next line",
-      "bus_rollband_dn": "Roller blind down",
-      "bus_rollband_dn_step": "Roller blind down (step)",
-      "bus_rollband_setl1": "Roller blind: line 1",
-      "bus_rollband_setl2": "Roller blind: line 2",
-      "bus_rollband_setl3": "Roller blind: line 3",
-      "bus_rollband_sett": "Roller blind: tour",
-      "bus_rollband_up": "Roller blind up",
-      "bus_rollband_up_step": "Roller blind up (step)",
+      "bus_rollband_dn": "Destination scroll down",
+      "bus_rollband_dn_step": "Destination scroll down (step)",
+      "bus_rollband_setl1": "Destination scroll: line 1",
+      "bus_rollband_setl2": "Destination scroll: line 2",
+      "bus_rollband_setl3": "Destination scroll: line 3",
+      "bus_rollband_sett": "Destination scroll: tour",
+      "bus_rollband_up": "Destination scroll up",
+      "bus_rollband_up_step": "Destination scroll up (step)",
       "bus_ziel_minus": "Previous destination",
       "bus_ziel_plus": "Next destination",
       "cashdesk_changer_0_05": "Change 0.05",
@@ -1032,7 +1536,7 @@
       "cp_licht_untenrechts_toggle": "Lower right light",
       "cp_licht_unterdeck_toggle": "Lower deck light",
       "cp_microphone": "Microphone",
-      "cp_schalter_kinderwagen": "Stroller switch",
+      "cp_schalter_kinderwagen": "Pushchair switch",
       "cp_wischer_intervall_toggle": "Wiper interval mode",
       "cp_wischer_wascher_button": "Windscreen washer",
       "debug_start_bench2": "Start benchmark 2",
@@ -1051,8 +1555,8 @@
       "ibis_7": "IBIS: 7",
       "ibis_8": "IBIS: 8",
       "ibis_9": "IBIS: 9",
-      "ibis_eingabe": "IBIS: enter",
-      "ibis_loeschen": "IBIS: delete",
+      "ibis_eingabe": "IBIS: Enter",
+      "ibis_loeschen": "IBIS: Clear",
       "ibis_setmode_linie_kurs": "IBIS: line / tour mode",
       "ibis_setmode_route": "IBIS: route mode",
       "ibis_setmode_ziel": "IBIS: destination mode",
@@ -1097,8 +1601,9 @@
       "throttle": "Throttle",
       "throttle_amplify": "Throttle boost",
       "ticket_give": "Issue ticket",
-      "toggel_ctrler": "Toggle controller",
-      "toggel_mouse_ctrl": "Toggle mouse control",
+      "toggel_ctrler": "Switch controller",
+      "toggel_mouse_ctrl": "Switch mouse control",
+      "toggle_navigator": "Show/hide navigator",
       "view_interiorcam_minus": "Interior camera: previous",
       "view_interiorcam_plus": "Interior camera: next",
       "view_reset_all_directions": "Reset all view directions",
@@ -1110,8 +1615,10 @@
       "view_set_passenger": "View: passenger",
       "view_set_schedule": "View: timetable",
       "view_set_ticketselling": "View: ticket sales",
-      "view_toggle_informationdisplay": "Toggle information display",
-      "view_toggle_viewpoint": "Toggle viewpoint"
+      "view_toggle_informationdisplay": "Switch information display",
+      "view_toggle_viewpoint": "Switch viewpoint",
+      "voice_talk": "Multiplayer: talk (hold)",
+      "voice_radio": "Multiplayer: talk over the radio (hold)"
     },
     "keybinds": {
       "not_set": "Not set",
@@ -1145,14 +1652,18 @@
       "start_point_missing": "This start point could not be found",
       "destination": "Destination: {name}",
       "fleet_number": "Fleet number: {number}",
-      "key_conflict": "This key is already used by: {keys}"
+      "key_conflict": "This key is already used by: {keys}",
+      "voice_talking": "Voice: talking",
+      "voice_radio": "Voice: on the radio",
+      "voice_error": "Voice: {error}",
+      "voice_mic_denied": "the microphone is not allowed"
     },
     "admin": {
       "player": "Player {id}",
       "go_to": "Go to {name}",
       "bring": "Bring {name} here",
       "repair": "Repair {name}'s vehicle",
-      "unstick": "Put {name}'s vehicle upright",
+      "unstick": "Set {name}'s vehicle upright",
       "kick": "Kick {name}",
       "ban": "Ban {name}",
       "bring_all": "Bring everyone here",
@@ -1184,7 +1695,181 @@
       "host_brought": "The host brought you here",
       "host_service": "The host ran a service: {kind}",
       "host_upright": "The host put your vehicle upright",
-      "wrong_password": "Wrong password"
+      "wrong_password": "Wrong password",
+      "mute": "Mute {name}'s microphone",
+      "unmute": "Let {name} speak again",
+      "voice": "Voice chat: {state}"
+    }
+  },
+  "start": {
+    "maps": {
+      "nav": "Start",
+      "head": "Choose a map",
+      "note": "Pick the map and how the drive starts.",
+      "list": "MAPS",
+      "settings": "SETTINGS",
+      "vehicle": "VEHICLE",
+      "mode": "START",
+      "free": "Free drive",
+      "t1": "Map & route",
+      "t2": "Vehicles",
+      "t3": "Time & weather",
+      "h1": "Where do you drive?",
+      "h2": "Choose your vehicle",
+      "h3": "When and in what weather?",
+      "next": "Next:",
+      "drive": "Drive",
+      "cont": "Continue where you left off",
+      "map": "MAP",
+      "buses": "ALL VEHICLES",
+      "sw": "Winter",
+      "sp": "Spring",
+      "su": "Summer",
+      "sa": "Autumn",
+      "route": "Route",
+      "go": "Start",
+      "none": "No maps found",
+      "livery": "Livery",
+      "details": "Vehicle details",
+      "auto": "Automatic",
+      "depot": "Depot file",
+      "fleet": "Fleet number",
+      "plate": "Number plate",
+      "search": "Search vehicles...",
+      "nobuses": "No vehicles found",
+      "unknown": "Unknown manufacturer",
+      "loading": "Loading preview...",
+      "nopreview": "No preview",
+      "line": "LINE",
+      "tour": "TOUR",
+      "filter": "Filter...",
+      "nolines": "No lines on this map",
+      "notours": "No tours",
+      "trip": "FIRST TRIP",
+      "autotrip": "By start time",
+      "mappreview": "Loading map...",
+      "autoentry": "Automatic (nearest to the first stop)",
+      "entry": "START POINT",
+      "noentries": "No start points on this map",
+      "linetour": "Line {line}, tour {tour}",
+      "linetourtrip": "Line {line}, tour {tour}, trip {trip}",
+      "time": "TIME",
+      "date": "DATE",
+      "now": "Now",
+      "season": "SEASON",
+      "today": "Today",
+      "close": "Close",
+      "sd": "By date",
+      "weather": "WEATHER",
+      "presets": "PRESETS",
+      "icao": "AIRPORT (ICAO)",
+      "onfoot": "Start on foot (no bus)",
+      "onfoot_short": "On foot",
+      "icao_ph": "ICAO code, e.g. EDDB",
+      "icao_auto": "Empty: nearest airport to the map",
+      "icao_live": "Live updates (every 10 minutes)",
+      "icao_lookup": "Looking up airport…",
+      "noair": "No matching airport",
+      "icao_checking": "Checking station..."
+    },
+    "profile": {
+      "ago_d": "{n} d ago",
+      "ago_h": "{n} h ago",
+      "ago_m": "{n} min ago",
+      "comfort": "Comfort",
+      "comfort_note": "The share of passengers who got on and had nothing to complain about.",
+      "default_name": "Driver",
+      "delete_confirm": "Delete?",
+      "distance": "Distance",
+      "driving": "Driving",
+      "driving_note": "Speeding, harsh braking and crashes lower it.",
+      "hm": "{h} h {m} min",
+      "hours": "Hours driven",
+      "level": "Level {level} · {xp} XP to level {next}",
+      "min": "{m} min",
+      "new": "New driver",
+      "new_hint": "Name of the new driver",
+      "no_drives": "No drives yet.",
+      "ontime": "On time",
+      "ratings": "Ratings",
+      "recent": "Recent drives",
+      "stops": "Stops served",
+      "tickets": "Ticket selling",
+      "tickets_note": "Right ticket, right change, without keeping anyone waiting."
+    },
+    "join": {
+      "nav": "Multiplayer",
+      "note": "Drive with friends by a session code, or join a server.",
+      "tab_join": "Join & host",
+      "tab_servers": "Server list",
+      "label": "SESSION CODE OR SERVER ADDRESS",
+      "placeholder": "Session code or server address",
+      "hint": "Paste a code from a friend, or an IP / address with port. Leave empty to search the local network.",
+      "go": "Join",
+      "checking": "Checking...",
+      "online": "Server online  -  {map}  -  {players}/{max} players",
+      "offline": "Server not reachable: {error}",
+      "offline_short": "Offline",
+      "game": "YOUR GAME",
+      "host": "Host my next drive",
+      "host_note": "Friends can join your session as soon as you start it.",
+      "servers_note": "Only servers that answer can be joined.",
+      "no_servers": "No saved servers yet."
+    },
+    "row": {
+      "vehicle": "Vehicle",
+      "time": "Time",
+      "traffic": "Traffic",
+      "passengers": "Passengers",
+      "timetable": "Timetable",
+      "weather": "Weather",
+      "date": "Date",
+      "situation": "Situation",
+      "season": "Season"
+    },
+    "value": {
+      "on": "on",
+      "off": "off",
+      "default": "default",
+      "vehicles": "{n} vehicles",
+      "hour": "{h}:00"
+    },
+    "season": {
+      "winter": "winter",
+      "spring": "spring",
+      "summer": "summer",
+      "autumn": "autumn"
+    },
+    "cal": {
+      "m1": "January",
+      "m2": "February",
+      "m3": "March",
+      "m4": "April",
+      "m5": "May",
+      "m6": "June",
+      "m7": "July",
+      "m8": "August",
+      "m9": "September",
+      "m10": "October",
+      "m11": "November",
+      "m12": "December",
+      "d1": "Mo",
+      "d2": "Tu",
+      "d3": "We",
+      "d4": "Th",
+      "d5": "Fr",
+      "d6": "Sa",
+      "d7": "Su"
+    },
+    "weather": {
+      "default": "Map default",
+      "cycle": "Weather cycle",
+      "real": "Real weather",
+      "custom": "Custom weather",
+      "vis": "Visibility",
+      "clouds": "Clouds",
+      "precip": "Precipitation",
+      "temp": "Temperature"
     }
   }
 }

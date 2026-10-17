@@ -62,7 +62,7 @@ impl CodePage {
     }
 }
 
-/// The system's ANSI code page when it is a double-byte one (Windows only).
+/// The system's ANSI code page when it is a double-byte one or Windows-1250 (Windows only).
 fn system_double_byte() -> Option<CodePage> {
     #[cfg(windows)]
     {
@@ -72,7 +72,8 @@ fn system_double_byte() -> Option<CodePage> {
         }
         static ACP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         // SAFETY: GetACP takes nothing and only returns a number.
-        CodePage::double_byte(*ACP.get_or_init(|| unsafe { GetACP() }))
+        let acp = *ACP.get_or_init(|| unsafe { GetACP() });
+        CodePage::double_byte(acp).or((acp == 1250).then_some(CodePage::Windows1250))
     }
     #[cfg(not(windows))]
     {
@@ -93,6 +94,22 @@ fn central_european_lower(b: u8) -> bool {
 
 fn central_european_upper(b: u8) -> bool {
     matches!(b, 0xA3 | 0xA5 | 0x8C | 0x8F | 0xAF)
+}
+
+/// Bytes that are Czech, Slovak or Polish letters in Windows-1250 but
+/// other letters or signs in 1252
+fn czech_lower(b: u8) -> bool {
+    matches!(b, 0xEC | 0xF9 | 0xF2 | 0x9D | 0xBE | 0xBF)
+}
+
+fn czech_upper(b: u8) -> bool {
+    matches!(b, 0xCC | 0xD9 | 0xD2 | 0x8D | 0xBC)
+}
+
+/// Nordic letters: Danish or Norwegian text may contain ø, which shares
+/// a byte with ř in Windows-1250
+fn nordic(b: u8) -> bool {
+    matches!(b, 0xE6 | 0xE5 | 0xC6 | 0xC5)
 }
 
 /// The code page `bytes` (without a byte-order mark) were most likely written in.
@@ -121,7 +138,7 @@ fn detect_on(bytes: &[u8], system: Option<CodePage>) -> CodePage {
     // a Chinese Windows almost never does (a Cyrillic word of odd length leaves
     // a lead byte before a space), and read as GBK all the same, a Russian HOF's stops lost
     // their names and no longer matched the map's
-    if let Some(page) = system {
+    if let Some(page) = system.filter(|p| *p != CodePage::Windows1250) {
         if page
             .encoding()
             .decode_without_bom_handling_and_without_replacement(bytes)
@@ -168,6 +185,29 @@ fn detect_on(bytes: &[u8], system: Option<CodePage>) -> CodePage {
     if central >= 2 {
         return CodePage::Windows1250;
     }
+
+    // Czech and Slovak stop names, e.g. "Třebenická", "Štětí".
+    // Italian accents usually occur at the end of a word, while
+    // Danish and Norwegian text may contain æ and å.
+    let (mut czech, mut ambiguous_upper) = (0usize, 0usize);
+    for (i, &b) in bytes.iter().enumerate() {
+        let (before, after) = (letter(i.checked_sub(1)), letter(Some(i + 1)));
+        
+        if (czech_lower(b) && before && after) || (czech_upper(b) && after) {
+            czech += 1;
+        } else if b == 0xD8 && after {
+            ambiguous_upper += 1;
+        }
+    }
+
+    let nordic_count = bytes.iter().filter(|b| nordic(**b)).count();
+
+    if (czech >= 2 || (czech >= 1 && ambiguous_upper >= 1))
+        && czech + ambiguous_upper > nordic_count
+    {
+        return CodePage::Windows1250;
+    }
+
     CodePage::Windows1252
 }
 
@@ -411,5 +451,81 @@ mod tests {
         assert!(char_variants('Л').contains(&'Ë'));
         assert!(char_variants('Ë').contains(&'Л'));
         assert!(char_variants('A').is_empty());
+    }
+
+    #[test]
+    fn detects_czech_and_slovak() {
+        let cp1250 = |s: &str| encoding_rs::WINDOWS_1250.encode(s).0.into_owned();
+
+        // Czech stop names: ř, ě and ů distinguish them from Windows-1252
+        let cz = cp1250(concat!(
+            "Praha,Třebenická\r\n",
+            "Předboj,rozcestí\r\n",
+            "Kojetice,Tůmovka\r\n",
+            "Obříství,Štěpánský most\r\n"
+        ));
+        assert_eq!(detect_on(&cz, None), CodePage::Windows1250);
+        assert_eq!(
+            decode(&cz),
+            concat!(
+                "Praha,Třebenická\r\n",
+                "Předboj,rozcestí\r\n",
+                "Kojetice,Tůmovka\r\n",
+                "Obříství,Štěpánský most\r\n"
+            )
+        );
+        assert_eq!(
+            detect_on(&cp1250("ŘEDITELSTVÍ, Ústí nad Labem, Děčín"), None),
+            CodePage::Windows1250
+        );
+        assert_eq!(
+            detect_on(&cp1250("Bratislava, Ľudovít, Kúpeľná"), None),
+            CodePage::Windows1250
+        );
+        // Western text must not be mistaken for Windows-1250.
+        assert_eq!(
+            detect_on(&cp1252("Città più bella, così però"), None),
+            CodePage::Windows1252
+        );
+        assert_eq!(
+            detect_on(&cp1252("Københavns Hovedbanegård, Nørreport, Ærø"), None),
+            CodePage::Windows1252
+        );
+        assert_eq!(
+            detect_on(&cp1252("Première pièce, très"), None),
+            CodePage::Windows1252
+        );
+        assert_eq!(
+            detect_on(&cp1252("Nørreport, Sønderborg"), None),
+            CodePage::Windows1252
+        );
+        assert_eq!(
+            detect_on(&cp1252("Østerbro, Øresund"), None),
+            CodePage::Windows1252
+        );
+        assert_eq!(
+            detect_on(&cp1252("Feliz año"), None),
+            CodePage::Windows1252
+        );
+        assert_eq!(
+            detect_on(&cp1252("Niño, España"), None),
+            CodePage::Windows1252
+        );
+        // Ambiguous text must not be forced to Windows-1250 by the system ACP.
+        let one = cp1250("Libiš\r\nLiběchov\r\n");
+        assert_eq!(detect_on(&one, None), CodePage::Windows1252);
+        assert_eq!(
+            detect_on(&one, Some(CodePage::Windows1250)),
+            CodePage::Windows1252
+        );
+        // Russian and UTF-8 must still be detected correctly on Czech Windows.
+        assert_eq!(
+            detect_on(&cp1251("Улица Ленина"), Some(CodePage::Windows1250)),
+            CodePage::Windows1251
+        );
+        assert_eq!(
+            detect_on("Liběchov".as_bytes(), Some(CodePage::Windows1250)),
+            CodePage::Utf8
+        );
     }
 }

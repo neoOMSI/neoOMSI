@@ -44,7 +44,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             ((t / 60.0) as i64) % 60
         );
         time.extend(switch_row(
-            app,
+            Some(app),
             "time_sync",
             &tx("pause.world.text.real_time_sync"),
             &tx("pause.world.text.the_game_follows_your_device_s_date_and_time"),
@@ -68,7 +68,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
                 "noop".to_string(),
             ));
         } else {
-            match app.menu_edit.as_ref() {
+            match app.menu_edit.as_ref().filter(|_| !app.menu_edit_date) {
                 Some(d) => {
                     let mut c: Vec<char> = d.chars().collect();
                     c.resize(6, '_');
@@ -98,20 +98,67 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
                     ));
                 }
             }
+            match app.menu_edit.as_ref().filter(|_| app.menu_edit_date) {
+                Some(d) => {
+                    let mut c: Vec<char> = d.chars().collect();
+                    c.resize(8, '_');
+                    let typed = format!(
+                        "{}{}.{}{}.{}{}{}{}",
+                        c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]
+                    );
+                    time.push((
+                        row(
+                            &tx("pause.world.text.exact_date"),
+                            'E',
+                            &typed,
+                            &tx("pause.world.text.press_enter_to_change_esc_to_cancel"),
+                            None,
+                        ),
+                        "date_edit".to_string(),
+                    ));
+                }
+                None => {
+                    let (d, m) = app.clock.day_month();
+                    let text = format!("{d:02}.{m:02}.{:04}", app.clock.year);
+                    time.push((
+                        row(
+                            &tx("pause.world.text.exact_date"),
+                            'e',
+                            &text,
+                            &tx("pause.world.text.change_the_current_date_press_enter_to_change"),
+                            None,
+                        ),
+                        "date_edit".to_string(),
+                    ));
+                }
+            }
             time.extend(slider_row(
-                app,
+                Some(app),
                 "hour",
                 &tx("pause.world.text.hour"),
                 &tx("pause.world.text.set_the_hour_of_the_day_directly"),
                 &|v| format!("{:02}", v as i64),
             ));
             time.extend(slider_row(
-                app,
+                Some(app),
                 "minute",
                 &tx("pause.world.text.minute"),
                 &tx("pause.world.text.set_the_minute_directly"),
                 &|v| format!("{:02}", v as i64),
             ));
+            for (id, key, desc) in [
+                ("day", "day", "set_the_day_directly"),
+                ("month", "month", "set_the_month_directly"),
+                ("year", "year", "set_the_year_directly"),
+            ] {
+                time.extend(slider_row(
+                    Some(app),
+                    id,
+                    &tx(&format!("pause.world.text.{key}")),
+                    &tx(&format!("pause.world.text.{desc}")),
+                    &|v| format!("{}", v as i64),
+                ));
+            }
             for (name, hm, secs) in [
                 (&tx("pause.world.text.morning"), "06:00", 6 * 3600),
                 (&tx("pause.world.text.noon"), "12:00", 12 * 3600),
@@ -144,7 +191,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             }
             if app.lan.is_none() {
                 time.extend(slider_row(
-                    app,
+                    Some(app),
                     "speed",
                     &tx("pause.world.text.time_speed"),
                     &tx("pause.world.text.how_fast_the_world_s_clock_runs"),
@@ -153,7 +200,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             }
         }
         weather.extend(switch_row(
-            app,
+            Some(app),
             "metar_sync",
             &tx("pause.world.text.metar_sync"),
             &tx("pause.world.text.the_weather_follows_the_real_metar_report"),
@@ -250,7 +297,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             "cloudkind".to_string(),
         ));
         weather.extend(slider_row(
-            app,
+            Some(app),
             "visibility",
             &tx("pause.world.text.visibility"),
             &tx("pause.world.text.how_far_one_can_see_less_is_fog"),
@@ -263,7 +310,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             },
         ));
         weather.extend(slider_row(
-            app,
+            Some(app),
             "brightness",
             &tx("pause.world.text.brightness"),
             &tx("pause.world.text.brightness_of_the_custom_weather_lighting"),
@@ -288,33 +335,33 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             "precipkind".to_string(),
         ));
         weather.extend(slider_row(
-            app,
+            Some(app),
             "rain_amt",
             &tx("pause.world.text.precipitation_strength"),
             &tx("pause.world.text.how_hard_it_rains_or_snows"),
             &pct,
         ));
         weather.extend(slider_row(
-            app,
+            Some(app),
             "wet",
             &tx("pause.world.text.wet_roads"),
             &tx("pause.world.text.how_wet_the_roads_are_now_they_dry_in_the_sun_wet_in_the_rain"),
             &pct,
         ));
         weather.extend(switch_row(
-            app,
+            Some(app),
             "snow_cover",
             &tx("pause.world.text.snow_cover"),
             &tx("pause.world.text.snow_lying_on_the_world_and_ground"),
         ));
         weather.extend(switch_row(
-            app,
+            Some(app),
             "snow_road",
             &tx("pause.world.text.snow_on_road"),
             &tx("pause.world.text.treat_the_road_surface_as_snow_covered"),
         ));
         climate.extend(slider_row(
-            app,
+            Some(app),
             "temp",
             &tx("pause.world.text.temperature"),
             &tx("pause.world.text.the_air_temperature"),
@@ -322,7 +369,7 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
         ));
         let dew_temp = app.weather.as_ref().map(|w| w.temp.0).unwrap_or(15.0);
         climate.extend(slider_row(
-            app,
+            Some(app),
             "humidity",
             &tx("pause.world.text.humidity"),
             &tx("pause.world.text.relative_humidity_of_the_air"),
@@ -336,14 +383,14 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
             },
         ));
         climate.extend(slider_row(
-            app,
+            Some(app),
             "wind_speed",
             &tx("pause.world.text.wind_speed"),
             &tx("pause.world.text.how_fast_the_wind_blows_it_drives_the_clouds"),
             &|v| format!("{} m/s", v as i64),
         ));
         climate.extend(slider_row(
-            app,
+            Some(app),
             "wind_dir",
             &tx("pause.world.text.wind_direction"),
             &tx("pause.world.text.the_direction_of_the_wind_in_degrees_0_is_north"),
@@ -368,14 +415,14 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
     }
     let mut people: Vec<(String, String)> = Vec::new();
     people.extend(slider_row(
-        app,
+        Some(app),
         "traffic",
         &tx("pause.world.text.traffic"),
         &tx("pause.world.text.how_many_vehicles_drive_around_the_map"),
         &|v| format!("{} vehicles", v as i64),
     ));
     people.extend(slider_row(
-        app,
+        Some(app),
         "pax",
         &tx("pause.world.text.passengers"),
         &tx("pause.world.text.how_many_passengers_wait_at_the_stops_and_ride"),

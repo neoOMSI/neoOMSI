@@ -1,11 +1,6 @@
 name: Build
 
 on:
-  schedule:
-    # Early morning German time, DST-aware. Running at 03:37 avoids both
-    # midnight UTC traffic and top-of-hour GitHub Actions scheduling peaks.
-    - cron: "37 3 * * *"
-      timezone: "Europe/Berlin"
   push:
     tags: ["v*"]
   workflow_dispatch:
@@ -41,8 +36,8 @@ jobs:
             esac
           else
             channel=nightly
-            short_sha="${GITHUB_SHA:0:8}"
-            v="$(sh scripts/version.sh)-nightly.g${short_sha}"
+            short_engine="${GITHUB_SHA:0:8}"
+            v="$(sh scripts/version.sh)-nightly.g${short_engine}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
@@ -135,6 +130,7 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      CHANNEL: ${{ needs.version.outputs.channel }}
       PRERELEASE: ${{ contains(needs.version.outputs.version, '-') }}
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}
       GH_TOKEN: ${{ github.token }}

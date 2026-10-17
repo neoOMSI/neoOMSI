@@ -44,7 +44,7 @@ pub enum Op {
     SoundTriggerFile(NameId),
     LoadStr(StrVarId),
     StoreStr(StrVarId),
-    PushStr(String),
+    PushStr(u32),
     LoadReg(u8),
     StoreReg(u8),
     Add,
@@ -102,3 +102,5 @@ pub enum Op {
     /// display of three digits and a letter) as `$__DigitsFirst`.
     StrDigitsFirst,
 }
+
+const _: () = assert!(std::mem::size_of::<Op>() == 8);

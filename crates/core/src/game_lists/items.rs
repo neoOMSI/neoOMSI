@@ -37,6 +37,62 @@ pub(super) fn route_numbers(app: &App) -> Vec<String> {
     out
 }
 
+/// The HOF's terminus target/ident: OMSI uses this to set and describe a destination.
+/// Older content occasionally leaves it blank, where field 0 is the best available fallback.
+pub(super) fn terminus_target(t: &::legacy_vehicle::hof::Terminus) -> String {
+    let target = t.texture_id.trim();
+    if !target.is_empty() {
+        return target.to_string();
+    }
+    t.strings
+        .iter()
+        .find(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| t.code.to_string())
+}
+
+/// Destination list order; OMSI keeps the HOF's (#447).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum DestSort {
+    #[default]
+    File,
+    Name,
+    Code,
+}
+
+impl DestSort {
+    pub(crate) fn next(self) -> Self {
+        match self {
+            DestSort::File => DestSort::Name,
+            DestSort::Name => DestSort::Code,
+            DestSort::Code => DestSort::File,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            DestSort::File => "pause.list.dest_sort_file",
+            DestSort::Name => "pause.list.dest_sort_name",
+            DestSort::Code => "pause.list.dest_sort_code",
+        }
+    }
+}
+
+/// The HOF termini in list order: (target, code).
+pub(super) fn ordered_termini(
+    termini: &[::legacy_vehicle::hof::Terminus],
+    sort: DestSort,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(i32, String)> = termini.iter().map(|t| (t.code, terminus_target(t))).collect();
+    // (stable: ties keep file order)
+    match sort {
+        DestSort::File => {}
+        DestSort::Name => out.sort_by(|a, b| natural(a.1.trim(), b.1.trim())),
+        DestSort::Code => out.sort_by_key(|t| t.0),
+    }
+    out.into_iter().map(|(code, name)| (name, code.to_string())).collect()
+}
+
 pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
     let line = line.trim();
     if line.is_empty() {
@@ -46,7 +102,7 @@ pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
         let hof = p.vehicle.host.hof.clone();
         let code = p.vehicle.var("IBIS_TerminusCode").unwrap_or(-1.0) as i32;
         let named = |t: &&::legacy_vehicle::hof::Terminus| {
-            t.strings.first().is_some_and(|s| !s.trim().is_empty())
+            !t.texture_id.trim().is_empty() || t.strings.iter().any(|s| !s.trim().is_empty())
         };
         let term = hof.as_ref().and_then(|h| {
             h.termini
@@ -55,9 +111,7 @@ pub(crate) fn set_route_by_hand(app: &mut App, line: &str) {
                 .find(|t| t.code == code)
                 .or_else(|| h.termini.iter().find(named))
         });
-        let name = term
-            .and_then(|t| t.strings.first().cloned())
-            .unwrap_or_default();
+        let name = term.map(terminus_target).unwrap_or_default();
         crate::schedule::set_player_destination_directly(
             &mut p.vehicle,
             hof.as_deref(),
@@ -152,7 +206,7 @@ pub(super) fn liveries(def: &::legacy_vehicle::Vehicle) -> Vec<String> {
     let Some(m) = def.model.as_ref() else {
         return Vec::new();
     };
-    let mp = ::legacy_config::resolve_path(def.dir(), m);
+    let mp = ::mods::resolve_path(def.dir(), m);
     let Ok(model) = ::model::Model::load(&mp) else {
         return Vec::new();
     };
@@ -160,7 +214,7 @@ pub(super) fn liveries(def: &::legacy_vehicle::Vehicle) -> Vec<String> {
         .ctc
         .iter()
         .flat_map(|c| {
-            ::simulation::vehicle::load_paint_schemes(&::legacy_config::resolve_path(def.dir(), &c.path))
+            ::simulation::vehicle::load_paint_schemes(&::mods::resolve_path(def.dir(), &c.path))
         })
         .map(|s| s.name)
         .collect();
@@ -198,7 +252,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 return map_options_page(app).1;
             }
             if matches!(kind, ListKind::Options(t) if *t == KEYS_TAB) {
-                return key_rows(app);
+                return key_rows(&app.args.root, &KeyView::of(app));
             }
             if matches!(kind, ListKind::Options(t) if *t == LOOK_TAB) {
                 return look_options_page(app).1;
@@ -290,22 +344,14 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
                 out.push((::i18n::translate("pause.list.route_now", &[("value", &now)]), "routes".into()));
             }
             if let Some(hof) = app.player.as_ref().and_then(|p| p.vehicle.host.hof.clone()) {
-                let mut termini: Vec<(String, String)> = hof
-                    .termini
-                    .iter()
-                    .map(|t| {
-                        (
-                            t.strings
-                                .iter()
-                                .find(|s| !s.trim().is_empty())
-                                .cloned()
-                                .unwrap_or_else(|| t.code.to_string()),
-                            t.code.to_string(),
-                        )
-                    })
-                    .collect();
-                termini.sort_by_key(|(name, _)| name.trim().to_lowercase());
-                for (name, code) in termini {
+                if !hof.termini.is_empty() {
+                    let mode = ::i18n::translate(app.dest_sort.label(), &[]);
+                    out.push((
+                        ::i18n::translate("pause.list.dest_sort", &[("mode", &mode)]),
+                        "dest_sort".into(),
+                    ));
+                }
+                for (name, code) in ordered_termini(&hof.termini, app.dest_sort) {
                     out.push((
                         format!("{:>3}  {}", code, name.trim()),
                         format!("dest {code}"),
@@ -366,11 +412,35 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
         }
         ListKind::Spots => {
             if let Some(w) = app.world.as_ref() {
-                for (i, e) in w.global.entry_points.iter().enumerate() {
-                    let label = if e.name.trim().is_empty() {
+                // (the entry points of tiles that are not loaded come from the map index)
+                w.index();
+                // our bus where it stands, to put it at each place: one where it would touch
+                // a vehicle - an AI one, or our bus itself - is taken
+                let ours = app.player.as_ref().map(|p| {
+                    let v = &p.vehicle;
+                    (crate::traffic::vehicle_bodies(v), v.position, v.heading)
+                });
+                let taken = |i: usize| {
+                    let (Some((bodies, from, from_heading)), Some((pos, rot))) =
+                        (ours.as_ref(), w.entry_point_place(&w.global.entry_points[i]))
+                    else {
+                        return false;
+                    };
+                    let mut there =
+                        crate::traffic::bodies_moved(bodies, *from, *from_heading, pos, rot[0]);
+                    for b in &mut there {
+                        b.half += glam::DVec2::splat(0.5);
+                    }
+                    bodies.iter().any(|o| there.iter().any(|b| b.overlaps(o)))
+                        || app.traffic.as_ref().is_some_and(|t| t.occupied(&there, pos))
+                };
+                // one line per name, its first free place; a name with none is left out
+                for (name, i) in w.global.free_entry_points(taken) {
+                    let label = if name.is_empty() {
+                        let e = &w.global.entry_points[i];
                         ::i18n::translate("pause.list.entry", &[("number", &(e.index + 1))])
                     } else {
-                        e.name.trim().to_string()
+                        name.to_string()
                     };
                     out.push((label, format!("spot {i}")));
                 }
@@ -487,6 +557,65 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
     }
     out.push((::i18n::translate("pause.dialog.back", &[]), "back".into()));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminus_target_prefers_the_hof_ident_over_display_field_zero() {
+        let term = ::legacy_vehicle::hof::Terminus {
+            code: 1000,
+            texture_id: "Apsley Station".into(),
+            strings: vec!["0".into(), "Apsley".into()],
+            ..Default::default()
+        };
+        assert_eq!(terminus_target(&term), "Apsley Station");
+    }
+
+    #[test]
+    fn terminus_target_falls_back_when_an_old_hof_has_no_ident() {
+        let term = ::legacy_vehicle::hof::Terminus {
+            code: 1000,
+            strings: vec!["  Apsley Station  ".into()],
+            ..Default::default()
+        };
+        assert_eq!(terminus_target(&term), "Apsley Station");
+    }
+
+    fn hof_termini() -> Vec<::legacy_vehicle::hof::Terminus> {
+        [(532, "430 Herberhausen"), (11, "518 Fürstenau"), (530, "430 Herberhausen"), (12, "51 Bahnhof")]
+            .into_iter()
+            .map(|(code, ident)| ::legacy_vehicle::hof::Terminus {
+                code,
+                texture_id: ident.into(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn destination_list_keeps_the_hof_order_by_default() {
+        let codes: Vec<String> =
+            ordered_termini(&hof_termini(), DestSort::default()).into_iter().map(|t| t.1).collect();
+        assert_eq!(codes, ["532", "11", "530", "12"]);
+    }
+
+    #[test]
+    fn destination_list_sorts_by_name_or_code_on_request() {
+        let by_name: Vec<String> =
+            ordered_termini(&hof_termini(), DestSort::Name).into_iter().map(|t| t.1).collect();
+        assert_eq!(by_name, ["12", "532", "530", "11"]);
+        let by_code: Vec<String> =
+            ordered_termini(&hof_termini(), DestSort::Code).into_iter().map(|t| t.1).collect();
+        assert_eq!(by_code, ["11", "12", "530", "532"]);
+    }
+
+    #[test]
+    fn destination_sort_cycles_back_to_the_hof_order() {
+        assert_eq!(DestSort::File.next().next().next(), DestSort::File);
+    }
 }
 
 pub(crate) fn menu_extras(
@@ -694,7 +823,7 @@ pub(crate) fn menu_extras(
 
 pub(super) fn driver_names(_app: &App) -> Vec<String> {
     scan_cached(&DRIVER_SCAN, || {
-        let mut names: Vec<String> = ::legacy_config::read_dir_merged("Drivers")
+        let mut names: Vec<String> = ::mods::read_dir_merged("Drivers")
             .into_iter()
             .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("odr")))
             .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))

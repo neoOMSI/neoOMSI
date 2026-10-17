@@ -30,6 +30,8 @@ pub struct MapObject {
     pub var_parent: Option<i64>,
     /// `[rule]` / `[kill_rule]` lines that follow the object: they apply to its `[path]`s.
     pub rules: Vec<MapRule>,
+    /// The plain `[spline_terrain_align]` enables this instance's terrain cutter.
+    pub terrain_align_flag: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -123,6 +125,8 @@ pub struct SplineAttachment {
     pub repeater: Option<(usize, usize)>,
     pub var_parent: Option<i64>,
     pub rules: Vec<MapRule>,
+    /// Enables terrain cutters on the objects of this row.
+    pub terrain_align_flag: bool,
 }
 
 /// Chrono patch: `[selobject]` / `[selspline]` name an object or spline **by id** (838 of
@@ -384,6 +388,7 @@ impl Tile {
                         attach_index,
                         var_parent: None,
                         rules: Vec::new(),
+                        terrain_align_flag: false,
                     };
                     if attach {
                         t.attach_objects.push(o);
@@ -544,6 +549,7 @@ impl Tile {
                         repeater,
                         var_parent: None,
                         rules: Vec::new(),
+                        terrain_align_flag: false,
                     });
                     last = Last::SplineAttach;
                 }
@@ -574,15 +580,20 @@ impl Tile {
                         _ => {}
                     }
                 }
-                "spline_terrain_align" => {
-                    if let Some(s) = t.splines.last_mut() {
-                        s.terrain_align_flag = true;
+                // The plain tag enables the last record's cutter. `_2` is spline-only.
+                "spline_terrain_align" => match last {
+                    Last::Object => t.objects.last_mut().unwrap().terrain_align_flag = true,
+                    Last::Attach => t.attach_objects.last_mut().unwrap().terrain_align_flag = true,
+                    Last::SplineAttach => {
+                        t.spline_attachments.last_mut().unwrap().terrain_align_flag = true
                     }
-                }
+                    Last::Spline => t.splines.last_mut().unwrap().terrain_align_flag = true,
+                    _ => {}
+                },
                 "spline_terrain_align_2" => {
                     let v = r.f64();
-                    if let Some(s) = t.splines.last_mut() {
-                        s.terrain_align = Some(v);
+                    if matches!(last, Last::Spline) {
+                        t.splines.last_mut().unwrap().terrain_align = Some(v);
                     }
                 }
                 "rule" | "kill_rule" => {
@@ -831,6 +842,46 @@ Object Nr. 3\n[splineAttachement_repeater]\n0\n12\n5\nSceneryobjects\\lamp.sco\n
         );
         let s = &t.splines[1];
         assert_eq!((s.delta_h, s.cant_start, s.tex_offset), (None, 2.0, 30.0));
+    }
+
+    /// `[spline_terrain_align]` belongs to the spline only straight after it (and its rules):
+    /// after an object it is not the spline's, nor is a `_2` (Tettau, `tile_2_4.map`).
+    #[test]
+    fn terrain_align_after_an_object_is_not_the_splines() {
+        let t = tile(&format!(
+            "{BASE}\n[spline_terrain_align]\n\n[spline_terrain_align_2]\n4\n"
+        ));
+        assert!(
+            t.splines
+                .iter()
+                .all(|s| !s.terrain_align_flag && s.terrain_align.is_none())
+        );
+        assert!(t.spline_attachments.last().unwrap().terrain_align_flag);
+        let t = tile(
+            "[version]\n14\n\n\
+[spline]\n0\nSplines\\road.sli\n100\n0\n0\n10\n0\n20\n0\n50\n0\n0\n0\n0\n0\n0\n0\n0\n\n\
+[rule]\n0\nspeedlimit\n45.000\n0\n\n[spline_terrain_align]\n\n\
+[spline]\n0\nSplines\\road.sli\n101\n0\n0\n10\n0\n70\n0\n30\n0\n0\n0\n0\n0\n0\n0\n0\n\n\
+[spline_terrain_align_2]\n4\n",
+        );
+        assert!(t.splines[0].terrain_align_flag, "a rule between keeps it");
+        assert_eq!(t.splines[1].terrain_align, Some(4.0));
+    }
+
+    #[test]
+    fn terrain_cutter_flags_follow_objects_and_attachments_only_when_enabled() {
+        let t = tile(
+            "[version]\n14\n\n[object]\n0\na.sco\n1\n0\n0\n0\n0\n0\n0\n0\n\n[object]\n0\nb.sco\n2\n0\n0\n0\n0\n0\n0\n0\n[spline_terrain_align_2]\n4\n\n[object]\n0\nc.sco\n3\n0\n0\n0\n0\n0\n0\n0\n[rule]\n0\nspeedlimit\n30\n0\n[spline_terrain_align]\n\n[attachObj]\n0\nd.sco\n4\n3\n0\n0\n0\n0\n0\n0\n[spline_terrain_align]\n",
+        );
+        assert_eq!(
+            t.objects
+                .iter()
+                .map(|o| o.terrain_align_flag)
+                .collect::<Vec<_>>(),
+            vec![false, false, true]
+        );
+        assert!(t.attach_objects[0].terrain_align_flag);
+        assert_eq!(t.objects[2].rules.len(), 1);
     }
 
     /// Before tile version 12 an object has only its heading; the next line is already the

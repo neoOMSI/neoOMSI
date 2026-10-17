@@ -9,6 +9,89 @@ const ALPHA_BLEND: wgpu::BlendState = wgpu::BlendState {
     alpha: wgpu::BlendComponent::REPLACE,
 };
 
+pub type LoadingFrame = Box<dyn FnMut(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>) + Send>;
+
+pub type DeviceHook = Arc<
+    dyn Fn(&wgpu::Device, &wgpu::Queue, &wgpu::Surface<'_>, wgpu::TextureFormat) -> Option<LoadingFrame>
+        + Send
+        + Sync,
+>;
+
+static DEVICE_HOOK: std::sync::Mutex<Option<DeviceHook>> = std::sync::Mutex::new(None);
+
+pub fn set_device_hook(hook: Option<DeviceHook>) {
+    *DEVICE_HOOK.lock().unwrap_or_else(|e| e.into_inner()) = hook;
+}
+
+static PIPELINE_CACHE: std::sync::OnceLock<wgpu::PipelineCache> = std::sync::OnceLock::new();
+static PIPELINE_CACHE_FILE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub(crate) fn pcache() -> Option<&'static wgpu::PipelineCache> {
+    PIPELINE_CACHE.get()
+}
+
+fn open_pipeline_cache(device: &wgpu::Device, info: &wgpu::AdapterInfo) {
+    if !device.features().contains(wgpu::Features::PIPELINE_CACHE)
+        || ::legacy_config::env::var_os("OMSI_NO_PIPELINE_CACHE").is_some()
+    {
+        return;
+    }
+    let home = || std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(home)
+    } else if cfg!(target_os = "macos") {
+        home().join("Library/Application Support")
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home().join(".config"))
+    };
+    let key = wgpu::util::pipeline_cache_key(info).unwrap_or_else(|| {
+        format!("{}-{:04x}-{:04x}", info.name, info.vendor, info.device)
+    });
+    let key: String = key
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let dir = base
+        .join("neoOMSI")
+        .join("cache")
+        .join("pipelines");
+    let _ = std::fs::create_dir_all(&dir);
+    let file = dir.join(format!("{key}.bin"));
+    let data = std::fs::read(&file).ok();
+    log::info!(
+        "pipeline cache: {} ({})",
+        file.display(),
+        data.as_ref()
+            .map(|d| format!("{} KB loaded", d.len() / 1024))
+            .unwrap_or_else(|| "empty".into())
+    );
+    let cache = unsafe {
+        device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+            label: Some("omsi pipelines"),
+            data: data.as_deref(),
+            fallback: true,
+        })
+    };
+    let _ = PIPELINE_CACHE.set(cache);
+    let _ = PIPELINE_CACHE_FILE.set(file);
+}
+
+fn save_pipeline_cache() {
+    let (Some(cache), Some(file)) = (PIPELINE_CACHE.get(), PIPELINE_CACHE_FILE.get()) else {
+        return;
+    };
+    if let Some(data) = cache.get_data() {
+        let tmp = file.with_extension("tmp");
+        if std::fs::write(&tmp, &data).is_ok() {
+            let _ = std::fs::rename(&tmp, file);
+        }
+    }
+}
+
 fn linear_sampler(
     device: &wgpu::Device,
     mode: wgpu::AddressMode,
@@ -209,7 +292,7 @@ impl Renderer {
             ),
             _ => {}
         }
-        let vram = dedicated_vram_mb(&info);
+        let vram = dedicated_vram_mb(&info).or_else(|| vulkan_vram_mb(&adapter));
         let guess_mb: u64 = match info.device_type {
             wgpu::DeviceType::DiscreteGpu => vram.filter(|v| *v >= 512).map_or(1600, |v| {
                 if v <= 2560 {
@@ -223,6 +306,10 @@ impl Renderer {
             _ => 800,
         };
         ADAPTER_TEXTURE_MB.store(guess_mb, std::sync::atomic::Ordering::Relaxed);
+        ADAPTER_IDS.store(
+            ((info.vendor as u64) << 32) | info.device as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         log::info!(
             "graphics adapter: {} ({:?}, {:?}{}), texture memory taken for it: {guess_mb} MB",
             info.name,
@@ -361,6 +448,7 @@ impl Renderer {
             required_features |= adapter.features() & wgpu::Features::POLYGON_MODE_LINE;
         }
         required_features |= adapter.features() & wgpu::Features::RG11B10UFLOAT_RENDERABLE;
+        required_features |= adapter.features() & wgpu::Features::PIPELINE_CACHE;
         if intel_vulkan_safe {
             required_features = wgpu::Features::empty();
         }
@@ -388,6 +476,11 @@ impl Renderer {
             })
             .await
             .context("request_device")?;
+        let loading = surface.and_then(|surface| {
+            let hook = DEVICE_HOOK.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
+            hook(&device, &queue, surface, format).map(|frame| (surface, frame))
+        });
+        open_pipeline_cache(&device, &info);
         log::info!("graphics device opened; compiling renderer pipelines");
         let adapter_table = device
             .features()
@@ -459,16 +552,41 @@ impl Renderer {
                 (true, true) => "DXT as blocks, others compressed where close",
             }
         );
+        let mesh_pages = adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::BASE_VERTEX)
+            && ::legacy_config::env::var_os("OMSI_NO_MESH_PAGES").is_none();
+        if !mesh_pages {
+            log::info!("renderer: every mesh in buffers of its own (no shared mesh pages)");
+        }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let renderer = Self::build(
-            device.clone(),
-            queue.clone(),
-            format!("{} ({:?})", info.name, info.backend),
-            format,
-            options,
-        );
+        let compiled = std::sync::atomic::AtomicBool::new(false);
+        let mut renderer = std::thread::scope(|threads| {
+            if let Some((surface, mut frame)) = loading {
+                let (device, queue, compiled) = (&device, &queue, &compiled);
+                threads.spawn(move || {
+                    while !compiled.load(std::sync::atomic::Ordering::Relaxed) {
+                        frame(device, queue, surface);
+                    }
+                });
+            }
+            let renderer = Self::build(
+                device.clone(),
+                queue.clone(),
+                format!("{} ({:?})", info.name, info.backend),
+                format,
+                options,
+            );
+            compiled.store(true, std::sync::atomic::Ordering::Relaxed);
+            renderer
+        });
+        renderer.mesh_pages = mesh_pages;
         match scope.pop().await {
-            None => Ok(renderer),
+            None => {
+                save_pipeline_cache();
+                Ok(renderer)
+            }
             Some(e) if options.msaa > 1 => {
                 log::error!(
                     "{}x MSAA failed on {}: {}; drawing without multisampling",
@@ -477,13 +595,16 @@ impl Renderer {
                     gpu_error_text(&e)
                 );
                 drop(renderer);
-                Ok(Self::build(
+                let mut renderer = Self::build(
                     device,
                     queue,
                     format!("{} ({:?})", info.name, info.backend),
                     format,
                     RenderOptions { msaa: 1, ..options },
-                ))
+                );
+                renderer.mesh_pages = mesh_pages;
+                save_pipeline_cache();
+                Ok(renderer)
             }
             Some(e) => Err(anyhow!("renderer pipelines: {}", gpu_error_text(&e))),
         }
@@ -773,6 +894,16 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let lm_atlas = device.create_texture(&wgpu::TextureDescriptor {
@@ -793,6 +924,13 @@ impl Renderer {
             label: Some("light map atlas place"),
             size: 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // (zeroed: no cover map set, nothing is sheltered)
+        let cover_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cover map"),
+            size: (COVER_HEADER + COVER_SIDE * COVER_SIDE) as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1015,7 +1153,7 @@ impl Renderer {
                     },
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let bias: i32 = ::legacy_config::env::var("OMSI_SURFACE_BIAS")
@@ -1138,7 +1276,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let shadow_clear_pipeline = {
@@ -1179,7 +1317,7 @@ impl Renderer {
                 multisample: Default::default(),
                 fragment: None,
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let shadow_pipelines = [
@@ -1327,7 +1465,7 @@ impl Renderer {
             alpha: wgpu::BlendComponent::REPLACE,
         };
         let alpha_blend = ALPHA_BLEND;
-        let corona_pipeline_for = |f: wgpu::TextureFormat, fs: &str, blend: wgpu::BlendState, samples, capture| {
+        let corona_pipeline_for = |f: wgpu::TextureFormat, vs: &str, fs: &str, blend: wgpu::BlendState, samples, capture| {
             let targets = if capture {
                 vec![Some(wgpu::ColorTargetState {
                     format: f,
@@ -1342,7 +1480,7 @@ impl Renderer {
                 layout: Some(&corona_pl),
                 vertex: wgpu::VertexState {
                     module: &corona_shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vs),
                     buffers: &[Some(corona_vertex.clone())],
                     compilation_options: Default::default(),
                 },
@@ -1371,7 +1509,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         drop(corona_texture);
@@ -1512,7 +1650,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let wire_ok = cfg!(all(feature = "devtools", debug_assertions))
@@ -1534,10 +1672,10 @@ impl Renderer {
             pipelines: scene_pipelines(format, "fs_main", msaa),
             rain_pipelines: scene_pipelines(format, "fs_main", 1),
             wire_pipelines: wire_for(format, "fs_main"),
-            corona_pipeline: corona_pipeline_for(format, "fs_main", screen, msaa, false),
-            smoke_pipeline: corona_pipeline_for(format, "fs_smoke", alpha_blend, msaa, false),
-            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen, 1, true),
-            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend, 1, true),
+            corona_pipeline: corona_pipeline_for(format, "vs_main", "fs_main", screen, msaa, false),
+            smoke_pipeline: corona_pipeline_for(format, "vs_smoke", "fs_smoke", alpha_blend, msaa, false),
+            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_main", screen, 1, true),
+            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke", alpha_blend, 1, true),
             sky_pipeline: sky_pipeline_for(format, "fs_main", msaa, false),
             reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", 1, true),
         };
@@ -1547,10 +1685,10 @@ impl Renderer {
             pipelines: scene_pipelines(hdr_format, "fs_enhanced", msaa),
             rain_pipelines: scene_pipelines(hdr_format, "fs_enhanced", 1),
             wire_pipelines: wire_for(hdr_format, "fs_enhanced"),
-            corona_pipeline: corona_pipeline_for(hdr_format, "fs_enhanced", additive, msaa, false),
-            smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke_enhanced", alpha_blend, msaa, false),
-            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "fs_enhanced", additive, 1, true),
-            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke_enhanced", alpha_blend, 1, true),
+            corona_pipeline: corona_pipeline_for(hdr_format, "vs_enhanced", "fs_enhanced", additive, msaa, false),
+            smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke_enhanced", alpha_blend, msaa, false),
+            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "vs_enhanced", "fs_enhanced", additive, 1, true),
+            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke_enhanced", alpha_blend, 1, true),
             sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced", msaa, false),
             reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_enhanced", 1, true),
         });
@@ -1558,10 +1696,10 @@ impl Renderer {
             pipelines: scene_pipelines(hdr_format, "fs_vanilla_reflections", msaa),
             rain_pipelines: scene_pipelines(hdr_format, "fs_vanilla_reflections", 1),
             wire_pipelines: wire_for(hdr_format, "fs_vanilla_reflections"),
-            corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen, msaa, false),
-            smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend, msaa, false),
-            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "fs_main", screen, 1, true),
-            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "fs_smoke", alpha_blend, 1, true),
+            corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_main", screen, msaa, false),
+            smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke", alpha_blend, msaa, false),
+            reflection_corona_pipeline: corona_pipeline_for(hdr_format, "vs_main", "fs_main", screen, 1, true),
+            reflection_smoke_pipeline: corona_pipeline_for(hdr_format, "vs_smoke", "fs_smoke", alpha_blend, 1, true),
             sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", msaa, false),
             reflection_sky_pipeline: sky_pipeline_for(hdr_format, "fs_main", 1, true),
         });
@@ -1652,46 +1790,6 @@ impl Renderer {
             },
             alpha: wgpu::BlendComponent::OVER,
         };
-        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("overlay"),
-            layout: Some(&overlay_pl),
-            vertex: wgpu::VertexState {
-                module: &overlay_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                front_face: wgpu::FrontFace::Ccw,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: msaa,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &overlay_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(premul),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
         log::info!("renderer: compiling the SSAO shaders");
         let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao"),
@@ -1778,7 +1876,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let ssao_pipeline = Some(make_ao("fs_ssao"));
@@ -1823,7 +1921,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let make_prepass = |kind: u8, cull: bool| make_prepass_samples(kind, cull, 1);
@@ -1877,35 +1975,39 @@ impl Renderer {
             bind_group_layouts: &[Some(&mip_layout)],
             immediate_size: 0,
         });
-        let mip_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mip"),
-            layout: Some(&mip_pl),
-            vertex: wgpu::VertexState {
-                module: &mip_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &mip_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let mip_pipeline_for = |entry: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mip"),
+                layout: Some(&mip_pl),
+                vertex: wgpu::VertexState {
+                    module: &mip_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &mip_shader,
+                    entry_point: Some(entry),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                multiview_mask: None,
+                cache: pcache(),
+            })
+        };
+        let mip_pipeline = mip_pipeline_for("fs_main");
+        let mip_plain_pipeline = mip_pipeline_for("fs_plain");
         let mip_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -2001,7 +2103,7 @@ impl Renderer {
                     },
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             })
         };
         let post = PostPipelines {
@@ -2293,7 +2395,7 @@ impl Renderer {
                         compilation_options: Default::default(),
                     }),
                     multiview_mask: None,
-                    cache: None,
+                    cache: pcache(),
                 })
             };
             let cube_faces: Vec<wgpu::TextureView> = (0..6)
@@ -2389,7 +2491,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: pcache(),
             });
             Probe {
                 view,
@@ -2411,6 +2513,7 @@ impl Renderer {
                 cube_recapture: false,
                 cloud_sig: [0.0; 12],
                 cloud_age: 0,
+                cloud_offset: [0.0; 2],
             }
         };
         let overlay_pipeline_1x = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -2441,7 +2544,7 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pcache(),
         });
         log::info!("renderer: compiling the VR interface shaders");
         let xr_ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2476,7 +2579,7 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pcache(),
         });
         log::info!("renderer: compiling the upscaler shaders");
         let upscale_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2485,45 +2588,71 @@ impl Renderer {
                 include_str!("../../shaders/post/upscale.wgsl").into(),
             ),
         });
+        let picture_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ];
         let upscale_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("upscale"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: &picture_entries,
         });
         let upscale_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("upscale"),
             bind_group_layouts: &[Some(&upscale_layout)],
             immediate_size: 0,
         });
-        let upscale_pipeline_for = |entry, target_format| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        // the upscale's bindings plus the depth prepass
+        let glass_snapshot_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("glass snapshot"),
+                entries: &[
+                    picture_entries[0],
+                    picture_entries[1],
+                    picture_entries[2],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let glass_snapshot_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("glass snapshot"),
+            bind_group_layouts: &[Some(&glass_snapshot_layout)],
+            immediate_size: 0,
+        });
+        let upscale_pipeline_for = |entry, target_format, layout| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("upscale"),
-            layout: Some(&upscale_pl),
+            layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: &upscale_shader,
                 entry_point: Some("vs_main"),
@@ -2548,20 +2677,13 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: pcache(),
         });
-        let upscale_pipeline = upscale_pipeline_for("fs_main", format);
-        let copy_pipeline = upscale_pipeline_for("fs_copy", format);
-        let glass_picture_format = if device
-            .features()
-            .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
-        {
-            wgpu::TextureFormat::Rg11b10Ufloat
-        } else {
-            HDR_FORMAT
-        };
+        let upscale_pipeline = upscale_pipeline_for("fs_main", format, &upscale_pl);
+        let copy_pipeline = upscale_pipeline_for("fs_copy", format, &upscale_pl);
+        // alpha holds the depth behind the glass
         let glass_snapshot_pipeline =
-            upscale_pipeline_for("fs_glass_snapshot", glass_picture_format);
+            upscale_pipeline_for("fs_glass_snapshot", HDR_FORMAT, &glass_snapshot_pl);
         let upscale_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("upscale params"),
             size: 16,
@@ -2571,16 +2693,36 @@ impl Renderer {
         let gpu_timers = [GpuTimers::new(&device), GpuTimers::new(&device)];
         let puddles = (!leave_out_enhanced)
             .then(|| puddles::Pipelines::new(&device, &shader, &camera_layout, &material_layout));
+        let encoding_pool = if ::legacy_config::env::var_os("OMSI_NO_RENDER_POOL").is_some() {
+            None
+        } else {
+            let workers = std::thread::available_parallelism()
+                .map(|n| n.get() / 2)
+                .unwrap_or(2)
+                .clamp(2, 8);
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .thread_name(|i| format!("render-{i}"))
+                .build()
+                .ok()
+                .map(Arc::new)
+        };
+        let submitter = if ::legacy_config::env::var_os("OMSI_NO_SUBMIT_THREAD").is_some() {
+            None
+        } else {
+            Submitter::new(queue.clone(), encoding_pool.clone())
+        };
         Renderer {
             _device_poller: DevicePoller::start(&device),
             upscale_pipeline,
             copy_pipeline,
             glass_snapshot_pipeline,
-            glass_picture_format,
+            glass_snapshot_layout,
             upscale_layout,
             upscale_buf,
             scale_targets: HashMap::new(),
             glass_picture: None,
+            glass_depth: None,
             glass_snapshot_source: None,
             target_use: HashMap::new(),
             dynamic_scale: std::cell::Cell::new(1.0),
@@ -2593,6 +2735,7 @@ impl Renderer {
             xr_shadow_cache: std::cell::Cell::new(None),
             shadow_clear_pipeline,
             mip_pipeline,
+            mip_plain_pipeline,
             mip_layout,
             mip_sampler,
             clamp_sampler,
@@ -2603,6 +2746,8 @@ impl Renderer {
             lm_atlas,
             lm_uniform,
             lm_place: std::cell::Cell::new((0.0, 0.0, 0.0)),
+            cover_buf,
+            cover_place: std::cell::Cell::new(None),
             hdr_targets: HashMap::new(),
             puddles,
             reflection_pass,
@@ -2627,6 +2772,7 @@ impl Renderer {
             last_frame: None,
             instant_exposure: false,
             overlay_pipeline_1x,
+            frost: None,
             xr_ui_pipeline,
             started: std::time::Instant::now(),
             ao: None,
@@ -2655,7 +2801,6 @@ impl Renderer {
             cloud_detail_view,
             cloud_sampler,
             sky_mesh,
-            overlay_pipeline,
             overlay_layout,
             sampler,
             camera_buf,
@@ -2685,21 +2830,17 @@ impl Renderer {
             counts: Default::default(),
             profiling: ::legacy_config::env::var_os("OMSI_PROFILE").is_some(),
             draw_audit_at: std::time::Instant::now(),
-            encoding_pool: if ::legacy_config::env::var_os("OMSI_NO_RENDER_POOL").is_some() {
-                None
-            } else {
-                let workers = std::thread::available_parallelism()
-                    .map(|n| n.get() / 2)
-                    .unwrap_or(2)
-                    .clamp(2, 8);
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(workers)
-                    .thread_name(|i| format!("render-{i}"))
-                    .build()
-                    .ok()
-            },
+            submitter,
+            encoding_pool,
+            queued: Default::default(),
+            defer_next: Default::default(),
+            defer_views: Default::default(),
+            uploads: Default::default(),
             pending_meshes: Default::default(),
+            spare_vertices: Default::default(),
+            main_bundles: Default::default(),
             freed: std::cell::OnceCell::new(),
+            mesh_pages: false,
         }
     }
 }

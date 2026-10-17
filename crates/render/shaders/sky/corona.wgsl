@@ -36,16 +36,25 @@ struct CoronaOut {
     // 1 for what is drawn at the scene's level (a precipitation streak, lit fog: a cone or
     // a halo), 0 for a light's glare
     @location(2) kind: f32,
-    // 1 when the light is drawn with a star (`[light_enh_2]` parameter bit 1)
     @location(3) star: f32,
     // 1 for a light's cone in the fog (OMSI's fan, see below)
     @location(4) beam: f32,
-    // the cone's inner and outer half angles (radians)
     @location(5) cone: vec2<f32>,
 };
 
 @vertex
 fn vs_main(in: CoronaIn) -> CoronaOut {
+    return corona_vertex(in, false);
+}
+
+@vertex
+fn vs_enhanced(in: CoronaIn) -> CoronaOut {
+    return corona_vertex(in, true);
+}
+
+const GLARE_ANGLE: f32 = 0.05;
+
+fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     var out: CoronaOut;
     let corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
     let c = corners[in.vid % 6u];
@@ -146,11 +155,15 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
         let ang = acos(clamp(dot(normalize(in.dir.xyz), view_dir), -1.0, 1.0));
         let outer = acos(clamp(in.dir.w, -1.0, 1.0));
         let inner = select(0.0, acos(clamp(in.extra.x, -1.0, 1.0)), in.extra.x >= -1.0);
-        brightness = brightness * clamp((outer - ang) / max(outer - inner, 0.0001), 0.0, 1.0);
+        let cone = clamp((outer - ang) / max(outer - inner, 0.0001), 0.0, 1.0);
+
+        let front = clamp((2.2 - ang) / 0.63, 0.0, 1.0);
+        let head = (u32(in.extra.z + 0.5) & 16u) != 0u;
+        brightness = brightness * select(cone, max(cone, 0.45 * front), head);
     }
     // a star grows with the light's strength; every sprite's strength stops at 1
     let star_sprite = (u32(in.extra.z + 0.5) & 8u) != 0u && !streak;
-    let grow = select(1.0, brightness, star_sprite);
+    let grow = select(1.0, min(brightness, 1.0), star_sprite);
     if (!streak) {
         brightness = min(brightness, 1.0);
     }
@@ -181,7 +194,12 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
     // 0.9 is measured against Omsi.exe: at the size the game files ask for, every glow reads
     // a shade too wide beside the original, which draws the sprite a little inside the
     // diameter its `size` names. (Streaks keep their size: they are rain, not a light.)
-    let size = select(max(in.size * grow, dist * 0.002) * 0.9, in.size, streak);
+    let lamp = select(max(in.size * grow, dist * 0.002) * 0.9, in.size, streak);
+    // Enhanced: the sprite spans the glare's angle round the lamp (or the lamp's own glow
+    // where that is wider); `glare_enhanced` draws the bitmap in the inner `core` of it.
+    let plain = (u32(in.extra.z + 0.5) & 32u) != 0u;
+    let glare = enhanced && !streak && !plain;
+    let size = select(lamp, max(lamp, dist * GLARE_ANGLE), glare);
     let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(0.06, 4.0), streak);
     var upv = up;
     if (streak) {
@@ -192,15 +210,22 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
     }
     // the spot moved towards the viewer by its z offset, so that a lamp inside its housing
     // shows (without one: half its size, at most half a metre)
-    let pull = select(min(size * 0.5, 0.5), in.extra.y, in.extra.y >= 0.0);
+    let pull = select(min(lamp * 0.5, 0.5), in.extra.y, in.extra.y >= 0.0);
     let wp = in.pos + (right * c.x * stretch.x + upv * c.y * stretch.y) * size + select(view_dir * min(pull, dist * 0.9), vec3<f32>(0.0), streak);
     out.clip = camera.view_proj * vec4<f32>(wp, 1.0);
     out.uv = c * 0.5 + 0.5;
     out.color = vec4<f32>(in.color.rgb, brightness);
-    out.kind = select(0.0, 1.0, streak);
+    out.kind = select(0.0, 1.0, streak || plain);
     out.star = 0.0;
     out.beam = 0.0;
     out.cone = vec2<f32>(0.0, 0.0);
+    if (glare) {
+        let unfloored = in.size * grow * 0.9;
+        let tiny = clamp(unfloored * unfloored / max(lamp * lamp, 1e-8), 0.25, 1.0);
+        let near = unfloored / max(dist * GLARE_ANGLE, 1e-4);
+        out.cone = vec2<f32>(lamp / size, min(near * near, 1.0));
+        out.star = tiny;
+    }
     // (not `<= 0.001`: a NaN brightness is not smaller, and Direct3D drew it as a black
     // square where Metal's fast maths had dropped it)
     if (!(brightness > 0.001) || (bitcast<u32>(brightness) & 0x7f800000u) == 0x7f800000u) {
@@ -245,14 +270,80 @@ fn fs_main(in: CoronaOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a, 1.0);
 }
 
+fn corona_scatter() -> f32 {
+    return clamp(max(enh.fog.x / 2.3e-3, enh.weather.z), 0.0, 1.0);
+}
+
 // Enhanced graphics: the corona in the pre-exposed high-range picture - the glare of a
 // lamp is drawn relative to what the eye is adapted to, brighter than white so that the
 // glow filter picks it up; precipitation streaks keep the vanilla level.
 @fragment
 fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
     // (a fog cone is lit fog, not glare: it keeps the scene's level too)
-    let scale = select(enh.exposure.w, enh.exposure.y, in.kind > 0.5);
-    return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a * scale, 1.0);
+    if (in.kind > 0.5) {
+        return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a * enh.exposure.y, 1.0);
+    }
+    return vec4<f32>(in.color.rgb * glare_enhanced(in) * in.color.a * enh.exposure.w, 1.0);
+}
+
+fn glare_enhanced(in: CoronaOut) -> vec3<f32> {
+    let scatter = corona_scatter();
+    let core = max(in.cone.x, 1e-3);
+    let p = in.uv * 2.0 - 1.0;
+    let r = length(p);
+    var glow = vec3<f32>(0.0);
+    if (max(abs(p.x), abs(p.y)) < core) {
+        var lamp = in;
+        lamp.uv = p / core * 0.5 + 0.5;
+        let t = corona_shape(lamp);
+        let m = max(t.r, max(t.g, t.b));
+        let profile = mix(mix(0.12, 1.0, m * m * m), 1.0, scatter);
+        glow = t * profile * in.star;
+    }
+    // the veil's tint: the bitmap's centre
+    var mid = in;
+    mid.uv = vec2<f32>(0.5, 0.5);
+    let tint = corona_shape(mid);
+    let edge = (1.0 - r * r) * (1.0 - r * r) * select(0.0, 1.0, r < 1.0);
+    let r0 = max(core * 0.35, 0.01);
+    let veil = 0.06 * in.cone.y * r0 * r0 / (r * r + r0 * r0);
+    let a0 = mix(r0, 0.35, scatter);
+    let aureole = 0.5 * scatter * sqrt(in.cone.y) * a0 * a0 / (r * r + a0 * a0);
+    return glow + tint * (veil + aureole) * edge;
+}
+
+// Smoke ([smoke] particles): a sprite turned to the viewer as `vs_main` turns a plain one,
+// then turned by `extra.x` about the line of sight and pulled `extra.y` metres towards the
+// viewer (both 0 for Vanilla, which leaves it exactly as `vs_main` draws it).
+@vertex
+fn vs_smoke(in: CoronaIn) -> CoronaOut {
+    var out: CoronaOut;
+    let corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
+    let c = corners[in.vid % 6u];
+    let to_cam = camera.cam_pos.xyz - in.pos;
+    let dist = length(to_cam);
+    let view_dir = to_cam / max(dist, 0.001);
+    let right0 = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), view_dir));
+    let up0 = cross(view_dir, right0);
+    let ca = cos(in.extra.x);
+    let sa = sin(in.extra.x);
+    let right = right0 * ca + up0 * sa;
+    let up = up0 * ca - right0 * sa;
+    let size = max(in.size, dist * 0.002) * 0.9;
+    let pull = min(max(in.extra.y, 0.0), dist * 0.9);
+    let wp = in.pos + (right * c.x + up * c.y) * size + view_dir * pull;
+    let brightness = in.color.a;
+    out.clip = camera.view_proj * vec4<f32>(wp, 1.0);
+    out.uv = c * 0.5 + 0.5;
+    out.color = in.color;
+    out.kind = 0.0;
+    out.star = 0.0;
+    out.beam = 0.0;
+    out.cone = vec2<f32>(0.0, 0.0);
+    if (!(brightness > 0.001) || (bitcast<u32>(brightness) & 0x7f800000u) == 0x7f800000u) {
+        out.clip = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+    }
+    return out;
 }
 
 // Smoke ([smoke] particles): the smoke texture tinted with the particle's colour, lit by the

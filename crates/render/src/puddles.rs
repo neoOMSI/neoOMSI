@@ -154,7 +154,7 @@ impl Pipelines {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: build::pcache(),
             })
         };
         let glass_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -192,7 +192,7 @@ impl Pipelines {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: build::pcache(),
             })
         });
         let vehicle_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -281,7 +281,7 @@ impl Pipelines {
                             },
                         }),
                         multiview_mask: None,
-                        cache: None,
+                        cache: build::pcache(),
                     }));
                     let mut primitive = one_sided_primitive(cull);
                     // Mirroring reverses winding. Keep authored one-sided geometry.
@@ -319,7 +319,7 @@ impl Pipelines {
                             compilation_options: Default::default(),
                         }),
                         multiview_mask: None,
-                        cache: None,
+                        cache: build::pcache(),
                     }));
                 }
             }
@@ -356,7 +356,7 @@ impl Pipelines {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: build::pcache(),
         });
         Self {
             trace: pipeline("fs_trace"),
@@ -677,12 +677,12 @@ impl Renderer {
             ],
             vehicle_parts: parts,
         };
-        self.queue.write_buffer(
+        self.write_buffer(
             &self.puddles.as_ref().unwrap().vehicle_params,
             0,
             bytemuck::bytes_of(&VehicleUniform { plane, parts }),
         );
-        self.queue.write_buffer(
+        self.write_buffer(
             &self.puddles.as_ref().unwrap().params,
             0,
             bytemuck::bytes_of(&u),
@@ -1490,6 +1490,8 @@ mod tests {
                                 size: 0.8,
                                 color: [1.0, 0.0, 0.0],
                                 alpha: 1.0,
+                                angle: 0.0,
+                                pull: 0.0,
                             });
                         } else {
                             scene.coronas.push(Corona {

@@ -303,6 +303,97 @@ mod scan_name_tests {
     }
 }
 
+pub(crate) fn layout_label(key: KeyCode) -> String {
+    crate::keyboard_layout::legend(key)
+        .and_then(latin_label)
+        .or_else(|| typed(key))
+        .unwrap_or_else(|| qwerty_label(key))
+}
+
+fn qwerty_label(key: KeyCode) -> String {
+    dik_code(key)
+        .and_then(scan_name)
+        .unwrap_or_else(|| format!("{key:?}"))
+}
+
+/// The tab keys' labels, left and right. Asked at most twice a second (a switch of the
+/// layout shows that soon; the X server is a round trip away).
+pub(crate) fn tab_keys() -> [String; 2] {
+    static LAST: std::sync::Mutex<Option<(std::time::Instant, [String; 2])>> = std::sync::Mutex::new(None);
+    let mut g = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((t, keys)) = g.as_ref() {
+        if t.elapsed() < std::time::Duration::from_millis(500) {
+            return keys.clone();
+        }
+    }
+    let keys = [layout_label(KeyCode::KeyQ), layout_label(KeyCode::KeyE)];
+    *g = Some((std::time::Instant::now(), keys.clone()));
+    keys
+}
+
+/// A letter of the Latin script or a printable sign: what a key's legend may be.
+pub(crate) fn is_latin(c: char) -> bool {
+    c.is_ascii_graphic()
+        || (('\u{a1}'..='\u{24f}').contains(&c) && c != '\u{ad}')
+        || ('\u{1e00}'..='\u{1eff}').contains(&c)
+}
+
+/// A character as a key's label, if it is a Latin one.
+fn latin_label(c: char) -> Option<String> {
+    is_latin(c).then(|| c.to_uppercase().collect())
+}
+
+static TYPED: std::sync::Mutex<Vec<(KeyCode, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Remembers what a key typed, for [`layout_label`] where the layout cannot be asked
+/// (Wayland without X, Android).
+pub(crate) fn note_typed(key: KeyCode, text: &str) {
+    let mut chars = text.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return;
+    };
+    let Some(label) = latin_label(c) else {
+        return;
+    };
+    if let Ok(mut t) = TYPED.lock() {
+        match t.iter_mut().find(|e| e.0 == key) {
+            Some(e) => e.1 = label,
+            None => t.push((key, label)),
+        }
+    }
+}
+
+fn typed(key: KeyCode) -> Option<String> {
+    TYPED.lock().ok()?.iter().find(|e| e.0 == key).map(|e| e.1.clone())
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn labels_are_the_latin_legend() {
+        assert_eq!(latin_label('a').as_deref(), Some("A"));
+        assert_eq!(latin_label('ğ').as_deref(), Some("Ğ"));
+        assert_eq!(latin_label('\'').as_deref(), Some("'"));
+        assert_eq!(latin_label('.').as_deref(), Some("."));
+        for other in ['й', 'ε', 'ض', 'ק', 'ๆ', 'ㅂ', '\r', ' ', '\u{ad}'] {
+            assert_eq!(latin_label(other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn typed_letters_are_remembered_unless_they_are_no_label() {
+        note_typed(KeyCode::KeyZ, "w");
+        assert_eq!(typed(KeyCode::KeyZ).as_deref(), Some("W"));
+        note_typed(KeyCode::KeyZ, "я");
+        note_typed(KeyCode::KeyZ, "ab");
+        assert_eq!(typed(KeyCode::KeyZ).as_deref(), Some("W"));
+        // (not `layout_label`: macOS answers layout questions on the main thread only)
+        assert_eq!(qwerty_label(KeyCode::KeyQ), "Q");
+    }
+}
+
 /// A key and its modifiers as the player reads them ("Ctrl+D"); `(unbound)` for scan 0.
 pub(crate) fn key_name(scan: i64, modifier: i64) -> String {
     if scan == 0 {

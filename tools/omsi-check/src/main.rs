@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use ::legacy_config::{CfgFile, resolve_path};
+use ::legacy_config::{CfgFile};
 use ::legacy_script::{CompileInput, NullHost, State, Vm, compile};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -155,7 +155,7 @@ fn script_set(file: &CfgFile) -> CompileInput {
         for _ in 0..n {
             let rel = r.str();
             if !rel.trim().is_empty() {
-                target.push(resolve_path(base, rel));
+                target.push(::mods::resolve_path(base, rel));
             }
         }
     }
@@ -273,25 +273,25 @@ fn main() -> Result<()> {
                 .map(|e| e.eq_ignore_ascii_case("zip"))
                 .unwrap_or(false)
         {
-            match ::legacy_config::vfs::add_content_zip(&c) {
+            match ::mods::add_content_zip(&c) {
                 Ok(m) => content.push(m),
                 Err(e) => eprintln!("{}: {e}", c.display()),
             }
         } else {
-            ::legacy_config::add_content_root(c.clone());
+            ::mods::add_content_root(c.clone());
             content.push(c);
         }
     }
-    ::legacy_config::add_content_root(root.clone());
+    ::mods::add_content_root(root.clone());
     if let [dir, name] = args.resolve.as_slice() {
         // the folder under the first root that has it (mods and archives first)
         let base = content
             .iter()
             .chain(std::iter::once(&root))
-            .map(|r| resolve_path(r, dir))
+            .map(|r| ::mods::resolve_path(r, dir))
             .find(|p| ::legacy_config::vfs::is_dir(p))
             .unwrap_or_else(|| root.join(dir));
-        let p = resolve_path(&base, name);
+        let p = ::mods::resolve_path(&base, name);
         println!(
             "path    {:?} in {} -> {} (exists: {})",
             name,
@@ -602,7 +602,7 @@ fn check_maps(root: &Path, verbose: bool) {
                     .tiles
                     .par_iter()
                     .filter_map(|t| {
-                        let p = ::legacy_config::resolve_path(&dir, &t.file);
+                        let p = ::mods::resolve_path(&dir, &t.file);
                         if !p.exists() {
                             // The original silently treats a listed-but-missing tile as empty.
                             return None;

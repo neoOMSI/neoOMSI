@@ -181,7 +181,7 @@ fn bus_key(path: &Path, root: &Path) -> String {
 fn driver_origin(camera: &::legacy_vehicle::Camera) -> Vec3 {
     let (sy, cy) = camera.yaw.to_radians().sin_cos();
     let (sp, cp) = camera.pitch.to_radians().sin_cos();
-    Vec3::from(camera.pos) - Vec3::new(sy * cp, cy * cp, sp) * camera.dist.max(0.0)
+    Vec3::from(camera.pos) - Vec3::new(sy * cp, cy * cp, sp) * camera.dist
 }
 
 /// A display is anchored to the vehicle, independently of view, seat and HMD recentering.

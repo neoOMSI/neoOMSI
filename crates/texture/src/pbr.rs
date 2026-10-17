@@ -80,7 +80,7 @@ pub fn find(diffuse: &Path) -> PbrFiles {
     // never found)
     let stem_l = stem.to_ascii_lowercase();
     let mut names: Vec<(String, PathBuf)> = Vec::new();
-    for d in ::legacy_config::mirrored_dirs(dir) {
+    for d in ::mods::mirrored_dirs(dir) {
         for (s, name) in pictures_in(&d).iter() {
             if let Some(rest) = s.strip_prefix(&stem_l) {
                 if let Some(suffix) = rest.strip_prefix('_').or_else(|| rest.strip_prefix('-')) {

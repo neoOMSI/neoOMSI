@@ -1,7 +1,7 @@
 //! The pause menu
 
 use super::*;
-use crate::ui::{ADMIN_PAGE, Dialog, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PauseState, VEHICLE_PAGE, WORLD_PAGE, WorldDrop, WorldGroup, WorldRow};
+use crate::ui::{ADMIN_PAGE, Dialog, OPTIONS_PAGE, OPTION_GROUPS, PAGE_COUNT, PauseState, VEHICLE_PAGE, VOICE_SUB, WORLD_PAGE, WorldDrop, WorldGroup, WorldRow};
 
 #[derive(Clone, Default)]
 pub(crate) struct PlaceSel {
@@ -13,7 +13,7 @@ pub(crate) struct PlaceSel {
     pub pick: usize,
 }
 
-type LabGroup = (String, Vec<(String, String)>, crate::lab_options::Subs);
+type LabGroup = (String, Vec<(String, String)>, lab_options::Subs);
 
 fn pick_row(groups: &[LabGroup], g: usize, sub: usize, k: usize) -> Option<(String, String)> {
     let gr = groups.get(g)?;
@@ -35,19 +35,20 @@ fn view_rows(rows: &[(String, String)]) -> Vec<WorldRow> {
             let meter = p.next().and_then(|m| m.parse::<f32>().ok());
             let meter_one_sided = p.next() == Some("u");
             let lit = p.next() == Some("1");
-            WorldRow { name: tr(name), kind, value: value.to_string(), desc: tr(desc), frac, tag, meter, meter_one_sided, lit }
+            let alt = p.next().unwrap_or("").to_string();
+            WorldRow { name: tr(name), kind, value: value.to_string(), desc: tr(desc), frac, tag, meter, meter_one_sided, lit, alt }
         })
         .collect()
 }
 
 thread_local! {
-    static SYNC: std::cell::Cell<Option<(std::time::Instant, Option<usize>)>> = const { std::cell::Cell::new(None) };
+    static SYNC: std::cell::Cell<Option<(Instant, Option<usize>)>> = const { std::cell::Cell::new(None) };
     static SYNC_NOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static ADMIN_CACHE: std::cell::RefCell<Option<(std::time::Instant, Vec<(String, String)>)>> = const { std::cell::RefCell::new(None) };
+    static ADMIN_CACHE: std::cell::RefCell<Option<(Instant, Vec<(String, String)>)>> = const { std::cell::RefCell::new(None) };
 }
 
 fn tl(key: &str) -> String {
-    ::i18n::translate(key, &[])
+    i18n::translate(key, &[])
 }
 
 const PLACE_FIELDS: [&str; 4] = [
@@ -62,7 +63,7 @@ impl App {
         self.game_menu_items()
             .into_iter()
             .filter(|(id, _)| !id.starts_with("report"))
-            .map(|(id, label)| (id, ::i18n::translate(label, &[])))
+            .map(|(id, label)| (id, i18n::translate(label, &[])))
             .collect()
     }
 
@@ -92,7 +93,7 @@ impl App {
         for (label, action) in items {
             let g = match action.split(' ').next().unwrap_or("") {
                 "back" => continue,
-                "goto" | "bring" | "kick" | "ban" | "unstick" | "bringall" | "service" => 0,
+                "goto" | "bring" | "kick" | "ban" | "unstick" | "bringall" | "service" | "mute" | "unmute" | "voice" => 0,
                 "clock" | "time" | "speed" => 1,
                 "weather" => 2,
                 _ => 3,
@@ -110,7 +111,7 @@ impl App {
 
     fn lab_world_raw(&self) -> Vec<LabGroup> {
         match self.lab_group_page() {
-            Some(OPTIONS_PAGE) => crate::lab_options::options_groups(self),
+            Some(OPTIONS_PAGE) => crate::lab_options::options_groups(&crate::lab_options::Host::game(self)),
             Some(ADMIN_PAGE) => self.lab_admin_groups(),
             _ => crate::game_lists::world_groups(self),
         }
@@ -124,9 +125,61 @@ impl App {
         }
     }
 
+    pub(crate) fn lab_voice_shown(&self) -> bool {
+        self.lab_sub_shown(VOICE_SUB)
+    }
+
+    /// Whether the options show the sub-tab whose title key is `title`.
+    pub(crate) fn lab_sub_shown(&self, title: &str) -> bool {
+        self.lab_group_page() == Some(OPTIONS_PAGE)
+            && self.ui.as_ref().is_some_and(|u| {
+            u.world_sub > 0
+                && u.world_view
+                .get(u.world_group)
+                .and_then(|g| g.subs.get(u.world_sub - 1))
+                .is_some_and(|s| s.title == title)
+        })
+    }
+
+    /// Reopens the drop-down of the row whose action is `id` after an action rebuilt the page,
+    /// scrolled into view, with the first choice starting with `pick` selected.
+    pub(crate) fn lab_reopen_drop(&mut self, id: &str, pick: &str) {
+        let groups = self.lab_world_raw();
+        let Some((group, sub)) = self.ui.as_ref().map(|u| (u.world_group, u.world_sub)) else {
+            return;
+        };
+        let rows = groups.get(group).and_then(|(_, rows, subs)| {
+            if sub == 0 { Some(rows) } else { subs.get(sub - 1).map(|s| &s.1) }
+        });
+        let Some(row) = rows.and_then(|rows| rows.iter().position(|(_, action)| action == id)) else {
+            return;
+        };
+        if let Some(u) = self.ui.as_mut() {
+            // The list draws one extra, half-visible row, so leave it out. A short list draws fewer
+            // rows, which over-scrolls, but drawing clamps it.
+            let fit = u.world_rows_rc.len().saturating_sub(1).max(1);
+            if row < u.world_scroll {
+                u.world_scroll = row;
+            } else if row >= u.world_scroll + fit {
+                u.world_scroll = row + 1 - fit;
+            }
+        }
+        if !self.lab_open_drop(row, id) {
+            return;
+        }
+        let vis = self.ui.as_ref().map_or(8, |u| u.world_drop_vis).max(1);
+        if let Some(d) = self.ui.as_mut().and_then(|u| u.world_drop.as_mut())
+            && let Some(i) = d.actions.iter().position(|a| a.starts_with(pick))
+        {
+            d.sel = i;
+            d.top = i.saturating_sub(vis / 2);
+        }
+    }
+
     fn lab_sync_due(&self) -> bool {
         let page = self.lab_group_page();
-        let live = self.ui.as_ref().is_some_and(|u| {
+        let live = self.lab_voice_shown()
+            || self.ui.as_ref().is_some_and(|u| {
             u.world_drag.is_some() || u.world_bar_grab.is_some() || (page == Some(OPTIONS_PAGE) && u.world_sub >= 2)
         });
         let forced = SYNC_NOW.with(|c| c.replace(false));
@@ -199,7 +252,7 @@ impl App {
 
     /// Delete / Backspace on the key binding under the mouse.
     fn lab_key_clear_hovered(&mut self) {
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let Some(u) = self.ui.as_ref() else {
             return;
         };
@@ -215,7 +268,7 @@ impl App {
 
     fn lab_world_click(&mut self) {
         SYNC_NOW.with(|c| c.set(true));
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let hit = |list: &[[f32; 4]]| list.iter().position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
 
         if self.key_capture.take().is_some() {
@@ -235,6 +288,20 @@ impl App {
             }
             return;
         }
+        let alt = self.ui.as_ref().and_then(|u| {
+            let r = u.world_alt.iter().find(|(_, r)| hit(&[*r]).is_some())?;
+            Some((r.0, u.world_group, u.world_sub))
+        });
+        if let Some((k, g, sub)) = alt {
+            let groups = self.lab_world_raw();
+            if let Some((row, _)) = pick_row(&groups, g, sub, k) {
+                let id = row.split('\u{1f}').nth(10).unwrap_or("").to_string();
+                if !id.is_empty() {
+                    self.lab_open_drop(k, &id);
+                }
+            }
+            return;
+        }
         let Some(u) = self.ui.as_mut() else {
             return;
         };
@@ -249,6 +316,7 @@ impl App {
             u.world_group = g;
             u.world_sub = 0;
             u.world_scroll = 0;
+            self.key_filter.clear();
             return;
         }
         if let Some(i) = hit(&u.world_sub_rc) {
@@ -261,6 +329,7 @@ impl App {
                 (u.world_sub + 1).min(tabs - 1)
             };
             u.world_scroll = 0;
+            self.key_filter.clear();
             return;
         }
         let Some(i) = hit(&u.world_rows_rc) else {
@@ -295,40 +364,45 @@ impl App {
                     self.lab_world_set(x);
                 }
             }
-            'o' => match crate::game_lists::dropdown_for(self, k, &id) {
-                Some(d) => {
-                    let sel = d.current.unwrap_or(0).min(d.items.len().saturating_sub(1));
-                    let vis = self.ui.as_ref().map_or(8, |u| u.world_drop_vis).max(1);
-                    if let Some(u) = self.ui.as_mut() {
-                        let labels: Vec<String> = d.items.iter().map(|i| i.0.clone()).collect();
-                        let actions: Vec<String> = d.items.iter().map(|i| i.1.clone()).collect();
-                        let searchable = !d.search.is_empty();
-                        u.world_drop = Some(WorldDrop {
-                            k,
-                            all_labels: if searchable { labels.clone() } else { Vec::new() },
-                            all_actions: if searchable { actions.clone() } else { Vec::new() },
-                            hay: d.search.clone(),
-                            filter: String::new(),
-                            labels,
-                            actions,
-                            sel,
-                            top: sel.saturating_sub(vis / 2),
-                            current: d.current,
-                        });
-                    }
-                }
-                None => {
+            'o' => {
+                if !self.lab_open_drop(k, &id) {
                     crate::game_lists::run(self, &list, &id);
                 }
-            },
+            }
             _ => {
                 crate::game_lists::run(self, &list, &id);
             }
         }
     }
 
+    fn lab_open_drop(&mut self, k: usize, id: &str) -> bool {
+        let Some(d) = crate::game_lists::dropdown_for(self, k, id) else {
+            return false;
+        };
+        let sel = d.current.unwrap_or(0).min(d.items.len().saturating_sub(1));
+        let vis = self.ui.as_ref().map_or(8, |u| u.world_drop_vis).max(1);
+        if let Some(u) = self.ui.as_mut() {
+            let labels: Vec<String> = d.items.iter().map(|i| i.0.clone()).collect();
+            let actions: Vec<String> = d.items.iter().map(|i| i.1.clone()).collect();
+            let searchable = !d.search.is_empty();
+            u.world_drop = Some(WorldDrop {
+                k,
+                all_labels: if searchable { labels.clone() } else { Vec::new() },
+                all_actions: if searchable { actions.clone() } else { Vec::new() },
+                hay: d.search.clone(),
+                filter: String::new(),
+                labels,
+                actions,
+                sel,
+                top: sel.saturating_sub(vis / 2),
+                current: d.current,
+            });
+        }
+        true
+    }
+
     fn lab_world_drop_click(&mut self) {
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let Some(u) = self.ui.as_ref() else {
             return;
         };
@@ -482,6 +556,7 @@ impl App {
         }
         if let Some(u) = self.ui.as_mut() {
             u.admin_visible = admin;
+            u.tab_keys = crate::keys::tab_keys();
         }
         if self.lab_sync_due() {
             self.lab_world_sync();
@@ -489,9 +564,10 @@ impl App {
         if self.lab_menu.is_none() {
             return;
         }
-        let list: Vec<String> = self.lab_entries().into_iter().map(|e| e.1).collect();
+        let (ids, list): (Vec<&'static str>, Vec<String>) = self.lab_entries().into_iter().unzip();
         if let Some(u) = self.ui.as_mut() {
             u.pause_entries = list;
+            u.pause_entry_ids = ids;
         }
     }
 
@@ -568,7 +644,7 @@ impl App {
         if !self.lab_menu.is_some_and(|s| s.page == Some(0)) || self.lab_place.is_some() || self.lab_list.is_some() {
             return false;
         }
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let Some(n) = self.navigator.as_mut().filter(|n| n.city.embed.is_some()) else {
             return false;
         };
@@ -578,22 +654,62 @@ impl App {
         let inside = x >= r[0] && x < r[2] && y >= r[1] && y < r[3] && !on_btn;
         match pressed {
             Some(true) if inside => {
-                if self.teleport_pick {
-                    if let Some(at) = n.map_point(x, y) {
-                        self.teleport_pick = false;
-                        self.close_game_menu();
-                        self.place_bus_at(at);
-                    }
-                } else {
-                    n.map_press(x, y);
+                n.map_press(x, y);
+                if self.teleport_pick && n.map_dragging() {
+                    self.teleport_down = Some((x, y));
                 }
                 true
             }
             Some(false) => {
                 n.map_release();
+                if let Some((px, py)) = self.teleport_down.take() {
+                    if self.teleport_pick && (x - px).abs() + (y - py).abs() < 6.0 {
+                        if let Some(at) = n.map_point(x, y) {
+                            self.teleport_pick = false;
+                            self.close_game_menu();
+                            self.place_bus_at(at);
+                            return true;
+                        }
+                    }
+                }
                 false
             }
             _ => false,
+        }
+    }
+
+    pub(crate) fn lab_bar_press(&mut self) -> bool {
+        if self.lab_list.is_none() {
+            return false;
+        }
+        let (x, y) = self.ui_cursor();
+        let inside = |r: [f32; 4]| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
+        let kind = match self.ui.as_ref() {
+            Some(u) if u.dialog_bar.is_some_and(inside) => 1,
+            Some(u) if u.dialog_pane_bar.is_some_and(inside) => 2,
+            _ => 0,
+        };
+        self.lab_bar_drag = kind;
+        if kind == 0 {
+            return false;
+        }
+        self.lab_bar_set();
+        true
+    }
+
+    pub(crate) fn lab_bar_set(&mut self) {
+        let y = self.ui_cursor().1;
+        let kind = self.lab_bar_drag;
+        let vis = self.ui.as_ref().map_or(1, |u| u.dialog_vis);
+        let Some(u) = self.ui.as_mut() else { return };
+        let bar = if kind == 1 { u.dialog_bar } else { u.dialog_pane_bar };
+        let Some(bar) = bar else { return };
+        let frac = ((y - bar[1]) / (bar[3] - bar[1]).max(1.0)).clamp(0.0, 1.0);
+        if kind == 2 {
+            u.dialog_pane_top = Some((frac * u.dialog_pane_max as f32).round() as usize);
+        } else if let Some(Dialog::Select { scroll, options, .. }) = u.dialog.as_mut() {
+            let max = options.len().saturating_sub(vis) as f32;
+            *scroll = (frac * max).round() as usize;
         }
     }
 
@@ -601,7 +717,7 @@ impl App {
         if self.lab_list.is_none() {
             return false;
         }
-        let (cx, cy) = self.cursor;
+        let (cx, cy) = self.ui_cursor();
         if let Some(u) = self.ui.as_mut() {
             let r = u.dialog_pane_rc;
             if u.dialog_pane_max > 0 && cx >= r[0] && cx <= r[2] && cy >= r[1] && cy <= r[3] {
@@ -638,7 +754,7 @@ impl App {
             }
             return;
         };
-        let look = crate::launcher::showroom::Look {
+        let look = crate::showcase::Look {
             root: self.args.root.clone(),
             map: self.args.map.clone(),
             bus,
@@ -648,7 +764,7 @@ impl App {
             date: String::new(),
         };
         let room = self.lab_room.get_or_insert_with(|| {
-            let mut room = crate::launcher::showroom::Showroom::new();
+            let mut room = crate::showcase::Showcase::new();
 
             room.zoom_by(1.3);
             room
@@ -667,10 +783,7 @@ impl App {
             return;
         }
         ui.place_status.clear();
-        if let Some((pw, ph, mut rgba)) = room.snapshot(r, w, h) {
-            for px in rgba.chunks_exact_mut(4) {
-                px[3] = 255;
-            }
+        if let Some((pw, ph, rgba)) = room.snapshot(r, w, h) {
             let id = match self.lab_pic {
                 Some((id, tw, th)) if (tw, th) == (pw, ph) => id,
                 old => {
@@ -682,7 +795,7 @@ impl App {
                     id
                 }
             };
-            r.update_texture(scene, id, &::texture::Image { width: pw, height: ph, rgba, has_alpha: false });
+            r.update_texture(scene, id, &::texture::Image { width: pw, height: ph, rgba, has_alpha: true });
         }
         ui.place_picture = self.lab_pic.map(|p| p.0);
     }
@@ -838,7 +951,9 @@ impl App {
         let (Some(list), Some(kind)) = (self.admin_list.take(), self.list_kind.take()) else {
             return;
         };
-        self.chooser = None;
+        let at = self.chooser.take();
+        // destinations open with search, like OMSI's box (#447)
+        let dest = kind == crate::game_lists::ListKind::Destinations;
         let no_back = matches!(kind, crate::game_lists::ListKind::Lines | crate::game_lists::ListKind::Tours(..));
         let last = list.len().saturating_sub(1);
         let idx: Vec<usize> = (0..list.len())
@@ -854,9 +969,12 @@ impl App {
                 .find(|e| e.0 == id)
                 .map_or_else(|| id.to_string(), |e| e.1);
         }
+        // (keeps the sort line chosen)
+        let sel = if dest { at.and_then(|a| idx.iter().position(|&k| k == a)).unwrap_or(0) } else { 0 };
         self.lab_list = Some((list, kind, idx));
+        let search = dest.then(String::new);
         if let Some(u) = self.ui.as_mut() {
-            u.dialog = Some(Dialog::Select { title, options, sel: 0, scroll: 0, search: None, drop: None });
+            u.dialog = Some(Dialog::Select { title, options, sel, scroll: 0, search, drop: None });
         }
     }
 
@@ -927,6 +1045,20 @@ impl App {
             *sel = 0;
             *scroll = 0;
             *search = q;
+        }
+    }
+
+    /// Rebuilds the open list's lines, keeping the selection.
+    pub(crate) fn lab_list_refresh(&mut self) {
+        let Some(kind) = self.lab_list.as_ref().map(|l| l.1.clone()) else {
+            return;
+        };
+        let list = crate::game_lists::items(self, &kind);
+        let idx: Vec<usize> = (0..list.len()).filter(|&k| list[k].1 != crate::game_lists::HEADING).collect();
+        let opts = idx.iter().map(|&k| list[k].0.clone()).collect();
+        self.lab_list = Some((list, kind, idx));
+        if let Some(Dialog::Select { options, .. }) = self.ui.as_mut().and_then(|u| u.dialog.as_mut()) {
+            *options = opts;
         }
     }
 
@@ -1041,6 +1173,7 @@ impl App {
         if self.lab_menu.is_some() && self.admin_list.is_some() {
             let id = match self.list_kind {
                 Some(crate::game_lists::ListKind::Lines | crate::game_lists::ListKind::Tours(..)) => "duty",
+                Some(crate::game_lists::ListKind::Destinations) => "dest",
                 _ => "place",
             };
             self.lab_list_dialog(id);
@@ -1076,6 +1209,7 @@ impl App {
             "world" => page(self, 2),
             "vehicle" => page(self, VEHICLE_PAGE),
             "admin" => page(self, ADMIN_PAGE),
+            "mainmenu" => self.back_to_main_menu(),
             "quit" => {
                 self.game_menu = None;
                 self.lab_menu = None;
@@ -1094,7 +1228,85 @@ impl App {
         }
     }
 
+    pub(crate) fn restart_ask(&mut self, target: Option<PauseState>) {
+        self.restart_prompt = Some(target);
+        if let Some(u) = self.ui.as_mut() {
+            u.dialog = Some(Dialog::Confirm {
+                title: tl("pause.dialog.restart.title"),
+                text: tl("pause.dialog.restart.text"),
+                yes: tl("pause.dialog.restart.yes"),
+                no: tl("pause.dialog.restart.no"),
+            });
+        }
+    }
+
+    fn restart_answer(&mut self, event_loop: &ActiveEventLoop, now: bool) {
+        let Some(target) = self.restart_prompt.take() else {
+            return;
+        };
+        if let Some(u) = self.ui.as_mut() {
+            u.dialog = None;
+            u.dialog_under = None;
+        }
+        self.restart_pending = false;
+        if now && self.restart_game(event_loop) {
+            return;
+        }
+        match target {
+            Some(s) => self.lab_menu = Some(s),
+            None => self.close_game_menu(),
+        }
+    }
+
+    fn restart_gate(&mut self, before: Option<PauseState>) {
+        if !self.restart_pending || self.restart_prompt.is_some() {
+            return;
+        }
+        if before.and_then(|s| s.page) != Some(OPTIONS_PAGE) {
+            return;
+        }
+        let now = self.lab_menu;
+        if now.and_then(|s| s.page) != Some(OPTIONS_PAGE) {
+            self.lab_menu = before;
+            self.restart_ask(now);
+        }
+    }
+
     pub(crate) fn lab_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode) {
+        if self.restart_prompt.is_some() {
+            match code {
+                KeyCode::Enter | KeyCode::NumpadEnter => self.restart_answer(event_loop, true),
+                KeyCode::Escape => self.restart_answer(event_loop, false),
+                _ => {}
+            }
+            return;
+        }
+        let before = self.lab_menu;
+        self.lab_key_inner(event_loop, code);
+        self.restart_gate(before);
+    }
+
+    pub(crate) fn lab_click(&mut self, event_loop: &ActiveEventLoop) {
+        if self.restart_prompt.is_some() {
+            let (x, y) = self.ui_cursor();
+            let hit = self.ui.as_ref().and_then(|u| {
+                u.dialog_rects
+                    .iter()
+                    .position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3])
+            });
+            match hit {
+                Some(0) => self.restart_answer(event_loop, true),
+                Some(1) => self.restart_answer(event_loop, false),
+                _ => {}
+            }
+            return;
+        }
+        let before = self.lab_menu;
+        self.lab_click_inner(event_loop);
+        self.restart_gate(before);
+    }
+
+    fn lab_key_inner(&mut self, event_loop: &ActiveEventLoop, code: KeyCode) {
         SYNC_NOW.with(|c| c.set(true));
         let n = self.lab_pages();
         let st = self.lab_menu.unwrap_or_default();
@@ -1128,6 +1340,14 @@ impl App {
             } else {
                 self.time_edit_key(code);
             }
+            return;
+        }
+        if self.route_editing() && self.lab_list.is_some() {
+            if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) {
+                self.lab_dialog_close();
+            }
+            self.route_edit_key(code);
+            self.lab_list_refresh();
             return;
         }
         if self.lab_place.is_some() && self.lab_list.is_none() {
@@ -1167,10 +1387,15 @@ impl App {
             };
             let ctrl = self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
             let searching = self.lab_search();
+            // (destinations: Escape clears the search, then closes)
+            let dest = matches!(self.lab_list.as_ref().map(|l| &l.1), Some(crate::game_lists::ListKind::Destinations));
             match code {
                 KeyCode::Slash | KeyCode::NumpadDivide if searching.is_none() => self.lab_refilter(Some(String::new())),
                 KeyCode::KeyF if ctrl && searching.is_none() => self.lab_refilter(Some(String::new())),
-                KeyCode::Escape if searching.is_some() => self.lab_refilter(None),
+                KeyCode::Escape if dest && searching.as_deref().is_some_and(|q| !q.is_empty()) => {
+                    self.lab_refilter(Some(String::new()))
+                }
+                KeyCode::Escape if !dest && searching.is_some() => self.lab_refilter(None),
                 KeyCode::Escape => self.lab_dialog_close(),
                 KeyCode::Backspace => {
                     if let Some(mut q) = searching {
@@ -1218,9 +1443,13 @@ impl App {
         // a page
         let to = |p: usize| Some(PauseState { page: Some(p), ..st });
         match code {
+            KeyCode::Escape if self.menu.is_some() => self.start_options_close(),
             KeyCode::Escape if self.lab_map_direct => self.close_game_menu(),
             KeyCode::Escape => self.lab_menu = Some(PauseState { page: None, ..st }),
             KeyCode::Delete | KeyCode::Backspace => self.lab_key_clear_hovered(),
+            KeyCode::KeyQ if self.menu.is_some() => self.start_tab(-1),
+            KeyCode::KeyE if self.menu.is_some() => self.start_tab(1),
+            _ if self.menu.is_some() => {}
             KeyCode::ArrowLeft | KeyCode::KeyA | KeyCode::KeyQ => {
                 self.lab_menu = to((tab + n - 1) % n)
             }
@@ -1236,9 +1465,9 @@ impl App {
         }
     }
 
-    pub(crate) fn lab_click(&mut self, event_loop: &ActiveEventLoop) {
+    fn lab_click_inner(&mut self, event_loop: &ActiveEventLoop) {
         SYNC_NOW.with(|c| c.set(true));
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let st = self.lab_menu.unwrap_or_default();
         let hit = |list: &[[f32; 4]]| {
             list.iter()
@@ -1252,7 +1481,6 @@ impl App {
                 Some(4) => self.lab_place_create(),
                 Some(i) => self.lab_place_open(i),
                 None => {
-                    let (x, y) = self.cursor;
                     let b = self.ui.as_ref().map_or([0.0; 4], |u| u.place_box);
                     if !(x >= b[0] && x < b[2] && y >= b[1] && y < b[3]) {
                         self.lab_dialog_close();
@@ -1354,12 +1582,12 @@ impl App {
 }
 
 pub(crate) fn scan_vehicles(
-    root: std::path::PathBuf,
+    root: PathBuf,
     map: String,
-) -> std::sync::mpsc::Receiver<crate::app::VehicleScan> {
+) -> std::sync::mpsc::Receiver<VehicleScan> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let menu = crate::menu::Menu::new(&root, &map);
+        let menu = menu::Menu::new(&root, &map);
         let meta = menu.vehicles.iter().zip(menu.vehicle_meta).map(|(v, m)| (v.1.clone(), m)).collect();
         let _ = tx.send((menu.vehicles, meta));
     });

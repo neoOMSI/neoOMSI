@@ -5,6 +5,7 @@ pub(crate) struct Freed {
     pub(crate) index_buf: wgpu::Buffer,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) buf: wgpu::Buffer,
+    pub(crate) buf_offset: u64,
 }
 
 impl Renderer {
@@ -61,33 +62,61 @@ impl Renderer {
             Some(id),
             None,
             false,
+            None,
+            false,
+            None,
+            false,
+            None,
         );
         self.texture_aspect = None;
     }
 
-    /// Refraction reads a half-resolution current scene before films are drawn, avoiding feedback.
-    pub(crate) fn prepare_glass_behind(
-        &mut self,
-        scene: &mut Scene,
-        width: u32,
-        height: u32,
-    ) {
-        let Some(id) = scene.glass_slot else { return };
-        // TODO 960×540 max
-        let (width, height) = (width.div_ceil(2).max(1), height.div_ceil(2).max(1));
-        let format = self.glass_picture_format;
-        if self.glass_picture.as_ref().is_none_or(|v| {
-            v.texture().width() != width
-                || v.texture().height() != height
-                || v.texture().format() != format
-        }) {
+    /// Holds the depth prepass for the glass snapshot when the main pass draws into it.
+    pub(crate) fn prepare_glass_depth(&mut self, width: u32, height: u32) {
+        if self
+            .glass_depth
+            .as_ref()
+            .is_none_or(|v| v.texture().width() != width || v.texture().height() != height)
+        {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("current picture behind glass"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                label: Some("depth prepass behind glass"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format,
+                format: DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            self.glass_depth = Some(texture.create_view(&Default::default()));
+        }
+    }
+
+    /// Refraction reads a half-resolution current scene before films are drawn, avoiding feedback.
+    pub(crate) fn prepare_glass_behind(&mut self, scene: &mut Scene, width: u32, height: u32) {
+        let Some(id) = scene.glass_slot else { return };
+        // TODO 960×540 max
+        let (width, height) = (width.div_ceil(2).max(1), height.div_ceil(2).max(1));
+        if self
+            .glass_picture
+            .as_ref()
+            .is_none_or(|v| v.texture().width() != width || v.texture().height() != height)
+        {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("current picture behind glass"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
@@ -96,9 +125,8 @@ impl Renderer {
         }
         let view = self.glass_picture.as_ref().unwrap();
         if scene.textures[id].view != *view {
-            scene.textures[id] = GpuTexture::showing(
-                view.texture().clone(), view.clone(), (width, height),
-            );
+            scene.textures[id] =
+                GpuTexture::showing(view.texture().clone(), view.clone(), (width, height));
             self.rebind_textures(scene, &[id]);
         }
     }
@@ -187,6 +215,7 @@ impl Renderer {
                 index_buf,
                 bind_group,
                 buf,
+                buf_offset: m.buf_offset,
             });
         }
         self.freed.get().unwrap()
@@ -200,17 +229,32 @@ impl Renderer {
             let f = self.freed(scene);
             (f.vertex_buf.clone(), f.index_buf.clone())
         };
+        let (vertex_bytes, index_bytes) = (vertex_buf.size(), index_buf.size());
+        // (the page's space goes to the next mesh)
+        release_mesh_space(&mut scene.mesh_pages, &scene.meshes[id]);
         let m = &mut scene.meshes[id];
         m.vertex_buf = vertex_buf;
         m.index_buf = index_buf;
+        m.page = NO_PAGE;
+        m.base_vertex = 0;
+        m.first_index = 0;
+        m.vertex_offset = 0;
+        m.vertex_bytes = vertex_bytes;
+        m.index_bytes = index_bytes;
         m.ranges.clear();
+        m.walls.clear();
         m.bounds_center = Vec3::ZERO;
         m.bounds_radius = 0.0;
         Self::mesh_bounds_changed(scene, id);
+        // (a pose makes it a reshaped mesh again; the slot may take a static one now)
+        if let Some(r) = scene.reshaped_meshes.get_mut(id) {
+            *r = false;
+        }
     }
 
     pub fn free_texture(&self, scene: &mut Scene, id: TextureId) {
         scene.snow_textures.remove(&id);
+        scene.uploaded.remove(&id);
         if let Some(m) = scene.pbr_maps.remove(&id) {
             for t in [m.normal, m.orm].into_iter().flatten() {
                 self.free_texture(scene, t);
@@ -231,10 +275,11 @@ impl Renderer {
         if id >= scene.materials.len() {
             return;
         }
-        let (bind_group, buf) = {
+        let (bind_group, buf, buf_offset) = {
             let f = self.freed(scene);
-            (f.bind_group.clone(), f.buf.clone())
+            (f.bind_group.clone(), f.buf.clone(), f.buf_offset)
         };
+        let look = scene.intern_look(0);
         scene.materials[id] = Material {
             texture: None,
             alpha: AlphaMode::Opaque,
@@ -253,7 +298,9 @@ impl Renderer {
             address: TexAddressing::Wrap,
             uniform: <MaterialUniform as bytemuck::Zeroable>::zeroed(),
             buf,
+            buf_offset,
             bind_group,
+            look,
         };
     }
 
@@ -282,9 +329,14 @@ impl Renderer {
                 }
             }
         }
+        for m in scene.meshes.iter().skip(meshes) {
+            release_mesh_space(&mut scene.mesh_pages, m);
+        }
         cut(&mut scene.meshes, meshes);
         cut(&mut scene.textures, textures);
         cut(&mut scene.materials, materials);
+        scene.reshaped_meshes.truncate(scene.meshes.len());
+        Self::forget_reshaped_users(scene);
         let (nm, nt) = (scene.meshes.len(), scene.materials.len());
         for inst in scene.instances.iter_mut() {
             if inst.mesh >= nm {
@@ -312,8 +364,13 @@ impl Renderer {
             return new;
         }
         let m = scene.meshes.pop().unwrap();
+        // (a slot taken over before it was freed gives its page space back)
+        release_mesh_space(&mut scene.mesh_pages, &scene.meshes[into]);
         scene.meshes[into] = m;
         Self::mesh_bounds_changed(scene, into);
+        if let Some(r) = scene.reshaped_meshes.get_mut(into) {
+            *r = false;
+        }
         into
     }
 
@@ -350,6 +407,7 @@ impl Renderer {
         let mut inst = scene.instances.pop().unwrap();
         inst.base = scene.instances[into].base;
         scene.instances[into] = inst;
+        Self::note_instance_mesh(scene, into);
         Self::mark_changed(scene, into);
         into
     }

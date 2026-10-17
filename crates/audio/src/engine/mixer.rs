@@ -32,7 +32,8 @@ pub const MAX_VOICES: usize = 200;
 /// Hard storage bound, including streams, virtual voices and stop tails. Excess starts
 /// are counted and returned to the game thread without growing the callback storage.
 pub(crate) const VOICE_CAPACITY: usize = 512;
-const BLOCK_FRAMES: usize = 256;
+pub(crate) const BLOCK_FRAMES: usize = 256;
+pub(crate) const MIX_SAMPLE_RATE: u32 = 48000;
 
 pub(crate) struct AudioCore {
     voices: Vec<Voice>,
@@ -113,6 +114,9 @@ impl AudioCore {
             Command::PlayStream { id, stream, params } => {
                 self.voices.push(Voice::stream_with_kernel(id, stream, params, self.kernel.clone()));
             }
+            Command::PlaySource { id, feed, params } => {
+                self.voices.push(Voice::source_with_kernel(id, feed, params, self.kernel.clone()));
+            }
             Command::Stop { id } => {
                 if let Some(v) = self.voices.iter_mut().find(|v| v.id() == id) {
                     v.stop();
@@ -132,6 +136,15 @@ impl AudioCore {
 
     /// Mix one block into `out` (interleaved, device order).
     pub(crate) fn render(&mut self, out: &mut [f32]) {
+        self.render_block(out, true);
+    }
+
+    /// Device output limits after resampling.
+    pub(crate) fn render_mix(&mut self, out: &mut [f32]) {
+        self.render_block(out, false);
+    }
+
+    fn render_block(&mut self, out: &mut [f32], limit: bool) {
         for s in out.iter_mut() {
             *s = 0.0;
         }
@@ -145,7 +158,7 @@ impl AudioCore {
         if rejected.is_empty() {
             self.queue.drain_into(&mut cmds);
             for cmd in cmds.drain(..) {
-                if self.voices.len() >= VOICE_CAPACITY && matches!(cmd, Command::Play { .. } | Command::PlayStream { .. }) {
+                if self.voices.len() >= VOICE_CAPACITY && matches!(cmd, Command::Play { .. } | Command::PlayStream { .. } | Command::PlaySource { .. }) {
                     self.counters.dropped_commands.fetch_add(1, Ordering::Relaxed);
                     if let Err(cmd) = self.reaper.reject(cmd) { rejected.push(cmd); }
                 } else { self.apply(cmd); }
@@ -236,7 +249,7 @@ impl AudioCore {
                 self.pa_reverb.process_wet(&mut self.pa_send[..samples], 2, rate, 0.45);
                 for frame in self.pa_send[..samples].chunks_exact_mut(2) {
                     for c in 0..2 {
-                        self.pa_damping[c] += (frame[c] - self.pa_damping[c]) * self.pa_damping_alpha;
+                        envelope::smooth(&mut self.pa_damping[c], frame[c], self.pa_damping_alpha);
                         frame[c] = self.pa_damping[c];
                     }
                 }
@@ -244,9 +257,9 @@ impl AudioCore {
             }
             self.stereo[..samples].fill(0.0);
             for f in 0..count {
-                self.pa_return += (self.pa_return_target - self.pa_return) * bus_k;
+                envelope::smooth(&mut self.pa_return, self.pa_return_target, bus_k);
                 for bus in 0..BUS_COUNT {
-                    self.bus_gains[bus] += (self.bus_targets[bus] - self.bus_gains[bus]) * bus_k;
+                    envelope::smooth(&mut self.bus_gains[bus], self.bus_targets[bus], bus_k);
                     for c in 0..2 {
                         self.stereo[f * 2 + c] += self.buses[bus][f * 2 + c] * self.bus_gains[bus] * HEADROOM;
                     }
@@ -259,7 +272,7 @@ impl AudioCore {
             if mix > 0.001 && rt > 0.05 {
                 self.reverb.process(&mut self.stereo[..samples], 2, rate, rt.min(3.0), mix.min(1.0));
             }
-            self.limiter.process(&mut self.stereo[..samples], 2, rate);
+            if limit { self.limiter.process(&mut self.stereo[..samples], 2, rate); }
             for f in 0..count {
                 let (l, r) = (self.stereo[f * 2], self.stereo[f * 2 + 1]);
                 if !self.muted {

@@ -1097,10 +1097,14 @@ fn to_client(c: &LanSession) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, c.local_addr().unwrap().port()))
 }
 
-fn welcome_msg(id: u32) -> String {
+fn welcome_msg(id: u32, nonce: u64) -> String {
+    welcome_msg_for(7, id, nonce)
+}
+
+fn welcome_msg_for(session: u64, id: u32, nonce: u64) -> String {
     format!(
-        "WELCOME|{PROTOCOL}|{id}|{}|host|m|1989-05-30|32400|||1",
-        session_hex(7)
+        "WELCOME|{PROTOCOL}|{id}|{}|host|m|1989-05-30|32400|||1||{nonce:016X}",
+        session_hex(session),
     )
 }
 
@@ -1111,12 +1115,32 @@ fn state_of(id: u32, x: f64) -> Vec<u8> {
 }
 
 #[test]
+fn a_welcome_must_match_the_join_attempt() {
+    let host: SocketAddr = "127.0.0.1:27015".parse().unwrap();
+    let session = 0x1234;
+    let mut client = LanSession::join_addr(vec![host], None, "client", world("m")).unwrap();
+    client.session = session;
+    client.session_required = true;
+
+    let wrong = welcome_msg_for(session ^ 1, 2, client.nonce ^ 1);
+    let parts: Vec<&str> = wrong.split('|').collect();
+    client.on_welcome(&parts, host);
+    assert!(!client.connected);
+    assert!(client.rejected.is_none());
+
+    let right = welcome_msg_for(session, 2, client.nonce);
+    let parts: Vec<&str> = right.split('|').collect();
+    client.on_welcome(&parts, host);
+    assert!(client.connected);
+}
+
+#[test]
 fn a_client_listens_to_its_host_only() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
     let mine = pose(1.0);
-    host.send_to(welcome_msg(5).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(5, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     host.send_to(&state_of(1, 50.0), to_client(&c)).unwrap();
     for _ in 0..20 {
@@ -1136,7 +1160,7 @@ fn a_client_listens_to_its_host_only() {
     stranger
         .send_to(format!("REJECT|{PROTOCOL}|go away").as_bytes(), at)
         .unwrap();
-    stranger.send_to(welcome_msg(9).as_bytes(), at).unwrap();
+    stranger.send_to(welcome_msg(9, 0).as_bytes(), at).unwrap();
     stranger.send_to(b"BYE|1", at).unwrap();
     stranger.send_to(b"SAY|1|host|buy this", at).unwrap();
     stranger.send_to(b"CLOCK|m|1989-05-30|0|x|", at).unwrap();
@@ -1169,7 +1193,7 @@ fn a_client_takes_a_limited_number_of_players() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(2).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(2, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     for id in 3..(3 + 3 * MAX_PEERS as u32) {
         host.send_to(&state_of(id, id as f64), to_client(&c))
@@ -1188,7 +1212,7 @@ fn old_states_do_not_overtake_new_ones() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(2).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(2, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     let mut p = pose(10.0);
     p.id = 1;
@@ -1208,10 +1232,13 @@ fn old_states_do_not_overtake_new_ones() {
 fn a_full_session_turns_the_next_player_away() {
     let mut host = LanSession::host(27940, "host", world("m"), true).unwrap();
     let at = SocketAddr::from((Ipv4Addr::LOCALHOST, host.local_addr().unwrap().port()));
-    let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400||");
     let players: Vec<UdpSocket> = (0..MAX_PEERS).map(|_| raw()).collect();
     let mut buf = [0u8; 512];
     for (i, p) in players.iter().enumerate() {
+        let hello = format!(
+            "HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||{:016X}",
+            i + 1
+        );
         p.send_to(hello.as_bytes(), at).unwrap();
         host.tick(0.01, &pose(0.0));
         // everybody gets in only once the ones before them have loaded (a state arrived)
@@ -1236,6 +1263,7 @@ fn a_full_session_turns_the_next_player_away() {
     }
     assert_eq!(host.peer_count(), MAX_PEERS);
     let late = raw();
+    let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||FFFF");
     let mut answer = String::new();
     for _ in 0..40 {
         late.send_to(hello.as_bytes(), at).unwrap();
@@ -1258,9 +1286,12 @@ fn a_full_session_turns_the_next_player_away() {
 fn too_many_loading_players_wait() {
     let mut host = LanSession::host(27900, "host", world("m"), true).unwrap();
     let at = SocketAddr::from((Ipv4Addr::LOCALHOST, host.local_addr().unwrap().port()));
-    let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400||");
     let players: Vec<UdpSocket> = (0..MAX_JOINING + 1).map(|_| raw()).collect();
-    for p in &players {
+    for (i, p) in players.iter().enumerate() {
+        let hello = format!(
+            "HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400|||{:016X}",
+            i + 1
+        );
         p.send_to(hello.as_bytes(), at).unwrap();
     }
     for _ in 0..10 {
@@ -1340,7 +1371,7 @@ fn idle_buses_send_less() {
     let host = raw();
     let mut c =
         LanSession::join_addr(vec![host.local_addr().unwrap()], None, "c", world("m")).unwrap();
-    host.send_to(welcome_msg(4).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(4, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     // (the simulated seconds pass quickly: the silent host must not time out meanwhile)
     host.set_nonblocking(true).unwrap();
@@ -1384,7 +1415,7 @@ fn a_player_without_a_bus_sends_a_heartbeat() {
         world("m"),
     )
     .unwrap();
-    host.send_to(welcome_msg(4).as_bytes(), to_client(&c))
+    host.send_to(welcome_msg(4, c.nonce).as_bytes(), to_client(&c))
         .unwrap();
     let none = Pose::default();
     let mut buf = [0u8; 1024];
@@ -1612,4 +1643,104 @@ fn a_returning_player_is_known_by_its_nonce_not_its_name() {
     // alice herself (her nonce) comes back to her number
     let back = hello_id(&raw(), &mut host, "alice", 0x1234).expect("welcomed");
     assert_eq!(back, first);
+}
+
+/// A host and three clients: Anton next to the host, Berta 40 m away, Clara 2 km away.
+fn voice_session(port: u16) -> (LanSession, [LanSession; 3], [Pose; 4]) {
+    let mut host = LanSession::host(port, "Server", world("m"), true).unwrap();
+    host.voice.range = 50.0;
+    let port = host.local_addr().unwrap().port();
+    let join = |n: &str| {
+        LanSession::join(&port.to_string(), n, world("m"), Duration::from_secs(1)).unwrap()
+    };
+    let (mut a, mut b, mut c) = (join("Anton"), join("Berta"), join("Clara"));
+    let poses = [pose(0.0), pose(5.0), pose(40.0), pose(2000.0)];
+    pump(&mut [&mut host, &mut a, &mut b, &mut c], &poses, 100, |s| {
+        s[1..].iter().all(|c| c.connected) && s[0].peers().filter(|p| p.has_pose).count() == 3
+    });
+    for s in [&mut host, &mut a, &mut b, &mut c] {
+        s.take_voice();
+    }
+    (host, [a, b, c], poses)
+}
+
+fn heard(s: &mut LanSession) -> Vec<(u32, u16, bool)> {
+    s.take_voice()
+        .into_iter()
+        .map(|f| (f.id, f.seq, f.radio()))
+        .collect()
+}
+
+#[test]
+fn a_voice_carries_as_far_as_the_host_allows() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28010);
+    assert!(a.voice_allowed() && a.voice.range == 50.0, "{:?}", a.voice);
+    for k in 0..5u16 {
+        a.send_voice(k, 0, &[0xF8, k as u8]);
+    }
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 40, |s| {
+        s[2].voice_in.len() == 5 && s[0].voice_in.len() == 5
+    });
+    let (h, b_heard, c_heard) = (heard(&mut host), heard(&mut b), heard(&mut c));
+    assert_eq!(h.len(), 5);
+    assert_eq!(b_heard.iter().map(|f| f.1).collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+    assert!(b_heard.iter().all(|f| f.0 == a.my_id && !f.2));
+    assert!(c_heard.is_empty(), "Clara is 2 km away");
+    assert!(heard(&mut a).is_empty(), "nobody hears themselves");
+    // the radio reaches everybody, the host's own voice those near it
+    a.send_voice(9, voice::FLAG_RADIO, &[0xF8]);
+    host.send_voice(1, 0, &[0xF8]);
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 40, |s| s[3].voice_in.len() == 1 && s[2].voice_in.len() == 2);
+    assert_eq!(heard(&mut c), [(a.my_id, 9, true)]);
+    assert_eq!(heard(&mut a), [(1, 1, false)]);
+}
+
+#[test]
+fn muted_spoofed_and_unasked_voices_go_nowhere() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28020);
+    assert!(host.set_voice_muted(a.my_id, true));
+    a.send_voice(1, 0, &[0xF8]);
+    // Berta pretending to be Anton
+    let fake = voice::encode_voice(a.my_id, 2, 0, &[0xF8]);
+    b.send(&fake, b.host.unwrap());
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |_| false);
+    assert!(heard(&mut host).is_empty() && heard(&mut b).is_empty());
+    // the host turns voice off: the clients learn it with the next clock message
+    host.set_voice_muted(a.my_id, false);
+    host.voice.enabled = false;
+    host.clock_acc = CLOCK_EVERY;
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 40, |s| !s[1].voice.enabled);
+    assert!(!a.voice_allowed());
+    b.send(&voice::encode_voice(b.my_id, 3, 0, &[0xF8]), b.host.unwrap());
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |_| false);
+    assert!(heard(&mut a).is_empty() && heard(&mut host).is_empty());
+}
+
+#[test]
+fn a_flood_of_voice_is_cut_to_the_rate() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28030);
+    for k in 0..300u16 {
+        a.send_voice(k, 0, &[0xF8]);
+    }
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |_| false);
+    let n = heard(&mut b).len();
+    assert!((50..=80).contains(&n), "{n} frames passed on");
+}
+
+#[test]
+fn an_older_game_gets_no_voice() {
+    let (mut host, [mut a, mut b, mut c], poses) = voice_session(28040);
+    let old = host.peers.get_mut(&b.my_id).unwrap();
+    old.voice = false;
+    a.send_voice(1, 0, &[0xF8]);
+    let mut all = [&mut host, &mut a, &mut b, &mut c];
+    pump(&mut all, &poses, 20, |s| !s[0].voice_in.is_empty());
+    assert!(heard(&mut b).is_empty());
+    assert_eq!(heard(&mut host).len(), 1);
 }

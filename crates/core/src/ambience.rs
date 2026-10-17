@@ -64,8 +64,8 @@ impl Ambience {
         if !engine.enabled {
             return a;
         }
-        a.rain = engine.load_clip(&::legacy_config::resolve_path(root, "Sounds\\rain_outside.wav"));
-        let dir = ::legacy_config::resolve_path(root, "Sounds\\Passengers");
+        a.rain = engine.load_clip(&::mods::resolve_path(root, "Sounds\\rain_outside.wav"));
+        let dir = ::mods::resolve_path(root, "Sounds\\Passengers");
         // (the configuration's own file is only a stand-in: TSoundPack plays the pack's)
         if let Ok(cfg) = ::legacy_vehicle::SoundCfg::load(&dir.join("sound.cfg")) {
             if let Some(step) = cfg
@@ -206,7 +206,7 @@ impl Ambience {
             let Some(clip) = self
                 .steps
                 .entry(file.to_ascii_lowercase())
-                .or_insert_with(|| engine.load_clip(&::legacy_config::resolve_path(dir, file)))
+                .or_insert_with(|| engine.load_clip(&::mods::resolve_path(dir, file)))
                 .clone()
             else {
                 continue;

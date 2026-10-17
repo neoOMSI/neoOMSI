@@ -1,4 +1,4 @@
-use super::{GpuTexture, MaterialId, Renderer, Scene, TextureId, buffer_init};
+use super::{GpuTexture, MaterialId, Renderer, Scene, TextureId};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -99,7 +99,10 @@ pub struct Material {
     /// map without losing map lighting, moisture, screen, or other renderer flags.
     pub(crate) uniform: MaterialUniform,
     pub(crate) buf: wgpu::Buffer,
+    pub(crate) buf_offset: u64,
     pub(crate) bind_group: wgpu::BindGroup,
+    /// Materials that draw alike (same textures, sampler and values) share this number.
+    pub(crate) look: u32,
 }
 
 impl Material {
@@ -163,6 +166,7 @@ pub struct MaterialExtra {
     /// and FXAA leave it alone (see `MASK_FORMAT`): FXAA took half the contrast out of
     /// their letters and they read as blurred.
     pub screen: bool,
+    pub text: bool,
     /// An LED matrix - a display whose lit dots are the `\S:n` script texture's
     /// (`[matl_transmap]`), the Krueger and K++ destination panels: the dots are the
     /// panel's own light, so the enhanced picture lets them burn in HDR and blooms them
@@ -204,6 +208,9 @@ pub struct MaterialExtra {
     /// factor alone, as the vanilla one shows the sphere map on it - chrome read as a
     /// faint clear coat there. A body needs a mask of its own for that (a Golf's bonnet).
     pub metal_ok: bool,
+    /// The normals point against the faces (`VehicleMesh::normals_inward`): the enhanced
+    /// picture flips them.
+    pub normals_inward: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -492,7 +499,7 @@ impl Renderer {
         if uniform.ambient[3] < 1.5 {
             uniform.ambient[3] = snow_texture_flag(scene, texture);
         }
-        let (bind_group, buf) = self.cached_bind_group(
+        let (bind_group, buf, buf_offset, look) = self.cached_bind_group(
             scene,
             MaterialMaps {
                 texture,
@@ -525,7 +532,9 @@ impl Renderer {
             address,
             uniform,
             buf,
+            buf_offset,
             bind_group,
+            look,
         });
         Some(scene.materials.len() - 1)
     }
@@ -746,14 +755,15 @@ impl Renderer {
                 envmap.map(|e| e.1).unwrap_or(0.0),
                 moisture,
                 // bit 1: a [matl_envmap_mask]; bit 2: a [matl_transmap]; bit 4: a vehicle's
-                // part that may be metal (see the shaders)
+                // part that may be metal; bit 8: normals turned inwards (see the shaders)
                 (if env_mask.is_some() { 1.0 } else { 0.0 })
                     + if extra.transmap_declared || transmap.is_some() {
                         2.0
                     } else {
                         0.0
                     }
-                    + if extra.metal_ok { 4.0 } else { 0.0 },
+                    + if extra.metal_ok { 4.0 } else { 0.0 }
+                    + if extra.normals_inward { 8.0 } else { 0.0 },
             ],
             emissive: [
                 emissive[0],
@@ -790,7 +800,7 @@ impl Renderer {
                     .unwrap_or([0.0; 4])
                     .map(|c| (c.clamp(0.0, 1.0) * 255.0).round());
                 [
-                    if extra.screen { 1.0 } else { 0.0 },
+                    if extra.text { 2.0 } else if extra.screen { 1.0 } else { 0.0 },
                     if extra.border.is_some() {
                         1.0
                     } else if address == TexAddressing::MirrorOnce {
@@ -816,7 +826,7 @@ impl Renderer {
                 ]
             },
         };
-        let (bind_group, buf) = self.cached_bind_group(
+        let (bind_group, buf, buf_offset, look) = self.cached_bind_group(
             scene,
             MaterialMaps {
                 texture,
@@ -849,7 +859,9 @@ impl Renderer {
             address,
             uniform,
             buf,
+            buf_offset,
             bind_group,
+            look,
         });
         scene.materials.len() - 1
     }
@@ -860,7 +872,7 @@ impl Renderer {
         maps: MaterialMaps,
         address: TexAddressing,
         uniform: MaterialUniform,
-    ) -> (wgpu::BindGroup, wgpu::Buffer) {
+    ) -> (wgpu::BindGroup, wgpu::Buffer, u64, u32) {
         let slot = |t: Option<TextureId>| {
             t.and_then(|t| scene.textures.get(t).map(|g| (t, g.generation)))
                 .unwrap_or((usize::MAX, 0))
@@ -878,21 +890,40 @@ impl Renderer {
             address,
             uniform: bytemuck::cast(uniform),
         };
-        if let Some((bg, b)) = scene.bind_groups.get(&key) {
-            return (bg.clone(), b.clone());
+        let look = scene.look(&key);
+        if let Some((bg, b, offset)) = scene.bind_groups.get(&key) {
+            return (bg.clone(), b.clone(), *offset, look);
         }
-        let buf = buffer_init(
-            &self.device,
-            &self.queue,
-            None,
-            bytemuck::bytes_of(&uniform),
-            wgpu::BufferUsages::UNIFORM,
-        );
-        let bind_group = self.material_bind_group(&scene.textures, maps, address, &buf);
+        let (buf, buf_offset) = self.material_uniform(scene, &uniform);
+        let bind_group = self.material_bind_group(&scene.textures, maps, address, &buf, buf_offset);
         scene
             .bind_groups
-            .insert(key, (bind_group.clone(), buf.clone()));
-        (bind_group, buf)
+            .insert(key, (bind_group.clone(), buf.clone(), buf_offset));
+        (bind_group, buf, buf_offset, look)
+    }
+
+    /// Materials are immutable: append their uniforms to a page and bind a fixed range.
+    /// A 176-byte buffer costs a 64 KiB allocation on DX12. Sharing pages avoids that
+    /// per-material cost without changing any shader data or texture resolution.
+    /// Full pages are held only by their materials/bind groups. Never overwrite or reuse
+    /// ranges: queued frames and retained render bundles may still be reading them.
+    fn material_uniform(&self, scene: &mut Scene, uniform: &MaterialUniform) -> (wgpu::Buffer, u64) {
+        let stride = (size_of::<MaterialUniform>() as u64)
+            .next_multiple_of(self.device.limits().min_uniform_buffer_offset_alignment as u64);
+        let capacity = (64 * 1024u64).max(stride);
+        if scene.material_uniform_page.as_ref().is_none_or(|(buf, top)| *top + stride > buf.size()) {
+            scene.material_uniform_page = Some((self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("material uniforms"),
+                size: capacity,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }), 0));
+        }
+        let (buf, top) = scene.material_uniform_page.as_mut().unwrap();
+        let offset = *top;
+        *top += stride;
+        self.queue.write_buffer(buf, offset, bytemuck::bytes_of(uniform));
+        (buf.clone(), offset)
     }
 
     fn glass_slot(&self, scene: &mut Scene) -> TextureId {
@@ -915,6 +946,7 @@ impl Renderer {
         maps: MaterialMaps,
         address: TexAddressing,
         buf: &wgpu::Buffer,
+        buf_offset: u64,
     ) -> wgpu::BindGroup {
         let view = |t: Option<TextureId>, or: &'_ GpuTexture| -> wgpu::TextureView {
             t.and_then(|t| textures.get(t))
@@ -949,7 +981,11 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: buf.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: buf,
+                        offset: buf_offset,
+                        size: std::num::NonZeroU64::new(size_of::<MaterialUniform>() as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,

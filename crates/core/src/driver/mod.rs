@@ -460,7 +460,7 @@ impl DriverFigure {
         pick: u64,
     ) -> Option<DriverFigure> {
         let named = ::network::human_path(hum)
-            .map(|rel| ::legacy_config::resolve_path(&world.root, &rel))
+            .map(|rel| ::mods::resolve_path(&world.root, &rel))
             .filter(|p| ::legacy_config::vfs::exists(p))
             .and_then(|p| cached_type(&p));
         let ty = named.or_else(|| driver_type(world, pick))?;
@@ -496,7 +496,7 @@ impl DriverFigure {
                 };
                 mats.push(renderer.add_material(scene, tex, alpha, [1.0; 4], false));
             }
-            let id = renderer.add_mesh(scene, &hm.data);
+            let id = renderer.add_animated_mesh(scene, &hm.data);
             let inst = renderer.add_instance(scene, id, v.position, Mat4::IDENTITY, mats);
             // (hidden until `update` has posed and placed it: drawn as loaded, the figure
             // stood in the file's T-pose at the bus's origin, in the middle of the aisle)
@@ -1937,7 +1937,7 @@ pub fn cabin_of(def: &::legacy_vehicle::Vehicle) -> Option<Arc<::legacy_vehicle:
         .entry(def.path.clone())
         .or_insert_with(|| {
             let rel = def.passenger_cabin.as_ref()?;
-            ::legacy_vehicle::PassengerCabin::load(&::legacy_config::resolve_path(def.dir(), rel))
+            ::legacy_vehicle::PassengerCabin::load(&::mods::resolve_path(def.dir(), rel))
                 .map_err(|e| log::warn!("driver: {e}"))
                 .ok()
                 .map(Arc::new)
@@ -2297,11 +2297,11 @@ fn driver_type(world: &crate::scene::World, pick: u64) -> Option<Arc<HumanType>>
     let listed: Vec<std::path::PathBuf> =
         ::map::ailists::load_list(&world.map_dir.join("drivers.txt"))
             .iter()
-            .map(|l| ::legacy_config::resolve_path(&world.root, l))
+            .map(|l| ::mods::resolve_path(&world.root, l))
             .collect();
     let path = if listed.is_empty() {
         let mut found: Vec<std::path::PathBuf> = Vec::new();
-        for r in ::legacy_config::content_dirs("Humans") {
+        for r in ::mods::content_dirs("Humans") {
             for (group, is_dir) in ::legacy_config::vfs::list_dir(&r).unwrap_or_default() {
                 if !is_dir {
                     continue;

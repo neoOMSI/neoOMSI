@@ -68,19 +68,33 @@ pub(crate) enum Move {
 
 pub(super) type Page = (String, Vec<(String, String)>);
 
-pub(super) type ScanCache = std::sync::Mutex<Option<(std::time::Instant, Vec<String>)>>;
+/// Caches a value the lists request on every redraw, along with its creation time and key.
+pub(crate) type Cache<K, V> = std::sync::Mutex<Option<(std::time::Instant, K, V)>>;
+
+/// The value kept in `slot`, rebuilt by `build` when `key` changed or it is older than `ttl`.
+pub(crate) fn cached<K: PartialEq, V: Clone>(
+    slot: &Cache<K, V>,
+    key: K,
+    ttl: std::time::Duration,
+    build: impl FnOnce() -> V,
+) -> V {
+    let mut entry = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((made, made_for, value)) = entry.as_ref()
+        && *made_for == key
+        && made.elapsed() < ttl
+    {
+        return value.clone();
+    }
+    let value = build();
+    *entry = Some((std::time::Instant::now(), key, value.clone()));
+    value
+}
+
+pub(super) type ScanCache = Cache<(), Vec<String>>;
 
 /// Directory scans are asked for with every redraw: kept for 5 s, dropped when a list is opened.
 pub(super) fn scan_cached(slot: &ScanCache, scan: impl FnOnce() -> Vec<String>) -> Vec<String> {
-    let mut g = slot.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((t, v)) = g.as_ref() {
-        if t.elapsed().as_secs() < 5 {
-            return v.clone();
-        }
-    }
-    let v = scan();
-    *g = Some((std::time::Instant::now(), v.clone()));
-    v
+    cached(slot, (), std::time::Duration::from_secs(5), scan)
 }
 
 pub(super) static DRIVER_SCAN: ScanCache = std::sync::Mutex::new(None);

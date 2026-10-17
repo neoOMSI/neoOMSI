@@ -21,13 +21,14 @@ pub(crate) fn chase_orbit_step(yaw: f32, pitch: f32, dx_px: f32, dy_px: f32) -> 
 #[cfg(test)]
 mod look_tests {
     #[test]
-    fn a_route_number_takes_digits_and_letters() {
-        use winit::keyboard::KeyCode;
-        assert_eq!(crate::game_menu::route_char(KeyCode::Digit5), Some('5'));
-        assert_eq!(crate::game_menu::route_char(KeyCode::Numpad0), Some('0'));
-        assert_eq!(crate::game_menu::route_char(KeyCode::KeyE), Some('E'));
-        assert_eq!(crate::game_menu::route_char(KeyCode::NumpadAdd), None);
-        assert_eq!(crate::game_menu::route_char(KeyCode::Space), None);
+    fn a_route_number_takes_any_text_at_any_length() {
+        let mut t = String::new();
+        for typed in ["N", "4", "1", "/", "2", " ", "ä", "+", "\u{8}", "\r"] {
+            crate::game_menu::push_route_text(&mut t, typed);
+        }
+        assert_eq!(t, "N41/2 ä+");
+        crate::game_menu::push_route_text(&mut t, "-Schienenersatzverkehr");
+        assert_eq!(t, "N41/2 ä+-Schienenersatzverkehr");
     }
 
     #[test]
@@ -415,12 +416,13 @@ impl App {
         let last = self.cursor;
         self.cursor = (x, y);
         if self.lab_menu.is_some() {
+            let (ui_x, ui_y) = self.ui_cursor();
             if (x, y) != last {
                 if let Some(st) = self.lab_menu.filter(|s| s.page.is_none()) {
                     let hit = self.ui.as_ref().and_then(|u| {
                         u.pause_items
                             .iter()
-                            .position(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3])
+                            .position(|r| ui_x >= r[0] && ui_x < r[2] && ui_y >= r[1] && ui_y < r[3])
                     });
                     if let Some(k) = hit {
                         self.lab_menu = Some(crate::ui::PauseState { sel: k, ..st });
@@ -428,13 +430,16 @@ impl App {
                 }
             }
             if let Some(n) = self.navigator.as_mut().filter(|n| n.city.embed.is_some()) {
-                n.map_move(x, y);
+                n.map_move(ui_x, ui_y);
+            }
+            if self.lab_bar_drag != 0 {
+                self.lab_bar_set();
             }
             if self.ui.as_ref().is_some_and(|u| u.world_drag.is_some()) {
-                self.lab_world_set(x);
+                self.lab_world_set(ui_x);
             }
             if self.ui.as_ref().is_some_and(|u| u.world_bar_grab.is_some()) {
-                self.lab_world_bar_set(y);
+                self.lab_world_bar_set(ui_y);
             }
         }
         if self.game_menu.is_some() && (x, y) != last {
@@ -444,13 +449,14 @@ impl App {
             self.menu_drag = None;
         }
         if let Some(k) = self.menu_drag {
+            let (ui_x, _) = self.ui_cursor();
             let c = self.ui.as_ref().and_then(|u| {
                 k.checked_sub(u.menu_start)
                     .and_then(|i| u.menu_ctl.get(i).copied().flatten())
             });
             match c {
                 Some(c) => {
-                    let fx = ((x - c[0]) / (c[2] - c[0]).max(1.0)).clamp(0.0, 1.0);
+                    let fx = ((ui_x - c[0]) / (c[2] - c[0]).max(1.0)).clamp(0.0, 1.0);
                     self.list_click(k, fx);
                 }
                 None => self.menu_drag = None,
@@ -501,8 +507,9 @@ impl App {
             self.editor_drag_frame();
             return false;
         }
+        let (ui_x, ui_y) = self.ui_cursor();
         if let Some(n) = self.navigator.as_mut().filter(|n| n.map_open()) {
-            n.map_move(x, y);
+            n.map_move(ui_x, ui_y);
             return false;
         }
         // looking round in a view of the bus follows the cursor, as Omsi.exe turns it
@@ -517,7 +524,8 @@ impl App {
                 .unwrap_or(1.0)
                 .max(0.1);
             let fov = self.camera.as_ref().map(|c| c.fov_deg).unwrap_or(60.0);
-            let k = look_deg_per_px(fov) * (::config::get_float("camera", "look_sens").unwrap_or(1.0) as f32);
+            let k = look_deg_per_px(fov)
+                * (::config::get_float("camera", "look_sens").unwrap_or(1.0) as f32);
             self.look_by((x - last.0) / scale * k, (y - last.1) / scale * k);
         }
         if self.dragging {
@@ -540,13 +548,13 @@ impl App {
         if self.game_menu.is_none() && self.editor_mouse(pressed) {
             return;
         }
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let vr_active = self.vr_active();
         if let Some(n) = self.navigator.as_mut() {
             if n.map_open() {
                 let ctrl = self.keys.contains(&KeyCode::ControlLeft)
                     || self.keys.contains(&KeyCode::ControlRight);
-                if pressed && (ctrl || self.teleport_pick) {
+                if pressed && ctrl {
                     if let Some(at) = n.map_point(x, y) {
                         if std::mem::take(&mut self.teleport_pick) {
                             n.toggle_map();
@@ -555,8 +563,20 @@ impl App {
                     }
                 } else if pressed {
                     n.map_press(x, y);
+                    if self.teleport_pick && n.map_dragging() {
+                        self.teleport_down = Some((x, y));
+                    }
                 } else {
                     n.map_release();
+                    if let Some((px, py)) = self.teleport_down.take() {
+                        if self.teleport_pick && (x - px).abs() + (y - py).abs() < 6.0 {
+                            if let Some(at) = n.map_point(x, y) {
+                                self.teleport_pick = false;
+                                n.toggle_map();
+                                self.place_bus_at(at);
+                            }
+                        }
+                    }
                 }
                 return;
             }
@@ -646,6 +666,16 @@ impl App {
                     p.release();
                     p.html_pointer(page, u, v, ::simulation::htmltex::PointerKind::Down);
                     self.html_pressed = Some((page, u, v));
+                    self.dragging = false;
+                    return;
+                }
+                if self
+                    .humans
+                    .as_mut()
+                    .and_then(|h| h.money.as_mut())
+                    .is_some_and(|m| m.pick(o, d, spread, || p.body_hit(o, d)))
+                {
+                    p.release();
                     self.dragging = false;
                     return;
                 }
@@ -833,12 +863,13 @@ impl App {
         {
             return (ray.0, ray.1, ray.2 * 6.0);
         }
-        let (o, d) = cursor_ray(
+        let (o, d) = cursor_ray_with_projection(
             cam,
             self.cursor.0,
             self.cursor.1,
             size.0 as f32,
             size.1 as f32,
+            self.triple_screen_projection_active(),
         );
         (o, d, pixel_angle(cam, size.1 as f32) * 6.0)
     }
@@ -891,7 +922,15 @@ impl App {
                 {
                     let (o, d, spread) =
                         self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
-                    p.hovered_part(o, d, spread)
+                    let (part, hand) = p.hovered_part(o, d, spread);
+                    let coin = !hand
+                        && self
+                        .humans
+                        .as_ref()
+                        .and_then(|h| h.money.as_ref())
+                        .and_then(|m| m.change_under(o, d, spread, || p.body_hit(o, d)))
+                        .is_some();
+                    (part, hand || coin)
                 }
             _ => (None, false),
         };
@@ -951,6 +990,7 @@ impl App {
             self.cursor_kind = kind;
             if let Some(w) = self.window.as_ref() {
                 w.set_cursor(match kind {
+                    5 => winit::window::CursorIcon::Text,
                     4 => winit::window::CursorIcon::NsResize,
                     3 => winit::window::CursorIcon::Move,
                     2 => winit::window::CursorIcon::Crosshair,
@@ -969,7 +1009,7 @@ impl App {
         if self.lab_menu.is_some() {
             return u8::from(u.hand);
         }
-        let (x, y) = self.cursor;
+        let (x, y) = self.ui_cursor();
         let inside = |r: &[f32; 4]| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
         let clickable = u.menu_scroll_thumb.is_some_and(|r| inside(&r))
             || u.menu_side.iter().any(|r| inside(r))

@@ -23,6 +23,8 @@ pub enum Fmt {
     Lock,
     /// 0.25 -> "250 ms"
     Ms,
+    /// 690 -> "690 mm"
+    Mm,
     /// 6 -> "6/15"
     Of15,
     /// 1.3 -> "1.30"
@@ -41,6 +43,7 @@ impl Fmt {
             Fmt::Lock if v < 45.0 => "OMSI".to_string(),
             Fmt::Lock => format!("{v:.0}°"),
             Fmt::Ms => format!("{:.0} ms", v * 1000.0),
+            Fmt::Mm => format!("{v:.0} mm"),
             Fmt::Of15 => format!("{}/15", v as i64),
             Fmt::Dec2 => format!("{v:.2}"),
         }
@@ -58,7 +61,14 @@ pub enum OptKind {
     Button(&'static str),
     Keybinds,
     Pads,
+    Mic,
+    VoicePlayers,
+    Mods,
+    GameRoot,
+    UpdateNow,
 }
+
+pub const VOICE_SUB: &str = "pause.options.group.voice";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptShow {
@@ -214,7 +224,7 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
             sw(
                 "momentary_gears",
                 "pause.options.driving.momentary_gears.name",
-                "pause.options.later",
+                "pause.options.driving.momentary_gears.desc",
             ),
             sw(
                 "brake_hold",
@@ -341,6 +351,27 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "pause.options.camera.head.name",
                 "pause.options.camera.head.desc",
             ),
+            sl(
+                "head_strength",
+                "pause.options.camera.head_strength.name",
+                "pause.options.camera.head_strength.desc",
+                Fmt::Pct,
+            ),
+            sw(
+                "head_vertical",
+                "pause.options.camera.head_vertical.name",
+                "pause.options.camera.head_vertical.desc",
+            ),
+            sw(
+                "head_longitudinal",
+                "pause.options.camera.head_longitudinal.name",
+                "pause.options.camera.head_longitudinal.desc",
+            ),
+            sw(
+                "head_lateral",
+                "pause.options.camera.head_lateral.name",
+                "pause.options.camera.head_lateral.desc",
+            ),
             sw(
                 "cam_smooth",
                 "pause.options.camera.cam_smooth.name",
@@ -406,6 +437,18 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "pause.options.camera.seat_0.name",
                 "pause.options.camera.seat_0.desc",
                 Fmt::Cm,
+            ),
+            sl(
+                "head_pitch",
+                "pause.options.camera.head_pitch.name",
+                "pause.options.camera.head_pitch.desc",
+                Fmt::Deg,
+            ),
+            row(
+                "head_pitch_reset",
+                "pause.options.camera.head_pitch_reset.name",
+                "pause.options.camera.head_pitch_reset.desc",
+                OptKind::Button("pause.options.button.reset"),
             ),
             row(
                 "seat_reset",
@@ -620,10 +663,61 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
         title: "pause.options.group.display",
         tab: "",
         rows: &[
+            sel(
+                "window_mode",
+                "pause.options.display.window_mode.name",
+                "pause.options.display.window_mode.desc",
+            ),
             sw(
-                "fullscreen",
-                "pause.options.display.fullscreen.name",
-                "pause.options.display.fullscreen.desc",
+                "triple_screen",
+                "pause.options.display.triple_screen.name",
+                "pause.options.display.triple_screen.desc",
+            ),
+            sw(
+                "triple_screen_span",
+                "pause.options.display.triple_screen_span.name",
+                "pause.options.display.triple_screen_span.desc",
+            ),
+            sw(
+                "triple_screen_hud",
+                "pause.options.display.triple_screen_hud.name",
+                "pause.options.display.triple_screen_hud.desc",
+            ),
+            sl(
+                "triple_screen_width_mm",
+                "pause.options.display.triple_screen_width_mm.name",
+                "pause.options.display.triple_screen_width_mm.desc",
+                Fmt::Mm,
+            ),
+            sl(
+                "triple_screen_distance_mm",
+                "pause.options.display.triple_screen_distance_mm.name",
+                "pause.options.display.triple_screen_distance_mm.desc",
+                Fmt::Mm,
+            ),
+            sl(
+                "triple_screen_bezel_mm",
+                "pause.options.display.triple_screen_bezel_mm.name",
+                "pause.options.display.triple_screen_bezel_mm.desc",
+                Fmt::Mm,
+            ),
+            sl(
+                "triple_screen_left_angle",
+                "pause.options.display.triple_screen_left_angle.name",
+                "pause.options.display.triple_screen_left_angle.desc",
+                Fmt::Deg,
+            ),
+            sl(
+                "triple_screen_right_angle",
+                "pause.options.display.triple_screen_right_angle.name",
+                "pause.options.display.triple_screen_right_angle.desc",
+                Fmt::Deg,
+            ),
+            sl(
+                "triple_screen_eye_height_mm",
+                "pause.options.display.triple_screen_eye_height_mm.name",
+                "pause.options.display.triple_screen_eye_height_mm.desc",
+                Fmt::Mm,
             ),
             sw(
                 "vsync",
@@ -676,7 +770,56 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "pause.options.sound.pax_voices.desc",
             ),
         ],
-        subs: &[],
+        subs: &[OptSub {
+            title: VOICE_SUB,
+            rows: &[
+                sw(
+                    "voice",
+                    "pause.options.voice.voice.name",
+                    "pause.options.voice.voice.desc",
+                ),
+                sel(
+                    "voice_mode",
+                    "pause.options.voice.voice_mode.name",
+                    "pause.options.voice.voice_mode.desc",
+                ),
+                row(
+                    "voicemic",
+                    "pause.options.voice.mic.name",
+                    "pause.options.voice.mic.desc",
+                    OptKind::Mic,
+                ),
+                sl(
+                    "mic_gain",
+                    "pause.options.voice.mic_gain.name",
+                    "pause.options.voice.mic_gain.desc",
+                    Fmt::Pct,
+                ),
+                sl(
+                    "voice_sensitivity",
+                    "pause.options.voice.voice_sensitivity.name",
+                    "pause.options.voice.voice_sensitivity.desc",
+                    Fmt::Pct,
+                ),
+                sw(
+                    "voice_denoise",
+                    "pause.options.voice.voice_denoise.name",
+                    "pause.options.voice.voice_denoise.desc",
+                ),
+                sl(
+                    "vol_voice",
+                    "pause.options.voice.vol_voice.name",
+                    "pause.options.voice.vol_voice.desc",
+                    Fmt::Pct,
+                ),
+                row(
+                    "pvol",
+                    "pause.options.voice.pvol.name",
+                    "pause.options.voice.pvol.desc",
+                    OptKind::VoicePlayers,
+                ),
+            ],
+        }],
     },
     OptGroup {
         title: "pause.options.group.interface",
@@ -713,11 +856,6 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 "nav_arrows",
                 "pause.options.interface.nav_arrows.name",
                 "pause.options.interface.nav_arrows.desc",
-            ),
-            sw(
-                "info_bar",
-                "pause.options.interface.info_bar.name",
-                "pause.options.interface.info_bar.desc",
             ),
             sw(
                 "timetable_win",
@@ -757,6 +895,55 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
             ),
         ],
         subs: &[OptSub {
+            title: "pause.options.group.info",
+            rows: &[
+                sw(
+                    "info_bar",
+                    "pause.options.interface.info_bar.name",
+                    "pause.options.interface.info_bar.desc",
+                ),
+                sw(
+                    "info_time",
+                    "pause.options.info.time.name",
+                    "pause.options.info.time.desc",
+                ),
+                sw(
+                    "info_speed",
+                    "pause.options.info.speed.name",
+                    "pause.options.info.speed.desc",
+                ),
+                sw(
+                    "info_temp",
+                    "pause.options.info.temp.name",
+                    "pause.options.info.temp.desc",
+                ),
+                sw(
+                    "info_fuel",
+                    "pause.options.info.fuel.name",
+                    "pause.options.info.fuel.desc",
+                ),
+                sw(
+                    "info_pax",
+                    "pause.options.info.pax.name",
+                    "pause.options.info.pax.desc",
+                ),
+                sw(
+                    "info_line",
+                    "pause.options.info.line.name",
+                    "pause.options.info.line.desc",
+                ),
+                sw(
+                    "info_next",
+                    "pause.options.info.next.name",
+                    "pause.options.info.next.desc",
+                ),
+                sw(
+                    "info_delay",
+                    "pause.options.info.delay.name",
+                    "pause.options.info.delay.desc",
+                ),
+            ],
+        }, OptSub {
             title: "pause.options.group.map",
             rows: &[
                 sw(
@@ -796,6 +983,31 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
                 ),
             ],
         }],
+    },
+    OptGroup {
+        title: "pause.options.group.mods",
+        tab: "",
+        rows: &[
+            row(
+                "mods_open",
+                "pause.options.mods.open.name",
+                "pause.options.mods.open.desc",
+                OptKind::Button("pause.options.mods.open.button"),
+            ),
+            row(
+                "mods_install",
+                "pause.options.mods.install.name",
+                "pause.options.mods.install.desc",
+                OptKind::Button("pause.options.mods.install.button"),
+            ),
+            row(
+                "mods_list",
+                "pause.options.mods.list.name",
+                "pause.options.mods.list.desc",
+                OptKind::Mods,
+            ),
+        ],
+        subs: &[],
     },
     OptGroup {
         title: "pause.options.group.vr",
@@ -938,6 +1150,35 @@ pub const OPTION_GROUPS: &[OptGroup] = &[
         ],
         subs: &[],
     },
+    OptGroup {
+        title: "pause.options.group.game",
+        tab: "",
+        rows: &[
+            row(
+                "setup_root",
+                "pause.options.game.root.name",
+                "pause.options.game.root.desc",
+                OptKind::GameRoot,
+            ),
+            sw(
+                "update_check",
+                "pause.options.game.update_check.name",
+                "pause.options.game.update_check.desc",
+            ),
+            sw(
+                "update_auto",
+                "pause.options.game.update_auto.name",
+                "pause.options.game.update_auto.desc",
+            ),
+            row(
+                "update_now",
+                "pause.options.game.update_now.name",
+                "pause.options.game.update_now.desc",
+                OptKind::UpdateNow,
+            ),
+        ],
+        subs: &[],
+    },
 ];
 
 impl Ui {
@@ -997,6 +1238,7 @@ mod tests {
     #[test]
     fn fmt_misc() {
         assert_eq!(Fmt::Ms.apply(0.25), "250 ms");
+        assert_eq!(Fmt::Mm.apply(690.0), "690 mm");
         assert_eq!(Fmt::Of15.apply(6.0), "6/15");
         assert_eq!(Fmt::Of15.apply(6.9), "6/15");
         assert_eq!(Fmt::Dec2.apply(1.3), "1.30");
@@ -1036,6 +1278,45 @@ mod tests {
                 assert!(!s.title.is_empty());
                 assert!(!s.rows.is_empty(), "{}", s.title);
             }
+        }
+    }
+
+    #[test]
+    fn display_options_keep_the_three_window_modes() {
+        let display = OPTION_GROUPS
+            .iter()
+            .find(|group| group.title == "pause.options.group.display")
+            .expect("display options group");
+        let window_mode = display
+            .rows
+            .iter()
+            .find(|row| row.id == "window_mode")
+            .expect("window mode selector");
+        assert_eq!(window_mode.kind, OptKind::Select);
+        assert_eq!(window_mode.name, "pause.options.display.window_mode.name");
+    }
+
+    #[test]
+    fn display_options_include_triple_screen_controls() {
+        let display = OPTION_GROUPS
+            .iter()
+            .find(|group| group.title == "pause.options.group.display")
+            .expect("display options group");
+        let rows: Vec<_> = display.rows.iter().map(|row| (row.id, row.kind)).collect();
+
+        assert!(rows.contains(&("triple_screen", OptKind::Switch)));
+        assert!(rows.contains(&("triple_screen_span", OptKind::Switch)));
+        assert!(rows.contains(&("triple_screen_hud", OptKind::Switch)));
+        for id in [
+            "triple_screen_width_mm",
+            "triple_screen_distance_mm",
+            "triple_screen_bezel_mm",
+            "triple_screen_eye_height_mm",
+        ] {
+            assert!(rows.contains(&(id, OptKind::Slider(Fmt::Mm))), "{id}");
+        }
+        for id in ["triple_screen_left_angle", "triple_screen_right_angle"] {
+            assert!(rows.contains(&(id, OptKind::Slider(Fmt::Deg))), "{id}");
         }
     }
 

@@ -1,6 +1,7 @@
 //! `maps/<map>/TTData/*` - bus stops, station links, trips, tracks and lines.
 
 use ::legacy_config::CfgFile;
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
 /// `Busstops.cfg` `[busstop]`: name, index within the group, object id, ?, ?, ?
@@ -369,7 +370,7 @@ impl CarUse {
     /// Every `car_use/*.ocu` of a map folder, in the order the folder lists them.
     pub fn load_dir(map_dir: &Path) -> Vec<CarUse> {
         let mut files: Vec<std::path::PathBuf> =
-            ::legacy_config::vfs::read_dir_paths(&::legacy_config::resolve_path(map_dir, "car_use"))
+            ::legacy_config::vfs::read_dir_paths(&::mods::resolve_path(map_dir, "car_use"))
                 .into_iter()
                 .filter(|p| {
                     p.extension()
@@ -449,7 +450,7 @@ impl TimetableData {
     /// Load `TTData` under a map directory.
     pub fn load(map_dir: &Path) -> TimetableData {
         let mut d = TimetableData::default();
-        d.merge_dir(&::legacy_config::resolve_path(map_dir, "TTData"), true);
+        d.merge_dir(&::mods::resolve_path(map_dir, "TTData"), true);
         d
     }
 
@@ -464,9 +465,9 @@ impl TimetableData {
         chrono_dirs: &[PathBuf],
         deactivated: &[(String, PathBuf)],
     ) -> TimetableData {
-        let mut folders = vec![::legacy_config::resolve_path(map_dir, "TTData")];
+        let mut folders = vec![::mods::resolve_path(map_dir, "TTData")];
         for c in chrono_dirs {
-            let dir = ::legacy_config::resolve_path(c, "TTData");
+            let dir = ::mods::resolve_path(c, "TTData");
             if ::legacy_config::vfs::is_dir(&dir) {
                 folders.push(dir);
             } else {
@@ -493,23 +494,21 @@ impl TimetableData {
             }
             let mut names: Vec<PathBuf> = ::legacy_config::vfs::read_dir_paths(f);
             names.sort_by_key(|p| p.to_string_lossy().to_uppercase());
-            for p in names {
-                if !p
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("ttl"))
-                {
-                    continue;
-                }
-                let stem = p
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                if d.lines.iter().any(|x| x.name.eq_ignore_ascii_case(&stem)) || off_after(&stem, k)
-                {
-                    continue;
-                }
-                match Line::load(&p) {
+            let wanted: Vec<PathBuf> = names
+                .into_iter()
+                .filter(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case("ttl"))
+                })
+                .filter(|p| {
+                    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                    !d.lines.iter().any(|x| x.name.eq_ignore_ascii_case(&stem)) && !off_after(&stem, k)
+                })
+                .collect();
+            let loaded: Vec<_> = wanted.par_iter().map(|p| Line::load(p)).collect();
+            for r in loaded {
+                match r {
                     Ok(l) => d.lines.push(l),
                     Err(e) => d.errors.push(e.to_string()),
                 }
@@ -540,22 +539,32 @@ impl TimetableData {
         }
         let mut names: Vec<PathBuf> = ::legacy_config::vfs::read_dir_paths(dir);
         names.sort();
-        for p in names {
-            let ext = p
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let stem = p
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let res = match ext.as_str() {
-                "ttp" => Trip::load(&p).map(|t| {
+        enum Item {
+            Trip(Trip),
+            Track(String, Track),
+            Line(Line),
+        }
+        let loaded: Vec<Option<Result<Item, String>>> = names
+            .par_iter()
+            .map(|p| {
+                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let r = match ext.as_str() {
+                    "ttp" => Trip::load(p).map(Item::Trip).map_err(|e| e.to_string()),
+                    "ttr" => Track::load(p).map(|t| Item::Track(stem, t)).map_err(|e| e.to_string()),
+                    "ttl" if lines => Line::load(p).map(Item::Line).map_err(|e| e.to_string()),
+                    _ => return None,
+                };
+                Some(r)
+            })
+            .collect();
+        for r in loaded.into_iter().flatten() {
+            match r {
+                Ok(Item::Trip(t)) => {
                     d.trips.retain(|x| !x.name.eq_ignore_ascii_case(&t.name));
                     d.trips.push(t)
-                }),
-                "ttr" => Track::load(&p).map(|t| {
+                }
+                Ok(Item::Track(stem, t)) => {
                     d.tracks.retain(|x| {
                         x.path
                             .file_stem()
@@ -563,15 +572,12 @@ impl TimetableData {
                             .unwrap_or(true)
                     });
                     d.tracks.push(t)
-                }),
-                "ttl" if lines => Line::load(&p).map(|t| {
+                }
+                Ok(Item::Line(t)) => {
                     d.lines.retain(|x| !x.name.eq_ignore_ascii_case(&t.name));
                     d.lines.push(t)
-                }),
-                _ => Ok(()),
-            };
-            if let Err(e) = res {
-                d.errors.push(e.to_string());
+                }
+                Err(e) => d.errors.push(e),
             }
         }
     }

@@ -3,9 +3,9 @@
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let root = std::path::PathBuf::from(std::env::var("OMSI_ROOT").unwrap());
-    ::legacy_config::add_content_root(std::path::PathBuf::from(&a[1]));
-    ::legacy_config::add_content_root(root.clone());
-    let path = ::legacy_config::resolve_path(std::path::Path::new(&a[1]), &a[2]);
+    ::mods::add_content_root(std::path::PathBuf::from(&a[1]));
+    ::mods::add_content_root(root.clone());
+    let path = ::mods::resolve_path(std::path::Path::new(&a[1]), &a[2]);
     let vt = std::sync::Arc::new(::simulation::VehicleType::load(&root, &path).unwrap());
     let mut v =
         ::simulation::VehicleInstance::new(vt.clone(), ::simulation::VehicleHost::new(Default::default()));

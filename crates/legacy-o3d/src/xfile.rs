@@ -1,6 +1,7 @@
-//! Minimal DirectX `.x` (text) mesh reader: enough for the OMSI helper meshes and the few
+//! Minimal DirectX `.x` mesh reader: enough for the OMSI helper meshes and the few
 //! scenery objects that still ship `.x` files (frames, Mesh, MeshNormals, MeshTextureCoords,
-//! MeshMaterialList, Material, TextureFilename). Binary `.x` is not used by OMSI content.
+//! the UVs in DeclData, MeshMaterialList, Material, TextureFilename). Binary files are read
+//! as the text they encode; compressed ones are not used by OMSI content.
 
 use super::{Material, Mesh, O3dError, Triangle, Vertex};
 use glam::{Mat3, Mat4, Vec2, Vec3};
@@ -89,6 +90,20 @@ impl<'a> Tok<'a> {
     fn int(&mut self) -> Result<usize, O3dError> {
         Ok(self.number()? as usize)
     }
+    /// A DWORD as written, without the detour through `f32` (`DeclData` stores float bits).
+    fn dword(&mut self) -> Result<u32, O3dError> {
+        loop {
+            let t = self
+                .next()
+                .ok_or_else(|| O3dError::XFile("eof in dword".into()))?;
+            if t == "," || t == ";" {
+                continue;
+            }
+            return t
+                .parse::<u32>()
+                .map_err(|_| O3dError::XFile(format!("bad dword {t}")));
+        }
+    }
     /// Skip a `{ ... }` block (after the '{' has been consumed).
     fn skip_block(&mut self) -> Result<(), O3dError> {
         let mut depth = 1;
@@ -119,9 +134,20 @@ pub fn parse_x(bytes: &[u8]) -> Result<Mesh, O3dError> {
     if bytes.len() < 16 || !bytes[..16].is_ascii() || !bytes.starts_with(b"xof ") {
         return Err(O3dError::XFile("missing xof header".into()));
     }
-    if &bytes[8..12] != b"txt " {
-        return Err(O3dError::XFile("binary .x not supported".into()));
-    }
+    let binary;
+    let bytes = match &bytes[8..12] {
+        b"txt " => bytes,
+        b"bin " => {
+            binary = binary_to_text(bytes)?;
+            &binary[..]
+        }
+        f => {
+            return Err(O3dError::XFile(format!(
+                "unsupported .x format {:?}",
+                String::from_utf8_lossy(f)
+            )));
+        }
+    };
     let (text, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
     let text = text.into_owned();
     let mut t = Tok { s: &text, p: 16 };
@@ -143,6 +169,98 @@ pub fn parse_x(bytes: &[u8]) -> Result<Mesh, O3dError> {
     }
     ctx.mesh.drop_bad_triangles();
     Ok(ctx.mesh)
+}
+
+/// A binary `.x` file (`xof 0303bin`) as the text it encodes, for the text reader. Names keep
+/// only letters, digits, `_` and `-`: a binary name may hold a space, which would split it.
+fn binary_to_text(bytes: &[u8]) -> Result<Vec<u8>, O3dError> {
+    let double = &bytes[12..16] == b"0064";
+    let mut out = b"xof 0303txt 0032\n".to_vec();
+    let mut p = 16;
+    let eof = || O3dError::XFile("eof in binary token".into());
+    let take = |p: &mut usize, n: usize| -> Result<&[u8], O3dError> {
+        let s = bytes.get(*p..*p + n).ok_or_else(eof)?;
+        *p += n;
+        Ok(s)
+    };
+    let dword = |p: &mut usize| -> Result<u32, O3dError> {
+        Ok(u32::from_le_bytes(take(p, 4)?.try_into().unwrap()))
+    };
+    while p < bytes.len() {
+        let token = u16::from_le_bytes(take(&mut p, 2)?.try_into().unwrap());
+        match token {
+            // TOKEN_NAME
+            1 => {
+                let n = dword(&mut p)? as usize;
+                for &c in take(&mut p, n)? {
+                    out.push(if c.is_ascii_alphanumeric() || c == b'-' {
+                        c
+                    } else {
+                        b'_'
+                    });
+                }
+                out.push(b' ');
+            }
+            // TOKEN_STRING, with its terminator token
+            2 => {
+                let n = dword(&mut p)? as usize;
+                let s = take(&mut p, n)?;
+                out.push(b'"');
+                out.extend(s.iter().filter(|&&c| c != b'"' && c != 0));
+                out.push(b'"');
+                take(&mut p, 2)?;
+                out.extend_from_slice(b";\n");
+            }
+            // TOKEN_INTEGER
+            3 => out.extend_from_slice(format!("{};\n", dword(&mut p)?).as_bytes()),
+            // TOKEN_GUID
+            5 => {
+                let g = take(&mut p, 16)?;
+                out.push(b'<');
+                for b in g {
+                    out.extend_from_slice(format!("{b:02X}").as_bytes());
+                }
+                out.extend_from_slice(b">\n");
+            }
+            // TOKEN_INTEGER_LIST, TOKEN_FLOAT_LIST
+            6 | 7 => {
+                let n = dword(&mut p)? as usize;
+                for _ in 0..n {
+                    let v = if token == 6 {
+                        dword(&mut p)?.to_string()
+                    } else if double {
+                        f64::from_le_bytes(take(&mut p, 8)?.try_into().unwrap()).to_string()
+                    } else {
+                        f32::from_le_bytes(take(&mut p, 4)?.try_into().unwrap()).to_string()
+                    };
+                    out.extend_from_slice(v.as_bytes());
+                    out.push(b',');
+                }
+                out.extend_from_slice(b";\n");
+            }
+            10 => out.extend_from_slice(b"{\n"),
+            11 => out.extend_from_slice(b"}\n"),
+            12 => out.push(b'('),
+            13 => out.push(b')'),
+            14 => out.push(b'['),
+            15 => out.push(b']'),
+            16 => out.push(b'<'),
+            17 => out.push(b'>'),
+            18 => out.push(b'.'),
+            19 => out.push(b','),
+            20 => out.extend_from_slice(b";\n"),
+            31 => out.extend_from_slice(b"template "),
+            // primitive type words and `array` (only inside templates, which are skipped)
+            40..=52 => out.extend_from_slice(b"type "),
+            _ => {
+                return Err(O3dError::XFile(format!(
+                    "unknown binary .x token {token} at {}",
+                    p - 2
+                )));
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn parse_objects(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
@@ -291,6 +409,8 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
     let mut normals: Vec<Vec3> = vec![Vec3::Z; nv];
     let mut has_normal: Vec<bool> = vec![false; nv];
     let mut uvs: Vec<Vec2> = vec![Vec2::ZERO; nv];
+    let mut has_uvs = false;
+    let mut decl_uvs: Option<Vec<Vec2>> = None;
     let mut face_mats: Vec<u16> = vec![0; nf];
     let mut mats: Vec<Material> = Vec::new();
     let mut material_refs: Vec<(usize, String)> = Vec::new();
@@ -345,6 +465,15 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
                         uvs[i] = uv;
                     }
                 }
+                has_uvs = true;
+                skip_to_close(t)?;
+            }
+            "DeclData" => {
+                if t.peek() != Some("{") {
+                    t.next();
+                }
+                t.expect("{")?;
+                decl_uvs = parse_decl_uvs(t, nv)?;
                 skip_to_close(t)?;
             }
             "MeshMaterialList" => {
@@ -406,6 +535,9 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
     if mats.is_empty() {
         mats.push(Material::default());
     }
+    if let (Some(decl), false) = (decl_uvs, has_uvs) {
+        uvs = decl;
+    }
 
     if has_normal.iter().any(|h| !*h) {
         let mut acc = vec![Vec3::ZERO; nv];
@@ -454,6 +586,49 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
     );
     ctx.mesh.materials.extend(mats);
     Ok(())
+}
+
+/// TEXCOORD0 of a `DeclData` block (after its '{'): D3D vertex elements (type, method, usage,
+/// usage index), then each vertex's data as DWORDs. None without a FLOAT2 TEXCOORD0 or with an
+/// element type of unknown size.
+fn parse_decl_uvs(t: &mut Tok, nv: usize) -> Result<Option<Vec<Vec2>>, O3dError> {
+    const TEXCOORD: u32 = 5;
+    const FLOAT2: u32 = 1;
+    let n = t.dword()?;
+    let mut stride = 0usize;
+    let mut uv_at = None;
+    let mut sizes_known = true;
+    for _ in 0..n {
+        let (ty, _method, usage, index) = (t.dword()?, t.dword()?, t.dword()?, t.dword()?);
+        // DWORDs per D3DDECLTYPE 0..=16 (FLOAT1 .. FLOAT16_4)
+        let size = match ty {
+            0 | 4 | 5 | 6 | 8 | 9 | 11 | 13 | 14 | 15 => 1,
+            1 | 7 | 10 | 12 | 16 => 2,
+            2 => 3,
+            3 => 4,
+            _ => {
+                sizes_known = false;
+                0
+            }
+        };
+        if ty == FLOAT2 && usage == TEXCOORD && index == 0 && uv_at.is_none() {
+            uv_at = Some(stride);
+        }
+        stride += size;
+    }
+    let count = t.dword()? as usize;
+    let Some(at) = uv_at.filter(|_| sizes_known) else {
+        return Ok(None);
+    };
+    let mut uvs = vec![Vec2::ZERO; nv];
+    for i in 0..count {
+        let d = t.dword()?;
+        let (v, k) = (i / stride, i % stride);
+        if v < nv && (k == at || k == at + 1) {
+            uvs[v][k - at] = f32::from_bits(d);
+        }
+    }
+    Ok(Some(uvs))
 }
 
 /// A material declaration after its `Material` token, either inline or a named object.
@@ -539,7 +714,7 @@ mod tests {
                 "unexpected housing texture: {}",
                 material.texture
             );
-            let texture = ::legacy_config::resolve_path(&object.join("texture"), &material.texture);
+            let texture = ::mods::resolve_path(&object.join("texture"), &material.texture);
             assert!(
                 texture.is_file(),
                 "missing referenced texture: {}",
@@ -737,6 +912,126 @@ Frame Root {\n FrameTransformMatrix {\n 1.0, 0.0, 0.0, 0.0,\n 0.0,-0.0, 1.0, 0.0
                 v.normal
             );
         }
+    }
+
+    /// Some exports (PAD-Labs houses on Köln) keep the UVs only in `DeclData`: skipping it put
+    /// every vertex at UV 0,0 and drew the houses in one colour.
+    #[test]
+    fn decl_data_carries_the_texture_coordinates() {
+        let uv = [(0.25f32, 0.5f32), (1.0, -0.75), (0.125, 2.0)];
+        // NORMAL (FLOAT3), TEXCOORD0 (FLOAT2), TEXCOORD1 (FLOAT2): 7 DWORDs a vertex
+        let data: Vec<String> = uv
+            .iter()
+            .flat_map(|(u, v)| {
+                [0.0f32, 0.0, 1.0, *u, *v, 9.0, 9.0].map(|f| f.to_bits().to_string())
+            })
+            .collect();
+        let decl = format!(
+            "DeclData {{ 3; 2;0;3;0;, 1;0;5;0;, 1;0;5;1;; 21; {}; }}",
+            data.join(",\n")
+        );
+        let mesh = |extra: &str| {
+            format!("xof 0303txt 0032\nMesh {{ 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3;0,1,2;; {extra} }}")
+        };
+        let m = parse_x(mesh(&decl).as_bytes()).unwrap();
+        let got: Vec<(f32, f32)> = m.vertices.iter().map(|v| (v.uv.x, v.uv.y)).collect();
+        assert_eq!(got, uv);
+        // MeshTextureCoords, where a file has both, stays what it was
+        let both = format!("MeshTextureCoords {{ 3; 0;0;, 0;1;, 1;1;; }} {decl}");
+        let m = parse_x(mesh(&both).as_bytes()).unwrap();
+        assert_eq!(m.vertices[1].uv, Vec2::new(0.0, 1.0));
+        // an element type of unknown size leaves the UVs alone instead of misreading them
+        let odd = decl.replacen("2;0;3;0;", "99;0;3;0;", 1);
+        let m = parse_x(mesh(&odd).as_bytes()).unwrap();
+        assert!(m.vertices.iter().all(|v| v.uv == Vec2::ZERO));
+    }
+
+    /// Some PAD-Labs houses on Köln are binary `.x` files; rejecting them left the houses
+    /// out of the map without a word.
+    #[test]
+    fn binary_files_are_read() {
+        let mut b = b"xof 0303bin 0032".to_vec();
+        let word = |b: &mut Vec<u8>, t: u16| b.extend_from_slice(&t.to_le_bytes());
+        let dword = |b: &mut Vec<u8>, v: u32| b.extend_from_slice(&v.to_le_bytes());
+        let name = |b: &mut Vec<u8>, s: &str| {
+            word(b, 1);
+            dword(b, s.len() as u32);
+            b.extend_from_slice(s.as_bytes());
+        };
+        let ints = |b: &mut Vec<u8>, v: &[u32]| {
+            word(b, 6);
+            dword(b, v.len() as u32);
+            v.iter().for_each(|x| dword(b, *x));
+        };
+        let floats = |b: &mut Vec<u8>, v: &[f32]| {
+            word(b, 7);
+            dword(b, v.len() as u32);
+            v.iter().for_each(|x| dword(b, x.to_bits()));
+        };
+        // template Skipped { <guid> DWORD x; }
+        word(&mut b, 31);
+        name(&mut b, "Skipped");
+        word(&mut b, 10);
+        word(&mut b, 5);
+        b.extend_from_slice(&[7; 16]);
+        word(&mut b, 41);
+        name(&mut b, "x");
+        word(&mut b, 20);
+        word(&mut b, 11);
+        // Material House 2 { ...; TextureFilename { "house.jpg"; } } (a name with a space)
+        name(&mut b, "Material");
+        name(&mut b, "House 2");
+        word(&mut b, 10);
+        floats(
+            &mut b,
+            &[1.0, 1.0, 1.0, 1.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        );
+        name(&mut b, "TextureFilename");
+        word(&mut b, 10);
+        word(&mut b, 2);
+        dword(&mut b, 9);
+        b.extend_from_slice(b"house.jpg");
+        word(&mut b, 20);
+        word(&mut b, 11);
+        word(&mut b, 11);
+        // Mesh { 3 vertices; 1 face; MeshTextureCoords; MeshMaterialList { { House 2 } } }
+        name(&mut b, "Mesh");
+        word(&mut b, 10);
+        ints(&mut b, &[3]);
+        floats(&mut b, &[0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0]);
+        ints(&mut b, &[1, 3, 0, 1, 2]);
+        name(&mut b, "MeshTextureCoords");
+        word(&mut b, 10);
+        ints(&mut b, &[3]);
+        floats(&mut b, &[0.0, 0.0, 0.5, 0.0, 0.0, 0.25]);
+        word(&mut b, 11);
+        name(&mut b, "MeshMaterialList");
+        word(&mut b, 10);
+        ints(&mut b, &[1, 1, 0]);
+        word(&mut b, 10);
+        name(&mut b, "House 2");
+        word(&mut b, 11);
+        word(&mut b, 11);
+        word(&mut b, 11);
+
+        let m = parse_x(&b).unwrap();
+        let p: Vec<Vec3> = m.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(
+            p,
+            [
+                Vec3::ZERO,
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(0.0, 3.0, 0.0)
+            ]
+        );
+        assert_eq!(m.vertices[1].uv, Vec2::new(0.5, 0.0));
+        assert_eq!(m.vertices[2].uv, Vec2::new(0.0, 0.25));
+        assert_eq!(m.triangles.len(), 1);
+        assert_eq!(m.materials.len(), 1);
+        assert_eq!(m.materials[0].texture, "house.jpg");
+        assert_eq!(m.materials[0].specular_power, 4.0);
+        // a cut-off file is an error, not a panic
+        assert!(parse_x(&b[..b.len() - 7]).is_err());
     }
 }
 

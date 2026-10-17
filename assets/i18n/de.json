@@ -1,8 +1,43 @@
 {
+  "splash": {
+    "compile-shaders": "Kompiliere Shader..",
+    "loading": "Lade..",
+    "load-map": "Lade {map}.."
+  },
+  "ingame": {
+    "navigator": {
+      "kmh": "km/h",
+      "off_route": "Abseits der Route",
+      "rerouting": "Route wird neu berechnet",
+      "recalculated": "Route neu berechnet",
+      "jam": "Stau",
+      "slow": "Langsam",
+      "map": "Karte",
+      "last_stop": "Endhaltestelle",
+      "on_time": "Pünktlich",
+      "days": {
+        "mon": "Mo",
+        "tue": "Di",
+        "wed": "Mi",
+        "thu": "Do",
+        "fri": "Fr",
+        "sat": "Sa",
+        "sun": "So"
+      }
+    },
+    "infobar": {
+      "outside": "Außen",
+      "inside": "Innen",
+      "fuel": "Tank",
+      "next_stop": "Nächste Haltestelle",
+      "passenger": "Fahrgast",
+      "passengers": "Fahrgäste"
+    }
+  },
   "pause": {
     "entry": {
       "admin": "Verwaltung",
-      "continue": "Weiter",
+      "continue": "Fortfahren",
       "quit_server": "Server verlassen",
       "report_current": "Aktuelle Fahrtauswertung",
       "report_last": "Letzte Fahrtauswertung",
@@ -16,6 +51,7 @@
       "screenshot": "Screenshot-Modus",
       "tobus": "Zurück zu meinem Bus",
       "options": "Optionen",
+      "mainmenu": "Hauptmenü",
       "quit": "Beenden",
       "resume": "Fortsetzen",
       "save": "Speichern",
@@ -42,10 +78,10 @@
         },
         "driver": {
           "desc": "Zeigt den Fahrer in den Außenansichten und in den Spiegeln",
-          "name": "Fahrer am Steuer (Außenansichten)"
+          "name": "Fahrer anzeigen (Außenansichten)"
         },
         "fov": {
-          "desc": "Der Blickwinkel der Ansichten aus dem Fahrzeug",
+          "desc": "Der Blickwinkel der Kameras im Inneren des Fahrzeugs",
           "name": "Sichtfeld"
         },
         "hands_in_cab": {
@@ -56,10 +92,18 @@
           "desc": "Die Ansicht bewegt sich mit der Beschleunigung des Fahrzeugs",
           "name": "Kopfbewegung"
         },
+        "head_pitch": {
+          "desc": "Passt den vertikalen Standardblickwinkel des Fahrers an",
+          "name": "Kopfneigung"
+        },
+        "head_pitch_reset": {
+          "desc": "Setzt den Blickwinkel des Fahrers auf 0° zurück",
+          "name": "Kopfneigung zurücksetzen"
+        },
         "headtrack": {
-          "desc": "Head-Tracking mit opentrack (UDP-Port 4242)",
+          "desc": "Head-Tracking mit TrackIR oder opentrack (UDP-Port 4242)",
           "name": "Head-Tracking",
-          "desc_port": "Head-Tracking mit opentrack (UDP-Port {port})"
+          "desc_port": "Head-Tracking mit TrackIR oder opentrack (UDP-Port {port})"
         },
         "look_sens": {
           "desc": "Wie schnell sich die Ansicht dreht, wenn du dich mit der Maus umsiehst (100% entspricht der Geschwindigkeit von OMSI)",
@@ -102,7 +146,7 @@
           "desc": "Welche Achsen des Head-Trackings umgekehrt werden"
         },
         "free_look": {
-          "desc": "Stelle den freien Blick, das Fadenkreuz und die Tastennamen ein"
+          "desc": "Stelle den freien Blick, das Fadenkreuz und die Namen der Bedienelemente ein"
         }
       },
       "controls": {
@@ -147,8 +191,8 @@
           "name": "Stärke des Gaspedals"
         },
         "steer_center": {
-          "desc": "Kleine Abweichungen von der Mittelstellung zählen als Geradeausfahrt",
-          "name": "Totzone der Lenkungsmitte"
+          "desc": "Kleine Abweichungen des Sticks von der Mittelstellung zählen als Geradeausfahrt",
+          "name": "Totzone des Gamepad-Sticks"
         },
         "stick_sens": {
           "desc": "Wie weit eine kleine Stick-Bewegung das Rad dreht; ein voll ausgelenkter Stick ergibt weiterhin vollen Einschlag",
@@ -183,6 +227,42 @@
         "window_mode": {
           "name": "Fenstermodus",
           "desc": "Wie das Spiel deinen Bildschirm ausfüllt"
+        },
+        "triple_screen": {
+          "name": "Projektion für drei Bildschirme",
+          "desc": "Richtet die Ansicht für drei Monitore um deine Fahrerposition aus"
+        },
+        "triple_screen_span": {
+          "name": "Beim Start über drei Monitore spannen",
+          "desc": "Öffnet nach Möglichkeit ein randloses Fenster über drei ausgerichtete Monitore"
+        },
+        "triple_screen_hud": {
+          "name": "HUD auf mittlerem Bildschirm",
+          "desc": "Hält die Spieloberfläche auf dem mittleren Monitor"
+        },
+        "triple_screen_width_mm": {
+          "name": "Sichtbare Breite eines Bildschirms",
+          "desc": "Physische Breite der sichtbaren Monitorfläche"
+        },
+        "triple_screen_distance_mm": {
+          "name": "Betrachtungsabstand",
+          "desc": "Abstand deiner Augen zum mittleren Monitor"
+        },
+        "triple_screen_bezel_mm": {
+          "name": "Rahmenabstand oder Überlappung",
+          "desc": "Positive Werte lassen Platz für Rahmen; negative Werte überlappen die Ansichten"
+        },
+        "triple_screen_left_angle": {
+          "name": "Einwärtswinkel des linken Bildschirms",
+          "desc": "Winkel des linken Monitors in deine Richtung"
+        },
+        "triple_screen_right_angle": {
+          "name": "Einwärtswinkel des rechten Bildschirms",
+          "desc": "Winkel des rechten Monitors in deine Richtung"
+        },
+        "triple_screen_eye_height_mm": {
+          "name": "Augenhöhe relativ zur Bildschirmmitte",
+          "desc": "Vertikale Position deiner Augen relativ zur Mitte des mittleren Bildschirms"
         }
       },
       "driving": {
@@ -233,7 +313,7 @@
         },
         "tooltips": {
           "desc": "Zeigt den Namen des Bedienelements, auf das der Mauszeiger oder die Bildschirmmitte zeigt",
-          "name": "Namen der Tasten"
+          "name": "Namen der Bedienelemente"
         }
       },
       "gameplay": {
@@ -288,6 +368,18 @@
         "pax_prefer_seats": {
           "desc": "Fahrgäste setzen sich beim Einsteigen auf einen freien Sitz und nutzen Stehplätze erst, wenn alle Sitze belegt sind",
           "name": "Fahrgäste bevorzugen freie Sitze"
+        },
+        "pax_pack": {
+          "download": "Herunterladen",
+          "downloading": "Wird heruntergeladen und beim nächsten Spielstart übernommen",
+          "installed": "Installiert",
+          "installing": "Wird installiert und beim nächsten Spielstart übernommen",
+          "missing": "Noch nicht heruntergeladen; „Realistisch“ als Fahrgastmodelle braucht sie",
+          "name": "Realistische Fahrgastmodelle",
+          "next_start": "Aktuell. Ein vor dem Download gestartetes Spiel hat noch die alten Fahrgäste",
+          "outdated": "Eine neuere Version ist verfügbar",
+          "retry": "Erneut versuchen",
+          "update": "Aktualisieren"
         }
       },
       "graphics": {
@@ -317,8 +409,8 @@
           "name": "LED-Leuchten"
         },
         "led_mips": {
-          "desc": "Behält die Mipmaps der LED-Masken (weicher aus der Ferne)",
-          "name": "Mipmaps der LED-Masken"
+          "desc": "Wie stark die Punkte der LED-Zielanzeigen mit der Entfernung verwischen; bei 0 bleibt jeder Punkt scharf",
+          "name": "Weichheit der LED-Punkte"
         },
         "map_detail": {
           "name": "Kartendetails"
@@ -350,7 +442,7 @@
           "name": "Renderauflösung"
         },
         "shadow_casters": {
-          "name": "Schatten werfen"
+          "name": "Schatten werfen von"
         },
         "shadow_size": {
           "name": "Auflösung der Schattenkarte"
@@ -396,13 +488,111 @@
         "free_look": "Freier Blick",
         "gameplay": "Spielablauf",
         "graphics": "Grafik",
+        "info": "Infoleiste",
         "interface": "Oberfläche",
         "keybinds": "Tastenbelegung",
         "map": "Karte",
+        "mods": "Mods",
         "sound": "Ton",
+        "game": "Spiel & Updates",
         "vr": "VR",
         "head_tracking": "Head-Tracking",
-        "general": "Allgemein"
+        "general": "Allgemein",
+        "voice": "Sprachchat"
+      },
+      "info": {
+        "time": {
+          "desc": "Zeigt die Simulationszeit",
+          "name": "Uhrzeit"
+        },
+        "speed": {
+          "desc": "Zeigt die aktuelle Geschwindigkeit",
+          "name": "Geschwindigkeit"
+        },
+        "temp": {
+          "desc": "Zeigt die Außen- und Innentemperatur",
+          "name": "Temperatur"
+        },
+        "fuel": {
+          "desc": "Zeigt den Füllstand des Tanks",
+          "name": "Tankinhalt"
+        },
+        "pax": {
+          "desc": "Zeigt die Zahl der Fahrgäste an Bord",
+          "name": "Fahrgäste"
+        },
+        "line": {
+          "desc": "Zeigt die Linie und das Fahrtziel",
+          "name": "Linie und Ziel"
+        },
+        "next": {
+          "desc": "Zeigt den Namen der nächsten Haltestelle",
+          "name": "Nächste Haltestelle"
+        },
+        "delay": {
+          "desc": "Zeigt die Abweichung vom Fahrplan",
+          "name": "Verspätung"
+        }
+      },
+      "mods": {
+        "folder": "Ordner",
+        "install": {
+          "button": "Auswählen",
+          "desc": "Wählen ein Archiv zum Installieren als Mod.\n\nUnterstützte Formate:\n- Zip\n- Rar\n- 7Zip",
+          "name": "Installiere einen Mod aus einem Archiv",
+          "title": "Wähle ein Mod-Archiv zum Installieren aus"
+        },
+        "list": {
+          "desc": "Alle geladenen Mods (Und ob Content fehlt)",
+          "name": "Aktive Mods"
+        },
+        "none": "Keine Mods aktiv",
+        "none_desc": "Es wurden keine Mods gefunden. Bitte beachte, dass OMSI 2 Ordnerinhalte nicht als Mods gezählt werden.\n\nDu kannst Mods im Mods Ordner als Archive oder Ordner installieren.",
+        "open": {
+          "button": "Öffnen",
+          "desc": "Öffnet den Ordner, der die Mods enthält",
+          "name": "Mods Ordner"
+        },
+        "status": {
+          "empty": "Fehlende Daten",
+          "empty_desc": "Keine OMSI-Inhalte gefunden (z.B. Fahrzeuge oder Karten)",
+          "ok": "OK",
+          "unreadable": "Fehlende Daten",
+          "unreadable_desc": "Der Ordner kann nicht gelesen werden",
+          "zip_error": "Fehlende Daten",
+          "zip_error_desc": "Das ZIP-Archiv kann nicht gelesen werden"
+        },
+        "zip": "ZIP"
+      },
+      "game": {
+        "root": {
+          "button": "Ändern",
+          "desc": "Der Ordner mit Omsi.exe, Karten und Fahrzeugen darin",
+          "name": "OMSI 2 Installation",
+          "title": "Der Ordner OMSI 2 (mit Karten und Fahrzeugen)",
+          "exe_title": "Wähle die omsi.exe deiner OMSI 2 Installation aus",
+          "incomplete": "{path} ist keine vollständige OMSI 2 Installation.\n\nFehlend: {missing}"
+        },
+        "root_none": "Noch nicht gewählt",
+        "root_restart": "Tritt nach einem Neustart in Kraft",
+        "update_auto": {
+          "desc": "Installiert eine neue Version, sobald sie gefunden wurde",
+          "name": "Updates automatisch installieren"
+        },
+        "update_available": "{version} ist verfügbar",
+        "update_check": {
+          "desc": "Sucht nach einer neuen Version, wenn das Spiel startet",
+          "name": "Automatisch nach verfügbaren Updates suchen"
+        },
+        "update_checking": "Suche nach Updates...",
+        "update_current": "Aktuelle Version: {version}",
+        "update_failed": "Die letzte Prüfung fehlgeschlagen",
+        "update_latest": "{version} ist die neueste Version",
+        "update_now": {
+          "button": "Jetzt prüfen",
+          "desc": "Sucht nach einer neuen Version von neoOMSI",
+          "name": "Nach Updates suchen"
+        }
       },
       "interface": {
         "chat": {
@@ -579,6 +769,86 @@
         }
       },
       "value": {
+        "boarding": {
+          "auto": "Bezahlen und Ticket nehmen",
+          "pay": "Fahrer verkauft das Ticket",
+          "walk": "Einfach einsteigen"
+        },
+        "pax_motion": {
+          "natural": "Natürlich",
+          "omsi": "OMSI 2"
+        },
+        "maintenance": {
+          "0": "Unendlich (Kein Verschleiß)",
+          "1": "Sehr schlecht",
+          "2": "Schlecht",
+          "3": "Normal",
+          "4": "Gut"
+        },
+        "ai_max_scheduled": {
+          "0": "Alle",
+          "10": "Höchstens 10",
+          "25": "Höchstens 25",
+          "50": "Höchstens 50"
+        },
+        "ai_max_parked": {
+          "-1": "Keine",
+          "0": "Jeder Platz",
+          "35": "Höchstens 35",
+          "100": "Höchstens 100",
+          "250": "Höchstens 250"
+        },
+        "pax_models": {
+          "omsi": "OMSI 2",
+          "realistic": "Realistisch"
+        },
+        "shadow_casters": {
+          "all": "Jedes feste Mesh",
+          "omsi": "OMSI 2"
+        },
+        "map_detail": {
+          "-1": "OMSI-Einstellung",
+          "0": "Niedrig",
+          "1": "Normal",
+          "2": "Voll",
+          "255": "Alle erstellten Stufen"
+        },
+        "view_distance": {
+          "0": "Standard (900 m)",
+          "600": "600 m – am schnellsten"
+        },
+        "max_obj_dist": {
+          "-1": "Automatisch"
+        },
+        "min_obj_size": {
+          "0_005": "Alle",
+          "0_013": "Normal",
+          "0_02": "Weniger (schneller)",
+          "0_03": "Wenige (am schnellsten)"
+        },
+        "texture_memory": {
+          "0": "Automatisch"
+        },
+        "max_fps": {
+          "0": "Bildwiederholrate des Bildschirms",
+          "1000": "Unbegrenzt"
+        },
+        "pax_voices": {
+          "all": "Begrüßungen und Tickets",
+          "tickets": "Nur das gewünschte Ticket",
+          "off": "Stumm"
+        },
+        "navigator_corner": {
+          "top-left": "Oben links",
+          "top-right": "Oben rechts",
+          "bottom-left": "Unten links",
+          "bottom-right": "Unten rechts"
+        },
+        "window_mode": {
+          "windowed": "Fenster",
+          "borderless": "Fenster ohne Rahmen",
+          "fullscreen": "Vollbild"
+        },
         "post_aa": {
           "fxaa": "FXAA",
           "off": "Aus"
@@ -601,6 +871,47 @@
           "yaw roll": "Gieren und Rollen",
           "pitch roll": "Nicken und Rollen",
           "yaw pitch roll": "Gieren, Nicken und Rollen"
+        },
+        "voice_mode": {
+          "ptt": "Sprechtaste (gedrückt halten)",
+          "auto": "Sprachaktivierung"
+        }
+      },
+      "voice": {
+        "voice": {
+          "name": "Sprachchat",
+          "desc": "Mit den Spielern in deiner Nähe sprechen, in einer Mehrspielersitzung"
+        },
+        "voice_mode": {
+          "name": "Sprechen",
+          "desc": "Die Sprechtaste halten (siehe Tastenbelegung; mit Umschalt: über Funk) oder immer, wenn du sprichst"
+        },
+        "mic": {
+          "name": "Mikrofon",
+          "desc": "Sprich: der Balken zeigt, wie laut du bist, und die Zeile leuchtet, solange dich die anderen hören",
+          "default": "Systemstandard",
+          "off": "Schalte den Sprachchat ein, um das Mikrofon zu testen"
+        },
+        "mic_gain": {
+          "name": "Mikrofonlautstärke",
+          "desc": "Wie laut dich die anderen hören"
+        },
+        "voice_sensitivity": {
+          "name": "Sprachaktivierung",
+          "desc": "Höher: auch leiseres Sprechen öffnet das Mikrofon"
+        },
+        "voice_denoise": {
+          "name": "Rauschunterdrückung",
+          "desc": "Filtert Motor, Wind und Tastatur aus deinem Mikrofon"
+        },
+        "vol_voice": {
+          "name": "Andere Spieler",
+          "desc": "Wie laut die Stimmen der anderen sind"
+        },
+        "pvol": {
+          "name": "Spieler",
+          "desc": "Die Stimme dieses Spielers (0: stumm)",
+          "muted": "stumm"
         }
       }
     },
@@ -612,7 +923,7 @@
         "run": "Ausführen"
       },
       "map": {
-        "nav": "Stadtkarte",
+        "nav": "Karte",
         "tour": "Linie und Tour"
       },
       "options": {
@@ -634,7 +945,7 @@
             "title": "Anzeige"
           },
           "service": {
-            "title": "Service"
+            "title": "Wartung"
           },
           "driver": {
             "title": "Fahrer"
@@ -706,7 +1017,7 @@
             "button": "Reparieren"
           },
           "reset_vehicle": {
-            "name": "Wieder auf die Räder stellen",
+            "name": "Aufrichten",
             "desc": "Stellt das Fahrzeug wieder aufrecht hin",
             "button": "Zurücksetzen"
           },
@@ -753,7 +1064,7 @@
       "keys": {
         "load_error": "Die Tastenbelegung konnte nicht gelesen werden",
         "find": "Tastenbelegung suchen",
-        "group_driving": "Fahren und der Bus",
+        "group_driving": "Fahren und Bus",
         "group_vr": "Headset (VR)",
         "group_scripted": "Per Skript (dieses Fahrzeug)",
         "press_key": "Taste drücken...",
@@ -778,13 +1089,21 @@
         "the_game_follows_your_device_s_date_and_time": "Das Spiel folgt dem Datum und der Uhrzeit deines Geräts",
         "date_and_time": "Datum und Uhrzeit",
         "synchronized_with_the_real_time": "Mit der Echtzeit synchronisiert",
-        "exact_time": "Genaue Uhrzeit",
+        "exact_time": "Uhrzeit",
         "press_enter_to_change_esc_to_cancel": "Mit Enter übernehmen, mit Esc abbrechen",
         "change_the_current_time_press_enter_to_change": "Ändere die aktuelle Uhrzeit (mit Enter übernehmen)",
+        "exact_date": "Datum",
+        "change_the_current_date_press_enter_to_change": "Ändere das aktuelle Datum (mit Enter übernehmen)",
         "hour": "Stunde",
         "set_the_hour_of_the_day_directly": "Stelle die Stunde des Tages direkt ein",
         "minute": "Minute",
         "set_the_minute_directly": "Stelle die Minute direkt ein",
+        "day": "Tag",
+        "set_the_day_directly": "Stelle den Tag direkt ein",
+        "month": "Monat",
+        "set_the_month_directly": "Stelle den Monat direkt ein",
+        "year": "Jahr",
+        "set_the_year_directly": "Stelle das Jahr direkt ein",
         "morning": "Morgen",
         "noon": "Mittag",
         "evening": "Abend",
@@ -814,11 +1133,11 @@
         "the_kind_of_clouds_in_the_sky": "Die Art der Wolken am Himmel.",
         "none": "Keine",
         "few_clouds": "Wenige Wolken",
-        "scattered": "Aufgelockert",
+        "scattered": "Aufgelockerte Wolken",
         "broken": "Stark bewölkt",
         "overcast": "Bedeckt",
         "visibility": "Sichtweite",
-        "how_far_one_can_see_less_is_fog": "Wie weit du sehen kannst; weniger bedeutet mehr Nebel.",
+        "how_far_one_can_see_less_is_fog": "Wie weit du sehen kannst; niedrigere Werte bedeuten mehr Nebel.",
         "brightness": "Helligkeit",
         "brightness_of_the_custom_weather_lighting": "Helligkeit der Beleuchtung des eigenen Wetters.",
         "precipitation": "Niederschlag",
@@ -830,7 +1149,7 @@
         "wet_roads": "Nasse Straßen",
         "how_wet_the_roads_are_now_they_dry_in_the_sun_wet_in_the_rain": "Wie nass die Straßen gerade sind (sie trocknen in der Sonne und werden im Regen nass).",
         "snow_cover": "Schneedecke",
-        "snow_lying_on_the_world_and_ground": "Wie viel Schnee auf dem Boden und der Umgebung liegt.",
+        "snow_lying_on_the_world_and_ground": "Ob Schnee auf dem Boden und in der Umgebung liegt.",
         "snow_on_road": "Schnee auf der Straße",
         "treat_the_road_surface_as_snow_covered": "Behandelt die Fahrbahn als schneebedeckt.",
         "temperature": "Temperatur",
@@ -852,6 +1171,11 @@
       }
     },
     "controls": {
+      "import": {
+        "title": "Aus OMSI 2 importieren",
+        "name": "Importieren",
+        "desc": "Übernimmt die Controller aus Inputs/gamectrler.cfg von OMSI 2"
+      },
       "setup": {
         "name": "Einrichten",
         "desc": "Richte diesen Controller ein, damit er im Spiel verwendet werden kann."
@@ -861,8 +1185,26 @@
         "desc": "Ein ausgeschalteter Controller wird ignoriert."
       },
       "axes": "Achsen",
+      "axis_mode": {
+        "name": "Achsenmodus",
+        "desc": "Auto erkennt Lenkräder und Pedale. Gamepad verwendet Sticks und Trigger; Nativ verwendet die eigenen Achsen des Geräts.",
+        "auto": "Auto",
+        "gamepad": "Gamepad",
+        "native": "Nativ"
+      },
       "axis": {
         "desc": "Was diese Achse bewirkt.",
+        "shape": {
+          "linear": "Linear",
+          "degressive": "Degressiv",
+          "progressive": "Progressive",
+          "bi_degressive": "Bi-degressiv",
+          "bi_progressive": "Bi-progressiv"
+        },
+        "invert": {
+          "name": "Invertieren",
+          "desc": "Kehrt diese Achse um, auch bevor eine Funktion zugeordnet wurde."
+        },
         "name": {
           "0": "X-Achse",
           "1": "Y-Achse",
@@ -916,9 +1258,33 @@
       "button": {
         "name": "Taste",
         "desc": "Was diese Taste bewirkt."
+      },
+      "pressed": "Gedrückt",
+      "find_hint": "Drücke eine Taste am Controller, um sie hier zu finden",
+      "button_search": "Tasten suchen",
+      "no_match": "Keine Taste passt zu „{query}“",
+      "pad": {
+        "view": "Ansicht",
+        "menu": "Menü",
+        "left_stick": "Linker Stick (drücken)",
+        "right_stick": "Rechter Stick (drücken)"
+      },
+      "hat": {
+        "up": "oben",
+        "right": "rechts",
+        "down": "unten",
+        "left": "links",
+        "dpad": "Steuerkreuz {dir}",
+        "hat": "Coolie-Hat {n} {dir}"
       }
     },
     "dialog": {
+      "restart": {
+        "title": "Neustart erforderlich",
+        "text": "Damit deine Änderungen vollständig in Kraft gehen, musst du das Spiel neustarten",
+        "yes": "Neustarten",
+        "no": "Später"
+      },
       "place": {
         "models": "Modelle",
         "random_livery": "Zufällige Lackierung",
@@ -972,10 +1338,10 @@
       "route_set": "Linie {line}",
       "route_number": "Liniennummer",
       "no_destinations": "Dieser Bus hat keine Betriebshofdatei (.hof) mit Zielen",
-      "no_routes": "Keine Linienummern in der Betriebshofdatei oder im Fahrplan",
+      "no_routes": "Keine Liniennummern in der Betriebshofdatei oder im Fahrplan",
       "no_hofs": "Dieser Bus hat keine Betriebshofdateien (.hof)",
-      "entry": "Zugang {number}",
-      "no_entries": "Diese Karte hat keine Zugangspunkte",
+      "entry": "Spawnpunkt {number}",
+      "no_entries": "Diese Karte hat keine Spawnpunkte",
       "maker_models": "{name}  ({count} Modelle)",
       "unknown_maker": "Unbekannter Hersteller",
       "no_numbers": "Dieser Bus hat keine Liste mit Wagennummern",
@@ -995,7 +1361,7 @@
       "blinker_warn_toggle": "Warnblinker",
       "brake": "Bremse",
       "bus_20h_switch": "20-h-Schalter",
-      "bus_dooraft": "Hintere Türen",
+      "bus_dooraft": "Türfreigabe",
       "bus_doorfront0": "Vordertür 1",
       "bus_doorfront1": "Vordertür 2",
       "bus_doorfront5": "Vordertür 6",
@@ -1088,7 +1454,7 @@
       "scendes_set_x": "Szeneriedesigner: Auf X-Achse sperren",
       "scendes_set_y": "Szeneriedesigner: Auf Y-Achse sperren",
       "scendes_set_z": "Szeneriedesigner: Auf Z-Achse sperren",
-      "screenshot": "Screenshot",
+      "screenshot": "Bildschirmfoto",
       "sim_pause": "Simulation pausieren",
       "steering_left": "Links lenken",
       "steering_neutral": "Lenkung zentrieren",
@@ -1099,6 +1465,7 @@
       "ticket_give": "Fahrschein ausgeben",
       "toggel_ctrler": "Controller umschalten",
       "toggel_mouse_ctrl": "Maussteuerung umschalten",
+      "toggle_navigator": "Navigator ein-/ausblenden",
       "view_interiorcam_minus": "Innenkamera: vorherige",
       "view_interiorcam_plus": "Innenkamera: nächste",
       "view_reset_all_directions": "Alle Blickrichtungen zurücksetzen",
@@ -1111,7 +1478,9 @@
       "view_set_schedule": "Ansicht: Fahrplan",
       "view_set_ticketselling": "Ansicht: Fahrscheinverkauf",
       "view_toggle_informationdisplay": "Informationsanzeige umschalten",
-      "view_toggle_viewpoint": "Blickpunkt umschalten"
+      "view_toggle_viewpoint": "Blickpunkt umschalten",
+      "voice_talk": "Mehrspieler: sprechen (halten)",
+      "voice_radio": "Mehrspieler: über Funk sprechen (halten)"
     },
     "keybinds": {
       "not_set": "Nicht belegt",
@@ -1145,7 +1514,11 @@
       "start_point_missing": "Dieser Startpunkt wurde nicht gefunden",
       "destination": "Ziel: {name}",
       "fleet_number": "Wagennummer: {number}",
-      "key_conflict": "Diese Taste wird bereits verwendet von: {keys}"
+      "key_conflict": "Diese Taste wird bereits verwendet von: {keys}",
+      "voice_talking": "Sprachchat: du sprichst",
+      "voice_radio": "Sprachchat: über Funk",
+      "voice_error": "Sprachchat: {error}",
+      "voice_mic_denied": "das Mikrofon ist nicht erlaubt"
     },
     "admin": {
       "player": "Spieler {id}",
@@ -1184,7 +1557,178 @@
       "host_brought": "Der Host hat dich hierher geholt",
       "host_service": "Der Host hat einen Service ausgeführt: {kind}",
       "host_upright": "Der Host hat dein Fahrzeug aufgerichtet",
-      "wrong_password": "Falsches Passwort"
+      "wrong_password": "Falsches Passwort",
+      "mute": "Mikrofon von {name} stummschalten",
+      "unmute": "{name} wieder sprechen lassen",
+      "voice": "Sprachchat: {state}"
+    }
+  },
+  "start": {
+    "maps": {
+      "nav": "Start",
+      "head": "Wähle eine Karte",
+      "note": "Wähle eine Karte und wie die Fahrt beginnt",
+      "list": "KARTEN",
+      "settings": "EINSTELLUNGEN",
+      "vehicle": "FAHRZEUG",
+      "mode": "START",
+      "free": "Freie Fahrt",
+      "t1": "Karte & Strecke",
+      "t2": "Fahrzeuge",
+      "t3": "Zeit & Wetter",
+      "h1": "Wo fährst du?",
+      "h2": "Wähle dein Fahrzeug",
+      "h3": "Wann und in welchem Wetter?",
+      "next": "Weiter:",
+      "drive": "Abfahrt",
+      "cont": "Dort weitermachen, wo du warst",
+      "map": "KARTE",
+      "buses": "ALLE FAHRZEUGE",
+      "sw": "Winter",
+      "sp": "Frühling",
+      "su": "Sommer",
+      "sa": "Herbst",
+      "route": "Route",
+      "go": "Start",
+      "none": "Keine Karten gefunden",
+      "livery": "Lackierung",
+      "details": "Fahrzeugdetails",
+      "auto": "Automatisch",
+      "depot": "Hof-Datei",
+      "fleet": "Wagennummer",
+      "plate": "Kennzeichen",
+      "search": "Suche Fahrzeuge...",
+      "nobuses": "Keine Fahrzeuge gefunden",
+      "unknown": "Unbekannter Hersteller",
+      "loading": "Vorschau wird geladen...",
+      "nopreview": "Keine Vorschau",
+      "line": "ZIEL",
+      "tour": "TOUR",
+      "filter": "Filter...",
+      "nolines": "Kein Fahrplan auf dieser Karte",
+      "notours": "Keine Touren",
+      "trip": "ERSTER TRIP",
+      "autotrip": "Nach Startzeit",
+      "mappreview": "Karte wird geladen…",
+      "autoentry": "Automatisch (nächster zur ersten Haltestelle)",
+      "entry": "STARTPUNKT",
+      "noentries": "Keine Startpunkte auf dieser Karte",
+      "linetour": "Linie {line}, Tour {tour}",
+      "linetourtrip": "Linie {line}, Tour {tour}, Trip {trip}",
+      "time": "ZEIT",
+      "date": "DATUM",
+      "now": "Jetzt",
+      "season": "JAHRESZEIT",
+      "today": "Heute",
+      "close": "Schließen",
+      "sd": "Nach Datum",
+      "weather": "WETTER",
+      "presets": "VOREINSTELLUNGEN",
+      "icao": "FLUGHAFEN (ICAO)",
+      "onfoot": "Zu Fuß starten (Kein Bus)",
+      "onfoot_short": "Zu Fuß",
+      "icao_ph": "ICAO code, z.B. EDDB",
+      "icao_auto": "Leer: nächstgelegenen Flughafen zur Karte",
+      "noair": "Kein passender Flughafen"
+    },
+    "profile": {
+      "ago_d": "vor {n} Tagen",
+      "ago_h": "vor {n} Stunden",
+      "ago_m": "vor {n} Minuten",
+      "comfort": "Komfort",
+      "comfort_note": "Der Anteil der Fluggäste, die eingestiegen sind und nichts zu beklagen hatten.",
+      "default_name": "Fahrer",
+      "delete_confirm": "Löschen?",
+      "distance": "Distanz",
+      "driving": "Fahren",
+      "driving_note": "Geschwindigkeit, harte Bremse und Unfälle senken diese Wertung.",
+      "hm": "{h} Std. {m} Min.",
+      "hours": "Stunden gefahren",
+      "level": "Level {level} · {xp} XP auf Level {next}",
+      "min": "{m} Min.",
+      "new": "Neuer Fahrer",
+      "new_hint": "Name des neuen Fahrers",
+      "no_drives": "Noch keine Fahrten.",
+      "ontime": "Pünktlich",
+      "ratings": "Bewertungen",
+      "recent": "Kürzliche Fahrten",
+      "stops": "Haltestellen bedient",
+      "tickets": "Ticketverkauf",
+      "tickets_note": "Korrektes Ticket, korrektes Rückgeld, ohne dass jemand warten muss."
+    },
+    "join": {
+      "nav": "Mehrspieler",
+      "note": "Fahre mit Freunden mit einem Sitzungscode oder trete einem Server bei.",
+      "tab_join": "Beitreten & Host",
+      "tab_servers": "Serverliste",
+      "label": "SITZUNGSCODE ODER SERVER ADRESSE",
+      "placeholder": "Sitzungscode oder Serveradresse",
+      "hint": "Füge einen Code von einem Freund ein, oder eine IP / Adresse mit Port. Lass das Feld leer um das lokale Netzwerk zu durchsuchen.",
+      "go": "Beitreten",
+      "checking": "Wird geprüft...",
+      "online": "Server online -  {map}  -  {players}/{max} Spieler",
+      "offline": "Server nicht erreichbar: {error}",
+      "offline_short": "Offline",
+      "game": "DEIN SPIEL",
+      "host": "Mein nächstes Spiel hosten",
+      "host_note": "Freunde können deiner Sitzung beitreten, sobald du diese gestartet hast.",
+      "servers_note": "Nur Server, die antworten, können beigetreten werden.",
+      "no_servers": "Noch keine gespeicherten Server."
+    },
+    "row": {
+      "vehicle": "Fahrzeug",
+      "time": "Zeit",
+      "traffic": "Verkehr",
+      "passengers": "Fahrgäste",
+      "timetable": "Fahrpläne",
+      "weather": "Wetter",
+      "date": "Datum",
+      "situation": "Situation",
+      "season": "Jahreszeit"
+    },
+    "value": {
+      "on": "an",
+      "off": "aus",
+      "default": "standard",
+      "vehicles": "{n} Fahrzeuge",
+      "hour": "{h}:00"
+    },
+    "season": {
+      "winter": "Winter",
+      "spring": "Frühling",
+      "summer": "Sommer",
+      "autumn": "Herbst"
+    },
+    "cal": {
+      "m1": "Januar",
+      "m2": "Februar",
+      "m3": "März",
+      "m4": "April",
+      "m5": "Mai",
+      "m6": "Juni",
+      "m7": "Juli",
+      "m8": "August",
+      "m9": "September",
+      "m10": "Oktober",
+      "m11": "November",
+      "m12": "Dezember",
+      "d1": "Mo",
+      "d2": "Di",
+      "d3": "Mi",
+      "d4": "Do",
+      "d5": "Fr",
+      "d6": "Sa",
+      "d7": "So"
+    },
+    "weather": {
+      "default": "Kartenstandard",
+      "cycle": "Wetterzyklus",
+      "real": "Echtes Wetter",
+      "custom": "Eigenes Wetter",
+      "vis": "Sichtweite",
+      "clouds": "Wolken",
+      "precip": "Niederschlag",
+      "temp": "Temperatur"
     }
   }
 }

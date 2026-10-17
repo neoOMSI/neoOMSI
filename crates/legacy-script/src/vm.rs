@@ -320,8 +320,15 @@ impl Vm {
 /// Values push; binary operators pop both operands and push the result; unary operators
 /// replace `st[0]`. This is what the stock scripts require (`A B C || &&` evaluates
 /// `A && (B || C)`).
-#[inline]
+#[inline(always)]
 fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut dyn Host) {
+    if !exec_hot(s, op, p, state, host) {
+        exec_cold(s, op, p, state, host)
+    }
+}
+
+#[inline(always)]
+fn exec_hot(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut dyn Host) -> bool {
     macro_rules! bin {
         ($f:expr) => {{
             let a = s.pop();
@@ -358,21 +365,6 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
             let c = &p.curves[*id as usize];
             un!(|x| c.eval(x))
         }
-        Op::Macro(_) | Op::Random | Op::JumpIfZero(_) | Op::Jump(_) => {
-            unreachable!("handled by run_block")
-        }
-        Op::Callback(n) => host.callback(p.name(*n), *n, s, state),
-        Op::SoundTrigger(n) => host.sound_trigger_vars(p.name(*n), *n, &state.vars),
-        Op::SoundTriggerFile(n) => {
-            let file = s.pop_str();
-            host.sound_trigger_file(p.name(*n), &file);
-        }
-        Op::LoadStr(id) => {
-            let v = state.str_vars[*id as usize].clone();
-            s.push_str(v)
-        }
-        Op::StoreStr(id) => state.str_vars[*id as usize] = s.sst[0].clone(),
-        Op::PushStr(v) => s.push_str(v.clone()),
         Op::LoadReg(i) => s.push(s.reg[*i as usize]),
         Op::StoreReg(i) => s.reg[*i as usize] = s.st[0],
         Op::Add => bin!(|b: f32, a: f32| b + a),
@@ -416,6 +408,29 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
         Op::Abs => un!(|a: f32| a.abs()),
         Op::Trunc => un!(|a: f32| a.trunc()),
         Op::Pi => s.push(std::f32::consts::PI),
+        _ => return false,
+    }
+    true
+}
+
+#[inline(never)]
+fn exec_cold(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut dyn Host) {
+    match op {
+        Op::Macro(_) | Op::Random | Op::JumpIfZero(_) | Op::Jump(_) => {
+            unreachable!("handled by run_block")
+        }
+        Op::Callback(n) => host.callback(p.name(*n), *n, s, state),
+        Op::SoundTrigger(n) => host.sound_trigger_vars(p.name(*n), *n, &state.vars),
+        Op::SoundTriggerFile(n) => {
+            let file = s.pop_str();
+            host.sound_trigger_file(p.name(*n), &file);
+        }
+        Op::LoadStr(id) => {
+            let v = state.str_vars[*id as usize].clone();
+            s.push_str(v)
+        }
+        Op::StoreStr(id) => state.str_vars[*id as usize] = s.sst[0].clone(),
+        Op::PushStr(i) => s.push_str(p.strings[*i as usize].clone()),
         Op::StackDump => host.stack_dump(s),
         Op::StrConcat => {
             let a = s.pop_str();
@@ -501,18 +516,24 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
             let v: String = src.chars().take(len.saturating_sub(n)).collect();
             s.push_str(v)
         }
+        // `$SetLength*` read their length and leave it on the stack: Omsi.exe's ops
+        // 0x25-0x27 are not in the executor's pop set (0x5d5c5c), unlike `$cutBegin`,
+        // `$cutEnd` and `$*`. The Krüger++ matrix counts on it - `Matrix_IsNextCmd` combines
+        // its matches with `$d 2 l7 + $SetLengthR && …` and clears the last length with
+        // `d - +` - and taking it off lost every `*L[…]`, `*C[…]` … command of a
+        // destination: they stood on the display as text (#391).
         Op::StrSetLengthL => {
-            let n = omsi_round(s.pop());
+            let n = omsi_round(s.top());
             let v = set_length(&s.pop_str(), n, Align::Left);
             s.push_str(v)
         }
         Op::StrSetLengthR => {
-            let n = omsi_round(s.pop());
+            let n = omsi_round(s.top());
             let v = set_length(&s.pop_str(), n, Align::Right);
             s.push_str(v)
         }
         Op::StrSetLengthC => {
-            let n = omsi_round(s.pop());
+            let n = omsi_round(s.top());
             let v = set_length(&s.pop_str(), n, Align::Center);
             s.push_str(v)
         }
@@ -533,6 +554,7 @@ fn exec_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut d
             let v = str_to_float(&s.pop_str());
             s.push(v)
         }
+        _ => unreachable!("numeric ops run in exec_hot"),
     }
 }
 
@@ -782,6 +804,22 @@ mod tests {
     }
 
     #[test]
+    fn set_length_keeps_its_length() {
+        let src = "{init}\n7 \"abcdef\" 3 $SetLengthR (S.L.a) 2 $cutEnd 9 \"xy\" 3 $* $+ \"ab\" 4 $SetLengthC 6 $SetLengthL (S.L.b)\n{end}\n";
+        let p = prog(src);
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut vm = Vm::new();
+        let mut st = State::new(&p);
+        vm.run_init(&p, &mut st, &mut NullHost);
+        assert_eq!(st.get(p.var("a").unwrap()), 3.0);
+        assert_eq!(st.get(p.var("b").unwrap()), 6.0);
+        assert_eq!(vm.stacks.top_str(), " ab   ");
+        assert_eq!(vm.stacks.sst[1], "dxyx");
+        // the 2 of `$cutEnd` and the 3 of `$*` are gone, every other number is still there
+        assert_eq!(&vm.stacks.st[..6], &[6.0, 4.0, 9.0, 3.0, 7.0, 0.0]);
+    }
+
+    #[test]
     fn triggers_that_set_a_variable() {
         let p = prog(
             "{trigger:on}\n1 (S.L.a)\n{end}\n{trigger:off}\n0 (S.L.b) (S.L.a)\n{end}\n{macro:m}\n(L.L.a) ! (S.L.a)\n{end}\n{trigger:tog}\n(M.L.m)\n{end}\n{trigger:ai_x}\n1 (S.L.a)\n{end}\n{trigger:other}\n1 (S.L.b)\n{end}\n",
@@ -907,6 +945,24 @@ mod tests {
         let mut vm = Vm::new();
         vm.run_init(&p, &mut st, &mut NullHost);
         assert_eq!(st.vars[p.var("a").unwrap() as usize], 2.0);
+    }
+
+    /// An `{if}` with a second `{else}` (the DBC Chicago Citybus's cashdesk.osc): a reached
+    /// `{else}` skips to the `{endif}`, so what follows the second one never runs - there it
+    /// blanks the bus's farebox every frame, which OMSI shows.
+    #[test]
+    fn second_else_skips_to_the_endif() {
+        let run = |cond: &str| {
+            let p = prog(&format!(
+                "{{init}}\n{cond} {{if}} 1 (S.L.a) {{else}} 2 (S.L.a) {{else}} 3 (S.L.b) {{endif}}\n{{end}}\n"
+            ));
+            let mut st = State::new(&p);
+            Vm::new().run_init(&p, &mut st, &mut NullHost);
+            let v = |k: &str| st.vars[p.var(k).unwrap() as usize];
+            (v("a"), v("b"))
+        };
+        assert_eq!(run("1"), (1.0, 0.0));
+        assert_eq!(run("0"), (2.0, 0.0));
     }
 }
 

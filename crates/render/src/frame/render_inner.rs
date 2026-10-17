@@ -1,5 +1,54 @@
 use crate::*;
 
+/// Preserve authored mesh order for vehicles; use instance IDs for other ties.
+const MAIN_PASS_PARTS: usize = 4;
+
+fn sort_blended_keys(keys: &mut [(u8, f32, [u64; 3], bool, u32, usize)]) {
+    keys.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(b.1.total_cmp(&a.1))
+            .then(a.2.cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+            .then_with(|| {
+                if a.3 {
+                    a.4.cmp(&b.4)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then(a.5.cmp(&b.5))
+    });
+}
+
+/// Whether one of the instance's materials is a rain layer (drawn after the scene).
+fn has_rain_layer(scene: &Scene, inst: &Instance) -> bool {
+    inst.materials
+        .iter()
+        .any(|&m| scene.materials[m].uniform.emissive[3] > 1.5)
+}
+
+fn set_output_viewport(pass: &mut wgpu::RenderPass<'_>, viewport: Option<(u32, u32, u32, u32)>) {
+    if let Some((x, y, width, height)) = viewport {
+        pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
+        pass.set_scissor_rect(x, y, width, height);
+    }
+}
+
+/// Rebase the window origin after 400 m, where f32 precision is still 0.03 mm.
+const ORIGIN_KEEP: f64 = 400.0;
+/// Nearby mirrors, stereo eyes and side panels share the window's origin and scene buffers.
+const SHARED_ORIGIN_KEEP: f64 = ORIGIN_KEEP + 200.0;
+
+/// Keep the current origin within `keep`; otherwise rebase to the camera's 100 m cell.
+fn view_render_origin(position: DVec3, current: DVec3, keep: f64) -> DVec3 {
+    // Avoid re-uploading static instances at cell boundaries; distant cameras still rebase.
+    if (position - current).abs().max_element() <= keep {
+        current
+    } else {
+        (position / 100.0).floor() * 100.0
+    }
+}
+
 impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_inner(
@@ -14,6 +63,11 @@ impl Renderer {
         exclude_texture: Option<TextureId>,
         projection: Option<Mat4>,
         second_eye: bool,
+        output_viewport: Option<(u32, u32, u32, u32)>,
+        preserve_output: bool,
+        custom_projection: Option<Mat4>,
+        lead_frame: bool,
+        frame_dt: Option<f32>,
     ) {
         if ::legacy_config::env::var("OMSI_FAKE_GPU_ERROR").as_deref() == Ok("lost")
             && with_overlays
@@ -51,10 +105,30 @@ impl Renderer {
                 view_formats: &[],
             });
         }
+        // Wait for the previous picture before writing its buffers.
+        self.wait_submitted();
+        // Queue the deferred window and mirrors for `present`; each copies its buffer writes
+        // in its first command buffer, preserving earlier queued pictures.
+        let defer = self.submitter.is_some()
+            && if with_overlays {
+                std::mem::take(&mut *self.defer_next.get_mut())
+                    && lead_frame
+                    && output_viewport.is_none()
+            } else {
+                projection.is_none() && self.defer_views.get()
+            };
+        if !defer {
+            // Draw queued panels and mirrors first.
+            self.flush_deferred();
+        }
         if self.gpu_error.load(std::sync::atomic::Ordering::Relaxed) {
             self.fall_back_to_single_sample(scene);
         }
-        self.collect_gpu_timers();
+        self.open_uploads();
+        // Read queued picture timers after submission.
+        if !self.has_queued() {
+            self.collect_gpu_timers();
+        }
         let tset: Option<wgpu::QuerySet> = self.gpu_timers[with_overlays as usize]
             .as_ref()
             .filter(|t| !t.waiting && !t.unresolved)
@@ -71,7 +145,18 @@ impl Renderer {
                 stage_t = now;
             }
         };
-        let ro = (camera.position / 100.0).floor() * 100.0;
+        let primary_view = (with_overlays && lead_frame) || (projection.is_some() && !second_eye);
+        let ro = view_render_origin(
+            camera.position,
+            scene.render_origin,
+            if scene.model_buf.is_none() {
+                0.0
+            } else if primary_view {
+                ORIGIN_KEEP
+            } else {
+                SHARED_ORIGIN_KEEP
+            },
+        );
         self.set_render_origin(scene, ro);
         let (full_w, full_h) = (width, height);
         let (width, height) = if with_overlays {
@@ -84,8 +169,8 @@ impl Renderer {
             && self.options.fxaa
             && self.options.msaa <= 1
             && !(lighting.enhanced
-                && self.hdr_pass.is_some()
-                && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none())
+            && self.hdr_pass.is_some()
+            && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none())
             && ::legacy_config::env::var_os("OMSI_NO_FXAA").is_none();
         let enhanced_view = lighting.enhanced
             && self.hdr_pass.is_some()
@@ -94,12 +179,26 @@ impl Renderer {
             && scene.glass_slot.is_some()
             && (lighting.rain > 0.001 || lighting.wetness > 0.02)
             && ::legacy_config::env::var_os("OMSI_NO_GLASS_PICTURE").is_none();
-        let scaled =
-            (width, height) != (full_w, full_h) || vanilla_fxaa || (glass_on && !enhanced_view);
+        let scaled = (width, height) != (full_w, full_h)
+            || vanilla_fxaa
+            || (glass_on && !enhanced_view)
+            || output_viewport.is_some();
         let scene_target: Option<(wgpu::TextureView, wgpu::BindGroup)> = if scaled {
             Some(self.scale_target(width, height))
         } else {
             None
+        };
+        let direct_output = scene_target.is_none();
+        let scene_viewport = direct_output.then_some(output_viewport).flatten();
+        let output_load = if preserve_output {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+        };
+        let scene_load = if direct_output && preserve_output {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
         };
         let scene_view: &wgpu::TextureView = scene_target.as_ref().map(|t| &t.0).unwrap_or(target);
         let aspect = self
@@ -107,13 +206,13 @@ impl Renderer {
             .unwrap_or(width as f32 / height.max(1) as f32);
         let cam_rel = (camera.position - ro).as_vec3();
         let xr_view = projection.is_some();
-        let lead_view = with_overlays || (xr_view && !second_eye);
+        let lead_view = (with_overlays && lead_frame) || (xr_view && !second_eye);
         let enhanced_frame = lighting.enhanced
             && self.hdr_pass.is_some()
             && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none()
             && (with_overlays
-                || xr_view
-                || ::legacy_config::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
+            || xr_view
+            || ::legacy_config::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
         let enhanced = enhanced_frame;
         let puddles_wanted = with_overlays
             && self.puddles.is_some()
@@ -130,9 +229,12 @@ impl Renderer {
         if !lighting.light_shadows {
             *self.spot_state.borrow_mut() = Default::default();
         }
+        stage(self, "setup", "mirror.setup");
         let grid = self.prepare_lights(scene, cam_rel, enhanced_frame, spot_plan);
-        self.prepare_coronas(scene, lighting.night);
+        stage(self, "setup.lights", "mirror.setup.lights");
+        self.prepare_coronas(scene, lighting.night, enhanced);
         self.prepare_smoke(scene, camera.position);
+        stage(self, "setup.coronas", "mirror.setup.coronas");
         let ao_on = with_overlays
             && self.options.ssao
             && self.ssao_pipeline.is_some()
@@ -149,7 +251,9 @@ impl Renderer {
         if glass_on {
             self.prepare_glass_behind(scene, width, height);
         }
-        let dt = {
+        let dt = if let Some(dt) = frame_dt {
+            dt
+        } else {
             let now = std::time::Instant::now();
             let dt = self
                 .last_frame
@@ -185,7 +289,7 @@ impl Renderer {
                 if let Some((_, buf, _, last)) = scene.overlay_res.get_mut(k).filter(|o| o.0 == tex)
                 {
                     if *last != ndc {
-                        self.queue.write_buffer(buf, 0, bytemuck::cast_slice(&ndc));
+                        self.write_buffer(buf, 0, bytemuck::cast_slice(&ndc));
                         *last = ndc;
                     }
                     continue;
@@ -258,11 +362,11 @@ impl Renderer {
             (near_m.project_point3(cam_rel) - near_wanted.project_point3(cam_rel)).length() > 0.03;
         let redraw_near = draw_shadows
             && (near_age >= 1
-                || near_jumped
-                || near_m == Mat4::IDENTITY
-                || near_origin != scene.render_origin
-                || near_sun.dot(sun) < 0.99999
-                || ::legacy_config::env::var_os("OMSI_SHADOW_NEAR_EVERY_FRAME").is_some());
+            || near_jumped
+            || near_m == Mat4::IDENTITY
+            || near_origin != scene.render_origin
+            || near_sun.dot(sun) < 0.99999
+            || ::legacy_config::env::var_os("OMSI_SHADOW_NEAR_EVERY_FRAME").is_some());
         let light_view_proj = if let Some((_, _, near, _, _)) = shared_xr_shadows {
             near
         } else if !shadows {
@@ -285,11 +389,11 @@ impl Renderer {
             (far_m.project_point3(cam_rel) - far_wanted.project_point3(cam_rel)).length() > 0.12;
         let redraw_far = draw_shadows
             && (far_age >= 3
-                || far_moved
-                || far_m == Mat4::IDENTITY
-                || far_origin != scene.render_origin
-                || far_sun.dot(sun) < 0.99999
-                || ::legacy_config::env::var_os("OMSI_SHADOW_FAR_EVERY_FRAME").is_some());
+            || far_moved
+            || far_m == Mat4::IDENTITY
+            || far_origin != scene.render_origin
+            || far_sun.dot(sun) < 0.99999
+            || ::legacy_config::env::var_os("OMSI_SHADOW_FAR_EVERY_FRAME").is_some());
         if redraw_far && ::legacy_config::env::var_os("OMSI_DEBUG_SHADOW_FAR").is_some() {
             log::info!(
                 "far shadow redrawn: age {far_age} moved {far_moved} origin {} sun {:.6}",
@@ -319,7 +423,8 @@ impl Renderer {
                 light_view_proj_close,
             )));
         }
-        let vp_mat = projection
+        let render_projection = custom_projection.or(projection);
+        let vp_mat = render_projection
             .map(|p| {
                 p * glam::camera::rh::view::look_to_mat4(
                     (camera.position - ro).as_vec3(),
@@ -342,8 +447,20 @@ impl Renderer {
                 side as f32,
                 if side > 0.0 { 1.0 } else { 0.0 },
             ];
-            self.queue
-                .write_buffer(&self.lm_uniform, 0, bytemuck::cast_slice(&v));
+            self.write_buffer(&self.lm_uniform, 0, bytemuck::cast_slice(&v));
+        }
+        if let Some((cx, cy, cell, slot)) = self.cover_place.get() {
+            let v: [f32; COVER_HEADER as usize] = [
+                (cx - ro.x) as f32,
+                (cy - ro.y) as f32,
+                cell,
+                COVER_SIDE as f32,
+                slot.0 as f32,
+                slot.1 as f32,
+                ro.z as f32,
+                1.0,
+            ];
+            self.write_buffer(&self.cover_buf, 0, bytemuck::cast_slice(&v));
         }
         let (spot_vp, spot_info) = {
             let st = self.spot_state.borrow();
@@ -357,7 +474,7 @@ impl Renderer {
                         SPOT_NEAR,
                         p.far,
                     )
-                    .to_cols_array_2d();
+                        .to_cols_array_2d();
                 }
             }
             let sz = self.options.shadow_size as f32;
@@ -390,12 +507,12 @@ impl Renderer {
                 .to_array(),
             ambient: (lighting.ambient
                 * if enhanced {
-                    1.0
-                } else {
-                    night_scale(lighting.night, lighting.atmosphere_brightness)
-                })
-            .extend(lighting.snow.clamp(0.0, 1.0))
-            .to_array(),
+                1.0
+            } else {
+                night_scale(lighting.night, lighting.atmosphere_brightness)
+            })
+                .extend(lighting.snow.clamp(0.0, 1.0))
+                .to_array(),
             fog: lighting.fog_color.extend(lighting.fog_density).to_array(),
             sun_color: lighting
                 .sun_color
@@ -403,16 +520,16 @@ impl Renderer {
                 .to_array(),
             sky_color: (lighting.secondary
                 * if enhanced {
-                    1.0
-                } else {
-                    night_scale(lighting.night, lighting.atmosphere_brightness)
-                })
-            .extend(if lighting.classic && !enhanced {
                 1.0
             } else {
-                0.0
+                night_scale(lighting.night, lighting.atmosphere_brightness)
             })
-            .to_array(),
+                .extend(if lighting.classic && !enhanced {
+                    1.0
+                } else {
+                    0.0
+                })
+                .to_array(),
             light_grid: grid,
             sky: [
                 lighting.sun_azimuth,
@@ -488,9 +605,15 @@ impl Renderer {
             ],
             spot_vp,
             spot_info,
+            tune: [
+                lighting.nightmap_gain,
+                lighting.lightmap_gain,
+                lighting.puddle_seed[0],
+                lighting.puddle_seed[1],
+            ],
+            trailers: trailer_fog_boxes(lighting.inside, &lighting.puddle_parts, ro),
         };
-        self.queue
-            .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cu));
+        self.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cu));
         let probe_redraw = enhanced
             && (lead_view || self.sky_state.is_none())
             && self.prepare_enhanced(lighting, cam_rel, ro, dt);
@@ -498,6 +621,8 @@ impl Renderer {
         let debug_draws = ::legacy_config::env::var_os("OMSI_DEBUG_DRAWS").is_some();
         let debug_cull = ::legacy_config::env::var_os("OMSI_DEBUG_CULL").is_some();
         let mut list: Vec<u32> = Vec::new();
+        // Shadow-caster entries follow the pass entries.
+        let mut shadow_list: Vec<u32> = Vec::new();
         let mut items: Vec<DrawItem> = Vec::new();
         let mut shadow_batches: [Vec<Batch>; SHADOW_SETS] = std::array::from_fn(|_| Vec::new());
         let kind_of = |alpha: AlphaMode| -> u8 {
@@ -562,13 +687,20 @@ impl Renderer {
             .unwrap_or(3.0);
         let casters = |span: std::ops::Range<usize>| -> [Vec<DrawItem>; SHADOW_SETS] {
             let mut out: [Vec<DrawItem>; SHADOW_SETS] = std::array::from_fn(|_| Vec::new());
-            let mut ranges: Vec<(u8, u32, u32, usize)> = Vec::new();
+            let mut ranges: Vec<(u8, u32, u32, usize, u32)> = Vec::new();
             for inst in &scene.instances[span] {
                 if !inst.visible
                     || !inst.casts_shadow
                     || (self.options.omsi_shadow_casters && !inst.omsi_caster)
                 {
                     continue;
+                }
+                // Far-tile stand-ins cast shadows only where drawn.
+                if let Some([x0, y0, x1, y1]) = inst.near_only {
+                    let c = camera.position;
+                    if c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1 {
+                        continue;
+                    }
                 }
                 let m = &scene.meshes[inst.mesh];
                 if m.ranges.is_empty() {
@@ -587,26 +719,7 @@ impl Renderer {
                         continue;
                     }
                 }
-                ranges.clear();
-                for (ri, (_, _, slot)) in m.ranges.iter().enumerate() {
-                    let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
-                    let mat = &scene.materials[mat_id];
-                    let mut kind = kind_of(mat.alpha);
-                    let cut_body = kind == PIPE_BLEND && mat.transmap.is_some() && !mat.no_z_write;
-                    if (kind == PIPE_BLEND && !cut_body) || mat.no_z_check {
-                        if dbg_shadow && r >= dbg_r {
-                            log::info!(
-                                "shadow: mesh r={r:.1} at {:?} slot {slot} is blended, never a caster",
-                                inst.origin
-                            );
-                        }
-                        continue;
-                    }
-                    if cut_body {
-                        kind = PIPE_ALPHA_TEST;
-                    }
-                    ranges.push((kind, ri as u32, *slot, mat_id));
-                }
+                let mut receives = [false; SHADOW_SETS];
                 for (cascade, &(range, lvp, min_radius)) in boxes.iter().enumerate() {
                     if !active[cascade] {
                         continue;
@@ -634,22 +747,7 @@ impl Renderer {
                         }
                         continue;
                     }
-                    if dbg {
-                        log::info!(
-                            "shadow: caster r={r:.1} at {:?} slots {:?}",
-                            inst.origin,
-                            ranges.iter().map(|x| x.0).collect::<Vec<_>>()
-                        );
-                    }
-                    for &(kind, ri, slot, mat_id) in &ranges {
-                        out[cascade].push(DrawItem {
-                            pipe: kind,
-                            mesh: inst.mesh as u32,
-                            range: ri,
-                            material: depth_only_material(kind, mat_id),
-                            entry: inst.base + slot,
-                        });
-                    }
+                    receives[cascade] = true;
                 }
                 for &(k, lpos, ldir, half, far) in &spot_cull {
                     let v = c - lpos;
@@ -663,12 +761,51 @@ impl Renderer {
                             continue;
                         }
                     }
-                    for &(kind, ri, slot, mat_id) in &ranges {
-                        out[3 + k].push(DrawItem {
+                    receives[3 + k] = true;
+                }
+                // Test shadow geometry before inspecting materials.
+                if !receives.iter().any(|&keep| keep) {
+                    continue;
+                }
+                ranges.clear();
+                for (ri, (_, _, slot)) in m.ranges.iter().enumerate() {
+                    let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
+                    let mat = &scene.materials[mat_id];
+                    let mut kind = kind_of(mat.alpha);
+                    let cut_body = kind == PIPE_BLEND && mat.transmap.is_some() && !mat.no_z_write;
+                    if (kind == PIPE_BLEND && !cut_body) || mat.no_z_check {
+                        if dbg_shadow && r >= dbg_r {
+                            log::info!(
+                                "shadow: mesh r={r:.1} at {:?} slot {slot} is blended, never a caster",
+                                inst.origin
+                            );
+                        }
+                        continue;
+                    }
+                    if cut_body {
+                        kind = PIPE_ALPHA_TEST;
+                    }
+                    ranges.push((kind, ri as u32, *slot, mat_id, mat.look));
+                }
+                if dbg_shadow && receives[0] && r >= dbg_r {
+                    log::info!(
+                        "shadow: caster r={r:.1} at {:?} slots {:?}",
+                        inst.origin,
+                        ranges.iter().map(|x| x.0).collect::<Vec<_>>()
+                    );
+                }
+                for (cascade, keep) in receives.into_iter().enumerate() {
+                    if !keep {
+                        continue;
+                    }
+                    for &(kind, ri, slot, mat_id, look) in &ranges {
+                        let (material, look) = depth_only_material(kind, mat_id, look);
+                        out[cascade].push(DrawItem {
                             pipe: kind,
                             mesh: inst.mesh as u32,
                             range: ri,
-                            material: depth_only_material(kind, mat_id),
+                            material,
+                            look,
                             entry: inst.base + slot,
                         });
                     }
@@ -678,10 +815,33 @@ impl Renderer {
         };
         if active.iter().any(|a| *a) {
             let n = scene.instances.len();
-            let (parts, chunk) = split_parts(self.encoding_pool.as_ref(), n);
+            let (parts, chunk) = split_parts(self.encoding_pool.as_deref(), n);
+            let chunk = chunk.div_ceil(CULL_BLOCK) * CULL_BLOCK;
+            // Skip blocks outside all sun boxes, unless drawing a spotlight map.
+            let blocks = Self::cull_blocks(scene).filter(|_| spot_cull.is_empty());
+            let lit = |b: usize| {
+                let Some(bl) = blocks.as_ref() else {
+                    return true;
+                };
+                let (c, r) = bl[b];
+                boxes.iter().enumerate().any(|(k, &(range, lvp, _))| {
+                    let lc = lvp.project_point3(c);
+                    let rr = r / range;
+                    active[k] && lc.x.abs() <= 1.0 + rr && lc.y.abs() <= 1.0 + rr
+                })
+            };
             let mut found: [Vec<DrawItem>; SHADOW_SETS] = std::array::from_fn(|_| Vec::new());
-            for part in run_parts(self.encoding_pool.as_ref(), parts, |p| {
-                casters(p * chunk..((p + 1) * chunk).min(n))
+            for part in run_parts(self.encoding_pool.as_deref(), parts, |p| {
+                let mut out: [Vec<DrawItem>; SHADOW_SETS] = std::array::from_fn(|_| Vec::new());
+                let end = ((p + 1) * chunk).min(n);
+                for b in (p * chunk..end).step_by(CULL_BLOCK) {
+                    if lit(b / CULL_BLOCK) {
+                        for (a, x) in out.iter_mut().zip(casters(b..(b + CULL_BLOCK).min(end))) {
+                            a.extend(x);
+                        }
+                    }
+                }
+                out
             }) {
                 for (a, b) in found.iter_mut().zip(part) {
                     a.extend(b);
@@ -698,7 +858,7 @@ impl Renderer {
                     scene,
                     &mut found[cascade],
                     true,
-                    &mut list,
+                    &mut shadow_list,
                     &mut shadow_batches[cascade],
                 );
             }
@@ -711,7 +871,7 @@ impl Renderer {
         }
         stage(self, "shadow items", "mirror.shadow items");
         let view = glam::camera::rh::view::look_to_mat4(cam_rel, camera.forward(), camera.up());
-        let (tan_x, tan_y) = if let Some(p) = projection {
+        let (tan_x, tan_y) = if let Some(p) = render_projection {
             (
                 ((p.z_axis.x - 1.0) / p.x_axis.x)
                     .abs()
@@ -747,10 +907,13 @@ impl Renderer {
         } else {
             camera.far
         };
-        if let Some(p) = ::legacy_config::env::var("OMSI_DEBUG_CULL").ok().and_then(|v| {
-            let f: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            (f.len() == 3).then(|| (DVec3::new(f[0], f[1], 0.0), f[2]))
-        }) {
+        if let Some(p) = ::legacy_config::env::var("OMSI_DEBUG_CULL")
+            .ok()
+            .and_then(|v| {
+                let f: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                (f.len() == 3).then(|| (DVec3::new(f[0], f[1], 0.0), f[2]))
+            })
+        {
             for (i, inst) in scene.instances.iter().enumerate() {
                 if (inst.origin.truncate() - p.0.truncate()).length() > p.1 || !with_overlays {
                     continue;
@@ -794,8 +957,8 @@ impl Renderer {
         };
         let cull_one = |i: usize, sizes: &mut Vec<([u64; 4], f32)>| -> Option<(usize, f32, bool)> {
             let inst = &scene.instances[i];
-            let m = &scene.meshes[inst.mesh];
-            if m.ranges.is_empty() || !inst.visible || (inst.mirror_only && main_view) {
+            // Look up meshes only after the view test passes.
+            if !inst.visible || (inst.mirror_only && main_view) {
                 return None;
             }
             if let Some([x0, y0, x1, y1]) = inst.near_only {
@@ -818,6 +981,10 @@ impl Renderer {
                 return None;
             }
             if !inside && (v.x.abs() > z * tan_x + r / cos_x || v.y.abs() > z * tan_y + r / cos_y) {
+                return None;
+            }
+            let m = &scene.meshes[inst.mesh];
+            if m.ranges.is_empty() {
                 return None;
             }
             let size = if inst.object_radius > 0.0 {
@@ -897,14 +1064,36 @@ impl Renderer {
             Some((i, z, inside))
         };
         let n = scene.instances.len();
-        let (parts, chunk) = split_parts(self.encoding_pool.as_ref(), n);
+        let (parts, chunk) = split_parts(self.encoding_pool.as_deref(), n);
+        // Cull whole blocks whose bounding sphere is outside the view.
+        let chunk = chunk.div_ceil(CULL_BLOCK) * CULL_BLOCK;
+        let blocks = Self::cull_blocks(scene);
+        let block_seen = |b: usize| {
+            let Some(bl) = blocks.as_ref() else {
+                return true;
+            };
+            let (c, r) = bl[b];
+            let v = view.transform_point3(c);
+            let z = -v.z;
+            v.length() <= r
+                || !(z + r < camera.near
+                    || (!enhanced_frame && z - r > fog_far)
+                    || v.x.abs() > z * tan_x + r / cos_x
+                    || v.y.abs() > z * tan_y + r / cos_y)
+        };
         let (mut visible, mut found): (Vec<(usize, f32, bool)>, Vec<([u64; 4], f32)>) =
             (Vec::new(), Vec::new());
-        for (v, sizes) in run_parts(self.encoding_pool.as_ref(), parts, |p| {
+        for (v, sizes) in run_parts(self.encoding_pool.as_deref(), parts, |p| {
             let mut sizes = Vec::new();
-            let v: Vec<_> = (p * chunk..((p + 1) * chunk).min(n))
-                .filter_map(|i| cull_one(i, &mut sizes))
-                .collect();
+            let mut v = Vec::new();
+            let end = ((p + 1) * chunk).min(n);
+            for b in (p * chunk..end).step_by(CULL_BLOCK) {
+                if block_seen(b / CULL_BLOCK) {
+                    v.extend(
+                        (b..(b + CULL_BLOCK).min(end)).filter_map(|i| cull_one(i, &mut sizes)),
+                    );
+                }
+            }
             (v, sizes)
         }) {
             visible.extend(v);
@@ -987,12 +1176,27 @@ impl Renderer {
             );
         }
         let mut prepass_batches: Vec<Batch> = Vec::new();
-        let prepass_job = || -> (Vec<u32>, Vec<Batch>) {
+        // Keep model-ordered vehicle batches out of main-pass depth (#292).
+        let mut prepass_split = 0;
+        // Include the camera's vehicle to avoid shading the world behind its cabin.
+        let camera_vehicle = lighting
+            .inside
+            .filter(|v| point_in_vehicle_box(camera.position, v))
+            .map(|(o, _, _)| o);
+        let prepass_job = || -> (Vec<u32>, Vec<Batch>, usize) {
             let mut items: Vec<DrawItem> = Vec::new();
+            let mut ordered_items: Vec<DrawItem> = Vec::new();
             let mut list: Vec<u32> = Vec::new();
             let mut batches: Vec<Batch> = Vec::new();
             for &(i, _, _) in &visible {
                 let inst = &scene.instances[i];
+                let target = if inst.ordered
+                    && camera_vehicle.is_none_or(|o| inst.origin.distance(o) > 0.01)
+                {
+                    &mut ordered_items
+                } else {
+                    &mut items
+                };
                 let cull = culls_back_faces(scene, inst);
                 for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
                     let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
@@ -1002,48 +1206,61 @@ impl Renderer {
                         continue;
                     }
                     if let Some(pre_kind) = depth_prepass_kind(kind, mat, inst.presurface) {
-                        items.push(DrawItem {
+                        let (material, look) = depth_only_material(pre_kind, mat_id, mat.look);
+                        target.push(DrawItem {
                             pipe: pre_kind * 2 + cull as u8,
                             mesh: inst.mesh as u32,
                             range: ri as u32,
-                            material: depth_only_material(pre_kind, mat_id),
+                            material,
+                            look,
                             entry: inst.base + *slot,
                         });
                     }
                 }
             }
             batch_items(scene, &mut items, true, &mut list, &mut batches);
-            (list, batches)
+            let split = batches.len();
+            batch_items(scene, &mut ordered_items, true, &mut list, &mut batches);
+            (list, batches, split)
         };
         let mut main_batches: Vec<Batch> = Vec::new();
+        let mut late_batches: Vec<Batch> = Vec::new();
         let mut main_draws = [0usize; 2];
         let has_presurface = visible
             .iter()
             .any(|&(i, _, _)| scene.instances[i].presurface);
-        let mut prepass_found: Option<(Vec<u32>, Vec<Batch>)> = None;
-        let pool = self.encoding_pool.as_ref();
+        let mut prepass_found: Option<(Vec<u32>, Vec<Batch>, usize)> = None;
+        let pool = self.encoding_pool.as_deref();
         in_scope(pool, |scope| {
             if prepass_on {
                 let job = &prepass_job;
                 let slot = &mut prepass_found;
                 scope.spawn(move |_| *slot = Some(job()));
             }
-            let mut by_phase: [Vec<(usize, f32, bool)>; RenderPhase::COUNT] =
+            let _ = env!("neoomsi_RENDER_PROFILE", "Render profile is missing from the build configuration");
+            let own_vehicle =
+                own_vehicle_origins(lighting.inside, &lighting.puddle_parts);
+            let outside_own_vehicle = !own_vehicle.is_empty()
+                && !lighting.inside.iter().chain(&lighting.puddle_parts)
+                    .any(|v| point_in_vehicle_box(camera.position, v));
+            let mut by_phase: [Vec<(usize, f32, bool)>; OWN_VEHICLE_BUCKET + 1] =
                 std::array::from_fn(|_| Vec::new());
             for &entry in &visible {
-                let phase = effective_render_phase(&scene.instances[entry.0]);
-                by_phase[phase as usize].push(entry);
+                let inst = &scene.instances[entry.0];
+                let phase = effective_render_phase(inst);
+                let bucket = draw_bucket(phase, inst.origin, &own_vehicle);
+                by_phase[bucket].push(entry);
+                if outside_own_vehicle && bucket == OWN_VEHICLE_BUCKET {
+                    by_phase[phase as usize].push(entry);
+                }
             }
-            for phase in RenderPhase::DRAW_ORDER {
-                if phase == RenderPhase::BeforeNormal {
-                    items.clear();
-                    for &(i, _, _) in by_phase[..RenderPhase::BeforeNormal as usize]
-                        .iter()
-                        .flatten()
-                    {
+            // Depth of the fully opaque pixels of ground-phase blends (or only of their walls).
+            let surface_depth_items =
+                |items: &mut Vec<DrawItem>, phases: &[Vec<(usize, f32, bool)>], walls_only: bool| {
+                    for &(i, _, _) in phases.iter().flatten() {
                         let inst = &scene.instances[i];
-                        for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate()
-                        {
+                        let mesh = &scene.meshes[inst.mesh];
+                        for (ri, (_, _, slot)) in mesh.ranges.iter().enumerate() {
                             let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
                             let mat = &scene.materials[mat_id];
                             if !surface_depth_coverage(
@@ -1052,6 +1269,7 @@ impl Renderer {
                                 mat.transmap.is_some(),
                                 mat.no_z_check,
                             ) || exclude_texture.is_some_and(|t| mat.uses_texture(t))
+                                || (walls_only && !surface_wall(&mesh.walls, inst.transform, ri))
                             {
                                 continue;
                             }
@@ -1062,20 +1280,33 @@ impl Renderer {
                                     instance_depth_bias(inst, mat),
                                 ),
                                 mesh: inst.mesh as u32,
-                                range: ri as u32,
+                                range: (ri + if walls_only { mesh.ranges.len() } else { 0 })
+                                    as u32,
                                 material: mat_id as u32,
+                                look: mat.look,
                                 entry: inst.base + *slot,
                             });
                         }
                     }
+                };
+            for (phase, bucket) in main_pass_buckets() {
+                if phase == RenderPhase::BeforeNormal {
+                    items.clear();
+                    surface_depth_items(
+                        &mut items,
+                        &by_phase[..RenderPhase::BeforeNormal as usize],
+                        false,
+                    );
                     batch_items(scene, &mut items, true, &mut list, &mut main_batches);
                 }
-                let visible = &by_phase[phase as usize];
+                let visible = &by_phase[bucket];
                 items.clear();
                 let mut blended: Vec<usize> = Vec::new();
                 for &(i, _, _) in visible {
                     let inst = &scene.instances[i];
-                    if inst.ordered {
+                    let split_own = outside_own_vehicle && own_vehicle.contains(&inst.origin);
+                    let late_own = split_own && bucket == OWN_VEHICLE_BUCKET;
+                    if inst.ordered && (!split_own || late_own) {
                         blended.push(i);
                         continue;
                     }
@@ -1086,7 +1317,10 @@ impl Renderer {
                         let mat = &scene.materials[mat_id];
                         let kind = kind_of(mat.alpha);
                         if kind == PIPE_BLEND || mat.no_z_check {
-                            has_blend = true;
+                            has_blend |= !split_own || late_own;
+                            continue;
+                        }
+                        if late_own {
                             continue;
                         }
                         if exclude_texture.is_some_and(|t| mat.uses_texture(t)) {
@@ -1097,6 +1331,7 @@ impl Renderer {
                             mesh: inst.mesh as u32,
                             range: ri as u32,
                             material: mat_id as u32,
+                            look: mat.look,
                             entry: inst.base + *slot,
                         });
                     }
@@ -1106,11 +1341,21 @@ impl Renderer {
                 }
                 main_draws[0] += items.len();
                 batch_items(scene, &mut items, true, &mut list, &mut main_batches);
-                let mut holders: Vec<DVec3> = Vec::new();
+                let mut holders = [[0u64; 3]; 8];
+                let mut holder_count = 0;
+                let mut holders_overflow = Vec::new();
                 for &(i, _, inside) in visible {
                     let inst = &scene.instances[i];
-                    if inside && !inst.surface && !holders.contains(&inst.origin) {
-                        holders.push(inst.origin);
+                    if inside && !inst.surface {
+                        let key = origin_key(inst.origin);
+                        if holder_count < 8 {
+                            if !holders[..holder_count].contains(&key) {
+                                holders[holder_count] = key;
+                                holder_count += 1;
+                            }
+                        } else if !holders.contains(&key) && !holders_overflow.contains(&key) {
+                            holders_overflow.push(key);
+                        }
                     }
                 }
                 let player = lighting
@@ -1129,15 +1374,18 @@ impl Renderer {
                         Some((inst.origin, (c - cam_rel).length() - r))
                     }))
                 };
-                let mut keyed: Vec<(u8, f32, usize)> = blended
+                let mut keyed: Vec<(u8, f32, [u64; 3], bool, u32, usize)> = blended
                     .iter()
                     .map(|&i| {
                         let inst = &scene.instances[i];
+                        let key = origin_key(inst.origin);
                         let rank = if self.blend_by_origin || inst.surface {
                             0
                         } else if player == Some(inst.origin) {
                             2
-                        } else if holders.contains(&inst.origin) {
+                        } else if holders[..holder_count].contains(&key)
+                            || (!holders_overflow.is_empty() && holders_overflow.contains(&key))
+                        {
                             1
                         } else {
                             0
@@ -1152,19 +1400,27 @@ impl Renderer {
                                 .copied()
                                 .unwrap_or(0.0)
                         };
-                        (rank, dist, i)
+                        (rank, dist, key, inst.ordered, inst.ordered_index, i)
                     })
                     .collect();
-                keyed.sort_unstable_by(|a, b| {
-                    a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then(a.2.cmp(&b.2))
-                });
+                sort_blended_keys(&mut keyed);
                 items.clear();
-                for (_, _, i) in keyed {
+                let mut late_items = Vec::new();
+                let mut rain_seen = false;
+                for (_, _, _, _, _, i) in keyed {
                     let inst = &scene.instances[i];
                     let cull = culls_back_faces(scene, inst);
+                    let after_rain = glass_on
+                        && player == Some(inst.origin)
+                        && follows_rain(&mut rain_seen, has_rain_layer(scene, inst));
                     for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
                         let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
                         let mat = &scene.materials[mat_id];
+                        if outside_own_vehicle && bucket == OWN_VEHICLE_BUCKET
+                            && mat.alpha != AlphaMode::Blend && !mat.no_z_check
+                        {
+                            continue;
+                        }
                         if (mat.alpha != AlphaMode::Blend && !mat.no_z_check && !inst.ordered)
                             || exclude_texture.is_some_and(|t| mat.uses_texture(t))
                         {
@@ -1172,9 +1428,9 @@ impl Renderer {
                         }
                         if mat.alpha == AlphaMode::Blend
                             && inst
-                                .slot_alpha
-                                .get(*slot as usize)
-                                .is_some_and(|a| *a < 1.0 / 512.0)
+                            .slot_alpha
+                            .get(*slot as usize)
+                            .is_some_and(|a| *a < 1.0 / 512.0)
                         {
                             continue;
                         }
@@ -1188,27 +1444,46 @@ impl Renderer {
                         } else {
                             PIPE_BLEND
                         };
-                        items.push(DrawItem {
+                        let item = DrawItem {
                             pipe: pipe_code(kind, cull, instance_depth_bias(inst, mat)),
                             mesh: inst.mesh as u32,
                             range: ri as u32,
                             material: mat_id as u32,
+                            look: mat.look,
                             entry: inst.base + *slot,
-                        });
+                        };
+                        if after_rain && kind == PIPE_BLEND_NO_WRITE {
+                            late_items.push(item);
+                        } else {
+                            items.push(item);
+                        }
                     }
                 }
-                main_draws[1] += items.len();
+                main_draws[1] += items.len() + late_items.len();
                 batch_items(scene, &mut items, false, &mut list, &mut main_batches);
+                batch_items(scene, &mut late_items, false, &mut list, &mut late_batches);
+                if world_surface_phase(phase) {
+                    items.clear();
+                    surface_depth_items(&mut items, std::slice::from_ref(visible), true);
+                    batch_items(scene, &mut items, true, &mut list, &mut main_batches);
+                }
             }
         });
-        if let Some((pre_list, mut pre_batches)) = prepass_found {
+        if let Some((pre_list, mut pre_batches, split)) = prepass_found {
             let offset = list.len() as u32;
             for b in &mut pre_batches {
                 b.instances = b.instances.start + offset..b.instances.end + offset;
             }
             list.extend(pre_list);
             prepass_batches = pre_batches;
+            prepass_split = split;
         }
+        // Put shadow casters last so changing shadows doesn't invalidate main-pass bundles.
+        let offset = list.len() as u32;
+        for b in shadow_batches.iter_mut().flatten() {
+            b.instances = b.instances.start + offset..b.instances.end + offset;
+        }
+        list.extend_from_slice(&shadow_list);
         if let Ok(skip) = ::legacy_config::env::var("OMSI_SKIP_PIPE") {
             let skip: Vec<u8> = skip
                 .split(',')
@@ -1284,9 +1559,9 @@ impl Renderer {
         stage(self, "items", "mirror.items");
         let mut rain_batches = Vec::new();
         if glass_on {
-            let (rain, main): (Vec<_>, Vec<_>) = main_batches.into_iter().partition(|b| {
-                scene.materials[b.material as usize].uniform.emissive[3] > 1.5
-            });
+            let (rain, main): (Vec<_>, Vec<_>) = main_batches
+                .into_iter()
+                .partition(|b| scene.materials[b.material as usize].uniform.emissive[3] > 1.5);
             rain_batches = rain;
             main_batches = main;
         }
@@ -1301,13 +1576,14 @@ impl Renderer {
             };
             record_bundles(
                 &self.device,
-                self.encoding_pool.as_ref(),
+                self.encoding_pool.as_deref(),
                 scene,
                 &main_batches,
                 pp,
                 scene.camera_bind_group.as_ref().expect("camera bind group"),
                 format,
                 self.options.msaa,
+                with_overlays.then_some(&self.main_bundles),
             )
         } else {
             Vec::new()
@@ -1395,7 +1671,31 @@ impl Renderer {
                 });
             }
         }
+        // Draw spotlight maps in one pass, each in its own tile, to avoid repeated map loads.
+        let mut spot_pass = spot_draws
+            .iter()
+            .any(|&(k, _)| scene.spot_bind_groups.get(k).is_some())
+            .then(|| {
+                shadow_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("spot shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.shadow_view_far,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+            });
         for &(k, pose) in &spot_draws {
+            let Some(pass) = spot_pass.as_mut() else {
+                break;
+            };
             let Some(bg) = scene.spot_bind_groups.get(k) else {
                 continue;
             };
@@ -1407,35 +1707,31 @@ impl Renderer {
                 SPOT_NEAR,
                 pose.far,
             )
-            .to_cols_array_2d();
-            self.queue
-                .write_buffer(&self.spot_cam_bufs[k], 0, bytemuck::bytes_of(&cu_spot));
+                .to_cols_array_2d();
+            self.write_buffer(&self.spot_cam_bufs[k], 0, bytemuck::bytes_of(&cu_spot));
             let tile = self.spot_tile;
             let x = (k as u32 % 4) * tile;
             let y = self.options.shadow_size + (k as u32 / 4) * tile;
-            let mut pass = shadow_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("spot shadow"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view_far,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
             pass.set_viewport(x as f32, y as f32, tile as f32, tile as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, tile, tile);
             pass.set_pipeline(&self.shadow_clear_pipeline);
             pass.draw(0..3, 0..1);
             pass.set_bind_group(0, bg, &[]);
-            encode_batches(&mut pass, scene, &shadow_batches[3 + k], |pipe| {
+            encode_batches(pass, scene, &shadow_batches[3 + k], |pipe| {
                 &self.shadow_pipelines[pipe as usize]
             });
+        }
+        drop(spot_pass);
+        let single = self.options.msaa <= 1;
+        let share_depth = prepass_on
+            && single
+            && self.ao.is_some()
+            && !has_presurface
+            && !puddles_wanted
+            && prepass_split == prepass_batches.len();
+        // A shared depth gets glass drawn into it, so the glass snapshot reads a copy.
+        if glass_on && share_depth {
+            self.prepare_glass_depth(width, height);
         }
         if prepass_on {
             let proj = glam::camera::rh::proj::directx::perspective(
@@ -1453,8 +1749,7 @@ impl Renderer {
                     height.div_ceil(2) as f32,
                 ],
             };
-            self.queue
-                .write_buffer(&self.ao_buf, 0, bytemuck::bytes_of(&u));
+            self.write_buffer(&self.ao_buf, 0, bytemuck::bytes_of(&u));
             let ao = self.ao.as_ref().unwrap();
             {
                 let mut pass = prepass_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1503,6 +1798,14 @@ impl Renderer {
                 pass.set_pipeline(pipe);
                 pass.set_bind_group(0, bg, &[]);
                 pass.draw(0..3, 0..1);
+            }
+            if glass_on && share_depth {
+                let copy = self.glass_depth.as_ref().unwrap().texture();
+                prepass_encoder.copy_texture_to_texture(
+                    ao.depth_view.texture().as_image_copy(),
+                    copy.as_image_copy(),
+                    copy.size(),
+                );
             }
         }
         if enhanced && (lead_view || probe_redraw) {
@@ -1628,16 +1931,10 @@ impl Renderer {
                 }
             }
         }
-        let single = self.options.msaa <= 1;
-        let share_depth = prepass_on
-            && single
-            && self.ao.is_some()
-            && !has_presurface
-            && !puddles_wanted;
         let targets = if share_depth {
             None
         } else {
-            Some(self.msaa_targets(width, height))
+            Some(self.msaa_targets(width, height, !single && !masked_frame))
         };
         let msaa_prepass = enhanced
             && !has_presurface
@@ -1649,7 +1946,7 @@ impl Renderer {
             && main_bundles.len() >= 2
             && ::legacy_config::env::var_os("OMSI_NO_MAIN_SPLIT").is_none()
         {
-            main_bundles.len().min(2)
+            main_bundles.len().min(MAIN_PASS_PARTS)
         } else {
             1
         };
@@ -1683,7 +1980,7 @@ impl Renderer {
                 encode_batches_filtered(
                     &mut pass,
                     scene,
-                    &prepass_batches,
+                    &prepass_batches[..prepass_split],
                     |batch| batch.pipe / 2 != PIPE_ALPHA_TEST,
                     |pipe| &pipes[pipe as usize],
                 );
@@ -1709,7 +2006,7 @@ impl Renderer {
             } else {
                 lighting.sky_color
             };
-            let msaa_color = targets.as_ref().map(|t| &t.0);
+            let msaa_color = targets.as_ref().and_then(|t| t.0.as_ref());
             let depth_view: &wgpu::TextureView = match &targets {
                 Some(t) => &t.1,
                 None => &self.ao.as_ref().unwrap().depth_view,
@@ -1751,13 +2048,19 @@ impl Renderer {
                     },
                 },
             });
-            let per_part = main_bundles.len().div_ceil(parts.max(1));
+            // Distribute bundle ranges evenly across parts.
+            let part_start = |g: usize| g * main_bundles.len() / parts.max(1);
             let sky_clear = wgpu::LoadOp::Clear(wgpu::Color {
                 r: sky.x as f64,
                 g: sky.y as f64,
                 b: sky.z as f64,
                 a: 1.0,
             });
+            let sky_load = if direct_output && preserve_output {
+                wgpu::LoadOp::Load
+            } else {
+                sky_clear
+            };
             let depth_first = if share_depth || msaa_prepass {
                 wgpu::LoadOp::Load
             } else {
@@ -1778,7 +2081,7 @@ impl Renderer {
                             depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: if first { sky_clear } else { wgpu::LoadOp::Load },
+                                load: if first { sky_load } else { wgpu::LoadOp::Load },
                                 store: wgpu::StoreOp::Store,
                             },
                         }),
@@ -1819,6 +2122,7 @@ impl Renderer {
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
+                    set_output_viewport(&mut pass, scene_viewport);
                     pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
                     if first {
                         if let Some(sky) = &scene.sky_bind_group {
@@ -1832,14 +2136,11 @@ impl Renderer {
                             pass.draw_indexed(0..self.sky_mesh.2, 0, 0..1);
                         }
                     }
-                    pass.execute_bundles(
-                        main_bundles[g * per_part..((g + 1) * per_part).min(main_bundles.len())]
-                            .iter(),
-                    );
+                    pass.execute_bundles(main_bundles[part_start(g)..part_start(g + 1)].iter());
                 }
                 main_parts.push(part);
             }
-            let tail = (parts - 1) * per_part;
+            let tail = part_start(parts - 1);
             let main_attachment = Some(wgpu::RenderPassColorAttachment {
                 view: draw_view,
                 depth_slice: None,
@@ -1848,7 +2149,7 @@ impl Renderer {
                     load: if parts > 1 {
                         wgpu::LoadOp::Load
                     } else {
-                        sky_clear
+                        sky_load
                     },
                     store: if resolve_view.is_none() {
                         wgpu::StoreOp::Store
@@ -1890,6 +2191,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            set_output_viewport(&mut pass, scene_viewport);
             pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             if let Some(sky) = scene.sky_bind_group.as_ref().filter(|_| parts == 1) {
                 pass.set_pipeline(&pp.sky_pipeline);
@@ -1908,23 +2210,20 @@ impl Renderer {
                 pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             }
             self.encode_particles(&mut pass, scene, &pp.smoke_pipeline, &pp.corona_pipeline);
-            if !overlays.is_empty() && !masked_frame && !scaled {
-                pass.set_pipeline(&self.overlay_pipeline);
-                for (k, _) in overlays.iter().enumerate() {
-                    if let Some((_, _, bg, _)) = scene.overlay_res.get(k) {
-                        pass.set_bind_group(0, bg, &[]);
-                        pass.draw(0..6, 0..1);
-                    }
-                }
-            }
         }
         let puddles_on = puddles_wanted
             && main_batches
-                .iter()
-                .any(|b| scene.materials[b.material as usize].uniform.params2[2] > 0.0)
+            .iter()
+            .any(|b| scene.materials[b.material as usize].uniform.params2[2] > 0.0)
             && self.prepare_puddle_reflections(
-                width, height, camera, aspect, projection, &cu, lighting,
-            );
+            width,
+            height,
+            camera,
+            aspect,
+            render_projection,
+            &cu,
+            lighting,
+        );
         if puddles_on {
             self.encode_puddle_reflections(
                 &mut encoder,
@@ -1942,18 +2241,34 @@ impl Renderer {
         if glass_on {
             let hdr = masked_frame.then(|| &self.hdr_targets[&(width, height)]);
             let view = hdr.map_or(scene_view, |h| {
-                h.puddles.as_ref().filter(|_| puddles_on).map_or(&h.view, |p| &p.view)
+                h.puddles
+                    .as_ref()
+                    .filter(|_| puddles_on)
+                    .map_or(&h.view, |p| &p.view)
             });
-            if self.glass_snapshot_source.as_ref().is_none_or(|(source, _)| source != view) {
-                self.glass_snapshot_source = Some((view.clone(), self.picture_group(view)));
+            let ao_depth = &self.ao.as_ref().unwrap().depth_view;
+            let depth = self
+                .glass_depth
+                .as_ref()
+                .filter(|_| share_depth)
+                .unwrap_or(ao_depth);
+            if self
+                .glass_snapshot_source
+                .as_ref()
+                .is_none_or(|(source, d, _)| source != view || d != depth)
+            {
+                let bg = self.glass_snapshot_group(view, depth);
+                self.glass_snapshot_source = Some((view.clone(), depth.clone(), bg));
             }
-            let (_, bg) = self.glass_snapshot_source.as_ref().unwrap();
+            let (_, _, bg) = self.glass_snapshot_source.as_ref().unwrap();
             let behind = self.glass_picture.as_ref().unwrap();
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("half resolution scene behind glass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: behind, depth_slice: None, resolve_target: None,
+                        view: behind,
+                        depth_slice: None,
+                        resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                             store: wgpu::StoreOp::Store,
@@ -1970,21 +2285,60 @@ impl Renderer {
             }
             let colours = [
                 Some(wgpu::RenderPassColorAttachment {
-                    view, depth_slice: None, resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 }),
                 hdr.map(|h| wgpu::RenderPassColorAttachment {
-                    view: &h.mask, depth_slice: None, resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    view: &h.mask,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 }),
             ];
+            // Add depth-writing blends to prepass depth so rain stays behind dashboards.
+            if !share_depth && (!rain_batches.is_empty() || !late_batches.is_empty()) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("blended depth before rain"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.ao.as_ref().unwrap().depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
+                encode_batches_filtered(
+                    &mut pass,
+                    scene,
+                    &main_batches,
+                    |b| blended_depth_pipe(b.pipe).is_some(),
+                    |pipe| &self.prepass_pipelines[blended_depth_pipe(pipe).unwrap() as usize],
+                );
+            }
             let pipes = &self.main_pass(enhanced, reflection_frame).rain_pipelines;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rain on current scene"),
                 color_attachments: &colours[..if hdr.is_some() { 2 } else { 1 }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.ao.as_ref().unwrap().depth_view,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -1992,7 +2346,12 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
-            encode_batches(&mut pass, scene, &rain_batches, |pipe| &pipes[pipe as usize]);
+            encode_batches(&mut pass, scene, &rain_batches, |pipe| {
+                &pipes[pipe as usize]
+            });
+            encode_batches(&mut pass, scene, &late_batches, |pipe| {
+                &pipes[pipe as usize]
+            });
         }
         if reflection_frame {
             let h = &self.hdr_targets[&(width, height)];
@@ -2008,7 +2367,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: scene_load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -2017,13 +2376,10 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            set_output_viewport(&mut pass, scene_viewport);
             pass.set_pipeline(&self.copy_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
-            if !overlays.is_empty() && !scaled {
-                pass.set_pipeline(&self.overlay_pipeline_1x);
-                draw_overlays(&mut pass, scene, overlays.len());
-            }
         }
         if enhanced {
             let secs = |tau: f32| {
@@ -2054,8 +2410,7 @@ impl Renderer {
                 ],
                 d: [lighting.nightmap_glow * 4.0, 0.0, 0.0, 0.0],
             };
-            self.queue
-                .write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&pu));
+            self.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&pu));
             let fxaa = with_overlays
                 && self.options.fxaa
                 && ::legacy_config::env::var_os("OMSI_NO_FXAA").is_none();
@@ -2101,7 +2456,7 @@ impl Renderer {
                 if let Some(log) = self
                     .exposure_log
                     .as_mut()
-                    .filter(|_| with_overlays && !lost)
+                    .filter(|_| with_overlays && lead_frame && !lost)
                 {
                     let pre = self.exposure.unwrap_or(0.0) / std::f32::consts::LN_2;
                     log.sample(&mut encoder, &self.adapt_views[self.adapt_front], pre, m);
@@ -2124,7 +2479,11 @@ impl Renderer {
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            load: if !fxaa && direct_output {
+                                output_load
+                            } else {
+                                wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                            },
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -2133,6 +2492,9 @@ impl Renderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
+                if !fxaa {
+                    set_output_viewport(&mut pass, scene_viewport);
+                }
                 pass.set_pipeline(if fxaa {
                     &self.post.tonemap_encoded
                 } else {
@@ -2149,7 +2511,7 @@ impl Renderer {
                             depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                load: scene_load,
                                 store: wgpu::StoreOp::Store,
                             },
                         })],
@@ -2158,19 +2520,16 @@ impl Renderer {
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
+                    set_output_viewport(&mut pass, scene_viewport);
                     pass.set_pipeline(&self.post.fxaa);
                     pass.set_bind_group(0, &h.fxaa_bg, &[]);
                     pass.draw(0..3, 0..1);
-                }
-                if !overlays.is_empty() && !scaled {
-                    pass.set_pipeline(&self.overlay_pipeline_1x);
-                    draw_overlays(&mut pass, scene, overlays.len());
                 }
             }
         }
         if let Some((_, bg)) = &scene_target {
             let sharpen = (1.0 - width as f32 / full_w as f32) * 2.0;
-            self.queue.write_buffer(
+            self.write_buffer(
                 &self.upscale_buf,
                 0,
                 bytemuck::cast_slice(&[
@@ -2187,7 +2546,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: output_load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -2196,15 +2555,66 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            set_output_viewport(&mut pass, output_viewport);
             pass.set_pipeline(&self.upscale_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
-            if !overlays.is_empty() {
+        }
+        // Draw overlays last; frost uses a blurred copy of the underlying picture.
+        if !overlays.is_empty() {
+            let under =
+                self.frost_backdrops(&mut encoder, scene, target, &overlays, (full_w, full_h), output_viewport);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("overlays"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            set_output_viewport(&mut pass, output_viewport);
+            for (k, (_, _, bg, _)) in scene.overlay_res.iter().take(overlays.len()).enumerate() {
+                if let (Some(slot), Some(frost)) = (under[k], self.frost.as_ref()) {
+                    frost.draw_under(&mut pass, slot);
+                }
                 pass.set_pipeline(&self.overlay_pipeline_1x);
-                draw_overlays(&mut pass, scene, overlays.len());
+                pass.set_bind_group(0, bg, &[]);
+                pass.draw(0..6, 0..1);
             }
         }
         stage(self, "encode", "mirror.encode");
+        // Copy this picture's writes before its commands.
+        let mut upload_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("picture uploads"),
+                });
+        self.flush_uploads(&mut upload_encoder);
+        if defer {
+            let mut queued = self.queued.borrow_mut();
+            queued.extend([upload_encoder, shadow_encoder, prepass_encoder]);
+            queued.extend(main_parts);
+            queued.push(encoder);
+            drop(queued);
+            if let (Some(t), false) = (
+                self.gpu_timers[with_overlays as usize].as_mut(),
+                timed.is_empty(),
+            ) {
+                t.pending = timed;
+                t.unresolved = true;
+            }
+            stage(self, "finish", "mirror.finish");
+            return;
+        }
+        let upload_commands = upload_encoder.finish();
         let big = shadow_batches.iter().map(|b| b.len()).sum::<usize>() + prepass_batches.len()
             > 64
             || !main_parts.is_empty();
@@ -2220,7 +2630,7 @@ impl Renderer {
         let (shadow_commands, prepass_commands, part_commands, commands, finish_times) =
             if big && self.encoding_pool.is_some() {
                 self.encoding_pool
-                    .as_ref()
+                    .as_deref()
                     .unwrap()
                     .in_place_scope_fifo(|scope| {
                         let (shadow_tx, shadow_rx) = std::sync::mpsc::sync_channel(1);
@@ -2342,7 +2752,7 @@ impl Renderer {
         }
         stage(self, "finish", "mirror.finish");
         self.queue.submit(
-            [shadow_commands, prepass_commands]
+            [upload_commands, shadow_commands, prepass_commands]
                 .into_iter()
                 .chain(part_commands)
                 .chain([commands]),
@@ -2355,5 +2765,84 @@ impl Renderer {
             t.pending = timed;
             t.unresolved = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn views_keep_the_origin_across_cell_boundaries() {
+        for origin in [DVec3::ZERO, DVec3::splat(-100.0), DVec3::splat(1_000_000.0)] {
+            for offset in [DVec3::splat(-0.1), DVec3::splat(100.1), DVec3::splat(-399.0)] {
+                assert_eq!(view_render_origin(origin + offset, origin, ORIGIN_KEEP), origin);
+                assert_eq!(view_render_origin(origin + offset, origin, SHARED_ORIGIN_KEEP), origin);
+                assert_ne!(view_render_origin(origin + offset, origin, 0.0), origin);
+            }
+        }
+    }
+
+    #[test]
+    fn a_mirror_near_the_window_camera_never_moves_the_origin() {
+        // the window's camera at the edge of its reach, a mirror a few metres beyond it
+        let origin = DVec3::new(5000.0, -2000.0, 100.0);
+        let camera = origin + DVec3::new(ORIGIN_KEEP, -ORIGIN_KEEP, 0.0);
+        assert_eq!(view_render_origin(camera, origin, ORIGIN_KEEP), origin);
+        let mirror = camera + DVec3::new(30.0, -30.0, 2.0);
+        assert_eq!(view_render_origin(mirror, origin, SHARED_ORIGIN_KEEP), origin);
+    }
+
+    #[test]
+    fn distant_cameras_and_initial_views_rebase() {
+        let position = DVec3::new(1000.5, -201.0, 2.0);
+        let expected = DVec3::new(1000.0, -300.0, 0.0);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, SHARED_ORIGIN_KEEP), expected);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, ORIGIN_KEEP), expected);
+        assert_eq!(view_render_origin(position, DVec3::ZERO, 0.0), expected);
+    }
+
+    #[test]
+    fn ordered_meshes_ignore_recycled_scene_instance_ids() {
+        let origin = [1, 2, 3];
+        // The text mesh acquired the lower recycled id, but it must follow its plate.
+        let mut keys = vec![
+            (0, 10.0, origin, true, 1, 3),
+            (0, 10.0, origin, true, 0, 81),
+        ];
+        sort_blended_keys(&mut keys);
+        assert_eq!(keys.iter().map(|k| k.4).collect::<Vec<_>>(), [0, 1]);
+    }
+
+    #[test]
+    fn unordered_instances_keep_their_scene_id_tiebreak() {
+        let mut keys = vec![
+            (0, 10.0, [1, 2, 3], false, 0, 81),
+            (0, 10.0, [1, 2, 3], false, 0, 3),
+        ];
+        sort_blended_keys(&mut keys);
+        assert_eq!(keys.iter().map(|k| k.5).collect::<Vec<_>>(), [3, 81]);
+    }
+
+    #[test]
+    fn mixed_ordered_and_unordered_ties_sort_consistently() {
+        // Mixed ordered and unordered meshes once formed a sort cycle with recycled IDs.
+        let origin = [1, 2, 3];
+        let mut keys: Vec<(u8, f32, [u64; 3], bool, u32, usize)> = Vec::new();
+        for i in 0..40u32 {
+            keys.push((0, 10.0, origin, true, i, 200 - 2 * i as usize));
+            keys.push((0, 10.0, [4, 5, 6], false, 0, 201 - 2 * i as usize));
+            keys.push((0, 10.0, origin, false, 0, 1 + 2 * i as usize));
+        }
+        sort_blended_keys(&mut keys);
+        for w in keys.windows(2) {
+            assert_ne!(
+                (w[0].0, w[0].2, w[0].3, w[0].4, w[0].5)
+                    .cmp(&(w[1].0, w[1].2, w[1].3, w[1].4, w[1].5)),
+                std::cmp::Ordering::Greater
+            );
+        }
+        let ordered: Vec<u32> = keys.iter().filter(|k| k.3).map(|k| k.4).collect();
+        assert_eq!(ordered, (0..40).collect::<Vec<_>>());
     }
 }

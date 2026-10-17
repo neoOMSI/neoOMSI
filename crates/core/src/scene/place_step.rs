@@ -207,18 +207,7 @@ impl World {
                         // the tile's water surface: one quad at the four corner heights, drawn over the
                         // riverbed. OMSI keeps it in `tile.map.water`, one height per corner.
                         if let Some(h) = p.water {
-                            let t = tile_size() as f32;
-                            let mut wm = MeshData::default();
-                            for (i, (x, y)) in [(0.0, 0.0), (t, 0.0), (0.0, t), (t, t)]
-                                .into_iter()
-                                .enumerate()
-                            {
-                                wm.positions.push(glam::Vec3::new(x, y, h[i]));
-                                wm.normals.push(glam::Vec3::Z);
-                                wm.uvs.push(glam::Vec2::new(x / 40.0, y / 40.0));
-                            }
-                            wm.indices.extend_from_slice(&[0, 1, 2, 2, 1, 3]);
-                            wm.ranges.push((0, 6, 0));
+                            let wm = ::geometry::build_water_mesh(h);
                             let wid = gpu.add_mesh(renderer, scene, &wm);
                             tg.meshes.push(wid);
                             if ::legacy_config::env::var_os("OMSI_DEBUG_SURFACES").is_some() {
@@ -260,7 +249,7 @@ impl World {
                                 scene,
                                 id,
                                 p.origin,
-                                Mat4::from_translation(glam::Vec3::Z * OMSI_SURFACE_LIFT),
+                                Mat4::IDENTITY,
                                 vec![mat]
                             ));
                             if let Some(inst) = scene.instances.get_mut(si) {
@@ -387,7 +376,7 @@ impl World {
                                 scene,
                                 gid,
                                 p.origin,
-                                Mat4::from_translation(glam::Vec3::Z * OMSI_SURFACE_LIFT),
+                                Mat4::IDENTITY,
                                 vec![mat],
                             ));
                             if let Some(inst) = scene.instances.get_mut(terrain_instance) {
@@ -404,7 +393,7 @@ impl World {
                         scene,
                         id,
                         p.origin,
-                        Mat4::from_translation(glam::Vec3::Z * OMSI_SURFACE_LIFT),
+                        Mat4::IDENTITY,
                         mats
                     ));
                     if let Some(inst) = scene.instances.get_mut(si) {
@@ -465,12 +454,7 @@ impl World {
                             tg.trees.push(tkey.clone());
                         }
                         let mat = tr.material;
-                        let xf = Mat4::from_rotation_z((-heading).to_radians() as f32)
-                            * Mat4::from_scale(glam::Vec3::new(
-                            *width as f32,
-                            *width as f32,
-                            *height as f32,
-                        ));
+                        let xf = tree_transform(*heading, *width, *height);
                         let _ =
                             instance!(renderer.add_instance(scene, tree_mesh, *pos, xf, vec![mat]));
                         pl.trees += 1;
@@ -524,7 +508,7 @@ impl World {
                     };
                     let surface = ot.sco.render_type.is_ground_layer() || ot.sco.surface;
                     let render_phase = scenery_render_phase(ot.sco.render_type);
-                    let draw_pos = scenery_draw_position(pos, drawn_on_surfaces(&ot.sco));
+                    let draw_pos = pos;
                     let has_lower = !type_lods.is_empty();
                     let mut lamp_instances = Vec::new();
                     let mut lamp_slots = Vec::new();
@@ -685,8 +669,8 @@ impl World {
                         if let Some(inst) = scene.instances.get_mut(inst) {
                             inst.render_phase = render_phase;
                             if surface {
-                                // The authored OMSI phase and fixed `[surface]` lift replace
-                                // camera-angle-sensitive bias for these road-layer meshes.
+                                // Ordered surface phases use the authored geometry; moving
+                                // it upward creates steps where it meets the terrain.
                                 inst.decal = true;
                                 inst.surface_bias = false;
                             }
@@ -836,13 +820,19 @@ impl World {
                                     // a script's string variable (the stock bus stop display's
                                     // departures): a texture of the object's own, drawn by
                                     // `update_scripted` whenever the script refreshes it
-                                    let scripted_text = lamp.is_none()
-                                        && tt.variable.trim().parse::<usize>().is_err()
+                                    // (a lamp's by `Traffic::sync`)
+                                    let scripted_text = tt.variable.trim().parse::<usize>().is_err()
                                         && ot
                                         .program
                                         .as_ref()
                                         .map(|p| p.str_var(tt.variable.trim()).is_some())
                                         .unwrap_or(false);
+                                    let slot_ov: Vec<&MaterialDef> = overrides
+                                        .iter()
+                                        .filter(|o| {
+                                            !o.item && ::simulation::vehicle::override_slot(o3d_mats, o) == Some(slot)
+                                        })
+                                        .collect();
                                     if scripted_text {
                                         let atlas = self.fonts.lock().get(&tt.font, &|p| {
                                             ::texture::decode_file(p)
@@ -856,12 +846,13 @@ impl World {
                                         let (w, h) =
                                             (tt.width.max(1) as u32, tt.height.max(1) as u32);
                                         let tex = gpu.add_blank_mips(renderer, scene, w, h);
-                                        let mat = renderer.add_material(
+                                        let mat = scenery_text_material(
+                                            renderer,
                                             scene,
-                                            Some(tex),
+                                            tex,
                                             AlphaMode::Blend,
-                                            [1.0; 4],
                                             true,
+                                            &slot_ov,
                                         );
                                         let mat = gpu.material(renderer, scene, mat);
                                         tg.textures.push(tex);
@@ -879,7 +870,7 @@ impl World {
                                         .cloned()
                                         .unwrap_or_default();
                                     let alpha = text_alpha(o3d_mats, slot, overrides);
-                                    let key = scenery_text_key(tt, &text, alpha);
+                                    let key = scenery_text_key(tt, &text, alpha, &slot_ov);
                                     if let Some(e) = gpu.text_textures.get_mut(&key) {
                                         e.2 += 1;
                                         let mat = e.1;
@@ -899,12 +890,13 @@ impl World {
                                     let tex = gpu.add_image(renderer, scene, &image, true);
                                     // (lit like the rest of the object: Omsi.exe only swaps
                                     // the slot's texture, a sign does not shine at night)
-                                    let mat = renderer.add_material(
+                                    let mat = scenery_text_material(
+                                        renderer,
                                         scene,
-                                        Some(tex),
+                                        tex,
                                         alpha,
-                                        [1.0; 4],
                                         false,
+                                        &slot_ov,
                                     );
                                     let mat = gpu.material(renderer, scene, mat);
                                     gpu.text_textures.insert(key.clone(), (tex, mat, 1));
@@ -1071,6 +1063,23 @@ impl World {
                             scene.instances[*inst].presurface =
                                 ot.sco.render_type == ::scenery::sco::RenderType::PreSurface;
                             renderer.set_object_culling(scene, *inst, radius, detail, any_distance);
+                            let near_only = near_only.or_else(|| {
+                                let i = &scene.instances[*inst];
+                                let m = scene.meshes.get(i.mesh)?;
+                                if m.bounds_radius <= 0.0 {
+                                    return None;
+                                }
+                                let t = i.transform;
+                                let scale = t
+                                    .x_axis
+                                    .truncate()
+                                    .length()
+                                    .max(t.y_axis.truncate().length())
+                                    .max(t.z_axis.truncate().length());
+                                let centre =
+                                    i.origin + t.transform_point3(m.bounds_center).as_dvec3();
+                                beyond_loaded_area(centre, (m.bounds_radius * scale) as f64, (p.tx, p.ty))
+                            });
                             renderer.set_near_only(scene, *inst, near_only);
                         }
                     }
@@ -1186,7 +1195,7 @@ impl World {
                                 .parent()
                                 .map(|p| p.to_path_buf())
                                 .unwrap_or_default();
-                            ::legacy_config::resolve_path(&dir, rel)
+                            ::mods::resolve_path(&dir, rel)
                         });
                         pl.light_objects.push(LightObject {
                             parent,
@@ -1197,6 +1206,7 @@ impl World {
                             variants: object_variants,
                             pos,
                             script,
+                            texts: Arc::new(Mutex::new(script_texts)),
                             coronas,
                             corona_mesh,
                             lit,
@@ -1204,6 +1214,7 @@ impl World {
                             animated,
                             sound,
                             sounds: Default::default(),
+                            shown: None,
                         });
                     } else if let Some(inst) = object_script.take() {
                         let texture_selection = scenery_texture_selection(&ot, &inst);
@@ -1244,18 +1255,24 @@ impl World {
                                 }
                             }
                         }
+                        let coronas = script_coronas(&ot, xf, pos);
                         if inst.is_dynamic()
                             || !object_variants.is_empty()
                             || ot.sco.sound.is_some()
                             || !script_texts.is_empty()
                             || !html_pages.is_empty()
                             || !ot.dynamic_textures.is_empty()
+                            || !coronas.is_empty()
                         {
                             let arrivals = inst.wants_arrivals();
+                            let lit = coronas
+                                .iter()
+                                .map(|(_, v)| inst.var(v).unwrap_or(0.0))
+                                .collect();
                             // (a scripted object with [terrainmapping] slots had more instances
                             // than its script has meshes: "index out of bounds", #111)
                             all_instances.truncate(mesh_instances);
-                            self.scripted.lock().push(ScriptedObject {
+                            self.push_scripted(ScriptedObject {
                                 ty: ot.clone(),
                                 pos,
                                 xf,
@@ -1271,6 +1288,10 @@ impl World {
                                 texts: script_texts,
                                 arrivals,
                                 htmls: html_pages,
+                                last_tex_selection: None,
+                                dynamic_materials: HashMap::new(),
+                                coronas,
+                                lit,
                             });
                         }
                     }

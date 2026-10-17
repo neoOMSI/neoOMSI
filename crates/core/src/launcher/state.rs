@@ -69,15 +69,7 @@ pub enum Msg {
     Crashed(String),
 }
 
-/// A server in the Multiplayer page's list (`~/.neoomsi/servers.json`), as the player
-/// added it: its address (`https://….trycloudflare.com`, `http://host:port`) and a name of
-/// their own (empty: the server's).
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-#[serde(default)]
-pub struct ServerEntry {
-    pub name: String,
-    pub address: String,
-}
+pub use core::servers::ServerEntry;
 
 /// A code host's status page (its gateway is the session's port + 10).
 fn host_status(code: &str) -> Result<network::ws::ServerInfo, String> {
@@ -94,27 +86,6 @@ fn host_status(code: &str) -> Result<network::ws::ServerInfo, String> {
         Some(url) => network::ws::query(&url, false),
         None => Err("the host did not answer".into()),
     }
-}
-
-/// The list as saved, with the official server first when it is not in it.
-fn with_official(mut list: Vec<ServerEntry>) -> Vec<ServerEntry> {
-    if !list
-        .iter()
-        .any(|s| network::official::is_alias(&s.address))
-    {
-        list.insert(
-            0,
-            ServerEntry {
-                name: network::official::NAME.into(),
-                address: network::official::ALIAS.into(),
-            },
-        );
-    }
-    list
-}
-
-fn servers_path() -> std::path::PathBuf {
-    core::data_dir().join("servers.json")
 }
 
 /// The duty as it is remembered between launches (`~/.neoomsi/launcher-duty.json`).
@@ -248,6 +219,9 @@ pub struct State {
     pub instances: Vec<core::Instance>,
     pub queued_launch: Option<core::Duty>,
     pub restarting: Vec<core::Instance>,
+    /// When the realistic passengers last changed (chosen, downloaded): games started before
+    /// still have the old ones.
+    pub pax_changed: Option<u64>,
     /// Start was pressed: the graphics device stays given up until the list of games has the
     /// game started (its process, once it is known), 15 s at most.
     pub launch_hold: Option<Instant>,
@@ -321,6 +295,7 @@ impl State {
             instances: Vec::new(),
             queued_launch: None,
             restarting: Vec::new(),
+            pax_changed: None,
             launch_hold: None,
             launched_pid: None,
             crash: None,
@@ -343,12 +318,7 @@ impl State {
             poll_t: 0.0,
             polling: false,
             second_armed: None,
-            servers: with_official(
-                std::fs::read(servers_path())
-                    .ok()
-                    .and_then(|b| serde_json::from_slice(&b).ok())
-                    .unwrap_or_default(),
-            ),
+            servers: core::servers::load(),
             server_info: Default::default(),
             server_asked: Default::default(),
             joined_server: None,
@@ -464,7 +434,15 @@ impl State {
             {
                 self.choice.map = m.file.clone();
                 self.choice.entry = -1;
+                self.roll_date();
             }
+        }
+    }
+
+    /// A new map starts on a random day of its `[years]`, like OMSI (#210).
+    fn roll_date(&mut self) {
+        if let Some(years) = self.map().and_then(|m| m.years) {
+            self.choice.date = date_in_years(years, random_u64());
         }
     }
 
@@ -564,11 +542,7 @@ impl State {
 
     /// Keep the server list on disk.
     pub fn save_servers(&self) {
-        let _ = std::fs::create_dir_all(core::data_dir());
-        let _ = std::fs::write(
-            servers_path(),
-            serde_json::to_vec_pretty(&self.servers).unwrap_or_default(),
-        );
+        let _ = core::servers::store(&self.servers);
     }
 
     /// Ask a server about itself (its status and icon), at most every `every` seconds.
@@ -659,6 +633,29 @@ impl State {
         });
     }
 
+    pub fn old_passenger_games(&self) -> usize {
+        self.instances.iter().filter(|i| self.has_old_passengers(i)).count()
+    }
+
+    fn has_old_passengers(&self, game: &core::Instance) -> bool {
+        self.pax_changed.is_some_and(|t| game.running && game.started < t)
+    }
+
+    pub fn restart_games(&mut self) {
+        let games: Vec<core::Instance> = self
+            .instances
+            .iter()
+            .filter(|i| self.has_old_passengers(i) && !self.restarting.iter().any(|r| r.id == i.id))
+            .cloned()
+            .collect();
+        for i in games {
+            if !self.stopping.contains(&i.pid) {
+                self.stop(i.pid);
+            }
+            self.restarting.push(i);
+        }
+    }
+
     fn restart_next(&mut self) {
         if self.queued_launch.is_some()
             || self
@@ -695,7 +692,7 @@ impl State {
         });
         self.spawn(move || {
             Msg::Installed(
-                core::start_install(std::path::Path::new(&path), &mode)
+                core::start_install(std::path::Path::new(&path), &mode, false)
                     .map_err(|e| format!("{e:#}")),
             )
         });
@@ -754,6 +751,9 @@ impl State {
             number: Some(c.number.clone()).filter(|n| !n.trim().is_empty()),
             hof: Some(c.hof.clone()).filter(|p| !p.is_empty()),
             entry: Some(c.entry),
+            // The in-game launcher currently selects entry points, not an arbitrary map
+            // position as the standalone launcher does.
+            spawn: None,
             line: if c.free { None } else { c.line.clone() },
             tour: if c.free { None } else { c.tour.clone() },
             trip: if c.free {
@@ -846,7 +846,7 @@ impl State {
 
     /// Settings a game changed while it ran: taken over, unless the launcher's own changes
     /// wait to be saved (those win, as the later ones).
-    fn reload_changed_settings(&mut self) {
+    pub(super) fn reload_changed_settings(&mut self) {
         if self.settings_dirty > 0.0 {
             return;
         }
@@ -860,7 +860,15 @@ impl State {
         }
     }
 
-    fn save_pending_settings(&mut self) -> bool {
+    /// The settings page wrote `settings.toml` itself (the game's options do).
+    pub(super) fn settings_written(&mut self) {
+        if let Ok(v) = core::get_settings() {
+            self.settings = v;
+        }
+        self.settings_file = read_settings_file();
+    }
+
+    pub(super) fn save_pending_settings(&mut self) -> bool {
         if self.settings_dirty <= 0.0 {
             return true;
         }
@@ -1109,22 +1117,6 @@ impl State {
                 self.polling = false;
                 match r {
                     Ok(p) => {
-                        for s in &p.started {
-                            core::log_to_file(&format!("inbox: installing {s}"));
-                        }
-                        if !p.started.is_empty() {
-                            self.set_status(
-                                format!(
-                                    "Installing from the Mods folder: {}",
-                                    p.started
-                                        .iter()
-                                        .map(|x| x.rsplit('/').next().unwrap_or(x))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                ),
-                                false,
-                            );
-                        }
                         let mut installed = false;
                         for j in &p.jobs {
                             let was = self
@@ -1325,7 +1317,7 @@ impl State {
     /// 92), which the bus has, else its first.
     pub fn default_hof(&self) -> String {
         let on_date = self.map().and_then(|m| {
-            let dir = legacy_config::resolve_path(std::path::Path::new(&self.config.root), &m.file);
+            let dir = ::mods::resolve_path(std::path::Path::new(&self.config.root), &m.file);
             map::ailists::depot_hof_on(
                 dir.parent()?,
                 map::ailists::date_code(&self.choice.date)?,
@@ -1373,6 +1365,7 @@ impl State {
         self.choice.entry = -1;
         self.choice.line = None;
         self.choice.tour = None;
+        self.roll_date();
         self.choice.hof = self.default_hof();
         self.lines.clear();
         self.load_lines();
@@ -1670,6 +1663,53 @@ mod crash_tests {
         std::fs::write(&p, "[t ERROR ::render] a part of the picture could not be recorded (left out)\n[t INFO x] starting the game: omsi\n[t INFO ::render] renderer: compiling the sky and clouds shaders\n").unwrap();
         assert!(super::crash_of(&p).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// The day `roll` picks from the years `first..=last`, as `YYYY-MM-DD`.
+fn date_in_years((first, last): (i32, i32), roll: u64) -> String {
+    let (first, last) = (first.min(last), first.max(last));
+    let leap = |y: i32| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let mut day = roll % (first..=last).map(|y| 365 + leap(y) as u64).sum::<u64>();
+    let mut year = first;
+    while day >= 365 + leap(year) as u64 {
+        day -= 365 + leap(year) as u64;
+        year += 1;
+    }
+    let mut month = 1;
+    while day >= super::ui::days_in_month(year, month) as u64 {
+        day -= super::ui::days_in_month(year, month) as u64;
+        month += 1;
+    }
+    format!("{year:04}-{month:02}-{:02}", day + 1)
+}
+
+fn random_u64() -> u64 {
+    let mut bytes = [0; 8];
+    if let Err(e) = getrandom::fill(&mut bytes) {
+        log::warn!("no random number for the map's date: {e}");
+    }
+    u64::from_le_bytes(bytes)
+}
+
+#[cfg(test)]
+mod date_tests {
+    #[test]
+    fn a_rolled_date_is_a_day_of_the_maps_years() {
+        assert_eq!(super::date_in_years((2005, 2005), 0), "2005-01-01");
+        assert_eq!(super::date_in_years((2005, 2005), 364), "2005-12-31");
+        assert_eq!(super::date_in_years((2005, 2005), 365), "2005-01-01");
+        assert_eq!(super::date_in_years((2025, 2012), 0), "2012-01-01");
+        // (2012 is a leap year)
+        assert_eq!(super::date_in_years((2012, 2025), 59), "2012-02-29");
+        assert_eq!(super::date_in_years((2012, 2025), 366), "2013-01-01");
+        assert_eq!(super::date_in_years((2012, 2025), 5113), "2025-12-31");
+        for roll in (0..100_000u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15)) {
+            let date = super::date_in_years((2012, 2025), roll);
+            let (y, m, d) = super::super::ui::parse_date(&date);
+            assert!((2012..=2025).contains(&y), "{date}");
+            assert!(d <= super::super::ui::days_in_month(y, m), "{date}");
+        }
     }
 }
 

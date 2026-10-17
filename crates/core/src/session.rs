@@ -36,6 +36,104 @@ impl App {
         self.career.seconds = 0.0;
     }
 
+    pub(crate) fn back_to_main_menu(&mut self) {
+        // (the session that ends gets its own summary; the next one is measured from its own start)
+        self.log_profile_summary(true);
+        self.play_since = None;
+        self.finish_session();
+        self.exiting = false;
+        self.present_splash(&::i18n::translate("splash.loading", &[]));
+        if let Some(ui) = self.ui.as_mut() {
+            ui.scene_replaced();
+        }
+        self.game_menu = None;
+        self.lab_menu = None;
+        self.lab_list = None;
+        self.lab_load = None;
+        self.lab_place = None;
+        self.lab_room = None;
+        self.lab_map_direct = false;
+        self.dropdown = None;
+        self.admin_list = None;
+        self.list_kind = None;
+        self.chooser = None;
+        self.report_view = None;
+        self.report_pending = false;
+        self.restart_pending = false;
+        self.restart_prompt = None;
+        self.screenshot_mode = None;
+        self.menu_edit = None;
+        self.menu_edit_icao = false;
+        self.menu_edit_date = false;
+        self.swap_pending = false;
+        self.teleport_pick = false;
+        self.placing = None;
+        self.editor = None;
+        self.tutorial = None;
+        self.on_foot = None;
+        self.remote_walkers.clear();
+        self.inside_remote = None;
+        self.is_admin = false;
+        self.in_cab = false;
+        self.player = None;
+        self.placed.clear();
+        self.traffic = None;
+        self.schedule = None;
+        self.humans = None;
+        self.duty = None;
+        self.hud = None;
+        self.navigator = None;
+        self.camera = None;
+        self.starting = None;
+        self.streamer = None;
+        self.world = None;
+        self.world_day = None;
+        self.audio = None;
+        self.ambience = None;
+        self.plugins = None;
+        // (bye bye session)
+        if let Some(l) = self.lan.take() {
+            l.leave();
+        }
+        lan_mods::clean_up();
+        self.voice = Default::default();
+        self.remotes = Default::default();
+        self.weather = None;
+        self.weather_cycle = None;
+        self.weather_blend = None;
+        self.envir = None;
+        self.remote_added.clear();
+        self.paused = false;
+        self.menu_prev_pause = false;
+        self.service_msg = None;
+        self.view = self.args.view.clone();
+        self.args.bus = None;
+        self.args.cam = None;
+        self.args.no_menu = false;
+        self.args.situation = None;
+        self.args.lan_join = None;
+        self.args.lan_host = None;
+        self.args.on_foot = false;
+        if let (Some((id, _, _)), Some(r), Some(scene)) =
+            (self.lab_pic.take(), self.renderer.as_ref(), self.scene.as_mut())
+        {
+            r.free_texture(scene, id);
+        }
+        if let Some(r) = self.renderer.as_ref() {
+            self.scene = Some(r.new_scene());
+        }
+        if let Some(u) = self.ui.as_mut() {
+            u.start_reset();
+        }
+        let mut menu = menu::Menu::new(&self.args.root, &self.args.map);
+        menu.refresh_continue();
+        menu.apply_last_situation();
+        menu.recall();
+        self.menu = Some(menu);
+        self.last = Instant::now();
+        log::info!("back to the start menu");
+    }
+
     pub(crate) fn load_quicksave(&mut self) -> bool {
         let dir = crate::startup::content_dir()
             .unwrap_or_else(|| self.args.root.clone())
@@ -49,6 +147,7 @@ impl App {
             return false;
         };
         let mut cmd = std::process::Command::new(exe);
+        cmd.env_remove("OMSI_INSTANCE");
         cmd.arg("--root")
             .arg(&self.args.root)
             .arg("--no-menu")
@@ -118,6 +217,7 @@ impl App {
             return false;
         };
         let mut cmd = std::process::Command::new(exe);
+        cmd.env_remove("OMSI_INSTANCE");
         cmd.arg("--root")
             .arg(&self.args.root)
             .arg("--no-menu")
@@ -153,11 +253,38 @@ impl App {
         }
     }
 
+    pub(crate) fn restart_game(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        game_lists::flush_settings(true);
+        let Some(file) = self.save_last_situation() else {
+            self.service_msg = Some(("The game cannot be restarted here".into(), 5.0));
+            return false;
+        };
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
+        let mut cmd = std::process::Command::new(exe);
+        cmd.env_remove("OMSI_INSTANCE");
+        cmd.arg("--root")
+            .arg(&self.args.root)
+            .arg("--no-menu")
+            .arg("--situation")
+            .arg(&file);
+        if let Err(e) = cmd.spawn() {
+            self.service_msg = Some((format!("Could not start the game again: {e}"), 5.0));
+            return false;
+        }
+        self.game_menu = None;
+        self.lab_menu = None;
+        self.finish_session();
+        platform::exit(event_loop);
+        true
+    }
+
     pub(crate) fn quick_save(&mut self) {
         let (Some(w), Some(cam)) = (self.world.as_ref(), self.camera.as_ref()) else {
             return;
         };
-        let dir = crate::startup::content_dir()
+        let dir = content_dir()
             .unwrap_or_else(|| self.args.root.clone())
             .join("Situations");
         let _ = std::fs::create_dir_all(&dir);

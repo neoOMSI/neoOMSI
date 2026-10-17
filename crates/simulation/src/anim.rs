@@ -43,7 +43,10 @@ pub fn origin_matrix(origins: &[AnimOrigin], pivot: Mat4) -> Mat4 {
             AnimOrigin::RotX(a) => Mat4::from_rotation_x(-a.to_radians()),
             AnimOrigin::RotY(a) => Mat4::from_rotation_y(-a.to_radians()),
             AnimOrigin::RotZ(a) => Mat4::from_rotation_z(-a.to_radians()),
-            AnimOrigin::FromMesh => pivot,
+            AnimOrigin::FromMesh => {
+                m = pivot;
+                continue;
+            }
         };
         m *= op;
     }
@@ -65,6 +68,7 @@ impl MeshAnimator {
                     origin_matrix(&a.origins, pivot),
                     AnimState {
                         var,
+                        // OMSI initializes anim_lastvalue to 0 before the first translation.
                         value: 0.0,
                         initialized: false,
                     },
@@ -85,31 +89,35 @@ impl MeshAnimator {
     pub fn update(&mut self, dt: f32, vars: &[f32]) -> Mat4 {
         let mut m = Mat4::IDENTITY;
         for (a, origin, st) in &mut self.anims {
-            let target = st.var.map(|v| vars[v as usize]).unwrap_or(0.0) * a.factor + a.offset;
-            if !st.initialized {
-                st.value = target;
-                st.initialized = true;
-            } else {
-                let mut v = target;
-                if a.delay > 0.0 {
-                    // `delay` is a rate, not a time: the value closes the gap to its target
-                    // at `delay` per second (the SD200's handbrake lever says `delay 10`,
-                    // its doors 3 to 4). Read as a time constant it made the handbrake
-                    // crawl for ten seconds.
-                    let k = (dt * a.delay).min(1.0);
-                    v = st.value + (target - st.value) * k;
+            let raw = st.var.map(|v| vars[v as usize]).unwrap_or(0.0);
+            let mut next = raw;
+            if a.delay != 0.0 {
+                let amount = dt * a.delay;
+                // OMSI applies the proportional filter only through 0.5, then snaps to raw.
+                if amount <= 0.5 {
+                    next = st.value + (raw - st.value) * amount;
                 }
-                if a.max_speed > 0.0 {
-                    let max_step = a.max_speed * dt;
-                    v = st.value + (v - st.value).clamp(-max_step, max_step);
-                }
-                st.value = v;
             }
+            if a.max_speed != 0.0 {
+                let max_step = if a.factor != 0.0 {
+                    dt * a.max_speed / a.factor.abs()
+                } else {
+                    dt * a.max_speed
+                };
+                // Keep OMSI's ordered comparisons instead of `clamp`: the parser accepts
+                // negative maxspeed values, and the original applies the signed bounds in
+                // this order rather than panicking when min > max.
+                let step = next - st.value;
+                let step = if step <= max_step { step } else { max_step };
+                let step = if step >= -max_step { step } else { -max_step };
+                next = st.value + step;
+            }
+            st.value = next;
+            let value = (st.value + a.offset) * a.factor;
+            st.initialized = true;
             let local = match a.kind {
-                Some(AnimKind::Rot) => {
-                    Mat4::from_quat(Quat::from_rotation_x(-st.value.to_radians()))
-                }
-                Some(AnimKind::Trans) => Mat4::from_translation(Vec3::new(st.value, 0.0, 0.0)),
+                Some(AnimKind::Rot) => Mat4::from_quat(Quat::from_rotation_x(-value.to_radians())),
+                Some(AnimKind::Trans) => Mat4::from_translation(Vec3::new(value, 0.0, 0.0)),
                 None => Mat4::IDENTITY,
             };
             // The original multiplies its matrices the Direct3D way round (a row vector
@@ -174,33 +182,153 @@ pub fn apply_parents(animators: &[MeshAnimator], transforms: &mut [Mat4]) {
         return;
     }
     let n = transforms.len().min(animators.len());
-    let local: Vec<Mat4> = transforms[..n].to_vec();
-    let mut done = vec![false; n];
-    let mut chain: Vec<usize> = Vec::new();
+    if n == 0 {
+        return;
+    }
+
+    const STACK_LIMIT: usize = 64;
+    if n <= STACK_LIMIT {
+        let mut local = [Mat4::IDENTITY; STACK_LIMIT];
+        local[..n].copy_from_slice(&transforms[..n]);
+        let mut done = [false; STACK_LIMIT];
+        let mut in_chain = [false; STACK_LIMIT];
+        let mut chain = [0usize; STACK_LIMIT];
+
+        for start in 0..n {
+            let mut chain_len = 0;
+            let mut k = start;
+            while !done[k] {
+                if in_chain[k] {
+                    break;
+                }
+                in_chain[k] = true;
+                chain[chain_len] = k;
+                chain_len += 1;
+                match animators[k].parent.filter(|p| *p < n) {
+                    Some(p) => k = p,
+                    None => break,
+                }
+            }
+            for i in (0..chain_len).rev() {
+                let c = chain[i];
+                in_chain[c] = false;
+                if done[c] {
+                    continue;
+                }
+                transforms[c] = match animators[c].parent.filter(|p| *p < n && done[*p]) {
+                    Some(p) => transforms[p] * local[c],
+                    None => local[c],
+                };
+                done[c] = true;
+            }
+        }
+    } else {
+        let local: Vec<Mat4> = transforms[..n].to_vec();
+        let mut done = vec![false; n];
+        let mut in_chain = vec![false; n];
+        let mut chain: Vec<usize> = Vec::new();
+        for start in 0..n {
+            chain.clear();
+            let mut k = start;
+            while !done[k] {
+                if in_chain[k] {
+                    break;
+                }
+                in_chain[k] = true;
+                chain.push(k);
+                match animators[k].parent.filter(|p| *p < n) {
+                    Some(p) => k = p,
+                    None => break,
+                }
+            }
+            for &c in chain.iter().rev() {
+                in_chain[c] = false;
+                if done[c] {
+                    continue;
+                }
+                transforms[c] = match animators[c].parent.filter(|p| *p < n && done[*p]) {
+                    Some(p) => transforms[p] * local[c],
+                    None => local[c],
+                };
+                done[c] = true;
+            }
+        }
+    }
+}
+
+pub fn round_visible(value: f32, expected: f32) -> bool {
+    value.is_finite()
+        && expected.is_finite()
+        && value.round_ties_even() == expected.round_ties_even()
+}
+
+pub fn apply_visibility_parents(animators: &[MeshAnimator], visible: &mut [bool]) {
+    apply_visibility_parents_with_scratch(
+        animators,
+        visible,
+        &mut VisibilityParentsScratch::default(),
+    );
+}
+
+/// Reusable storage for parent visibility propagation in the vehicle update path.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct VisibilityParentsScratch {
+    done: Vec<bool>,
+    in_chain: Vec<bool>,
+    chain: Vec<usize>,
+}
+
+pub(crate) fn apply_visibility_parents_with_scratch(
+    animators: &[MeshAnimator],
+    visible: &mut [bool],
+    scratch: &mut VisibilityParentsScratch,
+) {
+    let n = animators.len().min(visible.len());
+    if !animators[..n]
+        .iter()
+        .any(|a| a.parent.is_some_and(|parent| parent < n))
+    {
+        return;
+    }
+    scratch.done.clear();
+    scratch.done.resize(n, false);
+    scratch.in_chain.clear();
+    scratch.in_chain.resize(n, false);
+    scratch.chain.clear();
     for start in 0..n {
-        // walk up to the first mesh that is finished (or has no parent) ...
-        chain.clear();
-        let mut k = start;
-        while !done[k] {
-            if chain.contains(&k) {
+        scratch.chain.clear();
+        let mut current = start;
+        while !scratch.done[current] {
+            if scratch.in_chain[current] {
+                let cycle_start = scratch.chain.iter().position(|&i| i == current).unwrap();
+                if !scratch.chain[cycle_start..].iter().all(|&i| visible[i]) {
+                    for &i in &scratch.chain[cycle_start..] {
+                        visible[i] = false;
+                    }
+                }
+                for &i in &scratch.chain[cycle_start..] {
+                    scratch.in_chain[i] = false;
+                    scratch.done[i] = true;
+                }
+                scratch.chain.truncate(cycle_start);
                 break;
             }
-            chain.push(k);
-            match animators[k].parent.filter(|p| *p < n) {
-                Some(p) => k = p,
+            scratch.in_chain[current] = true;
+            scratch.chain.push(current);
+            match animators[current].parent.filter(|&parent| parent < n) {
+                Some(parent) => current = parent,
                 None => break,
             }
         }
-        // ... and come back down, each mesh taking its parent's final transform
-        for &c in chain.iter().rev() {
-            if done[c] {
+        for &i in scratch.chain.iter().rev() {
+            scratch.in_chain[i] = false;
+            if scratch.done[i] {
                 continue;
             }
-            transforms[c] = match animators[c].parent.filter(|p| *p < n && done[*p]) {
-                Some(p) => transforms[p] * local[c],
-                None => local[c],
-            };
-            done[c] = true;
+            if let Some(parent) = animators[i].parent.filter(|&parent| parent < n) {
+                visible[i] &= visible[parent];
+            }
+            scratch.done[i] = true;
         }
     }
 }
@@ -282,6 +410,161 @@ mod tests {
         assert_eq!(
             a.iter().map(|a| a.parent).collect::<Vec<_>>(),
             vec![None, Some(0), None, Some(2)]
+        );
+    }
+
+    #[test]
+    fn animation_offset_is_scaled_after_raw_value_smoothing() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                kind: Some(AnimKind::Rot),
+                variable: "v".into(),
+                factor: 90.0,
+                offset: -0.5,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+
+        let level = a.update(0.0, &[0.5]);
+        assert!(level.abs_diff_eq(Mat4::IDENTITY, 1e-6));
+        let level = a.update(0.0, &[0.0]);
+        assert!((level.transform_point3(Vec3::Y).z - 0.70710677).abs() < 1e-5);
+    }
+
+    #[test]
+    fn max_speed_limits_the_scaled_animation() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                kind: Some(AnimKind::Rot),
+                variable: "v".into(),
+                factor: 100.0,
+                max_speed: 1.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+
+        let first = a.update(0.5, &[1.0]);
+        assert!((a.anims[0].2.value - 0.005).abs() < 1e-6);
+        assert!((first.transform_point3(Vec3::Y).y - 0.5f32.to_radians().cos()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn negative_max_speed_uses_omsi_signed_bounds_without_panicking() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                variable: "v".into(),
+                max_speed: -1.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut animator = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+
+        animator.update(0.5, &[1.0]);
+        assert_eq!(animator.anims[0].2.value, 0.5);
+
+        // OMSI applies the signed upper bound first and the lower bound second. With a
+        // negative bound the latter wins, so the stored value advances by |dt * maxspeed|.
+        animator.update(0.1, &[0.0]);
+        assert!((animator.anims[0].2.value - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn delay_uses_dt_times_delay_and_snaps_above_half() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                variable: "v".into(),
+                delay: 10.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.02, &[1.0]);
+        assert!((a.anims[0].2.value - 0.2).abs() < 1e-6);
+
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.06, &[1.0]);
+        assert_eq!(a.anims[0].2.value, 1.0);
+
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.0, &[1.0]);
+        assert_eq!(a.anims[0].2.value, 0.0);
+    }
+
+    #[test]
+    fn max_speed_clamps_after_delay_snap() {
+        let def = MeshDef {
+            animations: vec![Animation {
+                variable: "v".into(),
+                delay: 10.0,
+                max_speed: 2.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
+        a.update(0.06, &[1.0]);
+        assert!((a.anims[0].2.value - 0.12).abs() < 1e-6);
+    }
+
+    #[test]
+    fn origin_from_mesh_replaces_prior_origin_transforms() {
+        let pivot = Mat4::from_translation(Vec3::new(3.0, 4.0, 5.0));
+        assert_eq!(
+            origin_matrix(
+                &[AnimOrigin::Trans([1.0, 2.0, 3.0]), AnimOrigin::FromMesh],
+                pivot
+            ),
+            pivot
+        );
+    }
+
+    #[test]
+    fn visible_values_use_ties_to_even_and_inherit_parent_visibility() {
+        assert!(round_visible(0.5, 0.0));
+        assert!(round_visible(1.5, 2.0));
+        assert!(round_visible(2.5, 2.0));
+        assert!(!round_visible(f32::NAN, 0.0));
+
+        let animators = vec![animator(Some(1)), animator(Some(2)), animator(None)];
+        let mut visible = vec![true, true, false];
+        apply_visibility_parents(&animators, &mut visible);
+        assert_eq!(visible, [false, false, false]);
+
+        let cycle = vec![animator(Some(1)), animator(Some(0)), animator(Some(1))];
+        let mut visible = vec![false, true, true];
+        apply_visibility_parents(&cycle, &mut visible);
+        assert_eq!(visible, [false, false, false]);
+    }
+
+    #[test]
+    fn visibility_parent_scratch_reuses_its_allocated_buffers() {
+        let animators = vec![animator(Some(1)), animator(None), animator(Some(1))];
+        let mut scratch = VisibilityParentsScratch::default();
+        let mut visible = [true, false, true];
+        apply_visibility_parents_with_scratch(&animators, &mut visible, &mut scratch);
+        assert_eq!(visible, [false, false, false]);
+        let capacity = (
+            scratch.done.capacity(),
+            scratch.in_chain.capacity(),
+            scratch.chain.capacity(),
+        );
+
+        let mut visible = [true, true, true];
+        apply_visibility_parents_with_scratch(&animators, &mut visible, &mut scratch);
+        assert_eq!(visible, [true, true, true]);
+        assert_eq!(
+            (
+                scratch.done.capacity(),
+                scratch.in_chain.capacity(),
+                scratch.chain.capacity(),
+            ),
+            capacity
         );
     }
 }

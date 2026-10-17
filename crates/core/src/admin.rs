@@ -17,7 +17,8 @@
 //! `ban <id>`, `bring <id>`, `goto <id>`, `time <seconds>`, `speed <factor>`,
 //! `weather next`, `say <text>`, `bringall`, `service <repair|refuel|wash> <id|all>`,
 //! `unstick <id>`, `clock <seconds of the day>`, `traffic next`, `traffic clear`,
-//! `weather cycle`, `weather set <Weather/file.owt>`.
+//! `weather cycle`, `weather set <Weather/file.owt>`, `mute <id>`, `unmute <id>`,
+//! `voice on|off`.
 
 use crate::App;
 use ::network::{LanSession, Role};
@@ -55,7 +56,19 @@ pub(crate) fn items(app: &App) -> Vec<(String, String)> {
         out.push((::i18n::translate("pause.admin.unstick", &[("name", &name)]), format!("unstick {id}")));
         out.push((::i18n::translate("pause.admin.kick", &[("name", &name)]), format!("kick {id}")));
         out.push((::i18n::translate("pause.admin.ban", &[("name", &name)]), format!("ban {id}")));
+        let muted = lan.peers().find(|p| p.pose.id == *id).map(|p| p.voice_muted);
+        if lan.role == Role::Client || muted == Some(false) {
+            out.push((::i18n::translate("pause.admin.mute", &[("name", &name)]), format!("mute {id}")));
+        }
+        if lan.role == Role::Client || muted == Some(true) {
+            out.push((::i18n::translate("pause.admin.unmute", &[("name", &name)]), format!("unmute {id}")));
+        }
     }
+    let state = ::i18n::translate(if lan.voice.enabled { "pause.admin.on" } else { "pause.admin.off" }, &[]);
+    out.push((
+        ::i18n::translate("pause.admin.voice", &[("state", &state)]),
+        format!("voice {}", if lan.voice.enabled { "off" } else { "on" }),
+    ));
     if peers.len() > 1 {
         out.push((
             ::i18n::translate("pause.admin.bring_all", &[]),
@@ -155,6 +168,11 @@ pub(crate) fn run(app: &mut App, action: &str) {
 fn host_action(app: &mut App, action: &str, by: Option<u32>) {
     let (verb, arg) = action.split_once(' ').unwrap_or((action, ""));
     let id = arg.trim().parse::<u32>().ok();
+    if let Some(l) = app.lan.as_mut() {
+        if voice_action(l, verb, arg) {
+            return;
+        }
+    }
     match verb {
         "kick" | "ban" => {
             if let (Some(l), Some(id)) = (app.lan.as_mut(), id) {
@@ -437,6 +455,9 @@ pub(crate) fn teleport(app: &mut App, at: glam::DVec3, heading: f64) {
                 p.vehicle.update(1.0 / 30.0);
             }
         }
+        // (the place it was put is where it last stood: a fall from here comes back here)
+        app.safe_pose = Some((glam::DVec3::new(at.x, at.y, z), heading));
+        app.safe_age = 0.0;
         log::info!(
             "teleported to ({:.1}, {:.1}) heading {heading:.0}",
             at.x,
@@ -572,6 +593,30 @@ pub(crate) fn command(app: &mut App, from: u32, text: &str) {
     }
 }
 
+fn voice_action(lan: &mut LanSession, verb: &str, arg: &str) -> bool {
+    match verb {
+        "mute" | "unmute" => {
+            let mute = verb == "mute";
+            if let Ok(id) = arg.trim().parse::<u32>() {
+                if lan.set_voice_muted(id, mute) {
+                    let _ = lan.say_to(
+                        id,
+                        "Admin (private)",
+                        if mute {
+                            "your microphone is muted in this session"
+                        } else {
+                            "you may speak again"
+                        },
+                    );
+                }
+            }
+        }
+        "voice" => lan.voice.enabled = arg.trim() == "on",
+        _ => return false,
+    }
+    true
+}
+
 /// The administration of a dedicated server (`omsi --server`): what it keeps.
 #[derive(Default)]
 pub(crate) struct ServerAdmin {
@@ -670,6 +715,9 @@ pub(crate) fn server_command(
             let (v, a) = arg.split_once(' ').unwrap_or((arg, ""));
             let id = a.trim().parse::<u32>().ok();
             log::info!("server: admin {from}: {arg}");
+            if voice_action(lan, v, a) {
+                return;
+            }
             match v {
                 "kick" | "ban" => {
                     if let Some(id) = id {
@@ -781,8 +829,7 @@ pub(crate) fn server_command(
 
 /// The bus fallen through the world (a hole in the ground, a tile that was not there yet,
 /// a mod's road without a surface) fell for ever. Where it last stood on the ground is
-/// kept every second; a bus more than 8 m under the ground there is - or 40 m under where
-/// it last stood, where there is no ground - is put back there.
+/// kept every second; a bus more than 8 m under the ground there is put back there.
 pub(crate) fn guard_fall(app: &mut App, dt: f32) {
     let Some(p) = app.player.as_ref() else { return };
     let at = p.vehicle.position;
@@ -797,12 +844,7 @@ pub(crate) fn guard_fall(app: &mut App, dt: f32) {
         None => (None, None),
     };
     app.safe_age += dt;
-    let fallen = match (under, ground) {
-        (Some(_), _) => false,
-        (None, Some(g)) => at.z < g - 8.0,
-        (None, None) => app.safe_pose.map(|s| at.z < s.0.z - 40.0).unwrap_or(false),
-    };
-    if fallen {
+    if fallen(at.z, under, ground) {
         if let Some((pos, heading)) = app.safe_pose {
             log::warn!(
                 "the bus fell through the world at ({:.1}, {:.1}, {:.1}): put back at ({:.1}, {:.1})",
@@ -825,6 +867,37 @@ pub(crate) fn guard_fall(app: &mut App, dt: f32) {
             app.safe_age = 0.0;
             app.safe_pose = Some((glam::DVec3::new(at.x, at.y, g), p.vehicle.heading));
         }
+    }
+}
+
+/// Whether a bus at height `z` has fallen through the world, from the face under it and
+/// the highest ground there. No ground at all is a tile still being read, where the bus is
+/// held, not a fall: a start point far below the last one was taken for one (#194).
+fn fallen(z: f64, under: Option<f64>, ground: Option<f64>) -> bool {
+    match (under, ground) {
+        (None, Some(g)) => z < g - 8.0,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod fall_tests {
+    use super::fallen;
+
+    #[test]
+    fn a_tile_still_being_read_is_no_fall() {
+        assert!(!fallen(45.8, None, None));
+    }
+
+    #[test]
+    fn more_than_8_m_under_the_ground_is_a_fall() {
+        assert!(fallen(91.0, None, Some(100.0)));
+        assert!(!fallen(93.0, None, Some(100.0)));
+    }
+
+    #[test]
+    fn a_face_under_the_bus_is_no_fall() {
+        assert!(!fallen(50.0, Some(49.5), Some(100.0)));
     }
 }
 

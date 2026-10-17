@@ -271,6 +271,20 @@ impl Humans {
         bus_ix: &HashMap<BusId, usize>,
     ) {
         let p0 = self.pax(i).unwrap().clone();
+        // The object-defined waiting point is on the platform, but an angled kerb can make a
+        // ground probe at that point select the road below. The stop marker can itself be at
+        // road height, so use the selected [passpos]'s floor instead. Waiting passengers must
+        // not sink through the platform before they have begun walking to a bus.
+        let wait_floor = matches!(p0.task, Task::WaitingForBus | Task::WalkingToBusstop)
+            .then(|| {
+                p0.stop.zip(p0.spot).and_then(|(stop, spot)| {
+                    self.stops
+                        .get(&stop)
+                        .and_then(|s| s.spots.get(spot))
+                        .map(|sp| sp.floor())
+                })
+            })
+            .flatten();
         if self.ik && p0.task != Task::SittingInBus && self.people[i].pose.sit_amount() > 0.02 {
             let p = self.pax_mut(i).unwrap();
             p.speed = 0.0;
@@ -390,11 +404,12 @@ impl Humans {
             _ => {}
         }
         // the people in the way (sub_626860)
-        let (mut block, free_r, free_l) = if st == Movement::ToTarget || st == Movement::AlongPath {
-            self.pax_blockers(i, buses, bus_ix)
-        } else {
-            (Obstruction::Clear, true, true)
-        };
+        let (mut block, free_r, free_l, gap) =
+            if st == Movement::ToTarget || st == Movement::AlongPath {
+                self.pax_blockers(i, buses, bus_ix)
+            } else {
+                (Obstruction::Clear, true, true, f64::INFINITY)
+            };
         let settling = self.ik && self.people[i].pose.settling();
         let natural = self.natural;
         let person = &self.people[i];
@@ -489,14 +504,25 @@ impl Humans {
             // on the terrain - 25-35 cm down in the platform
             if p.inside.is_none() && p.posture != Posture::Sitting {
                 if let Some(g) = world.walk_height_near(p.pos.x, p.pos.y, p.pos.z) {
-                    p.pos.z = g;
+                    p.pos.z = g.max(wait_floor.unwrap_or(f64::NEG_INFINITY));
                 }
             }
+            p.evade = 0.0;
             return;
         }
         let mut dh = wrap(head_des - p.yaw);
+        // Turned away from somebody facing them, keep that heading for a moment and walk
+        // on: turning straight back swung them to and fro every frame next to somebody
+        // standing beside the way (#138).
+        let mut hold = false;
         if st == Movement::ToTarget && p.free_r && p.obstruction == Obstruction::Facing {
             dh = -1.745;
+            p.evade = EVADE_HOLD;
+        } else if st == Movement::ToTarget && p.evade > 0.0 {
+            p.evade -= dt;
+            hold = true;
+        } else {
+            p.evade = 0.0;
         }
         if natural && st != Movement::Turning {
             if st == Movement::ToTarget || (st == Movement::AlongPath && p.pt == p.pt_target) {
@@ -504,6 +530,10 @@ impl Humans {
                 p.speed_des = p.speed_des.min((4.0 * left.max(0.0)).sqrt() + 0.1);
             }
             p.speed_des *= (dh.cos() as f32).max(0.0);
+            // ease up behind the one in front instead of stopping dead at 0.6 m
+            if gap.is_finite() {
+                p.speed_des = p.speed_des.min((FOLLOW_GAIN * (gap - 0.6)).max(0.0) as f32);
+            }
         }
         if st != Movement::Turning {
             if !natural && dh.abs() > 1.0 {
@@ -519,7 +549,7 @@ impl Humans {
             };
             p.speed += diff.signum() * diff.abs().min(rate * dt);
         }
-        let turn = dh.signum()
+        let turn = if hold { 0.0 } else { dh.signum() }
             * if natural {
                 (dh.abs() * (dt as f64 / 0.12).min(1.0)).min(4.5 * dt as f64)
             } else {
@@ -556,33 +586,41 @@ impl Humans {
             && p.posture != Posture::Sitting
             && matches!(p.task, Task::WaitingForBus | Task::WalkingToBusstop)
         {
-            if let Some(stop) = p.stop {
-                if let Some(s) = self.stops.get(&stop) {
-                    let floor = s.pos.z;
-                    let p = self.pax_mut(i).unwrap();
-                    p.pos.z = p.pos.z.max(floor);
-                }
+            if let Some(floor) = wait_floor {
+                p.pos.z = p.pos.z.max(floor);
             }
         }
         let _ = dt;
     }
 
-    /// sub_626860: whether somebody within 0.6 m stands in the way.
+    /// sub_626860: whether somebody within 0.6 m stands in the way, and for a natural-mode
+    /// boarder outside the distance to the person they follow (infinite when none).
     pub(in crate::humans) fn pax_blockers(
         &self,
         i: usize,
         buses: &[BusNow],
         bus_ix: &HashMap<BusId, usize>,
-    ) -> (Obstruction, bool, bool) {
+    ) -> (Obstruction, bool, bool, f64) {
         let me = self.pax(i).unwrap();
         let Some((my_pos, my_head)) = self.pax_world(me, buses, bus_ix) else {
-            return (Obstruction::Clear, true, true);
+            return (Obstruction::Clear, true, true, f64::INFINITY);
         };
         let fs = {
             let h = my_head.to_radians();
             DVec2::new(h.sin(), h.cos())
         };
+        // natural mode: a boarder outside waits only for those inside who stand on the
+        // threshold, not for somebody stamping beside it (#138)
+        let boarding = self.natural && me.inside.is_none() && me.task == Task::WalkingToBus;
+        let threshold = boarding
+            .then(|| {
+                let bn = me.bus.and_then(|b| bus_ix.get(&b)).map(|&k| &buses[k])?;
+                let door = me.door.and_then(|d| bn.cabin.boarding_door(d))?;
+                Some(bn.world(door.inside).truncate())
+            })
+            .flatten();
         let (mut block, mut free_r, mut free_l) = (Obstruction::Clear, true, true);
+        let mut gap = f64::INFINITY;
         for (j, o) in self.people.iter().enumerate() {
             if j == i || o.puppet.is_some() {
                 continue;
@@ -604,6 +642,13 @@ impl Humans {
                 }
                 _ => continue,
             };
+            if boarding
+                && matches!(&o.state, State::Pax(x) if x.inside.is_some() && x.doorway.is_none())
+                && threshold
+                    .is_none_or(|t| (o.position.truncate() - t).length() >= DOORWAY_THRESHOLD)
+            {
+                continue;
+            }
             if matches!(o_movement, Some(Movement::Standing | Movement::AtTarget)) {
                 continue;
             }
@@ -619,14 +664,19 @@ impl Humans {
             }
             let d2 = d.truncate();
             let dist = d2.length();
-            if !(dist < 0.6) {
-                continue;
-            }
             let dn = if dist > 0.0 { d2 / dist } else { DVec2::ZERO };
             let fo = {
                 let h = o.heading.to_radians();
                 DVec2::new(h.sin(), h.cos())
             };
+            // follow who is ahead within 45 degrees, unless this one is ahead of them too:
+            // two easing up behind each other would never meet the 0.6 m and step aside
+            if boarding && dist < FOLLOW_REACH && fs.dot(dn) > 0.7 && dn.dot(fo) > -0.7 {
+                gap = gap.min(dist);
+            }
+            if !(dist < 0.6) {
+                continue;
+            }
             if fs.dot(dn) < 0.0 {
                 if block == Obstruction::Clear {
                     block = Obstruction::Behind;
@@ -653,6 +703,15 @@ impl Humans {
             }
             block = block.max(Obstruction::Busy);
         }
-        (block, free_r, free_l)
+        (block, free_r, free_l, gap)
     }
 }
+
+/// How long a passenger keeps the heading turned away from somebody facing them (s).
+const EVADE_HOLD: f32 = 0.5;
+/// How near the door's threshold somebody inside keeps a boarder out (m).
+const DOORWAY_THRESHOLD: f64 = 0.3;
+/// How far ahead a boarder watches the person they follow (m).
+const FOLLOW_REACH: f64 = 1.3;
+/// Speed (m/s) per metre of gap beyond 0.6 m.
+const FOLLOW_GAIN: f64 = 2.0;

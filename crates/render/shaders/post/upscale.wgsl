@@ -11,6 +11,8 @@ struct Params {
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var t_src: texture_2d<f32>;
 @group(0) @binding(2) var s_src: sampler;
+// glass snapshot only: the depth prepass, at full size
+@group(0) @binding(3) var t_depth: texture_depth_2d;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -193,7 +195,16 @@ fn fs_copy(in: VsOut) -> @location(0) vec4<f32> {
     return textureLoad(t_src, vec2<i32>(in.clip.xy), 0);
 }
 
+// The scene behind the rain films at half size, its depth in alpha for `rain_behind`;
+// the nearest of four depths, so that a window frame's edge is not lost.
 @fragment
 fn fs_glass_snapshot(in: VsOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(textureSampleLevel(t_src, s_src, in.uv, 0.0).rgb, 1.0);
+    let size = vec2<i32>(textureDimensions(t_depth));
+    let at = vec2<i32>(in.clip.xy) * 2;
+    var near = 0.0;
+    for (var i = 0; i < 4; i = i + 1) {
+        let q = min(at + vec2<i32>(i & 1, i >> 1u), size - vec2<i32>(1));
+        near = max(near, textureLoad(t_depth, q, 0));
+    }
+    return vec4<f32>(textureSampleLevel(t_src, s_src, in.uv, 0.0).rgb, near);
 }

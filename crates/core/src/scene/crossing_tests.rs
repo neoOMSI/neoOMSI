@@ -132,3 +132,186 @@ fn loading_deforms_all_lods_and_collision_once_before_placement() {
     assert!(actual.starts_with(&temp) && actual != temp);
     std::fs::remove_dir_all(actual).unwrap();
 }
+
+/// An `[onlyeditor]` lamp still reads its crossing light (#303).
+#[test]
+fn an_editor_only_lamp_follows_its_crossing_light() {
+    let root = std::env::temp_dir().join(format!(
+        "neoomsi-editor-lamp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("global.cfg"),
+        "[name]\nSynthetic crossing\n[map]\n0\n0\ntile_0_0.map\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("crossing.sco"),
+        "[traffic_lights_group]\n10\n\
+[traffic_light]\nroad\n[phase]\n6\n5\n[phase]\n2\n5\n[approachdist]\n0\n\
+[traffic_light]\nbell\n[phase]\n2\n5\n[phase]\n6\n5\n[approachdist]\n0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("gong.sco"),
+        "[trafficlight]\n[sound]\ngong.cfg\n[script]\n1\ngong.osc\n[onlyeditor]\n[mesh]\ngong.x\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("gong.osc"), "{init}\n{end}\n{frame}\n{end}\n").unwrap();
+    std::fs::write(
+        root.join("gong.x"),
+        "xof 0303txt 0032\nMesh gong {3;0;0;0;,1;0;0;,0;1;0;;1;3;0,1,2;;}",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tile_0_0.map"),
+        "[version]\n14\n\
+[object]\n0\ncrossing.sco\n1\n100\n100\n0\n0\n0\n0\n0\n\n\
+[object]\n0\ngong.sco\n2\n105\n100\n0\n0\n0\n0\n1\n1\n\n[varparent]\n1\n",
+    )
+    .unwrap();
+    let world = World::open(&root, &root.join("global.cfg"), 20261001).unwrap();
+    let (mut prepared, _) = world.prepare_tiles(&[(0, 0, root.join("tile_0_0.map"))]);
+    assert_eq!(prepared.len(), 1);
+    // (the upload adds the visible lamps to the editor-only ones)
+    world.commit_upload(
+        world.begin_upload(prepared.pop().unwrap()),
+        &mut LoadStats::default(),
+    );
+    {
+        let states = world.tile_state.lock();
+        let lamps = &states[&(0, 0)].light_objects;
+        assert_eq!(lamps.len(), 1);
+        let lamp = &lamps[0];
+        assert_eq!((lamp.parent, lamp.index, lamp.any_light), (1, 1, false));
+        assert!(lamp.script.is_some() && lamp.sound.is_some());
+    }
+    // (not also run as a sound object without the crossing light)
+    assert!(!world.scripted.lock().iter().any(|o| o.map_id == 2));
+    drop(world);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A lamp draws the texts its script writes (#305).
+#[test]
+fn a_board_on_a_crossing_light_draws_its_script_texts() {
+    let root = std::env::temp_dir().join(format!(
+        "neoomsi-lamp-text-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("global.cfg"),
+        "[name]\nSynthetic crossing\n[map]\n0\n0\ntile_0_0.map\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("crossing.sco"),
+        "[traffic_lights_group]\n10\n[traffic_light]\nroad\n[phase]\n6\n5\n[phase]\n2\n5\n[approachdist]\n0\n",
+    )
+    .unwrap();
+    // (no `[trafficlight]`: string 0 links it to light 0)
+    std::fs::write(
+        root.join("board.sco"),
+        "[stringvarnamelist]\n1\nstrings.txt\n[script]\n1\nboard.osc\n\
+[mesh]\nboard.x\n\
+[texttexture]\nShown\nnofont\n64\n32\n1\n255\n255\n255\n\
+[matl]\nboard.png\n0\n[useTextTexture]\n0\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("strings.txt"), "Shown\n").unwrap();
+    std::fs::write(
+        root.join("board.osc"),
+        "{frame}\n(L.L.TrafficLightPhase) $IntToStr (S.$.Shown)\n{end}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("board.x"),
+        r#"xof 0303txt 0032
+        Mesh board {
+            3; 0;0;0;, 1;0;0;, 0;0;1;;
+            1; 3;0,1,2;;
+            MeshTextureCoords {3;0;0;,1;0;,0;1;;}
+            MeshMaterialList {1;1;0;; Material {1;1;1;1;;0;0;0;0;;0;0;0;; TextureFilename {"board.png";} }}
+        }
+    "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tile_0_0.map"),
+        "[version]\n14\n\
+[object]\n0\ncrossing.sco\n1\n100\n100\n0\n0\n0\n0\n0\n\n\
+[object]\n0\nboard.sco\n2\n105\n100\n0\n0\n0\n0\n1\n0\n\n[varparent]\n1\n",
+    )
+    .unwrap();
+    let world = World::open(&root, &root.join("global.cfg"), 20261013).unwrap();
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = wgpu::Backends::NOOP;
+    desc.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+    let renderer = pollster::block_on(Renderer::new_with(
+        &wgpu::Instance::new(desc),
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        ::render::RenderOptions {
+            msaa: 1,
+            ssao: false,
+            no_enhanced: true,
+            shadow_size: 512,
+            ..Default::default()
+        },
+    ))
+    .unwrap();
+    let mut scene = renderer.new_scene();
+    let (mut prepared, _) = world.prepare_tiles(&[(0, 0, root.join("tile_0_0.map"))]);
+    world.upload_tile(
+        &renderer,
+        &mut scene,
+        prepared.pop().unwrap(),
+        &mut LoadStats::default(),
+    );
+    let lamp = {
+        let states = world.tile_state.lock();
+        let lamps = &states[&(0, 0)].light_objects;
+        assert_eq!(lamps.len(), 1);
+        lamps[0].clone()
+    };
+    assert_eq!((lamp.parent, lamp.index), (1, 0));
+    assert_eq!(
+        lamp.texts.lock().len(),
+        1,
+        "the board's text slot is the script's"
+    );
+    // green (6), then red (2)
+    let script = lamp.script.as_ref().unwrap();
+    for (phase, shown) in [(6.0, "6"), (2.0, "2")] {
+        let mut s = script.lock();
+        s.update(
+            0.1,
+            &::simulation::scenery::SceneryVars {
+                in_use: 1.0,
+                traffic_light_phase: phase,
+                ..Default::default()
+            },
+        );
+        draw_script_texts(
+            &renderer,
+            &mut scene,
+            &mut s,
+            &mut lamp.texts.lock(),
+            || "lamp".into(),
+        );
+        assert_eq!(lamp.texts.lock()[0].1.last_text.as_deref(), Some(shown));
+    }
+    drop(lamp);
+    drop(world);
+    std::fs::remove_dir_all(&root).unwrap();
+}

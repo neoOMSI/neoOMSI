@@ -9,11 +9,10 @@ if errorlevel 1 (
   echo Install Rust from https://rustup.rs using the MSVC toolchain, then run this script again.
   exit /b 1
 )
-cargo build --locked --profile dev-release -p core -p legacy-launcher-core
+cargo build --locked --profile dev-release -p core
 if errorlevel 1 goto :failed
 if not exist "dist\windows-dev" mkdir "dist\windows-dev"
 copy /y "target\dev-release\neoomsi.exe" "dist\windows-dev\neoomsi.exe" >nul || goto :failed
-copy /y "target\dev-release\neoomsi-launcher.exe" "dist\windows-dev\neoomsi-launcher.exe" >nul || goto :failed
 echo.
 echo Done. Run: "%CD%\dist\windows-dev\neoomsi.exe"
 exit /b 0

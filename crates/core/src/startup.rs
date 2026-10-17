@@ -2,22 +2,106 @@
 
 use super::*;
 
-/// CPU seconds this process has used so far (all threads), from `ps`.
+/// CPU seconds this process has used so far (all threads): the kernel's count on Windows,
+/// else from `ps`. OMSI_PROFILE asks every frame until it has an answer, so a `ps` that
+/// fails is not started again (each start took ~10 ms of the frame).
+#[cfg(windows)]
 pub(crate) fn process_cpu_seconds() -> Option<f64> {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "cputime=", "-p", &std::process::id().to_string()])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    // [[dd-]hh:]mm:ss.ss
-    let (days, rest) = match text.trim().split_once('-') {
-        Some((d, r)) => (d.parse::<f64>().ok()?, r.to_string()),
-        None => (0.0, text.trim().to_string()),
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    let mut t = [FILETIME::default(); 4];
+    let [created, exited, kernel, user] = &mut t;
+    // SAFETY: the pseudo handle of this process and four FILETIMEs to write
+    unsafe { GetProcessTimes(GetCurrentProcess(), created, exited, kernel, user) }.ok()?;
+    let ticks = |f: &FILETIME| ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64;
+    // (100 ns units)
+    Some((ticks(kernel) + ticks(user)) * 1e-7)
+}
+
+/// CPU seconds of each thread of this process, by thread id, with its name (OMSI_PROFILE:
+/// which threads besides the main one keep the processor busy).
+#[cfg(windows)]
+pub(crate) fn thread_cpu_seconds() -> Vec<(u32, String, f64)> {
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, HLOCAL, LocalFree};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
-    let secs = rest.split(':').try_fold(0.0, |acc, part| {
-        part.parse::<f64>().ok().map(|v| acc * 60.0 + v)
-    })?;
-    Some(days * 86400.0 + secs)
+    use windows::Win32::System::Threading::{
+        GetThreadDescription, GetThreadTimes, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
+    };
+    let mut out = Vec::new();
+    let me = std::process::id();
+    // SAFETY: a snapshot handle, entries of the size it is told, and thread handles that are
+    // closed again; the description is the system's string, freed with LocalFree
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else {
+            return out;
+        };
+        let mut e = THREADENTRY32 {
+            dwSize: size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut more = Thread32First(snap, &mut e).is_ok();
+        while more {
+            if e.th32OwnerProcessID == me {
+                if let Ok(h) = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, e.th32ThreadID) {
+                    let mut t = [FILETIME::default(); 4];
+                    let [c, x, k, u] = &mut t;
+                    if GetThreadTimes(h, c, x, k, u).is_ok() {
+                        let ticks = |f: &FILETIME| {
+                            ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64
+                        };
+                        let name = match GetThreadDescription(h) {
+                            Ok(p) if !p.is_null() => {
+                                let n = p.to_string().unwrap_or_default();
+                                let _ = LocalFree(Some(HLOCAL(p.0 as _)));
+                                n
+                            }
+                            _ => String::new(),
+                        };
+                        out.push((e.th32ThreadID, name, (ticks(k) + ticks(u)) * 1e-7));
+                    }
+                    let _ = CloseHandle(h);
+                }
+            }
+            more = Thread32Next(snap, &mut e).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    out
+}
+
+#[cfg(not(windows))]
+pub(crate) fn thread_cpu_seconds() -> Vec<(u32, String, f64)> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn process_cpu_seconds() -> Option<f64> {
+    static PS_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if PS_FAILED.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    let secs = (|| {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "cputime=", "-p", &std::process::id().to_string()])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        // [[dd-]hh:]mm:ss.ss
+        let (days, rest) = match text.trim().split_once('-') {
+            Some((d, r)) => (d.parse::<f64>().ok()?, r.to_string()),
+            None => (0.0, text.trim().to_string()),
+        };
+        let secs = rest.split(':').try_fold(0.0, |acc, part| {
+            part.parse::<f64>().ok().map(|v| acc * 60.0 + v)
+        })?;
+        Some(days * 86400.0 + secs)
+    })();
+    if secs.is_none() {
+        PS_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    secs
 }
 
 pub(crate) fn shift_held_now(keys: &hashbrown::HashSet<KeyCode>) -> bool {
@@ -78,9 +162,6 @@ pub(crate) fn fatal_dialog(title: &str, text: &str) {
     }
 }
 
-/// neoOMSI's own content folder: the folder of the game binary, laid out like an OMSI 2
-/// installation (Vehicles, maps, Sceneryobjects ...). Mods live here; it is searched before
-/// the original installation.
 /// The `Inputs/keyboard.cfg` the game follows: the content folder's once the launcher has
 /// saved key bindings there, else the original installation's (never written) - or, where
 /// that has none, its `keyboard_reset.cfg`, the standard keys OMSI falls back to as well.
@@ -128,9 +209,17 @@ pub(crate) fn own_bindings(root: &Path, modifier: i32) -> std::collections::Hash
         .collect()
 }
 
+/// neoOMSI's content folder, where mods live: next to the game binary if that is writable,
+/// otherwise in the home folder.
 pub(crate) fn content_dir() -> Option<PathBuf> {
     if let Some(d) = ::legacy_config::env::var_os("OMSI_CONTENT") {
-        return Some(PathBuf::from(d));
+        match ::legacy_config::usable_content_folder(Path::new(&d)) {
+            Some(usable) => return Some(usable),
+            None => log::error!(
+                "OMSI_CONTENT {} lies inside the original OMSI 2 installation, which neoOMSI never writes to: the default content folder is used",
+                Path::new(&d).display()
+            ),
+        }
     }
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?.to_path_buf();
@@ -141,7 +230,9 @@ pub(crate) fn content_dir() -> Option<PathBuf> {
         dir
     };
     let cand = ::legacy_config::content_folder_of(&dir);
-    if (cand.exists() || std::fs::create_dir_all(&cand).is_ok()) && ::legacy_config::is_writable(&cand) {
+    if (cand.exists() || std::fs::create_dir_all(&cand).is_ok())
+        && ::legacy_config::is_writable(&cand)
+    {
         Some(cand)
     } else {
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
@@ -191,26 +282,43 @@ pub(crate) fn graphics_instance() -> wgpu::Instance {
         descriptor.backend_options.noop = wgpu::NoopBackendOptions::enabled();
         return wgpu::Instance::new(descriptor);
     }
-    let mut last = None;
+    // (an interface whose only adapter is a software renderer - DirectX 12's "Microsoft
+    // Basic Render Driver" on a chip without a usable DirectX 12 driver - comes after the
+    // others)
+    let (mut software, mut last) = (None, None);
     for b in backend_order() {
         let instance = backend_instance(b);
         let adapters = pollster::block_on(instance.enumerate_adapters(b));
-        if !adapters.is_empty() {
-            log::info!(
-                "graphics: {:?} ({})",
-                b,
-                adapters
-                    .iter()
-                    .map(|a| a.get_info().name)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+        let names = || {
+            adapters
+                .iter()
+                .map(|a| a.get_info().name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        if adapters.iter().any(|a| !is_software(&a.get_info())) {
+            log::info!("graphics: {:?} ({})", b, names());
             return instance;
         }
-        log::info!("graphics: no {b:?} adapter here");
-        last = Some(instance);
+        if adapters.is_empty() {
+            log::info!("graphics: no {b:?} adapter here");
+            last = Some(instance);
+        } else {
+            log::info!("graphics: {b:?} has only a software renderer ({})", names());
+            software.get_or_insert(instance);
+        }
     }
-    last.unwrap_or_else(|| wgpu::Instance::new(descriptor))
+    software
+        .or(last)
+        .unwrap_or_else(|| wgpu::Instance::new(descriptor))
+}
+
+/// A renderer in software on the processor (wgpu calls it a CPU adapter: WARP, llvmpipe,
+/// SwiftShader). It draws a frame every second or so.
+fn is_software(info: &wgpu::AdapterInfo) -> bool {
+    info.device_type == wgpu::DeviceType::Cpu
+        || info.name.contains("Microsoft Basic Render Driver")
+        || info.name.contains("llvmpipe")
 }
 
 /// The graphics interfaces in the order they are tried: Metal on a Mac; on Windows DirectX
@@ -224,12 +332,18 @@ pub(crate) fn backend_order() -> Vec<wgpu::Backends> {
     }
     let wanted = if cfg!(windows)
         && (::config::get_bool("vr", "enabled").unwrap_or(false)
-        || ::legacy_config::env::var_os("OMSI_OPENXR").is_some()) {
+        || ::legacy_config::env::var_os("OMSI_OPENXR").is_some())
+    {
         "dx12".to_owned()
     } else {
         ::legacy_config::env::var("OMSI_BACKEND")
             .ok()
-            .unwrap_or_else(|| ::config::get_string("graphics", "graphics_api").unwrap_or_else(|| "auto".into()).trim().to_ascii_lowercase())
+            .unwrap_or_else(|| {
+                ::config::get_string("graphics", "graphics_api")
+                    .unwrap_or_else(|| "auto".into())
+                    .trim()
+                    .to_ascii_lowercase()
+            })
     };
     let all: Vec<wgpu::Backends> = if cfg!(windows) {
         vec![wgpu::Backends::DX12, wgpu::Backends::VULKAN]
@@ -263,7 +377,7 @@ fn backend_instance(b: wgpu::Backends) -> wgpu::Instance {
 /// Vulkan and DirectX 12, and only when none opens is the game given up, saying so.
 pub(crate) fn window_renderer(
     instance: &mut wgpu::Instance,
-    window: &std::sync::Arc<winit::window::Window>,
+    make_surface: &dyn Fn(&wgpu::Instance) -> Result<wgpu::Surface<'static>, String>,
     options: ::render::RenderOptions,
 ) -> Result<Renderer> {
     let mut failures: Vec<String> = Vec::new();
@@ -273,45 +387,62 @@ pub(crate) fn window_renderer(
     for b in backend_order() {
         candidates.push((Some(b), backend_instance(b)));
     }
-    for (b, inst) in candidates {
-        let surface = match inst.create_surface(window.clone()) {
-            Ok(s) => s,
-            Err(e) => {
-                failures.push(format!(
-                    "{}: no surface ({e})",
-                    b.map(|b| format!("{b:?}"))
-                        .unwrap_or_else(|| "first choice".into())
-                ));
-                continue;
-            }
-        };
-        for adapter in Renderer::adapters_for(&inst, &surface) {
-            let info = adapter.get_info();
-            let what = format!("{} ({:?})", info.name, info.backend);
-            if failures.iter().any(|f| f.starts_with(&what)) {
-                continue;
-            }
-            match ::render::catch(|| {
-                pollster::block_on(Renderer::new_on(adapter, Some(&surface), None, options))
-            }) {
-                Some(Ok(r)) => {
-                    if !failures.is_empty() {
-                        log::warn!(
-                            "graphics: drawing on {what}; before it {}",
-                            failures.join("; ")
-                        );
+    // A software renderer only when no graphics chip opens on any interface: when the chip's
+    // DirectX 12 device could not be opened, DirectX 12's "Microsoft Basic Render Driver" was
+    // the next adapter tried, and the game ran on the processor at a frame a second instead
+    // of on the chip's Vulkan.
+    for software_round in [false, true] {
+        for (b, inst) in &candidates {
+            let surface = match make_surface(inst) {
+                Ok(s) => s,
+                Err(e) => {
+                    let what = format!(
+                        "{}: no surface ({e})",
+                        b.map(|b| format!("{b:?}"))
+                            .unwrap_or_else(|| "first choice".into())
+                    );
+                    if !failures.contains(&what) {
+                        failures.push(what);
                     }
-                    drop(surface);
-                    *instance = inst;
-                    return Ok(r);
+                    continue;
                 }
-                Some(Err(e)) => {
-                    log::warn!("graphics: {what} could not be opened: {e:#}");
-                    failures.push(format!("{what}: {e:#}"));
+            };
+            for adapter in Renderer::adapters_for(inst, &surface) {
+                let info = adapter.get_info();
+                if is_software(&info) != software_round {
+                    continue;
                 }
-                None => {
-                    log::warn!("graphics: {what} failed while being opened");
-                    failures.push(format!("{what}: failed while being opened"));
+                let what = format!("{} ({:?})", info.name, info.backend);
+                if failures.iter().any(|f| f.starts_with(&what)) {
+                    continue;
+                }
+                if software_round {
+                    log::warn!(
+                        "graphics: no graphics chip could be opened; trying the software renderer {what} (a few frames a second at best)"
+                    );
+                }
+                match ::render::catch(|| {
+                    pollster::block_on(Renderer::new_on(adapter, Some(&surface), None, options))
+                }) {
+                    Some(Ok(r)) => {
+                        if !failures.is_empty() {
+                            log::warn!(
+                                "graphics: drawing on {what}; before it {}",
+                                failures.join("; ")
+                            );
+                        }
+                        drop(surface);
+                        *instance = inst.clone();
+                        return Ok(r);
+                    }
+                    Some(Err(e)) => {
+                        log::warn!("graphics: {what} could not be opened: {e:#}");
+                        failures.push(format!("{what}: {e:#}"));
+                    }
+                    None => {
+                        log::warn!("graphics: {what} failed while being opened");
+                        failures.push(format!("{what}: failed while being opened"));
+                    }
                 }
             }
         }
@@ -381,6 +512,40 @@ pub(crate) fn fit_window(
     let ((lw, lh), (x, y)) = fit_rect((w, h), (screen.width as f64, screen.height as f64), scale);
     let at = winit::dpi::PhysicalPosition::new(m.position().x + x, m.position().y + y);
     (winit::dpi::LogicalSize::new(lw, lh), Some(at))
+}
+
+pub(crate) fn triple_monitor_rect(
+    event_loop: &winit::event_loop::ActiveEventLoop,
+) -> Option<(
+    winit::dpi::PhysicalPosition<i32>,
+    winit::dpi::PhysicalSize<u32>,
+)> {
+    let primary = event_loop.primary_monitor()?;
+    let mut monitors: Vec<_> = event_loop.available_monitors().collect();
+    monitors.sort_by_key(|monitor| monitor.position().x);
+    let middle = monitors
+        .iter()
+        .position(|monitor| monitor.position() == primary.position())?;
+    let left = monitors.get(middle.checked_sub(1)?)?;
+    let centre = monitors.get(middle)?;
+    let right = monitors.get(middle + 1)?;
+    let (lp, cp, rp) = (left.position(), centre.position(), right.position());
+    let (ls, cs, rs) = (left.size(), centre.size(), right.size());
+    if lp.y != cp.y
+        || cp.y != rp.y
+        || lp.x + ls.width as i32 != cp.x
+        || cp.x + cs.width as i32 != rp.x
+        || ls.width != cs.width
+        || cs.width != rs.width
+        || ls.height != cs.height
+        || cs.height != rs.height
+    {
+        return None;
+    }
+    Some((
+        lp,
+        winit::dpi::PhysicalSize::new(ls.width + cs.width + rs.width, cs.height),
+    ))
 }
 
 /// `want` points fitted into a screen of `screen` pixels at `scale` (the size kept to 90 %

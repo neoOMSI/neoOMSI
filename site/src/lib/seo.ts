@@ -16,7 +16,7 @@ export interface Meta {
 export const OG_IMAGE = { path: "og.png", width: 1200, height: 630 };
 
 export const DESCRIPTION =
-  "neoOMSI is an open-source reimplementation of OMSI 2 in Rust, targeting OMSI 2.2.032 compatibility on a modern 64-bit engine.";
+  "neoOMSI is a free, open-source reimplementation of OMSI 2 for modern 64-bit systems. It uses maps, buses and other game files from your OMSI 2 installation.";
 
 const ORG = {
   "@type": "Organization",
@@ -46,7 +46,7 @@ const APP = {
   image: absolute(OG_IMAGE.path),
   applicationCategory: "GameApplication",
   applicationSubCategory: "Bus simulator",
-  operatingSystem: "Windows 10, Windows 11, macOS 11, Linux, Android 8.0",
+  operatingSystem: "Windows 10, Windows 11, macOS 11, Linux",
   softwareRequirements: "An installed copy of OMSI 2",
   programmingLanguage: "Rust",
   isAccessibleForFree: true,
@@ -87,42 +87,42 @@ const clip = (text: string, n = 158) =>
 
 const STATIC: Record<string, Omit<Meta, "path">> = {
   "/": {
-    title: "neoOMSI: OMSI 2 reimplemented in Rust",
+    title: "neoOMSI: OMSI 2 rebuilt for modern systems",
     description: DESCRIPTION,
     schema: [APP],
   },
   "/download": {
     title: "Download neoOMSI for Windows, macOS and Linux",
     description:
-      "Download the latest neoOMSI builds for Windows, macOS or Linux, or the dedicated server. Android is supported through local builds. Requires an installed copy of OMSI 2.",
+      "Download neoOMSI for Windows, macOS or Linux, including development builds and dedicated server packages. Requires your own OMSI 2 files.",
     schema: [APP, crumbs(["Download", "/download/"])],
   },
   "/releases": {
     title: "neoOMSI releases and changelog",
     description:
-      "Every neoOMSI release and what changed, newest first, with packaged downloads for Windows, macOS, Linux and the dedicated server.",
+      "All neoOMSI releases and development changelogs, newest first, with packaged downloads for Windows, macOS, Linux and the dedicated server.",
     schema: [crumbs(["Releases", "/releases/"])],
   },
   "/issues": {
     title: "neoOMSI issues: bugs and feature requests",
     description:
-      "Open and closed neoOMSI bug reports and feature requests, tracked on GitHub. See what is being worked on or report a problem with a map, bus or mod.",
+      "Open and closed neoOMSI bug reports and feature requests, tracked on GitHub. See current issues or report a problem with a map, bus or mod.",
     schema: [crumbs(["Issues", "/issues/"])],
   },
   "/faq": {
-    title: "neoOMSI FAQ: OMSI 2 on Mac, Linux and Android, mods and more",
+    title: "neoOMSI FAQ: compatibility, installation and supported systems",
     description:
-      "Answers about neoOMSI: whether you need OMSI 2, playing OMSI 2 on Mac, Linux and Android, mods, multiplayer, memory limits and how neoOMSI differs from openOMSI.",
+      "Answers about neoOMSI: OMSI 2 requirements, map and bus compatibility, supported systems, mods, multiplayer and project status.",
     schema: [faqPage(FAQ), crumbs(["FAQ", "/faq/"])],
   },
   "/openomsi": {
-    title: "neoOMSI vs openOMSI: how the two OMSI 2 recreations compare",
+    title: "neoOMSI and openOMSI: how the two projects compare",
     description:
-      "Compare neoOMSI and openOMSI by project goals, compatibility focus and release model, and see how to switch between them.",
+      "Learn how neoOMSI and openOMSI relate, their shared origins, development processes, and how to test neoOMSI alongside openOMSI.",
     type: "article",
     schema: [
       faqPage(OPENOMSI_FAQ),
-      crumbs(["neoOMSI vs openOMSI", "/openomsi/"]),
+      crumbs(["neoOMSI and openOMSI", "/openomsi/"]),
     ],
   },
 };

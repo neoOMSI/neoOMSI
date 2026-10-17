@@ -107,6 +107,8 @@ pub struct VehicleHost {
     pub snapshot_triggers: hashbrown::HashSet<String>,
     pub fired_trigger_vars: Vec<(String, Vec<f32>)>,
     pub messages: Vec<String>,
+    /// Increments for every `$msg`, including repeated text, so the UI can show each message.
+    pub message_serial: u64,
     /// Fonts registered by `GetFontIndex` (index = position), loaded through `font_lib`.
     pub fonts: FontTable,
     pub font_lib: Option<Arc<Mutex<FontLibrary>>>,
@@ -156,9 +158,18 @@ pub struct VehicleHost {
 pub struct Arrival {
     pub line: String,
     pub terminus: String,
-    /// Seconds until it arrives: its timetable time plus its delay, less the time of day.
-    /// Negative once it is due and not there yet (the stock display shows 0 and blinks).
+    /// Seconds until it leaves (a departure, despite the name; #393). Negative once it is due
+    /// and not there yet (the stock display shows 0 and blinks).
     pub due: f32,
+}
+
+impl Arrival {
+    /// `due` for a bus leaving at `at` (seconds of the day) as of `now`, plus 0.1 s: a display
+    /// adding it to the time of day in single precision shows 15:43 for 15:44:00 sharp. A
+    /// countdown comparing it with whole seconds (`< 30`) so crosses its mark 0.1 s late.
+    pub fn due_at(at: f64, now: f64) -> f32 {
+        (at - now + 0.1) as f32
+    }
 }
 
 /// `STLoadTex`: a destination display loads its bitmap every time it changes, in every bus
@@ -225,6 +236,16 @@ impl VehicleHost {
             self.html_departure_wants.remove(0);
         }
         self.html_departure_wants.push(key);
+    }
+
+    /// No duty: the `GetTT*` callbacks answer ""/0/-1 again, as in Omsi.exe.
+    pub fn clear_timetable(&mut self) {
+        self.tt_line.clear();
+        self.tt_stops.clear();
+        self.tt_stop_ids.clear();
+        self.tt_busstop_index = -1;
+        self.tt_terminus_index = -1;
+        self.tt_delay = 0.0;
     }
 
     pub fn new(clock: SimClock) -> Self {
@@ -646,14 +667,14 @@ impl Host for VehicleHost {
                 // vehicle: the Krüger matrix loads `..\..\Anzeigen\Krueger\<bitmap>`,
                 // which is `Vehicles\Anzeigen\...` seen from `Vehicles\<bus>\Texture`
                 // (and found in whichever content root has it)
-                let mut full = ::legacy_config::resolve_path(
-                    &::legacy_config::resolve_path(&self.content_dir, "Texture"),
+                let mut full = ::mods::resolve_path(
+                    &::mods::resolve_path(&self.content_dir, "Texture"),
                     &path,
                 );
                 // (then the global `Texture` folder, as OMSI looks)
                 if !::legacy_config::vfs::is_file(&full) {
                     if let Some((_, p)) =
-                        ::legacy_config::find_in_roots(&format!("Texture/{}", path.replace('\\', "/")))
+                        ::mods::find_in_roots(&format!("Texture/{}", path.replace('\\', "/")))
                     {
                         full = p;
                     }
@@ -735,7 +756,7 @@ impl Host for VehicleHost {
                     .as_ref()
                     .and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?))
                     .map(|l| l.len() as f32)
-                    .unwrap_or(0.0);
+                    .unwrap_or(-1.0);
                 stacks.push(n);
             }
             "getroutebusstopident" => {
@@ -959,6 +980,7 @@ impl Host for VehicleHost {
     /// AI bus says one per stop, and the list grew all session).
     fn message(&mut self, text: &str) {
         const KEEP: usize = 16;
+        self.message_serial = self.message_serial.wrapping_add(1);
         log::debug!("script message: {text}");
         if self.messages.len() >= KEEP {
             self.messages.remove(0);
@@ -1032,6 +1054,34 @@ mod tests {
             (0, 2, 2, 0)
         );
         assert_eq!(arg_idx(-1.0), usize::MAX);
+    }
+
+    #[test]
+    fn human_count_on_seat_returns_the_current_seat_count() {
+        let p = compile(&CompileInput::default());
+        let mut state = State::new(&p);
+        let mut host = VehicleHost::new(SimClock::default());
+        host.humans_on_seat = vec![0, 2];
+        let mut stacks = Stacks::default();
+        stacks.push(1.0);
+        host.callback("GetHumanCountOnSeat", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop(), 2.0);
+    }
+
+    #[test]
+    fn busstop_count_returns_minus_one_for_invalid_hof_or_route() {
+        let p = compile(&CompileInput::default());
+        let mut state = State::new(&p);
+        let mut host = VehicleHost::new(SimClock::default());
+        let mut stacks = Stacks::default();
+        stacks.push(0.0);
+        host.callback("GetBusstopCount", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop(), -1.0);
+
+        host.hof = Some(Arc::new(Hof::default()));
+        stacks.push(0.0);
+        host.callback("GetBusstopCount", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop(), -1.0);
     }
 
     #[test]
@@ -1159,6 +1209,128 @@ mod tests {
         host.tt_stops.clear();
         assert!(vm.run_trigger(&p, "check", &mut state, &mut host));
         assert_eq!(host.script_textures[0].rgba, vec![255; 4]);
+    }
+
+    #[test]
+    fn tt_callbacks_answer_nothing_once_the_timetable_is_cleared() {
+        let dir =
+            std::env::temp_dir().join(format!("omsi_host_tt_clear_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("tt.osc");
+        std::fs::write(
+            &script,
+            concat!(
+                "{trigger:read}\n",
+                "(M.V.GetTTLineString) (S.$.line)\n",
+                "0 (M.V.GetTTBusstopName) (S.$.stop)\n",
+                "(M.V.GetTTBusstopCount) (S.L.count)\n",
+                "(M.V.GetTTDelay) (S.L.delay)\n",
+                "(M.V.GetTTBusstopIndex) (S.L.index)\n",
+                "(M.V.GetTTTerminusIndex) (S.L.terminus)\n",
+                "0 (M.V.GetTTBusstopDep) (S.L.dep)\n",
+                "{end}\n",
+            ),
+        )
+        .unwrap();
+        let vars = dir.join("vars.txt");
+        std::fs::write(&vars, "count\ndelay\nindex\nterminus\ndep\n").unwrap();
+        let strings = dir.join("strings.txt");
+        std::fs::write(&strings, "line\nstop\n").unwrap();
+        let p = compile(&CompileInput {
+            varlists: vec![vars],
+            stringvarlists: vec![strings],
+            scripts: vec![script],
+            ..Default::default()
+        });
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut host = VehicleHost::new(SimClock::default());
+        host.tt_line = "100".into();
+        host.tt_stops = vec![("A".into(), 10.0, 20.0), ("B".into(), 30.0, 40.0)];
+        host.tt_stop_ids = vec![1, 2];
+        host.tt_busstop_index = 1;
+        host.tt_terminus_index = 2;
+        host.tt_delay = 42.0;
+        let mut st = State::new(&p);
+        let mut vm = Vm::new();
+        let read = |vm: &mut Vm, st: &mut State, host: &mut VehicleHost| {
+            assert!(vm.run_trigger(&p, "read", st, host));
+            let s = |n| st.str_vars[p.str_var(n).unwrap() as usize].clone();
+            let v = |n| st.get(p.var(n).unwrap());
+            (
+                s("line"),
+                s("stop"),
+                [v("count"), v("delay"), v("index"), v("terminus"), v("dep")],
+            )
+        };
+        assert_eq!(
+            read(&mut vm, &mut st, &mut host),
+            ("100".into(), "A".into(), [2.0, 42.0, 1.0, 2.0, 20.0])
+        );
+        host.clear_timetable();
+        assert!(host.tt_stop_ids.is_empty());
+        assert_eq!(
+            read(&mut vm, &mut st, &mut host),
+            (String::new(), String::new(), [0.0, 0.0, -1.0, -1.0, 0.0])
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// #393: a clock display (like Gerolstein's DFI) shows a departure on the full minute as
+    /// that minute, not the one before.
+    #[test]
+    fn a_clock_display_shows_a_departure_on_the_minute() {
+        let dir =
+            std::env::temp_dir().join(format!("omsi_host_arrival_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("dfi.osc");
+        std::fs::write(
+            &script,
+            concat!(
+                "{trigger:read}\n",
+                "(L.S.Time) 0 (M.V.GetArrBusTimeDiff) + 3600 / s0 trunc s1 \"02\" $IntToStrEnh ",
+                "l0 l1 - 60 * \"02\" $IntToStrEnh $+ (S.$.hhmm)\n",
+                "{end}\n",
+            ),
+        )
+        .unwrap();
+        let strings = dir.join("strings.txt");
+        std::fs::write(&strings, "hhmm\n").unwrap();
+        let p = compile(&CompileInput {
+            stringvarlists: vec![strings],
+            scripts: vec![script],
+            ..Default::default()
+        });
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut st = State::new(&p);
+        let mut vm = Vm::new();
+        let mut shown = |now: f64, at: f64| {
+            let mut host = VehicleHost::new(SimClock {
+                time: now,
+                ..Default::default()
+            });
+            host.arrivals = vec![Arrival {
+                due: Arrival::due_at(at, now),
+                ..Default::default()
+            }];
+            assert!(vm.run_trigger(&p, "read", &mut st, &mut host));
+            st.str_vars[p.str_var("hhmm").unwrap() as usize].clone()
+        };
+        let hm = |h: f64, m: f64| h * 3600.0 + m * 60.0;
+        for now in [
+            hm(15.0, 30.0),
+            hm(15.0, 30.0) + 17.3,
+            hm(15.0, 31.0) + 0.002,
+        ] {
+            assert_eq!(shown(now, hm(15.0, 44.0)), "1544");
+            assert_eq!(shown(now, hm(16.0, 17.0)), "1617");
+            assert_eq!(shown(now, hm(15.0, 34.0)), "1534");
+            assert_eq!(shown(now, hm(15.0, 43.0)), "1543");
+            // still this minute
+            assert_eq!(shown(now, hm(15.0, 43.0) + 59.5), "1543");
+        }
+        // single precision is coarsest late in the day
+        assert_eq!(shown(hm(23.0, 50.0) + 0.37, hm(23.0, 59.0)), "2359");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// The engine part of the stock SD200/SD202/NL202 collision block: a rear hit low down

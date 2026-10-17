@@ -44,7 +44,6 @@ pub struct Renderer {
     pub(crate) cloud_detail_view: wgpu::TextureView,
     pub(crate) cloud_sampler: wgpu::Sampler,
     pub(crate) sky_mesh: (wgpu::Buffer, wgpu::Buffer, u32),
-    pub(crate) overlay_pipeline: wgpu::RenderPipeline,
     pub(crate) overlay_layout: wgpu::BindGroupLayout,
     pub(crate) sampler: wgpu::Sampler,
     pub(crate) camera_buf: wgpu::Buffer,
@@ -53,7 +52,7 @@ pub struct Renderer {
     pub(crate) flat_normal_texture: GpuTexture,
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) depth: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
-    pub(crate) msaa_targets: HashMap<(u32, u32), (wgpu::TextureView, wgpu::TextureView)>,
+    pub(crate) msaa_targets: HashMap<(u32, u32), (Option<wgpu::TextureView>, wgpu::TextureView)>,
     pub(crate) ao: Option<AoTargets>,
     pub(crate) ao_sampler: wgpu::Sampler,
     pub(crate) ao_layout: wgpu::BindGroupLayout,
@@ -98,6 +97,8 @@ pub struct Renderer {
     pub(crate) last_frame: Option<std::time::Instant>,
     pub instant_exposure: bool,
     pub(crate) overlay_pipeline_1x: wgpu::RenderPipeline,
+    /// The frosted backdrops of overlays, made when one is first wanted.
+    pub(crate) frost: Option<Frost>,
     pub(crate) xr_ui_pipeline: wgpu::RenderPipeline,
     pub(crate) started: std::time::Instant,
     pub(crate) clamp_sampler: wgpu::Sampler,
@@ -108,7 +109,13 @@ pub struct Renderer {
     pub(crate) lm_atlas_view: wgpu::TextureView,
     pub(crate) lm_uniform: wgpu::Buffer,
     pub(crate) lm_place: std::cell::Cell<(f64, f64, f64)>,
+    /// The cover map (`set_cover_map`).
+    pub(crate) cover_buf: wgpu::Buffer,
+    /// Its corner (world x, y), cell size and corner slot.
+    pub(crate) cover_place: std::cell::Cell<Option<(f64, f64, f32, (u32, u32))>>,
     pub(crate) mip_pipeline: wgpu::RenderPipeline,
+    /// The mip levels of the bus's own text and script textures (`mip.wgsl` `fs_plain`).
+    pub(crate) mip_plain_pipeline: wgpu::RenderPipeline,
     pub(crate) mip_layout: wgpu::BindGroupLayout,
     pub(crate) mip_sampler: wgpu::Sampler,
     pub(crate) gpu_error: Arc<std::sync::atomic::AtomicBool>,
@@ -118,12 +125,14 @@ pub struct Renderer {
     pub(crate) upscale_pipeline: wgpu::RenderPipeline,
     pub(crate) copy_pipeline: wgpu::RenderPipeline,
     pub(crate) glass_snapshot_pipeline: wgpu::RenderPipeline,
-    pub(crate) glass_picture_format: wgpu::TextureFormat,
+    pub(crate) glass_snapshot_layout: wgpu::BindGroupLayout,
     pub(crate) upscale_layout: wgpu::BindGroupLayout,
     pub(crate) upscale_buf: wgpu::Buffer,
     pub(crate) scale_targets: HashMap<(u32, u32), (wgpu::TextureView, wgpu::BindGroup)>,
     pub(crate) glass_picture: Option<wgpu::TextureView>,
-    pub(crate) glass_snapshot_source: Option<(wgpu::TextureView, wgpu::BindGroup)>,
+    pub(crate) glass_depth: Option<wgpu::TextureView>,
+    pub(crate) glass_snapshot_source:
+        Option<(wgpu::TextureView, wgpu::TextureView, wgpu::BindGroup)>,
     pub(crate) target_use: HashMap<(u32, u32), std::time::Instant>,
     pub(crate) dynamic_scale: std::cell::Cell<f32>,
     pub(crate) flicker: std::cell::RefCell<HashMap<usize, bool>>,
@@ -141,10 +150,24 @@ pub struct Renderer {
     pub counts: std::cell::RefCell<std::collections::BTreeMap<&'static str, f64>>,
     pub(crate) profiling: bool,
     pub(crate) draw_audit_at: std::time::Instant,
-    pub(crate) encoding_pool: Option<rayon::ThreadPool>,
+    pub(crate) encoding_pool: Option<Arc<rayon::ThreadPool>>,
+    /// Encoders left for `present` to finish and submit on the submit thread, in the order
+    /// they are submitted (the navigator's, the mirrors', the window picture's).
+    pub(crate) queued: std::cell::RefCell<Vec<wgpu::CommandEncoder>>,
+    pub(crate) defer_next: std::cell::Cell<bool>,
+    pub(crate) defer_views: std::cell::Cell<bool>,
+    pub(crate) uploads: std::cell::RefCell<Uploads>,
     pub(crate) _device_poller: Option<DevicePoller>,
-    pub(crate) pending_meshes: std::cell::RefCell<Vec<(MeshId, Vec<Vertex>)>>,
+    pub(crate) pending_meshes: std::cell::RefCell<hashbrown::HashMap<MeshId, Vec<Vertex>>>,
+    /// The window's main-pass bundles as last recorded (see `record_bundles`).
+    pub(crate) main_bundles: std::cell::RefCell<KeptBundles>,
+    /// The vertex lists of meshes sent, kept for the next frame's `update_mesh`.
+    pub(crate) spare_vertices: std::cell::RefCell<Vec<Vec<Vertex>>>,
     pub(crate) freed: std::cell::OnceCell<Freed>,
+    /// Meshes share pages of buffers (`MeshPage`): the adapter draws with a base vertex.
+    pub(crate) mesh_pages: bool,
+    // (last: dropped after the rest, once the thread has submitted everything)
+    pub(crate) submitter: Option<Submitter>,
 }
 
 impl Renderer {
@@ -164,6 +187,36 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+            ],
+        })
+    }
+
+    /// The glass snapshot's sources: the scene's picture and its depth prepass.
+    pub(crate) fn glass_snapshot_group(
+        &self,
+        view: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glass snapshot"),
+            layout: &self.glass_snapshot_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.upscale_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(depth),
                 },
             ],
         })

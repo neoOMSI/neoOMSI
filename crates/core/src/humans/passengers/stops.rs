@@ -6,6 +6,10 @@ use hashbrown::{HashMap, HashSet};
 use ::render::{Renderer, Scene};
 use ::simulation::traffic::Network;
 
+/// Passengers give the driver adequate warning without changing the much shorter range
+/// used for stop service and alighting.
+const BELL_RANGE: f64 = 180.0;
+
 /// A waiting place of a stop (a `[passpos]` of an object near it, sub_620c0c).
 #[derive(Debug, Clone)]
 pub(in crate::humans) struct WaitSpot {
@@ -18,6 +22,11 @@ pub(in crate::humans) struct WaitSpot {
 }
 
 impl WaitSpot {
+    /// The floor beneath this place. A seated `[passpos]` gives the person's hip height.
+    pub fn floor(&self) -> f64 {
+        self.pos.z - self.height as f64
+    }
+
     /// Put the feet ahead of the seated hip, using the selected human's geometry.
     pub fn foot_root(&self, front: f32, floor: f64) -> DVec3 {
         let yaw = self.face.to_radians();
@@ -66,18 +75,110 @@ pub(in crate::humans) struct PaxStop {
     /// stop name and the termini of the buses that go there.
     pub dests: Vec<(String, f32)>,
     pub lines: Vec<(String, HashSet<String>)>,
+    pub line_deadlines: Vec<f64>,
 }
 
 impl PaxStop {
     /// Whether a destination or a terminus `name` is this stop: its label, or its name in
     /// the timetable.
     pub(in crate::humans) fn is_named(&self, name: &str) -> bool {
-        let name = name.trim();
-        name == self.name.trim() || (!self.alias.is_empty() && name == self.alias.trim())
+        terminus_matches(name, &self.name)
+            || (!self.alias.is_empty() && terminus_matches(name, &self.alias))
+    }
+}
+
+/// Does a selected HOF terminus name identify this timetable destination?
+///
+/// A timetable normally uses the stop's plain name, whereas many UK HOFs prefix the
+/// texture identifier with the line (for example, `402 Apsley Station` or `B2 Apsley
+/// Bus Station`).  That prefix is presentation data, not part of the destination.  Keep
+/// ordinary destination comparisons exact, but also accept that one well-defined HOF
+/// spelling so a correctly programmed bus is not mistaken for a different service.
+pub(in crate::humans) fn terminus_matches(hof_name: &str, timetable_name: &str) -> bool {
+    let hof_name = hof_name.trim();
+    let timetable_name = timetable_name.trim();
+    if hof_name == timetable_name {
+        return true;
+    }
+    let Some((prefix, rest)) = hof_name.split_once(char::is_whitespace) else {
+        return false;
+    };
+    let is_line = !prefix.is_empty()
+        && prefix.chars().all(|c| c.is_ascii_alphanumeric())
+        && prefix.chars().any(|c| c.is_ascii_digit());
+    is_line && rest.trim() == timetable_name
+}
+
+fn destination_weights(world: &World, lines: &[(String, HashSet<String>)]) -> Vec<(String, f32)> {
+    let weights: Vec<f32> = lines
+        .iter()
+        .map(|(name, _)| {
+            world
+                .bus_stops
+                .lock()
+                .iter()
+                .find(|stop| stop.3.trim() == name.trim())
+                .map(|stop| world.stop_exit_weight(stop.0))
+                .unwrap_or(0.5)
+        })
+        .collect();
+    let total: f32 = weights.iter().sum();
+    if total > 0.0 {
+        lines
+            .iter()
+            .zip(weights)
+            .map(|((name, _), weight)| (name.clone(), weight / total))
+            .collect()
+    } else {
+        Vec::new()
     }
 }
 
 impl Humans {
+    /// Refresh the destinations that are relevant to passengers right now.
+    ///
+    /// The timetable only decides where people can travel. The normal stop-density and
+    /// physical-place limit still decide how many can wait, with no allocation per bus.
+    pub(crate) fn set_timetable_targets(
+        &mut self,
+        world: &World,
+        targets: HashMap<i64, Vec<crate::schedule::PassengerTarget>>,
+        names: HashMap<i64, String>,
+    ) {
+        if self.passenger_targets.as_ref() == Some(&targets) && self.stop_names.as_ref() == Some(&names) {
+            return;
+        }
+        self.passenger_targets = Some(targets);
+        self.stop_names = Some(names);
+        let lines_by_stop: HashMap<i64, Vec<(String, HashSet<String>)>> = self.passenger_targets.as_ref()
+            .unwrap()
+            .iter()
+            .map(|(id, targets)| (*id, targets.iter().map(|target| {
+                (target.destination.clone(), target.termini.clone())
+            }).collect()))
+            .collect();
+        self.stop_targets = Some(lines_by_stop);
+        let ids: Vec<i64> = self.stops.keys().copied().collect();
+        for id in ids {
+            let targets = self.passenger_targets.as_ref()
+                .and_then(|targets| targets.get(&id))
+                .cloned()
+                .unwrap_or_default();
+            let lines: Vec<(String, HashSet<String>)> = targets.iter()
+                .map(|target| (target.destination.clone(), target.termini.clone()))
+                .collect();
+            let dests = destination_weights(world, &lines);
+            let stop = self.stops.get_mut(&id).unwrap();
+            stop.alias = self.stop_names.as_ref()
+                .and_then(|names| names.get(&id))
+                .cloned()
+                .unwrap_or_else(|| id.to_string());
+            stop.lines = lines;
+            stop.line_deadlines = targets.iter().map(|target| target.deadline).collect();
+            stop.dests = dests;
+        }
+    }
+
     /// A stop as Omsi.exe sets it up (sub_620058, sub_620c0c, sub_61c604): its waiting
     /// places are the `[passpos]` of every object near it - within 10 m to the platform's
     /// side and from 10 m behind to the stop's length ahead of it -, the gather point a
@@ -166,34 +267,30 @@ impl Humans {
         let (enter_max, enter_min) = world.stop_enter(id);
         // the destinations: the stops the trips from here go on to, as likely as people
         // get off there; each with the termini of the buses that go there
-        let lines: Vec<(String, HashSet<String>)> = self
-            .stop_targets
+        let (lines, line_deadlines) = self
+            .passenger_targets
             .as_ref()
-            .and_then(|m| m.get(&id))
-            .cloned()
-            .unwrap_or_default();
-        let weights: Vec<f32> = lines
-            .iter()
-            .map(|(n, _)| {
-                world
-                    .bus_stops
-                    .lock()
-                    .iter()
-                    .find(|s| s.3.trim() == n.trim())
-                    .map(|s| world.stop_exit_weight(s.0))
-                    .unwrap_or(0.5)
+            .and_then(|targets| targets.get(&id))
+            .map(|targets| {
+                (
+                    targets
+                        .iter()
+                        .map(|target| (target.destination.clone(), target.termini.clone()))
+                        .collect(),
+                    targets.iter().map(|target| target.deadline).collect(),
+                )
             })
-            .collect();
-        let total: f32 = weights.iter().sum();
-        let dests: Vec<(String, f32)> = if total > 0.0 {
-            lines
-                .iter()
-                .zip(&weights)
-                .map(|((n, _), w)| (n.clone(), w / total))
-                .collect()
-        } else {
-            Vec::new()
-        };
+            .unwrap_or_else(|| {
+                (
+                    self.stop_targets
+                        .as_ref()
+                        .and_then(|targets| targets.get(&id))
+                        .cloned()
+                        .unwrap_or_default(),
+                    Vec::new(),
+                )
+            });
+        let dests = destination_weights(world, &lines);
         if debug_pax() {
             log::info!(
                 "stop {id} '{name}' at ({:.1}, {:.1}, {:.2}) heading {heading:.0}: {} waiting places, length {length}, side {side}, {} destinations",
@@ -231,6 +328,7 @@ impl Humans {
             buses: Vec::new(),
             dests,
             lines,
+            line_deadlines,
         }
     }
 
@@ -325,17 +423,41 @@ impl Humans {
                 };
                 s.factor = (r * 2.0 - 1.0) * k + 1.0;
             }
-            let count = self
-                .people
-                .iter()
-                .filter(|p| matches!(&p.state, State::Pax(x) if x.stop == Some(id)))
-                .count()
-                + self.network.handed.iter().filter(|h| h.0 == id).count();
+            // Retire expired timetable passengers and count the remaining ones in one pass.
+            // This runs for every nearby stop every frame, so a separate count scan is costly.
+            let mut count = 0;
+            for index in (0..self.people.len()).rev() {
+                let (at_stop, expired) = match &self.people[index].state {
+                    State::Pax(pax) if pax.stop == Some(id) => (
+                        true,
+                        pax.inside.is_none()
+                            && pax.journey.service_deadline.is_some_and(|deadline| self.time_of_day >= deadline)
+                            && matches!(pax.task, Task::WalkingToBusstop | Task::WaitingForBus),
+                    ),
+                    _ => (false, false),
+                };
+                if expired {
+                    self.release(index);
+                    let passenger = self.people.swap_remove(index);
+                    self.retire(&passenger);
+                } else if at_stop {
+                    count += 1;
+                }
+            }
+            let count = count + self.network.handed.iter().filter(|h| h.0 == id).count();
             let want = {
                 let s = &self.stops[&id];
                 let mean = (s.enter_max + s.enter_min) / 2.0;
                 let w = (self.density.max(0.0) * mean * s.factor).round().max(0.0) as usize;
-                forced.unwrap_or(w).min(s.spots.len())
+                let wanted = forced.unwrap_or(w).min(s.spots.len());
+                // A timetable stop only gains passengers when a compatible service is
+                // actually due. Its normal crowd cap is otherwise unchanged.
+                if self.passenger_targets.is_some() && s.lines.is_empty()
+                {
+                    0
+                } else {
+                    wanted
+                }
             };
             let s = self.stops.get_mut(&id).unwrap();
             s.want = want;
@@ -394,6 +516,14 @@ impl Humans {
         scene: &mut Scene,
         id: i64,
     ) -> Option<usize> {
+        let ours = self
+            .people
+            .iter()
+            .filter(|p| !p.remote && p.puppet.is_none())
+            .count();
+        if ours >= super::super::MAX_PEOPLE {
+            return None;
+        }
         let k = self.take_spot(id, None)?;
         let sp = self.stops[&id].spots[k].clone();
         let (dest, line) = self.draw_dest(id);
@@ -405,6 +535,12 @@ impl Humans {
         pax.yaw = sp.face.to_radians();
         pax.journey.dest = dest;
         pax.journey.line = line;
+        pax.journey.service_deadline = line
+            .and_then(|index| self.stops.get(&id).and_then(|stop| stop.line_deadlines.get(index)))
+            .copied();
+        pax.journey.allowed_termini = line
+            .and_then(|index| self.stops.get(&id).and_then(|stop| stop.lines.get(index)))
+            .map(|(_, termini)| termini.clone());
         pax.movement = Movement::Standing;
         if self.ik {
             let near = sp.pos.z - sp.height as f64;
@@ -472,20 +608,34 @@ impl Humans {
             let mut reg = BusAtStops::default();
             let mut nearest = f64::INFINITY;
             let mut nearest_at = f64::INFINITY;
+            let mut nearest_approaching = f64::INFINITY;
             reg.all_exit = bn.out_of_service;
             for id in &ids {
                 let s = &self.stops[id];
                 let d = bn.pos - s.pos;
                 let dist = d.length();
+                let sh = s.heading.to_radians();
+                let s_fwd = DVec2::new(sh.sin(), sh.cos());
+                let same_way = bn.fwd().dot(s_fwd) > 0.0;
+                // `d` points from the stop to the bus, so its forward component is negative
+                // while that stop lies ahead. A small allowance keeps the request on while
+                // the front of the bus is passing the marker.
+                let ahead = -d.truncate().dot(bn.fwd());
+                if same_way
+                    && ahead >= -5.0
+                    && dist < BELL_RANGE
+                    && dist < nearest_approaching
+                {
+                    reg.approaching = Some(*id);
+                    nearest_approaching = dist;
+                }
                 if !(dist < 60.0) {
                     continue;
                 }
-                let sh = s.heading.to_radians();
                 let (s_fwd, s_right) = (
-                    DVec2::new(sh.sin(), sh.cos()),
+                    s_fwd,
                     DVec2::new(sh.cos(), -sh.sin()),
                 );
-                let same_way = bn.fwd().dot(s_fwd) > 0.0;
                 reg.near.push(*id);
                 if same_way && dist < nearest {
                     reg.next = Some(*id);
@@ -502,17 +652,15 @@ impl Humans {
                         nearest_at = dist;
                         reg.at = Some(*id);
                     }
-                    if !bn.out_of_service && !bn.terminus.as_ref().is_some_and(|t| s.is_named(t)) {
+                    let ends_here = bn.ends_at(s);
+                    // any box it stands in: another stop may be nearer (#206)
+                    if in_box && ends_here {
+                        reg.all_exit = true;
+                    }
+                    if !bn.out_of_service && !ends_here {
                         self.stops.get_mut(id).unwrap().buses.push((bn.id, in_box));
                     }
                 }
-            }
-            if reg.at.is_some_and(|s| {
-                bn.terminus
-                    .as_ref()
-                    .is_some_and(|t| self.stops[&s].is_named(t))
-            }) {
-                reg.all_exit = true;
             }
             out.insert(bn.id, reg);
         }
@@ -546,8 +694,7 @@ impl Humans {
                     if bn.cabin.entries.is_empty() {
                         continue;
                     }
-                    let Some(t) = &bn.terminus else { continue };
-                    if !termini.contains(t.trim()) {
+                    if !termini.iter().any(|name| bn.serves_terminus(name)) {
                         continue;
                     }
                     let d = (bn.pos - self.people[i].position).length();

@@ -9,8 +9,13 @@ use ::model::TextTexture;
 use std::path::Path;
 use std::sync::Arc;
 
+/// A decoded font bitmap: width, height, RGBA8.
+type Bitmap = (u32, u32, Arc<[u8]>);
+
 pub struct FontLibrary {
     atlases: HashMap<String, Option<Arc<FontAtlas>>>,
+    /// The bitmaps by file: GPM's AS114 fonts draw a dozen sizes from one 2048x2048 picture.
+    bitmaps: HashMap<std::path::PathBuf, Option<Bitmap>>,
     root: std::path::PathBuf,
     /// Every `[newfont]` of every content root's `Fonts/*.oft`, in lookup order; read once.
     index: Option<Vec<Font>>,
@@ -62,6 +67,7 @@ impl FontLibrary {
     pub fn new(root: &Path) -> FontLibrary {
         FontLibrary {
             atlases: HashMap::new(),
+            bitmaps: HashMap::new(),
             root: root.to_path_buf(),
             index: None,
         }
@@ -73,7 +79,7 @@ impl FontLibrary {
             // the installation): a mod's display fonts live in the content folder, and looking
             // only in the installation's `Fonts` left the O530's number plate, matrix and
             // dashboard displays empty. A file of the same name higher up replaces the stock one.
-            let mut files = ::legacy_config::read_dir_merged("Fonts");
+            let mut files = ::mods::read_dir_merged("Fonts");
             if files.is_empty() {
                 files = ::legacy_config::vfs::read_dir_paths(&self.root.join("Fonts"));
             }
@@ -203,6 +209,17 @@ impl FontLibrary {
         })
     }
 
+    fn bitmap(
+        &mut self,
+        path: &Path,
+        decode: &dyn Fn(&Path) -> Option<(u32, u32, Vec<u8>)>,
+    ) -> Option<Bitmap> {
+        self.bitmaps
+            .entry(path.to_path_buf())
+            .or_insert_with(|| decode(path).map(|(w, h, rgba)| (w, h, rgba.into())))
+            .clone()
+    }
+
     /// Fonts are looked up by their `[newfont]` name across all `Fonts/*.oft` files of every
     /// content root (installed mods first, then the installation): a mod's display fonts
     /// live in the content folder, and looking only in the installation's `Fonts` left the
@@ -224,13 +241,13 @@ impl FontLibrary {
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| self.root.join("Fonts"));
-            let alpha_path = ::legacy_config::resolve_path(&fonts_dir, &f.alpha);
-            let color_path = ::legacy_config::resolve_path(&fonts_dir, &f.bitmap);
-            let (aw, ah, alpha) = decode(&alpha_path)?;
+            let alpha_path = ::mods::resolve_path(&fonts_dir, &f.alpha);
+            let color_path = ::mods::resolve_path(&fonts_dir, &f.bitmap);
+            let (aw, ah, alpha) = self.bitmap(&alpha_path, decode)?;
             let color = if color_path == alpha_path {
                 alpha.clone()
             } else {
-                decode(&color_path)
+                self.bitmap(&color_path, decode)
                     .map(|(_, _, c)| c)
                     .unwrap_or_else(|| alpha.clone())
             };
@@ -311,5 +328,29 @@ mod tests {
         assert_eq!(family_of("churafont++ 14x10"), "churafont++ 14x10");
         assert_eq!(family_of("Bold"), "bold");
         assert_eq!(family_of("LEERFELD"), "leerfeld");
+    }
+
+    #[test]
+    fn fonts_of_one_bitmap_decode_it_once() {
+        let dir = std::env::temp_dir().join(format!("omsi_font_bitmaps_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Fonts")).unwrap();
+        let font =
+            |name: &str| format!("[newfont]\r\n{name}\r\narial.bmp\r\narial.bmp\r\n8\r\n1\r\n\r\n");
+        std::fs::write(
+            dir.join("Fonts/arial.oft"),
+            font("arial12") + &font("arial24"),
+        )
+        .unwrap();
+        let mut lib = FontLibrary::new(&dir);
+        let decodes = std::cell::Cell::new(0);
+        let decode = |_: &Path| {
+            decodes.set(decodes.get() + 1);
+            Some((2, 2, vec![255; 16]))
+        };
+        let a = lib.get("arial12", &decode).expect("arial12");
+        let b = lib.get("arial24", &decode).expect("arial24");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(decodes.get(), 1);
+        assert!(Arc::ptr_eq(&a.alpha, &b.alpha) && Arc::ptr_eq(&a.color, &a.alpha));
     }
 }

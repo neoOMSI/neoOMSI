@@ -79,6 +79,9 @@ pub struct BusService {
     /// The timetable still carries the route on as tiles bring their lanes: at the end of
     /// what it has, it waits for more.
     pub route_open: bool,
+    /// A train on a track of its own: its trip ends at the track's end, not at its last
+    /// station (#342).
+    pub to_track_end: bool,
     /// The terminus of its trip, the name the waiting people read off it (Omsi.exe's bus
     /// +0x7bc) to see whether it goes their way.
     pub terminus: String,
@@ -92,6 +95,8 @@ pub struct BusService {
     /// more than `EARLY_STOP_SHORT` early (`schedule::TripTimes::kinds`).
     pub always: Vec<i64>,
     pub serve_early: Vec<i64>,
+    /// It waits at its last station for the profile's departure there, however long (#101).
+    pub stand_at_end: bool,
 }
 
 /// The side the bus pulls out towards: left (1) from a bay on the right, else right (2).
@@ -162,12 +167,14 @@ impl BusService {
             delay: 0.0,
             layover: false,
             route_open: false,
+            to_track_end: false,
             terminus: String::new(),
             near_d: f32::INFINITY,
             serve: None,
             last_stop: None,
             always: Vec::new(),
             serve_early: Vec::new(),
+            stand_at_end: false,
         }
     }
 
@@ -239,12 +246,16 @@ impl BusService {
     /// ones its timetable says it always serves, and any stop it would reach more than
     /// `EARLY_STOP` early (`EARLY_STOP_SHORT` at a stop marked for it).
     fn must_serve(&self, stop: &Stop, day_time: f64) -> bool {
-        let last = (self.stops.len() == 1 && !self.route_open) || self.last_stop == Some(stop.id);
+        let last = self.is_last(stop);
         let early = stop.depart - day_time;
         last || self.layover
             || early > EARLY_STOP
             || self.always.contains(&stop.id)
             || (early > EARLY_STOP_SHORT && self.serve_early.contains(&stop.id))
+    }
+
+    fn is_last(&self, stop: &Stop) -> bool {
+        (self.stops.len() == 1 && !self.route_open) || self.last_stop == Some(stop.id)
     }
 
     /// Arrived at the front stop: what now.
@@ -258,7 +269,15 @@ impl BusService {
             );
         }
         let layover = std::mem::take(&mut self.layover);
-        let limit = if layover { LAYOVER_WAIT } else { EARLY_WAIT };
+        // (a loop line's first stop has the last one's id)
+        let stand = self.stand_at_end && self.stops.len() == 1 && self.is_last(&self.stops[0]);
+        let limit = if stand {
+            f64::INFINITY
+        } else if layover {
+            LAYOVER_WAIT
+        } else {
+            EARLY_WAIT
+        };
         let wait = (depart - ctx.day_time).clamp(0.0, limit);
         self.leave_at = ctx.day_time + wait;
         self.boarding = boarding_time(ctx.id);
@@ -295,7 +314,7 @@ impl BusService {
         self.serve = None;
         crate::traffic::ibis_to_next_stop(vehicle, self.stops.len());
         let air = ctx.net.lanes[st.lane].kind == LaneKind::Air;
-        if self.stops.is_empty() && !self.route_open && !air {
+        if self.stops.is_empty() && !self.route_open && !self.to_track_end && !air {
             self.set_phase(Phase::TripDone);
             st.signal = 0;
             st.signal_time = 0.0;
@@ -569,6 +588,45 @@ mod tests {
         assert!(s.must_serve(&stop(2, 200.0), 170.0));
     }
 
+    /// #101: Städtedreieck's light detector buses stand at their last stop for hours.
+    #[test]
+    fn a_bus_stands_at_its_last_stop_until_its_departure_there() {
+        let net = Network::default();
+        let ctx = Ctx {
+            net: &net,
+            way: &[],
+            day_time: 1000.0,
+            dt: 0.1,
+            id: 1,
+            stopped: 0.0,
+            passing: false,
+            kerb_swerve: None,
+            wanted: None,
+            debug: false,
+        };
+        let stop = |id: i64, depart: f64| Stop::from_tuple((0, 0.0, 0.0, depart, id, 0.0));
+        for stand_at_end in [false, true] {
+            let mut s = BusService::new(vec![stop(1, 15_400.0)]);
+            s.last_stop = Some(1);
+            s.stand_at_end = stand_at_end;
+            s.arrive(&ctx, 15_400.0, (0, 0.0));
+            let leave = if stand_at_end {
+                15_400.0
+            } else {
+                1000.0 + EARLY_WAIT
+            };
+            assert_eq!(s.leave_at, leave, "stand_at_end {stand_at_end}");
+        }
+        // not before the last stop, nor at a loop line's first
+        for last in [2, 1] {
+            let mut s = BusService::new(vec![stop(1, 15_400.0), stop(2, 16_000.0)]);
+            s.last_stop = Some(last);
+            s.stand_at_end = true;
+            s.arrive(&ctx, 15_400.0, (0, 0.0));
+            assert_eq!(s.leave_at, 1000.0 + EARLY_WAIT, "last stop {last}");
+        }
+    }
+
     fn boarding_until_closed(in_doorway: impl Fn(f32) -> bool) -> f32 {
         let dir = std::env::temp_dir().join(format!(
             "omsi-dwell-{}-{:?}",
@@ -626,6 +684,54 @@ mod tests {
         let closed = boarding_until_closed(|t| t < crossing_until);
         assert!(closed >= crossing_until, "{closed}");
         assert!(closed <= crossing_until + 2.5 + 0.2, "{closed}");
+    }
+
+    /// A bus's trip ends at its last stop; a train on a track of its own drives on (#342).
+    #[test]
+    fn a_train_drives_on_past_its_last_stop_to_the_end_of_its_track() {
+        let dir = std::env::temp_dir().join(format!("omsi-track-end-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("train.ovh"), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        let ty = std::sync::Arc::new(
+            ::simulation::VehicleType::load(&dir, &dir.join("train.ovh")).unwrap(),
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        let mut vehicle =
+            VehicleInstance::new(ty, ::simulation::VehicleHost::new(Default::default()));
+        let mut net = Network::default();
+        net.lanes.push(::simulation::traffic::LaneBuilder::polyline(
+            vec![
+                glam::DVec3::new(0.0, 0.0, 0.0),
+                glam::DVec3::new(0.0, 300.0, 0.0),
+            ],
+            LaneKind::Rail,
+            2.5,
+        ));
+        for to_track_end in [false, true] {
+            let mut st = AiState::new(0, 150.0, 1);
+            let mut s = BusService::new(vec![Stop::from_tuple((0, 150.0, 0.0, 0.0, 1, 0.0))]);
+            s.to_track_end = to_track_end;
+            // the doors have closed at its last stop
+            s.phase = Phase::Closing;
+            s.phase_t = CLOSE_MAX;
+            let ctx = Ctx {
+                net: &net,
+                way: &[],
+                day_time: 0.0,
+                dt: 0.1,
+                id: 1,
+                stopped: 0.0,
+                passing: false,
+                kerb_swerve: None,
+                wanted: None,
+                debug: false,
+            };
+            s.step(&mut st, &mut vehicle, &ctx);
+            assert!(s.stops.is_empty());
+            assert_eq!(s.trip_done(), !to_track_end, "to_track_end {to_track_end}");
+            assert_eq!(s.phase == Phase::Running, to_track_end);
+        }
     }
 
     #[test]

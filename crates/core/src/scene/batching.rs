@@ -1,8 +1,7 @@
 use super::*;
 
-/// Short static spline segments with matching materials share a mesh within a 48 m cell.
-/// Their coordinates, material order, terrain mapping and shadow flag stay intact; long segments retain
-/// their own culling bounds. The original meshes remain in the staging/collision data.
+pub(super) const SPLINE_CELL: f32 = 150.0;
+
 pub(super) fn batch_static_splines(
     splines: Vec<(Arc<MeshData>, Arc<SplineType>, bool, DVec3)>,
 ) -> Vec<(Arc<MeshData>, Arc<SplineType>, bool, DVec3)> {
@@ -15,6 +14,9 @@ pub(super) fn batch_static_splines(
     let mut type_materials = HashMap::new();
     let material_batching = ::legacy_config::env::var_os("OMSI_NO_MATERIAL_SPLINE_BATCHING").is_none();
     for (mesh, ty, casts, sort_origin) in splines {
+        let mesh = ::geometry::group_spline_ranges(&ty.def, &mesh)
+            .map(Arc::new)
+            .unwrap_or(mesh);
         let (lo, hi) = mesh.positions.iter().fold(
             (
                 glam::Vec3::splat(f32::INFINITY),
@@ -30,7 +32,7 @@ pub(super) fn batch_static_splines(
                 .get(r.2 as usize)
                 .is_some_and(|t| t.alpha >= 2)
         });
-        let short = !blended && centre.is_finite() && (hi - lo).length() <= 48.0;
+        let short = !blended && centre.is_finite() && (hi - lo).length() <= SPLINE_CELL;
         let group = if short {
             let slots: Vec<_> = mesh.ranges.iter().map(|r| r.2).collect();
             // UV generation is already complete. Only the textures of the remaining
@@ -64,8 +66,8 @@ pub(super) fn batch_static_splines(
             };
             let key = (
                 material_type,
-                (centre.x / 48.0).floor() as i32,
-                (centre.y / 48.0).floor() as i32,
+                (centre.x / SPLINE_CELL).floor() as i32,
+                (centre.y / SPLINE_CELL).floor() as i32,
                 casts,
                 mesh.one_sided,
                 slots,
@@ -216,6 +218,12 @@ pub(super) fn terrain_ground(
         ground.ranges.push((0, n, 0));
     }
     ground
+}
+
+/// Trees use positive heading on fixed crossed cards, opposite to scenery objects.
+pub(super) fn tree_transform(heading: f64, width: f64, height: f64) -> Mat4 {
+    Mat4::from_rotation_z(heading.to_radians() as f32)
+        * Mat4::from_scale(glam::Vec3::new(width as f32, width as f32, height as f32))
 }
 
 /// Two crossed unit quads (1 m wide, 1 m tall, centred at x=0, standing on z=0).

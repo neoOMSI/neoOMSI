@@ -52,22 +52,22 @@ fn main() {
         .filter(|s| !s.starts_with("--"))
         .map(|s| s.to_ascii_lowercase());
     let quiet = a.iter().any(|s| s == "--quiet");
-    ::legacy_config::add_content_root(content.clone());
+    ::mods::add_content_root(content.clone());
     let archives = content.join("Archives");
     if archives.is_dir() {
-        for z in ::legacy_config::vfs::mount_dir_zips(&archives) {
-            ::legacy_config::add_content_root(z);
+        for z in ::mods::mount_dir_zips(&archives) {
+            ::mods::add_content_root(z);
         }
     }
     let orig = original_root();
     if let Some(o) = &orig {
-        ::legacy_config::add_content_root(o.clone());
+        ::mods::add_content_root(o.clone());
     }
     let root = orig.clone().unwrap_or(content.clone());
     // every .bus / .ovh of every root's Vehicles folder, the first root's copy of a name
     let mut buses: Vec<PathBuf> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for vdir in ::legacy_config::content_dirs("Vehicles") {
+    for vdir in ::mods::content_dirs("Vehicles") {
         for pack in ::legacy_config::vfs::read_dir_paths(&vdir) {
             if !::legacy_config::vfs::is_dir(&pack) {
                 continue;
@@ -161,10 +161,10 @@ fn main() {
                             let n = n.to_ascii_lowercase();
                             (n.contains("bat") || n.contains("akku"))
                                 && (n.contains("volt")
-                                    || n.contains("spannung")
-                                    || n.contains("charge")
-                                    || n.contains("ladung")
-                                    || n.ends_with("_u"))
+                                || n.contains("spannung")
+                                || n.contains("charge")
+                                || n.contains("ladung")
+                                || n.ends_with("_u"))
                         })
                         .collect();
                 let snap = |v: &::simulation::VehicleInstance| {
@@ -179,7 +179,7 @@ fn main() {
                     v.update(1.0 / 30.0);
                     if died.is_none()
                         && (!::simulation::startup::power_on(&v)
-                            || !::simulation::startup::engine_running(&v))
+                        || !::simulation::startup::engine_running(&v))
                     {
                         died = Some(k as f32 / 30.0);
                     }

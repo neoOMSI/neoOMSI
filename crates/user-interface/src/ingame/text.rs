@@ -26,13 +26,7 @@ impl TextCache {
         px: u32,
         color: [u8; 4],
     ) -> Label {
-        let color = if self.alpha < 1.0 {
-            let k = (self.alpha * 6.0).round() / 6.0;
-            let l = |from: u8, to: u8| (from as f32 + (to as f32 - from as f32) * k).round() as u8;
-            [l(14, color[0]), l(16, color[1]), l(20, color[2]), color[3]]
-        } else {
-            color
-        };
+        let color = self.faded(color);
         let color = [
             color[0],
             color[1],
@@ -55,6 +49,48 @@ impl TextCache {
         };
         self.labels.insert(key, l);
         l
+    }
+
+    fn faded(&self, color: [u8; 4]) -> [u8; 4] {
+        if self.alpha >= 1.0 {
+            return color;
+        }
+        let k = (self.alpha * 6.0).round() / 6.0;
+        let l = |from: u8, to: u8| (from as f32 + (to as f32 - from as f32) * k).round() as u8;
+        [l(14, color[0]), l(16, color[1]), l(20, color[2]), color[3]]
+    }
+
+    pub(super) fn icon(
+        &mut self,
+        r: &Renderer,
+        scene: &mut Scene,
+        name: &str,
+        px: u32,
+        color: [u8; 4],
+    ) -> Option<Label> {
+        let c = self.faded(color);
+        let key = (format!("\u{0}icon:{name}"), px, [c[0], c[1], c[2], 0]);
+        if let Some(l) = self.labels.get_mut(&key) {
+            l.used = self.frame;
+            return Some(*l);
+        }
+        let mask = crate::icons::rasterize(name, px)?;
+        let rgba = mask.iter().flat_map(|&a| [c[0], c[1], c[2], a]).collect();
+        let img = ::texture::Image {
+            width: px,
+            height: px,
+            rgba,
+            has_alpha: true,
+        };
+        let tex = r.add_texture(scene, &img, false);
+        let l = Label {
+            tex,
+            w: px,
+            h: px,
+            used: self.frame,
+        };
+        self.labels.insert(key, l);
+        Some(l)
     }
 
     /// Text width in pixels, without rendering it.
@@ -230,27 +266,49 @@ pub(super) fn render_text(
     }
 }
 
-/// `text` broken into lines of at most `width` pixels, between words.
+/// `text` broken into lines of at most `width` pixels, between words. A word wider than a line,
+/// like a file path, is broken with [`break_at`].
 pub(super) fn wrap(tc: &TextCache, text: &str, px: f32, width: f32) -> Vec<String> {
     let mut out = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let try_line = if line.is_empty() {
-            word.to_string()
-        } else {
-            format!("{line} {word}")
-        };
-        if tc.width(&try_line, px) > width && !line.is_empty() {
+        if !line.is_empty() {
+            let try_line = format!("{line} {word}");
+            if tc.width(&try_line, px) <= width {
+                line = try_line;
+                continue;
+            }
             out.push(std::mem::take(&mut line));
-            line = word.to_string();
-        } else {
-            line = try_line;
         }
+        let mut rest = word;
+        while tc.width_raw(rest, px) > width {
+            let cut = break_at(tc, rest, px, width);
+            out.push(rest[..cut].to_string());
+            rest = &rest[cut..];
+        }
+        line = rest.to_string();
     }
     if !line.is_empty() {
         out.push(line);
     }
     out
+}
+
+/// Where to break `word`, which is wider than `width` pixels: after the last folder separator
+/// that fits, else after as many characters as fit (one at least).
+fn break_at(tc: &TextCache, word: &str, px: f32, width: f32) -> usize {
+    let char_ends: Vec<usize> = word.char_indices().map(|(i, c)| i + c.len_utf8()).collect();
+    let (mut lo, mut hi) = (0, char_ends.len() - 1);
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        if tc.width_raw(&word[..char_ends[mid]], px) <= width {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let fits = char_ends[lo];
+    word[..fits].rfind(['/', '\\']).map_or(fits, |at| at + 1)
 }
 
 /// `text` cut at the end to fit `width` pixels ("…").

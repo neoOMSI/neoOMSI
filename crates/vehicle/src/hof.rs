@@ -245,7 +245,7 @@ impl Hof {
 pub fn depot_files(dir: &Path) -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     let mut files: Vec<PathBuf> = Vec::new();
-    for d in ::legacy_config::mirrored_dirs(dir) {
+    for d in ::mods::mirrored_dirs(dir) {
         for p in ::legacy_config::vfs::read_dir_paths(&d) {
             if !p
                 .extension()
@@ -330,7 +330,7 @@ pub fn depot_anywhere(name: &str) -> Option<Hof> {
         return path.and_then(|p| Hof::load(&p).ok());
     }
     // every vehicle folder once over all roots (depot_in looks at each root's copy)
-    let mut dirs: Vec<PathBuf> = ::legacy_config::read_dir_merged("Vehicles")
+    let mut dirs: Vec<PathBuf> = ::mods::read_dir_merged("Vehicles")
         .into_iter()
         .filter(|d| ::legacy_config::vfs::is_dir(d))
         .collect();

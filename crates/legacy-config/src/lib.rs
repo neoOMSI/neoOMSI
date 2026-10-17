@@ -30,7 +30,7 @@ pub mod number;
 pub mod vfs;
 pub use install_search::find_original_install;
 pub use number::{parse_f32, parse_f64, parse_i32, parse_i64};
-pub use vfs::{add_content_zip, mount_zip};
+pub use vfs::mount_zip;
 
 /// Decode raw file bytes with OMSI's encoding rules.
 pub fn decode_text(bytes: &[u8]) -> String {
@@ -258,6 +258,14 @@ impl<'a> CfgReader<'a> {
         self.block_line
     }
 
+    /// The line immediately before the current block.
+    pub fn line_before_block(&self) -> Option<&'a str> {
+        self.block_line
+            .checked_sub(2)
+            .and_then(|i| self.file.lines.get(i))
+            .map(String::as_str)
+    }
+
     pub fn seek(&mut self, pos: usize) {
         self.pos = pos.min(self.file.lines.len());
     }
@@ -369,9 +377,9 @@ impl<'a> CfgReader<'a> {
             let l = self.file.lines[self.pos].trim();
             let whole = !l.is_empty()
                 && l.strip_prefix('-')
-                    .unwrap_or(l)
-                    .chars()
-                    .all(|c| c.is_ascii_digit());
+                .unwrap_or(l)
+                .chars()
+                .all(|c| c.is_ascii_digit());
             if !whole || keyword_with(self.file.lines[self.pos].as_str(), self.rule).is_some() {
                 break;
             }
@@ -468,7 +476,7 @@ pub fn windows_components(rel: &str) -> Vec<&str> {
     let n = parts.len();
     let mut out = Vec::with_capacity(n);
     for (i, c) in parts.into_iter().enumerate() {
-        if c.is_empty() || c == "." {
+        if c.is_empty() || c == "." || c.contains([':', '\0']) {
             continue;
         }
         if c == ".." {
@@ -491,7 +499,7 @@ pub fn windows_components(rel: &str) -> Vec<&str> {
 
 /// How names compare, as on Windows: without regard to case (letters beyond ASCII too -
 /// `Bahnübergang` is `BAHNÜBERGANG`).
-fn name_key(name: &str) -> String {
+pub fn name_key(name: &str) -> String {
     if name.is_ascii() {
         name.to_ascii_lowercase()
     } else {
@@ -550,7 +558,7 @@ fn dir_listing(dir: &Path) -> Listing {
 
 /// The entry of `dir` that `name` means: the same name without regard to case, or one of
 /// its other spellings (a name beyond ASCII read in another code page on the way).
-fn find_in_dir(dir: &Path, name: &str) -> Option<std::ffi::OsString> {
+pub fn find_in_dir(dir: &Path, name: &str) -> Option<std::ffi::OsString> {
     let listing = dir_listing(dir);
     if let Some(n) = listing.get(&name_key(name)) {
         return Some(n.clone());
@@ -560,353 +568,33 @@ fn find_in_dir(dir: &Path, name: &str) -> Option<std::ffi::OsString> {
         .find_map(|v| listing.get(&name_key(v)).cloned())
 }
 
-/// Content roots, highest priority first: the game's own content folder next to its
-/// binary (where mods are installed) and the OMSI 2 installation. A path asked for
-/// relative to a folder of one root is looked for at the same place under the others,
-/// so a mod's `Vehicles\\Foo\\foo.bus` or a replacement texture is found as if it had
-/// been copied into the original installation.
-static CONTENT_ROOTS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-/// Register a content root. Roots are searched in the order they were added.
-pub fn add_content_root(root: PathBuf) {
-    let mut r = CONTENT_ROOTS.lock().unwrap();
-    if !r.iter().any(|x| x == &root) {
-        r.push(root);
-        drop(r);
-        content_changed();
-    }
-}
-
-/// Register a content root to be searched just before `before` (at the end when `before`
-/// is not a root): an archive installed while the launcher runs goes in front of the
-/// OMSI installation, where the game will have it on its next start.
-pub fn add_content_root_before(root: PathBuf, before: &Path) {
-    let mut r = CONTENT_ROOTS.lock().unwrap();
-    if r.iter().any(|x| x == &root) {
-        return;
-    }
-    match r.iter().position(|x| x == before) {
-        Some(i) => r.insert(i, root),
-        None => r.push(root),
-    }
-    drop(r);
-    content_changed();
-}
-
-/// Register a content root searched before every other one (the content a LAN host sent
-/// for the session: its files are the host's versions, and must win).
-pub fn add_content_root_first(root: PathBuf) {
-    let mut r = CONTENT_ROOTS.lock().unwrap();
-    r.retain(|x| x != &root);
-    r.insert(0, root);
-    drop(r);
-    content_changed();
-}
-
-/// Take a content root away again (a LAN session's content, when the session ends).
-pub fn remove_content_root(root: &Path) {
-    CONTENT_ROOTS.lock().unwrap().retain(|x| x != root);
-    content_changed();
-}
-
-static SANDBOX_ROOTS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-/// Mark a content root as a sandbox: content received from another machine. It is read as
-/// data (maps, vehicles, objects) like any other root, but nothing that runs code comes from
-/// it - no plugins are loaded from a sandbox.
-pub fn mark_sandbox(root: PathBuf) {
-    let mut r = SANDBOX_ROOTS.lock().unwrap();
-    if !r.contains(&root) {
-        r.push(root);
-    }
-}
-
-/// Does `path` lie in a sandbox root (see [`mark_sandbox`])?
-pub fn is_sandbox(path: &Path) -> bool {
-    SANDBOX_ROOTS
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|r| path.starts_with(r))
-}
-
-/// The first content root (in the order they are searched) that has `rel`, and the file
-/// or folder found there (case-insensitive, as Windows reads the folder).
-pub fn find_in_roots(rel: &str) -> Option<(PathBuf, PathBuf)> {
-    let comps = windows_components(rel);
-    content_roots()
-        .into_iter()
-        .find_map(|r| resolve_existing(&r, &comps).map(|p| (r, p)))
-}
-
-pub fn content_roots() -> Vec<PathBuf> {
-    CONTENT_ROOTS.lock().unwrap().clone()
-}
-
-/// Every content root's copy of the folder `dir` (which lies under one of the roots) that
-/// exists, highest priority first; just `dir` when it is under no root. A mod that adds
-/// files to a stock folder (a repaint's `.cti` next to the original ones) puts them into
-/// the same folder under the content folder (or an archive in `<content>/Archives`), and a
-/// listing must see both.
-pub fn mirrored_dirs(dir: &Path) -> Vec<PathBuf> {
-    let roots = content_roots();
-    let Some(suffix) = owner_root(dir, &roots).and_then(|r| dir.strip_prefix(r).ok()) else {
-        return vec![dir.to_path_buf()];
-    };
-    // a real folder: its names as they are
-    let rel: Vec<String> = suffix
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    let rel: Vec<&str> = rel.iter().map(|s| s.as_str()).collect();
-    let mut out: Vec<PathBuf> = Vec::new();
-    for r in &roots {
-        let found = if rel.is_empty() {
-            Some(r.clone())
-        } else {
-            resolve_existing(r, &rel)
-        };
-        if let Some(p) = found.filter(|p| vfs::is_dir(p)) {
-            if !out.contains(&p) {
-                out.push(p);
-            }
-        }
-    }
-    if out.is_empty() {
-        out.push(dir.to_path_buf());
-    }
-    out
-}
-
-/// The content root `path` belongs to: the deepest one that contains it. An archive
-/// mounted from `<content>/Archives` lies inside the content folder, and a path inside the
-/// archive is the archive's, not the content folder's.
-fn owner_root<'a>(path: &Path, roots: &'a [PathBuf]) -> Option<&'a PathBuf> {
-    roots
-        .iter()
-        .filter(|r| path.starts_with(r))
-        .max_by_key(|r| r.components().count())
-}
-
-/// The same relative location of `base` under `root` (None if `base` belongs to `root`
-/// itself, or to no root at all).
-fn mirrored_base(base: &Path, root: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
-    let owner = owner_root(base, roots)?;
-    if owner == root {
-        return None;
-    }
-    base.strip_prefix(owner)
-        .ok()
-        .map(|suffix| root.join(suffix))
-}
-
 /// Case-insensitive walk of the components `rel` from `base` using the cached directory
 /// listings only; None as soon as a component does not exist.
-fn resolve_existing(base: &Path, rel: &[&str]) -> Option<PathBuf> {
+pub fn resolve_existing(base: &Path, rel: &[&str]) -> Option<PathBuf> {
+    resolve_existing_with(base, rel, &|_| true)
+}
+
+/// Like [`resolve_existing`]; a `..` only goes up from a folder `can_pop` allows.
+pub fn resolve_existing_with(
+    base: &Path,
+    rel: &[&str],
+    can_pop: &dyn Fn(&Path) -> bool,
+) -> Option<PathBuf> {
     let mut cur = base.to_path_buf();
     for comp in rel {
         if comp.is_empty() || *comp == "." {
             continue;
         }
         if *comp == ".." {
-            cur.pop();
+            if can_pop(&cur) {
+                cur.pop();
+            }
             continue;
         }
         let found = find_in_dir(&cur, comp).map(|n| cur.join(n))?;
         cur = found;
     }
     Some(cur)
-}
-
-/// The vehicle pack (`Vehicles/<folder>`, relative to its root) that `rel` from `base` lands
-/// in, when it does: the files of one vehicle refer to each other relative to its folder.
-fn vehicle_package(base: &Path, owner: &Path, rel: &[&str]) -> Option<String> {
-    let suffix = base.strip_prefix(owner).ok()?;
-    let mut parts: Vec<String> = suffix
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
-    for comp in rel {
-        if *comp == ".." {
-            parts.pop();
-        } else {
-            parts.push(comp.to_string());
-        }
-    }
-    if parts.len() >= 3 && parts[0].eq_ignore_ascii_case("Vehicles") {
-        Some(format!("Vehicles/{}", parts[1]))
-    } else {
-        None
-    }
-}
-
-/// The vehicle definitions (`.bus`, `.ovh`, `.zug`) lying directly in a pack folder.
-fn package_definitions(root: &Path, package: &str) -> std::collections::HashSet<String> {
-    let comps: Vec<&str> = package.split('/').collect();
-    let Some(dir) = resolve_existing(root, &comps) else {
-        return Default::default();
-    };
-    vfs::list_dir(&dir)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, is_dir)| !is_dir)
-        .map(|(n, _)| name_key(&n.to_string_lossy()))
-        .filter(|n| n.ends_with(".bus") || n.ends_with(".ovh") || n.ends_with(".zug"))
-        .collect()
-}
-
-/// Whether the copy of vehicle pack `package` under the higher-priority root `over` patches
-/// the one under `owner` (the root the vehicle was loaded from), i.e. its files replace
-/// the owner's the way files copied over an installation would.
-///
-/// That holds for a patch (no vehicle definitions of its own, or only ones the owner's pack
-/// has as well). A pack with vehicles the owner's copy does not know is another *version*
-/// of the pack - a map archive bundles its own Citaro Facelift next to the one installed
-/// in the content folder, with scripts, varlists and constfiles that belong together - and
-/// taking single files from it broke the bus it did not come from (the Ahlheim Citaro's
-/// VDV and IBIS scripts ran on the installed pack's varlists, missing half their
-/// variables, and every display stayed dark). Such a copy is only asked for files the
-/// owner's pack does not have.
-fn overlays_package(over: &Path, owner: &Path, package: &str) -> bool {
-    type Key = (PathBuf, PathBuf, String);
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Key, bool>>> =
-        std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(Default::default);
-    let key = (
-        over.to_path_buf(),
-        owner.to_path_buf(),
-        package.to_ascii_lowercase(),
-    );
-    if let Some(v) = cache.lock().unwrap().get(&key) {
-        return *v;
-    }
-    // (a root without the pack at all is only where the lookup starts: `--bus` is resolved
-    // from the installation's root)
-    let comps: Vec<&str> = package.split('/').collect();
-    let owner_has = resolve_existing(owner, &comps)
-        .map(|d| vfs::is_dir(&d))
-        .unwrap_or(false);
-    let theirs = package_definitions(over, package);
-    let ok =
-        !owner_has || theirs.is_empty() || theirs.is_subset(&package_definitions(owner, package));
-    cache.lock().unwrap().insert(key, ok);
-    ok
-}
-
-/// The vehicle pack a missing file belongs to, when that whole pack is installed in no
-/// content root: a mod that borrows parts from another (the Ahlheim Citaro's Faremaster
-/// ticket machine and dashboard come from `Vehicles/Urbino_II`) is missing them because the
-/// other pack is not installed, not because of a broken path, and the player can fix that.
-pub fn missing_vehicle_pack(path: &Path) -> Option<String> {
-    let roots = content_roots();
-    let owner = owner_root(path, &roots)?.clone();
-    let suffix = path.strip_prefix(&owner).ok()?;
-    let mut comps = suffix.components().filter_map(|c| match c {
-        std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
-        _ => None,
-    });
-    let first = comps.next()?;
-    let pack = comps.next()?;
-    if !first.eq_ignore_ascii_case("Vehicles") || comps.next().is_none() {
-        return None;
-    }
-    let installed = roots.iter().any(|r| {
-        resolve_existing(r, &["Vehicles", pack.as_str()])
-            .map(|d| vfs::is_dir(&d))
-            .unwrap_or(false)
-    });
-    (!installed).then_some(pack)
-}
-
-/// Every content root's version of a folder given relative to a root (existing ones only),
-/// highest priority first - for listing maps, vehicles, weathers across the installation
-/// and the installed mods.
-pub fn content_dirs(rel: &str) -> Vec<PathBuf> {
-    let rel = windows_components(rel);
-    content_roots()
-        .iter()
-        .filter_map(|r| resolve_existing(r, &rel))
-        .filter(|p| vfs::is_dir(p))
-        .collect()
-}
-
-/// Directory entries of `rel` (relative to a content root) merged over all roots; an
-/// entry of a higher-priority root hides the same name lower down.
-pub fn read_dir_merged(rel: &str) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for d in content_dirs(rel) {
-        for (name, _) in vfs::list_dir(&d).unwrap_or_default() {
-            if seen.insert(name_key(&name.to_string_lossy())) {
-                out.push(d.join(name));
-            }
-        }
-    }
-    out
-}
-
-/// The file a content file names (`rel`, relative to the folder `base`), found the way
-/// Windows finds it: see [`windows_components`] for the spelling rules, names compare without
-/// regard to case, and a mod's copy under a content root of higher priority comes first.
-pub fn resolve_path(base: &Path, rel: &str) -> PathBuf {
-    let rel = windows_components(rel);
-    let rel = rel.as_slice();
-    // a mod's copy first: the same place under a content root of higher priority than the
-    // one `base` belongs to
-    let roots = content_roots();
-    let owner = if roots.len() > 1 {
-        owner_root(base, &roots).cloned()
-    } else {
-        None
-    };
-    if let Some(owner) = &owner {
-        let package = vehicle_package(base, owner, rel);
-        for r in roots.iter().take_while(|r| *r != owner) {
-            // another version of the same vehicle pack does not patch this one (see
-            // `overlays_package`); it is only asked below, for what this one lacks
-            if let Some(pkg) = &package {
-                if !overlays_package(r, owner, pkg) {
-                    continue;
-                }
-            }
-            if let Some(mb) = mirrored_base(base, r, &roots) {
-                if let Some(p) = resolve_existing(&mb, rel) {
-                    return p;
-                }
-            }
-        }
-    }
-    let mut cur = base.to_path_buf();
-    for comp in rel {
-        if *comp == ".." {
-            cur.pop();
-            continue;
-        }
-        let direct = cur.join(comp);
-        if vfs::exists(&direct) {
-            cur = direct;
-            continue;
-        }
-        // case-insensitive lookup through a per-directory listing kept from the first
-        // time (scanning the folder afresh for every miss made texture lookups crawl)
-        let found = find_in_dir(&cur, comp).map(|n| cur.join(n));
-        cur = found.unwrap_or(direct);
-    }
-    if let (Some(owner), false) = (&owner, vfs::exists(&cur)) {
-        // not in `base`'s root either: another root may still have it - a lower-priority
-        // one, or another version of the pack that was passed over above
-        for r in roots.iter().filter(|r| *r != owner) {
-            if let Some(mb) = mirrored_base(base, r, &roots) {
-                if let Some(p) = resolve_existing(&mb, rel) {
-                    return p;
-                }
-            }
-        }
-    }
-    cur
 }
 
 /// What an installation of the original OMSI 2 must have for neoOMSI to run on it: the
@@ -939,6 +627,11 @@ pub fn original_keyboard_cfg(root: &Path) -> PathBuf {
     resolve_existing(root, &["Inputs", "keyboard.cfg"])
         .or_else(|| resolve_existing(root, &["Inputs", "keyboard_reset.cfg"]))
         .unwrap_or_else(|| root.join("Inputs").join("keyboard.cfg"))
+}
+
+pub fn original_gamectrler_cfg(root: &Path) -> PathBuf {
+    resolve_existing(root, &["Inputs", "gamectrler.cfg"])
+        .unwrap_or_else(|| root.join("Inputs").join("gamectrler.cfg"))
 }
 
 /// The essentials (see [`ORIGINAL_ESSENTIALS`]) that `root` lacks; empty for a complete
@@ -989,6 +682,11 @@ pub const CONTENT_FOLDERS: &[&str] = &[
     "Sound",
 ];
 
+/// Whether `name` is one of [`CONTENT_FOLDERS`], ignoring case.
+pub fn is_content_folder(name: &str) -> bool {
+    CONTENT_FOLDERS.iter().any(|folder| folder.eq_ignore_ascii_case(name))
+}
+
 /// Marker file of an neoOMSI content folder (so it is never mistaken for the OMSI 2
 /// installation itself).
 pub const CONTENT_MARKER: &str = ".neocontent";
@@ -1027,6 +725,23 @@ pub fn content_folder_of(dir: &Path) -> PathBuf {
     }
 }
 
+/// `None` when `dir` lies inside an OMSI 2 installation, which neoOMSI never writes to.
+pub fn usable_content_folder(dir: &Path) -> Option<PathBuf> {
+    let dir = content_folder_of(dir);
+    let is_omsi = |path: &Path| {
+        resolve_existing(path, &["Omsi.exe"]).is_some() && resolve_existing(path, &["maps"]).is_some()
+    };
+    let inside_original = dir.ancestors().skip(1).any(|ancestor| {
+        is_omsi(ancestor)
+            && dir
+                .strip_prefix(ancestor)
+                .ok()
+                .and_then(|rel| rel.components().next())
+                .is_some_and(|first| !first.as_os_str().eq_ignore_ascii_case("neoOMSI"))
+    });
+    (!inside_original).then_some(dir)
+}
+
 /// Check if a directory is writable by attempting to create and remove a probe file.
 pub fn is_writable(dir: &Path) -> bool {
     let probe = dir.join(".neoomsi-write-test");
@@ -1038,30 +753,33 @@ pub fn is_writable(dir: &Path) -> bool {
 /// Create the content folder layout at `dir` (idempotent).
 pub fn ensure_content_layout(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    for f in CONTENT_FOLDERS {
-        std::fs::create_dir_all(dir.join(f))?;
+    // Older versions called it `Mods`, which is a different folder on a case-sensitive disk.
+    let old = dir.join("Mods");
+    if old.is_dir() && !dir.join("mods").exists() {
+        std::fs::rename(&old, dir.join("mods"))?;
     }
-    std::fs::create_dir_all(dir.join("Mods"))?;
-    let marker = dir.join(CONTENT_MARKER);
-    if !marker.exists() {
-        std::fs::write(
-            &marker,
-            "This folder holds neoOMSI's own content and installed mods, laid out like the original game.\nDrop a mod folder or zip into Mods/ and the launcher sorts it into place.\n",
-        )?;
-    }
-    let readme = dir.join("Mods").join("README.txt");
-    if !readme.exists() {
-        std::fs::write(
-            &readme,
-            "Put a mod here (a folder or a .zip) and start the launcher: it works out what the mod is\n(a bus, a map, scenery objects, splines, textures, fonts ...) and sorts it into the folders\nnext to this one. The original OMSI 2 folder is never written to.\n",
-        )?;
-    }
+    std::fs::create_dir_all(dir.join("mods"))?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_content_folder_never_lies_in_the_original_game() {
+        let omsi = std::env::temp_dir().join(format!("legacy-config-omsi-{}", std::process::id()));
+        std::fs::create_dir_all(omsi.join("maps")).unwrap();
+        std::fs::create_dir_all(omsi.join("Vehicles/Bus")).unwrap();
+        std::fs::write(omsi.join("Omsi.exe"), b"").unwrap();
+        assert_eq!(usable_content_folder(&omsi), Some(omsi.join("neoOMSI")));
+        assert_eq!(usable_content_folder(&omsi.join("neoOMSI")), Some(omsi.join("neoOMSI")));
+        assert_eq!(usable_content_folder(&omsi.join("Vehicles/Bus")), None);
+        assert_eq!(usable_content_folder(&omsi.join("mods")), None);
+        let elsewhere = std::env::temp_dir().join("neoomsi-content-elsewhere");
+        assert_eq!(usable_content_folder(&elsewhere), Some(elsewhere.clone()));
+        std::fs::remove_dir_all(&omsi).ok();
+    }
 
     #[test]
     fn writable_check() {
@@ -1199,21 +917,6 @@ mod tests {
             vec!["str_gehweg02.bmp"]
         );
         assert_eq!(windows_components(""), Vec::<&str>::new());
-        let dir = std::env::temp_dir().join(format!("legacy-config-paths-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("Texture").join("Bahn\u{fc}bergang")).unwrap();
-        std::fs::write(
-            dir.join("Texture")
-                .join("Bahn\u{fc}bergang")
-                .join("anz-oben.jpg"),
-            b"x",
-        )
-        .unwrap();
-        let p = resolve_path(
-            &dir.join("model"),
-            "..\\TEXTURE.\\BAHN\u{dc}BERGANG/Anz-Oben.JPG. ",
-        );
-        assert!(vfs::is_file(&p), "{}", p.display());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

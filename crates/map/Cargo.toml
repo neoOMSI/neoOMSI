@@ -7,5 +7,7 @@ description = "Map loading: global.cfg, tiles, terrain, calendar, AI lists, chro
 
 [dependencies]
 legacy-config = { path = "../legacy-config" }
+mods = { path = "../mods" }
 log.workspace = true
 thiserror.workspace = true
+unicode-normalization = "0.1"

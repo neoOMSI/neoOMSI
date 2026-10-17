@@ -74,10 +74,11 @@ export async function releases() {
 }
 
 export async function latestRelease(): Promise<Release | null> {
-  const stable = (await releases())
-    .filter((release) => !release.prerelease)
-    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
-  return stable[0] ?? null;
+  const ordered = (await releases()).sort(
+    (a, b) => Date.parse(b.published_at) - Date.parse(a.published_at),
+  );
+  // Match the download page: prefer Stable when available, otherwise use the latest build.
+  return ordered.find((release) => !release.prerelease) ?? ordered[0] ?? null;
 }
 
 export const version = (release: Release) => release.tag_name.replace(/^v/, "");

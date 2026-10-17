@@ -193,6 +193,15 @@ impl ObjectType {
             .filter(|s| s.blocks)
     }
 
+    /// The type's solid shape when it keeps the weather off what is under it.
+    pub fn shelter_shape(&self) -> Option<&crate::camera_arm::BlockerShape> {
+        Some(
+            self.camera
+                .get_or_init(|| crate::camera_arm::classify(self)),
+        )
+            .filter(|s| s.shelters)
+    }
+
     /// (definition, pivot) per loaded mesh, for the scenery script runtime.
     pub fn mesh_defs(&self) -> Vec<(&MeshDef, Mat4)> {
         self.mesh_def_index
@@ -229,6 +238,14 @@ pub struct ScriptedObject {
     /// `[htmltexture]` pages shown on the object: (script texture index, texture). The
     /// pages themselves are `inst.html_textures`.
     pub htmls: Vec<(usize, TextureId)>,
+    /// Previous dynamic texture selection, to skip unchanged work.
+    pub last_tex_selection: Option<Vec<usize>>,
+    /// Dynamic material overrides by (instance, slot) from dynamic_texture_variant.
+    pub dynamic_materials: HashMap<(usize, usize), Vec<MaterialId>>,
+    /// Coronas switched by a script variable, and that variable.
+    pub coronas: Vec<(::render::Corona, String)>,
+    /// Current brightness of each corona.
+    pub lit: Vec<f32>,
 }
 
 /// Where a ray lands on a page (`[htmltexture]`) of a scenery object: see
@@ -253,7 +270,7 @@ pub struct StopBoards {
     /// the scenery scripts then keep their own).
     pub clock: Option<::simulation::SimClock>,
     /// Per bus stop (map object id): the buses due, soonest first, as (line, terminus,
-    /// expected arrival in seconds of the day).
+    /// expected departure in seconds of the day).
     pub by_stop: HashMap<i64, Vec<(String, String, f64)>>,
     /// The stops whose displays asked in the last scenery update.
     pub wanted: Vec<i64>,
@@ -293,6 +310,8 @@ pub struct LightObject {
     /// Shared by the copies of the lamp list (the loaded tiles' lists are copied into
     /// `World::light_objects` whenever a tile comes or goes), so that it keeps its state.
     pub script: Option<Arc<Mutex<::simulation::scenery::SceneryInstance>>>,
+    /// Texts the lamp's script writes; shared like `script`.
+    pub texts: Arc<Mutex<Vec<(TextureId, ::simulation::texttex::TextTextureState)>>>,
     /// `[light_enh_2]` coronas switched by a lamp variable, and that variable.
     pub coronas: Vec<(::render::Corona, String)>,
     /// Per corona the mesh its light belongs to and the light's place and direction in the
@@ -309,6 +328,9 @@ pub struct LightObject {
     /// once the listener is near (shared by the copies of the list, like `script`).
     pub sound: Option<PathBuf>,
     pub sounds: Arc<Mutex<Option<::audio::SoundSet>>>,
+    /// What its lamps show, as a hash of the light state, the request and the script's
+    /// variables: when it has not changed, its materials and lenses are not set again.
+    pub shown: Option<u64>,
 }
 
 pub struct SplineType {
@@ -329,7 +351,7 @@ impl World {
             } else {
                 format!("parklist_p_{index}.txt")
             };
-            let text = ::legacy_config::vfs::read(&::legacy_config::resolve_path(&self.map_dir, &filename))
+            let text = ::legacy_config::vfs::read(&::mods::resolve_path(&self.map_dir, &filename))
                 .ok()
                 .map(|b| ::legacy_config::decode_text(&b))
                 .unwrap_or_default();

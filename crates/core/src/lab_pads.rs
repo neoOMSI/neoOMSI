@@ -1,31 +1,74 @@
-use crate::App;
-use crate::controllers::{self, Connected, DeviceCfg, Func};
-use crate::game_lists::{Dropdown, HEADING, row};
+use crate::controllers::{self, Connected, Controllers, DeviceCfg, Func};
+#[cfg(target_os = "linux")]
+use crate::evdev_axes::AxisMode;
+use crate::game_lists::{Dropdown, HEADING, KeyView, row};
+use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 static SEL: AtomicUsize = AtomicUsize::new(0);
 static LIVE: Mutex<Option<(Instant, Vec<Connected>)>> = Mutex::new(None);
+static IMPORT_MSG: Mutex<Option<String>> = Mutex::new(None);
 static TABMAP: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 type Rows = Vec<(String, String)>;
 
-fn connected(app: &App) -> Vec<Connected> {
+const LONG_LIST: usize = 8;
+
+const SHAPES: [i32; 5] = [0, 4, 8, 0x14, 0x18];
+const SHAPE_KEYS: [&str; 5] = [
+    "linear",
+    "degressive",
+    "progressive",
+    "bi_degressive",
+    "bi_progressive",
+];
+
+fn shape_index(flags: i32) -> usize {
+    SHAPES.iter().position(|s| *s == flags & 0x1c).unwrap_or(0)
+}
+
+fn shape_text(flags: i32) -> String {
+    tl(&format!(
+        "pause.controls.axis.shape.{}",
+        SHAPE_KEYS[shape_index(flags)]
+    ))
+}
+
+fn connected(pads: Option<&Controllers>) -> Vec<Connected> {
     let Ok(mut g) = LIVE.lock() else {
         return Vec::new();
     };
     if g.as_ref().map_or(true, |(t, v)| {
         t.elapsed() > Duration::from_millis(if v.is_empty() { 200 } else { 1000 })
     }) {
-        let v = app
-            .controllers
-            .as_ref()
+        let v = pads
             .map(|c| c.connected_devices())
             .unwrap_or_default();
         *g = Some((Instant::now(), v));
     }
     g.as_ref().map(|x| x.1.clone()).unwrap_or_default()
+}
+
+fn row_import() -> (String, String) {
+    let msg = IMPORT_MSG.lock().ok().and_then(|m| m.clone());
+    (
+        row(
+            "pause.controls.import.title",
+            'a',
+            "pause.controls.import.name",
+            msg.as_deref().unwrap_or("pause.controls.import.desc"),
+            None,
+        ),
+        "pad_import".to_string(),
+    )
+}
+
+fn set_import_msg(m: String) {
+    if let Ok(mut g) = IMPORT_MSG.lock() {
+        *g = Some(m);
+    }
 }
 
 fn heading(text: &str) -> (String, String) {
@@ -36,12 +79,39 @@ fn tl(key: &str) -> String {
     ::i18n::translate(key, &[])
 }
 
-fn axis_names(gamepad: bool) -> [String; 8] {
+pub(crate) fn axis_names(gamepad: bool) -> [String; 8] {
     std::array::from_fn(|i| match (gamepad, i) {
         (true, 0..=5) => tl(&format!("pause.controls.gamepad_axis.{i}")),
         (true, _) => String::new(),
         (false, _) => tl(&format!("pause.controls.axis.name.{i}")),
     })
+}
+
+pub(crate) fn button_label(n: usize, gamepad: bool) -> String {
+    const PAD: [&str; 6] = ["X", "A", "B", "Y", "LB", "RB"];
+    const DIRS: [&str; 4] = ["up", "right", "down", "left"];
+    let hats = controllers::HAT_BUTTONS..controllers::HAT_BUTTONS + 16;
+    if hats.contains(&n) {
+        let (hat, dir) = ((n - hats.start) / 4, (n - hats.start) % 4);
+        let dir = tl(&format!("pause.controls.hat.{}", DIRS[dir]));
+        return if gamepad && hat == 0 {
+            ::i18n::translate("pause.controls.hat.dpad", &[("dir", &dir)])
+        } else {
+            ::i18n::translate(
+                "pause.controls.hat.hat",
+                &[("n", &(hat + 1)), ("dir", &dir)],
+            )
+        };
+    }
+    if cfg!(windows) && gamepad {
+        if let Some(p) = PAD.get(n) {
+            return p.to_string();
+        }
+        if let Some(k) = ["view", "menu", "left_stick", "right_stick"].get(n.wrapping_sub(8)) {
+            return tl(&format!("pause.controls.pad.{k}"));
+        }
+    }
+    format!("{} {}", tl("pause.controls.button.name"), n + 1)
 }
 
 fn func_text(f: Option<(Func, bool)>) -> String {
@@ -58,21 +128,97 @@ fn func_text(f: Option<(Func, bool)>) -> String {
     }
 }
 
-fn selected(devices: &[DeviceCfg]) -> Option<usize> {
+pub(crate) fn selected(devices: &[DeviceCfg]) -> Option<usize> {
     (!devices.is_empty()).then(|| SEL.load(Ordering::Relaxed).min(devices.len() - 1))
 }
 
-fn save(app: &mut App, devices: &[DeviceCfg]) {
+pub(crate) fn save(pads: Option<&mut Controllers>, devices: &[DeviceCfg]) {
     controllers::write_cfg(devices);
     let _ = ::config::save();
-    if let Some(c) = app.controllers.as_mut() {
+    if let Some(c) = pads {
         c.reload_cfg();
+    }
+    #[cfg(target_os = "linux")]
+    if let Ok(mut live) = LIVE.lock() {
+        *live = None;
     }
 }
 
-fn names_of(app: &App) -> &'static crate::describe::ControlNames {
+pub(crate) fn bind_pressed(pads: Option<&mut Controllers>, device: &str, n: usize, action: &str) {
+    let gamepad = pads.as_deref().is_some_and(|c| {
+        c.connected_devices()
+            .iter()
+            .any(|d| d.gamepad && controllers::names_match(&d.name, device))
+    });
+    let mut devices = controllers::read_cfg();
+    controllers::bind_button(&mut devices, device, gamepad, n, action);
+    log::info!(
+        "key binding: {device} button {n} ({}, gamepad: {gamepad}) does {action}",
+        button_label(n, gamepad)
+    );
+    save(pads, &devices);
+}
+
+pub(crate) fn unbind(pads: Option<&mut Controllers>, action: &str) -> bool {
+    let mut devices = controllers::read_cfg();
+    let any = controllers::unbind_action(&mut devices, action);
+    if any {
+        save(pads, &devices);
+    }
+    any
+}
+
+/// Bound buttons of enabled devices: (action in lower case, button name).
+pub(crate) fn bound_buttons(pads: Option<&Controllers>) -> Vec<(String, String)> {
+    let live = connected(pads);
+    button_names(&controllers::read_cfg(), |name| {
+        live.iter()
+            .any(|c| c.gamepad && controllers::names_match(name, &c.name))
+    })
+}
+
+/// With several devices bound, each name gets the device's shortest distinct name (2+ words).
+fn button_names(devices: &[DeviceCfg], gamepad: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+    let bound = |d: &DeviceCfg| d.buttons.iter().any(|(a, _)| !a.trim().is_empty());
+    let devices: Vec<&DeviceCfg> = devices.iter().filter(|d| d.enabled && bound(d)).collect();
+    let several = devices.len() > 1;
+    let mut out = Vec::new();
+    let words = |name: &str, n: usize| {
+        name.split_whitespace()
+            .take(n)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    for d in devices.iter() {
+        let gamepad = gamepad(&d.name);
+        let long = d.name.split_whitespace().count();
+        let n = (2..long)
+            .find(|n| {
+                devices
+                    .iter()
+                    .filter(|o| o.name != d.name)
+                    .all(|o| words(&o.name, *n) != words(&d.name, *n))
+            })
+            .unwrap_or(long);
+        let short = words(&d.name, n);
+        for (b, (a, _)) in d.buttons.iter().enumerate() {
+            if !a.trim().is_empty() {
+                let label = button_label(b, gamepad);
+                let label = if several {
+                    format!("{label} ({short})")
+                } else {
+                    label
+                };
+                out.push((a.trim().to_lowercase(), label));
+            }
+        }
+    }
+    out
+}
+
+fn names_of(root: &Path) -> &'static crate::describe::ControlNames {
     crate::describe::names(
-        &app.args.root,
+        root,
         &::config::get_string("ui", "language").unwrap_or_else(|| "en".into()),
     )
 }
@@ -166,20 +312,16 @@ pub(crate) fn set_tab(sub: usize) {
     SEL.store(at, Ordering::Relaxed);
 }
 
-pub(crate) fn rows(app: &App) -> Rows {
-    let live = connected(app);
+pub(crate) fn rows(pads: Option<&Controllers>) -> Rows {
+    let live = connected(pads);
     let devices = controllers::read_cfg();
     let mut out: Rows = Vec::new();
     let mut tab = 2;
     for c in live.iter() {
-        if let Some(i) = devices
+        if devices
             .iter()
-            .position(|d| controllers::names_match(&d.name, &c.name))
+            .any(|d| controllers::names_match(&d.name, &c.name))
         {
-            out.push((
-                row(&c.name, 'o', "", "pause.controls.use.desc", None),
-                format!("pad_open {i}"),
-            ));
             tab += 1;
         } else {
             out.push((
@@ -195,11 +337,16 @@ pub(crate) fn rows(app: &App) -> Rows {
         }
     }
     let _ = tab;
+    out.push(row_import());
     out
 }
 
-pub(crate) fn device_tabs(app: &App) -> Vec<(&'static str, Rows)> {
-    let live = connected(app);
+pub(crate) fn device_tabs(
+    pads: Option<&Controllers>,
+    root: &Path,
+    search: &KeyView,
+) -> Vec<(&'static str, Rows)> {
+    let live = connected(pads);
     let devices = controllers::read_cfg();
     let sel = selected(&devices).unwrap_or(usize::MAX);
     let mut map = Vec::new();
@@ -212,7 +359,7 @@ pub(crate) fn device_tabs(app: &App) -> Vec<(&'static str, Rows)> {
                 .find(|c| controllers::names_match(&d.name, &c.name))?;
             map.push(i);
             let fresh = (i == sel)
-                .then(|| app.controllers.as_ref().map(|c| c.connected_devices()))
+                .then(|| pads.map(|c| c.connected_devices()))
                 .flatten()
                 .and_then(|v| {
                     v.into_iter()
@@ -220,7 +367,7 @@ pub(crate) fn device_tabs(app: &App) -> Vec<(&'static str, Rows)> {
                 });
             Some((
                 intern(&d.name),
-                device_rows(app, d, Some(fresh.as_ref().unwrap_or(dev))),
+                device_rows(root, d, Some(fresh.as_ref().unwrap_or(dev)), search),
             ))
         })
         .collect();
@@ -230,7 +377,7 @@ pub(crate) fn device_tabs(app: &App) -> Vec<(&'static str, Rows)> {
     tabs
 }
 
-fn device_rows(app: &App, d: &DeviceCfg, dev: Option<&Connected>) -> Rows {
+fn device_rows(root: &Path, d: &DeviceCfg, dev: Option<&Connected>, search: &KeyView) -> Rows {
     let mut out: Rows = vec![(
         row(
             "pause.controls.use.name",
@@ -241,7 +388,21 @@ fn device_rows(app: &App, d: &DeviceCfg, dev: Option<&Connected>) -> Rows {
         ),
         "pad_on".to_string(),
     )];
-    let labels = axis_names(dev.is_some_and(|c| c.gamepad));
+    #[cfg(target_os = "linux")]
+    out.push((
+        row(
+            "pause.controls.axis_mode.name",
+            'o',
+            &tl(&format!(
+                "pause.controls.axis_mode.{}",
+                d.axis_mode.as_str()
+            )),
+            "pause.controls.axis_mode.desc",
+            None,
+        ),
+        "pad_mode".to_string(),
+    ));
+    let labels = axis_names(dev.is_some_and(Connected::gamepad_axes));
     out.push(heading("pause.controls.axes"));
     for a in 0..8 {
         if labels[a].is_empty() && d.axes[a].is_none() {
@@ -254,23 +415,48 @@ fn device_rows(app: &App, d: &DeviceCfg, dev: Option<&Connected>) -> Rows {
             labels[a].as_str()
         };
         let mut r = row(name, 'o', &v, "pause.controls.axis.desc", None);
+        let mut meter = String::new();
+        let mut one_sided = "";
         if let Some((_, x)) = dev.and_then(|c| c.axes.iter().find(|(k, _)| *k == a)) {
-            let cal = d.calibrated(a, *x);
-            let (inv, pedal) = match d.axes[a] {
-                Some((f, inv)) => (
-                    inv,
-                    matches!(f, Func::Throttle | Func::Brake | Func::Clutch),
-                ),
-                None => (false, false),
+            let pedal = d.axes[a]
+                .is_some_and(|(f, _)| matches!(f, Func::Throttle | Func::Brake | Func::Clutch));
+            #[cfg(target_os = "linux")]
+            let v = d.axis_preview(a, *x).clamp(-1.0, 1.0);
+            #[cfg(not(target_os = "linux"))]
+            let v = {
+                let cal = d.calibrated(a, *x);
+                if d.axes[a].is_some_and(|(_, inv)| inv) {
+                    -cal
+                } else {
+                    cal
+                }
+                    .clamp(-1.0, 1.0)
             };
-            let v = if inv { -cal } else { cal }.clamp(-1.0, 1.0);
-            r = if pedal {
-                format!("{r}\u{1f}\u{1f}{:.3}\u{1f}u", (v + 1.0) * 0.5)
+            if pedal {
+                meter = format!("{:.3}", (v + 1.0) * 0.5);
+                one_sided = "u";
             } else {
-                format!("{r}\u{1f}\u{1f}{:.3}", v)
-            };
+                meter = format!("{:.3}", v);
+            }
         }
+        let alt = if d.axes[a].is_some_and(|(f, _)| !matches!(f, Func::LookX | Func::LookY)) {
+            format!("{}\u{1f}pad_shape {a}", shape_text(d.axis_flags[a]))
+        } else {
+            "\u{1f}".to_string()
+        };
+        r = format!("{r}\u{1f}\u{1f}{meter}\u{1f}{one_sided}\u{1f}\u{1f}{alt}");
         out.push((r, format!("pad_axis {a}")));
+        #[cfg(target_os = "linux")]
+        out.push((
+            row(
+                &format!("{name}: {}", tl("pause.controls.axis.invert.name")),
+                's',
+                if d.axis_reversed(a) { "on" } else { "off" },
+                "pause.controls.axis.invert.desc",
+                None,
+            ),
+            format!("pad_invert {a}"),
+        ));
     }
     out.push((
         row(
@@ -324,33 +510,75 @@ fn device_rows(app: &App, d: &DeviceCfg, dev: Option<&Connected>) -> Rows {
         }
     }
     let n = shown_buttons(d, dev.map_or(0, |c| c.buttons));
+    let hat_rows: Vec<usize> = if cfg!(target_os = "linux") && dev.is_some() {
+        (controllers::HAT_BUTTONS..controllers::HAT_BUTTONS + 4)
+            .filter(|h| *h >= n)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let list: Vec<usize> = (0..n).chain(hat_rows).collect();
+    let n = list.len();
     if n > 0 {
-        let names = names_of(app);
-        out.push(heading("pause.controls.buttons"));
-        for b in 0..n {
+        let names = names_of(root);
+        let gamepad = dev.is_some_and(|c| c.gamepad);
+        out.push((
+            row(
+                "pause.controls.buttons",
+                'h',
+                &tl("pause.controls.find_hint"),
+                "",
+                None,
+            ),
+            HEADING.to_string(),
+        ));
+        let q = search.filter.trim().to_lowercase();
+        if n > LONG_LIST {
+            out.push((
+                row(
+                    "pause.controls.button_search",
+                    if search.searching { 'F' } else { 'f' },
+                    search.filter,
+                    "",
+                    None,
+                ),
+                "keysearch".to_string(),
+            ));
+        }
+        let before = out.len();
+        for b in list {
             let act = d.buttons.get(b).map(|x| x.0.trim()).unwrap_or("");
             let v = if act.is_empty() {
                 "-".to_string()
             } else {
                 names.key_label(act)
             };
-            let mut r = row(
-                &format!("{} {}", tl("pause.controls.button.name"), b + 1),
-                'o',
-                &v,
-                "pause.controls.button.desc",
-                None,
-            );
+            let label = button_label(b, gamepad);
+            if n > LONG_LIST
+                && !q.is_empty()
+                && !label.to_lowercase().contains(&q)
+                && (act.is_empty() || !v.to_lowercase().contains(&q))
+            {
+                continue;
+            }
+            let mut r = row(&label, 'o', &v, "pause.controls.button.desc", None);
             if controllers::is_pressed(&d.name, b) {
                 r.push_str("\u{1f}\u{1f}\u{1f}\u{1f}1");
             }
             out.push((r, format!("pad_btn {b}")));
         }
+        if out.len() == before {
+            let none = ::i18n::translate(
+                "pause.controls.no_match",
+                &[("query", &search.filter.trim())],
+            );
+            out.push((row(&none, 'i', "", "", None), "noop".to_string()));
+        }
     }
     out
 }
 
-pub(crate) fn dropdown(app: &App, row_k: usize, id: &str) -> Option<Dropdown> {
+pub(crate) fn dropdown(root: &Path, row_k: usize, id: &str) -> Option<Dropdown> {
     let devices = controllers::read_cfg();
     let d = &devices[selected(&devices)?];
     let (verb, arg) = id.split_once(' ').unwrap_or((id, ""));
@@ -358,6 +586,16 @@ pub(crate) fn dropdown(app: &App, row_k: usize, id: &str) -> Option<Dropdown> {
     let mut current = None;
     let mut search: Vec<String> = Vec::new();
     match verb {
+        #[cfg(target_os = "linux")]
+        "pad_mode" => {
+            current = Some(d.axis_mode.index());
+            for mode in [AxisMode::Auto, AxisMode::Gamepad, AxisMode::Native] {
+                items.push((
+                    tl(&format!("pause.controls.axis_mode.{}", mode.as_str())),
+                    format!("pad_set_mode {}", mode.as_str()),
+                ));
+            }
+        }
         "pad_axis" => {
             let a: usize = arg.parse().ok().filter(|a| *a < 8)?;
             let now = d.axes[a];
@@ -366,6 +604,18 @@ pub(crate) fn dropdown(app: &App, row_k: usize, id: &str) -> Option<Dropdown> {
                 current = Some(0);
             }
             for c in 0..7 {
+                #[cfg(target_os = "linux")]
+                {
+                    let f = Func::from_code(c);
+                    if now.map(|(f, _)| f) == f {
+                        current = Some(items.len());
+                    }
+                    items.push((
+                        func_text(f.map(|f| (f, false))),
+                        format!("pad_set_axis {a} {c}"),
+                    ));
+                }
+                #[cfg(not(target_os = "linux"))]
                 for inv in [false, true] {
                     let f = Func::from_code(c);
                     if now == f.map(|f| (f, inv)) {
@@ -376,6 +626,16 @@ pub(crate) fn dropdown(app: &App, row_k: usize, id: &str) -> Option<Dropdown> {
                         format!("pad_set_axis {a} {c} {}", inv as u8),
                     ));
                 }
+            }
+        }
+        "pad_shape" => {
+            let a: usize = arg.parse().ok().filter(|a| *a < 8)?;
+            current = Some(shape_index(d.axis_flags[a]));
+            for (i, key) in SHAPE_KEYS.iter().enumerate() {
+                items.push((
+                    tl(&format!("pause.controls.axis.shape.{key}")),
+                    format!("pad_set_shape {a} {i}"),
+                ));
             }
         }
         "pad_dz" => {
@@ -404,7 +664,7 @@ pub(crate) fn dropdown(app: &App, row_k: usize, id: &str) -> Option<Dropdown> {
         }
         "pad_btn" => {
             let b: usize = arg.parse().ok()?;
-            let names = names_of(app);
+            let names = names_of(root);
             let now = d
                 .buttons
                 .get(b)
@@ -462,18 +722,14 @@ pub(crate) fn dropdown(app: &App, row_k: usize, id: &str) -> Option<Dropdown> {
     })
 }
 
-fn rescan(app: &App) {
-    if let Some(c) = app.controllers.as_ref() {
+pub(crate) fn apply(mut pads: Option<&mut Controllers>, verb: &str, arg: &str) {
+    apply_inner(pads.as_deref_mut(), verb, arg);
+    if let Some(c) = pads {
         c.refresh_devices();
     }
 }
 
-pub(crate) fn apply(app: &mut App, verb: &str, arg: &str) {
-    apply_inner(app, verb, arg);
-    rescan(app);
-}
-
-fn apply_inner(app: &mut App, verb: &str, arg: &str) {
+fn apply_inner(pads: Option<&mut Controllers>, verb: &str, arg: &str) {
     let mut devices = controllers::read_cfg();
     let Some(i) = selected(&devices) else {
         return;
@@ -489,12 +745,14 @@ fn apply_inner(app: &mut App, verb: &str, arg: &str) {
         } else {
             (a, v / 100.0)
         });
-        save(app, &devices);
+        save(pads, &devices);
         return;
     }
     let mut it = arg.splitn(3, ' ');
     let n: Option<i64> = it.next().and_then(|x| x.parse().ok());
     match verb {
+        #[cfg(target_os = "linux")]
+        "pad_set_mode" => devices[i].axis_mode = AxisMode::from_str(arg),
         "pad_set_axis" => {
             let (Some(a), Some(c)) = (
                 n.filter(|a| (0..8).contains(a)),
@@ -502,8 +760,25 @@ fn apply_inner(app: &mut App, verb: &str, arg: &str) {
             ) else {
                 return;
             };
-            let inv = it.next() == Some("1");
-            devices[i].axes[a as usize] = Func::from_code(c).map(|f| (f, inv));
+            #[cfg(target_os = "linux")]
+            devices[i].set_axis_function(a as usize, Func::from_code(c));
+            #[cfg(not(target_os = "linux"))]
+            {
+                let inv = it.next() == Some("1");
+                devices[i].axes[a as usize] = Func::from_code(c).map(|f| (f, inv));
+            }
+        }
+        "pad_set_shape" => {
+            let (Some(a), Some(s)) = (
+                n.filter(|a| (0..8).contains(a)),
+                it.next()
+                    .and_then(|x| x.parse::<usize>().ok())
+                    .and_then(|s| SHAPES.get(s).copied()),
+            ) else {
+                return;
+            };
+            let flags = &mut devices[i].axis_flags[a as usize];
+            *flags = (*flags & !0x1c) | s;
         }
         "pad_set_dz" => {
             let Some(v) = n else {
@@ -529,15 +804,41 @@ fn apply_inner(app: &mut App, verb: &str, arg: &str) {
         }
         _ => return,
     }
-    save(app, &devices);
+    save(pads, &devices);
 }
 
-pub(crate) fn click(app: &mut App, verb: &str, arg: &str) {
-    click_inner(app, verb, arg);
-    rescan(app);
+/// The menu's sub-tab to show next, when the click opens a device's page.
+pub(crate) fn click(mut pads: Option<&mut Controllers>, verb: &str, arg: &str) -> Option<usize> {
+    let tab = click_inner(pads.as_deref_mut(), verb, arg);
+    if let Some(c) = pads {
+        c.refresh_devices();
+    }
+    tab
 }
 
-fn click_inner(app: &mut App, verb: &str, arg: &str) {
+fn click_inner(pads: Option<&mut Controllers>, verb: &str, arg: &str) -> Option<usize> {
+    if verb == "pad_import" {
+        let done = omsi_launcher_lib::omsi_gamectrler_cfg()
+            .map_err(|e| e.to_string())
+            .and_then(|p| controllers::import_omsi_cfg(&p));
+        match done {
+            Ok(names) => {
+                let _ = ::config::save();
+                if let Some(c) = pads {
+                    c.reload_cfg();
+                }
+                log::info!("controllers imported from OMSI 2: {}", names.join(", "));
+                // TODO: Move this to notification UI (not implemented yet)
+                set_import_msg(format!("Imported {}: {}", names.len(), names.join(", ")));
+            }
+            Err(e) => {
+                log::warn!("controller import: {e}");
+                // TODO: Move this to notification UI (not implemented yet)
+                set_import_msg(format!("Import failed: {e}"));
+            }
+        }
+        return None;
+    }
     let mut devices = controllers::read_cfg();
     match verb {
         "pad_add" => {
@@ -548,32 +849,33 @@ fn click_inner(app: &mut App, verb: &str, arg: &str) {
             });
             let at = devices.len() - 1;
             SEL.store(at, Ordering::Relaxed);
-            save(app, &devices);
-
-            let tab = TABMAP.lock().map_or(0, |m| m.len());
-            if let Some(u) = app.ui.as_mut() {
-                u.world_sub = tab + 2;
-                u.world_scroll = 0;
-            }
+            save(pads, &devices);
+            return Some(TABMAP.lock().map_or(0, |m| m.len()) + 2);
         }
         "pad_open" => {
-            let Some(i) = arg.parse::<usize>().ok().filter(|i| *i < devices.len()) else {
-                return;
-            };
-            let tab = TABMAP
+            let i = arg.parse::<usize>().ok().filter(|i| *i < devices.len())?;
+            let t = TABMAP
                 .lock()
                 .ok()
-                .and_then(|m| m.iter().position(|x| *x == i));
-            if let (Some(t), Some(u)) = (tab, app.ui.as_mut()) {
-                SEL.store(i, Ordering::Relaxed);
-                u.world_sub = t + 2;
-                u.world_scroll = 0;
-            }
+                .and_then(|m| m.iter().position(|x| *x == i))?;
+            SEL.store(i, Ordering::Relaxed);
+            return Some(t + 2);
         }
         "pad_on" => {
             if let Some(i) = selected(&devices) {
                 devices[i].enabled = !devices[i].enabled;
-                save(app, &devices);
+                save(pads, &devices);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        "pad_invert" => {
+            if let (Some(i), Some(a)) = (
+                selected(&devices),
+                arg.parse::<usize>().ok().filter(|a| *a < 8),
+            ) {
+                let reversed = !devices[i].axis_reversed(a);
+                devices[i].set_axis_reversed(a, reversed);
+                save(pads, &devices);
             }
         }
         "pad_ffinv" => {
@@ -582,9 +884,79 @@ fn click_inner(app: &mut App, verb: &str, arg: &str) {
                     .ff_invert
                     .unwrap_or_else(controllers::global_ff_invert);
                 devices[i].ff_invert = Some(!now);
-                save(app, &devices);
+                save(pads, &devices);
             }
         }
         _ => {}
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{button_label, button_names};
+    use crate::controllers::DeviceCfg;
+
+    #[test]
+    fn buttons_say_their_device_only_when_several_have_buttons_bound() {
+        let pad = |name: &str, buttons: &[&str]| DeviceCfg {
+            name: name.into(),
+            buttons: buttons
+                .iter()
+                .map(|a| (a.to_string(), "0".into()))
+                .collect(),
+            ..Default::default()
+        };
+        let mut devices = vec![
+            pad("Xbox Wireless Controller", &["", "Horn"]),
+            pad("Logitech G29 Driving Force Racing Wheel", &[]),
+        ];
+        assert_eq!(
+            button_names(&devices, |_| false),
+            [("horn".to_string(), "Button 2".to_string())]
+        );
+        devices[1].buttons.push(("horn".into(), "0".into()));
+        assert_eq!(
+            button_names(&devices, |_| false),
+            [
+                ("horn".to_string(), "Button 2 (Xbox Wireless)".to_string()),
+                ("horn".to_string(), "Button 1 (Logitech G29)".to_string()),
+            ]
+        );
+        let both = [
+            pad("Microsoft X-Box 360 pad", &["horn"]),
+            pad("Microsoft X-Box One pad", &["bell"]),
+        ];
+        assert_eq!(
+            button_names(&both, |_| false)
+                .into_iter()
+                .map(|b| b.1)
+                .collect::<Vec<_>>(),
+            [
+                "Button 1 (Microsoft X-Box 360)",
+                "Button 1 (Microsoft X-Box One)"
+            ]
+        );
+        // (disabled devices don't count)
+        devices[1].enabled = false;
+        assert_eq!(button_names(&devices, |_| false).len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pad_buttons_have_the_launchers_names() {
+        let h = crate::controllers::HAT_BUTTONS;
+        assert_eq!(button_label(1, true), "A");
+        assert_eq!(button_label(4, true), "LB");
+        assert_eq!(button_label(9, true), "Menu");
+        assert_eq!(button_label(h, true), "D-pad up");
+        assert_eq!(button_label(h + 5, false), "Hat 2 right");
+        assert_eq!(button_label(6, true), "Button 7");
+    }
+
+    #[test]
+    fn other_buttons_are_numbered() {
+        assert_eq!(button_label(1, false), "Button 2");
+        assert_eq!(button_label(20, true), "Button 21");
     }
 }

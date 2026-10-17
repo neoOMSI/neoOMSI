@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn weather_files() -> Vec<String> {
     scan_cached(&WEATHER_SCAN, || {
-        let mut files: Vec<String> = ::legacy_config::read_dir_merged("Weather")
+        let mut files: Vec<String> = ::mods::read_dir_merged("Weather")
             .into_iter()
             .filter(|p| {
                 p.extension()
@@ -40,7 +40,7 @@ pub(crate) struct Dropdown {
 }
 
 pub(crate) fn value_label(setting: &str, value: &str, label: &str) -> String {
-    let key = format!("pause.options.value.{setting}.{value}");
+    let key = format!("pause.options.value.{setting}.{}", value.replace('.', "_"));
     let text = ::i18n::translate(&key, &[]);
     if text == key {
         ::user_interface::tr(label).into_owned()
@@ -53,9 +53,6 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
     let tr = |t: &str| ::user_interface::tr(t).into_owned();
     if app.metar_locked() && matches!(id, "weather" | "cloudkind" | "precipkind") {
         return None;
-    }
-    if id.starts_with("pad_") {
-        return crate::lab_pads::dropdown(app, row, id);
     }
     let mut current: Option<usize> = None;
     let items: Vec<(String, String)> = match id {
@@ -85,14 +82,9 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
             let mut v = vec![(tr("Automatic (nearest the map)"), "metar_src ".to_string())];
             let own = &::config::get_string("gameplay", "metar_station").unwrap_or_default();
             current = Some(0);
-            for (i, (code, label)) in crate::weather_setup::metar_airports(&app.args.root)
-                .into_iter()
-                .enumerate()
-            {
-                if code.eq_ignore_ascii_case(own) {
-                    current = Some(i + 1);
-                }
-                v.push((label, format!("metar_src {code}")));
+            if !own.trim().is_empty() {
+                current = Some(1);
+                v.push((own.to_uppercase(), format!("metar_src {}", own.to_uppercase())));
             }
             v
         }
@@ -115,6 +107,28 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
                 .map(|(i, n)| (tr(*n), format!("precip {i}")))
                 .collect()
         }
+        _ => match crate::lab_mods::dropdown(id, crate::lab_mods::applies_now(Some(app))) {
+            Some((items, selected)) => {
+                current = selected;
+                items
+            }
+            None => return settings_dropdown(&app.args.root, row, id),
+        },
+    };
+    dropdown_of(row, items, current)
+}
+
+/// The drop-downs of the settings that need no running game (the launcher has them too).
+pub(crate) fn settings_dropdown(root: &std::path::Path, row: usize, id: &str) -> Option<Dropdown> {
+    let tr = |t: &str| ::user_interface::tr(t).into_owned();
+    if id.starts_with("pad_") {
+        return crate::lab_pads::dropdown(root, row, id);
+    }
+    if let Some((items, current)) = crate::lab_mods::dropdown(id, true) {
+        return dropdown_of(row, items, current);
+    }
+    let mut current: Option<usize> = None;
+    let items: Vec<(String, String)> = match id {
         "preset" => {
             current = preset_now();
             PRESETS
@@ -127,6 +141,18 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
             .into_iter()
             .map(|n| (n.clone(), format!("gfxprofile {n}")))
             .collect(),
+        "voicemic" => {
+            let now = ::config::get_string("voice", "mic").unwrap_or_default();
+            let mut all = vec![(
+                ::i18n::translate("pause.options.voice.mic.default", &[]),
+                String::new(),
+            )];
+            all.extend(audio::mic::input_devices().into_iter().map(|d| (d.clone(), d)));
+            current = Some(all.iter().position(|d| d.1 == now).unwrap_or(0));
+            all.into_iter()
+                .map(|(label, d)| (label, format!("voicemic {d}")))
+                .collect()
+        }
         "reset" => vec![
             (tr("Cancel"), "noop".to_string()),
             (tr("Reset all settings"), "reset_all".to_string()),
@@ -142,6 +168,10 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
         }
         _ => return None,
     };
+    dropdown_of(row, items, current)
+}
+
+fn dropdown_of(row: usize, items: Vec<(String, String)>, current: Option<usize>) -> Option<Dropdown> {
     if items.is_empty() {
         return None;
     }
@@ -161,7 +191,7 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
 pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
     let (verb, arg) = action.split_once(' ').unwrap_or((action, ""));
     if verb.starts_with("pad_") {
-        crate::lab_pads::apply(app, verb, arg);
+        crate::lab_pads::apply(app.controllers.as_mut(), verb, arg);
         return;
     }
     if app.metar_locked() && matches!(verb, "wx" | "cloud" | "precip") {
@@ -172,6 +202,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
         return;
     }
     match verb {
+        v if v.starts_with("mod_") => crate::lab_mods::apply_in_game(app, v, arg),
         "wx" => {
             if app
                 .lan
@@ -191,13 +222,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 .take(4)
                 .collect::<String>()
                 .to_ascii_uppercase();
-            ::config::set_setting("gameplay", "metar_station", code.clone());
-            let _ = ::config::save();
-            app.metar_rx = None;
-            app.metar_once = false;
-            // With sync on, the new station is fetched at once. With it off this simply
-            // selects the station for "Load current METAR once".
-            app.metar_next = 0.0;
+            app.set_metar_station(code);
         }
         "cloud" => {
             if let Some(i) = arg
@@ -224,6 +249,46 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 set_precip(app, i);
             }
         }
+        _ => {
+            if let Some(m) = settings_pick(Some(app), action) {
+                app.service_msg = Some((m, 5.0));
+            }
+        }
+    }
+}
+
+/// What a drop-down of the settings chose, in a game or in the launcher (no `app`): a
+/// message to show when there is one.
+pub(crate) fn settings_pick(mut app: Option<&mut App>, action: &str) -> Option<String> {
+    let msg = settings_pick_inner(app.as_deref_mut(), action);
+    let restart = match action.split_once(' ') {
+        Some(("pick", rest)) => rest.split_once(' ').is_some_and(|(k, _)| super::options::RESTART_KEYS.contains(&k)),
+        Some(("preset" | "gfxprofile", _)) => true,
+        _ => false,
+    };
+    if let Some(app) = app {
+        if restart {
+            app.restart_pending = true;
+        }
+        if action.starts_with("pick texture_memory ") {
+            if let Some(world) = app.world.as_ref() {
+                let budget = crate::memory::texture_budget();
+                world.set_texture_budget(budget);
+                log::info!("texture budget changed: {:.0} MB", budget as f64 / 1e6);
+            }
+        }
+        apply_live_settings(app);
+    }
+    msg
+}
+
+fn settings_pick_inner(mut app: Option<&mut App>, action: &str) -> Option<String> {
+    let (verb, arg) = action.split_once(' ').unwrap_or((action, ""));
+    match verb {
+        "voicemic" => {
+            ::config::set_setting("voice", "mic", arg);
+            let _ = ::config::save();
+        }
         "pick" => {
             if let Some((key, value)) = arg.split_once(' ') {
                 if key == "boarding" {
@@ -242,11 +307,17 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 } else if matches!(key, "pax_voices" | "pax_models" | "pax_motion") {
                     ::config::set_setting("passengers", &key[4..], value);
                     let _ = ::config::save();
+                    if key == "pax_models" && value == "realistic" {
+                        crate::pax_pack::fetch_if_needed(crate::startup::content_dir);
+                    }
                 } else if key == "language" {
                     ::config::set_setting("ui", "language", crate::describe::language_code(value));
                     let _ = ::config::save();
                 } else if key == "units" {
                     ::config::set_setting("ui", "units", value);
+                    let _ = ::config::save();
+                } else if key == "voice_mode" {
+                    ::config::set_setting("voice", "mode", value);
                     let _ = ::config::save();
                 } else if key == "navigator_corner" {
                     ::config::set_setting("ui", "navigator_corner", value.to_ascii_lowercase());
@@ -271,14 +342,14 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                     }
                 } else if ::config::DEFAULTS.iter().any(|(c, k, _)| *c == "graphics" && *k == key) {
                     gfx_set(key, value);
-                    if key == "window_mode" {
-                        super::options::apply_window_mode(app, value);
+                    if let Some(app) = app.as_deref().filter(|_| key == "window_mode") {
+                        super::options::apply_window_mode(app, &gfx_text(key));
                     }
                     let _ = ::config::save();
                 } else {
                     remember_setting(key, value);
                 }
-                reload_settings(app);
+                reload_settings(app.as_deref_mut());
                 if key == "language" {
                     crate::ui_language(&::config::get_string("ui", "language").unwrap_or_else(|| "ENG".into()));
                 }
@@ -296,7 +367,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
             let name = arg.trim();
             let profile = ::config::get_table_sub("graphics_profiles", name);
             if profile.is_empty() {
-                app.service_msg = Some((::i18n::translate("pause.msg.graphics_missing", &[("name", &name)]), 4.0))
+                return Some(::i18n::translate("pause.msg.graphics_missing", &[("name", &name)]));
             } else {
                 for (k, v) in profile {
                     if ::config::DEFAULTS.iter().any(|(c, key, _)| *c == "graphics" && *key == k) {
@@ -306,11 +377,8 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 let _ = ::config::save();
                 sync_live(app);
                 LIST_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
-                app.service_msg = Some((
-                    format!(
-                        "Graphics profile \"{name}\" loaded: graphics settings apply when the game starts the next time"
-                    ),
-                    5.0,
+                return Some(format!(
+                    "Graphics profile \"{name}\" loaded: graphics settings apply when the game starts the next time"
                 ));
             }
         }
@@ -331,6 +399,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
         }
         _ => {}
     }
+    None
 }
 
 pub(super) fn weather_name(app: &App) -> String {
@@ -415,7 +484,7 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("0.67", "67%"),
             ("0.5", "50%"),
         ],
-        "anisotropy" => vec![("1", "Off"), ("2", "2x"), ("4", "4x"), ("8", "8x")],
+        "anisotropy" => vec![("1", "Off"), ("2", "2x"), ("4", "4x"), ("8", "8x"), ("16", "16x")],
         "shadow_size" => vec![("1024", "1024"), ("2048", "2048"), ("4096", "4096")],
         "shadow_casters" => vec![
             ("all", "Every solid mesh"),
@@ -478,7 +547,7 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
             ("6000", "6 GB"),
         ],
         "post_aa" => vec![("fxaa", "FXAA"), ("off", "Off")],
-        "mirror_refresh" => vec![("eco", "Economy"), ("full", "Full")],
+        "mirror_refresh" => vec![("off", "Frozen"), ("eco", "Economy"), ("full", "Full")],
         "graphics_api" => vec![("auto", "Automatic"), ("vulkan", "Vulkan"), ("dx12", "DirectX 12")],
         "head_tracking_invert" => vec![
             ("none", "None"),
@@ -509,6 +578,10 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
         ],
         "pax_models" => vec![("omsi", "OMSI 2"), ("realistic", "Realistic")],
         "pax_motion" => vec![("natural", "Natural"), ("omsi", "OMSI 2")],
+        "voice_mode" => vec![
+            ("ptt", "Push-to-talk (hold the key)"),
+            ("auto", "Voice activation"),
+        ],
         "pax_voices" => vec![
             ("all", "Greetings and tickets"),
             ("tickets", "Only the ticket asked for"),
@@ -599,6 +672,8 @@ pub(super) fn select_state(
         ::config::get_string("ui", "language").unwrap_or_default()
     } else if key == "units" {
         ::config::get_string("ui", "units").unwrap_or_default()
+    } else if key == "voice_mode" {
+        ::config::get_string("voice", "mode").unwrap_or_default()
     } else if key == "navigator_corner" {
         ::config::get_string("ui", "navigator_corner").unwrap_or_default()
     } else if key == "maintenance" {
@@ -639,6 +714,24 @@ pub(crate) fn select_row(
     Some((row(name, 'o', &label, desc, None), format!("sel {key}")))
 }
 
+/// The realistic passengers' download, under the choice of the models.
+pub(crate) fn pax_pack_row() -> (String, String) {
+    use crate::pax_pack::Status;
+    let t = |k: &str| ::i18n::translate(&format!("pause.options.gameplay.pax_pack.{k}"), &[]);
+    let (button, desc) = match crate::pax_pack::status(crate::startup::content_dir) {
+        Status::Missing => (t("download"), t("missing")),
+        Status::Outdated => (t("update"), t("outdated")),
+        Status::Downloading { done, total } => (
+            format!("{} %", (done * 100).checked_div(total).unwrap_or(0)),
+            t("downloading"),
+        ),
+        Status::Installing => (String::new(), t("installing")),
+        Status::Installed => (t("installed"), t("next_start")),
+        Status::Failed(e) => (t("retry"), e),
+    };
+    (row(&t("name"), 'a', &button, &desc, None), "pax_pack_get".to_string())
+}
+
 pub(crate) fn preset_row(
     name: &str,
     desc: &str,
@@ -648,4 +741,39 @@ pub(crate) fn preset_row(
         None => value_label("preset", "custom", "Custom"),
     };
     Some((row(name, 'o', &label, desc, None), "preset".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_options;
+
+    #[test]
+    fn window_mode_choices_remain_distinct() {
+        assert_eq!(
+            select_options("window_mode"),
+            vec![
+                ("windowed", "Windowed"),
+                ("borderless", "Windowed Borderless"),
+                ("fullscreen", "Fullscreen"),
+            ]
+        );
+    }
+
+    #[test]
+    fn graphics_choices_include_the_engine_and_launcher_values() {
+        assert_eq!(
+            select_options("anisotropy"),
+            vec![
+                ("1", "Off"),
+                ("2", "2x"),
+                ("4", "4x"),
+                ("8", "8x"),
+                ("16", "16x"),
+            ]
+        );
+        assert_eq!(
+            select_options("mirror_refresh"),
+            vec![("off", "Frozen"), ("eco", "Economy"), ("full", "Full")]
+        );
+    }
 }

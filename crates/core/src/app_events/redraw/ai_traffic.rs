@@ -107,12 +107,21 @@ impl App {
             t.others = lan_outlines(&self.remotes);
             t.others
                 .extend(own_outlines(self.player.as_ref(), &self.placed));
+            t.blinkers = lan_blinkers(&self.remotes);
+            t.player_blinker = self
+                .player
+                .as_ref()
+                .map_or(0, |p| rail_drive::blinker_of(&p.vehicle));
             if !self.paused {
                 t.player_priority = self
                     .player
                     .as_ref()
                     .and_then(|p| p.vehicle.var("TrafficPriority"))
                     .is_some_and(|v| v > 0.5);
+                t.rail_ahead = match self.world.as_ref() {
+                    Some(w) => rail_ahead(t, w, self.player.as_ref(), &self.remotes),
+                    None => Vec::new(),
+                };
                 t.tick(dt, self.player.as_ref().map(|p| player_outline(p)));
                 if let Some(w) = self.world.as_ref() {
                     w.set_switches(&t.switch_requests());

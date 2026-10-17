@@ -11,6 +11,7 @@ mod menu;
 mod net;
 mod overlays;
 mod perf;
+mod style;
 mod types;
 mod util;
 mod vehicle_editor;
@@ -23,7 +24,7 @@ use imgui::{BackendFlags, Condition, TextureId};
 use ::render::{Renderer, devtools as rdev};
 
 use gpu::Gpu;
-use overlays::{draw_beams, draw_boxes, draw_cameras, draw_doors};
+use overlays::{draw_beams, draw_boxes, draw_cameras, draw_doors, draw_foot};
 
 pub(crate) use types::*;
 pub(crate) use util::project;
@@ -77,9 +78,14 @@ impl DevTools {
         ctx.set_log_filename(None);
         ctx.io_mut().backend_flags |= BackendFlags::RENDERER_HAS_VTX_OFFSET;
         ctx.style_mut().use_dark_colors();
+        style::apply(ctx.style_mut());
         let (font_size, font_rgba) = {
             let fonts = ctx.fonts();
-            fonts.add_font(&[imgui::FontSource::DefaultFontData { config: None }]);
+            fonts.add_font(&[imgui::FontSource::TtfData {
+                data: style::ROBOTO,
+                size_pixels: style::FONT_PX,
+                config: None,
+            }]);
             let tex = fonts.build_rgba32_texture();
             ((tex.width, tex.height), tex.data.to_vec())
         };
@@ -170,7 +176,7 @@ impl DevTools {
             io.font_global_scale = scale.max(1.0);
             io.delta_time = (snap.dt_ms / 1000.0).clamp(0.0001, 0.25);
         }
-        self.perf.update(extra, snap.dt_ms);
+        self.perf.update(extra, snap, snap.dt_ms);
         self.ensure_gpu(r);
         let mut mode = self.mode;
         {
@@ -194,6 +200,9 @@ impl DevTools {
                     draw_boxes(ui, cam, (w, h), &extra.boxes, None);
                     draw_boxes(ui, cam, (w, h), &extra.blockers, Some([1.0, 0.1, 0.1, 1.0]));
                     draw_doors(ui, cam, (w, h), &extra.doors);
+                    if let Some(f) = extra.foot.as_ref() {
+                        draw_foot(ui, cam, (w, h), f);
+                    }
                 }
             }
             vehicle_editor::draw_world(ui, editor, extra, (w, h));

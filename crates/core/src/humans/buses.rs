@@ -157,6 +157,8 @@ pub(super) struct Cabin {
     pub(super) money_point: Option<Vec3>,
     pub(super) money_var: Option<(Vec3, [f32; 2])>,
     pub(super) change_point: Option<Vec3>,
+    pub(super) money_parent: Option<usize>,
+    pub(super) change_parent: Option<usize>,
 }
 
 /// The people on each seat by the scripts' numbers (`Seat::omsi_seat`, the `[drivpos]`
@@ -212,13 +214,13 @@ impl Cabin {
         let (lead, _, _) = parts.first()?;
         let load_cabin = |def: &::legacy_vehicle::Vehicle| -> Option<PassengerCabin> {
             let rel = def.passenger_cabin.as_ref()?;
-            PassengerCabin::load(&::legacy_config::resolve_path(def.dir(), rel))
+            PassengerCabin::load(&::mods::resolve_path(def.dir(), rel))
                 .map_err(|e| log::warn!("{e}"))
                 .ok()
         };
         let load_paths = |def: &::legacy_vehicle::Vehicle| {
             def.paths.as_ref().and_then(|rel| {
-                ::legacy_vehicle::VehiclePaths::load(&::legacy_config::resolve_path(def.dir(), rel))
+                ::legacy_vehicle::VehiclePaths::load(&::mods::resolve_path(def.dir(), rel))
                     .map_err(|e| log::warn!("{e}"))
                     .ok()
             })
@@ -531,6 +533,8 @@ impl Cabin {
             money_point,
             money_var,
             change_point,
+            money_parent: None,
+            change_parent: None,
         })
     }
 
@@ -607,8 +611,14 @@ pub(super) struct BusNow {
     pub(super) trailers: Vec<PartFrame>,
     /// The terminus it shows, by its HOF identity. None means its target is unknown.
     pub(super) terminus: Option<String>,
+    /// HOF targets that describe the selected route's passenger destination. A circular can
+    /// show a public destination such as `B2 Apsley Circular` while returning to the
+    /// timetable's `B2 Apsley Bus Station`.
+    pub(super) passenger_termini: Vec<String>,
     /// Explicit `$allexit$` service; a missing/unknown target is not out of service.
     pub(super) out_of_service: bool,
+    /// The last stop of its selected IBIS route, where everybody leaves (#206).
+    pub(super) final_stop: Option<String>,
 }
 
 /// What passengers feel stepping into a bus (OMSI reads the same fields: the vehicle's
@@ -720,6 +730,22 @@ pub(super) fn train_heading(heading: f64, trailers: &[PartFrame], local: Vec3) -
 }
 
 impl BusNow {
+    /// Whether the bus empties at `stop`: named exactly as its route's last stop, as in
+    /// OMSI; without a route, its terminus.
+    pub(super) fn ends_at(&self, stop: &super::passengers::PaxStop) -> bool {
+        match &self.final_stop {
+            Some(last) => stop.name.trim() == last.trim(),
+            None => self.terminus.as_ref().is_some_and(|t| stop.is_named(t)),
+        }
+    }
+
+    pub(super) fn serves_terminus(&self, name: &str) -> bool {
+        self.passenger_termini
+            .iter()
+            .chain(self.terminus.iter())
+            .any(|terminus| super::passengers::terminus_matches(terminus, name))
+    }
+
     pub(super) fn world(&self, local: Vec3) -> DVec3 {
         train_point(self.pos, &self.rot, &self.trailers, local)
     }
@@ -790,6 +816,162 @@ impl BusNow {
     }
 }
 
+/// HOF targets that passengers may use for the information-system route currently selected
+/// by the driver.  This keeps the public target intact: a circular can show its circular
+/// display while its timetable journeys use the route's return terminus.
+fn passenger_termini(
+    hof: &::legacy_vehicle::hof::Hof,
+    target_index: usize,
+    route_index: Option<usize>,
+    display_terminus: &str,
+) -> Vec<String> {
+    let mut termini = vec![display_terminus.to_string()];
+    let Some(route_index) = route_index else {
+        return termini;
+    };
+    let Some(selected_route) = hof.info_trips.get(route_index) else {
+        return termini;
+    };
+    let Some(selected_target) = hof.termini.get(target_index) else {
+        return termini;
+    };
+    if selected_route.route.trim().parse::<i32>().ok() != Some(selected_target.code) {
+        return termini;
+    }
+    let line = crate::player::route_line(selected_route);
+    let Some(last_stop) = hof
+        .info_busstop_lists
+        .get(route_index)
+        .and_then(|stops| stops.iter().rev().find(|stop| !stop.trim().is_empty()))
+    else {
+        return termini;
+    };
+
+    for (index, route) in hof.info_trips.iter().enumerate() {
+        if !crate::player::route_line(route).eq_ignore_ascii_case(&line) {
+            continue;
+        }
+        let matches_last_stop = hof
+            .info_busstop_lists
+            .get(index)
+            .and_then(|stops| stops.iter().rev().find(|stop| !stop.trim().is_empty()))
+            .is_some_and(|stop| stop.eq_ignore_ascii_case(last_stop));
+        if !matches_last_stop {
+            continue;
+        }
+        let Some(code) = route.route.trim().parse::<i32>().ok() else {
+            continue;
+        };
+        let Some(target) = hof
+            .termini
+            .iter()
+            .find(|target| target.code == code && !target.all_exit)
+        else {
+            continue;
+        };
+        let target = target.texture_id.trim();
+        if !target.is_empty() && !termini.iter().any(|name| name.eq_ignore_ascii_case(target)) {
+            termini.push(target.to_string());
+        }
+    }
+    termini
+}
+
+/// The last stop that IBIS route `route` lists.
+fn route_final_stop(hof: &::legacy_vehicle::hof::Hof, route: Option<f32>) -> Option<String> {
+    let route = route.filter(|r| r.is_finite() && *r >= 0.0)?.round() as usize;
+    hof.info_busstop_lists
+        .get(route)?
+        .iter()
+        .rev()
+        .map(|stop| stop.trim())
+        .find(|stop| !stop.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::legacy_vehicle::hof::{Hof, InfoTrip, Terminus};
+
+    fn terminus(code: i32, name: &str) -> Terminus {
+        Terminus {
+            code,
+            texture_id: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn selected_circular_route_normalises_placeholder_lines() {
+        let hof = Hof {
+            termini: vec![
+                terminus(1037, "B2 Apsley Circular"),
+                terminus(1048, "B2 Apsley Bus Station"),
+                terminus(1049, "B3 Apsley Bus Station"),
+            ],
+            info_trips: vec![
+                InfoTrip {
+                    route: "1037".into(),
+                    line: "XXX".into(),
+                    code: "200".into(),
+                    ..Default::default()
+                },
+                InfoTrip {
+                    route: "1048".into(),
+                    line: "XXX".into(),
+                    code: "200".into(),
+                    ..Default::default()
+                },
+                InfoTrip {
+                    route: "1049".into(),
+                    line: "XXX".into(),
+                    code: "300".into(),
+                    ..Default::default()
+                },
+            ],
+            info_busstop_lists: vec![
+                vec!["Bus Station".into(), "Apsley Town Hall".into(), "Bus Station".into()],
+                vec!["Bowdenham Depot".into(), "Bus Station".into()],
+                vec!["Bus Station".into()],
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            passenger_termini(&hof, 0, Some(0), "B2 Apsley Circular"),
+            ["B2 Apsley Circular", "B2 Apsley Bus Station"]
+        );
+        assert_eq!(
+            passenger_termini(&hof, 0, Some(3), "B2 Apsley Circular"),
+            ["B2 Apsley Circular"]
+        );
+    }
+
+    #[test]
+    fn the_final_stop_is_the_last_named_stop_of_the_selected_route() {
+        let hof = Hof {
+            info_busstop_lists: vec![
+                vec![
+                    "016 jardim gramacho final".into(),
+                    "016 hospital duque final ".into(),
+                    " ".into(),
+                ],
+                vec![],
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            route_final_stop(&hof, Some(0.0)).as_deref(),
+            Some("016 hospital duque final")
+        );
+        assert_eq!(route_final_stop(&hof, Some(1.0)), None, "no stops");
+        assert_eq!(route_final_stop(&hof, Some(-1.0)), None, "no route");
+        assert_eq!(route_final_stop(&hof, Some(7.0)), None);
+        assert_eq!(route_final_stop(&hof, None), None);
+    }
+}
+
 pub(in crate::humans) struct PassengerBuses {
     /// Passenger cabins by vehicle files (the front vehicle and its coupled parts).
     pub(in crate::humans) cabins: HashMap<Vec<PathBuf>, Option<Arc<Cabin>>>,
@@ -829,6 +1011,17 @@ impl Humans {
             return c.clone();
         }
         let cabin = Cabin::load_train(&parts).map(|mut c| {
+            let parent = |p: Option<&::legacy_vehicle::cabin::VarPoint>| {
+                p.and_then(|p| p.parent.as_deref())
+                    .and_then(|n| crate::money::parent_mesh(&v.ty, n))
+            };
+            c.money_parent = parent(c.data.money_points.last());
+            c.change_parent = parent(
+                c.data
+                    .change_points
+                    .first()
+                    .or(c.data.money_points.first()),
+            );
             let entries = c.entries.len();
             for (k, exit) in c.exits.iter_mut().enumerate() {
                 exit.button =
@@ -966,18 +1159,39 @@ impl Humans {
             } else {
                 b.var("IBIS_TerminusIndex")
             };
-            let service = match (target, b.host.hof.as_ref()) {
-                (Some(i), Some(hof)) if i.is_finite() && i >= 0.0 => hof
+            let target_index = target
+                .filter(|i| i.is_finite() && *i >= 0.0)
+                .map(|i| i.round() as usize);
+            let service = match (target_index, b.host.hof.as_ref()) {
+                (Some(i), Some(hof)) => hof
                     .termini
-                    .get(i.round() as usize)
+                    .get(i)
                     .map(|t| (t.texture_id.trim().to_string(), t.all_exit)),
                 _ => None,
             };
             let out_of_service = service.as_ref().is_some_and(|s| s.1);
             let terminus = service.filter(|s| !s.1).map(|s| s.0);
+            let passenger_termini = match (terminus.as_deref(), target_index, b.host.hof.as_ref()) {
+                (Some(display), Some(target), Some(hof)) => passenger_termini(
+                    hof,
+                    target,
+                    b.var("IBIS_RouteIndex")
+                        .filter(|i| i.is_finite() && *i >= 0.0)
+                        .map(|i| i.round() as usize),
+                    display,
+                ),
+                _ => Vec::new(),
+            };
+            let final_stop = b
+                .host
+                .hof
+                .as_ref()
+                .and_then(|hof| route_final_stop(hof, b.var("IBIS_RouteIndex")));
             out.push(BusNow {
                 terminus,
+                passenger_termini,
                 out_of_service,
+                final_stop,
                 id: BusId::Player,
                 walk_open: None,
                 cabin,
@@ -1064,13 +1278,22 @@ impl Humans {
                     .or_insert_with(|| vec![false; cabin.seats.len()]);
                 let (half, centre) = bb_of(&c.vehicle);
                 let trailers = part_frames(&c.vehicle, &cabin);
+                let terminus = c
+                    .bus
+                    .as_ref()
+                    .map(|b| b.terminus.trim().to_string())
+                    .filter(|t| !t.is_empty());
+                let final_stop = c
+                    .vehicle
+                    .host
+                    .hof
+                    .as_ref()
+                    .and_then(|hof| route_final_stop(hof, c.vehicle.var("IBIS_RouteIndex")));
                 out.push(BusNow {
-                    terminus: c
-                        .bus
-                        .as_ref()
-                        .map(|b| b.terminus.trim().to_string())
-                        .filter(|t| !t.is_empty()),
+                    passenger_termini: terminus.iter().cloned().collect(),
+                    terminus,
                     out_of_service: false,
+                    final_stop,
                     id: BusId::Ai(c.id),
                     walk_open: None,
                     cabin,
@@ -1135,7 +1358,9 @@ impl Humans {
         let walk_open = Self::doors_open(v, cabin.entries.len(), cabin.exits.len());
         Some(BusNow {
             terminus: None,
+            passenger_termini: Vec::new(),
             out_of_service: false,
+            final_stop: None,
             id,
             entry_open: vec![false; cabin.entries.len()],
             exit_open: vec![false; cabin.exits.len()],

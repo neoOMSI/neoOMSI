@@ -120,7 +120,13 @@ const Footer = () => (
           FAQ
         </a>
         <a className="hover:text-ink" href={url("/openomsi/")}>
-          neoOMSI vs openOMSI
+          neoOMSI and openOMSI
+        </a>
+        <a
+          className="hover:text-ink"
+          href={`https://github.com/${REPO}/blob/main/NOTICE`}
+        >
+          Attribution
         </a>
         <a className="hover:text-ink" href={DISCORD}>
           Discord

@@ -42,6 +42,10 @@ jobs:
           PUSH_HEAD: ${{ github.sha }}
         run: bash scripts/ci/detect-test-changes.sh
 
+      - name: Validate release publishing logic
+        shell: bash
+        run: bash scripts/ci/test-publish-release-logic.sh
+
   test:
     name: Workspace tests
     needs: changes
@@ -94,7 +98,6 @@ jobs:
               echo "::error::Workspace tests were required but did not pass."
               exit 1
             fi
-
             echo "Workspace tests passed."
           else
             echo "No Rust/test-relevant changes. Workspace tests were safely skipped."

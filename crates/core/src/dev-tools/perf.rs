@@ -2,6 +2,56 @@
 use super::types::*;
 use imgui::Condition;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::time::Instant;
+
+const MAX_REC_FRAMES: usize = 200_000;
+const MAX_SPIKES: usize = 12;
+
+#[derive(Default)]
+struct SecStat {
+    sum: f64,
+    max: f32,
+    samples: Vec<f32>,
+}
+
+struct Spike {
+    frame: usize,
+    at_s: f32,
+    dt: f32,
+    unaccounted: f32,
+    top: Vec<(&'static str, f32)>,
+    nested: Vec<(&'static str, f32)>,
+}
+
+struct Recording {
+    started: Instant,
+    lights: Vec<LightStats>,
+    dts: Vec<f32>,
+    secs: BTreeMap<&'static str, SecStat>,
+    spikes: Vec<Spike>,
+}
+
+fn copy_text(text: &str) -> bool {
+    #[cfg(not(target_os = "android"))]
+    {
+        thread_local! {
+            static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> = const { std::cell::RefCell::new(None) };
+        }
+        CLIPBOARD.with(|c| {
+            let mut c = c.borrow_mut();
+            if c.is_none() {
+                *c = arboard::Clipboard::new().ok();
+            }
+            c.as_mut().is_some_and(|cb| cb.set_text(text.to_string()).is_ok())
+        })
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = text;
+        false
+    }
+}
 
 pub(super) struct PerfTool {
     prev: BTreeMap<&'static str, f64>,
@@ -11,6 +61,9 @@ pub(super) struct PerfTool {
     pub frozen: bool,
     pub nested: bool,
     pub graph: Vec<f32>,
+    rec: Option<Recording>,
+    report: String,
+    status: Option<(String, Instant)>,
 }
 
 impl PerfTool {
@@ -23,16 +76,23 @@ impl PerfTool {
             frozen: false,
             nested: true,
             graph: Vec::new(),
+            rec: None,
+            report: String::new(),
+            status: None,
         }
     }
 
     /// Take this frame's share of the cumulative timers (per frame, even if frames were skipped).
-    pub(super) fn update(&mut self, extra: &Extra, dt_ms: f32) {
+    pub(super) fn update(&mut self, extra: &Extra, snap: &Snapshot, dt_ms: f32) {
         let frames = extra.frames.wrapping_sub(self.prev_frames).max(1) as f64;
         let first = self.prev_frames == 0;
+        let mut frame_secs: Vec<(&'static str, f32)> = Vec::new();
         for (k, v) in &extra.profile {
             let before = self.prev.get(k).copied().unwrap_or(*v);
             let ms = (((v - before) / frames) * 1000.0).max(0.0) as f32;
+            if !first && self.rec.is_some() {
+                frame_secs.push((*k, ms));
+            }
             if first || self.frozen {
                 continue;
             }
@@ -43,6 +103,50 @@ impl PerfTool {
         }
         self.prev = extra.profile.iter().copied().collect();
         self.prev_frames = extra.frames;
+        if !first {
+            if let Some(rec) = self.rec.as_mut() {
+                if rec.dts.len() < MAX_REC_FRAMES {
+                    let idx = rec.dts.len();
+                    rec.dts.push(dt_ms);
+                    rec.lights.push(snap.light_stats.clone());
+                    for (k, ms) in &frame_secs {
+                        let st = rec.secs.entry(*k).or_default();
+                        st.sum += *ms as f64;
+                        st.max = st.max.max(*ms);
+                        // Pad skipped frames so every series has one sample per frame.
+                        st.samples.resize(idx, 0.0);
+                        st.samples.push(*ms);
+                    }
+                    let worst = rec.spikes.last().map(|s| s.dt).unwrap_or(0.0);
+                    if dt_ms > 20.0 && (rec.spikes.len() < MAX_SPIKES || dt_ms > worst) {
+                        frame_secs.sort_by(|a, b| b.1.total_cmp(&a.1));
+                        let staged: f32 = frame_secs
+                            .iter()
+                            .filter(|(k, _)| !k.contains('.'))
+                            .map(|p| p.1)
+                            .sum();
+                        let mut nested: Vec<(&'static str, f32)> = frame_secs
+                            .iter()
+                            .filter(|(k, v)| k.contains('.') && *k != "frame.total" && *v > 0.5)
+                            .copied()
+                            .collect();
+                        nested.truncate(4);
+                        frame_secs.retain(|(k, _)| !k.contains('.'));
+                        frame_secs.truncate(4);
+                        rec.spikes.push(Spike {
+                            frame: idx,
+                            at_s: rec.started.elapsed().as_secs_f32(),
+                            dt: dt_ms,
+                            unaccounted: (dt_ms - staged).max(0.0),
+                            top: frame_secs,
+                            nested,
+                        });
+                        rec.spikes.sort_by(|a, b| b.dt.total_cmp(&a.dt));
+                        rec.spikes.truncate(MAX_SPIKES);
+                    }
+                }
+            }
+        }
         if !self.frozen {
             self.graph.push(dt_ms);
             if self.graph.len() > 240 {
@@ -50,6 +154,327 @@ impl PerfTool {
             }
         }
     }
+}
+
+impl PerfTool {
+    fn start(&mut self) {
+        self.rec = Some(Recording {
+            started: Instant::now(),
+            lights: Vec::new(),
+            dts: Vec::new(),
+            secs: BTreeMap::new(),
+            spikes: Vec::new(),
+        });
+        self.report.clear();
+        self.status = None;
+    }
+
+    fn stop(&mut self, snap: &Snapshot, extra: &Extra) {
+        let Some(rec) = self.rec.take() else {
+            return;
+        };
+        self.report = build_report(&rec, snap, extra);
+        let ok = copy_text(&self.report);
+        let msg = if ok {
+            "Report copied to clipboard"
+        } else {
+            "Clipboard unavailable - copy from the box below"
+        };
+        self.status = Some((msg.to_string(), Instant::now()));
+    }
+}
+
+fn build_report(rec: &Recording, snap: &Snapshot, extra: &Extra) -> String {
+    let n = rec.dts.len();
+    let secs = rec.started.elapsed().as_secs_f32();
+    let mut o = String::new();
+    let _ = writeln!(o, "# Performance report");
+    let _ = writeln!(o, "Duration {secs:.1} s, {n} frames");
+    let _ = writeln!(
+        o,
+        "GPU: {} ({:?}), surface {}x{}, render scale {}",
+        snap.adapter,
+        snap.format,
+        snap.surface.0,
+        snap.surface.1,
+        if snap.render_scale <= 0.0 {
+            "auto".to_string()
+        } else {
+            format!("{:.2}", snap.render_scale)
+        }
+    );
+    let _ = writeln!(
+        o,
+        "Settings: MSAA {}x, aniso {}x, shadows {}, SSAO {}, FXAA {}, reflections {}",
+        snap.msaa, snap.anisotropy, snap.shadow_size, snap.ssao, snap.fxaa, snap.reflections
+    );
+    let _ = writeln!(
+        o,
+        "Scene: {} instances, {} meshes, {} textures, {} materials, {} lights ({} interior), {} coronas",
+        snap.instances,
+        snap.meshes,
+        snap.textures,
+        snap.materials,
+        snap.lights,
+        snap.interior_lights,
+        snap.coronas
+    );
+    if let Some(t) = extra.traffic.as_ref() {
+        let _ = writeln!(o, "Traffic: {} cars, {} asleep", t.cars, t.dormant);
+    }
+    environment_report(&mut o, extra, snap);
+    if n == 0 {
+        let _ = writeln!(o, "\nNo frames recorded.");
+        return o;
+    }
+    let mut sorted = rec.dts.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let avg = sorted.iter().sum::<f32>() / n as f32;
+    let p50 = percentile(&sorted, 0.5);
+    let p95 = percentile(&sorted, 0.95);
+    let p99 = percentile(&sorted, 0.99);
+    let max = sorted.last().copied().unwrap_or(0.0);
+    let over = |t: f32| rec.dts.iter().filter(|d| **d > t).count();
+    let _ = writeln!(o, "\n## Frame time");
+    let _ = writeln!(
+        o,
+        "avg {avg:.2} ms ({:.0} FPS), p50 {p50:.2}, p95 {p95:.2}, p99 {p99:.2}, max {max:.2} ms",
+        1000.0 / avg.max(0.001)
+    );
+    if p99 > 0.0 {
+        let _ = writeln!(o, "1% low: {:.0} FPS", 1000.0 / p99);
+    }
+    let _ = writeln!(
+        o,
+        "Frames >16.7 ms: {} ({:.1}%), >33.3 ms: {} ({:.1}%), >50 ms: {}, >100 ms: {}",
+        over(16.7),
+        over(16.7) as f32 / n as f32 * 100.0,
+        over(33.3),
+        over(33.3) as f32 / n as f32 * 100.0,
+        over(50.0),
+        over(100.0)
+    );
+    {
+        let edges = [4.5f32, 8.0, 11.0, 15.0, 19.0, 25.0, 31.0, 38.0, 46.0, f32::MAX];
+        let mut hist = [0usize; 10];
+        for d in &sorted {
+            let i = edges.iter().position(|e| *d <= *e).unwrap_or(9);
+            hist[i] += 1;
+        }
+        let mut lo = 0.0f32;
+        let mut parts: Vec<String> = Vec::new();
+        for (i, e) in edges.iter().enumerate() {
+            if hist[i] > 0 {
+                if *e == f32::MAX {
+                    parts.push(format!(">{lo:.0}: {}", hist[i]));
+                } else {
+                    parts.push(format!("{lo:.0}-{e:.0}: {}", hist[i]));
+                }
+            }
+            lo = *e;
+        }
+        let _ = writeln!(o, "Frame histogram (ms: frames): {}", parts.join(", "));
+    }
+
+    struct Row {
+        name: &'static str,
+        avg: f32,
+        p95: f32,
+        max: f32,
+    }
+    let mut rows: Vec<Row> = rec
+        .secs
+        .iter()
+        .map(|(k, st)| {
+            let mut v = st.samples.clone();
+            v.resize(n, 0.0);
+            v.sort_by(|a, b| a.total_cmp(b));
+            Row {
+                name: *k,
+                avg: (st.sum / n as f64) as f32,
+                p95: percentile(&v, 0.95),
+                max: st.max,
+            }
+        })
+        .filter(|r| r.avg > 0.005 || r.max > 0.05)
+        .collect();
+    rows.sort_by(|a, b| b.avg.total_cmp(&a.avg));
+    let stages: f32 = rows.iter().filter(|r| !r.name.contains('.')).map(|r| r.avg).sum();
+    let _ = writeln!(
+        o,
+        "\n## Sections (ms per frame; stages {stages:.2} ms of {avg:.2} ms, {:.2} ms outside the timers)",
+        (avg - stages).max(0.0)
+    );
+    let _ = writeln!(o, "{:<36} {:>8} {:>8} {:>8} {:>6}", "section", "avg", "p95", "max", "%frame");
+    for r in rows.iter().filter(|r| !r.name.contains('.')) {
+        let _ = writeln!(
+            o,
+            "{:<36} {:>8.2} {:>8.2} {:>8.2} {:>5.1}%",
+            r.name,
+            r.avg,
+            r.p95,
+            r.max,
+            r.avg / avg * 100.0
+        );
+    }
+    let _ = writeln!(o, "\n## Sub-sections");
+    for r in rows.iter().filter(|r| r.name.contains('.')) {
+        let _ = writeln!(
+            o,
+            "{:<36} {:>8.2} {:>8.2} {:>8.2} {:>5.1}%",
+            r.name,
+            r.avg,
+            r.p95,
+            r.max,
+            r.avg / avg * 100.0
+        );
+    }
+    lights_report(&mut o, rec);
+    if !snap.gpu_passes.is_empty() {
+        let _ = writeln!(o, "\n## GPU passes (ms per pass, average since start, passes measured)");
+        let mut passes = snap.gpu_passes.clone();
+        passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (name, ms, count) in &passes {
+            let _ = writeln!(o, "{:<36} {:>8.2} {:>8}", name, ms, count);
+        }
+    }
+    if !snap.draw_report.is_empty() {
+        let _ = writeln!(o, "\n## Draws (counts: average since start; heaviest assets: last 2 s, main view)");
+        for line in &snap.draw_report {
+            let _ = writeln!(o, "{line}");
+        }
+    }
+    if !rec.spikes.is_empty() {
+        let _ = writeln!(
+            o,
+            "\n## Worst frames (dt, time into recording, unaccounted = dt minus all stages, top stages | top sub-sections)"
+        );
+        for s in &rec.spikes {
+            let top: Vec<String> = s.top.iter().map(|(k, v)| format!("{k} {v:.1}")).collect();
+            let sub: Vec<String> = s.nested.iter().map(|(k, v)| format!("{k} {v:.1}")).collect();
+            let _ = writeln!(
+                o,
+                "frame {} @ {:.1}s: {:.1} ms, unaccounted {:.1} ms | {} | {}",
+                s.frame,
+                s.at_s,
+                s.dt,
+                s.unaccounted,
+                top.join(", "),
+                sub.join(", ")
+            );
+        }
+    }
+    o
+}
+
+fn environment_report(o: &mut String, extra: &Extra, snap: &Snapshot) {
+    let l = &snap.light_stats;
+    let t = extra.clock;
+    let _ = writeln!(o, "\n## Environment");
+    let _ = writeln!(
+        o,
+        "Map {}, time {:02}:{:02}:{:02}, paused {}",
+        extra.map,
+        (t / 3600.0) as i32 % 24,
+        (t / 60.0) as i32 % 60,
+        t as i32 % 60,
+        extra.paused
+    );
+    let w = &extra.weather;
+    let _ = writeln!(
+        o,
+        "Date {}-{:02}-{:02}, weather '{}'{}, wetness {:.2}, street condition {:.2}",
+        w.year,
+        w.day_month.0,
+        w.day_month.1,
+        w.spec,
+        if w.is_custom { " (custom)" } else { "" },
+        w.wetness,
+        w.street_cond
+    );
+    let _ = writeln!(
+        o,
+        "Clouds: density {:.2}, layers {:?}, precipitation {:?}, drift {:?}",
+        w.density, w.layers, w.precip, w.drift
+    );
+    let _ = writeln!(
+        o,
+        "Sky: sun {:.2} at {:.1} deg, night {:.2}, ambient {:.2}, fog {:.5}, overcast {:.2}, rain {:.2}, snow {:.2}",
+        l.sun_intensity, l.sun_elevation, l.night, l.ambient, l.fog_density, l.overcast, l.rain, l.snow
+    );
+    let _ = writeln!(
+        o,
+        "Shadows: sun {}, lights {}; enhanced lighting {}",
+        l.sun_shadows, l.light_shadows, l.enhanced
+    );
+    if let Some(c) = extra.cam.as_ref() {
+        let _ = writeln!(
+            o,
+            "Camera: {:.1} {:.1} {:.1}, yaw {:.0}, pitch {:.0}",
+            c.position.x, c.position.y, c.position.z, c.yaw, c.pitch
+        );
+    }
+    if let Some(v) = extra.vehicle.as_ref() {
+        let on = |vars: &[InteriorInfo]| vars.len();
+        let _ = writeln!(
+            o,
+            "Vehicle lights: {} interior, {} exterior sources, {} beam marks",
+            on(&v.interior),
+            on(&v.exterior),
+            extra.beams.len()
+        );
+    }
+    if let Some(f) = extra.foot.as_ref() {
+        let _ = writeln!(
+            o,
+            "On foot: inside {}, seated {}, on lane {}",
+            f.inside, f.seated, f.on_lane
+        );
+    }
+}
+
+fn lights_report(o: &mut String, rec: &Recording) {
+    let n = rec.lights.len();
+    if n == 0 {
+        return;
+    }
+    let _ = writeln!(o, "\n## Lights (per frame: min / avg / max)");
+    let mut row = |name: &str, f: &dyn Fn(&LightStats) -> f32| {
+        let (mut lo, mut hi, mut sum) = (f32::MAX, 0.0f32, 0.0f64);
+        for s in &rec.lights {
+            let v = f(s);
+            lo = lo.min(v);
+            hi = hi.max(v);
+            sum += v as f64;
+        }
+        let _ = writeln!(
+            o,
+            "{:<28} {:>9.1} {:>9.1} {:>9.1}",
+            name,
+            lo,
+            sum / n as f64,
+            hi
+        );
+    };
+    row("point lights", &|s| s.point as f32);
+    row("spot lights", &|s| s.spot as f32);
+    row("screen lights", &|s| s.screen as f32);
+    row("shadow casting lights", &|s| s.shadow_casting as f32);
+    row("beam lights", &|s| s.beams as f32);
+    row("vanilla-only lights", &|s| s.vanilla_only as f32);
+    row("enhanced-only lights", &|s| s.enhanced_only as f32);
+    row("interior point lights", &|s| s.interior_point as f32);
+    row("interior spot lights", &|s| s.interior_spot as f32);
+    row("coronas: beam", &|s| s.coronas_beam as f32);
+    row("coronas: halo", &|s| s.coronas_halo as f32);
+    row("coronas: rotating", &|s| s.coronas_rotating as f32);
+    row("light occluders", &|s| s.occluders as f32);
+    row("light radius max (m)", &|s| s.max_radius);
+    row("light radius avg (m)", &|s| s.avg_radius);
+    row("light intensity sum", &|s| s.total_intensity);
+    row("nearest light (m)", &|s| s.nearest.unwrap_or(0.0));
+    row("sun intensity", &|s| s.sun_intensity);
+    row("night", &|s| s.night);
 }
 
 fn percentile(sorted: &[f32], p: f32) -> f32 {
@@ -89,6 +514,46 @@ pub(super) fn window(ui: &imgui::Ui, open: &mut bool, tool: &mut PerfTool, snap:
                 .graph_size([0.0, 64.0])
                 .overlay_text(format!("max {max:.1} ms"))
                 .build();
+            let mut stop = false;
+            if let Some(rec) = tool.rec.as_ref() {
+                let c = [1.0, 0.3, 0.3, 1.0];
+                ui.text_colored(
+                    c,
+                    format!(
+                        "REC {:.1} s, {} frames",
+                        rec.started.elapsed().as_secs_f32(),
+                        rec.dts.len()
+                    ),
+                );
+                ui.same_line();
+                stop = ui.button("Stop + copy report");
+            } else if ui.button("Start recording") {
+                tool.start();
+            }
+            if stop {
+                tool.stop(snap, extra);
+            }
+            if !tool.report.is_empty() && tool.rec.is_none() {
+                ui.same_line();
+                if ui.button("Copy report") {
+                    let ok = copy_text(&tool.report);
+                    let msg = if ok { "Report copied to clipboard" } else { "Clipboard unavailable" };
+                    tool.status = Some((msg.to_string(), Instant::now()));
+                }
+            }
+            if let Some((msg, at)) = tool.status.as_ref() {
+                if at.elapsed().as_secs_f32() < 6.0 {
+                    ui.text_colored([0.4, 1.0, 0.4, 1.0], msg);
+                }
+            }
+            if !tool.report.is_empty() && tool.rec.is_none() {
+                if ui.collapsing_header("Last report", imgui::TreeNodeFlags::empty()) {
+                    ui.input_text_multiline("##perfreport", &mut tool.report, [-1.0, 220.0])
+                        .read_only(true)
+                        .build();
+                }
+            }
+            ui.separator();
             ui.checkbox("Freeze", &mut tool.frozen);
             ui.same_line();
             ui.checkbox("Sub-sections", &mut tool.nested);
@@ -152,6 +617,24 @@ pub(super) fn window(ui: &imgui::Ui, open: &mut bool, tool: &mut PerfTool, snap:
             ui.text(format!(
                 "Instances {}, Meshes {}, Lights {}",
                 snap.instances, snap.meshes, snap.lights
+            ));
+            let l = &snap.light_stats;
+            ui.text(format!(
+                "Lights: {} point, {} spot, {} screen, {} shadowed, {} beams",
+                l.point, l.spot, l.screen, l.shadow_casting, l.beams
+            ));
+            ui.text(format!(
+                "Interior {}+{}, coronas {} (beam {}, halo {}), occluders {}",
+                l.interior_point,
+                l.interior_spot,
+                snap.coronas,
+                l.coronas_beam,
+                l.coronas_halo,
+                l.occluders
+            ));
+            ui.text(format!(
+                "Sun {:.2} @ {:.0} deg, night {:.2}, ambient {:.2}, fog {:.4}",
+                l.sun_intensity, l.sun_elevation, l.night, l.ambient, l.fog_density
             ));
         });
 }

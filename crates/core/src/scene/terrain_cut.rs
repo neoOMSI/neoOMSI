@@ -31,6 +31,7 @@ impl World {
                 let mut order: Vec<&Arc<StagedTile>> = src.values().collect();
                 order.sort_by_key(|q| (q.tx, q.ty));
                 let mut ts = TileSurface::new(SURFACE_RASTER);
+                let mut rims = Vec::new();
                 // meshes the wheels stand on, and of them low objects they climb
                 let mut wheel_meshes = 0usize;
                 let report = |mesh: &MeshData,
@@ -95,7 +96,7 @@ impl World {
                         match drive {
                             StagedDrive::HeightProfiles(mesh, _) => ts.add_height_profiles(
                                 mesh,
-                                scenery_draw_position(q.origin, true),
+                                q.origin,
                                 tx,
                                 ty,
                             ),
@@ -104,7 +105,7 @@ impl World {
                             } => ts.add_drive_mesh(
                                 mesh,
                                 &Mat4::IDENTITY,
-                                scenery_draw_position(q.origin, true),
+                                q.origin,
                                 tx,
                                 ty,
                                 surface_maps.as_deref(),
@@ -125,7 +126,7 @@ impl World {
                     };
                     if ::legacy_config::env::var_os("OMSI_NO_SPLINE_HOLES").is_none() {
                         for ring in &q.hole_outlines {
-                            ts.add_outline(ring, tx, ty);
+                            ts.add_mesh_outline(ring, tx, ty);
                         }
                     }
                     for (o, pose) in q.objects.iter().zip(res.poses.iter()) {
@@ -135,17 +136,31 @@ impl World {
                         if ot.sco.tree.is_some() || ot.sco.only_editor || ot.sco.is_help_arrow {
                             continue;
                         }
-                        for h in &ot.holes {
+                        for h in ot.holes.iter().filter(|_| o.terrain_align_flag) {
                             if !outside(&mesh_bounds(h, &pose.rot, pose.pos)) {
                                 ts.rasterize_hole(h, &pose.rot, pose.pos, tx, ty);
                                 // and cut exactly along its rim, as along a spline's outline:
                                 // by texel alone the ground stood a metre into the road at
                                 // the edges of a junction (Spandau, Bahnstr./Hansastr.)
                                 for ring in
-                                    ::geometry::hole_mesh_outlines(h, &pose.rot, pose.pos)
+                                    ::geometry::hole_mesh_rims(h, &pose.rot, pose.pos)
                                 {
-                                    if !::geometry::outline_crosses_itself(&ring) {
-                                        ts.add_outline(&ring, tx, ty);
+                                    let flat: Vec<_> = ring.iter().map(|p| p.truncate()).collect();
+                                    if !::geometry::outline_crosses_itself(&flat) {
+                                        // Register the contour as a mesh cut; the mask must not
+                                        // remove a coarse extra strip around its inset rim.
+                                        ts.register_mesh_outline(&ring, tx, ty);
+                                        rims.push(
+                                            ring.iter()
+                                                .map(|p| {
+                                                    glam::Vec3::new(
+                                                        (p.x - x0) as f32,
+                                                        (p.y - y0) as f32,
+                                                        p.z as f32,
+                                                    )
+                                                })
+                                                .collect(),
+                                        );
                                     }
                                 }
                             }
@@ -195,7 +210,7 @@ impl World {
                                 ts.add_drive_mesh(
                                     mesh,
                                     &pose.rot,
-                                    scenery_draw_position(pose.pos, true),
+                                    pose.pos,
                                     tx,
                                     ty,
                                     ot.surface_maps.as_deref(),
@@ -207,6 +222,13 @@ impl World {
                 }
                 ts.finish();
                 let tile_terrain = self.terrains.read().get(&key).cloned();
+                if let Some(t) = tile_terrain.as_ref()
+                    && let Some(cut) =
+                        ::geometry::TerrainCut::with_spline_outlines(t, &rims, &ts.mesh_outlines())
+                {
+                    p.terrain = Some(cut.mesh(t));
+                    ts.terrain_cut = Some(cut);
+                }
                 // How much of the ground the old cut rule ("anything below the terrain takes
                 // it away") would have removed with nothing to put in its place: a hole in
                 // the world you can see the sky through.
@@ -440,17 +462,7 @@ impl World {
                 .collect();
             wanted.sort();
             wanted.dedup();
-            let decoded: Vec<(PathBuf, Arc<TextureData>)> = wanted
-                .par_iter()
-                .filter_map(|(name, dirs)| {
-                    let dirs_ref: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
-                    let path = ::texture::find_texture(name, &dirs_ref)?;
-                    let (img, _) = ::texture::gpu::load_gpu(&path).ok()?;
-                    Some((path, Arc::new(img)))
-                })
-                .collect();
-            let decoded: Arc<HashMap<PathBuf, Arc<TextureData>>> =
-                Arc::new(decoded.into_iter().collect());
+            let decoded = prepare_texture_images(&wanted);
             for p in prepared.iter_mut() {
                 p.images = decoded.clone();
             }

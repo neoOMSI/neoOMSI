@@ -15,6 +15,7 @@ pub struct ScriptTexture {
     /// Last image released by STUnlock, retained even when the script locks again
     /// before the renderer runs (the Atron AFR4 keeps its drawing buffer locked).
     pending: Option<Vec<u8>>,
+    spare: Vec<u8>,
     /// `STFilter` was called after this texture was unlocked. OMSI then generates a mip
     /// chain, which keeps a distant matrix or IBIS screen stable instead of sampling its
     /// full-resolution pixels directly.
@@ -36,6 +37,7 @@ impl ScriptTexture {
             dirty: true,
             locked: false,
             pending: None,
+            spare: Vec::new(),
             mipmaps: false,
             color: [255, 255, 255, 255],
             declared: (w, h),
@@ -68,8 +70,26 @@ impl ScriptTexture {
     pub fn unlock(&mut self) {
         self.locked = false;
         if self.dirty {
-            self.pending = Some(self.rgba.clone());
+            let copy = self.copy_of_rgba();
+            if let Some(old) = self.pending.replace(copy) {
+                self.spare = old;
+            }
             self.dirty = false;
+        }
+    }
+
+    /// The drawing buffer's pixels, in the spare buffer when there is one.
+    fn copy_of_rgba(&mut self) -> Vec<u8> {
+        let mut copy = std::mem::take(&mut self.spare);
+        copy.clear();
+        copy.extend_from_slice(&self.rgba);
+        copy
+    }
+
+    /// Hand back a buffer [`Self::take_upload`] gave, once its pixels are uploaded.
+    pub fn recycle(&mut self, buf: Vec<u8>) {
+        if buf.capacity() > self.spare.capacity() {
+            self.spare = buf;
         }
     }
 
@@ -78,8 +98,10 @@ impl ScriptTexture {
     pub fn take_upload(&mut self) -> Option<Vec<u8>> {
         if !self.locked && self.dirty {
             self.dirty = false;
-            self.pending = None;
-            Some(self.rgba.clone())
+            if let Some(old) = self.pending.take() {
+                self.spare = old;
+            }
+            Some(self.copy_of_rgba())
         } else {
             self.pending.take()
         }

@@ -31,6 +31,8 @@ pub struct Block {
 #[derive(Debug, Clone, Default)]
 pub struct Program {
     pub var_names: Vec<String>,
+    /// The string literals the blocks push (`Op::PushStr` holds an index into these).
+    pub strings: Vec<String>,
     pub str_var_names: Vec<String>,
     pub names: Vec<String>,
     pub curves: Vec<Curve>,
@@ -48,11 +50,32 @@ pub struct Program {
     var_index: HashMap<String, VarId>,
     str_var_index: HashMap<String, StrVarId>,
     name_index: HashMap<String, NameId>,
+    /// The variables some block stores into, found on the first `stores` (the passengers ask
+    /// for a bus's door variables several times a frame, and each answer went through every
+    /// op of every block), with the block and op counts it was found for.
+    stored: std::sync::OnceLock<(usize, usize, Vec<bool>)>,
+}
+
+/// `f` of `name` in lower case, without a new string for the usual short names (the
+/// lookups by name run for every lamp and door each frame).
+fn lower<R>(name: &str, f: impl FnOnce(&str) -> R) -> R {
+    if !name.bytes().any(|b| b.is_ascii_uppercase()) {
+        f(name)
+    } else if name.len() <= 64 {
+        let mut buf = [0u8; 64];
+        let key = &mut buf[..name.len()];
+        key.copy_from_slice(name.as_bytes());
+        key.make_ascii_lowercase();
+        // (lowering ASCII letters keeps the text valid UTF-8)
+        f(std::str::from_utf8(key).unwrap_or(name))
+    } else {
+        f(&name.to_ascii_lowercase())
+    }
 }
 
 impl Program {
     pub fn var(&self, name: &str) -> Option<VarId> {
-        self.var_index.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.var_index.get(k).copied())
     }
     /// The name of a variable (lower case); a linear search, for diagnostics.
     pub fn var_name(&self, id: VarId) -> Option<&str> {
@@ -67,13 +90,13 @@ impl Program {
     }
 
     pub fn str_var(&self, name: &str) -> Option<StrVarId> {
-        self.str_var_index.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.str_var_index.get(k).copied())
     }
     pub fn name(&self, id: NameId) -> &str {
         &self.names[id as usize]
     }
     pub fn trigger(&self, name: &str) -> Option<BlockId> {
-        self.triggers.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.triggers.get(k).copied())
     }
     /// Every input trigger a script set exposes, in stable order.  A vehicle mod is free to
     /// give its ignition and starter controls its own names; callers that need to discover a
@@ -84,11 +107,11 @@ impl Program {
         out
     }
     pub fn macro_block(&self, name: &str) -> Option<BlockId> {
-        self.macros.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.macros.get(k).copied())
     }
     /// A `[const]` of the constfiles, as `(C.L.name)` reads it.
     pub fn constant(&self, name: &str) -> Option<f32> {
-        self.consts.get(&name.to_ascii_lowercase()).copied()
+        lower(name, |k| self.consts.get(k).copied())
     }
 
     /// Declare a variable (idempotent), returning its id.
@@ -105,7 +128,7 @@ impl Program {
 
     /// Whether variable `name` was declared in the script set's varlists (as opposed to built-in host variables).
     pub fn has_script_var(&self, name: &str) -> bool {
-        self.script_vars.contains(&name.to_ascii_lowercase())
+        lower(name, |k| self.script_vars.contains(k))
     }
 
     /// Declare a script variable (from a varlist), recording it in `script_vars` and returning its id.
@@ -127,6 +150,24 @@ impl Program {
 
     /// Whether any block of the program stores into `var`.
     pub fn stores(&self, var: VarId) -> bool {
+        let ops = || self.blocks.iter().map(|b| b.ops.len()).sum::<usize>();
+        let (blocks, op_count, stored) = self.stored.get_or_init(|| {
+            let mut stored = Vec::new();
+            for op in self.blocks.iter().flat_map(|b| &b.ops) {
+                if let Op::Store(v) = op {
+                    let v = *v as usize;
+                    if stored.len() <= v {
+                        stored.resize(v + 1, false);
+                    }
+                    stored[v] = true;
+                }
+            }
+            (self.blocks.len(), ops(), stored)
+        });
+        if *blocks == self.blocks.len() && *op_count == ops() {
+            return stored.get(var as usize).copied().unwrap_or(false);
+        }
+        // (blocks changed after the first answer)
         self.blocks.iter().any(|b| {
             b.ops
                 .iter()
@@ -285,7 +326,8 @@ impl Program {
         let mut out: Vec<String> = Vec::new();
         for b in &self.blocks {
             for w in b.ops.windows(2) {
-                if let (Op::PushStr(s), Op::Callback(n)) = (&w[0], &w[1]) {
+                if let (Op::PushStr(i), Op::Callback(n)) = (&w[0], &w[1]) {
+                    let s = &self.strings[*i as usize];
                     if self.name(*n).eq_ignore_ascii_case(callback) && !out.contains(s) {
                         out.push(s.clone());
                     }
@@ -564,7 +606,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_file(&mut self, f: &CfgFile) {
-        let mut cur: Option<(Vec<BlockKind>, Block, Vec<(usize, bool)>)> = None; // kinds (aliases), block, if-stack: (jump op index, has_else)
+        let mut cur: Option<(Vec<BlockKind>, Block, Vec<(Vec<usize>, bool)>)> = None; // kinds (aliases), block, if-stack: (jump op indices the {endif} patches, has_else)
         // `{else}` without an open `{if}` (a stray `{endif}` closed it early): in OMSI a
         // reached `{else}` skips to the next `{endif}`, so it jumps there here too - the
         // Procity's dashboard blanked its odometer every frame through such an `{else}`
@@ -649,14 +691,16 @@ impl<'a> Compiler<'a> {
                                     for idx in orphan_elses.drain(..) {
                                         patch(&mut block.ops[idx], end);
                                     }
-                                    for (idx, _) in ifs {
+                                    for (jumps, _) in ifs {
                                         log::debug!(
                                             "{}:{}: {{end}} with open {{if}}",
                                             f.path.display(),
                                             line_no
                                         );
                                         let end = block.ops.len() as u32;
-                                        patch(&mut block.ops[idx], end);
+                                        for idx in jumps {
+                                            patch(&mut block.ops[idx], end);
+                                        }
                                     }
                                     self.finish_block(kinds, block);
                                 } else {
@@ -670,7 +714,7 @@ impl<'a> Compiler<'a> {
                             }
                             "if" => {
                                 if let Some((_, block, ifs)) = cur.as_mut() {
-                                    ifs.push((block.ops.len(), false));
+                                    ifs.push((vec![block.ops.len()], false));
                                     block.ops.push(Op::JumpIfZero(u32::MAX));
                                 } else {
                                     // (code between blocks is never run - Omsi.exe reads only
@@ -685,21 +729,28 @@ impl<'a> Compiler<'a> {
                             }
                             "else" => {
                                 if let Some((_, block, ifs)) = cur.as_mut() {
-                                    if let Some((idx, has_else)) = ifs.last_mut() {
+                                    if let Some((jumps, has_else)) = ifs.last_mut() {
+                                        // a reached {else} skips to the {endif}
+                                        let jmp = block.ops.len();
+                                        block.ops.push(Op::Jump(u32::MAX));
                                         if *has_else {
+                                            // a second one too, so what follows it never runs:
+                                            // the DBC Chicago Citybus's cashdesk.osc has one
+                                            // that blanks its farebox, which OMSI shows
                                             log::debug!(
                                                 "{}:{}: double {{else}}",
                                                 f.path.display(),
                                                 line_no
                                             );
+                                        } else {
+                                            // a failed {if} goes on after the {else}
+                                            let target = block.ops.len() as u32;
+                                            for idx in jumps.drain(..) {
+                                                patch(&mut block.ops[idx], target);
+                                            }
+                                            *has_else = true;
                                         }
-                                        // jump over the else branch from the end of the if branch
-                                        let jmp = block.ops.len();
-                                        block.ops.push(Op::Jump(u32::MAX));
-                                        let target = block.ops.len() as u32;
-                                        patch(&mut block.ops[*idx], target);
-                                        *idx = jmp;
-                                        *has_else = true;
+                                        jumps.push(jmp);
                                     } else {
                                         log::debug!(
                                             "{}:{}: {{else}} without {{if}}",
@@ -719,9 +770,11 @@ impl<'a> Compiler<'a> {
                             }
                             "endif" => {
                                 if let Some((_, block, ifs)) = cur.as_mut() {
-                                    if let Some((idx, _)) = ifs.pop() {
+                                    if let Some((jumps, _)) = ifs.pop() {
                                         let target = block.ops.len() as u32;
-                                        patch(&mut block.ops[idx], target);
+                                        for idx in jumps {
+                                            patch(&mut block.ops[idx], target);
+                                        }
                                     } else {
                                         log::debug!(
                                             "{}:{}: {{endif}} without {{if}}",
@@ -746,7 +799,9 @@ impl<'a> Compiler<'a> {
                     }
                     Tok::Str(s) => {
                         if let Some((_, block, _)) = cur.as_mut() {
-                            block.ops.push(Op::PushStr(s));
+                            let i = self.p.strings.len() as u32;
+                            self.p.strings.push(s);
+                            block.ops.push(Op::PushStr(i));
                         }
                     }
                     Tok::Paren(inner) => {
@@ -891,7 +946,8 @@ impl<'a> Compiler<'a> {
                             "SC_ErrorInCommand_varinvalid: string variable \"{name}\" not found"
                         ),
                     );
-                    Some(Op::PushStr(String::new()))
+                    self.p.strings.push(String::new());
+                    Some(Op::PushStr(self.p.strings.len() as u32 - 1))
                 }
             },
             (b'S', b'$') => match self.p.str_var(&lname) {
@@ -1074,6 +1130,39 @@ fn patch(op: &mut Op, target: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `stores` answers from the set it makes on the first call as the scan of every op
+    /// did, and scans again when blocks were added after it.
+    #[test]
+    fn stores_answers_as_the_full_scan() {
+        let scan = |p: &Program, var: VarId| {
+            p.blocks.iter().any(|b| {
+                b.ops
+                    .iter()
+                    .any(|op| matches!(op, Op::Store(v) if *v == var))
+            })
+        };
+        let mut p = Program::default();
+        let a = p.declare_var("a");
+        let b = p.declare_var("b");
+        let c = p.declare_var("c");
+        p.blocks.push(Block {
+            ops: vec![Op::Load(a), Op::Store(b)],
+            ..Default::default()
+        });
+        for v in [a, b, c, 99] {
+            assert_eq!(p.stores(v), scan(&p, v), "var {v}");
+        }
+        assert!(p.stores(b) && !p.stores(a));
+        p.blocks.push(Block {
+            ops: vec![Op::Store(c)],
+            ..Default::default()
+        });
+        assert!(p.stores(c));
+        for v in [a, b, c] {
+            assert_eq!(p.stores(v), scan(&p, v), "var {v} after a new block");
+        }
+    }
 
     fn program_of(script: &str) -> Program {
         let dir = std::env::temp_dir().join(format!(

@@ -1,0 +1,1 @@
+The navigator no longer skips stops: on a route that loops back past itself it stays on the loop instead of jumping ahead, a way back to the route leads to the stop due next, and stops attached to another object or placed on a road are shown and announced.

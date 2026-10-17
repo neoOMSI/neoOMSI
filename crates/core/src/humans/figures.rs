@@ -39,10 +39,52 @@ fn type_path_key(path: &Path) -> String {
         .to_ascii_lowercase()
 }
 
+pub(super) fn prefetch_textures(types: Vec<Arc<HumanType>>, root: PathBuf) {
+    if types.is_empty() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("human-textures".into())
+        .spawn(move || {
+            crate::threads::lower_thread_priority();
+            let started = std::time::Instant::now();
+            let dirs: Vec<Vec<PathBuf>> = types.iter().map(|ty| ty.texture_dirs(&root)).collect();
+            let most = types.iter().map(|ty| ty.variants.len()).max().unwrap_or(0);
+            let mut read = HashSet::new();
+            for variant in 0..=most {
+                for (ty, dirs) in types.iter().zip(&dirs) {
+                    if variant > ty.variants.len() {
+                        continue;
+                    }
+                    for mi in 0..ty.mesh_count() {
+                        for m in &ty.mesh_at(mi).1.materials {
+                            let (name, first) = ty.variant_texture(&m.texture, variant);
+                            let mut look: Vec<&Path> = first.into_iter().collect();
+                            look.extend(dirs.iter().map(|p| p.as_path()));
+                            let found = ::texture::find_texture(name, &look)
+                                .or_else(|| ::texture::find_texture(&m.texture, &look));
+                            if let Some(path) = found {
+                                if read.insert(path.clone()) {
+                                    let _ = ::legacy_config::vfs::read(&path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            log::info!(
+                "humans: {} textures of {} figures read ahead in {:.1} s",
+                read.len(),
+                types.len(),
+                started.elapsed().as_secs_f64()
+            );
+        });
+}
+
 pub(super) fn load_figures(
     root: &Path,
 ) -> (Vec<Arc<HumanType>>, HashMap<String, Vec<Arc<HumanType>>>) {
-    let mut roots = ::legacy_config::content_dirs("Humans");
+    let mut roots = ::mods::content_dirs("Humans");
     if roots.is_empty() {
         roots.push(root.join("Humans"));
     }

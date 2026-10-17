@@ -15,7 +15,7 @@ export CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++
 export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
 # (MinGW keeps debug info inside the .exe, which made it ~200 MB; this build goes without.)
 export CARGO_PROFILE_RELEASE_DEBUG=0
-cargo build --locked --release --target x86_64-pc-windows-gnu -p core -p legacy-launcher-core
+cargo build --locked --release --target x86_64-pc-windows-gnu -p core
 mkdir -p dist/windows   # (the folder is also the content folder: mods stay)
-cp target/x86_64-pc-windows-gnu/release/neoomsi.exe target/x86_64-pc-windows-gnu/release/neoomsi-launcher.exe dist/windows/
+cp target/x86_64-pc-windows-gnu/release/neoomsi.exe dist/windows/
 printf '\nneoOMSI %s built in dist/windows\n' "$neoomsi_VERSION"

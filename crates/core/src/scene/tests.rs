@@ -144,7 +144,7 @@ fn installed_sor_ois_retains_powered_freetex() {
     assert!(
         definitions
             .iter()
-            .any(|(item, key, _)| *item && key.eq_ignore_ascii_case("cerna.bmp")),
+            .any(|(item, key, _)| item.is_some() && key.eq_ignore_ascii_case("cerna.bmp")),
         "{definitions:?}"
     );
     println!("SOR NB OIS: {definitions:?}");
@@ -165,7 +165,7 @@ fn powered_terminal_freetex_is_kept_and_replaces_its_black_nightmap() {
     let defs: Vec<&MaterialDef> = model.meshes[0].materials.iter().collect();
     assert_eq!(
         free_texture_defs(&defs),
-        vec![(true, "black.bmp".into(), "screen".into())]
+        vec![(Some(1), "black.bmp".into(), "screen".into())]
     );
     let base = freetex_test_look();
     let mut powered = base.clone();
@@ -175,7 +175,7 @@ fn powered_terminal_freetex_is_kept_and_replaces_its_black_nightmap() {
         item: Some(powered),
         more: Vec::new(),
     };
-    let changed = spec.with_freetex(Some(10), 20, true, true);
+    let changed = spec.with_freetex(Some(10), 20, true, Some(1));
     assert_eq!(changed.base.diffuse, None); // unpowered remains black
     assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(20));
     assert_eq!(changed.item.as_ref().unwrap().night, Some(20));
@@ -196,16 +196,173 @@ fn freetex_preserves_other_stages_and_per_vehicle_script_textures() {
         item: Some(item),
         more: Vec::new(),
     };
-    let changed = spec.with_freetex(Some(10), 20, true, false);
+    let changed = spec.with_freetex(Some(10), 20, true, None);
     assert_eq!(changed.base.diffuse, Some(20));
     assert_eq!(changed.base.night, Some(20));
     assert_eq!(changed.base.lightmap, Some(11));
     assert_eq!(changed.base.transmap, Some((20, true)));
     assert_eq!(changed.base.envmap, Some((12, 0.5)));
     assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(99));
-    let missing_key = spec.with_freetex(None, 21, true, true);
+    let missing_key = spec.with_freetex(None, 21, true, Some(1));
     assert_eq!(missing_key.item.as_ref().unwrap().night, Some(10));
     assert_eq!(missing_key.item.as_ref().unwrap().diffuse, Some(99));
+}
+
+#[test]
+fn freetex_updates_every_light_state_of_a_changed_slot() {
+    // London's Powerblind uses a free-texture picture with `[matl_change] lights_stand`.
+    // AI buses can select item 2+, so it must receive the live destination picture too.
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    let item = base.clone();
+    let spec = SlotSpec {
+        base,
+        item: Some(item.clone()),
+        more: vec![item],
+    };
+
+    let changed = spec.with_freetex(Some(10), 20, true, None);
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(20));
+    assert_eq!(changed.more[0].diffuse, Some(20));
+}
+
+#[test]
+fn freetex_and_dynamic_lightmap_keep_the_live_display_texture() {
+    // C400R's dashboard pairs [matl_freetex] with two [matl_lightmap] declarations.
+    // When the screen finishes booting, the active light map must not rebuild the slot
+    // from its black placeholder texture.
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    base.lightmap = Some(11);
+    let item = base.clone();
+    let spec = SlotSpec {
+        base,
+        item: Some(item.clone()),
+        more: vec![item],
+    };
+    let mut changed = spec.with_freetex(Some(10), 20, true, None);
+    changed.set_lightmap(Some(30));
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.base.lightmap, Some(30));
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(20));
+    assert_eq!(changed.item.as_ref().unwrap().lightmap, Some(30));
+    assert_eq!(changed.more[0].diffuse, Some(20));
+    assert_eq!(changed.more[0].lightmap, Some(30));
+}
+
+#[test]
+fn item_only_freetex_overrides_a_matching_base_freetex() {
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    let item = base.clone();
+    let spec = SlotSpec {
+        base,
+        item: Some(item),
+        more: Vec::new(),
+    };
+    let base_changed = spec.with_freetex_from(&spec, Some(10), 20, true, None);
+    let changed = base_changed.with_freetex_from(&spec, Some(10), 30, true, Some(1));
+
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, Some(30));
+}
+
+#[test]
+fn item_freetex_keeps_the_plain_slots_free_picture() {
+    // #114: the Wayfarer's picture is a free texture of the plain slot, its night map one of
+    // the item's; the powered item needs both, else it shows the green placeholder.
+    let model = ::model::Model::parse(&::legacy_config::CfgFile::from_str(
+        "model.cfg",
+        concat!(
+            "[mesh]\nWay150_Misc.o3d\n[matl]\nWay150_Misc.dds\n0\n",
+            "[matl_change]\nWay150_Misc.dds\n0\nWayfarer_Lightmap\n",
+            "[matl_freetex]\nWay150_Misc.dds\nWay150_Misc\n[matl_item]\n",
+            "[matl_nightmap]\nWay150_Misc_LM.dds\n",
+            "[matl_freetex]\nWay150_Misc_LM.dds\nWay150_MiscLM\n",
+        ),
+    ));
+    let defs: Vec<&MaterialDef> = model.meshes[0].materials.iter().collect();
+    assert_eq!(
+        free_texture_defs(&defs),
+        vec![
+            (None, "Way150_Misc.dds".into(), "Way150_Misc".into()),
+            (Some(1), "Way150_Misc_LM.dds".into(), "Way150_MiscLM".into()),
+        ]
+    );
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    let mut item = base.clone();
+    item.night = Some(11);
+    let spec = SlotSpec {
+        base,
+        item: Some(item.clone()),
+        more: vec![item],
+    };
+    let changed =
+        spec.with_free_textures([(Some(10), 20, true, None), (Some(11), 21, false, Some(1))]);
+
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.base.night, None);
+    let item = changed.item.as_ref().unwrap();
+    assert_eq!(item.diffuse, Some(20));
+    assert_eq!(item.night, Some(21));
+    assert_eq!(changed.more[0].diffuse, Some(20));
+    // (item 1's own free texture is not item 2's)
+    assert_eq!(changed.more[0].night, Some(11));
+}
+
+#[test]
+fn a_later_items_freetex_leaves_the_earlier_item_alone() {
+    // #479: the NLC's switch lamps - item 1 is the white stripe under a light map, item 2
+    // the same stripe made black (`Schalter_NM` = 1px_nm.bmp) under a night map. Item 2's
+    // free texture laid on item 1 as well, the lit stripe went dark when switched on.
+    let model = ::model::Model::parse(&::legacy_config::CfgFile::from_str(
+        "model.cfg",
+        concat!(
+            "[mesh]\nLC_Pult_s01.o3d\n",
+            "[matl_change]\n1px_lm.bmp\n0\npult_s01_lm\n",
+            "[matl_item]\n[matl_lightmap]\nrosa_LM.dds\n\n",
+            "[matl_item]\n[matl_freetex]\n1px_lm.bmp\nSchalter_NM\n",
+            "[matl_nightmap]\ngelb_NM.dds\n",
+        ),
+    ));
+    let defs: Vec<&MaterialDef> = model.meshes[0].materials.iter().collect();
+    assert_eq!(
+        free_texture_defs(&defs),
+        vec![(Some(2), "1px_lm.bmp".into(), "Schalter_NM".into())]
+    );
+    let base = freetex_test_look();
+    let mut lit = base.clone();
+    lit.lightmap = Some(11);
+    let mut lamp = base.clone();
+    lamp.night = Some(12);
+    let spec = SlotSpec {
+        base,
+        item: Some(lit),
+        more: vec![lamp],
+    };
+    let changed = spec.with_freetex(Some(10), 20, true, Some(2));
+    assert_eq!(changed.base.diffuse, None);
+    assert_eq!(changed.item.as_ref().unwrap().diffuse, None);
+    assert_eq!(changed.more[0].diffuse, Some(20));
+}
+
+#[test]
+fn inactive_dynamic_lightmap_keeps_the_original_lightmap() {
+    let mut base = freetex_test_look();
+    base.diffuse = Some(10);
+    base.lightmap = Some(11);
+    let spec = SlotSpec {
+        base,
+        item: None,
+        more: Vec::new(),
+    };
+    let mut changed = spec.with_freetex(Some(10), 20, true, None);
+    changed.set_lightmap(None);
+
+    assert_eq!(changed.base.diffuse, Some(20));
+    assert_eq!(changed.base.lightmap, Some(11));
 }
 
 #[test]
@@ -276,13 +433,13 @@ fn spline_batches_keep_materials_cells_shadows_and_long_segments_separate() {
         (mesh(1.0, 2.0), ty.clone(), false, DVec3::ZERO),
         (mesh(5.0, 2.0), ty.clone(), false, DVec3::ZERO),
         (mesh(9.0, 2.0), compatible, false, DVec3::ZERO),
-        (mesh(49.0, 2.0), ty.clone(), false, DVec3::ZERO),
+        (mesh(SPLINE_CELL + 1.0, 2.0), ty.clone(), false, DVec3::ZERO),
         (mesh(1.0, 2.0), other, false, DVec3::ZERO),
         (mesh(1.0, 2.0), other_dir, false, DVec3::ZERO),
         (mesh(1.0, 2.0), tested, false, DVec3::ZERO),
         (mesh(1.0, 2.0), ty.clone(), true, DVec3::ZERO),
-        (mesh(1.0, 100.0), ty.clone(), false, DVec3::ZERO),
-        (mesh(1.0, 100.0), ty, false, DVec3::ZERO),
+        (mesh(1.0, 2.0 * SPLINE_CELL), ty.clone(), false, DVec3::ZERO),
+        (mesh(1.0, 2.0 * SPLINE_CELL), ty, false, DVec3::ZERO),
         (
             mesh(1.0, 2.0),
             blended.clone(),
@@ -300,6 +457,71 @@ fn spline_batches_keep_materials_cells_shadows_and_long_segments_separate() {
     assert_eq!(batched[0].0.ranges, vec![(0, 9, 0)]);
     assert_eq!(batched.iter().filter(|b| b.2).count(), 1);
     assert_eq!(batched.iter().map(|b| b.0.indices.len()).sum::<usize>(), 36);
+}
+
+#[test]
+fn spline_batches_draw_a_texture_once_per_batch() {
+    use ::scenery::sli::{SplineProfile, SplineProfilePoint, SplineTexture};
+    // a curb, the road, the other curb: three profiles over two textures
+    let profile = |texture: usize, x0: f32, x1: f32| SplineProfile {
+        texture,
+        points: [x0, x1]
+            .map(|x| SplineProfilePoint {
+                x,
+                v_scale: 0.1,
+                ..Default::default()
+            })
+            .to_vec(),
+    };
+    let def = Spline {
+        textures: vec![SplineTexture::default(), SplineTexture::default()],
+        profiles: vec![
+            profile(0, -4.0, -3.5),
+            profile(1, -3.5, 3.5),
+            profile(0, 3.5, 4.0),
+        ],
+        ..Default::default()
+    };
+    let curve = |x: f64| ::geometry::SplineCurve {
+        start: DVec3::new(x, 0.0, 0.0),
+        heading_deg: 0.0,
+        length: 20.0,
+        radius: 0.0,
+        grad_start: 0.0,
+        grad_end: 0.0,
+        delta_h: None,
+        cant_start: 0.0,
+        cant_end: 0.0,
+        skew_start: 0.0,
+        skew_end: 0.0,
+        tex_offset: 0.0,
+        seed: 0,
+        half_cant_width: ::geometry::DEFAULT_HALF_CANT_WIDTH,
+    };
+    let mesh = |x: f64| {
+        Arc::new(::geometry::build_spline_mesh(
+            &def,
+            &curve(x),
+            false,
+            DVec3::ZERO,
+        ))
+    };
+    assert_eq!(mesh(0.0).ranges.len(), 3);
+    let ty = Arc::new(SplineType {
+        def: def.clone(),
+        dir: PathBuf::new(),
+        surface_maps: None,
+    });
+    let batched = batch_static_splines(vec![
+        (mesh(0.0), ty.clone(), false, DVec3::ZERO),
+        (mesh(10.0), ty, false, DVec3::ZERO),
+    ]);
+    assert_eq!(batched.len(), 1);
+    assert_eq!(
+        batched[0].0.ranges.iter().map(|r| r.2).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(batched[0].0.indices.len(), 2 * mesh(0.0).indices.len());
 }
 
 #[test]
@@ -386,39 +608,37 @@ fn a_light_map_is_laid_on_its_middle_third() {
 }
 
 #[test]
-fn surface_contact_height_matches_the_visible_surface_lift() {
-    let authored = DVec3::new(12.0, 18.0, 3.5);
-    let contact = scenery_draw_position(authored, true);
-    assert!((contact.z - authored.z - OMSI_SURFACE_LIFT as f64).abs() < 1e-8);
-}
-
-#[test]
-fn road_markings_are_lifted_with_the_road_they_lie_on() {
-    let sco = |text: &str| SceneryObject::parse(&::legacy_config::CfgFile::from_str("x.sco", text));
-    // Spandau's VZ_surfmark_arrow_L: a terrain-relative object drawn on the surfaces
-    assert!(drawn_on_surfaces(&sco(
-        "[rendertype]\non_surface\n[mesh]\narrow.o3d\n"
-    )));
-    assert!(drawn_on_surfaces(&sco(
-        "[rendertype]\nsurface\n[mesh]\nplate.o3d\n"
-    )));
-    assert!(drawn_on_surfaces(&sco("[surface]\n[mesh]\nplate.o3d\n")));
-    assert!(!drawn_on_surfaces(&sco("[mesh]\nhouse.o3d\n")));
-    assert!(!drawn_on_surfaces(&sco(
-        "[rendertype]\npresurface\n[mesh]\nground.o3d\n"
-    )));
-}
-
-#[test]
-fn scripted_surface_draw_pose_keeps_the_upload_lift() {
-    let authored = DVec3::new(-2165.1, -2368.8, -0.068);
-    let uploaded = scenery_draw_position(authored, true);
-    for _frame in 0..8 {
-        assert_eq!(scenery_draw_position(authored, true), uploaded);
+fn spline_attachment_rows_keep_the_authored_height_above_the_spline() {
+    let spline = ::map::MapSpline {
+        id: 1,
+        pos: [12.0, 18.0, 3.5],
+        length: 40.0,
+        heading: 37.0,
+        grad_start: 10.0,
+        grad_end: 10.0,
+        cant_start: 5.0,
+        cant_end: 5.0,
+        ..Default::default()
+    };
+    let curve = SplineCurve::from_map(&spline, DVec2::ZERO);
+    // Zero-height parking spaces and a fence with its own height offset, repeated
+    // along an inclined, banked spline. Tangential placement keeps its rotation.
+    for (height, tilt) in [(0.0, false), (0.25, true)] {
+        let row = ::map::SplineAttachment {
+            offset: [3.0, height, 5.0],
+            interval: 10.0,
+            range: 20.0,
+            tilt,
+            ..Default::default()
+        };
+        let objects = crate::tiles::tile_row_objects(&row, &[spline.clone()], DVec2::ZERO, None);
+        assert_eq!(objects.len(), 3);
+        for (_, object) in objects {
+            let along = 5.0 + object.index as f64 * 10.0;
+            let surface = curve.offset_point(along, 3.0, 0.0);
+            assert!((object.pose.pos.z - surface.z - height).abs() < 1e-8);
+        }
     }
-    assert_eq!(scenery_draw_position(authored, false), authored);
-    assert_eq!(uploaded.truncate(), authored.truncate());
-    assert!((uploaded.z - authored.z - 0.08).abs() < 1e-8);
 }
 
 #[test]
@@ -600,6 +820,21 @@ fn lights_of_lower_lods_count() {
     );
 }
 
+/// A light's star (effect bit 1) is three times the glow's size, as in OMSI (#324).
+#[test]
+fn a_light_star_reaches_past_its_glow() {
+    let text = "[mesh]\nsignal.o3d\n[light_enh_2]\n0\n0.136\n0.3\n0\n1\n0\n0\n0\n1\n0\n0\n255\n0\n0\n0.25\n20\n50\n1\n1\n0.1\n1\n0\n0\n";
+    let model = Model::parse(&::legacy_config::CfgFile::from_str("signal.sco", text));
+    let coronas = model_lights_faded(&model, &|_| Mat4::IDENTITY, DVec3::ZERO, &|_| 1.0, &[]);
+    let glow = coronas
+        .iter()
+        .find(|c| !c.halo && c.flags & 8 == 0)
+        .unwrap();
+    let star = coronas.iter().find(|c| c.flags & 8 != 0).unwrap();
+    assert!((glow.size - 0.125).abs() < 1e-6);
+    assert!((star.size - 0.375).abs() < 1e-6);
+}
+
 #[test]
 fn small_instrument_lights_keep_their_small_size() {
     let text = "[mesh]\ndash.o3d\n[light_enh]\n0\n0\n0\n255\n0\n0\n0.01\nspeedo_warn\n0\n";
@@ -652,4 +887,145 @@ fn standard_traffic_lamps_are_state_driven() {
         standard_traffic_lamp("custom_channel", true, true, true, false),
         None
     );
+}
+
+/// Drawn ground over a buried road face carries the wheel, as in Omsi.exe (#208).
+#[test]
+fn drawn_ground_over_a_buried_road_face_carries_the_wheel() {
+    let probe_over = |road_z: f32, ground: f32, top: f64, cut: bool| {
+        let side = tile_size() as f32;
+        let (a, b) = (side * 0.25, side * 0.75);
+        let face = MeshData {
+            positions: vec![
+                glam::Vec3::new(a, a, road_z),
+                glam::Vec3::new(b, a, road_z),
+                glam::Vec3::new(b, b, road_z),
+                glam::Vec3::new(a, b, road_z),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            ..Default::default()
+        };
+        let mut ts = TileSurface::new(SURFACE_RASTER);
+        ts.add_drive_mesh(&face, &Mat4::IDENTITY, DVec3::ZERO, 0, 0, None);
+        if cut {
+            ts.rasterize_hole(&face, &Mat4::IDENTITY, DVec3::ZERO, 0, 0);
+        }
+        ts.finish();
+        let mut terrain = Terrain::flat();
+        terrain.heights.fill(ground);
+        let mid = tile_size() * 0.5;
+        probe_tile(Some(&ts), Some(&terrain), (0, 0), mid, mid, top).below
+    };
+    let near = |got: Option<f64>, want: f64| got.is_some_and(|z| (z - want).abs() < 1e-3);
+    // #208: ground at 0.10 over the pavement's top at -0.67
+    let got = probe_over(-0.67, 0.1, 1.5, false);
+    assert!(near(got, 0.1), "{got:?}");
+    // the ground a few centimetres through the asphalt is still the road
+    let got = probe_over(0.0, 0.05, 1.5, false);
+    assert!(near(got, 0.0), "{got:?}");
+    // half way through the ramp: half way up, no step
+    let got = probe_over(0.0, 0.15, 1.5, false);
+    assert!(near(got, 0.075), "{got:?}");
+    // ground cut away over the road is not drawn: the road carries
+    let got = probe_over(-0.67, 0.1, 1.5, true);
+    assert!(near(got, -0.67), "{got:?}");
+    // ground over the wheel (a road under an embankment) is no floor
+    let got = probe_over(0.0, 4.0, 1.5, false);
+    assert!(near(got, 0.0), "{got:?}");
+}
+
+/// A departure display's lamps glow when its script says so, not all night (#372).
+#[test]
+fn a_scripted_objects_lamp_follows_its_variable() {
+    let root = std::env::temp_dir().join(format!(
+        "neoomsi-script-lamp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("global.cfg"),
+        "[name]\nSynthetic display\n[map]\n0\n0\ntile_0_0.map\n",
+    )
+    .unwrap();
+    // one lamp switched by the script's `Due`, one always on
+    std::fs::write(
+        root.join("display.sco"),
+        "[varnamelist]\n1\nvars.txt\n[script]\n1\ndisplay.osc\n[mesh]\ndisplay.x\n\
+[light_enh]\n0\n0\n1\n255\n128\n0\n0.1\nDue\n1\n1\n1\n1\n\
+[light_enh]\n1\n0\n1\n0\n255\n0\n0.1\n1\n1\n1\n1\n1\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("vars.txt"), "Due\n").unwrap();
+    std::fs::write(root.join("display.osc"), "{frame}\n1 (S.L.Due)\n{end}\n").unwrap();
+    std::fs::write(
+        root.join("display.x"),
+        r#"xof 0303txt 0032
+        Mesh display {
+            3; 0;0;0;, 1;0;0;, 0;0;1;;
+            1; 3;0,1,2;;
+        }
+    "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tile_0_0.map"),
+        "[version]\n14\n[object]\n0\ndisplay.sco\n1\n100\n100\n0\n0\n0\n0\n0\n",
+    )
+    .unwrap();
+    let world = World::open(&root, &root.join("global.cfg"), 20261014).unwrap();
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = wgpu::Backends::NOOP;
+    desc.backend_options.noop = wgpu::NoopBackendOptions::enabled();
+    let renderer = pollster::block_on(Renderer::new_with(
+        &wgpu::Instance::new(desc),
+        None,
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        ::render::RenderOptions {
+            msaa: 1,
+            ssao: false,
+            no_enhanced: true,
+            shadow_size: 512,
+            ..Default::default()
+        },
+    ))
+    .unwrap();
+    let mut scene = renderer.new_scene();
+    let (mut prepared, _) = world.prepare_tiles(&[(0, 0, root.join("tile_0_0.map"))]);
+    world.upload_tile(
+        &renderer,
+        &mut scene,
+        prepared.pop().unwrap(),
+        &mut LoadStats::default(),
+    );
+    {
+        let states = world.tile_state.lock();
+        let statics = &states[&(0, 0)].coronas;
+        assert_eq!(statics.len(), 1, "the night lights the constant lamp only");
+        assert_eq!(statics[0].switch, LightSwitch::Constant(1.0));
+    }
+    let lit = || {
+        let scripted = world.scripted.lock();
+        assert_eq!(scripted.len(), 1);
+        assert_eq!(scripted[0].coronas.len(), 1);
+        assert_eq!(scripted[0].coronas[0].1, "Due");
+        scripted[0].lit.clone()
+    };
+    assert_eq!(lit(), [0.0], "dark until the script switches it");
+    world.update_scripted(
+        &renderer,
+        &mut scene,
+        0.1,
+        DVec3::new(100.0, 100.0, 0.0),
+        0.0,
+        &|_, _| (-1.0, 0.0),
+        None,
+        false,
+    );
+    assert_eq!(lit(), [1.0]);
+    drop(world);
+    std::fs::remove_dir_all(&root).unwrap();
 }

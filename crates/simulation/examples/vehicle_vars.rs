@@ -5,20 +5,20 @@ use std::path::Path;
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let root = Path::new(&a[1]);
-    ::legacy_config::add_content_root(root.to_path_buf());
+    ::mods::add_content_root(root.to_path_buf());
     let archives = root.join("Archives");
     if archives.is_dir() {
-        ::legacy_config::vfs::mount_dir_zips(&archives);
+        ::mods::mount_dir_zips(&archives);
     }
     let orig_dir = std::env::var_os("OMSI_ORIGINAL")
         .map(std::path::PathBuf::from)
         .unwrap_or_default();
     let orig = orig_dir.as_path();
     if orig.is_dir() {
-        ::legacy_config::add_content_root(orig.to_path_buf());
+        ::mods::add_content_root(orig.to_path_buf());
     }
     let vt = std::sync::Arc::new(
-        ::simulation::VehicleType::load(root, &::legacy_config::resolve_path(root, &a[2])).unwrap(),
+        ::simulation::VehicleType::load(root, &::mods::resolve_path(root, &a[2])).unwrap(),
     );
     let frames: usize = a[3].parse().unwrap();
     let vars: Vec<&str> = a[4].split(',').collect();
@@ -41,7 +41,7 @@ fn main() {
     let audio = std::env::var_os("AUDIO").map(|_| ::audio::AudioEngine::new());
     let mut sounds = audio.as_ref().and_then(|a| {
         let rel = vt.def.sound.clone()?;
-        let path = ::legacy_config::resolve_path(vt.def.dir(), &rel);
+        let path = ::mods::resolve_path(vt.def.dir(), &rel);
         let cfg = ::legacy_vehicle::SoundCfg::load(&path).ok()?;
         Some(::audio::SoundSet::new(a, &cfg, path.parent().unwrap()))
     });

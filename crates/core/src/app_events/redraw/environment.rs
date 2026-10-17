@@ -49,7 +49,12 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             p.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                apply_weather(&mut p.vehicle, w, self.wetness);
+                let sheltered = precip_of(w).0 != 0
+                    && self.world.as_ref().is_some_and(|world| {
+                        crate::shelter::windscreen_top(&p.vehicle)
+                            .is_some_and(|top| self.shelter.covers_anywhere(world, top))
+                    });
+                apply_weather(&mut p.vehicle, w, self.wetness, sheltered);
             }
         }
         for q in self.placed.iter_mut() {
@@ -61,7 +66,12 @@ impl App {
                 .set_var("Envir_Brightness", daylight.envir_brightness(lm));
             q.vehicle.host.sun_alt = daylight.altitude_deg;
             if let Some(w) = &self.weather {
-                apply_weather(&mut q.vehicle, w, self.wetness);
+                let sheltered = precip_of(w).0 != 0
+                    && self.world.as_ref().is_some_and(|world| {
+                        crate::shelter::windscreen_top(&q.vehicle)
+                            .is_some_and(|top| self.shelter.covers_anywhere(world, top))
+                    });
+                apply_weather(&mut q.vehicle, w, self.wetness, sheltered);
             }
         }
         let __t = Instant::now();
@@ -78,6 +88,17 @@ impl App {
             self.camera.as_ref(),
         ) {
             w.update_light_map_atlas(r, cam.position);
+            // the roofs around the camera, while there is weather to keep off (#137)
+            if self.weather.as_ref().is_some_and(|wt| {
+                precip_of(wt).0 != 0 || wt.snow || wt.snow_on_road || self.wetness > 0.0
+            }) {
+                self.shelter
+                    .update(w, cam.position, Some(std::time::Duration::from_millis(2)));
+                self.shelter.upload(r);
+            } else {
+                // the tiles that come and go while it is dry take their roofs along too
+                self.shelter.retile(w);
+            }
         }
         *self.profile.entry("lights.atlas").or_default() += __ta.elapsed().as_secs_f64();
         if let (Some(w), Some(scene), Some(cam)) = (
@@ -97,6 +118,25 @@ impl App {
             let __tc = Instant::now();
             lights::collect(w, scene, &daylight, cam.position, &vehicles);
             *self.profile.entry("lights.collect").or_default() += __tc.elapsed().as_secs_f64();
+            {
+                let t = *lights::TIMES.lock().unwrap_or_else(|e| e.into_inner());
+                for (name, v) in [
+                    "lights.collect.near",
+                    "lights.collect.objects",
+                    "lights.collect.particles",
+                    "lights.collect.vehicles",
+                    "lights.collect.screens",
+                    "lights.collect.sort",
+                    "lights.collect.occluders",
+                ]
+                    .into_iter()
+                    .zip(t)
+                {
+                    *self.profile.entry(name).or_default() += v;
+                }
+                *self.profile.entry("lights.gathers").or_default() += 0.001
+                    * lights::GATHERS.load(std::sync::atomic::Ordering::Relaxed) as f64;
+            }
             if let Some(id) = self.editor.as_ref().and_then(|e| e.selected) {
                 let at = w.edit_objects.lock().get(&id).map(|o| o.pos);
                 let moved = w
@@ -151,6 +191,7 @@ impl App {
                     wind,
                     scene,
                     &buses,
+                    &self.shelter,
                 );
                 *self.profile.entry("lights.rain").or_default() += __tr.elapsed().as_secs_f64();
                 if kind == 1 || self.wetness > 0.1 {
@@ -264,15 +305,7 @@ impl App {
                 w.sync_html_departures(&mut p.vehicle.host);
             }
             match self.schedule.as_mut() {
-                Some(s) => s.update_boards(
-                    w,
-                    traffic,
-                    self.duty.as_ref(),
-                    self.player
-                        .as_ref()
-                        .and_then(|p| p.vehicle.host.hof.as_deref()),
-                    &self.clock,
-                ),
+                Some(s) => s.update_boards(w, traffic, self.duty.as_ref(), &self.clock),
                 None => w.timetable_boards.lock().clock = Some(self.clock.clone()),
             }
             *self.profile.entry("scripted.boards").or_default() += __tb.elapsed().as_secs_f64();

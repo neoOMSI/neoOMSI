@@ -365,9 +365,9 @@ impl World {
                             curve.heading_at(curve.length * 0.5)
                         );
                     }
-                    for ring in ::geometry::spline_hole_outlines(&st.def, &curve, s.mirror, mode)
-                    {
-                        if ::geometry::outline_crosses_itself(&ring) {
+                    for ring in ::geometry::spline_hole_rims(&st.def, &curve, s.mirror, mode) {
+                        let flat: Vec<DVec2> = ring.iter().map(|p| p.truncate()).collect();
+                        if ::geometry::outline_crosses_itself(&flat) {
                             if debug_splines {
                                 log::info!(
                                     "tile {tx},{ty} spline {} {}: its hole outline crosses itself, no hole (as in Omsi.exe)",
@@ -499,6 +499,7 @@ impl World {
                 id: o.id,
                 place,
                 rules: o.rules.clone(),
+                terrain_align_flag: o.terrain_align_flag,
                 extra: o.extra.clone(),
                 lamp_parent: o.var_parent,
                 parked,
@@ -526,6 +527,7 @@ impl World {
                     rot: ::geometry::map_rotation(o.rot),
                 },
                 rules: o.rules.clone(),
+                terrain_align_flag: o.terrain_align_flag,
                 extra: o.extra.clone(),
                 lamp_parent: o.var_parent.or(Some(parent)),
                 parked,
@@ -555,7 +557,11 @@ impl World {
             let first = objs.iter().map(|o| o.1.index).min().unwrap_or(0);
             for (_, ro) in objs {
                 if a.repeater.is_none() && ro.index == first {
-                    out.anchors.push((a.id, ro.pose, row_type.clone()));
+                    out.anchors.push((
+                        a.id,
+                        ro.pose,
+                        row_type.clone(),
+                    ));
                 }
                 // every car park of a row draws its own car
                 let key = a.id.wrapping_mul(1_000_003).wrapping_add(ro.index as i64);
@@ -570,6 +576,7 @@ impl World {
                     id: a.id,
                     place: Placement::Pose(ro.pose),
                     rules: a.rules.clone(),
+                    terrain_align_flag: a.terrain_align_flag,
                     extra: a.strings.clone(),
                     lamp_parent: a.var_parent,
                     parked,

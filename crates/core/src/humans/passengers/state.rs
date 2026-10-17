@@ -121,6 +121,8 @@ pub(in crate::humans) struct Pax {
     /// (see `pax_move`).
     pub jam: f32,
     pub squeeze: f32,
+    /// Seconds left keeping the heading turned away from somebody facing them.
+    pub evade: f32,
     pub free_r: bool,
     pub free_l: bool,
     /// How badly the ride has gone (+0x62c, 0..1; see `ride_comfort`), the complaint said
@@ -164,6 +166,7 @@ impl Pax {
             journey: Journey {
                 dest: None,
                 line: None,
+                service_deadline: None,
                 allowed_termini: None,
                 alt: None,
                 alt_seen: false,
@@ -198,6 +201,7 @@ impl Pax {
             obstruction: Obstruction::Clear,
             jam: 0.0,
             squeeze: 0.0,
+            evade: 0.0,
             free_r: true,
             free_l: true,
             discomfort: 0.0,
@@ -346,6 +350,8 @@ pub(in crate::humans) struct Journey {
     /// (+0x60c, km).
     pub dest: Option<String>,
     pub line: Option<usize>,
+    /// The passenger leaves the stop if their compatible service remains overdue.
+    pub service_deadline: Option<f64>,
     /// Semantic line permission from the host; independent of a client's timetable cache.
     pub allowed_termini: Option<HashSet<String>>,
     pub alt: Option<String>,

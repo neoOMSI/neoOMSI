@@ -76,8 +76,8 @@ impl Ui {
             let hv = self.ease((203, "grp", i), if hot { 1.0 } else { 0.0 }, 8.0);
             let sv = self.easeq((203, "grpsel", i), if i == gi { 1.0 } else { 0.0 }, 7.0);
             let bg = mix(
-                mix([30, 32, 37, 255], [42, 45, 52, 255], hv),
-                [58, 62, 70, 255],
+                mix(OPT_GROUP, OPT_GROUP_HOT, hv),
+                OPT_GROUP_ON,
                 sv,
             );
             self.text.rounded(r, scene, rc, 0.0, fade(bg, e));
@@ -136,20 +136,28 @@ impl Ui {
             let hv = self.ease((204, "row", i), if hot { 1.0 } else { 0.0 }, 8.0);
             let rr = [rc[0] + ox, rc[1], rc[2] + ox, rc[3]];
             self.text
-                .rounded(r, scene, rr, 0.0, fade(mix([34, 36, 40, 255], [58, 61, 67, 255], hv), e));
-            let vpx = (15.0 * u) as u32;
+                .rounded(r, scene, rr, 0.0, fade(mix(OPT_ROW, OPT_ROW_HOT, hv), e));
             let val = if a.opens {
                 t("pause.page.vehicle.choose")
             } else {
                 t(&action_key(a, "button"))
             };
-            let vw = self.text.width(&val, vpx as f32);
-            let vl = self.text.label(r, scene, &val, vpx, plain(mix(ACCENT, WHITE, hv)));
-            vl.place(
+            // the action: a small chip
+            let cpx = (14.0 * u) as u32;
+            let vl = self.text.label(r, scene, &val, cpx, plain(mix(SOFT, WHITE, hv)));
+            let (chip_px, chip_py) = (10.0 * u, 4.0 * u);
+            let vw = vl.w as f32 + chip_px * 2.0;
+            let ch = vl.h as f32 + chip_py * 2.0;
+            let cx = rr[2] - 18.0 * u - vw;
+            let cy = rr[1] + (row_h - ch) * 0.5;
+            self.text.rounded(
+                r,
                 scene,
-                rr[2] - 18.0 * u - vw,
-                rr[1] + (row_h - vl.h as f32) * 0.5,
+                [cx, cy, cx + vw, cy + ch],
+                4.0 * u,
+                fade(mix(CHIP, ACCENT_SOFT, hv), e),
             );
+            vl.place(scene, cx + chip_px, cy + chip_py);
             let npx = (18.0 * u) as u32;
             let name = clip_to(
                 &self.text,
@@ -183,7 +191,7 @@ impl Ui {
             .min((bottom - top).max(0.0));
         let x0 = px0 + 14.0 * u * (1.0 - e);
         let card = [x0, top, x0 + (w - mx - px0), top + ph];
-        self.text.rounded(r, scene, card, 0.0, fade([20, 22, 27, 255], e));
+        self.text.rounded(r, scene, card, 0.0, fade(OPT_CARD, e));
         self.text
             .rounded(r, scene, [card[0], card[1], card[0] + 3.0 * u, card[3]], 0.0, fade(ACCENT, e));
         let tl = self.text.label(

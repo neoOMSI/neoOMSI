@@ -4,10 +4,23 @@
 //! What a page may use:
 //! * HTML: nested elements, `<style>`, `<script>`, inline `style=""`, `id`, `class`, entities,
 //!   `<img src width height>` (bmp, dds, tga, jpg, png; looked up next to the page, see `images`).
+//!   Optional end tags (`<p>`, `<li>`, `<dt>/<dd>`, `<tr>`, `<td>/<th>`, `<option>`) close by themselves.
+//!   Tags: headings `h1`-`h6`; text `b strong i em u ins s strike del mark small big sub sup q a font
+//!   code kbd samp tt var cite abbr time ...`; blocks `div p blockquote pre center address figure
+//!   fieldset legend details/summary hr` and every sectioning tag; lists `ul ol li menu dl dt dd`
+//!   (bullets, `type`, `start`, `value`, nesting); tables `table caption thead tbody tfoot tr td th`
+//!   (`colspan`, `rowspan`, `width`, `border`, `cellpadding`, `cellspacing`, `align`, `valign`,
+//!   `bgcolor`); forms `input` (text-like, password, checkbox, radio, button/submit/reset),
+//!   `textarea`, `select/option`, `button`, `progress`, `meter`; `canvas video svg iframe embed
+//!   object` as empty boxes; `template noscript audio datalist [hidden]` and closed `dialog` are
+//!   not shown. Presentational attributes `bgcolor`, `align`, `valign`, `nowrap`, `text`, `color`,
+//!   `size` are understood. `getAttribute`/`setAttribute` work for any attribute.
 //! * CSS: selectors `tag`, `#id`, `.class`, `*`, compounds (`div.a#b`), descendant chains
 //!   and `,` lists; `color`, `background(-color)`, `font-size`, `font-weight`, `text-align`,
 //!   `line-height`, `margin*`, `padding*`, `width`, `height`, `display` (`none`, `inline`),
-//!   `visibility`, `border-radius`, `background-image: url()`, `background-size`,
+//!   `visibility`, `border-radius`, `border*` (width, colour, `none`; all sides), `border-collapse`,
+//!   `border-spacing`, `text-decoration`, `text-transform`, `white-space`, `vertical-align`,
+//!   `list-style(-type)`, `background-image: url()`, `background-size`,
 //!   `background-repeat`, `background-position` and the `background` shorthand. Units: `px`, `%`, `em`, `rem`, `pt`, `vw`, `vh`.
 //!   Layout is block flow with wrapped inline text (no floats, no flexbox).
 //! * JavaScript (ES5 plus arrow functions): `var/let/const`, functions, `if/for/while`,

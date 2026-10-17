@@ -117,8 +117,11 @@ fn switching_lod_uses_the_current_pose_and_recycles_contact_shadows() {
                 scene.instances[*instance].visible,
                 p.ty.mesh_at(k).0 == expected
             );
-            assert_ne!(p.render.skins[k].0, p.ty.mesh_at(k).1.data.positions);
-            assert!(p.render.skins[k].0.iter().all(|v| v.is_finite()));
+            // (only the level shown is skinned)
+            if p.ty.mesh_at(k).0 == expected {
+                assert_ne!(p.render.skins[k].0, p.ty.mesh_at(k).1.data.positions);
+                assert!(p.render.skins[k].0.iter().all(|v| v.is_finite()));
+            }
         }
         assert!(p.render.blob.is_none());
     }
@@ -1179,6 +1182,56 @@ fn procedural_waiting_points_start_on_the_floor_and_keep_it_when_walking() {
 }
 
 #[test]
+fn a_waiting_passenger_stays_on_a_raised_platform_above_a_sloped_kerb() {
+    let f = Fixture::new();
+    f.world
+        .terrains
+        .write()
+        .insert((0, 0), Arc::new(::map::Terrain::flat()));
+    let mut h = Humans::new(&f.root);
+    let floor = 0.25;
+    let mut platform = stop(DVec3::new(2.0, 2.0, 0.0), 0.0, "Platform");
+    platform.spots[0].pos.z = floor;
+    h.stops.insert(1, platform);
+    let mut pax = Pax::new(1.1);
+    pax.task = Task::WaitingForBus;
+    pax.stop = Some(1);
+    pax.spot = Some(0);
+    pax.pos = DVec3::new(2.0, 2.0, floor);
+    pax.movement = Movement::Standing;
+    let mut person = f.person(7, State::Pax(Box::new(pax)), false);
+    person.position = DVec3::new(2.0, 2.0, floor);
+    h.people.push(person);
+
+    h.pax_move(0, 0.05, 50.0, &f.world, &[], &HashMap::new());
+
+    assert_eq!(h.pax(0).unwrap().pos.z, floor);
+
+    // Returning to the place must keep the same floor while walking, not merely once the
+    // passenger is standing there again.
+    {
+        let p = h.pax_mut(0).unwrap();
+        p.task = Task::WalkingToBusstop;
+        p.movement = Movement::ToTarget;
+        p.target = DVec3::new(3.0, 2.0, floor);
+    }
+    h.pax_move(0, 0.05, 50.0, &f.world, &[], &HashMap::new());
+    assert_eq!(h.pax(0).unwrap().pos.z, floor);
+
+    // The task transition itself samples the nearby road too; it must retain the waiting
+    // point's floor rather than snapping down for one frame before the next movement tick.
+    h.pax_mut(0).unwrap().pos.z = 0.0;
+    h.set_task(
+        0,
+        Task::WaitingForBus,
+        &[],
+        &HashMap::new(),
+        &f.world,
+    );
+    assert_eq!(h.pax(0).unwrap().pos.z, floor);
+}
+
+#[test]
 fn streamed_floor_correction_changes_the_passenger_authority() {
     let f = Fixture::new();
     let mut p = Pax::new(1.1);
@@ -1436,6 +1489,8 @@ pub(super) fn cabin() -> Arc<Cabin> {
         money_point: None,
         money_var: None,
         change_point: None,
+        money_parent: None,
+        change_parent: None,
     })
 }
 
@@ -1457,7 +1512,9 @@ fn bus(cabin: Arc<Cabin>) -> BusNow {
         accel: DVec2::ZERO,
         trailers: vec![],
         terminus: None,
+        passenger_termini: vec![],
         out_of_service: false,
+        final_stop: None,
     }
 }
 
@@ -1608,7 +1665,124 @@ fn stop(pos: DVec3, heading: f64, name: &str) -> PaxStop {
         buses: vec![],
         dests: vec![],
         lines: vec![],
+        line_deadlines: vec![],
     }
+}
+
+#[test]
+fn timetable_gate_applies_to_stops_missing_from_busstops_cfg() {
+    let f = Fixture::new();
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mut h = Humans::new(&f.root);
+    h.stops.insert(1, stop(DVec3::ZERO, 0.0, "Unlisted stop"));
+    // Timetable targets are deliberately empty and there is no Busstops.cfg name for
+    // this stop. It must still be treated as having no due service.
+    h.passenger_targets = Some(HashMap::new());
+
+    h.stops_tick(0.05, &f.world, &renderer, &mut scene);
+
+    assert_eq!(h.stops[&1].want, 0);
+    assert!(h.people.is_empty());
+}
+
+#[test]
+fn a_newly_loaded_stop_spawns_passengers_for_a_late_bus_until_the_deadline() {
+    let f = Fixture::new();
+    let tt = f.root.join("TTData");
+    std::fs::create_dir_all(&tt).unwrap();
+    std::fs::write(
+        tt.join("1.ttl"),
+        "[newtour]\n1\nTest\n1023\n[addtrip]\nTrip\n0\n480\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tt.join("Trip.ttp"),
+        "[trip]\n\nTerminus\n1\n[station_typ2]\n1\n[station_typ2]\n2\n[station_typ2]\n3\n[profile]\nstandard\n20\n",
+    ).unwrap();
+    let clock = ::simulation::SimClock::default();
+    let mut schedule = crate::schedule::Schedule::new(&f.root, &f.world, &clock);
+    let mut duty = schedule
+        .player_duty(&f.world, "1", "1", 8.0 * 3600.0, Some("1"), false)
+        .unwrap();
+    duty.start_at(0, 1);
+    let renderer = noop_renderer();
+    let mut scene = renderer.new_scene();
+    let mut h = Humans::new(&f.root);
+    h.ik = true;
+    set_population(&mut h, [f.human.clone()]);
+    // The middle stop only enters the loaded area at 08:15, five minutes late.
+    let mut s = stop(DVec3::ZERO, 0.0, "Middle");
+    s.enter_min = 2.0;
+    s.enter_max = 2.0;
+    s.spots = (0..3)
+        .map(|i| pax::WaitSpot {
+            pos: DVec3::new(i as f64, 0.0, 0.0),
+            face: 0.0,
+            height: 0.0,
+        })
+        .collect();
+    s.taken = vec![false; 3];
+    h.stops.insert(2, s);
+    h.time_of_day = 8.0 * 3600.0 + 15.0 * 60.0;
+    h.set_timetable_targets(
+        &f.world,
+        schedule.stop_targets_within(h.time_of_day, 300.0, None, Some(&duty)),
+        schedule.stop_names(),
+    );
+    h.stops_tick(0.05, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 2);
+    assert_eq!(h.people.len(), 2);
+    for i in 0..2 {
+        let p = h.pax(i).unwrap();
+        assert_eq!(p.journey.dest.as_deref(), Some("3"));
+        assert!(
+            p.journey
+                .allowed_termini
+                .as_ref()
+                .unwrap()
+                .contains("Terminus")
+        );
+        assert_eq!(p.journey.service_deadline, Some(9.0 * 3600.0 + 10.0 * 60.0));
+    }
+    for _ in 0..5 {
+        h.stops_tick(15.0, &f.world, &renderer, &mut scene);
+        assert_eq!(
+            h.people.len(),
+            2,
+            "repeated updates must not multiply demand"
+        );
+    }
+    // The existing hourly density still controls how many wait.
+    h.density = 0.0;
+    h.stops_tick(0.05, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 0);
+    // The player has served this stop; freeing a place must not refill it for that bus.
+    h.density = 1.0;
+    duty.start_at(0, 2);
+    h.release(0);
+    let boarded = h.people.swap_remove(0);
+    h.retire(&boarded);
+    h.set_timetable_targets(
+        &f.world,
+        schedule.stop_targets_within(h.time_of_day, 300.0, None, Some(&duty)),
+        schedule.stop_names(),
+    );
+    h.stops_tick(15.0, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 0);
+    assert_eq!(h.people.len(), 1, "no new passenger after the bus passed");
+    // At the deadline they give up, and stale service cannot create replacements.
+    h.density = 1.0;
+    h.time_of_day = 9.0 * 3600.0 + 10.0 * 60.0;
+    h.set_timetable_targets(
+        &f.world,
+        schedule.stop_targets_within(h.time_of_day, 300.0, None, Some(&duty)),
+        schedule.stop_names(),
+    );
+    h.stops_tick(15.0, &f.world, &renderer, &mut scene);
+    assert_eq!(h.stops[&2].want, 0);
+    assert!(h.people.is_empty());
+    assert!(h.stops[&2].taken.iter().all(|taken| !taken));
 }
 
 #[test]
@@ -1870,9 +2044,10 @@ fn complete_journey(fare: TicketAction) {
     regs.get_mut(&b.id).unwrap().at = None;
     tick(&mut h, &b, &regs);
     assert!(h.stop_request);
-    assert_eq!(h.pax(0).unwrap().task, Task::InBusToExit);
-    assert_eq!(h.buses.seats[&b.id][reserved], b.cabin.seats[reserved].seated);
+    assert_eq!(h.pax(0).unwrap().task, Task::SittingInBus);
     regs.get_mut(&b.id).unwrap().at = Some(2);
+    tick(&mut h, &b, &regs);
+    assert_eq!(h.pax(0).unwrap().task, Task::InBusToExit);
     for _ in 0..600 {
         tick(&mut h, &b, &regs);
         if h.pax(0).is_none() {
@@ -1959,6 +2134,27 @@ fn a_seat_being_vacated_still_counts_for_the_scripts() {
     assert_eq!(h.seat_counts()[2], 1, "still getting up");
     h.pax_mut(0).unwrap().vacating = None;
     assert_eq!(h.seat_counts()[2], 0);
+}
+
+#[test]
+fn a_seated_on_foot_player_counts_for_the_vehicle_scripts() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    h.buses.player_cabin = Some(cabin());
+    h.avatars.avatar_cmds.insert(
+        0,
+        AvatarCmd {
+            pos: DVec3::ZERO,
+            heading: 0.0,
+            vel: DVec2::ZERO,
+            lift: 0.0,
+            seat: Some((BusId::Player, 1)),
+            floor: None,
+            aboard: None,
+            wheel: None,
+        },
+    );
+    assert_eq!(h.seat_counts()[2], 1);
 }
 
 #[test]
@@ -2097,6 +2293,290 @@ fn a_stop_request_and_open_door_result_in_one_completed_exit() {
     assert!(matches!(h.people[0].state, State::Standing));
     assert_eq!(h.people[0].place, Place::Ground);
     assert_eq!(h.people.len(), 1);
+}
+
+#[test]
+fn alighting_occupancy_lifecycle_matches_full_scan_throughout_replan_and_exit() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    let mut b = bus(cabin());
+    b.exit_open = vec![false, true];
+    let mut p0 = Pax::new(1.1);
+    p0.task = Task::Nothing;
+    p0.bus = Some(b.id);
+    p0.inside = Some(b.id);
+    p0.door_wait = 3.0;
+    p0.pos = b.cabin.graph.points[1].as_dvec3();
+    h.people.push(f.person(7, State::Pax(Box::new(p0)), false));
+
+    let mut p1 = Pax::new(1.1);
+    p1.task = Task::Nothing;
+    p1.bus = Some(b.id);
+    p1.inside = Some(b.id);
+    p1.door_wait = 0.0;
+    p1.pos = b.cabin.graph.points[1].as_dvec3();
+    h.people.push(f.person(8, State::Pax(Box::new(p1)), false));
+
+    let ix = [(b.id, 0)].into_iter().collect();
+    let regs = [(
+        b.id,
+        pax::BusAtStops {
+            next: Some(1),
+            at: Some(1),
+            ..Default::default()
+        },
+    )]
+    .into_iter()
+    .collect();
+
+    let scan_alighting = |h: &Humans, bus: BusId, exit: usize| -> usize {
+        h.people
+            .iter()
+            .filter(|person| {
+                matches!(&person.state, State::Pax(pax)
+                    if pax.inside == Some(bus)
+                        && pax.task == Task::InBusToExit
+                        && pax.door == Some(exit))
+            })
+            .count()
+    };
+
+    let check_sync = |h: &Humans| {
+        for door in 0..2 {
+            let oracle = scan_alighting(h, b.id, door);
+            assert_eq!(
+                h.alighting_occupancy.get(&(b.id, door)).copied().unwrap_or(0),
+                oracle,
+                "cached alighting_occupancy for door {door} must match independent full scan"
+            );
+            assert_eq!(
+                h.alighting_through(b.id, door),
+                oracle,
+                "alighting_through({door}) must match independent full scan"
+            );
+        }
+    };
+
+    check_sync(&h);
+
+    // Passenger 0 begins exiting: assigned to door 0 (nearest exit)
+    h.set_task(0, Task::InBusToExit, &[b.clone()], &ix, &f.world);
+    assert_eq!(h.pax(0).unwrap().door, Some(0));
+    check_sync(&h);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 0)), Some(&1));
+
+    // Passenger 1 also begins exiting: also assigned to door 0
+    h.set_task(1, Task::InBusToExit, &[b.clone()], &ix, &f.world);
+    assert_eq!(h.pax(1).unwrap().door, Some(0));
+    check_sync(&h);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 0)), Some(&2));
+
+    // Passenger 0 reaches door 0 (closed) and waits
+    {
+        let pax = h.pax_mut(0).unwrap();
+        pax.pt = Some(0);
+        pax.pt_target = Some(0);
+        pax.door = Some(0);
+        pax.movement = Movement::AtPathEnd;
+        pax.pos = b.cabin.graph.points[0].as_dvec3();
+    }
+    for _ in 0..5 {
+        h.pax_mut(0).unwrap().timer = 0.0;
+        h.task_to_exit(0, 0.05, &[b.clone()], &ix, &regs, &f.world, None);
+    }
+
+    // Passenger 0 timed out at closed door 0 and replanned to open door 1
+    assert_eq!(h.pax(0).unwrap().door, Some(1));
+    check_sync(&h);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 0)), Some(&1));
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 1)), Some(&1));
+
+    // Passenger 0 completes exit onto the street through door 1
+    {
+        let pax = h.pax_mut(0).unwrap();
+        pax.pt = Some(3);
+        pax.pt_target = Some(3);
+        pax.movement = Movement::AtPathEnd;
+        pax.pos = DVec3::Y * 3.0;
+    }
+    h.task_to_exit(0, 0.05, &[b.clone()], &ix, &regs, &f.world, None);
+    assert!(matches!(h.people[0].state, State::Standing));
+    check_sync(&h);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 1)).copied().unwrap_or(0), 0);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 0)), Some(&1));
+
+    // Passenger 1 changes task back to sitting
+    h.set_task(1, Task::SittingInBus, &[b.clone()], &ix, &f.world);
+    check_sync(&h);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 0)).copied().unwrap_or(0), 0);
+}
+
+#[test]
+fn alighting_occupancy_ignores_passenger_not_inside_bus() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    let b = bus(cabin());
+    let mut p = Pax::new(1.1);
+    p.task = Task::Nothing;
+    p.bus = Some(b.id);
+    p.inside = None;
+    p.pos = b.cabin.graph.points[1].as_dvec3();
+    h.people.push(f.person(7, State::Pax(Box::new(p)), false));
+
+    let ix = [(b.id, 0)].into_iter().collect();
+
+    let scan_alighting = |h: &Humans, bus: BusId, exit: usize| -> usize {
+        h.people
+            .iter()
+            .filter(|person| {
+                matches!(&person.state, State::Pax(pax)
+                    if pax.inside == Some(bus)
+                        && pax.task == Task::InBusToExit
+                        && pax.door == Some(exit))
+            })
+            .count()
+    };
+
+    assert_eq!(h.alighting_through(b.id, 0), 0);
+    assert_eq!(scan_alighting(&h, b.id, 0), 0);
+
+    // Transitioning to InBusToExit when inside is None must not increment alighting occupancy
+    h.set_task(0, Task::InBusToExit, &[b.clone()], &ix, &f.world);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 0)).copied().unwrap_or(0), 0);
+    assert_eq!(h.alighting_through(b.id, 0), 0);
+    assert_eq!(scan_alighting(&h, b.id, 0), 0);
+
+    // Transitioning out of InBusToExit also stays at 0 without negative underflow
+    h.set_task(0, Task::WalkingToBusstop, &[b.clone()], &ix, &f.world);
+    assert_eq!(h.alighting_occupancy.get(&(b.id, 0)).copied().unwrap_or(0), 0);
+    assert_eq!(h.alighting_through(b.id, 0), 0);
+    assert_eq!(scan_alighting(&h, b.id, 0), 0);
+}
+
+#[test]
+fn door_occupancy_lifecycle_matches_independent_full_scan() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    let b = bus(cabin());
+
+    let scan_boarding = |h: &Humans, bus: BusId, door: usize| -> usize {
+        h.people
+            .iter()
+            .filter(|person| {
+                matches!(&person.state, State::Pax(pax)
+                    if pax.bus == Some(bus)
+                        && pax.inside.is_none()
+                        && pax.task == Task::WalkingToBus
+                        && pax.door == Some(door))
+            })
+            .count()
+    };
+
+    let reference_door_queues = |h: &Humans, i: usize, bus: BusId, n: usize| -> Vec<f32> {
+        let mut queue = vec![0.0; n];
+        for (j, person) in h.people.iter().enumerate() {
+            let State::Pax(pax) = &person.state else {
+                continue;
+            };
+            if j != i
+                && pax.bus == Some(bus)
+                && pax.task == Task::WalkingToBus
+                && pax.inside.is_none()
+                && let Some(door) = pax.door.filter(|door| *door < n)
+            {
+                queue[door] += 2.0;
+            }
+        }
+        let id = h.people[i].id;
+        for (door, cost) in queue.iter_mut().enumerate() {
+            *cost += 3.0 * (crate::humans::person_hash(id, 20 + door as u32) as f32 - 0.5);
+        }
+        if let Some(door) = h
+            .pax(i)
+            .and_then(|pax| pax.door)
+            .filter(|door| *door < n)
+        {
+            queue[door] -= 1.5;
+        }
+        queue
+    };
+
+    let check_sync = |h: &Humans| {
+        for door in 0..3 {
+            let oracle = scan_boarding(h, b.id, door);
+            assert_eq!(
+                h.door_occupancy.get(&(b.id, door)).copied().unwrap_or(0),
+                oracle,
+                "door_occupancy for door {door} must match independent full scan"
+            );
+        }
+        for (idx, person) in h.people.iter().enumerate() {
+            if matches!(person.state, State::Pax(_)) {
+                let actual = h.door_queues(idx, b.id, 3);
+                let expected = reference_door_queues(h, idx, b.id, 3);
+                assert_eq!(
+                    actual, expected,
+                    "door_queues for person {idx} must match full-scan reference"
+                );
+            }
+        }
+    };
+
+    let mut p0 = Pax::new(1.1);
+    p0.task = Task::Nothing;
+    p0.bus = Some(b.id);
+    p0.inside = None;
+    p0.door = None;
+    p0.pos = DVec3::new(2.0, 0.0, 0.0);
+    h.people.push(f.person(10, State::Pax(Box::new(p0)), false));
+
+    let mut p1 = Pax::new(1.1);
+    p1.task = Task::Nothing;
+    p1.bus = Some(b.id);
+    p1.inside = None;
+    p1.door = None;
+    p1.pos = DVec3::new(2.5, 0.0, 0.0);
+    h.people.push(f.person(11, State::Pax(Box::new(p1)), false));
+
+    let ix = [(b.id, 0)].into_iter().collect();
+
+    check_sync(&h);
+
+    // 1. Initial door assignment None -> chosen door via set_task/choose_entry
+    h.set_task(0, Task::WalkingToBus, &[b.clone()], &ix, &f.world);
+    let door0 = h.pax(0).unwrap().door.expect("passenger must have chosen a door");
+    check_sync(&h);
+    assert_eq!(h.door_occupancy.get(&(b.id, door0)), Some(&1));
+
+    // Passenger 1 also enters WalkingToBus and selects a door
+    h.set_task(1, Task::WalkingToBus, &[b.clone()], &ix, &f.world);
+    let door1 = h.pax(1).unwrap().door.expect("passenger 1 must have chosen a door");
+    check_sync(&h);
+
+    // 2. Door switch for passenger 1 triggered through production choose_entry:
+    // Closing the current entry door while keeping the rear exit door open forces
+    // choose_entry to reassign passenger 1 to another available door.
+    let mut b_switch = b.clone();
+    b_switch.entry_open = vec![false];
+    b_switch.exit_open = vec![false, true];
+    h.choose_entry(1, &[b_switch.clone()], &ix);
+    let door1_new = h.pax(1).unwrap().door.expect("passenger 1 must choose new door");
+    assert_ne!(door1_new, door1, "door must switch when previous door is shut");
+    check_sync(&h);
+    assert_eq!(h.door_occupancy.get(&(b.id, door1_new)), Some(&2));
+    assert_eq!(h.door_occupancy.get(&(b.id, door1)).copied().unwrap_or(0), 0);
+
+    // 3. Boarding transition: WalkingToBus -> InBusToPlace (pax 0 enters bus)
+    h.set_task(0, Task::InBusToPlace, &[b.clone()], &ix, &f.world);
+    check_sync(&h);
+    assert_eq!(h.door_occupancy.get(&(b.id, door1_new)), Some(&1));
+
+    // 4. Aborting / bus loss: WalkingToBus -> WalkingToBusstop (pax 1 gives up)
+    h.set_task(1, Task::WalkingToBusstop, &[b.clone()], &ix, &f.world);
+    check_sync(&h);
+    for door in 0..3 {
+        assert_eq!(h.door_occupancy.get(&(b.id, door)).copied().unwrap_or(0), 0);
+    }
 }
 
 #[test]
@@ -2287,6 +2767,81 @@ fn a_client_without_timetable_records_keeps_the_hosts_line_permission() {
     h.buses.last_buses = vec![b.clone()];
     assert_eq!(h.grant_eligible(&grant), Some(true));
     assert_eq!(h.bus_for(0, 1, &[b], &ix), Some(BusId::Player));
+}
+
+#[test]
+fn a_hof_line_prefix_does_not_make_a_timetable_service_ineligible() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    let mut pax = Pax::new(1.1);
+    pax.task = Task::WaitingForBus;
+    pax.stop = Some(1);
+    pax.journey.allowed_termini = Some(["Apsley Station".into()].into_iter().collect());
+    h.people.push(f.person(7, State::Pax(Box::new(pax)), false));
+    let mut s = stop(DVec3::ZERO, 0.0, "Apsley Station");
+    s.buses.push((BusId::Player, true));
+    h.stops.insert(1, s);
+    let grant = PassengerGrant {
+        id: 7,
+        transfer: 1,
+        stop: 1,
+        spot: 0,
+        destination: Some("Apsley Station".into()),
+        alternative: None,
+        alternative_m: 0.0,
+        ride_km: 12.0,
+        line_destination: Some("Apsley Station".into()),
+        allowed_termini: Some(vec!["Apsley Station".into()]),
+    };
+    let mut b = bus(cabin());
+    b.terminus = Some("402 Apsley Station".into());
+    h.buses.last_buses = vec![b.clone()];
+    assert_eq!(h.grant_eligible(&grant), Some(true));
+    let ix = [(b.id, 0)].into_iter().collect();
+    assert_eq!(h.bus_for(0, 1, &[b], &ix), Some(BusId::Player));
+}
+
+#[test]
+fn a_hof_line_prefix_is_not_part_of_the_terminus_stop_name() {
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    h.stops.insert(1, stop(DVec3::ZERO, 0.0, "Apsley Station"));
+    let mut b = bus(cabin());
+    b.terminus = Some("B2 Apsley Station".into());
+    let regs = h.register_buses(std::slice::from_ref(&b), 0.05);
+    assert!(regs[&b.id].all_exit);
+    assert!(h.stops[&1].buses.is_empty());
+    b.terminus = Some("402 Apsley Bus Station".into());
+    let regs = h.register_buses(&[b], 0.05);
+    assert!(!regs[&BusId::Player].all_exit, "similar names remain distinct");
+}
+
+#[test]
+fn the_ibis_routes_last_stop_empties_the_bus_whatever_the_terminus_is_called() {
+    // Caxias City (#206): the next trip's first stop is 1.1 m past the last one
+    let mut h = Humans::new(Path::new("/nonexistent"));
+    h.stops
+        .insert(1, stop(DVec3::ZERO, 0.0, "016 hospital duque final"));
+    h.stops
+        .insert(2, stop(DVec3::Y * 1.1, 0.0, "016 hospital duque inicio"));
+    let mut b = bus(cabin());
+    b.pos = DVec3::Y * 3.0;
+    b.terminus = Some("016HOSPITALDUQUE".into());
+    let regs = h.register_buses(std::slice::from_ref(&b), 0.05);
+    assert_eq!(regs[&b.id].at, Some(2));
+    assert!(!regs[&b.id].all_exit, "the terminus ident is no stop name");
+
+    b.final_stop = Some("016 hospital duque final".into());
+    let regs = h.register_buses(std::slice::from_ref(&b), 0.05);
+    assert_eq!(regs[&b.id].at, Some(2));
+    assert!(regs[&b.id].all_exit);
+    assert!(h.stops[&1].buses.is_empty());
+    assert_eq!(h.stops[&2].buses, vec![(b.id, true)]);
+
+    // another spelling keeps people on board
+    b.final_stop = Some("016 Hospital Duque".into());
+    b.terminus = Some("016 hospital duque final".into());
+    let regs = h.register_buses(&[b], 0.05);
+    assert!(!regs[&BusId::Player].all_exit);
 }
 
 #[test]
@@ -2832,7 +3387,7 @@ fn bus_aisle_jam_squeeze_unblocks_frozen_passengers() {
     let ix = [(b.id, 0)].into_iter().collect();
 
     // Verify p2 blocks p1 (same direction, within 0.6m -> block = 3)
-    let (block, _, _) = h.pax_blockers(0, &[b.clone()], &ix);
+    let (block, _, _, _) = h.pax_blockers(0, &[b.clone()], &ix);
     assert!(
         block >= Obstruction::Facing,
         "expected block >= 2, got {}",
@@ -2847,6 +3402,167 @@ fn bus_aisle_jam_squeeze_unblocks_frozen_passengers() {
     assert_eq!(p.jam, 0.0);
     assert_eq!(p.squeeze, 1.5);
     assert_eq!(p.obstruction, Obstruction::Clear);
+}
+
+/// #138: somebody stamping beside the door kept the next boarder out on the pavement.
+#[test]
+fn natural_boarders_wait_for_the_threshold_not_for_somebody_stamping_beside_it() {
+    let f = Fixture::new();
+    let b = bus(cabin());
+    let ix: HashMap<BusId, usize> = [(b.id, 0)].into_iter().collect();
+    // door 0's threshold is the bus's origin; the boarder faces it from 0.15 m
+    let boarder = || {
+        let mut p = Pax::new(1.1);
+        p.bus = Some(b.id);
+        p.door = Some(0);
+        p.task = Task::WalkingToBus;
+        p.movement = Movement::ToTarget;
+        p.pos = DVec3::new(0.15, 0.0, 0.0);
+        p.yaw = -std::f64::consts::FRAC_PI_2;
+        p
+    };
+    let stamping = |x: f64| {
+        let mut p = Pax::new(1.1);
+        p.bus = Some(b.id);
+        p.inside = Some(b.id);
+        p.task = Task::InBusToPlace;
+        p.movement = Movement::Turning;
+        p.fare_phase = FarePhase::Validating;
+        p.pos = DVec3::new(x, 0.0, 0.0);
+        p
+    };
+    let blocked = |natural: bool, x: f64| {
+        let mut h = Humans::new(&f.root);
+        h.set_natural(natural);
+        h.people
+            .push(f.person(1, State::Pax(Box::new(boarder())), false));
+        h.people
+            .push(f.person(2, State::Pax(Box::new(stamping(x))), false));
+        let (w, _) = h
+            .pax_world(h.pax(1).unwrap(), std::slice::from_ref(&b), &ix)
+            .unwrap();
+        h.people[1].position = w;
+        h.pax_blockers(0, std::slice::from_ref(&b), &ix).0
+    };
+    assert_eq!(blocked(true, -0.4), Obstruction::Clear);
+    assert_eq!(blocked(true, -0.05), Obstruction::Busy);
+    // the OMSI mode keeps the plain 0.6 m
+    assert_eq!(blocked(false, -0.4), Obstruction::Busy);
+}
+
+/// #138: the queue outside eased up behind the one in front only by stopping dead at 0.6 m.
+#[test]
+fn natural_boarders_slow_down_behind_the_one_in_front() {
+    let f = Fixture::new();
+    let b = bus(cabin());
+    let ix: HashMap<BusId, usize> = [(b.id, 0)].into_iter().collect();
+    let walker = |y: f64, yaw: f64| {
+        let mut p = Pax::new(1.1);
+        p.bus = Some(b.id);
+        p.door = Some(0);
+        p.task = Task::WalkingToBus;
+        p.movement = Movement::ToTarget;
+        p.pos = DVec3::new(5.0, y, 0.0);
+        p.target = DVec3::new(5.0, -40.0, 0.0);
+        p.yaw = yaw;
+        p
+    };
+    let south = std::f64::consts::PI;
+    // (gap to the other, the other's heading)
+    let wanted = |other: Option<(f64, f64)>| {
+        let mut h = Humans::new(&f.root);
+        h.set_natural(true);
+        h.people
+            .push(f.person(1, State::Pax(Box::new(walker(-20.0, south))), false));
+        if let Some((gap, yaw)) = other {
+            h.people
+                .push(f.person(2, State::Pax(Box::new(walker(-20.0 - gap, yaw))), false));
+        }
+        for k in 0..h.people.len() {
+            h.people[k].position = h.pax(k).unwrap().pos;
+            h.people[k].heading = h.pax(k).unwrap().yaw.to_degrees();
+        }
+        h.pax_move(0, 0.05, 50.0, &f.world, std::slice::from_ref(&b), &ix);
+        h.pax(0).unwrap().speed_des
+    };
+    let free = wanted(None);
+    assert!(free > 1.0, "{free}");
+    let behind = wanted(Some((0.9, south)));
+    assert!((behind - 0.6).abs() < 1e-3, "{behind}");
+    assert!(wanted(Some((0.62, south))) < 0.05);
+    // somebody coming the other way is no one to follow: they meet the 0.6 m and step aside
+    assert_eq!(wanted(Some((0.9, 0.0))), free);
+}
+
+/// #138: next to somebody standing beside the way, a boarder swung to and fro every frame.
+#[test]
+fn a_boarder_walks_past_somebody_beside_the_way_instead_of_swinging_to_and_fro() {
+    let f = Fixture::new();
+    let b = bus(cabin());
+    let ix: HashMap<BusId, usize> = [(b.id, 0)].into_iter().collect();
+    for natural in [false, true] {
+        let mut h = Humans::new(&f.root);
+        h.set_natural(natural);
+        // heading for a point 6 m away bearing 85 degrees, facing 67
+        let mut me = Pax::new(1.1);
+        me.bus = Some(b.id);
+        me.task = Task::WalkingToBus;
+        me.movement = Movement::ToTarget;
+        me.pos = DVec3::new(20.0, 20.0, 0.0);
+        let to = 85f64.to_radians();
+        me.target = me.pos + DVec3::new(to.sin(), to.cos(), 0.0) * 6.0;
+        me.yaw = 67f64.to_radians();
+        h.people.push(f.person(1, State::Pax(Box::new(me)), false));
+        // held up 0.52 m away bearing 154 degrees, turned towards them
+        let mut other = Pax::new(1.1);
+        other.bus = Some(b.id);
+        other.task = Task::WalkingToBus;
+        other.movement = Movement::ShortOfTarget;
+        let at = 154f64.to_radians();
+        other.pos = DVec3::new(20.0, 20.0, 0.0) + DVec3::new(at.sin(), at.cos(), 0.0) * 0.52;
+        other.yaw = (154f64 + 180.0 + 30.0).to_radians();
+        h.people
+            .push(f.person(2, State::Pax(Box::new(other)), false));
+        for k in 0..2 {
+            h.people[k].position = h.pax(k).unwrap().pos;
+            h.people[k].heading = h.pax(k).unwrap().yaw.to_degrees();
+        }
+        let start = h.pax(0).unwrap().pos;
+        let (mut swings, mut last) = (0, 0.0f64);
+        let mut yaw = h.pax(0).unwrap().yaw;
+        for _ in 0..60 {
+            h.pax_move(
+                0,
+                1.0 / 30.0,
+                1000.0 / 30.0,
+                &f.world,
+                std::slice::from_ref(&b),
+                &ix,
+            );
+            let p = h.pax(0).unwrap();
+            let step = wrap_angle(p.yaw - yaw);
+            if step.abs() > 0.05 {
+                if step * last < 0.0 {
+                    swings += 1;
+                }
+                last = step;
+            }
+            yaw = p.yaw;
+            let (pos, heading) = (p.pos, p.yaw.to_degrees());
+            h.people[0].position = pos;
+            h.people[0].heading = heading;
+        }
+        let gone = (h.pax(0).unwrap().pos - start).truncate().length();
+        assert!(
+            swings <= 4,
+            "natural {natural}: swung to and fro {swings} times"
+        );
+        assert!(gone > 1.0, "natural {natural}: only {gone:.2} m in 2 s");
+    }
+}
+
+fn wrap_angle(a: f64) -> f64 {
+    (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }
 
 #[test]

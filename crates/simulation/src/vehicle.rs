@@ -23,6 +23,20 @@ fn script_speed(speed_kmh: f32) -> f32 {
     }
 }
 
+/// Resolve a model text source by name or OMSI's numeric string-variable slot syntax.
+fn string_var_value<'a>(program: &Program, values: &'a [String], name: &str) -> &'a str {
+    let index = program.str_var(name).or_else(|| {
+        name.trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| u32::try_from(i).ok())
+    });
+    index
+        .and_then(|i| values.get(i as usize))
+        .map(String::as_str)
+        .unwrap_or("")
+}
+
 /// Built-in variables every road vehicle has (`program/varlist_roadvehicle.txt` + generated).
 pub fn builtin_vars(root: &Path) -> Vec<String> {
     let mut v: Vec<String> =
@@ -85,7 +99,7 @@ pub fn builtin_str_vars(root: &Path) -> Vec<String> {
     }
 }
 
-/// A bone of a `[smoothskin]` mesh: the model mesh whose animation moves it (`[setbone]
+/// A bone of a skinned mesh: the model mesh whose animation moves it (`[setbone]
 /// name id`, the id counting the meshes of the model's first level of detail - the GN92's and
 /// the O530G's joint dummies `Gelenk_A`-`D` are its first four) and the weights of the o3d
 /// bone of that name. `None`: an o3d bone no `[setbone]` names, which keeps its weights and
@@ -95,6 +109,39 @@ pub fn builtin_str_vars(root: &Path) -> Vec<String> {
 pub struct SkinBone {
     pub def_index: Option<usize>,
     pub weights: Vec<(u32, f32)>,
+}
+
+fn mesh_skin(mesh: &::legacy_o3d::Mesh, def: &::model::MeshDef, lod_start: usize) -> Vec<SkinBone> {
+    let skin: Vec<SkinBone> = if !def.bones.is_empty() {
+        mesh.bones
+            .iter()
+            .map(|b| {
+                let id = def
+                    .bones
+                    .iter()
+                    .find(|(n, _)| n.trim().eq_ignore_ascii_case(b.name.trim()))
+                    .map(|(_, id)| *id)
+                    .filter(|id| *id >= 0);
+                let mut seen = std::collections::HashSet::new();
+                SkinBone {
+                    def_index: id.map(|id| lod_start + id as usize),
+                    weights: b
+                        .weights
+                        .iter()
+                        .filter(|w| seen.insert(w.vertex))
+                        .map(|w| (w.vertex, w.weight))
+                        .collect(),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if skin.iter().any(|b| b.def_index.is_some()) {
+        skin
+    } else {
+        Vec::new()
+    }
 }
 
 /// One mesh of the vehicle model ready for rendering.
@@ -109,8 +156,21 @@ pub struct VehicleMesh {
     pub overrides: Vec<MaterialDef>,
     pub pivot: Mat4,
     pub viewpoint: i32,
-    /// `[smoothskin]` bones (empty for a rigid mesh, and for an AI type).
+    /// `[setbone]` skinning bones (empty for an unskinned mesh).
     pub skin: Vec<SkinBone>,
+    /// Per material slot: (triangles whose normals point against their drawn face,
+    /// triangles counted).
+    pub normals_against: Vec<(usize, usize)>,
+}
+
+impl VehicleMesh {
+    /// Whether the normals of `slot` point against its faces nearly everywhere. Vanilla
+    /// lights them as they are, as Omsi.exe does; the enhanced picture flips them.
+    pub fn normals_inward(&self, slot: usize) -> bool {
+        self.normals_against
+            .get(slot)
+            .is_some_and(|&(against, counted)| counted >= 2 && against * 10 >= counted * 9)
+    }
 }
 
 pub struct VehicleType {
@@ -120,6 +180,11 @@ pub struct VehicleType {
     pub program: Arc<Program>,
     pub meshes: Vec<VehicleMesh>,
     pub keep_winding: bool,
+    /// Positive-determinant meshes facing along / against their normals, summed over the
+    /// parts it is coupled behind: what `keep_winding` is decided by.
+    pub winding_votes: (usize, usize),
+    /// The meshes [`::geometry::turns_round`] turns unless `keep_winding`.
+    turned_meshes: Vec<usize>,
     /// Paint schemes / adverts from the `[CTC]` folders' `.cti` files.
     pub paint_schemes: Vec<PaintScheme>,
     /// `[texchanges]`: material textures a script variable swaps (roller blinds, trim).
@@ -131,7 +196,7 @@ pub struct VehicleType {
     /// Axle numbers whose wheels the model moves with `Axle_Suspension_<n>_*`.
     pub suspension_axles: Vec<usize>,
     /// Other vehicle packs this one takes meshes from that are not installed (see
-    /// `::legacy_config::missing_vehicle_pack`), with how many meshes are missing for it.
+    /// `::mods::missing_vehicle_pack`), with how many meshes are missing for it.
     pub missing_packs: Vec<(String, usize)>,
     /// Per mesh: a sphere (centre, radius) around its vertices in the mesh's own frame, so
     /// that a ray (the mouse over the cockpit) can pass most meshes by without looking at a
@@ -162,7 +227,7 @@ pub fn load_paint_schemes(dir: &Path) -> Vec<PaintScheme> {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     // the folder in every content root (and mounted archive) that has it
-    for d in ::legacy_config::mirrored_dirs(dir) {
+    for d in ::mods::mirrored_dirs(dir) {
         let Some(list) = ::legacy_config::vfs::list_dir(&d) else {
             continue;
         };
@@ -234,11 +299,11 @@ pub fn load_paint_schemes(dir: &Path) -> Vec<PaintScheme> {
 /// game folder) - the first of the vehicle folder, its `model` folder and the game folder
 /// that has it. The model folder's spelling when none does, for the warning.
 fn mesh_path(root: &Path, dir: &Path, model_dir: &Path, file: &str) -> PathBuf {
-    let first = ::legacy_config::resolve_path(model_dir, file);
+    let first = ::mods::resolve_path(model_dir, file);
     if ::legacy_config::vfs::exists(&first) {
         return first;
     }
-    let model = ::legacy_config::resolve_path(dir, "model");
+    let model = ::mods::resolve_path(dir, "model");
     let parent = model_dir.parent().map(Path::to_path_buf);
     for base in [
         Some(dir.to_path_buf()),
@@ -249,7 +314,7 @@ fn mesh_path(root: &Path, dir: &Path, model_dir: &Path, file: &str) -> PathBuf {
     .into_iter()
     .flatten()
     {
-        let p = ::legacy_config::resolve_path(&base, file);
+        let p = ::mods::resolve_path(&base, file);
         if ::legacy_config::vfs::exists(&p) {
             return p;
         }
@@ -257,7 +322,7 @@ fn mesh_path(root: &Path, dir: &Path, model_dir: &Path, file: &str) -> PathBuf {
         // from inside `model`)
         let trimmed = file.trim_start_matches(['\\', '/']);
         if let Some(rest) = trimmed.split_once(['\\', '/']).map(|(_, r)| r) {
-            let p = ::legacy_config::resolve_path(&base, rest);
+            let p = ::mods::resolve_path(&base, rest);
             if ::legacy_config::vfs::exists(&p) {
                 return p;
             }
@@ -306,7 +371,7 @@ impl VehicleType {
             Vehicle::load(bus_file).with_context(|| format!("loading {}", bus_file.display()))?;
         let dir = def.dir().to_path_buf();
         let model_rel = def.model.clone().context("vehicle has no [model]")?;
-        let model_path = ::legacy_config::resolve_path(&dir, &model_rel);
+        let model_path = ::mods::resolve_path(&dir, &model_rel);
         let model = Model::load(&model_path)
             .with_context(|| format!("loading {}", model_path.display()))?;
         let model_dir = model_path
@@ -322,6 +387,9 @@ impl VehicleType {
         input.stringvarlists = def.scripts.stringvarlists.clone();
         input.constfiles = def.scripts.constfiles.clone();
         input.scripts = def.scripts.scripts.clone();
+        for script in input.varlists.iter().chain(&input.stringvarlists).chain(&input.constfiles).chain(&input.scripts) {
+            ::mods::diagnostics::missing(bus_file, script, ::mods::diagnostics::Kind::Script);
+        }
         let program = compile(&input);
         for e in &program.errors {
             log::warn!("{e}");
@@ -337,39 +405,22 @@ impl VehicleType {
                 .get(1)
                 .map(|l| l.first_mesh)
                 .unwrap_or(model.meshes.len());
-            for (i, md) in model.meshes[start..end].iter().enumerate() {
-                let p = mesh_path(root, &dir, &model_dir, &md.file);
-                match ::legacy_o3d::load_mesh(&p) {
-                    Ok(m) => {
-                        let skin: Vec<SkinBone> = if md.smooth_skin {
-                            m.bones
-                                .iter()
-                                .map(|b| {
-                                    let id = md
-                                        .bones
-                                        .iter()
-                                        .find(|(n, _)| n.trim().eq_ignore_ascii_case(b.name.trim()))
-                                        .map(|(_, id)| *id)
-                                        .filter(|id| *id >= 0);
-                                    SkinBone {
-                                        def_index: id.map(|id| start + id as usize),
-                                        weights: b
-                                            .weights
-                                            .iter()
-                                            .map(|w| (w.vertex, w.weight))
-                                            .collect(),
-                                    }
-                                })
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
-                        // (a mesh none of whose bones is bound moves as a rigid one)
-                        let skin = if skin.iter().any(|b| b.def_index.is_some()) {
-                            skin
-                        } else {
-                            Vec::new()
-                        };
+            use rayon::prelude::*;
+            let loaded: Vec<_> = model.meshes[start..end]
+                .par_iter()
+                .map(|md| {
+                    let p = mesh_path(root, &dir, &model_dir, &md.file);
+                    let m = ::legacy_o3d::load_mesh(&p).map(|m| {
+                        let data = mesh_from_o3d(&m);
+                        (m, data)
+                    });
+                    (p, m)
+                })
+                .collect();
+            for (i, (md, (p, loaded))) in model.meshes[start..end].iter().zip(loaded).enumerate() {
+                match loaded {
+                    Ok((m, data)) => {
+                        let skin = mesh_skin(&m, md, start);
                         match ::geometry::positive_det_faces_forward(&m) {
                             Some(true) => positive_forward += 1,
                             Some(false) => positive_backward += 1,
@@ -380,25 +431,29 @@ impl VehicleType {
                         }
                         meshes.push(VehicleMesh {
                             def_index: start + i,
-                            data: mesh_from_o3d(&m),
+                            data,
                             file: p,
                             materials: m.materials.clone(),
                             overrides: md.materials.clone(),
                             pivot: pivot_from_mesh(&m),
                             viewpoint: md.viewpoint,
                             skin,
+                            normals_against: Vec::new(),
                         })
                     }
-                    Err(e) => match ::legacy_config::missing_vehicle_pack(&p) {
-                        Some(pack) => match missing_packs
-                            .iter_mut()
-                            .find(|(n, _)| n.eq_ignore_ascii_case(&pack))
-                        {
-                            Some(m) => m.1 += 1,
-                            None => missing_packs.push((pack, 1)),
-                        },
-                        None => log::warn!("{}: {e}", p.display()),
-                    },
+                    Err(error) => {
+                        ::mods::diagnostics::missing(&model_path, &p, ::mods::diagnostics::Kind::Mesh);
+                        match ::mods::missing_vehicle_pack(&p) {
+                            Some(pack) => match missing_packs
+                                .iter_mut()
+                                .find(|(n, _)| n.eq_ignore_ascii_case(&pack))
+                            {
+                                Some(m) => m.1 += 1,
+                                None => missing_packs.push((pack, 1)),
+                            },
+                            None => log::warn!("{}: {error}", p.display()),
+                        }
+                    }
                 }
             }
         }
@@ -413,6 +468,12 @@ impl VehicleType {
                 turned.len()
             );
         }
+        {
+            use rayon::prelude::*;
+            meshes
+                .par_iter_mut()
+                .for_each(|m| m.normals_against = ::geometry::slot_normals_against(&m.data));
+        }
         for (pack, n) in &missing_packs {
             log::warn!(
                 "{}: {n} meshes come from the vehicle pack 'Vehicles/{pack}', which is not installed - install it for the parts this bus borrows from it (displays, ticket machine, dashboard)",
@@ -421,7 +482,7 @@ impl VehicleType {
         }
         let mut paint_schemes = Vec::new();
         for c in &model.ctc {
-            let d = ::legacy_config::resolve_path(&dir, &c.path);
+            let d = ::mods::resolve_path(&dir, &c.path);
             paint_schemes.extend(load_paint_schemes(&d));
         }
         // the model's own items, after the `.cti` files' (their textures in the first
@@ -429,7 +490,7 @@ impl VehicleType {
         let item_dir = model
             .ctc
             .first()
-            .map(|c| ::legacy_config::resolve_path(&dir, &c.path))
+            .map(|c| ::mods::resolve_path(&dir, &c.path))
             .unwrap_or_else(|| dir.clone());
         for it in &model.items {
             match paint_schemes.last_mut().filter(|s: &&mut PaintScheme| {
@@ -510,7 +571,7 @@ impl VehicleType {
             }
         }
         if !keep_meshes {
-            // a `[smoothskin]` mesh (the bellows of an articulated bus, `[setbone]`-bound to
+            // a skinned mesh (the bellows of an articulated bus, `[setbone]`-bound to
             // the joint's dummies) keeps its vertices and its bones even for an AI copy: it
             // is reshaped as the joint turns (`scene::own_skinned_meshes`), which needs the
             // rest pose and the bone weights this would otherwise throw away - an AI-loaded
@@ -539,7 +600,40 @@ impl VehicleType {
             mesh_bounds,
             mesh_boxes,
             keep_winding,
+            winding_votes: (positive_forward, positive_backward),
+            turned_meshes: turned,
         })
+    }
+
+    /// The winding votes this vehicle passes on to the part at `part` coupled to it: only
+    /// to one in its own folder (one pack, one exporter).
+    pub fn winding_votes_for(&self, part: &Path) -> Option<(usize, usize)> {
+        let folder = part.parent().unwrap_or(Path::new(""));
+        folder
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&self.def.dir().to_string_lossy())
+            .then_some(self.winding_votes)
+    }
+
+    /// Decide the winding together with `lead` (see [`VehicleType::winding_votes_for`]).
+    /// Alone, the Caio Millennium BRT's rear section turned its roof inside out (#117).
+    pub fn follow_winding_of(&mut self, lead: &VehicleType) {
+        let Some((lead_fwd, lead_back)) = lead.winding_votes_for(&self.def.path) else {
+            return;
+        };
+        let (own_fwd, own_back) = self.winding_votes;
+        self.winding_votes = (own_fwd + lead_fwd, own_back + lead_back);
+        let keep = self.winding_votes.0 > self.winding_votes.1;
+        if keep != self.keep_winding {
+            for &i in &self.turned_meshes {
+                let m = &mut self.meshes[i];
+                ::geometry::reverse_winding(&mut m.data);
+                for (against, counted) in &mut m.normals_against {
+                    *against = *counted - *against;
+                }
+            }
+            self.keep_winding = keep;
+        }
     }
 
     /// Per axle of the `.bus` (whose first axle is number `first_axle` of the whole train):
@@ -676,13 +770,13 @@ impl VehicleType {
                 }
                 let own = dirs
                     .iter()
-                    .map(|d| ::legacy_config::resolve_path(d, default))
+                    .map(|d| ::mods::resolve_path(d, default))
                     .find(|p| ::legacy_config::vfs::is_file(p));
                 let Some(own) = own else { continue };
                 if !flat_placeholder(&own) {
                     continue;
                 }
-                let theirs = ::legacy_config::resolve_path(&first.dir, file);
+                let theirs = ::mods::resolve_path(&first.dir, file);
                 if ::legacy_config::vfs::is_file(&theirs) {
                     log::info!(
                         "{}: CTC texture '{name}' is a flat placeholder ({default}); the first paint scheme's {file} lights it",
@@ -741,10 +835,10 @@ impl VehicleType {
         vec![
             // (the folder as it is spelled on the disk: many add-ons ship `texture`, which a
             // case-sensitive file system - Linux, a phone - does not find as `Texture`)
-            ::legacy_config::resolve_path(self.def.dir(), "Texture"),
-            ::legacy_config::resolve_path(&self.model_dir, "Texture"),
+            ::mods::resolve_path(self.def.dir(), "Texture"),
+            ::mods::resolve_path(&self.model_dir, "Texture"),
             self.model_dir.clone(),
-            ::legacy_config::resolve_path(root, "Texture"),
+            ::mods::resolve_path(root, "Texture"),
         ]
     }
 }
@@ -938,8 +1032,6 @@ pub struct VehicleInstance {
     /// followed with the light's `timeconst` (63 % of the way in that time when switched on,
     /// down to 27 % when switched off, as the stock files document it).
     pub light_fade: Vec<f32>,
-    /// The meshes' transforms in the modelled pose, for `[smoothskin]` (made when needed).
-    skin_rest: Vec<Mat4>,
     /// Static obstacles; the vehicle's `[boundingbox]` is kept out of them.
     pub collision: Option<Arc<crate::collision::CollisionWorld>>,
     /// Moving obstacles (AI vehicles) for this frame, set by the app.
@@ -991,6 +1083,12 @@ pub struct VehicleInstance {
     pub ai_visuals: bool,
     ai_visuals_missed: f32,
     pub ai_lights: bool,
+    /// A train's hidden parts (see [`VehicleInstance::part_hidden`]): from the front, those
+    /// run off the end of its track; from the back, those not yet in over its start.
+    pub parts_gone: usize,
+    pub parts_waiting: usize,
+    /// The last frame ran `{frame_ai}` (so do the coupled cars' scripts).
+    ai_frame: bool,
     var_index: HashMap<String, ::legacy_script::VarId>,
     /// Where each mesh's material properties come from, resolved against `var_index`
     /// (rebuilt when the vehicle gains engine variables).
@@ -1012,6 +1110,47 @@ pub struct VehicleInstance {
     v_accel: [Option<::legacy_script::VarId>; 3],
     v_wheels: Vec<[[Option<::legacy_script::VarId>; 5]; 2]>,
     v_springfactor: Vec<[Option<::legacy_script::VarId>; 2]>,
+}
+
+pub(crate) fn selected_spotlight(selected: f32, spots: &[::model::Spotlight]) -> Option<usize> {
+    if !selected.is_finite() {
+        return None;
+    }
+    let index = selected.round_ties_even();
+    if index < 0.0 || index >= spots.len() as f32 {
+        return None;
+    }
+    let index = index as usize;
+    (spots[index].values[9].is_finite() && spots[index].values[9] > 0.0).then_some(index)
+}
+
+fn driver_seat_step(mut position: f32, mut velocity: f32, push: f32, dt: f32) -> (f32, f32) {
+    velocity += push + (-position * 100.0 - velocity * 7.0) * dt;
+    position += velocity * dt;
+    if position.abs() > 0.1 {
+        position = position.clamp(-0.1, 0.1);
+        velocity = 0.0;
+    }
+    (position, velocity)
+}
+
+#[inline]
+fn lookup_var_index<'a>(
+    var_index: &'a HashMap<String, ::legacy_script::VarId>,
+    name: &str,
+) -> Option<&'a ::legacy_script::VarId> {
+    if !name.bytes().any(|b| b.is_ascii_uppercase()) {
+        var_index.get(name)
+    } else if name.len() <= 64 {
+        let mut buf = [0u8; 64];
+        let slice = &mut buf[..name.len()];
+        slice.copy_from_slice(name.as_bytes());
+        slice.make_ascii_lowercase();
+        let lower = std::str::from_utf8(slice).unwrap_or(name);
+        var_index.get(lower)
+    } else {
+        var_index.get(&name.to_ascii_lowercase())
+    }
 }
 
 impl VehicleInstance {
@@ -1068,6 +1207,9 @@ impl VehicleInstance {
         }
         // no ticket printed yet
         if let Some(i) = var_index.get("giventicket") {
+            state.vars[*i as usize] = -1.0;
+        }
+        if let Some(i) = var_index.get("spot_select") {
             state.vars[*i as usize] = -1.0;
         }
         // `wearlifespan` (varlist_roadvehicle.txt, written by the engine from the
@@ -1246,7 +1388,6 @@ impl VehicleInstance {
             html_textures,
             ground: None,
             trailers: Vec::new(),
-            skin_rest: Vec::new(),
             collision: None,
             dynamic_boxes: Vec::new(),
             collided: false,
@@ -1265,6 +1406,9 @@ impl VehicleInstance {
             ai_visuals: true,
             ai_visuals_missed: 0.0,
             ai_lights: false,
+            parts_gone: 0,
+            parts_waiting: 0,
+            ai_frame: false,
             var_index,
             props_plan: PropsPlan::default(),
         }
@@ -1285,13 +1429,18 @@ impl VehicleInstance {
             .collect();
     }
 
+    /// Current text of a string variable as a borrowed slice (empty when it does not exist).
+    ///
+    /// OMSI model files may name a `[texttexture]`'s source by its string-variable slot
+    /// rather than its name. In particular, `0` is the built-in `ident` slot used by a
+    /// number of AI car models for their registration plates.
+    pub fn str_var_str(&self, name: &str) -> &str {
+        string_var_value(&self.ty.program, &self.state.str_vars, name)
+    }
+
     /// Current text of a string variable (empty when it does not exist).
     pub fn str_var(&self, name: &str) -> String {
-        self.ty
-            .program
-            .str_var(name)
-            .map(|i| self.state.str_vars[i as usize].clone())
-            .unwrap_or_default()
+        self.str_var_str(name).to_string()
     }
 
     /// Re-render changed text textures; returns the indices with a pending image.
@@ -1313,7 +1462,7 @@ impl VehicleInstance {
 
     /// `Driver_Seat_VertTransl`: the sprung driver's seat, as OMSI moves it:
     /// the body's vertical acceleration and its roll and pitch at the seat's place (the
-    /// driver's camera) push a spring (3000) and damper (2000) on 150 kg; ±10 cm at most.
+    /// driver's camera) push a spring (100) and damper (7); ±10 cm at most.
     fn update_driver_seat(&mut self, dt: f32) {
         let Some(id) = self.ty.program.var("Driver_Seat_VertTransl") else {
             return;
@@ -1337,14 +1486,7 @@ impl VehicleInstance {
         // (the rolls' and pitches' change moves the seat by its lever: y forward rolls
         // about x, x across pitches about y)
         let push = -acc_z * dt + d_omega.y * seat[0] - d_omega.x * seat[1];
-        let k = (1000.0 / (15.0 * dt * 1000.0)).min(1.0);
-        let (mut x, mut v) = (self.seat.0, self.seat.1);
-        v += push + ((-x * 3000.0 - v * 2000.0) / 150.0) * k * dt;
-        x += v * dt;
-        if x.abs() > 0.1 {
-            x = x.clamp(-0.1, 0.1);
-            v = 0.0;
-        }
+        let (x, v) = driver_seat_step(self.seat.0, self.seat.1, push, dt);
         self.seat = (x, v, omega);
         self.state.vars[id as usize] = x;
     }
@@ -1468,8 +1610,9 @@ impl VehicleInstance {
         // a mod that brakes only inside an {if} (a retarder, a stop brake, its own physics)
         // stayed braked for good, and one that adds to its own value kept on growing.
         self.put(self.v_brakeforce, 0.0);
-        for a in self.v_wheels.clone() {
-            for w in a {
+        for a in 0..self.v_wheels.len() {
+            let axle = self.v_wheels[a];
+            for w in axle {
                 self.put(w[4], 0.0);
             }
         }
@@ -1625,20 +1768,19 @@ impl VehicleInstance {
         // straight down on the front wheel alone (OMSI_ONLY_MESH=SD_Rad_VL) and at the
         // steering wheel in the cab, which turn together with this sign.
         let steer = self.physics.steer_deg.to_radians();
-        for (ai, axle) in self.v_wheels.clone().iter().enumerate() {
+        let steered = self.steered_axle();
+        for ai in 0..self.v_wheels.len() {
+            let axle = self.v_wheels[ai];
             for (si, w) in axle.iter().enumerate() {
-                let ws = self.physics.wheels[ai][si].clone();
-                self.put(w[0], ws.rotation_deg.to_radians());
-                self.put(w[1], ws.rpm);
-                self.put(
-                    w[2],
-                    if ai == self.steered_axle() {
-                        steer
-                    } else {
-                        0.0
-                    },
-                );
-                self.put(w[3], ws.suspension);
+                let ws = &self.physics.wheels[ai][si];
+                let rot = ws.rotation_deg.to_radians();
+                let rpm = ws.rpm;
+                let st = if ai == steered { steer } else { 0.0 };
+                let susp = ws.suspension;
+                self.put(w[0], rot);
+                self.put(w[1], rpm);
+                self.put(w[2], st);
+                self.put(w[3], susp);
             }
         }
     }
@@ -1751,12 +1893,12 @@ impl VehicleInstance {
             rb.friction = lead.friction;
             rb.wheel_walls = self.wheel_walls;
             for (i, w) in rb.wheels.iter_mut().enumerate() {
-                let axle = t.first_axle + i / 2;
-                let side = if i % 2 == 0 { "L" } else { "R" };
-                w.spring_factor = self
-                    .ty
-                    .program
-                    .var(&format!("Axle_Springfactor_{axle}_{side}"))
+                let a = i / 2;
+                let side_idx = i % 2;
+                w.spring_factor = t
+                    .v_springfactor
+                    .get(a)
+                    .and_then(|pair| pair[side_idx])
                     .map(|id| self.state.vars[id as usize])
                     .unwrap_or(1.0);
             }
@@ -2078,14 +2220,19 @@ impl VehicleInstance {
         self.put(self.v_accel[0], a.x);
         self.put(self.v_accel[1], a.y);
         self.put(self.v_accel[2], a.z);
-        for (ai, axle) in self.v_wheels.clone().iter().enumerate() {
+        for ai in 0..self.v_wheels.len() {
+            let axle = self.v_wheels[ai];
             for (si, w) in axle.iter().enumerate() {
                 if let Some(rw) = rb.wheels.get(ai * 2 + si) {
-                    self.put(w[0], rw.rotation_deg.to_radians());
-                    self.put(w[1], rw.rpm);
+                    let rot = rw.rotation_deg.to_radians();
+                    let rpm = rw.rpm;
+                    let steer = rw.steer;
+                    let shown = -rw.compression.max(0.0);
+                    self.put(w[0], rot);
+                    self.put(w[1], rpm);
                     // (each axle's own angle: OMSI turns every axle towards the centre of
                     // the bend on the `[rot_pnt_long]` line)
-                    self.put(w[2], rw.steer);
+                    self.put(w[2], steer);
                     // `Axle_Suspension_*` is the wheel's travel *relative to the body*, and
                     // the stock model.cfg moves the wheel down for a positive value
                     // (`origin_rot_y -90` + `anim_trans`, checked with OMSI_DEBUG_ANIM on
@@ -2097,7 +2244,6 @@ impl VehicleInstance {
                     // (never below where the spring is unloaded: Omsi.exe hands over
                     // -clamp(travel, 0, maxforce / k), 0x7e4afa - a wheel in the air stays
                     // where it hangs at rest)
-                    let shown = -rw.compression.max(0.0);
                     self.put(w[3], shown);
                     if let Some(ws) = self.physics.wheels.get_mut(ai).and_then(|a| a.get_mut(si)) {
                         ws.rotation_deg = rw.rotation_deg;
@@ -2110,17 +2256,19 @@ impl VehicleInstance {
         self.rigid = Some(rb);
     }
 
+
     /// Where variable `name` sits among the script's variables (`State::vars`).
     pub fn var_slot(&self, name: &str) -> Option<usize> {
-        self.var_index
-            .get(&name.to_ascii_lowercase())
-            .map(|&i| i as usize)
+        lookup_var_index(&self.var_index, name).map(|&i| i as usize)
     }
 
     pub fn var(&self, name: &str) -> Option<f32> {
-        self.var_index
-            .get(&name.to_ascii_lowercase())
-            .map(|&i| self.state.vars[i as usize])
+        lookup_var_index(&self.var_index, name).map(|&i| self.state.vars[i as usize])
+    }
+
+    /// The selected OMSI `[spotlight]`, if its rounded index names a usable light.
+    pub fn active_spotlight(&self) -> Option<usize> {
+        selected_spotlight(self.var("Spot_Select")?, &self.ty.model.spotlights)
     }
 
     /// Whether variable `name` was declared in the vehicle's script set (as opposed to built-in host variables).
@@ -2136,8 +2284,16 @@ impl VehicleInstance {
             .map(|(n, _)| n.as_str())
     }
 
+    /// The trigger the `doors_release` action fires now (see [`door_release_trigger`]).
+    pub fn door_release_trigger(&self) -> Option<&'static str> {
+        door_release_trigger(
+            |t| self.ty.program.trigger(t).is_some(),
+            self.var("C2_CP_Tuerfreigabe").is_some_and(|x| x > 0.5),
+        )
+    }
+
     pub fn set_var(&mut self, name: &str, v: f32) -> bool {
-        match self.var_index.get(&name.to_ascii_lowercase()) {
+        match lookup_var_index(&self.var_index, name) {
             Some(&i) => {
                 self.state.vars[i as usize] = v;
                 true
@@ -2212,19 +2368,22 @@ impl VehicleInstance {
         self.set_engine_var("PrecipRate", rate);
         // the state of the road, for the tyre sounds and the wheel spray
         self.set_engine_var("StreetCond", self.host.street_cond);
-        // what is coupled to this vehicle (the train scripts light their ends by it: a head
-        // lamp only where nothing is coupled, the tail lamps at the last car)
+        self.set_train_vars();
+        // and for the tyres' grip
+        let mu = road_grip(self.host.street_cond, self.host.temperature);
+        if let Some(rb) = self.rigid.as_mut() {
+            rb.friction = mu;
+        }
+    }
+
+    /// The `TRAIN_VARS` of the leading car (the coupled cars': [`PartScript`]).
+    fn set_train_vars(&mut self) {
         self.set_engine_var("train_frontcoupling", 0.0);
         self.set_engine_var(
             "train_backcoupling",
             if self.trailers.is_empty() { 0.0 } else { 1.0 },
         );
         self.set_engine_var("train_me_reverse", 0.0);
-        // and for the tyres' grip
-        let mu = road_grip(self.host.street_cond, self.host.temperature);
-        if let Some(rb) = self.rigid.as_mut() {
-            rb.friction = mu;
-        }
     }
 
     /// The engine's own vehicle variables that OMSI binds to fields of the vehicle
@@ -2416,6 +2575,7 @@ impl VehicleInstance {
         self.driven_km += (self.physics.velocity_kmh() as f64 / 3600.0) * dt as f64;
         self.update_engine_vars(dt);
         let p = self.ty.program.clone();
+        self.ai_frame = false;
         self.vm.run_frame(&p, &mut self.state, &mut self.host);
         self.clear_pax_requests();
         self.update_visuals(dt);
@@ -2507,7 +2667,8 @@ impl VehicleInstance {
         // every wheel rolls as far as its own track through the bend is long
         let (rot, wheelbase) = crate::ai_motion::rotation_point(&self.ty.def);
         let k = ai.steer_deg.to_radians().tan() / wheelbase;
-        for (ai_idx, axle) in self.v_wheels.clone().iter().enumerate() {
+        for ai_idx in 0..self.v_wheels.len() {
+            let axle = self.v_wheels[ai_idx];
             for (si, w) in axle.iter().enumerate() {
                 let Some(ws) = self.physics.wheels.get_mut(ai_idx).map(|a| &mut a[si]) else {
                     continue;
@@ -2589,10 +2750,12 @@ impl VehicleInstance {
         ] {
             self.set_var(name, v);
         }
+        self.set_train_vars();
         for &(id, v) in inputs.iter().chain(pinned) {
             self.put(Some(id), v);
         }
         let p = self.ty.program.clone();
+        self.ai_frame = true;
         if p.frame_ai.is_empty() {
             self.vm.run_frame(&p, &mut self.state, &mut self.host);
         } else {
@@ -2612,7 +2775,7 @@ impl VehicleInstance {
         }
     }
 
-    /// The `[smoothskin]` meshes (the bellows of an articulated bus).
+    /// The meshes with `[setbone]` weights (the bellows of an articulated bus).
     pub fn skinned_meshes(&self) -> Vec<usize> {
         (0..self.ty.meshes.len())
             .filter(|&i| !self.ty.meshes[i].skin.is_empty())
@@ -2627,10 +2790,7 @@ impl VehicleInstance {
 
     /// Skinned mesh `i` as its bones hold it now (see [`skin_vertices`]).
     pub fn skinned(&mut self, i: usize) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
-        if self.skin_rest.len() != self.animators.len() {
-            self.skin_rest = rest_transforms(&self.animators, self.state.vars.len());
-        }
-        skin_vertices(&self.ty, i, &self.mesh_transforms, &self.skin_rest)
+        skin_vertices(&self.ty, i, &self.mesh_transforms)
     }
 
     /// Has the bus's script finished leaving its stop (doors shut, stop brake off)? True
@@ -2725,33 +2885,57 @@ impl VehicleInstance {
     fn update_trailers(&mut self, dt: f32) {
         let mut trailers = std::mem::take(&mut self.trailers);
         let mut lead: Option<(DVec3, Mat4, f64)> = None;
-        for t in &mut trailers {
-            t.update(self, dt, lead);
+        let n = trailers.len();
+        for (k, t) in trailers.iter_mut().enumerate() {
+            t.update(self, dt, lead, k + 1 < n);
             lead = Some((t.position, t.body_rotation(), t.heading));
         }
         self.trailers = trailers;
     }
 
+    /// How far behind the vehicle's origin each coupled part's coupling lies with the train
+    /// laid out straight (m; negative ahead of it).
+    fn couplings_behind(&self) -> Vec<f64> {
+        // the origin of the part in front (forward positive) and which way its body faces
+        let (mut y, mut sign) = (0.0f64, 1.0f64);
+        self.trailers
+            .iter()
+            .map(|t| {
+                let (back, front) = t.couplings();
+                let at_coupling = y + sign * back.y as f64;
+                sign = if t.reversed { -1.0 } else { 1.0 };
+                y = at_coupling - sign * front.y as f64;
+                -at_coupling
+            })
+            .collect()
+    }
+
+    /// Put the coupled parts' couplings over a track (`at_behind` as for `retrail`) rather
+    /// than where the part in front puts them.
+    pub fn couple_on_track(&mut self, at_behind: &dyn Fn(f64) -> Option<DVec3>) {
+        let behind = self.couplings_behind();
+        for (t, d) in self.trailers.iter_mut().zip(behind) {
+            if let Some(p) = at_behind(d) {
+                t.place_coupling_on_track(p);
+            }
+        }
+    }
+
     /// Put the coupled parts on a track: `at_behind(d)` is the point of the track `d` metres
     /// behind the vehicle's origin (None: not known, the part follows as it does on a road).
-    /// Each part's turning axle is placed there, and the part follows its coupling.
+    /// Each part's turning axle is placed there and the part follows its coupling (see
+    /// `couple_on_track`). The track is asked once per part, front to back.
     pub fn retrail(&mut self, dt: f32, at_behind: &dyn Fn(f64) -> Option<DVec3>) {
+        let behind = self.couplings_behind();
         let mut trailers = std::mem::take(&mut self.trailers);
         let mut lead: Option<(DVec3, Mat4, f64)> = None;
-        let (mut prev_c, mut b_prev) = (self.position, 0.0f64);
-        for t in &mut trailers {
-            let (lp, lr) = lead
-                .map(|(p, r, _)| (p, r))
-                .unwrap_or((self.position, self.body_rotation()));
-            let c = t.coupling_point(lp, lr);
-            let b_c = b_prev + (c - prev_c).truncate().length();
-            if let Some(p) = at_behind(b_c + t.pivot_length() as f64) {
+        let n = trailers.len();
+        for (k, (t, b_c)) in trailers.iter_mut().zip(behind).enumerate() {
+            if let Some(p) = at_behind(b_c + t.pivot_reach() as f64) {
                 t.place_on_track(p);
             }
-            t.update(self, dt, lead);
+            t.update(self, dt, lead, k + 1 < n);
             lead = Some((t.position, t.body_rotation(), t.heading));
-            prev_c = c;
-            b_prev = b_c;
         }
         self.trailers = trailers;
     }
@@ -2843,7 +3027,7 @@ impl VehicleInstance {
                 .or_else(|| self.var(n.trim()))
                 .unwrap_or(0.0)
         };
-        let fade = |model: &Model, fades: &mut Vec<f32>| {
+        let fade = |model: &Model, value: &dyn Fn(&str) -> f32, fades: &mut Vec<f32>| {
             let mut k = 0;
             for md in &model.meshes {
                 for l in &md.light_enh_2 {
@@ -2868,9 +3052,10 @@ impl VehicleInstance {
                 }
             }
         };
-        fade(&self.ty.model, &mut lf);
+        fade(&self.ty.model, &value, &mut lf);
         for (t, f) in self.trailers.iter().zip(part_fades.iter_mut()) {
-            fade(&t.ty.model, f);
+            let value = |n: &str| t.value(self, n);
+            fade(&t.ty.model, &value, f);
         }
         self.light_fade = lf;
         for (t, f) in self.trailers.iter_mut().zip(part_fades) {
@@ -3023,9 +3208,6 @@ impl VehicleInstance {
                 let mut vars = vec![0.0; self.state.vars.len()];
                 vars[id as usize] = 0.35;
                 let mut probe = a.clone();
-                for (_, _, st) in probe.anims.iter_mut() {
-                    st.initialized = false;
-                }
                 let t = probe.update(0.0, &vars);
                 let moved = t.transform_point3(c) - c;
                 let (axis, angle) = Quat::from_mat4(&t).to_axis_angle();
@@ -3072,7 +3254,8 @@ impl VehicleInstance {
 /// vehicles use the same rules through `PropsPlan`, resolved once; this is the plain
 /// statement of them (and what the plan is tested against).
 pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -> Vec<MeshProps> {
-    ty.meshes
+    let mut props: Vec<MeshProps> = ty
+        .meshes
         .iter()
         .map(|vm| {
             let def = &ty.model.meshes[vm.def_index];
@@ -3133,25 +3316,28 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
             }
             if let Some((v, value)) = &def.visible {
                 if let Some(x) = var(v) {
-                    props.visible = (x - value).abs() < 0.5;
+                    props.visible = crate::anim::round_visible(x, *value);
                 }
             }
-            // [illumination_interior] a b c d: the interior lights (by index) lighting this mesh
+            // [illumination_interior] a b c d: the interior lights (by index) lighting this mesh.
+            // [illumination] bit 0x10 disables both their point lights and fallback brightness.
             let mut interior = 0.0f32;
-            for idx in &def.illumination_interior {
-                if let Some(il) = usize::try_from(*idx)
-                    .ok()
-                    .and_then(|i| ty.model.interior_lights.get(i))
-                {
-                    let b = il
-                        .variable
-                        .trim()
-                        .parse::<f32>()
+            if def.interior_lights_enabled() {
+                for idx in &def.illumination_interior {
+                    if let Some(il) = usize::try_from(*idx)
                         .ok()
-                        .or_else(|| var(&il.variable))
-                        .unwrap_or(0.0)
-                        .clamp(0.0, 1.0);
-                    interior = interior.max(b * il.range.clamp(0.0, 1.0));
+                        .and_then(|i| ty.model.interior_lights.get(i))
+                    {
+                        let b = il
+                            .variable
+                            .trim()
+                            .parse::<f32>()
+                            .ok()
+                            .or_else(|| var(&il.variable))
+                            .unwrap_or(1.0)
+                            .clamp(0.0, 1.0);
+                        interior = interior.max(b * il.range.clamp(0.0, 1.0));
+                    }
                 }
             }
             props.interior = interior * 0.5;
@@ -3181,7 +3367,28 @@ pub fn compute_mesh_props(ty: &VehicleType, var: &dyn Fn(&str) -> Option<f32>) -
             }
             props
         })
-        .collect()
+        .collect::<Vec<_>>();
+    let mut animators: Vec<_> = ty
+        .meshes
+        .iter()
+        .map(|_| crate::anim::MeshAnimator {
+            anims: Vec::new(),
+            parent: None,
+        })
+        .collect();
+    crate::anim::link_parents(
+        &mut animators,
+        &ty.meshes
+            .iter()
+            .map(|m| &ty.model.meshes[m.def_index])
+            .collect::<Vec<_>>(),
+    );
+    let mut visible: Vec<bool> = props.iter().map(|p| p.visible).collect();
+    crate::anim::apply_visibility_parents(&animators, &mut visible);
+    for (props, visible) in props.iter_mut().zip(visible) {
+        props.visible = visible;
+    }
+    props
 }
 
 /// Where a mesh property takes its value from: a number written in model.cfg, a
@@ -3207,8 +3414,9 @@ impl PropSource {
 #[derive(Debug, Clone, Default)]
 struct MeshPlan {
     slots: usize,
-    /// `[matl_change]` (default 1) and `[matl_lightmap]` (default 1: a variable the bus does not have is on) per slot.
+    /// `[matl_change]` (default 0) per slot.
     night: Vec<(usize, PropSource)>,
+    /// `[matl_lightmap]` (default 1: OMSI leaves an unresolved light-map variable on) per slot.
     light: Vec<(usize, PropSource)>,
     /// `[visible]` variable and value.
     visible: Option<(usize, f32)>,
@@ -3230,6 +3438,9 @@ struct MeshPlan {
 #[derive(Debug, Clone, Default)]
 struct PropsPlan {
     meshes: Vec<MeshPlan>,
+    parents: Vec<crate::anim::MeshAnimator>,
+    visible: Vec<bool>,
+    visibility_scratch: crate::anim::VisibilityParentsScratch,
     /// Size of the variable table the plan was resolved against (engine variables such
     /// as `Dirt_Norm` join it later, and an `[alphascale]` on one must then find it).
     vars_seen: usize,
@@ -3241,7 +3452,7 @@ impl PropsPlan {
         if self.built && self.vars_seen == var_index.len() {
             return;
         }
-        let var = |v: &str| var_index.get(&v.to_ascii_lowercase()).map(|&i| i as usize);
+        let var = |v: &str| lookup_var_index(var_index, v).map(|&i| i as usize);
         let source = |v: &str| match v.trim().parse::<f32>() {
             Ok(c) => PropSource::Const(c),
             Err(_) => var(v).map(PropSource::Var).unwrap_or(PropSource::Missing),
@@ -3287,24 +3498,42 @@ impl PropsPlan {
                     .visible
                     .as_ref()
                     .and_then(|(v, value)| var(v).map(|i| (i, *value)));
-                for idx in &def.illumination_interior {
-                    if let Some(il) = usize::try_from(*idx)
-                        .ok()
-                        .and_then(|i| ty.model.interior_lights.get(i))
-                    {
-                        plan.interior
-                            .push((source(&il.variable), il.range.clamp(0.0, 1.0)));
+                if def.interior_lights_enabled() {
+                    for idx in &def.illumination_interior {
+                        if let Some(il) = usize::try_from(*idx)
+                            .ok()
+                            .and_then(|i| ty.model.interior_lights.get(i))
+                        {
+                            plan.interior
+                                .push((source(&il.variable), il.range.clamp(0.0, 1.0)));
+                        }
                     }
                 }
                 plan
             })
             .collect();
+        let mut animators: Vec<_> = ty
+            .meshes
+            .iter()
+            .map(|_| crate::anim::MeshAnimator {
+                anims: Vec::new(),
+                parent: None,
+            })
+            .collect();
+        crate::anim::link_parents(
+            &mut animators,
+            &ty.meshes
+                .iter()
+                .map(|m| &ty.model.meshes[m.def_index])
+                .collect::<Vec<_>>(),
+        );
+        self.parents = animators;
         self.vars_seen = var_index.len();
         self.built = true;
     }
 
     /// The mesh properties for the current variables, written into `out` in place.
-    fn apply(&self, vars: &[f32], out: &mut Vec<MeshProps>) {
+    fn apply(&mut self, vars: &[f32], out: &mut Vec<MeshProps>) {
         out.resize_with(self.meshes.len(), MeshProps::default);
         for (plan, props) in self.meshes.iter().zip(out.iter_mut()) {
             let n = plan.slots;
@@ -3343,12 +3572,12 @@ impl PropsPlan {
             }
             if let Some((i, value)) = plan.visible {
                 if let Some(x) = vars.get(i) {
-                    props.visible = (x - value).abs() < 0.5;
+                    props.visible = crate::anim::round_visible(*x, value);
                 }
             }
             let mut interior = 0.0f32;
             for &(src, range) in &plan.interior {
-                interior = interior.max(src.value(vars, 0.0).clamp(0.0, 1.0) * range);
+                interior = interior.max(src.value(vars, 1.0).clamp(0.0, 1.0) * range);
             }
             props.interior = interior * 0.5;
             for &(slot, i, boost) in &plan.alpha {
@@ -3361,6 +3590,16 @@ impl PropsPlan {
             for &(slot, i) in &plan.uv_y {
                 props.slot_uv[slot][1] = vars.get(i).copied().unwrap_or(0.0);
             }
+        }
+        self.visible.clear();
+        self.visible.extend(out.iter().map(|p| p.visible));
+        crate::anim::apply_visibility_parents_with_scratch(
+            &self.parents,
+            &mut self.visible,
+            &mut self.visibility_scratch,
+        );
+        for (props, visible) in out.iter_mut().zip(self.visible.iter().copied()) {
+            props.visible = visible;
         }
     }
 }
@@ -3444,11 +3683,110 @@ pub fn fit_plane(points: &[Vec3]) -> [f32; 3] {
 }
 
 /// A vehicle coupled behind another (articulated bus rear section, trailer, train car).
-/// It has no script state of its own: meshes animate from the leading vehicle's
-/// variables, and it is towed at the coupling point with trailer kinematics.
+/// It has no script state of its own (except [`PartScript`]): meshes animate from the
+/// leading vehicle's variables, and it is towed at the coupling point with trailer kinematics.
 /// Sign of `articulation_<n>_alpha` relative to (heading in front − own heading), clockwise
 /// degrees: settled with the GN92's joint dummies (see the vehicle tests).
 const ARTICULATION_SIGN: f64 = 1.0;
+
+/// Written per car of a train: turned round (its `.zug` flag), and coupled at its own
+/// front and back.
+const TRAIN_VARS: [&str; 3] = [
+    "train_me_reverse",
+    "train_frontcoupling",
+    "train_backcoupling",
+];
+
+/// The own scripts of a coupled car that reads the `TRAIN_VARS` (head and tail lamps):
+/// with the leading car's values a turned head car at the back lit its head lamps (#318).
+/// What its scripts only read comes from the leading car.
+struct PartScript {
+    state: State,
+    vm: Vm,
+    initialised: bool,
+    /// (own variable, leading car's variable, stored by its scripts)
+    shared: Vec<(::legacy_script::VarId, usize, bool)>,
+    /// The leading car's variable count `shared` was made for.
+    shared_for: usize,
+    train: [Option<::legacy_script::VarId>; 3],
+    /// The leading car's variables with this car's own laid over them.
+    view: Vec<f32>,
+}
+
+impl PartScript {
+    fn new(program: &Program) -> Option<Box<PartScript>> {
+        let train = TRAIN_VARS.map(|n| program.var(n).filter(|&v| program.reads(v)));
+        train.iter().any(Option::is_some).then(|| {
+            Box::new(PartScript {
+                state: State::new(program),
+                vm: Vm::new(),
+                initialised: false,
+                shared: Vec::new(),
+                shared_for: usize::MAX,
+                train,
+                view: Vec::new(),
+            })
+        })
+    }
+
+    /// One frame (`{init}` first). Its sounds and messages are dropped.
+    fn run(&mut self, program: &Program, main: &mut VehicleInstance, reversed: bool, behind: bool) {
+        if self.shared_for != main.var_index.len() {
+            self.shared_for = main.var_index.len();
+            self.shared = program
+                .var_names
+                .iter()
+                .enumerate()
+                .filter_map(|(i, n)| {
+                    let id = i as ::legacy_script::VarId;
+                    let m = *lookup_var_index(&main.var_index, n)? as usize;
+                    Some((id, m, program.stores(id)))
+                })
+                .collect();
+        }
+        for &(own, m, stored) in &self.shared {
+            if !stored {
+                self.state.vars[own as usize] = main.state.vars[m];
+            }
+        }
+        // something is always coupled ahead of it
+        let (front, back) = if reversed {
+            (behind, true)
+        } else {
+            (true, behind)
+        };
+        for (id, v) in self.train.iter().zip([reversed, front, back]) {
+            if let Some(id) = id {
+                self.state.vars[*id as usize] = v as i32 as f32;
+            }
+        }
+        let host = &mut main.host;
+        let (fired_sounds, fired_vars, messages, time_written) = (
+            host.fired_sounds.len(),
+            host.fired_trigger_vars.len(),
+            host.messages.len(),
+            host.time_written,
+        );
+        if !self.initialised {
+            self.initialised = true;
+            self.vm.run_init(program, &mut self.state, host);
+        }
+        if main.ai_frame && !program.frame_ai.is_empty() {
+            self.vm.run_frame_ai(program, &mut self.state, host);
+        } else {
+            self.vm.run_frame(program, &mut self.state, host);
+        }
+        host.fired_sounds.truncate(fired_sounds);
+        host.fired_trigger_vars.truncate(fired_vars);
+        host.messages.truncate(messages);
+        host.time_written = time_written;
+        self.view.clear();
+        self.view.extend_from_slice(&main.state.vars);
+        for &(own, m, _) in &self.shared {
+            self.view[m] = self.state.vars[own as usize];
+        }
+    }
+}
 
 pub struct TrailerPart {
     pub ty: Arc<VehicleType>,
@@ -3465,6 +3803,9 @@ pub struct TrailerPart {
     pivot: Option<DVec3>,
     /// Coupling → rear axle distance.
     length: f32,
+    /// How far the coupling lies ahead of that axle as the part travels (m): negative for
+    /// the BR 481's bogies, coupled behind the car body they run under (#342).
+    reach: f32,
     coupling_front: Vec3,
     coupling_back: Vec3,
     axle_long: f32,
@@ -3484,6 +3825,12 @@ pub struct TrailerPart {
     rest: Vec<(f32, f32, f32)>,
     /// `Axle_Brakeforce_<axle>_L/R` of this part's axles, in the leading vehicle's scripts.
     v_brakes: Vec<Option<::legacy_script::VarId>>,
+    /// Cached script variable IDs for wheels/axles in the leading vehicle's program.
+    v_springfactor: Vec<[Option<::legacy_script::VarId>; 2]>,
+    v_suspension: Vec<[Option<::legacy_script::VarId>; 2]>,
+    v_wheel_rotation: Vec<[Option<::legacy_script::VarId>; 2]>,
+    v_wheel_rotationspeed: Vec<[Option<::legacy_script::VarId>; 2]>,
+    v_axle_steering: Vec<[Option<::legacy_script::VarId>; 2]>,
     /// How far the part's origin stands above the ground under its axles (m).
     ground_lift: f32,
     /// The part's pitch (degrees, nose up) and lean (degrees, as the vehicle's `bank`) as
@@ -3500,14 +3847,17 @@ pub struct TrailerPart {
     /// The track under its turning axle, when it runs on rails (`VehicleInstance::retrail`):
     /// it stands at the track's height, not on whatever the ground probe finds there.
     track: Option<DVec3>,
+    /// The track point under its coupling (`VehicleInstance::couple_on_track`).
+    track_coupling: Option<DVec3>,
+    held: Option<DVec3>,
     /// Mesh property sources, resolved against the leading vehicle's variables.
     props_plan: PropsPlan,
-    /// The meshes' transforms in the modelled pose, for `[smoothskin]` (made when needed).
-    skin_rest: Vec<Mat4>,
     /// The part's own `[texttexture]`s, written from the leading vehicle's string
     /// variables (`[scriptshare]`: the rear section of an articulated bus shows the
     /// number and the destination the front's scripts set).
     pub text_textures: Vec<crate::texttex::TextTextureState>,
+    /// Its own scripts, see [`PartScript`].
+    script: Option<Box<PartScript>>,
 }
 
 /// OMSI's frames, a thirtieth of a second (`[maxFPS]` 30 in its options.cfg and every option
@@ -3556,6 +3906,10 @@ impl OmsiFrames {
 fn scripts_acceleration(accel_body: Vec3, orientation: Quat) -> Vec3 {
     accel_body - orientation.inverse().mul_vec3(Vec3::new(0.0, 0.0, 9.81))
 }
+
+/// How near the track point must be to where the part in front has the coupling (m): a
+/// stale one is ignored.
+const TRACK_COUPLING_REACH: f64 = 5.0;
 
 impl TrailerPart {
     /// Pitch (degrees, nose up), eased axle height and the track point it stands on (for
@@ -3665,11 +4019,62 @@ impl TrailerPart {
                     .map(|side| program.var(&format!("Axle_Brakeforce_{}_{side}", first_axle + a)))
             })
             .collect();
+        let num_axles = ty.def.axles.len().max(1);
+        let v_springfactor = (0..num_axles)
+            .map(|a| {
+                let k = first_axle + a;
+                [
+                    program.var(&format!("Axle_Springfactor_{k}_L")),
+                    program.var(&format!("Axle_Springfactor_{k}_R")),
+                ]
+            })
+            .collect();
+        let v_suspension = (0..num_axles)
+            .map(|a| {
+                let k = first_axle + a;
+                [
+                    program.var(&format!("Axle_Suspension_{k}_L")),
+                    program.var(&format!("Axle_Suspension_{k}_R")),
+                ]
+            })
+            .collect();
+        let v_wheel_rotation = (0..num_axles)
+            .map(|a| {
+                let k = first_axle + a;
+                [
+                    program.var(&format!("Wheel_Rotation_{k}_L")),
+                    program.var(&format!("Wheel_Rotation_{k}_R")),
+                ]
+            })
+            .collect();
+        let v_wheel_rotationspeed = (0..num_axles)
+            .map(|a| {
+                let k = first_axle + a;
+                [
+                    program.var(&format!("Wheel_RotationSpeed_{k}_L")),
+                    program.var(&format!("Wheel_RotationSpeed_{k}_R")),
+                ]
+            })
+            .collect();
+        let v_axle_steering = (0..num_axles)
+            .map(|a| {
+                let k = first_axle + a;
+                [
+                    program.var(&format!("Axle_Steering_{k}_L")),
+                    program.var(&format!("Axle_Steering_{k}_R")),
+                ]
+            })
+            .collect();
         TrailerPart {
             particles: ParticleSet::new(ty.model.particle_systems(), first_axle as u64 * 7919 + 17),
             light_fade: Vec::new(),
             rest,
             v_brakes,
+            v_springfactor,
+            v_suspension,
+            v_wheel_rotation,
+            v_wheel_rotationspeed,
+            v_axle_steering,
             ground_lift: 0.0,
             pitch: 0.0,
             bank: 0.0,
@@ -3679,16 +4084,24 @@ impl TrailerPart {
             frame_brakes: Vec::new(),
             joint_angles: None,
             track: None,
+            track_coupling: None,
+            held: None,
             v_alpha: program.var(&format!("articulation_{joint}_alpha")),
             v_beta: program.var(&format!("articulation_{joint}_beta")),
             animators,
             mesh_transforms: vec![Mat4::IDENTITY; n],
             mesh_props: vec![MeshProps::default(); n],
             props_plan: PropsPlan::default(),
+            script: PartScript::new(&ty.program),
             position: DVec3::ZERO,
             heading: 0.0,
             pivot: None,
             length: (coupling_front.y - axle_long).abs(),
+            reach: if reversed {
+                axle_long - coupling_front.y
+            } else {
+                coupling_front.y - axle_long
+            },
             coupling_front,
             coupling_back,
             axle_long,
@@ -3698,12 +4111,11 @@ impl TrailerPart {
             odometer: 0.0,
             reversed,
             text_textures: Vec::new(),
-            skin_rest: Vec::new(),
             ty,
         }
     }
 
-    /// The `[smoothskin]` meshes of this part.
+    /// The meshes with `[setbone]` weights of this part.
     pub fn skinned_meshes(&self) -> Vec<usize> {
         (0..self.ty.meshes.len())
             .filter(|&i| !self.ty.meshes[i].skin.is_empty())
@@ -3717,11 +4129,8 @@ impl TrailerPart {
 
     /// Skinned mesh `i` as its bones hold it now; `n_vars`: the leading vehicle's variable
     /// count (this part animates from its variables).
-    pub fn skinned(&mut self, i: usize, n_vars: usize) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
-        if self.skin_rest.len() != self.animators.len() {
-            self.skin_rest = rest_transforms(&self.animators, n_vars);
-        }
-        skin_vertices(&self.ty, i, &self.mesh_transforms, &self.skin_rest)
+    pub fn skinned(&mut self, i: usize) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
+        skin_vertices(&self.ty, i, &self.mesh_transforms)
     }
 
     /// Prepare the part's text textures with fonts from `lib`.
@@ -3810,16 +4219,36 @@ impl TrailerPart {
         let rot = self.body_rotation();
         let c = position + rot.transform_point3(self.coupling_front).as_dvec3();
         let h = heading.to_radians();
-        self.pivot = Some(c - DVec3::new(h.sin(), h.cos(), 0.0) * self.length as f64);
+        let ahead = DVec3::new(h.sin(), h.cos(), 0.0);
+        let pivot = c - ahead * self.reach as f64;
+        // (the follow step after this one sees the pivot standing still: the wheels roll
+        // as far as the pose moved)
+        if let Some(d) = self.pivot.map(|p| pivot - p).filter(|d| d.length() < 25.0) {
+            self.odometer += d.dot(ahead) as f32;
+        }
+        self.pivot = Some(pivot);
         self.position = position;
+        self.held = Some(position);
+    }
+
+    fn axle_z_through(&self, c: DVec3, origin: DVec3) -> f64 {
+        let h = self.heading.to_radians();
+        let d = c - origin;
+        let along = d.x * h.sin() + d.y * h.cos();
+        let reach = (self.coupling_front.y as f64).abs();
+        let pitch =
+            (d.z.atan2(along) - (self.coupling_front.z as f64).atan2(reach)).clamp(-0.3, 0.3);
+        c.z - self.coupling_front.z as f64 - self.length.max(0.5) as f64 * pitch.tan()
     }
 
     /// Forget where this part was: the next step puts it straight behind the leading part
     /// (after the vehicle was moved somewhere else).
     pub fn realign(&mut self) {
         self.pivot = None;
+        self.held = None;
         self.axle_z = None;
         self.track = None;
+        self.track_coupling = None;
         self.rigid = None;
         self.joint_angles = None;
     }
@@ -3836,6 +4265,12 @@ impl TrailerPart {
         self.length
     }
 
+    /// How far behind the coupling the axle the part turns about lies along the way
+    /// (negative: ahead of it).
+    pub fn pivot_reach(&self) -> f32 {
+        self.reach
+    }
+
     /// Put the part's turning axle at `pivot` (a point on the road behind the coupling):
     /// a bus placed on a bend stands with its rear section following the bend rather than
     /// straight behind it.
@@ -3850,11 +4285,46 @@ impl TrailerPart {
         self.track = Some(p);
     }
 
-    fn update(&mut self, main: &mut VehicleInstance, dt: f32, lead: Option<(DVec3, Mat4, f64)>) {
+    /// Put the part's coupling over the track at `p` (keeping its height).
+    pub fn place_coupling_on_track(&mut self, p: DVec3) {
+        self.track_coupling = Some(p);
+    }
+
+    /// Variable `name` as this part's meshes and lamps see it.
+    pub fn var(&self, main: &VehicleInstance, name: &str) -> Option<f32> {
+        let i = *lookup_var_index(&main.var_index, name)? as usize;
+        let own = self.script.as_ref().and_then(|s| s.view.get(i));
+        Some(*own.unwrap_or(&main.state.vars[i]))
+    }
+
+    /// A number or [`TrailerPart::var`] (0 when unknown).
+    pub fn value(&self, main: &VehicleInstance, source: &str) -> f32 {
+        let t = source.trim();
+        t.parse::<f32>()
+            .ok()
+            .or_else(|| self.var(main, t))
+            .unwrap_or(0.0)
+    }
+
+    /// `behind`: another part is coupled behind this one.
+    fn update(
+        &mut self,
+        main: &mut VehicleInstance,
+        dt: f32,
+        lead: Option<(DVec3, Mat4, f64)>,
+        behind: bool,
+    ) {
         // coupling point in the world: on the leading part (the vehicle or the previous trailer)
         let (lead_pos, lead_rot, lead_heading) =
             lead.unwrap_or((main.position, main.body_rotation(), main.heading));
         let c = lead_pos + lead_rot.transform_point3(self.coupling_back).as_dvec3();
+        // (kept, not taken: `update_trailers` steps the part again in the same frame)
+        let c = match self.track_coupling {
+            Some(p) if (p - c).truncate().length() < TRACK_COUPLING_REACH => {
+                DVec3::new(p.x, p.y, c.z)
+            }
+            _ => c,
+        };
         // the height its axle had (the new one eases from it; nothing after a move)
         let (lift, sag, ground_z) = if let Some(rb) = &self.rigid {
             self.position = rb.origin();
@@ -3880,10 +4350,12 @@ impl TrailerPart {
                 None => {
                     // start straight behind the leading vehicle
                     let h = main.heading.to_radians();
-                    c - DVec3::new(h.sin(), h.cos(), 0.0) * self.length as f64
+                    c - DVec3::new(h.sin(), h.cos(), 0.0) * self.reach as f64
                 }
             };
-            let mut dir = (c - pivot).truncate();
+            // (forward: from the axle to the coupling, the other way where the axle leads)
+            let ahead = if self.reach < 0.0 { -1.0 } else { 1.0 };
+            let mut dir = (c - pivot).truncate() * ahead;
             if dir.length() < 1e-3 {
                 let h = main.heading.to_radians();
                 dir = glam::DVec2::new(h.sin(), h.cos());
@@ -3905,7 +4377,7 @@ impl TrailerPart {
                 }
             }
             self.heading = heading;
-            let new_pivot = c - DVec3::new(dir.x, dir.y, 0.0) * self.length as f64;
+            let new_pivot = c - DVec3::new(dir.x, dir.y, 0.0) * self.reach as f64;
             let ds = (new_pivot - pivot).truncate().length() as f32;
             self.odometer +=
                 ds * (main.physics.velocity_kmh().signum().max(0.0) * 2.0 - 1.0).max(-1.0);
@@ -3924,21 +4396,22 @@ impl TrailerPart {
                         0.0
                     }
                 } else if self.ty.suspension_axles.contains(&axle) {
-                    let factor = main
-                        .var(&format!("Axle_Springfactor_{axle}_L"))
+                    let factor = self
+                        .v_springfactor
+                        .get(a)
+                        .and_then(|pair| pair[0])
+                        .map(|id| main.state.vars[id as usize])
                         .unwrap_or(1.0)
                         .max(0.05);
                     (load / (k * factor)).min(crate::rigid::BUMP)
                 } else {
                     0.0
                 };
-                for side in ["L", "R"] {
-                    if let Some(id) = main
-                        .ty
-                        .program
-                        .var(&format!("Axle_Suspension_{axle}_{side}"))
-                    {
-                        main.state.vars[id as usize] = -compression;
+                if let Some(pair) = self.v_suspension.get(a) {
+                    for opt_id in pair {
+                        if let Some(id) = opt_id {
+                            main.state.vars[*id as usize] = -compression;
+                        }
                     }
                 }
                 sag.push(offset - compression);
@@ -3947,10 +4420,14 @@ impl TrailerPart {
             self.ground_lift = lift as f32;
             // On rails: the track's height where it was put on it (the ground probe found the
             // platform edge or the embankment beside a bend, and the car jumped up and down).
-            let on_track = self
-                .track
-                .filter(|t| (t.truncate() - new_pivot.truncate()).length() < 1.0)
-                .map(|t| t.z);
+            // A LAN player's part: the height their game has it at.
+            let on_track = match self.held.take() {
+                Some(p) => Some(self.axle_z_through(c, p)),
+                None => self
+                    .track
+                    .filter(|t| (t.truncate() - new_pivot.truncate()).length() < 1.0)
+                    .map(|t| t.z),
+            };
             // the height of the part's origin over its axle (where the ground has none: level
             // with the coupling, as before)
             let level = c.z - self.coupling_front.z as f64;
@@ -4025,8 +4502,9 @@ impl TrailerPart {
             // a crest the joint came apart by a hand's breadth or more). It leans as the vehicle
             // it is coupled to does.
             let rise = c.z - (axle_z + self.coupling_front.z as f64);
-            self.pitch =
-                (rise.atan2(self.length.max(0.5) as f64).to_degrees() as f32).clamp(-15.0, 15.0);
+            // (with the axle ahead, a raised coupling tips the nose down)
+            let run = self.length.max(0.5).copysign(self.reach) as f64;
+            self.pitch = ((rise / run).atan().to_degrees() as f32).clamp(-15.0, 15.0);
             self.bank = main.bank;
             // the trailer origin: coupling_front sits at c
             let rot = self.body_rotation();
@@ -4079,33 +4557,30 @@ impl TrailerPart {
         // rear section's wheels 57 times too fast: a flicker instead of a rolling wheel)
         let rot = (self.odometer / self.wheel_radius).rem_euclid(std::f32::consts::TAU);
         for a in 0..self.axle_count {
-            for side in ["L", "R"] {
-                let k = self.first_axle + a;
-                if let Some(id) = main.ty.program.var(&format!("Wheel_Rotation_{k}_{side}")) {
+            for side_idx in 0..2 {
+                if let Some(id) = self.v_wheel_rotation.get(a).and_then(|p| p[side_idx]) {
                     main.state.vars[id as usize] = rot;
                 }
-                if let Some(id) = main
-                    .ty
-                    .program
-                    .var(&format!("Wheel_RotationSpeed_{k}_{side}"))
-                {
+                if let Some(id) = self.v_wheel_rotationspeed.get(a).and_then(|p| p[side_idx]) {
                     main.state.vars[id as usize] = rpm;
                 }
             }
         }
         if let Some(rb) = &self.rigid {
             for (i, w) in rb.wheels.iter().enumerate() {
-                let axle = self.first_axle + i / 2;
-                let side = if i % 2 == 0 { "L" } else { "R" };
-                for (name, value) in [
-                    ("Wheel_Rotation", w.rotation_deg.to_radians()),
-                    ("Wheel_RotationSpeed", w.rpm),
-                    ("Axle_Steering", w.steer),
-                    ("Axle_Suspension", -w.compression.max(0.0)),
-                ] {
-                    if let Some(id) = main.ty.program.var(&format!("{name}_{axle}_{side}")) {
-                        main.state.vars[id as usize] = value;
-                    }
+                let a = i / 2;
+                let side_idx = i % 2;
+                if let Some(id) = self.v_wheel_rotation.get(a).and_then(|p| p[side_idx]) {
+                    main.state.vars[id as usize] = w.rotation_deg.to_radians();
+                }
+                if let Some(id) = self.v_wheel_rotationspeed.get(a).and_then(|p| p[side_idx]) {
+                    main.state.vars[id as usize] = w.rpm;
+                }
+                if let Some(id) = self.v_axle_steering.get(a).and_then(|p| p[side_idx]) {
+                    main.state.vars[id as usize] = w.steer;
+                }
+                if let Some(id) = self.v_suspension.get(a).and_then(|p| p[side_idx]) {
+                    main.state.vars[id as usize] = -w.compression.max(0.0);
                 }
             }
             if let Some(w) = rb.wheels.iter().find(|w| w.driven) {
@@ -4134,14 +4609,23 @@ impl TrailerPart {
                 }
             }
         }
+        if let Some(script) = self.script.as_mut() {
+            script.run(&self.ty.program, main, self.reversed, behind);
+        }
         self.props_plan.refresh(&self.ty, &main.var_index);
-        self.props_plan
-            .apply(&main.state.vars, &mut self.mesh_props);
+        let vars = self.script.as_ref().map_or(&main.state.vars, |s| &s.view);
+        self.props_plan.apply(vars, &mut self.mesh_props);
         let _ = self.axle_long;
     }
 }
 
 impl VehicleInstance {
+    /// Is part `k` (0 = the vehicle itself, `k` = trailer `k - 1`) off its track, past
+    /// its end or not yet over its start (see `parts_gone`)?
+    pub fn part_hidden(&self, k: usize) -> bool {
+        k < self.parts_gone || k + self.parts_waiting > self.trailers.len()
+    }
+
     /// Rotation of the vehicle body (model frame → world, without translation).
     pub fn body_rotation(&self) -> Mat4 {
         if let Some(rb) = &self.rigid {
@@ -4217,7 +4701,9 @@ impl VehicleInstance {
     /// A camera fixed to the body as OMSI keeps one (`[add_camera_reflexion]`: Omsi.exe
     /// 0x7edfd0 puts it in the vehicle's own matrix): its eye, and yaw, pitch and roll (deg)
     /// of its view with the body's pitch and bank in them - a mirror leans with the bus. A
-    /// `dist` above zero puts the eye that far behind the point along the view.
+    /// `dist` above zero puts the eye that far behind the point along the view, one below
+    /// zero that far ahead of it (Omsi.exe 0x7ed8c3 takes the eye to (0, 0, -dist) in the
+    /// camera's frame as it is: the stock MAN NL and Lion's City drivers sit at -0.06).
     pub fn camera_world_full(&self, cam: &::legacy_vehicle::Camera) -> (DVec3, f32, f32, f32) {
         camera_in_body(self.position, self.body_rotation(), cam)
     }
@@ -4240,7 +4726,7 @@ fn camera_in_body(
         .normalize_or(Vec3::Z);
     let local = Vec3::new(cam.pos[0], cam.pos[1], cam.pos[2]);
     let eye =
-        position + rot.transform_point3(local).as_dvec3() - (f * cam.dist.max(0.0)).as_dvec3();
+        position + rot.transform_point3(local).as_dvec3() - (f * cam.dist).as_dvec3();
     let yaw = f.x.atan2(f.y).to_degrees();
     let pitch = f.z.clamp(-1.0, 1.0).asin().to_degrees();
     // (the roll the renderer's `Camera::up` turns back into this up)
@@ -4267,28 +4753,16 @@ fn skin_key(ty: &VehicleType, i: usize, transforms: &[Mat4]) -> Vec<Mat4> {
     key
 }
 
-/// The transforms of every mesh with all variables at 0: the pose the model was built in
-/// (what a skinned mesh's vertices are given in).
-fn rest_transforms(animators: &[MeshAnimator], n_vars: usize) -> Vec<Mat4> {
-    let zeros = vec![0.0; n_vars];
-    let mut probes = animators.to_vec();
-    let mut out: Vec<Mat4> = probes
-        .iter_mut()
-        .map(|a| {
-            for (_, _, st) in a.anims.iter_mut() {
-                st.initialized = false;
-            }
-            a.update(0.0, &zeros)
-        })
-        .collect();
-    crate::anim::apply_parents(&probes, &mut out);
-    out
-}
-
-/// The vertices (positions, normals) of `[smoothskin]` mesh `i` with its bones where
+/// The vertices (positions, normals) of a mesh with `[setbone]` weights where
 /// `transforms` has them, in the mesh's own frame (the renderer puts `transforms[i]` on
-/// top); `rest` are the transforms of the modelled pose. None for a mesh without bones or
-/// vertices.
+/// top). As in OMSI 2, current submesh matrices deform the vertices directly, without
+/// dividing by the modelled pose. Without `[smoothskin]`, each vertex
+/// follows only its highest-weight bone; with it, its bones are blended by their weights
+/// divided by the vertex's total, as Omsi.exe's loader normalizes them (0x7c69f0); no
+/// share of a vertex is left on the mesh beyond what an unbound bone holds. (With the rest
+/// of 1 left on the mesh, a total above 1 - the Lion's City 18C's bellows, before their
+/// repeated weights were dropped, added up to 2 to 8 - threw the vertices apart by a
+/// negative multiple of their own position.) None for a mesh without bones or vertices.
 ///
 /// As in Omsi.exe, the bones move the vertices first and the mesh's own motion (its
 /// animations and its `[animparent]`) comes on top: the Agora L's rear half of the bellows
@@ -4305,55 +4779,95 @@ pub fn skin_vertices(
     ty: &VehicleType,
     i: usize,
     transforms: &[Mat4],
-    rest: &[Mat4],
 ) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
     let vm = ty.meshes.get(i)?;
     let n = vm.data.positions.len();
-    if vm.skin.is_empty()
-        || n == 0
-        || transforms.len() < ty.meshes.len()
-        || rest.len() < ty.meshes.len()
-    {
+    if vm.skin.is_empty() || n == 0 || transforms.len() < ty.meshes.len() {
         return None;
     }
-    let mut sum = vec![Mat4::ZERO; n];
-    let mut total = vec![0.0f32; n];
-    for b in &vm.skin {
-        let bone = match b.def_index {
-            None => Mat4::IDENTITY,
-            Some(d) => {
-                let Some(k) = ty.meshes.iter().position(|m| m.def_index == d) else {
-                    continue;
-                };
-                transforms[k] * rest[k].inverse()
-            }
-        };
-        for &(v, w) in &b.weights {
-            let v = v as usize;
-            if v < n && w.is_finite() && w > 0.0 {
-                sum[v] += bone * w;
-                total[v] += w;
-            }
-        }
-    }
-    // (the renderer puts the mesh's transform on top: in the modelled pose, the vertices
-    // are where the file has them)
-    let own_rest_inv = rest[i].inverse();
+    let bones: Vec<Mat4> = vm
+        .skin
+        .iter()
+        .map(|b| {
+            b.def_index
+                .and_then(|d| ty.meshes.iter().position(|m| m.def_index == d))
+                .map(|k| transforms[k])
+                .unwrap_or(Mat4::IDENTITY)
+        })
+        .collect();
+    let smooth = ty.model.meshes[vm.def_index].smooth_skin;
     let mut pos = Vec::with_capacity(n);
     let mut nrm = Vec::with_capacity(n);
-    for v in 0..n {
-        let p = vm.data.positions[v];
-        let q = vm.data.normals.get(v).copied().unwrap_or(Vec3::Z);
-        if total[v] < 1e-4 {
-            pos.push(p);
-            nrm.push(q);
-            continue;
+    if smooth {
+        let mut sum = vec![Mat4::ZERO; n];
+        let mut total = vec![0.0f32; n];
+        for (bone, b) in bones.iter().zip(&vm.skin) {
+            for &(v, w) in &b.weights {
+                let v = v as usize;
+                if v < n && w.is_finite() && w > 0.0 {
+                    sum[v] += *bone * w;
+                    total[v] += w;
+                }
+            }
         }
-        let m = own_rest_inv * (sum[v] * (1.0 / total[v]));
-        pos.push(m.transform_point3(p));
-        nrm.push(m.transform_vector3(q).normalize_or_zero());
+        for v in 0..n {
+            let p = vm.data.positions[v];
+            let q = vm.data.normals.get(v).copied().unwrap_or(Vec3::Z);
+            if total[v] == 0.0 {
+                pos.push(p);
+                nrm.push(q);
+                continue;
+            }
+            let m = sum[v] * (1.0 / total[v]);
+            pos.push(m.transform_point3(p));
+            nrm.push(m.transform_vector3(q).normalize_or_zero());
+        }
+    } else {
+        let mut dominant = vec![None; n];
+        let mut max_weight = vec![0.0f32; n];
+        for (bone, b) in vm.skin.iter().enumerate() {
+            for &(v, w) in &b.weights {
+                let v = v as usize;
+                if v < n && w.is_finite() && w > max_weight[v] {
+                    max_weight[v] = w;
+                    dominant[v] = Some(bone);
+                }
+            }
+        }
+        for (v, bone) in dominant.into_iter().enumerate() {
+            let p = vm.data.positions[v];
+            let q = vm.data.normals.get(v).copied().unwrap_or(Vec3::Z);
+            if let Some(bone) = bone {
+                let m = bones[bone];
+                pos.push(m.transform_point3(p));
+                nrm.push(m.transform_vector3(q));
+            } else {
+                pos.push(p);
+                nrm.push(q);
+            }
+        }
     }
     Some((pos, nrm))
+}
+
+/// The door release of a bus, whatever its script calls it: its own release trigger
+/// (`bus_doorall`, the Iveco's `CG_active`, the C2's `C2_CP_doorall_1`), the C2's release
+/// switch turned over (`C2_CP_Tuerfreigabe_1` / `_0`, by `switch_on`), else `bus_dooraft`.
+pub fn door_release_trigger(has: impl Fn(&str) -> bool, switch_on: bool) -> Option<&'static str> {
+    if let Some(t) = ["bus_doorall", "CG_active", "C2_CP_doorall_1"]
+        .into_iter()
+        .find(|t| has(t))
+    {
+        return Some(t);
+    }
+    if has("C2_CP_Tuerfreigabe_1") && has("C2_CP_Tuerfreigabe_0") {
+        return Some(if switch_on {
+            "C2_CP_Tuerfreigabe_0"
+        } else {
+            "C2_CP_Tuerfreigabe_1"
+        });
+    }
+    has("bus_dooraft").then_some("bus_dooraft")
 }
 
 #[cfg(test)]
@@ -4361,10 +4875,516 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_camera_dist_below_zero_puts_the_eye_ahead_of_the_point() {
+        let cam = ::legacy_vehicle::Camera {
+            pos: [-0.72, 4.49, 1.78],
+            dist: -0.06,
+            ..Default::default()
+        };
+        let (eye, ..) = camera_in_body(DVec3::ZERO, Mat4::IDENTITY, &cam);
+        assert!((eye - DVec3::new(-0.72, 4.55, 1.78)).length() < 1e-5, "{eye}");
+        let back = ::legacy_vehicle::Camera { dist: 0.5, ..cam };
+        let (eye, ..) = camera_in_body(DVec3::ZERO, Mat4::IDENTITY, &back);
+        assert!((eye - DVec3::new(-0.72, 3.99, 1.78)).length() < 1e-5, "{eye}");
+    }
+
+    /// A quad with a mirrored (positive determinant) matrix, normals along or against
+    /// its faces.
+    fn mirrored_o3d(along: bool) -> Vec<u8> {
+        let mut bytes = vec![0x84, 0x19, 3, 0, 0x17, 4, 0, 0, 0];
+        let ny = if along { -1.0f32 } else { 1.0 };
+        for (x, z) in [(0.0f32, 0.0f32), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+            for value in [x, 0.0, z, 0.0, ny, 0.0, 0.0, 0.0] {
+                bytes.extend(value.to_le_bytes());
+            }
+        }
+        bytes.extend([
+            0x49, 2, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 0, 2, 0, 1, 0, 3, 0, 0, 0,
+        ]);
+        bytes.extend([0x26, 1, 0]);
+        for value in [1.0f32, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes.push(0);
+        bytes.push(0x79);
+        for value in Mat4::from_scale(Vec3::new(-1.0, 1.0, -1.0)).to_cols_array() {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// #117
+    #[test]
+    fn a_coupled_part_keeps_the_winding_its_lead_keeps() {
+        let dir = std::env::temp_dir().join(format!("omsi-coupled-winding-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("along.o3d"), mirrored_o3d(true)).unwrap();
+        std::fs::write(dir.join("against.o3d"), mirrored_o3d(false)).unwrap();
+        std::fs::write(dir.join("front.bus"), "[model]\nfront.cfg\n").unwrap();
+        std::fs::write(
+            dir.join("front.cfg"),
+            "[mesh]\nalong.o3d\n\n[mesh]\nalong.o3d\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("rear.bus"), "[model]\nrear.cfg\n").unwrap();
+        std::fs::write(dir.join("rear.cfg"), "[mesh]\nagainst.o3d\n").unwrap();
+        let front = VehicleType::load(&dir, &dir.join("front.bus")).unwrap();
+        let mut rear = VehicleType::load(&dir, &dir.join("rear.bus")).unwrap();
+        let mut ai_rear = VehicleType::load_ai(&dir, &dir.join("rear.bus")).unwrap();
+        assert!(front.keep_winding);
+        // alone, the rear section turns its mesh round
+        assert!(!rear.keep_winding);
+        assert_eq!(rear.meshes[0].data.indices, [0, 2, 1, 2, 3, 1]);
+        assert!(!rear.meshes[0].normals_inward(0));
+        rear.follow_winding_of(&front);
+        assert!(rear.keep_winding);
+        assert_eq!(rear.winding_votes, (2, 1));
+        assert_eq!(rear.meshes[0].data.indices, [0, 1, 2, 2, 1, 3]);
+        // kept as wound: normals inward
+        assert!(rear.meshes[0].normals_inward(0));
+        assert!(!front.meshes[0].normals_inward(0));
+        // an AI type re-reads its mesh with the new winding
+        ai_rear.follow_winding_of(&front);
+        let ai_indices = ai_rear.mesh_data(0).unwrap().indices.clone();
+        // another folder: decides alone
+        let other = dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("against.o3d"), mirrored_o3d(false)).unwrap();
+        std::fs::write(other.join("rear.bus"), "[model]\nrear.cfg\n").unwrap();
+        std::fs::write(other.join("rear.cfg"), "[mesh]\nagainst.o3d\n").unwrap();
+        let mut coach = VehicleType::load(&other, &other.join("rear.bus")).unwrap();
+        coach.follow_winding_of(&front);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(ai_indices, [0, 1, 2, 2, 1, 3]);
+        assert!(!coach.keep_winding);
+        assert_eq!(coach.winding_votes, (0, 1));
+    }
+
+    fn skin_test_vehicle(smooth_skin: bool) -> VehicleType {
+        let target = VehicleMesh {
+            def_index: 0,
+            data: MeshData {
+                positions: vec![Vec3::ZERO, Vec3::X, Vec3::X * 2.0],
+                normals: vec![Vec3::Y; 3],
+                ..Default::default()
+            },
+            file: PathBuf::new(),
+            materials: Vec::new(),
+            overrides: Vec::new(),
+            pivot: Mat4::IDENTITY,
+            viewpoint: 0,
+            skin: vec![
+                SkinBone {
+                    def_index: Some(1),
+                    weights: vec![(0, 0.7), (1, 0.4)],
+                },
+                SkinBone {
+                    def_index: Some(2),
+                    weights: vec![(0, 0.3)],
+                },
+            ],
+            normals_against: Vec::new(),
+        };
+        let bone = |def_index| VehicleMesh {
+            def_index,
+            data: MeshData::default(),
+            file: PathBuf::new(),
+            materials: Vec::new(),
+            overrides: Vec::new(),
+            pivot: Mat4::IDENTITY,
+            viewpoint: 0,
+            skin: Vec::new(),
+            normals_against: Vec::new(),
+        };
+        let mut model = Model::default();
+        model.meshes = vec![
+            ::model::MeshDef {
+                smooth_skin,
+                ..Default::default()
+            },
+            ::model::MeshDef::default(),
+            ::model::MeshDef::default(),
+        ];
+        VehicleType {
+            def: Vehicle::default(),
+            model,
+            model_dir: PathBuf::new(),
+            program: Arc::new(Program::default()),
+            meshes: vec![target, bone(1), bone(2)],
+            keep_winding: false,
+            winding_votes: (0, 0),
+            turned_meshes: Vec::new(),
+            paint_schemes: Vec::new(),
+            texchanges: Vec::new(),
+            wheel_meshes: Vec::new(),
+            suspension_axles: Vec::new(),
+            missing_packs: Vec::new(),
+            mesh_bounds: vec![(Vec3::ZERO, 0.0); 3],
+            mesh_boxes: vec![(Vec3::ZERO, Vec3::ZERO); 3],
+        }
+    }
+
+    fn props_test_vehicle() -> VehicleType {
+        let mut ty = skin_test_vehicle(false);
+        ty.meshes.truncate(1);
+        ty.meshes[0].skin.clear();
+        ty.meshes[0].materials.push(::legacy_o3d::Material {
+            texture: "body.bmp".into(),
+            ..Default::default()
+        });
+        ty.model.meshes.truncate(1);
+        ty.model.meshes[0].materials.push(MaterialDef {
+            texture: "body.bmp".into(),
+            change: Some(("body.bmp".into(), 0, "missing_change".into())),
+            lightmaps: vec![("body.bmp".into(), "missing_lightmap".into())],
+            ..Default::default()
+        });
+        ty.model.meshes[0].illumination_interior.push(0);
+        ty.model.interior_lights.push(::model::InteriorLight {
+            variable: "missing_interior".into(),
+            range: 0.8,
+            ..Default::default()
+        });
+        ty
+    }
+
+    /// A three-car train with its last car turned round, lamps as `BR243.osc` (#318).
+    #[test]
+    fn each_car_of_a_train_sees_how_it_stands_in_the_train() {
+        let dir = std::env::temp_dir().join(format!("omsi-train-vars-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("car.ovh"),
+            "[model]\nmodel.cfg\n\n[varnamelist]\n1\nvars.txt\n\n[script]\n1\ncar.osc\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        std::fs::write(
+            dir.join("vars.txt"),
+            "train_me_reverse\ntrain_frontcoupling\ntrain_backcoupling\nAI_Engine\n\
+             Lights_white_front\nLights_white_rear\nLights_red_front\nLights_red_rear\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("car.osc"),
+            "{frame}\n\
+             (L.L.train_Me_reverse)\n\
+             {if}\n\
+             (L.L.AI_Engine) 0.5 > (S.L.Lights_white_rear)\n\
+             (L.L.train_frontcoupling) ! (S.L.Lights_red_front)\n\
+             0 (S.L.Lights_white_front) (S.L.Lights_red_rear)\n\
+             {else}\n\
+             (L.L.AI_Engine) 0.5 > (S.L.Lights_white_front)\n\
+             (L.L.train_backcoupling) ! (S.L.Lights_red_rear)\n\
+             0 (S.L.Lights_white_rear) (S.L.Lights_red_front)\n\
+             {endif}\n\
+             {end}\n",
+        )
+        .unwrap();
+        let ty = VehicleType::load(&dir, &dir.join("car.ovh"));
+        std::fs::remove_dir_all(&dir).ok();
+        let ty = Arc::new(ty.unwrap());
+        let mut v = VehicleInstance::new(ty.clone(), VehicleHost::new(crate::SimClock::default()));
+        v.attach_trailer_ex(ty.clone(), false);
+        v.attach_trailer_ex(ty, true);
+        v.set_var("AI_Engine", 1.0);
+        v.update(0.02);
+        let lamps = |var: &dyn Fn(&str) -> Option<f32>| {
+            [
+                "Lights_white_front",
+                "Lights_white_rear",
+                "Lights_red_front",
+                "Lights_red_rear",
+            ]
+            .map(|n| var(n).unwrap())
+        };
+        assert_eq!(lamps(&|n| v.var(n)), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(lamps(&|n| v.trailers[0].var(&v, n)), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(lamps(&|n| v.trailers[1].var(&v, n)), [0.0, 1.0, 1.0, 0.0]);
+        assert_eq!(v.trailers[1].value(&v, "train_me_reverse"), 1.0);
+    }
+
+    /// `Gerolstein_BR425.zug` in AI service: white at the head, red at the tail (#318).
+    #[test]
+    fn an_et425_lights_its_head_and_its_tail() {
+        let root = ::legacy_config::env::var_os("OMSI_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
+        let dir = root.join("Vehicles/DB_BR425");
+        if !dir.join("Kopf.ovh").exists() || !root.join("Vehicles/BR145_146").exists() {
+            eprintln!("skipped: no {}", dir.display());
+            return;
+        }
+        let load = |n: &str| Arc::new(VehicleType::load(&root, &dir.join(n)).expect(n));
+        let (kopf, gelenk) = (load("Kopf.ovh"), load("Gelenk.ovh"));
+        let mut v =
+            VehicleInstance::new(kopf.clone(), VehicleHost::new(crate::SimClock::default()));
+        for (ty, reversed) in [
+            (gelenk.clone(), false),
+            (load("Panto.ovh"), false),
+            (gelenk.clone(), false),
+            (load("Basis.ovh"), false),
+            (gelenk, false),
+            (kopf, true),
+        ] {
+            v.attach_trailer_ex(ty, reversed);
+        }
+        let ai = AiFrame {
+            lights: true,
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            v.update_ai(0.05, &ai);
+        }
+        let tail = v.trailers.last().unwrap();
+        let lamps = |var: &dyn Fn(&str) -> Option<f32>| {
+            [
+                "Lights_white_front",
+                "Lights_white_rear",
+                "Lights_red_front",
+                "Lights_red_rear",
+            ]
+            .map(|n| var(n).unwrap())
+        };
+        assert_eq!(lamps(&|n| v.var(n)), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(lamps(&|n| tail.var(&v, n)), [0.0, 1.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn the_door_release_is_the_bus_own_trigger() {
+        let with = |names: &'static [&'static str]| move |t: &str| names.contains(&t);
+        assert_eq!(
+            door_release_trigger(with(&["bus_doorall", "bus_dooraft"]), false),
+            Some("bus_doorall")
+        );
+        assert_eq!(
+            door_release_trigger(with(&["CG_active"]), false),
+            Some("CG_active")
+        );
+        let c2 = with(&[
+            "C2_CP_Tuerfreigabe_1",
+            "C2_CP_Tuerfreigabe_0",
+            "bus_dooraft",
+        ]);
+        assert_eq!(
+            door_release_trigger(c2, false),
+            Some("C2_CP_Tuerfreigabe_1")
+        );
+        assert_eq!(door_release_trigger(c2, true), Some("C2_CP_Tuerfreigabe_0"));
+        assert_eq!(
+            door_release_trigger(with(&["bus_dooraft"]), false),
+            Some("bus_dooraft")
+        );
+        assert_eq!(door_release_trigger(with(&[]), false), None);
+    }
+
+    #[test]
     fn script_speed_reports_tiny_resting_motion_as_stopped() {
         assert_eq!(script_speed(0.000251), 0.0);
         assert_eq!(script_speed(-0.000251), 0.0);
         assert_eq!(script_speed(0.02), 0.02);
+    }
+
+    #[test]
+    fn spotlight_selection_rounds_to_even_and_rejects_disabled_ranges() {
+        let spots = [
+            ::model::Spotlight {
+                values: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0],
+            },
+            ::model::Spotlight {
+                values: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0],
+            },
+        ];
+        assert_eq!(selected_spotlight(0.6, &spots), Some(1));
+        assert_eq!(selected_spotlight(-0.6, &spots), None);
+        assert_eq!(selected_spotlight(-0.4, &spots), Some(0));
+        assert_eq!(selected_spotlight(f32::NAN, &spots), None);
+        assert_eq!(
+            selected_spotlight(0.0, &[::model::Spotlight::default()]),
+            None
+        );
+    }
+
+    #[test]
+    fn driver_seat_spring_responds_and_stays_within_ten_centimetres() {
+        let (position, _) = driver_seat_step(0.0, 0.0, 0.2, 0.1);
+        assert!(position > 0.0);
+        let (position, velocity) = driver_seat_step(0.099, 1.0, 1.0, 0.1);
+        assert_eq!(position, 0.1);
+        assert_eq!(velocity, 0.0);
+    }
+
+    #[test]
+    fn repeated_bone_weights_keep_the_first_and_blend_to_one() {
+        let mesh = ::legacy_o3d::Mesh {
+            bones: vec![
+                ::legacy_o3d::Bone {
+                    name: "a".into(),
+                    weights: [(0, 0.5), (0, 0.5), (0, 0.9)]
+                        .map(|(vertex, weight)| ::legacy_o3d::BoneWeight { vertex, weight })
+                        .to_vec(),
+                },
+                ::legacy_o3d::Bone {
+                    name: "b".into(),
+                    weights: [(0, 0.5), (0, 0.5)]
+                        .map(|(vertex, weight)| ::legacy_o3d::BoneWeight { vertex, weight })
+                        .to_vec(),
+                },
+            ],
+            ..Default::default()
+        };
+        let def = ::model::MeshDef {
+            bones: vec![("a".into(), 1), ("b".into(), 2)],
+            smooth_skin: true,
+            ..Default::default()
+        };
+        let skin = mesh_skin(&mesh, &def, 0);
+        assert_eq!(skin[0].weights, [(0, 0.5)]);
+        assert_eq!(skin[1].weights, [(0, 0.5)]);
+
+        let mut ty = skin_test_vehicle(true);
+        ty.meshes[0].skin = skin;
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0)),
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0)),
+        ];
+        let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert!((positions[0] - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn setbone_enables_position_skinning_without_smoothskin() {
+        let mesh = ::legacy_o3d::Mesh {
+            bones: vec![::legacy_o3d::Bone {
+                name: "joint".into(),
+                weights: vec![::legacy_o3d::BoneWeight {
+                    vertex: 0,
+                    weight: 1.0,
+                }],
+            }],
+            ..Default::default()
+        };
+        let def = ::model::MeshDef {
+            bones: vec![("JOINT".into(), 0)],
+            smooth_skin: false,
+            ..Default::default()
+        };
+        let skin = mesh_skin(&mesh, &def, 3);
+        assert_eq!(skin.len(), 1);
+        assert_eq!(skin[0].def_index, Some(3));
+    }
+
+    #[test]
+    fn rigid_skin_uses_the_dominant_bone_for_positions_and_normals() {
+        let ty = skin_test_vehicle(false);
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0))
+                * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Mat4::from_translation(Vec3::new(12.0, 0.0, 0.0)),
+        ];
+        let (positions, normals) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert_eq!(positions[0], Vec3::new(4.0, 0.0, 0.0));
+        assert_eq!(positions[1], Vec3::new(4.0, 1.0, 0.0));
+        assert_eq!(positions[2], Vec3::X * 2.0);
+        assert!((normals[0] - Vec3::NEG_X).length() < 1e-6);
+        assert_eq!(normals[2], Vec3::Y);
+    }
+
+    #[test]
+    fn smooth_skin_blends_normalized_weights() {
+        let ty = skin_test_vehicle(true);
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0))
+                * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Mat4::from_translation(Vec3::new(12.0, 0.0, 0.0)),
+        ];
+        let (positions, normals) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert!((positions[0].x - 6.4).abs() < 1e-6);
+        // (its one weight of 0.4 is all the vertex has: it follows that bone entirely)
+        assert!((positions[1] - Vec3::new(4.0, 1.0, 0.0)).length() < 1e-6);
+        assert_eq!(positions[2], Vec3::X * 2.0);
+        let expected = Vec3::new(-0.7, 0.3, 0.0).normalize();
+        assert!((normals[0] - expected).length() < 1e-6);
+    }
+
+    #[test]
+    fn smooth_skin_does_not_drop_small_nonzero_weights() {
+        let mut ty = skin_test_vehicle(true);
+        ty.meshes[0].skin = vec![SkinBone {
+            def_index: Some(1),
+            weights: vec![(0, 1e-5)],
+        }];
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(4.0, 0.0, 0.0)),
+            Mat4::IDENTITY,
+        ];
+        let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert!((positions[0].x - 4.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn unresolved_material_and_interior_variables_use_omsi_defaults() {
+        let ty = props_test_vehicle();
+        let expected = compute_mesh_props(&ty, &|_| None);
+        let mut plan = PropsPlan::default();
+        plan.refresh(&ty, &HashMap::new());
+        let mut actual = Vec::new();
+        plan.apply(&[], &mut actual);
+
+        // OMSI's loader leaves a missing [matl_change] variable at 0 (plain material), but
+        // a missing [matl_lightmap] variable remains on and a missing interior-light index
+        // starts with ison=true.
+        assert_eq!(expected[0].slot_night[0], 0.0);
+        assert_eq!(actual[0].slot_night[0], 0.0);
+        assert_eq!(expected[0].slot_light[0], 1.0);
+        assert_eq!(actual[0].slot_light[0], 1.0);
+        assert!((expected[0].interior - 0.4).abs() < 1e-6);
+        assert!((actual[0].interior - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn illumination_bit_0x10_disables_interior_fallback_brightness() {
+        let mut ty = props_test_vehicle();
+        ty.model.meshes[0].illumination = 0x10;
+
+        let expected = compute_mesh_props(&ty, &|_| None);
+        let mut plan = PropsPlan::default();
+        plan.refresh(&ty, &HashMap::new());
+        let mut actual = Vec::new();
+        plan.apply(&[], &mut actual);
+
+        assert!(!ty.model.meshes[0].interior_lights_enabled());
+        assert_eq!(expected[0].interior, 0.0);
+        assert_eq!(actual[0].interior, 0.0);
+    }
+
+    #[test]
+    fn skinning_uses_current_bone_matrix_without_rest_pose_cancellation() {
+        let ty = skin_test_vehicle(false);
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)),
+            Mat4::IDENTITY,
+        ];
+        let (positions, _) = skin_vertices(&ty, 0, &transforms).unwrap();
+        assert_eq!(positions[0], Vec3::new(5.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn numeric_texttexture_variable_reads_its_string_slot() {
+        let mut program = Program::default();
+        program.declare_str_var("ident");
+        program.declare_str_var("number");
+        let values = vec!["AP06 NSD".to_string(), "12345".to_string()];
+
+        assert_eq!(string_var_value(&program, &values, "ident"), "AP06 NSD");
+        assert_eq!(string_var_value(&program, &values, "0"), "AP06 NSD");
+        assert_eq!(string_var_value(&program, &values, "1"), "12345");
+        assert_eq!(string_var_value(&program, &values, "9"), "");
     }
 
     /// A shadow blob at the model's z = 0 is laid onto the plane through the wheels: 15 cm
@@ -4711,6 +5731,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_remote_rear_section_takes_the_senders_pitch_and_rolls() {
+        let root = ::legacy_config::env::var_os("OMSI_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("../../../OMSI 2 Original"));
+        let bus = root.join("Vehicles/MAN_NL_NG/MAN_GN92_main.bus");
+        let trail = root.join("Vehicles/MAN_NL_NG/MAN_GN92_trail.bus");
+        if !bus.exists() || !trail.exists() {
+            eprintln!("skipped: no {}", bus.display());
+            return;
+        }
+        let ty = Arc::new(VehicleType::load(&root, &bus).expect("GN92"));
+        let part = Arc::new(VehicleType::load(&root, &trail).expect("GN92 trail"));
+        let make = || {
+            let mut v =
+                VehicleInstance::new(ty.clone(), VehicleHost::new(crate::SimClock::default()));
+            v.attach_trailer_ex(part.clone(), false);
+            v
+        };
+        let (mut sender, mut copy) = (make(), make());
+        sender.ground = Some(Arc::new(|_, y| Some(y * 0.06)));
+        copy.ground = None;
+        let (dt, speed) = (1.0 / 60.0, 8.0f32);
+        let axle = sender.physics.wheels.len();
+        let wheel = |v: &VehicleInstance| v.var(&format!("Wheel_Rotation_{axle}_L")).unwrap();
+        let mut odometer = 0.0;
+        let mut turned = 0.0;
+        for f in 0..120 {
+            odometer += speed * dt;
+            let frame = AiFrame {
+                speed,
+                odometer,
+                ..Default::default()
+            };
+            for v in [&mut sender, &mut copy] {
+                v.position = DVec3::new(0.0, odometer as f64, odometer as f64 * 0.06 + 0.5);
+                v.heading = f as f64 * 0.1;
+                v.pitch = 0.06f32.atan().to_degrees();
+            }
+            sender.update_ai_with(dt, &frame, &[], &[]);
+            let (at, heading) = (sender.trailers[0].position, sender.trailers[0].heading);
+            let before = wheel(&copy);
+            copy.trailers[0].set_pose(at, heading);
+            copy.update_ai_with(dt, &frame, &[], &[]);
+            turned += (wheel(&copy) - before).rem_euclid(std::f32::consts::TAU);
+        }
+        let (s, c) = (&sender.trailers[0], &copy.trailers[0]);
+        assert!(s.pitch.abs() > 2.0, "sender pitch {}", s.pitch);
+        assert!((s.pitch - c.pitch).abs() < 0.05, "{} vs {}", s.pitch, c.pitch);
+        assert!((s.position - c.position).length() < 0.01, "{} vs {}", s.position, c.position);
+        let rolled = odometer / part.def.axles[0].wheel_diameter * 2.0;
+        assert!(
+            (turned - rolled).abs() < 0.1 * rolled,
+            "turned {turned}, rolled {rolled}"
+        );
+    }
+
     /// The stock rattle (`klappern.osc`) as loud at 144 frames a second as at OMSI's 30.
     #[test]
     fn a_jolt_rattles_alike_at_any_frame_rate() {
@@ -4872,8 +5949,8 @@ mod tests {
     }
 
     /// A timetable duty and a random traffic car load their bus with `VehicleType::load_ai`,
-    /// which lets the vertices of every mesh go to save memory - except a `[smoothskin]`
-    /// mesh (the bellows) has to keep its own, or there is nothing left to bend it from and
+    /// which lets the vertices of every mesh go to save memory - except a skinned mesh
+    /// (the bellows) has to keep its own, or there is nothing left to bend it from and
     /// every AI articulated bus (and the rear-section trailer of a `.zug` train) drove with
     /// its bellows frozen in the rest pose through every corner.
     #[test]
@@ -5027,6 +6104,69 @@ mod tests {
         let full = report(VehicleType::load(&root, &bus).expect("F90"));
         assert!(!full.is_empty(), "the F90 has no animated wheels");
         assert_eq!(report(ai), full);
+    }
+
+    /// Parts coupled on ahead of their own axle, each ahead of the one before (the BR 481's
+    /// bogies, #342), stand on the track in a bend.
+    #[test]
+    fn parts_coupled_ahead_of_their_axle_stand_on_the_track_in_a_bend() {
+        let dir = std::env::temp_dir().join(format!("omsi-retrail-ahead-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        let part = |name: &str, front: f32, back: f32| {
+            std::fs::write(
+                dir.join(name),
+                format!(
+                    "[model]\nmodel.cfg\n[coupling_front]\n0\n{front}\n1\n[coupling_back]\n0\n{back}\n1\n"
+                ),
+            )
+            .unwrap();
+            Arc::new(VehicleType::load(&dir, &dir.join(name)).unwrap())
+        };
+        let lead = part("lead.ovh", 5.0, -30.0);
+        // origin 10 m behind the lead's, its axle (none given) 0.5 m behind that
+        let a = part("a.ovh", -20.0, -3.0);
+        // origin 5 m behind the lead's: ahead of the part it hangs on
+        let b = part("b.ovh", -8.0, -1.0);
+        let mut v = VehicleInstance::new(lead, VehicleHost::new(crate::SimClock::default()));
+        v.attach_trailer_ex(a, false);
+        v.attach_trailer_ex(b, false);
+        // a bend of 150 m radius, the lead's origin on it heading north (+y)
+        let r = 150.0f64;
+        let on_track = |d: f64| {
+            let t = d / r;
+            Some(DVec3::new(r - r * t.cos(), -r * t.sin(), 0.0))
+        };
+        v.position = DVec3::ZERO;
+        v.heading = 0.0;
+        for _ in 0..3 {
+            v.couple_on_track(&on_track);
+            v.retrail(0.0, &on_track);
+        }
+        // (once per part: the traffic counts the queries)
+        let asked = std::cell::Cell::new(0);
+        v.retrail(0.0, &|d| {
+            asked.set(asked.get() + 1);
+            on_track(d)
+        });
+        assert_eq!(asked.get(), v.trailers.len());
+        for (k, (t, behind)) in v.trailers.iter().zip([10.5, 5.5]).enumerate() {
+            let axle = t
+                .world_transform()
+                .transform_point3(Vec3::new(0.0, -0.5, 0.0))
+                .as_dvec3();
+            let off = ((axle - DVec3::new(r, 0.0, 0.0)).truncate().length() - r).abs();
+            assert!(
+                off < 0.05,
+                "part {k}: axle {axle:?} {off:.2} m off the track"
+            );
+            let want = on_track(behind).unwrap();
+            assert!(
+                (axle - want).truncate().length() < 0.1,
+                "part {k}: axle {axle:?}, the track {behind} m behind the lead is at {want:?}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 
@@ -5214,5 +6354,33 @@ mod grip_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod part_hidden_tests {
+    use super::*;
+
+    /// A locomotive and three coaches: the parts that ran off the end are hidden from the
+    /// front, those not yet in over the start from the back.
+    #[test]
+    fn hidden_parts_count_from_either_end() {
+        let dir = std::env::temp_dir().join(format!("neoomsi-parts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("test.bus"), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(dir.join("model.cfg"), "").unwrap();
+        let ty = Arc::new(VehicleType::load(&dir, &dir.join("test.bus")).unwrap());
+        let mut v = VehicleInstance::new(ty.clone(), VehicleHost::new(Default::default()));
+        for _ in 0..3 {
+            v.attach_trailer(ty.clone());
+        }
+        let hidden = |v: &VehicleInstance| (0..4).map(|k| v.part_hidden(k)).collect::<Vec<_>>();
+        assert_eq!(hidden(&v), [false; 4]);
+        v.parts_waiting = 2;
+        assert_eq!(hidden(&v), [false, false, true, true]);
+        v.parts_waiting = 0;
+        v.parts_gone = 1;
+        assert_eq!(hidden(&v), [true, false, false, false]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

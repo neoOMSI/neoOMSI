@@ -98,7 +98,8 @@ pub(crate) fn in_scope<'s, R>(
 }
 
 pub(crate) fn split_parts(pool: Option<&rayon::ThreadPool>, n: usize) -> (usize, usize) {
-    let parts = (n / 8192).clamp(1, pool.map_or(3, |p| p.current_num_threads()) + 1);
+    // (4096 per part: the scene's 20 000 objects in five parts rather than two)
+    let parts = (n / 4096).clamp(1, pool.map_or(3, |p| p.current_num_threads()) + 1);
     (parts, n.div_ceil(parts))
 }
 

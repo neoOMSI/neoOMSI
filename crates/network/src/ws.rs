@@ -336,10 +336,29 @@ pub fn query(target: &str, with_icon: bool) -> Result<ServerInfo, String> {
             .and_then(|r| r.into_body().read_to_string().map_err(|e| e.to_string()))
         {
             Ok(body) => match ServerInfo::from_json(&body) {
-                Some(i) => {
-                    found = Some((base, i));
-                    break;
+                Some(i) if i.name.trim().is_empty() => {
+                    err = "the answer is not an neoOMSI server's".into()
                 }
+                Some(i) => match json_value(&body, "protocol").and_then(|v| v.trim().parse::<u32>().ok()) {
+                    Some(p) if p == crate::PROTOCOL => match door_check(&base) {
+                        Ok(()) => {
+                            found = Some((base, i));
+                            break;
+                        }
+                        Err(e) => {
+                            if err.is_empty() {
+                                err = e;
+                            }
+                        }
+                    },
+                    Some(p) => {
+                        err = format!(
+                            "the server speaks protocol {p}, this game {} - both need the same version",
+                            crate::PROTOCOL
+                        )
+                    }
+                    None => err = "the server does not say its protocol (an older game?)".into(),
+                },
                 None => err = "the answer is not an neoOMSI server's".into(),
             },
             Err(e) => {
@@ -367,6 +386,22 @@ pub fn query(target: &str, with_icon: bool) -> Result<ServerInfo, String> {
         }
     }
     Ok(info)
+}
+
+/// Whether the server's door for players opens: the WebSocket handshake at `base`.
+fn door_check(base: &str) -> Result<(), String> {
+    let url = ws_url(base).ok_or_else(|| "no address given".to_string())?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let r = tungstenite::connect(&url)
+            .map(|(mut ws, _)| {
+                let _ = ws.close(None);
+            })
+            .map_err(|e| format!("the server answers, but players cannot connect: {e}"));
+        let _ = tx.send(r);
+    });
+    rx.recv_timeout(Duration::from_secs(8))
+        .map_err(|_| "the server answers, but its player door does not open".to_string())?
 }
 
 /// Connections the gateway serves at once (players, status requests, mod streams).
@@ -515,8 +550,8 @@ pub fn local_admin(
         "forwarded",
         "x-real-ip",
     ]
-    .iter()
-    .any(|h| header(head, h).is_some())
+        .iter()
+        .any(|h| header(head, h).is_some())
     {
         return (
             "403 Forbidden",
@@ -692,10 +727,10 @@ fn pump<S: Read + Write>(
                 Ok(Message::Close(_)) => return Ok(()),
                 Ok(_) => last_in = Instant::now(),
                 Err(tungstenite::Error::Io(e))
-                    if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-                {
-                    break;
-                }
+                if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                    {
+                        break;
+                    }
                 Err(tungstenite::Error::ConnectionClosed)
                 | Err(tungstenite::Error::AlreadyClosed) => return Ok(()),
                 Err(e) => return Err(e.to_string()),
@@ -759,10 +794,10 @@ fn pump_tcp<S: Read + Write>(
                 Ok(Message::Close(_)) => return Ok(()),
                 Ok(_) => {}
                 Err(tungstenite::Error::Io(e))
-                    if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-                {
-                    break;
-                }
+                if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                    {
+                        break;
+                    }
                 Err(tungstenite::Error::ConnectionClosed)
                 | Err(tungstenite::Error::AlreadyClosed) => return Ok(()),
                 Err(e) => return Err(e.to_string()),
@@ -822,7 +857,7 @@ pub fn tcp_forward(url: &str) -> std::io::Result<SocketAddr> {
                             }
                             _ => Ok(()),
                         }
-                        .map_err(|e| e.to_string())?;
+                            .map_err(|e| e.to_string())?;
                         pump_tcp(&mut ws, conn, &AtomicBool::new(false))
                     })();
                     if let Err(e) = r {
@@ -873,7 +908,7 @@ impl WsClient {
             }
             _ => Ok(()),
         }
-        .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
         let udp = UdpSocket::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         udp.set_nonblocking(true).map_err(|e| e.to_string())?;
         let local = udp.local_addr().map_err(|e| e.to_string())?;
@@ -1055,7 +1090,7 @@ mod tests {
                 Some(SocketAddr::from(([10, 0, 0, 2], 5000))),
                 &info
             )
-            .0,
+                .0,
             "403 Forbidden"
         );
         assert_eq!(
@@ -1064,7 +1099,7 @@ mod tests {
                 here,
                 &info
             )
-            .0,
+                .0,
             "405 Method Not Allowed"
         );
         assert_eq!(
@@ -1163,7 +1198,7 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+            .unwrap();
         let client = WsClient::connect(&format!("ws://{}/ws", gw.addr)).unwrap();
         let game = UdpSocket::bind("127.0.0.1:0").unwrap();
         game.set_read_timeout(Some(Duration::from_secs(3))).unwrap();

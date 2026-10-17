@@ -1,0 +1,1733 @@
+{
+  "splash": {
+    "compile-shaders": "Zkompilovat stíny..",
+    "loading": "Načítání..",
+    "load-map": "Načítám {map}.."
+  },
+  "ingame": {
+    "navigator": {
+      "kmh": "km/h",
+      "off_route": "Mimo trasu",
+      "rerouting": "Přepočítávám trasu",
+      "recalculated": "Trasa přepočítána",
+      "jam": "Dopravní zácpa",
+      "slow": "Pomalý provoz",
+      "map": "Mapa",
+      "last_stop": "Konečná zastávka",
+      "on_time": "na čas",
+      "days": {
+        "mon": "Po",
+        "tue": "Út",
+        "wed": "St",
+        "thu": "Čt",
+        "fri": "Pá",
+        "sat": "So",
+        "sun": "Ne"
+      }
+    },
+    "infobar": {
+      "outside": "Ext.",
+      "inside": "Int.",
+      "fuel": "Palivo",
+      "next_stop": "Příští zastávka",
+      "passenger": "Cestující",
+      "passengers": "Cestující"
+    }
+  },
+  "pause": {
+    "entry": {
+      "admin": "Administrace",
+      "continue": "Pokračovat",
+      "quit_server": "Opustit server",
+      "report_current": "Aktuální zhodnocení jízdy",
+      "report_last": "Zhodnocení poslední jízdy",
+      "report_save": "Uložit jako text",
+      "copycode": "Kopírovat kód serveru",
+      "duty": "Linka a trasa",
+      "end-duty": "Ukončit trasu",
+      "load": "Načíst rychlé uložení",
+      "map": "Mapa",
+      "saveslot": "Uložit (Nový slot)",
+      "screenshot": "Režim snímku obrazovky",
+      "tobus": "Zpět do mého autobusu",
+      "options": "Nastavení",
+      "mainmenu": "Hlavní menu",
+      "quit": "Ukončit",
+      "resume": "Pokračovat",
+      "save": "Uložit",
+      "vehicle": "Vozidlo",
+      "world": "Svět"
+    },
+    "options": {
+      "button": {
+        "open": "Otevřít",
+        "reset": "Obnovit"
+      },
+      "camera": {
+        "alt_view": {
+          "desc": "Zapnuto: pravé tlačítko myši otáčí pohledem a Shift+PTM přibližuje. Vypnuto: Jako v OMSI, pravé tlačítko myši přibližuje a prostřední otáčí pohledem",
+          "name": "Pravé tlačítko myši otáčí pohledem"
+        },
+        "cam_smooth": {
+          "desc": "Povoluje plynulý přechod mezi kamerami",
+          "name": "Plynulé změny pohledu"
+        },
+        "camcoll": {
+          "desc": "Venkovní kamera nemůže procházet objekty",
+          "name": "Kolize kamery"
+        },
+        "driver": {
+          "desc": "Zobrazí řidiče z venkovního pohledu a v zrcátkách",
+          "name": "Zobrazit řidiče (venkovní pohledy)"
+        },
+        "fov": {
+          "desc": "Úhel pohledu kamery uvnitř vozidla",
+          "name": "Zorné pole"
+        },
+        "hands_in_cab": {
+          "desc": "Zobrazí ruce řidiče na volantu (pouze v pohledu řidiče)",
+          "name": "Řidičské ruce v pohledu řidiče"
+        },
+        "head": {
+          "desc": "Pohled se pohybuje se zrychlením vozidla",
+          "name": "Pohyb hlavy"
+        },
+        "head_pitch": {
+          "desc": "Nastaví výchozí úhel pohledu řidiče nahoru nebo dolů",
+          "name": "Náklon hlavy"
+        },
+        "head_pitch_reset": {
+          "desc": "Obnoví úhel pohledu řidiče na 0°",
+          "name": "Obnovit náklon hlavy"
+        },
+        "headtrack": {
+          "name": "Sledování hlavy"
+        },
+        "look_sens": {
+          "desc": "Jak rychle se pohled otočí, když se rozhlédnete myší (100% je rychlost OMSI)",
+          "name": "Citlivost pohledu myší"
+        },
+        "seat_0": {
+          "desc": "Upravit polohu sedadla řidiče ze strany na stranu",
+          "name": "Levé a pravé sedadlo"
+        },
+        "seat_1": {
+          "desc": "Upravit polohu sedadla řidiče dopředu a dozadu",
+          "name": "Sedadlo dopředu a dozadu"
+        },
+        "seat_2": {
+          "desc": "Upravit výšku sedadla řidiče",
+          "name": "Výška sedadla"
+        },
+        "seat_reset": {
+          "desc": "Posune sedadlo řidiče do výchozí pozice vozidla",
+          "name": "Resetovat polohu sedadla"
+        },
+        "steer_look": {
+          "desc": "Kamera se otáčí s volantem (pouze v pohledu řidiče)",
+          "name": "Kamera se otáčí se zatáčením"
+        },
+        "steer_look_angle": {
+          "desc": "Jak daleko se pohled otočí, když se řízení plně otočí",
+          "name": "Úhel pohledu řízení"
+        },
+        "steer_look_response": {
+          "desc": "Jak rychle pohled následuje řízení",
+          "name": "Odezva pohledu řízení"
+        },
+        "head_tracking_port": {
+          "name": "Port sledování pohybu hlavy",
+          "desc": "UDP port, na který opentrack posílá data"
+        },
+        "head_tracking_invert": {
+          "name": "Invertovat sledování pohybu hlavy",
+          "desc": "Které osy sledování pohybu hlavy jsou invertovány"
+        },
+        "free_look": {
+          "desc": "Nastavit volný pohled, křížek a názvy ovládání"
+        }
+      },
+      "controls": {
+        "drive_keys": {
+          "desc": "Kterými klávesami ovládáte vozidlo",
+          "name": "Klávesy pro řízení"
+        },
+        "ff": {
+          "desc": "Umožňuje zpětnou vazbu pro volanty a vibrace pro ovladače",
+          "name": "Zpětná vazba a vibrace"
+        },
+        "ff_invert": {
+          "desc": "Používá se pro volanty, které nemají uložený směr zpětné vazby",
+          "name": "Invertovat zpětnou vazbu jako výchozí"
+        },
+        "keybinds": {
+          "desc": "Nastavit klíče pro autobus a hru",
+          "name": "Klávesové zkratky"
+        },
+        "mouse": {
+          "desc": "Řízení a ovládání pedálů se ovládá myší",
+          "name": "Řízení myší"
+        },
+        "mouse_right": {
+          "desc": "Zapnuto (jako v OMSI): kliknutí na pravé tlačítko myši zastaví řízení myší. Vypnuto: pravé tlačítko pouze otočí pohled",
+          "name": "Pravým kliknutím zastavíte řízení myši"
+        },
+        "mouse_sens": {
+          "desc": "Jak daleko se volant otočí pro daný pohyb myši",
+          "name": "Citlivost řízení myši"
+        },
+        "pads": {
+          "desc": "Nastavte ovladače, volanty a pedály",
+          "name": "Ovladače"
+        },
+        "pedal_b": {
+          "desc": "Jak silně vstup pedálu ovlivňuje brzdu",
+          "name": "Pevnost brzdového pedálu"
+        },
+        "pedal_t": {
+          "desc": "Jak silně vstup pedálu ovlivňuje plyn",
+          "name": "Pevnost pedálu plynu"
+        },
+        "steer_center": {
+          "desc": "Malé odchylky páky od střední polohy se počítají jako jízda dopředu",
+          "name": "Mrtvá oblast páčky ovladače"
+        },
+        "stick_sens": {
+          "desc": "Jak daleko malý pohyb páky otočí volant; tlačení páky na konec, stále dává plný pohled",
+          "name": "Citlivost řízení na ovladači"
+        },
+        "wheel_lock": {
+          "desc": "Jak daleko se volant otočí, když kola vozidla dosáhnou plného zámku",
+          "name": "Úhel volantu při plném zámku"
+        },
+        "wheel_range": {
+          "desc": "Celkové otočení volantu od jednoho konce zámku do druhého",
+          "name": "Rozsah otáčení volantu"
+        }
+      },
+      "display": {
+        "fps": {
+          "desc": "Zobrazí snímky za sekundu v pravém horním rohu",
+          "name": "Zobrazit FPS"
+        },
+        "fullscreen": {
+          "desc": "Přepíná okno mezi oknem a celoobrazovkovým režimem",
+          "name": "Celá obrazovka"
+        },
+        "max_fps": {
+          "desc": "Omezuje počet snímků za sekundu",
+          "name": "Omezení snímků"
+        },
+        "vsync": {
+          "desc": "Synchronizuje snímky s obnovovací frekvencí obrazovky",
+          "name": "Vertikální synchronizace"
+        },
+        "window_mode": {
+          "name": "Režim okna",
+          "desc": "Jak hra vyplňuje obrazovku"
+        },
+        "triple_screen": {
+          "name": "Projekce na tři monitory",
+          "desc": "Kalibruje zobrazení pro tři monitory v okolí vaší pozice řidiče"
+        },
+        "triple_screen_span": {
+          "name": "Rozpětí tří monitorů při startu",
+          "desc": "Otevře režim v okně bez okrajů přes tři zarovnané monitory, pokud je k dispozici"
+        },
+        "triple_screen_hud": {
+          "name": "HUD na středním monitoru",
+          "desc": "Udržuje herní rozhraní na prostředním monitoru"
+        },
+        "triple_screen_width_mm": {
+          "name": "Viditelná šířka jedné obrazovky",
+          "desc": "Fyzická šířka viditelného prostoru každého monitoru"
+        },
+        "triple_screen_distance_mm": {
+          "name": "Vzdálenost zobrazení",
+          "desc": "Vzdálenost od očí ke prostřednímu monitoru"
+        },
+        "triple_screen_bezel_mm": {
+          "name": "Bezelová mezera nebo překrytí",
+          "desc": "Pozitivní hodnoty ponechávají prostor pro rámečky monitorů; záporné hodnoty překrývají sousední pohledy"
+        },
+        "triple_screen_left_angle": {
+          "name": "Úhel levé obrazovky směrem dovnitř",
+          "desc": "Úhel levého monitoru k Vám"
+        },
+        "triple_screen_right_angle": {
+          "name": "Úhel na pravé obrazovce směrem dovnitř",
+          "desc": "Úhel pravého monitoru k Vám"
+        },
+        "triple_screen_eye_height_mm": {
+          "name": "Výška oka vzhledem ke středu obrazovky",
+          "desc": "Svislá poloha očí vzhledem ke středu prostřední obrazovky"
+        }
+      },
+      "driving": {
+        "auto_clutch": {
+          "desc": "Automaticky ovládá spojku",
+          "name": "Automatická spojka"
+        },
+        "auto_shift": {
+          "desc": "Automaticky přeřazuje rychlosti manuální převodovky na základě rychlosti vozidla",
+          "name": "Automatizovaná ruční převodovka"
+        },
+        "blinker_cancel": {
+          "desc": "Zapnuto: Autobusový skript vypne blinkr po projetí zatáčky. Vypnuto: blinkr zůstane zapnutý, dokud jej nevypneš",
+          "name": "Blinkry se ruší samy"
+        },
+        "brake_hold": {
+          "desc": "Vozidlo udržuje sešlápnutou brzdu, dokud nešlápnete na plyn",
+          "name": "Klávesnicová brzda zůstane zabrzděna"
+        },
+        "momentary_gears": {
+          "name": "Momentální převodová tlačítka",
+          "desc": "Podržte stupňové tlačítko pro setrvání v tomto rychlostním stupni; uvolněním se vrátí do neutrálu"
+        },
+        "old_steering": {
+          "desc": "Volant zůstane tam, kde ho nechaly klávesy; musíte točit volantem zpět",
+          "name": "Klasické řízení klávesnicí"
+        },
+        "red_steer_spd": {
+          "desc": "Řízení klávesami je pomalejší při vyšších rychlostech (V OMSI zajišťuje redSteerSpd)",
+          "name": "Řízení klávesnicí na základě rychlosti"
+        },
+        "steering_linear": {
+          "desc": "Otáčení na klávesnici konstantním tempem, jako v OMSI",
+          "name": "Lineární řízení klávesnicí"
+        }
+      },
+      "fmt": {
+        "default": "Výchozí"
+      },
+      "free_look": {
+        "crosshair": {
+          "desc": "Zobrazí malý kruh uprostřed obrazovky (ne v pohledech F2 a F3)",
+          "name": "Zaměřovač"
+        },
+        "free_look": {
+          "desc": "Myší otáčite pohled, středem obrazovky ovládáte tlačítka; podržením levého Altu zobrazíte kurzor a přerušíte otáčení pohledu",
+          "name": "Volný pohled"
+        },
+        "tooltips": {
+          "desc": "Po najetí myší zobrazí název ovládání",
+          "name": "Názvy ovládání"
+        }
+      },
+      "gameplay": {
+        "ai_max_parked": {
+          "name": "Zaparkovaná vozidla"
+        },
+        "ai_max_scheduled": {
+          "name": "Plánovaný provoz"
+        },
+        "ai_unsched_factor": {
+          "name": "Neplánovaný provoz"
+        },
+        "auto_ibis": {
+          "desc": "Vybraná trasa je zadána do IBIS automaticky",
+          "name": "Automatický IBIS"
+        },
+        "boarding": {
+          "desc": "Jak cestující dostávají své lístky",
+          "name": "Nastupování"
+        },
+        "coll_objects": {
+          "desc": "Povolí nebo zakáže kolize s objekty, jako jsou budovy a pouliční světla",
+          "name": "Kolize s objekty"
+        },
+        "coll_vehicles": {
+          "desc": "Povolí nebo zakáže kolize s jinými vozidly",
+          "name": "Kolize s vozidly"
+        },
+        "collision_pedestrians": {
+          "desc": "Povolí nebo zakáže přejíždění chodců",
+          "name": "Kolize s chodci"
+        },
+        "exact_fare": {
+          "desc": "Cestující platí přesnou částku, takže řidič nevrací zpátky",
+          "name": "Cestující platí přesnou částku"
+        },
+        "maintenance": {
+          "name": "Údržba"
+        },
+        "pax_ik": {
+          "desc": "Používá procedurální animace namísto OMSI 2 animací",
+          "name": "Procedurální animace cestujících"
+        },
+        "pax_models": {
+          "desc": "Které modely klientů jsou použity; RealisticPax nabývá účinnosti při příštím spuštění hry",
+          "name": "Modely pro cestující"
+        },
+        "pax_motion": {
+          "desc": "Přirozený pohyb nebo porovnání s OMSI 2",
+          "name": "Pohyb cestujících"
+        },
+        "pax_prefer_seats": {
+          "desc": "Cestující si sednou při nástupu a zůstanou stát až pokud jsou všechna sedadla obsazená",
+          "name": "Cestující dávají přednost volným sedadlům"
+        },
+        "pax_pack": {
+          "download": "Stáhnout",
+          "downloading": "Stahování. Použijí se od příštího začátku hry",
+          "installed": "Nainstalováno",
+          "installing": "Instalace. Použijí se od příštího začátku hry",
+          "missing": "Zatím není staženo; je potřeba pro \"Realistické\" modely cestujících",
+          "name": "Realistické modely cestujících",
+          "next_start": "Aktuální. Hra spuštěná před stažením má stále staré cestující",
+          "outdated": "Nová verze je dostupná",
+          "retry": "Zkusit znovu",
+          "update": "Aktualizovat"
+        }
+      },
+      "graphics": {
+        "anisotropy": {
+          "name": "Anizotropní filtrování"
+        },
+        "atmosphere_brightness": {
+          "desc": "Jak jasná je noc",
+          "name": "Jas atmosféry"
+        },
+        "clouds": {
+          "name": "Mraky"
+        },
+        "detail_textures": {
+          "desc": "Přidá jemné detaily k zemi a velkým zdím, když jste blízko",
+          "name": "Detailní texturování nablízko"
+        },
+        "gfxprofile": {
+          "desc": "Aplikuje grafický profil, který byl uložen ve spouštěči",
+          "name": "Načíst grafický profil"
+        },
+        "graphics": {
+          "name": "Grafika"
+        },
+        "led_glow": {
+          "desc": "Jak silně září tečky cíle LED",
+          "name": "LED záře"
+        },
+        "led_mips": {
+          "desc": "Jak silné tečky cíle LED zobrazují rozostření se vzdáleností; 0 udržuje každý bod ostrý",
+          "name": "Měkkost LED tečky"
+        },
+        "map_detail": {
+          "name": "Detail mapy"
+        },
+        "max_obj_dist": {
+          "name": "Vzdálenost objektu"
+        },
+        "min_obj_size": {
+          "name": "Malé objekty"
+        },
+        "mirror_size": {
+          "name": "Zrcátka"
+        },
+        "msaa": {
+          "name": "Vyhlazování (MSAA)"
+        },
+        "nightmap_glow": {
+          "desc": "Jak silně rozsvícená tlačítka, lampy a okna svítí v noci",
+          "name": "Noční textura záře"
+        },
+        "preset": {
+          "desc": "Nastaví většinu možností grafiky najednou",
+          "name": "Předvolby kvality"
+        },
+        "reflections": {
+          "name": "Mapy odrazů (barvy, chrom, sklo)"
+        },
+        "render_scale": {
+          "name": "Měřítko vykreslování"
+        },
+        "shadow_casters": {
+          "name": "Vržené stíny z"
+        },
+        "shadow_size": {
+          "name": "Rozlišení stínů mapy"
+        },
+        "shadows": {
+          "desc": "Povolí nebo zakáže stíny",
+          "name": "Sluneční stíny"
+        },
+        "ssao": {
+          "name": "Ambientní okluze"
+        },
+        "texture_compression": {
+          "name": "Při načítání komprimovat textury"
+        },
+        "texture_memory": {
+          "name": "Paměť pro textury"
+        },
+        "view_distance": {
+          "name": "Vzdálenost vykreslování"
+        },
+        "graphics_api": {
+          "name": "API grafiky",
+          "desc": "Které grafické API je použito; nabývá účinku při příštím spuštění hry"
+        },
+        "post_aa": {
+          "name": "Vyhlazování hran",
+          "desc": "Uhlazuje hrany po výkresu"
+        },
+        "shadow_blobs": {
+          "name": "Stínové skvrny",
+          "desc": "Zobrazí jednoduché tmavé skvrny pod objekty, které samy o sobě nemají žádný stín"
+        },
+        "mirror_refresh": {
+          "name": "Obnovování zrcátek",
+          "desc": "Jak často se zrcátka překreslují"
+        }
+      },
+      "group": {
+        "camera": "Kamera",
+        "controls": "Ovládání",
+        "display": "Displej",
+        "driving": "Řízení",
+        "free_look": "Volný pohled",
+        "gameplay": "Hra",
+        "graphics": "Grafika",
+        "info": "Informační lišta",
+        "interface": "Rozhraní",
+        "keybinds": "Klávesové zkratky",
+        "map": "Mapa",
+        "mods": "Módy",
+        "sound": "Zvuk",
+        "game": "Hra & aktualizace",
+        "vr": "VR",
+        "head_tracking": "Sledování hlavy",
+        "general": "Obecné",
+        "voice": "Hlasová komunikace"
+      },
+      "info": {
+        "time": {
+          "desc": "Zobrazí čas simulace",
+          "name": "Čas"
+        },
+        "speed": {
+          "desc": "Zobrazí aktuální rychlost",
+          "name": "Rychlost"
+        },
+        "temp": {
+          "desc": "Zobrazí vnější a vnitřní teplotu",
+          "name": "Teplota"
+        },
+        "fuel": {
+          "desc": "Zobrazí úroveň paliva",
+          "name": "Palivo"
+        },
+        "pax": {
+          "desc": "Zobrazí počet cestujících na palubě",
+          "name": "Cestující"
+        },
+        "line": {
+          "desc": "Zobrazí linku a její cíl",
+          "name": "Linka a cíl"
+        },
+        "next": {
+          "desc": "Zobrazí název příští zastávky",
+          "name": "Příští zastávka"
+        },
+        "delay": {
+          "desc": "Zobrazí odchylku od jízdního řádu",
+          "name": "Zpoždění"
+        }
+      },
+      "mods": {
+        "folder": "Složka",
+        "install": {
+          "button": "Vybrat",
+          "desc": "Vyberte archiv pro instalaci jako mod.\n\nPodporované formáty:\n- Zip\n- Rar\n- 7Zip",
+          "name": "Nainstalovat mod z archivu",
+          "title": "Vyberte mod z archivu pro instalaci"
+        },
+        "list": {
+          "desc": "Všechny nahrané mody a zda chybí data",
+          "name": "Aktivní modifikace"
+        },
+        "none": "Žádné mody nejsou aktivní",
+        "none_desc": "Nebyly nalezeny žádné mody. Vezměte prosím na vědomí, že obsah složky OMSI 2 se nepočítá jako mody.\n\nMody můžete nainstalovat ve složce Mody jako archivy nebo složky.",
+        "open": {
+          "button": "Otevřít",
+          "desc": "Otevře složku modifikací",
+          "name": "Složka s mody"
+        },
+        "status": {
+          "empty": "Chybějící data",
+          "empty_desc": "Nebyl nalezen žádný obsah OMSI (např. vozidla nebo mapy)",
+          "ok": "OK",
+          "unreadable": "Chybějící data",
+          "unreadable_desc": "Složku nelze přečíst",
+          "zip_error": "Chybějící data",
+          "zip_error_desc": "Nelze přečíst ZIP archiv"
+        },
+        "zip": "ZIP"
+      },
+      "game": {
+        "root": {
+          "button": "Změnit",
+          "desc": "Složka s Omsi.exe, mapami a vozidly v ní",
+          "name": "Instalace OMSI 2",
+          "title": "Složka OMSI 2 (s mapou a vozidly)",
+          "exe_title": "Vyberte Omsi.exe z vaší instalace OMSI 2",
+          "incomplete": "{path} není kompletní instalace OMSI 2.\n\nChybí: {missing}"
+        },
+        "root_none": "Zatím nevybráno",
+        "root_restart": "se projeví po restartu",
+        "update_auto": {
+          "desc": "Nainstaluje novou verzi, jakmile bude nalezena",
+          "name": "Instalovat aktualizace automaticky"
+        },
+        "update_available": "{version} je k dispozici",
+        "update_check": {
+          "desc": "Vyhledá novou verzi, když hra začne",
+          "name": "Automaticky kontrolovat aktualizace"
+        },
+        "update_checking": "Hledání aktualizace...",
+        "update_current": "Aktuální verze: {version}",
+        "update_failed": "Poslední kontrola selhala",
+        "update_latest": "{version} je nejnovější verze",
+        "update_now": {
+          "button": "Zkontrolovat nyní",
+          "desc": "Vyhledá novou verzi neoOMSI",
+          "name": "Zkontrolovat aktualizace"
+        }
+      },
+      "interface": {
+        "chat": {
+          "desc": "Zobrazí chat z LAN relace",
+          "name": "Chat v online hře"
+        },
+        "info_bar": {
+          "desc": "Zobrazí čas, rychlost a další informace v horní části obrazovky",
+          "name": "Informační panel"
+        },
+        "language": {
+          "desc": "Jazyk herního rozhraní",
+          "name": "Jazyk"
+        },
+        "name_tags": {
+          "desc": "Zobrazí jména ostatních hráčů nad jejich autobusy",
+          "name": "Názvy hráčů nad autobusy"
+        },
+        "nav_arrows": {
+          "desc": "Zobrazí OMSI 2 šipky na silnici",
+          "name": "Šipky trasy (jako OMSI 2)"
+        },
+        "notes": {
+          "desc": "Zobrazí zprávy jako proč vozidlo nemůže jet, zbývající peníze na vrácení a výsledek jízdy",
+          "name": "Poznámky v levém horním rohu"
+        },
+        "reset": {
+          "desc": "Resetuje všechna nastavení do výchozích hodnot, kromě jazyka, nastavení kláves a složky s hrou",
+          "name": "Obnovit všechna nastavení..."
+        },
+        "timetable_win": {
+          "desc": "Zobrazí seznam všech zastávek (pouze když je aktivní trasa)",
+          "name": "Okno s rozvrhem jízdního řádu"
+        },
+        "tooltips": {
+          "desc": "Zobrazí název ovládání pod kurzorem",
+          "name": "Názvy ovládání"
+        },
+        "ui_opacity": {
+          "desc": "Jak neprůhledné jsou pozadí rozhraní",
+          "name": "Neprůhlednost rozhraní"
+        },
+        "ui_scale": {
+          "desc": "Velikost textů, menu, jízdního řádu a navigace",
+          "name": "Velikost herního rozhraní"
+        },
+        "ui_scale_window": {
+          "desc": "Rozhraní roste s oknem, když je vyšší než 1080p",
+          "name": "Rozhraní roste s oknem"
+        },
+        "units": {
+          "desc": "Zobrazuje rychlost, vzdálenost a teplotu v metrických nebo imperiálních jednotkách",
+          "name": "Jednotky"
+        },
+        "discord_status": {
+          "name": "Discord status",
+          "desc": "Zobrazí na Discordu, co hraješ"
+        },
+        "navigator": {
+          "desc": "Konfigurace nastavení navigace"
+        }
+      },
+      "later": "Změny se projeví až po dalším spuštění hry",
+      "map": {
+        "nav_ai": {
+          "desc": "Zobrazí nebo skryje ostatní (AI) vozidla na minimapě a velké mapě",
+          "name": "Vozidla AI"
+        },
+        "nav_stoplist": {
+          "desc": "Zobrazí další zastávku pod mapou",
+          "name": "Seznam zastávek"
+        },
+        "nav_stops_ext": {
+          "desc": "Zobrazí více zastávek pod další zastávkou namísto pouze základních informací",
+          "name": "Rozšířený seznam zastávek"
+        },
+        "nav_topbar": {
+          "desc": "Zobrazí rychlost, omezení rychlosti a čas v horní části mapy",
+          "name": "Horní panel"
+        },
+        "nav_turn": {
+          "desc": "Zobrazí další odbočení v horní části mapy",
+          "name": "Instrukce k odbočení"
+        },
+        "navigator": {
+          "desc": "Povolí nebo zakáže minimapu",
+          "name": "Minimapa"
+        },
+        "navigator_corner": {
+          "name": "Roh minimapy"
+        }
+      },
+      "sound": {
+        "doppler": {
+          "desc": "Přijíždějící vozidla jsou hlasitější, odjíždějící tišší",
+          "name": "Dopplerův efekt"
+        },
+        "pax_voices": {
+          "desc": "Cestující mluví a vydávají zvuky",
+          "name": "Hlasy cestujících"
+        },
+        "vol_ai": {
+          "desc": "Jak hlasitá jsou ostatní vozidla",
+          "name": "Provoz"
+        },
+        "vol_scenery": {
+          "desc": "Jak hlasité zvuky scenérie jsou",
+          "name": "Okolí"
+        },
+        "volume": {
+          "desc": "Jak je hra hlasitá",
+          "name": "Hlasitost"
+        }
+      },
+      "vr": {
+        "navigator": {
+          "desc": "Poloha navigace (tento autobus)",
+          "name": "Navigace"
+        },
+        "vr": {
+          "name": "Použít OpenXR headset"
+        },
+        "vr_desktop_mirror": {
+          "name": "Zobrazit obrázek sluchátek na monitoru"
+        },
+        "vr_head_smoothing_ms": {
+          "name": "Vyhlazování sledování hlavy"
+        },
+        "vr_mirror_rate": {
+          "name": "Obnovování zrcátek autobusu"
+        },
+        "vr_nav_edit": {
+          "desc": "Umístěte navigaci pomocí myši (tento autobus)",
+          "name": "Pohyb a otáčení pomocí myši..."
+        },
+        "vr_nav_opacity": {
+          "desc": "Jak neprůhledné je zobrazení navigace (tento autobus)",
+          "name": "Průhlednost navigace"
+        },
+        "vr_nav_reset": {
+          "desc": "Vrátí navigaci zpět na výchozí pozici (tento autobus)",
+          "name": "Obnovit pozici navigace"
+        },
+        "vr_nav_roll": {
+          "desc": "Natočení navigace (tento autobus)",
+          "name": "Natočení displeje"
+        },
+        "vr_nav_tilt": {
+          "desc": "Naklopení navigace (tento autobus)",
+          "name": "Naklopení displeje"
+        },
+        "vr_nav_width": {
+          "desc": "Šířka navigace (tento autobus)",
+          "name": "Šířka displeje"
+        },
+        "vr_nav_x": {
+          "desc": "Přesune navigaci doleva nebo doprava (tento autobus)",
+          "name": "Pozice vlevo / vpravo"
+        },
+        "vr_nav_y": {
+          "desc": "Posune navigaci dopředu nebo dozadu (tento autobus)",
+          "name": "Pozice vpřed / zpět"
+        },
+        "vr_nav_yaw": {
+          "desc": "Horizontální otáčení navigace (tento autobus)",
+          "name": "Rotace displeje"
+        },
+        "vr_nav_z": {
+          "desc": "Přesune navigaci nahoru nebo dolů (tento autobus)",
+          "name": "Pozice nahoru / dolů"
+        },
+        "vr_scale": {
+          "name": "Rozlišení na oko"
+        }
+      },
+      "value": {
+        "boarding": {
+          "auto": "Zaplatit a vzít si jízdenku",
+          "pay": "Řidič prodává lístky",
+          "walk": "Cestující pouze nastoupí"
+        },
+        "pax_motion": {
+          "natural": "Přirozený",
+          "omsi": "OMSI 2"
+        },
+        "maintenance": {
+          "0": "Nekonečná (bez opotřebení)",
+          "1": "Velmi špatná",
+          "2": "Špatné",
+          "3": "Normální",
+          "4": "Dobrá"
+        },
+        "ai_max_scheduled": {
+          "0": "Vše",
+          "10": "Nejvýše 10",
+          "25": "Nejvýše 25",
+          "50": "Nejvýše 50"
+        },
+        "ai_max_parked": {
+          "-1": "Žádné",
+          "0": "Každé místo",
+          "35": "Nejvýše 35",
+          "100": "Nejvýše 100",
+          "250": "Nejvýše 250"
+        },
+        "pax_models": {
+          "omsi": "OMSI 2",
+          "realistic": "Realistické"
+        },
+        "shadow_casters": {
+          "all": "Všechny pevné sítě",
+          "omsi": "OMSI 2"
+        },
+        "map_detail": {
+          "-1": "OMSI nastavení",
+          "0": "Nízké",
+          "1": "Normální",
+          "2": "Plné",
+          "255": "Všechny autorizované úrovně"
+        },
+        "view_distance": {
+          "0": "Výchozí (900 m)",
+          "600": "600 m - nejrychlejší"
+        },
+        "max_obj_dist": {
+          "-1": "Automatické"
+        },
+        "min_obj_size": {
+          "0_005": "Všechny",
+          "0_013": "Normální",
+          "0_02": "Méně (rychlejší)",
+          "0_03": "Málo (nejrychlejší)"
+        },
+        "texture_memory": {
+          "0": "Automaticky"
+        },
+        "max_fps": {
+          "0": "Obnovovací frekvence obrazovky",
+          "1000": "Neomezené"
+        },
+        "pax_voices": {
+          "all": "Pozdrav a jízdenky",
+          "tickets": "Cestující pouze požádá o jízdenku",
+          "off": "Ticho"
+        },
+        "navigator_corner": {
+          "top-left": "Vlevo nahoře",
+          "top-right": "Vpravo nahoře",
+          "bottom-left": "Vlevo dole",
+          "bottom-right": "Vpravo dole"
+        },
+        "window_mode": {
+          "windowed": "V okně",
+          "borderless": "V okně bez okrajů",
+          "fullscreen": "Celá obrazovka"
+        },
+        "post_aa": {
+          "fxaa": "FXAA",
+          "off": "Vypnuto"
+        },
+        "mirror_refresh": {
+          "eco": "Ekonomické",
+          "full": "Plné"
+        },
+        "graphics_api": {
+          "auto": "Automatické",
+          "vulkan": "Vulkan",
+          "dx12": "DirectX 12"
+        },
+        "head_tracking_invert": {
+          "none": "Žádné",
+          "yaw": "Vybočení",
+          "pitch": "Klopení",
+          "roll": "Klonění",
+          "yaw pitch": "Vybočení a klopení",
+          "yaw roll": "Vybočení a klonění",
+          "pitch roll": "Klopení a klonění",
+          "yaw pitch roll": "Vybočení klopení a klonění"
+        },
+        "voice_mode": {
+          "ptt": "Push-to-talk (držte klávesu)",
+          "auto": "Aktivování hlasem"
+        }
+      },
+      "voice": {
+        "voice": {
+          "name": "Hlasová komunikace",
+          "desc": "Mluvte s hráči poblíž vás v relaci pro více hráčů"
+        },
+        "voice_mode": {
+          "name": "Mluvení",
+          "desc": "Podrž klávesu push-to-talk (viz klávesové nastavení; pomocí Shift: přes rádio), nebo kdykoli mluvíš"
+        },
+        "mic": {
+          "name": "Mikrofon",
+          "desc": "Mluvení: panel ukazuje jak hlasitý jsi, řádek se rozsvítí, pokud tě ostatní slyší",
+          "default": "Výchozí systémové nastavení",
+          "off": "Zapněte hlasový chat a vyzkoušejte mikrofon"
+        },
+        "mic_gain": {
+          "name": "Hlasitost mikrofonu",
+          "desc": "Jak hlasitě vás ostatní slyší"
+        },
+        "voice_sensitivity": {
+          "name": "Aktivování hlasem",
+          "desc": "Vyšší: mikrofon zaznamená tišší řeč"
+        },
+        "voice_denoise": {
+          "name": "Potlačení hluku",
+          "desc": "Filtruje motor, vítr a klávesnici z mikrofonu"
+        },
+        "vol_voice": {
+          "name": "Ostatní hráči",
+          "desc": "Jak hlasití jsou ostatní hráči"
+        },
+        "pvol": {
+          "name": "Hráč",
+          "desc": "Hlas tohoto hráče (0: ztlumen)",
+          "muted": "ztlumen"
+        }
+      }
+    },
+    "page": {
+      "admin": {
+        "head": "Administrace",
+        "nav": "Admin",
+        "note": "Spravovat hráče, hodiny, počasí a provoz této relace.",
+        "run": "Spustit"
+      },
+      "map": {
+        "nav": "Mapa",
+        "tour": "Linka a trasa"
+      },
+      "options": {
+        "head": "Nastavení",
+        "nav": "Nastavení",
+        "note": "Změnit nastavení hry."
+      },
+      "vehicle": {
+        "choose": "Vybrat",
+        "empty": "Nejsou k dispozici žádná vozidla.",
+        "head": "Vozidlo",
+        "nav": "Vozidlo",
+        "note": "Umístění, přepnutí a servis Vašich vozidel.",
+        "group": {
+          "fleet": {
+            "title": "Vozidla"
+          },
+          "display": {
+            "title": "Displej"
+          },
+          "service": {
+            "title": "Servis"
+          },
+          "driver": {
+            "title": "Řidič"
+          },
+          "teleport": {
+            "title": "Teleport"
+          }
+        },
+        "action": {
+          "switch": {
+            "name": "Jezdit s dalším vozidlem",
+            "desc": "Vezměte jiné vozidlo stojící ve světě",
+            "button": "Přepnout"
+          },
+          "place": {
+            "name": "Umístit vozidlo",
+            "desc": "Umístěte vozidlo dle Vašeho výběru do světa"
+          },
+          "swap": {
+            "name": "Vyměnit za jiné vozidlo",
+            "desc": "Vlož do tohoto místa jiné vozidlo a řiď ho",
+            "button": "Vyměnit"
+          },
+          "couple": {
+            "name": "Spojit",
+            "desc": "Spojí vozidlo s vozidlem před nebo za autobusem",
+            "button": "Spojit"
+          },
+          "uncouple": {
+            "name": "Rozpojit",
+            "desc": "Rozpojí spojená vozidla",
+            "button": "Rozpojit"
+          },
+          "remove": {
+            "name": "Odstranit toto vozidlo",
+            "desc": "Odstraní aktuální vozidlo",
+            "button": "Odstranit"
+          },
+          "clearplaced": {
+            "name": "Odstranit umístěná vozidla",
+            "desc": "Odstraní všechna vozidla, která jste umístili do světa",
+            "button": "Odstranit"
+          },
+          "dest": {
+            "name": "Zobrazení cíle",
+            "desc": "Změnit aktuální cíl"
+          },
+          "hof": {
+            "name": "Soubor depa (HOF)",
+            "desc": "Změnit aktuální soubor depa (použitý pro jízdní řád)"
+          },
+          "number": {
+            "name": "Evidenční číslo",
+            "desc": "Změnit evidenční číslo vozidla"
+          },
+          "refuel": {
+            "name": "Dotankovat",
+            "desc": "Doplní nádrž aktuálního vozidla",
+            "button": "Dotankovat"
+          },
+          "wash": {
+            "name": "Umýt",
+            "desc": "Umyje aktuální vozidlo",
+            "button": "Umýt"
+          },
+          "repair": {
+            "name": "Opravit",
+            "desc": "Opraví aktuální vozidlo",
+            "button": "Opravit"
+          },
+          "reset_vehicle": {
+            "name": "Postavit vozidlo na kola",
+            "desc": "Postaví vozidlo zpět na kola",
+            "button": "Obnovit"
+          },
+          "reload": {
+            "name": "Znovu načíst toto vozidlo",
+            "desc": "Znovu načte soubory vozidla (.bus, model a konfigurace zvuku, skripty) a umožní řídit vozidlo",
+            "button": "Obnovit"
+          },
+          "driver": {
+            "name": "Řidič",
+            "desc": "Změnit aktuální profil řidiče"
+          },
+          "getout": {
+            "name": "Vystoupit z vozidla",
+            "desc": "Opustit vozidlo a prozkoumat svět pěšky",
+            "button": "Vystoupit"
+          },
+          "teleport": {
+            "name": "Teleportovat na mapě",
+            "desc": "Teleportuje tě do libovolné polohy na mapě",
+            "button": "Vybrat"
+          },
+          "tplist": {
+            "name": "Teleportovat na počáteční bod",
+            "desc": "Teleportuje tě na počáteční bod na mapě"
+          }
+        }
+      },
+      "world": {
+        "head": "Svět",
+        "nav": "Svět",
+        "note": "Změnit čas, počasí a další nastavení světa.",
+        "off": "Vypnuto",
+        "on": "Zapnuto"
+      },
+      "text": {
+        "enables_disables_the_minimap": "Povolí nebo zakáže minimapu",
+        "boarding_at_the_rear_doors": "Nástup zadními dveřmi",
+        "passengers_who_need_no_ticket_from_the_driver_also_get_on_at_the_rear_doors": "Cestující, kteří nepotřebují jízdenku od řidiče, také nastoupí zadními dveřmi",
+        "enables_disables_collisions_with_other_vehicles": "Povolí nebo zakáže kolize s jinými vozidly",
+        "enables_disabled_shadows": "Povolí nebo zakáže stíny",
+        "the_game": "Hra"
+      },
+      "keys": {
+        "load_error": "Nastavení kláves nelze přečíst",
+        "find": "Najít nastavení kláves",
+        "group_driving": "Řízení a autobus",
+        "group_vr": "Headset (VR)",
+        "group_scripted": "Skriptované (toto vozidlo)",
+        "press_key": "stiskni klávesu...",
+        "press_key_desc": "Stisknutím tlačítka Escape ponecháte aktuální klávesu",
+        "not_set": "Nenastaveno",
+        "no_match": "Žádné výsledky",
+        "no_match_desc": "Zkuste jiné jméno nebo klávesu"
+      }
+    },
+    "world": {
+      "automatic": "automatická",
+      "dew": "rosa",
+      "typing": "píše",
+      "vehicles": "vozidla",
+      "text": {
+        "time": "Čas",
+        "weather": "Počasí",
+        "temperature_and_wind": "Teplota a vítr",
+        "traffic_and_people": "Doprava a lidé",
+        "tools": "Nástroje",
+        "real_time_sync": "Synchronizace reálného času",
+        "the_game_follows_your_device_s_date_and_time": "Hra sleduje datum a čas Vašeho zařízení",
+        "date_and_time": "Datum a čas",
+        "synchronized_with_the_real_time": "Synchronizováno s reálným časem",
+        "exact_time": "Aktuální čas",
+        "press_enter_to_change_esc_to_cancel": "Stiskněte Enter pro aplikaci, Esc pro zrušení",
+        "change_the_current_time_press_enter_to_change": "Změnit aktuální čas (stiskněte Enter pro použití)",
+        "exact_date": "Aktuální datum",
+        "change_the_current_date_press_enter_to_change": "Změnit aktuální datum (stiskněte Enter pro použití)",
+        "hour": "Hodina",
+        "set_the_hour_of_the_day_directly": "Nastavte hodinu dne přímo",
+        "minute": "Minuta",
+        "set_the_minute_directly": "Nastavte minutu přímo",
+        "day": "Den",
+        "set_the_day_directly": "Nastavit den přímo",
+        "month": "Měsíc",
+        "set_the_month_directly": "Nastavte měsíc přímo",
+        "year": "Rok",
+        "set_the_year_directly": "Nastavte rok přímo",
+        "morning": "Ráno",
+        "noon": "Poledne",
+        "evening": "Večer",
+        "night": "Noc",
+        "jump_to_this_time_of_day": "Přejít na tuto denní dobu.",
+        "on_time_with_the_timetable": "Nastavit hodiny na jízdní řád",
+        "move_the_clock_so_that_the_vehicle_is_on_time": "Přesune hodiny tak, aby vozidlo bylo načas",
+        "time_speed": "Rychlost času",
+        "how_fast_the_world_s_clock_runs": "Jak rychle běží světový čas",
+        "metar_sync": "Synchronizace METAR",
+        "the_weather_follows_the_real_metar_report": "Počasí se řídí skutečnou zprávou METAR",
+        "metar_source": "Zdroj zprávy METAR",
+        "the_airport_used_for_real_weather": "Letiště využito pro reálné počasí.",
+        "icao": "ICAO",
+        "enter_any_4_letter_icao_station": "Zadejte jakýkoliv čtyřpísmenný kód ICAO.",
+        "metar_report": "Hlášení METAR",
+        "refresh_now": "Obnovit nyní",
+        "fetch_the_selected_station_again_without_waiting_for_the_next_automatic_update": "Znovu načte vybranou stanici bez čekání na další automatickou aktualizaci.",
+        "load_once": "Načíst jednou",
+        "load_the_selected_station_once_without_enabling_continuous_metar_sync": "Vybraná stanice se načte jednou bez povolení kontinuální synchronizace METAR.",
+        "preset": "Předvolba",
+        "a_ready_made_weather": "Připravené nastavení počasí.",
+        "custom_weather": "Vlastní počasí",
+        "edit_current": "Upravit aktuální",
+        "freeze_the_weather_currently_in_force_and_edit_it_as_a_custom_weather": "Zmrazit aktuálně platné počasí a upravit jej jako vlastní počasí.",
+        "clouds": "Mraky",
+        "the_kind_of_clouds_in_the_sky": "Druhy mraků na nebi.",
+        "none": "Žádné",
+        "few_clouds": "Skoro jasno",
+        "scattered": "Polojasno",
+        "broken": "Převážně zataženo",
+        "overcast": "Zataženo",
+        "visibility": "Dohlednost",
+        "how_far_one_can_see_less_is_fog": "Jak daleko vidíš; nižší hodnoty znamenají větší mlhu.",
+        "brightness": "Jas",
+        "brightness_of_the_custom_weather_lighting": "Jas vlastního světla počasí.",
+        "precipitation": "Srážky",
+        "rain_or_snow": "Typ srážek.",
+        "rain": "Déšť",
+        "snow": "Sníh",
+        "precipitation_strength": "Síla srážek",
+        "how_hard_it_rains_or_snows": "Jak silně prší nebo sněží.",
+        "wet_roads": "Mokré silnice",
+        "how_wet_the_roads_are_now_they_dry_in_the_sun_wet_in_the_rain": "Jak mokré jsou silnice právě teď (schnou na slunci a vlhnou v dešti).",
+        "snow_cover": "Pokrytí sněhem",
+        "snow_lying_on_the_world_and_ground": "Zda sníh leží na zemi a na scenérii.",
+        "snow_on_road": "Sníh na silnici",
+        "treat_the_road_surface_as_snow_covered": "Považovat povrch vozovky za pokrytý sněhem.",
+        "temperature": "Teplota",
+        "the_air_temperature": "Teplota vzduchu.",
+        "humidity": "Vlhkost",
+        "relative_humidity_of_the_air": "Relativní vlhkost vzduchu.",
+        "wind_speed": "Rychlost větru",
+        "how_fast_the_wind_blows_it_drives_the_clouds": "Jak rychle fouká vítr; ovlivňuje mraky.",
+        "wind_direction": "Směr větru",
+        "the_direction_of_the_wind_in_degrees_0_is_north": "Směr větru ve stupních (0 je sever).",
+        "object_editor": "Editor objektů",
+        "open": "Otevřít",
+        "place_and_move_objects_in_the_world": "Umístěte a přesouvejte objekty ve světě.",
+        "traffic": "Provoz",
+        "how_many_vehicles_drive_around_the_map": "Kolik vozidel jezdí po mapě.",
+        "passengers": "Cestující",
+        "how_many_passengers_wait_at_the_stops_and_ride": "Kolik cestujících čeká na zastávkách a jede.",
+        "presets": "Předvolby"
+      }
+    },
+    "controls": {
+      "import": {
+        "title": "Import z OMSI 2",
+        "name": "Import",
+        "desc": "Vybere ovladače z OMSI 2 Inputs/gamectrler.cfg"
+      },
+      "setup": {
+        "name": "Nastavit",
+        "desc": "Nastavení tohoto ovladače, aby mohl být použit ve hře."
+      },
+      "use": {
+        "name": "Použít tento ovladač",
+        "desc": "Ovladač, který je vypnutý, je ignorován."
+      },
+      "axes": "Osy",
+      "axis_mode": {
+        "name": "Režim osy",
+        "desc": "Automaticky rozpozná kola a pedály. Ovladač používá páčky a spouště; Nativně používá vlastní osy zařízení.",
+        "auto": "Automaticky",
+        "gamepad": "Ovladač",
+        "native": "Nativní"
+      },
+      "axis": {
+        "desc": "Co tato osa dělá.",
+        "shape": {
+          "linear": "Lineární",
+          "degressive": "Degresivní",
+          "progressive": "Progresivní",
+          "bi_degressive": "Bi-degresivní",
+          "bi_progressive": "Bi-progresivní"
+        },
+        "invert": {
+          "name": "Převrátit",
+          "desc": "Vrátí tuto osu, ještě před přiřazením funkce."
+        },
+        "name": {
+          "0": "Osa X",
+          "1": "Osa Y",
+          "2": "Osa Z",
+          "3": "Rotace X",
+          "4": "Rotace Y",
+          "5": "Rotace Z",
+          "6": "Posuvník 1",
+          "7": "Posuvník 2"
+        }
+      },
+      "gamepad_axis": {
+        "0": "Levá páčka X",
+        "1": "Levá páčka Y",
+        "2": "Levá spoušť",
+        "3": "Pravá páčka X",
+        "4": "Pravá páčka Y",
+        "5": "Pravá spoušť"
+      },
+      "func": {
+        "0": "<none>",
+        "1": "Zatáčení",
+        "2": "Plyn",
+        "3": "Brzda",
+        "4": "Spojka",
+        "5": "Plyn/brzda",
+        "6": "Podívat se vlevo / vpravo",
+        "7": "Podívat se dolů / nahoru"
+      },
+      "reversed": "obrácené",
+      "deadzone": {
+        "name": "Mrtvá zóna",
+        "desc": "Část osy kolem jejího středu, která je ignorována."
+      },
+      "ff": {
+        "title": "Zpětná vazba",
+        "steer": {
+          "name": "Síla řízení",
+          "desc": "Jak silně volant tlačí zpět."
+        },
+        "vib": {
+          "name": "Vibrace",
+          "desc": "Jak silná je vibrace."
+        },
+        "invert": {
+          "name": "Převrátit zpětnou vazbu",
+          "desc": "Vrátí směr zpětné vazby tohoto zařízení."
+        }
+      },
+      "buttons": "Tlačítka",
+      "button": {
+        "name": "Tlačítko",
+        "desc": "Co toto tlačítko dělá."
+      },
+      "pressed": "Stisknuto",
+      "find_hint": "Stiskněte tlačítko na ovladači pro jeho nalezení zde",
+      "button_search": "Vyhledávat tlačítka",
+      "no_match": "Žádné tlačítko neodpovídá \"{query}\"",
+      "pad": {
+        "view": "Pohled",
+        "menu": "Nabídka",
+        "left_stick": "Levá páka (stisknutí)",
+        "right_stick": "Pravá páka (stisknutí)"
+      },
+      "hat": {
+        "up": "nahoru",
+        "right": "vpravo",
+        "down": "dolů",
+        "left": "vlevo",
+        "dpad": "D-pad {dir}",
+        "hat": "Klobouček {n} {dir}"
+      }
+    },
+    "dialog": {
+      "restart": {
+        "title": "Je vyžadován restart",
+        "text": "Aby se vaše změny projevily v plném rozsahu, musíte restartovat hru",
+        "yes": "Restartovat",
+        "no": "Později"
+      },
+      "place": {
+        "models": "modely",
+        "random_livery": "Náhodná livery",
+        "depot_file": "Soubor depa mapy",
+        "model": "Model",
+        "type": "Typ",
+        "livery": "Livery",
+        "hof": "Soubor depa",
+        "none": "Nic nevybráno",
+        "create": "Umístit"
+      },
+      "title": {
+        "place": "Umístit vozidlo",
+        "keys": "Klávesové zkratky",
+        "options": "Nastavení",
+        "vehicle": "Nastavení vozidla",
+        "world": "Možnosti světa",
+        "line_tour": "Linka a trasa",
+        "driver": "Řidič",
+        "fleet_number": "Evidenční číslo",
+        "destination": "Zobrazení cíle",
+        "hof": "Soubor depa (HOF)",
+        "spot": "Teleportovat na počáteční bod",
+        "admin": "Administrace"
+      },
+      "duty": {
+        "tour": "Trasa",
+        "line": "Linka",
+        "tours": "trasy"
+      },
+      "search": "Vyhledat...",
+      "no_results": "Žádné výsledky",
+      "back": "Zpět",
+      "no_vehicles": "Nebyla nalezena žádná vozidla"
+    },
+    "list": {
+      "nothing_to_set": "Není zde nic k nastavení",
+      "line_one": "Linka {name}  (1 trasa)",
+      "line_many": "Linka {name}  ({count} tras)",
+      "line_title": "Linka {name}",
+      "tours_one": "1 trasa",
+      "tours_many": "{count} tras",
+      "no_timetable": "Žádný jízdní řád na této mapě",
+      "tour": "Trasa {number}",
+      "tour_to": "Trasa {number}  ›  {end}",
+      "now": "(nyní)",
+      "route_now": "Číslo linky: {value}...",
+      "route_typing": "Číslo linky: {text}_ (Enterem nastavíte, Esc zrušíte)",
+      "route_type": "Zadejte číslo trasy...",
+      "route": "Linka {line}",
+      "route_set": "Linka {line}",
+      "route_number": "Číslo linky",
+      "no_destinations": "Tento autobus nemá žádný soubor depa (.hof) s destinacemi",
+      "no_routes": "Žádné číslo linky v souboru depa nebo v jízdním řádu",
+      "no_hofs": "Tento autobus nemá žádné soubory depa (.hof)",
+      "entry": "Vstupní bod {number}",
+      "no_entries": "Tato mapa nemá žádné vstupní body",
+      "maker_models": "{name}  ({count} modely)",
+      "unknown_maker": "Neznámý výrobce",
+      "no_numbers": "Tento autobus nemá žádný seznam evidenčních čísel",
+      "driver_set": "Řidič: {name}",
+      "preview_meta": "Linka {line}  · Trasa {trip}/{trips}  · Vyberte zastávku, odkud začnete",
+      "start_trip": "Zahájit trasu"
+    },
+    "keyname": {
+      "automatic_1": "Automatická: 1",
+      "automatic_2": "Automatická: 2",
+      "automatic_d": "Automatická: jízda",
+      "automatic_n": "Automatická: neutrál",
+      "automatic_r": "Automatická: zpátečka",
+      "blinker_left_set": "Blinkr vlevo",
+      "blinker_off": "Blinkr vypnut",
+      "blinker_right_set": "Blinkr vpravo",
+      "blinker_warn_toggle": "Varovná světla",
+      "brake": "Brzda",
+      "bus_20h_switch": "Přepínač 20 h",
+      "bus_dooraft": "Uvolnění dveří",
+      "bus_doorfront0": "Přední dveře 1",
+      "bus_doorfront1": "Přední dveře 2",
+      "bus_doorfront5": "Přední dveře 6",
+      "bus_linie_minus": "Předchozí linka",
+      "bus_linie_plus": "Další linka",
+      "bus_rollband_dn": "Scroll cíle dolů",
+      "bus_rollband_dn_step": "Scroll cíle dolů (krok)",
+      "bus_rollband_setl1": "Scroll cíle: řádek 1",
+      "bus_rollband_setl2": "Scroll cíle: řádek 2",
+      "bus_rollband_setl3": "Scroll cíle: řádek 3",
+      "bus_rollband_sett": "Scroll cíle: trasa",
+      "bus_rollband_up": "Scroll cíle nahoru",
+      "bus_rollband_up_step": "Scroll cíle nahoru (krok)",
+      "bus_ziel_minus": "Předchozí cíl",
+      "bus_ziel_plus": "Další cíl",
+      "cashdesk_changer_0_05": "Vrátit 0.05",
+      "cashdesk_changer_0_10": "Vrátit 0.10",
+      "cashdesk_changer_0_15": "Vrátit 0.15",
+      "cashdesk_changer_0_30": "Vrátit 0.30",
+      "cashdesk_changer_0_50": "Vrátit 0.50",
+      "cashdesk_changer_15_00": "Vrátit 15.00",
+      "cashdesk_changer_1_00": "Vrátit 1.00",
+      "cashdesk_changer_1_50": "Vrátit 1.50",
+      "cashdesk_changer_2_00": "Vrátit 2.00",
+      "cashdesk_changer_4_00": "Vrátit 4.00",
+      "cashdesk_changer_5_00": "Vrátit 5.00",
+      "cashdesk_changer_8_00": "Vrátit 8.00",
+      "change_give": "Vrátit rozdíl",
+      "change_take": "Vzít peníze",
+      "clutch": "Spojka",
+      "cp_batterietrennschalter_toggle": "Přepínač odpojení baterie",
+      "cp_fahrerlicht_toggle": "Světlo řidiče",
+      "cp_licht_oberdeck_toggle": "Světlo na horním podlaží",
+      "cp_licht_untenrechts_toggle": "Spodní pravé světlo",
+      "cp_licht_unterdeck_toggle": "Světlo na dolním podlaží",
+      "cp_microphone": "Mikrofon",
+      "cp_schalter_kinderwagen": "Kočárek",
+      "cp_wischer_intervall_toggle": "Režim intervalu stírání",
+      "cp_wischer_wascher_button": "Ostřikovač čelního skla",
+      "debug_start_bench2": "Spustit benchmark 2",
+      "debug_threadcalc": "Ladění: výpočet vláken",
+      "debug_window": "Okno ladění",
+      "ego_forward": "Jít vpřed",
+      "exit": "Ukončit hru",
+      "horn": "Klakson",
+      "ibis_0": "IBIS: 0",
+      "ibis_1": "IBIS: 1",
+      "ibis_2": "IBIS: 2",
+      "ibis_3": "IBIS: 3",
+      "ibis_4": "IBIS: 4",
+      "ibis_5": "IBIS: 5",
+      "ibis_6": "IBIS: 6",
+      "ibis_7": "IBIS: 7",
+      "ibis_8": "IBIS: 8",
+      "ibis_9": "IBIS: 9",
+      "ibis_eingabe": "IBIS: Enter",
+      "ibis_loeschen": "IBIS: Smazat",
+      "ibis_setmode_linie_kurs": "IBIS: linka / kurz režim",
+      "ibis_setmode_route": "IBIS: režim trasy",
+      "ibis_setmode_ziel": "IBIS: režim cíle",
+      "kw_fernlicht_toggle": "Dálková světla",
+      "kw_m_enginestart": "Spustit motor",
+      "kw_s_1": "Rychlostní stupeň: 1",
+      "kw_s_2": "Rychlostní stupeň: 2",
+      "kw_s_3": "Rychlostní stupeň: 3",
+      "kw_s_4": "Rychlostní stupeň: 4",
+      "kw_s_5": "Rychlostní stupeň: 5",
+      "kw_s_6": "Rychlostní stupeň: 6",
+      "kw_s_minus": "Podřadit",
+      "kw_s_n": "Rychlostní stupeň: neutrál",
+      "kw_s_plus": "Zařadit",
+      "kw_s_r": "Rychlostní stupeň: zpátečka",
+      "kw_scheinwerfer_toggle": "Světla",
+      "kw_standlicht_toggle": "Obrysová světla",
+      "kw_wipermode_up": "Stěrače: další režim",
+      "open_mainmenue": "Otevřít hlavní nabídku",
+      "open_menue": "Otevřít menu",
+      "parking_brake_toggle": "Ruční brzda",
+      "quicksave": "Rychlé uložení",
+      "scendes_aitraffic_deact": "Editor scenérie: deaktivovat AI provoz",
+      "scendes_aitraffic_desel": "Editor scenérie: zrušit výběr AI provozu",
+      "scendes_cancel": "Editor scenérie: zrušit",
+      "scendes_delete": "Editor scenérie: odstranit",
+      "scendes_enter": "Editor scenérie: potvrdit",
+      "scendes_grabmode": "Editor scenérie: režim chycení",
+      "scendes_new": "Editor scenérie: nový objekt",
+      "scendes_nodechange_pri": "Editor scenérie: změna priority uzlu",
+      "scendes_rast_strg": "Editor scenérie: přichytit na mřížku",
+      "scendes_rotmode": "Editor scenérie: režim otáčení",
+      "scendes_set_x": "Editor scenérie: zámek na osu X",
+      "scendes_set_y": "Editor scenérie: zámek na osu Y",
+      "scendes_set_z": "Editor scenérie: zámek na osu Z",
+      "screenshot": "Snímek obrazovky",
+      "sim_pause": "Pozastavit simulaci",
+      "steering_left": "Otáčení vlevo",
+      "steering_neutral": "Vycentrovat řízení",
+      "steering_right": "Otáčení vpravo",
+      "taster_nebelschluss": "Zadní mlhové světlo",
+      "throttle": "Plyn",
+      "throttle_amplify": "Zesílení plynu",
+      "ticket_give": "Vydat jízdenku",
+      "toggel_ctrler": "Přepnout ovladač",
+      "toggel_mouse_ctrl": "Přepnout ovládání myši",
+      "toggle_navigator": "Zobrazit/skrýt navigaci",
+      "view_interiorcam_minus": "Vnitřní kamera: další",
+      "view_interiorcam_plus": "Vnitřní kamera: další",
+      "view_reset_all_directions": "Obnovit všechny směry pohledu",
+      "view_reset_direction": "Obnovit směr pohledu",
+      "view_set_driver": "Zobrazení: řidič",
+      "view_set_ego": "Zobrazení: pěšky",
+      "view_set_map": "Zobrazení: mapa",
+      "view_set_outside": "Zobrazení: venku",
+      "view_set_passenger": "Zobrazení: cestující",
+      "view_set_schedule": "Zobrazení: jízdní řád",
+      "view_set_ticketselling": "Zobrazení: prodej jízdenek",
+      "view_toggle_informationdisplay": "Přepnout informační displej",
+      "view_toggle_viewpoint": "Přepnout pohled",
+      "voice_talk": "Hra pro více hráčů: mluvit (držet)",
+      "voice_radio": "Hra pro více hráčů: mluvit přes rádio (držet)"
+    },
+    "keybinds": {
+      "not_set": "Nenastaveno",
+      "press": "stiskni klávesu...",
+      "nothing_desc": "Zkuste jiné jméno nebo klávesu",
+      "find": "Najít nastavení kláves",
+      "error": "Nastavení kláves nelze přečíst",
+      "cancel_desc": "Escape ponechá nastavení",
+      "conflict": "Konflikt: tato klávesa používá také"
+    },
+    "keys": {
+      "shift": "Shift",
+      "ctrl": "Ctrl",
+      "alt": "Alt"
+    },
+    "msg": {
+      "lan_weather": "V LAN relaci hostitel nastaví počasí",
+      "lan_clock": "V LAN relaci hostitel nastaví čas",
+      "clock_locked": "Čas nelze změnit, dokud je zapnuta synchronizace v reálném čase",
+      "clock_set": "Čas nastaven na {time}",
+      "graphics_missing": "Grafický profil \"{name}\" nebyl nalezen",
+      "metar_source": "Zdroj zprávy METAR: {code}",
+      "icao_invalid": "Zadejte platný čtyřpísmenný kód ICAO",
+      "free_drive": "Volná jízda: žádná služba neprobíhá",
+      "no_vehicles": "Žádné další vozidlo k řízení",
+      "vehicle_upright": "Vozidlo je zpět na kolech",
+      "no_duty": "Službu nelze spustit: {error}",
+      "duty_started": "Linka {line}, trasa {tour} začala",
+      "depot_file": "Soubor depa: {name}",
+      "start_point_reached": "Jste na počátečním bodě",
+      "start_point_missing": "Tento počáteční bod nebyl nalezen",
+      "destination": "Cíl: {name}",
+      "fleet_number": "Evidenční číslo: {number}",
+      "key_conflict": "Tato klávesa je již používána: {keys}",
+      "voice_talking": "Hlas: mluví",
+      "voice_radio": "Hlas: na rádiu",
+      "voice_error": "Hlas: {error}",
+      "voice_mic_denied": "mikrofon není povolen"
+    },
+    "admin": {
+      "player": "Hráč {id}",
+      "go_to": "Jít na {name}",
+      "bring": "Teleportovat sem {name}",
+      "repair": "Oprav vozidlo {name}",
+      "unstick": "Postavit na kola vozidlo hráče {name}",
+      "kick": "Vyhodit {name}",
+      "ban": "Zabanovat {name}",
+      "bring_all": "Teleportovat sem všechny hráče",
+      "repair_all": "Opravit všechna vozidla",
+      "refuel_all": "Dotankovat všechna vozidla",
+      "wash_all": "Umýt všechna vozidla",
+      "clock_morning": "Hodiny: ráno (6:00)",
+      "clock_noon": "Hodiny: poledne (12:00)",
+      "clock_evening": "Hodiny: večer (18:00)",
+      "clock_night": "Hodiny: noc (23:00)",
+      "traffic": "Doprava: {value}",
+      "hour_plus": "Hodiny: o 1 hodinu později",
+      "hour_minus": "Hodiny: o 1 hodinu dříve",
+      "now": "(nyní)",
+      "speed": "Rychlost času: {speed}x{mark}",
+      "next_weather": "Další počasí",
+      "weather_cycle": "Cyklus počasí: {state}",
+      "on": "zapnuto",
+      "off": "vypnuto",
+      "weather": "Počasí: {name}{mark}",
+      "clear_traffic": "Odstranit veškerý provoz",
+      "sent": "Odesláno: {action}",
+      "no_bus": "Tento hráč nemá žádné vozidlo",
+      "speed_fixed": "Čas nelze změnit, dokud je zapnuta synchronizace v reálném čase",
+      "speed_msg": "Rychlost času: {speed}x",
+      "weather_cycle_msg": "Cyklus počasí: {state}",
+      "brought": "{count} hráči se připojili",
+      "traffic_msg": "Provoz: {value}",
+      "host_brought": "Hostitel tě sem teleportoval",
+      "host_service": "Hostitel provozoval službu: {kind}",
+      "host_upright": "Hostitel postavil vozidlo vzhůru",
+      "wrong_password": "Nesprávné heslo",
+      "mute": "Ztišit mikrofon hráče {name}",
+      "unmute": "Povolit hráči {name} mluvit",
+      "voice": "Hlasový chat: {state}"
+    }
+  },
+  "start": {
+    "maps": {
+      "nav": "Spustit",
+      "head": "Vybrat mapu",
+      "note": "Vyberte si mapu a jak začne jízda.",
+      "list": "MAPY",
+      "settings": "NASTAVENÍ",
+      "vehicle": "VOZIDLO",
+      "mode": "SPUSTIT",
+      "free": "Volná jízda",
+      "t1": "Mapa a trasa",
+      "t2": "Vozidla",
+      "t3": "Čas & počasí",
+      "h1": "Kam pojedete?",
+      "h2": "Vyberte své vozidlo",
+      "h3": "Kdy a za jakého počasí?",
+      "next": "Další:",
+      "drive": "Jet",
+      "cont": "Pokračovat tam, kde jste skončili",
+      "map": "MAPA",
+      "buses": "VŠECHNA VOZIDLA",
+      "sw": "Zima",
+      "sp": "Jaro",
+      "su": "Léto",
+      "sa": "Podzim",
+      "route": "Trasa",
+      "go": "Spustit",
+      "none": "Nebyly nalezeny žádné mapy",
+      "livery": "Livery",
+      "details": "Podrobnosti o vozidle",
+      "auto": "Automatická",
+      "depot": "Soubor depa",
+      "fleet": "Evidenční číslo",
+      "plate": "Poznávací značka",
+      "search": "Hledat vozidla...",
+      "nobuses": "Nebyla nalezena žádná vozidla",
+      "unknown": "Neznámý výrobce",
+      "loading": "Načítání náhledu...",
+      "nopreview": "Bez náhledu",
+      "line": "LINKA",
+      "tour": "KURZ",
+      "filter": "Filtrovat...",
+      "nolines": "Žádné linky na této mapě",
+      "notours": "Žádné trasy",
+      "trip": "PRVNÍ SPOJ",
+      "autotrip": "Podle času zahájení",
+      "mappreview": "Načítání mapy...",
+      "autoentry": "Automaticky (nejblíže první zastávce)",
+      "entry": "POČÁTEČNÍ BOD",
+      "noentries": "Na této mapě nejsou žádné počáteční body",
+      "linetour": "Linka {line}, kurz {tour}",
+      "linetourtrip": "Linka {line}, kurz {tour}, jízda {trip}",
+      "time": "ČAS",
+      "date": "DATUM",
+      "now": "Nyní",
+      "season": "OBDOBÍ",
+      "today": "Dnes",
+      "close": "Zavřít",
+      "sd": "Podle data",
+      "weather": "POČASÍ",
+      "presets": "PŘEDVOLBY",
+      "icao": "LETIŠTĚ (ICAO)",
+      "onfoot": "Začít pěšky (bez autobusu)",
+      "onfoot_short": "Pěšky",
+      "icao_ph": "ICAO kód, např. LKPR",
+      "icao_auto": "Prázdné: nejbližší letiště k mapě",
+      "noair": "Žádné odpovídající letiště",
+      "icao_checking": "Kontroluji stanici..."
+    },
+    "profile": {
+      "ago_d": "před {n} dny",
+      "ago_h": "před {n} hod",
+      "ago_m": "před {n} min",
+      "comfort": "Komfort",
+      "comfort_note": "Podíl cestujících, kteří nastoupili a neměli co si stěžovat.",
+      "default_name": "Řidič",
+      "delete_confirm": "Smazat?",
+      "distance": "Vzdálenost",
+      "driving": "Řízení",
+      "driving_note": "Rychlost, tvrdé brzdění a nehody jej snižují.",
+      "hm": "{h} h {m} min",
+      "hours": "Odjeté hodiny",
+      "level": "Úroveň {level} · {xp} XP pro úroveň {next}",
+      "min": "{m} min",
+      "new": "Nový řidič",
+      "new_hint": "Jméno nového řidiče",
+      "no_drives": "Zatím žádné jízdy.",
+      "ontime": "Na čas",
+      "ratings": "Hodnocení",
+      "recent": "Nedávné jízdy",
+      "stops": "Obsloužené zastávky",
+      "tickets": "Prodeje jízdenek",
+      "tickets_note": "Správná jízdenka, správné vrácení peněz, bez čekání cestujících."
+    },
+    "join": {
+      "nav": "Hra pro více hráčů",
+      "note": "Jezděte s přáteli pomocí kódu relace nebo se připojte na server.",
+      "tab_join": "Připojit se a hostovat",
+      "tab_servers": "Seznam serverů",
+      "label": "KÓD RELACE NEBO ADRESA SERVERU",
+      "placeholder": "Kód relace nebo adresa serveru",
+      "hint": "Vložte kód od přítele nebo IP / adresu s portem. Ponechte prázdné pro vyhledání místní sítě.",
+      "go": "Připojit se",
+      "checking": "Kontroluji...",
+      "online": "Server online -  {map}  -  {players}/{max} hráčů",
+      "offline": "Server není dostupný: {error}",
+      "offline_short": "Offline",
+      "game": "VAŠE HRA",
+      "host": "Hostovat moji další jízdu",
+      "host_note": "Přátelé se mohou připojit k vaší relaci, jakmile ji zahájíte.",
+      "servers_note": "Je možné se připojit pouze k serverům, které odpověděly.",
+      "no_servers": "Zatím žádné uložené servery."
+    },
+    "row": {
+      "vehicle": "Vozidlo",
+      "time": "Čas",
+      "traffic": "Provoz",
+      "passengers": "Cestující",
+      "timetable": "Jízdní řád",
+      "weather": "Počasí",
+      "date": "Datum",
+      "situation": "Situace",
+      "season": "Roční období"
+    },
+    "value": {
+      "on": "zapnuto",
+      "off": "vypnuto",
+      "default": "výchozí",
+      "vehicles": "{n} vozidel",
+      "hour": "{h}:00"
+    },
+    "season": {
+      "winter": "zima",
+      "spring": "jaro",
+      "summer": "léto",
+      "autumn": "podzim"
+    },
+    "cal": {
+      "m1": "Leden",
+      "m2": "Únor",
+      "m3": "Březen",
+      "m4": "Duben",
+      "m5": "Květen",
+      "m6": "Červen",
+      "m7": "Červenec",
+      "m8": "Srpen",
+      "m9": "Září",
+      "m10": "Říjen",
+      "m11": "Listopad",
+      "m12": "Prosinec",
+      "d1": "Po",
+      "d2": "Út",
+      "d3": "St",
+      "d4": "Čt",
+      "d5": "Pá",
+      "d6": "So",
+      "d7": "Ne"
+    },
+    "weather": {
+      "default": "Výchozí mapy",
+      "cycle": "Cyklus počasí",
+      "real": "Reálné počasí",
+      "custom": "Vlastní počasí",
+      "vis": "Dohlednost",
+      "clouds": "Mraky",
+      "precip": "Srážky",
+      "temp": "Teplota"
+    }
+  }
+}

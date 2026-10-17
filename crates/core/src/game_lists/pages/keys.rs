@@ -2,7 +2,51 @@
 
 use super::*;
 
-pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
+pub(crate) struct KeyView<'a> {
+    pub filter: &'a str,
+    pub searching: bool,
+    pub capture: Option<(usize, usize)>,
+    pub scripted: Vec<String>,
+    /// Bound controller buttons: (action in lower case, button name).
+    pub pads: Vec<(String, String)>,
+}
+
+impl KeyView<'_> {
+    pub(crate) fn of(app: &App) -> KeyView<'_> {
+        KeyView {
+            filter: &app.key_filter,
+            searching: app.key_search,
+            capture: app.key_capture,
+            scripted: app.scripted_names(),
+            pads: crate::lab_pads::bound_buttons(app.controllers.as_ref()),
+        }
+    }
+
+    fn pad(&self, action: &str) -> Vec<&str> {
+        let action = action.to_lowercase();
+        self.pads
+            .iter()
+            .filter(|(a, _)| *a == action)
+            .map(|(_, b)| b.as_str())
+            .collect()
+    }
+}
+
+/// A binding's key and buttons (" | ": key names can contain " / ").
+fn bound(key: Option<String>, pad: &[&str]) -> String {
+    let all: Vec<&str> = key
+        .as_deref()
+        .into_iter()
+        .chain(pad.iter().copied())
+        .collect();
+    if all.is_empty() {
+        tx("pause.page.keys.not_set")
+    } else {
+        all.join(" | ")
+    }
+}
+
+pub(crate) fn key_rows(root: &std::path::Path, view: &KeyView) -> Vec<(String, String)> {
     let Some(v) = crate::keys::keybindings() else {
         return vec![(
             row(&tx("pause.page.keys.load_error"), 'i', "", "", None),
@@ -10,7 +54,7 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
         )];
     };
     let names = crate::describe::names(
-        &app.args.root,
+        root,
         &::config::get_string("ui", "language").unwrap_or_else(|| "en".into()),
     );
     let head = |t: &str, n: usize| {
@@ -19,12 +63,12 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
             HEADING.to_string(),
         )
     };
-    let q = app.key_filter.trim().to_lowercase();
+    let q = view.filter.trim().to_lowercase();
     let mut out = vec![(
         row(
             &tx("pause.page.keys.find"),
-            if app.key_search { 'E' } else { 'a' },
-            &app.key_filter,
+            if view.searching { 'E' } else { 'a' },
+            view.filter,
             "",
             None,
         ),
@@ -67,15 +111,17 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
     ];
     let mut any = false;
     // scripted keybinds
-    let scripted: Vec<(usize, String)> = app
-        .scripted_names()
-        .into_iter()
+    let scripted: Vec<(usize, String)> = view
+        .scripted
+        .iter()
+        .cloned()
         .enumerate()
         .filter(|(_, n)| {
             q.is_empty()
-                || app.key_capture.is_some_and(|c| c.0 == 2)
+                || view.capture.is_some_and(|c| c.0 == 2)
                 || names.key_label(n).to_lowercase().contains(&q)
                 || n.to_lowercase().contains(&q)
+                || view.pad(n).iter().any(|b| b.to_lowercase().contains(&q))
         })
         .collect();
     if !scripted.is_empty() {
@@ -84,7 +130,7 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
         for (i, action) in scripted {
             let label = names.key_label(&action);
             let id = format!("keybind 2 {i} {action}");
-            if app.key_capture == Some((2, i)) {
+            if view.capture == Some((2, i)) {
                 out.push((
                     row(
                         &label,
@@ -97,7 +143,7 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
                 ));
             } else {
                 out.push((
-                    row(&label, 'k', &tx("pause.page.keys.not_set"), "", None),
+                    row(&label, 'k', &bound(None, &view.pad(&action)), "", None),
                     id,
                 ));
             }
@@ -109,10 +155,11 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
             .filter(|b| pick(b))
             .filter(|b| {
                 q.is_empty()
-                    || app.key_capture == Some((b.0, b.1))
+                    || view.capture == Some((b.0, b.1))
                     || names.key_label(&b.2).to_lowercase().contains(&q)
                     || b.2.to_lowercase().contains(&q)
                     || crate::keys::key_name(b.3, b.4).to_lowercase().contains(&q)
+                    || view.pad(&b.2).iter().any(|p| p.to_lowercase().contains(&q))
             })
             .collect();
         if members.is_empty() {
@@ -134,7 +181,7 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
                     .collect()
             };
             let label = names.key_label(action);
-            if app.key_capture == Some((sec, i)) {
+            if view.capture == Some((sec, i)) {
                 out.push((
                     row(
                         &label,
@@ -147,11 +194,10 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
                 ));
                 continue;
             }
-            let value = if scan == 0 {
-                tx("pause.page.keys.not_set")
-            } else {
-                crate::keys::key_name(scan, m)
-            };
+            let value = bound(
+                (scan != 0).then(|| crate::keys::key_name(scan, m)),
+                &view.pad(action),
+            );
             let desc = if clash.is_empty() {
                 String::new()
             } else {
@@ -176,4 +222,19 @@ pub(crate) fn key_rows(app: &App) -> Vec<(String, String)> {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bound;
+
+    #[test]
+    fn a_binding_shows_its_key_and_its_buttons() {
+        assert_eq!(
+            bound(Some("Ctrl+K".into()), &["LB", "Button 9"]),
+            "Ctrl+K | LB | Button 9"
+        );
+        assert_eq!(bound(None, &["D-pad up"]), "D-pad up");
+        assert_eq!(bound(Some("K".into()), &[]), "K");
+    }
 }

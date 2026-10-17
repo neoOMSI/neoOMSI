@@ -91,6 +91,12 @@ const BODY_OUTSIDE: f64 = 0.28;
 const STOP_RANGE: f64 = 450.0;
 /// Pedestrians stroll within this distance of the player (m).
 const STROLL_RADIUS: f64 = 200.0;
+/// The most people of our own (not a LAN host's, not test puppets) a stop is filled up to,
+/// counting everybody: Omsi.exe keeps a fixed pool of people (`[AIMaxCountRandom]`, 200 by
+/// default) and a stop gets none once it is used up. Every stop near a big interchange
+/// filled to its own want made 400 and more people, waiting where nobody looks, each
+/// simulated, posed and drawn. A quiet map never comes near it.
+const MAX_PEOPLE: usize = 300;
 /// Over this distance on either side of a joint (m) a point of an articulated bus's cabin
 /// moves from the frame of the section in front to the one behind.
 const JOINT_BLEND: f32 = 0.5;
@@ -213,6 +219,8 @@ pub struct Humans {
     pub entry_req: Vec<bool>,
     /// `PAX_Exit<i>_Req`: somebody inside wants out through exit `i`.
     pub exit_req: Vec<bool>,
+    pub(crate) door_occupancy: HashMap<(BusId, usize), usize>,
+    pub(crate) alighting_occupancy: HashMap<(BusId, usize), usize>,
     /// Procedural inverse kinematics animation enabled.
     pub ik: bool,
     /// Natural movement and gait, independent of the skeletal pose used to draw people.
@@ -241,6 +249,9 @@ pub struct Humans {
     /// wants one of them and boards only a bus showing one of its termini; at a stop no trip
     /// goes on from, anybody takes the first bus (0x61c33c).
     pub stop_targets: Option<HashMap<i64, Vec<(String, HashSet<String>)>>>,
+    /// Time-limited timetable demand used to refresh the stop targets without reserving
+    /// capacity for a particular departure.
+    pub passenger_targets: Option<HashMap<i64, Vec<crate::schedule::PassengerTarget>>>,
     /// The timetable's name of each stop object (`Schedule::stop_names`), the names the
     /// targets above are made of.
     pub stop_names: Option<HashMap<i64, String>>,
@@ -306,7 +317,7 @@ fn map_human_types(root: &Path, list: &[String]) -> Vec<Arc<HumanType>> {
         } else {
             format!("Humans/{rel}")
         };
-        let path = ::legacy_config::resolve_path(root, &rel);
+        let path = ::mods::resolve_path(root, &rel);
         let ty = loaded
             .entry(path.to_string_lossy().to_lowercase())
             .or_insert_with(|| match HumanType::load(&path) {
@@ -420,6 +431,7 @@ impl Humans {
                 gpu_textures: HashMap::new(),
                 gpu_materials: HashMap::new(),
                 spare: HashMap::new(),
+                texture_dirs: HashMap::new(),
                 sync_frame: 0,
             },
             types,
@@ -446,6 +458,8 @@ impl Humans {
             ticket_points: 0,
             entry_req: Vec::new(),
             exit_req: Vec::new(),
+            door_occupancy: HashMap::new(),
+            alighting_occupancy: HashMap::new(),
             ik: ::legacy_config::env::var("OMSI_PAX_IK")
                 .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
                 .unwrap_or(true),
@@ -459,6 +473,7 @@ impl Humans {
             avatar_only: false,
             driver_away: false,
             stop_targets: None,
+            passenger_targets: None,
             stop_names: None,
             stamped: Vec::new(),
             pedestrians: 14,
@@ -538,6 +553,7 @@ impl Humans {
         self.buses.served_stop = None;
         self.network.handed.clear();
         self.stop_targets = None;
+        self.passenger_targets = None;
         self.stop_names = None;
         self.walking.started = false;
         self.walking.stroll_timer = 0.0;
@@ -776,7 +792,15 @@ impl Humans {
                 continue;
             }
             if !self.render.gpu_materials.contains_key(&key) {
-                let dirs = ty.texture_dirs(&world.root);
+                let generation = ::legacy_config::content_generation();
+                let dirs = match self.render.texture_dirs.get(&tkey) {
+                    Some((g, dirs)) if *g == generation => dirs.clone(),
+                    _ => {
+                        let dirs = Arc::new(ty.texture_dirs(&world.root));
+                        self.render.texture_dirs.insert(tkey, (generation, dirs.clone()));
+                        dirs
+                    }
+                };
                 let mut mats = Vec::new();
                 for (k, m) in hm.materials.iter().enumerate() {
                     // the variant's texture from its own folder first, else the default
@@ -817,7 +841,7 @@ impl Humans {
                 self.render.gpu_materials.insert(key, mats);
             }
             let mats = self.render.gpu_materials[&key].clone();
-            let id = renderer.add_mesh(scene, &hm.data);
+            let id = renderer.add_animated_mesh(scene, &hm.data);
             let inst = renderer.add_instance(scene, id, position, Mat4::IDENTITY, mats);
             renderer.set_omsi_caster(scene, inst, true);
             if level > 0 {
@@ -977,7 +1001,27 @@ impl Humans {
             return;
         }
         self.map_humans_done = true;
-        let path = ::legacy_config::resolve_path(&world.map_dir, "humans.txt");
+        self.pick_map_humans(world);
+        // the textures of the figures that may now appear, looked up and read ahead
+        let mut types: Vec<Arc<HumanType>> = Vec::new();
+        let mut slots = HashSet::new();
+        for &index in &self.population {
+            let ty = &self.types[index];
+            if !types.iter().any(|t| Arc::ptr_eq(t, ty)) {
+                types.push(ty.clone());
+            }
+            let slot = slot_key(&ty.def.path);
+            if let Some(alts) = self.alternates.get(&slot) {
+                if slots.insert(slot) {
+                    types.extend(alts.iter().cloned());
+                }
+            }
+        }
+        figures::prefetch_textures(types, world.root.clone());
+    }
+
+    fn pick_map_humans(&mut self, world: &World) {
+        let path = ::mods::resolve_path(&world.map_dir, "humans.txt");
         let list = ::map::ailists::load_list(&path);
         if list.is_empty() {
             return;
@@ -1367,7 +1411,11 @@ impl Humans {
                 .filter(|_| x.task == Task::SittingInBus)
                 .or(x.vacating),
             _ => None,
-        });
+        }).chain(self.avatars.avatar_cmds.values().filter_map(|avatar| {
+            avatar
+                .seat
+                .and_then(|(bus, seat)| (bus == BusId::Player).then_some(seat))
+        }));
         seat_numbers(&cabin.seats, sitting)
     }
 

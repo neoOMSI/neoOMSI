@@ -1,7 +1,12 @@
+/// The game's allocator, on every system (the Android library as well as the program):
+/// the render threads recording, the tile loaders and the navigator's map building all
+/// allocate at once, and on Windows the main thread spent a tenth of a busy station's frame
+/// waiting for the process heap's lock. mimalloc keeps a heap per thread.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod admin;
 mod ambience;
-#[cfg(target_os = "android")]
-mod android;
 mod camera_arm;
 mod career;
 mod describe;
@@ -16,6 +21,7 @@ mod game_lists;
 mod headtrack;
 mod hud;
 mod humans;
+mod keyboard_layout;
 mod keys;
 mod lan;
 mod lan_world;
@@ -24,8 +30,10 @@ mod lights;
 #[cfg(target_os = "macos")]
 mod mac_hid;
 mod menu;
+mod start_menu;
 mod money;
 mod navigator;
+pub mod navmap;
 #[cfg(windows)]
 mod openxr;
 mod placing;
@@ -34,6 +42,7 @@ mod radio;
 mod rail_drive;
 mod touch;
 mod updater;
+mod voice;
 mod vr_navigator;
 
 mod puddles;
@@ -41,9 +50,13 @@ mod quit;
 mod rain;
 mod real_time;
 mod run_statistics;
+#[cfg(all(feature = "devtools", debug_assertions))]
+mod sampler;
 mod scene;
 mod schedule;
 mod schedule_paper;
+mod shelter;
+mod showcase;
 mod sound_events;
 mod threads;
 mod tiles;
@@ -64,20 +77,23 @@ mod controllers;
 mod dinput;
 mod duty_start;
 mod editor_ctl;
+#[cfg(target_os = "linux")]
+mod evdev_axes;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod evdev_ff;
 mod game_menu;
 mod lab_menu;
+mod lab_mods;
 mod lab_options;
 mod lab_pads;
 mod input_keys;
 mod input_mouse;
 mod input_script;
 mod lan_mods;
-mod launcher_link;
 mod memory;
 mod offscreen;
 mod on_foot;
+mod pax_pack;
 mod player;
 mod plugins;
 mod route_arrows;
@@ -109,7 +125,6 @@ use cli::*;
 use duty_start::*;
 use glam::{DVec3, Vec3};
 use input_script::*;
-use launcher_link::*;
 use memory::*;
 use offscreen::*;
 use ::render::{Camera, Renderer, Scene, SurfaceState};
@@ -132,13 +147,17 @@ use winit::window::{Window, WindowId};
 use world_load::*;
 
 pub fn run() -> Result<()> {
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some(updater::FINISH_UPDATE) {
+        logging::init("update");
+        return updater::finish_update(&raw[2..]);
+    }
     #[cfg(target_os = "macos")]
     restart_with_allocator_settings();
     #[cfg(windows)]
     attach_parent_console();
     let args = Args::parse();
-    let bare = std::env::args().len() == 1;
-    logging::init(if args.launcher || (bare && !args.menu) {
+    logging::init(if args.launcher {
         "launcher"
     } else {
         "game"
@@ -156,11 +175,14 @@ pub fn run() -> Result<()> {
                 std::backtrace::Backtrace::force_capture()
             ),
         );
+        // (other threads' panics are often caught: a damaged tile, a plugin)
         default_hook(info);
     }));
     if let Err(e) = config::init(config::default_path()) {
         log::warn!("settings not loaded: {e}");
     }
+    #[cfg(all(feature = "devtools", debug_assertions))]
+    sampler::start();
     log::info!(
         "neoOMSI {VERSION}, build {BUILD}{}",
         if std::env::var_os("MallocLargeCache").is_some() {
@@ -169,15 +191,24 @@ pub fn run() -> Result<()> {
             ""
         }
     );
-    let Some((args, server_cfg)) = prepare(args, bare)? else {
+    let Some((args, server_cfg)) = prepare(args)? else {
         return Ok(());
     };
-    if args.launcher || (bare && !args.menu) {
-        if legacy_config::env::var_os("OMSI_LAUNCHER").is_some() && open_launcher()? {
-            return Ok(());
+    if args.launcher {
+        let exe = std::env::current_exe()?;
+        match omsi_launcher_lib::start_external_launcher(&exe) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {
+                let expected = omsi_launcher_lib::shipped_launcher(&exe)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "dist/<platform>/launcher".to_string());
+                anyhow::bail!(
+                    "neoOMSI desktop launcher was not found at {expected}.\n\
+                     To run the engine directly for development, specify a map (e.g. `--map maps/Grundorf/global.cfg`) or `--menu`."
+                );
+            }
+            Err(e) => anyhow::bail!("Failed to start neoOMSI desktop launcher: {e:#}"),
         }
-        launcher_statics();
-        return launcher::run(graphics_instance());
     }
     let Some(app) = make_app(args, server_cfg)? else {
         return Ok(());
@@ -189,26 +220,44 @@ pub fn run() -> Result<()> {
     });
     let mut app = app;
     let r = event_loop.run_app(&mut app);
+    // Keep what was missed while driving, for the start menu.
+    lab_mods::save_drive();
     lan_mods::clean_up();
     r?;
     Ok(())
 }
 
-pub(crate) fn launcher_statics() {
-    ENHANCED.store(
-        (config::get_string("graphics", "graphics").as_deref() == Some("enhanced")) || legacy_config::env::var_os("OMSI_ENHANCED").is_some(),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    CLASSIC.store(config::get_string("graphics", "graphics").as_deref() == Some("vanilla"), std::sync::atomic::Ordering::Relaxed);
-    CLOUDS.store(
-        config::get_bool("graphics", "clouds").unwrap_or(true) && legacy_config::env::var_os("OMSI_NO_CLOUDS").is_none(),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+fn ask_for_root() -> Option<PathBuf> {
+    loop {
+        let exe = rfd::FileDialog::new()
+            .set_title(::i18n::translate("pause.options.game.root.exe_title", &[]))
+            .add_filter("Omsi.exe", &["exe"])
+            .pick_file()?;
+        let dir = exe.parent()?.to_path_buf();
+        if is_omsi_root(&dir) {
+            let mut c = omsi_launcher_lib::load_config();
+            c.root = dir.to_string_lossy().to_string();
+            if let Err(e) = omsi_launcher_lib::save_config(&c) {
+                log::warn!("OMSI 2 folder not saved: {e}");
+            }
+            if let Some(memo) = root_memo() {
+                let _ = std::fs::write(memo, dir.to_string_lossy().as_bytes());
+            }
+            return Some(dir);
+        }
+        let missing = legacy_config::missing_original_essentials(&dir);
+        fatal_dialog(
+            "neoOMSI",
+            &::i18n::translate(
+                "pause.options.game.root.incomplete",
+                &[("path", &dir.display()), ("missing", &missing.join(", "))],
+            ),
+        );
+    }
 }
 
 pub(crate) fn prepare(
     mut args: Args,
-    bare: bool,
 ) -> Result<Option<(Args, Option<server::ServerCfg>)>> {
     ui_language(&config::get_string("ui", "language").unwrap_or_else(|| "ENG".into()));
     let server_cfg = match args.server.clone() {
@@ -233,9 +282,16 @@ pub(crate) fn prepare(
         });
     legacy_script::set_session_seed(seed);
     log::info!("script random seed {seed} (OMSI_SEED={seed} repeats it)");
-    let launcher_mode = args.launcher || (bare && !args.menu);
+    let launcher_mode = args.launcher;
     if !is_omsi_root(&args.root) {
-        match find_root() {
+        let asked = || {
+            let silent = launcher_mode
+                || server_cfg.is_some()
+                || args.offscreen.is_some()
+                || legacy_config::env::var_os("OMSI_BACKGROUND").is_some();
+            if silent { None } else { ask_for_root() }
+        };
+        match find_root().or_else(asked) {
             Some(p) => {
                 log::info!("OMSI 2 found at {}", p.display());
                 args.root = p;
@@ -248,7 +304,7 @@ pub(crate) fn prepare(
                 let text = format!(
                     "The original OMSI 2 was not found.\n\n\
                      neoOMSI needs a complete installation of the original game (any version). \
-                     Choose its folder in the launcher (Setup), or start once with \
+                     Start neoOMSI again and select its Omsi.exe, or start once with \
                      --root \"/path/to/OMSI 2\", the folder with Omsi.exe, maps and Vehicles in it.\n\n\
                      Missing in {}: {}",
                     args.root.display(),
@@ -269,20 +325,21 @@ pub(crate) fn prepare(
     if let Some(memo) = root_memo().filter(|_| is_omsi_root(&args.root)) {
         let _ = std::fs::write(memo, args.root.to_string_lossy().as_bytes());
     }
-    if let Some(c) = content_dir() {
-        match legacy_config::ensure_content_layout(&c) {
+    let content = content_dir();
+    if let Some(c) = &content {
+        match legacy_config::ensure_content_layout(c) {
             Ok(()) => {
-                legacy_config::add_content_root(c.clone());
+                ::mods::add_content_root(c.clone());
                 log::info!("content folder (mods): {}", c.display());
             }
             Err(e) => log::warn!("content folder {}: {e}", c.display()),
         }
     }
     if config::get_string("passengers", "models").unwrap_or_else(|| "omsi".into()) == "realistic" {
-        if let Some(content) = content_dir() {
-            let pack = content.join("Packs/RealisticPax");
+        if let Some(content) = content.clone() {
+            let pack = pax_pack::folder(&content);
             if pack.join("Humans").is_dir() {
-                legacy_config::add_content_root(pack.clone());
+                ::mods::add_content_root(pack.clone());
                 log::info!("realistic passengers: {}", pack.display());
             } else {
                 log::warn!(
@@ -290,18 +347,26 @@ pub(crate) fn prepare(
                     pack.display()
                 );
             }
+            if server_cfg.is_none() && args.offscreen.is_none() {
+                pax_pack::fetch_if_needed(|| Some(content));
+            }
         }
     }
     for z in &args.content_zip {
-        if let Err(e) = legacy_config::add_content_zip(z) {
+        if let Err(e) = ::mods::add_content_zip(z) {
             log::warn!("content zip {}: {e}", z.display());
         }
     }
-    legacy_config::vfs::mount_env_zips();
-    if let Some(c) = content_dir() {
-        legacy_config::vfs::mount_dir_zips(&c.join("Archives"));
+    ::mods::mount_env_zips();
+    let mods = match &content {
+        Some(content) => ::mods::init(content, Some(&args.root)).map_err(|error| {
+            log::warn!("mods folder {}: {error}", content.join(::mods::MODS_DIR).display())
+        }),
+        None => Err(()),
+    };
+    if mods.is_err() {
+        ::mods::add_content_root(args.root.clone());
     }
-    legacy_config::add_content_root(args.root.clone());
     Ok(Some((args, server_cfg)))
 }
 
@@ -428,6 +493,8 @@ pub(crate) fn make_app(
         surface: None,
         renderer: None,
         resize_pending: None,
+        pending_triple_screen_span: None,
+        boot: None,
         #[cfg(windows)]
         vr: None,
         scene: None,
@@ -459,6 +526,7 @@ pub(crate) fn make_app(
         ui: ui::Ui::new(),
         fps: 0.0,
         rain: rain::Rain::new(),
+        shelter: shelter::Shelter::new(),
         splashes: puddles::Splashes::new(),
         lamps_on: None,
         menu: None,
@@ -466,6 +534,7 @@ pub(crate) fn make_app(
         humans_populate_t: 0.0,
         radio: radio::Radio::load(&args_root_for_keys),
         profile: Default::default(),
+        redraw_ended: None,
         profile_prev: Default::default(),
         first_populate: true,
         envir: None,
@@ -486,7 +555,9 @@ pub(crate) fn make_app(
         vr_cursor_warp_pending: None,
         window_focused: false,
         keys: Default::default(),
+        modifiers: Default::default(),
         door_key_triggers: Default::default(),
+        pad_doors: Default::default(),
         last: Instant::now(),
         speed: 30.0,
         mouse_look: false,
@@ -503,6 +574,8 @@ pub(crate) fn make_app(
         game_menu: None,
         lab_menu: None,
         lab_map_direct: false,
+        restart_pending: false,
+        restart_prompt: None,
         lab_list: None,
         lab_load: None,
         lab_place: None,
@@ -511,11 +584,13 @@ pub(crate) fn make_app(
         vehicle_scan,
         menu_top: None,
         menu_scroll_drag: false,
+        lab_bar_drag: 0,
         pane_scroll: None,
         plugin_keys: Vec::new(),
         clock_hold: 0.0,
         pad_look: [false; 4],
         teleport_pick: false,
+        teleport_down: None,
         discord: None,
         discord_next_update: Instant::now(),
         headtrack: None,
@@ -589,6 +664,8 @@ pub(crate) fn make_app(
         cloud_drift: [0.0; 2],
         menu_edit: None,
         menu_edit_icao: false,
+        menu_edit_date: false,
+        dest_sort: Default::default(),
         swap_pending: false,
         menu_drag: None,
         menu_kbd: true,
@@ -600,6 +677,7 @@ pub(crate) fn make_app(
         cursor_kind: 0,
         lan: None,
         remotes: Default::default(),
+        voice: Default::default(),
         spikes: 0,
         worst_ms: 0.0,
         governor: (0.0, 0, 0.0),
@@ -611,6 +689,9 @@ pub(crate) fn make_app(
         #[cfg(all(feature = "devtools", debug_assertions))]
         devtools: None,
         cpu_mark: None,
+        thread_cpu_mark: Vec::new(),
+        profile_mark: None,
+        play_since: None,
         touch: touch::Touch::new(),
     };
     app.lan = lan;
@@ -644,6 +725,14 @@ mod tests {
                 None
             ),
             seat
+        );
+        assert_eq!(
+            start_centers(
+                &args(&["--bus", "Vehicles/x.bus", "--spawn", "10,20,90,12.5"]),
+                &cam,
+                None
+            ),
+            vec![DVec3::new(10.0, 20.0, 12.5)]
         );
         assert_eq!(
             start_centers(

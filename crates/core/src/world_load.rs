@@ -43,11 +43,14 @@ pub(crate) fn season_folder_on(
 /// camera, and the point the tiles are loaded around (the spawn entry point when a vehicle
 /// is requested).
 pub(crate) fn open_world(args: &Args) -> Result<(World, Camera, DVec3)> {
-    let map_cfg = ::legacy_config::resolve_path(&args.root, &args.map);
+    let map_cfg = ::mods::resolve_path(&args.root, &args.map);
     let date = start_clock(args).date_code();
     let world = match crate::duty_start::take_preopened(&map_cfg, date) {
         Some(w) => w,
-        None => World::open(&args.root, &map_cfg, date)?,
+        None => {
+            crate::lab_mods::drive_starts(&args.map);
+            World::open(&args.root, &map_cfg, date)?
+        }
     };
     *world.start_clock.lock() = start_clock(args);
     {
@@ -59,10 +62,26 @@ pub(crate) fn open_world(args: &Args) -> Result<(World, Camera, DVec3)> {
         );
         ::texture::set_season_folder(folder);
     }
-    let camera = match &args.cam {
+    let mut camera = match &args.cam {
         Some(c) => parse_cam(c)?,
         None => default_camera(&world),
     };
+    if args.on_foot && args.bus.is_none() && args.cam.is_none() {
+        if let Some(ep) = world
+            .global
+            .entry_points
+            .get(args.entry)
+            .or(world.global.entry_points.first())
+        {
+            world.index();
+            if let Some((p, rot)) = world.entry_point_place(ep) {
+                let z = world.walk_height(p.x, p.y).unwrap_or(p.z);
+                camera.position = DVec3::new(p.x, p.y, z + 1.7);
+                camera.yaw = rot[0] as f32;
+                camera.pitch = 0.0;
+            }
+        }
+    }
     // centre the loaded area on the spawn point (a requested vehicle's entry point, unless a
     // camera is given too)
     let spawn = spawn_point(args, Some(&world));
@@ -89,7 +108,7 @@ pub(crate) fn open_world(args: &Args) -> Result<(World, Camera, DVec3)> {
 }
 
 /// Where the vehicle starts: `--spawn`, else the requested bus's entry point (None without
-/// either, or when the entry point's object is not in the map). The height is not known.
+/// either, or when the entry point's object is not in the map).
 pub(crate) fn spawn_point(args: &Args, world: Option<&World>) -> Option<DVec3> {
     if let Some(sp) = &args.spawn {
         let v: Vec<f64> = sp
@@ -97,10 +116,12 @@ pub(crate) fn spawn_point(args: &Args, world: Option<&World>) -> Option<DVec3> {
             .filter_map(|x| x.trim().parse().ok())
             .collect();
         if v.len() >= 2 {
-            return Some(DVec3::new(v[0], v[1], 0.0));
+            return Some(DVec3::new(v[0], v[1], v.get(3).copied().unwrap_or(0.0)));
         }
     }
-    args.bus.as_ref()?;
+    if args.bus.is_none() && !args.on_foot {
+        return None;
+    }
     let world = world?;
     let ep = world
         .global

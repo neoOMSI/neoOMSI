@@ -1,6 +1,5 @@
 #![allow(unused_imports)]
 use super::types::*;
-use ::simulation::collision::Obb;
 
 impl crate::App {
     pub(crate) fn dev_gather(&self) -> Extra {
@@ -17,6 +16,13 @@ impl crate::App {
             attached: f.attached,
             seated: f.seat.is_some(),
             inside: f.inside.is_some(),
+            exempt: f.dbg.exempt.map(|e| [e.x, e.y]),
+            solids: f.dbg.boxes,
+            lost: [f.dbg.lost.x, f.dbg.lost.y],
+            step_wall: f.dbg.step_wall,
+            reset: f.dbg.reset,
+            floor: f.dbg.floor,
+            lift: f.lift,
         });
         let doors = match (self.on_foot.as_ref(), self.humans.as_ref()) {
             (Some(f), Some(hm)) if boxes_on || self.devtools.is_some() => {
@@ -62,15 +68,7 @@ impl crate::App {
             Vec::new()
         };
         let blockers = if boxes_on {
-            let exempt = doors
-                .iter()
-                .filter(|d| d.in_lane)
-                .min_by(|a, b| {
-                    a.lateral
-                        .partial_cmp(&b.lateral)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .map(|d| glam::DVec2::new(d.inside[0], d.inside[1]));
+            let exempt = self.on_foot.as_ref().and_then(|f| f.dbg.exempt);
             self.dev_blockers(exempt)
         } else {
             Vec::new()
@@ -189,7 +187,7 @@ impl crate::App {
                 beams.sort_by(|a, b| {
                     let da = (glam::DVec3::from(a.pos) - at).length_squared();
                     let db = (glam::DVec3::from(b.pos) - at).length_squared();
-                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    da.total_cmp(&db)
                 });
                 beams.truncate(32);
             }
@@ -257,7 +255,34 @@ impl crate::App {
             lan,
             tours,
             quicksave,
-            profile: self.profile.iter().map(|(k, v)| (*k, *v)).collect(),
+            profile: {
+                let mut p: Vec<(&'static str, f64)> =
+                    self.profile.iter().map(|(k, v)| (*k, *v)).collect();
+                if let Some(r) = self.renderer.as_ref() {
+                    for (k, v) in r.stats.borrow().iter() {
+                        let name: &'static str = match *k {
+                            "setup" => "render.setup",
+                            "prepare" => "render.prepare",
+                            "shadow items" => "render.shadow items",
+                            "cull" => "render.cull",
+                            "items" => "render.items",
+                            "upload" => "render.upload",
+                            "bundles" => "render.bundles",
+                            "encode" => "render.encode",
+                            "finish" => "render.finish",
+                            "submit" => "render.submit",
+                            "finish.shadow" => "render.finish.shadow",
+                            "finish.prepass" => "render.finish.prepass",
+                            "finish.main" => "render.finish.main",
+                            "finish.wait shadow" => "render.finish.wait shadow",
+                            "finish.wait prepass" => "render.finish.wait prepass",
+                            other => other,
+                        };
+                        p.push((name, *v));
+                    }
+                }
+                p
+            },
             frames: self.total_frames,
             traffic: self.traffic.as_ref().map(|t| TrafficPerf {
                 cars: t.cars.len(),
@@ -531,7 +556,7 @@ fn walk_paths(def: &::legacy_vehicle::Vehicle) -> (Vec<[f32; 3]>, Vec<(i32, i32,
         .paths
         .as_ref()
         .and_then(|rel| {
-            ::legacy_vehicle::VehiclePaths::load(&::legacy_config::resolve_path(def.dir(), rel)).ok()
+            ::legacy_vehicle::VehiclePaths::load(&::mods::resolve_path(def.dir(), rel)).ok()
         })
         .map(|vp| {
             (

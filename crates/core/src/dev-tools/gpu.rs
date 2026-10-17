@@ -329,7 +329,10 @@ impl DevTools {
                 }
             }
         }
-        queue.submit(Some(encoder.finish()));
+        // (after the picture's commands, finished and submitted with them on the submit
+        // thread: submitting here made the main thread finish and submit the whole picture
+        // first, every frame, the panel shown or not)
+        r.submit_with_frame(encoder);
     }
 }
 

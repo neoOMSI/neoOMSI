@@ -33,6 +33,42 @@ impl Drop for Fixture {
     }
 }
 
+#[test]
+fn texture_preparation_deduplicates_files_without_merging_search_priorities() {
+    let fixture = Fixture::new();
+    let first = fixture.0.join("first");
+    let second = fixture.0.join("second");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    for (dir, color) in [(&first, [40, 80, 120, 255]), (&second, [120, 80, 40, 255])] {
+        image::RgbaImage::from_pixel(8, 8, image::Rgba(color))
+            .save(dir.join("shared.png"))
+            .unwrap();
+    }
+    let mut wanted = vec![
+        ("shared.png".into(), vec![first.clone(), second.clone()]),
+        ("shared.png".into(), vec![first.clone()]),
+        ("SHARED.PNG".into(), vec![first.clone(), fixture.0.clone()]),
+        ("missing.png".into(), vec![first.clone()]),
+    ];
+    let images = prepare_texture_images(&wanted);
+    let data = &images[&first.join("shared.png")];
+    assert_eq!((data.width, data.height), (8, 8));
+    // All requested aliases remain available, sharing the same decoded allocation.
+    for (name, dirs) in &wanted[..3] {
+        let dirs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
+        let path = ::texture::find_texture(name, &dirs).unwrap();
+        assert!(Arc::ptr_eq(&images[&path], data));
+    }
+    // Identically named textures in a higher-priority pack must keep their own identity.
+    wanted.push(("shared.png".into(), vec![second.clone(), first.clone()]));
+    let images = prepare_texture_images(&wanted);
+    assert!(!Arc::ptr_eq(
+        &images[&first.join("shared.png")],
+        &images[&second.join("shared.png")]
+    ));
+}
+
 fn triangle(z: f32) -> MeshData {
     MeshData {
         positions: vec![
@@ -46,6 +82,55 @@ fn triangle(z: f32) -> MeshData {
         ranges: vec![(0, 3, 0)],
         ..Default::default()
     }
+}
+
+#[test]
+fn authored_surface_heights_meet_the_terrain_without_an_added_step() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "global.cfg",
+        "[name]\nSurface height regression\n[map]\n0\n0\ntile_0_0.map\n",
+    );
+    fixture.write(
+        "road.sli",
+        "[profile]\n0\n[profilepnt]\n-2\n0\n0\n1\n[profilepnt]\n2\n0\n1\n1\n",
+    );
+    fixture.write("surface.sco", "[surface]\n[mesh]\nsurface.x\n");
+    fixture.write(
+        "surface.x",
+        "xof 0303txt 0032\nMesh surface {3;0;0;0;,10;0;0;,0;0.5;10;;1;3;0,2,1;;}",
+    );
+    fixture.write(
+        "tile_0_0.map",
+        "[version]\n14\n[terrain]\n\n[spline]\n0\nroad.sli\n1\n0\n0\n20\n2\n20\n0\n20\n0\n5\n5\n0\n0\n0\n0\n0\n0\n\n[object]\n0\nsurface.sco\n2\n90\n20\n0\n0\n0\n0\n0\n",
+    );
+    let mut terrain = Terrain::flat();
+    let cell = tile_size() as f32 / terrain.cells as f32;
+    let n = terrain.samples();
+    for iy in 0..n {
+        for ix in 0..n {
+            terrain.heights[iy * n + ix] = 1.0 + iy as f32 * cell * 0.05;
+        }
+    }
+    std::fs::write(fixture.0.join("tile_0_0.map.terrain"), terrain.to_bytes()).unwrap();
+    let world = World::open(&fixture.0, &fixture.0.join("global.cfg"), 20261001).unwrap();
+    let (prepared, _) = world.prepare_tiles(&[(0, 0, fixture.0.join("tile_0_0.map"))]);
+    assert_eq!(prepared.len(), 1);
+    assert_eq!(prepared[0].splines.len(), 1);
+    assert_eq!(prepared[0].objects.len(), 1);
+    // Cross both ends of an inclined spline whose authored surface matches the terrain.
+    // The old 8 cm lift affected the spline alone and made a step at each end. Paul likes :)
+    for y in [19.9, 20.1, 25.0, 39.9, 40.1] {
+        let expected = 1.0 + y * 0.05;
+        let got = drive_probe(&world.terrains, &world.surfaces, 20.0, y, expected + 1.0);
+        assert!(
+            (got.below.unwrap() - expected).abs() < 1e-5,
+            "y={y}: {got:?}"
+        );
+    }
+    // A terrain-relative [surface] object must use the same height as well
+    let got = drive_probe(&world.terrains, &world.surfaces, 91.0, 21.0, 3.0);
+    assert!((got.below.unwrap() - 2.05).abs() < 1e-5, "surface: {got:?}");
 }
 
 #[test]
@@ -186,6 +271,8 @@ fn mapped_splines_and_objects_use_uncut_base_while_ground_keeps_paint() {
         2
     );
     for instance in mapped {
+        assert_eq!(instance.transform, Mat4::IDENTITY);
+        assert_eq!(instance.origin, DVec3::ZERO);
         assert_eq!(instance.materials.len(), 1);
         let material = &scene.materials[instance.materials[0]];
         assert_eq!(material.texture, Some(base_texture));
@@ -224,4 +311,71 @@ fn surf_height_map_is_loaded_from_a_mounted_zip_sidecar() {
     let map = surface_height_map("road.bmp", &[mount.join("Texture")])
         .expect("the sidecar in the mounted content archive must load");
     assert!((map.sample(glam::Vec2::ZERO) - 0.02).abs() < 1e-6);
+}
+
+#[test]
+fn flagged_terrain_cutters_share_the_drawn_ground_with_wheels_and_walkers() {
+    let fixture = Fixture::new();
+    fixture.write(
+        "global.cfg",
+        "[name]\nCut terrain regression\n[map]\n0\n0\ntile_0_0.map\n",
+    );
+    fixture.write(
+        "portal.sco",
+        "[absheight]\n[surface]\n[mesh]\nfloor.x\n[terrainhole]\nhole.x\n",
+    );
+    let floor = "xof 0303txt 0032\nMesh floor {4;101;7;101;,109;7;101;,109;7;109;,101;7;109;;2;3;0,2,1;,3;0,3,2;;}";
+    fixture.write("floor.x", floor);
+    fixture.write("hole.x", floor);
+    fixture.write("tile_0_0.map", "[version]\n14\n[terrain]\n\n[object]\n0\nportal.sco\n1\n0\n0\n0\n0\n0\n0\n0\n[spline_terrain_align]\n\n[object]\n0\nportal.sco\n2\n30\n0\n0\n0\n0\n0\n0\n");
+    let mut terrain = Terrain::flat();
+    terrain.heights.fill(10.0);
+    std::fs::write(fixture.0.join("tile_0_0.map.terrain"), terrain.to_bytes()).unwrap();
+    let world = World::open(&fixture.0, &fixture.0.join("global.cfg"), 20261001).unwrap();
+    let (prepared, _) = world.prepare_tiles(&[(0, 0, fixture.0.join("tile_0_0.map"))]);
+    let mesh = prepared[0].terrain.as_ref().unwrap();
+    let cast = |x: f32, y: f32| {
+        ::geometry::ray_mesh(
+            glam::Vec3::new(x, y, 20.0),
+            -glam::Vec3::Z,
+            mesh,
+            &Mat4::IDENTITY,
+        )
+        .map(|d| 20.0 - d)
+    };
+    assert!(cast(103.0, 103.0).is_none(), "flagged portal cuts");
+    assert_eq!(
+        cast(133.0, 103.0),
+        Some(10.0),
+        "unflagged portal keeps the hill"
+    );
+    assert!((world.walk_height(103.0, 103.0).unwrap() - 7.0).abs() < 1e-4);
+    assert!((world.walk_height(133.0, 103.0).unwrap() - 10.0).abs() < 1e-4);
+    let h = cast(100.5, 103.0).unwrap() as f64;
+    assert!(h > 7.0 && h < 10.0);
+    let probe = drive_probe(&world.terrains, &world.surfaces, 100.5, 103.0, 20.0);
+    assert!(
+        (probe.below.unwrap() - h).abs() < 1e-4,
+        "wheel: {probe:?}, rendered: {h}"
+    );
+    assert!((world.walk_height(100.5, 103.0).unwrap() - h).abs() < 1e-4);
+    let empty = drive_probe(&world.terrains, &world.surfaces, 104.0, 104.0, 6.0);
+    assert!(
+        empty.below.is_none(),
+        "the original hill must not reappear inside the cut: {empty:?}"
+    );
+}
+
+#[test]
+fn tree_cards_keep_their_uvs_at_zero_and_turn_with_positive_heading() {
+    let mesh = tree_quad_mesh();
+    for heading in [0.0_f64, 86.4, 90.0] {
+        let xf = tree_transform(heading, 2.0, 3.0);
+        let p = xf.transform_point3(mesh.positions[1]);
+        let angle = heading.to_radians();
+        assert!(p.distance(glam::Vec3::new(angle.cos() as f32, angle.sin() as f32, 0.0)) < 1e-5);
+        assert_eq!(mesh.uvs[0], glam::Vec2::new(0.0, 1.0));
+        assert_eq!(mesh.uvs[1], glam::Vec2::new(1.0, 1.0));
+        assert!(xf.transform_point3(mesh.positions[2]).z == 3.0);
+    }
 }

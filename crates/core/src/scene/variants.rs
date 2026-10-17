@@ -52,6 +52,52 @@ pub(crate) fn pick_variant(
     }
 }
 
+/// Apply [matl_change] variant switches to scenery instances, honoring any active dynamic
+/// material overrides from [CTC] / [texchanges].
+pub(crate) fn apply_scenery_variants(
+    variants: &[SceneryVariant],
+    dynamic_materials: &HashMap<(usize, usize), Vec<MaterialId>>,
+    nightlight: f32,
+    var: &impl Fn(&str) -> Option<f32>,
+    renderer: &Renderer,
+    scene: &mut Scene,
+) {
+    for (inst, slot, base, item, var_name, more) in variants {
+        let x = if var_name.trim().eq_ignore_ascii_case("NightlightA") {
+            nightlight
+        } else {
+            var_name
+                .trim()
+                .parse()
+                .ok()
+                .or_else(|| var(var_name))
+                .unwrap_or(0.0)
+        };
+        let n = variant_number(x);
+        let target_mat = if let Some(dyn_looks) = dynamic_materials.get(&(*inst, *slot)) {
+            look_of(dyn_looks, n)
+        } else {
+            pick_variant(x, *base, *item, more)
+        };
+        if scene
+            .instances
+            .get(*inst)
+            .and_then(|i| i.materials.get(*slot))
+            != Some(&target_mat)
+        {
+            renderer.set_material(
+                scene,
+                *inst,
+                *slot,
+                target_mat,
+            );
+        }
+    }
+}
+
+/// (plain, item) and items 2, 3, ... built for one set of free textures.
+pub type FreeBuilt = ((MaterialId, MaterialId), Vec<MaterialId>);
+
 /// A material variant switched by a variable.
 #[derive(Clone)]
 pub struct VariantSlot {
@@ -71,8 +117,10 @@ pub struct VariantSlot {
     pub entries: Vec<(MaterialId, MaterialId)>,
     /// `[texchanges]` variable: its integer value picks the entry.
     pub tex_var: String,
-    /// Free textures for the plain material and, independently, its switched item.
+    /// Free textures of the plain material (shown in its item too) and of the item alone.
     pub free: Vec<FreeTex>,
+    /// Materials built per set of `free` textures.
+    pub free_cache: HashMap<Vec<Option<TextureId>>, FreeBuilt>,
     /// How to build a material of this slot for a texture loaded later.
     pub spec: SlotSpec,
     /// The textures `base`/`item` and each entry were made with (made again per vehicle
@@ -95,8 +143,12 @@ pub struct MultiLight {
     pub maps: Vec<(PathBuf, String)>,
     /// The set's own materials (the last map), shown while none is on.
     pub plain: (MaterialId, MaterialId),
-    /// Materials made per switched-on combination (bit k: map k).
-    pub cache: HashMap<u32, (MaterialId, MaterialId)>,
+    /// Materials made per switched-on light-map combination (bit k: map k) and the
+    /// live `[matl_freetex]` textures present when it was made.  The latter is normally
+    /// empty, but a dashboard may combine a live screen with several light maps.
+    pub cache: HashMap<(u32, Vec<Option<TextureId>>), (MaterialId, MaterialId)>,
+    /// The rebuilt items 2, 3, ... for each light-map and FreeTex combination.
+    pub more_cache: HashMap<(u32, Vec<Option<TextureId>>), Vec<MaterialId>>,
     pub current: u32,
     /// Composite maps are shared like the vehicles' pictures (see `FreeTex::shared`).
     pub shared: Arc<Mutex<HashMap<PathBuf, (TextureId, usize)>>>,
@@ -165,17 +217,32 @@ impl MultiLight {
 
 /// `[matl_freetex]`: the slot shows the texture file named by a string variable - the
 /// SD200's destination roller reads the terminus pictures of the map's `.hof` this way.
-pub(super) fn free_texture_defs(overrides: &[&MaterialDef]) -> Vec<(bool, String, String)> {
-    [false, true]
-        .into_iter()
-        .filter_map(|item| {
-            overrides.iter().filter(|o| o.item == item).find_map(|o| {
-                o.freetex
-                    .as_ref()
-                    .map(|(key, var)| (item, key.clone(), var.clone()))
-            })
-        })
-        .collect()
+pub(super) fn free_texture_defs(
+    overrides: &[&MaterialDef],
+) -> Vec<(Option<usize>, String, String)> {
+    let mut changes = 0;
+    let mut items = 0;
+    let mut defs: Vec<(Option<usize>, String, String)> = Vec::new();
+    for o in overrides {
+        // (the items of a later [matl_change] merge into item 1, as the slot's materials do)
+        let item = if !o.item {
+            changes += usize::from(o.change.is_some());
+            None
+        } else if changes <= 1 {
+            items += 1;
+            Some(items)
+        } else {
+            Some(1)
+        };
+        if let Some((key, var)) = &o.freetex {
+            if !defs.iter().any(|(i, _, _)| *i == item) {
+                defs.push((item, key.clone(), var.clone()));
+            }
+        }
+    }
+    // (the plain slot's first: it shows in the items as well)
+    defs.sort_by_key(|(item, _, _)| *item);
+    defs
 }
 
 #[derive(Clone)]
@@ -185,15 +252,19 @@ pub struct FreeTex {
     /// names the same black texture as its diffuse and its switched night map).
     pub key: Option<TextureId>,
     pub diffuse: bool,
-    /// A declaration inside `[matl_item]` must not change the unpowered material.
-    pub item_only: bool,
+    /// The `[matl_item]` the declaration is inside (1, 2, ...), whose material alone it
+    /// changes; `None`: the plain material's, shown in every item too.
+    pub item: Option<usize>,
     /// Where the file name is looked up (the vehicle's texture folders).
     pub dirs: Vec<PathBuf>,
     pub textures: Arc<::texture::TextureCache>,
-    /// File name (lower case) → the materials already built for it.
-    pub cache: HashMap<String, (MaterialId, MaterialId)>,
+    /// File name (lower case) → its resolved GPU texture, including failed lookups.
+    pub texture_cache: HashMap<String, Option<TextureId>>,
     /// The name currently applied.
     pub current: Option<String>,
+    /// GPU texture for the current name. This is retained so that a slot which also has
+    /// dynamic light maps can rebuild both stages together.
+    pub texture: Option<TextureId>,
     /// The world's shared vehicle textures (a picture is one texture for every vehicle
     /// showing it; every bus had its own copy, half a gigabyte of destination pictures on
     /// Ahlheim), the pictures this vehicle holds, and where pictures uploaded as RGBA are
@@ -319,11 +390,16 @@ impl Look {
             let mut extra = l.extra;
             extra.display = text_is_display(l.lightmap.is_some(), l.night.is_some());
             extra.screen = true;
+            extra.text = true;
             return Look {
                 diffuse: Some(t),
-                alpha: AlphaMode::Blend,
+                alpha: if l.alpha == AlphaMode::Test {
+                    AlphaMode::Test
+                } else {
+                    AlphaMode::Blend
+                },
                 color: [1.0; 4],
-                emissive: [0.0; 3],
+                emissive: l.emissive,
                 unlit: false,
                 transmap: None,
                 envmap: None,
@@ -359,45 +435,90 @@ impl Look {
 }
 
 impl SlotSpec {
+    #[cfg(test)]
     pub(super) fn with_freetex(
         &self,
         key: Option<TextureId>,
         tex: TextureId,
         diffuse: bool,
-        item_only: bool,
+        item: Option<usize>,
     ) -> Self {
+        self.with_freetex_from(self, key, tex, diffuse, item)
+    }
+
+    /// Apply a free texture while matching its source against the slot before any other
+    /// free-texture replacements.  An item-only declaration can therefore override the
+    /// powered material even when a preceding base declaration replaced the same source.
+    /// `item`: see `FreeTex::item`.
+    pub(super) fn with_freetex_from(
+        &self,
+        source: &Self,
+        key: Option<TextureId>,
+        tex: TextureId,
+        diffuse: bool,
+        item: Option<usize>,
+    ) -> Self {
+        let item_only = item.is_some();
         let mut spec = self.clone();
-        let replace = |look: &mut Look| {
+        let replace = |look: &mut Look, source: &Look| {
             // A per-vehicle text/script texture has already replaced the original
             // diffuse and is not the file named by this free-texture declaration.
-            if (diffuse && look.diffuse.is_none()) || (key.is_some() && look.diffuse == key) {
+            if (diffuse && look.diffuse.is_none())
+                || (key.is_some()
+                && (look.diffuse == key || (item_only && source.diffuse == key)))
+            {
                 look.diffuse = Some(tex);
             }
             if let Some(key) = key {
-                for stage in [&mut look.night, &mut look.lightmap] {
-                    if *stage == Some(key) {
+                for (stage, source_stage) in [
+                    (&mut look.night, source.night),
+                    (&mut look.lightmap, source.lightmap),
+                ] {
+                    if *stage == Some(key) || (item_only && source_stage == Some(key)) {
                         *stage = Some(tex);
                     }
                 }
                 if let Some((id, _)) = &mut look.transmap {
-                    if *id == key {
+                    if *id == key
+                        || (item_only
+                        && source.transmap.is_some_and(|(source_id, _)| source_id == key))
+                    {
                         *id = tex;
                     }
                 }
                 if let Some((id, _)) = &mut look.envmap {
-                    if *id == key {
+                    if *id == key
+                        || (item_only
+                        && source.envmap.is_some_and(|(source_id, _)| source_id == key))
+                    {
                         *id = tex;
                     }
                 }
             }
         };
+        let shows_in = |n: usize| item.is_none_or(|i| i == n);
         if !item_only {
-            replace(&mut spec.base);
+            replace(&mut spec.base, &source.base);
         }
-        if let Some(item) = &mut spec.item {
-            replace(item);
+        if let (Some(look), Some(source_item), true) = (&mut spec.item, &source.item, shows_in(1)) {
+            replace(look, source_item);
+        }
+        for (k, (more, source_more)) in spec.more.iter_mut().zip(&source.more).enumerate() {
+            if shows_in(k + 2) {
+                replace(more, source_more);
+            }
         }
         spec
+    }
+
+    pub(super) fn with_free_textures(
+        &self,
+        free: impl IntoIterator<Item = (Option<TextureId>, TextureId, bool, Option<usize>)>,
+    ) -> Self {
+        free.into_iter()
+            .fold(self.clone(), |spec, (key, tex, diffuse, item)| {
+                spec.with_freetex_from(self, key, tex, diffuse, item)
+            })
     }
 
     /// (plain material, `[matl_item]` material) for one diffuse texture; without a
@@ -420,12 +541,15 @@ impl SlotSpec {
     /// `for_vehicle`.
     /// The same slot with another light map.
     pub fn set_lightmap(&mut self, tex: Option<TextureId>) {
-        self.base.lightmap = tex;
+        let Some(tex) = tex else {
+            return;
+        };
+        self.base.lightmap = Some(tex);
         if let Some(it) = &mut self.item {
-            it.lightmap = tex;
+            it.lightmap = Some(tex);
         }
         for it in &mut self.more {
-            it.lightmap = tex;
+            it.lightmap = Some(tex);
         }
     }
 
