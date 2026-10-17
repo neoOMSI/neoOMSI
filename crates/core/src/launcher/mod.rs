@@ -276,7 +276,7 @@ impl Launcher {
         if self.renderer.is_none() {
             let renderer = match crate::startup::window_renderer(
                 &mut self.instance,
-                &window,
+                &|i| i.create_surface(window.clone()).map_err(|e| e.to_string()),
                 showroom_options(),
             ) {
                 Ok(r) => r,
@@ -362,7 +362,7 @@ impl ApplicationHandler for Launcher {
         };
         let renderer = match crate::startup::window_renderer(
             &mut self.instance,
-            &window,
+            &|i| i.create_surface(window.clone()).map_err(|e| e.to_string()),
             showroom_options(),
         ) {
             Ok(r) => r,

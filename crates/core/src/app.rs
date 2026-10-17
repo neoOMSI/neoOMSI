@@ -22,8 +22,14 @@ pub(crate) struct ProfileMark {
     pub(crate) gpu: Vec<(String, f64, u32)>,
 }
 
+pub(crate) type SurfaceRequest = (
+    wgpu::Instance,
+    std::sync::mpsc::Sender<Result<wgpu::Surface<'static>, String>>,
+);
+
 pub(crate) struct Boot {
     pub(crate) rx: std::sync::mpsc::Receiver<(Result<Renderer>, wgpu::Instance)>,
+    pub(crate) surfaces: std::sync::mpsc::Receiver<SurfaceRequest>,
     pub(crate) window: Arc<Window>,
     pub(crate) span_rect: Option<(
         winit::dpi::PhysicalPosition<i32>,
@@ -365,41 +371,57 @@ impl App {
         {
             let w = window.clone();
             let started = Instant::now();
-            render::set_device_hook(Some(Arc::new(move |device, queue, surface, format| {
-                let size = w.inner_size();
-                let (pw, ph) = (size.width.max(1), size.height.max(1));
-                surface.configure(
-                    device,
-                    &wgpu::SurfaceConfiguration {
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        format,
-                        color_space: wgpu::SurfaceColorSpace::Auto,
-                        width: pw,
-                        height: ph,
-                        present_mode: wgpu::PresentMode::AutoVsync,
-                        desired_maximum_frame_latency: 2,
-                        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-                        view_formats: vec![],
-                    },
-                );
+            render::set_device_hook(Some(Arc::new(move |device, queue, _, format| {
+                let w = w.clone();
+                let caption = ::i18n::translate("splash.compile-shaders", &[]);
                 let mut screen = user_interface::LoadingScreen::new(device, queue, format);
-                if let wgpu::CurrentSurfaceTexture::Success(frame)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) = surface.get_current_texture()
-                {
-                    let view = frame.texture.create_view(&Default::default());
-                    screen.draw(
-                        device,
-                        queue,
-                        &view,
-                        (pw, ph),
-                        &::i18n::translate("splash.compile-shaders", &[]),
-                        None,
-                        started.elapsed().as_secs_f32(),
-                    );
-                    w.pre_present_notify();
-                    queue.present(frame);
-                    w.set_visible(true);
-                }
+                let mut configured = (0, 0);
+                let mut shown = false;
+                Box::new(move |device, queue, surface| {
+                    let size = w.inner_size();
+                    let (pw, ph) = (size.width.max(1), size.height.max(1));
+                    if configured != (pw, ph) {
+                        surface.configure(
+                            device,
+                            &wgpu::SurfaceConfiguration {
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                format,
+                                color_space: wgpu::SurfaceColorSpace::Auto,
+                                width: pw,
+                                height: ph,
+                                present_mode: wgpu::PresentMode::AutoVsync,
+                                desired_maximum_frame_latency: 2,
+                                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                                view_formats: vec![],
+                            },
+                        );
+                        configured = (pw, ph);
+                    }
+                    match surface.get_current_texture() {
+                        wgpu::CurrentSurfaceTexture::Success(frame)
+                        | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                            let view = frame.texture.create_view(&Default::default());
+                            screen.draw(
+                                device,
+                                queue,
+                                &view,
+                                (pw, ph),
+                                &caption,
+                                None,
+                                started.elapsed().as_secs_f32(),
+                            );
+                            w.pre_present_notify();
+                            queue.present(frame);
+                            if !shown {
+                                w.set_visible(true);
+                                shown = true;
+                            }
+                        }
+                        wgpu::CurrentSurfaceTexture::Outdated
+                        | wgpu::CurrentSurfaceTexture::Lost => configured = (0, 0),
+                        _ => std::thread::sleep(std::time::Duration::from_millis(16)),
+                    }
+                })
             })));
         }
         let options = render::RenderOptions {
@@ -430,13 +452,32 @@ impl App {
                 != Some("enhanced"),
         };
         let (tx, rx) = std::sync::mpsc::channel();
-        {
-            let mut instance = self.instance.clone();
-            let r = window_renderer(&mut instance, &window, options);
+        let (surface_tx, surfaces) = std::sync::mpsc::channel::<SurfaceRequest>();
+        let mut instance = self.instance.clone();
+        if cfg!(target_os = "macos") {
+            let w = window.clone();
+            let r = window_renderer(
+                &mut instance,
+                &|i| i.create_surface(w.clone()).map_err(|e| e.to_string()),
+                options,
+            );
             let _ = tx.send((r, instance));
+        } else {
+            std::thread::spawn(move || {
+                let make_surface = |i: &wgpu::Instance| {
+                    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+                    let _ = surface_tx.send((i.clone(), reply_tx));
+                    reply_rx
+                        .recv()
+                        .unwrap_or_else(|_| Err("the window is gone".into()))
+                };
+                let r = window_renderer(&mut instance, &make_surface, options);
+                let _ = tx.send((r, instance));
+            });
         }
         self.boot = Some(Boot {
             rx,
+            surfaces,
             window,
             span_rect,
             start_exclusive,
@@ -448,6 +489,13 @@ impl App {
         let Some(boot) = self.boot.as_ref() else {
             return;
         };
+        while let Ok((instance, reply)) = boot.surfaces.try_recv() {
+            let _ = reply.send(
+                instance
+                    .create_surface(boot.window.clone())
+                    .map_err(|e| e.to_string()),
+            );
+        }
         let (renderer, instance) = match boot.rx.try_recv() {
             Ok(v) => v,
             Err(std::sync::mpsc::TryRecvError::Empty) => {
