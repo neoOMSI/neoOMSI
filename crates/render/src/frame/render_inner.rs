@@ -209,10 +209,7 @@ impl Renderer {
         let lead_view = (with_overlays && lead_frame) || (xr_view && !second_eye);
         let enhanced_frame = lighting.enhanced
             && self.hdr_pass.is_some()
-            && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none()
-            && (with_overlays
-            || xr_view
-            || ::legacy_config::env::var_os("OMSI_MIRROR_ENHANCED").is_some());
+            && ::legacy_config::env::var_os("OMSI_NO_ENHANCED").is_none();
         let enhanced = enhanced_frame;
         let puddles_wanted = with_overlays
             && self.puddles.is_some()
