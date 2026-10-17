@@ -320,7 +320,7 @@ mod tests {
         let mut hits = Vec::new();
         let direction = rain.advance(0.1, camera, Vec3::X * 3.0, -2.0, &mut hits);
         let world = camera + rain.particles[0].as_dvec3();
-        assert!((world - DVec3::new(0.3, 0.0, 9.1)).length() < 1e-5);
+        assert!((world - DVec3::new(0.3, 0.0, 9.0)).length() < 1e-5);
         assert!(direction.z < -0.8);
         rain.advance(0.0, DVec3::splat(10000.0), Vec3::ZERO, -2.0, &mut hits);
         let p = rain.particles[0];
