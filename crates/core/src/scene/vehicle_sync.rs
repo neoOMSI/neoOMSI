@@ -705,6 +705,20 @@ pub(super) const GLASS_WORDS: [&str; 20] = [
     "cristal", // es
 ];
 
+pub(super) fn is_window_decal(name: &str) -> bool {
+    ["decal", "sticker", "aufkleber"]
+        .iter()
+        .any(|part| name.contains(part))
+}
+
+#[cfg(test)]
+#[test]
+fn window_decals_are_not_glass() {
+    assert!(is_window_decal("windows/scania/decals/e4_windows_decals_exterior.o3d"));
+    assert!(is_window_decal("interior/cab/e4_cabwindowdecals.o3d"));
+    assert!(!is_window_decal("windows/scania/e4_windows_outer.o3d glass.dds"));
+}
+
 pub(super) fn is_vehicle_body_material(
     mesh_file: &str,
     texture: &str,

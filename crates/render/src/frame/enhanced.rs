@@ -240,7 +240,7 @@ impl Renderer {
                 0.0,
                 0.0,
             ],
-            eye: eye_off.extend(0.0).to_array(),
+            eye: eye_off.extend(lighting.night.clamp(0.0, 1.0)).to_array(),
             led: [
                 lighting.led_glow,
                 lighting.led_mips,
