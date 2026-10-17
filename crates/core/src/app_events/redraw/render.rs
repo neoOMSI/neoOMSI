@@ -524,7 +524,27 @@ impl App {
                     self.wetness,
                     ::config::get_bool("graphics", "shadows").unwrap_or(true),
                 );
-                weather::effects::fill_rain_grid(&mut l, w, &self.sky, [observer[0] as f64, observer[1] as f64], enhanced);
+                {
+                    let at = [observer[0] as f64, observer[1] as f64];
+                    let intensity = w.precip.intensity;
+                    let stale = match self.rain_cache.as_mut() {
+                        Some(c) => {
+                            c.2 += dt;
+                            let dx = at[0] - c.1[0];
+                            let dy = at[1] - c.1[1];
+                            c.2 >= 1.0
+                                || dx * dx + dy * dy > 50.0 * 50.0
+                                || (intensity - c.3).abs() > 0.02
+                        }
+                        None => true,
+                    };
+                    if stale {
+                        weather::effects::fill_rain_grid(&mut l, w, &self.sky, at, enhanced);
+                        self.rain_cache = Some((l.rain_grid, at, 0.0, intensity));
+                    } else if let Some(c) = self.rain_cache.as_ref() {
+                        l.rain_grid = c.0;
+                    }
+                }
                 if ::legacy_config::env::var_os("OMSI_WETNESS").is_none() {
                     self.wet_grid.fill(&mut l, observer);
                 }

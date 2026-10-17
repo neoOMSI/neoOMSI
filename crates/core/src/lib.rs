@@ -665,6 +665,7 @@ pub(crate) fn make_app(
         career: Default::default(),
         wetness: 0.0,
         wet_grid: Default::default(),
+        rain_cache: None,
         lightning: Default::default(),
         menu_edit: None,
         menu_edit_icao: false,
