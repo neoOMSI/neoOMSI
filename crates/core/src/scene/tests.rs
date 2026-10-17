@@ -835,12 +835,87 @@ fn a_light_star_reaches_past_its_glow() {
     assert!((star.size - 0.375).abs() < 1e-6);
 }
 
+/// A light's own bitmap replaces only its glow's picture: its star (light_effect1.bmp),
+/// its halo (licht.bmp) and its cone stay as the effect bits ask, as in Omsi.exe (#493).
+#[test]
+fn a_light_bitmap_keeps_its_star_and_halo() {
+    let dir = std::env::temp_dir().join(format!(
+        "neoomsi-light-bitmap-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join("texture")).unwrap();
+    std::fs::write(dir.join("texture/eff.bmp"), b"BM").unwrap();
+    let text = "[mesh]\nbus.o3d\n[light_enh_2]\n0\n5\n1\n0\n1\n0\n0\n0\n1\n0\n0\n255\n255\n200\n0.2\n40\n80\nlights_abbl\n1\n0.05\n1\n1\n0\neff.bmp\n";
+    let path = dir.join("bus.cfg");
+    let model = Model::parse(&::legacy_config::CfgFile::from_str(
+        path.to_str().unwrap(),
+        text,
+    ));
+    let coronas = model_lights_faded(&model, &|_| Mat4::IDENTITY, DVec3::ZERO, &|_| 1.0, &[]);
+    let bitmap = crate::lights::corona_texture_id(&dir, "eff.bmp");
+    assert_ne!(bitmap, 0);
+    // the glow in the bitmap, the star, the halo and the cone
+    assert_eq!(coronas.len(), 4);
+    assert_eq!(coronas[0].texture, bitmap);
+    assert!(coronas[1].flags & 8 != 0);
+    assert_eq!(coronas[1].texture, crate::lights::star_texture_id());
+    assert!(coronas[2].halo);
+    assert_eq!(coronas[2].texture, crate::lights::glow_texture_id());
+    assert!(coronas[3].beam);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `[light_enh]` takes its effect bits as `[light_enh_2]` does: bit 1 a star, bit 2 no
+/// halo, bit 4 no glow (#493).
+#[test]
+fn an_old_light_follows_its_effect_bits() {
+    let lights = |effect: u8| {
+        let text = format!(
+            "[mesh]\nsign.o3d\n[light_enh]\n0\n0\n1\n255\n128\n0\n0.1\n1\n1\n0.1\n{effect}\n0\n"
+        );
+        let model = Model::parse(&::legacy_config::CfgFile::from_str("sign.sco", &text));
+        model_lights_faded(&model, &|_| Mat4::IDENTITY, DVec3::ZERO, &|_| 1.0, &[])
+    };
+    let star = lights(1);
+    assert_eq!(star.len(), 3);
+    assert!(star[0].flags & 8 == 0 && !star[0].halo);
+    assert!(star[1].flags & 8 != 0 && (star[1].size - 0.15).abs() < 1e-6);
+    assert!(star[2].halo);
+    assert_eq!(lights(1 | 2).len(), 2);
+    let none = lights(2 | 4);
+    assert!(none.is_empty());
+}
+
+#[test]
+fn a_light_star_grows_with_its_factor() {
+    let sprites = |factor: u32| {
+        let text = format!(
+            "[mesh]\nbus.o3d\n[light_enh_2]\n-1.06\n5.86\n0.71\n0\n1\n0\n0\n0\n1\n0\n0\n205\n255\n255\n0.05\n90\n180\nabblendlicht_an\n{factor}\n0.1\n1\n0\n0\n"
+        );
+        let model = Model::parse(&::legacy_config::CfgFile::from_str("bus.cfg", &text));
+        model_lights_faded(&model, &|_| Mat4::IDENTITY, DVec3::ZERO, &|_| 1.0, &[])
+    };
+    let (one, four) = (sprites(1), sprites(4));
+    let star = |c: &[::render::Corona]| c.iter().find(|c| c.flags & 8 != 0).unwrap().size;
+    let glow =
+        |c: &[::render::Corona]| c.iter().find(|c| c.flags & 8 == 0 && !c.halo).unwrap().size;
+    assert!((star(&one) - 0.075).abs() < 1e-6);
+    assert!((star(&four) - 0.3).abs() < 1e-6);
+    assert!((glow(&four) - 0.025).abs() < 1e-6);
+}
+
 #[test]
 fn small_instrument_lights_keep_their_small_size() {
     let text = "[mesh]\ndash.o3d\n[light_enh]\n0\n0\n0\n255\n0\n0\n0.01\nspeedo_warn\n0\n";
     let model = Model::parse(&::legacy_config::CfgFile::from_str("bus.cfg", text));
     let coronas = model_lights_faded(&model, &|_| Mat4::IDENTITY, DVec3::ZERO, &|_| 1.0, &[]);
-    assert_eq!(coronas.len(), 1);
+    // its glow, and (effect bits 0) the halo round it in fog
+    assert_eq!(coronas.len(), 2);
+    assert!(!coronas[0].halo && coronas[1].halo);
     assert!((coronas[0].size - 0.005).abs() < 1e-6);
 }
 
@@ -1004,17 +1079,22 @@ fn a_scripted_objects_lamp_follows_its_variable() {
     {
         let states = world.tile_state.lock();
         let statics = &states[&(0, 0)].coronas;
-        assert_eq!(statics.len(), 1, "the night lights the constant lamp only");
-        assert_eq!(statics[0].switch, LightSwitch::Constant(1.0));
+        // its glow, star and halo (effect bit 1)
+        assert_eq!(statics.len(), 3, "the night lights the constant lamp only");
+        assert!(
+            statics
+                .iter()
+                .all(|c| c.switch == LightSwitch::Constant(1.0))
+        );
     }
     let lit = || {
         let scripted = world.scripted.lock();
         assert_eq!(scripted.len(), 1);
-        assert_eq!(scripted[0].coronas.len(), 1);
-        assert_eq!(scripted[0].coronas[0].1, "Due");
+        assert_eq!(scripted[0].coronas.len(), 3);
+        assert!(scripted[0].coronas.iter().all(|c| c.1 == "Due"));
         scripted[0].lit.clone()
     };
-    assert_eq!(lit(), [0.0], "dark until the script switches it");
+    assert_eq!(lit(), [0.0; 3], "dark until the script switches it");
     world.update_scripted(
         &renderer,
         &mut scene,
@@ -1025,7 +1105,7 @@ fn a_scripted_objects_lamp_follows_its_variable() {
         None,
         false,
     );
-    assert_eq!(lit(), [1.0]);
+    assert_eq!(lit(), [1.0; 3]);
     drop(world);
     std::fs::remove_dir_all(&root).unwrap();
 }

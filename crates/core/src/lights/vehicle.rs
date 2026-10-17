@@ -222,7 +222,7 @@ fn road_and_lamp_lights(
         .max(brightness_darkness());
     let lamp_night = 1.0;
     if !v.part_hidden(0) {
-        headlamps(cfg, faders, v, lamp_night, lights, coronas);
+        headlamps(cfg, faders, v, lamp_night, lights);
         let section = Section {
             model: &ty.model,
             rot: body_rot,

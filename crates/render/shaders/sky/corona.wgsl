@@ -149,6 +149,7 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     let streak = in.dir.w < -1.5;
     let directed = length(in.dir.xyz) > 0.5 && !streak;
     var brightness = in.color.a;
+    var facing = 1.0;
     if (directed) {
         // a directional light is seen inside its outer cone, in full inside the inner one,
         // linearly in the angle between them
@@ -159,11 +160,14 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
 
         let front = clamp((2.2 - ang) / 0.63, 0.0, 1.0);
         let head = (u32(in.extra.z + 0.5) & 16u) != 0u;
-        brightness = brightness * select(cone, max(cone, 0.45 * front), head);
+        facing = select(cone, max(cone, 0.45 * front), head);
+        brightness = brightness * facing;
     }
-    // a star grows with the light's strength; every sprite's strength stops at 1
+    // a star shrinks as the light turns away (its strength and the night are in its size
+    // already, see `push_light_sprites` and `prepare_coronas`); every sprite's strength
+    // stops at 1
     let star_sprite = (u32(in.extra.z + 0.5) & 8u) != 0u && !streak;
-    let grow = select(1.0, min(brightness, 1.0), star_sprite);
+    let grow = select(1.0, facing, star_sprite);
     if (!streak) {
         brightness = min(brightness, 1.0);
     }

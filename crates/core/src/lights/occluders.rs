@@ -77,7 +77,9 @@ fn spot_casters(
             let (c, reach) = tri_sphere(&t);
             let rel = c - pos;
             let len = rel.length();
-            if len - reach > range + SPOT_MARGIN {
+            // (nor the lamp's own housing: the facets of a globe round the light threw a
+            // ring of dark wedges on the pavement round its pole)
+            if len - reach > range + SPOT_MARGIN || len < reach + LAMP_HOUSING {
                 return None;
             }
             if len > reach + 1.0 {
@@ -131,7 +133,7 @@ fn point_casters(
             }
             let (c, size) = tri_sphere(&t);
             let len = (c - pos).length();
-            if len - size > reach + 1.0 || len < size + 0.2 {
+            if len - size > reach + 1.0 || len < size + LAMP_HOUSING {
                 return None;
             }
             Some((area / (len * len + 1.0), t))
@@ -164,6 +166,7 @@ fn vehicle_bodies(f: &Frame, vehicles: &[&VehicleInstance]) -> Vec<(Obb, Occlude
             let o = Obb::from_box(bbox, origin, heading.to_degrees());
             let mut oc = box_occluder(&o);
             oc.half = Vec2::new(o.half.x as f32 - 0.1, o.half.y as f32 - 0.1);
+            oc.z0 = (o.z0 + BODY_CLEARANCE).min(o.z1);
             out.push((o, oc));
         }
     }
