@@ -1175,15 +1175,21 @@ impl Network {
         if la.turn != lb.turn {
             return la.turn != 0 && lb.turn == 0;
         }
-        // where two ways become one, the one from the side gives way (not a bus bay running
-        // back into the road it left)
+        // where two ways become one, the one from the side gives way
         match la.next.iter().find(|n| lb.next.contains(n)) {
-            Some(&m) => {
-                self.merge_offset(a, m) > self.merge_offset(b, m) + MERGE_SIDE_MIN
-                    && !self.split_before(a, b)
-            }
+            Some(&m) => self.merge_offset(a, m) > self.merge_offset(b, m) + MERGE_SIDE_MIN,
             None => false,
         }
+    }
+
+    /// Does lane `a` run back into `b` where the two ways parted within `SPLIT_BACK` m (a bus
+    /// bay, or a lane that drops out soon after the road widened)? A timetable bus coming out
+    /// of a bay keeps its way (StVO §20 (5)); anything else gives way there (`must_yield`).
+    pub fn returns_beside(&self, a: usize, b: usize) -> bool {
+        let (Some(la), Some(lb)) = (self.lanes.get(a), self.lanes.get(b)) else {
+            return false;
+        };
+        la.next.iter().any(|n| lb.next.contains(n)) && self.split_before(a, b)
     }
 
     /// Did the ways into lanes `a` and `b` part within `SPLIT_BACK` m before them?

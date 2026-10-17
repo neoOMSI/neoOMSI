@@ -114,6 +114,12 @@ pub fn junction_ahead(net: &Network, way: &[(usize, f32)]) -> Option<Movement> {
     j
 }
 
+/// Must `a`, on lane `l`, let the vehicle on lane `m` go first? `Network::must_yield`, but
+/// a timetable bus coming back out of its bay keeps its way (`Network::returns_beside`).
+fn gives_way(net: &Network, a: &JunctionActor, l: usize, m: usize) -> bool {
+    net.must_yield(l, m) && !(a.bus && net.returns_beside(l, m))
+}
+
 /// How far (m) a vehicle needs to stop braking firmly, as a driver who has to give way
 /// at a roundabout entry does when the ring is not clear after all.
 fn firm_stop(a: &JunctionActor) -> f32 {
@@ -279,6 +285,8 @@ pub struct JunctionActor {
     pub priority: bool,
     /// Out on the oncoming lane, passing the vehicles in front of it.
     pub passing: bool,
+    /// A timetable bus.
+    pub bus: bool,
 }
 
 impl JunctionActor {
@@ -307,6 +315,7 @@ impl JunctionActor {
             wait_at: None,
             priority: false,
             passing: false,
+            bus: false,
         }
     }
 }
@@ -870,18 +879,17 @@ impl JunctionCoordinator {
                     // a reservation, `Oncoming` keeps the default commitment rule.
                     let mode = block_mode_between(scene.net, l, m);
                     // (an entry path on the ring's object still gives way at the merge)
-                    let yielding_merge = c.merge && scene.net.must_yield(l, m)
-                        && !scene.net.must_yield(m, l);
-                    let priority_merge = c.merge && scene.net.must_yield(m, l)
-                        && !scene.net.must_yield(l, m);
+                    let (i_yield, they_yield) = (gives_way(scene.net, actor, l, m), gives_way(scene.net, o, m, l));
+                    let yielding_merge = c.merge && i_yield && !they_yield;
+                    let priority_merge = c.merge && they_yield && !i_yield;
                     // A `[rule] priority` difference is signage: an early claim from the lower
                     // road does not win while it can still stop (same distance on both sides).
                     let signed = (scene.net.lanes[l].priority - scene.net.lanes[m].priority)
                         .abs() > 0.5;
                     let mine_ahead = point - c.before - actor.front;
-                    let i_give_way = signed && !jn.inside && scene.net.must_yield(l, m)
+                    let i_give_way = signed && !jn.inside && i_yield
                         && mine_ahead > stopping_distance(actor);
-                    let they_give_way = signed && scene.net.must_yield(m, l)
+                    let they_give_way = signed && they_yield
                         && !same_object(scene.net, o.lane, m);
                     let claims_block = mode != Some(BlockMode::Occupy);
                     let claimed = self.claims.holds(LaneId(m), o.id)
@@ -990,7 +998,7 @@ impl JunctionCoordinator {
                     if (jn.inside && !yielding_merge)
                         || (committed && !yielding_merge && !i_give_way)
                         || (me_prio && !o_prio && !yielding_merge)
-                        || (!scene.net.must_yield(l, m) && !(o_prio && !me_prio))
+                        || (!i_yield && !(o_prio && !me_prio))
                     {
                         continue;
                     }
@@ -1525,6 +1533,34 @@ fn actor_state(_scene: &JunctionScene, o: &JunctionActor) -> AiState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bay forking off the road and running back into it 60 m on: a car coming out gives
+    /// way, a timetable bus keeps its way (StVO §20 (5)).
+    #[test]
+    fn a_timetable_bus_keeps_its_way_out_of_its_bay() {
+        use crate::network::{LaneBuilder, LaneKind};
+        use glam::DVec3;
+        let street = |p: Vec<(f64, f64)>| {
+            LaneBuilder::polyline(p.into_iter().map(|(x, y)| DVec3::new(x, y, 0.0)).collect(), LaneKind::Street, 3.0)
+        };
+        let mut net = Network {
+            lanes: vec![
+                street(vec![(0.0, -100.0), (0.0, 0.0)]),
+                street(vec![(0.0, 0.0), (0.0, 60.0)]),
+                street(vec![(0.0, 0.0), (3.5, 10.0), (3.5, 45.0), (0.0, 60.0)]),
+                street(vec![(0.0, 60.0), (0.0, 200.0)]),
+            ],
+            ..Default::default()
+        };
+        net.link(1.0);
+        assert!(net.returns_beside(2, 1));
+        let mut car = JunctionActor::new(VehicleId(1), 2, 40.0);
+        assert!(gives_way(&net, &car, 2, 1));
+        car.bus = true;
+        assert!(!gives_way(&net, &car, 2, 1));
+        // the road's own traffic does not give way to it either way
+        assert!(!gives_way(&net, &JunctionActor::new(VehicleId(2), 1, 40.0), 1, 2));
+    }
 
     fn classify_with(
         coord: &mut JunctionCoordinator,

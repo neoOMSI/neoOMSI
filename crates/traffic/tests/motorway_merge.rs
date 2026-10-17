@@ -104,13 +104,18 @@ fn the_taper_gives_way_to_the_motorway() {
     assert!(!net.must_yield(M1, TAPER));
 }
 
+/// The "acceleration lane" left the road just before: a bus bay, or a lane that drops out
+/// soon after the road widened. What comes out of it gives way (a timetable bus keeps its
+/// way: `JunctionCoordinator`).
 #[test]
-fn a_bus_pulling_out_of_its_bay_keeps_its_way() {
-    // the "acceleration lane" left the road just before: a bus bay
+fn a_lane_that_left_the_road_just_before_gives_way_where_it_runs_back() {
     let net = motorway(true);
     assert!(net.lanes[MBACK].next.contains(&RAMP));
-    assert!(!net.must_yield(TAPER, M1));
+    assert!(net.returns_beside(TAPER, M1));
+    assert!(net.must_yield(TAPER, M1));
     assert!(!net.must_yield(M1, TAPER));
+    // an acceleration lane off a ramp from another road does not run back beside
+    assert!(!motorway(false).returns_beside(TAPER, M1));
 }
 
 #[test]
