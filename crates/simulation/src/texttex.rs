@@ -63,6 +63,23 @@ fn size_of(name: &str) -> Option<(u32, u32)> {
     })
 }
 
+/// The key NTFS sorts a folder by, the order OMSI read its fonts in: the name in UTF-16, each
+/// character upper case where that is one character (`ß` stays). The two cases disagree
+/// around `_` (0x5F): in lower case "a_" comes before "ab", Windows lists "AB" first.
+fn ntfs_order(name: &str) -> Vec<u16> {
+    let mut key = Vec::with_capacity(name.len());
+    let mut buf = [0u16; 2];
+    for c in name.chars() {
+        let mut up = c.to_uppercase();
+        let c = match (up.next(), up.next()) {
+            (Some(u), None) => u,
+            _ => c,
+        };
+        key.extend_from_slice(c.encode_utf16(&mut buf));
+    }
+    key
+}
+
 impl FontLibrary {
     pub fn new(root: &Path) -> FontLibrary {
         FontLibrary {
@@ -83,8 +100,8 @@ impl FontLibrary {
             if files.is_empty() {
                 files = ::legacy_config::vfs::read_dir_paths(&self.root.join("Fonts"));
             }
-            // each folder in root order, its files in name order (a listing comes in the file
-            // system's order)
+            // each folder in root order, its files in the order Windows lists them (a listing
+            // here comes in the file system's order)
             let mut folders: Vec<std::path::PathBuf> = Vec::new();
             for p in &files {
                 let d = p.parent().map(|d| d.to_path_buf()).unwrap_or_default();
@@ -99,14 +116,19 @@ impl FontLibrary {
                         .position(|d| Some(d.as_path()) == p.parent())
                         .unwrap_or(usize::MAX),
                     p.file_name()
-                        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                        .map(|n| ntfs_order(&n.to_string_lossy()))
                         .unwrap_or_default(),
                 )
             });
-            // Two files of one folder naming the same font: the one read later takes its place,
-            // as in the original (the LiAZ's `ANX_S.oft` spells its "ц" as "=", and a
-            // "ANX_S - копия.oft" lying beside it, read first, left the letter out). A
-            // folder of higher priority keeps its fonts over the folders after it.
+            // Two files of one folder naming the same font: the one read first keeps the name.
+            // HamburgLinie109's `2_StreetHamburg2.oft` (15 px) and `StreetHamburg2.oft`
+            // (29 px) both define "StreetHamburg2"; its signs map a 146x15 px window of a
+            // 640 px text texture, which only the first one fits - with the later one
+            // Laurenzbach's "Angeln verboten" ran off both sides of its plate. A later copy
+            // drawn from the same bitmap still adds the letters the first one lacks (the
+            // LiAZ's `ANX_S.oft` spells its "ц" as "=", the "ANX_S - копия.oft" lying beside
+            // it, read first, leaves the letter out). A folder of higher priority keeps its
+            // fonts over the folders after it.
             let mut all: Vec<Font> = Vec::new();
             let mut folder_of: Vec<usize> = Vec::new();
             for p in files {
@@ -129,7 +151,17 @@ impl FontLibrary {
                             .iter()
                             .position(|o| o.name.trim().to_ascii_lowercase() == key)
                         {
-                            Some(k) if folder_of[k] == folder => all[k] = f,
+                            Some(k)
+                                if folder_of[k] == folder
+                                    && all[k].alpha.trim().eq_ignore_ascii_case(f.alpha.trim()) =>
+                            {
+                                let first = &mut all[k];
+                                for c in f.chars {
+                                    if !first.chars.iter().any(|g| g.ch == c.ch) {
+                                        first.chars.push(c);
+                                    }
+                                }
+                            }
                             Some(_) => {}
                             None => {
                                 all.push(f);
@@ -352,5 +384,61 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(decodes.get(), 1);
         assert!(Arc::ptr_eq(&a.alpha, &b.alpha) && Arc::ptr_eq(&a.color, &a.alpha));
+    }
+
+    #[test]
+    fn fonts_are_read_in_windows_order() {
+        assert!(ntfs_order("XB.oft") < ntfs_order("x_.oft"));
+        assert!(ntfs_order("ANX_S - копия.oft") < ntfs_order("ANX_S.oft"));
+        assert!(ntfs_order("2_StreetHamburg2.oft") < ntfs_order("streethamburg2.oft"));
+        assert_eq!(ntfs_order("straße"), ntfs_order("STRAßE"));
+        assert_eq!(ntfs_order("копия"), ntfs_order("КОПИЯ"));
+        // the first file read keeps the font: "XB" before "X_", not after as in lower case
+        let dir = std::env::temp_dir().join(format!("omsi_font_order_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Fonts")).unwrap();
+        let font = |alpha: &str| format!("[newfont]\r\nX\r\n{alpha}\r\n{alpha}\r\n8\r\n1\r\n");
+        std::fs::write(dir.join("Fonts/X_.oft"), font("underscore.bmp")).unwrap();
+        std::fs::write(dir.join("Fonts/XB.oft"), font("b.bmp")).unwrap();
+        let mut lib = FontLibrary::new(&dir);
+        let x = lib.find("X").expect("X");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(x.alpha, "b.bmp");
+    }
+
+    #[test]
+    fn first_file_keeps_a_font_name_and_same_bitmap_copies_add_letters() {
+        let dir = std::env::temp_dir().join(format!("omsi_font_dupes_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Fonts")).unwrap();
+        let font = |name: &str, alpha: &str, height: i32, chars: &str| {
+            let mut s =
+                format!("[newfont]\r\n{name}\r\n{alpha}\r\n{alpha}\r\n{height}\r\n1\r\n\r\n");
+            for c in chars.chars() {
+                s += &format!("[char]\r\n{c}\r\n0\r\n4\r\n0\r\n\r\n");
+            }
+            s
+        };
+        let write =
+            |file: &str, text: String| std::fs::write(dir.join("Fonts").join(file), text).unwrap();
+        // HamburgLinie109: two sizes under one name, the first file is the one drawn
+        write(
+            "2_StreetHamburg2.oft",
+            font("StreetHamburg2", "2_alpha.bmp", 15, "AB"),
+        );
+        write(
+            "StreetHamburg2.oft",
+            font("StreetHamburg2", "alpha.bmp", 29, "AB"),
+        );
+        // a copy of the same font read first, without a letter the original has
+        write("ANX_S - Kopie.oft", font("ANX_S", "anx.bmp", 12, "AB"));
+        write("ANX_S.oft", font("ANX_S", "anx.bmp", 12, "AB="));
+        let mut lib = FontLibrary::new(&dir);
+        let hamburg = lib.find("StreetHamburg2").expect("StreetHamburg2");
+        let anx = lib.find("ANX_S").expect("ANX_S");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(
+            (hamburg.height, hamburg.alpha.as_str()),
+            (15, "2_alpha.bmp")
+        );
+        assert!(anx.has_glyph('=') && anx.has_glyph('A'));
     }
 }
