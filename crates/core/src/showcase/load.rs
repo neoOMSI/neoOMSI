@@ -21,7 +21,7 @@ pub(super) struct Model {
     pub centre: Vec3,
     pub radius: f32,
     pub lighting: Lighting,
-    _world: Arc<World>,
+    pub world: Arc<World>,
 }
 
 pub(super) type Job = Receiver<Result<Ready, String>>;
@@ -121,6 +121,6 @@ pub(super) fn place(renderer: &Renderer, r: Ready) -> Model {
         centre,
         radius,
         lighting,
-        _world: world,
+        world,
     }
 }

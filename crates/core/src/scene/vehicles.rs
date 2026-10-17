@@ -43,19 +43,18 @@ pub(super) struct PreparedVehicles {
 impl VehiclePrefetch {
     /// Read what uploading `vt` in `scheme` will ask for and the GPU does not have.
     pub fn prefetch(&self, vt: &::simulation::VehicleType, scheme: Option<usize>) {
-        use rayon::prelude::*;
-        vehicle_texture_names(&self.root, vt, scheme).par_iter().for_each(|(name, dirs)| {
+        for (name, dirs) in vehicle_texture_names(&self.root, vt, scheme) {
             let refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
-            let Some(path) = ::texture::find_texture(name, &refs) else {
-                return;
+            let Some(path) = ::texture::find_texture(&name, &refs) else {
+                continue;
             };
             if self.on_gpu.lock().contains_key(&path)
                 || self.ready.lock().textures.contains_key(&path)
             {
-                return;
+                continue;
             }
             let Some(data) = self.textures.get_gpu_path(&path) else {
-                return;
+                continue;
             };
             // on the GPU now, unless the GPU has to make its chain (the upload does that)
             if let Some(t) = ::render::prepare_texture(&self.gpu.0, &self.gpu.1, &data) {
@@ -66,21 +65,21 @@ impl VehiclePrefetch {
                     .entry(path)
                     .or_insert((t, data.format));
             }
-        });
+        }
         // [matl_bumpmap] height maps, kept under their own key
-        vehicle_bump_names(&self.root, vt, scheme).par_iter().for_each(|(name, dirs)| {
+        for (name, dirs) in vehicle_bump_names(&self.root, vt, scheme) {
             let refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
-            let Some(path) = ::texture::find_texture(name, &refs) else {
-                return;
+            let Some(path) = ::texture::find_texture(&name, &refs) else {
+                continue;
             };
             let key = bump_key(&path);
             if self.on_gpu.lock().contains_key(&key)
                 || self.ready.lock().textures.contains_key(&key)
             {
-                return;
+                continue;
             }
             let Some(data) = load_texture_key(&key, true) else {
-                return;
+                continue;
             };
             if let Some(t) = ::render::prepare_texture(&self.gpu.0, &self.gpu.1, &data) {
                 self.ready
@@ -89,19 +88,19 @@ impl VehiclePrefetch {
                     .entry(key)
                     .or_insert((t, data.format));
             }
-        });
-        (0..vt.meshes.len()).into_par_iter().for_each(|i| {
+        }
+        for i in 0..vt.meshes.len() {
             let key = (vt.def.path.clone(), i);
             if self.meshes_on_gpu.lock().contains_key(&key)
                 || self.ready.lock().meshes.contains_key(&key)
             {
-                return;
+                continue;
             }
             if let Some(d) = vt.mesh_data(i) {
                 let m = ::render::prepare_mesh(&self.gpu.0, &self.gpu.1, &d);
                 self.ready.lock().meshes.entry(key).or_insert(m);
             }
-        });
+        }
     }
 }
 

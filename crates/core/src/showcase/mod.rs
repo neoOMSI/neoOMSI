@@ -147,6 +147,12 @@ impl Showcase {
         }
         self.busy = self.loading.is_some();
 
+        if let Some(m) = self.model.as_mut() {
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(4);
+            if m.world.apply_texture_upgrades(renderer, &mut m.scene, Some(until)) > 0 {
+                self.dirty = true;
+            }
+        }
         if self.view.step(dt, self.auto_turn) {
             self.dirty = true;
         }
@@ -250,3 +256,4 @@ impl Showcase {
         self.model.is_some() && self.target.is_some()
     }
 }
+
