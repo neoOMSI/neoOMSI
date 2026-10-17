@@ -1,5 +1,7 @@
 use glam::{DVec2, DVec3};
 use hashbrown::HashMap;
+use std::borrow::Cow;
+use std::sync::OnceLock;
 use crate::ids::NetworkVersion;
 use crate::rules::{DEFAULT_PRIORITY, pool_density};
 
@@ -460,6 +462,37 @@ pub struct Network {
     /// Bumped whenever lanes or links change, so callers can invalidate cached route and
     /// conflict work. Starts at a nonzero value so a default-built network is versioned.
     pub version: NetworkVersion,
+    /// Per-lane geometry the planners ask about for every vehicle every tick, worked out
+    /// once (dropped with every new `version`).
+    pub cache: NetworkCache,
+}
+
+/// Per-lane answers of `Network` worked out when first asked, for the lanes there were at
+/// the last `bump_version` (a lane added since is worked out every time).
+#[derive(Default)]
+pub struct NetworkCache {
+    merge_ends: Vec<OnceLock<Option<MergeEnd>>>,
+    ways_back: Vec<OnceLock<Vec<usize>>>,
+}
+
+impl NetworkCache {
+    fn new(lanes: usize) -> Self {
+        Self {
+            merge_ends: (0..lanes).map(|_| OnceLock::new()).collect(),
+            ways_back: (0..lanes).map(|_| OnceLock::new()).collect(),
+        }
+    }
+}
+
+/// Where the way on along a lane ends into the way of the lane beside it
+/// (`Network::merges_into`), measured from the lane's start (m).
+#[derive(Debug, Clone, Copy)]
+struct MergeEnd {
+    /// Where it comes too close to the lane beside to go on beside it.
+    clear: f32,
+    /// Where the two ways become one.
+    meet: f32,
+    beside: usize,
 }
 
 impl Network {
@@ -475,6 +508,7 @@ impl Network {
     /// Mark the network changed (a streamed tile added lanes or links).
     pub fn bump_version(&mut self) {
         self.version = NetworkVersion(self.version().get().wrapping_add(1).max(1));
+        self.cache = NetworkCache::new(self.lanes.len());
     }
 }
 
@@ -514,6 +548,9 @@ pub const MERGE_SIDE_MIN: f32 = 0.8;
 /// A lane that ends ends, for the vehicles on it, where its middle comes closer than this
 /// to the middle of the lane beside (m): two cars side by side with some air between them.
 pub const MERGE_CLEAR: f32 = 3.2;
+/// ... or, for lanes drawn closer together than that, this much closer than they run
+/// beside each other where it starts (m).
+pub const MERGE_NARROWING: f32 = 0.3;
 /// How far back two ways that meet are looked at for a common start (m): a bus bay is a
 /// few dozen metres long, an acceleration lane comes from another road.
 pub const SPLIT_BACK: f32 = 120.0;
@@ -1059,16 +1096,31 @@ impl Network {
         match la.next.iter().find(|n| lb.next.contains(n)) {
             Some(&m) => {
                 self.merge_offset(a, m) > self.merge_offset(b, m) + MERGE_SIDE_MIN
-                    && !self.split_before(a, b, SPLIT_BACK)
+                    && !self.split_before(a, b)
             }
             None => false,
         }
     }
 
-    /// Did the ways into lanes `a` and `b` part within `back` m before them (a bay that
-    /// left the road and runs back into it)?
-    pub fn split_before(&self, a: usize, b: usize, back: f32) -> bool {
-        let behind = |from: usize| {
+    /// Did the ways into lanes `a` and `b` part within `SPLIT_BACK` m before them (a bay
+    /// that left the road and runs back into it)?
+    pub fn split_before(&self, a: usize, b: usize) -> bool {
+        let (wa, wb) = (self.way_back(a), self.way_back(b));
+        let (mut i, mut j) = (0, 0);
+        while i < wa.len() && j < wb.len() {
+            match wa[i].cmp(&wb[j]) {
+                std::cmp::Ordering::Less => i += 1,
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Equal => return true,
+            }
+        }
+        false
+    }
+
+    /// Lane `from` and the lanes the ways into it come by within `SPLIT_BACK` (at most 64,
+    /// sorted).
+    fn way_back(&self, from: usize) -> Cow<'_, [usize]> {
+        let work = || {
             let mut seen: Vec<usize> = vec![from];
             let mut open = vec![(from, 0.0f32)];
             while let Some((l, d)) = open.pop() {
@@ -1076,16 +1128,19 @@ impl Network {
                     let dp = d + self.lanes[p].length();
                     if !seen.contains(&p) && seen.len() < 64 {
                         seen.push(p);
-                        if dp < back {
+                        if dp < SPLIT_BACK {
                             open.push((p, dp));
                         }
                     }
                 }
             }
+            seen.sort_unstable();
             seen
         };
-        let (wa, wb) = (behind(a), behind(b));
-        wa.iter().any(|l| wb.contains(l))
+        match self.cache.ways_back.get(from) {
+            Some(cell) => Cow::Borrowed(cell.get_or_init(work).as_slice()),
+            None => Cow::Owned(work()),
+        }
     }
 
     /// Does the way on from `s` along `lane` end by running into the way of a lane beside
@@ -1095,6 +1150,16 @@ impl Network {
     /// ways that meet is the one that ends: the one that comes in from the side of the lane
     /// they become (`merge_offset`), not the one it continues straight on.
     pub fn merges_into(&self, lane: usize, s: f32, look: f32) -> Option<(f32, usize)> {
+        let end = match self.cache.merge_ends.get(lane) {
+            Some(cell) => *cell.get_or_init(|| self.merge_end(lane)),
+            None => self.merge_end(lane),
+        }?;
+        (end.meet - s <= look).then(|| ((end.clear - s).max(0.0), end.beside))
+    }
+
+    /// Where the way on along `lane` ends into the way of a lane beside it, from its start
+    /// (`merges_into`).
+    fn merge_end(&self, lane: usize) -> Option<MergeEnd> {
         let l = self.lanes.get(lane)?;
         if l.kind != LaneKind::Street {
             return None;
@@ -1107,7 +1172,7 @@ impl Network {
                 let [n] = self.lanes[cur].next.as_slice() else {
                     break;
                 };
-                if *n == from || out.iter().any(|&(x, _)| x == *n) || d > look {
+                if *n == from || out.iter().any(|&(x, _)| x == *n) {
                     break;
                 }
                 out.push((*n, d));
@@ -1116,10 +1181,10 @@ impl Network {
             }
             out
         };
-        let ours = way(lane, s);
+        let ours = way(lane, 0.0);
         // (the paths of its own road beside it: an acceleration lane is one of them)
         for b in [l.left, l.right].into_iter().flatten() {
-            let theirs = way(b, self.beside_s(lane, b, s.min(l.length())));
+            let theirs = way(b, self.beside_s(lane, b, 0.0));
             let Some(k) = ours
                 .iter()
                 .position(|(x, _)| theirs.iter().any(|(y, _)| y == x))
@@ -1139,27 +1204,32 @@ impl Network {
             if self.merge_offset(mine, m) > self.merge_offset(other, m) + MERGE_SIDE_MIN {
                 // where it comes too close to the lane beside to drive on beside it: a car
                 // waiting at the lane's very end already stood in the way of the road
+                // (lanes drawn closer together than `MERGE_CLEAR`: closer than where it
+                // starts, else it ended right away)
                 let theirs: Vec<usize> = std::iter::once(b)
                     .chain(theirs.iter().map(|&(y, _)| y))
                     .collect();
-                let mut way = vec![(lane, s, 0.0f32)];
-                way.extend(ours[..k].iter().map(|&(x, dx)| (x, 0.0, dx)));
-                for (x, from, at) in way {
+                let apart = |p: DVec3| {
+                    theirs
+                        .iter()
+                        .filter_map(|&y| self.lanes[y].nearest_point(p))
+                        .map(|(_, dist)| dist as f32)
+                        .fold(f32::INFINITY, f32::min)
+                };
+                let clear = MERGE_CLEAR.min(apart(l.start()) - MERGE_NARROWING);
+                let mut way = vec![(lane, 0.0f32)];
+                way.extend(ours[..k].iter().copied());
+                for (x, at) in way {
                     let lx = &self.lanes[x];
-                    let mut t = from;
+                    let mut t = 0.0;
                     while t < lx.length() {
-                        let p = lx.at(t).0;
-                        let near = theirs
-                            .iter()
-                            .filter_map(|&y| self.lanes[y].nearest_point(p))
-                            .any(|(_, dist)| (dist as f32) < MERGE_CLEAR);
-                        if near {
-                            return Some((at + t - from, b));
+                        if apart(lx.at(t).0) < clear {
+                            return Some(MergeEnd { clear: at + t, meet: d, beside: b });
                         }
                         t += 1.0;
                     }
                 }
-                return Some((d, b));
+                return Some(MergeEnd { clear: d, meet: d, beside: b });
             }
         }
         None

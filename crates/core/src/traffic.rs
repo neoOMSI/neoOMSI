@@ -182,9 +182,9 @@ pub struct AiCar {
     pub(crate) caps: VehicleCapabilities,
     pub(crate) motion_fault: Option<Reason>,
     pub(crate) scenery_streak: f32,
-    /// How long (s) this emergency vehicle has stood holding a junction reservation, and
-    /// the traffic time until which it drives by the ordinary rules after holding one too
-    /// long (`EMERGENCY_STUCK_AFTER`).
+    /// How long (s) this emergency vehicle has stood holding others up, and the traffic
+    /// time until which it drives by the ordinary rules after standing too long
+    /// (`EMERGENCY_STUCK_AFTER`).
     pub(crate) emergency_hold: f32,
     pub(crate) emergency_pause_until: f32,
     /// How long (s) it has stood for somebody standing still in its way, and the odometer
@@ -493,10 +493,10 @@ pub struct Traffic {
     /// Pedestrians on the footpaths: (lane, distance along it), for giving way at crossings
     /// and for the pedestrian lights' request buttons.
     walkers: Vec<(usize, f32)>,
-    /// Everybody on foot on the ground: position, velocity and whether they are waiting
-    /// at a stop (set every frame) - the cars stop for anybody in their way, not only on
-    /// a crossing.
-    people: Vec<(DVec2, DVec2, bool)>,
+    /// Everybody on foot on the ground: position, velocity, whether they are waiting
+    /// at a stop and whether they step aside (`Humans::on_foot`, set every frame) - the
+    /// cars stop for anybody in their way, not only on a crossing.
+    people: Vec<(DVec2, DVec2, bool, bool)>,
     /// Spatial broadphase grid over `people` (cells of [`PEOPLE_GRID_CELL`] metres),
     /// rebuilt with them for the corridor queries in `people_stop`.
     people_grid: HashMap<(i32, i32), Vec<usize>>,
@@ -1027,14 +1027,14 @@ impl Traffic {
         &mut self,
         weekday: i32,
         walkers: Vec<(usize, f32)>,
-        people: Vec<(DVec2, DVec2, bool)>,
+        people: Vec<(DVec2, DVec2, bool, bool)>,
         occluders: Option<Arc<::simulation::collision::CollisionWorld>>,
     ) {
         self.weekday = weekday;
         self.walkers = walkers;
         self.people = people;
         self.people_grid.clear();
-        for (idx, (p, _, _)) in self.people.iter().enumerate() {
+        for (idx, (p, ..)) in self.people.iter().enumerate() {
             self.people_grid.entry(people_cell(*p)).or_default().push(idx);
         }
         self.occluders = occluders;

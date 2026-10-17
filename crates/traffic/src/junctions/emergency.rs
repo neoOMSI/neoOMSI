@@ -45,9 +45,12 @@ impl JunctionCoordinator {
                         })
                     }) || r.lanes.contains(&a.lane)
                         || (r.exit == Some(a.lane) && a.s < a.rear + 1.0)
+                        // (once made, it stays while the queue in front moves on: dropped
+                        // and made again as the queue's speed crossed the rule's, it cost
+                        // the cars admitted on the way their claims each time)
                         || (a.emergency
                             && junction_ahead(net, w).is_some_and(|m| {
-                                in_reach(a, w, &m, actors, on_lane)
+                                m.lanes[0].1 - a.front <= EMERGENCY_QUEUE_REACH
                                     && r.lanes.contains(&m.lanes[0].0)
                             }))
                 })

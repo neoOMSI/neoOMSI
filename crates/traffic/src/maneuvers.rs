@@ -361,8 +361,9 @@ pub struct ManeuverScene<'a> {
 pub struct ManeuverInputs {
     pub emergency: Option<crate::emergency::EmergencyApproach>,
     pub priority_pass: bool,
-    /// The emergency vehicle holds the reservation of the junction ahead: passing a queue
-    /// that stands up to it, it may go on across it on the oncoming side.
+    /// The emergency vehicle holds the reservation of the junction ahead (the first on its
+    /// way): passing a queue that stands up to it, it may go on across it on the oncoming
+    /// side.
     pub emergency_through: bool,
     /// A scheduled bus queues for its own occupied stop instead of passing that queue.
     pub queue_for_stop: bool,
@@ -1881,13 +1882,13 @@ pub fn required_target(net: &Network, actor: &ManeuverActor) -> Option<usize> {
     }
 }
 
-/// The lane beside that a vehicle on a lane that ends (`Network::merges_into`, within
-/// `MERGE_LOOKAHEAD`) moves over onto, when it may drive there.
 /// Does `lane` end within `KEEP_OFF_ENDING` from `s` (see `Network::merges_into`)?
 fn ends_soon(net: &Network, lane: usize, s: f32) -> bool {
     net.merges_into(lane, s, KEEP_OFF_ENDING).is_some()
 }
 
+/// The lane beside that a vehicle on a lane that ends (`Network::merges_into`, within
+/// `MERGE_LOOKAHEAD`) moves over onto, when it may drive there.
 fn ending_lane(net: &Network, actor: &ManeuverActor) -> Option<usize> {
     // (a timetable bus keeps to its route: its bay runs back into the road too)
     if actor.lane_kind != LaneKind::Street || actor.veh_type < 0 {
@@ -1895,7 +1896,7 @@ fn ending_lane(net: &Network, actor: &ManeuverActor) -> Option<usize> {
     }
     let (_, b) = net.merges_into(actor.lane, actor.s, MERGE_LOOKAHEAD)?;
     let l = &net.lanes[b];
-    (l.allows(actor.veh_type) && l.density > 0.0 && !l.no_cars).then_some(b)
+    (l.open_to(actor.veh_type) && !l.no_cars).then_some(b)
 }
 
 /// How far ahead (from distance `s` along `lane`, within `TURN_LANE_LOOKAHEAD`) the way

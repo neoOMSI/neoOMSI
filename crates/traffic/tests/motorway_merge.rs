@@ -30,19 +30,24 @@ fn lane(net: &mut Network, pts: &[(f64, f64)]) -> usize {
 /// acceleration lane comes off a ramp from another road (`bay`: it forks off the right lane
 /// just before instead, a bus bay running back into the road).
 fn motorway(bay: bool) -> Network {
+    motorway_with(bay, 3.5)
+}
+
+/// The same, the acceleration lane `side` m right of the right lane.
+fn motorway_with(bay: bool, side: f64) -> Network {
     let mut net = Network::default();
     lane(&mut net, &[(0.0, -100.0), (0.0, 0.0)]);
     lane(&mut net, &[(-3.5, -100.0), (-3.5, 0.0)]);
     if bay {
-        lane(&mut net, &[(0.0, 0.0), (3.5, 0.0)]);
+        lane(&mut net, &[(0.0, 0.0), (side, 0.0)]);
     } else {
-        lane(&mut net, &[(40.0, -60.0), (3.5, 0.0)]);
+        lane(&mut net, &[(40.0, -60.0), (side, 0.0)]);
     }
     lane(&mut net, &[(0.0, 0.0), (0.0, 100.0)]);
     lane(&mut net, &[(-3.5, 0.0), (-3.5, 300.0)]);
-    lane(&mut net, &[(3.5, 0.0), (3.5, 100.0)]);
+    lane(&mut net, &[(side, 0.0), (side, 100.0)]);
     lane(&mut net, &[(0.0, 100.0), (0.0, 125.0)]);
-    lane(&mut net, &[(3.5, 100.0), (0.0, 125.0)]);
+    lane(&mut net, &[(side, 100.0), (0.0, 125.0)]);
     lane(&mut net, &[(0.0, 125.0), (0.0, 300.0)]);
     // (the bay forks off where the lane before ends)
     net.link(1.0);
@@ -67,6 +72,34 @@ fn the_acceleration_lane_ends_into_the_motorway_and_the_motorway_does_not() {
     assert_eq!(net.merges_into(L0, 10.0, 400.0), None);
     // out of sight, it does not end yet
     assert_eq!(net.merges_into(ACCEL, 10.0, 100.0), None);
+}
+
+#[test]
+fn an_acceleration_lane_drawn_close_to_the_road_ends_in_its_taper() {
+    // 3 m from the right lane, closer than `MERGE_CLEAR` all along: it does not end right
+    // where the car is, so that it never moved over early, but where its taper comes in
+    let net = motorway_with(false, 3.0);
+    let (d, beside) = net.merges_into(ACCEL, 10.0, 400.0).expect("no end seen");
+    assert_eq!(beside, M0);
+    assert!(d > 90.0 && d < 100.0, "ends {d} m ahead");
+}
+
+#[test]
+fn a_relinked_network_works_out_again_where_its_lanes_end() {
+    let mut net = motorway(false);
+    assert!(net.merges_into(ACCEL, 10.0, 400.0).is_some());
+    // the acceleration lane goes on as a lane of its own now
+    net.lanes[TAPER] = LaneBuilder::polyline(
+        vec![DVec3::new(3.5, 100.0, 0.0), DVec3::new(3.5, 300.0, 0.0)],
+        LaneKind::Street,
+        3.5,
+    );
+    net.link(1.0);
+    for (right, left) in [(ACCEL, M0), (M0, L0), (MBACK, LBACK)] {
+        net.lanes[right].left = Some(left);
+        net.lanes[left].right = Some(right);
+    }
+    assert_eq!(net.merges_into(ACCEL, 10.0, 400.0), None);
 }
 
 #[test]

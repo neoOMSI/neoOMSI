@@ -392,8 +392,9 @@ impl Traffic {
                 // when the car's front gets here, at most two seconds on
                 let t = (((d - st.front).max(0.0)) / v.max(1.0)).min(2.0) as f64;
                 for &idx in near {
-                    let (p, pv, waiting) = &self.people[idx];
-                    let standing = *waiting && pv.length() < PEOPLE_STANDING_SPEED;
+                    let (p, pv, waiting, steps_aside) = &self.people[idx];
+                    // (only those who do step aside: the car would drive through the rest)
+                    let standing = *steps_aside && pv.length() < PEOPLE_STANDING_SPEED;
                     if past_standing && standing {
                         continue;
                     }

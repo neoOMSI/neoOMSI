@@ -184,7 +184,7 @@ impl Traffic {
             self.body_feet(player, others),
         );
         let by_lane = occupancy.lane_view(&self.index_of);
-        let maneuver_people: Vec<_> = self.people.iter().map(|&(p, _, _)| p).collect();
+        let maneuver_people: Vec<_> = self.people.iter().map(|&(p, ..)| p).collect();
         let road_collision = self.road_collision.clone();
         let parked_collision = self.parked_collision.clone();
         let maneuver_geometry: HashMap<_, _> = self.cars.iter().map(|c| {
@@ -311,15 +311,17 @@ impl Traffic {
         if prepare_emergency {
             self.junctions.prepare_emergencies(&self.net, &junction_actors, &emergency_ways, &junction_on_lane);
         }
-        // the time an emergency vehicle stands holding a reservation, or held up in a queue
-        // that pulls over for it and with the oncoming traffic stopping for it (see
+        // the time an emergency vehicle stands holding a reservation, held up in a queue
+        // that pulls over for it and with the oncoming traffic stopping for it, or held by
+        // anything else (another emergency's reservation, people, one coming head-on; see
         // `EMERGENCY_STUCK_AFTER`)
         for (car, actor) in self.cars.iter_mut().zip(&junction_actors) {
-            let holding = actor.emergency
-                && car.state.speed.abs() < 0.3
-                && (self.junctions.owns_emergency_reservation(car.id) || car.why.0 == Reason::Leader);
-            let (hold, give_up) =
-                emergency_hold_step(car.emergency_hold, holding, car.why.0 == Reason::Leader, dt);
+            let standing = actor.emergency && car.state.speed.abs() < 0.3;
+            let behind = emergency_held_behind(
+                self.junctions.owns_emergency_reservation(car.id),
+                car.why.0,
+            );
+            let (hold, give_up) = emergency_hold_step(car.emergency_hold, standing, behind, dt);
             car.emergency_hold = hold;
             if give_up {
                 car.emergency_pause_until = self.time + EMERGENCY_PAUSE;
@@ -818,7 +820,9 @@ impl Traffic {
                 inputs.parked = parked_ahead || at_stop;
                 inputs.priority_pass = junction_actors[i].emergency;
                 inputs.emergency_through = inputs.priority_pass
-                    && self.junctions.owns_emergency_reservation(self.cars[i].id);
+                    && owns_junction_ahead(&self.net, way, |l| {
+                        self.junctions.emergency_owns(self.cars[i].id, l)
+                    });
                 inputs.queue_for_stop = self.cars[i].next_stop().is_some_and(|(ri, ss)| {
                     let st = &self.cars[i].state;
                     ri >= st.route_index && st.route_distance(&self.net, ri, ss)
@@ -2096,8 +2100,26 @@ fn people_wait_step(wait: f32, held: bool, dt: f32) -> (f32, bool) {
     }
 }
 
-/// One tick of an emergency vehicle's hold clock: `holding` while it stands holding a
-/// junction reservation, `behind` when what holds it is a vehicle in front of it. Returns
+/// Whether an emergency vehicle owns (`owns` a junction lane) the reservation of the first
+/// junction ahead on its `way`, where a queue in front of it ends: one still held on the
+/// exit of the junction it has just left does not stop the cross traffic of the next.
+fn owns_junction_ahead(net: &Network, way: &[(usize, f32)], owns: impl Fn(usize) -> bool) -> bool {
+    way.iter()
+        .skip(1)
+        .find(|w| !net.crossings[w.0].is_empty())
+        .is_some_and(|w| owns(w.0))
+}
+
+/// Whether an emergency vehicle standing for `why` waits by the longer clock
+/// (`EMERGENCY_STUCK_BEHIND`): anywhere but at the line of a junction it has reserved -
+/// behind the vehicles in front of it, or held by anything else (another emergency's
+/// reservation, people, one coming head-on), which would otherwise hold it for good.
+fn emergency_held_behind(owns_reservation: bool, why: Reason) -> bool {
+    !owns_reservation || why == Reason::Leader
+}
+
+/// One tick of an emergency vehicle's hold clock: `holding` while it stands, `behind`
+/// unless it stands at the line of a junction it has reserved. Returns
 /// the new clock and whether it gives up its rights for `EMERGENCY_PAUSE` now.
 fn emergency_hold_step(hold: f32, holding: bool, behind: bool, dt: f32) -> (f32, bool) {
     if !holding {
@@ -2277,6 +2299,30 @@ fn gate_lane_ahead(lane: &::traffic::Lane, pos: DVec3, heading: f64) -> bool {
         && across < 6.0
         && turn < 60.0
         && (p0.z - pos.z).abs() < 4.0
+}
+
+#[cfg(test)]
+mod emergency_through_tests {
+    use super::owns_junction_ahead;
+    use ::traffic::{Crossing, Network};
+
+    /// #462: an ambulance goes on across a junction on the oncoming side only when it holds
+    /// the reservation of that junction - the first ahead on its way - not because it still
+    /// holds the one of the junction it is leaving.
+    #[test]
+    fn an_ambulance_goes_through_only_the_junction_it_has_reserved() {
+        let mut net = Network::default();
+        let meet = Crossing {
+            other: 0, at: 5.0, other_at: 5.0, merge: false,
+            before: 1.0, after: 1.0, other_before: 1.0, other_after: 1.0,
+        };
+        // it is on a junction lane (0), then the road (1), then the next junction (2)
+        net.crossings = vec![vec![meet], vec![], vec![meet]];
+        let way = [(0, -3.0), (1, 7.0), (2, 40.0)];
+        assert!(!owns_junction_ahead(&net, &way, |l| l == 0), "the junction it leaves");
+        assert!(owns_junction_ahead(&net, &way, |l| l == 2));
+        assert!(!owns_junction_ahead(&net, &way[..2], |_| true), "no junction ahead");
+    }
 }
 
 #[cfg(test)]
@@ -2545,6 +2591,12 @@ mod presence_tests {
             (behind - super::EMERGENCY_STUCK_BEHIND).abs() < 0.05,
             "{behind}"
         );
+        // held by anything else than its own reservation it gives up too, by the longer
+        // clock (two meeting head-on, one waiting for the other's reservation)
+        assert!(!super::emergency_held_behind(true, ::traffic::Reason::Yield));
+        assert!(super::emergency_held_behind(true, ::traffic::Reason::Leader));
+        assert!(super::emergency_held_behind(false, ::traffic::Reason::Yield));
+        assert!(super::emergency_held_behind(false, ::traffic::Reason::SceneryBlocked));
     }
 
     /// #338: a car that stands for somebody standing still in its way edges past them after

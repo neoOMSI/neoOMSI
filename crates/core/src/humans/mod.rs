@@ -693,13 +693,19 @@ impl Humans {
     /// for them.
     /// Everybody on foot on the ground, for the traffic to stop for: position, velocity
     /// and whether they wait at a stop (a bus pulls up right beside those).
-    pub fn on_foot(&self) -> Vec<(DVec2, DVec2, bool)> {
+    /// Everybody on the ground: position, velocity, whether they wait at a stop and
+    /// whether, standing, they step aside for a vehicle edging past (`make_room`: not
+    /// somebody dealing with a bus at its door, from the LAN or played).
+    pub fn on_foot(&self) -> Vec<(DVec2, DVec2, bool, bool)> {
         self.people
             .iter()
             .filter(|p| p.place == Place::Ground)
             .map(|p| {
                 let waiting = matches!(&p.state, State::Pax(x) if x.inside.is_none());
-                (p.position.truncate(), p.vel, waiting)
+                let steps_aside = matches!(&p.state, State::Pax(x) if x.inside.is_none() && x.bus.is_none())
+                    && p.puppet.is_none()
+                    && !p.remote;
+                (p.position.truncate(), p.vel, waiting, steps_aside)
             })
             .collect()
     }

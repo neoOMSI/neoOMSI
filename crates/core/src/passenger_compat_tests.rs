@@ -308,6 +308,22 @@ fn host_id_collisions_cannot_consume_a_local_fare_owner_or_alias_an_avatar() {
     assert_eq!(ids.len(), h.people.len());
 }
 
+/// #338: a car edges past only the passengers who step aside for it (`make_room`), not
+/// one at a bus's door or from the LAN, whom it would drive through.
+#[test]
+fn only_waiting_passengers_who_step_aside_let_a_car_edge_past() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    h.people.push(f.person(1, State::Pax(Box::new(Pax::new(1.1))), false));
+    let mut at_door = Pax::new(1.1);
+    at_door.bus = Some(BusId::Ai(42));
+    h.people.push(f.person(2, State::Pax(Box::new(at_door)), false));
+    h.people.push(f.person(3, State::Pax(Box::new(Pax::new(1.1))), true));
+    h.people.push(f.person(4, State::Standing, false));
+    let flags = h.on_foot().iter().map(|p| (p.2, p.3)).collect::<Vec<_>>();
+    assert_eq!(flags, [(true, true), (true, false), (true, false), (false, false)]);
+}
+
 #[test]
 fn procedural_ai_riders_follow_cabin_paths_before_the_seat_transition() {
     let f = Fixture::new();

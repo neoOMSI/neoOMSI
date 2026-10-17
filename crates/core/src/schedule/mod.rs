@@ -396,6 +396,8 @@ const BAY_PULL_UP_MAX: f32 = 15.0;
 const BAY_EXIT_MARGIN: f32 = 1.0;
 /// How far behind its rear a vehicle at a stop looks for the place its bay forked off (m).
 const BAY_FORK_LOOK: f32 = 20.0;
+/// How far past a fork the two ways are compared to tell the bay from the road (m).
+const BAY_SIDE_AT: f32 = 10.0;
 
 /// A bus whose front comes to rest at the pole of a short bay can leave its rear - an
 /// articulated bus its whole rear section - standing across the lane the bay forked off,
@@ -545,6 +547,11 @@ fn blocks_fork(
             .iter()
             .filter(|&&o| o != route[j]);
         for &o in siblings {
+            // (only a bay: a bus on the road just past a turn pocket keeps its stop point
+            // at the pole)
+            if !leaves_road(net, route, j, o) {
+                continue;
+            }
             if j > kr {
                 return true;
             }
@@ -572,6 +579,26 @@ fn blocks_fork(
         }
     }
     false
+}
+
+/// Does `route` leave the road at the fork before `route[j]`, where `other` goes on: is it
+/// the further of the two off the line the road came in on, `BAY_SIDE_AT` past the fork?
+fn leaves_road(net: &Network, route: &[usize], j: usize, other: usize) -> bool {
+    let into = &net.lanes[route[j - 1]];
+    let (q, h) = (into.end(), (into.end_heading() as f64).to_radians());
+    let right = glam::DVec2::new(h.cos(), -h.sin());
+    let off = |p: glam::DVec3| (p - q).truncate().dot(right).abs();
+    let (k, s) = along_route(net, route, j, BAY_SIDE_AT);
+    let mine = off(net.lanes[route[k]].at(s).0);
+    let (mut l, mut s) = (other, BAY_SIDE_AT);
+    while s > net.lanes[l].length() {
+        let Some(&n) = net.lanes[l].next.first().filter(|&&n| n != other) else {
+            break;
+        };
+        s -= net.lanes[l].length();
+        l = n;
+    }
+    mine > off(net.lanes[l].at(s).0)
 }
 
 /// Where on `route` the bus stop at `pos` is: (route index, distance along that lane, lateral

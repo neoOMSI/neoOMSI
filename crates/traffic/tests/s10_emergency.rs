@@ -309,6 +309,38 @@ fn an_emergency_at_the_end_of_a_queue_to_the_junction_reserves_it() {
     assert!(!queue(25.0), "a reservation across a gap in the queue");
 }
 
+/// #462: the reservation made from the end of a queue stays while the queue moves on in
+/// front of the ambulance (it flickered as the queue's speed crossed the rule's, and the
+/// cars admitted on the way lost their claims each time).
+#[test]
+fn a_reservation_from_the_end_of_a_queue_stays_while_the_queue_moves_on() {
+    let mut w = Harness::new(four_way());
+    let mut amb = emergency(1, 0);
+    amb.s = 10.0;
+    let a = w.add(amb);
+    w.place(a, 0, 10.0);
+    let mut s = 98.0;
+    let mut id = 10;
+    while s > 20.0 {
+        let car = w.add(JunctionActor::new(VehicleId(id), 0, s));
+        w.place(car, 0, s);
+        id += 1;
+        s -= 7.0;
+    }
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 1));
+    for car in w.actors.iter_mut().skip(1) {
+        car.speed = 4.0;
+    }
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 1), "dropped as the queue moved on");
+    // without one it does not make it from so far back
+    let mut fresh = JunctionCoordinator::new();
+    prepare(&w, &mut fresh);
+    assert!(!fresh.emergency_owns(VehicleId(1), 1));
+}
+
 /// #462: at a red light the car at the head of the queue in front of the ambulance rolls
 /// carefully over the line once the junction is reserved, instead of holding it up.
 #[test]
