@@ -66,11 +66,42 @@ pub(crate) fn own_outlines(
 }
 
 /// The LAN players' buses as obstacles for the AI traffic (their speed as last sent).
+/// Trailers share the remote's id, so traffic cannot drive through an articulated bus's back.
 pub(crate) fn lan_outlines(game: &lan::LanGame) -> Vec<(u32, traffic::PlayerBox)> {
-    game.remotes
+    let mut out = Vec::new();
+    for (id, r) in game.remotes.iter() {
+        let v = r.vehicle();
+        let speed = r.last.speed_kmh / 3.6;
+        out.push((*id, vehicle_outline(v, speed)));
+        for t in &v.trailers {
+            let Some(bb) = t.ty.def.bounding_box else {
+                continue;
+            };
+            let h = t.heading.to_radians();
+            let centre = t.position
+                + DVec3::new(
+                    (bb[3] as f64) * h.cos() + (bb[4] as f64) * h.sin(),
+                    -(bb[3] as f64) * h.sin() + (bb[4] as f64) * h.cos(),
+                    0.0,
+                );
+            out.push((*id, (centre, t.heading, bb[1] * 0.5, bb[0] * 0.5, speed)));
+        }
+    }
+    // (deterministic, not hash order)
+    out.sort_by_key(|(id, _)| *id);
+    out
+}
+
+/// The LAN players whose state says they are on an emergency drive (`FLAG_EMERGENCY`).
+pub(crate) fn lan_emergencies(game: &lan::LanGame) -> Vec<u32> {
+    let mut out: Vec<u32> = game
+        .remotes
         .iter()
-        .map(|(id, r)| (*id, vehicle_outline(r.vehicle(), r.last.speed_kmh / 3.6)))
-        .collect()
+        .filter(|(_, r)| r.last.flags & ::network::FLAG_EMERGENCY != 0)
+        .map(|(id, _)| *id)
+        .collect();
+    out.sort_unstable();
+    out
 }
 
 /// The LAN players' indicators by session id (`Traffic::blinkers`).
@@ -100,7 +131,7 @@ pub(crate) fn rail_ahead(
     if let Some(p) = player.filter(|p| p.rail_bound && p.vehicle.physics.speed > -0.5) {
         let v = &p.vehicle;
         let (train, front) = (t.is_train(&v.ty.def.path), traffic::extents(&v.ty, 12.0).0);
-        let ahead = rail_drive::lanes_ahead(p, &t.net, world, reach(train));
+        let ahead = rail_drive::lanes_ahead(p, t.net(), world, reach(train));
         out.extend(ahead.into_iter().map(|(l, d)| (l, d, front, train)));
     }
     for r in lan
@@ -113,7 +144,7 @@ pub(crate) fn rail_ahead(
             continue;
         }
         let (train, front) = (t.is_train(&v.ty.def.path), traffic::extents(&v.ty, 12.0).0);
-        let ahead = rail_drive::remote_lanes_ahead(v, r.last.blinker, &t.net, world, reach(train));
+        let ahead = rail_drive::remote_lanes_ahead(v, r.last.blinker, t.net(), world, reach(train));
         out.extend(ahead.into_iter().map(|(l, d)| (l, d, front, train)));
     }
     out
@@ -132,17 +163,18 @@ pub(crate) fn traffic_inputs(
     render: &::render::RenderOptions,
 ) {
     if let Some(c) = cam {
-        t.viewer = Some(
+        t.set_viewer(Some(
             traffic::Viewer::new(c, aspect, fog)
                 .with_culling(render.min_obj_size, render.max_obj_dist),
-        );
+        ));
     }
-    t.weekday = clock.weekday();
-    t.walkers = humans.map(|h| h.strollers()).unwrap_or_default();
-    t.people = humans.map(|h| h.on_foot()).unwrap_or_default();
-    // the player's obstacle boxes follow the streamed tiles; without a player the world's
-    // own are asked
-    t.occluders = player.and_then(|p| p.vehicle.collision.clone());
+    t.set_world_inputs(
+        clock.weekday(),
+        humans.map(|h| h.strollers()).unwrap_or_default(),
+        humans.map(|h| h.on_foot()).unwrap_or_default(),
+        // (without a player the world's own obstacle boxes are asked)
+        player.and_then(|p| p.vehicle.collision.clone()),
+    );
 }
 
 /// Posts (`[crashmode_pole]`) the vehicle knocked over this frame: laid on the ground from

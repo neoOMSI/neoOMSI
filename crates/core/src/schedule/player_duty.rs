@@ -545,8 +545,8 @@ impl Schedule {
         // train runs its track without stops of its own and is taken as on time)
         let mut on_road: HashMap<usize, OnRoad> = HashMap::new();
         if let Some(t) = traffic {
-            for car in &t.cars {
-                let Some(&i) = self.car_departure.get(&car.id) else {
+            for car in t.cars() {
+                let Some(&i) = self.car_departure.get(&car.id.get()) else {
                     continue;
                 };
                 if trip_stations(&self.data.trips[self.departures[i].trip]).is_empty() {
@@ -571,7 +571,7 @@ impl Schedule {
                     OnRoad {
                         next: next.map(|t| t - self.day_base),
                         dwelling: car.at_stop(),
-                        late: car.bus.as_ref().map(|b| b.delay).unwrap_or(0.0).max(0.0),
+                        late: car.bus.as_ref().map(|b| b.state.delay).unwrap_or(0.0).max(0.0),
                     },
                 );
             }

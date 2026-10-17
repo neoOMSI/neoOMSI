@@ -48,7 +48,7 @@ use ::simulation::VehicleInstance;
 use ::simulation::crowd::{self, Block, CrowdParams, PathGraph, Walker};
 use ::simulation::human::{Activity, HumanType, skin};
 use ::simulation::human_omsi::{AnimInput, OmsiAnim};
-use ::simulation::traffic::{LaneKind, Network};
+use ::traffic::{LaneKind, Network};
 use ::legacy_vehicle::PassengerCabin;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -693,13 +693,18 @@ impl Humans {
     /// for them.
     /// Everybody on foot on the ground, for the traffic to stop for: position, velocity
     /// and whether they wait at a stop (a bus pulls up right beside those).
-    pub fn on_foot(&self) -> Vec<(DVec2, DVec2, bool)> {
+    /// Everybody on the ground: position, velocity, whether they wait at a stop and whether
+    /// they step aside for a vehicle edging past (`make_room`).
+    pub fn on_foot(&self) -> Vec<(DVec2, DVec2, bool, bool)> {
         self.people
             .iter()
             .filter(|p| p.place == Place::Ground)
             .map(|p| {
                 let waiting = matches!(&p.state, State::Pax(x) if x.inside.is_none());
-                (p.position.truncate(), p.vel, waiting)
+                let steps_aside = matches!(&p.state, State::Pax(x) if x.inside.is_none() && x.bus.is_none())
+                    && p.puppet.is_none()
+                    && !p.remote;
+                (p.position.truncate(), p.vel, waiting, steps_aside)
             })
             .collect()
     }
@@ -1313,7 +1318,7 @@ impl Humans {
     /// Who wants a timetable bus to stop, as Omsi.exe asks before it lets one pull in
     /// (0x7da91f): the AI buses with somebody aboard on the way to a door to get off
     /// (task 5), and the stops where somebody is waiting for a bus or walking to one
-    /// (tasks 1 to 3).
+    /// (tasks 1 to 3). Somebody still walking to their waiting place counts as waiting too.
     pub fn stop_wishes(&self) -> (HashSet<u64>, HashSet<i64>) {
         let (mut alighting, mut waiting) = (HashSet::new(), HashSet::new());
         for p in &self.people {
@@ -1324,7 +1329,10 @@ impl Humans {
                         alighting.insert(id);
                     }
                 }
-                Task::WaitingForBus | Task::ToBus | Task::WalkingToBus => {
+                Task::WaitingForBus
+                | Task::ToBus
+                | Task::WalkingToBus
+                | Task::WalkingToBusstop => {
                     if let Some(s) = x.stop {
                         waiting.insert(s);
                     }

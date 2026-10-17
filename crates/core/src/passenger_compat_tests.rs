@@ -308,6 +308,21 @@ fn host_id_collisions_cannot_consume_a_local_fare_owner_or_alias_an_avatar() {
     assert_eq!(ids.len(), h.people.len());
 }
 
+/// #338: a car edges past only passengers who step aside (not at a bus door, not LAN).
+#[test]
+fn only_waiting_passengers_who_step_aside_let_a_car_edge_past() {
+    let f = Fixture::new();
+    let mut h = Humans::new(&f.root);
+    h.people.push(f.person(1, State::Pax(Box::new(Pax::new(1.1))), false));
+    let mut at_door = Pax::new(1.1);
+    at_door.bus = Some(BusId::Ai(42));
+    h.people.push(f.person(2, State::Pax(Box::new(at_door)), false));
+    h.people.push(f.person(3, State::Pax(Box::new(Pax::new(1.1))), true));
+    h.people.push(f.person(4, State::Standing, false));
+    let flags = h.on_foot().iter().map(|p| (p.2, p.3)).collect::<Vec<_>>();
+    assert_eq!(flags, [(true, true), (true, false), (true, false), (false, false)]);
+}
+
 #[test]
 fn procedural_ai_riders_follow_cabin_paths_before_the_seat_transition() {
     let f = Fixture::new();
@@ -667,7 +682,7 @@ fn consecutive_alighters_queue_at_the_door_and_disperse_around_existing_pedestri
             lanes: edges
                 .into_iter()
                 .map(|(a, b)| {
-                    ::simulation::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
+                    ::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
                 })
                 .collect(),
             ..Default::default()
@@ -863,7 +878,7 @@ fn post_alight_walks_do_not_reverse_forever_in_dead_ends_cycles_or_junctions() {
             lanes: edges
                 .into_iter()
                 .map(|(a, b)| {
-                    ::simulation::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
+                    ::traffic::LaneBuilder::polyline(vec![a, b], LaneKind::Sidewalk, 2.0)
                 })
                 .collect(),
             ..Default::default()
@@ -1940,7 +1955,7 @@ fn complete_journey(fare: TicketAction) {
         ..Default::default()
     }));
     let net = Network {
-        lanes: vec![::simulation::traffic::LaneBuilder::polyline(
+        lanes: vec![::traffic::LaneBuilder::polyline(
             vec![DVec3::ZERO, DVec3::Y * 50.0],
             LaneKind::Sidewalk,
             2.0,
@@ -3283,12 +3298,12 @@ fn installed_maps_provide_passenger_runtime_stops() {
 fn debarking_passengers_disperse_along_sidewalk_network() {
     let f = Fixture::new();
     let mut h = Humans::new(&f.root);
-    let lane = ::simulation::traffic::LaneBuilder::polyline(
+    let lane = ::traffic::LaneBuilder::polyline(
         vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 50.0, 0.0)],
-        ::simulation::traffic::LaneKind::Sidewalk,
+        ::traffic::LaneKind::Sidewalk,
         2.0,
     );
-    let net = ::simulation::traffic::Network {
+    let net = ::traffic::Network {
         lanes: vec![lane],
         ..Default::default()
     };

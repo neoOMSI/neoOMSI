@@ -124,7 +124,7 @@ fn surfaces_of_a_real_map() {
     }
 }
 
-fn draw(map: &SurfaceMap, lanes: &[::simulation::traffic::Lane], c: DVec2, radius: f64, path: &str) {
+fn draw(map: &SurfaceMap, lanes: &[::traffic::Lane], c: DVec2, radius: f64, path: &str) {
     let size = 1200u32;
     let scale = size as f64 / (2.0 * radius);
     let mut img = image::RgbImage::from_pixel(size, size, image::Rgb([24, 26, 30]));
@@ -212,7 +212,7 @@ fn draw(map: &SurfaceMap, lanes: &[::simulation::traffic::Lane], c: DVec2, radiu
         }
     }
     if std::env::var_os("NAVMAP_LANES").is_some() {
-        for l in lanes.iter().filter(|l| l.kind == ::simulation::traffic::LaneKind::Street) {
+        for l in lanes.iter().filter(|l| l.kind == ::traffic::LaneKind::Street) {
             let col = if l.invisible { [200, 80, 200] } else { [60, 140, 255] };
             for ab in l.points.windows(2) {
                 line(&mut img, to_px(ab[0].truncate()), to_px(ab[1].truncate()), col);
@@ -287,7 +287,7 @@ fn a_deck_and_the_ground_of_one_object_keep_their_own_levels() {
 
 #[test]
 fn a_raised_floor_is_kept_where_paths_run_over_it_and_a_roof_is_not() {
-    use ::simulation::traffic::{LaneBuilder, LaneKind};
+    use ::traffic::{LaneBuilder, LaneKind};
     // a street across a bridge object 4 m over the ground, at z 4
     let road = LaneBuilder::polyline(
         vec![DVec3::new(-10.0, 5.0, 4.0), DVec3::new(30.0, 5.0, 4.0)],

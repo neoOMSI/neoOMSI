@@ -20,7 +20,12 @@ impl App {
         #[cfg(all(feature = "devtools", debug_assertions))]
         self.dev_actions(event_loop);
         #[cfg(all(feature = "devtools", debug_assertions))]
-        let dev_extra = self.dev_gather();
+        let dev_extra = {
+            let __t = Instant::now();
+            let extra = self.dev_gather();
+            *self.profile.entry("devtools").or_default() += __t.elapsed().as_secs_f64();
+            extra
+        };
         let menu_lines = if self.game_menu.is_some() && self.report_view.is_some() {
             self.game_menu_items()
         } else {
@@ -186,9 +191,14 @@ impl App {
                             }
                         }
                         (Some((key, name)), Some(sch), Some(t), Some(w)) => {
-                            if nav.wants_route(&key, t.lanes_generation) {
-                                let (lanes, complete) = sch.trip_route(w, t, &name);
-                                nav.set_route(&key, lanes, complete, t.lanes_generation);
+                            if nav.wants_route(&key, t.lanes_generation()) {
+                                let (lanes, status) = sch.trip_route(w, t, &name);
+                                nav.set_route(
+                                    &key,
+                                    lanes,
+                                    status.is_complete(),
+                                    t.lanes_generation(),
+                                );
                             }
                         }
                         _ => nav.clear_route(),
@@ -258,7 +268,7 @@ impl App {
                     if nav.arrows {
                         if let Some(w) = self.world.as_ref() {
                             let spots = nav.arrow_spots(
-                                self.traffic.as_ref().map(|t| &t.net),
+                                self.traffic.as_ref().map(|t| t.net()),
                                 350.0,
                                 &|id| w.object_positions.lock().get(&id).map(|p| (p.0, p.1[0])),
                             );
@@ -977,6 +987,7 @@ impl App {
                         .window
                         .as_ref()
                         .map_or(1.0, |w| w.scale_factor() as f32);
+                    let __t = Instant::now();
                     if self.lab_menu.is_none() {
                         // (drawn over the picture: its commands are queued after the
                         // picture's, see `DevTools::submit`)
@@ -984,6 +995,8 @@ impl App {
                             .get_or_insert_with(devtools::DevTools::new)
                             .render(r, &view, scale, &snap, &dev_extra);
                     }
+                    *self.profile.entry("render.devtools").or_default() +=
+                        __t.elapsed().as_secs_f64();
                 }
                 *self.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
                 if ::legacy_config::env::var_os("OMSI_PROFILE_GPU").is_some() {

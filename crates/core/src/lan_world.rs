@@ -595,7 +595,7 @@ impl LanWorld {
             .collect();
         let centers: Vec<DVec3> = players.iter().map(|p| p.1).collect();
         if let Some(t) = traffic.as_deref_mut() {
-            t.lan_centers = centers.clone();
+            t.set_lan_centers(centers.clone());
         }
         if let Some(h) = humans.as_deref_mut() {
             h.lan_centers = centers;
@@ -707,14 +707,14 @@ impl LanWorld {
             let mut descs: Vec<Desc> = Vec::new();
             let mut ids_hash = 0u64;
             if let Some(t) = t_ref {
-                for c in &t.cars {
+                for c in t.cars() {
                     let p = c.vehicle.position;
                     if (p - at).truncate().length() > CAR_RADIUS || c.id > nw::MAX_ID as u64 {
                         continue;
                     }
-                    let key = (false, c.id as u32);
+                    let key = (false, c.id.get() as u32);
                     seen.insert(key);
-                    ids_hash ^= fnv(&c.id.to_le_bytes());
+                    ids_hash ^= fnv(&c.id.get().to_le_bytes());
                     let d = describe_car(args, c);
                     let h = fnv(d.encode().as_bytes());
                     if view.described.get(&key) != Some(&h) {
@@ -734,7 +734,7 @@ impl LanWorld {
                     }
                     view.sent.insert(key, (q, 0.0));
                     frame.cars.push(CarState {
-                        id: c.id as u32,
+                        id: c.id.get() as u32,
                         x: p.x,
                         y: p.y,
                         z: p.z,
@@ -745,7 +745,7 @@ impl LanWorld {
                         steer: c.body.steer,
                         blinker: c.state.blinker.clamp(0, 3) as u8,
                         brake: c.state.braking,
-                        lights: t.night,
+                        lights: t.night(),
                         at_station: if c.at_station() {
                             1
                         } else if !c.vehicle.station_released() {
@@ -1180,7 +1180,7 @@ impl LanWorld {
                 .filter(|id| !m.cars.contains_key(id))
                 .collect();
             for id in gone {
-                t.remove_car(world, renderer, scene, id as u64);
+                t.remove_car(world, renderer, scene, crate::traffic::VehicleId(id as u64));
                 m.drawn_cars.remove(&id);
                 m.shown.remove(&id);
                 m.odometer.remove(&id);
@@ -1239,7 +1239,7 @@ impl LanWorld {
                     world,
                     renderer,
                     scene,
-                    id as u64,
+                    crate::traffic::VehicleId(id as u64),
                     ty,
                     scheme.map(|s| s as usize),
                     scheduled,
@@ -1249,8 +1249,12 @@ impl LanWorld {
                 m.drawn_cars.insert(id);
             }
             // where each is now, and what its scripts make of it
-            let index: HashMap<u64, usize> =
-                t.cars.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+            let index: HashMap<u64, usize> = t
+                .cars()
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.id.get(), i))
+                .collect();
             let mut work: Vec<(usize, CarState, f64)> = Vec::new();
             for (id, track) in &m.cars {
                 let Some(&i) = index.get(&(*id as u64)) else {
@@ -1285,29 +1289,25 @@ impl LanWorld {
             }
             let mut shown: Vec<(usize, u32)> = Vec::new();
             for (i, c, _) in &work {
-                let car = &mut t.cars[*i];
-                let before = car.vehicle.position;
+                let before = t.car_vehicle_pos(*i);
                 let now_p = DVec3::new(c.x, c.y, c.z);
                 let moved = (now_p - before).truncate().length() as f32;
                 let odo = m.odometer.entry(c.id).or_insert(0.0);
                 if moved < 30.0 {
                     *odo += moved * c.speed.signum();
                 }
-                car.vehicle.position = now_p;
-                car.vehicle.heading = c.heading as f64;
-                car.vehicle.pitch = c.pitch;
-                car.vehicle.bank = c.bank;
-                car.state.speed = c.speed;
-                car.state.blinker = c.blinker as i32;
-                car.state.braking = c.brake;
-                if let Some(b) = car.bus.as_mut() {
-                    b.phase = if c.at_station == 1 {
-                        crate::bus_service::Phase::Boarding
-                    } else {
-                        crate::bus_service::Phase::Running
-                    };
-                }
-                car.body.steer = c.steer;
+                t.apply_host_car(
+                    *i,
+                    now_p,
+                    c.heading as f64,
+                    c.pitch,
+                    c.bank,
+                    c.speed,
+                    c.blinker as i32,
+                    c.brake,
+                    c.at_station == 1,
+                    c.steer,
+                );
                 shown.push((*i, c.id));
             }
             // the scripts (lamps, indicators, doors, wheels) run in parallel, as the
@@ -1319,7 +1319,7 @@ impl LanWorld {
                 // which side each stands at its stop is the host's own timetable state)
                 let sides: HashMap<usize, f32> = work
                     .iter()
-                    .map(|(i, _, _)| (*i, t.cars[*i].at_station_side()))
+                    .map(|(i, _, _)| (*i, t.car(*i).at_station_side()))
                     .collect();
                 let frames: HashMap<usize, AiFrame> = work
                     .iter()
@@ -1341,7 +1341,7 @@ impl LanWorld {
                     })
                     .collect();
                 let mut run: Vec<(&mut ::simulation::VehicleInstance, &AiFrame)> = t
-                    .cars
+                    .cars_mut()
                     .iter_mut()
                     .enumerate()
                     .filter_map(|(i, car)| frames.get(&i).map(|f| (&mut car.vehicle, f)))
@@ -1363,7 +1363,7 @@ impl LanWorld {
                 if m.shown.get(&id) == Some(&want) {
                     continue;
                 }
-                let car = &mut t.cars[i];
+                let car = t.car_mut(i);
                 let path = car.vehicle.ty.def.path.clone();
                 let hof = m
                     .hofs
@@ -1467,9 +1467,9 @@ impl LanWorld {
                 self.trace_t = 0.1;
                 if let Some(t) = traffic.as_deref() {
                     for c in t
-                        .cars
+                        .cars()
                         .iter()
-                        .filter(|c| m.drawn_cars.contains(&(c.id as u32)))
+                        .filter(|c| m.drawn_cars.contains(&(c.id.get() as u32)))
                     {
                         let p = c.vehicle.position;
                         let _ = writeln!(
@@ -1647,7 +1647,7 @@ fn describe_car(args: &Args, c: &crate::traffic::AiCar) -> Desc {
         (String::new(), String::new())
     };
     Desc::Car {
-        id: c.id as u32,
+        id: c.id.get() as u32,
         file: relative_file(&c.vehicle.ty.def.path, &args.root),
         scheme: c
             .render
@@ -1673,7 +1673,7 @@ fn describe(
             file: Humans::type_file(&p),
         })
     } else {
-        let c = traffic?.cars.iter().find(|c| c.id == r.id as u64)?;
+        let c = traffic?.cars().iter().find(|c| c.id.get() == r.id as u64)?;
         Some(describe_car(args, c))
     }
 }

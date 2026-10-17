@@ -126,7 +126,7 @@ impl App {
                     }
                 }
                 if let Some(t) = self.traffic.as_ref() {
-                    for c in &t.cars {
+                    for c in t.cars() {
                         add(&c.vehicle);
                     }
                 }

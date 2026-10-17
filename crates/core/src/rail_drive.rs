@@ -11,7 +11,7 @@
 use crate::player::Player;
 use crate::scene::World;
 use glam::DVec3;
-use ::simulation::traffic::{LaneKind, Network};
+use ::traffic::{LaneKind, Network};
 
 /// Where on the track the vehicle is.
 #[derive(Debug, Clone)]
@@ -434,7 +434,7 @@ pub(crate) fn frame(p: &mut Player, net: Option<&Network>, world: &World, dt: f3
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::simulation::traffic::LaneBuilder;
+    use ::traffic::LaneBuilder;
 
     /// 100 m of track, a fork (straight on or right), 50 m on a fork (straight or left).
     fn forks() -> Network {

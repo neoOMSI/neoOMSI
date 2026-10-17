@@ -202,7 +202,7 @@ impl Navigator {
         if self.dist_t <= 0.0 || self.first {
             self.dist_t = 0.4;
             let global = self.global.clone();
-            let net = global.as_deref().or(f.traffic.map(|t| &t.net));
+            let net = global.as_deref().or(f.traffic.map(|t| t.net()));
             self.next_dist = match (f.stops.first(), net) {
                 (Some(s), Some(n)) if !self.route.lanes.is_empty() => self
                     .route_distance(n, s.position)
@@ -375,7 +375,7 @@ impl Navigator {
         let global = self.global.clone();
         let net = global
             .as_deref()
-            .or(f.traffic.map(|t| &t.net))
+            .or(f.traffic.map(|t| t.net()))
             .or(own.as_deref());
         let lanes_now = net.map(|n| n.lanes.len()).unwrap_or(0);
         // (the panel goes over to the ground once it is whole around the bus: drawn from the
@@ -522,7 +522,7 @@ impl Navigator {
 
         let mut route_verts = None;
         let mut route_cut = Layer::WHOLE_ROUTE;
-        let route_net = global.as_deref().or(f.traffic.map(|t| &t.net));
+        let route_net = global.as_deref().or(f.traffic.map(|t| t.net()));
         if let (Some(rn), true) = (route_net, !self.route.lanes.is_empty()) {
             let print = lanes_print(&self.route.lanes);
             if self.route_cum.0 != print {
@@ -613,7 +613,7 @@ impl Navigator {
         let n_bg = bg.len();
 
         let mut dy = Painter::new();
-        if let Some(net) = f.traffic.map(|t| &t.net) {
+        if let Some(net) = f.traffic.map(|t| t.net()) {
             for (&lane, &c) in &self.congestion {
                 let lv = level(c);
                 if lv < 3 {

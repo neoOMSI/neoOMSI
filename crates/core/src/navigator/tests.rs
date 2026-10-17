@@ -1,8 +1,8 @@
 use super::*;
-use ::simulation::traffic::Lane;
+use ::traffic::Lane;
 
 fn straight(a: (f64, f64), b: (f64, f64)) -> Lane {
-    ::simulation::traffic::LaneBuilder::polyline(
+    ::traffic::LaneBuilder::polyline(
         vec![DVec3::new(a.0, a.1, 0.0), DVec3::new(b.0, b.1, 0.0)],
         LaneKind::Street,
         3.0,
@@ -74,7 +74,7 @@ fn a_way_back_changes_lanes_where_the_splines_do_not_link_them() {
     assert_eq!(join, 0);
     // the line drifts across instead of stepping
     for l in net.lanes.iter_mut() {
-        *l = ::simulation::traffic::LaneBuilder::polyline(
+        *l = ::traffic::LaneBuilder::polyline(
             (0..=50)
                 .map(|k| l.points[0].lerp(l.points[1], k as f64 / 50.0))
                 .collect(),
@@ -430,7 +430,7 @@ fn the_route_line_is_one_smooth_line_and_breaks_where_lanes_jump() {
         ..Default::default()
     };
     for l in net.lanes.iter_mut() {
-        *l = ::simulation::traffic::LaneBuilder::polyline(
+        *l = ::traffic::LaneBuilder::polyline(
             (0..=50)
                 .map(|k| l.points[0].lerp(l.points[1], k as f64 / 50.0))
                 .collect(),

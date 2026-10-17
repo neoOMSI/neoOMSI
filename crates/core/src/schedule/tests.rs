@@ -382,6 +382,32 @@ fn trip_times_from_the_profile() {
     );
 }
 
+/// `[profile_otherstopping]` per station: 1 and 4 are served in any case, 3 when early, and
+/// at 3 and 4 the bus waits for its departure (#298: Städtedreieck's NE76 stands at
+/// Hauptbahnhof from minute 21 to minute 26, marked 4).
+#[test]
+fn the_stations_that_wait_for_their_departure() {
+    let ne76 = ::timetable::TripProfile {
+        name: "p".into(),
+        factor: 40.0,
+        man_arr_time: vec![(4, 21.0)],
+        man_dep_time: vec![(4, 26.0)],
+        other_stopping: vec![(1, 1), (2, 2), (3, 3), (4, 4)],
+    };
+    let stations = [1, 2, 3, 4, 5];
+    let t = TripTimes::new(&stations, Some(&ne76), &link);
+    assert_eq!(t.kinds, vec![0, 1, 2, 3, 4]);
+    assert_eq!(t.stations[4], (1260.0, 1560.0));
+    assert_eq!(t.stops, vec![true, true, false, true, true]);
+    let mut s = saturday_after_midnight(&[(60.0, SATURDAY)]);
+    s.data.trips[0].stations = stations.to_vec();
+    s.times[0][0] = t;
+    let (always, early, wait) = s.special_stops(0);
+    assert_eq!(always, vec![2, 5]);
+    assert_eq!(early, vec![4]);
+    assert_eq!(wait, vec![4, 5], "the stations marked to wait for the departure");
+}
+
 /// An X10 Berlin S-Bahn trip (S7_Tgn_Sav: from the map's edge, Zoo at 1.5 min) comes at
 /// its departure time; a bus or a track beginning at a stop has its layover (#342).
 #[test]
@@ -1013,13 +1039,15 @@ fn passenger_service(
             .enumerate()
             .skip(from)
             .filter(|(index, _)| times.stops[*index])
-            .map(|(index, id)| crate::bus_service::Stop {
-                ri: index,
-                s: 0.0,
-                bay: 0.0,
-                side: 0.0,
-                id,
-                depart: entry.base + entry.time + times.stations[index].1,
+            .map(|(index, id)| {
+                ::traffic::StopTarget::from_tuple((
+                    index,
+                    0.0,
+                    0.0,
+                    entry.base + entry.time + times.stations[index].1,
+                    id,
+                    0.0,
+                ))
             })
             .collect(),
     )
@@ -1221,7 +1249,7 @@ fn passenger_targets_distinguish_equal_time_stops_and_unloaded_calls() {
         car: 10,
         steps: vec![],
         next: 0,
-        stations: vec![(tail.id, tail.depart)],
+        stations: vec![(tail.stop.get(), tail.depart)],
         served: vec![false],
     };
     let run = s.passenger_run(0, Some(&service), Some(&unloaded));
@@ -1524,4 +1552,116 @@ fn a_trip_of_the_day_before_still_under_way_is_put_on_the_road_when_the_map_load
     assert_eq!(s.due(10.0 * 60.0, 20.0 * 60.0), vec![(0, 0.0)]);
     assert!(s.due(10.0 * 60.0, 2.5).is_empty());
     assert!(s.due(40.0 * 60.0, 20.0 * 60.0).is_empty());
+}
+
+/// A bay forking off the road at y = 0, 3.5 m over from y = 10 to 30, back at y = 40.
+fn bay_network() -> Network {
+    let mut net = Network::default();
+    let p = |x: f64, y: f64| glam::DVec3::new(x, y, 0.0);
+    for pts in [
+        vec![p(0.0, -30.0), p(0.0, 0.0)],
+        vec![p(0.0, 0.0), p(0.0, 40.0)],
+        vec![p(0.0, 0.0), p(3.5, 10.0)],
+        vec![p(3.5, 10.0), p(3.5, 30.0)],
+        vec![p(3.5, 30.0), p(0.0, 40.0)],
+        vec![p(0.0, 40.0), p(0.0, 80.0)],
+    ] {
+        net.lanes.push(::traffic::LaneBuilder::polyline(
+            pts,
+            ::traffic::LaneKind::Street,
+            3.0,
+        ));
+    }
+    net.link(0.5);
+    net
+}
+
+#[test]
+fn an_articulated_bus_pulls_up_into_its_bay_clear_of_the_road() {
+    let net = bay_network();
+    let route = [0, 2, 3, 4, 5];
+    let stop = |s: f32| [(2usize, s, 0.0f32, 0.0f64, 1i64, 0.0f32)];
+    // front at the pole at y = 20, origin 4.5 m behind it: an 18 m bus's rear stands
+    // across the fork, beside the road
+    let mut long = stop(5.5);
+    fit_bays(&net, &route, 0, &mut long, 4.5, 13.5, 1.25);
+    let (k, s) = (long[0].0, long[0].1);
+    assert_eq!(k, 2, "it stays in the bay");
+    assert!(s > 11.0 && s < 14.0, "pulled up to fit: {s}");
+    assert!(!blocks_fork(&net, &route, k, s, 13.5, 1.25));
+    // a solo bus at the same pole already stands clear
+    let mut short = stop(5.5);
+    fit_bays(&net, &route, 0, &mut short, 4.5, 2.0, 1.25);
+    assert_eq!((short[0].0, short[0].1), (2, 5.5));
+    // one too long for the bay stays at its pole
+    let mut too_long = stop(5.5);
+    fit_bays(&net, &route, 0, &mut too_long, 4.5, 40.0, 1.25);
+    assert_eq!((too_long[0].0, too_long[0].1), (2, 5.5));
+}
+
+#[test]
+fn a_trip_that_begins_in_the_bay_pulls_up_too() {
+    // the bus's next trip starts on the bay lane it already stands on
+    let net = bay_network();
+    let route = [3, 4, 5];
+    let mut st = [(0usize, 5.5f32, 0.0f32, 0.0f64, 1i64, 0.0f32)];
+    fit_bays(&net, &route, 0, &mut st, 4.5, 13.5, 1.25);
+    assert_eq!(st[0].0, 0);
+    assert!(
+        st[0].1 > 11.0 && st[0].1 < 14.0,
+        "pulled up to fit: {}",
+        st[0].1
+    );
+}
+
+#[test]
+fn a_bus_on_the_road_past_a_fork_keeps_its_stop_at_the_pole() {
+    // the bus stops on the road with its rear across the fork: no bay to pull up into
+    let net = bay_network();
+    let mut st = [(1usize, 5.5f32, 0.0f32, 0.0f64, 1i64, 0.0f32)];
+    fit_bays(&net, &[0, 1, 5], 0, &mut st, 4.5, 13.5, 1.25);
+    assert_eq!((st[0].0, st[0].1), (1, 5.5));
+    assert!(!in_the_way(&net, &[1, 5], 0, 5.5, 13.5, 1.25));
+}
+
+#[test]
+fn a_bus_across_the_fork_is_in_the_way_of_the_road() {
+    let net = bay_network();
+    // on the bay lane it stands on, an 18 m bus's rear at the fork; a solo bus clear of it
+    assert!(in_the_way(&net, &[3, 4, 5], 0, 5.5, 13.5, 1.25));
+    assert!(!in_the_way(&net, &[3, 4, 5], 0, 5.5, 2.0, 1.25));
+}
+
+#[test]
+fn the_fork_counts_where_the_bay_leaves_the_road_over_two_lanes() {
+    // the bay leaves the road in two pieces (Gerolstein station); the rear stands on the
+    // second, 1.75 m off the road
+    let mut net = Network::default();
+    let p = |x: f64, y: f64| glam::DVec3::new(x, y, 0.0);
+    for pts in [
+        vec![p(0.0, -30.0), p(0.0, 0.0)],
+        vec![p(0.0, 0.0), p(0.0, 40.0)],
+        vec![p(0.0, 0.0), p(0.5, 5.0)],
+        vec![p(0.5, 5.0), p(3.5, 15.0)],
+        vec![p(3.5, 15.0), p(3.5, 30.0)],
+        vec![p(3.5, 30.0), p(0.0, 40.0)],
+        vec![p(0.0, 40.0), p(0.0, 80.0)],
+    ] {
+        net.lanes.push(::traffic::LaneBuilder::polyline(
+            pts,
+            ::traffic::LaneKind::Street,
+            3.0,
+        ));
+    }
+    net.link(0.5);
+    // origin at y = 23 on the bay, rear 13.5 m back at y = 9.5 on the second piece
+    assert!(in_the_way(&net, &[4, 5, 6], 0, 8.0, 13.5, 1.25));
+    let mut st = [(2usize, 8.0f32, 0.0f32, 0.0f64, 1i64, 0.0f32)];
+    fit_bays(&net, &[2, 3, 4, 5, 6], 0, &mut st, 4.5, 13.5, 1.25);
+    assert_eq!(st[0].0, 2);
+    assert!(
+        st[0].1 > 9.0 && st[0].1 < 13.0,
+        "pulled up to fit: {}",
+        st[0].1
+    );
 }

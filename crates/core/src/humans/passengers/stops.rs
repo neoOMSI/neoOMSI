@@ -4,7 +4,7 @@ use crate::scene::World;
 use glam::{DVec2, DVec3};
 use hashbrown::{HashMap, HashSet};
 use ::render::{Renderer, Scene};
-use ::simulation::traffic::Network;
+use ::traffic::Network;
 
 /// Passengers give the driver adequate warning without changing the much shorter range
 /// used for stop service and alighting.

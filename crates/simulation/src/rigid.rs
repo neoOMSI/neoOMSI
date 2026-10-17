@@ -115,6 +115,15 @@ pub trait Ground: Send + Sync {
     /// The faces at world (x, y): the highest at or below `top` and the lowest above it.
     fn probe(&self, x: f64, y: f64, top: f64) -> GroundProbe;
 
+    /// AI support selection around the previous wheel level. Providers that distinguish
+    /// authored road faces from buried terrain may prefer the road explicitly.
+    fn road_height(&self, x: f64, y: f64, reference: f64, range: f64) -> Option<f64> {
+        let probe = self.probe(x, y, reference);
+        [probe.below, probe.above].into_iter().flatten()
+            .filter(|z| z.is_finite() && (*z - reference).abs() <= range)
+            .min_by(|a, b| (a - reference).abs().total_cmp(&(b - reference).abs()))
+    }
+
     /// A prober for one step of one vehicle - many points close together. It may keep what
     /// it looked up (the tiles under the vehicle) until it is dropped.
     fn session(&self) -> Box<dyn Fn(f64, f64, f64) -> GroundProbe + '_> {

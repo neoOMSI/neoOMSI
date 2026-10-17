@@ -21,7 +21,6 @@ pub mod scenery;
 pub mod scripttex;
 pub mod startup;
 pub mod texttex;
-pub mod traffic;
 pub mod vehicle;
 pub mod vehicle_api;
 

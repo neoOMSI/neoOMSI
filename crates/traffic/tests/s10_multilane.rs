@@ -1,0 +1,466 @@
+//! Unrequested passing decisions must reach arbitration; a free adjacent lane stays free.
+mod common;
+use common::maneuver::two_lanes;
+use glam::{DVec2, DVec3};
+use traffic::*;
+
+fn body(a: &ManeuverActor, net: &Network) -> BodyFootprint {
+    let mut b = BodyFootprint::new(
+        a.id,
+        net.lanes[a.lane].at(a.s).0.truncate() + DVec2::Y * ((a.front - a.rear) * 0.5) as f64,
+        DVec2::Y,
+        a.length as f64 * 0.5,
+        a.half_width as f64,
+        0.0,
+        3.0,
+        a.speed,
+    );
+    b.front = a.front;
+    b.rear = a.rear;
+    b.current = Some(Placement {
+        lane: LaneId(a.lane),
+        s: a.s,
+        lateral: 0.0,
+        foreign: false,
+    });
+    b
+}
+fn scenario(
+    speed: f32,
+    blocked: bool,
+    bus_waiting_for_red: bool,
+    static_blocked: bool,
+) -> Option<ChangeCommand> {
+    let net = two_lanes();
+    let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    ego.speed = speed;
+    ego.stopped = if speed == 0.0 { 5.0 } else { 0.0 };
+    ego.front = 2.0;
+    ego.rear = 2.0;
+    ego.length = 4.0;
+    ego.half_width = 0.9;
+    let mut bus = ManeuverActor::new(VehicleId(2), 0, if speed == 0.0 { 72.0 } else { 90.0 });
+    bus.front = 6.0;
+    bus.rear = 4.0;
+    bus.length = 10.0;
+    bus.at_stop = !bus_waiting_for_red;
+    bus.light_hold = bus_waiting_for_red;
+    let blocker = ManeuverActor::new(VehicleId(3), 1, 60.0);
+    let mut actors = vec![ego, bus];
+    if blocked {
+        actors.push(blocker);
+    }
+    let occ = Occupancy::build(
+        net.version(),
+        0,
+        actors.iter().map(|a| body(a, &net)).collect(),
+    );
+    let clear = |_: &[SweepSample], _: &ManeuverActor| !static_blocked;
+    let mut c = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    for tick in 0..150 {
+        let scene = ManeuverScene {
+            net: &net,
+            occupancy: &occ,
+            actors: &actors,
+            people: &[],
+            static_clearance: Some(&clear),
+            time: tick as f32 * 0.02,
+            dt: 0.02,
+            tick,
+        };
+        let it = c.intent(&scene, &actors[0], &state);
+        c.begin_tick(&[it], tick);
+        let mut input = ManeuverInputs::new(0);
+        input.lead_standing = !bus_waiting_for_red;
+        input.lead_gap = Some(6.0);
+        input.obstacle_len = 10.0;
+        if let Some(change) = c.plan(&scene, &mut state, &input).change {
+            return Some(change);
+        }
+    }
+    None
+}
+
+#[test]
+fn a_moving_car_requests_a_safe_pass_on_the_parallel_lane() {
+    assert_eq!(scenario(8.0, false, false, false).unwrap().to, 1);
+}
+#[test]
+fn a_stopped_car_can_bypass_a_serving_bus() {
+    assert_eq!(
+        scenario(0.0, false, false, false).unwrap().kind,
+        ChangeKind::Bypass
+    );
+}
+
+#[test]
+fn a_stopped_car_bypasses_a_car_parked_in_its_lane() {
+    // (also where the lane beside is no neighbour of the same spline: an object's paths)
+    for linked in [true, false] {
+        let mut net = two_lanes();
+        if !linked {
+            net.lanes[0].left = None;
+            net.lanes[1].right = None;
+        }
+        assert_eq!(parked_bypass(&net), Some((1, ChangeKind::Bypass)), "linked {linked}");
+    }
+}
+
+#[test]
+fn a_bypass_round_a_parked_car_goes_back_only_past_it() {
+    let net = two_lanes();
+    let route_back = |odometer: f32| {
+        let mut a = ManeuverActor::new(VehicleId(1), 1, 60.0);
+        a.front = 6.0; a.rear = 6.0; a.length = 12.0; a.half_width = 1.25;
+        a.speed = 3.0; a.route_next = Some(0); a.odometer = odometer;
+        let actors = [a];
+        let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+        let mut coord = ManeuverCoordinator::new();
+        let mut state = ManeuverState { bypass_until: Some(100.0), ..Default::default() };
+        for tick in 0..50 {
+            let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+                static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+            coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+            if let Some(c) = coord.plan(&scene, &mut state, &ManeuverInputs::new(0)).change {
+                return Some(c.to);
+            }
+        }
+        None
+    };
+    assert_eq!(route_back(90.0), None, "moved back in beside the parked car");
+    assert_eq!(route_back(101.0), Some(0));
+}
+
+#[test]
+fn a_blocked_route_change_moves_on_to_the_lanes_beside_after_the_joint() {
+    // lanes 0 -> 1 along x = 0, lanes 2 -> 3 beside them on the right; the route changes
+    // from 0 onto 2 and goes on to 3. A car stands on 2 beside the bus near the end of 0.
+    let mk = |x: f64, a: f64, b: f64| {
+        LaneBuilder::polyline(vec![DVec3::new(x, a, 0.0), DVec3::new(x, b, 0.0)], LaneKind::Street, 3.0)
+    };
+    let mut net = Network {
+        lanes: vec![mk(0.0, 0.0, 20.0), mk(0.0, 20.0, 60.0), mk(3.0, 0.0, 20.0), mk(3.0, 20.0, 60.0)],
+        ..Default::default()
+    };
+    net.link(1.5);
+    let mut bus = ManeuverActor::new(VehicleId(1), 0, 10.0);
+    bus.front = 6.0; bus.rear = 6.0; bus.length = 12.0; bus.half_width = 1.25;
+    bus.veh_type = -1; bus.route_next = Some(2); bus.planned_next = Some(3);
+    let mut car = ManeuverActor::new(VehicleId(2), 2, 6.0);
+    car.front = 2.2; car.rear = 2.2; car.length = 4.4; car.half_width = 0.9;
+    let actors = [bus, car];
+    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+    let mut coord = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+        static_clearance: None, time: 0.0, dt: 0.02, tick: 0 };
+    coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], 0);
+    let d = coord.plan(&scene, &mut state, &ManeuverInputs::new(0));
+    assert!(d.change.is_none());
+    assert_eq!(d.defer_change, Some((2, 1)));
+    assert_eq!(d.stop_at, None, "stopped at the end of its lane instead");
+}
+
+fn parked_bypass(net: &Network) -> Option<(usize, ChangeKind)> {
+    // the parked car is no actor of the scene: only the lead the world reports stands for it
+    let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    ego.front = 6.0; ego.rear = 6.0; ego.length = 12.0; ego.half_width = 1.25;
+    ego.stopped = 5.0; ego.pass_room = 5.5;
+    let actors = [ego];
+    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, net)).collect());
+    let mut coord = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    let mut chosen = None;
+    for tick in 0..150 {
+        let scene = ManeuverScene { net, occupancy: &occ, actors: &actors, people: &[],
+            static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+        coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+        let mut input = ManeuverInputs::new(0);
+        input.lead_gap = Some(4.0);
+        input.lead_standing = true;
+        input.parked = true;
+        chosen = coord.plan(&scene, &mut state, &input).change;
+        if chosen.is_some() { break; }
+    }
+    chosen.map(|c| (c.to, c.kind))
+}
+
+#[test]
+fn a_following_car_does_not_need_fifty_empty_metres_after_the_first_passer() {
+    let net = two_lanes();
+    let mut ego = ManeuverActor::new(VehicleId(1), 0, 60.0);
+    ego.front = 2.1; ego.rear = 2.1; ego.length = 4.2; ego.half_width = 0.85;
+    ego.stopped = 5.0;
+    let mut bus = ManeuverActor::new(VehicleId(2), 0, 80.0);
+    bus.front = 6.0; bus.rear = 4.0; bus.length = 10.0; bus.at_stop = true;
+    let mut passer = ego.clone();
+    passer.id = VehicleId(3); passer.lane = 1; passer.s = 74.0; passer.speed = 6.0; passer.stopped = 0.0;
+    let actors = [ego, bus, passer];
+    let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+    let mut coord = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    let mut chosen = None;
+    for tick in 0..150 {
+        let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors, people: &[],
+            static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+        coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+        chosen = coord.plan(&scene, &mut state, &ManeuverInputs::new(0)).change;
+        if chosen.is_some() { break; }
+    }
+    assert_eq!(chosen.expect("safe moving passer prevented every following bypass").kind, ChangeKind::Bypass);
+}
+
+#[test]
+fn cars_queued_behind_a_serving_bus_also_request_a_bypass() {
+    for red in [false, true] {
+        let net = two_lanes();
+        let mut car = ManeuverActor::new(VehicleId(1), 0, 60.0);
+        car.front = 2.1;
+        car.rear = 2.1;
+        car.length = 4.2;
+        car.half_width = 0.85;
+        car.stopped = 5.0;
+        let mut first = car.clone();
+        first.id = VehicleId(2);
+        first.s = 70.5;
+        let mut bus = ManeuverActor::new(VehicleId(3), 0, 82.6);
+        bus.at_stop = !red;
+        bus.light_hold = red;
+        bus.front = 6.0;
+        bus.rear = 4.0;
+        bus.length = 10.0;
+        let actors = [car, first, bus];
+        let occ = Occupancy::build(net.version(), 0, actors.iter().map(|a| body(a, &net)).collect());
+        let mut coord = ManeuverCoordinator::new();
+        let mut state = ManeuverState::default();
+        let mut chosen = None;
+        for tick in 0..150 {
+            let scene = ManeuverScene { net: &net, occupancy: &occ, actors: &actors,
+                people: &[], static_clearance: None, time: tick as f32 * 0.02, dt: 0.02, tick };
+            coord.begin_tick(&[coord.intent(&scene, &actors[0], &state)], tick);
+            if let Some(change) = coord.plan(&scene, &mut state, &ManeuverInputs::new(0)).change {
+                chosen = Some(change);
+                break;
+            }
+        }
+        if red { assert!(chosen.is_none(), "a red queue must wait"); }
+        else { assert_eq!(chosen.expect("follower remained stuck behind the stop queue").kind, ChangeKind::Bypass); }
+    }
+}
+
+fn segmented_bypass(blocked: bool, fork: bool, gap: f64) -> Option<ChangeCommand> {
+    let mut net = Network::default();
+    for (x, from, to) in [
+        (0.0, 0.0, 30.0),
+        (-3.0, 0.0, 30.0),
+        (0.0, 30.0, 60.0),
+        (-3.0, 30.0, 60.0),
+    ] {
+        net.lanes.push(LaneBuilder::polyline(
+            vec![DVec3::new(x, from, 0.0), DVec3::new(x, to, 0.0)],
+            LaneKind::Street,
+            3.0,
+        ));
+    }
+    net.link(1.5);
+    for (right, left) in [(0, 1), (2, 3)] {
+        net.lanes[right].left = Some(left);
+        net.lanes[left].right = Some(right);
+    }
+    if fork {
+        net.lanes[1].next.clear();
+    }
+    let mut ego = ManeuverActor::new(VehicleId(167), 0, 28.3);
+    ego.stopped = 5.0;
+    ego.planned_next = Some(2);
+    ego.front = 2.13;
+    ego.rear = 2.11;
+    ego.length = 4.24;
+    ego.half_width = 0.83;
+    ego.pass_room = 5.25;
+    let mut bus = ManeuverActor::new(VehicleId(93), 2, (12.23 + gap) as f32);
+    bus.at_stop = true;
+    bus.front = 5.68;
+    bus.rear = 3.88;
+    bus.length = 9.56;
+    bus.half_width = 1.24;
+    let mut actors = vec![ego, bus];
+    if blocked {
+        actors.push(ManeuverActor::new(VehicleId(7), 3, 3.0));
+    }
+    let mut feet: Vec<_> = actors.iter().map(|a| body(a, &net)).collect();
+    // The articulated rear has no lane placement, but still constrains the sweep.
+    feet.push(feet[1].part_of(1, DVec2::new(0.0, 34.03 + gap), DVec2::Y, 3.6, 1.24));
+    let occ = Occupancy::build(net.version(), 0, feet);
+    let mut coordinator = ManeuverCoordinator::new();
+    let mut memory = ManeuverState::default();
+    for tick in 0..150 {
+        let scene = ManeuverScene {
+            net: &net,
+            occupancy: &occ,
+            actors: &actors,
+            people: &[],
+            static_clearance: None,
+            time: tick as f32 * 0.02,
+            dt: 0.02,
+            tick,
+        };
+        let intent = coordinator.intent(&scene, &actors[0], &memory);
+        coordinator.begin_tick(&[intent], tick);
+        if let Some(change) = coordinator
+            .plan(&scene, &mut memory, &ManeuverInputs::new(0))
+            .change
+        {
+            return Some(change);
+        }
+    }
+    None
+}
+
+#[test]
+fn bus_bypass_uses_the_continuing_parallel_road_past_a_short_spline() {
+    assert_eq!(
+        segmented_bypass(false, false, 5.25).unwrap().kind,
+        ChangeKind::Bypass
+    );
+    assert!(
+        segmented_bypass(true, false, 5.25).is_none(),
+        "car on the next target piece"
+    );
+    assert!(
+        segmented_bypass(false, true, 5.25).is_none(),
+        "target lane ends at the joint"
+    );
+    assert!(
+        segmented_bypass(false, false, 2.45).is_none(),
+        "too close to the articulated rear to steer out"
+    );
+}
+#[test]
+fn no_bypass_through_an_occupied_lane_or_scenery() {
+    assert!(scenario(0.0, true, false, false).is_none());
+    assert!(scenario(0.0, false, false, true).is_none());
+}
+#[test]
+fn a_red_light_queue_is_not_mistaken_for_a_bus_stop() {
+    assert!(scenario(0.0, false, true, false).is_none());
+}
+#[test]
+fn a_stopped_bus_does_not_block_the_corridor_of_the_free_lane() {
+    let net = two_lanes();
+    let mut bus = ManeuverActor::new(VehicleId(2), 0, 90.0);
+    bus.front = 6.0;
+    bus.rear = 10.0;
+    bus.length = 16.0;
+    let occ = Occupancy::build(net.version(), 0, vec![body(&bus, &net)]);
+    let samples: Vec<_> = (60..110)
+        .map(|s| SweepSample {
+            p: DVec3::new(-3.5, s as f64, 0.0),
+            d: (s - 60) as f32,
+            dir: DVec2::Y,
+        })
+        .collect();
+    assert!(
+        occ.swept_clearance(&samples, 0.9, &[VehicleId(1)])
+            .is_none()
+    );
+}
+
+#[test]
+fn a_required_route_change_precedes_an_optional_pass() {
+    for reverse in [false, true] {
+        let mut intents = vec![
+            ManeuverIntent {
+                vehicle: VehicleId(1),
+                target: Some(LaneId(1)),
+                required: false,
+                s: 0.0,
+            },
+            ManeuverIntent {
+                vehicle: VehicleId(99),
+                target: Some(LaneId(1)),
+                required: true,
+                s: 0.0,
+            },
+        ];
+        if reverse {
+            intents.reverse();
+        }
+        let mut c = ManeuverCoordinator::new();
+        c.begin_tick(&intents, 1);
+        assert!(c.approved(VehicleId(1)).is_none());
+        assert_eq!(c.approved(VehicleId(99)), Some(LaneId(1)));
+    }
+}
+
+#[test]
+fn a_boarding_bus_does_not_reserve_a_future_lane_change() {
+    let net = two_lanes();
+    let mut bus = ManeuverActor::new(VehicleId(99), 0, 60.0);
+    bus.at_stop = true;
+    bus.route_next = Some(1);
+    let actors = [bus];
+    let occ = Occupancy::build(net.version(), 0, vec![body(&actors[0], &net)]);
+    let scene = ManeuverScene {
+        net: &net,
+        occupancy: &occ,
+        actors: &actors,
+        people: &[],
+        static_clearance: None,
+        time: 0.0,
+        dt: 0.02,
+        tick: 0,
+    };
+    let mut coord = ManeuverCoordinator::new();
+    let mut state = ManeuverState::default();
+    assert!(coord.intent(&scene, &actors[0], &state).target.is_none());
+    assert!(
+        coord
+            .plan(&scene, &mut state, &ManeuverInputs::new(0))
+            .change
+            .is_none()
+    );
+}
+
+#[test]
+fn tight_spatial_queries_still_find_long_bodies_and_cell_boundary_contacts() {
+    let mut feet: Vec<_> = (-3..=3)
+        .map(|i| {
+            BodyFootprint::new(
+                VehicleId((i + 4) as u64),
+                DVec2::new(i as f64 * 50.0, 2.0),
+                DVec2::Y,
+                4.0,
+                1.0,
+                0.0,
+                3.0,
+                0.0,
+            )
+        })
+        .collect();
+    feet.push(BodyFootprint::new(
+        VehicleId(99),
+        DVec2::new(160.0, 0.0),
+        DVec2::X,
+        130.0,
+        1.0,
+        0.0,
+        3.0,
+        0.0,
+    ));
+    let occ = Occupancy::build(NetworkVersion(1), 0, feet.clone());
+    for x in [-50.01, -49.99, 0.0, 49.99, 50.01, 99.99] {
+        let p = DVec2::new(x, 0.0);
+        let mut found = Vec::new();
+        occ.near(p, 2.0, |f| found.push(f.owner));
+        let mut expected: Vec<_> = feet
+            .iter()
+            .filter(|f| (f.center - p).length() <= 2.0 + f.half_len.max(f.half_w))
+            .map(|f| f.owner)
+            .collect();
+        found.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(found, expected, "query at {x}");
+    }
+}

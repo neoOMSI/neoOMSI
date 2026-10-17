@@ -1,0 +1,278 @@
+//! Viewer visibility/occlusion and the realized-body `Footprint` helpers.
+
+use super::*;
+
+/// Is a vehicle (radius `r`) at `p` deep under the ground, with the viewer above ground?
+/// Then nobody sees it however near (#101: detector buses 10 m underground). `ground(x, y)`
+/// is the terrain's height, None where it is cut away (a tunnel portal) or not loaded.
+fn buried(ground: impl Fn(f64, f64) -> Option<f64>, viewer: DVec3, p: DVec3, r: f64) -> bool {
+    let above = |q: DVec3, depth: f64| ground(q.x, q.y).is_some_and(|g| g > q.z + depth);
+    // (not for a viewer in a tunnel)
+    if above(viewer, 0.5) {
+        return false;
+    }
+    let reach = r.max(2.0);
+    [
+        DVec3::ZERO,
+        DVec3::X * reach,
+        -DVec3::X * reach,
+        DVec3::Y * reach,
+        -DVec3::Y * reach,
+    ]
+    .into_iter()
+    .all(|o| above(p + o, BURIED_DEPTH))
+}
+
+impl Footprint {
+    pub(crate) fn from_obb(car: usize, b: &::simulation::collision::Obb, speed: f32) -> Footprint {
+        let (sh, ch) = (b.heading.sin(), b.heading.cos());
+        Footprint {
+            car,
+            center: b.center,
+            fwd: DVec2::new(sh, ch),
+            right: DVec2::new(ch, -sh),
+            half_len: b.half.y,
+            half_w: b.half.x,
+            speed,
+            z: b.z0,
+        }
+    }
+
+
+    /// Does this footprint overlap `o`, both grown by `margin` (separating axes)?
+    pub(crate) fn overlaps(&self, o: &Footprint, margin: f64) -> bool {
+        let d = o.center - self.center;
+        for axis in [self.fwd, self.right, o.fwd, o.right] {
+            let extent = |f: &Footprint| {
+                (f.fwd.dot(axis)).abs() * (f.half_len + margin)
+                    + (f.right.dot(axis)).abs() * (f.half_w + margin)
+            };
+            if d.dot(axis).abs() > extent(self) + extent(o) {
+                return false;
+            }
+        }
+        true
+    }
+
+}
+
+impl Viewer {
+    pub fn new(cam: &::render::Camera, aspect: f64, fog_range: f64) -> Viewer {
+        let tan_y = (cam.fov_deg as f64 * 0.5).to_radians().tan();
+        Viewer {
+            pos: cam.position,
+            forward: cam.forward().as_dvec3().normalize_or_zero(),
+            tan_x: tan_y * aspect.max(0.2),
+            tan_y,
+            range: fog_range.min(VISIBLE_RANGE).min(cam.far as f64),
+            min_size: 0.0,
+            max_dist: 0.0,
+            fov: (cam.fov_deg as f64).to_radians(),
+        }
+    }
+
+
+    /// The renderer's culling as well (`RenderOptions::min_obj_size`, `max_obj_dist`).
+    pub fn with_culling(mut self, min_size: f32, max_dist: f32) -> Viewer {
+        self.min_size = min_size.max(0.0) as f64;
+        self.max_dist = max_dist.max(0.0) as f64;
+        self
+    }
+
+
+    /// Would the renderer draw an object of radius `r` this far away at all?
+    pub fn draws(&self, dist: f64, r: f64) -> bool {
+        // (the renderer's sphere is about the origin, which may be well off the middle)
+        let r = r * 1.5 + 1.0;
+        if self.max_dist > 0.0 && dist > self.max_dist + r {
+            return false;
+        }
+        self.min_size <= 0.0 || 2.0 * r / (dist.max(0.01) * self.fov.max(1e-3)) >= self.min_size
+    }
+
+
+    /// Does a sphere of radius `r` at `p` lie within the view frustum and range?
+    pub fn frames(&self, p: DVec3, r: f64) -> bool {
+        let rel = p - self.pos;
+        let dist = rel.length();
+        if dist <= r {
+            return true;
+        }
+        if dist - r > self.range {
+            return false;
+        }
+        let f = self.forward;
+        let mut right = f.cross(DVec3::Z);
+        if right.length() < 1e-3 {
+            right = DVec3::X;
+        }
+        let right = right.normalize();
+        let up = right.cross(f);
+        let z = rel.dot(f);
+        if z < -r {
+            return false;
+        }
+        let (x, y) = (rel.dot(right), rel.dot(up));
+        x.abs() <= z * self.tan_x + r * (1.0 + self.tan_x * self.tan_x).sqrt()
+            && y.abs() <= z * self.tan_y + r * (1.0 + self.tan_y * self.tan_y).sqrt()
+    }
+
+}
+
+impl Traffic {
+
+    /// Is a vehicle of radius `r` at `p` hidden from the viewer by buildings (or a hill)?
+    /// Every line of sight must be: to its middle, both ends and (if large) its roof.
+    pub(crate) fn occluded(&self, world: &World, v: &Viewer, p: DVec3, r: f64) -> bool {
+        let rel = (p - v.pos).truncate();
+        let across = if rel.length() > 1e-3 {
+            DVec3::new(-rel.y, rel.x, 0.0).normalize()
+        } else {
+            DVec3::X
+        };
+        let along = DVec3::new(rel.x, rel.y, 0.0).normalize_or_zero();
+        let reach = (r * 0.8).max(1.5);
+        let mut targets = vec![
+            p + DVec3::new(0.0, 0.0, 1.2),
+            p + across * reach + DVec3::new(0.0, 0.0, 1.0),
+            p - across * reach + DVec3::new(0.0, 0.0, 1.0),
+            p - along * reach + DVec3::new(0.0, 0.0, 1.0),
+        ];
+        // the roof of a bus or a lorry shows over a wall a car hides behind
+        if r > 4.0 {
+            targets.push(p + DVec3::new(0.0, 0.0, 3.2));
+        }
+        targets.into_iter().all(|t| self.sight_blocked(world, v, t))
+    }
+
+
+    /// Is the line of sight from the viewer to `target` blocked by a building (or a hill)?
+    pub(crate) fn sight_blocked(&self, world: &World, v: &Viewer, target: DVec3) -> bool {
+        let p = target;
+        let blocker = match &self.occluders {
+            Some(c) => c.ray_blocker(v.pos, target, 2.5, 3.0),
+            None => world.collision.lock().ray_blocker(v.pos, target, 2.5, 3.0),
+        };
+        if let Some(b) = blocker {
+            if self.debug_population {
+                log::info!(
+                    "  line of sight to ({:.0}, {:.0}) blocked by a box at ({:.1}, {:.1}) {:.1} x {:.1} m, z {:.1}..{:.1}",
+                    p.x,
+                    p.y,
+                    b.center.x,
+                    b.center.y,
+                    b.half.x * 2.0,
+                    b.half.y * 2.0,
+                    b.z0,
+                    b.z1
+                );
+            }
+            return true;
+        }
+        // the ground between: a crest or an embankment
+        for k in 1..8 {
+            let t = k as f64 / 8.0;
+            let q = v.pos.lerp(target, t);
+            if let Some(g) = terrain_height(world, q.x, q.y) {
+                if g > q.z + 0.5 {
+                    if self.debug_population {
+                        log::info!(
+                            "  line of sight to ({:.0}, {:.0}) blocked by the ground at ({:.0}, {:.0}): {:.1} over {:.1}",
+                            p.x,
+                            p.y,
+                            q.x,
+                            q.y,
+                            g,
+                            q.z
+                        );
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+
+    /// May a vehicle be put on the road at `p` without the player seeing it appear? A
+    /// timetable bus asks this before it spawns mid-route.
+    pub fn may_appear(&self, world: &World, p: DVec3) -> bool {
+        self.initial || self.hidden(world, p, 8.0)
+    }
+
+
+    /// Could the player not see a vehicle (radius `r`) at `p` appear or vanish? Close by only
+    /// when deep underground (mirrors and gaps between houses see what is near); within
+    /// `NEAR_HIDE` only behind a building, wherever the camera looks (mirrors look back);
+    /// further off: beyond what is drawn, out of the picture, or behind something.
+    pub fn hidden(&self, world: &World, p: DVec3, r: f64) -> bool {
+        let Some(v) = self.viewer else { return true };
+        let d = (p - v.pos).length();
+        if d < NEVER_VANISH_WITHIN {
+            let ground = |x, y| {
+                if world.ground_cut_away(x, y) {
+                    None
+                } else {
+                    terrain_height(world, x, y)
+                }
+            };
+            return buried(ground, v.pos, p, r);
+        }
+        if !v.draws(d, r) {
+            return true;
+        }
+        if d < NEAR_HIDE {
+            return self.occluded(world, &v, p, r);
+        }
+        !v.frames(p, r) || self.occluded(world, &v, p, r)
+    }
+
+
+    /// `hidden` for every part of `c` on the track, not just the locomotive.
+    pub(crate) fn consist_hidden(&self, world: &World, c: &AiCar, r: f64) -> bool {
+        let v = &c.vehicle;
+        (v.part_hidden(0) || self.hidden(world, v.position, r))
+            && v.trailers.iter().enumerate().all(|(k, t)| {
+                let (front, rear, _) = extents(&t.ty, 4.5);
+                let r = ((front + rear) * 0.5).max(2.0) as f64;
+                v.part_hidden(k + 1) || self.hidden(world, t.position, r)
+            })
+    }
+
+}
+
+#[cfg(test)]
+mod buried_tests {
+    use super::buried;
+    use glam::DVec3;
+
+    /// Flat ground at 0 with the ground cut away from x = `hole` on (a tunnel portal).
+    fn ground(hole: f64) -> impl Fn(f64, f64) -> Option<f64> {
+        move |x, _| (x < hole).then_some(0.0)
+    }
+
+    const VIEWER: DVec3 = DVec3::new(0.0, -50.0, 1.7);
+    const DEEP: DVec3 = DVec3::new(0.0, 0.0, -10.0);
+
+    #[test]
+    fn a_vehicle_deep_under_the_ground_is_out_of_sight() {
+        assert!(buried(ground(f64::MAX), VIEWER, DEEP, 8.0));
+    }
+
+    /// Everything else keeps the usual rules (#101 review): near the player it may not
+    /// appear, behind a building or not.
+    #[test]
+    fn a_vehicle_not_wholly_under_the_ground_is_not() {
+        let flat = ground(f64::MAX);
+        // on the street, behind a building or not
+        assert!(!buried(&flat, VIEWER, DVec3::ZERO, 8.0));
+        // in a shallow underpass: its roof shows
+        assert!(!buried(&flat, VIEWER, DVec3::new(0.0, 0.0, -4.0), 8.0));
+        // in a tunnel whose portal is within its length
+        assert!(!buried(ground(5.0), VIEWER, DEEP, 8.0));
+        // seen from a tunnel
+        assert!(!buried(&flat, DVec3::new(0.0, -50.0, -10.0), DEEP, 8.0));
+        // where no terrain is loaded
+        assert!(!buried(|_, _| None, VIEWER, DEEP, 8.0));
+    }
+}

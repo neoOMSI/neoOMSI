@@ -13,7 +13,7 @@ impl App {
             self.clock.advance(dt * speed as f32);
             self.sync_real_time();
             if let Some(t) = self.traffic.as_mut() {
-                t.time_scale = speed;
+                t.set_time_scale(speed);
             }
             self.tick_weather(dt * speed as f32);
         } else if self.weather_blend.is_some() {
@@ -106,17 +106,24 @@ impl App {
             self.scene.as_mut(),
             self.camera.as_ref(),
         ) {
-            let mut vehicles: Vec<&::simulation::VehicleInstance> = Vec::new();
-            if let Some(p) = self.player.as_ref() {
-                vehicles.push(&p.vehicle);
-            }
-            vehicles.extend(self.placed.iter().map(|q| &q.vehicle));
-            if let Some(t) = self.traffic.as_ref() {
-                vehicles.extend(t.cars.iter().map(|c| &c.vehicle));
-            }
-            vehicles.extend(self.remotes.remotes.values().map(|r| r.vehicle()));
             let __tc = Instant::now();
-            lights::collect(w, scene, &daylight, cam.position, &vehicles);
+            // (the AI vehicles' lights where their bodies are drawn, between two steps)
+            let mut collect = |traffic: Option<&traffic::Traffic>| {
+                let mut vehicles: Vec<&::simulation::VehicleInstance> = Vec::new();
+                if let Some(p) = self.player.as_ref() {
+                    vehicles.push(&p.vehicle);
+                }
+                vehicles.extend(self.placed.iter().map(|q| &q.vehicle));
+                if let Some(t) = traffic {
+                    vehicles.extend(t.cars().iter().map(|c| &c.vehicle));
+                }
+                vehicles.extend(self.remotes.remotes.values().map(|r| r.vehicle()));
+                lights::collect(w, scene, &daylight, cam.position, &vehicles);
+            };
+            match self.traffic.as_mut() {
+                Some(t) => t.with_drawn_poses(|t| collect(Some(t))),
+                None => collect(None),
+            }
             *self.profile.entry("lights.collect").or_default() += __tc.elapsed().as_secs_f64();
             {
                 let t = *lights::TIMES.lock().unwrap_or_else(|e| e.into_inner());
@@ -176,7 +183,7 @@ impl App {
                 );
                 if let Some(t) = self.traffic.as_ref() {
                     buses.extend(
-                        t.cars
+                        t.cars()
                             .iter()
                             .filter(|c| {
                                 c.is_bus() && (c.vehicle.position - cam.position).length() < 40.0
