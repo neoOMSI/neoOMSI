@@ -22,7 +22,7 @@ impl Ui {
         let card = [0.0, bar_h + rise, w, h + rise];
         self.text.alpha = ep;
         self.text.rounded(r, scene, card, 0.0, OPT_CARD);
-        self.text.rounded(r, scene, [0.0, bar_h, w, bar_h + 1.0], 0.0, [255, 255, 255, 14]);
+        self.text.rounded(r, scene, [0.0, bar_h, w, bar_h + 1.0], 0.0, DIVIDER);
 
         let pad = (48.0 * u).round();
         let (x0, x1) = (card[0] + pad, card[2] - pad);
