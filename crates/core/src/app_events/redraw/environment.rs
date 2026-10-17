@@ -192,8 +192,17 @@ impl App {
                     scene,
                     &buses,
                     &self.shelter,
+                    w.camera_ground(cam.position.x, cam.position.y, cam.position.z),
                 );
                 *self.profile.entry("lights.rain").or_default() += __tr.elapsed().as_secs_f64();
+                self.lightning.tick(
+                    if self.paused { 0.0 } else { dt },
+                    self.weather_local.storm,
+                    self.weather_local.visibility_m,
+                    cam.position,
+                    w.camera_ground(cam.position.x, cam.position.y, cam.position.z),
+                    scene,
+                );
                 if kind == 1 || self.wetness > 0.1 {
                     let mut wheels = self
                         .player
@@ -212,8 +221,9 @@ impl App {
                             speed = speed.max(f.vel.length() as f32);
                         }
                     }
-                    let wetness = self.wetness;
+                    let grid = &self.wet_grid;
                     self.splashes.update(&wheels, speed, &|x, y| {
+                        let wetness = grid.at(x, y);
                         let wet = w.wet_road_at(x, y, wetness);
                         if wet > 0.0 {
                             // a wet road always throws water; a puddle throws most

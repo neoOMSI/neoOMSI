@@ -234,6 +234,8 @@ pub(crate) struct App {
     pub(crate) log_state: applog::LogState,
     pub(crate) career: career::Career,
     pub(crate) wetness: f32,
+    pub(crate) wet_grid: weather::WetGrid,
+    pub(crate) lightning: crate::lightning::Lightning,
     pub(crate) sky: weather::Regional,
     pub(crate) sky_anchored: bool,
     pub(crate) weather_local: weather::Local,
@@ -807,6 +809,8 @@ impl App {
         }
         let first_weather = weather::spec::load(&self.args);
         self.wetness = weather::initial_wetness(&first_weather);
+        let cellular = first_weather.precip.showers || first_weather.precip.thunder || first_weather.precip.vicinity;
+        self.wet_grid.set_all(if cellular { 0.0 } else { self.wetness });
         self.sky = weather::Regional::new();
         let observer = self.weather_observer();
         self.sky.anchor(&first_weather, observer, weather::enhanced_sky());

@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use super::types::*;
 use super::util::*;
-use crate::weather::{CUSTOM_CLOUDS, CUSTOM_PRECIP, CustomWeather, PrecipKind, Weather};
+use crate::weather::{CUSTOM_PRECIP, CustomWeather, PrecipKind, Weather};
 use imgui::Condition;
 
 const SCENARIOS: [&str; 10] = [
@@ -361,15 +361,11 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
     match i {
         0 => {}
         1 => {
-            c.cloud = 1;
-            c.cloud_base_m = 1500.0;
             c.visibility_m = 30_000.0;
             c.wind_speed = 3.0;
             c.temp_c = 20.0;
         }
         2 => {
-            c.cloud = 3;
-            c.cloud_base_m = 900.0;
             c.visibility_m = 15_000.0;
             c.wind_speed = 5.0;
             c.humidity = 70.0;
@@ -377,8 +373,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.85;
         }
         3 => {
-            c.cloud = 4;
-            c.cloud_base_m = 500.0;
             c.visibility_m = 8_000.0;
             c.wind_speed = 4.0;
             c.humidity = 85.0;
@@ -387,8 +381,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.7;
         }
         4 => {
-            c.cloud = 4;
-            c.cloud_base_m = 350.0;
             c.visibility_m = 4_000.0;
             c.wind_speed = 3.0;
             c.humidity = 92.0;
@@ -400,8 +392,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.7;
         }
         5 => {
-            c.cloud = 4;
-            c.cloud_base_m = 300.0;
             c.visibility_m = 2_500.0;
             c.wind_speed = 7.0;
             c.humidity = 95.0;
@@ -413,8 +403,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.6;
         }
         6 => {
-            c.cloud = 4;
-            c.cloud_base_m = 250.0;
             c.visibility_m = 1_200.0;
             c.wind_speed = 18.0;
             c.humidity = 98.0;
@@ -426,8 +414,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.4;
         }
         7 => {
-            c.cloud = 4;
-            c.cloud_base_m = 350.0;
             c.visibility_m = 1_800.0;
             c.wind_speed = 4.0;
             c.humidity = 90.0;
@@ -441,8 +427,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.8;
         }
         8 => {
-            c.cloud = 4;
-            c.cloud_base_m = 100.0;
             c.visibility_m = 120.0;
             c.wind_speed = 0.5;
             c.humidity = 100.0;
@@ -452,7 +436,6 @@ fn scenario(i: usize, base: &CustomWeather) -> CustomWeather {
             c.brightness = 0.8;
         }
         _ => {
-            c.cloud = 0;
             c.visibility_m = 40_000.0;
             c.wind_speed = 1.0;
             c.humidity = 30.0;
@@ -493,12 +476,9 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
             temp_c: if cold { r(-8.0, 2.0) } else { r(2.0, 30.0) },
             humidity: r(30.0, 100.0),
             pressure: r(985.0, 1030.0),
-            cloud: (r(0.0, 5.0) as usize).min(4),
-            cloud_base_m: r(250.0, 3000.0),
             ..CustomWeather::default()
         };
         if rain > 0.55 {
-            c.cloud = 4;
             c.precip = if c.temp_c < 1.5 { 2 } else { 1 };
             c.precip_intensity = r(20.0, 255.0);
             c.road_wetness = if c.precip == 1 { r(0.4, 1.0) } else { r(0.0, 0.4) };
@@ -569,12 +549,6 @@ fn custom(ui: &imgui::Ui, tool: &mut WeatherTool, wi: &WeatherInfo, actions: &mu
     ui.slider_config("Pressure##cw", 900.0, 1100.0)
         .display_format("%.0f hPa")
         .build(&mut e.pressure);
-    ui.set_next_item_width(-150.0);
-    ui.combo_simple_string("Cloud type##cw", &mut e.cloud, &CUSTOM_CLOUDS[..]);
-    ui.set_next_item_width(-150.0);
-    ui.slider_config("Cloud base##cw", 50.0, 5000.0)
-        .display_format("%.0f m")
-        .build(&mut e.cloud_base_m);
     let mut p = e.precip.clamp(0, 2) as usize;
     ui.set_next_item_width(-150.0);
     if ui.combo_simple_string("Precipitation##cw", &mut p, &CUSTOM_PRECIP[..]) {

@@ -34,7 +34,7 @@ pub(crate) fn value_label(setting: &str, value: &str, label: &str) -> String {
 
 pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> {
     let tr = |t: &str| ::user_interface::tr(t).into_owned();
-    if app.metar_locked() && matches!(id, "weather" | "cloudkind" | "precipkind") {
+    if app.metar_locked() && matches!(id, "weather" | "precipkind") {
         return None;
     }
     let mut current: Option<usize> = None;
@@ -65,14 +65,6 @@ pub(crate) fn dropdown_for(app: &App, row: usize, id: &str) -> Option<Dropdown> 
                 v.push((own.to_uppercase(), format!("metar_src {}", own.to_uppercase())));
             }
             v
-        }
-        "cloudkind" => {
-            current = app.weather.as_ref().map(|w| w.simple_cloud_index());
-            CLOUD_TYPES
-                .iter()
-                .enumerate()
-                .map(|(i, (_, n))| (tr(*n), format!("cloud {i}")))
-                .collect()
         }
         "precipkind" => {
             current = app
@@ -172,7 +164,7 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
         crate::lab_pads::apply(app.controllers.as_mut(), verb, arg);
         return;
     }
-    if app.metar_locked() && matches!(verb, "wx" | "cloud" | "precip") {
+    if app.metar_locked() && matches!(verb, "wx" | "precip") {
         app.service_msg = Some((
             "The weather cannot be changed while the METAR sync is on".into(),
             3.0,
@@ -201,19 +193,6 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 .collect::<String>()
                 .to_ascii_uppercase();
             app.set_metar_station(code);
-        }
-        "cloud" => {
-            if let Some(i) = arg
-                .trim()
-                .parse::<usize>()
-                .ok()
-                .filter(|i| *i < CLOUD_TYPES.len())
-            {
-                app.edit_weather(|w| {
-                    let base = w.clouds.first().map_or(900.0, |l| l.base_m);
-                    w.set_simple_cloud(i, base);
-                });
-            }
         }
         "precip" => {
             if let Some(i) = arg

@@ -7,6 +7,8 @@ pub const COARSE: usize = 64;
 pub const ENHANCED_TILE_M: f64 = 70_000.0;
 pub const CLASSIC_TILE_M: f64 = 14_000.0;
 
+pub const RAIN_ZOOM: f32 = 4.0;
+
 pub struct Field {
     pub image: ::texture::Image,
     cells: Vec<f32>,
@@ -172,6 +174,16 @@ impl Field {
         top + (bottom - top) * fy
     }
 
+    pub fn rain_cell(&self, pos: [f64; 2], offset: [f32; 2], enhanced: bool) -> f32 {
+        let base = Self::base_uv(pos, enhanced);
+        let k = Self::offset_scale(enhanced);
+        self.at(
+            enhanced,
+            ((base[0] + offset[0] * k) * RAIN_ZOOM).rem_euclid(1.0),
+            ((base[1] + offset[1] * k) * RAIN_ZOOM).rem_euclid(1.0),
+        )
+    }
+
     pub fn cell(&self, pos: [f64; 2], offset: [f32; 2], enhanced: bool) -> f32 {
         let base = Self::base_uv(pos, enhanced);
         let k = Self::offset_scale(enhanced);
@@ -200,6 +212,39 @@ pub struct RenderSky {
     pub layers: [[f32; 4]; 3],
 }
 
+fn classify(w: &Weather, l: &Layer, rain: f32) -> (f32, f32) {
+    let spread = (w.temp_c - w.dew_c).max(0.0);
+    let instab = (spread / 12.0).clamp(0.0, 1.0);
+    let falling = w.precip.is_falling();
+    let (base, cover) = (l.base_m, l.cover);
+    if base >= 6000.0 {
+        return (500.0 + 500.0 * cover, 0.12);
+    }
+    if base >= 2400.0 {
+        return if cover >= 0.6 {
+            (700.0 + 700.0 * cover, 0.1)
+        } else {
+            (350.0 + 500.0 * cover, 0.45)
+        };
+    }
+    if w.precip.thunder && cover >= 0.3 {
+        return (3500.0 + 2500.0 * instab, 1.0);
+    }
+    if w.precip.showers && cover >= 0.3 {
+        return (1400.0 + 1400.0 * instab, 0.9);
+    }
+    if falling && cover >= 0.875 {
+        return (1100.0 + 1200.0 * rain.max(w.precip.intensity), 0.1);
+    }
+    if cover >= 0.875 {
+        return (350.0 + 450.0 * (1.0 - instab), 0.1);
+    }
+    if cover >= 0.6 {
+        return (450.0 + 650.0 * instab, 0.35);
+    }
+    (350.0 + 1900.0 * instab * (1.0 - 0.4 * cover), (0.6 + 0.35 * instab).clamp(0.6, 0.95))
+}
+
 pub fn render_sky(w: &Weather, rain: f32) -> RenderSky {
     let mut layers = [[0.0f32; 4]; 3];
     let mut sorted = w.clouds.clone();
@@ -211,13 +256,8 @@ pub fn render_sky(w: &Weather, rain: f32) -> RenderSky {
         }
     }
     for (i, l) in sorted.iter().enumerate() {
-        let base = l.base_m.clamp(250.0, 8000.0);
-        let (thickness, shape) = match l.kind {
-            CloudKind::Storm => (5500.0, 1.0),
-            CloudKind::Towering => (3200.0, 0.9),
-            CloudKind::Plain if l.cover >= 0.875 => (700.0 + 1400.0 * rain, 0.1),
-            CloudKind::Plain => (500.0 + 1400.0 * (1.0 - l.cover), (1.1 - l.cover).clamp(0.2, 0.85)),
-        };
+        let base = l.base_m.clamp(250.0, 12000.0);
+        let (thickness, shape) = classify(w, &Layer { base_m: base, ..*l }, rain);
         let mut top = base + thickness;
         if let Some(next) = sorted.get(i + 1) {
             if next.base_m - base > 400.0 {

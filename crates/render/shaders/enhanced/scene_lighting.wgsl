@@ -63,37 +63,26 @@ fn cs_fbm(p: vec2<f32>) -> f32 {
     return cs_noise(p) * 0.5 + cs_noise(p * 2.03 + 11.7) * 0.3 + cs_noise(p * 4.1 + 5.3) * 0.2;
 }
 
+@group(0) @binding(17) var t_sky_cube: texture_cube<f32>;
+
 fn cloud_sun_visibility(world: vec3<f32>) -> f32 {
     let sd = normalize(camera.sun_dir.xyz);
     if (sd.z < 0.05) {
         return 1.0;
     }
-    let have = (enh.layers[0].z + enh.layers[1].z + enh.layers[2].z) > 0.01;
-    var vis = 1.0;
-    for (var li = 0; li < 3; li = li + 1) {
-        var lay = enh.layers[li];
-        if (!have) {
-            if (li > 0) {
-                break;
-            }
-            lay = vec4<f32>(1400.0, 4200.0, camera.clouds.x, 1.0);
+    var h = 2200.0;
+    for (var li = 2; li >= 0; li = li - 1) {
+        let lay = enh.layers[li];
+        if (lay.z > 0.01 && lay.y > lay.x) {
+            h = lay.x + (lay.y - lay.x) * 0.35;
         }
-        if (lay.z <= 0.01 || lay.y <= lay.x) {
-            continue;
-        }
-        let fl = f32(li);
-        let h = lay.x + (lay.y - lay.x) * 0.3;
-        let t = max(h - world.z, 0.0) / sd.z;
-        let g = world.xy + camera.world_origin.zw + sd.xy * t;
-        let drift = camera.clouds.yz * 70000.0 * (1.0 + fl) + vec2<f32>(5300.0, 2900.0) * fl;
-        let period = mix(9000.0, 5000.0, lay.w);
-        let n = cs_fbm((g + drift) / period);
-        let cover = clamp(0.15 + lay.z * 0.75, 0.0, 1.0);
-        let dens = smoothstep(0.9 - cover * 0.8, 1.0 - cover * 0.8 + 0.15, n);
-        let closed = select(0.0, 1.0, li == 0) * smoothstep(0.85, 1.0, lay.z);
-        vis = vis * (1.0 - 0.85 * max(dens, closed) * mix(0.6, 1.0, lay.w));
     }
-    return clamp(vis, 0.0, 1.0);
+    let t = max(h - world.z, 0.0) / sd.z;
+    let q = world + sd * t;
+    let ld = normalize(q - camera.cam_pos.xyz - enh.eye.xyz);
+    let dir = normalize(mix(sd, ld, smoothstep(0.02, 0.12, ld.z)));
+    let c = textureSampleLevel(t_sky_cube, s_lin, vec3<f32>(dir.x, dir.z, dir.y), 1.0).a;
+    return clamp(1.0 - 0.97 * smoothstep(0.05, 0.85, c), 0.0, 1.0);
 }
 
 fn sun_shadow_soft(world_in: vec3<f32>, n: vec3<f32>, thin: bool) -> f32 {
@@ -404,6 +393,30 @@ fn fs_vanilla_reflections(in: FsIn) -> EnhancedOut {
     return out;
 }
 
+fn local_rain(world: vec3<f32>) -> f32 {
+    let g = ((world.xy - camera.cam_pos.xy) / 6400.0 + vec2<f32>(0.5)) * 16.0 - vec2<f32>(0.5);
+    return rain_grid_at(g);
+}
+
+fn wet_cell(ix: i32, iy: i32) -> f32 {
+    let k = clamp(iy, 0, 15) * 16 + clamp(ix, 0, 15);
+    return enh.wet[k / 4][k % 4];
+}
+
+fn local_wetness(world: vec3<f32>) -> f32 {
+    if (enh.wet_info.x < 0.5) {
+        return camera.shadow.w;
+    }
+    let g = (world.xy - camera.cam_pos.xy - enh.wet_info.yz) / enh.wet_info.w - vec2<f32>(0.5);
+    let f = floor(g);
+    let w = g - f;
+    let ix = i32(f.x);
+    let iy = i32(f.y);
+    let a = mix(wet_cell(ix, iy), wet_cell(ix + 1, iy), w.x);
+    let b = mix(wet_cell(ix, iy + 1), wet_cell(ix + 1, iy + 1), w.x);
+    return clamp(mix(a, b, w.y), 0.0, 1.0);
+}
+
 fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bool, eye: vec3<f32>) -> vec4<f32> {
     if (material.emissive.w > 1.5) {
         let v = camera.cam_pos.xyz - in.world;
@@ -573,8 +586,9 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     let dry_snow = 1.0 - clamp(enh.weather.y, 0.0, 1.0);
     // (neither wet nor snowed on under a roof)
     let unroofed = 1.0 - sheltered(in.world);
-    let wet_road = camera.shadow.w * material.params2.z * outside * unroofed * dry_snow;
-    let wet_any = camera.shadow.w * outside * unroofed * select(0.35, 0.0, glass || material.emissive.w < -1.5) * dry_snow;
+    let wet_here = local_wetness(in.world);
+    let wet_road = wet_here * material.params2.z * outside * unroofed * dry_snow;
+    let wet_any = wet_here * outside * unroofed * select(0.35, 0.0, glass || material.emissive.w < -1.5) * dry_snow;
     var puddle = 0.0;
     if (wet_road > 0.0) {
         albedo = albedo * mix(1.0, 0.5, wet_road);
@@ -585,7 +599,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         let puddle_t = 1.0 - pow(wet_road, 0.6) * PUDDLE_SPREAD;
         puddle = smoothstep(puddle_t - 0.06, puddle_t + 0.06, pn) * smoothstep(0.75, 0.95, n.z);
         if (puddle > 0.001) {
-            let raining = enh.weather.z * (1.0 - enh.weather.y);
+            let raining = local_rain(in.world) * (1.0 - enh.weather.y);
             let ripple = puddle_ripple(pattern_xy, camera.post.y, raining, puddle);
             var wake = vec2<f32>(0.0);
             if (camera.inside_c.w > 0.5) {
@@ -686,6 +700,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     let saloon_lit = select(0.0, clamp(max(cabin_light.r, max(cabin_light.g, cabin_light.b)) * 4.0, 0.0, 1.0), in.params2.z >= 1.0);
     let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
     let cabin = sf.albedo * cabin_light * mix(1.0, ao, 0.85);
+    ambient = ambient + sf.albedo / PI * vec3<f32>(0.6, 0.7, 1.0) * enh.eye.w * 5.0 * (0.4 + 0.6 * max(n.z, 0.0));
     var rgb = (direct + ambient + lamps) * pre + cabin;
     var emit = tex.rgb * material.emissive.rgb * max(enh.exposure.z * 2.0, 0.8);
     if (material.extra.w > 0.5) {

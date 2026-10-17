@@ -279,21 +279,6 @@ pub(crate) fn world_pages(app: &App) -> Vec<Page> {
                 "weather_custom",
             ));
         }
-        let cloud = app
-            .weather
-            .as_ref()
-            .map(|w| CLOUD_TYPES[w.simple_cloud_index()].1.to_string())
-            .unwrap_or_default();
-        weather.push((
-            row(
-                &tx("pause.world.text.clouds"),
-                'o',
-                &cloud,
-                &tx("pause.world.text.the_kind_of_clouds_in_the_sky"),
-                None,
-            ),
-            "cloudkind".to_string(),
-        ));
         weather.extend(slider_row(
             Some(app),
             "visibility",

@@ -186,9 +186,12 @@ impl App {
         self.args.weather = Some(spec.clone());
         self.weather_blend = None;
         self.weather_cycle = None;
+        let observer = self.weather_observer();
+        if (wetness - self.wet_grid.at(observer[0], observer[1])).abs() > 0.001 {
+            self.wet_grid.set_all(wetness);
+        }
         self.wetness = wetness;
         weather::spec::publish(&to);
-        let observer = self.weather_observer();
         self.sky.retarget(&to, observer, weather::enhanced_sky(), 20.0);
         self.weather = Some(to);
         self.follow_date();
@@ -786,15 +789,16 @@ impl App {
         };
         let wire = weather::spec::wire(&to).unwrap_or_default();
         let name = to.name.clone();
-        let from = self.weather.clone().unwrap_or_default();
         weather::spec::publish(&to);
         if self.args.weather.as_deref().and_then(weather::metar_mode).is_none() {
             self.args.weather = Some(format!("metar:{station}"));
         }
         self.weather_cycle = None;
         let observer = self.weather_observer();
-        self.sky.retarget(&to, observer, weather::enhanced_sky(), 60.0);
-        self.weather_blend = Some(weather::Blend::new(from, to, 60.0));
+        self.sky.anchor(&to, observer, weather::enhanced_sky());
+        self.wetness = self.wetness.max(weather::initial_wetness(&to));
+        self.weather_blend = None;
+        self.weather = Some(to);
         if let Some(l) = self.lan.as_mut().filter(|l| l.role == ::network::Role::Host) {
             l.set_weather(&wire);
         }

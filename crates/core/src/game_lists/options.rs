@@ -94,14 +94,6 @@ pub(crate) fn steps_of(verb: &str) -> Option<Vec<f32>> {
     })
 }
 
-pub(super) const CLOUD_TYPES: [(&str, &str); 5] = [
-    ("-1", "None"),
-    ("Cumulus 1", "Few clouds"),
-    ("Cumulus 2", "Scattered"),
-    ("Cumulus 3", "Broken"),
-    ("Overcast 1", "Overcast"),
-];
-
 pub(super) const PRECIP_KINDS: [&str; 3] = ["None", "Rain", "Snow"];
 
 pub(crate) const CUSTOM_WEATHER: &str = "Custom weather";
@@ -505,6 +497,7 @@ pub(crate) fn option_set(
             let app = app?;
             if !app.metar_locked() {
                 app.wetness = v.clamp(0.0, 1.0);
+                app.wet_grid.set_all(app.wetness);
             }
             None
         }

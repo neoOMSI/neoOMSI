@@ -1667,23 +1667,6 @@ fn step_time(l: &mut Launcher, r: Rect) {
             );
             yy += 44.0;
 
-            ui.label(Rect::new(v.x + 4.0, yy, 130.0, 32.0), "Cloud type");
-            let cloud_labels: Vec<String> = crate::weather_setup::CUSTOM_CLOUDS
-                .iter()
-                .map(|x| (*x).to_string())
-                .collect();
-            let mut cloud = custom.cloud;
-            if ui.select(
-                "custom-cloud",
-                Rect::new(v.x + 134.0, yy, v.w - 142.0, 32.0),
-                &mut cloud,
-                &cloud_labels,
-            ) {
-                custom.cloud = cloud;
-                changed = true;
-            }
-            yy += 44.0;
-
             ui.label(Rect::new(v.x + 4.0, yy, 130.0, 32.0), "Precipitation");
             let precip_labels: Vec<String> = crate::weather_setup::CUSTOM_PRECIP
                 .iter()

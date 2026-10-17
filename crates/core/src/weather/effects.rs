@@ -10,10 +10,11 @@ pub fn enhanced_sky() -> bool {
 }
 
 fn dim(l: &mut ::render::Lighting, k: f32) {
-    l.sun_intensity *= k;
     if l.enhanced {
+        l.brightness = k.max(0.0);
         return;
     }
+    l.sun_intensity *= k;
     l.secondary *= k;
     l.ambient *= k;
     l.sky_color *= k;
@@ -46,11 +47,45 @@ pub fn lighting(
         local.precip_rate,
         if w.snow_cover { 1.0 } else { 0.0 },
     );
+    if w.precip.is_falling() {
+        l.rain_area = super::region::areal_fraction(w).clamp(0.02, 1.0);
+        l.rain_far = w.precip.intensity.clamp(0.0, 1.0);
+    }
     dim(&mut l, w.brightness);
     l.wetness = wetness;
     l.shadows = shadows && thick < 0.85 && local.visibility_m > 350.0;
     l.light_shadows = shadows;
     l
+}
+
+pub const RAIN_GRID: usize = 16;
+pub const RAIN_GRID_SPAN_M: f64 = 6400.0;
+
+pub fn fill_rain_grid(
+    l: &mut ::render::Lighting,
+    w: &Weather,
+    region: &Regional,
+    observer: [f64; 2],
+    enhanced: bool,
+) {
+    l.rain_grid = [0.0; 256];
+    if !w.precip.is_falling() {
+        return;
+    }
+    let step = RAIN_GRID_SPAN_M / RAIN_GRID as f64;
+    let half = RAIN_GRID as f64 * 0.5;
+    for j in 0..RAIN_GRID {
+        for i in 0..RAIN_GRID {
+            let at = [
+                observer[0] + (i as f64 + 0.5 - half) * step,
+                observer[1] + (j as f64 + 0.5 - half) * step,
+            ];
+            let s = region.sample(w, at, enhanced);
+            if s.precip_kind == 1 {
+                l.rain_grid[j * RAIN_GRID + i] = s.precip_rate;
+            }
+        }
+    }
 }
 
 pub fn road_wetness(rate: f32, secs: f64, start: f32) -> f32 {
@@ -63,8 +98,7 @@ pub fn road_wetness(rate: f32, secs: f64, start: f32) -> f32 {
 }
 
 pub fn initial_wetness(w: &Weather) -> f32 {
-    let falling = if w.falling() { (0.4 + w.precip.intensity).min(1.0) } else { 0.0 };
-    w.ground_wet.clamp(0.0, 1.0).max(falling)
+    w.ground_wet.clamp(0.0, 1.0)
 }
 
 pub fn street_condition(w: &Weather, local: &Local, wetness: f32) -> f32 {
@@ -128,7 +162,7 @@ mod tests {
         let mut l = ::render::Lighting { enhanced: true, ..Default::default() };
         let before = l.clone();
         dim(&mut l, 0.0);
-        assert_eq!(l.sun_intensity, 0.0);
+        assert_eq!(l.brightness, 0.0);
         assert_eq!(l.ambient, before.ambient);
     }
 

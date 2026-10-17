@@ -3051,6 +3051,7 @@ pub(crate) fn run_offscreen(
                     .map(|p| rain::vehicle_boxes(&p.vehicle))
                     .unwrap_or_default(),
                 &shelter,
+                world.camera_ground(camera.position.x, camera.position.y, camera.position.z),
             );
         }
         // a moving player's wheels through the puddles the enhanced renderer paints on wet

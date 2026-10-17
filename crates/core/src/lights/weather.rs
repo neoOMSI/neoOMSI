@@ -63,7 +63,7 @@ pub fn apply_weather(
 ) {
     let cloud = cloud_density.clamp(0.0, 1.0);
     let overcast = (cloud - 0.45).max(0.0) / 0.55;
-    l.sun_intensity *= 1.0 - 0.85 * overcast;
+    l.sun_intensity *= 1.0 - 0.97 * overcast;
     l.sun_color = desaturate(l.sun_color, 0.6 * cloud);
     let sky_lum = l.sky_color.dot(LUMA);
     let grey_sky = Vec3::splat(sky_lum * 0.82)

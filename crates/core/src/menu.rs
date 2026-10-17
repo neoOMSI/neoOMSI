@@ -747,7 +747,7 @@ impl Menu {
             return self.entry_rows().into_iter().map(|r| r.1).collect();
         }
         if kind == 13 {
-            return crate::weather::CUSTOM_CLOUDS.iter().map(|s| s.to_string()).collect();
+            return Self::CUSTOM_HUMIDITY.iter().map(|h| format!("{h:.0} %")).collect();
         }
         if kind == 14 {
             return crate::weather::CUSTOM_PRECIP.iter().map(|s| s.to_string()).collect();
@@ -767,7 +767,7 @@ impl Menu {
     pub fn drop_sel(&self, kind: usize) -> usize {
         match kind {
             11 => self.map,
-            13 => self.custom.cloud,
+            13 => Self::CUSTOM_HUMIDITY.iter().position(|h| *h >= self.custom.humidity).unwrap_or(5),
             14 => self.custom.precip.clamp(0, 2) as usize,
             12 => {
                 let shown = self.entry_shown();
@@ -783,7 +783,7 @@ impl Menu {
     pub fn drop_pick(&mut self, kind: usize, i: usize) {
         match kind {
             11 => self.map = i,
-            13 => self.custom_set(1, i as f32 / (crate::weather::CUSTOM_CLOUDS.len() - 1).max(1) as f32),
+            13 => self.custom_set(1, i as f32 / 5.0),
             14 => self.custom_set(2, i as f32 / 2.0),
             12 => {
                 if let Some(r) = self.entry_rows().get(i) {
@@ -1522,7 +1522,7 @@ impl Menu {
         };
         vec![
             (tr("start.weather.vis"), vis),
-            (tr("start.weather.clouds"), crate::weather::CUSTOM_CLOUDS[c.cloud].to_string()),
+            (::i18n::translate("pause.world.text.humidity", &[]), format!("{:.0} %", c.humidity)),
             (
                 tr("start.weather.precip"),
                 crate::weather::CUSTOM_PRECIP[c.precip.clamp(0, 2) as usize].to_string(),
@@ -1531,6 +1531,8 @@ impl Menu {
         ]
     }
 
+    const CUSTOM_HUMIDITY: [f32; 6] = [30.0, 50.0, 70.0, 85.0, 95.0, 100.0];
+
     const CUSTOM_VIS: [f32; 8] = [200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0, 50000.0];
 
     pub fn custom_fracs(&self) -> Vec<f32> {
@@ -1538,7 +1540,7 @@ impl Menu {
         let vis = Self::CUSTOM_VIS.iter().position(|v| *v >= c.visibility_m).unwrap_or(7);
         vec![
             vis as f32 / 7.0,
-            c.cloud as f32 / (crate::weather::CUSTOM_CLOUDS.len() - 1).max(1) as f32,
+            Self::CUSTOM_HUMIDITY.iter().position(|h| *h >= c.humidity).unwrap_or(5) as f32 / 5.0,
             c.precip.clamp(0, 2) as f32 / 2.0,
             ((c.temp_c + 30.0) / 75.0).clamp(0.0, 1.0),
         ]
@@ -1549,7 +1551,7 @@ impl Menu {
         let c = &mut self.custom;
         match i {
             0 => c.visibility_m = Self::CUSTOM_VIS[(f * 7.0).round() as usize],
-            1 => c.cloud = (f * (crate::weather::CUSTOM_CLOUDS.len() - 1) as f32).round() as usize,
+            1 => c.humidity = Self::CUSTOM_HUMIDITY[(f * 5.0).round() as usize],
             2 => {
                 c.precip = (f * 2.0).round() as i32;
                 c.road_wetness = if c.precip == 1 { 0.8 } else { 0.0 };
@@ -1569,7 +1571,10 @@ impl Menu {
                 let at = VIS.iter().position(|v| *v >= c.visibility_m).unwrap_or(7) as i32;
                 c.visibility_m = VIS[(at + dir).clamp(0, 7) as usize];
             }
-            1 => c.cloud = (c.cloud as i32 + dir).rem_euclid(crate::weather::CUSTOM_CLOUDS.len() as i32) as usize,
+            1 => {
+                let at = Self::CUSTOM_HUMIDITY.iter().position(|h| *h >= c.humidity).unwrap_or(5) as i32;
+                c.humidity = Self::CUSTOM_HUMIDITY[(at + dir).clamp(0, 5) as usize];
+            }
             2 => {
                 c.precip = (c.precip + dir).rem_euclid(3);
                 c.road_wetness = if c.precip == 1 { 0.8 } else { 0.0 };

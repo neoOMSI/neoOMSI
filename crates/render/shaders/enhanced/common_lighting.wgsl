@@ -36,6 +36,9 @@ struct Enhanced {
     // up to three cloud layers, low to high: x base, y top (m), z cover 0..1, w shape
     // (0 flat stratus .. 1 piled cumulus)
     layers: array<vec4<f32>, 3>,
+    rain: array<vec4<f32>, 64>,
+    wet_info: vec4<f32>,
+    wet: array<vec4<f32>, 64>,
 };
 @group(0) @binding(11) var<uniform> enh: Enhanced;
 @group(0) @binding(13) var s_lin: sampler;
@@ -99,10 +102,40 @@ fn air(dir: vec3<f32>, dist: f32, h0: f32, h1: f32) -> vec4<f32> {
     return air_of(dir, dist, h0, h1, 1.0);
 }
 
+fn rain_cell(ix: i32, iy: i32) -> f32 {
+    let k = clamp(iy, 0, 15) * 16 + clamp(ix, 0, 15);
+    return enh.rain[k / 4][k % 4];
+}
+
+fn rain_grid_at(g: vec2<f32>) -> f32 {
+    let f = floor(g);
+    let w = g - f;
+    let ix = i32(f.x);
+    let iy = i32(f.y);
+    let a = mix(rain_cell(ix, iy), rain_cell(ix + 1, iy), w.x);
+    let b = mix(rain_cell(ix, iy + 1), rain_cell(ix + 1, iy + 1), w.x);
+    return mix(a, b, w.y);
+}
+
+fn rain_haze(dir: vec3<f32>, dist: f32, h0: f32) -> f32 {
+    if (enh.debug.w <= 0.001) {
+        return 0.0;
+    }
+    let reach = min(dist, 3200.0);
+    var od = 0.0;
+    for (var i = 0; i < 8; i = i + 1) {
+        let t = (f32(i) + 0.5) / 8.0 * reach;
+        let g = (dir.xy * t / 6400.0 + vec2<f32>(0.5)) * 16.0 - vec2<f32>(0.5);
+        let up = h0 + dir.z * t;
+        od = od + rain_grid_at(g) * (1.0 - smoothstep(600.0, 1500.0, up)) * reach / 8.0;
+    }
+    return od * 0.0025;
+}
+
 // The same with the clear air's share scaled (0 for the sky, whose table holds it already).
 fn air_of(dir: vec3<f32>, dist: f32, h0: f32, h1: f32, clear: f32) -> vec4<f32> {
     // only the weather's fog: no haze on a clear day
-    let tau = layer_depth(enh.fog.x, enh.fog.y, h0, h1, dist);
+    let tau = layer_depth(enh.fog.x, enh.fog.y, h0, h1, dist) + clear * rain_haze(dir, dist, h0);
     let t = exp(-tau);
     if (tau < 1e-5) {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);

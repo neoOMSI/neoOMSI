@@ -8,15 +8,17 @@ pub mod region;
 pub mod sky;
 pub mod spec;
 pub mod template;
+pub mod wet;
 
 pub use blend::{Blend, Cycle};
-pub use editor::{CUSTOM_CLOUDS, CUSTOM_PRECIP, CustomWeather, custom_weather};
+pub use editor::{CUSTOM_PRECIP, CustomWeather, custom_weather};
 pub use effects::{
     apply_to_vehicle, debug_sound_every, enhanced_sky, initial_wetness, lighting, road_wetness, street_condition,
     wind_vector,
 };
 pub use model::{CloudKind, Haze, Layer, Precip, PrecipKind, Source, Weather};
 pub use region::{Local, Regional};
+pub use wet::WetGrid;
 pub use spec::{CYCLE, MetarMode, REPORT, is_cycle, metar_mode};
 
 use crate::cli::Args;

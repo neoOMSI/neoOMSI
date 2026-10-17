@@ -2496,7 +2496,7 @@ impl Renderer {
                 cube_wait: 0,
                 cube_eye: None,
                 cube_recapture: false,
-                cloud_sig: [0.0; 12],
+                cloud_sig: [0.0; 16],
                 cloud_age: 0,
                 cloud_offset: [0.0; 2],
             }

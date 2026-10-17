@@ -200,7 +200,7 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     let plain = (u32(in.extra.z + 0.5) & 32u) != 0u;
     let glare = enhanced && !streak && !plain;
     let size = select(lamp, max(lamp, dist * GLARE_ANGLE), glare);
-    let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(0.06, 4.0), streak);
+    let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(1.0, 8.0), streak);
     var upv = up;
     if (streak) {
         upv = vec3<f32>(0.0, 0.0, 1.0);
@@ -211,7 +211,10 @@ fn corona_vertex(in: CoronaIn, enhanced: bool) -> CoronaOut {
     // the spot moved towards the viewer by its z offset, so that a lamp inside its housing
     // shows (without one: half its size, at most half a metre)
     let pull = select(min(lamp * 0.5, 0.5), in.extra.y, in.extra.y >= 0.0);
-    let wp = in.pos + (right * c.x * stretch.x + upv * c.y * stretch.y) * size + select(view_dir * min(pull, dist * 0.9), vec3<f32>(0.0), streak);
+    var wp = in.pos + (right * c.x * stretch.x + upv * c.y * stretch.y) * size + select(view_dir * min(pull, dist * 0.9), vec3<f32>(0.0), streak);
+    if (streak) {
+        wp = in.pos + right * c.x * max(size * 0.03, dist * 0.0005) + upv * c.y * size * stretch.y;
+    }
     out.clip = camera.view_proj * vec4<f32>(wp, 1.0);
     out.uv = c * 0.5 + 0.5;
     out.color = vec4<f32>(in.color.rgb, brightness);

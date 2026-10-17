@@ -175,25 +175,29 @@ impl Weather {
         self.snow_cover || self.is_snowy()
     }
 
-    pub fn simple_cloud_index(&self) -> usize {
-        match self.cover() {
-            c if c < 0.06 => 0,
-            c if c < 0.35 => 1,
-            c if c < 0.65 => 2,
-            c if c < 0.9 => 3,
-            _ => 4,
-        }
-    }
-
-    pub fn set_simple_cloud(&mut self, index: usize, base_m: f32) {
+    pub fn derive_clouds(&mut self) {
         self.clouds.clear();
-        let cover = [0.0, 0.25, 0.5, 0.78, 1.0][index.min(4)];
-        if cover > 0.0 {
-            self.clouds.push(Layer {
-                cover,
-                base_m: base_m.clamp(50.0, 6000.0),
-                kind: CloudKind::Plain,
-            });
+        let rh = self.rel_humidity();
+        let spread = (self.temp_c - self.dew_c).max(0.0);
+        let low_p = ((1013.0 - self.pressure_hpa) / 25.0).clamp(-1.0, 1.0);
+        let falling = self.precip.is_falling();
+        let humid = smoothstep(55.0, 100.0, rh);
+        let mut low = (humid * (1.0 + 0.25 * low_p)).clamp(0.0, 1.0);
+        if self.pressure_hpa > 1022.0 {
+            low *= 0.8;
+        }
+        if falling {
+            let need = if self.precip.showers || self.precip.thunder { 0.5 } else { 0.95 };
+            low = low.max(need);
+        }
+        let lcl = (spread * 125.0).clamp(100.0, 3500.0);
+        let base = if falling { lcl.min(900.0) } else { lcl };
+        if low > 0.04 {
+            self.clouds.push(Layer { cover: low, base_m: base, kind: CloudKind::Plain });
+        }
+        let high = (smoothstep(50.0, 85.0, rh) * low_p.max(0.0) * 0.6 * (1.0 - low)).clamp(0.0, 0.5);
+        if high > 0.1 && low < 0.6 && self.temp_c < 30.0 {
+            self.clouds.push(Layer { cover: high, base_m: 8000.0, kind: CloudKind::Plain });
         }
     }
 
@@ -220,20 +224,20 @@ impl Weather {
             }
             _ => {}
         }
-        if index != 0 && self.cover() < 0.85 {
-            self.set_simple_cloud(4, self.clouds.first().map_or(600.0, |l| l.base_m));
-        }
+        self.derive_clouds();
     }
 
     pub fn set_precip_amount(&mut self, v: f32) {
         if v <= 0.0 {
             self.precip = Precip::default();
+            self.derive_clouds();
             return;
         }
         if self.precip.kind == PrecipKind::None {
             self.set_simple_precip(1);
         }
         self.precip.intensity = v.clamp(0.0, 1.0);
+        self.derive_clouds();
     }
 
     pub fn lerp(a: &Weather, b: &Weather, k: f32) -> Weather {

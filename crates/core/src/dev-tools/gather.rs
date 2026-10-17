@@ -393,6 +393,7 @@ impl crate::App {
             }
             Action::WeatherWetness(v) => {
                 self.wetness = v.clamp(0.0, 1.0);
+                self.wet_grid.set_all(self.wetness);
             }
             Action::WeatherSave(name) => {
                 let Some(w) = self.weather.clone() else {

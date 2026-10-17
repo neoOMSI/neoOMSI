@@ -123,7 +123,7 @@ fn cloud_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool) -> f
 // the CPU (weather/sky.rs `render_sky`).
 
 fn layer_coverage(p: vec2<f32>, cover: f32, li: f32) -> f32 {
-    let uv = p / CLOUD_FIELD_TILE + camera.clouds.yz * (CLOUD_DRIFT_UNIT / CLOUD_FIELD_TILE) * (1.0 + li) + vec2<f32>(0.37, 0.61) * li;
+    let uv = p / CLOUD_FIELD_TILE + camera.clouds.yz * (CLOUD_DRIFT_UNIT / CLOUD_FIELD_TILE) + vec2<f32>(0.37, 0.61) * li;
     let field = textureSampleLevel(t_clouds, s_repeat, uv * 0.2, 5.0).r;
     // the cell map (R) is the same one the CPU lets the rain fall from (weather/region.rs):
     // the sky is thick where it rains, and an overcast deck stays even
@@ -135,7 +135,7 @@ fn layer_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool, li: 
         return 0.0;
     }
     let off = vec2<f32>(5300.0, 2900.0) * li;
-    let drift = camera.clouds.yz * CLOUD_DRIFT_UNIT * (1.0 + li);
+    let drift = camera.clouds.yz * CLOUD_DRIFT_UNIT;
     let s = textureSampleLevel(t_cloud_shape, s_cloud, (p.xy + drift + off) / CLOUD_SHAPE_PERIOD, lod);
     let lo = s.g - 1.0;
     let stack = h * h * (0.7 + s.b);
@@ -154,6 +154,21 @@ fn layer_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool, li: 
     m = m * min(h / CLOUD_BOTTOM_SOFTNESS, 1.0);
     // the higher the layer, the thinner its cloud
     return m * CLOUD_SIGMA / (1.0 + 0.5 * li * li);
+}
+
+fn rain_mask(p: vec2<f32>) -> f32 {
+    let area = enh.debug.z;
+    if (enh.debug.w <= 0.001) {
+        return 0.0;
+    }
+    if (area >= 0.5) {
+        return 1.0;
+    }
+    let uv = p / CLOUD_FIELD_TILE + camera.clouds.yz * (CLOUD_DRIFT_UNIT / CLOUD_FIELD_TILE);
+    let raw = textureSampleLevel(t_clouds, s_repeat, uv * 0.2 * 4.0, 3.0).r;
+    let field = clamp(0.5 + (raw - 0.5) * 1.35, 0.0, 1.0);
+    let edge = 1.0 - area;
+    return smoothstep(edge - 0.2, edge + 0.2, field);
 }
 
 struct LayerOut {
@@ -182,14 +197,16 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
     let ds = (t1 - t0) / f32(steps);
     let lod = log2(max(t0 * pix * f32(textureDimensions(t_cloud_shape).x) / CLOUD_SHAPE_PERIOD, 1.0));
     let cos_sun = dot(d, sd);
-    let k = select(0.0, closed, li == 0);
+    let rm0 = rain_mask(cloud_ground(d, t0));
+    let cells_only = li == 0 && enh.debug.w > 0.001 && enh.debug.z < 0.5;
+    let k = select(0.0, max(closed, rm0 * enh.debug.w), li == 0);
     let coverage = mix(layer_coverage(cloud_ground(d, t0), lay.z, fl), 1.0, k);
     let span = top - base;
     var t = t0 + ds * cloud_jitter;
     for (var i = 0; i < steps; i = i + 1) {
         let p = vec3<f32>(cloud_ground(d, t), cloud_height(d, t));
         let h = (p.z - base) / span;
-        let sigma = layer_sigma(p, h, coverage, lod, true, fl, shape);
+        let sigma = layer_sigma(p, h, coverage, lod, true, fl, shape) * select(1.0, mix(0.35, 1.0, rain_mask(p.xy)), cells_only);
         if (sigma > 1e-6) {
             // the sunlight reaching p through the cloud towards the sun
             var od = 0.0;
@@ -218,7 +235,7 @@ fn cloud_march_layer(d: vec3<f32>, li: i32, steps: i32, closed: f32, pix: f32, s
             }
             let amb = mix(ground * 0.45 + sky_top * 0.55, sky_top * 1.1, clamp(h * 1.4, 0.0, 1.0));
             let powder = mix(1.0, 1.0 - exp(-sigma * 600.0), 0.5);
-            let light = (direct * powder * CLOUD_MS_GAIN + amb * 1.6 * mix(0.55, 1.0, smoothstep(0.0, 0.55, h))) * (1.0 - 0.35 * k - 0.3 * enh.weather.z);
+            let light = (direct * powder * CLOUD_MS_GAIN + amb * 1.6 * mix(0.55, 1.0, smoothstep(0.0, 0.55, h))) * (1.0 - 0.35 * k - 0.55 * rain_mask(p.xy) * enh.debug.w);
             let dt = exp(-sigma * ds);
             o.acc = o.acc + o.trans * light * (1.0 - dt);
             o.hit = o.hit + t * o.trans * (1.0 - dt);
@@ -265,7 +282,23 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
     let a = (1.0 - trans) * fade * horizon_fade;
     acc = mix(acc, below * (1.0 - trans), aerial) * fade * horizon_fade;
     var col = acc + (1.0 - a) * below;
-    return vec4<f32>(col, a);
+    var alpha = a;
+    if (enh.debug.w > 0.001 && enh.debug.z < 0.5 && d.z > 0.0) {
+        let base = cloud_ref_base();
+        let tb = min(cloud_shell(d, base), 30000.0);
+        if (tb > 0.0 && camera.cam_pos.z + eye_off.z < base) {
+            var od = 0.0;
+            for (var i = 0; i < 8; i = i + 1) {
+                let t = (f32(i) + 0.5) / 8.0 * tb;
+                od = od + rain_mask(cloud_ground(d, t)) * tb / 8.0;
+            }
+            let shaft = (1.0 - exp(-od * enh.debug.w / 6000.0)) * horizon_fade;
+            let grey = vec3<f32>(dot(sky_top, vec3<f32>(0.2126, 0.7152, 0.0722))) * 0.6;
+            col = mix(col, grey, shaft * 0.8);
+            alpha = max(alpha, shaft * 0.7);
+        }
+    }
+    return vec4<f32>(col, alpha);
 }
 
 // Where the clouds' base is looked up from the sky cube's own eye: the lowest layer there is.
@@ -346,6 +379,7 @@ fn fs_enhanced(in: VsOut) -> @location(0) vec4<f32> {
             out_col = out_col + star_field(d, star_pix, camera.post.y, camera.sky.x) * vis * 0.6;
         }
     }
+    out_col = out_col + vec3<f32>(0.55, 0.65, 1.0) * enh.eye.w * pre * (0.3 + 0.9 * cube.a) * 1.5;
     return vec4<f32>(out_col, 1.0);
 }
 

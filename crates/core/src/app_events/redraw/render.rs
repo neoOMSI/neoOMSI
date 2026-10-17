@@ -514,15 +514,21 @@ impl App {
                     self.sky_anchored = true;
                 }
                 self.weather_local = self.sky.sample(w, observer, enhanced);
-                self.wetness = weather::road_wetness(self.weather_local.precip_rate, dt as f64, self.wetness);
-                weather::lighting(
+                self.wet_grid.update(dt as f64, w, &self.sky, observer, enhanced);
+                self.wetness = self.wet_grid.at(observer[0], observer[1]);
+                let mut l = weather::lighting(
                     &daylight,
                     w,
                     &self.sky,
                     &self.weather_local,
                     self.wetness,
                     ::config::get_bool("graphics", "shadows").unwrap_or(true),
-                )
+                );
+                weather::effects::fill_rain_grid(&mut l, w, &self.sky, [observer[0] as f64, observer[1] as f64], enhanced);
+                if ::legacy_config::env::var_os("OMSI_WETNESS").is_none() {
+                    self.wet_grid.fill(&mut l, observer);
+                }
+                l
             }
             None => lights::lighting_from(&daylight, 50000.0),
         };
@@ -533,6 +539,12 @@ impl App {
                 ((h >> 8) & 0xffff) as f32 / 65535.0 * 997.0,
                 ((h2 >> 8) & 0xffff) as f32 / 65535.0 * 997.0,
             ];
+        }
+        lighting.lightning = self.lightning.flash;
+        if !lighting.enhanced && lighting.lightning > 0.0 {
+            let f = lighting.lightning;
+            lighting.ambient += glam::Vec3::splat(0.8 * f);
+            lighting.sky_color += glam::Vec3::splat(0.8 * f);
         }
         lighting.wetness = ::legacy_config::env::var("OMSI_WETNESS")
             .ok()

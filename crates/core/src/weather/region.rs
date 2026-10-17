@@ -43,13 +43,13 @@ pub fn areal_fraction(w: &Weather) -> f32 {
     }
     let c = w.cover();
     if w.precip.thunder {
-        0.12 + 0.2 * c
+        0.05 + 0.12 * c
     } else if w.precip.showers || w.precip.vicinity {
-        0.18 + 0.4 * c
+        0.10 + 0.25 * c
     } else if c >= 0.85 {
-        0.97
+        0.45
     } else {
-        0.5 + 0.45 * c
+        0.2 + 0.3 * c
     }
 }
 
@@ -143,7 +143,7 @@ impl Regional {
         let Some(target) = self.solve(to, observer, enhanced, Some(now)) else {
             return;
         };
-        let period = 1.0 / Field::offset_scale(enhanced);
+        let period = 1.0 / (Field::offset_scale(enhanced) * sky::RAIN_ZOOM);
         let delta = [
             wrap_to(target[0] - now[0], period),
             wrap_to(target[1] - now[1], period),
@@ -166,17 +166,18 @@ impl Regional {
         let field = sky::field();
         let n = sky::COARSE;
         let k = Field::offset_scale(enhanced);
-        let period = 1.0 / k;
+        let z = sky::RAIN_ZOOM;
+        let period = 1.0 / (k * z);
         let base = Field::base_uv(observer, enhanced);
         let tile = Field::tile_m(enhanced) as f32;
         let here = !w.precip.vicinity;
         let (sin, cos) = (w.wind_dir.to_radians().sin(), w.wind_dir.to_radians().cos());
         let reach = (w.wind_speed * 600.0).clamp(4000.0, 12000.0);
-        let (du, dv) = (sin * reach / tile, cos * reach / tile);
+        let (du, dv) = (sin * reach / tile * z, cos * reach / tile * z);
         let edge = 1.0 - f;
         let offset_of = |idx: usize| -> [f32; 2] {
             let (u, v) = (((idx % n) as f32 + 0.5) / n as f32, ((idx / n) as f32 + 0.5) / n as f32);
-            [(u - base[0]).rem_euclid(1.0) / k, (v - base[1]).rem_euclid(1.0) / k]
+            [(u / z - base[0]).rem_euclid(1.0 / z) / k, (v / z - base[1]).rem_euclid(1.0 / z) / k]
         };
         let mut best: Option<(f32, [f32; 2])> = None;
         let start = (self.seed as usize) % (n * n);
@@ -185,7 +186,7 @@ impl Regional {
             let cell = field.grid(enhanced)[idx];
             let fits = if here {
                 let core = smoothstep(edge, 1.0, cell);
-                cell >= edge + 0.08 && (0.25..=0.8).contains(&core)
+                cell >= (edge + 0.2).min(0.97) && (0.25..=0.8).contains(&core)
             } else {
                 let (u, v) = (((idx % n) as f32 + 0.5) / n as f32, ((idx / n) as f32 + 0.5) / n as f32);
                 let upwind = field.at(enhanced, (u + du).rem_euclid(1.0), (v + dv).rem_euclid(1.0));
@@ -216,15 +217,18 @@ impl Regional {
 
     pub fn sample(&self, w: &Weather, observer: [f64; 2], enhanced: bool) -> Local {
         let cell = sky::field().cell(observer, self.offset(), enhanced);
+        let rcell = sky::field().rain_cell(observer, self.offset(), enhanced);
         let cover = w.cover();
         let thick = sky::thickness(cover, cell, enhanced);
         let f = areal_fraction(w);
         let (gate, core) = if f > 0.0 {
-            (smoothstep(1.0 - f - 0.06, 1.0 - f + 0.06, cell), smoothstep(1.0 - f, 1.0, cell))
+            (smoothstep(1.0 - f - 0.2, 1.0 - f + 0.2, rcell), smoothstep(1.0 - f, 1.0, rcell))
         } else {
             (0.0, 0.0)
         };
-        let rate = (w.precip.intensity * gate * (0.7 + 0.6 * core)).clamp(0.0, 1.0);
+        let cellular = w.precip.showers || w.precip.thunder || w.precip.vicinity;
+        let shape = if cellular { 0.2 + 1.0 * core * core } else { 0.85 + 0.4 * core };
+        let rate = (w.precip.intensity * gate * shape).clamp(0.0, 1.0);
         let clear_air = (w.visibility_m * 3.0).min(30_000.0).max(w.visibility_m);
         let visibility = if f > 0.0 {
             clear_air + (w.visibility_m - clear_air) * gate
@@ -280,6 +284,6 @@ mod tests {
         let wet = (0..200)
             .filter(|i| r.sample(&w, [*i as f64 * 1500.0, 900.0], true).precip_rate > 0.05)
             .count();
-        assert!(wet > 170, "{wet}");
+        assert!((50..140).contains(&wet), "{wet}");
     }
 }

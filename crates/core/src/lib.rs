@@ -47,6 +47,7 @@ mod vr_navigator;
 
 mod puddles;
 mod quit;
+mod lightning;
 mod rain;
 mod real_time;
 mod run_statistics;
@@ -108,7 +109,7 @@ mod traffic_link;
 mod tutorial;
 mod weather;
 mod weather_setup {
-    pub(crate) use crate::weather::editor::{CUSTOM_CLOUDS, CUSTOM_PRECIP, CustomWeather, custom_weather};
+    pub(crate) use crate::weather::editor::{CUSTOM_PRECIP, CustomWeather, custom_weather};
     pub(crate) use crate::weather::model::dew_point_c;
 }
 mod world_ctl;
@@ -663,6 +664,8 @@ pub(crate) fn make_app(
         plugins: None,
         career: Default::default(),
         wetness: 0.0,
+        wet_grid: Default::default(),
+        lightning: Default::default(),
         menu_edit: None,
         menu_edit_icao: false,
         menu_edit_date: false,

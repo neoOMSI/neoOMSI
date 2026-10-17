@@ -51,4 +51,4 @@ pub const LAMP_CODE_STRIDE: u32 = 64;
 pub(crate) const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-pub(crate) const FOG_MIN_DENSITY: f32 = 5e-4;
+pub(crate) const FOG_MIN_DENSITY: f32 = 6e-5;
