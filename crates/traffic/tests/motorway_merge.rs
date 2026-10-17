@@ -60,7 +60,9 @@ fn the_acceleration_lane_ends_into_the_motorway_and_the_motorway_does_not() {
     assert_eq!(net.prev[M2].len(), 2, "the taper and the right lane meet");
     let (d, beside) = net.merges_into(ACCEL, 10.0, 400.0).expect("no end seen");
     assert_eq!(beside, M0);
-    assert!((d - 115.24).abs() < 0.1, "ends {d} m ahead");
+    // (for the cars on it it ends where the taper comes within 3.2 m of the right lane,
+    // 2.15 m into it, found to the metre; the taper meets that lane 25 m later)
+    assert!((d - 93.0).abs() < 0.01, "ends {d} m ahead");
     assert_eq!(net.merges_into(M0, 10.0, 400.0), None);
     assert_eq!(net.merges_into(L0, 10.0, 400.0), None);
     // out of sight, it does not end yet
@@ -123,9 +125,52 @@ fn a_car_waiting_for_a_gap_waits_at_the_end_of_the_acceleration_lane() {
     );
     assert_eq!(decision.target_lane, Some(LaneId(M0)));
     let stop = decision.stop_at.expect("no wait before the end");
+    // it waits at the end of the lane beside the road, its front (2.25 m ahead of its
+    // origin) not yet in the taper where it would stand in the way of the cars going past
+    // (waiting at the merge, 114 m ahead, the cars on the road slowed for it)
+    assert!((stop - 89.75).abs() < 0.01, "stops at {stop}");
+    let front = net.lanes[TAPER].at(10.0 + stop + 2.25 - 100.0).0;
+    let beside = [M1, M2]
+        .map(|l| net.lanes[l].nearest_point(front).unwrap().1)
+        .into_iter()
+        .fold(f64::MAX, f64::min);
     assert!(
-        (stop - 114.24).abs() < 0.1,
-        "stops at {stop}, not at the end of the first piece"
+        beside >= MERGE_CLEAR as f64,
+        "its front {beside} m off the right lane"
+    );
+}
+
+#[test]
+fn a_car_already_in_the_taper_is_not_held_there() {
+    // it came too far to wait beside the road, its front (4 m ahead) in the taper already:
+    // it is not stopped where it stands, in the way of the cars going past, but merges
+    // where the two ways meet (giving way there)
+    let net = motorway(false);
+    let mut actor = ManeuverActor::new(VehicleId(1), ACCEL, 100.0);
+    actor.front = 4.0;
+    actor.planned_next = Some(TAPER);
+    let actors = [actor];
+    let occupancy = Occupancy::default();
+    let scene = ManeuverScene {
+        net: &net,
+        occupancy: &occupancy,
+        actors: &actors,
+        people: &[],
+        static_clearance: None,
+        time: 0.0,
+        dt: 0.02,
+        tick: 1,
+    };
+    let mut coord = ManeuverCoordinator::new();
+    let decision = coord.plan(
+        &scene,
+        &mut ManeuverState::default(),
+        &ManeuverInputs::new(0),
+    );
+    assert!(
+        decision.stop_at.is_none_or(|s| s > 15.0),
+        "held at {:?}",
+        decision.stop_at
     );
 }
 

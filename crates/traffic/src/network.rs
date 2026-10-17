@@ -511,6 +511,9 @@ pub struct Crossing {
 pub const MERGE_BACK: f32 = 25.0;
 /// How much further off the line of the lane they become the way that ends lies (m).
 pub const MERGE_SIDE_MIN: f32 = 0.8;
+/// A lane that ends ends, for the vehicles on it, where its middle comes closer than this
+/// to the middle of the lane beside (m): two cars side by side with some air between them.
+pub const MERGE_CLEAR: f32 = 3.2;
 /// How far back two ways that meet are looked at for a common start (m): a bus bay is a
 /// few dozen metres long, an acceleration lane comes from another road.
 pub const SPLIT_BACK: f32 = 120.0;
@@ -1087,7 +1090,8 @@ impl Network {
 
     /// Does the way on from `s` along `lane` end by running into the way of a lane beside
     /// it within `look` m: an acceleration lane, or a lane that drops out of the road? Then
-    /// (the distance to where the two ways meet, the lane beside it at `s`). Which of two
+    /// (the distance to where it comes too close to the lane beside to go on beside it,
+    /// `MERGE_CLEAR`, the lane beside it at `s`). Which of two
     /// ways that meet is the one that ends: the one that comes in from the side of the lane
     /// they become (`merge_offset`), not the one it continues straight on.
     pub fn merges_into(&self, lane: usize, s: f32, look: f32) -> Option<(f32, usize)> {
@@ -1133,6 +1137,28 @@ impl Network {
                 continue;
             }
             if self.merge_offset(mine, m) > self.merge_offset(other, m) + MERGE_SIDE_MIN {
+                // where it comes too close to the lane beside to drive on beside it: a car
+                // waiting at the lane's very end already stood in the way of the road
+                let theirs: Vec<usize> = std::iter::once(b)
+                    .chain(theirs.iter().map(|&(y, _)| y))
+                    .collect();
+                let mut way = vec![(lane, s, 0.0f32)];
+                way.extend(ours[..k].iter().map(|&(x, dx)| (x, 0.0, dx)));
+                for (x, from, at) in way {
+                    let lx = &self.lanes[x];
+                    let mut t = from;
+                    while t < lx.length() {
+                        let p = lx.at(t).0;
+                        let near = theirs
+                            .iter()
+                            .filter_map(|&y| self.lanes[y].nearest_point(p))
+                            .any(|(_, dist)| (dist as f32) < MERGE_CLEAR);
+                        if near {
+                            return Some((at + t - from, b));
+                        }
+                        t += 1.0;
+                    }
+                }
                 return Some((d, b));
             }
         }

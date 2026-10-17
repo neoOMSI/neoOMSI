@@ -783,15 +783,21 @@ impl ManeuverCoordinator {
         let dir = side_of(net, actor.lane, to);
         // (waiting for a gap, the car stops before the lane the map closes to it, which may
         // lie a spline joint or two ahead, else before the end of its lane)
-        // (on a lane that ends, before the end of it: the acceleration lane goes on to where
-        // it runs into the road, not only to the end of its first piece)
-        let wait_at = closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next)
-            .filter(|_| actor.lane_kind == LaneKind::Street)
-            .or_else(|| {
-                net.merges_into(actor.lane, actor.s, MERGE_LOOKAHEAD)
-                    .filter(|&(_, b)| b == to)
-                    .map(|(d, _)| d)
-            })
+        // (on a lane that ends, its front before the end of it: the acceleration lane goes
+        // on to where it comes too close to the road, not only to the end of its first
+        // piece; a car already in the taper is not held there in the way of the road, it
+        // merges where the two ways meet, giving way there)
+        let closed = closed_ahead(net, actor.lane, actor.s, actor.veh_type, actor.planned_next)
+            .filter(|_| actor.lane_kind == LaneKind::Street);
+        let ending = net
+            .merges_into(actor.lane, actor.s, MERGE_LOOKAHEAD)
+            .filter(|&(_, b)| b == to)
+            .map(|(d, _)| d - actor.front);
+        if closed.is_none() && ending.is_some_and(|d| d < 0.5) {
+            return None;
+        }
+        let wait_at = closed
+            .or(ending)
             .unwrap_or(net.lanes[actor.lane].length() - actor.s);
         Some(self.commit_or_wait(scene, actor, state, to, dir, kind, s_to, wait_at))
     }
