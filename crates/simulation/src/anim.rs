@@ -99,7 +99,11 @@ impl MeshAnimator {
                 }
             }
             if a.max_speed != 0.0 {
-                let max_step = dt * a.max_speed;
+                let max_step = if a.factor != 0.0 {
+                    dt * a.max_speed / a.factor.abs()
+                } else {
+                    dt * a.max_speed
+                };
                 // Keep OMSI's ordered comparisons instead of `clamp`: the parser accepts
                 // negative maxspeed values, and the original applies the signed bounds in
                 // this order rather than panicking when min > max.
@@ -430,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn max_speed_limits_the_unscaled_animation_variable() {
+    fn max_speed_limits_the_scaled_animation() {
         let def = MeshDef {
             animations: vec![Animation {
                 kind: Some(AnimKind::Rot),
@@ -444,11 +448,8 @@ mod tests {
         let mut a = MeshAnimator::new(&def, Mat4::IDENTITY, |_| Some(0));
 
         let first = a.update(0.5, &[1.0]);
-        assert_eq!(a.anims[0].2.value, 0.5);
-        assert!((first.transform_point3(Vec3::Y).y - 50f32.to_radians().cos()).abs() < 1e-5);
-        let second = a.update(0.5, &[1.0]);
-        assert_eq!(a.anims[0].2.value, 1.0);
-        assert!((second.transform_point3(Vec3::Y).y - 100f32.to_radians().cos()).abs() < 1e-5);
+        assert!((a.anims[0].2.value - 0.005).abs() < 1e-6);
+        assert!((first.transform_point3(Vec3::Y).y - 0.5f32.to_radians().cos()).abs() < 1e-5);
     }
 
     #[test]
