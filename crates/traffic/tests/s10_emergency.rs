@@ -415,3 +415,76 @@ fn traffic_whose_way_never_meets_the_emergency_does_not_stop_for_it() {
         Some(Reason::EmergencyYield)
     );
 }
+
+/// A two-way road east-west through a crossing object, right-hand traffic: 0 eastbound
+/// approach, 1 eastbound object lane, 2 eastbound exit; 3 westbound approach, 4 westbound
+/// object lane, 5 westbound exit; 6 a side road from the north, 7 its right turn into the
+/// westbound exit, 8 its way straight across; 9 a left turn from the eastbound approach
+/// into the north.
+fn two_way_crossing() -> Network {
+    use glam::DVec3;
+    let street = |a: DVec3, b: DVec3| LaneBuilder::polyline(vec![a, b], LaneKind::Street, 3.0);
+    let mut net = Network {
+        lanes: vec![
+            street(DVec3::new(-110.0, -1.75, 0.0), DVec3::new(-10.0, -1.75, 0.0)),
+            common::object_lane(DVec3::new(-10.0, -1.75, 0.0), DVec3::new(10.0, -1.75, 0.0), 0),
+            street(DVec3::new(10.0, -1.75, 0.0), DVec3::new(110.0, -1.75, 0.0)),
+            street(DVec3::new(110.0, 1.75, 0.0), DVec3::new(10.0, 1.75, 0.0)),
+            common::object_lane(DVec3::new(10.0, 1.75, 0.0), DVec3::new(-10.0, 1.75, 0.0), 1),
+            street(DVec3::new(-10.0, 1.75, 0.0), DVec3::new(-110.0, 1.75, 0.0)),
+            street(DVec3::new(-1.75, 110.0, 0.0), DVec3::new(-1.75, 10.0, 0.0)),
+            common::object_lane(DVec3::new(-1.75, 10.0, 0.0), DVec3::new(-10.0, 1.75, 0.0), 2),
+            common::object_lane(DVec3::new(-1.75, 10.0, 0.0), DVec3::new(-1.75, -10.0, 0.0), 3),
+            common::object_lane(DVec3::new(-10.0, -1.75, 0.0), DVec3::new(1.75, 10.0, 0.0), 4),
+        ],
+        ..Default::default()
+    };
+    for (from, to) in [(0, vec![1, 9]), (1, vec![2]), (3, vec![4]), (4, vec![5]), (6, vec![7]), (7, vec![5])] {
+        net.lanes[from].next = to;
+    }
+    net.build_grid();
+    net.compute_conflicts();
+    net
+}
+
+/// An ambulance passing a queue across its junction drives on the oncoming side: traffic
+/// turning into that side waits for it too, not only traffic meeting its own lane.
+#[test]
+fn traffic_turning_into_the_oncoming_side_waits_for_an_ambulance_passing_its_queue() {
+    for queue in [true, false] {
+        let mut w = Harness::new(two_way_crossing());
+        let mut amb = emergency(1, 0);
+        amb.s = 80.0;
+        let a = w.add(amb);
+        w.place(a, 0, 80.0);
+        if queue {
+            let head = w.add(JunctionActor::new(VehicleId(2), 0, 96.0));
+            w.place(head, 0, 96.0);
+        }
+        let turn = w.add(JunctionActor::new(VehicleId(3), 6, 94.0));
+        w.place(turn, 6, 94.0);
+        let mut c = JunctionCoordinator::new();
+        prepare(&w, &mut c);
+        assert!(c.emergency_owns(VehicleId(1), 1));
+        let held = w.plan(&mut c, turn, None).binding == Some(Reason::EmergencyYield);
+        assert_eq!(held, queue, "a queue in front of the ambulance: {queue}");
+    }
+}
+
+/// The car in front of an ambulance crosses the red line for it only on the ambulance's own
+/// way through the junction: turning off, it would cross traffic that is not held.
+#[test]
+fn only_a_car_taking_the_emergencys_way_crosses_the_red_line_for_it() {
+    let mut w = Harness::new(two_way_crossing());
+    let mut amb = emergency(1, 0);
+    amb.s = 85.0;
+    let a = w.add(amb);
+    w.place(a, 0, 85.0);
+    let head = w.add(JunctionActor::new(VehicleId(2), 0, 96.0));
+    w.place(head, 0, 96.0);
+    let mut c = JunctionCoordinator::new();
+    prepare(&w, &mut c);
+    assert!(c.emergency_owns(VehicleId(1), 1));
+    assert!(c.emergency_leads(VehicleId(2), &[(1, 4.0), (2, 24.0)]));
+    assert!(!c.emergency_leads(VehicleId(2), &[(9, 4.0)]));
+}

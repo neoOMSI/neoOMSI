@@ -408,6 +408,51 @@ fn an_ambulance_passes_a_queue_across_the_junction_it_has_reserved() {
     assert_ne!(d.phase, ManeuverPhase::Passing, "pulled out without the junction reserved");
 }
 
+/// ... nor on into a second junction right beyond it, which it has not reserved.
+#[test]
+fn an_ambulance_does_not_pass_a_queue_on_into_a_junction_beyond_the_reserved_one() {
+    let mut net = through_junction(false);
+    let object = |from: DVec3, to: DVec3, path: u16| {
+        let mut l = traffic::network::LaneBuilder::polyline(vec![from, to], LaneKind::Street, 3.0);
+        l.source = 2;
+        l.key = Some(LaneKey { tile: (0, 0), id: 8, path });
+        l
+    };
+    let street = |a: DVec3, b: DVec3| traffic::network::LaneBuilder::polyline(vec![a, b], LaneKind::Street, 3.0);
+    // 2 m of road beyond the first junction, then another one (y 122..140) crossed at y 131
+    net.lanes[2] = street(DVec3::new(0.0, 120.0, 0.0), DVec3::new(0.0, 122.0, 0.0));
+    net.lanes[3] = street(DVec3::new(-3.5, 122.0, 0.0), DVec3::new(-3.5, 120.0, 0.0));
+    net.lanes.extend([
+        object(DVec3::new(0.0, 122.0, 0.0), DVec3::new(0.0, 140.0, 0.0), 0),
+        street(DVec3::new(0.0, 140.0, 0.0), DVec3::new(0.0, 400.0, 0.0)),
+        street(DVec3::new(-3.5, 400.0, 0.0), DVec3::new(-3.5, 140.0, 0.0)),
+        object(DVec3::new(-3.5, 140.0, 0.0), DVec3::new(-3.5, 122.0, 0.0), 1),
+        object(DVec3::new(-30.0, 131.0, 0.0), DVec3::new(30.0, 131.0, 0.0), 2),
+    ]);
+    net.link(1.5);
+    assert!(!net.crossings[7].is_empty(), "the second junction has no crossing");
+    let feet = (0..6).map(|k| queued(10 + k, 0, 0.0, 65.0 + k as f32 * 6.5, 0.0)).collect::<Vec<_>>();
+    let (d, _) = plan_behind_queue(&net, ambulance(45.0), feet, 65.0 - 2.1 - 45.0 - 3.5, true);
+    assert_ne!(d.phase, ManeuverPhase::Passing);
+}
+
+/// The oncoming traffic stops for a held-up ambulance (`pass_open`) only where the road lets
+/// it pass: not before a queue up to a junction it does not hold.
+#[test]
+fn oncoming_traffic_is_asked_to_wait_only_where_the_ambulance_can_pass() {
+    let feet = || (0..6).map(|k| queued(10 + k, 0, 0.0, 65.0 + k as f32 * 6.5, 0.0)).collect::<Vec<_>>();
+    let gap = 65.0 - 2.1 - 45.0 - 3.5;
+    let (_, state) = plan_behind_queue(&through_junction(false), ambulance(45.0), feet(), gap, false);
+    assert!(!state.pass_open, "a pass across a junction it does not hold");
+    // only oncoming traffic in the way
+    let mut feet = queue_of_eight();
+    feet.push(queued(31, 1, -3.5, 210.0, 12.0));
+    let s = 60.0 - 2.1 - 6.0 - 3.5;
+    let (d, state) = plan_behind_queue(&two_way(), ambulance(s), feet, 6.0, false);
+    assert_ne!(d.phase, ManeuverPhase::Passing);
+    assert!(state.pass_open, "the oncoming car was not asked to wait");
+}
+
 /// ... but not across a junction where its way turns off.
 #[test]
 fn an_ambulance_does_not_pass_a_queue_across_a_junction_where_it_turns() {

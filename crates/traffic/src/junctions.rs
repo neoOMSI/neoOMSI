@@ -656,7 +656,7 @@ impl JunctionCoordinator {
                 self.mark_against_signal(actor.id, way[k].0);
             }
             let for_emergency = (actor.emergency && self.emergency_owns(actor.id, way[k].0))
-                || self.emergency_leads(actor.id, way[k].0);
+                || self.emergency_leads(actor.id, &way[k..]);
             if for_emergency && gap < 15.0 && actor.speed <= emergency::EMERGENCY_CROSSING_SPEED {
                 // Only the reserved movement gets a red-light exception. Admission still
                 // checks actual occupants, pedestrians and full downstream exits.

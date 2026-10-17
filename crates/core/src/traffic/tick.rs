@@ -2068,9 +2068,12 @@ fn emergency_pass_zone(c: &AiCar) -> (bool, f32) {
     if let Some(p) = c.maneuver.passing.filter(|p| !p.aborted) {
         return (true, (p.until + p.back - c.state.odometer).max(0.0) + 5.0);
     }
+    // (not where it cannot pass anyway: a split carriageway, a queue up to a junction it
+    // does not hold)
     let held = c.why.0 == Reason::Leader
         && c.why.1 - c.state.front < 30.0
-        && c.state.speed < EMERGENCY_PASS_LEAD_SPEED;
+        && c.state.speed < EMERGENCY_PASS_LEAD_SPEED
+        && c.maneuver.pass_open;
     let reach = if held {
         ::traffic::EMERGENCY_PASS_ZONE
     } else {

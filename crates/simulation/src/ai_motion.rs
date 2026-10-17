@@ -179,6 +179,9 @@ const TRACK_STEP: f32 = 3.0;
 const TRACK_PREVIEW: f32 = 0.35;
 const TRACK_LATERAL: f64 = 0.12;
 const TRACK_HEADING: f64 = 0.7;
+/// Above this speed (m/s) the gains fall with it, so the correction takes as long in
+/// seconds as here: faster, it outran the steering lag and weaved.
+const TRACK_GAIN_SPEED: f64 = 8.0;
 /// The most (1/m) the correction of a tracking error adds to the way's own bend.
 const TRACK_CORRECTION_MAX: f64 = 0.2;
 /// The steering pace while keeping to the way, in multiples of `steer_rate`.
@@ -688,7 +691,8 @@ impl AiBody {
         let beside = (self.rear - p).dot(left) - shift;
         let fwd = dir(self.heading);
         let askew = (t.x * fwd.y - t.y * fwd.x).atan2(t.dot(fwd));
-        let correction = (-TRACK_LATERAL * beside - TRACK_HEADING * askew)
+        let slow = (TRACK_GAIN_SPEED / v as f64).min(1.0);
+        let correction = (-TRACK_LATERAL * slow * slow * beside - TRACK_HEADING * slow * askew)
             .clamp(-TRACK_CORRECTION_MAX, TRACK_CORRECTION_MAX);
         // (the shifted line bends tighter)
         let bend = bend / (1.0 - bend * shift).max(0.5);
@@ -743,25 +747,7 @@ impl AiBody {
         // tick. Steering follows the way; only the longitudinal owner may choose speed.
         let v = speed.max(0.0);
         let normal_look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
-        let look = if self.steering_recovery > 0.0 {
-            (normal_look * self.recovery_preview_scale).max(3.5)
-        } else { normal_look };
-        let g = way(self.rot_long + look).truncate() + self.sweep_shift(way, look) - self.rear;
-        let alpha = (g.dot(right) as f32)
-            .atan2(g.dot(fwd) as f32)
-            .clamp(-FRAC_PI_2, FRAC_PI_2);
-        let reach = (g.length() as f32).max(1.0);
-        // The lock the bend needs (for `OMSI_DEBUG_AI_WIDE`); `OMSI_AI_MODEL_LOCK` holds the
-        // vehicle to its model's lock for comparison.
-        let (a, b, c) = (
-            way(self.rot_long).truncate(),
-            way(self.rot_long + 0.5 * look).truncate(),
-            way(self.rot_long + look).truncate(),
-        );
-        let (u, w) = (b - a, c - b);
-        let turn = (u.x * w.y - u.y * w.x).atan2(u.dot(w)).abs() as f32;
-        let bend_k = if look > 0.1 { 2.0 * turn / look } else { 0.0 };
-        let need = (bend_k * self.wheelbase).atan().to_degrees() * 1.15;
+        // (`OMSI_AI_MODEL_LOCK` holds the vehicle to its model's lock for comparison)
         let limit = if env_switch(&MODEL_LOCK, "OMSI_AI_MODEL_LOCK") {
             self.max_steer
         } else {
@@ -774,6 +760,16 @@ impl AiBody {
                 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if n % 50 == 0 {
+                    // (the lock the bend needs)
+                    let look = normal_look;
+                    let (a, b, c) = (
+                        way(self.rot_long).truncate(),
+                        way(self.rot_long + 0.5 * look).truncate(),
+                        way(self.rot_long + look).truncate(),
+                    );
+                    let (u, w) = (b - a, c - b);
+                    let turn = (u.x * w.y - u.y * w.x).atan2(u.dot(w)).abs() as f32;
+                    let need = (2.0 * turn / look * self.wheelbase).atan().to_degrees() * 1.15;
                     log::info!(
                         "ai wide: {off:.1} m beside its way at ({:.0}, {:.0}), bend needs {need:.0} deg, lock {:.0} ({} so far)",
                         self.rear.x,
@@ -785,6 +781,12 @@ impl AiBody {
             }
         }
         let pursuit = if self.steering_recovery > 0.0 {
+            let look = (normal_look * self.recovery_preview_scale).max(3.5);
+            let g = way(self.rot_long + look).truncate() + self.sweep_shift(way, look) - self.rear;
+            let alpha = (g.dot(right) as f32)
+                .atan2(g.dot(fwd) as f32)
+                .clamp(-FRAC_PI_2, FRAC_PI_2);
+            let reach = (g.length() as f32).max(1.0);
             (2.0 * self.wheelbase * alpha.sin() / reach).atan().to_degrees()
         } else {
             self.track(way, v)
@@ -1705,6 +1707,31 @@ mod sweep_measure {
         let (inside, outside) = rotation_point_beside(&def, &|s| left_turn(5.0, 135.0, s), 40.0 + 5.0 * f64::to_radians(135.0) + 30.0, 2.8);
         assert!(outside < 0.3 && inside > -(SWEEP_SHIFT_MAX + 0.2),
             "{inside:.2} m inside, {outside:.2} m outside");
+    }
+
+    /// A car 1 m beside a motorway lane at 30 m/s comes back to it without weaving.
+    #[test]
+    fn a_fast_car_comes_back_to_its_way_without_weaving() {
+        let mut car = c2();
+        car.rot_pnt_long = -1.3;
+        car.axles[0].long = 1.4;
+        car.axles[1].long = -1.3;
+        car.bounding_box = Some([1.8, 4.5, 1.5, 0.0, 0.0, 1.4]);
+        let path = |s: f64| DVec3::new(0.0, s, 0.0);
+        let (v, dt) = (30.0f32, 1.0 / 60.0);
+        let mut body = AiBody::new(&car, MotionKind::Road);
+        let mut s = 20.0f64;
+        body.place(&|d| path(s + d as f64), None, None, v);
+        body.rear.x += 1.0;
+        let (mut across, mut last) = (0.0f64, 0.0f64);
+        while s < 400.0 {
+            s += (v * dt) as f64;
+            let at = s;
+            body.step(dt, v, &|d| path(at + d as f64), None, None);
+            across = across.min(body.rear.x);
+            last = body.rear.x;
+        }
+        assert!(across > -0.1 && last.abs() < 0.05, "{across:.2} m across the way, {last:.2} m off at the end");
     }
 
     #[test]

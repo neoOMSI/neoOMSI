@@ -9,6 +9,9 @@ pub(super) struct EmergencyReservation {
     /// The owner's own way through the junction and the lane after it: what has to stay
     /// clear of the traffic that makes way for it.
     pub movement: Vec<usize>,
+    /// The oncoming lanes beside it, where it passes a queue across the junction
+    /// (`emergency_through`).
+    pub oncoming: Vec<usize>,
     exit: Option<usize>,
     /// The reserved movement shows the owner a stop aspect: it crosses against it, slowly.
     /// Sticky for the reservation's life, so the owner does not speed up once past the line.
@@ -61,11 +64,11 @@ impl JunctionCoordinator {
                     return None;
                 }
                 let m = junction_ahead(net, w)?;
-                (m.inside || in_reach(a, w, &m, actors, on_lane)).then_some((a, m))
+                (m.inside || in_reach(a, w, &m, actors, on_lane)).then_some(((a, m), w))
             })
             .collect();
-        requests.sort_by_key(|(a, m)| (!m.inside, a.id));
-        for (actor, movement) in requests {
+        requests.sort_by_key(|((a, m), _)| (!m.inside, a.id));
+        for ((actor, movement), way) in requests {
             let lanes = junction_group(net, movement.lanes[0].0);
             if self
                 .emergency_reservations
@@ -84,6 +87,7 @@ impl JunctionCoordinator {
                 owner: actor.id,
                 lanes,
                 movement: way_through,
+                oncoming: oncoming_beside(net, way, &movement),
                 exit: movement.exit.map(|x| x.0),
                 against_signal: false,
                 ahead: Vec::new(),
@@ -123,12 +127,19 @@ impl JunctionCoordinator {
         self.emergency_reservations.iter().any(|r| r.owner == id)
     }
 
-    /// Is `id` in front of an emergency vehicle on its way through the reserved junction of
-    /// `lane`? It leads it through, at a red light carefully over the line.
-    pub fn emergency_leads(&self, id: VehicleId, lane: usize) -> bool {
-        self.emergency_reservations
-            .iter()
-            .any(|r| r.ahead.contains(&id) && r.lanes.contains(&lane))
+    /// Is `id` in front of an emergency vehicle on its way through the reserved junction
+    /// that `way` enters? It leads it through, at a red light carefully over the line, if it
+    /// takes the same way through.
+    pub fn emergency_leads(&self, id: VehicleId, way: &[(usize, f32)]) -> bool {
+        let Some(&(lane, _)) = way.first() else { return false };
+        self.emergency_reservations.iter().any(|r| {
+            r.ahead.contains(&id)
+                && r.lanes.contains(&lane)
+                && way
+                    .iter()
+                    .take_while(|(l, _)| r.lanes.contains(l))
+                    .all(|(l, _)| r.movement.contains(l))
+        })
     }
 
     /// The crawl speed for an emergency crossing its reserved junction against the signal.
@@ -141,17 +152,19 @@ impl JunctionCoordinator {
     }
 
     /// Does a movement through `lanes` cross, join or share the way an emergency vehicle
-    /// reserved (`r.movement`)? Only that traffic stops for it: one junction object can
-    /// hold a whole square (#462).
+    /// reserved (`r.movement`), or the oncoming side it passes the vehicles in front of it
+    /// on? Only that traffic stops for it: one junction object can hold a whole square (#462).
     pub(super) fn meets_emergency(
         net: &Network,
         r: &EmergencyReservation,
         lanes: &[usize],
     ) -> bool {
+        let passing = !r.ahead.is_empty();
+        let on = |l: &usize| r.movement.contains(l) || (passing && r.oncoming.contains(l));
         lanes.iter().any(|&l| {
-            r.movement.contains(&l)
-                || net.crossings[l].iter().any(|c| r.movement.contains(&c.other))
-                || net.lanes[l].next.iter().any(|n| r.movement.contains(n))
+            on(&l)
+                || net.crossings[l].iter().any(|c| on(&c.other))
+                || net.lanes[l].next.iter().any(on)
         })
     }
 
@@ -172,6 +185,38 @@ const EMERGENCY_RESERVE_REACH: f32 = 45.0;
 /// wider than `EMERGENCY_QUEUE_GAP` (m), so the queue drains through in front of it (#462).
 const EMERGENCY_QUEUE_REACH: f32 = 150.0;
 const EMERGENCY_QUEUE_GAP: f32 = 15.0;
+
+/// How far before and after the junction (m) `oncoming_beside` looks.
+const ONCOMING_BESIDE: f32 = 20.0;
+
+/// The oncoming lanes beside the way into, through and out of the junction `m` on `way`
+/// (`ONCOMING_BESIDE` either side of it).
+fn oncoming_beside(net: &Network, way: &[(usize, f32)], m: &Movement) -> Vec<usize> {
+    let before = way
+        .iter()
+        .position(|w| w.0 == m.lanes[0].0)
+        .and_then(|k| k.checked_sub(1))
+        .map(|k| way[k].0);
+    let length = |l: usize| net.lanes[l].length();
+    // (lane, from, to)
+    let stretches = before
+        .map(|b| (b, (length(b) - ONCOMING_BESIDE).max(0.0), length(b)))
+        .into_iter()
+        .chain(m.lanes.iter().map(|&(l, _)| (l, 0.0, length(l))))
+        .chain(m.exit.map(|(x, _)| (x, 0.0, length(x).min(ONCOMING_BESIDE))));
+    let mut out = Vec::new();
+    for (lane, from, to) in stretches {
+        let n = ((to - from) / 4.0).ceil().max(1.0) as usize;
+        for k in 0..=n {
+            let s = from + (to - from) * k as f32 / n as f32;
+            match net.opposite(lane, s) {
+                Some((o, _, _)) if !out.contains(&o) => out.push(o),
+                _ => {}
+            }
+        }
+    }
+    out
+}
 
 /// Is the junction `m` on `a`'s way `way` close enough for `a` to reserve it: near, or at
 /// the head of the queue `a` stands at the end of?

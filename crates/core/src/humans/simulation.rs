@@ -1,4 +1,5 @@
 use super::*;
+use crate::traffic::PEOPLE_STANDING_SPEED;
 
 impl Humans {
     /// Advance everybody. `bus`: the player's vehicle; `traffic`: the timetable buses,
@@ -436,7 +437,7 @@ impl Humans {
             }
             let State::Pax(x) = &p.state else { continue };
             // (not one dealing with a bus - walking to its door, waiting for it to open)
-            if x.inside.is_some() || x.bus.is_some() || p.vel.length() > 0.3 {
+            if x.inside.is_some() || x.bus.is_some() || p.vel.length() > PEOPLE_STANDING_SPEED {
                 continue;
             }
             let at = p.position.truncate();

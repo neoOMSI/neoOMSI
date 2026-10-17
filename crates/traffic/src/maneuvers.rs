@@ -34,7 +34,7 @@
 use crate::diagnostics::{ManeuverPhase, Reason};
 use crate::following::{arrival_time, ramp_progress_for, smooth01};
 use crate::ids::{LaneId, VehicleId};
-use crate::network::{LaneKind, Network};
+use crate::network::{Lane, LaneKind, Network};
 use crate::wrap_deg;
 use crate::perception::{Occupancy, SweepSample};
 use glam::{DVec2, DVec3};
@@ -215,6 +215,10 @@ pub struct ManeuverState {
     /// change back before (a bus moved back into the bus lane beside the car and stood
     /// there with its nose on it).
     pub bypass_until: Option<f32>,
+    /// The road would let it pass the vehicle in front on the oncoming lane, last it looked:
+    /// only oncoming traffic was in the way. An emergency vehicle has the oncoming traffic
+    /// stop for it only then.
+    pub pass_open: bool,
 }
 
 // ---- frozen per-tick scene and inputs --------------------------------------------------
@@ -1063,8 +1067,10 @@ impl ManeuverCoordinator {
             || actor.at_stop
             || scene.time < state.pass_retry
         {
+            state.pass_open &= input.lead_standing;
             return None;
         }
+        state.pass_open = false;
         let gap = input.lead_gap?;
         let lane = &net.lanes[actor.lane];
         // Only the single-lane-each-way case: a road with lanes to change to uses bypass.
@@ -1227,6 +1233,7 @@ impl ManeuverCoordinator {
         ) + 1.5;
         let from = os - actor.front - clear_d - 2.0;
         let to = os + actor.rear + 8.0;
+        state.pass_open = true;
         if self.oncoming_soon(scene, actor.id, opp, from, to, t_need, input.priority_pass) {
             return None;
         }
@@ -1643,7 +1650,7 @@ impl ManeuverCoordinator {
         let Some(l) = net.lanes.get(lane) else {
             return false;
         };
-        !l.no_cars && l.density > 0.0 && l.allows(actor.veh_type)
+        lane_open_to(l, actor.veh_type)
     }
 
     /// Does lane `lane` (from `s` on) stay open to `actor` beyond the lookahead? A car does
@@ -1908,8 +1915,12 @@ fn ending_lane(net: &Network, actor: &ManeuverActor) -> Option<usize> {
         return None;
     }
     let (_, b) = net.merges_into(actor.lane, actor.s, MERGE_LOOKAHEAD)?;
-    let l = &net.lanes[b];
-    (l.open_to(actor.veh_type) && !l.no_cars).then_some(b)
+    lane_open_to(&net.lanes[b], actor.veh_type).then_some(b)
+}
+
+/// May a vehicle of `[ai_veh_type]` `veh_type` change into lane `l`?
+fn lane_open_to(l: &Lane, veh_type: i32) -> bool {
+    !l.no_cars && l.open_to(veh_type)
 }
 
 /// How far ahead (from distance `s` along `lane`, within `TURN_LANE_LOOKAHEAD`) the way
@@ -2066,12 +2077,20 @@ const MIN_LANE_WIDTH: f32 = 3.0;
 /// actor origin to `distance` metres along `way`? Separate carriageways (an island, a median,
 /// a hatched area between the lanes) are no passing room (#126).
 fn passing_corridor(net: &Network, way: &[WayStep], distance: f32, across_junction: bool, emergency: bool) -> bool {
+    let crossing = |w: &WayStep| !net.crossings[w.0].is_empty();
+    // (the reserved junction: the first run of junction lanes on the way)
+    let first = way.iter().position(crossing).unwrap_or(way.len());
+    let reserved = first..first + way[first..].iter().take_while(|w| crossing(w)).count();
     let mut d = 0.0f32;
     loop {
         let Some((lane, u)) = way_locate(net, way, d.min(distance)) else { return false };
         let l = &net.lanes[lane];
-        // (across a reserved junction only the roads on both sides count)
+        // (across the reserved junction only the roads on both sides count; another
+        // junction beyond it is not held for it)
         if across_junction && !net.crossings[lane].is_empty() {
+            if !way.iter().position(|w| w.0 == lane).is_some_and(|k| reserved.contains(&k)) {
+                return false;
+            }
             if d >= distance {
                 return true;
             }
