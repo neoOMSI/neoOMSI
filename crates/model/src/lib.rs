@@ -489,6 +489,21 @@ pub struct ModelItem {
 }
 
 impl Model {
+    /// Add a text texture at its declared model slot.  OMSI model files may leave holes in
+    /// this table: a bare number immediately before `[texttexture]` / `[texttexture_enh]`
+    /// names the slot which `[useTextTexture]` addresses.  Treating the declarations as a
+    /// dense list makes later dashboard displays bind to the wrong generated texture.
+    fn add_text_texture(&mut self, slot: Option<usize>, text: TextTexture) {
+        if let Some(slot) = slot {
+            if slot >= self.text_textures.len() {
+                self.text_textures.resize(slot + 1, TextTexture::default());
+            }
+            self.text_textures[slot] = text;
+        } else {
+            self.text_textures.push(text);
+        }
+    }
+
     /// All declared cutters, plus legacy mesh fields supplied by programmatic callers.
     pub fn terrain_hole_meshes(&self) -> impl Iterator<Item = &str> {
         self.terrain_holes.iter().map(String::as_str).chain(
@@ -654,6 +669,9 @@ impl Model {
                 });
             }
             "texttexture" => {
+                let slot = r
+                    .line_before_block()
+                    .and_then(|line| line.trim().parse::<usize>().ok());
                 let variable = r.str().to_string();
                 let font = r.str().to_string();
                 let width = r.i32();
@@ -661,7 +679,7 @@ impl Model {
                 // any non-zero value means full colour (add-ons write 255)
                 let full_color = r.i32() != 0;
                 let color = r.f32s::<3>();
-                self.text_textures.push(TextTexture {
+                self.add_text_texture(slot, TextTexture {
                     variable,
                     font,
                     width,
@@ -679,6 +697,9 @@ impl Model {
                 // [useTextTexture] counts through - the D86's number plate is texture 0 and
                 // its matrix texts 3..5; without the slot every later index was off by one
                 // and the destination display showed the temperature's 7-segment digits.
+                let slot = r
+                    .line_before_block()
+                    .and_then(|line| line.trim().parse::<usize>().ok());
                 let variable = r.str().to_string();
                 let font = r.str().to_string();
                 let width = r.i32();
@@ -688,7 +709,7 @@ impl Model {
                 let extra: Vec<String> = (0..2).map(|_| r.str().to_string()).collect();
                 let orientation = ::legacy_config::parse_i32(&extra[0]);
                 let grid = ::legacy_config::parse_i32(&extra[1]).max(1);
-                self.text_textures.push(TextTexture {
+                self.add_text_texture(slot, TextTexture {
                     variable: variable.clone(),
                     font: font.clone(),
                     width,
@@ -1377,6 +1398,21 @@ mod tests {
         assert_eq!((tt[0].orientation, tt[0].grid), (1, 1));
         assert!(tt[1].full_color);
         assert!(!tt[2].full_color);
+    }
+
+    /// Model files may use sparse, explicitly numbered text-texture slots.  The Gold
+    /// E400MMC's dashboard refers to slots above 140 while its VIX declarations occupy
+    /// the low slots, so packing these declarations changes what every mesh displays.
+    #[test]
+    fn texttextures_keep_their_declared_sparse_slots() {
+        let m = super::Model::parse(&::legacy_config::CfgFile::from_str(
+            "x.cfg",
+            "3\n[texttexture]\nthird\nf\n64\n32\n0\n1\n1\n1\n\n9\n[texttexture_enh]\nninth\nf\n64\n32\n0\n1\n1\n1\n0\n1\n",
+        ));
+        assert_eq!(m.text_textures.len(), 10);
+        assert_eq!(m.text_textures[3].variable, "third");
+        assert_eq!(m.text_textures[9].variable, "ninth");
+        assert!(m.text_textures[4].variable.is_empty());
     }
 
     /// Two [matl] blocks of one material are one material (Absperrung_grau.sco).
