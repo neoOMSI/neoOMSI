@@ -30,14 +30,19 @@ pub fn lighting(
     shadows: bool,
 ) -> ::render::Lighting {
     let clouds = CLOUDS.load(Relaxed);
-    let mut l = crate::lights::lighting_from(daylight, local.visibility_m);
+    let bright = w.brightness.clamp(0.0, 1.0);
+    let visibility_m = local.visibility_m * (0.25 + 0.75 * bright);
+    let mut l = crate::lights::lighting_from(daylight, visibility_m);
     l.enhanced = ENHANCED.load(Relaxed);
     l.classic = CLASSIC.load(Relaxed);
-    let thick = if clouds { local.thick } else { 0.0 };
+    let thick = if clouds { local.thick * bright } else { 0.0 };
     if clouds {
         let s = sky::render_sky(w, local.precip_rate);
-        l.cloud_density = s.density;
+        l.cloud_density = s.density * bright;
         l.cloud_layers = s.layers;
+        for layer in l.cloud_layers.iter_mut() {
+            layer[2] *= bright;
+        }
     }
     l.cloud_offset = region.offset();
     crate::lights::apply_weather(
@@ -53,7 +58,7 @@ pub fn lighting(
     }
     dim(&mut l, w.brightness);
     l.wetness = wetness;
-    l.shadows = shadows && thick < 0.85 && local.visibility_m > 350.0;
+    l.shadows = shadows && thick < 0.85 && visibility_m > 350.0;
     l.light_shadows = shadows;
     l
 }
