@@ -1253,13 +1253,20 @@ impl Renderer {
                 scope.spawn(move |_| *slot = Some(job()));
             }
             let own_vehicle =
-                own_vehicle_origins(camera.position, lighting.inside, &lighting.puddle_parts);
+                own_vehicle_origins(lighting.inside, &lighting.puddle_parts);
+            let outside_own_vehicle = !own_vehicle.is_empty()
+                && !lighting.inside.iter().chain(&lighting.puddle_parts)
+                    .any(|v| point_in_vehicle_box(camera.position, v));
             let mut by_phase: [Vec<(usize, f32, bool)>; OWN_VEHICLE_BUCKET + 1] =
                 std::array::from_fn(|_| Vec::new());
             for &entry in &visible {
                 let inst = &scene.instances[entry.0];
-                let bucket = draw_bucket(effective_render_phase(inst), inst.origin, &own_vehicle);
+                let phase = effective_render_phase(inst);
+                let bucket = draw_bucket(phase, inst.origin, &own_vehicle);
                 by_phase[bucket].push(entry);
+                if outside_own_vehicle && bucket == OWN_VEHICLE_BUCKET {
+                    by_phase[phase as usize].push(entry);
+                }
             }
             // Depth of the fully opaque pixels of ground-phase blends (or only of their walls).
             let surface_depth_items =
@@ -1311,7 +1318,9 @@ impl Renderer {
                 let mut blended: Vec<usize> = Vec::new();
                 for &(i, _, _) in visible {
                     let inst = &scene.instances[i];
-                    if inst.ordered {
+                    let split_own = outside_own_vehicle && own_vehicle.contains(&inst.origin);
+                    let late_own = split_own && bucket == OWN_VEHICLE_BUCKET;
+                    if inst.ordered && (!split_own || late_own) {
                         blended.push(i);
                         continue;
                     }
@@ -1322,7 +1331,10 @@ impl Renderer {
                         let mat = &scene.materials[mat_id];
                         let kind = kind_of(mat.alpha);
                         if kind == PIPE_BLEND || mat.no_z_check {
-                            has_blend = true;
+                            has_blend |= !split_own || late_own;
+                            continue;
+                        }
+                        if late_own {
                             continue;
                         }
                         if exclude_texture.is_some_and(|t| mat.uses_texture(t)) {
@@ -1418,6 +1430,11 @@ impl Renderer {
                     for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
                         let mat_id = inst.materials.get(*slot as usize).copied().unwrap_or(0);
                         let mat = &scene.materials[mat_id];
+                        if outside_own_vehicle && bucket == OWN_VEHICLE_BUCKET
+                            && mat.alpha != AlphaMode::Blend && !mat.no_z_check
+                        {
+                            continue;
+                        }
                         if (mat.alpha != AlphaMode::Blend && !mat.no_z_check && !inst.ordered)
                             || exclude_texture.is_some_and(|t| mat.uses_texture(t))
                         {

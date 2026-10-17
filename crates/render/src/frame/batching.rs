@@ -177,25 +177,18 @@ pub(crate) fn effective_render_phase(instance: &Instance) -> RenderPhase {
     }
 }
 
-/// Drawn after every phase: the vehicle the camera sits in, so its windows tint all scenery
-/// behind them (#231).
+/// Drawn after scenery so the player's windows tint everything behind them (#231).
 pub(crate) const OWN_VEHICLE_BUCKET: usize = RenderPhase::COUNT;
 
-/// Origins of the vehicle the camera sits in and its trailers; empty when the camera is outside.
+/// Origins of the player's vehicle and its trailers.
 pub(crate) fn own_vehicle_origins(
-    camera: DVec3,
     inside: Option<(DVec3, f64, [f32; 6])>,
     trailers: &[(DVec3, f64, [f32; 6])],
 ) -> Vec<DVec3> {
     let Some(vehicle) = inside else {
         return Vec::new();
     };
-    let parts = || std::iter::once(&vehicle).chain(trailers);
-    if parts().any(|v| point_in_vehicle_box(camera, v)) {
-        parts().map(|v| v.0).collect()
-    } else {
-        Vec::new()
-    }
+    std::iter::once(&vehicle).chain(trailers).map(|v| v.0).collect()
 }
 
 /// The main pass's buckets in drawing order, with the phase each is drawn as.

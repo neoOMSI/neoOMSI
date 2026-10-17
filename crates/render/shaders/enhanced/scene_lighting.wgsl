@@ -621,6 +621,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     sf.albedo = albedo * (1.0 - metal);
     sf.f0 = f0;
     sf.rough = rough;
+    let daylight_albedo = sf.albedo * select(1.0, mix(0.02, 1.0, enh.eye.w), glass);
     let nv = clamp(dot(n, v), 1e-4, 1.0);
     let s = camera.sun_dir.xyz;
     let nl = dot(n, s);
@@ -639,7 +640,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
             let a = max(rough * rough, 0.012);
             let h = normalize(s + v);
             let spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(f0, dot(v, h));
-            direct = e_sun * nl * (sf.albedo / PI * (vec3<f32>(1.0) - f_schlick(f0, nl)) + spec * select(1.0, 0.12, glass));
+            direct = e_sun * nl * (daylight_albedo / PI * (vec3<f32>(1.0) - f_schlick(f0, nl)) + spec * select(1.0, 0.12, glass));
         }
     }
     var ao = 1.0;
@@ -657,7 +658,7 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     let avg_e = enh.fog_color.rgb * (PI / 0.9);
     let cab_e = vec3<f32>(dot(avg_e, vec3<f32>(0.2126, 0.7152, 0.0722))) * vec3<f32>(1.0, 0.98, 0.95);
     let e_amb = mix(sh_irradiance(n), cab_e * CAB_AMBIENT, 0.6 * in_cab) * ao_bounce(ao, sf.albedo);
-    var ambient = e_amb * sf.albedo / PI * (vec3<f32>(1.0) - fr * (1.0 - rough));
+    var ambient = e_amb * daylight_albedo / PI * (vec3<f32>(1.0) - fr * (1.0 - rough));
     var r = reflect(-v, n);
     let below = dot(r, geo_n);
     if (below < 0.0) {
@@ -677,15 +678,19 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     let reflects = reflective_env || pbr_reflects || is_water || wet_road > 0.0;
     var reflection = select(vec3<f32>(0.0), env * env_brdf(f0, rough, nv) * spec_occ * select(1.0, wet_road * (0.02 + 0.98 * puddle * puddle), !(reflective_env || glass || pbr_reflects || is_water)), reflects);
     if (!reflects) {
-        ambient = e_amb * sf.albedo / PI;
+        ambient = e_amb * daylight_albedo / PI;
     }
     if (glass) {
         reflection = reflection * 0.20 * (1.0 - 0.85 * own_pane);
     }
     let cabin_light = interior_lamps(in.world, n, in.params2.z);
     let saloon_lit = select(0.0, clamp(max(cabin_light.r, max(cabin_light.g, cabin_light.b)) * 4.0, 0.0, 1.0), in.params2.z >= 1.0);
-    let lamps = lamp_light(in.world, n, v, sf, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
-    let cabin = sf.albedo * cabin_light * mix(1.0, ao, 0.85);
+    var lamp_surface = sf;
+    if (glass) {
+        lamp_surface.albedo = sf.albedo * (0.06 * enh.eye.w);
+    }
+    let lamps = lamp_light(in.world, n, v, lamp_surface, thin) * select(1.0, 0.0, material.params.y > 0.2 && material.params.y < 0.3) * (1.0 - saloon_lit) * (1.0 + 0.9 * wet_road);
+    let cabin = lamp_surface.albedo * cabin_light * mix(1.0, ao, 0.85);
     var rgb = (direct + ambient + lamps) * pre + cabin;
     var emit = tex.rgb * material.emissive.rgb * max(enh.exposure.z * 2.0, 0.8);
     if (material.extra.w > 0.5) {

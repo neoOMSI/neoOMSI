@@ -28,7 +28,7 @@ struct Enhanced {
     sun_disc: vec4<f32>,
     // x which term the main pass shows alone (OMSI_DEBUG_ENHANCED, 0 = the picture)
     debug: vec4<f32>,
-    // xyz where the sky cube is drawn from, relative to the camera
+    // xyz sky cube offset, w night level
     eye: vec4<f32>,
     // x how bright an LED panel's dots burn (0 = off), y whether the LED panels' `\S:n`
     // masks keep their mip chain (0: at full resolution, the dots stay visible when small)

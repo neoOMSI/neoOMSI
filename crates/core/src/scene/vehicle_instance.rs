@@ -916,6 +916,7 @@ impl World {
                     // must remain overlays and must not reveal the cabin behind themselves.
                     extra.glass = transparent_layer_hint
                         && alpha == AlphaMode::Blend
+                        && !is_window_decal(&material_name)
                         && !dirt_overlay
                         && !rain_layer;
                     // (while it snows the film is the snow-crystal texture, drawn as it is)
