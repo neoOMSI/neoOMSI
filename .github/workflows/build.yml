@@ -1,0 +1,167 @@
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Repo whose code gets built"
+        default: "neoOMSI/REPO-B"
+      source_ref:
+        description: "Branch, tag or SHA in the source repo"
+        default: "main"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  SOURCE_REPO: ${{ inputs.source_repo || 'neoOMSI/REPO-B' }}
+  SOURCE_REF: ${{ inputs.source_ref || 'main' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-slim
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      channel: ${{ steps.v.outputs.channel }}
+      source_sha: ${{ steps.v.outputs.source_sha }}
+      source_repo: ${{ steps.v.outputs.source_repo }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.SOURCE_REF }}
+          token: ${{ secrets.SOURCE_TOKEN || github.token }}
+          fetch-depth: 0
+      - id: v
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"
+            case "$v" in
+              *-nightly.*) channel=nightly ;;
+              *-rc.*) channel=rc ;;
+              *) channel=stable ;;
+            esac
+          else
+            channel=nightly
+            short_engine="$(git rev-parse --short=8 HEAD)"
+            v="$(sh scripts/version.sh)-nightly.g${short_engine}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - shell: bash
+        run: |
+          echo "### neoOMSI ${{ steps.v.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source ${SOURCE_REPO}@\`$(git rev-parse --short=8 HEAD)\` · Actions run #${GITHUB_RUN_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-target.yml
+    with:
+      platform: windows
+      runner: windows-latest
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      version: ${{ needs.version.outputs.version }}
+      channel: ${{ needs.version.outputs.channel }}
+      source_repository: ${{ needs.version.outputs.source_repo }}
+      source_ref: ${{ needs.version.outputs.source_sha }}
+      cache_write: ${{ github.ref == 'refs/heads/main' }}
+      direct_artifact: false
+      retention_days: 1
+
+  macos:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x64
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-target.yml
+    with:
+      platform: macos
+      runner: macos-latest
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      version: ${{ needs.version.outputs.version }}
+      channel: ${{ needs.version.outputs.channel }}
+      source_repository: ${{ needs.version.outputs.source_repo }}
+      source_ref: ${{ needs.version.outputs.source_sha }}
+      cache_write: ${{ github.ref == 'refs/heads/main' }}
+      direct_artifact: false
+      retention_days: 1
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-target.yml
+    with:
+      platform: linux
+      runner: ${{ matrix.runner }}
+      arch: ${{ matrix.arch }}
+      version: ${{ needs.version.outputs.version }}
+      channel: ${{ needs.version.outputs.channel }}
+      source_repository: ${{ needs.version.outputs.source_repo }}
+      source_ref: ${{ needs.version.outputs.source_sha }}
+      cache_write: ${{ github.ref == 'refs/heads/main' }}
+      direct_artifact: false
+      retention_days: 1
+
+  release:
+    needs: [version, windows, macos, linux]
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      CHANNEL: ${{ needs.version.outputs.channel }}
+      PRERELEASE: ${{ contains(needs.version.outputs.version, '-') }}
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}   # publish the release in THIS (public) repo
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ needs.version.outputs.source_sha }}
+          token: ${{ secrets.SOURCE_TOKEN || github.token }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish release
+        shell: bash
+        run: bash scripts/ci/publish-release.sh
