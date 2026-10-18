@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       source_repo:
-        description: "Repo whose code gets built"
+        description: "Source repository"
         default: "neoOMSI/game"
       source_ref:
-        description: "Branch, tag or SHA in the source repo"
+        description: "Reference of source (branch, tag, commit)"
         default: "main"
 
 concurrency:
@@ -153,7 +153,8 @@ jobs:
       PRERELEASE: ${{ contains(needs.version.outputs.version, '-') }}
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}
       GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}   # publish the release in THIS (public) repo
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: ${{ needs.version.outputs.source_sha }}
     steps:
       - uses: actions/checkout@v7
         with:
