@@ -7,7 +7,7 @@ on:
     inputs:
       source_repo:
         description: "Repo whose code gets built"
-        default: "neoOMSI/REPO-B"
+        default: "neoOMSI/game"
       source_ref:
         description: "Branch, tag or SHA in the source repo"
         default: "main"
