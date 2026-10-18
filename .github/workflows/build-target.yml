@@ -2,6 +2,10 @@ name: Build target
 
 on:
   workflow_call:
+    secrets:
+      SOURCE_TOKEN:
+        description: Token with read access to the source repository (only needed if it is private).
+        required: false
     inputs:
       platform:
         description: Target operating system identifier used by the packaging scripts.
@@ -72,6 +76,7 @@ jobs:
         with:
           repository: ${{ inputs.source_repository }}
           ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.SOURCE_TOKEN || github.token }}
           persist-credentials: false
 
       - name: Rust toolchain
