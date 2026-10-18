@@ -20,7 +20,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   CARGO_NET_RETRY: 10
-  SOURCE_REPO: ${{ inputs.source_repo || 'neoOMSI/REPO-B' }}
+  SOURCE_REPO: ${{ inputs.source_repo || 'neoOMSI/game' }}
   SOURCE_REF: ${{ inputs.source_ref || 'main' }}
 
 jobs:
@@ -75,6 +75,7 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/build-target.yml
+    secrets: inherit
     with:
       platform: windows
       runner: windows-latest
@@ -101,6 +102,7 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/build-target.yml
+    secrets: inherit
     with:
       platform: macos
       runner: macos-latest
@@ -127,6 +129,7 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/build-target.yml
+    secrets: inherit
     with:
       platform: linux
       runner: ${{ matrix.runner }}
